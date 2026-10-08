@@ -246,6 +246,15 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		return nil, err
 	}
 	if err := wfCtx.SetCancellationHandler(func(cancelCtx engine.WorkflowContext, request engine.CancellationRequest) error {
+		if request.RunID != input.RunID {
+			owned, err := workflowOwnsCancellation(checkpoint, executionLoop, reg.Definition, request.RunID)
+			if err != nil {
+				return err
+			}
+			if !owned {
+				return engine.ErrCancellationRunNotOwned
+			}
+		}
 		if err := r.handleWorkflowCancellation(finalization, cancelCtx, input, startCommand, request); err != nil {
 			return err
 		}

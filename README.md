@@ -370,9 +370,11 @@ timers for temporary read and cancellation delivery failures. The creating tool
 and uncertain answer submission are never repeated. Ended-session admission records
 cancellation intent; the accepted workflow settles saved Tasks and children before
 it records canceled completion. Failed cleanup records failure. Store implementations
-must replace terminal-at-start records with this intent contract. Generated server
-bindings and durable cancellation through the public suspended-run entry point
-remain release requirements.
+must replace terminal-at-start records with this intent contract. `CancelRun` also
+accepts suspended work through an engine-owned job, using the original worker
+route and the successor selected by storage. Cleanup continues after the caller
+leaves and when a replacement worker starts. Generated server bindings and the
+complete caller-store migration remain release requirements.
 
 Generated MCP adapters accept the application's configured Goa endpoints.
 Authentication, method scopes, interceptors and endpoint middleware therefore run

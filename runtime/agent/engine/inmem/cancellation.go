@@ -1,7 +1,7 @@
 package inmem
 
 // Cancellation commands join the workflow callback queue before the engine
-// cancels execution. The first accepted reason is retained for exact repeats;
+// cancels execution. The first accepted request is retained for exact repeats;
 // commands arriving after completion receive the established terminal result.
 
 import (
@@ -15,14 +15,14 @@ import (
 type (
 	// cancellationState serializes commands for one workflow execution.
 	cancellationState struct {
-		mu             sync.Mutex
-		workflow       *wfCtx
-		handler        engine.CancellationHandler
-		cancel         context.CancelFunc
-		acceptedReason string
-		commands       []*cancellationCommand
-		processing     bool
-		closed         bool
+		mu              sync.Mutex
+		workflow        *wfCtx
+		handler         engine.CancellationHandler
+		cancel          context.CancelFunc
+		acceptedRequest engine.CancellationRequest
+		commands        []*cancellationCommand
+		processing      bool
+		closed          bool
 	}
 
 	// cancellationCommand returns the result of one queued request.
@@ -41,7 +41,7 @@ func (s *cancellationState) request(ctx context.Context, request engine.Cancella
 	}
 	s.mu.Lock()
 	if s.closed {
-		err := completedCancellationResult(s.acceptedReason, request)
+		err := completedCancellationResult(s.acceptedRequest, request)
 		s.mu.Unlock()
 		return err
 	}
@@ -110,8 +110,8 @@ func (s *cancellationState) endAttempt() {
 	s.processing = false
 }
 
-// process handles queued commands in arrival order. The first successful
-// reason cancels execution; retries reuse that result without calling the
+// process handles queued commands in arrival order. The first accepted
+// request cancels execution; retries reuse that result without calling the
 // handler again.
 func (s *cancellationState) process() {
 	for {
@@ -123,7 +123,7 @@ func (s *cancellationState) process() {
 		}
 		command := s.commands[0]
 		s.commands = s.commands[1:]
-		acceptedReason := s.acceptedReason
+		acceptedRequest := s.acceptedRequest
 		handler := s.handler
 		closed := s.closed
 		s.mu.Unlock()
@@ -131,16 +131,16 @@ func (s *cancellationState) process() {
 		var err error
 		switch {
 		case closed:
-			err = completedCancellationResult(acceptedReason, command.request)
-		case acceptedReason == "":
+			err = completedCancellationResult(acceptedRequest, command.request)
+		case acceptedRequest.RunID == "":
 			err = handler(s.workflow, command.request)
 			if err == nil {
 				s.mu.Lock()
-				s.acceptedReason = command.request.Reason
+				s.acceptedRequest = command.request
 				s.mu.Unlock()
 				s.cancel()
 			}
-		case acceptedReason != command.request.Reason:
+		case acceptedRequest != command.request:
 			err = &engine.CancellationConflictError{
 				RunID:  command.request.RunID,
 				Reason: command.request.Reason,
@@ -157,20 +157,20 @@ func (s *cancellationState) finish() {
 	s.closed = true
 	queued := s.commands
 	s.commands = nil
-	acceptedReason := s.acceptedReason
+	acceptedRequest := s.acceptedRequest
 	s.mu.Unlock()
 	for _, command := range queued {
-		command.result <- completedCancellationResult(acceptedReason, command.request)
+		command.result <- completedCancellationResult(acceptedRequest, command.request)
 	}
 }
 
-// completedCancellationResult preserves an accepted reason after closure and
+// completedCancellationResult preserves an accepted request after closure and
 // otherwise reports that the workflow can no longer accept a command.
-func completedCancellationResult(acceptedReason string, request engine.CancellationRequest) error {
-	switch acceptedReason {
-	case "":
+func completedCancellationResult(acceptedRequest, request engine.CancellationRequest) error {
+	switch {
+	case acceptedRequest.RunID == "":
 		return engine.ErrWorkflowCompleted
-	case request.Reason:
+	case acceptedRequest == request:
 		return nil
 	default:
 		return &engine.CancellationConflictError{RunID: request.RunID, Reason: request.Reason}

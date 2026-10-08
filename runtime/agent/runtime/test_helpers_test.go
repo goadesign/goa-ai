@@ -1227,6 +1227,14 @@ type stubEngine struct {
 	sealErrors                       []error
 }
 
+func (s *stubEngine) RegisterCancellationWorkflow(context.Context, string, engine.ActivityOptions, func(context.Context, engine.CancellationRequest) (bool, error)) error {
+	return nil
+}
+
+func (s *stubEngine) StartCancellationWorkflow(context.Context, string, string, engine.CancellationRequest) error {
+	return errors.New("cancellation workflow start is not implemented by this test stub")
+}
+
 func (s *stubEngine) RegisterWorkflow(_ context.Context, definition engine.WorkflowDefinition) error {
 	s.registeredWorkflow = definition
 	return nil

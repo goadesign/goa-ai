@@ -3052,9 +3052,20 @@ operation independently of the stopped run context. Temporary reads and
 cancellation delivery use workflow timers; permanent rejection remains an error.
 The shared activity serializer preserves rejection of one exact activity input
 without forbidding a fresh workflow attempt that chooses different input.
-Generated executors still do not advertise Tasks: cancellation after a
-suspension, one-successor admission, producer bindings and notifications must
-complete first. Registry protocol 13 and suspension version 13 reject prior
+Generated executors still do not advertise Tasks: producer bindings, complete
+caller-store migration and the remaining capability checks must complete first.
+Public `CancelRun` accepts a durable cancellation job for a suspended run. The
+job obtains its route from the original accepted preparation, follows only
+storage-admitted successors, and publishes ordinary cancellation continuations.
+A racing answer can win admission; the job then follows that accepted execution.
+Saved children remain owned by their execution parent. Cancellation never starts
+a detached child as an unrelated root. A selected child's reason is retained;
+related work uses the established engine-cancellation reason. Temporal records
+pending observations and retries temporary delivery failures without a total
+cleanup deadline. Temporal's history rollover hint carries the same request into
+a fresh execution with the same observation delay. Contract conflicts fail
+instead of retrying indefinitely.
+The in-memory engine mirrors acceptance and retry rules without durability. Registry protocol 13 and suspension version 13 reject prior
 contracts; providers, consumers and workers must migrate together.
 
 A suspended run owns one admitted successor. The existing atomic start command

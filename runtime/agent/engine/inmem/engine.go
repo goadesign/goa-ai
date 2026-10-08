@@ -34,7 +34,9 @@ type (
 	eng struct {
 		mu sync.RWMutex
 
-		workflows map[string]engine.WorkflowDefinition
+		workflows             map[string]engine.WorkflowDefinition
+		cancellationWorkflows map[string]cancellationWorkflow
+		cancellationJobs      map[string]*cancellationJob
 
 		storageActivities      map[string]storageActivityDef
 		plannerActivities      map[string]plannerActivityDef
@@ -171,6 +173,9 @@ func (e *eng) RegisterWorkflow(_ context.Context, def engine.WorkflowDefinition)
 		e.workflows = make(map[string]engine.WorkflowDefinition)
 	}
 	if _, dup := e.workflows[def.Name]; dup {
+		return fmt.Errorf("workflow %q already registered", def.Name)
+	}
+	if _, dup := e.cancellationWorkflows[def.Name]; dup {
 		return fmt.Errorf("workflow %q already registered", def.Name)
 	}
 	if def.Handler == nil || def.Name == "" {
@@ -546,7 +551,10 @@ func isTerminalRunStatus(status engine.RunStatus) bool {
 
 // RequestCancellation waits for workflow code to record the reason, then
 // cancels the engine-owned execution context.
-func (e *eng) RequestCancellation(ctx context.Context, request engine.CancellationRequest) error {
+func (e *eng) RequestCancellation(ctx context.Context, workflowID string, request engine.CancellationRequest) error {
+	if workflowID == "" {
+		return errors.New("receiving workflow id is required")
+	}
 	if request.RunID == "" {
 		return errors.New("run id is required")
 	}
@@ -554,7 +562,7 @@ func (e *eng) RequestCancellation(ctx context.Context, request engine.Cancellati
 		return errors.New("cancellation reason is required")
 	}
 	e.mu.RLock()
-	handle, ok := e.handles[request.RunID]
+	handle, ok := e.handles[workflowID]
 	e.mu.RUnlock()
 	if !ok {
 		return engine.ErrWorkflowNotFound

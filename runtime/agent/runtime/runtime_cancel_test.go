@@ -47,7 +47,7 @@ type (
 
 const cancellationPlanActivityName = "plan"
 
-func (e *recordingCancellationEngine) RequestCancellation(_ context.Context, request engine.CancellationRequest) error {
+func (e *recordingCancellationEngine) RequestCancellation(_ context.Context, _ string, request engine.CancellationRequest) error {
 	e.requests = append(e.requests, request)
 	return e.err
 }

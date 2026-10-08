@@ -249,18 +249,11 @@ func (w *temporalWorkflowContext) registerCancellationUpdate() error {
 	return workflow.SetUpdateHandler(
 		w.commandCtx,
 		cancellationUpdateName,
-		func(ctx workflow.Context, request engine.CancellationRequest) (string, error) {
-			if request.RunID != w.workflowID {
-				return "", temporal.NewNonRetryableApplicationError(
-					"cancellation run id does not match workflow id",
-					"goa_ai_cancellation_contract",
-					nil,
-				)
-			}
+		func(ctx workflow.Context, request engine.CancellationRequest) (engine.CancellationRequest, error) {
 			if err := workflow.Await(ctx, func() bool {
 				return *w.cancellationHandler != nil
 			}); err != nil {
-				return "", err
+				return engine.CancellationRequest{}, err
 			}
 			updateCtx := *w
 			updateCtx.ctx = ctx
@@ -268,23 +261,27 @@ func (w *temporalWorkflowContext) registerCancellationUpdate() error {
 				var conflict *engine.CancellationConflictError
 				switch {
 				case errors.As(err, &conflict):
-					return "", temporal.NewNonRetryableApplicationError(
+					return engine.CancellationRequest{}, temporal.NewNonRetryableApplicationError(
 						conflict.Error(),
 						cancellationConflictErrorType,
 						nil,
 						request,
 					)
+				case errors.Is(err, engine.ErrCancellationRunNotOwned):
+					return engine.CancellationRequest{}, temporal.NewNonRetryableApplicationError(
+						engine.ErrCancellationRunNotOwned.Error(), cancellationNotOwnedErrorType, nil,
+					)
 				case errors.Is(err, engine.ErrWorkflowCompleted):
-					return "", temporal.NewNonRetryableApplicationError(
+					return engine.CancellationRequest{}, temporal.NewNonRetryableApplicationError(
 						engine.ErrWorkflowCompleted.Error(),
 						cancellationCompletedErrorType,
 						nil,
 					)
 				}
-				return "", err
+				return engine.CancellationRequest{}, err
 			}
 			w.cancelExecution()
-			return request.Reason, nil
+			return request, nil
 		},
 	)
 }

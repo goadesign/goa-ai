@@ -821,20 +821,27 @@ func checkpointContainsRun(checkpoint *workflowCheckpoint, definition AgentDefin
 		if record.ChildSuspension == nil {
 			continue
 		}
-		childDefinition, err := childDefinitionForCall(record.Call, definition)
-		if err != nil {
-			return false, err
-		}
-		child, err := decodeWorkflowCheckpoint(record.ChildSuspension, childDefinition)
-		if err != nil {
-			return false, err
-		}
-		found, err := checkpointContainsRun(child, childDefinition, runID)
+		found, err := checkpointChildContainsRun(record.Call, record.ChildSuspension, definition, runID)
 		if err != nil || found {
 			return found, err
 		}
 	}
 	return false, nil
+}
+
+// checkpointChildContainsRun checks one saved child and its descendants with
+// the generated definition that owns that call. Current and restored batches
+// use the same check before accepting cancellation for a child.
+func checkpointChildContainsRun(call ToolCall, suspension *api.RunSuspension, definition AgentDefinition, runID string) (bool, error) {
+	childDefinition, err := childDefinitionForCall(call, definition)
+	if err != nil {
+		return false, err
+	}
+	child, err := decodeWorkflowCheckpoint(suspension, childDefinition)
+	if err != nil {
+		return false, err
+	}
+	return checkpointContainsRun(child, childDefinition, runID)
 }
 
 // validateContinuationResponse checks caller-supplied tool results with the

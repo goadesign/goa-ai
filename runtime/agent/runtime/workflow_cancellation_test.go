@@ -169,12 +169,16 @@ func TestEndedSessionWorkflowStoresItsOwnTerminalResult(t *testing.T) {
 func TestContinuationCancellationSettlesSavedTaskAfterWorkerReplacement(t *testing.T) {
 	for _, ended := range []bool{true, false} {
 		t.Run(fmt.Sprintf("ended_session=%t", ended), func(t *testing.T) {
-			testContinuationCancellationAfterWorkerReplacement(t, ended)
+			testContinuationCancellationAfterWorkerReplacement(t, ended, false)
 		})
 	}
 }
 
-func testContinuationCancellationAfterWorkerReplacement(t *testing.T, ended bool) {
+func TestCancelRunSettlesSuspendedTaskAfterWorkerReplacement(t *testing.T) {
+	testContinuationCancellationAfterWorkerReplacement(t, false, true)
+}
+
+func testContinuationCancellationAfterWorkerReplacement(t *testing.T, ended, useJob bool) {
 	spec := newAnyJSONSpec("remote.tools.lookup")
 	definition := NewAgentDefinition(AgentRoute{ID: "test.agent", WorkflowName: "test.workflow", DefaultTaskQueue: "test.queue"},
 		[]tools.ToolSpec{spec}, nil, nil, []tools.Ident{spec.Name}, nil, nil)
@@ -237,10 +241,28 @@ func testContinuationCancellationAfterWorkerReplacement(t *testing.T, ended bool
 		require.NoError(t, err)
 	}
 	rt = install()
-	if ended {
+	cleanupRunID := "cleanup"
+	switch {
+	case useJob:
+		require.NoError(t, rt.CancelRun(t.Context(), CancelRequest{RunID: "source", Reason: reason}))
+		require.NoError(t, rt.CancelRun(t.Context(), CancelRequest{RunID: "source", Reason: reason}))
+		require.Eventually(t, func() bool {
+			previous, loadErr := store.LoadRun(t.Context(), "source")
+			if loadErr != nil || previous.SuccessorRunID == "" {
+				return false
+			}
+			meta, loadErr := store.LoadRun(t.Context(), previous.SuccessorRunID)
+			if loadErr != nil || meta.Status != session.RunStatusCanceled {
+				return false
+			}
+			cleanupRunID = meta.RunID
+			return true
+		}, 5*time.Second, time.Millisecond)
+		err = context.Canceled
+	case ended:
 		_, err = rt.MustClient(definition.route.ID).Continue(t.Context(), "session", "source", "cleanup", "turn-2", response, WorkflowOptions{})
-	} else {
-		input, writer, buildErr := rt.buildStoredContinuationRunInput(t.Context(), definition, "session", "source", "cleanup", "turn-2", response, "cleanup", "cleanup")
+	default:
+		input, writer, buildErr := rt.buildStoredContinuationRunInput(t.Context(), definition, "session", "source", "cleanup", "turn-2", &api.RunContinuationInput{Response: response}, "cleanup", "cleanup")
 		require.NoError(t, buildErr)
 		compiled, encodeErr := json.Marshal(input)
 		require.NoError(t, encodeErr)
@@ -260,20 +282,28 @@ func testContinuationCancellationAfterWorkerReplacement(t *testing.T, ended bool
 	assert.EqualValues(t, 1, creates.Load())
 	assert.EqualValues(t, 1, plans.Load())
 	assert.EqualValues(t, 1, cancels.Load())
-	meta, err := store.LoadRun(t.Context(), "cleanup")
+	meta, err := store.LoadRun(t.Context(), cleanupRunID)
 	require.NoError(t, err)
 	assert.Equal(t, session.RunStatusCanceled, meta.Status)
 	assert.Equal(t, reason, meta.CancellationReason)
 	previous, err := store.LoadRun(t.Context(), "source")
 	require.NoError(t, err)
-	assert.Equal(t, "cleanup", previous.SuccessorRunID)
-	page, err := rt.ListRunEvents(t.Context(), "cleanup", "", 20)
+	assert.Equal(t, cleanupRunID, previous.SuccessorRunID)
+	page, err := rt.ListRunEvents(t.Context(), cleanupRunID, "", 20)
 	require.NoError(t, err)
 	assert.Equal(t, 1, countRunEventsByType(page, hooks.RunCompleted))
 	assert.Zero(t, countRunEventsByType(page, hooks.ToolResultReceived))
 }
 
 func TestCancellationDuringTaskAnswerSettlesSelectedAndSavedTasks(t *testing.T) {
+	for _, source := range []bool{false, true} {
+		t.Run(map[bool]string{false: "cancel active answer", true: "follow accepted answer from suspended source"}[source], func(t *testing.T) {
+			testCancellationDuringTaskAnswer(t, source)
+		})
+	}
+}
+
+func testCancellationDuringTaskAnswer(t *testing.T, source bool) {
 	spec := newAnyJSONSpec("remote.tools.lookup")
 	definition := NewAgentDefinition(AgentRoute{ID: "test.agent", WorkflowName: "test.workflow", DefaultTaskQueue: "test.queue"},
 		[]tools.ToolSpec{spec}, nil, nil, []tools.Ident{spec.Name}, nil, nil)
@@ -345,7 +375,11 @@ func TestCancellationDuringTaskAnswerSettlesSelectedAndSavedTasks(t *testing.T) 
 	case <-time.After(10 * time.Second):
 		t.Fatal("Task answer did not start")
 	}
-	require.NoError(t, rt.CancelRun(t.Context(), CancelRequest{RunID: "answer", Reason: run.CancellationReasonUserRequested}))
+	target := "answer"
+	if source {
+		target = "source"
+	}
+	require.NoError(t, rt.CancelRun(t.Context(), CancelRequest{RunID: target, Reason: run.CancellationReasonUserRequested}))
 	select {
 	case err := <-done:
 		require.ErrorIs(t, err, context.Canceled)

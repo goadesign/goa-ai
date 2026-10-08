@@ -100,6 +100,10 @@ var (
 	// ErrWorkflowCompleted indicates that the workflow or its durable run has
 	// closed, so the requested execution or mutation cannot proceed.
 	ErrWorkflowCompleted = errors.New("workflow completed")
+	// ErrCancellationRunNotOwned means this workflow does not currently hold
+	// the requested run's saved work. A durable owner may reread its admitted
+	// successor or parent; no cancellation was accepted by this recipient.
+	ErrCancellationRunNotOwned = errors.New("requested cancellation run is not owned by this workflow")
 	// ErrWorkflowStartConflict indicates that an existing workflow ID was
 	// started with different immutable execution semantics.
 	ErrWorkflowStartConflict = errors.New("workflow start conflict")
@@ -115,12 +119,12 @@ type (
 		ID string
 	}
 
-	// CancellationConflictError reports a request whose reason differs from the
-	// reason already accepted for the workflow.
+	// CancellationConflictError reports a run or reason that differs from the
+	// cancellation request already accepted by the receiving workflow.
 	CancellationConflictError struct {
-		// RunID identifies the workflow whose first reason won.
+		// RunID identifies the requested run whose cancellation was rejected.
 		RunID string
-		// Reason is the later reason that was rejected.
+		// Reason is the reason from the rejected request.
 		Reason string
 	}
 
@@ -182,7 +186,7 @@ func (e *WorkflowStartConflictError) Unwrap() error {
 
 // Error implements error.
 func (e *CancellationConflictError) Error() string {
-	return fmt.Sprintf("run %q already accepted a different cancellation reason; rejected %q", e.RunID, e.Reason)
+	return fmt.Sprintf("run %q already accepted a different cancellation request; rejected reason %q", e.RunID, e.Reason)
 }
 
 type (
@@ -192,6 +196,18 @@ type (
 	Engine interface {
 		// RegisterWorkflow registers a workflow definition with the engine.
 		RegisterWorkflow(ctx context.Context, def WorkflowDefinition) error
+
+		// RegisterCancellationWorkflow installs a durable job that observes and
+		// settles one cancellation request. The handler returns false while work
+		// remains; the engine waits InitialInterval before its next observation.
+		// Queue and a positive InitialInterval are required. Attempts use the
+		// supplied activity timeout and retry policy; the job has no total deadline.
+		RegisterCancellationWorkflow(ctx context.Context, name string, opts ActivityOptions, fn func(context.Context, CancellationRequest) (bool, error)) error
+
+		// StartCancellationWorkflow accepts one durable cancellation job. Exact
+		// retries succeed; a changed reason returns CancellationConflictError.
+		// Successful acceptance does not claim that cleanup has completed.
+		StartCancellationWorkflow(ctx context.Context, name, queue string, request CancellationRequest) error
 
 		// RegisterStorageActivity registers the one typed activity that applies
 		// runtime storage commands outside the deterministic workflow thread.
@@ -239,14 +255,15 @@ type (
 
 	// CancellationRequester sends a durable cancellation command to a workflow.
 	CancellationRequester interface {
-		// RequestCancellation waits until workflow code handles the request, then
+		// RequestCancellation delivers request to workflowID, whose handler must
+		// verify that it owns the requested run. It waits for handling, then
 		// cancels the workflow. An exact retry succeeds. A different reason returns
 		// CancellationConflictError. A request that arrives after terminal work
 		// starts returns ErrWorkflowCompleted.
-		RequestCancellation(context.Context, CancellationRequest) error
+		RequestCancellation(ctx context.Context, workflowID string, request CancellationRequest) error
 	}
 
-	// CancellationRequest identifies one workflow and its write-once reason.
+	// CancellationRequest identifies the run whose work must stop and its write-once reason.
 	CancellationRequest = api.CancellationRequest
 
 	// CancellationHandler records one cancellation request from workflow code.

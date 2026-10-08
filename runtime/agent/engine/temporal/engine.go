@@ -184,7 +184,7 @@ type Engine struct {
 	registrationClosed bool
 	activationComplete bool
 	workers            map[string]*workerBundle
-	workflows          map[string]engine.WorkflowDefinition
+	workflows          map[string]struct{}
 	pendingWorkflows   map[string]struct{}
 	activityOptions    map[string]engine.ActivityOptions
 	pendingActivities  map[string]struct{}
@@ -257,7 +257,7 @@ func newEngine(opts Options, workerMode bool) (*Engine, error) {
 		workerFactory:           worker.New,
 		activationRetryInterval: defaultActivationRetryInterval,
 		workers:                 make(map[string]*workerBundle),
-		workflows:               make(map[string]engine.WorkflowDefinition),
+		workflows:               make(map[string]struct{}),
 		pendingWorkflows:        make(map[string]struct{}),
 		activityOptions:         make(map[string]engine.ActivityOptions),
 		pendingActivities:       make(map[string]struct{}),
@@ -305,7 +305,7 @@ func (e *Engine) RegisterWorkflow(_ context.Context, def engine.WorkflowDefiniti
 	bundle := e.workerForQueue(queue)
 
 	bundle.registerWorkflow(def.Name, e.temporalWorkflowHandler(def.Handler))
-	e.finishWorkflowRegistration(def)
+	e.finishWorkflowRegistration(def.Name)
 	registered = true
 	return nil
 }
@@ -486,33 +486,9 @@ func (e *Engine) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequ
 		opts.RetryPolicy = rp
 	}
 
-	run, err := e.client.ExecuteWorkflow(
-		ctx,
-		opts,
-		req.Workflow,
-		converter.NewRawValue(snapshot.InputPayload),
-	)
+	run, err := e.startWorkflowWithDigest(ctx, opts, req.Workflow, converter.NewRawValue(snapshot.InputPayload), fingerprint)
 	if err != nil {
-		var alreadyStarted *serviceerror.WorkflowExecutionAlreadyStarted
-		if !errors.As(err, &alreadyStarted) {
-			return nil, err
-		}
-		desc, describeErr := e.client.DescribeWorkflowExecution(ctx, req.ID, alreadyStarted.RunId)
-		if describeErr != nil {
-			return nil, describeErr
-		}
-		payload := desc.GetWorkflowExecutionInfo().GetMemo().GetFields()[workflowStartRecipeMemoKey]
-		if payload == nil {
-			return nil, &engine.WorkflowStartConflictError{ID: req.ID}
-		}
-		var storedFingerprint []byte
-		if decodeErr := NewAgentDataConverter().FromPayload(payload, &storedFingerprint); decodeErr != nil {
-			return nil, fmt.Errorf("decode workflow start recipe: %w", decodeErr)
-		}
-		if len(storedFingerprint) != sha256.Size || !bytes.Equal(storedFingerprint, fingerprint[:]) {
-			return nil, &engine.WorkflowStartConflictError{ID: req.ID}
-		}
-		run = e.client.GetWorkflow(ctx, req.ID, alreadyStarted.RunId)
+		return nil, err
 	}
 
 	return &workflowHandle{
@@ -684,14 +660,14 @@ func (e *Engine) beginWorkflowRegistration(name string) error {
 	return nil
 }
 
-// finishWorkflowRegistration commits a workflow definition after worker
+// finishWorkflowRegistration records a workflow name after worker
 // registration succeeds and clears the temporary reservation.
-func (e *Engine) finishWorkflowRegistration(def engine.WorkflowDefinition) {
+func (e *Engine) finishWorkflowRegistration(name string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	delete(e.pendingWorkflows, def.Name)
-	e.workflows[def.Name] = def
+	delete(e.pendingWorkflows, name)
+	e.workflows[name] = struct{}{}
 }
 
 // abortWorkflowRegistration releases a reserved workflow name after a failed
@@ -753,4 +729,39 @@ func (e *Engine) releaseWorkflowContext(runID string) {
 		return
 	}
 	e.workflowContexts.Delete(runID)
+}
+
+// startWorkflowWithDigest accepts a workflow or returns the exact existing
+// execution. A changed request cannot reuse the same queryable workflow ID.
+func (e *Engine) startWorkflowWithDigest(ctx context.Context, opts client.StartWorkflowOptions, name string, input converter.RawValue, fingerprint [32]byte) (client.WorkflowRun, error) {
+	run, err := e.client.ExecuteWorkflow(
+		ctx,
+		opts,
+		name,
+		input,
+	)
+	if err != nil {
+		var alreadyStarted *serviceerror.WorkflowExecutionAlreadyStarted
+		if !errors.As(err, &alreadyStarted) {
+			return nil, err
+		}
+		desc, describeErr := e.client.DescribeWorkflowExecution(ctx, opts.ID, alreadyStarted.RunId)
+		if describeErr != nil {
+			return nil, describeErr
+		}
+		payload := desc.GetWorkflowExecutionInfo().GetMemo().GetFields()[workflowStartRecipeMemoKey]
+		if payload == nil {
+			return nil, &engine.WorkflowStartConflictError{ID: opts.ID}
+		}
+		var storedFingerprint []byte
+		if decodeErr := NewAgentDataConverter().FromPayload(payload, &storedFingerprint); decodeErr != nil {
+			return nil, fmt.Errorf("decode workflow start recipe: %w", decodeErr)
+		}
+		if len(storedFingerprint) != sha256.Size || !bytes.Equal(storedFingerprint, fingerprint[:]) {
+			return nil, &engine.WorkflowStartConflictError{ID: opts.ID}
+		}
+		run = e.client.GetWorkflow(ctx, opts.ID, alreadyStarted.RunId)
+	}
+
+	return run, nil
 }

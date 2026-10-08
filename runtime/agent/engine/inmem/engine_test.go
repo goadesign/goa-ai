@@ -973,7 +973,7 @@ func TestRequestCancellationWaitsForWorkflowHandler(t *testing.T) {
 
 	requestDone := make(chan error, 1)
 	go func() {
-		requestDone <- implementation.RequestCancellation(t.Context(), engine.CancellationRequest{
+		requestDone <- implementation.RequestCancellation(t.Context(), "run", engine.CancellationRequest{
 			RunID: "run", Reason: "user_requested",
 		})
 	}()
@@ -1014,9 +1014,9 @@ func TestRequestCancellationRetriesExactReasonAndRejectsConflict(t *testing.T) {
 	<-registered
 
 	request := engine.CancellationRequest{RunID: "run", Reason: "user_requested"}
-	require.NoError(t, implementation.RequestCancellation(t.Context(), request))
-	require.NoError(t, implementation.RequestCancellation(t.Context(), request))
-	err = implementation.RequestCancellation(t.Context(), engine.CancellationRequest{
+	require.NoError(t, implementation.RequestCancellation(t.Context(), request.RunID, request))
+	require.NoError(t, implementation.RequestCancellation(t.Context(), request.RunID, request))
+	err = implementation.RequestCancellation(t.Context(), "run", engine.CancellationRequest{
 		RunID: "run", Reason: "session_ended",
 	})
 	var conflict *engine.CancellationConflictError
@@ -1046,7 +1046,7 @@ func TestRequestCancellationRejectsWorkflowThatAlreadyCompleted(t *testing.T) {
 	_, err = handle.Wait(t.Context())
 	require.NoError(t, err)
 
-	err = implementation.RequestCancellation(t.Context(), engine.CancellationRequest{
+	err = implementation.RequestCancellation(t.Context(), "run", engine.CancellationRequest{
 		RunID: "run", Reason: "user_requested",
 	})
 	require.ErrorIs(t, err, engine.ErrWorkflowCompleted)

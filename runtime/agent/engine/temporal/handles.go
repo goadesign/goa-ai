@@ -20,6 +20,7 @@ const (
 	cancellationUpdateID           = "goa_ai_cancellation"
 	cancellationConflictErrorType  = "goa_ai_cancellation_conflict"
 	cancellationCompletedErrorType = "goa_ai_workflow_completed"
+	cancellationNotOwnedErrorType  = "goa_ai_cancellation_not_owned"
 )
 
 type workflowHandle struct {
@@ -41,29 +42,32 @@ func (h *workflowHandle) Cancel(ctx context.Context) error {
 
 // RequestCancellation waits for workflow code to record the reason and cancel
 // its execution scope in the same workflow update.
-func (e *Engine) RequestCancellation(ctx context.Context, request engine.CancellationRequest) error {
+func (e *Engine) RequestCancellation(ctx context.Context, workflowID string, request engine.CancellationRequest) error {
+	if workflowID == "" {
+		return errors.New("receiving workflow id is required")
+	}
 	if request.RunID == "" {
 		return errors.New("run id is required")
 	}
 	if request.Reason == "" {
 		return errors.New("cancellation reason is required")
 	}
-	acceptedReason, err := e.requestCancellationUpdate(ctx, request)
+	accepted, err := e.requestCancellationUpdate(ctx, workflowID, request)
 	if err != nil {
 		return err
 	}
-	if acceptedReason != request.Reason {
+	if accepted != request {
 		return &engine.CancellationConflictError{RunID: request.RunID, Reason: request.Reason}
 	}
 	return nil
 }
 
-// requestCancellationUpdate returns the reason saved by the workflow update.
+// requestCancellationUpdate returns the complete request saved by the workflow update.
 // A closed workflow can still answer an exact retry from its completed update.
-func (e *Engine) requestCancellationUpdate(ctx context.Context, request engine.CancellationRequest) (string, error) {
+func (e *Engine) requestCancellationUpdate(ctx context.Context, workflowID string, request engine.CancellationRequest) (engine.CancellationRequest, error) {
 	options := client.UpdateWorkflowOptions{
 		UpdateID:     cancellationUpdateID,
-		WorkflowID:   request.RunID,
+		WorkflowID:   workflowID,
 		UpdateName:   cancellationUpdateName,
 		Args:         []any{request},
 		WaitForStage: client.WorkflowUpdateStageCompleted,
@@ -73,23 +77,23 @@ func (e *Engine) requestCancellationUpdate(ctx context.Context, request engine.C
 	if err != nil {
 		mapped := mapWorkflowMutationError(err)
 		if !errors.Is(mapped, engine.ErrWorkflowCompleted) {
-			return "", mapped
+			return engine.CancellationRequest{}, mapped
 		}
 		workflowCompleted = true
 		handle = e.client.GetWorkflowUpdateHandle(client.GetWorkflowUpdateHandleOptions{
-			WorkflowID: request.RunID,
+			WorkflowID: workflowID,
 			UpdateID:   cancellationUpdateID,
 		})
 	}
-	var acceptedReason string
-	if err := handle.Get(ctx, &acceptedReason); err != nil {
+	var accepted engine.CancellationRequest
+	if err := handle.Get(ctx, &accepted); err != nil {
 		mapped := mapCancellationUpdateError(err)
 		if workflowCompleted && errors.Is(mapped, engine.ErrWorkflowNotFound) {
-			return "", engine.ErrWorkflowCompleted
+			return engine.CancellationRequest{}, engine.ErrWorkflowCompleted
 		}
-		return "", mapped
+		return engine.CancellationRequest{}, mapped
 	}
-	return acceptedReason, nil
+	return accepted, nil
 }
 
 // mapCancellationUpdateError restores the engine conflict returned by workflow
@@ -98,6 +102,9 @@ func mapCancellationUpdateError(err error) error {
 	var applicationErr *temporal.ApplicationError
 	if !errors.As(err, &applicationErr) {
 		return mapWorkflowMutationError(err)
+	}
+	if applicationErr.Type() == cancellationNotOwnedErrorType {
+		return engine.ErrCancellationRunNotOwned
 	}
 	if applicationErr.Type() == cancellationCompletedErrorType {
 		return engine.ErrWorkflowCompleted

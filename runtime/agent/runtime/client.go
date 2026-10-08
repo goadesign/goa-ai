@@ -494,7 +494,7 @@ func (c *agentClient) PrepareContinuation(
 		preparation.apply(&start)
 	}
 	commandID, attemptID := start.preparationIdentity()
-	input, writer, err := c.r.buildStoredContinuationRunInput(ctx, c.definition, sessionID, predecessorRunID, runID, turnID, response, commandID, attemptID)
+	input, writer, err := c.r.buildStoredContinuationRunInput(ctx, c.definition, sessionID, predecessorRunID, runID, turnID, &api.RunContinuationInput{Response: response}, commandID, attemptID)
 	if err != nil {
 		return nil, err
 	}
@@ -563,7 +563,7 @@ func buildOneShotRunStart(agentID agent.Ident, messages []*model.Message, opts [
 // buildContinuationRunInput constructs the only legal input shape for a
 // suspended sessionful run. Policy, labels, tool context, and transcript state
 // are restored from the opaque checkpoint by the worker.
-func buildContinuationRunInput(agentID agent.Ident, sessionID, runID, turnID string, suspension *api.RunSuspension, response *api.PendingInputResponse) (*RunInput, error) {
+func buildContinuationRunInput(agentID agent.Ident, sessionID, runID, turnID string, suspension *api.RunSuspension, operation *api.RunContinuationInput) (*RunInput, error) {
 	if sessionID == "" {
 		return nil, ErrMissingSessionID
 	}
@@ -576,10 +576,10 @@ func buildContinuationRunInput(agentID agent.Ident, sessionID, runID, turnID str
 	if suspension == nil {
 		return nil, errors.New("run suspension is required")
 	}
-	if response == nil {
-		return nil, errors.New("pending input response is required")
+	if operation == nil {
+		return nil, errors.New("continuation operation is required")
 	}
-	if err := validatePendingInputResponse(response); err != nil {
+	if err := validateRunContinuationOperation(operation); err != nil {
 		return nil, err
 	}
 	return &RunInput{
@@ -588,8 +588,9 @@ func buildContinuationRunInput(agentID agent.Ident, sessionID, runID, turnID str
 		SessionID: sessionID,
 		TurnID:    turnID,
 		Continuation: &api.RunContinuationInput{
-			Suspension: suspension,
-			Response:   response,
+			Suspension:   suspension,
+			Response:     operation.Response,
+			Cancellation: operation.Cancellation,
 		},
 	}, nil
 }
@@ -600,7 +601,7 @@ func (r *Runtime) buildStoredContinuationRunInput(
 	ctx context.Context,
 	definition AgentDefinition,
 	sessionID, predecessorRunID, runID, turnID string,
-	response *api.PendingInputResponse,
+	operation *api.RunContinuationInput,
 	commandID, attemptID string,
 ) (*RunInput, *initialHistoryWriter, error) {
 	if predecessorRunID == "" {
@@ -610,7 +611,7 @@ func (r *Runtime) buildStoredContinuationRunInput(
 	if err != nil {
 		return nil, nil, err
 	}
-	input, err := buildContinuationRunInput(definition.route.ID, sessionID, runID, turnID, suspension, response)
+	input, err := buildContinuationRunInput(definition.route.ID, sessionID, runID, turnID, suspension, operation)
 	if err != nil {
 		return nil, nil, continuationContractError(err)
 	}

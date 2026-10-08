@@ -6741,8 +6741,31 @@ same intent and operation identity after a workflow wait. Each activity has one
 network attempt; configured activity deadlines apply to that attempt. Permanent
 rejections end delivery with an error. Observed terminal Tasks need no cancellation.
 Uncertain answer delivery never repeats answers or the creating tool. Generated
-advertisement still waits for suspended-run cancellation, one-successor admission
-and the remaining producer bindings.
+advertisement still waits for complete producer bindings, caller-store migration
+and the remaining capability checks.
+
+`Runtime.CancelRun` accepts cancellation of suspended work without asking the
+caller to reconstruct or answer its checkpoint. Temporal owns a cancellation job
+on the route saved by the original accepted preparation. The job follows the
+successor selected by storage, including a competing answer, and restores saved
+work through the ordinary continuation path. It also follows saved child work to
+its execution parent rather than starting an unrelated root. Duplicate requests
+retain the first accepted reason. A different request is rejected. Acceptance
+does not mean cleanup has finished; replacement workers continue without another
+client call. Temporal may roll the job into a fresh execution to keep recorded
+history manageable; the same request and observation delay continue. Temporary
+delivery failures retry, while contract rejections and
+closed executions with unfinished storage state fail explicitly. The in-memory
+engine provides the same behavior only for the life of its process.
+
+Hosts must retain suspended runs with no admitted successor until cancellation
+or another continuation settles their work. A suspended predecessor with an
+admitted successor transfers that obligation to the successor. Purge checks
+that consider only running engine executions can delete unfinished work and
+must be updated before cutover. Custom engine implementations must implement
+`RegisterCancellationWorkflow` and `StartCancellationWorkflow`; cancellation
+delivery now carries the receiving workflow ID separately from the requested
+run ID. Deploy providers, consumers, workers and storage owners together.
 
 The `ttlMs` member is required on the wire; null means unlimited retention, while
 an absent member is invalid. `TaskInfo.TTLMs` represents that value with `*int64`

@@ -262,7 +262,7 @@ func TestChildContinuationStartRejectsAnotherParentsPendingCall(t *testing.T) {
 		require.NoError(t, storeSuspensionForTest(t.Context(), rt.Store, runID, session.RunSuspension{ID: suspension.ID, Data: data}))
 	}
 	active, writer, err := rt.buildStoredContinuationRunInput(t.Context(), parentDefinition, "session-1", "parent-0", "active-parent", "turn-active",
-		&api.PendingInputResponse{Clarification: &api.ClarificationAnswer{ID: "clarification-1"}}, "active-parent", "active-parent")
+		&api.RunContinuationInput{Response: &api.PendingInputResponse{Clarification: &api.ClarificationAnswer{ID: "clarification-1"}}}, "active-parent", "active-parent")
 	require.NoError(t, err)
 	compiled, err := json.Marshal(active)
 	require.NoError(t, err)
@@ -280,7 +280,7 @@ func TestChildContinuationStartRejectsAnotherParentsPendingCall(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			parentID := test.parent
 			input, writer, err := rt.buildStoredContinuationRunInput(t.Context(), childDefinition, "session-1", test.predecessor, "candidate-"+test.name, "turn-new",
-				&api.PendingInputResponse{Clarification: &api.ClarificationAnswer{ID: "clarification-1"}}, "candidate-"+test.name, "candidate-"+test.name)
+				&api.RunContinuationInput{Response: &api.PendingInputResponse{Clarification: &api.ClarificationAnswer{ID: "clarification-1"}}}, "candidate-"+test.name, "candidate-"+test.name)
 			require.NoError(t, err)
 			input.ParentRunID = parentID
 			compiled, err := json.Marshal(input)
@@ -422,6 +422,18 @@ func TestStoredSuspensionRejectsPreviousVersion(t *testing.T) {
 // TestEndedSessionContinuationSettlesAllSavedChildren proves that cleanup keeps
 // its execution parent active while both independent saved calls are canceled.
 func TestEndedSessionContinuationSettlesAllSavedChildren(t *testing.T) {
+	testSavedChildrenCancellation(t, false, false)
+}
+
+func TestCancelRunSettlesSuspendedNativeChildren(t *testing.T) {
+	for _, child := range []bool{false, true} {
+		t.Run(map[bool]string{false: "ended root", true: "selected child"}[child], func(t *testing.T) {
+			testSavedChildrenCancellation(t, true, child)
+		})
+	}
+}
+
+func testSavedChildrenCancellation(t *testing.T, useJob, selectedChild bool) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	rt := New(newTestStore(), WithEngine(engineinmem.New()))
@@ -476,14 +488,42 @@ func TestEndedSessionContinuationSettlesAllSavedChildren(t *testing.T) {
 	require.Len(t, first.Suspension.Pending, 2)
 	checkpoint, err := decodeWorkflowCheckpoint(first.Suspension, parentDefinition)
 	require.NoError(t, err)
-	_, err = rt.Store.(interface {
-		EndSession(context.Context, string, time.Time) (session.Session, error)
-	}).EndSession(ctx, "session-1", time.Now())
-	require.NoError(t, err)
-	_, err = client.Continue(ctx, "session-1", "parent-source", "parent-cleanup", "turn-cleanup", &api.PendingInputResponse{
-		Clarification: &api.ClarificationAnswer{ID: "question", Answer: "Unused after session ending"},
-	}, WorkflowOptions{})
-	require.ErrorIs(t, err, context.Canceled)
+	cleanupRunID := "parent-cleanup"
+	selectedRunID := "parent-source"
+	if selectedChild {
+		saved, err := decodeWorkflowCheckpointState(checkpoint.Pending[0].Child.Suspension)
+		require.NoError(t, err)
+		selectedRunID = saved.PreviousRunID
+	} else {
+		_, err = rt.Store.(interface {
+			EndSession(context.Context, string, time.Time) (session.Session, error)
+		}).EndSession(ctx, "session-1", time.Now())
+		require.NoError(t, err)
+	}
+	if useJob {
+		reason := run.CancellationReasonSessionEnded
+		if selectedChild {
+			reason = run.CancellationReasonUserRequested
+		}
+		require.NoError(t, rt.CancelRun(ctx, CancelRequest{RunID: selectedRunID, Reason: reason}))
+		require.Eventually(t, func() bool {
+			previous, err := rt.Store.LoadRun(ctx, "parent-source")
+			if err != nil || previous.SuccessorRunID == "" {
+				return false
+			}
+			cleanup, err := rt.Store.LoadRun(ctx, previous.SuccessorRunID)
+			if err != nil || cleanup.Status != session.RunStatusCanceled {
+				return false
+			}
+			cleanupRunID = cleanup.RunID
+			return true
+		}, 5*time.Second, time.Millisecond)
+	} else {
+		_, err = client.Continue(ctx, "session-1", "parent-source", cleanupRunID, "turn-cleanup", &api.PendingInputResponse{
+			Clarification: &api.ClarificationAnswer{ID: "question", Answer: "Unused after session ending"},
+		}, WorkflowOptions{})
+		require.ErrorIs(t, err, context.Canceled)
+	}
 	require.EqualValues(t, 2, childPlans.Load())
 	require.Zero(t, childResumes.Load())
 	for _, item := range checkpoint.Pending {
@@ -494,14 +534,21 @@ func TestEndedSessionContinuationSettlesAllSavedChildren(t *testing.T) {
 		require.NotEmpty(t, previous.SuccessorRunID)
 		child, err := rt.Store.LoadRun(ctx, previous.SuccessorRunID)
 		require.NoError(t, err)
-		require.Equal(t, "parent-cleanup", child.ParentRunID)
+		require.Equal(t, cleanupRunID, child.ParentRunID)
 		require.Equal(t, session.RunStatusCanceled, child.Status)
-		require.Equal(t, run.CancellationReasonSessionEnded, child.CancellationReason)
+		reason := run.CancellationReasonSessionEnded
+		if selectedChild {
+			reason = run.CancellationReasonEngineCanceled
+			if saved.PreviousRunID == selectedRunID {
+				reason = run.CancellationReasonUserRequested
+			}
+		}
+		require.Equal(t, reason, child.CancellationReason)
 	}
-	parent, err := rt.Store.LoadRun(ctx, "parent-cleanup")
+	parent, err := rt.Store.LoadRun(ctx, cleanupRunID)
 	require.NoError(t, err)
 	require.Equal(t, session.RunStatusCanceled, parent.Status)
-	page, err := rt.ListRunEvents(ctx, "parent-cleanup", "", 20)
+	page, err := rt.ListRunEvents(ctx, cleanupRunID, "", 20)
 	require.NoError(t, err)
 	require.Equal(t, 2, countRunEventsByType(page, hooks.ChildRunLinked))
 	require.Equal(t, 1, countRunEventsByType(page, hooks.RunCompleted))

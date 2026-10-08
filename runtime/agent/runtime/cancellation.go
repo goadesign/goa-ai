@@ -77,8 +77,10 @@ func (r *Runtime) handleWorkflowCancellation(
 	defer func() {
 		state.finishCancellation(err == nil)
 	}()
-	if request.RunID != input.RunID {
-		return fmt.Errorf("runtime: cancellation run id %q does not match workflow run id %q", request.RunID, input.RunID)
+	recorded := request
+	recorded.RunID = input.RunID
+	if request.RunID != input.RunID && request.Reason != run.CancellationReasonSessionEnded {
+		recorded.Reason = run.CancellationReasonEngineCanceled
 	}
 	output, err := r.executeStorageWithRetry(cancelCtx.Detached().Context(), startCommand)
 	if err != nil {
@@ -86,7 +88,7 @@ func (r *Runtime) handleWorkflowCancellation(
 	}
 	start := runStartStorageResult(input, output)
 	if start.Outcome == session.RunStartStop {
-		if start.CancellationReason != request.Reason {
+		if start.CancellationReason != recorded.Reason {
 			return &engine.CancellationConflictError{RunID: request.RunID, Reason: request.Reason}
 		}
 		return nil
@@ -94,7 +96,7 @@ func (r *Runtime) handleWorkflowCancellation(
 	if session.IsTerminalRunStatus(start.RunStatus) {
 		return engine.ErrWorkflowCompleted
 	}
-	return r.publishRunCancellation(cancelCtx, input, request)
+	return r.publishRunCancellation(cancelCtx, input, recorded)
 }
 
 // publishRunCancellation stores the reason from a workflow cancellation
@@ -216,4 +218,29 @@ func (s *workflowFinalizationState) beginFinalization(wfCtx engine.WorkflowConte
 // terminal record was being stored.
 func (s *workflowFinalizationState) finishFinalization() {
 	s.phase.Store(workflowFinalizationFinished)
+}
+
+// workflowOwnsCancellation checks only child work still held by this execution.
+// Once a child handle or a completed result takes ownership, an old checkpoint
+// cannot authorize cancellation through the parent anymore.
+func workflowOwnsCancellation(checkpoint *workflowCheckpoint, loop *workflowLoop, definition AgentDefinition, runID string) (bool, error) {
+	if loop == nil {
+		if checkpoint == nil {
+			return false, nil
+		}
+		return checkpointContainsRun(checkpoint, definition, runID)
+	}
+	if loop.unfinishedBatch == nil {
+		return false, nil
+	}
+	for _, record := range loop.unfinishedBatch.records {
+		if record.childSuspension == nil {
+			continue
+		}
+		owned, err := checkpointChildContainsRun(record.call, record.childSuspension, definition, runID)
+		if err != nil || owned {
+			return owned, err
+		}
+	}
+	return false, nil
 }

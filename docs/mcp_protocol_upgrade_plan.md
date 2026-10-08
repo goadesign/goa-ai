@@ -3783,7 +3783,21 @@ components now use the existing complete-error classifier, with failed cleanup
 preserved as a separate cause. The focused permanent-cleanup test covers both
 server rejection and a canceled cleanup attempt.
 
-Public suspended-run cancellation delivery, caller-store migration, durable
-answer-versus-cancellation following, complete Task producer generation, and
-the remaining capability gates are still unfinished. This checkpoint does not
-authorize release or Task capability advertisement.
+Public suspended-run cancellation now has an engine-owned job. Its route comes
+from the original accepted preparation, and it reuses ordinary continuation
+publication and storage's one-successor admission. Focused checks cover the
+accepted answer winning admission, nested saved children and exact request
+conflicts. A real loopback Temporal check accepts cancellation without an active
+worker, stops the caller, then starts a replacement worker. It verifies one
+Task creation, one cancellation and no planner replay (4.00 s including Go
+startup). A second real server check proves exact duplicate acceptance and reason
+conflicts survive history rollover (4.48 s). The job follows Temporal's own
+rollover hint, preserving its request and observation delay. Both owned server
+instances are stopped afterward.
+
+Caller-store migration remains unfinished: purge and active-work listing must
+include suspended runs with no admitted successor. An admitted successor carries
+the remaining obligation; historical suspended predecessors must not block
+purge after that successor settles. Complete Task producer generation and the
+remaining capability gates also remain unfinished. This does not authorize
+release or Task capability advertisement.
