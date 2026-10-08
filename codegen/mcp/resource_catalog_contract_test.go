@@ -23,6 +23,13 @@ func TestMCPDynamicResourceCatalogs(t *testing.T) {
 // through two native result views, including Goa's projected pointer fields.
 func TestMCPDynamicResourceCatalogViews(t *testing.T) {
 	design, runtime := resourceCatalogPeer()
+	design, runtime = resourceCatalogViews(design, runtime)
+	runMCPPeer(t, "resource-peer.local", design, runtime)
+}
+
+// resourceCatalogViews gives both catalog owners native page views while
+// preserving the ordinary authenticated endpoints and result assertions.
+func resourceCatalogViews(design, runtime string) (string, string) {
 	pages := `
 var resourcesPage=ResultType("application/vnd.resources-page",func(){
  TypeName("ListResourcesResult")
@@ -51,7 +58,7 @@ var templatesPage=ResultType("application/vnd.templates-page",func(){
 		body = strings.ReplaceAll(body, "},nil", `},"page",nil`)
 		runtime = runtime[:start] + body + runtime[end:]
 	}
-	runMCPPeer(t, "resource-peer.local", design, runtime)
+	return design, runtime
 }
 
 // resourceCatalogPeer extends the URI reader fixture with both native catalogs

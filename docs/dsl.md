@@ -2252,6 +2252,17 @@ content and rejects malformed selected variants. Method-backed prompts author
 these kinds through typed Goa results. Tool methods use `ToolContent` to return
 typed attachments beside structured domain fields.
 
+Author a content or resource catalog `_meta` field as an ordinary Goa object
+when its extension fields are known. The generated codec preserves JSON names,
+Go field mappings, required fields and validation before encoding the object.
+An omitted optional object remains absent on the wire. The same conversion
+applies to tool content, prompt messages, embedded resources, URI reads and
+resource descriptors, including selected result views. For extension data whose
+fields are determined externally, use `Any` with
+`Meta("struct:field:type", "json.RawMessage", "encoding/json")`; a present value
+must be a JSON object. Service implementations do not need to encode their
+own authored metadata.
+
 ### Authored MCP tool content
 
 Use `ToolContent(field)` inside a method's `Tool` block to select a top-level

@@ -156,12 +156,12 @@ func planToolContent(generation *codegen.Generation, services *goaservice.Plan, 
 				if err != nil {
 					return err
 				}
-				if err := planContentConversion(generation, pkg, selected.conversion, target, selected.layout, fmt.Sprintf("convertTool%dView%dContent", index, viewIndex)); err != nil {
+				if err := planContentConversion(generation, pkg, selected.conversion, target, selected.layout, fmt.Sprintf("convertTool%dView%dContent", index, viewIndex), codecs); err != nil {
 					return err
 				}
 				contentConversionNeeds(data, selected.conversion)
 			}
-			structured, err := mcpcontract.WithoutContent(selected.result, content.tool.ContentField)
+			structured, err := mcpcontract.WithoutField(selected.result, content.tool.ContentField)
 			if err != nil {
 				return err
 			}

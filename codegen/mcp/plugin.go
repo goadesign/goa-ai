@@ -120,10 +120,17 @@ func (p *mcpPlugin) plan(plan *goagenerator.Plan) error {
 		if err := planTaskAdapters(plan.Generation(), servicePlan, prepared, adapter); err != nil {
 			return err
 		}
-		if err := planResourceReader(plan.Generation(), servicePlan, prepared, adapter); err != nil {
+		codecPlan, methodCodecs, err := planMCPCodecs(plan.Generation(), servicePlan, prepared, adapter)
+		if err != nil {
 			return err
 		}
-		if err := planContentConversions(plan.Generation(), servicePlan, prepared, adapter); err != nil {
+		if err := planCatalogMetadata(codecPlan, adapter); err != nil {
+			return err
+		}
+		if err := planResourceReader(plan.Generation(), servicePlan, prepared, adapter, codecPlan); err != nil {
+			return err
+		}
+		if err := planContentConversions(plan.Generation(), servicePlan, prepared, adapter, codecPlan); err != nil {
 			return err
 		}
 		if err := planCompletionConversions(plan.Generation(), servicePlan, prepared, adapter); err != nil {
@@ -133,10 +140,6 @@ func (p *mcpPlugin) plan(plan *goagenerator.Plan) error {
 			return err
 		}
 		if err := declareMCPNames(plan.Generation(), adapter); err != nil {
-			return err
-		}
-		codecPlan, methodCodecs, err := planMCPCodecs(plan.Generation(), servicePlan, prepared, adapter)
-		if err != nil {
 			return err
 		}
 		if err := planToolContent(plan.Generation(), servicePlan, prepared, adapter, codecPlan, methodCodecs); err != nil {
@@ -731,6 +734,9 @@ func bindMCPCodecs(generation *goacodegen.Generation, services *goaservice.Servi
 		source.TaskSnapshotEncode = source.taskSnapshot.EncodeDeclaration().Name()
 	}
 	bindMCPCodecData(planned.adapterData, planned.methodCodecs)
+	if err := bindContentMetadataCodecs(services, planned); err != nil {
+		return nil, err
+	}
 	files, err := planned.codecPlan.Files("codec")
 	if err != nil {
 		return nil, fmt.Errorf("render MCP codecs for service %q: %w", planned.prepared.userService.Name, err)

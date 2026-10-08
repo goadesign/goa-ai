@@ -10,7 +10,7 @@ func (a *MCPAdapter) ResourcesList(ctx context.Context, p {{ index .PayloadRefs 
     {{ template "catalog-page" . }}
     {{ .EntriesConversion }}
     seen := make(map[string]struct{}, len(resources))
-    for _, entry := range resources {
+    for {{ if .Metadata }}index{{ else }}_{{ end }}, entry := range resources {
         {{ template "catalog-entry-checks" . }}
         if _, duplicate := seen[entry.URI]; duplicate {
             failure := goa.PermanentError("internal_error", "resource catalog returned duplicate URI %q", entry.URI)
@@ -182,7 +182,7 @@ func (a *MCPAdapter) ResourcesTemplatesList(ctx context.Context, p {{ index .Pay
     {{ template "catalog-page" . }}
     {{ .EntriesConversion }}
     seen := make(map[string]struct{}, len(resourceTemplates))
-    for _, entry := range resourceTemplates {
+    for {{ if .Metadata }}index{{ else }}_{{ end }}, entry := range resourceTemplates {
         {{ template "catalog-entry-checks" . }}
         if _, err := uritemplate.New(entry.URITemplate); err != nil {
             span.RecordError(err)

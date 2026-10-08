@@ -11,6 +11,14 @@ import (
 )
 
 func TestMCPGeneratedTaskContentAfterCreationInput(t *testing.T) {
+	design, runtime := taskContentPeer(t)
+	runMCPPeer(t, "task-peer.local", design, runtime)
+}
+
+// taskContentPeer combines a read-selected content result and input before job
+// creation so additional field checks retain the same complete task lifecycle.
+func taskContentPeer(t *testing.T) (string, string) {
+	t.Helper()
 	design, runtime := taskPeerCreationInput(taskOwnerDesign, taskOwnerRuntime)
 	design, runtime = taskPeerViews(design, runtime)
 	design = strings.Replace(design, `var observation=`, `
@@ -26,5 +34,5 @@ var observation=`, 1)
 	assertion := `assert.JSONEq(t,"{\"type\":\"alternate\",\"value\":\"done\"}",string(finished.StructuredContent))`
 	require.Contains(t, runtime, assertion)
 	runtime = strings.Replace(runtime, assertion, `assert.JSONEq(t,"{\"type\":\"alternate\",\"value\":{\"summary\":\"done\"}}",string(finished.StructuredContent));require.Len(t,finished.Content,1);presentation,ok:=finished.Content[0].(*content.TextContent);require.True(t,ok);assert.Equal(t,"user presentation",presentation.Text)`, 1)
-	runMCPPeer(t, "task-peer.local", design, runtime)
+	return design, runtime
 }

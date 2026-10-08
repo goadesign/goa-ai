@@ -6,6 +6,7 @@ package codegen
 import (
 	"fmt"
 
+	jsoncodec "goa.design/goa-ai/codegen/internal/codec"
 	"goa.design/goa-ai/internal/mcpinput"
 
 	"goa.design/goa/v3/codegen"
@@ -15,7 +16,7 @@ import (
 
 // planContentConversions reserves functions and complete result imports before
 // Goa freezes names. The result schema has already passed the authoring checks.
-func planContentConversions(generation *codegen.Generation, services *goaservice.Plan, prepared *preparedMCPService, data *AdapterData) error {
+func planContentConversions(generation *codegen.Generation, services *goaservice.Plan, prepared *preparedMCPService, data *AdapterData, codecs *jsoncodec.Plan) error {
 	if len(data.MethodPrompts) == 0 {
 		return nil
 	}
@@ -78,7 +79,7 @@ func planContentConversions(generation *codegen.Generation, services *goaservice
 			continue
 		}
 		conversions[prompt.conversion.attribute] = prompt.conversion
-		if err := planContentConversion(generation, pkg, prompt.conversion, content, layout, fmt.Sprintf("convertPrompt%dContent", index)); err != nil {
+		if err := planContentConversion(generation, pkg, prompt.conversion, content, layout, fmt.Sprintf("convertPrompt%dContent", index), codecs); err != nil {
 			return err
 		}
 		contentConversionNeeds(data, prompt.conversion)
@@ -106,9 +107,9 @@ func contentConversionNeeds(data *AdapterData, conversion *contentConversion) {
 }
 
 // planContentConversion records one converter and its field transforms.
-// Byte and nested-union fields have distinct protocol representations and are
-// emitted separately from ordinary Goa field conversions.
-func planContentConversion(generation *codegen.Generation, pkg *codegen.GeneratedPackage, conversion *contentConversion, target *expr.AttributeExpr, resultLayout *codegen.GoTypePlan, name string) error {
+// Bytes, nested unions and typed metadata have distinct wire representations;
+// generated encoders handle them beside the ordinary Goa field copies.
+func planContentConversion(generation *codegen.Generation, pkg *codegen.GeneratedPackage, conversion *contentConversion, target *expr.AttributeExpr, resultLayout *codegen.GoTypePlan, name string, codecs *jsoncodec.Plan) error {
 	conversion.target = target
 	declaration := codegen.NewExactName(codegen.NameFunction, name)
 	if err := pkg.DeclareName(declaration); err != nil {
@@ -140,9 +141,16 @@ func planContentConversion(generation *codegen.Generation, pkg *codegen.Generate
 	conversion.sourcePackage = generation.Package(unionLayout.UnionDeclaration().PackagePath())
 	for index, branch := range conversion.branches {
 		object := expr.AsObject(branch.attribute.Type)
+		if metadata := object.Attribute("_meta"); metadata != nil && expr.AsObject(metadata.Type) != nil {
+			var err error
+			branch.metaCodec, branch.metaLayout, err = planContentMetadata(codecs, metadata, conversion.unionLayout, fmt.Sprintf("%sBranch%dMetadata", name, index))
+			if err != nil {
+				return err
+			}
+		}
 		fields := make(expr.Object, 0, len(*object))
 		for _, field := range *object {
-			if field.Name == branch.bytesField || branch.nested != nil && field.Name == contentResourceField {
+			if field.Name == branch.bytesField || branch.nested != nil && field.Name == contentResourceField || branch.metaCodec != nil && field.Name == "_meta" {
 				continue
 			}
 			fields = append(fields, field)
@@ -163,7 +171,7 @@ func planContentConversion(generation *codegen.Generation, pkg *codegen.Generate
 		}
 		branch.transform = transform
 		if branch.nested != nil {
-			if err := planContentConversion(generation, pkg, branch.nested, expr.AsObject(target.Type).Attribute(contentResourceField), resultLayout, fmt.Sprintf("%sResource%d", name, index)); err != nil {
+			if err := planContentConversion(generation, pkg, branch.nested, expr.AsObject(target.Type).Attribute(contentResourceField), resultLayout, fmt.Sprintf("%sResource%d", name, index), codecs); err != nil {
 				return err
 			}
 		}
@@ -278,6 +286,14 @@ func bindContentConversion(data *AdapterData, conversion *contentConversion, sou
 			}
 			rendered.BytesPointer = matches[0].IsPointer()
 			rendered.TargetBytesField = targetScope.Field(expr.AsObject(conversion.target.Type).Attribute(branch.bytesField), branch.bytesField, true)
+		}
+		if branch.metaCodec != nil {
+			rendered.Metadata = &contentMetadataData{
+				Field:       sourceScope.Field(object.Attribute("_meta"), "_meta", true),
+				Encode:      data.CodecPackage + "." + branch.metaCodec.EncodeDeclaration().Name(),
+				Optional:    !branch.attribute.IsRequired("_meta") && branch.metaLayout.IsPointer(),
+				TargetField: targetScope.Field(expr.AsObject(conversion.target.Type).Attribute("_meta"), "_meta", true),
+			}
 		}
 		if branch.metaField {
 			rendered.MetaField = sourceScope.Field(object.Attribute("_meta"), "_meta", true)

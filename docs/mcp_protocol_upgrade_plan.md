@@ -4038,3 +4038,28 @@ and the [exact referee results](../integration_tests/conformance/README.md).
 This completes the remaining metadata/profile assessment without claiming a
 full referee pass. Final caller acceptance, Apps, Skills and website completion
 remain upgrade release gates.
+
+### Typed extension metadata through shared generation (2026-10-08)
+
+Authored `_meta` objects now use the existing private JSON codec plan for
+resource content, prompt messages, tool content and resource/template catalogs.
+Service code retains typed fields and validation; generated adapters encode only
+the extension object. Unknown external metadata keeps the protocol's raw JSON
+object boundary. There is no Apps-only conversion or new public Go API.
+
+The same field projection used for structured tool results now excludes
+separately encoded metadata. Goa's `MethodTypeLayout` retains projected catalog
+names and view fields. Content metadata is planned within its selected union,
+so a domain field reusing that type cannot create an ambiguous layout.
+
+Authored authenticated peers verified mapped fields, omitted values, invalid
+enums, resource and catalog views, prompt input exchanges and task content.
+Resource/catalog checks passed in 14.33 seconds; prompt/task checks passed in
+45.61 seconds. The reused-type counterexample passed in 23.36 seconds. The
+ordinary generated client/server checkpoint passed both view variants in
+38.61 seconds. Scoped lint reported zero issues in 7.53 seconds. The compatible
+pinned linter was used after the PATH binary rejected Go 1.27 configuration.
+
+Apps still requires typed tool declarations, model/app visibility enforcement
+and verified official browser SDK integration. Skills, final caller/store
+acceptance and website publication remain completion gates.

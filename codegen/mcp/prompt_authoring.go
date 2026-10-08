@@ -1,6 +1,7 @@
 // Package codegen maps typed prompt messages and resource contents to MCP.
 // Authors declare content with Goa OneOf; the generated adapter selects its
-// declared branch and returns the flat protocol object without JSON round trips.
+// declared branch and copies content fields. Authored extension objects use the
+// shared generated JSON codec because MCP carries their open wire representation.
 package codegen
 
 import (
@@ -8,6 +9,7 @@ import (
 	"slices"
 	"sort"
 
+	jsoncodec "goa.design/goa-ai/codegen/internal/codec"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
 	"goa.design/goa-ai/internal/mcpinput"
 	"goa.design/goa/v3/codegen"
@@ -86,6 +88,8 @@ type (
 		nested     *contentConversion
 		bytesField string
 		metaField  bool
+		metaCodec  *jsoncodec.Value
+		metaLayout *codegen.GoTypePlan
 	}
 	// contentConversionData contains only final names and emitted Go code.
 	contentConversionData struct {
@@ -110,6 +114,7 @@ type (
 		ResourceField    string
 		NestedConversion string
 		MetaField        string
+		Metadata         *contentMetadataData
 		CheckSize        bool
 		CheckPriority    bool
 	}
@@ -249,7 +254,7 @@ func buildContentConversion(attribute, target *expr.AttributeExpr, hasType bool)
 				return nil, fmt.Errorf("%s.%s must be declared and required", branch.Name, name)
 			}
 		}
-		planned := &contentBranch{name: branch.Name, attribute: branch.Attribute, bytesField: bytesField, metaField: object.Attribute("_meta") != nil}
+		planned := &contentBranch{name: branch.Name, attribute: branch.Attribute, bytesField: bytesField, metaField: object.Attribute("_meta") != nil && expr.AsObject(object.Attribute("_meta").Type) == nil}
 		targetObject := expr.AsObject(target.Type)
 		for _, field := range *object {
 			if field.Name == bytesField {
@@ -296,6 +301,9 @@ func checkContentFields(attribute *expr.AttributeExpr, allowed []string) error {
 // fields and validations needed by the MCP content contract.
 func checkContentFieldType(source, target *expr.AttributeExpr) error {
 	sourceObject, targetObject := expr.AsObject(source.Type), expr.AsObject(target.Type)
+	if primitiveType(target.Type) == expr.Any && sourceObject != nil {
+		return nil
+	}
 	if targetObject != nil {
 		if sourceObject == nil {
 			return fmt.Errorf("must be an object")

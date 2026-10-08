@@ -1,13 +1,15 @@
 // Package codegen connects changing catalog pages to configured Goa endpoints.
 // Application methods return declared operation names or resource descriptors
 // and opaque cursors. Generation retains native field layouts, supplies authored
-// operation metadata and copies validated resource descriptors without JSON.
+// operation metadata and copies validated resource descriptors. Authored extension
+// objects use the same private JSON codecs as resource, prompt and tool content.
 package codegen
 
 import (
 	"fmt"
 
 	jsoncodec "goa.design/goa-ai/codegen/internal/codec"
+	"goa.design/goa-ai/codegen/internal/mcpcontract"
 	"goa.design/goa/v3/codegen"
 	goaservice "goa.design/goa/v3/codegen/service"
 	"goa.design/goa/v3/expr"
@@ -39,6 +41,12 @@ type (
 		// CheckMeta, CheckSize and CheckPriority select declared metadata checks.
 		CheckMeta, CheckSize, CheckPriority bool
 
+		// Metadata selects the generated encoder for an authored extension object.
+		Metadata *contentMetadataData
+
+		metaAttribute                *expr.AttributeExpr
+		metaLayout                   *codegen.GoTypePlan
+		metaCodec                    *jsoncodec.Value
 		method                       *expr.MethodExpr
 		collection                   string
 		entries                      *codegen.TransformPlan
@@ -116,7 +124,28 @@ func planCatalogs(generation *codegen.Generation, services *goaservice.Plan, pre
 				return fmt.Errorf("MCP protocol entries have %d layouts", len(matches))
 			}
 			adapter.entriesTarget = matches[0]
-			adapter.entries, err = codegen.NewTransformPlan(entries, target, "catalog", nil)
+			projection := entries
+			item := expr.AsArray(entries.Type).ElemType
+			if metadata := item.Find("_meta"); metadata != nil && expr.AsObject(metadata.Type) != nil {
+				adapter.metaAttribute = metadata
+				selected := expr.NewAttributeGraphCopier().Copy(result)
+				projection = selected.Find(catalog.collection)
+				array := expr.AsArray(projection.Type)
+				array.ElemType, err = mcpcontract.WithoutField(array.ElemType, "_meta")
+				if err != nil {
+					return err
+				}
+				layout, err := services.MethodTypeLayout(catalog.method, selected)
+				if err != nil {
+					return err
+				}
+				matches := layout.PlansForOccurrence(projection)
+				if len(matches) != 1 {
+					return fmt.Errorf("MCP catalog field projection has %d layouts", len(matches))
+				}
+				adapter.entriesSource = matches[0]
+			}
+			adapter.entries, err = codegen.NewTransformPlan(projection, target, "catalog", nil)
 			if err != nil {
 				return err
 			}
@@ -129,8 +158,7 @@ func planCatalogs(generation *codegen.Generation, services *goaservice.Plan, pre
 					return err
 				}
 			}
-			item := expr.AsArray(entries.Type).ElemType
-			adapter.CheckMeta = item.Find("_meta") != nil
+			adapter.CheckMeta = item.Find("_meta") != nil && adapter.metaAttribute == nil
 			adapter.CheckSize = item.Find("size") != nil
 			if annotations := item.Find("annotations"); annotations != nil {
 				adapter.CheckPriority = annotations.Find("priority") != nil
@@ -210,6 +238,14 @@ func bindCatalogs(services *goaservice.ServicesData, planned *plannedMCPService)
 			}
 			if err := catalog.entries.BindContexts(source, target); err != nil {
 				return err
+			}
+			if catalog.metaCodec != nil {
+				catalog.Metadata = &contentMetadataData{
+					Field:       scope.Field(catalog.metaAttribute, "_meta", true),
+					Encode:      data.CodecPackage + "." + catalog.metaCodec.EncodeDeclaration().Name(),
+					Optional:    !expr.AsArray(names.Type).ElemType.IsRequired("_meta") && catalog.metaLayout.IsPointer(),
+					TargetField: protocol.Field(expr.AsArray(planned.prepared.mcpService.Method(catalog.Operation).Result.Find(catalog.collection).Type).ElemType.Find("_meta"), "_meta", true),
+				}
 			}
 			catalog.EntriesConversion, catalog.Helpers, err = catalog.entries.Render(catalog.Endpoint.ResultValue+"."+catalog.EntriesField, catalog.collection, true)
 			if err != nil {

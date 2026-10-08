@@ -222,6 +222,13 @@ func {{ .Name }}(value {{ .SourceRef }}) ({{ .TargetRef }}, error) {
         if err := validateContentMeta(selected.{{ .MetaField }}); err != nil { return nil, err }
         {{ end }}
         {{ .Transform }}
+        {{ with .Metadata }}
+        {{ if .Optional }}if selected.{{ .Field }} != nil { {{ end }}
+            metadata, err := {{ .Encode }}(selected.{{ .Field }})
+            if err != nil { return nil, err }
+            out.{{ .TargetField }} = metadata
+        {{ if .Optional }} } {{ end }}
+        {{ end }}
         {{ if .CheckSize }}
         if out.Size != nil && (math.IsNaN(*out.Size) || math.IsInf(*out.Size, 0)) {
             return nil, goa.PermanentError("invalid_content", "resource size must be a finite JSON number")

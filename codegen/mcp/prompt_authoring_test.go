@@ -18,6 +18,10 @@ func TestMethodPromptAuthoring(t *testing.T) {
 		want   string
 	}{
 		{name: "complete typed result"},
+		{name: "typed extension object", change: func(_ *expr.MethodExpr, _ *expr.Object, content *expr.Union) {
+			object := expr.AsObject(content.Values[0].Attribute.Type)
+			*object = append(*object, &expr.NamedAttributeExpr{Name: "_meta", Attribute: &expr.AttributeExpr{Type: &expr.Object{{Name: "ui", Attribute: &expr.AttributeExpr{Type: &expr.Object{{Name: "prefersBorder", Attribute: &expr.AttributeExpr{Type: expr.Boolean}}}}}}}})
+		}},
 		{name: "stronger bounds", change: func(_ *expr.MethodExpr, _ *expr.Object, content *expr.Union) {
 			priority := expr.AsObject(expr.AsObject(content.Values[0].Attribute.Type).Attribute("annotations").Type).Attribute("priority")
 			priority.Validation = &expr.ValidationExpr{ExclusiveMinimum: new(0.0), ExclusiveMaximum: new(1.0)}

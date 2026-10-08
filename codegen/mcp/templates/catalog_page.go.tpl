@@ -47,6 +47,21 @@ func {{ .Declaration.Name }}(v {{ .ParamTypeRef }}) {{ .ResultTypeRef }} {
 {{- end }}
 
 {{- define "catalog-entry-checks" }}
+{{- if .Metadata }}
+{{- $catalog := . }}
+{{- with .Metadata }}
+metadataValue := {{ $catalog.Endpoint.ResultValue }}.{{ $catalog.EntriesField }}[index].{{ .Field }}
+{{ if .Optional }}if metadataValue != nil { {{ end }}
+    encodedMetadata, err := {{ .Encode }}(metadataValue)
+    if err != nil {
+        span.RecordError(err)
+        span.SetStatus(codes.Error, err.Error())
+        return nil, goa.PermanentError("internal_error", "%s", err.Error())
+    }
+    entry.{{ .TargetField }} = encodedMetadata
+{{ if .Optional }} } {{ end }}
+{{- end }}
+{{- end }}
 {{- if .CheckMeta }}
 if err := validateContentMeta(entry.Meta); err != nil {
     span.RecordError(err)

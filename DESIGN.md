@@ -2123,6 +2123,17 @@ cannot reopen the invocation. Each selected branch retains its required fields
 and null checks. Independent HTTP peers from the official Go SDK test these
 contracts without adding an application dependency.
 
+Authored content and resource catalog extension metadata use the same private
+JSON codec plan as native service arguments and results. Known `_meta` fields
+remain typed Goa objects in service and view declarations; the adapter encodes
+only the extension object into MCP's open metadata field. Optional absent values
+stay absent. Externally defined metadata retains its raw JSON object boundary.
+`mcpcontract.WithoutField` preserves named declarations, locations, examples and
+required fields when excluding separately encoded fields from Goa transforms.
+Catalog projections use `MethodTypeLayout` for the selected result graph;
+content metadata uses the selected union's layout rather than unrelated result
+fields. There is no separate Apps resource converter or service serialization API.
+
 `internal/mcpinput` reads inherited method contracts for early DSL validation.
 Goa validates every root before finalizing inherited fields, so this reader
 resolves a detached graph with Goa's `AttributeGraphCopier` and `Finalize`.

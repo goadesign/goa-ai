@@ -77,7 +77,7 @@ func (g *adapterGenerator) buildResourceReaderAdapter() (*resourceReaderAdapter,
 }
 
 // planResourceReader records final type dependencies before Goa freezes names.
-func planResourceReader(generation *codegen.Generation, services *goaservice.Plan, prepared *preparedMCPService, data *AdapterData) error {
+func planResourceReader(generation *codegen.Generation, services *goaservice.Plan, prepared *preparedMCPService, data *AdapterData, codecs *jsoncodec.Plan) error {
 	reader := data.ResourceReader
 	if reader == nil {
 		return nil
@@ -122,7 +122,7 @@ func planResourceReader(generation *codegen.Generation, services *goaservice.Pla
 	if err != nil {
 		return err
 	}
-	if err := planContentConversion(generation, pkg, reader.conversion, target, layout, "convertResourceContent"); err != nil {
+	if err := planContentConversion(generation, pkg, reader.conversion, target, layout, "convertResourceContent", codecs); err != nil {
 		return err
 	}
 	contentConversionNeeds(data, reader.conversion)
@@ -130,7 +130,8 @@ func planResourceReader(generation *codegen.Generation, services *goaservice.Pla
 }
 
 // bindResourceReader uses the saved field layout to construct a typed request
-// and copy validated content without JSON serialization or URI normalization.
+// and copy validated content while preserving the exact requested URI. Authored
+// extension objects use the shared generated codec for their open JSON field.
 func bindResourceReader(services *goaservice.ServicesData, planned *plannedMCPService) error {
 	data := planned.adapterData
 	reader := data.ResourceReader
