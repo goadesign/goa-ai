@@ -88,8 +88,8 @@ func prepareHTTPInputs(root *expr.RootExpr, service *expr.ServiceExpr, mcp *mcpe
 	for _, resource := range mcp.Resources {
 		operations["resources/read"] = append(operations["resources/read"], resource.Method)
 	}
-	for _, template := range mcp.ResourceTemplates {
-		operations["resources/read"] = append(operations["resources/read"], template.Method)
+	if mcp.ResourceReader != nil {
+		operations["resources/read"] = append(operations["resources/read"], mcp.ResourceReader)
 	}
 	for _, prompt := range mcp.MethodPrompts {
 		operations["prompts/get"] = append(operations["prompts/get"], prompt.Method)
@@ -105,6 +105,12 @@ func prepareHTTPInputs(root *expr.RootExpr, service *expr.ServiceExpr, mcp *mcpe
 	}
 	if mcp.PromptCatalog != nil {
 		operations["prompts/list"] = []*expr.MethodExpr{mcp.PromptCatalog}
+	}
+	if mcp.ResourceCatalog != nil {
+		operations["resources/list"] = []*expr.MethodExpr{mcp.ResourceCatalog}
+	}
+	if mcp.ResourceTemplateCatalog != nil {
+		operations["resources/templates/list"] = []*expr.MethodExpr{mcp.ResourceTemplateCatalog}
 	}
 	if source := mcp.SubscriptionSource; source != nil {
 		operations["subscriptions/listen"] = []*expr.MethodExpr{source.Method}

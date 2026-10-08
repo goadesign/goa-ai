@@ -150,8 +150,8 @@ func (a *MCPAdapter) ServerDiscover(ctx context.Context, _ {{ index .PayloadRefs
     {{- if .Tools }}
     capabilities.Tools = &ToolsCapability{ {{ if and .SubscriptionSource (index .SubscriptionSource.Catalogs "tools") }}ListChanged: boolPtr(true),{{ end }} }
     {{- end }}
-    {{- if or .Resources .ResourceTemplates }}
-    capabilities.Resources = &ResourcesCapability{ {{ if and .SubscriptionSource .SubscriptionSource.Resources }}Subscribe: boolPtr(true),{{ end }} }
+    {{- if or .Resources .ResourceReader }}
+    capabilities.Resources = &ResourcesCapability{ {{ if and .SubscriptionSource (index .SubscriptionSource.Catalogs "resources") }}ListChanged: boolPtr(true),{{ end }} {{ if and .SubscriptionSource .SubscriptionSource.Resources }}Subscribe: boolPtr(true),{{ end }} }
     {{- end }}
     {{- if or .StaticPrompts .MethodPrompts }}
     capabilities.Prompts = &PromptsCapability{ {{ if and .SubscriptionSource (index .SubscriptionSource.Catalogs "prompts") }}ListChanged: boolPtr(true),{{ end }} }

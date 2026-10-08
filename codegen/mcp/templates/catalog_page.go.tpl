@@ -34,3 +34,40 @@ if err := {{ .Endpoint.Codec.ResultValidate }}(result); err != nil {
 var nextCursor *string
 {{- end }}
 {{- end }}
+
+{{- define "catalog-helpers" }}
+{{- range .Helpers }}
+// {{ .Declaration.Name }} copies a validated native descriptor value into its
+// generated MCP representation, preserving the authored fields and types.
+func {{ .Declaration.Name }}(v {{ .ParamTypeRef }}) {{ .ResultTypeRef }} {
+    {{ .Code }}
+    return res
+}
+{{- end }}
+{{- end }}
+
+{{- define "catalog-entry-checks" }}
+{{- if .CheckMeta }}
+if err := validateContentMeta(entry.Meta); err != nil {
+    span.RecordError(err)
+    span.SetStatus(codes.Error, err.Error())
+    return nil, goa.PermanentError("internal_error", "%s", err.Error())
+}
+{{- end }}
+{{- if .CheckSize }}
+if entry.Size != nil && (math.IsNaN(*entry.Size) || math.IsInf(*entry.Size, 0)) {
+    failure := goa.PermanentError("internal_error", "resource size must be finite")
+    span.RecordError(failure)
+    span.SetStatus(codes.Error, failure.Error())
+    return nil, failure
+}
+{{- end }}
+{{- if .CheckPriority }}
+if entry.Annotations != nil && entry.Annotations.Priority != nil && (math.IsNaN(*entry.Annotations.Priority) || math.IsInf(*entry.Annotations.Priority, 0)) {
+    failure := goa.PermanentError("internal_error", "resource priority must be finite")
+    span.RecordError(failure)
+    span.SetStatus(codes.Error, failure.Error())
+    return nil, failure
+}
+{{- end }}
+{{- end }}

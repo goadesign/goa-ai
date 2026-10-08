@@ -230,6 +230,7 @@ func bindSubscriptionCatalogs(generation *codegen.Generation, services *goaservi
 	for _, selection := range []struct{ collection, field, filter, branch, report string }{
 		{"tools", "toolsListChanged", "ToolsListChanged", "tools_changed", "ReportToolsChanged"},
 		{"prompts", "promptsListChanged", "PromptsListChanged", "prompts_changed", "ReportPromptsChanged"},
+		{"resources", "resourcesListChanged", "ResourcesListChanged", "resources_changed", "ReportResourcesChanged"},
 	} {
 		field := source.method.Payload.Find(selection.field)
 		if field == nil {

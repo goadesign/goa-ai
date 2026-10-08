@@ -107,8 +107,8 @@ func resolveResourcePolicy(root *expr.RootExpr, service *expr.ServiceExpr, mcp *
 			policy.Operations["resources/read"] = true
 		}
 	}
-	if len(mcp.ResourceTemplates) > 0 {
-		scopes := operationResourceScopes(root, service, policy, mcp.ResourceTemplates[0].Method)
+	if mcp.ResourceReader != nil {
+		scopes := operationResourceScopes(root, service, policy, mcp.ResourceReader)
 		if !slices.EqualFunc(scopes, policy.BasicScopes, slices.Equal[[]string]) {
 			policy.ResourceReader = scopes
 			policy.Operations["resources/read"] = true
@@ -144,6 +144,8 @@ func resolveResourcePolicy(root *expr.RootExpr, service *expr.ServiceExpr, mcp *
 	}{
 		{mcp.ToolCatalog, "tools/list"},
 		{mcp.PromptCatalog, "prompts/list"},
+		{mcp.ResourceCatalog, "resources/list"},
+		{mcp.ResourceTemplateCatalog, "resources/templates/list"},
 	} {
 		if catalog.method == nil {
 			continue

@@ -22,7 +22,7 @@ func (b *mcpExprBuilder) buildMCPTypes() {
 	}
 
 	// Resource types
-	if len(b.mcp.Resources)+len(b.mcp.ResourceTemplates) > 0 {
+	if len(b.mcp.Resources) > 0 || b.mcp.ResourceReader != nil {
 		b.getOrCreateType("ResourceInfo", b.buildResourceInfoType)
 		b.getOrCreateType("ResourceContent", b.buildResourceContentType)
 	}
@@ -57,6 +57,7 @@ func (b *mcpExprBuilder) buildServerCapabilitiesType() *expr.AttributeExpr {
 	})
 	resources := b.getOrCreateType("ResourcesCapability", func() *expr.AttributeExpr {
 		fields := expr.Object{
+			{Name: "listChanged", Attribute: &expr.AttributeExpr{Type: expr.Boolean, Description: "Send authorized resource catalog changes through subscriptions/listen"}},
 			{Name: "subscribe", Attribute: &expr.AttributeExpr{Type: expr.Boolean, Description: "Accept resource update subscriptions through subscriptions/listen"}},
 		}
 		return &expr.AttributeExpr{Type: &fields, Description: "Resource capabilities"}
@@ -258,29 +259,28 @@ func (b *mcpExprBuilder) buildResourcesListResultType() *expr.AttributeExpr {
 	}
 }
 
+// buildResourceInfoType retains the current resource discovery contract.
 func (b *mcpExprBuilder) buildResourceInfoType() *expr.AttributeExpr {
-	return &expr.AttributeExpr{
-		Type: &expr.Object{
-			{Name: "uri", Attribute: &expr.AttributeExpr{
-				Type:        expr.String,
-				Description: "Resource URI",
-			}},
-			{Name: "name", Attribute: &expr.AttributeExpr{
-				Type:        expr.String,
-				Description: "Resource name",
-			}},
-			{Name: "description", Attribute: &expr.AttributeExpr{
-				Type:        expr.String,
-				Description: "Resource description",
-			}},
-			{Name: "mimeType", Attribute: &expr.AttributeExpr{
-				Type:        expr.String,
-				Description: "Resource MIME type",
-			}},
-		},
-		Validation: &expr.ValidationExpr{
-			Required: []string{"uri", "name"},
-		},
+	zero := float64(0)
+	fields := b.resourceMetadataFields()
+	fields = append(fields,
+		&expr.NamedAttributeExpr{Name: "uri", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "Exact resource address", Validation: &expr.ValidationExpr{Format: expr.FormatURI}}},
+		&expr.NamedAttributeExpr{Name: "size", Attribute: &expr.AttributeExpr{Type: expr.Float64, Description: "Raw resource content size in bytes before base64 encoding", Validation: &expr.ValidationExpr{Minimum: &zero}}},
+	)
+	return &expr.AttributeExpr{Type: &fields, Validation: &expr.ValidationExpr{Required: []string{"uri", "name"}}}
+}
+
+// resourceMetadataFields supplies the common MCP resource and template hints.
+// Both catalogs use the same icon and annotation declarations as result content.
+func (b *mcpExprBuilder) resourceMetadataFields() expr.Object {
+	return expr.Object{
+		{Name: "name", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "Resource or template identifier"}},
+		{Name: "title", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "Optional display name"}},
+		{Name: "description", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "Available resource contents"}},
+		{Name: "mimeType", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "Resource MIME type when known"}},
+		{Name: "icons", Attribute: &expr.AttributeExpr{Type: &expr.Array{ElemType: &expr.AttributeExpr{Type: b.getOrCreateType("ContentIcon", buildContentIconType)}, NonNullableElems: true}, Description: "Optional resource icons"}},
+		{Name: "annotations", Attribute: &expr.AttributeExpr{Type: b.getOrCreateType("ContentAnnotations", buildContentAnnotationsType), Description: "Optional audience, importance and modification time"}},
+		{Name: "_meta", Attribute: contentMetaAttribute()},
 	}
 }
 

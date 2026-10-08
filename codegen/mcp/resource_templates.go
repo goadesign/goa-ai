@@ -52,16 +52,17 @@ func (b *mcpExprBuilder) buildResourceTemplatesListMethod() *expr.MethodExpr {
 
 // buildResourceTemplatesListResult retains the declared address and its hints.
 func (b *mcpExprBuilder) buildResourceTemplatesListResult() *expr.AttributeExpr {
-	info := b.getOrCreateType("ResourceTemplateInfo", func() *expr.AttributeExpr {
-		return &expr.AttributeExpr{Type: &expr.Object{
-			{Name: "uriTemplate", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "RFC 6570 template expanded by the client"}},
-			{Name: "name", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "Resource template name"}},
-			{Name: "description", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "Resources available through this template"}},
-			{Name: "mimeType", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "Hint for the resource content type"}},
-		}, Validation: &expr.ValidationExpr{Required: []string{"uriTemplate", "name"}}}
-	})
+	info := b.getOrCreateType("ResourceTemplateInfo", b.buildResourceTemplateInfoType)
 	return &expr.AttributeExpr{Type: &expr.Object{
 		{Name: "resourceTemplates", Attribute: &expr.AttributeExpr{Type: &expr.Array{ElemType: &expr.AttributeExpr{Type: info}, NonNullableElems: true}, Description: "Parameterized addresses advertised by this service"}},
 		{Name: "nextCursor", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "Cursor for another catalog page"}},
 	}, Validation: &expr.ValidationExpr{Required: []string{"resourceTemplates"}}}
+}
+
+// buildResourceTemplateInfoType retains complete typed discovery hints. The
+// catalog owner supplies its RFC 6570 address; reading remains URI-based.
+func (b *mcpExprBuilder) buildResourceTemplateInfoType() *expr.AttributeExpr {
+	fields := b.resourceMetadataFields()
+	fields = append(fields, &expr.NamedAttributeExpr{Name: "uriTemplate", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "RFC 6570 template expanded by the client"}})
+	return &expr.AttributeExpr{Type: &fields, Validation: &expr.ValidationExpr{Required: []string{"uriTemplate", "name"}}}
 }

@@ -2260,7 +2260,7 @@ endpoint still returns its full typed result; generated code validates that
 result and converts content separately. A fixed result containing only the
 marked field returns content without structured JSON. Service-selected views
 retain their declared name and exclude content when that view omits the field.
-Tasks use `TaskExchange` to bind existing application-owned job methods. `ToolCatalog` and `PromptCatalog` bind typed pages of declared names. Dynamic resource and template catalogs still require their typed service bindings.
+Tasks use `TaskExchange` to bind existing application-owned job methods. `ToolCatalog` and `PromptCatalog` bind typed pages of declared names. `ResourceCatalog` and `ResourceTemplateCatalog` return typed runtime descriptors through the same catalog endpoint planner. `ResourceReader` owns URI reads independently of catalog declarations.
 Server-produced additional input now has its authored `InputExchange` binding;
 resource subscriptions use their existing typed stream binding.
 See [the MCP runtime contract](docs/runtime.md#mcp-callers) and
@@ -3129,6 +3129,23 @@ There is no catalog broadcaster or connection-owned permission state. Native
 inputs use the same private constructors, credential and route filling, result
 validation and endpoint composition as other MCP methods. Catalog definitions
 remain generated; page membership and notification acceptance remain dynamic.
+
+`ResourceCatalog` and `ResourceTemplateCatalog` use the same endpoint planner,
+private input constructor, native authorization and cursor conversion. Their
+methods return typed runtime descriptors rather than declared operation names.
+Goa transforms preserve custom field selectors, located types, result views and
+metadata. Every selected view retains the descriptor's required address and
+name. Generated validation rejects unsupported fields and malformed descriptors;
+raw extension metadata stays an object without numeric conversion. Duplicate
+addresses in one page are service contract failures. The shared subscription
+source reports both resource catalogs through `resourcesListChanged`.
+
+`ResourceReader` selects one URI-reading method even when no template or catalog
+is declared. Authored `ResourceTemplate` declarations select that same reader.
+Fixed resources retain exact dispatch first; every other URI reaches the owner
+with native credentials and mapped URL values. The method owns existence and
+current access, so catalog visibility is never a read authorization rule. No
+adapter infers template variables, retrieves addresses or stores permissions.
 
 Before Goa finalization, inherited argument fields are resolved on a detached
 copy using Goa's own attribute finalizer. Already resolved inputs retain their

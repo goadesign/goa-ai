@@ -10,22 +10,9 @@ import "goa.design/goa/v3/expr"
 // buildContentItemType preserves each field defined by MCP's content union.
 // The generated decoder checks the selected variant before a caller sees it.
 func (b *mcpExprBuilder) buildContentItemType() *expr.AttributeExpr {
-	zero, one := float64(0), float64(1)
-	annotations := b.getOrCreateType("ContentAnnotations", func() *expr.AttributeExpr {
-		return &expr.AttributeExpr{Type: &expr.Object{
-			{Name: "audience", Attribute: &expr.AttributeExpr{Type: &expr.Array{ElemType: &expr.AttributeExpr{Type: expr.String, Validation: &expr.ValidationExpr{Values: []any{"user", "assistant"}}}}, Description: "Roles that should see this content"}},
-			{Name: "priority", Attribute: &expr.AttributeExpr{Type: expr.Float64, Description: "Importance from zero through one, inclusive, for this content item", Validation: &expr.ValidationExpr{Minimum: &zero, Maximum: &one}}},
-			{Name: "lastModified", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "Time this content last changed"}},
-		}}
-	})
-	icon := b.getOrCreateType("ContentIcon", func() *expr.AttributeExpr {
-		return &expr.AttributeExpr{Type: &expr.Object{
-			{Name: "src", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "URI of the icon; decoding does not fetch it", Validation: &expr.ValidationExpr{Format: expr.FormatURI}}},
-			{Name: "mimeType", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "Optional image MIME type"}},
-			{Name: "sizes", Attribute: &expr.AttributeExpr{Type: &expr.Array{ElemType: &expr.AttributeExpr{Type: expr.String}}, Description: "Suggested dimensions or any for scalable icons"}},
-			{Name: "theme", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "Optional light or dark theme", Validation: &expr.ValidationExpr{Values: []any{"light", "dark"}}}},
-		}, Validation: &expr.ValidationExpr{Required: []string{"src"}}}
-	})
+	zero := float64(0)
+	annotations := b.getOrCreateType("ContentAnnotations", buildContentAnnotationsType)
+	icon := b.getOrCreateType("ContentIcon", buildContentIconType)
 	return &expr.AttributeExpr{Type: &expr.Object{
 		{Name: "type", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "Selects the required content fields", Validation: &expr.ValidationExpr{Values: []any{"text", "image", "audio", "resource_link", "resource"}}}},
 		{Name: "text", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "Text for the text variant, including an empty string"}},
@@ -51,4 +38,26 @@ func contentMetaAttribute() *expr.AttributeExpr {
 		Description: "Namespaced extension metadata retained without interpreting its fields",
 		Meta:        expr.MetaExpr{"struct:field:type": []string{"json.RawMessage", "encoding/json"}, "struct:tag:json": []string{"_meta,omitempty"}},
 	}
+}
+
+// buildContentAnnotationsType declares the shared audience, importance and time
+// hints used by content and resource discovery. Validation applies to one item.
+func buildContentAnnotationsType() *expr.AttributeExpr {
+	zero, one := float64(0), float64(1)
+	return &expr.AttributeExpr{Type: &expr.Object{
+		{Name: "audience", Attribute: &expr.AttributeExpr{Type: &expr.Array{ElemType: &expr.AttributeExpr{Type: expr.String, Validation: &expr.ValidationExpr{Values: []any{"user", "assistant"}}}}, Description: "Roles that should see this content"}},
+		{Name: "priority", Attribute: &expr.AttributeExpr{Type: expr.Float64, Description: "Importance from zero through one, inclusive, for this content item", Validation: &expr.ValidationExpr{Minimum: &zero, Maximum: &one}}},
+		{Name: "lastModified", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "Time this content last changed"}},
+	}}
+}
+
+// buildContentIconType declares the shared image reference and display hints.
+// Clients validate and retain the URI; decoding never fetches its image.
+func buildContentIconType() *expr.AttributeExpr {
+	return &expr.AttributeExpr{Type: &expr.Object{
+		{Name: "src", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "URI of the icon; decoding does not fetch it", Validation: &expr.ValidationExpr{Format: expr.FormatURI}}},
+		{Name: "mimeType", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "Optional image MIME type"}},
+		{Name: "sizes", Attribute: &expr.AttributeExpr{Type: &expr.Array{ElemType: &expr.AttributeExpr{Type: expr.String}}, Description: "Suggested dimensions or any for scalable icons"}},
+		{Name: "theme", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "Optional light or dark theme", Validation: &expr.ValidationExpr{Values: []any{"light", "dark"}}}},
+	}, Validation: &expr.ValidationExpr{Required: []string{"src"}}}
 }

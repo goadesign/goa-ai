@@ -54,6 +54,10 @@ type (
 		ToolCatalog *catalogAdapter
 		// PromptCatalog selects an authenticated page of declared prompt names.
 		PromptCatalog *catalogAdapter
+		// ResourceCatalog selects a typed page of runtime resource descriptors.
+		ResourceCatalog *catalogAdapter
+		// ResourceTemplateCatalog selects a typed page of URI template descriptors.
+		ResourceTemplateCatalog *catalogAdapter
 		// Tools contains the Goa methods exposed as MCP tools.
 		Tools []*ToolAdapter
 		// Tasks contains configured creators with complete native job operations.

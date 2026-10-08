@@ -509,7 +509,8 @@ func runMCPPluginCorePlan(t *testing.T, executionSelected bool) {
 	})
 	mcpexpr.Root.RegisterMCP(templated, &mcpexpr.MCPExpr{
 		Name: "templated", Version: "1",
-		ResourceTemplates: []*mcpexpr.ResourceTemplateExpr{{Name: "items", URI: "test://items/{id:3}", MimeType: "text/plain", Method: templateMethods["read"]}},
+		ResourceTemplates: []*mcpexpr.ResourceTemplateExpr{{Name: "items", URI: "test://items/{id:3}", MimeType: "text/plain"}},
+		ResourceReader:    templateMethods["read"],
 	})
 	mcpexpr.Root.RegisterMCP(blobs, &mcpexpr.MCPExpr{
 		Name: "blobs", Version: "1.0.0",

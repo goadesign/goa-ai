@@ -1,5 +1,4 @@
-// Package codegen plans the one typed service method that owns parameterized resource
-// reads. It uses Goa's final field names and the same text/blob conversion used
+// Package codegen plans the one typed service method that owns exact URI reads. It uses Goa's final field names and the same text/blob conversion used
 // by embedded prompt resources; the service receives no inferred variables.
 package codegen
 
@@ -42,28 +41,20 @@ type (
 
 // buildResourceReaderAdapter rejects service fields that conversion would lose.
 func (g *adapterGenerator) buildResourceReaderAdapter() (*resourceReaderAdapter, error) {
-	if len(g.mcp.ResourceTemplates) == 0 {
+	if g.mcp.ResourceReader == nil {
 		return nil, nil
 	}
-	declaration := g.mcp.ResourceTemplates[0]
-	if err := validateExecutionViews(declaration.Method, func(result *expr.AttributeExpr) error {
-		method := *declaration.Method
-		method.Result = result
-		selected := *declaration
-		selected.Method = &method
-		definition := *g.mcp
-		definition.ResourceTemplates = []*mcpexpr.ResourceTemplateExpr{&selected}
-		generator := *g
-		generator.mcp = &definition
-		_, err := generator.buildResourceReaderAdapter()
-		return err
+	method := g.mcp.ResourceReader
+	if err := validateExecutionViews(method, func(result *expr.AttributeExpr) error {
+		selected := *method
+		selected.Result = result
+		return mcpexpr.ValidateResourceReader(&selected)
 	}); err != nil {
 		return nil, err
 	}
-	if err := declaration.Validate(); err != nil {
+	if err := mcpexpr.ValidateResourceReader(method); err != nil {
 		return nil, err
 	}
-	method := declaration.Method
 	if err := checkContentGoType(method.Payload); err != nil {
 		return nil, err
 	}
@@ -107,9 +98,7 @@ func planResourceReader(generation *codegen.Generation, services *goaservice.Pla
 			method.Meta[key] = value
 		}
 	}
-	selected := *prepared.mcp.ResourceTemplates[0]
-	selected.Method = &method
-	if err := selected.Validate(); err != nil {
+	if err := mcpexpr.ValidateResourceReader(&method); err != nil {
 		return fmt.Errorf("resource reader selected result view: %w", err)
 	}
 	reader.resultAttribute = result

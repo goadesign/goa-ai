@@ -81,9 +81,28 @@ func templateReaderDeclaration() func(string, ...string) {
 				Attribute("contents", ArrayOfRequired(item), "Contents", func() { MinLength(1) })
 				Required("contents")
 			})
+			if len(templates) == 0 {
+				ResourceReader()
+			}
 			for _, template := range templates {
 				ResourceTemplate(name, template, "text/plain")
 			}
 		})
 	}
+}
+
+// TestMCPResourceReaderWithoutTemplates keeps reading independent of discovery.
+func TestMCPResourceReaderWithoutTemplates(t *testing.T) {
+	runMCPDSL(t, func() {
+		API("reader", func() {})
+		reader := templateReaderDeclaration()
+		Service("resources", func() {
+			MCP("resources", "1")
+			JSONRPC(func() { POST("/mcp") })
+			reader("read")
+		})
+	})
+	server := mcpexpr.Root.MCPServers["resources"]
+	assert.Empty(t, server.ResourceTemplates)
+	assert.Equal(t, "read", server.ResourceReader.Name)
 }

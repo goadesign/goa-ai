@@ -8,9 +8,9 @@ func (a *MCPAdapter) PromptsList(ctx context.Context, p {{ index .PayloadRefs "p
     defer span.End()
     {{- with .PromptCatalog }}
     {{ template "catalog-page" . }}
-    prompts := make([]*PromptInfo, 0, len({{ .Endpoint.ResultValue }}.{{ .NamesField }}))
-    seen := make(map[string]struct{}, len({{ .Endpoint.ResultValue }}.{{ .NamesField }}))
-    for _, name := range {{ .Endpoint.ResultValue }}.{{ .NamesField }} {
+    prompts := make([]*PromptInfo, 0, len({{ .Endpoint.ResultValue }}.{{ .EntriesField }}))
+    seen := make(map[string]struct{}, len({{ .Endpoint.ResultValue }}.{{ .EntriesField }}))
+    for _, name := range {{ .Endpoint.ResultValue }}.{{ .EntriesField }} {
         selected := string({{ if .NamePointer }}*{{ end }}name)
         if _, duplicate := seen[selected]; duplicate {
             failure := goa.PermanentError("internal_error", "prompt catalog returned duplicate name %q", selected)

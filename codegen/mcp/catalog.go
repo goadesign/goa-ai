@@ -1,6 +1,7 @@
 // Package codegen connects changing catalog pages to configured Goa endpoints.
-// Application methods return declared tool or prompt names and opaque cursors;
-// generation retains native field layouts and supplies the existing metadata.
+// Application methods return declared operation names or resource descriptors
+// and opaque cursors. Generation retains native field layouts, supplies authored
+// operation metadata and copies validated resource descriptors without JSON.
 package codegen
 
 import (
@@ -25,23 +26,31 @@ type (
 		Cursor *jsoncodec.TransportField
 		// Operation names the fixed protocol list method for native HTTP inputs.
 		Operation string
-		// NamesField selects the validated list of declared operation names.
-		NamesField string
+		// EntriesField selects the validated native catalog entries.
+		EntriesField string
 		// NamePointer records whether each returned name is a pointer in this view.
 		NamePointer bool
 		// NextCursor copies the native optional cursor using Goa's conversion plan.
 		NextCursor string
+		// EntriesConversion copies typed runtime descriptors to the protocol array.
+		EntriesConversion string
+		// Helpers contains Goa conversions for nested descriptor types.
+		Helpers []*codegen.TransformFunctionData
+		// CheckMeta, CheckSize and CheckPriority select declared metadata checks.
+		CheckMeta, CheckSize, CheckPriority bool
 
-		method                 *expr.MethodExpr
-		collection             string
-		next                   *codegen.TransformPlan
-		nextSource, nextTarget *codegen.GoTypePlan
+		method                       *expr.MethodExpr
+		collection                   string
+		entries                      *codegen.TransformPlan
+		entriesSource, entriesTarget *codegen.GoTypePlan
+		next                         *codegen.TransformPlan
+		nextSource, nextTarget       *codegen.GoTypePlan
 	}
 )
 
 // planCatalogs selects the exact endpoint already retained by common dispatch.
 // Later conversion uses its selected result view rather than copying native types.
-func planCatalogs(services *goaservice.Plan, prepared *preparedMCPService, data *AdapterData) error {
+func planCatalogs(generation *codegen.Generation, services *goaservice.Plan, prepared *preparedMCPService, data *AdapterData) error {
 	for _, catalog := range []struct {
 		method                *expr.MethodExpr
 		collection, operation string
@@ -49,18 +58,26 @@ func planCatalogs(services *goaservice.Plan, prepared *preparedMCPService, data 
 	}{
 		{prepared.mcp.ToolCatalog, "tools", "tools/list", &data.ToolCatalog},
 		{prepared.mcp.PromptCatalog, "prompts", "prompts/list", &data.PromptCatalog},
+		{prepared.mcp.ResourceCatalog, "resources", "resources/list", &data.ResourceCatalog},
+		{prepared.mcp.ResourceTemplateCatalog, "resourceTemplates", "resources/templates/list", &data.ResourceTemplateCatalog},
 	} {
 		if catalog.method == nil {
 			continue
 		}
 		if err := validateExecutionViews(catalog.method, func(result *expr.AttributeExpr) error {
-			if result.Find(catalog.collection) == nil {
+			entries := result.Find(catalog.collection)
+			if entries == nil {
 				return fmt.Errorf("catalog view must contain %s", catalog.collection)
+			}
+			if catalog.collection == "resources" || catalog.collection == "resourceTemplates" {
+				target := prepared.mcpService.Method(catalog.operation).Result.Find(catalog.collection)
+				return checkContentFieldType(entries, target)
 			}
 			return nil
 		}); err != nil {
 			return err
 		}
+
 		if err := checkContentGoType(catalog.method.Payload); err != nil {
 			return err
 		}
@@ -78,6 +95,50 @@ func planCatalogs(services *goaservice.Plan, prepared *preparedMCPService, data 
 		if result.Find(catalog.collection) == nil {
 			return fmt.Errorf("MCP catalog method %q selected view omits %s", catalog.method.Name, catalog.collection)
 		}
+		if catalog.collection == "resources" || catalog.collection == "resourceTemplates" {
+			entries := result.Find(catalog.collection)
+			protocol := prepared.mcpService.Method(catalog.operation)
+			target := protocol.Result.Find(catalog.collection)
+			if err := checkContentFieldType(entries, target); err != nil {
+				return fmt.Errorf("MCP %s catalog: %w", catalog.collection, err)
+			}
+			matches := adapter.Endpoint.resultLayout.PlansForOccurrence(entries)
+			if len(matches) != 1 {
+				return fmt.Errorf("MCP catalog entries have %d layouts", len(matches))
+			}
+			adapter.entriesSource = matches[0]
+			layout, err := services.MethodTypeLayout(protocol, protocol.Result)
+			if err != nil {
+				return err
+			}
+			matches = layout.PlansForOccurrence(target)
+			if len(matches) != 1 {
+				return fmt.Errorf("MCP protocol entries have %d layouts", len(matches))
+			}
+			adapter.entriesTarget = matches[0]
+			adapter.entries, err = codegen.NewTransformPlan(entries, target, "catalog", nil)
+			if err != nil {
+				return err
+			}
+			for i, helper := range adapter.entries.Helpers() {
+				declaration := codegen.NewExactName(codegen.NameFunction, fmt.Sprintf("%sCatalogHelper%d", catalog.collection, i))
+				if err := generation.Package(data.mcpImportPath).DeclareName(declaration); err != nil {
+					return err
+				}
+				if err := adapter.entries.BindHelperDeclaration(helper.ID, declaration); err != nil {
+					return err
+				}
+			}
+			item := expr.AsArray(entries.Type).ElemType
+			adapter.CheckMeta = item.Find("_meta") != nil
+			adapter.CheckSize = item.Find("size") != nil
+			if annotations := item.Find("annotations"); annotations != nil {
+				adapter.CheckPriority = annotations.Find("priority") != nil
+			}
+			data.NeedsContentMeta = data.NeedsContentMeta || adapter.CheckMeta
+			data.NeedsContentNumbers = data.NeedsContentNumbers || adapter.CheckSize || adapter.CheckPriority
+		}
+
 		if next := result.Find("nextCursor"); next != nil {
 			matches := adapter.Endpoint.resultLayout.PlansForOccurrence(next)
 			if len(matches) != 1 {
@@ -110,7 +171,7 @@ func planCatalogs(services *goaservice.Plan, prepared *preparedMCPService, data 
 // validates domain input before native HTTP fields and endpoint authorization.
 func bindCatalogs(services *goaservice.ServicesData, planned *plannedMCPService) error {
 	data := planned.adapterData
-	for _, catalog := range []*catalogAdapter{data.ToolCatalog, data.PromptCatalog} {
+	for _, catalog := range []*catalogAdapter{data.ToolCatalog, data.PromptCatalog, data.ResourceCatalog, data.ResourceTemplateCatalog} {
 		if catalog == nil {
 			continue
 		}
@@ -131,12 +192,31 @@ func bindCatalogs(services *goaservice.ServicesData, planned *plannedMCPService)
 			scope = services.ViewAttributor(planned.prepared.userService.Name, data.mcpImportPath)
 		}
 		names := catalog.Endpoint.resultAttribute.Find(catalog.collection)
-		catalog.NamesField = scope.Field(names, catalog.collection, true)
+		catalog.EntriesField = scope.Field(names, catalog.collection, true)
 		layouts := catalog.Endpoint.resultLayout.PlansForOccurrence(names)
 		if len(layouts) != 1 {
 			return fmt.Errorf("MCP catalog names have %d layouts", len(layouts))
 		}
 		catalog.NamePointer = layouts[0].Elem().IsPointer()
+		if catalog.entries != nil {
+			source, err := (&codegen.AttributeContext{Scope: scope, UseDefault: true, Pointer: catalog.entriesSource.Policy().Pointer}).WithGoTypeLayout(catalog.entriesSource.Link(data.mcpImportPath, data.mcpPackage.ImportName))
+			if err != nil {
+				return err
+			}
+			protocol := services.ServiceAttributor(planned.prepared.mcpService.Name, data.mcpImportPath)
+			target, err := (&codegen.AttributeContext{Scope: protocol, UseDefault: true}).WithGoTypeLayout(catalog.entriesTarget.Link(data.mcpImportPath, data.mcpPackage.ImportName))
+			if err != nil {
+				return err
+			}
+			if err := catalog.entries.BindContexts(source, target); err != nil {
+				return err
+			}
+			catalog.EntriesConversion, catalog.Helpers, err = catalog.entries.Render(catalog.Endpoint.ResultValue+"."+catalog.EntriesField, catalog.collection, true)
+			if err != nil {
+				return err
+			}
+		}
+
 		if catalog.next == nil {
 			continue
 		}

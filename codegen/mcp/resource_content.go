@@ -22,6 +22,10 @@ func applyMCPContentValidation(files []*codegen.File, services []*plannedMCPServ
 			continue
 		}
 		validators := map[string]bool{"ResourceContent": false}
+		if len(service.adapterData.Resources) > 0 || service.adapterData.ResourceReader != nil {
+			validators["ResourceInfo"] = false
+			validators["ResourceTemplateInfo"] = false
+		}
 		if len(service.adapterData.Tools) > 0 || len(service.adapterData.StaticPrompts) > 0 || len(service.adapterData.MethodPrompts) > 0 {
 			validators["ContentItem"] = false
 		}
@@ -38,6 +42,9 @@ func applyMCPContentValidation(files []*codegen.File, services []*plannedMCPServ
 		}
 		codegen.AddImport(header, codegen.SimpleImport("encoding/base64"))
 		codegen.AddImport(header, codegen.SimpleImport("encoding/json"))
+		if _, resources := paths[filePath]["ResourceInfo"]; resources {
+			codegen.AddImport(header, codegen.NewImport("uritemplate", "github.com/yosida95/uritemplate/v3"))
+		}
 		for _, section := range file.SectionTemplates {
 			if section.Name != "client-validate" {
 				continue
@@ -50,8 +57,13 @@ func applyMCPContentValidation(files []*codegen.File, services []*plannedMCPServ
 				continue
 			}
 			validation := resourceContentValidation
-			if data.Name == "ContentItem" {
+			switch data.Name {
+			case "ContentItem":
 				validation = contentItemValidation
+			case "ResourceInfo":
+				validation = contentMetadataValidation
+			case "ResourceTemplateInfo":
+				validation = resourceTemplateValidation
 			}
 			data.ValidateDef += validation(`"body"`)
 			if data.NestedValidatorDeclaration != nil {
@@ -133,4 +145,17 @@ if len(body.Meta) > 0 {
  }
 }
 `, errorPath)
+}
+
+// resourceTemplateValidation checks an external descriptor's RFC 6570 template.
+// Goa checks required fields; the parser rejects invalid syntax before the
+// caller can expand it. Extension metadata retains the same object contract.
+func resourceTemplateValidation(errorPath string) string {
+	return fmt.Sprintf(`
+if body.URITemplate != nil {
+ if _, templateErr := uritemplate.New(*body.URITemplate); templateErr != nil {
+  err = goa.MergeErrors(err, goa.PermanentError("invalid_resource_template", "%%s.uriTemplate must be an RFC 6570 template", %s))
+ }
+}
+`, errorPath) + contentMetadataValidation(errorPath)
 }

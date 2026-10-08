@@ -47,14 +47,14 @@ func (s *SubscriptionSourceExpr) Validate() error {
 	}
 	for _, field := range *object {
 		switch field.Name {
-		case "resources":
+		case resourceCatalogCollection:
 			validateSubscriptionResources(verr, s, arguments)
 		case "tasks":
 			validateSubscriptionTasks(verr, s, arguments, nil)
-		case "toolsListChanged", "promptsListChanged":
+		case "toolsListChanged", "promptsListChanged", "resourcesListChanged":
 			validateSubscriptionCatalog(verr, s, arguments, field.Name)
 			server := Root.GetMCP(method.Service)
-			if server == nil || (field.Name == "toolsListChanged" && server.ToolCatalog == nil) || (field.Name == "promptsListChanged" && server.PromptCatalog == nil) {
+			if server == nil || (field.Name == "toolsListChanged" && server.ToolCatalog == nil) || (field.Name == "promptsListChanged" && server.PromptCatalog == nil) || (field.Name == "resourcesListChanged" && server.ResourceCatalog == nil && server.ResourceTemplateCatalog == nil) {
 				verr.Add(s, "%s requires an authored changing catalog", field.Name)
 			}
 		default:
@@ -80,13 +80,13 @@ func (s *SubscriptionSourceExpr) Validate() error {
 		return verr
 	}
 	expected := map[string]bool{"acknowledged": true}
-	if object.Attribute("resources") != nil {
+	if object.Attribute(resourceCatalogCollection) != nil {
 		expected["updated"] = true
 	}
 	if object.Attribute("tasks") != nil {
 		expected["tasks_updated"] = true
 	}
-	for field, branch := range map[string]string{"toolsListChanged": "tools_changed", "promptsListChanged": "prompts_changed"} {
+	for field, branch := range map[string]string{"toolsListChanged": "tools_changed", "promptsListChanged": "prompts_changed", "resourcesListChanged": "resources_changed"} {
 		if object.Attribute(field) != nil {
 			expected[branch] = true
 		}
@@ -111,7 +111,7 @@ func (s *SubscriptionSourceExpr) Validate() error {
 					continue
 				}
 				switch field.Name {
-				case "resources":
+				case resourceCatalogCollection:
 					validateSubscriptionResources(verr, s, branch.Attribute)
 				case "tasks":
 					validateSubscriptionTasks(verr, s, branch.Attribute, field.Attribute)
@@ -119,7 +119,7 @@ func (s *SubscriptionSourceExpr) Validate() error {
 					validateSubscriptionCatalog(verr, s, branch.Attribute, field.Name)
 				}
 			}
-		case "tools_changed", "prompts_changed":
+		case "tools_changed", "prompts_changed", "resources_changed":
 			changed := expr.AsObject(branch.Attribute.Type)
 			if changed == nil || len(*changed) != 0 {
 				verr.Add(s, "%s must contain an empty object", branch.Name)
@@ -157,13 +157,13 @@ func (s *SubscriptionSourceExpr) Validate() error {
 // validateSubscriptionResources checks the selected URI array. An empty accepted
 // subset is valid, so the array remains optional and carries URI item validation.
 func validateSubscriptionResources(verr *eval.ValidationErrors, source *SubscriptionSourceExpr, attribute *expr.AttributeExpr) {
-	field := attribute.Find("resources")
+	field := attribute.Find(resourceCatalogCollection)
 	if field == nil {
 		verr.Add(source, "subscription selections must contain optional resources")
 		return
 	}
 	array := expr.AsArray(field.Type)
-	if array == nil || !isPrimitive(array.ElemType.Type, expr.String) || attribute.IsRequired("resources") {
+	if array == nil || !isPrimitive(array.ElemType.Type, expr.String) || attribute.IsRequired(resourceCatalogCollection) {
 		verr.Add(source, "subscription resources must be an optional array of URI strings")
 		return
 	}

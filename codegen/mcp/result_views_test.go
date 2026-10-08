@@ -25,7 +25,7 @@ func TestMCPExecutionSelectedViewsRequireProtocolFields(t *testing.T) {
 				definition.MethodPrompts = []*mcpexpr.MethodPromptExpr{{Name: "review", Description: "Return a synthetic prompt", Method: method}}
 			case "resource":
 				method = methods["read"]
-				definition.ResourceTemplates = []*mcpexpr.ResourceTemplateExpr{{Name: "records", URI: "test://records/{id}", MimeType: "text/plain", Method: method}}
+				definition.ResourceReader = method
 			case "completion":
 				method = methods["complete"]
 				definition.PromptCompletions = []*mcpexpr.PromptCompletionExpr{{Prompt: "review", Argument: "code", Method: method}}

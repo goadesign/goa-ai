@@ -13,7 +13,7 @@ and verification evidence and do not supersede unfinished gates.
 | Native additional input and registry continuation | Implemented through shared typed execution and codecs. Final caller acceptance remains required. |
 | Durable Task consumption and cancellation | Implemented. Final caller/database acceptance remains required. |
 | Task production and notifications | Implemented through existing typed job methods and one shared resource/Task subscription source. Generated HTTP lifecycle, native executor/provider paths, discovery, full snapshots and selected views are verified. Final-head integration and caller acceptance remain required. |
-| Dynamic catalogs | Required. Catalog reads and change notifications must share the application's authorization and catalog owner. |
+| Dynamic catalogs | Implemented through authenticated native methods for tools, prompts, resources and URI templates, with one shared subscription source. Final-head integration and review remain required. |
 | OAuth | Built-in authorization paths are implemented; finish the remaining agreed profile and conformance assessment. |
 | MCP Apps and Skills | Required. Complete their authored, generated and consuming paths and verify extension contracts. |
 | Dependencies, documentation and website | Dependency updates are underway. Finish caller migration, authoritative docs, translations and the MCP home-page section after capability acceptance. |
@@ -54,7 +54,8 @@ the same protocol codec as `tasks/get`. MCP aliases share one native selection;
 each accepted opaque handle receives its corresponding snapshot. No adapter job
 store, original-argument cache, global broadcaster or duplicate snapshot schema
 is introduced. Ordering, accepted identity, correlation and closure stay in the
-shared transport. Dynamic catalogs remain a separate unfinished requirement.
+shared transport. Catalogs use the same native source ownership, with separate
+selections for list changes.
 
 Focused evidence includes the native local/provider lifecycle, ordinary input
 before creation, read-only method defaults, form/URL questions, exact failure JSON,
@@ -3904,3 +3905,33 @@ Catalog verification passed the native HTTP fixture (10.37 seconds), dynamic
 Goa result views (8.55 seconds), and focused DSL, inherited-input, common-layout
 and golden checks (5.79 seconds). Affected golden output was regenerated with
 its owning tests. Scoped generator, DSL, expression and input lint passed.
+
+### Typed resource catalogs and explicit URI ownership (2026-10-08)
+
+`ResourceCatalog` and `ResourceTemplateCatalog` complete the native catalog
+bindings. Both invoke configured Goa endpoints with typed cursors, mapped URL
+inputs and credentials. Application methods return full descriptors, while Goa
+transforms retain declared types, locators, custom selectors and result views.
+Validation rejects unsupported fields, missing required addresses/names,
+malformed URIs/templates, non-object extension metadata and repeated addresses
+within a page. Metadata remains encoded JSON, preserving large integers.
+
+`ResourceReader` explicitly selects the existing URI-reading method independently
+of discovery. Template declarations bind that same owner, replacing the former
+method reference on every template. Fixed resources retain exact dispatch; all
+other URIs reach the one authenticated reader. No template matching, variable
+reconstruction, address fetching or catalog-based permission state is added.
+This breaking DSL/expression change requires regeneration of all affected MCP
+packages. Existing authored template methods select the same reader automatically.
+
+`SubscriptionSource` selects both resource catalogs with `resourcesListChanged`
+and an empty `resources_changed` branch. The same acknowledgment, authorized
+subset, originating request identity and closure rules apply to all four
+catalog kinds. URI update subscriptions remain separately advertised.
+
+The ordinary dynamic resource HTTP peer passed in 10.08 seconds. Native result
+views and six DSL binding cases passed in 8.28 seconds. The generated ordinary
+HTTP integration checkpoint, including valid and
+malformed external resource/template descriptors and fixed resource behavior,
+passed in 8.56 seconds. OAuth assessment, Apps, Skills, affected caller
+acceptance and final website publication still gate release.

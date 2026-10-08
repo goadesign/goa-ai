@@ -47,4 +47,36 @@ func TestResourceContentBoundary(t *testing.T) {
   })
  }
 }
+
+func TestResourceDescriptorBoundary(t *testing.T) {
+ for _,test:=range []struct{name,collection,entry string;valid bool}{
+  {"resource","resources",` + "`" + `{"uri":"test://record","name":"record","title":"Record","icons":[{"src":"https://example.com/icon.png"}],"annotations":{"priority":1},"size":0,"_meta":{"id":9007199254740993}}` + "`" + `,true},
+  {"template","resourceTemplates",` + "`" + `{"uriTemplate":"test://records/{id}","name":"records","_meta":{}}` + "`" + `,true},
+  {"fixed template","resourceTemplates",` + "`" + `{"uriTemplate":"test://record","name":"record"}` + "`" + `,true},
+  {"missing URI","resources",` + "`" + `{"name":"record"}` + "`" + `,false},
+  {"invalid URI","resources",` + "`" + `{"uri":"invalid","name":"record"}` + "`" + `,false},
+  {"null name","resources",` + "`" + `{"uri":"test://record","name":null}` + "`" + `,false},
+  {"negative size","resources",` + "`" + `{"uri":"test://record","name":"record","size":-1}` + "`" + `,false},
+  {"invalid priority","resources",` + "`" + `{"uri":"test://record","name":"record","annotations":{"priority":2}}` + "`" + `,false},
+  {"null metadata","resources",` + "`" + `{"uri":"test://record","name":"record","_meta":null}` + "`" + `,false},
+  {"scalar metadata","resourceTemplates",` + "`" + `{"uriTemplate":"test://records/{id}","name":"records","_meta":42}` + "`" + `,false},
+  {"invalid template","resourceTemplates",` + "`" + `{"uriTemplate":"test://records/{id","name":"records"}` + "`" + `,false},
+ } {
+  t.Run(test.name,func(t *testing.T){
+   server:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
+    var request struct{ID json.RawMessage};if err:=json.NewDecoder(r.Body).Decode(&request);err!=nil{t.Error(err);return}
+    w.Header().Set("Content-Type","application/json")
+    reply:=[]byte("{\"jsonrpc\":\"2.0\",\"id\":"+string(request.ID)+",\"result\":{\"resultType\":\"complete\",\"ttlMs\":0,\"cacheScope\":\"private\",\""+test.collection+"\":["+test.entry+"]}}")
+    if _,err:=w.Write(reply);err!=nil{t.Error(err)}
+   }));defer server.Close()
+   location,err:=url.Parse(server.URL);if err!=nil{t.Fatal(err)}
+   client:=NewClient(location.Scheme,location.Host,server.Client(),goahttp.RequestEncoder,goahttp.ResponseDecoder,false)
+   var result any
+   if test.collection=="resources"{result,err=client.ResourcesList()(t.Context(),&genmcpresources.ResourcesListPayload{})}else{result,err=client.ResourcesTemplatesList()(t.Context(),&genmcpresources.ResourceTemplatesListPayload{})}
+   if test.valid && err!=nil{t.Fatal(err)}
+   if !test.valid && err==nil{t.Fatalf("accepted invalid descriptor: %+v",result)}
+  })
+ }
+}
+
 `

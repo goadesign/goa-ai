@@ -39,6 +39,8 @@ type (
 		Resources []*ResourceExpr
 		// ResourceTemplates advertises parameterized addresses owned by one URI reader.
 		ResourceTemplates []*ResourceTemplateExpr
+		// ResourceReader owns exact URI reads independently of catalog entries.
+		ResourceReader *expr.MethodExpr
 		// Prompts contains fixed message sequences declared at service level.
 		Prompts []*PromptExpr
 		// MethodPrompts contains prompt operations implemented by service methods.
@@ -51,6 +53,10 @@ type (
 		ToolCatalog *expr.MethodExpr
 		// PromptCatalog selects the configured method returning visible declared prompt names.
 		PromptCatalog *expr.MethodExpr
+		// ResourceCatalog owns pages of runtime resource descriptors.
+		ResourceCatalog *expr.MethodExpr
+		// ResourceTemplateCatalog owns pages of runtime URI template descriptors.
+		ResourceTemplateCatalog *expr.MethodExpr
 		// SubscriptionSource selects the owned resource and job change stream.
 		SubscriptionSource *SubscriptionSourceExpr
 		// Service is the Goa service expression this MCP server is
@@ -247,8 +253,8 @@ func (m *MCPExpr) Validate() error {
 	m.validatePromptCompletions(verr)
 	m.validateResourceCompletions(verr)
 	if source := m.SubscriptionSource; source != nil {
-		if source.Method.Payload.Find("resources") != nil && len(m.Resources)+len(m.ResourceTemplates) == 0 {
-			verr.Add(source, "resource subscription requires a declared resource or resource template")
+		if source.Method.Payload.Find("resources") != nil && len(m.Resources) == 0 && m.ResourceReader == nil {
+			verr.Add(source, "resource subscription requires a declared resource or URI reader")
 		}
 		if err := source.Validate(); err != nil {
 			var validation *eval.ValidationErrors

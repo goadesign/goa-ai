@@ -18,7 +18,7 @@ func (b *mcpExprBuilder) buildMethods() []*expr.MethodExpr {
 	}
 
 	// Add resource methods if resources are defined
-	if len(b.mcp.Resources)+len(b.mcp.ResourceTemplates) > 0 {
+	if len(b.mcp.Resources) > 0 || b.mcp.ResourceReader != nil {
 		methods = append(methods,
 			b.buildResourcesListMethod(),
 			b.buildResourcesReadMethod(),

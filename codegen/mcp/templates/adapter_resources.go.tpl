@@ -1,10 +1,26 @@
-{{- if or .Resources .ResourceTemplates }}
+{{- if or .Resources .ResourceReader }}
 {{ comment "Resources handling" }}
 
-// ResourcesList returns the fixed resources declared in the Goa design.
+// ResourcesList returns the declared catalog or one authenticated resource page.
 func (a *MCPAdapter) ResourcesList(ctx context.Context, p {{ index .PayloadRefs "resources/list" }}) (*ResourcesListResult, error) {
     ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.resources/list")
     defer span.End()
+
+    {{- with .ResourceCatalog }}
+    {{ template "catalog-page" . }}
+    {{ .EntriesConversion }}
+    seen := make(map[string]struct{}, len(resources))
+    for _, entry := range resources {
+        {{ template "catalog-entry-checks" . }}
+        if _, duplicate := seen[entry.URI]; duplicate {
+            failure := goa.PermanentError("internal_error", "resource catalog returned duplicate URI %q", entry.URI)
+            span.RecordError(failure)
+            span.SetStatus(codes.Error, failure.Error())
+            return nil, failure
+        }
+        seen[entry.URI] = struct{}{}
+    }
+    {{- else }}
 
     if p.Cursor != nil {
         failure := goa.PermanentError("invalid_params", "resources/list does not accept a cursor")
@@ -17,9 +33,8 @@ func (a *MCPAdapter) ResourcesList(ctx context.Context, p {{ index .PayloadRefs 
         { URI: {{ quote .URI }}, Name: {{ quote .Name }}, Description: stringPtr({{ quote .Description }}), MimeType: stringPtr({{ quote .MimeType }}) },
         {{- end }}
     }
-    res := &ResourcesListResult{ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private", Resources: resources}
-
-    return res, nil
+    {{- end }}
+    return &ResourcesListResult{ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private", Resources: resources, {{ if .ResourceCatalog }}NextCursor: nextCursor,{{ end }}}, nil
 }
 
 // ResourcesRead calls the Goa method that owns the requested resource.
@@ -157,12 +172,33 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p {{ index .PayloadRefs 
 
 {{- end }}
 
-{{- if or .Resources .ResourceTemplates }}
+{{- if or .Resources .ResourceReader }}
 // ResourcesTemplatesList returns the URI templates advertised by the service.
 // Templates guide discovery; the typed reader owns URI interpretation and access.
 func (a *MCPAdapter) ResourcesTemplatesList(ctx context.Context, p {{ index .PayloadRefs "resources/templates/list" }}) (*ResourceTemplatesListResult, error) {
-    _, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.resources/templates/list")
+    ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.resources/templates/list")
     defer span.End()
+    {{- with .ResourceTemplateCatalog }}
+    {{ template "catalog-page" . }}
+    {{ .EntriesConversion }}
+    seen := make(map[string]struct{}, len(resourceTemplates))
+    for _, entry := range resourceTemplates {
+        {{ template "catalog-entry-checks" . }}
+        if _, err := uritemplate.New(entry.URITemplate); err != nil {
+            span.RecordError(err)
+            span.SetStatus(codes.Error, err.Error())
+            return nil, goa.PermanentError("internal_error", "invalid resource URI template: %s", err.Error())
+        }
+        if _, duplicate := seen[entry.URITemplate]; duplicate {
+            failure := goa.PermanentError("internal_error", "resource catalog returned duplicate URI template %q", entry.URITemplate)
+            span.RecordError(failure)
+            span.SetStatus(codes.Error, failure.Error())
+            return nil, failure
+        }
+        seen[entry.URITemplate] = struct{}{}
+    }
+    {{- else }}
+
     if p.Cursor != nil {
         failure := goa.PermanentError("invalid_params", "resources/templates/list does not accept a cursor")
         span.RecordError(failure)
@@ -174,6 +210,10 @@ func (a *MCPAdapter) ResourcesTemplatesList(ctx context.Context, p {{ index .Pay
         {URITemplate: {{ quote .URI }}, Name: {{ quote .Name }}, Description: stringPtr({{ quote .Description }}), MimeType: stringPtr({{ quote .MimeType }})},
         {{- end }}
     }
-    return &ResourceTemplatesListResult{ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private", ResourceTemplates: templates}, nil
+    {{- end }}
+    return &ResourceTemplatesListResult{ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private", ResourceTemplates: {{ if .ResourceTemplateCatalog }}resourceTemplates, NextCursor: nextCursor{{ else }}templates{{ end }}}, nil
 }
 {{- end }}
+
+{{- with .ResourceCatalog }}{{ template "catalog-helpers" . }}{{ end }}
+{{- with .ResourceTemplateCatalog }}{{ template "catalog-helpers" . }}{{ end }}

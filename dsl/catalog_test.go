@@ -187,3 +187,74 @@ func TestMCPCatalogSubscriptionRejectsInvalidDeclarations(t *testing.T) {
 		})
 	}
 }
+
+// TestMCPResourceCatalogBindings keeps both discovery methods separate from the
+// shared URI reader and rejects page shapes that cannot represent MCP replies.
+func TestMCPResourceCatalogBindings(t *testing.T) {
+	for _, test := range []struct{ name, mode, want string }{
+		{"both catalogs", "valid", ""},
+		{"missing reader", "reader", "requires ResourceReader"},
+		{"nullable entries", "nullable", "ArrayOfRequired"},
+		{"duplicate resource owner", "duplicate", "only one resource catalog"},
+		{"duplicate template owner", "templates", "only one resource template catalog"},
+		{"extra result", "extra", "unsupported field"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := runMCPDSLWithError(t, func() {
+				API("resource-catalogs", func() {})
+				reader := templateReaderDeclaration()
+				resource := Type("ListedResource", func() {
+					Attribute("uri", String, "Exact resource address", func() { Format(FormatURI) })
+					Attribute("name", String, "Resource identifier")
+					Required("uri", "name")
+				})
+				template := Type("ListedTemplate", func() {
+					Attribute("uriTemplate", String, "RFC 6570 resource address")
+					Attribute("name", String, "Template identifier")
+					Required("uriTemplate", "name")
+				})
+				Service("records", func() {
+					MCP("records", "1")
+					JSONRPC(func() { POST("/mcp") })
+					if test.mode != "reader" {
+						reader("read")
+					}
+					Method("list_resources", func() {
+						Payload(func() { Attribute("cursor", String, "Page cursor") })
+						Result(func() {
+							if test.mode == "nullable" {
+								Attribute("resources", ArrayOf(resource), "Visible resources")
+							} else {
+								Attribute("resources", ArrayOfRequired(resource), "Visible resources")
+							}
+							if test.mode == "extra" {
+								Attribute("unknown", String, "Unsupported result field")
+							}
+						})
+						ResourceCatalog()
+						if test.mode == "duplicate" {
+							ResourceCatalog()
+						}
+					})
+					Method("list_templates", func() {
+						Payload(func() { Attribute("cursor", String, "Page cursor") })
+						Result(func() { Attribute("resourceTemplates", ArrayOfRequired(template), "Visible templates") })
+						ResourceTemplateCatalog()
+						if test.mode == "templates" {
+							ResourceTemplateCatalog()
+						}
+					})
+				})
+			})
+			if test.want != "" {
+				assert.ErrorContains(t, err, test.want)
+				return
+			}
+			require.NoError(t, err)
+			server := mcpexpr.Root.MCPServers["records"]
+			require.NotNil(t, server.ResourceReader)
+			require.NotNil(t, server.ResourceCatalog)
+			require.NotNil(t, server.ResourceTemplateCatalog)
+		})
+	}
+}

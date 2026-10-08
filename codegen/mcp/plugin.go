@@ -114,7 +114,7 @@ func (p *mcpPlugin) plan(plan *goagenerator.Plan) error {
 		if err := planRouteInputs(plan.Generation(), servicePlan, prepared, adapter); err != nil {
 			return err
 		}
-		if err := planCatalogs(servicePlan, prepared, adapter); err != nil {
+		if err := planCatalogs(plan.Generation(), servicePlan, prepared, adapter); err != nil {
 			return err
 		}
 		if err := planTaskAdapters(plan.Generation(), servicePlan, prepared, adapter); err != nil {
@@ -306,6 +306,10 @@ func planMCPImports(
 	if data.NeedsContentBytes {
 		serverFixed = append(serverFixed, goacodegen.SimpleImport("encoding/base64"))
 		data.serverImportPaths = append(data.serverImportPaths, "encoding/base64")
+	}
+	if data.ResourceTemplateCatalog != nil {
+		serverFixed = append(serverFixed, goacodegen.NewImport("uritemplate", "github.com/yosida95/uritemplate/v3"))
+		data.serverImportPaths = append(data.serverImportPaths, "github.com/yosida95/uritemplate/v3")
 	}
 	if data.NeedsContentNumbers {
 		serverFixed = append(serverFixed, goacodegen.SimpleImport("math"))
@@ -593,7 +597,7 @@ func planMCPCodecs(
 			}
 		}
 	}
-	for _, catalog := range []*catalogAdapter{data.ToolCatalog, data.PromptCatalog} {
+	for _, catalog := range []*catalogAdapter{data.ToolCatalog, data.PromptCatalog, data.ResourceCatalog, data.ResourceTemplateCatalog} {
 		if catalog == nil {
 			continue
 		}
@@ -829,7 +833,7 @@ func mcpCodecDirections(data *AdapterData, methodName string) (jsoncodec.Directi
 	for _, completion := range data.Completions {
 		needsConstruction = needsConstruction || completion.method.Name == methodName
 	}
-	for _, catalog := range []*catalogAdapter{data.ToolCatalog, data.PromptCatalog} {
+	for _, catalog := range []*catalogAdapter{data.ToolCatalog, data.PromptCatalog, data.ResourceCatalog, data.ResourceTemplateCatalog} {
 		needsConstruction = needsConstruction || (catalog != nil && catalog.method.Name == methodName)
 	}
 	if source := data.SubscriptionSource; source != nil && source.method.Name == methodName {
@@ -874,9 +878,7 @@ func mappedMCPMethods(prepared *preparedMCPService) []*expr.MethodExpr {
 	for _, resource := range prepared.mcp.Resources {
 		add(resource.Method)
 	}
-	for _, template := range prepared.mcp.ResourceTemplates {
-		add(template.Method)
-	}
+	add(prepared.mcp.ResourceReader)
 	for _, prompt := range prepared.mcp.MethodPrompts {
 		add(prompt.Method)
 	}
@@ -888,6 +890,8 @@ func mappedMCPMethods(prepared *preparedMCPService) []*expr.MethodExpr {
 	}
 	add(prepared.mcp.ToolCatalog)
 	add(prepared.mcp.PromptCatalog)
+	add(prepared.mcp.ResourceCatalog)
+	add(prepared.mcp.ResourceTemplateCatalog)
 	if source := prepared.mcp.SubscriptionSource; source != nil {
 		add(source.Method)
 	}

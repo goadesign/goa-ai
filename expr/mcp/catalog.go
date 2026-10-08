@@ -1,6 +1,7 @@
 // Package mcp checks authored catalog methods before generation. The application
-// returns visible declared names and a page cursor; generated adapters retain the
-// existing tool and prompt schemas and invoke the configured catalog endpoints.
+// returns visible operation names or typed resource descriptors and a page
+// cursor. Generated adapters retain authored schemas and invoke the configured
+// catalog endpoints with their native authorization and input contracts.
 package mcp
 
 import (
@@ -8,6 +9,8 @@ import (
 	"goa.design/goa/v3/eval"
 	"goa.design/goa/v3/expr"
 )
+
+const resourceCatalogCollection = "resources"
 
 // validateCatalogs checks each catalog against its own declared operation set.
 // Catalog methods cannot return unfinished work or choose new runtime schemas.
@@ -19,12 +22,18 @@ func (m *MCPExpr) validateCatalogs(verr *eval.ValidationErrors) {
 	}{
 		{m.ToolCatalog, "tools", len(m.Tools) > 0},
 		{m.PromptCatalog, "prompts", len(m.Prompts)+len(m.MethodPrompts) > 0},
+		{m.ResourceCatalog, resourceCatalogCollection, m.ResourceReader != nil},
+		{m.ResourceTemplateCatalog, "resourceTemplates", m.ResourceReader != nil},
 	} {
 		if catalog.method == nil {
 			continue
 		}
 		if !catalog.available {
-			verr.Add(m, "%s catalog requires declared %s", catalog.field, catalog.field)
+			if catalog.field == resourceCatalogCollection || catalog.field == "resourceTemplates" {
+				verr.Add(m, "%s catalog requires ResourceReader", catalog.field)
+			} else {
+				verr.Add(m, "%s catalog requires declared %s", catalog.field, catalog.field)
+			}
 		}
 		validateCatalogMethod(verr, catalog.method, catalog.field)
 	}
@@ -56,15 +65,21 @@ func validateCatalogMethod(verr *eval.ValidationErrors, method *expr.MethodExpr,
 		result = expr.AsObject(method.Result.Type)
 	}
 	if result == nil || result.Attribute(collection) == nil {
-		verr.Add(method, "MCP catalog result must contain a %s string array and optional nextCursor string", collection)
+		verr.Add(method, "MCP catalog result must contain a %s array and optional nextCursor string", collection)
 		return
 	}
 	for _, field := range *result {
 		switch field.Name {
 		case collection:
 			array := expr.AsArray(field.Attribute.Type)
-			if array == nil || !isPrimitive(array.ElemType.Type, expr.String) {
-				verr.Add(method, "MCP catalog %s must be an array of declared names", collection)
+			if collection == "tools" || collection == "prompts" {
+				if array == nil || !isPrimitive(array.ElemType.Type, expr.String) {
+					verr.Add(method, "MCP catalog %s must be an array of declared names", collection)
+				}
+			} else {
+				if array == nil || !array.NonNullableElems || expr.AsObject(array.ElemType.Type) == nil {
+					verr.Add(method, "MCP catalog %s must use ArrayOfRequired of resource descriptors", collection)
+				}
 			}
 		case "nextCursor":
 			if !isPrimitive(field.Attribute.Type, expr.String) || method.Result.IsRequired(field.Name) {

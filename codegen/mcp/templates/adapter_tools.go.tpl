@@ -6,9 +6,9 @@ func (a *MCPAdapter) ToolsList(ctx context.Context, p {{ index .PayloadRefs "too
     defer span.End()
     {{- with .ToolCatalog }}
     {{ template "catalog-page" . }}
-    tools := make([]*ToolInfo, 0, len({{ .Endpoint.ResultValue }}.{{ .NamesField }}))
-    seen := make(map[string]struct{}, len({{ .Endpoint.ResultValue }}.{{ .NamesField }}))
-    for _, name := range {{ .Endpoint.ResultValue }}.{{ .NamesField }} {
+    tools := make([]*ToolInfo, 0, len({{ .Endpoint.ResultValue }}.{{ .EntriesField }}))
+    seen := make(map[string]struct{}, len({{ .Endpoint.ResultValue }}.{{ .EntriesField }}))
+    for _, name := range {{ .Endpoint.ResultValue }}.{{ .EntriesField }} {
         selected := string({{ if .NamePointer }}*{{ end }}name)
         if _, duplicate := seen[selected]; duplicate {
             failure := goa.PermanentError("internal_error", "tool catalog returned duplicate name %q", selected)

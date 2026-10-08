@@ -18,7 +18,7 @@ import (
 // ordinary bindings. The method owns authorization, page order and cursor validity.
 // Listing a tool never grants access to invoke it.
 func ToolCatalog() {
-	method, server := catalogMethod()
+	method, server := mcpMethod()
 	if method == nil {
 		return
 	}
@@ -37,7 +37,7 @@ func ToolCatalog() {
 // an empty catalog is valid. The method owns authorization and pagination, while
 // each prompt operation retains its existing authorization.
 func PromptCatalog() {
-	method, server := catalogMethod()
+	method, server := mcpMethod()
 	if method == nil {
 		return
 	}
@@ -48,9 +48,46 @@ func PromptCatalog() {
 	server.PromptCatalog = method
 }
 
-// catalogMethod requires a method inside an MCP service before a catalog can
-// claim it. Invalid DSL placement reports an evaluation error and changes nothing.
-func catalogMethod() (*expr.MethodExpr, *exprmcp.MCPExpr) {
+// ResourceCatalog selects the current unary method to list resource descriptors.
+// Its domain payload contains only an optional cursor string. Its result contains
+// resources, an optional ArrayOfRequired of objects, and optional nextCursor.
+// Each object declares required uri and name strings; uri uses FormatURI.
+// Optional title, description, mimeType, icons, annotations, size and _meta retain
+// their current MCP shapes and validation. ResourceReader owns exact URI reads.
+// The catalog method owns authorization, page order and cursor validity.
+func ResourceCatalog() {
+	method, server := mcpMethod()
+	if method == nil {
+		return
+	}
+	if server.ResourceCatalog != nil {
+		eval.ReportError("an MCP service can declare only one resource catalog")
+		return
+	}
+	server.ResourceCatalog = method
+}
+
+// ResourceTemplateCatalog selects the current unary method to list URI templates.
+// Its domain payload contains only optional cursor. Its result contains optional
+// resourceTemplates, an ArrayOfRequired of objects, and optional nextCursor.
+// Each object declares required uriTemplate and name strings. Optional title,
+// description, mimeType, icons, annotations and _meta retain current MCP shapes.
+// The service's ResourceReader receives expanded URIs without inferred variables.
+func ResourceTemplateCatalog() {
+	method, server := mcpMethod()
+	if method == nil {
+		return
+	}
+	if server.ResourceTemplateCatalog != nil {
+		eval.ReportError("an MCP service can declare only one resource template catalog")
+		return
+	}
+	server.ResourceTemplateCatalog = method
+}
+
+// mcpMethod requires an authored method inside an MCP service before a binding
+// can claim it. Invalid placement reports an evaluation error and changes nothing.
+func mcpMethod() (*expr.MethodExpr, *exprmcp.MCPExpr) {
 	method, ok := eval.Current().(*expr.MethodExpr)
 	if !ok {
 		eval.IncompatibleDSL()

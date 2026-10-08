@@ -21,9 +21,11 @@ import (
 // first, then identifies changed resources or native jobs. Generated code reads
 // each changed job through its configured observation endpoint and sends its
 // full state. The shared transport owns correlation, ordering and closure.
-// Optional toolsListChanged and promptsListChanged booleans select authored
-// ToolCatalog and PromptCatalog changes. Their acknowledged fields match the
-// payload. tools_changed and prompts_changed each contain an empty object.
+// Optional toolsListChanged, promptsListChanged and resourcesListChanged
+// booleans select the corresponding authored catalogs. Resource changes cover
+// both ResourceCatalog and ResourceTemplateCatalog. Their acknowledged fields
+// match the payload. tools_changed, prompts_changed and resources_changed each
+// contain an empty object.
 // Absence or false does not request or accept that catalog. Fixed catalogs do
 // not gain list-change notifications.
 func SubscriptionSource() {

@@ -1630,9 +1630,10 @@ it does not encode base64 itself or construct protocol content.
 ### Parameterized MCP resources
 
 `ResourceTemplate(name, uriTemplate, mimeType)` advertises an RFC 6570 address
-on an ordinary unary Goa method. All templates in one MCP service use the same
-reader method. Its payload contains only a required `uri: String`; the generated
-constructor preserves the client's exact URI, including percent encoding.
+on an ordinary unary Goa method. `ResourceReader()` selects that same reader
+without requiring a template declaration. All templates in one MCP service use
+the same reader method. Its payload contains only a required `uri: String`;
+the generated constructor preserves the client's exact URI, including percent encoding.
 
 Templates describe addresses clients can construct. They do not grant access,
 choose between competing handlers, or recover original variable values. For
@@ -1657,8 +1658,9 @@ return `internal_error`. Ordinary Goa composition and the service own access
 checks; the framework never opens a filesystem path or fetches a supplied URI.
 
 Resource-capable services also expose `resources/templates/list`, returning
-an empty array when no templates are declared. The generated catalog has private
-zero-duration cache metadata and rejects cursors because it fits in one response.
+an empty array when no templates are declared. Without a dynamic catalog
+binding, the generated fixed catalog has private zero-duration cache metadata
+and rejects cursors because it fits in one response.
 
 `ResourceCompletion(uriTemplate, variable)` binds a declared template variable
 to the same typed partial-value/prior-arguments/suggestions method contract as
@@ -1776,13 +1778,71 @@ originating request identity. Discovery advertises `listChanged` only for the
 catalogs that this source actually declares.
 
 A catalog method may exist without change notifications. Fixed catalogs cannot
-advertise a changing source. Dynamic resource and template catalogs remain an
-unfinished part of the breaking MCP upgrade.
+advertise a changing source.
+
+### Authenticated resource and template catalogs
+
+`ResourceCatalog()` and `ResourceTemplateCatalog()` bind unary Goa methods to
+`resources/list` and `resources/templates/list`. Both require the service's
+`ResourceReader`. The catalog method owns authorization, order and opaque cursor
+validity. Reading a URI still invokes its resource owner with current credentials.
+A listed descriptor grants no read permission, and the reader can serve URIs
+that are not listed.
+
+Declare descriptor types before the service:
+
+```go
+var ListedResource = Type("ListedResource", func() {
+    Field(1, "uri", String, "Exact resource address", func() { Format(FormatURI) })
+    Field(2, "name", String, "Resource identifier")
+    Field(3, "title", String, "Display name")
+    Required("uri", "name")
+})
+
+// Inside the MCP service:
+Method("list_resources", func() {
+    Description("List the resources visible to this caller")
+    Payload(func() { Attribute("cursor", String, "Cursor from the previous page") })
+    Result(func() {
+        Attribute("resources", ArrayOfRequired(ListedResource), "Visible resources")
+        Attribute("nextCursor", String, "Cursor for another page")
+    })
+    ResourceCatalog()
+})
+```
+
+For templates, return `resourceTemplates: ArrayOfRequired(Template)` and bind
+`ResourceTemplateCatalog()`. Each descriptor requires `uriTemplate: String` and
+`name: String`. Templates use RFC 6570 syntax; reading receives the expanded URI
+and does not infer the original variables. Both catalog payloads contain only
+optional `cursor`, apart from native credentials and mapped URL fields. Make the
+entries array optional when empty pages are valid. Each result view must retain
+the entries and their required descriptor fields.
+
+Both descriptor kinds allow `title`, `description`, `mimeType`, `icons`,
+`annotations` and raw JSON `_meta`. Resource descriptors also allow `size`, the
+nonnegative number of raw content bytes before base64 encoding. Icons require
+`src` with `FormatURI`; optional fields are `mimeType`, `sizes` (a string array)
+and `theme` (`light` or `dark`). Annotations allow `audience` (a `user`/`assistant`
+string array), `priority` (a number from zero through one, inclusive) and
+`lastModified` (a string). Declare these fields with the corresponding Goa
+validation. `_meta` uses the same raw JSON object declaration as rich content;
+numbers are retained exactly. Unknown fields, invalid metadata or templates,
+and duplicate addresses in one page are contract errors rather than silently
+removed entries. Generated clients also reject invalid descriptors from peers.
+
+The same `SubscriptionSource()` can select optional `resourcesListChanged`.
+Its acknowledgment contains that boolean and its `resources_changed` branch
+contains an empty object. This selection covers both resource catalog kinds.
+The service acknowledges an authorized subset first, then reports changes.
+It does not imply URI update subscriptions: discovery advertises `listChanged`
+and `subscribe` independently according to the source's declared selections.
 
 ### Resource update subscriptions
 
 `SubscriptionSource()` binds one server-streaming Goa method per MCP service.
-The service must already declare a `Resource` or `ResourceTemplate`. Its input
+The service must already declare a `Resource` or `ResourceReader` (including
+a reader selected by `ResourceTemplate`). Its input
 selects optional `resources`, an array of URI strings, apart from native
 annotated credentials and mapped URL fields. The same source may also select
 Tasks as described below. Each URI declares `Format(FormatURI)`. Empty selections
@@ -1812,7 +1872,7 @@ var ResourceChange = Type("ResourceChange", func() {
     Required("change")
 })
 
-// Add this method to a service with Resource or ResourceTemplate declarations.
+// Add this method to a service with a fixed resource or URI reader.
 Method("watch_resources", func() {
     Description("Authorize requested resources and report their changes")
     Payload(func() {
@@ -2252,7 +2312,8 @@ content field or compatibility decoder.
 | `Resource(name, uri, mime)`  | `resources/list`, `resources/read` |
 | `Prompt(name, desc)` in Method | `prompts/list`, `prompts/get` with typed arguments and messages |
 | `StaticPrompt(...)`          | `prompts/list`, `prompts/get`      |
-| `ResourceTemplate(name, template, mime)` in Method | `resources/templates/list` and the service-owned URI reader |
+| `ResourceReader()` / `ResourceTemplate(name, template, mime)` in Method | One service-owned URI reader and optional authored templates |
+| `ResourceCatalog()` / `ResourceTemplateCatalog()` in Method | Authenticated pages of typed resource descriptors or URI templates |
 | `ToolCatalog()` / `PromptCatalog()` in Method | Authenticated pages of declared tools or prompts |
 | `SubscriptionSource()` in Method | `subscriptions/listen` for service-owned catalog, resource and Task updates over HTTP |
 | `TaskExchange(read, answer, cancel)` in Method | Task creation from `tools/call`, plus `tasks/get`, `tasks/update` and `tasks/cancel` |
