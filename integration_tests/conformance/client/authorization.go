@@ -13,6 +13,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"time"
@@ -37,6 +38,7 @@ type (
 		IDPPublicKeyPEM  string `json:"idp_public_key_pem"`
 		IDPSubject       string `json:"idp_subject"`
 		Authentication   string `json:"token_endpoint_auth_method"`
+		MetadataAddress  string `json:"metadata_address"`
 	}
 )
 
@@ -45,6 +47,8 @@ const (
 	basicMachineScenario  = "auth/client-credentials-basic"
 	signedMachineScenario = "auth/client-credentials-jwt"
 	enterpriseScenario    = "auth/enterprise-managed-authorization"
+	metadataScenario      = "auth/basic-cimd"
+	offlineAccessScenario = "auth/offline-access-scope"
 )
 
 // exerciseAuthorization calls the referee's tool through production OAuth.
@@ -69,6 +73,11 @@ func exerciseAuthorization(endpoint string) error {
 	}
 	httpTransport := baseTransport.Clone()
 	httpTransport.TLSClientConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
+	if configuration.Name == metadataScenario {
+		if err := routeRefereeMetadata(httpTransport, configuration); err != nil {
+			return err
+		}
+	}
 	defer httpTransport.CloseIdleConnections()
 	browser := &http.Client{Transport: httpTransport, CheckRedirect: stopAtAuthorizationRedirect}
 	registration, err := refereeClientRegistration(configuration)
@@ -84,7 +93,8 @@ func exerciseAuthorization(endpoint string) error {
 		"auth/iss-wrong-issuer", "auth/iss-unexpected", "auth/iss-normalized",
 		"auth/metadata-issuer-mismatch", "auth/resource-mismatch",
 		"auth/scope-from-www-authenticate", "auth/scope-from-scopes-supported",
-		"auth/scope-omitted-when-undefined", "auth/scope-step-up", "auth/scope-retry-limit":
+		"auth/scope-omitted-when-undefined", "auth/scope-step-up", "auth/scope-retry-limit",
+		metadataScenario, offlineAccessScenario, "auth/offline-access-not-supported":
 		transport, err = mcp.NewAuthorizationCodeHTTPTransport(mcp.HTTPOptions{Endpoint: endpoint, Client: browser, ClientInfo: info}, mcp.AuthorizationCode{
 			Registration: registration,
 			RedirectURI:  "http://127.0.0.1:3000/callback",
@@ -149,6 +159,9 @@ func stopAtAuthorizationRedirect(_ *http.Request, _ []*http.Request) error {
 func refereeClientRegistration(configuration authorizationContext) (*mcp.ClientRegistration, error) {
 	switch configuration.Authentication {
 	case "none":
+		if configuration.Name == metadataScenario || configuration.Name == offlineAccessScenario {
+			return mcp.NewPublicClientMetadataRegistration(configuration.Issuer, configuration.ClientID)
+		}
 		return mcp.NewPublicClientRegistration(configuration.Issuer, configuration.ClientID)
 	case "client_secret_basic":
 		return mcp.NewBasicClientRegistration(configuration.Issuer, configuration.ClientID, configuration.ClientSecret)
@@ -190,4 +203,25 @@ func refereeClientRegistration(configuration authorizationContext) (*mcp.ClientR
 	default:
 		return nil, errors.New("unsupported referee client registration")
 	}
+}
+
+// routeRefereeMetadata connects the referee's fixed document host to its
+// explicitly configured local HTTPS server. The URL, Host and TLS identity stay
+// unchanged, so the production document reader still verifies the named host.
+func routeRefereeMetadata(transport *http.Transport, configuration authorizationContext) error {
+	if configuration.ClientID != "https://conformance-test.local/client-metadata.json" {
+		return errors.New("referee metadata identity does not match its fixed host")
+	}
+	host, port, err := net.SplitHostPort(configuration.MetadataAddress)
+	if err != nil || host != "localhost" || port == "" {
+		return errors.New("referee metadata destination must name its local HTTPS server")
+	}
+	dial := transport.DialContext
+	transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
+		if address == "conformance-test.local:443" {
+			address = configuration.MetadataAddress
+		}
+		return dial(ctx, network, address)
+	}
+	return nil
 }

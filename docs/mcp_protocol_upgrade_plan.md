@@ -3968,3 +3968,21 @@ authorization owner is added. Browser grants, client credentials and enterprise
 authorization use the implemented shared ownership and native generated contracts.
 Reassess these proposals when MCP adopts their contracts; referee scenarios alone
 do not make a proposed profile mandatory or implemented.
+
+### Independent client-metadata and offline-access checks (2026-10-08)
+
+The synthetic host now publishes real HTTPS client metadata and constructs the
+existing metadata registration; production Goa clients validate the document.
+The fixed hostname in the basic referee case has an explicitly configured local
+network destination and a certificate for that hostname. URL and TLS checks stay
+enabled. Token handlers and independent assertions remain unchanged.
+
+The basic case passed 14 checks in 1.02 seconds. Supported offline access passed
+13 checks in 0.55 seconds; unsupported offline access passed 14 in 0.52 seconds.
+None reported warnings or failures. The client can omit optional `offline_access`.
+The pinned referee records results before its cleanup-time grant-list fetch, so
+that check remains informational and is not independent grant-list verification.
+Existing local metadata-refresh checks establish registered grant handling. See
+[the report](../integration_tests/conformance/README.md) for exact adaptations.
+Metadata-location and issuer-migration assessment still require complete-path
+review; these passes do not close OAuth or full-upgrade release gates.

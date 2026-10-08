@@ -9,10 +9,13 @@ import { ClientCredentialsBasicScenario, ClientCredentialsJwtScenario } from '..
 import { ClientSecretBasicAuthScenario, ClientSecretPostAuthScenario, PublicClientAuthScenario } from '../../.cache/mcp-conformance/src/scenarios/client/auth/token-endpoint-auth.ts';
 import { IssParameterSupportedScenario, IssParameterNotAdvertisedScenario, IssParameterSupportedMissingScenario, IssParameterWrongIssuerScenario, IssParameterUnexpectedScenario, IssParameterNormalizedVariantScenario, MetadataIssuerMismatchScenario } from '../../.cache/mcp-conformance/src/scenarios/client/auth/issuer-parameter.ts';
 import { ScopeFromWwwAuthenticateScenario, ScopeFromScopesSupportedScenario, ScopeOmittedWhenUndefinedScenario, ScopeStepUpAuthScenario, ScopeRetryLimitScenario } from '../../.cache/mcp-conformance/src/scenarios/client/auth/scope-handling.ts';
+import { AuthBasicCIMDScenario, CIMD_CLIENT_METADATA_URL } from '../../.cache/mcp-conformance/src/scenarios/client/auth/basic-cimd.ts';
+import { OfflineAccessScopeScenario, OfflineAccessNotSupportedScenario } from '../../.cache/mcp-conformance/src/scenarios/client/auth/offline-access.ts';
 import { ResourceMismatchScenario } from '../../.cache/mcp-conformance/src/scenarios/client/auth/resource-mismatch.ts';
 import { ServerLifecycle } from '../../.cache/mcp-conformance/src/scenarios/client/auth/helpers/serverLifecycle.ts';
 
 const publicIdentityServers = new WeakSet();
+const clientMetadataServers = new WeakMap();
 
 const key = readFileSync(process.env.MCP_CONFORMANCE_TLS_KEY);
 const cert = readFileSync(process.env.MCP_CONFORMANCE_CA_FILE);
@@ -27,6 +30,21 @@ ServerLifecycle.prototype.start = async function (app) {
       }
       return json.call(this, body);
     };
+  }
+  const metadata = clientMetadataServers.get(this);
+  if (metadata) {
+    // The host publishes the registered document. The production client and
+    // offline-access referee fetch it over HTTPS before inspecting its grants.
+    app.get('/client-metadata.json', (_request, response) => {
+      response.type('application/client+json').json({
+        client_id: metadata.identifier ?? `${this.getUrl()}/client-metadata.json`,
+        client_name: 'Conformance host',
+        redirect_uris: ['http://127.0.0.1:3000/callback'],
+        token_endpoint_auth_method: 'none',
+        grant_types: ['authorization_code', 'refresh_token'],
+        response_types: ['code']
+      });
+    });
   }
   this.app = app;
   this.httpServer = createServer({ key, cert }, app);
@@ -83,7 +101,8 @@ for (const [scenario, method] of [
   [ScopeFromScopesSupportedScenario, 'none'],
   [ScopeOmittedWhenUndefinedScenario, 'none'],
   [ScopeStepUpAuthScenario, 'none'],
-  [ScopeRetryLimitScenario, 'none']
+  [ScopeRetryLimitScenario, 'none'],
+  [OfflineAccessNotSupportedScenario, 'none']
 ]) {
   const start = scenario.prototype.start;
   scenario.prototype.start = async function (context) {
@@ -93,6 +112,27 @@ for (const [scenario, method] of [
       client_id: 'test-client-id',
       client_secret: method === 'none' ? undefined : 'test-client-secret',
       token_endpoint_auth_method: method
+    };
+    return urls;
+  };
+}
+
+// The CIMD referee names a non-resolving fixed host. Supply its exact local
+// destination as host configuration; TLS still verifies that named identity.
+// Offline access uses the actual HTTPS document URL so the referee can fetch it.
+for (const [scenario, identifier] of [
+  [AuthBasicCIMDScenario, CIMD_CLIENT_METADATA_URL],
+  [OfflineAccessScopeScenario, undefined]
+]) {
+  const start = scenario.prototype.start;
+  scenario.prototype.start = async function (context) {
+    clientMetadataServers.set(this.authServer, { identifier });
+    const urls = await start.call(this, context);
+    urls.context = {
+      issuer: this.authServer.getUrl(),
+      client_id: identifier ?? `${this.authServer.getUrl()}/client-metadata.json`,
+      metadata_address: identifier ? new URL(this.authServer.getUrl()).host : undefined,
+      token_endpoint_auth_method: 'none'
     };
     return urls;
   };

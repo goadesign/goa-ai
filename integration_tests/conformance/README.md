@@ -80,7 +80,7 @@ From the repository root, create a local test certificate and build the driver:
 ```sh
 umask 077
 mkdir -p .cache/conformance-tls
-openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=localhost -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1' -keyout .cache/conformance-tls/key.pem -out .cache/conformance-tls/cert.pem
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=localhost -addext 'subjectAltName=DNS:localhost,DNS:conformance-test.local,IP:127.0.0.1' -keyout .cache/conformance-tls/key.pem -out .cache/conformance-tls/cert.pem
 go build -o .cache/mcp-conformance-client ./integration_tests/conformance/client
 export MCP_CONFORMANCE_TLS_KEY="$PWD/.cache/conformance-tls/key.pem"
 export MCP_CONFORMANCE_CA_FILE="$PWD/.cache/conformance-tls/cert.pem"
@@ -129,6 +129,22 @@ are supplied before client startup; original scope assertions and token handlers
 remain unchanged. The production client obtains its initial challenge through
 `server/discover`, then reuses established permissions until a resource rejection.
 
+`auth/basic-cimd` supplies a real client document for the referee's fixed
+`https://conformance-test.local/client-metadata.json` identifier. Host setup routes
+only that named fixture destination to its configured local HTTPS server; URL,
+Host and TLS identity stay unchanged. The local certificate must include the
+extra DNS name shown above. `auth/offline-access-scope` publishes its document at
+the actual HTTPS server URL, while `auth/offline-access-not-supported` uses an
+explicit public preregistration. Both retain the original scope assertions. The
+production client uses the existing metadata-registration constructor and decoder;
+there is no runtime fixture exception or synthetic metadata response in the driver.
+
+The pinned runner records checks before calling scenario cleanup. The supported
+`offline_access` case fetches client grant metadata during cleanup, so that late
+assertion is absent from its recorded result. Its informational grant-list check
+is not independent verification. Local generated-client tests separately verify
+registered refresh grants; no full conformance claim follows from this case.
+
 The certificate's one-day validity is local test setup, not an OAuth token or
 product retention rule. Keep the private key and raw reports out of commits:
 reports contain synthetic secrets, authorization codes and tokens. After the
@@ -150,6 +166,9 @@ Verified on 2026-10-03 with the pinned referee:
 | Client / initial challenge, metadata fallback and omitted-scope scenarios, HTTPS/preregistration-adapted, verified 2026-10-08 | 14 passed each; no warnings or failures | The production client selects the challenge before initial consent, uses metadata only as fallback and omits undefined scope. Runs took 0.93, 0.52 and 0.51 seconds. |
 | Client / `auth/scope-step-up`, HTTPS/preregistration-adapted, verified 2026-10-08 | 25 passed; no warnings or failures | Initial challenge overrides metadata. A later resource rejection adds the challenged scope while retaining prior permissions. Corrected run took 0.94 seconds. |
 | Client / `auth/scope-retry-limit`, HTTPS/preregistration-adapted, verified 2026-10-08 | 11 passed; no warnings or failures | Repeated insufficient-scope rejection stops after the permitted authorization recovery. Run took 0.51 seconds. |
+| Client / `auth/basic-cimd`, HTTPS/document-host-adapted, verified 2026-10-08 | 14 passed; no warnings or failures | The production client fetches and validates the real document, uses its exact HTTPS identifier, and completes authorization and MCP dispatch. Run took 1.02 seconds. |
+| Client / `auth/offline-access-scope`, HTTPS/document-host-adapted, verified 2026-10-08 | 13 passed; no warnings or failures | Omitting the optional scope is permitted. The referee's grant-list assertion remains informational because checks are recorded before its cleanup-time fetch. Run took 0.55 seconds. |
+| Client / `auth/offline-access-not-supported`, HTTPS/preregistration-adapted, verified 2026-10-08 | 14 passed; no warnings or failures | The client does not request unsupported offline access. Run took 0.52 seconds. |
 | Client / `tools_call` | 2 checks passed | Simple tool call and its wire schema |
 | Client / `request-metadata` | 4 passed, 3 skipped, 1 warning; overall failure | Roots, sampling, and elicitation are unclaimed by this driver. The peer rejects `2026-07-28` while advertising that same revision as supported; it warns because the client stops instead of repeating the request. This is not an old-version fallback test. |
 | Client / `http-standard-headers` | 3 passed, 8 skipped | Tool list/call method headers and tool name header. The driver does not exercise resource/prompt methods or removed initialization methods. |
