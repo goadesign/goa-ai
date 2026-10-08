@@ -18,7 +18,7 @@ import (
 // select excluded fields. Unbound domain fields keep their names, types, and examples.
 // The original payload is never changed.
 func Arguments(method *expr.MethodExpr) (*expr.AttributeExpr, error) {
-	payload := method.Payload
+	payload := resolvedArgumentPayload(method.Payload)
 	names := append(Credentials(payload), method.Meta[pathFieldsKey]...)
 	mapping, err := InputExchange(method)
 	if err != nil {
@@ -128,4 +128,23 @@ func isCredential(meta expr.MetaExpr) bool {
 		}
 	}
 	return false
+}
+
+// resolvedArgumentPayload asks Goa to merge inherited fields on a detached
+// copy before MCP validation. Already resolved payloads keep their original
+// fields; the authored method is never finalized or changed by this reader.
+func resolvedArgumentPayload(payload *expr.AttributeExpr) *expr.AttributeExpr {
+	for attribute := payload; attribute != nil; {
+		if len(attribute.Bases) > 0 || len(attribute.References) > 0 {
+			resolved := expr.DupAtt(payload)
+			resolved.Finalize()
+			return resolved
+		}
+		named, ok := attribute.Type.(expr.UserType)
+		if !ok {
+			break
+		}
+		attribute = named.Attribute()
+	}
+	return payload
 }

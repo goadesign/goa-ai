@@ -47,7 +47,11 @@ type (
 		PromptCompletions []*PromptCompletionExpr
 		// ResourceCompletions binds template variables to suggestion methods.
 		ResourceCompletions []*ResourceCompletionExpr
-		// SubscriptionSource selects the owned resource update stream.
+		// ToolCatalog selects the configured method returning visible declared tool names.
+		ToolCatalog *expr.MethodExpr
+		// PromptCatalog selects the configured method returning visible declared prompt names.
+		PromptCatalog *expr.MethodExpr
+		// SubscriptionSource selects the owned resource and job change stream.
 		SubscriptionSource *SubscriptionSourceExpr
 		// Service is the Goa service expression this MCP server is
 		// bound to.
@@ -238,6 +242,7 @@ func (m *MCPExpr) Validate() error {
 			}
 		}
 	}
+	m.validateCatalogs(verr)
 	m.validateResourceTemplates(verr)
 	m.validatePromptCompletions(verr)
 	m.validateResourceCompletions(verr)

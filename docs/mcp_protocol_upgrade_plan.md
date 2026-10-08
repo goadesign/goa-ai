@@ -3873,3 +3873,34 @@ the remaining obligation; historical suspended predecessors must not block
 purge after that successor settles. Complete Task producer generation and the
 remaining capability gates also remain unfinished. This does not authorize
 release or Task capability advertisement.
+
+## Authenticated tool and prompt catalog milestone
+
+Configured unary Goa catalog endpoints select pages of declared tool or prompt
+names. The generator retains schemas and metadata, and copies optional cursors
+through Goa's scalar conversion and saved native field layout. The application
+owns authentication, authorization, ordering and cursor validity. Listing does
+not change invocation authorization. Undeclared or repeated names fail before
+a response; empty pages are valid. No runtime definition registry is introduced.
+
+The same typed `SubscriptionSource` accepts optional tool and prompt catalog
+flags and empty change branches. The shared HTTP producer owns accepted-filter
+checks, acknowledgment ordering, correlation and stream lifetime. Discovery
+advertises each list-change capability only when its authored catalog source
+exists. Fixed catalogs retain fixed behavior. String and boolean aliases,
+inherited input fields, mapped URL fields and configured endpoint middleware
+follow the existing generated mechanisms. Goa's own finalizer resolves inherited
+payload fields on a detached validation copy; the authored design is preserved.
+
+Generated HTTP acceptance covers aliases, two cursor pages, empty pages,
+unknown/duplicate returned names, rejected native credentials, original schema
+preservation and invocation independent of page membership. Catalog-only source
+acceptance covers both catalogs, reduced acceptance and invalid order or subset.
+Dynamic resources and resource templates remain required next. OAuth profile
+assessment, Apps, Skills, affected caller acceptance and final website work
+remain release gates. This milestone is not release completion.
+
+Catalog verification passed the native HTTP fixture (10.37 seconds), dynamic
+Goa result views (8.55 seconds), and focused DSL, inherited-input, common-layout
+and golden checks (5.79 seconds). Affected golden output was regenerated with
+its owning tests. Scoped generator, DSL, expression and input lint passed.

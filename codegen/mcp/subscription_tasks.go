@@ -67,7 +67,7 @@ func bindSubscriptionTasks(services *goaservice.ServicesData, planned *plannedMC
 	choice := expr.AsUnion(source.unionAttribute.Type)
 	var accepted, updated *expr.AttributeExpr
 	for _, branch := range choice.Values {
-		if branch.Name == "acknowledged" {
+		if branch.Name == subscriptionAcknowledgedBranch {
 			accepted = branch.Attribute.Find("tasks")
 		}
 		if branch.Name == "tasks_updated" {

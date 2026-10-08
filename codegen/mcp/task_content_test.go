@@ -26,5 +26,5 @@ var observation=`, 1)
 	assertion := `assert.JSONEq(t,"{\"type\":\"alternate\",\"value\":\"done\"}",string(finished.StructuredContent))`
 	require.Contains(t, runtime, assertion)
 	runtime = strings.Replace(runtime, assertion, `assert.JSONEq(t,"{\"type\":\"alternate\",\"value\":{\"summary\":\"done\"}}",string(finished.StructuredContent));require.Len(t,finished.Content,1);presentation,ok:=finished.Content[0].(*content.TextContent);require.True(t,ok);assert.Equal(t,"user presentation",presentation.Text)`, 1)
-	runTaskPeer(t, design, runtime)
+	runMCPPeer(t, "task-peer.local", design, runtime)
 }

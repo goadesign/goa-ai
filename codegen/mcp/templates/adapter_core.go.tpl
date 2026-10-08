@@ -148,13 +148,13 @@ func (a *MCPAdapter) ServerDiscover(ctx context.Context, _ {{ index .PayloadRefs
     capabilities.Extensions = json.RawMessage(`{"io.modelcontextprotocol/tasks":{}}`)
     {{- end }}
     {{- if .Tools }}
-    capabilities.Tools = &ToolsCapability{}
+    capabilities.Tools = &ToolsCapability{ {{ if and .SubscriptionSource (index .SubscriptionSource.Catalogs "tools") }}ListChanged: boolPtr(true),{{ end }} }
     {{- end }}
     {{- if or .Resources .ResourceTemplates }}
     capabilities.Resources = &ResourcesCapability{ {{ if and .SubscriptionSource .SubscriptionSource.Resources }}Subscribe: boolPtr(true),{{ end }} }
     {{- end }}
     {{- if or .StaticPrompts .MethodPrompts }}
-    capabilities.Prompts = &PromptsCapability{}
+    capabilities.Prompts = &PromptsCapability{ {{ if and .SubscriptionSource (index .SubscriptionSource.Catalogs "prompts") }}ListChanged: boolPtr(true),{{ end }} }
     {{- end }}
     {{- if .Completions }}
     capabilities.Completions = &CompletionsCapability{}

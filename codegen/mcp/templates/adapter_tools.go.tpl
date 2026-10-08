@@ -1,41 +1,50 @@
 {{- if .Tools }}
-// ToolsList returns the stable catalog declared by the design. A supplied
-// cursor is invalid because this generated catalog has only one page.
+// ToolsList returns either the fixed catalog or an authenticated page of
+// declared tool names. The generated tool definitions keep their exact schemas.
 func (a *MCPAdapter) ToolsList(ctx context.Context, p {{ index .PayloadRefs "tools/list" }}) (*ToolsListResult, error) {
-    _, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.tools/list")
+    ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.tools/list")
     defer span.End()
+    {{- with .ToolCatalog }}
+    {{ template "catalog-page" . }}
+    tools := make([]*ToolInfo, 0, len({{ .Endpoint.ResultValue }}.{{ .NamesField }}))
+    seen := make(map[string]struct{}, len({{ .Endpoint.ResultValue }}.{{ .NamesField }}))
+    for _, name := range {{ .Endpoint.ResultValue }}.{{ .NamesField }} {
+        selected := string({{ if .NamePointer }}*{{ end }}name)
+        if _, duplicate := seen[selected]; duplicate {
+            failure := goa.PermanentError("internal_error", "tool catalog returned duplicate name %q", selected)
+            span.RecordError(failure)
+            span.SetStatus(codes.Error, failure.Error())
+            return nil, failure
+        }
+        seen[selected] = struct{}{}
+        switch selected {
+        {{- range $.Tools }}
+        case {{ quote .Name }}:
+            tools = append(tools, &ToolInfo{{ template "tool-info" . }})
+        {{- end }}
+        default:
+            failure := goa.PermanentError("internal_error", "tool catalog returned undeclared name %q", selected)
+            span.RecordError(failure)
+            span.SetStatus(codes.Error, failure.Error())
+            return nil, failure
+        }
+    }
+    {{- else }}
     if p.Cursor != nil {
         failure := goa.PermanentError("invalid_params", "tools/list does not accept a cursor")
         span.RecordError(failure)
         span.SetStatus(codes.Error, failure.Error())
         return nil, failure
     }
-    return &ToolsListResult{
-        ResultType: "complete",
-        Meta: resultMeta(),
-        TTLMs: 0,
-        CacheScope: "private",
-        Tools: []*ToolInfo{
+    tools := []*ToolInfo{
         {{- range .Tools }}
-            {
-                Name: {{ quote .Name }},
-                Description: stringPtr({{ quote .Description }}),
-                {{- with .Annotations }}
-                Annotations: &ToolAnnotations{
-                    {{- if ne .Title nil }}Title: stringPtr({{ quote .Title }}),{{ end }}
-                    {{- if ne .ReadOnlyHint nil }}ReadOnlyHint: boolPtr({{ .ReadOnlyHint }}),{{ end }}
-                    {{- if ne .DestructiveHint nil }}DestructiveHint: boolPtr({{ .DestructiveHint }}),{{ end }}
-                    {{- if ne .IdempotentHint nil }}IdempotentHint: boolPtr({{ .IdempotentHint }}),{{ end }}
-                    {{- if ne .OpenWorldHint nil }}OpenWorldHint: boolPtr({{ .OpenWorldHint }}),{{ end }}
-                },
-                {{- end }}
-                InputSchema: json.RawMessage({{ quote .InputSchema }}),
-                {{- if .OutputSchema }}
-                OutputSchema: json.RawMessage({{ quote .OutputSchema }}),
-                {{- end }}
-            },
+        {{ template "tool-info" . }},
         {{- end }}
-        },
+    }
+    {{- end }}
+    return &ToolsListResult{
+        ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private", Tools: tools,
+        {{- if .ToolCatalog }}NextCursor: nextCursor,{{ end }}
     }, nil
 }
 
@@ -221,4 +230,24 @@ func {{ .Name }}(result {{ .SourceRef }}) ([]*ContentItem, json.RawMessage, erro
     {{- end }}
 }
 {{- end }}
+{{- end }}
+
+{{- define "tool-info" -}}
+{
+                Name: {{ quote .Name }},
+                Description: stringPtr({{ quote .Description }}),
+                {{- with .Annotations }}
+                Annotations: &ToolAnnotations{
+                    {{- if ne .Title nil }}Title: stringPtr({{ quote .Title }}),{{ end }}
+                    {{- if ne .ReadOnlyHint nil }}ReadOnlyHint: boolPtr({{ .ReadOnlyHint }}),{{ end }}
+                    {{- if ne .DestructiveHint nil }}DestructiveHint: boolPtr({{ .DestructiveHint }}),{{ end }}
+                    {{- if ne .IdempotentHint nil }}IdempotentHint: boolPtr({{ .IdempotentHint }}),{{ end }}
+                    {{- if ne .OpenWorldHint nil }}OpenWorldHint: boolPtr({{ .OpenWorldHint }}),{{ end }}
+                },
+                {{- end }}
+                InputSchema: json.RawMessage({{ quote .InputSchema }}),
+                {{- if .OutputSchema }}
+                OutputSchema: json.RawMessage({{ quote .OutputSchema }}),
+                {{- end }}
+            }
 {{- end }}

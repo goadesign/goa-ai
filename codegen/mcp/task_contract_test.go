@@ -17,7 +17,7 @@ import (
 )
 
 func TestMCPGeneratedTaskLifecycle(t *testing.T) {
-	runTaskPeer(t, taskOwnerDesign, taskOwnerRuntime)
+	runMCPPeer(t, "task-peer.local", taskOwnerDesign, taskOwnerRuntime)
 }
 
 func TestMCPGeneratedTaskRequiredAliasDefault(t *testing.T) {
@@ -25,12 +25,12 @@ func TestMCPGeneratedTaskRequiredAliasDefault(t *testing.T) {
 var empty=`, 1)
 	design = strings.Replace(design, `Field(3,"selection",String,"Read profile selected by this method",func(){Default("standard");Enum("standard")})`, `Field(3,"selection",selection,"Read profile selected by this method")`, 1)
 	design = strings.Replace(design, `Required("credential","ownerId","taskId")`, `Required("credential","ownerId","taskId","selection")`, 1)
-	runTaskPeer(t, design, taskOwnerRuntime)
+	runMCPPeer(t, "task-peer.local", design, taskOwnerRuntime)
 }
 
 func TestMCPGeneratedTaskViews(t *testing.T) {
 	design, runtime := taskPeerViews(taskOwnerDesign, taskOwnerRuntime)
-	runTaskPeer(t, design, runtime)
+	runMCPPeer(t, "task-peer.local", design, runtime)
 }
 
 // taskPeerViews gives the same synthetic creator and read owner an execution
@@ -59,7 +59,7 @@ func taskPeerViews(design, runtime string) (string, string) {
 // task observations after creation on their separately owned methods.
 func TestMCPGeneratedTaskCreationInput(t *testing.T) {
 	design, runtime := taskPeerCreationInput(taskOwnerDesign, taskOwnerRuntime)
-	runTaskPeer(t, design, runtime)
+	runMCPPeer(t, "task-peer.local", design, runtime)
 }
 
 // taskPeerCreationInput adds an input round before durable job creation.
@@ -201,15 +201,15 @@ func(s *jobOwner)Resource(context.Context)(string,error){return "record",nil}
 	if viewed {
 		design, runtime = taskPeerViews(design, runtime)
 	}
-	runTaskPeer(t, design, runtime)
+	runMCPPeer(t, "task-peer.local", design, runtime)
 }
 
-// runTaskPeer uses the normal generator and limits compilation to a small
+// runMCPPeer uses the normal generator and limits compilation to a small
 // synthetic module, recording both generation and verification duration.
-func runTaskPeer(t *testing.T, design, runtime string) {
+func runMCPPeer(t *testing.T, moduleName, design, runtime string) {
 	t.Helper()
 	dir := t.TempDir()
-	module := fmt.Sprintf(`module task-peer.local
+	module := fmt.Sprintf(`module %s
 
 go 1.27.0
 require (
@@ -218,7 +218,7 @@ require (
 )
 replace goa.design/goa-ai => %s
 replace goa.design/goa/v3 => %s
-`, filepath.ToSlash(testModuleDirectory(t, "goa.design/goa-ai")), filepath.ToSlash(testModuleDirectory(t, "goa.design/goa/v3")))
+`, moduleName, filepath.ToSlash(testModuleDirectory(t, "goa.design/goa-ai")), filepath.ToSlash(testModuleDirectory(t, "goa.design/goa/v3")))
 	require.NoError(t, os.Mkdir(filepath.Join(dir, "design"), 0o700))
 	for name, source := range map[string]string{"go.mod": module, "design/design.go": design, "peer_test.go": runtime} {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(source), 0o600))
@@ -226,7 +226,7 @@ replace goa.design/goa/v3 => %s
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
 	defer cancel()
 	for _, args := range [][]string{
-		{"run", "-mod=mod", "goa.design/goa/v3/cmd/goa", "gen", "task-peer.local/design"},
+		{"run", "-mod=mod", "goa.design/goa/v3/cmd/goa", "gen", moduleName + "/design"},
 		{"test", "-mod=mod", "-race", "-p=1", "./..."},
 	} {
 		started := time.Now()

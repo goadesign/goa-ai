@@ -1,9 +1,9 @@
 package generated
 
-// ToolsList returns the stable catalog declared by the design. A supplied
-// cursor is invalid because this generated catalog has only one page.
+// ToolsList returns either the fixed catalog or an authenticated page of
+// declared tool names. The generated tool definitions keep their exact schemas.
 func (a *MCPAdapter) ToolsList(ctx context.Context, p *ToolsListPayload) (*ToolsListResult, error) {
-	_, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.tools/list")
+	ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.tools/list")
 	defer span.End()
 	if p.Cursor != nil {
 		failure := goa.PermanentError("invalid_params", "tools/list does not accept a cursor")
@@ -11,19 +11,16 @@ func (a *MCPAdapter) ToolsList(ctx context.Context, p *ToolsListPayload) (*Tools
 		span.SetStatus(codes.Error, failure.Error())
 		return nil, failure
 	}
-	return &ToolsListResult{
-		ResultType: "complete",
-		Meta:       resultMeta(),
-		TTLMs:      0,
-		CacheScope: "private",
-		Tools: []*ToolInfo{
-			{
-				Name:         "summarize",
-				Description:  stringPtr("Summarize one document."),
-				InputSchema:  json.RawMessage("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"text\":{\"description\":\"Text written with `inline code`.\",\"type\":\"string\"}},\"type\":\"object\"}"),
-				OutputSchema: json.RawMessage("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"summary\":{\"description\":\"Summary written with `inline code`.\",\"type\":\"string\"}},\"type\":\"object\"}"),
-			},
+	tools := []*ToolInfo{
+		{
+			Name:         "summarize",
+			Description:  stringPtr("Summarize one document."),
+			InputSchema:  json.RawMessage("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"text\":{\"description\":\"Text written with `inline code`.\",\"type\":\"string\"}},\"type\":\"object\"}"),
+			OutputSchema: json.RawMessage("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"summary\":{\"description\":\"Summary written with `inline code`.\",\"type\":\"string\"}},\"type\":\"object\"}"),
 		},
+	}
+	return &ToolsListResult{
+		ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private", Tools: tools,
 	}, nil
 }
 
@@ -82,11 +79,11 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 
 // Prompts handling
 
-// PromptsList describes the fixed prompts and service-owned prompt operations.
+// PromptsList returns either the fixed catalog or an authenticated page of
+// declared prompt names. Descriptions and argument contracts remain generated.
 func (a *MCPAdapter) PromptsList(ctx context.Context, p *PromptsListPayload) (*PromptsListResult, error) {
 	ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.prompts/list")
 	defer span.End()
-
 	if p.Cursor != nil {
 		failure := goa.PermanentError("invalid_params", "prompts/list does not accept a cursor")
 		span.RecordError(failure)
@@ -97,9 +94,9 @@ func (a *MCPAdapter) PromptsList(ctx context.Context, p *PromptsListPayload) (*P
 
 		{Name: "daily \"summary\"\nreport", Description: stringPtr("Prepare the daily report.")},
 	}
-	res := &PromptsListResult{ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private", Prompts: prompts}
-
-	return res, nil
+	return &PromptsListResult{
+		ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private", Prompts: prompts,
+	}, nil
 }
 
 // PromptsGet returns fixed messages or calls the service with validated arguments.

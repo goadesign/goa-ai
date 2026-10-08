@@ -21,6 +21,8 @@ type (
 		Tasks                                             []*subscriptionTaskSelection
 		TaskInput                                         *jsoncodec.TransportField
 		AcknowledgedTasks, UpdatedTasks, TasksUpdatedKind string
+		// Catalogs retains only authored catalog selections and their event branches.
+		Catalogs map[string]*subscriptionCatalogSelection
 		// PayloadTransportRef names the private resource and job selection record.
 		PayloadTransportRef string
 		// PayloadConstructor applies authored input constraints and defaults.
@@ -58,7 +60,23 @@ type (
 		unionAttribute      *expr.AttributeExpr
 		unionLayout         *codegen.GoTypePlan
 	}
+
+	// subscriptionCatalogSelection keeps one native flag beside its protocol event.
+	subscriptionCatalogSelection struct {
+		// Input fills the existing private constructor's typed selection field.
+		Input *jsoncodec.TransportField
+		// FilterField names the shared transport's boolean selection.
+		FilterField string
+		// AcceptedValue reads the native acknowledgment using Goa's field layout.
+		AcceptedValue string
+		// Kind selects the authored empty change branch.
+		Kind string
+		// Report names the shared transport operation that sends this change.
+		Report string
+	}
 )
+
+const subscriptionAcknowledgedBranch = "acknowledged"
 
 // planSubscriptionSource reserves its private stream name before Goa freezes
 // declarations and retains the original union attributes for later field lookup.
@@ -143,7 +161,7 @@ func bindSubscriptionSource(generation *codegen.Generation, services *goaservice
 		kind := data.mcpPackage.ImportName(owner.ImportPath()) + "." + declaration.KindConst()
 		object := expr.AsObject(branch.Attribute.Type)
 		switch branch.Name {
-		case "acknowledged":
+		case subscriptionAcknowledgedBranch:
 			source.AcknowledgedKind = kind
 			field := object.Attribute("resources")
 			if field != nil {
@@ -169,6 +187,9 @@ func bindSubscriptionSource(generation *codegen.Generation, services *goaservice
 			}
 		}
 	}
+	if err := bindSubscriptionCatalogs(generation, services, planned); err != nil {
+		return err
+	}
 	return bindSubscriptionTasks(services, planned)
 }
 
@@ -188,4 +209,57 @@ func (g *adapterGenerator) buildSubscriptionAdapter() (*subscriptionAdapter, err
 		}
 	}
 	return &subscriptionAdapter{method: declaration.Method}, nil
+}
+
+// bindSubscriptionCatalogs specializes only declared flags and event kinds.
+// The shared transport checks the accepted subset and originating request; the
+// generated source keeps native aliases, selectors and authentication intact.
+func bindSubscriptionCatalogs(generation *codegen.Generation, services *goaservice.ServicesData, planned *plannedMCPService) error {
+	data := planned.adapterData
+	source := data.SubscriptionSource
+	scope := services.ServiceAttributor(planned.prepared.userService.Name, data.mcpImportPath)
+	values := planned.methodCodecs[source.method.Name]
+	var acknowledgment *expr.AttributeExpr
+	for _, branch := range expr.AsUnion(source.unionAttribute.Type).Values {
+		if branch.Name == subscriptionAcknowledgedBranch {
+			acknowledgment = branch.Attribute
+			break
+		}
+	}
+	owner := generation.Package(source.unionLayout.UnionDeclaration().PackagePath())
+	for _, selection := range []struct{ collection, field, filter, branch, report string }{
+		{"tools", "toolsListChanged", "ToolsListChanged", "tools_changed", "ReportToolsChanged"},
+		{"prompts", "promptsListChanged", "PromptsListChanged", "prompts_changed", "ReportPromptsChanged"},
+	} {
+		field := source.method.Payload.Find(selection.field)
+		if field == nil {
+			continue
+		}
+		input, err := values.payload.TransportField(field, selection.field, data.mcpImportPath, data.mcpPackage.ImportName)
+		if err != nil {
+			return err
+		}
+		accepted := acknowledgment.Find(selection.field)
+		layouts := source.Endpoint.resultLayout.PlansForOccurrence(accepted)
+		if len(layouts) != 1 {
+			return fmt.Errorf("subscription catalog selection %q must have one Go layout", selection.field)
+		}
+		value := "selected." + scope.Field(accepted, selection.field, true)
+		converted := "bool(" + value + ")"
+		if layouts[0].IsPointer() {
+			converted = value + " != nil && bool(*" + value + ")"
+		}
+		branch, err := owner.UnionBranch(source.unionAttribute, selection.branch)
+		if err != nil {
+			return err
+		}
+		if source.Catalogs == nil {
+			source.Catalogs = make(map[string]*subscriptionCatalogSelection)
+		}
+		source.Catalogs[selection.collection] = &subscriptionCatalogSelection{
+			Input: input, FilterField: selection.filter, AcceptedValue: converted,
+			Kind: data.mcpPackage.ImportName(owner.ImportPath()) + "." + branch.KindConst(), Report: selection.report,
+		}
+	}
+	return nil
 }

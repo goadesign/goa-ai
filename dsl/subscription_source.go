@@ -10,7 +10,7 @@ import (
 )
 
 // SubscriptionSource selects the current server-streaming method as the change
-// source for this MCP service. Its payload has optional resources and/or tasks,
+// source for this MCP service. Its payload selects catalogs, resources and/or tasks,
 // apart from native credentials and URL fields. resources is an array whose URI
 // elements declare FormatURI. tasks is an object of optional job-ID arrays named
 // after the service's TaskExchange creator methods exposed as MCP tools.
@@ -21,7 +21,11 @@ import (
 // first, then identifies changed resources or native jobs. Generated code reads
 // each changed job through its configured observation endpoint and sends its
 // full state. The shared transport owns correlation, ordering and closure.
-// Fixed catalogs do not gain list-change notifications.
+// Optional toolsListChanged and promptsListChanged booleans select authored
+// ToolCatalog and PromptCatalog changes. Their acknowledged fields match the
+// payload. tools_changed and prompts_changed each contain an empty object.
+// Absence or false does not request or accept that catalog. Fixed catalogs do
+// not gain list-change notifications.
 func SubscriptionSource() {
 	method, ok := eval.Current().(*expr.MethodExpr)
 	if !ok {

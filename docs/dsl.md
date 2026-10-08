@@ -1440,7 +1440,7 @@ Service("calculator", func() {
 ```
 
 Tool, resource, prompt and completion bindings select their generated MCP
-operations. `SubscriptionSource()` selects a distinct resource and task change stream;
+operations. `SubscriptionSource()` selects one catalog, resource and task change stream;
 it does not create a model tool or executor. Other methods in the same
 service retain their ordinary HTTP or gRPC contract. For example, an HTTP-only
 `health` method can serve `/health` without becoming a model-callable tool.
@@ -1727,6 +1727,57 @@ must declare support on each creating tool call; otherwise the adapter returns
 must regenerate affected executors, providers, servers and clients together;
 there is no compatibility alias or older Task wire representation. See
 [Task client and workflow behavior](runtime.md#mcp-task-clients).
+
+### Authenticated tool and prompt catalogs
+
+`ToolCatalog()` and `PromptCatalog()` bind unary Goa methods to paginated
+`tools/list` and `prompts/list`. The method selects the declared names visible
+to this request and owns cursor validity, ordering and authorization. Generated
+code supplies each selected operation's existing schema and metadata.
+
+```go
+Method("list_tools", func() {
+    Payload(func() {
+        Attribute("cursor", String, "Opaque cursor from the preceding page")
+    })
+    Result(func() {
+        Attribute("tools", ArrayOf(String), "Visible names declared with Tool")
+        Attribute("nextCursor", String, "Opaque cursor for another page")
+    })
+    ToolCatalog()
+})
+```
+
+For `PromptCatalog`, return `prompts` instead of `tools`. Names select authored
+static or method-backed prompts. Both page inputs contain only an optional
+`cursor` string apart from native credentials and mapped URL values. Both page
+results contain the names array and an optional `nextCursor` string. String
+aliases, inherited inputs, custom Go selectors and Goa result views retain
+normal generated representations. Every selected view must include its names
+array. Make the array optional when an empty page is valid.
+
+An unknown or repeated returned name is a server contract error; generated
+adapters do not invent definitions or silently drop entries. Catalog membership
+is independent of invocation authorization. Each tool or prompt operation still
+runs its original configured endpoint. A name absent from one page does not
+become an invocation permission rule. Catalogs do not vary with connection state.
+Without a catalog binding, the generated fixed list keeps its existing behavior.
+
+The same `SubscriptionSource()` can select optional `toolsListChanged` and
+`promptsListChanged` boolean fields when the corresponding catalog is authored.
+Its `acknowledged` object contains those same fields. `tools_changed` and
+`prompts_changed` each contain an empty object. The service first acknowledges
+an authorized subset, then sends changes for accepted catalogs. Absence or
+false leaves a catalog unselected. Native aliases, credentials and mapped URL
+values follow the same generated constructor and endpoint path as resource and
+Task subscriptions. The shared transport rejects unrequested acceptance,
+changes before acknowledgment and duplicate acknowledgment, and attaches the
+originating request identity. Discovery advertises `listChanged` only for the
+catalogs that this source actually declares.
+
+A catalog method may exist without change notifications. Fixed catalogs cannot
+advertise a changing source. Dynamic resource and template catalogs remain an
+unfinished part of the breaking MCP upgrade.
 
 ### Resource update subscriptions
 
@@ -2202,7 +2253,8 @@ content field or compatibility decoder.
 | `Prompt(name, desc)` in Method | `prompts/list`, `prompts/get` with typed arguments and messages |
 | `StaticPrompt(...)`          | `prompts/list`, `prompts/get`      |
 | `ResourceTemplate(name, template, mime)` in Method | `resources/templates/list` and the service-owned URI reader |
-| `SubscriptionSource()` in Method | `subscriptions/listen` for service-owned resource and Task updates over HTTP |
+| `ToolCatalog()` / `PromptCatalog()` in Method | Authenticated pages of declared tools or prompts |
+| `SubscriptionSource()` in Method | `subscriptions/listen` for service-owned catalog, resource and Task updates over HTTP |
 | `TaskExchange(read, answer, cancel)` in Method | Task creation from `tools/call`, plus `tasks/get`, `tasks/update` and `tasks/cancel` |
 | `ResourceCompletion(template, variable)` in Method | `completion/complete` for declared template variables |
 | `PromptCompletion(prompt, argument)` in Method | `completion/complete` for declared prompt arguments |

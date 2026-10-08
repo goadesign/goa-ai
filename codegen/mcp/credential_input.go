@@ -100,6 +100,12 @@ func prepareHTTPInputs(root *expr.RootExpr, service *expr.ServiceExpr, mcp *mcpe
 	for _, completion := range mcp.ResourceCompletions {
 		operations["completion/complete"] = append(operations["completion/complete"], completion.Method)
 	}
+	if mcp.ToolCatalog != nil {
+		operations["tools/list"] = []*expr.MethodExpr{mcp.ToolCatalog}
+	}
+	if mcp.PromptCatalog != nil {
+		operations["prompts/list"] = []*expr.MethodExpr{mcp.PromptCatalog}
+	}
 	if source := mcp.SubscriptionSource; source != nil {
 		operations["subscriptions/listen"] = []*expr.MethodExpr{source.Method}
 		if selected := source.Method.Payload.Find("tasks"); selected != nil {

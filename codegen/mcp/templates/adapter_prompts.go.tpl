@@ -1,11 +1,41 @@
 {{- if or .StaticPrompts .MethodPrompts }}
 {{ comment "Prompts handling" }}
 
-// PromptsList describes the fixed prompts and service-owned prompt operations.
+// PromptsList returns either the fixed catalog or an authenticated page of
+// declared prompt names. Descriptions and argument contracts remain generated.
 func (a *MCPAdapter) PromptsList(ctx context.Context, p {{ index .PayloadRefs "prompts/list" }}) (*PromptsListResult, error) {
     ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.prompts/list")
     defer span.End()
-
+    {{- with .PromptCatalog }}
+    {{ template "catalog-page" . }}
+    prompts := make([]*PromptInfo, 0, len({{ .Endpoint.ResultValue }}.{{ .NamesField }}))
+    seen := make(map[string]struct{}, len({{ .Endpoint.ResultValue }}.{{ .NamesField }}))
+    for _, name := range {{ .Endpoint.ResultValue }}.{{ .NamesField }} {
+        selected := string({{ if .NamePointer }}*{{ end }}name)
+        if _, duplicate := seen[selected]; duplicate {
+            failure := goa.PermanentError("internal_error", "prompt catalog returned duplicate name %q", selected)
+            span.RecordError(failure)
+            span.SetStatus(codes.Error, failure.Error())
+            return nil, failure
+        }
+        seen[selected] = struct{}{}
+        switch selected {
+        {{- range $.StaticPrompts }}
+        case {{ quote .Name }}:
+            prompts = append(prompts, &PromptInfo{Name: {{ quote .Name }}, Description: stringPtr({{ quote .Description }})})
+        {{- end }}
+        {{- range $.MethodPrompts }}
+        case {{ quote .Name }}:
+            prompts = append(prompts, &PromptInfo{{ template "prompt-info" . }})
+        {{- end }}
+        default:
+            failure := goa.PermanentError("internal_error", "prompt catalog returned undeclared name %q", selected)
+            span.RecordError(failure)
+            span.SetStatus(codes.Error, failure.Error())
+            return nil, failure
+        }
+    }
+    {{- else }}
     if p.Cursor != nil {
         failure := goa.PermanentError("invalid_params", "prompts/list does not accept a cursor")
         span.RecordError(failure)
@@ -14,19 +44,17 @@ func (a *MCPAdapter) PromptsList(ctx context.Context, p {{ index .PayloadRefs "p
     }
     prompts := []*PromptInfo{
     {{ range .StaticPrompts }}
-        { Name: {{ quote .Name }}, Description: stringPtr({{ quote .Description }}) },
+        {Name: {{ quote .Name }}, Description: stringPtr({{ quote .Description }})},
     {{ end }}
     {{ range .MethodPrompts }}
-        {Name: {{ quote .Name }}, Description: stringPtr({{ quote .Description }}), Arguments: []*PromptArgument{
-            {{ range .Arguments }}
-            {Name: {{ quote .Name }}, Description: stringPtr({{ quote .Description }}), Required: boolPtr({{ .Required }})},
-            {{ end }}
-        }},
+        {{ template "prompt-info" . }},
     {{ end }}
     }
-    res := &PromptsListResult{ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private", Prompts: prompts}
-
-    return res, nil
+    {{- end }}
+    return &PromptsListResult{
+        ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private", Prompts: prompts,
+        {{- if .PromptCatalog }}NextCursor: nextCursor,{{ end }}
+    }, nil
 }
 
 // PromptsGet returns fixed messages or calls the service with validated arguments.
@@ -227,3 +255,11 @@ func {{ .Declaration.Name }}(v {{ .ParamTypeRef }}) {{ .ResultTypeRef }} {
 }
 {{ end }}
 {{ end }}
+
+{{- define "prompt-info" -}}
+{Name: {{ quote .Name }}, Description: stringPtr({{ quote .Description }}), Arguments: []*PromptArgument{
+    {{- range .Arguments }}
+    {Name: {{ quote .Name }}, Description: stringPtr({{ quote .Description }}), Required: boolPtr({{ .Required }})},
+    {{- end }}
+}}
+{{- end }}

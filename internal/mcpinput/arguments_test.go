@@ -2,6 +2,7 @@ package mcpinput
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -129,4 +130,42 @@ func TestDomainArgumentsKeepsNativeBindings(t *testing.T) {
 	assert.Nil(t, transport.Find("credential"))
 	assert.Nil(t, transport.Find("resource_key"))
 	assert.NotNil(t, transport.Find("destination"))
+}
+
+// TestArgumentsInheritedFields checks early DSL validation and later generation
+// use the same payload while credentials stay out of the model's arguments.
+func TestArgumentsInheritedFields(t *testing.T) {
+	for _, named := range []bool{false, true} {
+		t.Run(fmt.Sprint(named), func(t *testing.T) {
+			credential := &expr.AttributeExpr{Type: expr.String, Meta: expr.MetaExpr{"security:token": nil}}
+			cursor := &expr.AttributeExpr{Type: expr.String, Meta: expr.MetaExpr{"struct:field:name": []string{"Page"}}}
+			base := &expr.UserTypeExpr{TypeName: "PageInput", AttributeExpr: &expr.AttributeExpr{
+				Type:       &expr.Object{{Name: "credential", Attribute: credential}, {Name: "cursor", Attribute: cursor}},
+				Validation: &expr.ValidationExpr{Required: []string{"credential"}},
+			}}
+			payload := &expr.AttributeExpr{Type: &expr.Object{}, Bases: []expr.DataType{base}}
+			if named {
+				payload = &expr.AttributeExpr{Type: &expr.UserTypeExpr{TypeName: "ExtendedPage", AttributeExpr: payload}}
+			}
+			method := &expr.MethodExpr{Payload: payload}
+			selected, err := Arguments(method)
+			require.NoError(t, err)
+			assert.NotNil(t, selected.Find("cursor"))
+			assert.Nil(t, selected.Find("credential"))
+			assert.False(t, selected.IsRequired("credential"))
+			assert.Equal(t, cursor.Meta, selected.Find("cursor").Meta)
+			original := payload
+			if user, ok := payload.Type.(expr.UserType); ok {
+				original = user.Attribute()
+			}
+			assert.Len(t, original.Bases, 1)
+			assert.Empty(t, *expr.AsObject(original.Type))
+			payload.Finalize()
+			generated, err := Arguments(method)
+			require.NoError(t, err)
+			assert.Equal(t, selected.Find("cursor").Meta, generated.Find("cursor").Meta)
+			assert.Nil(t, generated.Find("credential"))
+			assert.Same(t, credential, payload.Find("credential"))
+		})
+	}
 }

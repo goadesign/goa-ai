@@ -42,7 +42,7 @@ func (s *SubscriptionSourceExpr) Validate() error {
 	}
 	object := expr.AsObject(arguments.Type)
 	if object == nil || len(*object) == 0 {
-		verr.Add(s, "subscription input must select resources or tasks")
+		verr.Add(s, "subscription input must select catalogs, resources or tasks")
 		return verr
 	}
 	for _, field := range *object {
@@ -51,6 +51,12 @@ func (s *SubscriptionSourceExpr) Validate() error {
 			validateSubscriptionResources(verr, s, arguments)
 		case "tasks":
 			validateSubscriptionTasks(verr, s, arguments, nil)
+		case "toolsListChanged", "promptsListChanged":
+			validateSubscriptionCatalog(verr, s, arguments, field.Name)
+			server := Root.GetMCP(method.Service)
+			if server == nil || (field.Name == "toolsListChanged" && server.ToolCatalog == nil) || (field.Name == "promptsListChanged" && server.PromptCatalog == nil) {
+				verr.Add(s, "%s requires an authored changing catalog", field.Name)
+			}
 		default:
 			verr.Add(s, "subscription input has unsupported field %q", field.Name)
 		}
@@ -80,6 +86,11 @@ func (s *SubscriptionSourceExpr) Validate() error {
 	if object.Attribute("tasks") != nil {
 		expected["tasks_updated"] = true
 	}
+	for field, branch := range map[string]string{"toolsListChanged": "tools_changed", "promptsListChanged": "prompts_changed"} {
+		if object.Attribute(field) != nil {
+			expected[branch] = true
+		}
+	}
 	seen := make(map[string]bool, len(choice.Values))
 	for _, branch := range choice.Values {
 		if !expected[branch.Name] {
@@ -99,11 +110,19 @@ func (s *SubscriptionSourceExpr) Validate() error {
 					verr.Add(s, "acknowledged selections omit %q", field.Name)
 					continue
 				}
-				if field.Name == "resources" {
+				switch field.Name {
+				case "resources":
 					validateSubscriptionResources(verr, s, branch.Attribute)
-				} else {
+				case "tasks":
 					validateSubscriptionTasks(verr, s, branch.Attribute, field.Attribute)
+				default:
+					validateSubscriptionCatalog(verr, s, branch.Attribute, field.Name)
 				}
+			}
+		case "tools_changed", "prompts_changed":
+			changed := expr.AsObject(branch.Attribute.Type)
+			if changed == nil || len(*changed) != 0 {
+				verr.Add(s, "%s must contain an empty object", branch.Name)
 			}
 		case "updated":
 			update := expr.AsObject(branch.Attribute.Type)
@@ -215,5 +234,14 @@ func validateSubscriptionTaskSelections(verr *eval.ValidationErrors, source *Sub
 		if binding == nil || !bound {
 			verr.Add(source, "task selection %q must name a TaskExchange creator exposed as an MCP tool", field.Name)
 		}
+	}
+}
+
+// validateSubscriptionCatalog keeps acceptance explicit: absence or false does
+// not select a catalog. Optional native aliases retain their generated layout.
+func validateSubscriptionCatalog(verr *eval.ValidationErrors, source *SubscriptionSourceExpr, attribute *expr.AttributeExpr, field string) {
+	value := attribute.Find(field)
+	if value == nil || !isPrimitive(value.Type, expr.Boolean) || attribute.IsRequired(field) {
+		verr.Add(source, "%s must be an optional boolean", field)
 	}
 }

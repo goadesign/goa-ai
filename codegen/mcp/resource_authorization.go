@@ -33,6 +33,8 @@ type (
 		Prompts map[string][][]string
 		// Completions selects the declared reference and argument provider.
 		Completions []*completionScopePolicy
+		// Catalogs supplies the scope alternatives of each configured catalog method.
+		Catalogs map[string][][]string
 		// Subscription contains scopes for the resource update stream.
 		Subscription [][]string
 		// Operations selects protocol methods that need typed request decoding.
@@ -134,6 +136,24 @@ func resolveResourcePolicy(root *expr.RootExpr, service *expr.ServiceExpr, mcp *
 		if !slices.EqualFunc(scopes, policy.BasicScopes, slices.Equal[[]string]) {
 			policy.Completions = append(policy.Completions, &completionScopePolicy{Type: "ref/resource", Reference: completion.URI, Argument: completion.Argument, Scopes: scopes})
 			policy.Operations["completion/complete"] = true
+		}
+	}
+	for _, catalog := range []struct {
+		method    *expr.MethodExpr
+		operation string
+	}{
+		{mcp.ToolCatalog, "tools/list"},
+		{mcp.PromptCatalog, "prompts/list"},
+	} {
+		if catalog.method == nil {
+			continue
+		}
+		scopes := operationResourceScopes(root, service, policy, catalog.method)
+		if !slices.EqualFunc(scopes, policy.BasicScopes, slices.Equal[[]string]) {
+			if policy.Catalogs == nil {
+				policy.Catalogs = make(map[string][][]string)
+			}
+			policy.Catalogs[catalog.operation] = scopes
 		}
 	}
 	if mcp.SubscriptionSource != nil {

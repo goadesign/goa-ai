@@ -2198,7 +2198,7 @@ owning operation; cancellation releases bounded stdio delivery. A graceful reply
 closes the listener, while connection loss returns an interruption without an
 implicit reconnect. The host chooses a new listen request. This consumer does
 not make fixed catalogs dynamic or turn private session streams into public
-change sources. `SubscriptionSource()` binds one authored Goa stream to generated HTTP resource and Task updates. Dynamic catalog sources remain a release gate.
+change sources. `SubscriptionSource()` binds one authored Goa stream to generated HTTP catalog, resource and Task updates. Dynamic resource and template catalogs remain a release gate.
 The shared HTTP producer keeps source authorization and change selection in the
 configured handler, while its transport owns acknowledgment order, exact request
 IDs, serialized writes and graceful completion. Producer and receiver use one
@@ -2260,7 +2260,7 @@ endpoint still returns its full typed result; generated code validates that
 result and converts content separately. A fixed result containing only the
 marked field returns content without structured JSON. Service-selected views
 retain their declared name and exclude content when that view omits the field.
-Tasks use `TaskExchange` to bind existing application-owned job methods. Dynamic catalogs still require their typed service bindings.
+Tasks use `TaskExchange` to bind existing application-owned job methods. `ToolCatalog` and `PromptCatalog` bind typed pages of declared names. Dynamic resource and template catalogs still require their typed service bindings.
 Server-produced additional input now has its authored `InputExchange` binding;
 resource subscriptions use their existing typed stream binding.
 See [the MCP runtime contract](docs/runtime.md#mcp-callers) and
@@ -3111,3 +3111,27 @@ A child continuation's execution ID includes the current parent call and exact
 source suspension. If answering produces another question, cancellation uses a
 distinct child execution even within the same parent turn. Answers require a new
 conversation turn; cleanup supplies no answer and may keep the existing turn.
+
+### Catalog ownership and generated definitions
+
+`ToolCatalog` and `PromptCatalog` invoke configured Goa endpoints that select
+names already declared in the DSL. The application owns authorization, order and
+opaque page cursors. Generation owns the associated definitions and emits exact
+name dispatch, schema literals and metadata. Unknown or repeated names are
+boundary failures, rather than a second source of tool definitions. Listing is
+not invocation authorization; operation endpoints retain that responsibility.
+
+The catalog source extends the existing `SubscriptionSource` selection and
+acknowledgment contract. Authored optional booleans select only implemented
+catalog owners. Empty typed change branches reuse the shared HTTP producer's
+filter checks, acknowledgment ordering, request correlation and cancellation.
+There is no catalog broadcaster or connection-owned permission state. Native
+inputs use the same private constructors, credential and route filling, result
+validation and endpoint composition as other MCP methods. Catalog definitions
+remain generated; page membership and notification acceptance remain dynamic.
+
+Before Goa finalization, inherited argument fields are resolved on a detached
+copy using Goa's own attribute finalizer. Already resolved inputs retain their
+original field declarations. The shared argument reader then removes annotated
+credentials, URL inputs and typed continuation fields; authored method types
+remain untouched. This avoids interpreting `Extend` separately in each binding.

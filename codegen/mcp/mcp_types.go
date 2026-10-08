@@ -51,7 +51,9 @@ func (b *mcpExprBuilder) buildDiscoverResultType() *expr.AttributeExpr {
 
 func (b *mcpExprBuilder) buildServerCapabilitiesType() *expr.AttributeExpr {
 	tools := b.getOrCreateType("ToolsCapability", func() *expr.AttributeExpr {
-		return &expr.AttributeExpr{Type: &expr.Object{}, Description: "Tool capabilities"}
+		return &expr.AttributeExpr{Type: &expr.Object{
+			{Name: "listChanged", Attribute: &expr.AttributeExpr{Type: expr.Boolean, Description: "Send authorized tool catalog changes through subscriptions/listen"}},
+		}, Description: "Tool capabilities"}
 	})
 	resources := b.getOrCreateType("ResourcesCapability", func() *expr.AttributeExpr {
 		fields := expr.Object{
@@ -60,7 +62,9 @@ func (b *mcpExprBuilder) buildServerCapabilitiesType() *expr.AttributeExpr {
 		return &expr.AttributeExpr{Type: &fields, Description: "Resource capabilities"}
 	})
 	prompts := b.getOrCreateType("PromptsCapability", func() *expr.AttributeExpr {
-		return &expr.AttributeExpr{Type: &expr.Object{}, Description: "Prompt capabilities"}
+		return &expr.AttributeExpr{Type: &expr.Object{
+			{Name: "listChanged", Attribute: &expr.AttributeExpr{Type: expr.Boolean, Description: "Send authorized prompt catalog changes through subscriptions/listen"}},
+		}, Description: "Prompt capabilities"}
 	})
 	completions := b.getOrCreateType("CompletionsCapability", func() *expr.AttributeExpr {
 		return &expr.AttributeExpr{Type: &expr.Object{}, Description: "Argument suggestions"}

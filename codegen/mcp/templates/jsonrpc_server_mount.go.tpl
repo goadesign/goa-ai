@@ -99,6 +99,16 @@ func withMCPTransport(h *{{ .Transport.ServerStructDeclaration.Name }}, {{ if an
             scopes = selected
         }
         {{- end }}
+        {{- if .Catalogs }}
+        if request.HasID {
+            switch request.Method {
+            {{- range $method, $scopes := .Catalogs }}
+            case {{ printf "%q" $method }}:
+                scopes = [][]string{ {{ range $scopes }}{ {{ range . }}{{ printf "%q" . }}, {{ end }} }, {{ end }} }
+            {{- end }}
+            }
+        }
+        {{- end }}
         {{- with .Subscription }}
         if request.HasID && request.Method == "subscriptions/listen" {
             scopes = [][]string{ {{ range . }}{ {{ range . }}{{ printf "%q" . }}, {{ end }} }, {{ end }} }

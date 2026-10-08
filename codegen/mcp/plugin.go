@@ -114,6 +114,9 @@ func (p *mcpPlugin) plan(plan *goagenerator.Plan) error {
 		if err := planRouteInputs(plan.Generation(), servicePlan, prepared, adapter); err != nil {
 			return err
 		}
+		if err := planCatalogs(servicePlan, prepared, adapter); err != nil {
+			return err
+		}
 		if err := planTaskAdapters(plan.Generation(), servicePlan, prepared, adapter); err != nil {
 			return err
 		}
@@ -194,6 +197,9 @@ func (p *mcpPlugin) generate(plan *goagenerator.Plan, files []*goacodegen.File) 
 			return nil, err
 		}
 		files = append(files, codecFiles...)
+		if err := bindCatalogs(services, planned); err != nil {
+			return nil, err
+		}
 		if err := bindResourceReader(services, planned); err != nil {
 			return nil, err
 		}
@@ -587,6 +593,20 @@ func planMCPCodecs(
 			}
 		}
 	}
+	for _, catalog := range []*catalogAdapter{data.ToolCatalog, data.PromptCatalog} {
+		if catalog == nil {
+			continue
+		}
+		values := methodCodecs[catalog.method.Name]
+		if err := values.planResultValidation(); err != nil {
+			return nil, nil, err
+		}
+		if values.payload.TransportConstructorDeclaration() == nil {
+			if err := values.payload.PlanTransportConstructor(); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
 	for _, endpoint := range data.EndpointMethods {
 		if !endpoint.TaskRole {
 			continue
@@ -809,6 +829,9 @@ func mcpCodecDirections(data *AdapterData, methodName string) (jsoncodec.Directi
 	for _, completion := range data.Completions {
 		needsConstruction = needsConstruction || completion.method.Name == methodName
 	}
+	for _, catalog := range []*catalogAdapter{data.ToolCatalog, data.PromptCatalog} {
+		needsConstruction = needsConstruction || (catalog != nil && catalog.method.Name == methodName)
+	}
 	if source := data.SubscriptionSource; source != nil && source.method.Name == methodName {
 		needsConstruction = true
 	}
@@ -863,6 +886,8 @@ func mappedMCPMethods(prepared *preparedMCPService) []*expr.MethodExpr {
 	for _, completion := range prepared.mcp.ResourceCompletions {
 		add(completion.Method)
 	}
+	add(prepared.mcp.ToolCatalog)
+	add(prepared.mcp.PromptCatalog)
 	if source := prepared.mcp.SubscriptionSource; source != nil {
 		add(source.Method)
 	}

@@ -50,6 +50,10 @@ type (
 		NeedsEndpointResultCheck bool
 		// EndpointMethods contains one typed call per authored MCP method.
 		EndpointMethods []*endpointMethodAdapter
+		// ToolCatalog selects an authenticated page of declared tool names.
+		ToolCatalog *catalogAdapter
+		// PromptCatalog selects an authenticated page of declared prompt names.
+		PromptCatalog *catalogAdapter
 		// Tools contains the Goa methods exposed as MCP tools.
 		Tools []*ToolAdapter
 		// Tasks contains configured creators with complete native job operations.

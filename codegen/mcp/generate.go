@@ -131,7 +131,7 @@ func generateMCPTransport(_ string, svc *expr.ServiceExpr, data *AdapterData) []
 			},
 			{
 				Name:   "mcp-adapter-tools",
-				Source: mcpTemplates.Read("adapter_tools"),
+				Source: mcpTemplates.Read("catalog_page") + mcpTemplates.Read("adapter_tools"),
 				Data:   data,
 				FuncMap: map[string]any{
 					"comment": codegen.Comment,
@@ -158,7 +158,7 @@ func generateMCPTransport(_ string, svc *expr.ServiceExpr, data *AdapterData) []
 			},
 			{
 				Name:   "mcp-adapter-prompts",
-				Source: mcpTemplates.Read("adapter_prompts"),
+				Source: mcpTemplates.Read("catalog_page") + mcpTemplates.Read("adapter_prompts"),
 				Data:   data,
 				FuncMap: map[string]any{
 					"comment": codegen.Comment,

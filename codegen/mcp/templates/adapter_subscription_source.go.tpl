@@ -6,6 +6,14 @@ func (a *MCPAdapter) SubscriptionsListen(ctx context.Context, p {{ index $.Paylo
     ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.subscriptions/listen")
     defer span.End()
     body := &{{ .PayloadTransportRef }}{}
+    {{- range .Catalogs }}
+    requested{{ .FilterField }} := false
+    if p.Notifications.{{ .FilterField }} != nil {
+        requested{{ .FilterField }} = *p.Notifications.{{ .FilterField }}
+    }
+    selected{{ .FilterField }} := {{ .Input.ValueTypeRef }}(requested{{ .FilterField }})
+    body.{{ .Input.Selector }} = {{ if .Input.Pointer }}&{{ end }}selected{{ .FilterField }}
+    {{- end }}
     {{- if .Resources }}
     body.{{ .Resources.Selector }} = make({{ .Resources.ValueTypeRef }}, len(p.Notifications.ResourceSubscriptions))
     for index, uri := range p.Notifications.ResourceSubscriptions {
@@ -107,6 +115,9 @@ func (s *subscriptionStream) {{ .SendWithContextName }}(ctx context.Context, eve
     case {{ .AcknowledgedKind }}:
         selected, _ := choice.AsAcknowledged()
         accepted := mcpruntime.SubscriptionFilter{}
+        {{- range .Catalogs }}
+        accepted.{{ .FilterField }} = {{ .AcceptedValue }}
+        {{- end }}
         {{- if .Resources }}
         accepted.ResourceSubscriptions = make([]string, len(selected.{{ .AcknowledgedResources }}))
         for index, uri := range selected.{{ .AcknowledgedResources }} {
@@ -130,6 +141,10 @@ func (s *subscriptionStream) {{ .SendWithContextName }}(ctx context.Context, eve
         s.{{ .Prefix }}Accepted = {{ .Prefix }}Accepted
         {{- end }}
         return nil
+    {{- range .Catalogs }}
+    case {{ .Kind }}:
+        return mcpruntime.{{ .Report }}(sendContext)
+    {{- end }}
     {{- if .Tasks }}
     case {{ .TasksUpdatedKind }}:
         selected, _ := choice.AsTasksUpdated()
