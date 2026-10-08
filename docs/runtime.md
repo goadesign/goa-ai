@@ -2661,6 +2661,8 @@ func newRegistryClient(address string) (*genregistry.Client, func() error, error
 		transport.DrainProvider(),
 		transport.Unregister(),
 		transport.Pong(),
+		transport.RegisterAgentToolset(),
+		transport.ReplaceAgentToolset(),
 		transport.ListToolsets(),
 		transport.GetToolset(),
 		transport.ResolveToolset(),

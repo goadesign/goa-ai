@@ -1332,25 +1332,12 @@ provider contact or health tracker and creates no provider lease, stream, or
 ping. The existing catalog scheduler still observes its presence and may report
 it unavailable under the normal sampling lease.
 
-`ReplaceServiceToolset` saves a complete replacement against an exact current
-registration token, without attaching a provider. Supply a UUID `replacement_id`
-for this update and keep it unchanged when repeating that same request after a
-lost response. The saved result is returned while that replacement is current;
-changed content or a superseding update conflicts. Live old leases, including
-leases retained during graceful shutdown, return `admission_blocked` without
-accepting the update. Stop old providers, let their calls settle, and release
-all their leases before retrying. Attachment or renewal racing the update is
-checked by the same atomic catalog write.
-
-An accepted replacement permanently retires the old service token and returns
-a fresh token and registration time, with no provider lease or authenticated
-pong. Attach the new providers to that returned registration. A rollback is
-another replacement with a new request ID, even when restoring an old schema.
-A retired service can be reactivated through this explicit operation; initial
-declaration still cannot reclaim it. Existing published calls never move to
-the replacement. The operation reuses current storage and wire encoding. Upgrade
-registry servers before calling it; regenerated positional `NewClient` calls
-must include its endpoint after `DeclareServiceToolset`.
+`ReplaceServiceToolset` compares the current registration and saves a complete
+replacement only after every old provider lease has ended. A stable replacement
+request ID lets repeated requests return the saved winner without a journal.
+The old service token is permanently retired; fresh attachment establishes
+availability for the replacement. The [service publication contract](docs/runtime.md#service-declarations-before-provider-startup)
+defines errors, replay, reactivation, rollback, and client upgrade steps.
 
 `AttachProvider` requires the exact existing name and token, a stable provider ID,
 a lifecycle incarnation, and the current wire version. Its conditional write
