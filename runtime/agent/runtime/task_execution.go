@@ -223,7 +223,10 @@ func (e *toolBatchExec) cancelAcceptedTasks(wfCtx engine.WorkflowContext) error 
 		}
 		cancellationErr = errors.Join(cancellationErr, e.cancelAcceptedTask(wfCtx, info))
 	}
-	return cancellationErr
+	if cancellationErr != nil {
+		return errors.Join(errWorkCleanupFailure, cancellationErr)
+	}
+	return nil
 }
 
 // cancelAcceptedTask schedules cancellation independently of the stopped run's

@@ -78,7 +78,7 @@ func TestRecordActivityStoresRootStartDecision(t *testing.T) {
 		type_   string
 	}{
 		{name: "active", outcome: session.RunStartProceed, status: session.RunStatusRunning, type_: string(hooks.RunStarted)},
-		{name: "ended", end: true, outcome: session.RunStartStop, status: session.RunStatusCanceled, type_: string(hooks.RunStarted)},
+		{name: "ended", end: true, outcome: session.RunStartStop, status: session.RunStatusRunning, type_: string(hooks.RunStarted)},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -120,7 +120,7 @@ func TestRecordActivityStoresRootStartDecision(t *testing.T) {
 			require.Len(t, page.Events, wantRecords)
 			require.Equal(t, test.type_, string(page.Events[0].Type))
 			if test.end {
-				require.Equal(t, string(hooks.RunCompleted), string(page.Events[1].Type))
+				require.Equal(t, string(storage.CancellationRecordType), string(page.Events[1].Type))
 			}
 		})
 	}
@@ -133,7 +133,7 @@ func TestRecordActivityStoresRenderedPromptsOnlyForStartedRun(t *testing.T) {
 		wantTypes  []string
 	}{
 		{name: "active", wantTypes: []string{string(hooks.RunStarted), string(hooks.PromptRendered)}},
-		{name: "ended", endSession: true, wantTypes: []string{string(hooks.RunStarted), string(hooks.RunCompleted)}},
+		{name: "ended", endSession: true, wantTypes: []string{string(hooks.RunStarted), string(storage.CancellationRecordType)}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -279,10 +279,10 @@ func TestRecordActivityRejectsStartRecordsWithWrongSessionStatus(t *testing.T) {
 			name: "root stop",
 			kind: storageCommandRootStart,
 			store: startSessionStatusStore{root: storage.RootRunStartResult{
-				Outcome:   session.RunStartStop,
-				RunStatus: session.RunStatusCanceled,
-				Started:   ended,
-				Canceled:  active,
+				Outcome:      session.RunStartStop,
+				RunStatus:    session.RunStatusRunning,
+				Started:      ended,
+				Cancellation: active,
 			}},
 			want: `start record 1 has session status "active", want all records to report "ended"`,
 		},
@@ -302,10 +302,10 @@ func TestRecordActivityRejectsStartRecordsWithWrongSessionStatus(t *testing.T) {
 			kind: storageCommandChildStart,
 			store: startSessionStatusStore{child: storage.ChildRunStartResult{
 				Outcome:      session.RunStartStop,
-				RunStatus:    session.RunStatusCanceled,
+				RunStatus:    session.RunStatusRunning,
 				ParentRecord: ended,
 				Started:      active,
-				Canceled:     ended,
+				Cancellation: ended,
 			}},
 			want: `start record 1 has session status "active", want all records to report "ended"`,
 		},
@@ -314,10 +314,10 @@ func TestRecordActivityRejectsStartRecordsWithWrongSessionStatus(t *testing.T) {
 			kind: storageCommandChildStart,
 			store: startSessionStatusStore{child: storage.ChildRunStartResult{
 				Outcome:      session.RunStartStop,
-				RunStatus:    session.RunStatusCanceled,
+				RunStatus:    session.RunStatusRunning,
 				ParentRecord: ended,
 				Started:      ended,
-				Canceled:     active,
+				Cancellation: active,
 			}},
 			want: `start record 2 has session status "active", want all records to report "ended"`,
 		},

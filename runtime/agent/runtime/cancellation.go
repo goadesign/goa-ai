@@ -30,17 +30,9 @@ const (
 )
 
 type (
-	// CancelRequest describes an explicit runtime-owned cancellation request.
-	//
-	// Contract:
-	// - RunID and Reason are required.
-	// - Reason should use the canonical run.CancellationReason* constants.
-	CancelRequest struct {
-		// RunID identifies the run to cancel.
-		RunID string
-		// Reason records who or what initiated the cancellation.
-		Reason string
-	}
+	// CancelRequest identifies the run whose unfinished work must be canceled
+	// and the first accepted reason shared with workflow engines.
+	CancelRequest = api.CancellationRequest
 
 	// CancellationReasonConflictError reports a later cancellation request whose
 	// reason differs from the first durable request.
@@ -108,23 +100,15 @@ func (r *Runtime) handleWorkflowCancellation(
 // publishRunCancellation stores the reason from a workflow cancellation
 // command. The engine waits for this activity before it stops the workflow.
 func (r *Runtime) publishRunCancellation(wfCtx engine.WorkflowContext, input *RunInput, req engine.CancellationRequest) error {
-	payload, err := json.Marshal(cancellationIntentPayload{Reason: req.Reason})
+	record, err := buildCancellationRecord(&RecordActivityInput{
+		RunID: input.RunID, AgentID: input.AgentID, SessionID: input.SessionID,
+		TurnID: input.TurnID, TimestampMS: wfCtx.Now().UnixMilli(),
+	}, req.Reason)
 	if err != nil {
 		return err
 	}
 	output, err := r.executeStorageWithRetry(wfCtx.Detached().Context(), &api.StorageActivityCommand{
-		Cancellation: &api.RunCancellationCommand{
-			Record: &RecordActivityInput{
-				Type:        storage.CancellationRecordType,
-				EventKey:    cancellationIntentEventKey,
-				RunID:       input.RunID,
-				AgentID:     input.AgentID,
-				SessionID:   input.SessionID,
-				TurnID:      input.TurnID,
-				TimestampMS: wfCtx.Now().UnixMilli(),
-				Payload:     rawjson.Message(payload),
-			},
-		},
+		Cancellation: &api.RunCancellationCommand{Record: record},
 	})
 	if err != nil {
 		return err
@@ -133,6 +117,20 @@ func (r *Runtime) publishRunCancellation(wfCtx engine.WorkflowContext, input *Ru
 		return &engine.CancellationConflictError{RunID: req.RunID, Reason: req.Reason}
 	}
 	return nil
+}
+
+// buildCancellationRecord encodes the reason with the supplied run identity and
+// time. Start admission and later cancellation commands store the same record.
+func buildCancellationRecord(input *RecordActivityInput, reason string) (*RecordActivityInput, error) {
+	payload, err := json.Marshal(cancellationIntentPayload{Reason: reason})
+	if err != nil {
+		return nil, err
+	}
+	return &RecordActivityInput{
+		Type: storage.CancellationRecordType, EventKey: cancellationIntentEventKey,
+		RunID: input.RunID, AgentID: input.AgentID, SessionID: input.SessionID,
+		TurnID: input.TurnID, TimestampMS: input.TimestampMS, Payload: rawjson.Message(payload),
+	}, nil
 }
 
 // loadRunCancellation loads the stored cancellation provenance for the run when

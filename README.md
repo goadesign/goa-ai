@@ -367,8 +367,12 @@ explicit host capability on that request. `Listen` can select task IDs and
 receive their acknowledged full state through the same subscription callback.
 Agent execution retains Task identity across worker replacement and uses workflow
 timers for temporary read and cancellation delivery failures. The creating tool
-and uncertain answer submission are never repeated. Generated server bindings,
-suspended-run cancellation and one-successor admission remain release requirements.
+and uncertain answer submission are never repeated. Ended-session admission records
+cancellation intent; the accepted workflow settles saved Tasks and children before
+it records canceled completion. Failed cleanup records failure. Store implementations
+must replace terminal-at-start records with this intent contract. Generated server
+bindings and durable cancellation through the public suspended-run entry point
+remain release requirements.
 
 Generated MCP adapters accept the application's configured Goa endpoints.
 Authentication, method scopes, interceptors and endpoint middleware therefore run

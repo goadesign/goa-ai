@@ -85,9 +85,9 @@ func TestStartResultRejectsInvalidRelations(t *testing.T) {
 			want   string
 		}{
 			{"proceed reason", func(s *api.StartRunResult) { s.CancellationReason = run.CancellationReasonSessionEnded }, "cannot have a cancellation reason"},
-			{"stop running", func(s *api.StartRunResult) {
-				s.Outcome, s.CancellationReason = session.RunStartStop, run.CancellationReasonSessionEnded
-			}, "requires canceled status"},
+			{"stop completed", func(s *api.StartRunResult) {
+				s.Outcome, s.RunStatus, s.CancellationReason = session.RunStartStop, session.RunStatusCompleted, run.CancellationReasonSessionEnded
+			}, "requires running, canceled, or failed status"},
 			{"stop other reason", func(s *api.StartRunResult) {
 				s.Outcome, s.RunStatus, s.CancellationReason = session.RunStartStop, session.RunStatusCanceled, run.CancellationReasonUserRequested
 			}, "session_ended reason"},

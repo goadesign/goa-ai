@@ -104,7 +104,11 @@ func (l *workflowLoop) applyExecutionContinuation(batch *stepBatch, pending *api
 			return nil, err
 		}
 		call.ExecutionContinuation = continuation
-		outcomes, timedOut, err := l.executeImmediateToolCalls([]ToolCall{call}, record.expectedChildren, map[string]*taskExecution{call.ToolCallID: record.task})
+		// The activity batch now owns the Task, including cleanup on a failed
+		// update. The saved record takes it back only after another input round.
+		task := record.task
+		record.task = nil
+		outcomes, timedOut, err := l.executeImmediateToolCalls([]ToolCall{call}, record.expectedChildren, map[string]*taskExecution{call.ToolCallID: task})
 		batch.timedOut = batch.timedOut || timedOut
 		if err != nil {
 			return nil, err

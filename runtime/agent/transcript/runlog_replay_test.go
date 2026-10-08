@@ -11,7 +11,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
-	agentrun "goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/runlog"
 	"goa.design/goa-ai/runtime/agent/session"
 	"goa.design/goa-ai/runtime/agent/storage"
@@ -152,20 +151,15 @@ func newTranscriptTestStore(t *testing.T, ctx context.Context) *storageinmem.Sto
 	started := transcriptLifecycleRecord(t, hooks.NewRunStartedEvent(
 		"run-1", "agent-1", "session-1", "", "", nil,
 	), "run-started", now)
-	canceled := transcriptLifecycleRecord(t, hooks.NewRunCompletedEvent(
-		"run-1",
-		"agent-1",
-		"session-1",
-		"canceled",
-		agentrun.PhaseCanceled,
-		nil,
-		context.Canceled,
-		&agentrun.Cancellation{Reason: agentrun.CancellationReasonSessionEnded},
-	), "run-canceled", now)
+	canceled := &runlog.Event{
+		RunID: "run-1", AgentID: "agent-1", SessionID: "session-1", Timestamp: now,
+		Type: storage.CancellationRecordType, EventKey: "cancellation-intent",
+		Payload: []byte(`{"reason":"session_ended"}`),
+	}
 	_, err = store.StartRootRun(ctx, storage.RootRunStart{RequestDigest: [32]byte{1},
-		Run:      session.RunStart{AgentID: "agent-1", RunID: "run-1", SessionID: "session-1", SeedEndID: storage.EmptySeedEndID, StartedAt: now},
-		Started:  started,
-		Canceled: canceled,
+		Run:          session.RunStart{AgentID: "agent-1", RunID: "run-1", SessionID: "session-1", SeedEndID: storage.EmptySeedEndID, StartedAt: now},
+		Started:      started,
+		Cancellation: canceled,
 	})
 	require.NoError(t, err)
 	return store

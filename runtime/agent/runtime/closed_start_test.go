@@ -99,7 +99,7 @@ func TestClosedStartCancellationDoesNotBecomeAccepted(t *testing.T) {
 	}
 }
 
-func TestEndedSessionStartKeepsOriginalStopBehavior(t *testing.T) {
+func TestEndedSessionStartStoresIntentWithoutTerminalCompletion(t *testing.T) {
 	for _, kind := range []storageCommandKind{storageCommandRootStart, storageCommandChildStart} {
 		t.Run(fmt.Sprint(kind), func(t *testing.T) {
 			f := newClosedStartFixture(t, kind, session.RunStatusCanceled, true)
@@ -115,17 +115,17 @@ func TestEndedSessionStartKeepsOriginalStopBehavior(t *testing.T) {
 			require.NoError(t, err)
 			start := runStartStorageResult(f.input, result)
 			assert.Equal(t, session.RunStartStop, start.Outcome)
-			assert.Equal(t, session.RunStatusCanceled, start.RunStatus)
+			assert.Equal(t, session.RunStatusRunning, start.RunStatus)
 			assert.Equal(t, run.CancellationReasonSessionEnded, start.CancellationReason)
-			count := 2
+			count := 1
 			if kind == storageCommandChildStart {
-				count = 3
+				count = 2
 			}
 			assert.Len(t, f.bus.events, count)
 			assert.Empty(t, f.sink.snapshot())
 			retry, err := f.runtime.executeStorageCommand(t.Context(), f.command)
 			require.NoError(t, err)
-			assert.Equal(t, session.RunStatusCanceled, runStartStorageResult(f.input, retry).RunStatus)
+			assert.Equal(t, session.RunStatusRunning, runStartStorageResult(f.input, retry).RunStatus)
 			assert.Len(t, f.bus.events, count)
 
 			state := &workflowFinalizationState{}

@@ -1028,8 +1028,11 @@ completed, failed, or canceled returns `engine.ErrWorkflowCompleted` before
 planner work, prompt or transcript writes, or terminal replacement. The
 storage activity validates the complete result before publishing hooks and
 suppresses both parent-link and start publication for that closed replay.
-An original `stop` outcome still publishes its newly inserted canceled
-lifecycle and returns cancellation. Prompt references are derived from `PromptRendered`, the
+An original `stop` outcome stores a cancellation intent and keeps the admitted
+workflow running while it settles inherited Tasks and children. The workflow
+then writes canceled completion, or failed completion if cleanup is permanently
+rejected. An exact closed retry selects the original start and intent without
+replacing the terminal result. Prompt references are derived from `PromptRendered`, the
 continuation predecessor in `RunStarted`, and `ChildRunLinked` rather than
 duplicated in `RunMeta`. A child continuation's prompt references follow its
 exact accepted history source, not equality between its old and new execution
@@ -3060,3 +3063,21 @@ identity never changes and exact retries select the same records. Another
 successor cannot publish a run or child link. The owning store exposes the
 current identity through `LoadRun`; consumers do not scan history to select
 recent work. Each separate child call retains its own continuation chain.
+
+Tool activities retain the original invocation's `ToolCall.RunID` across Task
+reads, updates, cancellation and host-input successors. Registry admission uses
+that same identity and the saved operation sequence; it cannot reinterpret a
+successor as a fresh invocation. The successor workflow owns later result records
+through the existing separate call and result run references.
+
+Before publishing host questions, the workflow loop retains unfinished Task and
+child records. Initial and resumed workflows use that same owner during
+finalization; successful suspension transfers ownership through the stored
+checkpoint. A cancellation accepted before suspension cannot discard those
+records. Cleanup failure remains a separate error cause, so the runtime and
+both engine adapters report failure rather than successful cancellation.
+
+A child continuation's execution ID includes the current parent call and exact
+source suspension. If answering produces another question, cancellation uses a
+distinct child execution even within the same parent turn. Answers require a new
+conversation turn; cleanup supplies no answer and may keep the existing turn.

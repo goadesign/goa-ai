@@ -3682,3 +3682,108 @@ fixture accepts both valid branches and rejects missing/unknown discriminators,
 wrong fields and invalid values; it passes in 1.152 s (1.81 s with compilation).
 Selected agent schemas pass in 0.492 s. All affected generator lint scopes pass
 with zero issues, including the corrected builder. No full suite was run.
+
+### Cancellation ownership across suspended runs and ended sessions
+
+The complete path is `CancelRun` → engine cancellation command → stored run
+metadata. A suspended workflow has already closed. The current terminal branch
+therefore returns success without restoring its accepted Task state. Ordinary
+continuation loads the exact suspension, publishes its original history prefix,
+and admits a new root through `StartRootRun`; a suspended agent tool instead
+starts through `applyChildContinuation` and `StartChildRun` under the new active
+parent. The atomic successor selection is the owner of competing starts.
+
+There is a second lifecycle problem: ended-session admission writes
+`RunCompleted` before `ExecuteWorkflow` restores inherited work. `RunStartStop`
+then returns before workflow finalization is enabled. A cancellation continuation
+cannot use that path to settle Tasks or keep an execution parent active while its
+suspended children finish. Moving this problem into an MCP-only scheduler, allowing
+ordinary execution after session closure, inventing a host answer, or weakening
+running-parent checks would assign completion to the wrong component.
+
+The from-scratch design records the first cancellation reason at admission and
+leaves the accepted workflow responsible for cleanup and its final terminal
+record. The shared start transaction owns both first records and any successor
+selection. The same existing Task cancellation operation and child-workflow route
+perform cleanup. A terminal record means the workflow has finished its delivery
+obligation; it does not prove that a remote server stopped every effect after
+acknowledging `tasks/cancel`.
+
+Preserve these outcomes across the breaking migration:
+
+| Request and owner state | Required outcome |
+| --- | --- |
+| Active-session initial root or child | Existing start, planning and domain effects remain unchanged. |
+| Ended-session initial root or child | Store the cancellation reason, perform no planning or new domain effects, then record canceled completion. |
+| Ended-session continuation | Select one successor, restore inherited work, deliver cancellation through the same Task and child paths, then record canceled completion. |
+| Exact start retry while cleanup runs | Select the original start and intent; do not add records or execute the original tool again. |
+| Exact start retry after cleanup closes | Select the original start and intent plus the current terminal state; the completion time belongs to finalization rather than admission. |
+| Answer wins successor admission | Cancellation follows the stored successor and remains workflow-owned until that run accepts it. |
+| Cancellation wins successor admission | Reject a different answering successor without records or child links. |
+| Suspended child | Keep the original logical call and a valid execution parent; do not use a detached application scheduler. |
+| Sessionless or synchronous run | Preserve its existing lifecycle; these runs do not inherit suspended session work. |
+
+Implementation order:
+
+1. Replace ended-session terminal-at-start records with the shared cancellation
+   intent contract. Update lifecycle validation, both first-party stores, storage
+   transport callers, exact retries, workflow finalization and documentation
+   together. No compatibility path or dual record format remains.
+2. Represent answering and cancellation as one closed continuation action. Keep
+   caller-owned domain answers separate from runtime-owned cancellation intent;
+   the existing typed union validator and common workflow codec enforce exactly
+   one selected operation. Public answering and cancellation methods stay separate.
+3. Make cancellation delivery and successor following replay-safe workflow work.
+   Reuse the existing cancellation request and engine ownership; do not require a
+   client to call again after the server has accepted the obligation.
+4. Restore pending Task and child state before ordinary work can run. Reuse the
+   shared cancellation implementation, retain exact operation sequence and Task
+   identity, and generalize the existing child proof to the selected saved work
+   rather than adding another ownership path.
+5. Verify root and child races, caller-only processes, worker replacement,
+   temporary delivery failure, late cancellation, ended-session admission and
+   exact closed retries before Task advertisement or release.
+
+This strengthens lifecycle completion ownership and changes stored start records,
+so every store and transport caller must cut over together. These paths have not
+been deployed. Populated-storage preflight, historical-read preservation and
+independent acceptance evidence remain required; source rollback alone is not a
+storage rollback. The framework PR remains draft throughout this work.
+
+Suspended-child cancellation preserves the active child behavior: a canceled
+child makes its waiting parent cancel and settle its other children. The selected
+child keeps the requested reason; related workflows use `engine_canceled`.
+Session closure chooses `session_ended` instead. A permanent cleanup failure
+records failed completion and remains observable on exact retries; it is not a
+successful cancellation acknowledgment. The original intent and its timestamp
+remain separate from the final record.
+
+Activity scheduling must preserve the invocation's original `ToolCall.RunID`
+through every Task read, update and cancel. A successor owns later result records,
+not a new external invocation. The existing call already carries this fact; no
+extra caller-visible identity field or registry-specific dispatch path is needed.
+
+The workflow loop now retains pending work before question publication for both
+initial and resumed runs. Focused caller tests cover cancellation during the
+first Task question, before restored answers, during an accepted Task update,
+and after a child has saved a second question. Child continuation IDs include
+the exact source suspension, preventing an answer and later cleanup within one
+parent execution from reusing a closed child ID. Cleanup may keep its existing
+conversation turn because it supplies no domain answer.
+
+The final boundary checks require exactly one answer or cancellation and reject
+a cancellation subject outside the selected checkpoint. Runtime, closed-start,
+and Temporal child checks pass (1.076 s, 0.449 s, and 0.760 s in the selected
+packages). The lifecycle package compiled in that command without a matching
+test; its prior focused validation checks remain the evidence for that layer.
+Scoped lint passes with zero issues. A further end-to-end check exposed an
+in-memory engine status mismatch: cancellation joined with cleanup failure was
+reported as canceled even though storage correctly recorded failed. Both
+components now use the existing complete-error classifier, with failed cleanup
+preserved as a separate cause. The focused permanent-cleanup test covers both
+server rejection and a canceled cleanup attempt.
+
+Public suspended-run cancellation delivery, caller-store migration, durable
+answer-versus-cancellation following, complete Task producer generation, and
+the remaining capability gates are still unfinished. This checkpoint does not
+authorize release or Task capability advertisement.

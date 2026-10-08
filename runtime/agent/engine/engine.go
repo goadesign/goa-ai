@@ -247,12 +247,7 @@ type (
 	}
 
 	// CancellationRequest identifies one workflow and its write-once reason.
-	CancellationRequest struct {
-		// RunID identifies the workflow to cancel.
-		RunID string
-		// Reason records why cancellation was requested.
-		Reason string
-	}
+	CancellationRequest = api.CancellationRequest
 
 	// CancellationHandler records one cancellation request from workflow code.
 	// It returns ErrWorkflowCompleted when terminal work has already started.

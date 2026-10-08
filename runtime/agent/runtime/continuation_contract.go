@@ -17,6 +17,7 @@ import (
 	"reflect"
 	"slices"
 	"time"
+	"unicode/utf8"
 
 	"goa.design/goa-ai/internal/registrycontract"
 	agent "goa.design/goa-ai/runtime/agent"
@@ -601,7 +602,7 @@ func validateWorkflowRunInput(input *RunInput) error {
 		}
 		return nil
 	}
-	if err := validatePendingInputResponse(input.Continuation.Response); err != nil {
+	if err := validateRunContinuationOperation(input.Continuation); err != nil {
 		return err
 	}
 	if len(input.Labels) > 0 || len(input.Metadata) > 0 ||
@@ -609,6 +610,25 @@ func validateWorkflowRunInput(input *RunInput) error {
 		input.ParentToolCallID != "" || input.Tool != "" || len(input.ToolArgs) > 0 ||
 		input.ToolRegistry != nil {
 		return errors.New("run continuation cannot include caller-supplied checkpoint state")
+	}
+	return nil
+}
+
+// validateRunContinuationOperation rejects missing or mixed operations before
+// a worker restores saved values or schedules any external work.
+func validateRunContinuationOperation(input *api.RunContinuationInput) error {
+	if (input.Response == nil) == (input.Cancellation == nil) {
+		return errors.New("run continuation requires exactly one answer or cancellation")
+	}
+	if input.Response != nil {
+		return validatePendingInputResponse(input.Response)
+	}
+	request := input.Cancellation
+	if request.RunID == "" || request.Reason == "" {
+		return errors.New("run continuation cancellation requires run id and reason")
+	}
+	if !utf8.ValidString(request.RunID) || !utf8.ValidString(request.Reason) {
+		return errors.New("run continuation cancellation contains invalid UTF-8")
 	}
 	return nil
 }
@@ -767,6 +787,19 @@ func validateContinuationAgainstCheckpoint(input *RunInput, checkpoint *workflow
 	if err := validateContinuationIdentity(input, checkpoint); err != nil {
 		return err
 	}
+	if err := validateRunContinuationOperation(input.Continuation); err != nil {
+		return err
+	}
+	if request := input.Continuation.Cancellation; request != nil {
+		found, err := checkpointContainsRun(checkpoint, definition, request.RunID)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return fmt.Errorf("cancellation run %q is not saved in the selected checkpoint", request.RunID)
+		}
+		return nil
+	}
 	publicPending, err := publicPendingInputs(checkpoint.Pending)
 	if err != nil {
 		return err
@@ -775,6 +808,33 @@ func validateContinuationAgainstCheckpoint(input *RunInput, checkpoint *workflow
 		return err
 	}
 	return validateContinuationResponse(checkpoint, input.Continuation.Response, definition)
+}
+
+// checkpointContainsRun follows only the child calls proved by the selected
+// checkpoint and generated definitions. Another run in the same session cannot
+// be canceled through this continuation.
+func checkpointContainsRun(checkpoint *workflowCheckpoint, definition AgentDefinition, runID string) (bool, error) {
+	if checkpoint.PreviousRunID == runID {
+		return true, nil
+	}
+	for _, record := range checkpoint.Batch.Records {
+		if record.ChildSuspension == nil {
+			continue
+		}
+		childDefinition, err := childDefinitionForCall(record.Call, definition)
+		if err != nil {
+			return false, err
+		}
+		child, err := decodeWorkflowCheckpoint(record.ChildSuspension, childDefinition)
+		if err != nil {
+			return false, err
+		}
+		found, err := checkpointContainsRun(child, childDefinition, runID)
+		if err != nil || found {
+			return found, err
+		}
+	}
+	return false, nil
 }
 
 // validateContinuationResponse checks caller-supplied tool results with the

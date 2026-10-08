@@ -1,20 +1,11 @@
 package runtime
 
-// workflow_loop.go defines the internal loop context used by the durable plan/tool
-// workflow implementation.
-//
-// The original workflow implementation threaded many values (workflow context,
-// registration, run input/base, deadlines, activity options,
-// parent tracking, etc.) through long helper signatures. That style is brittle:
-// it is easy to mis-thread values (e.g., budget vs hard deadline) and hard to
-// evolve without propagating parameters everywhere.
-//
-// Contract:
-// - workflowLoop is used only from within workflow execution (ExecuteWorkflow/runLoop).
-// - It owns the shared, immutable context for a run iteration and provides helpers
-//   that use workflow time for replay safety.
-// - Mutable per-run state is held in runLoopState and is intentionally mutated in
-//   place by loop methods.
+// workflow_loop.go owns the planner state, tool activity settings, and deadlines
+// used by one running agent workflow. Loop methods use workflow time and engine
+// operations so replay follows the same calls and transitions. Before publishing
+// a host question, the loop retains accepted Tasks and suspended children. The
+// workflow finalizer settles that work on failure or cancellation; a successful
+// suspension transfers it through the stored checkpoint to the next workflow.
 
 import (
 	"time"
@@ -53,6 +44,11 @@ type (
 		deadlines     runDeadlines
 		resumeOpts    engine.ActivityOptions
 		toolOpts      engine.ActivityOptions
+
+		// Unfinished records remain owned here until execution accepts them or
+		// suspension storage transfers them to the next workflow.
+		unfinishedBatch   *stepBatch
+		unfinishedPending []checkpointPendingInput
 	}
 
 	runDeadlines struct {

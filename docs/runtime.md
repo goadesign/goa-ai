@@ -1134,7 +1134,9 @@ runtime also rejects an event without a prompt ID or version, or whose scoped
 session differs from the run session. The
 accepted root or child workflow stores `RunStarted` and then these prompt events
 before planner work. If session ending prevents the run from starting, it stores
-the canceled start and no prompt events. Consumer-side agent-tool rendering runs
+the cancellation intent and no prompt events. The workflow settles inherited
+Tasks and children before it stores its terminal result; failed cleanup records
+failure. Consumer-side agent-tool rendering runs
 in an activity and carries its recorded text and events in the child input.
 Workflow replay therefore reuses the activity result instead of reading prompt
 storage again. `RunOneShot` gives
@@ -5341,16 +5343,16 @@ selected result before publishing any hook:
 | --- | --- |
 | `proceed`, `running` | Existing start publication and execution continue. |
 | `proceed`, any closed state | No start or parent-link publication. Execution returns `engine.ErrWorkflowCompleted`. |
-| `stop`, `canceled`, newly inserted records | Existing ended-Session cancellation behavior remains. |
-| `stop`, `canceled`, original records | No new publication or execution. |
+| `stop`, `running` | The accepted workflow settles inherited work before storing its terminal result. |
+| `stop`, `canceled` or `failed`, original records | No new publication or execution; preserve the actual cleanup outcome. |
 | Missing status or inconsistent result | The result is rejected before publication or execution. |
 
 `stop` is valid only for Session root and child starts. It requires
-`CancellationReason == "session_ended"` and the canceled completion record.
+`CancellationReason == "session_ended"` and the cancellation intent record.
 `proceed` carries no initial cancellation reason. Its ordered record counts
 are one for root/one-shot starts and two for child starts; `stop` adds one
-completion record. Every record needs its committed ID and the existing
-consistent Session status. A closed `proceed` replay must report
+intent record. Every record needs its committed ID and the existing
+consistent Session status. Every closed start replay must report
 `Inserted == false` for every start and parent-link record.
 
 `ExecuteWorkflow`, its cancellation handler, and direct `RunOneShot` calls all

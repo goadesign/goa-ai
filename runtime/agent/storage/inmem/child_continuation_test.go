@@ -30,8 +30,8 @@ func TestChildContinuationPreservesCallAcrossExecutionParents(t *testing.T) {
 			ParentLinked: hookRecord(t, "link-"+runID, start.StartedAt, hooks.NewChildRunLinkedEvent(
 				parent.RunID, agent.Ident(parent.AgentID), start.SessionID, "child", callID, runID, "child",
 			)),
-			Started:  startedRecord(t, "start", start),
-			Canceled: completedRecord(t, "stop", start, "canceled", &run.Cancellation{Reason: run.CancellationReasonSessionEnded}),
+			Started:      startedRecord(t, "start", start),
+			Cancellation: cancellationRecord(t, "stop", start, run.CancellationReasonSessionEnded),
 		}
 	}
 	suspend := func(start session.RunStart) {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/internal/temporalerrors"
 )
 
 type (
@@ -100,7 +101,7 @@ func awaitAgentChild(w engine.WorkflowContext, child engine.ChildWorkflowHandle,
 		if cancelErr := child.Cancel(w.Detached().Context()); cancelErr != nil {
 			return nil, errors.Join(err, cancelErr)
 		}
-		if _, joinErr := child.Get(w.Detached().Context()); joinErr != nil && !isRunCancellationError(joinErr) {
+		if _, joinErr := child.Get(w.Detached().Context()); joinErr != nil && !temporalerrors.CancellationOnly(joinErr) {
 			return nil, errors.Join(err, joinErr)
 		}
 		return nil, err

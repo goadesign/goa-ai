@@ -3,7 +3,6 @@
 package lifecycle
 
 import (
-	"context"
 	"testing"
 	"time"
 
@@ -11,7 +10,6 @@ import (
 
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/hooks"
-	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/runlog"
 	"goa.design/goa-ai/runtime/agent/session"
 	"goa.design/goa-ai/runtime/agent/storage"
@@ -62,26 +60,17 @@ func TestValidateRunStartsRequireMatchingTimestamps(t *testing.T) {
 		"",
 		nil,
 	), startedAt)
-	canceled := lifecycleRecord(t, hooks.NewRunCompletedEvent(
-		start.RunID,
-		agent.Ident(start.AgentID),
-		start.SessionID,
-		"canceled",
-		run.PhaseCanceled,
-		nil,
-		context.Canceled,
-		&run.Cancellation{Reason: run.CancellationReasonSessionEnded},
-	), startedAt)
-	root := storage.RootRunStart{RequestDigest: [32]byte{1}, Run: start, Started: started, Canceled: canceled}
+	canceled := startCancellationRecord(t, start.RunID, agent.Ident(start.AgentID), start.SessionID, startedAt)
+	root := storage.RootRunStart{RequestDigest: [32]byte{1}, Run: start, Started: started, Cancellation: canceled}
 	require.NoError(t, ValidateRootRunStart(root))
 
 	root.Started = cloneLifecycleRecord(started)
 	root.Started.Timestamp = startedAt.Add(time.Millisecond)
 	require.ErrorContains(t, ValidateRootRunStart(root), "started record: timestamp does not match run start")
 	root.Started = started
-	root.Canceled = cloneLifecycleRecord(canceled)
-	root.Canceled.Timestamp = startedAt.Add(time.Millisecond)
-	require.ErrorContains(t, ValidateRootRunStart(root), "canceled record: timestamp does not match run start")
+	root.Cancellation = cloneLifecycleRecord(canceled)
+	root.Cancellation.Timestamp = startedAt.Add(time.Millisecond)
+	require.ErrorContains(t, ValidateRootRunStart(root), "cancellation record: timestamp does not match run start")
 
 	childStart := start
 	childStart.RunID = "child"
@@ -94,16 +83,7 @@ func TestValidateRunStartsRequireMatchingTimestamps(t *testing.T) {
 		"",
 		nil,
 	), startedAt)
-	childCanceled := lifecycleRecord(t, hooks.NewRunCompletedEvent(
-		childStart.RunID,
-		agent.Ident(childStart.AgentID),
-		childStart.SessionID,
-		"canceled",
-		run.PhaseCanceled,
-		nil,
-		context.Canceled,
-		&run.Cancellation{Reason: run.CancellationReasonSessionEnded},
-	), startedAt)
+	childCanceled := startCancellationRecord(t, childStart.RunID, agent.Ident(childStart.AgentID), childStart.SessionID, startedAt)
 	linked := lifecycleRecord(t, hooks.NewChildRunLinkedEvent(
 		start.RunID,
 		agent.Ident(start.AgentID),
@@ -114,7 +94,7 @@ func TestValidateRunStartsRequireMatchingTimestamps(t *testing.T) {
 		agent.Ident(childStart.AgentID),
 	), startedAt.Add(time.Millisecond))
 	require.NoError(t, ValidateChildRunStart(storage.ChildRunStart{RequestDigest: [32]byte{1},
-		Run: childStart, ParentLinked: linked, Started: childStarted, Canceled: childCanceled,
+		Run: childStart, ParentLinked: linked, Started: childStarted, Cancellation: childCanceled,
 	}))
 }
 
@@ -194,16 +174,7 @@ func TestValidateChildRunStartRequiresParentToolIdentity(t *testing.T) {
 	started := lifecycleRecord(t, hooks.NewRunStartedEvent(
 		child.RunID, agent.Ident(child.AgentID), child.SessionID, child.ParentRunID, "", nil,
 	), startedAt)
-	canceled := lifecycleRecord(t, hooks.NewRunCompletedEvent(
-		child.RunID,
-		agent.Ident(child.AgentID),
-		child.SessionID,
-		"canceled",
-		run.PhaseCanceled,
-		nil,
-		context.Canceled,
-		&run.Cancellation{Reason: run.CancellationReasonSessionEnded},
-	), startedAt)
+	canceled := startCancellationRecord(t, child.RunID, agent.Ident(child.AgentID), child.SessionID, startedAt)
 
 	for _, test := range []struct {
 		name       string
@@ -225,7 +196,7 @@ func TestValidateChildRunStartRequiresParentToolIdentity(t *testing.T) {
 			), startedAt)
 
 			err := ValidateChildRunStart(storage.ChildRunStart{RequestDigest: [32]byte{1},
-				Run: child, ParentLinked: linked, Started: started, Canceled: canceled,
+				Run: child, ParentLinked: linked, Started: started, Cancellation: canceled,
 			})
 			require.ErrorContains(t, err, "parent tool name and call id are required")
 		})
@@ -261,7 +232,7 @@ func TestValidateStoredChildLinkRequiresExactStoredParent(t *testing.T) {
 	require.ErrorContains(t, ValidateStoredChildLink(linked, wrongSession, child), "different sessions")
 }
 
-func TestValidateSessionRunStartRejectsStartedAndCanceledKeyCollision(t *testing.T) {
+func TestValidateSessionRunStartRejectsStartedAndCancellationKeyCollision(t *testing.T) {
 	startedAt := time.Date(2026, time.August, 29, 12, 0, 0, 0, time.UTC)
 	start := session.RunStart{
 		AgentID: "service.agent", RunID: "run", SessionID: "session", StartedAt: startedAt,
@@ -269,20 +240,11 @@ func TestValidateSessionRunStartRejectsStartedAndCanceledKeyCollision(t *testing
 	started := lifecycleRecord(t, hooks.NewRunStartedEvent(
 		start.RunID, agent.Ident(start.AgentID), start.SessionID, "", "", nil,
 	), startedAt)
-	canceled := lifecycleRecord(t, hooks.NewRunCompletedEvent(
-		start.RunID,
-		agent.Ident(start.AgentID),
-		start.SessionID,
-		"canceled",
-		run.PhaseCanceled,
-		nil,
-		context.Canceled,
-		&run.Cancellation{Reason: run.CancellationReasonSessionEnded},
-	), startedAt)
+	canceled := startCancellationRecord(t, start.RunID, agent.Ident(start.AgentID), start.SessionID, startedAt)
 	canceled.EventKey = started.EventKey
 
 	require.ErrorContains(t, ValidateRootRunStart(storage.RootRunStart{RequestDigest: [32]byte{1},
-		Run: start, Started: started, Canceled: canceled,
+		Run: start, Started: started, Cancellation: canceled,
 	}), "require different event keys")
 	child := start
 	child.RunID = "child"
@@ -290,16 +252,7 @@ func TestValidateSessionRunStartRejectsStartedAndCanceledKeyCollision(t *testing
 	childStarted := lifecycleRecord(t, hooks.NewRunStartedEvent(
 		child.RunID, agent.Ident(child.AgentID), child.SessionID, child.ParentRunID, "", nil,
 	), startedAt)
-	childCanceled := lifecycleRecord(t, hooks.NewRunCompletedEvent(
-		child.RunID,
-		agent.Ident(child.AgentID),
-		child.SessionID,
-		"canceled",
-		run.PhaseCanceled,
-		nil,
-		context.Canceled,
-		&run.Cancellation{Reason: run.CancellationReasonSessionEnded},
-	), startedAt)
+	childCanceled := startCancellationRecord(t, child.RunID, agent.Ident(child.AgentID), child.SessionID, startedAt)
 	childCanceled.EventKey = childStarted.EventKey
 	require.ErrorContains(t, ValidateChildRunStart(storage.ChildRunStart{RequestDigest: [32]byte{1},
 		Run: child,
@@ -312,8 +265,8 @@ func TestValidateSessionRunStartRejectsStartedAndCanceledKeyCollision(t *testing
 			child.RunID,
 			agent.Ident(child.AgentID),
 		), startedAt),
-		Started:  childStarted,
-		Canceled: childCanceled,
+		Started:      childStarted,
+		Cancellation: childCanceled,
 	}), "require different event keys")
 }
 
@@ -328,16 +281,7 @@ func TestValidateRunStartPredecessor(t *testing.T) {
 		PredecessorRunID: "predecessor",
 		StartedAt:        startedAt,
 	}
-	canceled := lifecycleRecord(t, hooks.NewRunCompletedEvent(
-		start.RunID,
-		agent.Ident(start.AgentID),
-		start.SessionID,
-		"canceled",
-		run.PhaseCanceled,
-		nil,
-		context.Canceled,
-		&run.Cancellation{Reason: run.CancellationReasonSessionEnded},
-	), startedAt)
+	canceled := startCancellationRecord(t, start.RunID, agent.Ident(start.AgentID), start.SessionID, startedAt)
 	continued := lifecycleRecord(t, hooks.NewRunStartedEvent(
 		start.RunID,
 		agent.Ident(start.AgentID),
@@ -347,7 +291,7 @@ func TestValidateRunStartPredecessor(t *testing.T) {
 		nil,
 	), startedAt)
 	require.NoError(t, ValidateRootRunStart(storage.RootRunStart{RequestDigest: [32]byte{1},
-		Run: start, Started: continued, Canceled: canceled,
+		Run: start, Started: continued, Cancellation: canceled,
 	}))
 	mismatched := lifecycleRecord(t, hooks.NewRunStartedEvent(
 		start.RunID,
@@ -358,7 +302,7 @@ func TestValidateRunStartPredecessor(t *testing.T) {
 		nil,
 	), startedAt)
 	require.ErrorContains(t, ValidateRootRunStart(storage.RootRunStart{RequestDigest: [32]byte{1},
-		Run: start, Started: mismatched, Canceled: canceled,
+		Run: start, Started: mismatched, Cancellation: canceled,
 	}), "predecessor run id does not match run")
 
 	selfStart := start
@@ -372,7 +316,7 @@ func TestValidateRunStartPredecessor(t *testing.T) {
 		nil,
 	), startedAt)
 	require.ErrorContains(t, ValidateRootRunStart(storage.RootRunStart{RequestDigest: [32]byte{1},
-		Run: selfStart, Started: self, Canceled: canceled,
+		Run: selfStart, Started: self, Cancellation: canceled,
 	}), "predecessor run id must differ from run id")
 
 	oneShot := start
@@ -425,5 +369,16 @@ func validOrdinaryRecord() *runlog.Event {
 		Timestamp: time.Date(
 			2026, time.August, 29, 12, 0, 0, 0, time.UTC,
 		),
+	}
+}
+
+// startCancellationRecord supplies the intent required by session-owned start
+// admission; a final completed event is a different lifecycle operation.
+func startCancellationRecord(t *testing.T, runID string, agentID agent.Ident, sessionID string, at time.Time) *runlog.Event {
+	t.Helper()
+	return &runlog.Event{
+		RunID: runID, AgentID: agentID, SessionID: sessionID, Timestamp: at,
+		Type: storage.CancellationRecordType, EventKey: "cancellation-intent",
+		Payload: []byte(`{"reason":"session_ended"}`),
 	}
 }

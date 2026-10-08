@@ -383,7 +383,7 @@ func (e *eng) executeWorkflow(
 		switch {
 		case err == nil:
 			e.statuses[id] = engine.RunStatusCompleted
-		case errors.Is(err, context.Canceled):
+		case temporalerrors.CancellationOnly(err):
 			e.statuses[id] = engine.RunStatusCanceled
 		case errors.Is(err, context.DeadlineExceeded):
 			e.statuses[id] = engine.RunStatusTimedOut

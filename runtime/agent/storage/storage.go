@@ -138,8 +138,9 @@ type (
 		Run session.RunStart
 		// Started is stored for every accepted workflow.
 		Started *runlog.Event
-		// Canceled is stored after Started when the session has ended.
-		Canceled *runlog.Event
+		// Cancellation stores why an ended session prohibits ordinary execution.
+		// The workflow settles inherited work before storing its terminal record.
+		Cancellation *runlog.Event
 	}
 
 	// ChildRunStart contains the parent link and child lifecycle records.
@@ -152,8 +153,9 @@ type (
 		ParentLinked *runlog.Event
 		// Started is stored after ParentLinked for every accepted workflow.
 		Started *runlog.Event
-		// Canceled is stored after Started when the session has ended.
-		Canceled *runlog.Event
+		// Cancellation stores why an ended session prohibits ordinary execution.
+		// The workflow settles inherited work before storing its terminal record.
+		Cancellation *runlog.Event
 	}
 
 	// OneShotRunStart contains the identity and first record for a sessionless
@@ -249,8 +251,8 @@ type (
 		RunStatus session.RunStatus
 		// Started is the run-started record stored for every outcome.
 		Started AppendResult
-		// Canceled is the run-completed record stored only when Outcome is stop.
-		Canceled AppendResult
+		// Cancellation is the intent record stored only when Outcome is stop.
+		Cancellation AppendResult
 	}
 
 	// ChildRunStartResult reports the original child start and the current child state.
@@ -263,8 +265,8 @@ type (
 		ParentRecord AppendResult
 		// Started is the child run-started record stored for every outcome.
 		Started AppendResult
-		// Canceled is the child run-completed record stored only when Outcome is stop.
-		Canceled AppendResult
+		// Cancellation is the child intent record stored only when Outcome is stop.
+		Cancellation AppendResult
 	}
 
 	// OneShotRunStartResult reports the first record and current sessionless run state.

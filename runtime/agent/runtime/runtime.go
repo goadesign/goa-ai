@@ -1929,10 +1929,7 @@ func (r *Runtime) CancelRun(ctx context.Context, req CancelRequest) error {
 	if !ok || requester == nil {
 		return errors.New("engine does not support durable cancellation")
 	}
-	err := requester.RequestCancellation(ctx, engine.CancellationRequest{
-		RunID:  req.RunID,
-		Reason: req.Reason,
-	})
+	err := requester.RequestCancellation(ctx, req)
 	if err == nil {
 		return nil
 	}

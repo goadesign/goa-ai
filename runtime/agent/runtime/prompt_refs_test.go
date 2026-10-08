@@ -716,12 +716,9 @@ func admitPromptChildContinuationForTest(t *testing.T, store storage.Store, meta
 	linked := testHookRecord(t, hooks.NewChildRunLinkedEvent(
 		parent.RunID, agent.Ident(parent.AgentID), meta.SessionID, "test.child", callID, meta.RunID, agent.Ident(meta.AgentID),
 	), "child-link-"+meta.RunID, startedAt)
-	canceled := testHookRecord(t, hooks.NewRunCompletedEvent(
-		meta.RunID, agent.Ident(meta.AgentID), meta.SessionID, "canceled", agentrun.PhaseCanceled,
-		meta.Labels, context.Canceled, &agentrun.Cancellation{Reason: agentrun.CancellationReasonSessionEnded},
-	), "stopped", startedAt)
+	canceled := testStartCancellationRecord(t, start)
 	result, err := store.StartChildRun(t.Context(), storage.ChildRunStart{
-		RequestDigest: [32]byte{1}, Run: start, ParentLinked: linked, Started: started, Canceled: canceled,
+		RequestDigest: [32]byte{1}, Run: start, ParentLinked: linked, Started: started, Cancellation: canceled,
 	})
 	require.NoError(t, err)
 	require.Equal(t, session.RunStartProceed, result.Outcome)
@@ -768,19 +765,10 @@ func startStoppedRunForTest(t *testing.T, store storage.Store, meta session.RunM
 		"",
 		meta.Labels,
 	), "start", startedAt)
-	canceled := testHookRecord(t, hooks.NewRunCompletedEvent(
-		meta.RunID,
-		agent.Ident(meta.AgentID),
-		meta.SessionID,
-		"canceled",
-		agentrun.PhaseCanceled,
-		meta.Labels,
-		context.Canceled,
-		&agentrun.Cancellation{Reason: agentrun.CancellationReasonSessionEnded},
-	), "stopped", startedAt)
+	canceled := testStartCancellationRecord(t, start)
 	if meta.ParentRunID == "" {
 		result, err := store.StartRootRun(t.Context(), storage.RootRunStart{RequestDigest: [32]byte{1},
-			Run: start, Started: started, Canceled: canceled,
+			Run: start, Started: started, Cancellation: canceled,
 		})
 		require.NoError(t, err)
 		require.Equal(t, session.RunStartStop, result.Outcome)
@@ -798,7 +786,7 @@ func startStoppedRunForTest(t *testing.T, store storage.Store, meta session.RunM
 		agent.Ident(meta.AgentID),
 	), "child-link-"+meta.RunID, startedAt)
 	result, err := store.StartChildRun(t.Context(), storage.ChildRunStart{RequestDigest: [32]byte{1},
-		Run: start, ParentLinked: linked, Started: started, Canceled: canceled,
+		Run: start, ParentLinked: linked, Started: started, Cancellation: canceled,
 	})
 	require.NoError(t, err)
 	require.Equal(t, session.RunStartStop, result.Outcome)

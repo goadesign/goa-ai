@@ -99,15 +99,25 @@ type (
 		Continuation *RunContinuationInput
 	}
 
-	// RunContinuationInput starts a new workflow from one exact suspended run.
-	// The runtime validates Response against the first pending request before it
-	// decodes Checkpoint or schedules additional work.
+	// CancellationRequest identifies one run and the first accepted cancellation
+	// reason. Runtime callers and workflow engines use the same contract.
+	CancellationRequest struct {
+		// RunID identifies the run whose unfinished work must be canceled.
+		RunID string
+		// Reason records why cancellation was requested.
+		Reason string
+	}
+
+	// RunContinuationInput restores one exact suspended run to answer its first
+	// pending request or cancel saved work. Exactly one operation is required.
 	RunContinuationInput struct {
 		// Suspension is the terminal result returned by the preceding workflow.
 		Suspension *RunSuspension
-
-		// Response satisfies the first request in Suspension.Pending.
+		// Response satisfies the first pending request and excludes Cancellation.
 		Response *PendingInputResponse
+		// Cancellation selects the saved run or one of its suspended descendants.
+		// It excludes Response and never supplies an answer to a pending request.
+		Cancellation *CancellationRequest
 	}
 
 	// TagPolicyClause describes one tag-filtering clause for a run.
@@ -812,11 +822,11 @@ type (
 		// Append stores ordinary records without changing run lifecycle state.
 		Append *AppendRecordsCommand
 		// RootStart stores the start of a session root run. An ended session also
-		// stores the canceled completion that prevents the run from doing work.
+		// stores cancellation intent; the workflow settles inherited work before closing.
 		RootStart *RootRunStartCommand
 		// ChildStart stores a parent link and the start of a child run. An ended
-		// session also stores the canceled completion that prevents the run from
-		// doing work.
+		// session also stores cancellation intent; the workflow settles inherited
+		// work before closing.
 		ChildStart *ChildRunStartCommand
 		// OneShotStart stores the first record for a sessionless run.
 		OneShotStart *OneShotRunStartCommand
@@ -1000,7 +1010,8 @@ type (
 		// Registry carries the selected registration into the execution activity.
 		// Static tool calls leave it absent.
 		Registry *tools.RegistryBinding
-		// RunID identifies the run that owns this tool call.
+		// RunID identifies the run that first issued this invocation. Later Task
+		// and input operations retain it; the workflow owns new result records.
 		RunID string
 
 		// AgentID identifies the agent that owns this tool call.

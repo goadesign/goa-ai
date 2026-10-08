@@ -127,8 +127,8 @@ const (
 	// RunStartProceed records that the first start allowed planner and tool
 	// work. An exact retry must also inspect the current run status.
 	RunStartProceed RunStartOutcome = "proceed"
-	// RunStartStop prevents the workflow from doing work because its session
-	// had already ended.
+	// RunStartStop prevents ordinary work because the session had already ended.
+	// The workflow cancels inherited work before recording its terminal result.
 	RunStartStop RunStartOutcome = "stop"
 )
 

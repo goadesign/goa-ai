@@ -102,7 +102,7 @@ func replayStartOperation(t *testing.T, store *Store, start session.RunStart, ki
 	case "child":
 		command := storage.ChildRunStart{RequestDigest: [32]byte{1},
 			Run: start, ParentLinked: childLinkRecord(t, "link", parent, start),
-			Started: root.Started, Canceled: root.Canceled,
+			Started: root.Started, Cancellation: root.Cancellation,
 		}
 		return func() startReplayResult {
 			result, err := store.StartChildRun(t.Context(), command)

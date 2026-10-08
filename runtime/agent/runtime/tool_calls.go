@@ -783,6 +783,13 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 		taskStates:       taskStates,
 		ownedTasks:       make(map[string]futureInfo),
 	}
+	// Saved Tasks belong to this batch before any scheduling or deadline check.
+	// A canceled wait or failed schedule must still deliver their cancellation.
+	for _, call := range calls {
+		if task := taskStates[call.ToolCallID]; task != nil {
+			exec.ownedTasks[call.ToolCallID] = futureInfo{call: exec.normalizeToolCall(call), task: cloneTaskExecution(task)}
+		}
+	}
 	defer func() {
 		if resultErr != nil || timedOutResult {
 			resultErr = errors.Join(resultErr, exec.cancelAcceptedTasks(wfCtx))
@@ -958,7 +965,7 @@ func (e *toolBatchExec) cancelAndWaitForAgentChildren(wfCtx engine.WorkflowConte
 		}
 	}
 	for _, info := range children {
-		if _, err := info.handle.Get(ctx); err != nil && !isRunCancellationError(err) {
+		if _, err := info.handle.Get(ctx); err != nil && !temporalerrors.CancellationOnly(err) {
 			waitErr = errors.Join(waitErr, err)
 		}
 	}
