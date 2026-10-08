@@ -198,7 +198,7 @@ func TestRunnerRetainsRealJudgeDiagnostics(t *testing.T) {
 	assert.False(t, report.Scenarios[0].Passed)
 	assert.Nil(t, report.Scenarios[0].Requirements[0].Instances[0].Decision)
 	assert.Contains(t, report.Scenarios[0].Error, "recovery_cap")
-	assert.Contains(t, report.Scenarios[0].Error, "missing property 'complete'")
+	assert.Contains(t, report.Scenarios[0].Error, "missing property 'claim_1'")
 	assert.Contains(t, report.Scenarios[0].Error, "judgments")
 	assert.Len(t, client.requests, 4)
 	assert.Len(t, report.Scenarios[0].Calls, 4)

@@ -1,6 +1,7 @@
 package typesafe
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -55,9 +56,9 @@ func TestClientUsesNativeChoiceAndRetainsProbabilities(t *testing.T) {
 	result, err := client.Classify(ctx, "The task is complete.", testClaims(), "The task was requested.")
 	require.NoError(t, err)
 	require.Len(t, result.Predictions, 1)
-	assert.Equal(t, .97, result.Predictions[0].Probability)
+	assert.InDelta(t, .97, result.Predictions[0].Probability, 0)
 	require.Len(t, result.Calls, 1)
-	assert.Equal(t, nativeResponse, string(result.Calls[0].Response))
+	assert.True(t, bytes.Equal([]byte(nativeResponse), result.Calls[0].Response), "retain the exact provider response bytes")
 	require.NotNil(t, result.Calls[0].Usage)
 	assert.Equal(t, 123, result.Calls[0].Usage.InputTokens)
 	assert.Equal(t, 0, result.Calls[0].Usage.OutputTokens)

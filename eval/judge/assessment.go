@@ -23,7 +23,7 @@ const (
 // allowance. Actual provider model identities are retained on individual calls.
 func (j *Judge) Config() eval.EvaluatorConfig {
 	return eval.EvaluatorConfig{
-		ID: "goa-ai/typed-judge/1", Model: string(j.modelClass),
+		ID: "goa-ai/typed-judge/2", Model: string(j.modelClass),
 		Instructions: judgePrompt + abstentionPrompt + adjudicationPrompt,
 		Settings: map[string]string{
 			"max_output_tokens": strconv.Itoa(j.maxOutputTokens),
@@ -58,7 +58,8 @@ func (j *Judge) Adjudicate(ctx context.Context, subject string, claims []eval.Cl
 		}
 		byID[id] = conflict
 	}
-	for _, claim := range claims {
+	wireConflicts := make(map[string]eval.Disagreement, len(claims))
+	for index, claim := range claims {
 		conflict, exists := byID[claim.ID]
 		if !exists {
 			return eval.Reasoning{}, fmt.Errorf("missing disagreement for %q", claim.ID)
@@ -69,11 +70,17 @@ func (j *Judge) Adjudicate(ctx context.Context, subject string, claims []eval.Cl
 		if err := eval.ValidateClassification([]eval.Claim{claim}, eval.Classification{Predictions: []eval.Prediction{conflict.Prediction}}); err != nil {
 			return eval.Reasoning{}, err
 		}
+		// The schema and disagreement use the same request-local name. The
+		// caller's stable identities remain in the returned assessment.
+		key := assessmentClaimKey(index)
+		conflict.Judgment.ClaimID = key
+		conflict.Prediction.ClaimID = key
+		wireConflicts[key] = conflict
 	}
 	payload, err := json.Marshal(struct {
 		requestBody
 		Disagreements map[string]eval.Disagreement `json:"disagreements"`
-	}{requestBody: requestBody{Output: subject, Reference: reference}, Disagreements: byID})
+	}{requestBody: requestBody{Output: subject, Reference: reference}, Disagreements: wireConflicts})
 	if err != nil {
 		return eval.Reasoning{}, err
 	}
@@ -89,7 +96,11 @@ func (j *Judge) assess(ctx context.Context, claims []eval.Claim, payload []byte,
 	if err := eval.ValidateClaims(claims); err != nil {
 		return eval.Reasoning{}, err
 	}
-	spec, err := decisionToolSpec(claims, true)
+	wireClaims := make([]eval.Claim, len(claims))
+	for index, claim := range claims {
+		wireClaims[index] = eval.Claim{ID: assessmentClaimKey(index), Text: claim.Text}
+	}
+	spec, err := decisionToolSpec(wireClaims, true)
 	if err != nil {
 		return eval.Reasoning{}, err
 	}
@@ -107,8 +118,8 @@ func (j *Judge) assess(ctx context.Context, claims []eval.Claim, payload []byte,
 	if err != nil {
 		return result, err
 	}
-	for _, claim := range claims {
-		decision := response[claim.ID]
+	for index, claim := range claims {
+		decision := response[wireClaims[index].ID]
 		if decision.Label == "unresolved" {
 			result.Abstentions = append(result.Abstentions, eval.Abstention{ClaimID: claim.ID, Reason: decision.Rationale})
 		} else {
@@ -116,4 +127,11 @@ func (j *Judge) assess(ctx context.Context, claims []eval.Claim, payload []byte,
 		}
 	}
 	return result, nil
+}
+
+// assessmentClaimKey names one schema property using only ASCII letters,
+// digits and an underscore. Provider schemas receive these short names; callers
+// still receive their original claim IDs, including scoped or Unicode IDs.
+func assessmentClaimKey(index int) string {
+	return "claim_" + strconv.Itoa(index+1)
 }

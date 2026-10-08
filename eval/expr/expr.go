@@ -279,7 +279,7 @@ func (s *ScenarioExpr) Validate() error {
 	if inputContainsUnion(s.Input, make(map[string]struct{})) {
 		verr.Add(s, "scenario input does not support OneOf")
 	}
-	s.AssertionExpr.validate(verr, s, len(s.Assessments) > 0)
+	s.validate(verr, s, len(s.Assessments) > 0)
 	names := make(map[string]struct{}, len(s.Checks)+len(s.Requirements)+len(s.Assessments))
 	for _, check := range s.Checks {
 		names[check.Name] = struct{}{}
@@ -339,7 +339,7 @@ func (c *ComponentExpr) Validate() error {
 	if c.Description == "" {
 		verr.Add(c, "component description is required")
 	}
-	c.AssertionExpr.validate(verr, c, false)
+	c.validate(verr, c, false)
 	if c.Observation != nil {
 		if _, named := c.Observation.Type.(goaexpr.UserType); !named {
 			verr.Add(c, "component Observation must use a named Goa type")

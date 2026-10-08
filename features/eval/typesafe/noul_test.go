@@ -1,6 +1,7 @@
 package typesafe
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net/http"
@@ -38,9 +39,9 @@ func TestNoulUsesBinaryCriterionWithoutInventingFailureLabels(t *testing.T) {
 	defer cancel()
 	result, err := client.Classify(ctx, "Captured answer.", testClaims(), "Captured facts.")
 	require.NoError(t, err)
-	assert.Equal(t, .97, result.Predictions[0].Probability)
+	assert.InDelta(t, .97, result.Predictions[0].Probability, 0)
 	require.Len(t, result.Calls, 1)
-	assert.Equal(t, noulResponse, string(result.Calls[0].Response))
+	assert.True(t, bytes.Equal([]byte(noulResponse), result.Calls[0].Response), "retain the exact provider response bytes")
 	assert.Equal(t, 128, result.Calls[0].Usage.TotalTokens)
 	assert.Equal(t, 1, calls)
 	choice, err := NewChoice(http.DefaultClient, testConfig())

@@ -21,6 +21,8 @@ type (
 		typedChecks        map[expr.UserType]*typedCheckPlan
 		orderedTypedChecks []*typedCheckPlan
 		originalValidator  *codegen.NameDeclaration
+		originalPlanner    *originalValidatorPlanner
+		transportValidator *codegen.NameDeclaration
 		originalValidators []*originalValidatorPlan
 	}
 

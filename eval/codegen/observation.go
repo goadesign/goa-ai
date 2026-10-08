@@ -5,6 +5,7 @@ package codegen
 
 import (
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"goa.design/goa-ai/codegen/shared"
 	evalexpr "goa.design/goa-ai/eval/expr"
 	"goa.design/goa-ai/internal/codegen/codec"
+	"goa.design/goa-ai/internal/codegen/jsonshape"
 	goacodegen "goa.design/goa/v3/codegen"
 	goaexpr "goa.design/goa/v3/expr"
 )
@@ -20,6 +22,17 @@ type (
 	observationCodecPlan struct {
 		Value  *codec.Value
 		Layout *goacodegen.GoTypePlan
+		Schema string
+	}
+
+	// observationOccurrence retains decoder facts omitted by JSON Schema.
+	// Named definitions and their uses occupy separate paths, so a scenario's
+	// validation cannot disappear when another scenario uses the same Go type.
+	observationOccurrence struct {
+		Primitive        string                  `json:"primitive,omitempty"`
+		Validation       *goaexpr.ValidationExpr `json:"validation,omitempty"`
+		Default          any                     `json:"default,omitempty"`
+		NonNullableElems bool                    `json:"non_nullable_elems,omitempty"`
 	}
 
 	checkData struct {
@@ -109,10 +122,14 @@ func planObservation(suite *suitePlan, scenario *evalexpr.ScenarioExpr, planned 
 	if err != nil {
 		return err
 	}
-	// Two scenarios may share one observation type. Its strict codec is also
-	// shared; selectors and predicates remain specific to each scenario.
+	planned.Schema, err = observationSchema(observation, layout.Policy())
+	if err != nil {
+		return fmt.Errorf("scenario %q observation schema: %w", scenario.Name, err)
+	}
+	// Scenarios share a codec only when both their Go representation and every
+	// observation rule agree. Different rules still reuse the named Go type.
 	for _, existing := range suite.ObservationCodecs {
-		if existing.Layout.TypeDeclaration() == layout.TypeDeclaration() {
+		if existing.Layout.TypeDeclaration() == layout.TypeDeclaration() && existing.Schema == planned.Schema {
 			planned.Codec = existing
 			break
 		}
@@ -122,12 +139,8 @@ func planObservation(suite *suitePlan, scenario *evalexpr.ScenarioExpr, planned 
 		if err != nil {
 			return err
 		}
-		planned.Codec = &observationCodecPlan{Value: value, Layout: layout}
+		planned.Codec = &observationCodecPlan{Value: value, Layout: layout, Schema: planned.Schema}
 		suite.ObservationCodecs = append(suite.ObservationCodecs, planned.Codec)
-	}
-	planned.Schema, err = shared.ToJSONSchema(observation)
-	if err != nil {
-		return fmt.Errorf("scenario %q observation schema: %w", scenario.Name, err)
 	}
 	for _, check := range scenario.Checks {
 		planned.Checks = append(planned.Checks, checkData{
@@ -155,6 +168,66 @@ func planObservation(suite *suitePlan, scenario *evalexpr.ScenarioExpr, planned 
 		}
 	}
 	return nil
+}
+
+// observationSchema preserves the public JSON shape and adds a private digest
+// of the decoder facts that JSON Schema cannot distinguish. The existing replay
+// and qualification hashes therefore change when captured values would acquire
+// a different meaning, without requiring a runtime schema interpreter.
+func observationSchema(attribute *goaexpr.AttributeExpr, policy goacodegen.GoLayoutPolicy) (string, error) {
+	schema, err := shared.ToJSONSchema(attribute)
+	if err != nil {
+		return "", err
+	}
+	contract := struct {
+		Policy      goacodegen.GoLayoutPolicy
+		Occurrences map[string]observationOccurrence
+	}{Policy: policy, Occurrences: make(map[string]observationOccurrence)}
+	// ToJSONSchema rejects recursive observations before this traversal starts.
+	recordObservationOccurrences(attribute, "$", contract.Occurrences)
+	encoded, err := json.Marshal(contract)
+	if err != nil {
+		return "", fmt.Errorf("marshal observation decoder contract: %w", err)
+	}
+	var document map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(schema), &document); err != nil {
+		return "", fmt.Errorf("read generated observation schema: %w", err)
+	}
+	document["x-goa-observation-contract"] = json.RawMessage(strconv.Quote(fmt.Sprintf("%x", sha256.Sum256(encoded))))
+	encoded, err = json.Marshal(document)
+	if err != nil {
+		return "", fmt.Errorf("marshal observation schema identity: %w", err)
+	}
+	return string(encoded), nil
+}
+
+// recordObservationOccurrences retains original occurrence rules because the
+// shared JSON shape graph intentionally shares named definitions. Quoted field
+// names keep paths distinct even when an authored name contains a separator.
+func recordObservationOccurrences(attribute *goaexpr.AttributeExpr, path string, occurrences map[string]observationOccurrence) {
+	occurrence := observationOccurrence{Validation: attribute.Validation, Default: attribute.DefaultValue}
+	if primitive, ok := jsonshape.PrimitiveType(attribute); ok {
+		occurrence.Primitive = primitive.Name()
+	}
+	switch actual := attribute.Type.(type) {
+	case goaexpr.UserType:
+		recordObservationOccurrences(actual.Attribute(), path+"/definition", occurrences)
+	case *goaexpr.Array:
+		occurrence.NonNullableElems = actual.NonNullableElems
+		recordObservationOccurrences(actual.ElemType, path+"/element", occurrences)
+	case *goaexpr.Map:
+		recordObservationOccurrences(actual.KeyType, path+"/key", occurrences)
+		recordObservationOccurrences(actual.ElemType, path+"/element", occurrences)
+	case *goaexpr.Object:
+		for _, field := range *actual {
+			recordObservationOccurrences(field.Attribute, path+"/field/"+strconv.Quote(field.Name), occurrences)
+		}
+	case *goaexpr.Union:
+		for _, branch := range actual.Values {
+			recordObservationOccurrences(branch.Attribute, path+"/branch/"+strconv.Quote(branch.Name), occurrences)
+		}
+	}
+	occurrences[path] = occurrence
 }
 
 // planRequirements copies fixed assertions with their selected observation root.

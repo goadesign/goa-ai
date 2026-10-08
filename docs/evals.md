@@ -562,15 +562,20 @@ request's claims and unchanged for corrections. A finite allowance does not
 guarantee completion. The adapter never guesses model capabilities or switches
 output mechanisms after a failure.
 
-Its tool schema has one required property per claim ID, containing a label and
-nonempty rationale. Association is by property name, never response position.
+Its tool schema has one required property per claim, containing a label and
+nonempty rationale. Engine calls assign private request-local names such as
+`claim_1`, so scoped, long, or Unicode assertion IDs do not become provider schema
+names. The same names identify disagreement evidence during adjudication.
+Returned judgments and abstentions retain the original assertion IDs.
+Association is by property name, never response position.
 Strict decoding rejects missing, extra, and duplicate members. Engine calls also
 admit the explicit `unresolved` outcome. The existing structural correction policy
 permits one initial invocation and at most three corrections. A valid semantic
 decision or abstention does not trigger correction. Adjudication is one semantic
 attempt with the same bounded structural correction mechanism.
 
-The standalone `Judge.Judge` method still returns four-label judgments. Engine
+The standalone `Judge.Judge` method keeps its existing claim-ID property names
+and returns four-label judgments. Engine
 `Reason` and `Adjudicate` additionally retain abstentions and every actual call's
 available usage. Provider and transport errors retain their causes. Full
 requirement text and references are not truncated; the existing runtime tool

@@ -140,7 +140,7 @@ func ForAssessment(checks Checks) (eval.Suite, error) {
 				Description:  "The agent produces a final assistant reply to a user question.",
 				Tags:         []string{"smoke"},
 				Timeout:      time.Duration(30000000000),
-				Schema:       "{\"type\":\"object\",\"required\":[\"question\",\"answer\",\"terminal_phase\",\"terminal_failure\",\"run_error\"],\"properties\":{\"answer\":{\"type\":\"string\",\"description\":\"Captured assistant text, including an empty answer.\"},\"question\":{\"type\":\"string\",\"description\":\"The original question sent to the agent.\"},\"run_error\":{\"type\":\"string\",\"description\":\"The product call's returned error, or empty on success.\"},\"terminal_failure\":{\"type\":\"string\",\"description\":\"Observed workflow failure explanation, or empty.\"},\"terminal_phase\":{\"type\":\"string\",\"description\":\"Observed final workflow phase, or empty when absent.\"},\"tool_calls\":{\"type\":\"array\",\"description\":\"Invocations in the collector's causal order.\",\"items\":{\"type\":\"object\",\"required\":[\"name\",\"call_id\",\"parent_call_id\",\"completed\"],\"properties\":{\"arguments\":{\"type\":\"string\",\"description\":\"Exact tool-argument JSON bytes.\"},\"call_id\":{\"type\":\"string\",\"description\":\"The identifier linking invocation and result.\"},\"completed\":{\"type\":\"boolean\",\"description\":\"Whether a terminal tool result was observed.\"},\"failure\":{\"type\":\"object\",\"description\":\"Observed failure, when the tool failed.\",\"required\":[\"kind\",\"message\",\"recovery_action\"],\"properties\":{\"kind\":{\"type\":\"string\",\"description\":\"Observed failure classification.\"},\"message\":{\"type\":\"string\",\"description\":\"Observed failure explanation.\"},\"recovery_action\":{\"type\":\"string\",\"description\":\"The runtime's recorded recovery action.\"}},\"additionalProperties\":false},\"name\":{\"type\":\"string\",\"description\":\"The invoked tool.\"},\"parent_call_id\":{\"type\":\"string\",\"description\":\"The parent call, or empty for a root call.\"},\"result\":{\"type\":\"string\",\"description\":\"Exact result JSON bytes, when available.\"}},\"additionalProperties\":false}}},\"additionalProperties\":false}",
+				Schema:       "{\"additionalProperties\":false,\"properties\":{\"answer\":{\"type\":\"string\",\"description\":\"Captured assistant text, including an empty answer.\"},\"question\":{\"type\":\"string\",\"description\":\"The original question sent to the agent.\"},\"run_error\":{\"type\":\"string\",\"description\":\"The product call's returned error, or empty on success.\"},\"terminal_failure\":{\"type\":\"string\",\"description\":\"Observed workflow failure explanation, or empty.\"},\"terminal_phase\":{\"type\":\"string\",\"description\":\"Observed final workflow phase, or empty when absent.\"},\"tool_calls\":{\"type\":\"array\",\"description\":\"Invocations in the collector's causal order.\",\"items\":{\"type\":\"object\",\"required\":[\"name\",\"call_id\",\"parent_call_id\",\"completed\"],\"properties\":{\"arguments\":{\"type\":\"string\",\"description\":\"Exact tool-argument JSON bytes.\"},\"call_id\":{\"type\":\"string\",\"description\":\"The identifier linking invocation and result.\"},\"completed\":{\"type\":\"boolean\",\"description\":\"Whether a terminal tool result was observed.\"},\"failure\":{\"type\":\"object\",\"description\":\"Observed failure, when the tool failed.\",\"required\":[\"kind\",\"message\",\"recovery_action\"],\"properties\":{\"kind\":{\"type\":\"string\",\"description\":\"Observed failure classification.\"},\"message\":{\"type\":\"string\",\"description\":\"Observed failure explanation.\"},\"recovery_action\":{\"type\":\"string\",\"description\":\"The runtime's recorded recovery action.\"}},\"additionalProperties\":false},\"name\":{\"type\":\"string\",\"description\":\"The invoked tool.\"},\"parent_call_id\":{\"type\":\"string\",\"description\":\"The parent call, or empty for a root call.\"},\"result\":{\"type\":\"string\",\"description\":\"Exact result JSON bytes, when available.\"}},\"additionalProperties\":false}}},\"required\":[\"question\",\"answer\",\"terminal_phase\",\"terminal_failure\",\"run_error\"],\"type\":\"object\",\"x-goa-observation-contract\":\"1fe3b87cc8f36780e1b547d01977dd34343873d1fbde24aecc1c476d8d8910fb\"}",
 				CheckNames:   []string{"run_tools"},
 				Requirements: []eval.Requirement{},
 				Bind: func(data rawjson.Message) (eval.Binding, error) {
@@ -153,6 +153,7 @@ func ForAssessment(checks Checks) (eval.Suite, error) {
 					{
 						diagnostic := checks.CheckGreetingReplyRunTools(observed)
 						binding.Checks = append(binding.Checks, eval.Check{Name: "run_tools", Passed: diagnostic == "", Diagnostic: diagnostic})
+
 					}
 					return binding, nil
 				},
@@ -162,7 +163,7 @@ func ForAssessment(checks Checks) (eval.Suite, error) {
 				Description:  "The helpers.answer tool contract is reachable from the agent.",
 				Tags:         []string{"contract"},
 				Timeout:      time.Duration(30000000000),
-				Schema:       "{\"type\":\"boolean\"}",
+				Schema:       "{\"type\":\"boolean\",\"x-goa-observation-contract\":\"dc6c289bf89bcebe01f5f28ece3f8408593e0e3d608cc3967c677bd29956d883\"}",
 				CheckNames:   []string{"payload_schema"},
 				Requirements: []eval.Requirement{},
 				Bind: func(data rawjson.Message) (eval.Binding, error) {
@@ -175,6 +176,7 @@ func ForAssessment(checks Checks) (eval.Suite, error) {
 					{
 						diagnostic := checks.CheckHelpersContractPayloadSchema(observed)
 						binding.Checks = append(binding.Checks, eval.Check{Name: "payload_schema", Passed: diagnostic == "", Diagnostic: diagnostic})
+
 					}
 					return binding, nil
 				},

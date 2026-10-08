@@ -119,7 +119,7 @@ func NewChoice(httpClient *http.Client, config Config) (*Client, error) {
 // ChoiceOrder must be empty because Noul has no ordered options.
 func NewNoul(httpClient *http.Client, config Config) (*NoulClient, error) {
 	if len(config.ChoiceOrder) > 0 {
-		return nil, errors.New("Noul does not accept ChoiceOrder")
+		return nil, errors.New("noul does not accept ChoiceOrder")
 	}
 	transport, err := newTransport(httpClient, config)
 	if err != nil {

@@ -157,17 +157,19 @@ func (r *Runner) Assess(ctx context.Context, suite Suite, archive Archive) (repo
 	r.parallel(selected, func(index int) {
 		report.Scenarios[index] = r.assessScenario(ctx, selected[index], observations[index])
 	})
-	report.Passed = true
+	// Read cancellation once after every scenario finishes. The returned error
+	// and report then agree, and completed scenario results remain saveable.
+	err = ctx.Err()
+	if err != nil {
+		report.Error = err.Error()
+		recordError(span, err)
+	}
+	report.Passed = err == nil
 	for _, scenario := range report.Scenarios {
 		report.Passed = report.Passed && scenario.Passed
 	}
 	span.SetAttributes(attribute.String("eval.suite.id", suite.ID), attribute.Bool("eval.passed", report.Passed))
-	if err := ctx.Err(); err != nil {
-		report.Error = err.Error()
-		recordError(span, err)
-		return report, err
-	}
-	return report, nil
+	return report, err
 }
 
 // captureScenario bounds one product call and makes a record even when it never

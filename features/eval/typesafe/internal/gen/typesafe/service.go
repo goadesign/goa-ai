@@ -20,9 +20,9 @@ import (
 	goa "goa.design/goa/v3/pkg"
 )
 
-// Defines native Choice records for assessing captured evidence with a pinned
-// System One model. The adapter sends these records to TypeSafe and validates
-// request-to-response correspondence.
+// Defines native Choice and Noul records for assessing captured evidence with
+// a pinned System One model. The adapter sends these records to TypeSafe and
+// validates request-to-response correspondence.
 type Service interface {
 	// Classifies fixed requirements sharing captured content and factual context,
 	// returning complete probabilities for each requirement and the model that
