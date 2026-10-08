@@ -76,41 +76,9 @@ type (
 		queue string
 	}
 
-	// ToolCallMeta carries run-scoped identifiers for executors. It provides explicit
-	// access to business context (RunID, SessionID, TurnID, correlation IDs)
-	// without relying on context values.
-	ToolCallMeta struct {
-		// TextOnly is derived from the accepted run policy and disables UI interaction.
-		TextOnly bool `json:",omitempty"` //nolint:tagliatelle // Saved execution records retain Go field names.
-		// RunID is the durable workflow execution identifier of the run that
-		// owns this tool call. It remains stable across retries and is used to
-		// correlate runtime records and telemetry.
-		RunID string
-
-		// SessionID logically groups related runs (for example a chat
-		// conversation). Services typically index memory and search attributes
-		// by session.
-		SessionID string
-
-		// TurnID identifies the conversational turn that produced this tool
-		// call. When set, event streams use it to order and group events.
-		TurnID string
-
-		// ToolCallID uniquely identifies this tool invocation. It is used to
-		// correlate start/update/end events and parent/child relationships.
-		ToolCallID string
-
-		// ParentToolCallID is the identifier of the parent tool call when this
-		// invocation is a child (for example a tool launched by an agent-tool).
-		// UIs and subscribers use it to reconstruct the call tree.
-		ParentToolCallID string
-
-		// Labels contains a copy of the run labels plus runtime-authored values
-		// for this call. When the runtime executes a terminal finalization tool,
-		// FinalizationReasonLabel contains the exact termination reason; ordinary
-		// tool calls do not receive that reserved label.
-		Labels map[string]string
-	}
+	// ToolCallMeta is the shared call metadata received by generated injection
+	// functions and custom executors. The alias preserves existing runtime callers.
+	ToolCallMeta = tools.ToolCallMeta
 
 	// ResultMaterializer enriches a typed tool result before the runtime encodes
 	// and publishes it.

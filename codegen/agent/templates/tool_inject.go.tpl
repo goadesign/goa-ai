@@ -9,7 +9,7 @@
 //
 // Generated executors call this after decoding and before running the tool.
 // The model never supplies these fields.
-func {{ .InjectFunc }}(p *{{ .PayloadTypeName }}, meta runtime.ToolCallMeta, labels map[string]string) error {
+func {{ .InjectFunc }}(p *{{ .PayloadTypeName }}, meta tools.ToolCallMeta, labels map[string]string) error {
 {{- range .Injected }}
 	{
 {{- if .IsMetaBacked }}
@@ -43,7 +43,7 @@ func {{ .InjectFunc }}(p *{{ .PayloadTypeName }}, meta runtime.ToolCallMeta, lab
 // Custom executors for {{ .QualifiedName }} must call this function. Calling
 // {{ .PayloadCodecName }}().FromJSON alone does not fill fields marked by
 // Inject().
-func {{ .DecodeFunc }}(payload []byte, meta runtime.ToolCallMeta, labels map[string]string) (*{{ .PayloadTypeName }}, error) {
+func {{ .DecodeFunc }}(payload []byte, meta tools.ToolCallMeta, labels map[string]string) (*{{ .PayloadTypeName }}, error) {
 	p, err := {{ .PayloadCodecName }}().FromJSON(payload)
 	if err != nil {
 		return nil, err

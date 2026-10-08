@@ -189,7 +189,10 @@ handwritten model schema beside the service contract.
 Tools can also have a smaller, purpose-built input or result. Use `Args` and
 `Return` with generated transforms, and `Inject` for server-supplied fields that
 the model should not fill in. [Service bindings and injection](docs/dsl.md#bindto-service-method-binding)
-explain those choices.
+explain those choices. Generated providers use shared `tools.ToolCallMeta` for
+injection without importing the agent engine or model adapters. Existing
+`runtime.ToolCallMeta` callers remain compatible; regenerate providers to
+remove the old engine import.
 
 ### Tool calls that can correct themselves
 
