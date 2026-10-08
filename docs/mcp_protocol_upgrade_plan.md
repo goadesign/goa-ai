@@ -3640,3 +3640,23 @@ the native generated direct and registry-provider fixture passes in 3.471 s
 (7.93 s for that command including compilation). Caller regeneration and the
 remaining capability gates are still required. Scoped lint found zero issues in
 2.17 s; no full suite was repeated.
+
+### Generated registry admission composition — 2026-10-07
+
+The shared executor now accepts the existing generated `CallTool` and `RetryTool`
+payloads and results. It owns the workflow-selected operation metadata and
+response deadline validation once for static and discovered tools. Applications
+can pass the generated registry client directly. Remove handwritten admission
+adapters that copy runtime metadata and parse timestamps when upgrading; no
+public conversion helper or parallel client contract is introduced. Discovered
+tools still require their selected registration token, and overload recovery
+retains the same admitted identity and independent deadlines.
+
+A generated-client test covers the original call, ordinary input, Task reads,
+empty Task answers and cancellation through both admission and overload recovery.
+Selected executor checks pass in 0.654 s (2.37 s including compilation); selected
+registration with a saved empty Task identity passes in 0.822 s. Admission
+response boundary checks pass in 0.465 s. Caller migration remains in progress;
+this composition does not complete suspended cancellation or producer gates.
+Scoped runtime and executor lint passed; the admission assertion correction
+passes its owning lint check with zero issues. No full suite was repeated.

@@ -16,6 +16,8 @@ import (
 	"time"
 
 	pulsec "goa.design/goa-ai/features/stream/pulse/clients/pulse"
+	"goa.design/goa-ai/internal/tooloperation"
+	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -34,24 +36,11 @@ import (
 )
 
 type (
-	// Client initiates tool calls and returns both transport identity and the
-	// exact admission-generation token stamped on the routed request.
+	// Client sends generated registry requests without translating runtime metadata.
+	// The executor owns payload construction and admission-response validation.
 	Client interface {
-		CallTool(
-			ctx context.Context,
-			toolset string,
-			tool tools.Ident,
-			payload []byte,
-			meta toolregistry.ToolCallMeta,
-		) (toolregistry.ToolCallRef, error)
-		RetryTool(
-			ctx context.Context,
-			toolset string,
-			tool tools.Ident,
-			payload []byte,
-			meta toolregistry.ToolCallMeta,
-			expectedRegistrationToken string,
-		) (toolregistry.ToolCallRef, error)
+		CallTool(context.Context, *genregistry.CallToolPayload) (*genregistry.CallToolResult, error)
+		RetryTool(context.Context, *genregistry.RetryToolPayload) (*genregistry.CallToolResult, error)
 	}
 
 	// SpecLookup supplies immutable tool contracts for one admitted invocation.
@@ -222,7 +211,26 @@ func (e *Executor) Execute(ctx context.Context, meta *toolregistry.ToolCallMeta,
 		ctx,
 		toolregistry.MaxToolCallWait+toolregistry.ResultStreamTransportBudget,
 	)
-	callRef, err := e.client.CallTool(admissionCtx, toolsetID, call.Name, call.Payload, tmeta)
+	// The workflow selected this operation before admission. Encode its metadata
+	// here so every generated client sends the same identity and continuation.
+	payload := &genregistry.CallToolPayload{
+		Toolset:             toolsetID,
+		Tool:                call.Name.String(),
+		PayloadJSON:         call.Payload,
+		WireProtocolVersion: toolregistry.WireProtocolVersion,
+		Meta: &genregistry.ToolCallMeta{
+			TextOnly:              tmeta.TextOnly,
+			ExecutionSequence:     tmeta.ExecutionSequence,
+			ExecutionContinuation: tooloperation.Value(tmeta.ExecutionContinuation),
+			RunID:                 tmeta.RunID,
+			SessionID:             tmeta.SessionID,
+			TurnID:                &tmeta.TurnID,
+			ToolCallID:            tmeta.ToolCallID,
+			ParentToolCallID:      &tmeta.ParentToolCallID,
+			Labels:                tmeta.Labels,
+		},
+	}
+	admitted, err := e.client.CallTool(admissionCtx, payload)
 	cancelAdmission()
 	if err != nil {
 		span.RecordError(err)
@@ -232,7 +240,8 @@ func (e *Executor) Execute(ctx context.Context, meta *toolregistry.ToolCallMeta,
 		}
 		return outcomeUnknownResult(err), nil
 	}
-	if err := toolregistry.ValidateToolCallRef(callRef); err != nil {
+	callRef, err := decodeAdmission(admitted)
+	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "call tool returned invalid reference")
 		return outcomeUnknownResult(
@@ -405,19 +414,20 @@ func (e *Executor) Execute(ctx context.Context, meta *toolregistry.ToolCallMeta,
 				)
 			}
 			if msg.Retry != nil {
-				retryRef, err := e.client.RetryTool(
-					executionCtx,
-					toolsetID,
-					call.Name,
-					call.Payload,
-					tmeta,
-					callRef.RegistrationToken,
-				)
+				retried, err := e.client.RetryTool(executionCtx, &genregistry.RetryToolPayload{
+					ExpectedRegistrationToken: callRef.RegistrationToken,
+					Toolset:                   payload.Toolset,
+					Tool:                      payload.Tool,
+					PayloadJSON:               payload.PayloadJSON,
+					WireProtocolVersion:       payload.WireProtocolVersion,
+					Meta:                      payload.Meta,
+				})
 				if err != nil {
 					span.RecordError(err)
 					return outcomeUnknownResult(err), nil
 				}
-				if err := toolregistry.ValidateToolCallRef(retryRef); err != nil {
+				retryRef, err := decodeAdmission(retried)
+				if err != nil {
 					span.RecordError(err)
 					return outcomeUnknownResult(
 						fmt.Errorf("retry tool returned invalid reference: %w", err),

@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	genrecords "goa.design/goa-ai/internal/testpresentation/gen/records/toolsets/records"
+	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
@@ -37,7 +38,7 @@ func TestExecutorRequiredInputReachesActivityWithoutCompletedDecoding(t *testing
 			message, err := toolregistry.NewInputRequiredResult(testRegistrationTokenA, "input-round", pending)
 			require.NoError(t, err)
 			stream := &fakeStream{t: t, requiredStart: "0", events: []*streaming.Event{{ID: "1-0", EventName: toolregistry.ResultEventKey, Payload: mustJSON(t, message)}}}
-			var delivered toolregistry.ToolCallMeta
+			var delivered genregistry.ToolCallMeta
 			exec := newExecutor(t, fakeRegistryClient{toolUseID: "input-round", meta: &delivered}, fakePulseClient{streamID: toolregistry.ResultStreamID("input-round"), stream: stream}, "records", fakeSpecs{spec: &spec})
 			rt := agentsruntime.New(inmem.New())
 			require.NoError(t, rt.RegisterToolset(agentsruntime.ToolsetRegistration{Name: "records", Specs: []tools.ToolSpec{spec}, DecodeInExecutor: true, Execute: func(ctx context.Context, call *agentsruntime.ToolCall) (*agentsruntime.ToolExecutionResult, error) {

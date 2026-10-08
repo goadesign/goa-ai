@@ -6,10 +6,8 @@ package runtime
 import (
 	"context"
 	"fmt"
-	"time"
 
 	"goa.design/goa-ai/internal/registrycall"
-	"goa.design/goa-ai/internal/tooloperation"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/toolregistry"
@@ -56,45 +54,37 @@ func (r *Runtime) executeRegistryTool(ctx context.Context, call *ToolCall) (*Too
 }
 
 // CallTool admits only the registration whose definition produced the call.
-func (c resolvedRegistryClient) CallTool(ctx context.Context, toolset string, tool tools.Ident, payload []byte, meta toolregistry.ToolCallMeta) (toolregistry.ToolCallRef, error) {
+func (c resolvedRegistryClient) CallTool(ctx context.Context, payload *genregistry.CallToolPayload) (*genregistry.CallToolResult, error) {
 	result, err := c.client.CallResolvedTool(ctx, &genregistry.CallResolvedToolPayload{
 		ExpectedRegistrationToken: c.token,
-		Toolset:                   toolset, Tool: tool.String(), PayloadJSON: payload,
-		WireProtocolVersion: toolregistry.WireProtocolVersion,
-		Meta: &genregistry.ToolCallMeta{
-			RunID: meta.RunID, SessionID: meta.SessionID, ToolCallID: meta.ToolCallID,
-			TurnID: &meta.TurnID, ParentToolCallID: &meta.ParentToolCallID,
-			Labels: cloneLabels(meta.Labels), TextOnly: meta.TextOnly, ExecutionSequence: meta.ExecutionSequence,
-			ExecutionContinuation: tooloperation.Value(meta.ExecutionContinuation),
-		},
+		Toolset:                   payload.Toolset,
+		Tool:                      payload.Tool,
+		PayloadJSON:               payload.PayloadJSON,
+		WireProtocolVersion:       payload.WireProtocolVersion,
+		Meta:                      payload.Meta,
 	})
 	if err != nil {
-		return toolregistry.ToolCallRef{}, err
+		return nil, err
 	}
 	if result.RegistrationToken != c.token {
-		return toolregistry.ToolCallRef{}, fmt.Errorf("registry admitted a different registration for tool %q", tool)
+		return nil, fmt.Errorf("registry admitted a different registration for tool %q", payload.Tool)
 	}
-	deadline, err := time.Parse(time.RFC3339Nano, result.ExecutionDeadline)
-	if err != nil {
-		return toolregistry.ToolCallRef{}, fmt.Errorf("registry execution deadline: %w", err)
-	}
-	expiration, err := time.Parse(time.RFC3339Nano, result.ResultStreamExpiresAt)
-	if err != nil {
-		return toolregistry.ToolCallRef{}, fmt.Errorf("registry result expiration: %w", err)
-	}
-	return toolregistry.ToolCallRef{
-		ToolUseID: result.ToolUseID, RegistrationToken: result.RegistrationToken,
-		ExecutionDeadline: deadline, ResultStreamExpiresAt: expiration,
-	}, nil
+	return result, nil
 }
 
 // RetryTool resumes the original call's registry-owned overload event.
 // It cannot replace the selected registration or start a new call identity.
-func (c resolvedRegistryClient) RetryTool(ctx context.Context, toolset string, tool tools.Ident, payload []byte, meta toolregistry.ToolCallMeta, token string) (toolregistry.ToolCallRef, error) {
-	if token != c.token {
-		return toolregistry.ToolCallRef{}, fmt.Errorf("registry retry token differs from the selected registration")
+func (c resolvedRegistryClient) RetryTool(ctx context.Context, payload *genregistry.RetryToolPayload) (*genregistry.CallToolResult, error) {
+	if payload.ExpectedRegistrationToken != c.token {
+		return nil, fmt.Errorf("registry retry token differs from the selected registration")
 	}
-	return c.CallTool(ctx, toolset, tool, payload, meta)
+	return c.CallTool(ctx, &genregistry.CallToolPayload{
+		Toolset:             payload.Toolset,
+		Tool:                payload.Tool,
+		PayloadJSON:         payload.PayloadJSON,
+		WireProtocolVersion: payload.WireProtocolVersion,
+		Meta:                payload.Meta,
+	})
 }
 
 // Spec supplies the already-compiled saved contract to result-stream decoding.

@@ -1234,6 +1234,10 @@ reserving ordinary application type names in Goa's global design. Consuming APIs
 must regenerate after this breaking type-name change; operation fields, branch
 names and saved JSON remain unchanged. Designs importing the moved declarations
 use the `registry/design/types` path.
+The shared registry executor constructs generated admission payloads and checks
+returned identities and deadlines. Both static and discovered tools use this
+implementation; applications pass the generated client without a separate
+runtime-metadata adapter.
 See [tool contract reuse](docs/tool_search.md#publish-complete-provider-contracts).
 
 Declare centralized registry sources for dynamic tool discovery and agent publication:

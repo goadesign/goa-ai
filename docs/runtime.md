@@ -3225,25 +3225,17 @@ if err != nil {
 // Use exec.Execute as the executor for registry-backed toolsets.
 ```
 
-`executor.Client` receives `toolregistry.ToolCallMeta` by value. A handwritten
-adapter to the generated registry client must copy every field, including
-`Labels`, into both `CallToolPayload.Meta` and `RetryToolPayload.Meta`:
+`executor.Client` uses the generated `CallTool` and `RetryTool` payloads and
+results. Pass `*genregistry.Client` directly, or forward these exact typed
+methods through an application client. The executor owns request metadata,
+including labels, operation sequence and the saved continuation. It also checks
+the registry's independent execution deadline and result-stream expiration.
+Applications do not copy runtime metadata or parse these timestamps.
 
-```go
-func registryMeta(meta toolregistry.ToolCallMeta) *genregistry.ToolCallMeta {
-    return &genregistry.ToolCallMeta{
-        RunID:            meta.RunID,
-        SessionID:        meta.SessionID,
-        TurnID:           meta.TurnID,
-        ToolCallID:       meta.ToolCallID,
-        ParentToolCallID: meta.ParentToolCallID,
-        Labels:           maps.Clone(meta.Labels),
-    }
-}
-```
-
-Use the same conversion for a retry. Labels are part of the immutable call
-identity, so changing or omitting them on a retry is rejected.
+For this breaking upgrade, replace handwritten domain-shaped admission methods
+with the generated signatures. Registry-directed overload recovery retains the
+original arguments, metadata, registration token and deadlines; changing any
+admitted identity is rejected.
 
 The registry wire protocol and deterministic stream IDs are defined in `runtime/toolregistry`:
 

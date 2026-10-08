@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/internal/registrycontract"
+	"goa.design/goa-ai/internal/tooloperation"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/hooks"
@@ -29,6 +30,8 @@ func TestRegistryActivityPreservesSelectedAdmission(t *testing.T) {
 	require.NoError(t, err)
 	binding, err := resolved.Select("company", "records.find")
 	require.NoError(t, err)
+	operation, err := tooloperation.NewTaskGet("")
+	require.NoError(t, err)
 	calls := 0
 	client := &genregistry.Client{CallResolvedToolEndpoint: func(_ context.Context, value any) (any, error) {
 		calls++
@@ -39,13 +42,19 @@ func TestRegistryActivityPreservesSelectedAdmission(t *testing.T) {
 		assert.JSONEq(t, `{"value":9007199254740993}`, string(payload.PayloadJSON))
 		assert.Equal(t, toolregistry.WireProtocolVersion, payload.WireProtocolVersion)
 		assert.Equal(t, "call-1", payload.Meta.ToolCallID)
+		assert.Equal(t, uint64(1), payload.Meta.ExecutionSequence)
+		require.NotNil(t, payload.Meta.ExecutionContinuation)
+		id, ok := payload.Meta.ExecutionContinuation.Operation.AsTaskGet()
+		require.True(t, ok)
+		assert.Empty(t, id)
 		return nil, genregistry.MakeCallNotAdmitted(errors.New("registration was replaced"))
 	}}
 	require.NoError(t, rt.RegisterRegistry("company", client, unusedRegistryPulse{}))
 	output, err := rt.ExecuteToolActivity(t.Context(), &ToolInput{
 		Registry: binding, AgentID: definition.route.ID, ToolName: "records.find",
 		RunID: "run-1", SessionID: "session-1", ToolCallID: "call-1",
-		Payload: rawjson.Message(`{"value":9007199254740993}`),
+		Payload:           rawjson.Message(`{"value":9007199254740993}`),
+		ExecutionSequence: 1, ExecutionContinuation: operation,
 	})
 	require.NoError(t, err)
 	require.NotNil(t, output.Failure)

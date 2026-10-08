@@ -14,7 +14,8 @@ import (
 )
 
 type (
-	// Client admits registry calls and resumes registry-directed retries.
+	// Client accepts generated registry payloads and returns generated admissions.
+	// The executor constructs metadata and validates both admission deadlines.
 	Client = registrycall.Client
 
 	// SpecLookup supplies the exact contracts used to decode returned results.
