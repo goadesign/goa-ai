@@ -51,6 +51,45 @@ func NewProtoDeclareServiceToolsetResponse(result *registry.ResolvedToolset) *re
 	return message
 }
 
+// NewReplaceServiceToolsetPayload builds
+// *registry.ReplaceServiceToolsetPayload from
+// *registrypb.ReplaceServiceToolsetRequest.
+func NewReplaceServiceToolsetPayload(message *registrypb.ReplaceServiceToolsetRequest) *registry.ReplaceServiceToolsetPayload {
+	v := &registry.ReplaceServiceToolsetPayload{
+		ExpectedRegistrationToken: *message.ExpectedRegistrationToken,
+		ReplacementID:             *message.ReplacementId,
+		Name:                      *message.Name,
+		Description:               message.Description,
+	}
+	if message.Version != nil {
+		version := registry.SemVer(*message.Version)
+		v.Version = &version
+	}
+	if message.Tags != nil {
+		v.Tags = make([]string, len(message.Tags))
+		for i, val := range message.Tags {
+			v.Tags[i] = val
+		}
+	}
+	v.Tools = make([]*registry.ToolSchema, len(message.Tools))
+	for i, val := range message.Tools {
+		v.Tools[i] = transformProtoToolSchemaToToolSchema(val)
+	}
+	return v
+}
+
+// NewProtoReplaceServiceToolsetResponse builds
+// *registrypb.ReplaceServiceToolsetResponse from *registry.ResolvedToolset.
+func NewProtoReplaceServiceToolsetResponse(result *registry.ResolvedToolset) *registrypb.ReplaceServiceToolsetResponse {
+	message := &registrypb.ReplaceServiceToolsetResponse{
+		RegistrationToken: &result.RegistrationToken,
+	}
+	if result.Toolset != nil {
+		message.Toolset = transformToolsetToProtoToolset(result.Toolset)
+	}
+	return message
+}
+
 // NewAttachProviderPayload builds *registry.AttachProviderPayload from
 // *registrypb.AttachProviderRequest.
 func NewAttachProviderPayload(message *registrypb.AttachProviderRequest) *registry.AttachProviderPayload {
@@ -1054,6 +1093,53 @@ func validateregistry_registry_TextOnlyToolContract_Target_textOnly_Context_text
 	if textOnly.ExecutionSchema != nil {
 		if len(textOnly.ExecutionSchema) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("text_only.execution_schema", textOnly.ExecutionSchema, len(textOnly.ExecutionSchema), 1, true))
+		}
+	}
+	return
+}
+
+// ValidateReplaceServiceToolsetRequest runs the validations defined on
+// ReplaceServiceToolsetRequest.
+func ValidateReplaceServiceToolsetRequest(message *registrypb.ReplaceServiceToolsetRequest) (err error) {
+	if message.ExpectedRegistrationToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("expected_registration_token", "message"))
+	}
+	if message.ReplacementId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("replacement_id", "message"))
+	}
+	if message.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "message"))
+	}
+	if message.ExpectedRegistrationToken != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.expected_registration_token", *message.ExpectedRegistrationToken, "^[0-9a-f]{64}$"))
+	}
+	if message.ReplacementId != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("message.replacement_id", *message.ReplacementId, goa.FormatUUID))
+	}
+	if message.Name != nil {
+		if utf8.RuneCountInString(*message.Name) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 1, true))
+		}
+		if utf8.RuneCountInString(*message.Name) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 256, false))
+		}
+	}
+	if message.Description != nil {
+		if utf8.RuneCountInString(*message.Description) > 4096 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.description", *message.Description, utf8.RuneCountInString(*message.Description), 4096, false))
+		}
+	}
+	if message.Version != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.version", string(*message.Version), "^v?\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?$"))
+	}
+	if len(message.Tools) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("message.tools", message.Tools, len(message.Tools), 1, true))
+	}
+	for _, e := range message.Tools {
+		if e != nil {
+			if err2 := validateregistry_registry_ToolSchema_At_elem(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
 		}
 	}
 	return

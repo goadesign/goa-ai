@@ -45,8 +45,7 @@ type plannerActivityInvocation struct {
 	parentTool           *tools.ToolSpec
 	// originalFailure remains available to the application tracer after a
 	// rejected planner result becomes a successful activity transport value.
-	originalFailure         error
-	providerRecoveryEnabled bool
+	originalFailure error
 }
 
 // PlanStartActivity executes the planner's PlanStart method.
@@ -77,11 +76,7 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, wireInput *PlanActivity
 	}
 	var continuationActions []continuationAction
 	if input.Finalize == nil && !input.SynthesisOnly {
-		historicalOutputs, err := r.loadHistoricalContinuationOutputs(ctx, input, catalog.specs)
-		if err != nil {
-			return nil, err
-		}
-		continuationActions, err = r.availableContinuationActions(input.AgentID, historicalOutputs, input.RunContext.TextOnly)
+		continuationActions, err = r.continuationActionsForHistory(ctx, input, catalog.specs, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -206,7 +201,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, wireInput *PlanActivit
 	}
 	var continuationActions []continuationAction
 	if input.Finalize == nil && !synthesisOnly {
-		continuationActions, err = r.availableContinuationActions(input.AgentID, toolOutputs, input.RunContext.TextOnly)
+		continuationActions, err = r.continuationActionsForHistory(ctx, input, catalog.specs, toolOutputs)
 		if err != nil {
 			return nil, err
 		}
@@ -604,18 +599,17 @@ func (r *Runtime) preparePlannerActivity(
 		rems = r.reminders.Snapshot(input.RunID)
 	}
 	return &plannerActivityInvocation{
-		runtime:                 r,
-		reg:                     reg,
-		agentCtx:                agentCtx,
-		plannerAuthoredTools:    plannerAuthoredTools,
-		events:                  events,
-		invocations:             invocations,
-		reminders:               rems,
-		runContext:              input.RunContext,
-		publicationBatchID:      publicationBatchID,
-		catalog:                 catalog,
-		parentTool:              parentTool,
-		providerRecoveryEnabled: input.Policy != nil && input.Policy.ProviderRetryBudget > 0,
+		runtime:              r,
+		reg:                  reg,
+		agentCtx:             agentCtx,
+		plannerAuthoredTools: plannerAuthoredTools,
+		events:               events,
+		invocations:          invocations,
+		reminders:            rems,
+		runContext:           input.RunContext,
+		publicationBatchID:   publicationBatchID,
+		catalog:              catalog,
+		parentTool:           parentTool,
 	}, nil
 }
 
@@ -734,7 +728,7 @@ func (a *plannerActivityInvocation) failureOutput(ctx context.Context, err error
 	if errors.As(err, &outputErr) {
 		return a.outputContractFailure(ctx, err)
 	}
-	if a.providerRecoveryEnabled && ctx.Err() == nil {
+	if ctx.Err() == nil {
 		if providerErr := a.invocations.retryableProviderFailure(err); providerErr != nil {
 			return a.providerFailureOutput(ctx, providerErr)
 		}

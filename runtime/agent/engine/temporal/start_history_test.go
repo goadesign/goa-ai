@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 
@@ -20,7 +21,7 @@ func TestProductionWorkflowRejectsHistoryWithoutAcceptedRequest(t *testing.T) {
 		{"current input without memo", "published", "accepted request"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			plannerStub, handler := productionReplayWorkflow(t)
+			plannerStub, eng, handler := productionReplayWorkflow(t)
 			// Construct each rejected shape independently. Neither case upgrades
 			// saved history or supplies a fabricated engine acceptance memo.
 			input, err := NewAgentDataConverter().ToPayloads(&api.RunInput{
@@ -28,10 +29,10 @@ func TestProductionWorkflowRejectsHistoryWithoutAcceptedRequest(t *testing.T) {
 				SessionID: productionReplaySessionID, TurnID: productionReplayTurnID, SeedEndID: test.seed,
 			})
 			require.NoError(t, err)
-			started := workflowExecutionStartedEvent(1, productionReplayWorkflowName, productionReplayTaskQueue, input)
+			started := workflowExecutionStartedEvent(productionReplayWorkflowName, productionReplayTaskQueue, input)
 			history := deserializeReplayHistory(t, syntheticProductionHistory(t, &api.PlanActivityOutput{}, false, started))
 			var returned error
-			replayer, err := worker.NewWorkflowReplayerWithOptions(worker.WorkflowReplayerOptions{DataConverter: NewAgentDataConverter()})
+			replayer, err := worker.NewWorkflowReplayerWithOptions(worker.WorkflowReplayerOptions{DataConverter: NewAgentDataConverter(), Interceptors: []interceptor.WorkerInterceptor{&workflowControlInterceptor{engine: eng}}})
 			require.NoError(t, err)
 			replayer.RegisterWorkflowWithOptions(func(ctx workflow.Context, input *api.RunInput) (*api.RunOutput, error) {
 				out, err := handler(ctx, input)

@@ -55,6 +55,44 @@ func DecodeDeclareServiceToolsetResponse(ctx context.Context, v any, hdr, trlr m
 	return res, nil
 }
 
+// BuildReplaceServiceToolsetFunc builds the remote method to invoke for
+// "registry" service "ReplaceServiceToolset" endpoint.
+func BuildReplaceServiceToolsetFunc(grpccli registrypb.RegistryClient, cliopts ...grpc.CallOption) goagrpc.RemoteFunc {
+	return func(ctx context.Context, reqpb any, opts ...grpc.CallOption) (any, error) {
+		for _, opt := range cliopts {
+			opts = append(opts, opt)
+		}
+		if reqpb != nil {
+			return grpccli.ReplaceServiceToolset(ctx, reqpb.(*registrypb.ReplaceServiceToolsetRequest), opts...)
+		}
+		return grpccli.ReplaceServiceToolset(ctx, &registrypb.ReplaceServiceToolsetRequest{}, opts...)
+	}
+}
+
+// EncodeReplaceServiceToolsetRequest encodes requests sent to registry
+// ReplaceServiceToolset endpoint.
+func EncodeReplaceServiceToolsetRequest(ctx context.Context, v any, md *metadata.MD) (any, error) {
+	payload, ok := v.(*registry.ReplaceServiceToolsetPayload)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "ReplaceServiceToolset", "*registry.ReplaceServiceToolsetPayload", v)
+	}
+	return NewProtoReplaceServiceToolsetRequest(payload), nil
+}
+
+// DecodeReplaceServiceToolsetResponse decodes responses from the registry
+// ReplaceServiceToolset endpoint.
+func DecodeReplaceServiceToolsetResponse(ctx context.Context, v any, hdr, trlr metadata.MD) (any, error) {
+	message, ok := v.(*registrypb.ReplaceServiceToolsetResponse)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "ReplaceServiceToolset", "*registrypb.ReplaceServiceToolsetResponse", v)
+	}
+	if err := ValidateReplaceServiceToolsetResponse(message); err != nil {
+		return nil, err
+	}
+	res := NewReplaceServiceToolsetResult(message)
+	return res, nil
+}
+
 // BuildAttachProviderFunc builds the remote method to invoke for "registry"
 // service "AttachProvider" endpoint.
 func BuildAttachProviderFunc(grpccli registrypb.RegistryClient, cliopts ...grpc.CallOption) goagrpc.RemoteFunc {

@@ -20,8 +20,10 @@ import (
 	workflowservice "go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/converter"
+	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
+	"go.temporal.io/sdk/worker"
 	"google.golang.org/grpc"
 
 	"goa.design/goa-ai/runtime/agent/api"
@@ -107,6 +109,7 @@ func TestTemporalWorkflowHandlerPreservesCancellationStatus(t *testing.T) {
 			var suite testsuite.WorkflowTestSuite
 			env := suite.NewTestWorkflowEnvironment()
 
+			env.SetWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{&workflowControlInterceptor{engine: eng}}})
 			env.ExecuteWorkflow(handler, &api.RunInput{RunID: "run-1"})
 
 			err := env.GetWorkflowError()

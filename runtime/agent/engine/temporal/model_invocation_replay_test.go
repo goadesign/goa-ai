@@ -22,6 +22,7 @@ import (
 	taskqueuepb "go.temporal.io/api/taskqueue/v1"
 	"go.temporal.io/api/temporalproto"
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 
@@ -73,7 +74,7 @@ func (p *replayPlanner) PlanResume(context.Context, *planner.PlanResumeInput) (*
 }
 
 func TestProductionWorkflowReplaysPreRecoveryHistory(t *testing.T) {
-	plannerStub, handler := productionReplayWorkflow(t)
+	plannerStub, eng, handler := productionReplayWorkflow(t)
 	history := deserializeReplayHistory(t, syntheticAcceptedProductionHistory(t, &api.PlanActivityOutput{
 		PublicationBatchID: "00000000-0000-4000-8000-000000000001",
 		Result: &api.PlanResult{
@@ -96,12 +97,12 @@ func TestProductionWorkflowReplaysPreRecoveryHistory(t *testing.T) {
 		productionReplayRecord,
 	}, scheduledActivityNames(history))
 
-	replayProductionWorkflow(t, handler, history)
+	replayProductionWorkflow(t, eng, handler, history)
 	assert.Zero(t, plannerStub.calls.Load())
 }
 
 func TestProductionWorkflowReplaysModelInvocationRecovery(t *testing.T) {
-	plannerStub, handler := productionReplayWorkflow(t)
+	plannerStub, eng, handler := productionReplayWorkflow(t)
 	correction := `Field "query" must contain a JSON string.`
 	history := deserializeReplayHistory(t, syntheticAcceptedProductionHistory(t, &api.PlanActivityOutput{
 		PublicationBatchID: "00000000-0000-4000-8000-000000000001",
@@ -127,13 +128,13 @@ func TestProductionWorkflowReplaysModelInvocationRecovery(t *testing.T) {
 		productionReplayRecord,
 	}, scheduledActivityNames(history))
 
-	replayProductionWorkflow(t, handler, history)
+	replayProductionWorkflow(t, eng, handler, history)
 
 	assert.Zero(t, plannerStub.calls.Load())
 }
 
 func TestProductionWorkflowReplaysCompleteRejectedCalls(t *testing.T) {
-	plannerStub, handler := productionReplayWorkflow(t)
+	plannerStub, eng, handler := productionReplayWorkflow(t)
 	recovery := &api.ModelInvocationRecovery{ToolInput: &api.ModelToolInputRecovery{
 		Calls: []api.RejectedToolCall{
 			{Name: "catalog.lookup", ArgumentsJSON: " { \"query\" : 4.20e1 } \n"},
@@ -151,14 +152,14 @@ func TestProductionWorkflowReplaysCompleteRejectedCalls(t *testing.T) {
 	))
 	assert.Equal(t, recovery, resume.ModelInvocationRecovery)
 	assert.Equal(t, "start-record", resume.HistoryEndID)
-	out := replayProductionWorkflow(t, handler, history)
+	out := replayProductionWorkflow(t, eng, handler, history)
 	require.NotNil(t, out)
 	assert.Equal(t, "corrected", out.Final.Text())
 	assert.Zero(t, plannerStub.calls.Load())
 }
 
 func TestProductionWorkflowRejectsLegacyCorrectionHistory(t *testing.T) {
-	plannerStub, handler := productionReplayWorkflow(t)
+	plannerStub, eng, handler := productionReplayWorkflow(t)
 	history := syntheticAcceptedProductionHistory(t, &api.PlanActivityOutput{
 		PublicationBatchID: "00000000-0000-4000-8000-000000000001",
 		ModelInvocationRecovery: &api.ModelInvocationRecovery{
@@ -170,7 +171,7 @@ func TestProductionWorkflowRejectsLegacyCorrectionHistory(t *testing.T) {
 	first.Data = bytes.ReplaceAll(first.Data, []byte(`"ToolInput":null,`), nil)
 	first.Data = bytes.ReplaceAll(first.Data, []byte(`"NoCallBodyCorrection"`), []byte(`"Correction"`))
 	var decodeErr error
-	replayer, err := worker.NewWorkflowReplayerWithOptions(worker.WorkflowReplayerOptions{DataConverter: NewAgentDataConverter()})
+	replayer, err := worker.NewWorkflowReplayerWithOptions(worker.WorkflowReplayerOptions{DataConverter: NewAgentDataConverter(), Interceptors: []interceptor.WorkerInterceptor{&workflowControlInterceptor{engine: eng}}})
 	require.NoError(t, err)
 	replayer.RegisterWorkflowWithOptions(func(ctx workflow.Context, input *api.RunInput) (*api.RunOutput, error) {
 		output, err := handler(ctx, input)
@@ -185,7 +186,7 @@ func TestProductionWorkflowRejectsLegacyCorrectionHistory(t *testing.T) {
 }
 
 func TestProductionWorkflowReplaysUnadvertisedToolNameRecovery(t *testing.T) {
-	plannerStub, handler := productionReplayWorkflow(t)
+	plannerStub, eng, handler := productionReplayWorkflow(t)
 	name := "$FUNCTIONS.catalog_list_nearby"
 	usage := model.TokenUsage{
 		Model:        "test-model",
@@ -237,7 +238,7 @@ func TestProductionWorkflowReplaysUnadvertisedToolNameRecovery(t *testing.T) {
 	assert.Equal(t, hooks.Usage, recordedOutput.PlannerEvents[0].Type)
 	assert.Equal(t, []model.TokenUsage{usage}, recordedUsageEvents(t, history))
 
-	replayedOutput := replayProductionWorkflow(t, handler, history)
+	replayedOutput := replayProductionWorkflow(t, eng, handler, history)
 
 	assert.Zero(t, plannerStub.calls.Load())
 	require.NotNil(t, replayedOutput)
@@ -254,7 +255,7 @@ func TestProductionWorkflowReplaysUnadvertisedToolNameRecovery(t *testing.T) {
 // wrapper used by Engine.RegisterWorkflow.
 func productionReplayWorkflow(
 	t *testing.T,
-) (*replayPlanner, func(workflow.Context, *api.RunInput) (*api.RunOutput, error)) {
+) (*replayPlanner, *Engine, func(workflow.Context, *api.RunInput) (*api.RunOutput, error)) {
 	t.Helper()
 	plannerStub := &replayPlanner{}
 	store := storageinmem.New()
@@ -293,7 +294,7 @@ func productionReplayWorkflow(
 			},
 		},
 	}
-	return plannerStub, eng.temporalWorkflowHandler(rt.ExecuteWorkflow)
+	return plannerStub, eng, eng.temporalWorkflowHandler(rt.ExecuteWorkflow)
 }
 
 // replayProductionWorkflow registers the production Temporal wrapper with the
@@ -301,6 +302,7 @@ func productionReplayWorkflow(
 // with the activity commands stored in history.
 func replayProductionWorkflow(
 	t *testing.T,
+	eng *Engine,
 	handler func(workflow.Context, *api.RunInput) (*api.RunOutput, error),
 	history *historypb.History,
 ) *api.RunOutput {
@@ -313,6 +315,7 @@ func replayProductionWorkflow(
 	}
 	replayer, err := worker.NewWorkflowReplayerWithOptions(worker.WorkflowReplayerOptions{
 		DataConverter: NewAgentDataConverter(),
+		Interceptors:  []interceptor.WorkerInterceptor{&workflowControlInterceptor{engine: eng}},
 	})
 	require.NoError(t, err)
 	replayer.RegisterWorkflowWithOptions(
@@ -340,7 +343,7 @@ func syntheticAcceptedProductionHistory(
 		TurnID:    productionReplayTurnID,
 	}
 	accepted := acceptedStartForTest(t, productionReplayWorkflowName, productionReplayTaskQueue, runInput)
-	started := workflowExecutionStartedEvent(1, productionReplayWorkflowName, productionReplayTaskQueue, accepted.Input)
+	started := workflowExecutionStartedEvent(productionReplayWorkflowName, productionReplayTaskQueue, accepted.Input)
 	started.GetWorkflowExecutionStartedEventAttributes().Memo = accepted.Memo
 	return syntheticProductionHistory(t, first, recovery, started)
 }
@@ -623,12 +626,11 @@ func deserializeReplayHistory(t *testing.T, history *historypb.History) *history
 }
 
 func workflowExecutionStartedEvent(
-	id int64,
 	workflowName, taskQueue string,
 	input *commonpb.Payloads,
 ) *historypb.HistoryEvent {
 	return &historypb.HistoryEvent{
-		EventId:   id,
+		EventId:   1,
 		EventType: enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_STARTED,
 		Attributes: &historypb.HistoryEvent_WorkflowExecutionStartedEventAttributes{
 			WorkflowExecutionStartedEventAttributes: &historypb.WorkflowExecutionStartedEventAttributes{

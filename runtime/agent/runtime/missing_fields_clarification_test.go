@@ -206,7 +206,7 @@ func TestMissingFieldsClarificationResumesAfterAccountedFailure(t *testing.T) {
 	}
 
 	out, err := h.runtime.resumeSuspendedWorkflow(
-		nextWorkflow,
+		recoveryContinuationWorkflow(t, nextWorkflow, checkpoint),
 		h.registration,
 		nextInput,
 		checkpoint, seedTestContinuationHistory(t, h.runtime, nextInput, checkpoint),

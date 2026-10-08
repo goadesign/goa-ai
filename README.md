@@ -69,6 +69,17 @@ The Responses adapter preserves typed nested stream failures, including transien
 server-error metadata. Retry owners must still protect already-published output;
 classification does not replay streams. See the [provider stream contract](DESIGN.md#provider-stream-integrity-contract).
 
+An enabled provider recovery allowance also covers agent helpers started by the
+run. Each helper retains its unfinished planning request; completed tools are
+not repeated. Simultaneous failures consume overlapping elapsed time once.
+Custom engines must implement the workflow recovery control, and native
+Temporal workflows must handle the error returned by `NewWorkflowContext`.
+See [engine integration](docs/runtime.md#engine-integration) before upgrading.
+
+Live thinking streams send each new text fragment once. Complete reasoning
+blocks remain in the accepted provider transcript and do not repeat their text
+in the live stream. See the [streaming planner contract](docs/runtime.md#streaming-planners).
+
 Bedrock Fable 5.1 requests with forced `tool` or `any` choices fail locally as
 `model.RequestValidationError` before inference or counting. The adapter preserves
 the caller's selected model and choice; see the
@@ -247,7 +258,7 @@ explains how to keep those responsibilities clear.
 | --- | --- |
 | [MCP servers](docs/dsl.md#mcp-server-definition) | Expose Goa service methods as MCP tools and resources, with static prompts and generated JSON-RPC adapters. |
 | [External tools](docs/dsl.md#mcp-backed-toolsets) | Consume MCP servers over stdio or HTTP using declared tool contracts. |
-| [Tool registries](docs/tool_search.md) | Consume a named toolset or a changing registry catalog. Generated contracts preserve confirmation, pagination, and exact execution across provider changes. Providers register definitions at startup or attach to a complete declaration saved beforehand, then renew exact leases without resending schemas. Applications can attach immutable catalog identity and use bounded scoped reads without changing declaration encoding or provider messages. Native retry lookups return saved registration or explicit absence. Provider completion reports whether the registry retained the submitted result or settled the execution deadline instead. Handlers can leave an unconfirmed call to registry recovery without inventing a failure or stopping other calls. |
+| [Tool registries](docs/tool_search.md) | Consume a named toolset or a changing registry catalog. Generated contracts preserve confirmation, pagination, and exact execution across provider changes. Providers register definitions at startup or attach to a complete declaration saved beforehand, then renew exact leases without resending schemas. Explicit service replacement compares the current token, waits for old provider leases to end, and safely repeats a committed update using its request ID. Applications can attach immutable catalog identity and use bounded scoped reads without changing declaration encoding or provider messages. Native retry lookups return saved registration or explicit absence. Provider completion reports whether the registry retained the submitted result or settled the execution deadline instead. Handlers can leave an unconfirmed call to registry recovery without inventing a failure or stopping other calls. |
 | [Deferred tool search](docs/tool_search.md) | Load definitions on demand using OpenAI native client search with BM25 or Claude hosted search. Consumers choose whole toolsets with `Deferred()` or exact compiled tools with `Deferred("search")`, keeping other tools immediately available. Claude replay preserves schema text through JSON escaping while still rejecting changed definitions. |
 | [Structured output](docs/runtime.md#typed-direct-completions) | Declare `Completion(...)` and get typed unary and streaming helpers. Use [typed tool output](docs/runtime.md#forced-typed-tool-output) with explicit forced or automatic tool choice when you want the same generated result contract with bounded model correction. |
 | [Standalone JSON codecs](docs/json_codecs.md) | Automatically generate typed encode/decode functions beside supported original Goa types using Goa’s planned shared or service-local declaration, validating complete values and rejecting ambiguous or invalid JSON. |
@@ -255,7 +266,7 @@ explains how to keep those responsibilities clear.
 | [Human input and approval](docs/runtime.md#external-input-and-workflow-continuations) | Ask structured questions or require confirmation, save the pending state, and continue from the answer. |
 | [Evaluation suites](docs/evals.md) | Capture typed observations once, reuse component assessments in focused tests and complete flows, and reserve complex requirements for reasoning. Qualify native System One pass probabilities to reduce reasoning calls, audit automatic passes, and compare complete work on the same evidence. |
 | [Large tool results](docs/runtime.md#bounded-results) | Give models bounded results and runtime-managed pagination; keep rich UI data out of model requests with `ServerData`. |
-| [Policies and context](docs/runtime.md#policy-enforcement) | Enforce tool restrictions, call/recovery budgets, and timing. Opt into [durable provider recovery](docs/runtime.md#streaming-planners) before model output, with a separate finite allowance. Configure [history compression](docs/runtime.md#history-policies) with instructions to retain critical identifiers verbatim, [prompt caching](docs/runtime.md#prompt-caching), and [prompt overrides](docs/runtime.md#prompt-registry-and-overrides). |
+| [Policies and context](docs/runtime.md#policy-enforcement) | Enforce tool restrictions, call/recovery budgets, and timing. Opt into [durable provider recovery](docs/runtime.md#streaming-planners) before model output, with a separate finite allowance. Disabled or exhausted recovery preserves the typed provider failure. Configure [history compression](docs/runtime.md#history-policies) with instructions to retain critical identifiers verbatim, [prompt caching](docs/runtime.md#prompt-caching), and [prompt overrides](docs/runtime.md#prompt-registry-and-overrides). |
 | [Streaming and observability](docs/runtime.md#hooks-and-streaming) | Receive assistant text, tool progress, usage, and child-run events in a trusted application host, with [OpenTelemetry tracing](docs/runtime.md#telemetry). Your host selects what to expose to users. |
 
 ## Production
@@ -279,6 +290,12 @@ Recovery preserves failed arguments as evidence and validates each fresh correct
 An input-schema change alone therefore does not invalidate inert history.
 See [continuation compatibility](docs/runtime.md#external-input-and-workflow-continuations)
 for the checks that still apply.
+
+`PrepareNextTurn` retains unfinished queries from the selected saved run.
+Continuing one query retires only that query, even when provider call IDs are
+reused. Literal message imports retain their existing execution-ID behavior.
+See [saved pagination](docs/runtime.md#saved-pagination) for history ownership
+and the engine upgrade requirement.
 
 Choose model adapters for OpenAI, Anthropic, Amazon Bedrock, Google Vertex AI,
 or a model gateway. Provider capabilities differ; the [runtime guide](docs/runtime.md)
@@ -345,6 +362,15 @@ complete tool result. After envelope and identity validation, adapters can call
 semantic-result and bounds checks before forwarding a successful result.
 Server-data validation remains separate. See the [result envelope contract](docs/runtime.md#registry-result-envelope-decoding)
 for identity, retry, parser semantics, and tool-value validation responsibilities.
+
+Registry reads verify saved consumer contracts using their original JSON bytes.
+Warm lookups reuse validation only for identical saved bytes and execution kind,
+while checking current state and retirement on every read. The cache retains
+compact validation results rather than full definitions.
+New fields added by a framework upgrade do not change a saved declaration's
+fingerprint or routing token merely because its Go type has changed. This
+correction needs no storage conversion or provider regeneration; see
+[saved declaration identity](docs/runtime.md#saved-declaration-identity).
 
 Provider hosts can use `toolprovider.ServeAndWait` with the same arguments as
 `Serve` to join invocation-owned work before returning. `Serve` keeps its bounded

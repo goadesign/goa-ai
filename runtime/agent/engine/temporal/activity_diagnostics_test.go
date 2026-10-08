@@ -42,7 +42,7 @@ type (
 )
 
 func TestActivityWrappersOfferOriginalCustomError(t *testing.T) {
-	for _, name := range []string{"storage", "planner", "tool", "child"} {
+	for _, name := range []string{"storage", "planner", "tool", "child", "continuation"} {
 		t.Run(name, func(t *testing.T) {
 			original := temporal.NewNonRetryableApplicationError("dependency rejected field", "client.type",
 				errors.New("root detail"), "custom diagnostic detail")
@@ -72,6 +72,12 @@ func TestActivityWrappersOfferOriginalCustomError(t *testing.T) {
 				require.NoError(t, eng.RegisterAgentChildActivity(t.Context(), name, engine.ActivityOptions{},
 					func(context.Context, *api.AgentChildActivityInput) (*api.AgentChildActivityOutput, error) {
 						return nil, original
+					}))
+			case "continuation":
+				input = &api.ContinuationActivityInput{}
+				require.NoError(t, eng.RegisterContinuationActivity(t.Context(), name, engine.ActivityOptions{},
+					func(context.Context, *api.ContinuationActivityInput) (bool, error) {
+						return false, original
 					}))
 			}
 			var suite testsuite.WorkflowTestSuite

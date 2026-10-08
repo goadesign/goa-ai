@@ -16,9 +16,11 @@ import (
 // routeWorkflowContext routes activity execution through registered handlers so
 // tests can call runtime helpers without standing up a workflow engine.
 type routeWorkflowContext struct {
-	ctx   context.Context
-	runID string
-	now   func() time.Time
+	ctx          context.Context
+	workflowID   string
+	runID        string
+	now          func() time.Time
+	recoveryPort *testProviderRecoveryPort
 
 	plannerRoutes map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error)
 	toolRoutes    map[string]func(context.Context, *ToolInput) (*ToolOutput, error)
@@ -30,8 +32,10 @@ type routeWorkflowContext struct {
 	nextSequence        uint64
 	cancellationHandler engine.CancellationHandler
 
-	hookRuntime  *Runtime
-	childRuntime *Runtime
+	hookRuntime          *Runtime
+	childRuntime         *Runtime
+	continuationRead     func(*api.ContinuationActivityInput) (bool, error)
+	lastContinuationCall engine.ContinuationActivityCall
 
 	parent *routeWorkflowContext
 }
@@ -51,6 +55,9 @@ func (r *routeWorkflowContext) Context() context.Context {
 }
 
 func (r *routeWorkflowContext) WorkflowID() string {
+	if r.workflowID != "" {
+		return r.workflowID
+	}
 	return "wf"
 }
 
@@ -78,6 +85,7 @@ func (r *routeWorkflowContext) WithCancel() (engine.WorkflowContext, func()) {
 func (r *routeWorkflowContext) withContext(ctx context.Context) *routeWorkflowContext {
 	return &routeWorkflowContext{
 		ctx:             ctx,
+		workflowID:      r.workflowID,
 		runID:           r.runID,
 		now:             r.now,
 		plannerRoutes:   r.plannerRoutes,
@@ -156,10 +164,24 @@ func (r *routeWorkflowContext) StartChildWorkflow(
 	_ context.Context,
 	request engine.ChildWorkflowRequest,
 ) (engine.ChildWorkflowHandle, error) {
+	// A child request keeps the activity and storage routes but starts a new
+	// workflow context. Its receiver registration and sequence counter belong
+	// to the child, while nested updates still use the shared runtime and Store.
+	child := &routeWorkflowContext{
+		ctx:              r.ctx,
+		workflowID:       request.ID,
+		runID:            request.ID,
+		now:              r.now,
+		plannerRoutes:    r.plannerRoutes,
+		toolRoutes:       r.toolRoutes,
+		hookRuntime:      r.hookRuntime,
+		childRuntime:     r.childRuntime,
+		continuationRead: r.continuationRead,
+	}
 	return &testChildHandle{
 		runtime: r.childRuntime,
 		request: request,
-		wfCtx:   r,
+		wfCtx:   child,
 	}, nil
 }
 
@@ -177,7 +199,7 @@ func (r *routeWorkflowContext) ExecuteStorageActivity(call engine.StorageActivit
 func (r *routeWorkflowContext) ExecutePlannerActivity(
 	call engine.PlannerActivityCall,
 ) (*api.PlanActivityOutput, error) {
-	r.lastPlannerCall = call
+	r.root().lastPlannerCall = call
 	handler, ok := r.plannerRoutes[call.Name]
 	if !ok {
 		return nil, fmt.Errorf("no planner route for activity %q", call.Name)
@@ -213,6 +235,17 @@ func (r *routeWorkflowContext) ExecuteAgentChildActivity(call engine.AgentChildA
 		return nil, errors.New("agent child activity runtime is required")
 	}
 	return r.childRuntime.prepareAgentChildActivity(r.Context(), call.Input)
+}
+
+func (r *routeWorkflowContext) ExecuteContinuationActivity(call engine.ContinuationActivityCall) (bool, error) {
+	r.lastContinuationCall = call
+	if r.continuationRead != nil {
+		return r.continuationRead(call.Input)
+	}
+	if r.hookRuntime == nil {
+		return false, errors.New("continuation activity runtime is required")
+	}
+	return r.hookRuntime.continuationAvailableActivity(r.Context(), call.Input)
 }
 
 // StartRequestDigest supplies the fixed accepted request for this workflow fixture.

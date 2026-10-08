@@ -856,7 +856,7 @@ func (r *Runtime) runPlanActivityOnce(
 		return out, nil
 	}
 	if out.ProviderFailure != nil {
-		return out, nil
+		return out, nil //nolint:nilerr // A completed certificate is a successful activity value; the recovery consumer decides whether to retry or return its error.
 	}
 	if out.PlanningFailure != nil {
 		failure := &planningFailureError{failure: *out.PlanningFailure}

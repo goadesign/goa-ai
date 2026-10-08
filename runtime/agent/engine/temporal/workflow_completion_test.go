@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/worker"
@@ -39,6 +40,7 @@ func TestClosedWorkflowStopsRetries(t *testing.T) {
 			env := suite.NewTestWorkflowEnvironment()
 			env.SetTestTimeout(time.Second * 5)
 			eng := &Engine{}
+			env.SetWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{&workflowControlInterceptor{engine: eng}}})
 			handler := eng.temporalWorkflowHandler(func(engine.WorkflowContext, *api.RunInput) (*api.RunOutput, error) {
 				calls.Add(1)
 				return nil, engine.ErrWorkflowCompleted
@@ -87,7 +89,8 @@ func TestActivityRejectionAllowsFreshWorkflowAttempt(t *testing.T) {
 			env.SetTestTimeout(time.Second * 5)
 			env.SetDataConverter(NewAgentDataConverter())
 			eng := newTestEngine(t)
-			eng.workerFactory = func(client.Client, string, worker.Options) worker.Worker {
+			eng.workerFactory = func(_ client.Client, _ string, opts worker.Options) worker.Worker {
+				env.SetWorkerOptions(opts)
 				return &boundedCompletionWorker{env: env}
 			}
 			var reads, writes atomic.Int32

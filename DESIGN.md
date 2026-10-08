@@ -19,7 +19,9 @@ contract. The host selects fields and translates them into its own public
 events. The debug profile also sends every event to make the diagnostic
 purpose explicit at its call sites. An accepted response keeps the complete
 provider response in the internal transcript, including thinking needed for an
-exact later provider request. A rejected response or ordinary
+exact later provider request. Live thinking events carry only new text
+fragments; a complete signed reasoning block is retained in the provider
+transcript without repeating its text in the live stream. A rejected response or ordinary
 failure reported before activity cancellation keeps only assistant text already
 delivered to the trusted host. Cancellation may prevent that text from reaching
 durable storage.
@@ -34,9 +36,33 @@ assistant-turn event uses that same ID.
 Provider recovery is explicitly enabled by a separate finite run allowance.
 The activity certifies one temporary failed model invocation with no observed
 model output and clean completed phases; an activity error is never permission
-to retry. Durable workflow timers schedule the identical pending planning
-request as a new single-attempt activity. Accepted tools and active-work limits
-remain intact; saved external-input checkpoints retain the remaining allowance.
+to retry. Certification is independent of that allowance. The exclusive
+activity result preserves the canonical provider error, including cause-only
+diagnostic text; disabled or exhausted consumers return the typed failure.
+The engine owns its private versioned encoding and rejects historical summary
+certificates that cannot supply the original provider facts. Durable workflow
+timers schedule the identical pending planning request as a new single-attempt
+activity. A helper reports its certified failure through its actual workflow
+parents to the run that owns the allowance. That owner counts overlapping
+failed-activity and entered-wait intervals once. Helpers using inherited recovery
+do not receive a fresh allowance. Accepted tools remain intact; saved external-input checkpoints retain
+the remaining allowance.
+
+Each runtime measures when its own work is paused. A parent waiting for several
+helpers pauses its active-work clock only when every unfinished branch is known
+to be paused. Healthy work, unresolved failures, and ordinary publication still
+consume active-work time. A descendant's pause is not automatically a pause for
+every ancestor.
+
+The runtime owns certification, spending, and the first terminal decision. The
+engine owns the accepted child relationship, ordered messages, and receiver
+acceptance. Sending a native signal does not complete a recovery obligation.
+The Temporal engine installs a worker interceptor that retains those obligations
+and waits for acceptance before ordinary workflow completion. Native workflows
+on that worker obtain the shared control through `NewWorkflowContext`, which
+returns an error when the required interceptor is missing or belongs to another
+engine. Custom engine adapters must implement the typed control described in
+[engine integration](docs/runtime.md#engine-integration).
 See [provider recovery](docs/runtime.md#streaming-planners) in the runtime reference.
 
 An accepted response stores its complete
@@ -638,6 +664,25 @@ permits only a final response or registered terminal bookkeeping. When the same 
 failures in one batch, the correctable failure keeps that tool available. A
 recovery turn may end with an input suspension; its evidence remains available
 when a new workflow continues after the answer.
+
+Saved pagination uses the exact `RunSeed.Source` ancestry and completed
+execution records through each selected end. A continuation checkpoint also
+selects its retained completed output references: a completed sibling's event
+can follow the predecessor's transcript end without being published again by
+the successor. Provider IDs remain transcript identities and can repeat across
+responses; they are never a session-wide correlation key. Start and Resume
+share this private reader with the continuation-availability activity.
+
+Before a finish failure chooses recovery or finalization, the workflow records
+one availability read through the typed engine activity contract. A negative
+answer retains direct `tool_failure` finalization and its hard deadline without
+an initial recovery-turn charge. A positive answer retains ordinary recovery
+charging and its normal deadline. Read errors remain errors. The read uses the
+storage activity's existing attempt allowance, bounded by remaining hard time;
+it does not move deadlines or change recovery capacity. Custom engines must
+implement this activity. Existing Temporal executions must remain on workers
+with their original workflow code; the added activity changes command history.
+
 Active tool failures and model-replacement feedback are separate workflow
 facts. A rejected response preserves active failed-call IDs and their execution
 restrictions. Ordinary correction/replan restrictions end when the accepted
@@ -1285,6 +1330,13 @@ provider contact or health tracker and creates no provider lease, stream, or
 ping. The existing catalog scheduler still observes its presence and may report
 it unavailable under the normal sampling lease.
 
+`ReplaceServiceToolset` compares the current registration and saves a complete
+replacement only after every old provider lease has ended. A stable replacement
+request ID lets repeated requests return the saved winner without a journal.
+The old service token is permanently retired; fresh attachment establishes
+availability for the replacement. The [service publication contract](docs/runtime.md#service-declarations-before-provider-startup)
+defines errors, replay, reactivation, rollback, and client upgrade steps.
+
 `AttachProvider` requires the exact existing name and token, a stable provider ID,
 a lifecycle incarnation, and the current wire version. Its conditional write
 changes only leases and health. It preserves longer deadlines, rejects draining
@@ -1435,7 +1487,7 @@ completion still check the exact lease in the same Redis operation that records
 their effects.
 
 Application owners may call the explicit `WithIdentity` variants of Register,
-DeclareServiceToolset, RegisterAgentToolset and ReplaceAgentToolset. These share
+DeclareServiceToolset, ReplaceServiceToolset, RegisterAgentToolset and ReplaceAgentToolset. These share
 the existing compiler and catalog commit. Identity is immutable, is not part of
 the declaration fingerprint, and cannot be introduced by an ordinary retry.
 Existing identity-free registration remains supported. Assignment to historical
@@ -1496,15 +1548,36 @@ inconsistent fingerprints or summaries, and disagreement with retirement
 history. Startup reports invalid data without rewriting or reconstructing it.
 
 Definition-dependent reads fetch current state, definition and retirement
-membership in one Redis snapshot and validate the complete pair. Semantic
-fingerprints ignore ordering, and native replacements can reuse their token;
-no per-name definition cache may substitute earlier saved bytes. Each caller
-receives an independently owned definition with the selected state's time and
-token. The schema validator's digest-keyed cache still reuses compiled execution
-schemas. Full definition transfer, decoding and fingerprinting occur for each
-resolution or call-preparation read, including availability retries. Lease and
-health operations retain compact-only reads. Every consequential call operation
-still checks current authority.
+membership in one Redis snapshot and validate the complete pair. Declaration
+fingerprints ignore tool and tag ordering, and native replacements can reuse
+their token, so neither can select an earlier saved definition. Each read hashes
+all current definition bytes with SHA-256 and reuses validation only when both
+that hash and the service or native-agent validation rules match. Changed bytes
+pass the same strict saved-encoding checks before use.
+
+The private catalog retains one immutable validation result per name: compact
+metadata, the saved fingerprint, and compiled execution-schema maps. It retains
+neither full JSON nor decoded declarations. Replacements overwrite that entry;
+reads or successful listings that observe removed names discard it. Cold
+validation runs one definition at a time to avoid concurrent large parsing
+allocations; warm lookups do not wait for that work. Canceled reads leave
+the validation queue without retaining their current definition. The existing schema
+validator still shares compiled schemas by schema digest.
+
+Each selected lookup owns its current definition string and state. Callers
+requesting full definitions receive independently decoded values with that
+state's time and token. Full definition transfer remains part of resolution and
+call preparation, including availability retries; warm call preparation skips
+full decoding and fingerprint reconstruction. Lease and health operations still
+read compact state only. Every consequential call operation checks current
+authority. This optimization changes no API, saved encoding, or migration.
+
+Saved consumer-contract JSON enters the fingerprint calculation in its original
+encoding, after strict decoding. Reads retain the complete saved definition
+instead of serializing it with today's generated types. This preserves existing
+identity when new optional fields are added, while mismatched definitions still
+fail validation. The [saved declaration identity contract](docs/runtime.md#saved-declaration-identity)
+defines decoding, registration, and upgrade behavior.
 
 Attachment and same-token Register may preserve a pong only while a previous
 routable provider remains live at the atomic write. The commit checks Redis time

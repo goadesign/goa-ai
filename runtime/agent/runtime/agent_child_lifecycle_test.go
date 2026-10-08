@@ -61,7 +61,8 @@ func TestExecuteAgentChildWaitsAfterParentCancellation(t *testing.T) {
 	case <-time.After(20 * time.Millisecond):
 	}
 	close(handle.ready)
-	require.NoError(t, (<-done).err)
+	require.ErrorIs(t, (<-done).err, context.Canceled)
+	require.True(t, handle.wasCanceled(), "parent cancellation must also cancel the child")
 }
 
 func TestExecuteAgentChildRejectsMissingRequiredLabelBeforeStart(t *testing.T) {

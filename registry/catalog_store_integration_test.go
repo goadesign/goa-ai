@@ -158,7 +158,8 @@ func TestRedisCompactLifecycleDoesNotTransferDefinitions(t *testing.T) {
 	first, err := catalog.Register(ctx, definition, testAdmissionRevisionA, "provider", testIncarnationA, time.Minute)
 	require.NoError(t, err)
 
-	// A second registry process validates a complete definition on each use.
+	// A second registry process reads the complete definition on each use and
+	// reuses validation only when the saved bytes remain identical.
 	other := newToolsetCatalog(store, newRedisTimeSource(rdb))
 	_, err = other.ActiveRegistration(ctx, toolset.Name)
 	require.NoError(t, err)

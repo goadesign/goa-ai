@@ -42,7 +42,7 @@ func TestProductionWorkflowReplaysRejectionDiagnosticVersions(t *testing.T) {
 				name += "/terminal"
 			}
 			t.Run(name, func(t *testing.T) {
-				plannerStub, handler := productionReplayWorkflow(t)
+				plannerStub, eng, handler := productionReplayWorkflow(t)
 				reason := "field[7]: invalid value"
 				if version == errorevidence.ReasonVersion {
 					reason = strings.Repeat(reason+"\n", 400)
@@ -111,7 +111,7 @@ func TestProductionWorkflowReplaysRejectionDiagnosticVersions(t *testing.T) {
 					}
 				}
 				history = deserializeReplayHistory(t, history)
-				output := replayProductionWorkflow(t, handler, history)
+				output := replayProductionWorkflow(t, eng, handler, history)
 				assert.Zero(t, plannerStub.calls.Load())
 				assert.NotContains(t, scheduledActivityNames(history), productionReplayExecute)
 				assert.Equal(t, []model.TokenUsage{usage}, recordedUsageEvents(t, history))

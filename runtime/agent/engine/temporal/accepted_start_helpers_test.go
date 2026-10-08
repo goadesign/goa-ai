@@ -9,7 +9,10 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/testsuite"
+	"go.temporal.io/sdk/worker"
+	"go.temporal.io/sdk/workflow"
 
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -41,4 +44,20 @@ func prepareAcceptedTestWorkflow(t *testing.T, env *testsuite.TestWorkflowEnviro
 	env.SetStartWorkflowOptions(client.StartWorkflowOptions{ID: accepted.WorkflowId, TaskQueue: queue})
 	require.NoError(t, env.SetMemoOnStart(map[string]any{workflowStartRecipeMemoKey: digest}))
 	return owned
+}
+
+// installFirstAttemptRecoveryControl supplies one field the SDK fixture omits.
+// These existing child-input tests run only a first attempt. Retry and
+// continuation identity are verified against a real server in separate tests.
+func installFirstAttemptRecoveryControl(
+	t *testing.T, env *testsuite.TestWorkflowEnvironment, eng *Engine, opts worker.Options,
+) {
+	t.Helper()
+	opts.Interceptors = append(opts.Interceptors, &workflowControlInterceptor{engine: eng})
+	env.SetWorkerOptions(opts)
+	env.SetOnChildWorkflowStartedListener(func(info *workflow.Info, _ workflow.Context, _ converter.EncodedValues) {
+		require.EqualValues(t, 1, info.Attempt)
+		require.Empty(t, info.FirstRunID, "remove fixture field when the SDK supplies it")
+		info.FirstRunID = info.WorkflowExecution.RunID
+	})
 }

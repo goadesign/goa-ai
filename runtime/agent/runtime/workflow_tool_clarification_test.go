@@ -131,7 +131,7 @@ func TestRunLoopToolClarificationPreservesCallAndReturnsAnswer(t *testing.T) {
 	}
 	require.NoError(t, restoreContinuationRunInput(continuedInput, checkpoint))
 	out, err = rt.resumeSuspendedWorkflow(
-		continuedCtx,
+		recoveryContinuationWorkflow(t, continuedCtx, checkpoint),
 		AgentRegistration{ResumeActivityName: "resume"},
 		continuedInput,
 		checkpoint, seedTestContinuationHistory(t, rt, continuedInput, checkpoint),
@@ -269,7 +269,7 @@ func TestRunLoopQuestionsPreservesProviderAndRuntimeIdentityAcrossResume(t *test
 	}
 	require.NoError(t, restoreContinuationRunInput(continuedInput, checkpoint))
 	out, err = rt.resumeSuspendedWorkflow(
-		continuedCtx,
+		recoveryContinuationWorkflow(t, continuedCtx, checkpoint),
 		AgentRegistration{ResumeActivityName: "resume"},
 		continuedInput,
 		checkpoint, seedTestContinuationHistory(t, rt, continuedInput, checkpoint),
@@ -395,7 +395,7 @@ func TestRunLoopExternalToolsPreservesIdentityForSuccessAndCorrection(t *testing
 	}
 	require.NoError(t, restoreContinuationRunInput(continuedInput, checkpoint))
 	out, err = rt.resumeSuspendedWorkflow(
-		continuedCtx,
+		recoveryContinuationWorkflow(t, continuedCtx, checkpoint),
 		AgentRegistration{ResumeActivityName: "resume"},
 		continuedInput,
 		checkpoint, seedTestContinuationHistory(t, rt, continuedInput, checkpoint),
