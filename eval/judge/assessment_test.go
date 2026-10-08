@@ -46,9 +46,7 @@ func TestAdjudicationReceivesOriginalEvidenceAndBothDecisions(t *testing.T) {
 	}}
 	claims := []eval.Claim{{ID: "complete", Text: "The task was completed."}}
 	disagreements := []eval.Disagreement{{
-		Prediction: eval.Prediction{ClaimID: "complete", Label: eval.Entailed, Probabilities: map[eval.Label]float64{
-			eval.Entailed: .97, eval.Contradicted: .01, eval.NotAddressed: .01, eval.Indeterminate: .01,
-		}},
+		Prediction:      eval.Prediction{ClaimID: "complete", Probability: .97},
 		Judgment:        eval.Judgment{ClaimID: "complete", Label: eval.NotAddressed, Rationale: "Only planned."},
 		QualificationID: "reviewed-fixture",
 	}}
@@ -60,7 +58,7 @@ func TestAdjudicationReceivesOriginalEvidenceAndBothDecisions(t *testing.T) {
 	body := provider.requests[0].Messages[1].Parts[0].(model.TextPart).Text
 	assert.Contains(t, body, "I will do it tomorrow.")
 	assert.Contains(t, body, "The task was requested.")
-	assert.Contains(t, body, `"probabilities"`)
+	assert.Contains(t, body, `"probability":0.97`)
 	assert.Contains(t, body, "Only planned.")
 	assert.Contains(t, body, "reviewed-fixture")
 }

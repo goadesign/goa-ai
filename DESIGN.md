@@ -315,6 +315,13 @@ Observations admit failed and partial product outcomes; defaults cannot create
 facts that a hook did not capture. Assertion identities and coverage belong to
 the design, never to product hooks or model output.
 
+`Component` owns reusable assertions over a named observation type. `Assess`
+selects an observation of that type in a scenario; generation expands every
+assertion with a distinct occurrence identity and direct typed access. Component
+selectors cannot read beyond the selected observation. Reused exact checks share
+one predicate method. Components do not execute the product, and scenarios retain
+separate assertions for the complete flow.
+
 Application hooks execute the product and return observations. `Capture` stores
 exact bytes, input configuration, schema identities, timestamps, errors, and
 provenance without calling predicates or assessors. `Assess` verifies the saved
@@ -327,16 +334,19 @@ identity, evaluation provenance, and appendable report.
 
 Exact predicates cannot be overridden by semantic assessment. Reasoning-only,
 disagreement-detecting, and selective engines are explicit constructors. Native
-classifiers return complete four-label probabilities. Reasoners return judgments
+classifiers return native pass probabilities. Reasoners return judgments
 with explanations or explicit abstentions. Only a qualified automatic pass can
 avoid reasoning, and a reproducible audit policy can send it for independent
-assessment. Every other prediction requires reasoning. The initial reasoner
+assessment. Unqualified selective requirements bypass classification;
+`Reasoning()` requirements always bypass it, including in comparison experiments.
+Every other prediction requires reasoning. The initial reasoner
 sees original evidence without the classifier's opinion. Qualified pass/fail
 conflicts receive one adjudication; unresolved decisions and infrastructure
 errors remain distinct from product labels.
 
 Qualification belongs to an exact observation schema, requirement statement,
-field selection, classifier version, instructions, and choice ordering. An
+field selection, component scope, reasoning policy, classifier version,
+instructions, and choice ordering. An
 application-owned reviewed corpus fixes independent groups and tuning/validation
 partitions. Tuning selects pass and fail probability bands; held-out evidence
 checks them once using conservative group error bounds. Insufficient evidence
@@ -345,9 +355,10 @@ failure. The four-example semantic sanity check is explicit and provides no
 statistical qualification. No application-independent confidence cutoff is
 supplied, and the framework neither trains nor auto-promotes a model.
 
-`features/eval/typesafe` sends native Choice requests using generated private Goa
+`features/eval/typesafe` sends native Noul or Choice requests using generated private Goa
 records and codecs. It requires a pinned Jev version, verifies that version on
-responses, retains all four probabilities, enforces a caller-specified per-response
+responses, retains the unmodified pass probability and original response,
+enforces a caller-specified per-response
 byte ceiling, and honors context deadlines without retries or redirects.
 `eval/judge` remains the reasoning implementation, with explicit forced or
 automatic typed-tool constructors and the existing bounded format corrections.

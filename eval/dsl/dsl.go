@@ -51,6 +51,35 @@ func Suite(name string, fn func()) *evalexpr.SuiteExpr {
 	return suite
 }
 
+// Component declares reusable assertions over a named Goa observation type.
+// It must appear at the design top level and requires Description, Observation,
+// and at least one Check or Requirement. It does not execute or capture a run.
+// Assess applies these assertions to saved evidence in one or more scenarios.
+func Component(name string, fn func()) *evalexpr.ComponentExpr {
+	if eval.Current() != eval.Top {
+		eval.IncompatibleDSL()
+		return nil
+	}
+	component := &evalexpr.ComponentExpr{Name: name, DSLFunc: fn}
+	evalexpr.Root.Components = append(evalexpr.Root.Components, component)
+	return component
+}
+
+// Assess applies a component to one field of the scenario observation.
+// The selector must resolve to the component's named Goa type; "$" selects the
+// complete observation. Each use has a distinct name, while its typed check
+// methods are shared. Missing selected evidence is an assessment error.
+func Assess(name string, component *evalexpr.ComponentExpr, selector string) {
+	scenario, ok := eval.Current().(*evalexpr.ScenarioExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return
+	}
+	scenario.Assessments = append(scenario.Assessments, &evalexpr.AssessmentExpr{
+		Name: name, Component: component, Selector: selector,
+	})
+}
+
 // Scenario defines one evaluation case. Each scenario generates one hook
 // method that the application implements to execute the real product and
 // return a typed observation. Checks and requirements are declared in the
@@ -61,7 +90,7 @@ func Suite(name string, fn func()) *evalexpr.SuiteExpr {
 // Scenario accepts two arguments: the scenario name in lower_snake_case and
 // the defining DSL function. The DSL function requires Description and may set
 // Input, Tags, and a Timeout overriding the suite timeout. Observation and at
-// least one Check or Requirement are required.
+// least one Check, Requirement, or Assess are required.
 //
 // Example:
 //
@@ -127,18 +156,19 @@ func Input(value any, args ...any) {
 // Observation declares the typed evidence returned by the scenario hook.
 // Describe possible outcomes, including empty answers and failed product
 // operations; Check and Requirement describe which of those outcomes pass.
-// It accepts the same type forms as Input and must appear once in Scenario.
+// It accepts the same type forms as Input and must appear once in Scenario or
+// Component. A Component requires a named Goa type so all uses share that type.
 func Observation(value any, args ...any) {
-	scenario, ok := eval.Current().(*evalexpr.ScenarioExpr)
-	if !ok {
+	name, assertions := currentAssertions()
+	if assertions == nil {
 		eval.IncompatibleDSL()
 		return
 	}
-	if scenario.Observation != nil {
+	if assertions.Observation != nil {
 		eval.ReportError("Observation may appear only once")
 		return
 	}
-	scenario.Observation = dslshape.Build(scenario.Name, "Observation", value, args...)
+	assertions.Observation = dslshape.Build(name, "Observation", value, args...)
 }
 
 // Check declares an exact assertion over the scenario's observation. The
@@ -146,12 +176,12 @@ func Observation(value any, args ...any) {
 // diagnostic on success, or an explanation on failure. Predicates receive
 // only saved evidence and must not call the product or reload reference data.
 func Check(name, description string) {
-	scenario, ok := eval.Current().(*evalexpr.ScenarioExpr)
-	if !ok {
+	_, assertions := currentAssertions()
+	if assertions == nil {
 		eval.IncompatibleDSL()
 		return
 	}
-	scenario.Checks = append(scenario.Checks, &evalexpr.CheckExpr{
+	assertions.Checks = append(assertions.Checks, &evalexpr.CheckExpr{
 		Name: name, Description: description,
 	})
 }
@@ -160,14 +190,31 @@ func Check(name, description string) {
 // assess it. Its defining function requires Subject and may specify Evidence
 // and ForEach. The statement is fixed when the suite is generated.
 func Requirement(name, statement string, fn func()) {
-	scenario, ok := eval.Current().(*evalexpr.ScenarioExpr)
+	_, assertions := currentAssertions()
+	if assertions == nil {
+		eval.IncompatibleDSL()
+		return
+	}
+	assertions.Requirements = append(assertions.Requirements, &evalexpr.RequirementExpr{
+		Name: name, Statement: statement, DSLFunc: fn, Owner: assertions,
+	})
+}
+
+// Reasoning requires an independent reasoning model for this requirement.
+// Native predictions cannot decide it or trigger extra adjudication. Use it for
+// assessments that need broader interpretation, such as satisfying the user's
+// complete request. It must appear once inside Requirement.
+func Reasoning() {
+	requirement, ok := eval.Current().(*evalexpr.RequirementExpr)
 	if !ok {
 		eval.IncompatibleDSL()
 		return
 	}
-	scenario.Requirements = append(scenario.Requirements, &evalexpr.RequirementExpr{
-		Name: name, Statement: statement, DSLFunc: fn, Scenario: scenario,
-	})
+	if requirement.Reasoning {
+		eval.ReportError("Reasoning may appear only once")
+		return
+	}
+	requirement.Reasoning = true
 }
 
 // Subject selects the observation content a requirement assesses. A dotted
@@ -220,4 +267,17 @@ func ForEach(selector string) {
 		return
 	}
 	requirement.ForEach = selector
+}
+
+// currentAssertions returns the declaration that owns checks and requirements.
+// Other DSL contexts cannot add assertions or change captured field types.
+func currentAssertions() (string, *evalexpr.AssertionExpr) {
+	switch current := eval.Current().(type) {
+	case *evalexpr.ScenarioExpr:
+		return current.Name, &current.AssertionExpr
+	case *evalexpr.ComponentExpr:
+		return current.Name, &current.AssertionExpr
+	default:
+		return "", nil
+	}
 }

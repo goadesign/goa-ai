@@ -168,14 +168,12 @@ func {{ .ExampleScenarioInputs }}() {{ .ExampleAlias }}.{{ .Inputs }} {
 func (*{{ $.ExampleHooks }}) {{ .Method }}(context.Context{{ if .HasInput }}, {{ .ExampleInputRef }}{{ end }}) ({{ .ExampleObservationRef }}, error) {
 	return {{ .ObservationZero }}, errors.New("TODO: implement {{ .RawID }} capture")
 }
-{{- $scenario := . }}
-{{- range .Checks }}
+{{- end }}
+{{- range .CheckMethods }}
 // {{ .Method }} checks saved evidence only. {{ .Description }}
-func (*{{ $.ExampleHooks }}) {{ .Method }}(observed {{ $scenario.ExampleObservationRef }}) string {
+func (*{{ $.ExampleHooks }}) {{ .Method }}(observed {{ .ExampleRef }}) string {
 	return "TODO: implement exact predicate"
 }
-{{- end }}
-
 {{- end }}
 func (v *{{ .ExampleValues }}) String() string {
 	return fmt.Sprint([]string(*v))

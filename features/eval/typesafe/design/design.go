@@ -1,4 +1,4 @@
-// Package design describes the Choice subset of TypeSafe's published System One
+// Package design describes the Choice and Noul subsets of TypeSafe's published System One
 // API: https://docs.typesafe.ai/api. Generated codecs own JSON field presence,
 // exact shapes, numeric ranges, and decoding. The adapter owns matching question
 // IDs, probability sums, and the pinned response model.
@@ -10,7 +10,7 @@ import (
 )
 
 var _ = API("typesafe_choice", func() {
-	Description("Typed records for native TypeSafe Choice requests and responses.")
+	Description("Typed records for native TypeSafe Choice and Noul requests and responses.")
 })
 
 var ModelVersion = Type("ModelVersion", String, func() {
@@ -85,11 +85,59 @@ var ChoiceResponse = Type("Response", func() {
 	Required("model", "answers", "usage")
 })
 
+var NoulCriteria = Type("NoulCriteria", func() {
+	Attribute("true", String, "Meaning of satisfying the requirement.")
+	Attribute("false", String, "Meaning of not satisfying the requirement.")
+	Required("true", "false")
+})
+
+var NoulInstructions = Type("NoulInstructions", func() {
+	Attribute("contract", String, "The common grading contract.")
+	Attribute("requirement", String, "The fixed semantic requirement.")
+	Attribute("question", String, "The yes/no question the model evaluates.")
+	Required("contract", "requirement", "question")
+})
+
+var NoulQuestion = Type("NoulQuestion", func() {
+	Attribute("type", String, "Native primitive used for this question.", func() { Enum("noul") })
+	Attribute("instructions", NoulInstructions, "The exact grading contract and yes/no question.")
+	Attribute("criteria", NoulCriteria, "What satisfying and not satisfying the requirement mean.")
+	Required("type", "instructions", "criteria")
+})
+
+var NoulRequest = Type("NoulRequest", func() {
+	Attribute("state", State, "Evidence shared by all questions in this request.")
+	Attribute("model", ModelVersion, "Pinned Jev model version.")
+	Attribute("questions", MapOf(String, NoulQuestion), "Requirements keyed by caller-owned identities.", func() { MinLength(1) })
+	Required("state", "model", "questions")
+})
+
+var NoulAnswer = Type("NoulAnswer", func() {
+	Attribute("type", String, "Native primitive that produced this answer.", func() { Enum("noul") })
+	Attribute("noul", Float64, "The native probability that the answer is yes.", func() {
+		Minimum(0)
+		Maximum(1)
+	})
+	Required("type", "noul")
+})
+
+var NoulResponse = Type("NoulResponse", func() {
+	Attribute("model", String, "Actual model version used for inference.")
+	Attribute("answers", MapOf(String, NoulAnswer), "Answers under the exact requested identities.")
+	Attribute("usage", Usage, "Reported token usage; absent counts remain unknown.")
+	Required("model", "answers", "usage")
+})
+
 var _ = Service("typesafe", func() {
-	Description("Defines native Choice records for assessing captured evidence with a pinned System One model. The adapter sends these records to TypeSafe and validates request-to-response correspondence.")
+	Description("Defines native Choice and Noul records for assessing captured evidence with a pinned System One model. The adapter sends these records to TypeSafe and validates request-to-response correspondence.")
 	Method("classify", func() {
 		Description("Classifies fixed requirements sharing captured content and factual context, returning complete probabilities for each requirement and the model that produced them.")
 		Payload(Request)
 		Result(ChoiceResponse)
+	})
+	Method("verify", func() {
+		Description("Checks whether captured content establishes each fixed requirement, returning one native probability of yes per requirement without inventing a reason for failure.")
+		Payload(NoulRequest)
+		Result(NoulResponse)
 	})
 })

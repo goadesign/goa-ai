@@ -41,12 +41,9 @@ const suiteTemplate = `type (
 	// An empty diagnostic passes; a nonempty diagnostic explains a failure.
 	// Methods must not call the product or reload reference data.
 	{{ .Checks }} interface {
-{{- range .Scenarios }}
-{{- $scenario := . }}
-{{- range .Checks }}
+{{- range .CheckMethods }}
 		// {{ .Method }} checks the saved observation. {{ .Description }}
-		{{ .Method }}({{ $scenario.ObservationRef }}) string
-{{- end }}
+		{{ .Method }}({{ .Ref }}) string
 {{- end }}
 	}
 {{- end }}
@@ -120,7 +117,7 @@ func {{ .ForAssessment }}({{ if .HasChecks }}checks {{ .Checks }}{{ end }}) (eva
 				CheckNames: []string{ {{- range .Checks }}{{ .Name }},{{- end }}},
 				Requirements: []eval.Requirement{
 {{- range .Requirements }}
-					{ID: {{ .ID }}, SchemaID: {{ .SchemaID }}, Statement: {{ .Statement }}, Subject: {{ .Subject }}, Evidence: []string{ {{- range .Evidence }}{{ . }},{{- end }}}, ForEach: {{ .ForEach }}},
+					{ID: {{ .ID }}, SchemaID: {{ .SchemaID }}, Statement: {{ .Statement }}, Subject: {{ .Subject }}, Evidence: []string{ {{- range .Evidence }}{{ . }},{{- end }}}, ForEach: {{ .ForEach }}, Scope: {{ .Scope }}, Reasoning: {{ .Reasoning }}},
 {{- end }}
 				},
 				Bind: func(data rawjson.Message) (eval.Binding, error) {
@@ -130,8 +127,7 @@ func {{ .ForAssessment }}({{ if .HasChecks }}checks {{ .Checks }}{{ end }}) (eva
 					{{ .Binding }}
 {{- range .Checks }}
 					{
-						diagnostic := checks.{{ .Method }}(observed)
-						binding.Checks = append(binding.Checks, eval.Check{Name: {{ .Name }}, Passed: diagnostic == "", Diagnostic: diagnostic})
+						{{ .Binding }}
 					}
 {{- end }}
 					return binding, nil

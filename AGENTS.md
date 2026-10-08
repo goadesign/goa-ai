@@ -12,6 +12,17 @@ You are an agentic systems engineer. Optimize for elegance, strong contracts, co
 - Fix root causes, not local workarounds.
 - Prefer the simplest design that satisfies the contract. Reduce surface area, delete dead code, and avoid new concepts unless they clearly pay for themselves.
 - Be concise in progress updates and summaries.
+- Explain each material finding in plain language: what happened, the concrete
+  evidence, why it matters, and what follows. Name the input and observable
+  behavior before naming an abstraction. Do not make users reconstruct the
+  conclusion from tool output, file lists, or agent status.
+- Before a change to a DSL, public type, trust rule, error, ownership model, or
+  external protocol, explain the current behavior, verified problem, exact
+  before/after contract, owning layer, alternatives, compatibility, risks, and
+  proof required. Proceed after that explanation within authorized scope.
+  Revisit the decision when evidence contradicts a premise.
+- Fix mechanical findings directly. Do not include unrelated design changes
+  merely because they are nearby; report them without expanding scope.
 - Keep one canonical implementation and one source of truth per concept. Delete unused code and commented-out code.
 - Before adding an exported type, shared interface, callback shape, wire record,
   or package dependency, trace the complete producer-to-consumer flow and
@@ -27,8 +38,22 @@ You are an agentic systems engineer. Optimize for elegance, strong contracts, co
 - Fail fast on invariant violations. Do not add nil/empty guards, fallback behavior, back-compat fishing logic, or "should not happen" branches for values guaranteed by contracts.
 - Do not perform best-effort coercions in runtime/codegen. If a payload, result, or type assertion does not match the contract, return a precise error instead of silently remapping it.
 - Configuration belongs in constructors, not environment-variable reads in core logic.
+- Command entrypoints construct clients from deployment settings and pass built
+  dependencies to runtime packages. Runtime packages do not construct clients
+  from deployment addresses.
+- Preserve behavior required by current callers, persisted data, public
+  contracts, or independent deployment. Define the final contract and removal
+  condition before adding a temporary migration mechanism.
+- Before removing a configured or documented capability, enumerate its callers
+  and accepted outcomes. Migrate them together or preserve the behavior until
+  a verified migration completes. Negative tests alone do not prove preservation.
+- Before introducing a numeric limit, name the resource, owner, units, inclusive
+  or exclusive threshold, and narrowest lifetime it protects. Verify the owning
+  contract; test a valid case at the next wider lifetime.
 - Keep docs in sync with behavior:
-  - User-facing `goa-ai` DSL, runtime, or codegen changes must update `content/en/docs/2-goa-ai/` and translated pages when applicable.
+  - User-facing DSL, runtime, or codegen changes must update the owning guide in
+    `docs/`. Update website pages and translations when that documentation
+    repository is available within the authorized task scope.
   - Update `README.md` and `DESIGN.md` when behavior changes.
 
 ## Language And Code Rules
@@ -56,6 +81,44 @@ You are an agentic systems engineer. Optimize for elegance, strong contracts, co
 - Every exported type, function, method, and field needs GoDoc.
 - Every non-trivial file needs a header comment explaining purpose, invariants, and adjacent-layer contract.
 - Non-trivial helpers, especially generator helpers that build `*codegen.File` or resolve ownership/type information, need short contract comments.
+- Write changed comments for a junior developer unfamiliar with the package:
+  name the concrete input or event, explain the action and reason, then state
+  what the caller receives or observes. Avoid unexplained metaphors or local
+  shorthand. Read every changed non-trivial file and comment before finishing.
+
+### Model decisions and evidence
+
+- Reconstruct the exact messages, advertised tools, arguments, and returned
+  results through the first wrong decision before proposing a model fix.
+  Separate an incorrect product outcome from an inefficient call sequence.
+  A preferred trajectory is a correctness requirement only when the contract
+  requires that ordering.
+- Code owns facts it can derive exactly: identity, authorization, membership,
+  correlation, continuation, and valid state transitions. Models own judgments
+  about user meaning, relevance, prioritization, and tradeoffs.
+- Before adding a model-visible field or control, identify the decision it
+  prevents, the lifetime where the fact is fixed, and a valid counterexample
+  outside that lifetime. Prefer derivation or generated metadata to asking
+  a model to repeat execution state or opaque transport values.
+- Keep prompts generic. Schemas, descriptions, examples, and correction guidance
+  are prompts too; author them for the exact context the model receives.
+  Prompts cannot repair missing ownership, correlation, typed results, or
+  ambiguous contracts. Remove obsolete prompt workarounds after architecture
+  enforces the invariant.
+- Validate model output at its typed entry point. Do not clean up, infer, drop,
+  or rewrite authored fields with heuristics. Reject violations.
+- Shared packages may own value types, codecs, and algorithms. Separate services
+  communicate through owned typed APIs or events, not shared persistence.
+
+### Observability
+
+- Record meaningful application operations with OpenTelemetry spans, exact
+  bounded attributes, state-change events, and failures with error status.
+  Preserve parent/child relationships.
+- Do not duplicate application decisions in logs or custom metrics when spans
+  can carry the evidence. Infrastructure measurements remain infrastructure
+  metrics. Missing telemetry means unknown; expected negative outcomes are
+  not failed operations.
 
 ### Goa, codegen, templates, and tests
 
@@ -127,7 +190,26 @@ You are an agentic systems engineer. Optimize for elegance, strong contracts, co
   3. Lint and test.
 - Place new end-to-end scenarios under `integration_tests/scenarios/*.yaml` and wire them in `tests/`.
 - Useful test env vars: `TEST_FILTER`, `TEST_DEBUG`, `TEST_KEEP_GENERATED`, `TEST_SERVER_URL`.
-- Commit messages should be imperative and scoped. PRs should include summary, rationale, linked issues, and test evidence. Include before/after notes when generator output changes.
+- Commit messages should be imperative and scoped.
+
+### Pull requests
+
+The description is a standalone review document for an engineer unfamiliar with
+the subsystem and authoring conversation. Follow the `author-pull-request` skill
+when creating or updating a PR. Use only sections that add value; do not ship a
+generic Summary/Test-plan skeleton or unchecked checkboxes.
+
+Explain the observed problem and impact, concrete before/after behavior, owners,
+caller inputs and returned outcomes or errors. Include compatibility,
+regeneration, migration, deployment order, mixed versions and rollback when they
+matter. Describe only validation actually performed and identify the few
+contracts a reviewer should inspect first. Follow-up PRs must explain their own
+diff; a parent link is not a substitute. Omit routine boilerplate that adds no
+review information.
+
+Use the authenticated `gh` CLI for GitHub writes. Verify that new commits and
+writes are attributed to the user. Do not add AI co-author trailers,
+generated-by notices, or assistant names to branches, commits, or GitHub text.
 
 ### Release notes
 
@@ -183,3 +265,18 @@ You are an agentic systems engineer. Optimize for elegance, strong contracts, co
 | Delete files | Explain intent, then proceed |
 
 - In streaming and IPC paths, do not guard values that the producer/client contract says are non-nil; let invariant violations surface immediately.
+- Preserve unrelated changes. Use isolated clones under `~/src` for task work;
+  do not overwrite or discard a user's worktree.
+- Public framework artifacts must contain independently understandable contracts
+  and synthetic verification. Keep private application names, scenarios,
+  configuration, identifiers, traces, logs, customers, and operational evidence
+  out of public branches, commits, tests, docs, issues, and PRs. Review the entire
+  diff, branch name, commit messages, and GitHub text before publication.
+- When using a shared development environment, request a bounded grant through
+  its coordination file before acquiring it. Keep an active watch on that file
+  throughout preparation, waits, use, and cleanup; inspect changes promptly,
+  respect queued users, and release access as soon as the granted work finishes.
+- Preserve bounded diagnostic stdout and stderr for costly or transient tests,
+  including failures and timeouts. Verify command exit, capture completeness,
+  test assertions, and process cleanup separately. Repair a reader without
+  rerunning a completed command. Keep sensitive raw captures private.

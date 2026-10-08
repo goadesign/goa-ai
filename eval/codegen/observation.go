@@ -26,6 +26,11 @@ type (
 		Name        string
 		Method      string
 		Description string
+		Selector    string
+		Attribute   *goaexpr.AttributeExpr
+		Ref         string
+		ExampleRef  string
+		Binding     string
 	}
 
 	requirementPlan struct {
@@ -34,6 +39,8 @@ type (
 		Subject   string
 		Evidence  []string
 		ForEach   string
+		Scope     string
+		Reasoning bool
 	}
 
 	requirementData struct {
@@ -43,6 +50,8 @@ type (
 		Subject   string
 		Evidence  []string
 		ForEach   string
+		Scope     string
+		Reasoning bool
 	}
 
 	selectedField struct {
@@ -123,9 +132,35 @@ func planObservation(suite *suitePlan, scenario *evalexpr.ScenarioExpr, planned 
 	for _, check := range scenario.Checks {
 		planned.Checks = append(planned.Checks, checkData{
 			Name: strconv.Quote(check.Name), Method: "Check" + planned.Method + goacodegen.Goify(check.Name, true), Description: check.Description,
+			Selector: "$", Attribute: observation,
 		})
 	}
-	for _, requirement := range scenario.Requirements {
+	if err := planRequirements(suite, planned, observation, scenario.Requirements, suite.Name+"/"+scenario.Name, ""); err != nil {
+		return err
+	}
+	for _, assessment := range scenario.Assessments {
+		selected, err := evalexpr.Select(observation, observation, assessment.Selector)
+		if err != nil {
+			return err
+		}
+		for _, check := range assessment.Component.Checks {
+			planned.Checks = append(planned.Checks, checkData{
+				Name:        strconv.Quote(assessment.Name + "/" + check.Name),
+				Method:      "CheckComponent" + goacodegen.Goify(assessment.Component.Name, true) + goacodegen.Goify(check.Name, true),
+				Description: check.Description, Selector: assessment.Selector, Attribute: selected,
+			})
+		}
+		if err := planRequirements(suite, planned, selected, assessment.Component.Requirements, suite.Name+"/"+scenario.Name+"/"+assessment.Name, assessment.Selector); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// planRequirements copies fixed assertions with their selected observation root.
+// Reusing a component never changes its original selectors or declaration order.
+func planRequirements(suite *suitePlan, planned *scenarioPlan, observation *goaexpr.AttributeExpr, requirements []*evalexpr.RequirementExpr, prefix, selector string) error {
+	for _, requirement := range requirements {
 		local := observation
 		if requirement.ForEach != "" {
 			selected, err := evalexpr.Select(observation, observation, requirement.ForEach)
@@ -144,9 +179,10 @@ func planObservation(suite *suitePlan, scenario *evalexpr.ScenarioExpr, planned 
 			}
 		}
 		planned.Requirements = append(planned.Requirements, requirementPlan{
-			ID:        suite.Name + "/" + scenario.Name + "/" + requirement.Name,
+			ID:        prefix + "/" + requirement.Name,
 			Statement: requirement.Statement, Subject: requirement.Subject,
 			Evidence: append([]string(nil), requirement.Evidence...), ForEach: requirement.ForEach,
+			Scope: selector, Reasoning: requirement.Reasoning,
 		})
 	}
 	return nil
@@ -179,15 +215,25 @@ func linkRequirements(scenario scenarioPlan, scope *goacodegen.NameScope) ([]req
 			ID: strconv.Quote(requirement.ID), Statement: strconv.Quote(requirement.Statement),
 			SchemaID: strconv.Quote(fmt.Sprintf("%x", sha256.Sum256([]byte(scenario.Schema)))),
 			Subject:  strconv.Quote(requirement.Subject), ForEach: strconv.Quote(requirement.ForEach),
+			Scope: strconv.Quote(requirement.Scope), Reasoning: requirement.Reasoning,
 		}
 		for _, field := range requirement.Evidence {
 			definition.Evidence = append(definition.Evidence, strconv.Quote(field))
 		}
 		definitions[i] = definition
 		fmt.Fprintf(&out, "{\n// Bind %s from the captured observation.\n", requirement.ID)
-		local, target := scenario.Observation, "observed"
+		root, rootTarget := scenario.Observation, "observed"
+		if requirement.Scope != "" {
+			selected := selectField(root, rootTarget, root, rootTarget, requirement.Scope, scope)
+			writeRequiredSelection(&out, selected, "requirement "+requirement.ID+": missing captured component "+requirement.Scope)
+			root, rootTarget = selected.Attribute, selected.Expression
+			if selected.Pointer {
+				rootTarget = "(*" + rootTarget + ")"
+			}
+		}
+		local, target := root, rootTarget
 		if requirement.ForEach != "" {
-			selected := selectField(scenario.Observation, local, target, requirement.ForEach, scope)
+			selected := selectField(root, rootTarget, local, target, requirement.ForEach, scope)
 			fmt.Fprintf(&out, "binding.Subjects[%q] = []eval.Subject{}\n", requirement.ID)
 			if len(selected.Present) > 0 {
 				fmt.Fprintf(&out, "if !(%s) { return eval.Binding{}, fmt.Errorf(%q) }\n",
@@ -197,12 +243,12 @@ func linkRequirements(scenario scenarioPlan, scope *goacodegen.NameScope) ([]req
 			local, target = goaexpr.AsArray(selected.Attribute.Type).ElemType, "item"
 		}
 		out.WriteString("subject := eval.Subject{}\n")
-		selected := selectField(scenario.Observation, local, target, requirement.Subject, scope)
+		selected := selectField(root, rootTarget, local, target, requirement.Subject, scope)
 		writeSelectedContent(&out, selected)
 		if len(requirement.Evidence) > 0 {
 			out.WriteString("reference := make(map[string]json.RawMessage)\n")
 			for _, field := range requirement.Evidence {
-				selected := selectField(scenario.Observation, local, target, field, scope)
+				selected := selectField(root, rootTarget, local, target, field, scope)
 				if len(selected.Present) > 0 {
 					fmt.Fprintf(&out, "if !(%s) { return eval.Binding{}, fmt.Errorf(%q) }\n",
 						strings.Join(selected.Present, " && "), "requirement "+requirement.ID+": missing captured evidence "+field)
@@ -224,12 +270,12 @@ func linkRequirements(scenario scenarioPlan, scope *goacodegen.NameScope) ([]req
 
 // selectField computes Go access and all required nil checks at generation time.
 // Runtime code checks only actual optional values, never selector syntax.
-func selectField(root, local *goaexpr.AttributeExpr, target, selector string, scope *goacodegen.NameScope) selectedField {
+func selectField(root *goaexpr.AttributeExpr, rootTarget string, local *goaexpr.AttributeExpr, target, selector string, scope *goacodegen.NameScope) selectedField {
 	if selector == "@" {
 		selector = ""
 	}
 	if selector == "$" || strings.HasPrefix(selector, "$.") {
-		local, target = root, "observed"
+		local, target = root, rootTarget
 		selector = strings.TrimPrefix(selector, "$")
 		selector = strings.TrimPrefix(selector, ".")
 	}
@@ -252,6 +298,37 @@ func selectField(root, local *goaexpr.AttributeExpr, target, selector string, sc
 	}
 	selected.Attribute = local
 	return selected
+}
+
+// linkChecks writes direct calls to typed predicates and requires the selected
+// component value to exist. One predicate method may serve multiple assessments.
+func linkChecks(scenario scenarioPlan, scope *goacodegen.NameScope, exampleAlias string) []checkData {
+	checks := make([]checkData, len(scenario.Checks))
+	for i, check := range scenario.Checks {
+		selected := selectField(scenario.Observation, "observed", scenario.Observation, "observed", check.Selector, scope)
+		check.Ref = scope.GoTypeRef(check.Attribute)
+		if exampleAlias != "" {
+			check.ExampleRef = scope.GoFullTypeRef(check.Attribute, exampleAlias)
+		}
+		var out strings.Builder
+		writeRequiredSelection(&out, selected, "check "+scenario.RawID+"/"+strings.Trim(check.Name, `"`)+": missing captured component "+check.Selector)
+		target := selected.Expression
+		if selected.Pointer && !goaexpr.IsObject(selected.Attribute.Type) {
+			target = "*" + target
+		}
+		fmt.Fprintf(&out, "diagnostic := checks.%s(%s)\nbinding.Checks = append(binding.Checks, eval.Check{Name: %s, Passed: diagnostic == \"\", Diagnostic: diagnostic})\n", check.Method, target, check.Name)
+		check.Binding = out.String()
+		checks[i] = check
+	}
+	return checks
+}
+
+// writeRequiredSelection returns a precise error when an optional parent or
+// selected value is missing, before generated code dereferences that value.
+func writeRequiredSelection(out *strings.Builder, selected selectedField, diagnostic string) {
+	if len(selected.Present) > 0 {
+		fmt.Fprintf(out, "if !(%s) { return eval.Binding{}, fmt.Errorf(%q) }\n", strings.Join(selected.Present, " && "), diagnostic)
+	}
 }
 
 func writeSelectedContent(out *strings.Builder, selected selectedField) {

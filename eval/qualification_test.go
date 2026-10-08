@@ -25,7 +25,7 @@ func TestQualificationUsesSeparateDecisionCandidatesAndHeldOutGroups(t *testing.
 	assert.InDelta(t, .5, qualification.Pass.Validation.Coverage, 1e-12)
 	assert.InDelta(t, 1-math.Pow(.025, 1.0/40), qualification.Pass.Validation.UpperError, 1e-14)
 	assert.Equal(t, 80, qualification.Calibration.Examples)
-	assert.InDelta(t, .0018, qualification.Calibration.BrierScore, 1e-12)
+	assert.InDelta(t, .0009, qualification.Calibration.BrierScore, 1e-12)
 	assert.InDelta(t, .5, qualification.Calibration.MeanEntailedProbability, 1e-12)
 	assert.InDelta(t, .5, qualification.Calibration.EntailedRate, 1e-12)
 	require.NoError(t, qualification.Validate())
@@ -116,7 +116,7 @@ func TestQualificationRejectsTamperedEvidenceAndNonfiniteStatistics(t *testing.T
 		{"qualification flag", func(q *Qualification) { q.Pass.Qualified = false }, "statistics"},
 		{"nonfinite threshold", func(q *Qualification) { q.Pass.Threshold = math.NaN() }, "statistics"},
 		{"nonfinite statistic", func(q *Qualification) { q.Calibration.BrierScore = math.Inf(1) }, "statistics"},
-		{"nonfinite prediction", func(q *Qualification) { q.Samples[0].Prediction.Probabilities[Entailed] = math.NaN() }, "invalid probability"},
+		{"nonfinite prediction", func(q *Qualification) { q.Samples[0].Prediction.Probability = math.NaN() }, "invalid probability"},
 		{"changed evidence", func(q *Qualification) { q.Samples[0].Example.Subject.Reference = "Changed facts." }, "content hash"},
 		{"negative duration", func(q *Qualification) { q.Duration = -1 }, "duration"},
 	} {

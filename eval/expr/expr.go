@@ -21,6 +21,8 @@ type (
 	RootExpr struct {
 		// Suites are retained in declaration order.
 		Suites []*SuiteExpr
+		// Components declare reusable assertions without executing the product.
+		Components []*ComponentExpr
 	}
 
 	// SuiteExpr describes one generated evaluation suite.
@@ -42,6 +44,7 @@ type (
 	// ScenarioExpr describes one application scenario.
 	ScenarioExpr struct {
 		eval.DSLFunc
+		AssertionExpr
 		// Name is the stable scenario identifier.
 		Name string
 		// Description explains the evaluated behavior.
@@ -49,19 +52,45 @@ type (
 		// Input declares the optional typed value passed to the generated
 		// hook method.
 		Input *goaexpr.AttributeExpr
-		// Observation describes the evidence returned by the capture hook,
-		// including unsuccessful product outcomes.
-		Observation *goaexpr.AttributeExpr
-		// Checks are exact assertions implemented by typed Go predicates.
-		Checks []*CheckExpr
-		// Requirements are semantic assertions fixed by the design.
-		Requirements []*RequirementExpr
+		// Assessments bind reusable assertions to fields of this observation.
+		Assessments []*AssessmentExpr
 		// Tags classify the scenario for runner selection.
 		Tags []string
 		// Timeout overrides the suite timeout when non-zero.
 		Timeout time.Duration
 		// Suite is the owning suite.
 		Suite *SuiteExpr
+	}
+
+	// AssertionExpr contains assertions over one declared observation type.
+	// Scenarios capture that observation; components only inspect saved values.
+	AssertionExpr struct {
+		// Observation describes captured facts, including unsuccessful outcomes.
+		Observation *goaexpr.AttributeExpr
+		// Checks are exact assertions implemented by typed Go predicates.
+		Checks []*CheckExpr
+		// Requirements are semantic assertions fixed by the design.
+		Requirements []*RequirementExpr
+	}
+
+	// ComponentExpr declares reusable assertions over a named observation type.
+	ComponentExpr struct {
+		eval.DSLFunc
+		AssertionExpr
+		// Name identifies the reusable component throughout the design.
+		Name string
+		// Description explains the behavior established by these assertions.
+		Description string
+	}
+
+	// AssessmentExpr binds a component to one typed scenario observation field.
+	AssessmentExpr struct {
+		// Name identifies this use independently of other uses of the component.
+		Name string
+		// Component supplies the checks and semantic requirements.
+		Component *ComponentExpr
+		// Selector selects one value of the component's declared type.
+		Selector string
 	}
 
 	// CheckExpr declares one exact assertion over a captured observation.
@@ -86,8 +115,10 @@ type (
 		Evidence []string
 		// ForEach selects an array whose elements are assessed independently.
 		ForEach string
-		// Scenario owns the observation schema and this requirement.
-		Scenario *ScenarioExpr
+		// Reasoning requires independent reasoning for every subject.
+		Reasoning bool
+		// Owner declares the observation schema inspected by these selectors.
+		Owner *AssertionExpr
 	}
 )
 
@@ -121,6 +152,10 @@ func (r *RootExpr) Packages() []string {
 
 // WalkSets exposes suites and scenarios in evaluation order.
 func (r *RootExpr) WalkSets(walk eval.SetWalker) {
+	walk(eval.ToExpressionSet(r.Components))
+	for _, component := range r.Components {
+		walk(eval.ToExpressionSet(component.Requirements))
+	}
 	walk(eval.ToExpressionSet(r.Suites))
 	for _, suite := range r.Suites {
 		walk(eval.ToExpressionSet(suite.Scenarios))
@@ -139,6 +174,13 @@ func (r *RootExpr) Validate() error {
 			verr.Add(suite, "suite name %q duplicates %s", suite.Name, other.EvalName())
 		}
 		suites[suite.Name] = suite
+	}
+	components := make(map[string]struct{}, len(r.Components))
+	for _, component := range r.Components {
+		if _, exists := components[component.Name]; exists {
+			verr.Add(component, "duplicate component name %q", component.Name)
+		}
+		components[component.Name] = struct{}{}
 	}
 	return verr
 }
@@ -163,6 +205,7 @@ func (s *SuiteExpr) Validate() error {
 	}
 	scenarios := make(map[string]*ScenarioExpr, len(s.Scenarios))
 	methods := make(map[string]*ScenarioExpr, len(s.Scenarios))
+	components := make(map[*ComponentExpr]struct{})
 	for _, scenario := range s.Scenarios {
 		if other, ok := scenarios[scenario.Name]; ok {
 			verr.Add(scenario, "scenario name %q duplicates %s", scenario.Name, other.EvalName())
@@ -181,6 +224,23 @@ func (s *SuiteExpr) Validate() error {
 				verr.Add(scenario, "check %q and scenario %q both generate hook method %q", check.Name, other.Name, method)
 			}
 			methods[method] = scenario
+		}
+		for _, assessment := range scenario.Assessments {
+			component := assessment.Component
+			if component == nil {
+				continue
+			}
+			if _, exists := components[component]; exists {
+				continue
+			}
+			components[component] = struct{}{}
+			for _, check := range component.Checks {
+				method := "CheckComponent" + goacodegen.Goify(component.Name, true) + goacodegen.Goify(check.Name, true)
+				if other, exists := methods[method]; exists {
+					verr.Add(scenario, "component check %q and scenario %q both generate hook method %q", check.Name, other.Name, method)
+				}
+				methods[method] = scenario
+			}
 		}
 	}
 	return verr
@@ -219,38 +279,37 @@ func (s *ScenarioExpr) Validate() error {
 	if inputContainsUnion(s.Input, make(map[string]struct{})) {
 		verr.Add(s, "scenario input does not support OneOf")
 	}
-	if s.Observation == nil || s.Observation.Type == goaexpr.Empty {
-		verr.Add(s, "scenario Observation is required")
-	} else if inputContainsUnion(s.Observation, make(map[string]struct{})) {
-		verr.Add(s, "scenario observation does not support OneOf")
-	} else if err := goacodegen.Walk(s.Observation, validateCapturedAttribute); err != nil {
-		verr.Add(s, "%s", err)
-	}
-	if len(s.Checks)+len(s.Requirements) == 0 {
-		verr.Add(s, "scenario must declare at least one Check or Requirement")
-	}
-	names := make(map[string]struct{}, len(s.Checks)+len(s.Requirements))
-	methods := make(map[string]string, len(s.Checks))
+	s.AssertionExpr.validate(verr, s, len(s.Assessments) > 0)
+	names := make(map[string]struct{}, len(s.Checks)+len(s.Requirements)+len(s.Assessments))
 	for _, check := range s.Checks {
-		validateID(verr, s, "check", check.Name)
-		if check.Description == "" {
-			verr.Add(s, "check %q requires a description", check.Name)
-		}
-		if _, exists := names[check.Name]; exists {
-			verr.Add(s, "duplicate assertion %q", check.Name)
-		}
 		names[check.Name] = struct{}{}
-		method := goacodegen.Goify(check.Name, true)
-		if other, exists := methods[method]; exists {
-			verr.Add(s, "checks %q and %q generate the same method", other, check.Name)
-		}
-		methods[method] = check.Name
 	}
 	for _, requirement := range s.Requirements {
-		if _, exists := names[requirement.Name]; exists {
-			verr.Add(s, "duplicate assertion %q", requirement.Name)
-		}
 		names[requirement.Name] = struct{}{}
+	}
+	for _, assessment := range s.Assessments {
+		validateID(verr, s, "assessment", assessment.Name)
+		if _, exists := names[assessment.Name]; exists {
+			verr.Add(s, "duplicate assertion %q", assessment.Name)
+		}
+		names[assessment.Name] = struct{}{}
+		if assessment.Component == nil {
+			verr.Add(s, "assessment %q requires a Component", assessment.Name)
+			continue
+		}
+		if s.Observation == nil || assessment.Component.Observation == nil {
+			continue
+		}
+		selected, err := Select(s.Observation, s.Observation, assessment.Selector)
+		if err != nil {
+			verr.Add(s, "assessment %q: %s", assessment.Name, err)
+			continue
+		}
+		selectedType, selectedNamed := selected.Type.(goaexpr.UserType)
+		componentType, componentNamed := assessment.Component.Observation.Type.(goaexpr.UserType)
+		if !selectedNamed || !componentNamed || selectedType.ID() != componentType.ID() {
+			verr.Add(s, "assessment %q must select the component's named observation type", assessment.Name)
+		}
 	}
 	tags := make(map[string]struct{}, len(s.Tags))
 	for _, tag := range s.Tags {
@@ -261,6 +320,69 @@ func (s *ScenarioExpr) Validate() error {
 		tags[tag] = struct{}{}
 	}
 	return verr
+}
+
+// EvalName identifies a reusable component in design errors.
+func (c *ComponentExpr) EvalName() string {
+	return fmt.Sprintf("evaluation component %q", c.Name)
+}
+
+// SetDescription records the behavior established by a reusable component.
+func (c *ComponentExpr) SetDescription(description string) {
+	c.Description = description
+}
+
+// Validate requires a reusable named type and at least one fixed assertion.
+func (c *ComponentExpr) Validate() error {
+	verr := new(eval.ValidationErrors)
+	validateID(verr, c, "component", c.Name)
+	if c.Description == "" {
+		verr.Add(c, "component description is required")
+	}
+	c.AssertionExpr.validate(verr, c, false)
+	if c.Observation != nil {
+		if _, named := c.Observation.Type.(goaexpr.UserType); !named {
+			verr.Add(c, "component Observation must use a named Goa type")
+		}
+	}
+	return verr
+}
+
+// validate checks captured field contracts and local assertion identities.
+func (a *AssertionExpr) validate(verr *eval.ValidationErrors, owner eval.Expression, hasAssessments bool) {
+	if a.Observation == nil || a.Observation.Type == goaexpr.Empty {
+		verr.Add(owner, "Observation is required")
+	} else if inputContainsUnion(a.Observation, make(map[string]struct{})) {
+		verr.Add(owner, "observation does not support OneOf")
+	} else if err := goacodegen.Walk(a.Observation, validateCapturedAttribute); err != nil {
+		verr.Add(owner, "%s", err)
+	}
+	if len(a.Checks)+len(a.Requirements) == 0 && !hasAssessments {
+		verr.Add(owner, "must declare at least one Check or Requirement")
+	}
+	names := make(map[string]struct{}, len(a.Checks)+len(a.Requirements))
+	methods := make(map[string]string, len(a.Checks))
+	for _, check := range a.Checks {
+		validateID(verr, owner, "check", check.Name)
+		if check.Description == "" {
+			verr.Add(owner, "check %q requires a description", check.Name)
+		}
+		if _, exists := names[check.Name]; exists {
+			verr.Add(owner, "duplicate assertion %q", check.Name)
+		}
+		names[check.Name] = struct{}{}
+		method := goacodegen.Goify(check.Name, true)
+		if other, exists := methods[method]; exists {
+			verr.Add(owner, "checks %q and %q generate the same method", other, check.Name)
+		}
+		methods[method] = check.Name
+	}
+	for _, requirement := range a.Requirements {
+		if _, exists := names[requirement.Name]; exists {
+			verr.Add(owner, "duplicate assertion %q", requirement.Name)
+		}
+		names[requirement.Name] = struct{}{}
+	}
 }
 
 // SetDescription implements expr.DescriptionHolder.
@@ -280,7 +402,7 @@ func (s *ScenarioExpr) SetTimeout(duration string) error {
 
 // EvalName identifies a semantic requirement in a design error.
 func (r *RequirementExpr) EvalName() string {
-	return fmt.Sprintf("requirement %q in %s", r.Name, r.Scenario.EvalName())
+	return fmt.Sprintf("requirement %q", r.Name)
 }
 
 // Validate checks selectors against the actual observation shape. Field paths
@@ -291,7 +413,7 @@ func (r *RequirementExpr) Validate() error {
 	if r.Statement == "" {
 		verr.Add(r, "requirement statement is required")
 	}
-	root := r.Scenario.Observation
+	root := r.Owner.Observation
 	if root == nil {
 		return verr
 	}

@@ -52,6 +52,11 @@ type (
 		Evidence []string `json:"evidence,omitempty"`
 		// ForEach is the compiled array selector, or empty for one instance.
 		ForEach string `json:"for_each,omitempty"`
+		// Scope selects the component observation within the scenario, or is
+		// empty when selectors inspect the complete scenario observation.
+		Scope string `json:"scope,omitempty"`
+		// Reasoning requires independent reasoning and forbids native decisions.
+		Reasoning bool `json:"reasoning,omitempty"`
 	}
 
 	// Subject keeps assessed content separate from factual context. Generated

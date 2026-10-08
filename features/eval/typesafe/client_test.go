@@ -28,7 +28,7 @@ const nativeResponse = `{"model":"jev-1.13.0","answers":{"required":{"type":"cho
 
 func TestClientUsesNativeChoiceAndRetainsProbabilities(t *testing.T) {
 	var calls int
-	client, err := New(&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+	client, err := NewChoice(&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		calls++
 		assert.Equal(t, endpoint, request.URL.String())
 		assert.Equal(t, http.MethodPost, request.Method)
@@ -55,11 +55,9 @@ func TestClientUsesNativeChoiceAndRetainsProbabilities(t *testing.T) {
 	result, err := client.Classify(ctx, "The task is complete.", testClaims(), "The task was requested.")
 	require.NoError(t, err)
 	require.Len(t, result.Predictions, 1)
-	assert.Equal(t, eval.Entailed, result.Predictions[0].Label)
-	assert.Equal(t, map[eval.Label]float64{
-		eval.Entailed: .97, eval.Contradicted: .01, eval.NotAddressed: .01, eval.Indeterminate: .01,
-	}, result.Predictions[0].Probabilities)
+	assert.Equal(t, .97, result.Predictions[0].Probability)
 	require.Len(t, result.Calls, 1)
+	assert.Equal(t, nativeResponse, string(result.Calls[0].Response))
 	require.NotNil(t, result.Calls[0].Usage)
 	assert.Equal(t, 123, result.Calls[0].Usage.InputTokens)
 	assert.Equal(t, 0, result.Calls[0].Usage.OutputTokens)
@@ -96,7 +94,7 @@ func TestClientRejectsInvalidNativeResponsesWithoutRetry(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			var calls int
-			client, err := New(&http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			client, err := NewChoice(&http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 				calls++
 				return httpResponse(test.status, test.response), nil
 			})}, testConfig())
@@ -117,7 +115,7 @@ func TestResponseCeilingAppliesToEachResponse(t *testing.T) {
 		t.Run("ceiling_offset_"+strconv.FormatInt(extra, 10), func(t *testing.T) {
 			config := testConfig()
 			config.MaxResponseBytes = int64(len(nativeResponse)) + extra
-			client, err := New(&http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+			client, err := NewChoice(&http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 				return httpResponse(200, nativeResponse), nil
 			})}, config)
 			require.NoError(t, err)
@@ -137,7 +135,7 @@ func TestResponseCeilingAppliesToEachResponse(t *testing.T) {
 
 func TestClientCancellationAndTransportErrors(t *testing.T) {
 	t.Run("cancellation", func(t *testing.T) {
-		client, err := New(&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		client, err := NewChoice(&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 			<-request.Context().Done()
 			return nil, request.Context().Err()
 		})}, testConfig())
@@ -150,7 +148,7 @@ func TestClientCancellationAndTransportErrors(t *testing.T) {
 		assert.Nil(t, result.Calls[0].Usage)
 	})
 	t.Run("close error", func(t *testing.T) {
-		client, err := New(&http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+		client, err := NewChoice(&http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 			return &http.Response{StatusCode: 200, Body: failedClose{Reader: strings.NewReader(nativeResponse)}}, nil
 		})}, testConfig())
 		require.NoError(t, err)
@@ -165,16 +163,16 @@ func TestClientRequiresPinnedVersionAndBoundedRequests(t *testing.T) {
 	for _, version := range []string{"", "jev-latest", "jev-preview", "jev-1.13"} {
 		config := testConfig()
 		config.Model = version
-		_, err := New(http.DefaultClient, config)
+		_, err := NewChoice(http.DefaultClient, config)
 		require.ErrorContains(t, err, "pinned model")
 	}
 	for _, limit := range []int64{0, -1, math.MaxInt64} {
 		config := testConfig()
 		config.MaxResponseBytes = limit
-		_, err := New(http.DefaultClient, config)
+		_, err := NewChoice(http.DefaultClient, config)
 		require.ErrorContains(t, err, "byte ceiling")
 	}
-	client, err := New(http.DefaultClient, testConfig())
+	client, err := NewChoice(http.DefaultClient, testConfig())
 	require.NoError(t, err)
 	result, err := client.Classify(context.Background(), "Captured.", testClaims(), "")
 	require.ErrorContains(t, err, "deadline")
@@ -184,7 +182,7 @@ func TestClientRequiresPinnedVersionAndBoundedRequests(t *testing.T) {
 func TestChoiceOrderChangesBothQuestionsAndQualificationIdentity(t *testing.T) {
 	config := testConfig()
 	config.ChoiceOrder = []eval.Label{eval.Indeterminate, eval.NotAddressed, eval.Contradicted, eval.Entailed}
-	client, err := New(&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+	client, err := NewChoice(&http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		data, err := io.ReadAll(request.Body)
 		require.NoError(t, err)
 		require.NoError(t, request.Body.Close())
@@ -197,7 +195,7 @@ func TestChoiceOrderChangesBothQuestionsAndQualificationIdentity(t *testing.T) {
 		return httpResponse(200, response), nil
 	})}, config)
 	require.NoError(t, err)
-	standard, err := New(http.DefaultClient, testConfig())
+	standard, err := NewChoice(http.DefaultClient, testConfig())
 	require.NoError(t, err)
 	assert.NotEqual(t, standard.Config(), client.Config())
 	assert.Equal(t, string(eval.Entailed), client.Config().Settings["d"])
@@ -205,15 +203,14 @@ func TestChoiceOrderChangesBothQuestionsAndQualificationIdentity(t *testing.T) {
 	defer cancel()
 	result, err := client.Classify(ctx, "Captured.", testClaims(), "")
 	require.NoError(t, err)
-	assert.Equal(t, eval.Entailed, result.Predictions[0].Label)
-	assert.InDelta(t, .97, result.Predictions[0].Probabilities[eval.Entailed], 1e-12)
+	assert.InDelta(t, .97, result.Predictions[0].Probability, 1e-12)
 	config.ChoiceOrder[0] = eval.Entailed
-	_, err = New(http.DefaultClient, config)
+	_, err = NewChoice(http.DefaultClient, config)
 	assert.ErrorContains(t, err, "exactly once")
 }
 
 func TestMissingUsageIsUnknown(t *testing.T) {
-	client, err := New(&http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
+	client, err := NewChoice(&http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		return httpResponse(200, strings.Replace(nativeResponse, `"input_tokens":123,"output_tokens":0`, `"input_tokens":123`, 1)), nil
 	})}, testConfig())
 	require.NoError(t, err)

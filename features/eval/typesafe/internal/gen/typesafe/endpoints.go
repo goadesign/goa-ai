@@ -16,18 +16,21 @@ import (
 // Endpoints wraps the "typesafe" service endpoints.
 type Endpoints struct {
 	Classify goa.Endpoint
+	Verify   goa.Endpoint
 }
 
 // NewEndpoints wraps the methods of the "typesafe" service with endpoints.
 func NewEndpoints(s Service) *Endpoints {
 	return &Endpoints{
 		Classify: NewClassifyEndpoint(s),
+		Verify:   NewVerifyEndpoint(s),
 	}
 }
 
 // Use applies the given middleware to all the "typesafe" service endpoints.
 func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.Classify = m(e.Classify)
+	e.Verify = m(e.Verify)
 }
 
 // NewClassifyEndpoint returns an endpoint function that calls the method
@@ -36,5 +39,14 @@ func NewClassifyEndpoint(s Service) goa.Endpoint {
 	return func(ctx context.Context, req any) (any, error) {
 		p := req.(*Request)
 		return s.Classify(ctx, p)
+	}
+}
+
+// NewVerifyEndpoint returns an endpoint function that calls the method
+// "verify" of service "typesafe".
+func NewVerifyEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*NoulRequest)
+		return s.Verify(ctx, p)
 	}
 }

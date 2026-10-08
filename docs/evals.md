@@ -12,7 +12,7 @@ classification, reasoning, and disagreement resolution.
 
 A native **System One classifier**, such as TypeSafe's Jev, answers constrained
 questions with probabilities instead of generating an explanation. Goa-AI uses
-that distribution to reduce reasoning work only after application-reviewed data
+that probability to reduce reasoning work only after application-reviewed data
 qualifies a decision band. Reasoning remains responsible for uncertain,
 unqualified, predicted-failing, and audited cases.
 
@@ -21,9 +21,11 @@ flowchart LR
     H[Typed product hook] --> A[Saved observation archive]
     A --> B[Generated decoding and field selection]
     B --> X[Exact Go predicates]
-    B --> C[Native classification]
+    B --> E[Reasoning required or unqualified]
+    E --> R[Independent reasoning]
+    B --> C[Qualified native classification]
     C --> P[Qualified pass without audit]
-    C --> R[Independent reasoning]
+    C --> R
     R --> D[One adjudication for a qualified disagreement]
     X --> O[Independent assessment record]
     P --> O
@@ -77,7 +79,80 @@ var _ = Suite("records", func() {
 Suite, scenario, check, requirement, and tag names use `lower_snake_case`.
 Descriptions and a positive suite timeout are required. A scenario timeout
 replaces the suite timeout for that scenario. `Input` is optional; `Observation`
-and at least one `Check` or `Requirement` are required.
+and at least one `Check`, `Requirement`, or `Assess` are required.
+
+## Reuse an assessment in focused tests and complete flows
+
+A `Component` declares expectations over one named observation type. It does
+not execute the product. `Assess` applies all of those expectations to a typed
+field in a scenario's captured observation:
+
+```go
+var AnswerObservation = Type("AnswerObservation", func() {
+    Attribute("text", String, "The displayed answer, including an empty answer.")
+    Attribute("facts", ArrayOf(String), "Captured facts available to that answer.")
+    Required("text")
+})
+
+var GroundedAnswer = Component("grounded_answer", func() {
+    Description("Checks an answer using only its captured facts.")
+    Observation(AnswerObservation)
+    Requirement("grounded", "The answer's factual statements agree with the captured facts.", func() {
+        Subject("text")
+        Evidence("facts")
+    })
+})
+
+var ConversationObservation = Type("ConversationObservation", func() {
+    Attribute("first", AnswerObservation, "The first answer and its own facts.")
+    Attribute("follow_up", AnswerObservation, "The follow-up answer and its own facts.")
+    Attribute("goal", String, "The complete user goal.")
+    Required("first", "follow_up", "goal")
+})
+
+var _ = Suite("conversation", func() {
+    Description("Checks individual answers and the complete conversation.")
+    Timeout("2m")
+    Scenario("focused", func() {
+        Description("Checks one captured answer.")
+        Observation(AnswerObservation)
+        Assess("answer", GroundedAnswer, "$")
+    })
+    Scenario("complete_flow", func() {
+        Description("Checks both answers and the overall outcome.")
+        Observation(ConversationObservation)
+        Assess("first", GroundedAnswer, "first")
+        Assess("follow_up", GroundedAnswer, "follow_up")
+        Requirement("goal_satisfied", "The complete conversation satisfies the user's goal.", func() {
+            Subject("$")
+            Evidence("goal")
+            Reasoning()
+        })
+    })
+})
+```
+
+The selected field must have the component's named Goa type. Within a component,
+`$` and `$.facts` mean that selected observation, including inside `ForEach`.
+They cannot read another answer's facts. Generated identities include the
+assessment name: `conversation/complete_flow/follow_up/grounded`. Repeated
+component checks share one typed predicate method; every assessment still runs
+and reports its own check.
+
+`Reasoning()` requires an independent reasoning assessment and excludes the
+requirement from native prediction, automatic acceptance, and qualification.
+Use it for complex interactions, authored algorithms, or assessments whose
+correctness depends on broader interpretation. Requirements without it are
+eligible for application-reviewed qualification; they still require reasoning
+until a qualification supports an automatic decision.
+
+Keep the complete-flow assertions. Passing each small component does not prove
+that their combined outcome satisfies the user's goal. Before reducing selected
+evidence, test omissions, misleading context, and interactions that require facts
+outside the component. Smaller evidence is useful only when it preserves the
+assessment's meaning.
+
+## Observation shapes and selectors
 
 Observation schemas describe possible outcomes, including empty, partial, and
 failed outcomes. A desired property such as a correct answer belongs in an
@@ -99,8 +174,9 @@ Selectors are compiled against the observation type:
 `ForEach` selects an array; each element receives its own requirement instance
 in captured order. An empty array has zero visible instances. Declare an exact
 check when at least one item is required. A missing enclosing object is an error,
-not an empty collection. Missing subject text becomes `not_addressed` without a
-model call. Missing selected factual context is an assessment error. Nil and
+not an empty collection. Empty subject text is assessed against the declared
+requirement: required content may be missing, while a prohibition can hold by
+absence. Missing selected factual context is an assessment error. Nil and
 empty arrays or maps have the same empty-collection meaning; capture availability
 in an explicit field when an empty result must differ from unavailable facts.
 
@@ -258,13 +334,16 @@ Three constructors have distinct behavior:
 
 | Constructor | Behavior |
 | --- | --- |
-| `NewReasoningEngine` | Reasons about every nonempty subject |
+| `NewReasoningEngine` | Reasons about every subject |
 | `NewDisagreementEngine` | Classifies and independently reasons; adjudicates qualified pass/fail conflicts |
-| `NewSelectiveEngine` | Accepts qualified passes unless audited; reasons about all other predictions; adjudicates qualified conflicts |
+| `NewSelectiveEngine` | Classifies qualified requirements, accepts qualified passes unless audited, and reasons about all other requirements; adjudicates qualified conflicts |
 
 Requirements sharing byte-identical subject and reference are batched. Initial
-reasoning receives original evidence without the classifier's prediction. A
-qualified pass opposed by a reasoned failure, or qualified failure opposed by a
+reasoning receives original evidence without the classifier's prediction.
+`Reasoning()` requirements never call the classifier. Unqualified requirements
+also bypass it in the selective engine. The disagreement engine deliberately
+collects unqualified predictions for experiments, while preserving `Reasoning()`.
+A qualified pass opposed by a reasoned failure, or qualified failure opposed by a
 reasoned pass, receives one additional adjudication. The adjudicator sees original
 evidence and both assessments; it can abstain. There is no semantic retry loop.
 Provider or protocol errors remain errors and do not select a fallback model.
@@ -296,10 +375,10 @@ An infrastructure error leaves the affected decision absent and records an error
 ## Native TypeSafe classification
 
 `features/eval/typesafe` implements `eval.Classifier` using TypeSafe's native
-Choice API, rather than a chat adapter:
+Noul yes/no API or Choice API, rather than a chat adapter:
 
 ```go
-classifier, err := typesafe.New(httpClient, typesafe.Config{
+classifier, err := typesafe.NewNoul(httpClient, typesafe.Config{
     APIKey: apiKey,
     Model: "jev-1.13.0",
     MaxResponseBytes: 1 << 20,
@@ -311,23 +390,34 @@ HTTP response, including unsuccessful responses. It protects response allocation
 it is not a suite-wide evidence allowance. Every call also needs a context
 deadline. Runners and qualification provide their own per-operation contexts.
 
-The adapter sends subject and captured reference as separate state fields, with
-one named question per requirement and four choices. Generated Goa records and
-codecs own wire validation. The client verifies exact answer coverage, all four
-finite probabilities, a sum within floating-point serialization tolerance, the
-selected most-probable label, and the exact returned model version. It preserves
-probabilities without clipping or normalization. Mutable aliases such as
+Both adapters send subject and captured reference as separate state fields, with
+one named question per requirement. Noul asks whether the subject establishes
+the requirement; its true and false criteria distinguish satisfaction from
+contradiction, omission, or ambiguity. Its answer contains only a probability.
+`NewChoice` asks the four semantic alternatives and selects the probability
+of `entailed` from the original distribution. Neither adapter fabricates a
+semantic failure label from that probability.
+
+Generated Goa records and codecs own wire validation. Both clients verify exact
+answer coverage, finite probabilities in `[0,1]`, and the exact returned model
+version. Choice additionally checks its complete distribution, its sum within
+floating-point serialization tolerance, and the selected most-probable option.
+Original decoded response bytes remain in the call record. Probabilities are
+never clipped or normalized. Mutable aliases such as
 `jev-latest` are rejected. The HTTP client is supplied by the application; the
 adapter performs no retries and follows no redirects.
 
 An optional `ChoiceOrder` permutation supports controlled order-sensitivity
 experiments. The resolved ordering and criterion text are recorded in evaluator
-configuration, so a qualification cannot be reused under another ordering.
+configuration, so a qualification cannot be reused under another ordering or
+transferred between Noul and Choice. Compare primitives on development data
+and fix the primitive before collecting held-out qualification evidence.
 Routing uses `P(entailed)`, not the provider's derived confidence field. Neither
 number is assumed to be an accuracy guarantee.
 
 See TypeSafe's [API contract](https://docs.typesafe.ai/api),
 [model versions](https://docs.typesafe.ai/models), and
+[Noul primitive](https://docs.typesafe.ai/primitives/noul), and
 [Choice primitive](https://docs.typesafe.ai/primitives/choice). Provider context
 and rate limits apply to each native request; the adapter does not estimate token
 counts, truncate evidence, or silently split an oversized request.
@@ -376,16 +466,28 @@ A band qualifies only with nonempty held-out evidence and an upper bound no
 greater than `MaxErrorRate`. Missing or insufficient evidence leaves reasoning
 required. The failure band authorizes disagreement detection, never automatic
 product failure. Qualifications retain the complete examples, predictions,
-coverage, error bounds, four-label Brier score, call usage, and duration.
+coverage, error bounds, binary Brier score, call usage, and duration. The score
+measures squared error between the native pass probability and reviewed pass/fail
+outcomes; it does not measure the reasoner's four-label accuracy.
 
 The content identity binds the observation schema, requirement statement and
-selectors, classifier version, instructions, and option order. Changed evidence,
+selectors, component scope, reasoning policy, classifier version, instructions,
+and option order. Changed evidence,
 statistics, thresholds, or contracts cannot silently reuse the record. The
 application owns corpus review, population selection, qualification renewal,
 and responses to audit findings; the library does not train or auto-promote models.
 
-`Engine.CheckSemantics` tests four fixed synthetic label meanings under a
-caller-supplied deadline. It is an explicit semantic sanity check, not statistical
+When the application limits qualification to particular inputs or extracts
+evidence before encoding an observation, include the population and extraction
+identities in its classifier's `EvaluatorConfig.Settings`. Enforce that input
+scope before making native requests. The library can compare recorded identities;
+it cannot discover whether an application has changed its representative
+population or discarded context before capture.
+
+`Engine.CheckSemantics` tests four fixed synthetic cases under a
+caller-supplied deadline. Reasoners must distinguish all four labels; native
+classifiers must distinguish satisfaction from failure. It is an explicit
+semantic sanity check, not statistical
 qualification, and is never automatically invoked by capture or assessment.
 
 ## Challenge and compare
@@ -436,6 +538,12 @@ Invocation records include failed format corrections and adjudication. Existing
 qualification work is recorded in its qualification rather than charged again
 to each assessment. A reasoning baseline is another evaluator, not gold truth.
 Use challenge results to assess accuracy alongside savings and variability.
+
+`Compare` runs policies serially in name order, with each policy's repetitions
+together. For experiments affected by provider caches or changing load, rotate
+that order by calling `Compare` once per policy and repetition. Keep the actual
+schedule and every report; rotation makes order effects visible but does not
+prove that a provider cache was disabled.
 
 ## Reports and reasoning-model behavior
 
@@ -517,6 +625,16 @@ in the same change:
 | `Run` returns report and error | `Run` returns archive, report, and error; use `Capture` and `Assess` independently |
 | Automatic four-example “calibration” before each run | Explicit `CheckSemantics`; reviewed tuning/held-out qualification for automatic decisions |
 | Report-level output/claim/judgment fields | Archived observation bytes plus requirement instances and discriminated decisions |
+| `typesafe.New` | `typesafe.NewChoice`, or `NewNoul` with a separately reviewed qualification |
+| Native prediction label and four-label map | A pass `Probability`; original provider response remains in `ModelCall.Response` |
+| Empty subjects automatically receive `not_addressed` | The configured assessor evaluates the requirement's meaning, including conditions and prohibitions |
+
+Regenerate when adding components: checks receive the component observation
+and reused methods have names such as `CheckComponentAnswerQualityPresent`
+for a component named `answer_quality` with a check named `present`.
+Reports identify each occurrence with its assessment name. Existing experimental
+qualifications and prediction readers must migrate and requalify; the old
+four-label prediction format cannot authorize the new native contract.
 
 Input schemas, generated tool descriptors, scenario/tag selection, and
 `eval/evidence` expectations remain available. Exact-only suites use a nil

@@ -1,4 +1,4 @@
-// Package typesafe assesses captured evidence with TypeSafe's native Choice API.
+// Package typesafe assesses captured evidence with TypeSafe's Noul and Choice APIs.
 // The generated private records and codecs follow the published HTTP contract.
 package typesafe
 

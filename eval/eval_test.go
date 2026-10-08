@@ -202,7 +202,7 @@ func TestBindingCannotDropAssertions(t *testing.T) {
 	}
 }
 
-func TestEmptyOutputAndExactFailureNeverBecomePasses(t *testing.T) {
+func TestSemanticPassNeverOverridesExactFailure(t *testing.T) {
 	for _, empty := range []bool{true, false} {
 		t.Run(fmt.Sprint(empty), func(t *testing.T) {
 			subject := "Done."
@@ -228,13 +228,41 @@ func TestEmptyOutputAndExactFailureNeverBecomePasses(t *testing.T) {
 			assert.Empty(t, report.Scenarios[0].Error)
 			label, ok := report.Scenarios[0].Requirements[0].Instances[0].Label()
 			assert.True(t, ok)
-			if empty {
-				assert.Equal(t, NotAddressed, label)
-				assert.Empty(t, reasoner.requests)
-			} else {
-				assert.Equal(t, Entailed, label)
-				assert.Len(t, reasoner.requests, 1)
-			}
+			assert.Equal(t, Entailed, label)
+			assert.Len(t, reasoner.requests, 1)
+		})
+	}
+}
+
+func TestEmptySubjectReceivesItsDeclaredSemanticAssessment(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		statement string
+		label     Label
+		passed    bool
+	}{
+		{"required content", "The answer reports the measured price.", NotAddressed, false},
+		{"conditional absence", "Any price quoted in the answer agrees with the measured price.", Entailed, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			scenario := testScenario("answer", Subject{Reference: "The measured price is 10."})
+			scenario.Requirements[0].Statement = test.statement
+			reasoner := &testReasoner{reason: func(_ context.Context, request reasonRequest) (Reasoning, error) {
+				assert.Empty(t, request.subject)
+				assert.Equal(t, "The measured price is 10.", request.reference)
+				assert.Equal(t, test.statement, request.claims[0].Text)
+				return reasonedLabels(request.claims, test.label), nil
+			}}
+			engine, err := NewReasoningEngine(reasoner)
+			require.NoError(t, err)
+			_, report, err := mustRunner(t, engine, 1).Run(t.Context(), Suite{ID: "suite", Scenarios: []Scenario{scenario}})
+			require.NoError(t, err)
+			assert.Empty(t, report.Scenarios[0].Error)
+			assert.Equal(t, test.passed, report.Passed)
+			assert.Len(t, reasoner.requests, 1)
+			label, resolved := report.Scenarios[0].Requirements[0].Instances[0].Label()
+			assert.True(t, resolved)
+			assert.Equal(t, test.label, label)
 		})
 	}
 }
@@ -495,13 +523,8 @@ func reasonedLabels(claims []Claim, label Label) Reasoning {
 
 func predictedLabels(claims []Claim, pass float64) Classification {
 	result := Classification{}
-	label := Entailed
-	if pass < .5 {
-		label = Contradicted
-	}
 	for _, claim := range claims {
-		result.Predictions = append(result.Predictions, Prediction{ClaimID: claim.ID, Label: label,
-			Probabilities: map[Label]float64{Entailed: pass, Contradicted: 1 - pass, NotAddressed: 0, Indeterminate: 0}})
+		result.Predictions = append(result.Predictions, Prediction{ClaimID: claim.ID, Probability: pass})
 	}
 	return result
 }

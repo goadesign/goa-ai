@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
 type (
@@ -39,16 +40,20 @@ type (
 		Usage *model.TokenUsage `json:"usage,omitempty"`
 		// Error retains an invocation failure even when a format correction succeeds.
 		Error string `json:"error,omitempty"`
+		// Response retains the decoded native provider response, including its
+		// probabilities, even when later correspondence checks reject it.
+		// It is absent when a response could not be decoded.
+		Response rawjson.Message `json:"response,omitempty"`
 	}
 
-	// Prediction is a native classifier's complete distribution for one claim.
+	// Prediction is the native probability that one requirement is satisfied.
+	// It does not describe why the requirement might fail. ModelCall.Response
+	// retains the provider's original answer for independent review.
 	Prediction struct {
 		// ClaimID identifies the request-local requirement instance.
 		ClaimID string `json:"claim_id"`
-		// Label is the provider's selected most-probable semantic label.
-		Label Label `json:"label"`
-		// Probabilities contains exactly the four semantic labels and sums to one.
-		Probabilities map[Label]float64 `json:"probabilities"`
+		// Probability is the unmodified probability of satisfying the requirement.
+		Probability float64 `json:"probability"`
 	}
 
 	// Classification preserves the complete predictions and paid provider work.
@@ -89,7 +94,7 @@ type (
 	// Disagreement gives an adjudicator two conflicting assessments and the
 	// qualification that makes the classifier's decision eligible for comparison.
 	Disagreement struct {
-		// Prediction contains the native classifier's original probabilities.
+		// Prediction contains the native probability of satisfying the requirement.
 		Prediction Prediction `json:"prediction"`
 		// Judgment is the independent, initially blind reasoned decision.
 		Judgment Judgment `json:"judgment"`
@@ -117,7 +122,7 @@ type (
 
 	// Calibrated is an automatic decision supported by a qualified probability band.
 	Calibrated struct {
-		// Prediction contains the full native probability distribution.
+		// Prediction contains the qualified native probability of passing.
 		Prediction Prediction `json:"prediction"`
 		// Model is the exact classifier version used.
 		Model string `json:"model"`
@@ -143,7 +148,7 @@ type (
 		ID string `json:"id"`
 		// Decision is absent only when an infrastructure or protocol error occurred.
 		Decision Decision `json:"decision,omitempty"`
-		// Prediction retains the classifier's distribution even after reasoning.
+		// Prediction retains the native probability even after reasoning.
 		Prediction *Prediction `json:"prediction,omitempty"`
 		// Initial retains the blind reasoner's decision when adjudication followed.
 		Initial *Judgment `json:"initial,omitempty"`
@@ -213,7 +218,7 @@ func (d Unresolved) MarshalJSON() ([]byte, error) {
 }
 
 func (d Calibrated) decisionLabel() (Label, bool) {
-	return d.Prediction.Label, true
+	return Entailed, true
 }
 
 func (d Reasoned) decisionLabel() (Label, bool) {
@@ -225,8 +230,8 @@ func (Unresolved) decisionLabel() (Label, bool) {
 }
 
 // ValidateClassification rejects incomplete, non-finite, or inconsistent model
-// output. The sum tolerance covers floating-point serialization of one four-way
-// distribution; it does not change, clip, or normalize the supplied probabilities.
+// output. Each adapter owns its provider's response shape and probability
+// distribution; this boundary checks identities and finite probabilities.
 func ValidateClassification(claims []Claim, result Classification) error {
 	if err := ValidateClaims(claims); err != nil {
 		return err
@@ -241,23 +246,8 @@ func ValidateClassification(claims []Claim, result Classification) error {
 			return fmt.Errorf("unknown or duplicate prediction %q", prediction.ClaimID)
 		}
 		seen[prediction.ClaimID] = true
-		if !validLabel(prediction.Label) || len(prediction.Probabilities) != 4 {
-			return fmt.Errorf("prediction %q requires four semantic probabilities", prediction.ClaimID)
-		}
-		sum, largest := 0.0, 0.0
-		for _, label := range []Label{Entailed, Contradicted, NotAddressed, Indeterminate} {
-			probability, exists := prediction.Probabilities[label]
-			if !exists || !unitInterval(probability) {
-				return fmt.Errorf("prediction %q has invalid probability for %q", prediction.ClaimID, label)
-			}
-			sum += probability
-			largest = max(largest, probability)
-		}
-		if math.Abs(sum-1) > 1e-6 {
-			return fmt.Errorf("prediction %q probabilities sum to %g, want one", prediction.ClaimID, sum)
-		}
-		if prediction.Probabilities[prediction.Label] != largest {
-			return fmt.Errorf("prediction %q selected a less probable label", prediction.ClaimID)
+		if !unitInterval(prediction.Probability) {
+			return fmt.Errorf("prediction %q has invalid probability", prediction.ClaimID)
 		}
 	}
 	return validateCalls(result.Calls)

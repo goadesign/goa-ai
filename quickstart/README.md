@@ -242,6 +242,14 @@ constructs an offline suite with no capture hooks or live dependencies.
 `goa example` scaffolds `cmd/chat_quality-evals` once; application edits survive
 regeneration.
 
+To reuse expectations in focused cases and complete flows, declare a named
+`Component` over an observation type and apply it with `Assess`. Keep assertions
+about the complete outcome beside those components. `Reasoning()` marks a
+requirement that always needs the reasoning model; other requirements still
+need reviewed qualification before native predictions can bypass reasoning.
+See the [component example](../docs/evals.md#reuse-an-assessment-in-focused-tests-and-complete-flows)
+and [qualification contract](../docs/evals.md#qualify-automatic-decisions).
+
 The `greeting_reply` hook in [main.go](cmd/chat_quality-evals/main.go) subscribes
 an `evidence.Collector` to the runtime's events while the chat agent runs on
 the in-memory engine. [observations.go](cmd/chat_quality-evals/observations.go)

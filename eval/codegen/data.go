@@ -142,6 +142,7 @@ type (
 		Checks         string
 		ForAssessment  string
 		HasChecks      bool
+		CheckMethods   []checkData
 	}
 
 	// exampleData contains the final suite and command names used by one file.
@@ -494,6 +495,7 @@ func linkSuiteData(planned *suitePlan, exampleAlias string) *suiteData {
 		})
 		validatorNames[inputType.Type.ID()] = inputType.Validator.NestedDeclaration
 	}
+	checkMethods := make(map[string]struct{})
 	for index, scenario := range planned.Scenarios {
 		linked := scenarioData{
 			ID:             scenario.ID,
@@ -507,13 +509,20 @@ func linkSuiteData(planned *suitePlan, exampleAlias string) *suiteData {
 			Encode:         scenario.Codec.Value.EncodeDeclaration().Name(),
 			Decode:         scenario.Codec.Value.DecodeDeclaration().Name(),
 			Schema:         strconv.Quote(scenario.Schema),
-			Checks:         append([]checkData(nil), scenario.Checks...),
+			Checks:         linkChecks(scenario, scope, exampleAlias),
 		}
 		if exampleAlias != "" {
 			linked.ExampleObservationRef = scope.GoFullTypeRef(scenario.Observation, exampleAlias)
 			linked.ObservationZero = zeroValue(linked.ExampleObservationRef)
 		}
 		data.HasChecks = data.HasChecks || len(scenario.Checks) > 0
+		for _, check := range linked.Checks {
+			if _, exists := checkMethods[check.Method]; exists {
+				continue
+			}
+			checkMethods[check.Method] = struct{}{}
+			data.CheckMethods = append(data.CheckMethods, check)
+		}
 		linked.Requirements, linked.Binding = linkRequirements(scenario, scope)
 		if scenario.Input != nil {
 			linked.HasInput = true

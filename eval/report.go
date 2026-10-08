@@ -252,6 +252,9 @@ func validateScenarioReport(report ScenarioReport, qualifications map[string]Qua
 
 func validateAssessment(assessment Assessment, requirement Requirement, failed bool) error {
 	claims := []Claim{{ID: assessment.ID, Text: requirement.Statement}}
+	if requirement.Reasoning && (assessment.Prediction != nil || assessment.Audited || assessment.Disagreement) {
+		return errors.New("a requirement marked Reasoning cannot retain native routing")
+	}
 	if assessment.Prediction != nil {
 		if err := ValidateClassification(claims, Classification{Predictions: []Prediction{*assessment.Prediction}}); err != nil {
 			return err
@@ -264,7 +267,7 @@ func validateAssessment(assessment Assessment, requirement Requirement, failed b
 	}
 	switch decision := assessment.Decision.(type) {
 	case Calibrated:
-		if decision.Model == "" || decision.QualificationID == "" || decision.Prediction.Label != Entailed {
+		if decision.Model == "" || decision.QualificationID == "" || requirement.Reasoning {
 			return errors.New("calibrated decision requires a qualified pass and model identity")
 		}
 		return ValidateClassification(claims, Classification{Predictions: []Prediction{decision.Prediction}})

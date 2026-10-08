@@ -56,7 +56,7 @@ type (
 	QualificationSample struct {
 		// Example contains the reviewed subject, label, group, and partition.
 		Example LabeledExample `json:"example"`
-		// Prediction retains the unmodified four-label distribution.
+		// Prediction retains the unmodified probability of satisfying the requirement.
 		Prediction Prediction `json:"prediction"`
 	}
 
@@ -93,7 +93,7 @@ type (
 	CalibrationStatistics struct {
 		// Examples counts the held-out examples contributing to these statistics.
 		Examples int `json:"examples"`
-		// BrierScore is the mean sum of squared errors over all four probabilities.
+		// BrierScore is the mean squared error of the probability of passing.
 		BrierScore float64 `json:"brier_score"`
 		// MeanEntailedProbability is the average predicted probability of passing.
 		MeanEntailedProbability float64 `json:"mean_entailed_probability"`
@@ -237,8 +237,8 @@ func qualificationStatistics(samples []QualificationSample, config Qualification
 func tuneBand(samples []QualificationSample, config QualificationConfig, pass bool) *DecisionBand {
 	thresholds := make([]float64, 0, len(samples))
 	for _, sample := range samples {
-		if sample.Example.Partition == Tuning && (sample.Prediction.Label == Entailed) == pass {
-			thresholds = append(thresholds, sample.Prediction.Probabilities[Entailed])
+		if sample.Example.Partition == Tuning {
+			thresholds = append(thresholds, sample.Prediction.Probability)
 		}
 	}
 	sort.Float64s(thresholds)
@@ -297,11 +297,11 @@ func bandStatistics(samples []QualificationSample, partition Partition, threshol
 }
 
 func inBand(prediction Prediction, threshold float64, pass bool) bool {
-	probability := prediction.Probabilities[Entailed]
+	probability := prediction.Probability
 	if pass {
-		return prediction.Label == Entailed && probability >= threshold
+		return probability >= threshold
 	}
-	return prediction.Label != Entailed && probability <= threshold
+	return probability <= threshold
 }
 
 func calibrationStatistics(samples []QualificationSample) CalibrationStatistics {
@@ -311,18 +311,16 @@ func calibrationStatistics(samples []QualificationSample) CalibrationStatistics 
 			continue
 		}
 		statistics.Examples++
-		statistics.MeanEntailedProbability += sample.Prediction.Probabilities[Entailed]
+		statistics.MeanEntailedProbability += sample.Prediction.Probability
 		if sample.Example.Expected == Entailed {
 			statistics.EntailedRate++
 		}
-		for _, label := range []Label{Entailed, Contradicted, NotAddressed, Indeterminate} {
-			probability := sample.Prediction.Probabilities[label]
-			target := 0.0
-			if label == sample.Example.Expected {
-				target = 1
-			}
-			statistics.BrierScore += (probability - target) * (probability - target)
+		target := 0.0
+		if sample.Example.Expected == Entailed {
+			target = 1
 		}
+		probability := sample.Prediction.Probability
+		statistics.BrierScore += (probability - target) * (probability - target)
 	}
 	if statistics.Examples > 0 {
 		n := float64(statistics.Examples)
@@ -372,6 +370,9 @@ func binomialCDF(incorrect, total int, probability float64) float64 {
 func validateCorpus(requirement Requirement, examples []LabeledExample, config QualificationConfig) error {
 	if err := validateRequirement(requirement); err != nil {
 		return err
+	}
+	if requirement.Reasoning {
+		return errors.New("a requirement marked Reasoning cannot receive a native qualification")
 	}
 	if !unitInterval(config.MaxErrorRate) || config.MaxErrorRate == 1 || !unitInterval(config.Confidence) || config.Confidence == 0 || config.Confidence == 1 || config.Timeout <= 0 {
 		return errors.New("qualification requires an error rate in [0,1), confidence in (0,1), and a positive per-example timeout")

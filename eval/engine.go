@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -40,6 +39,7 @@ type (
 		requirement   int
 		instance      int
 		qualification *Qualification
+		native        bool
 	}
 
 	assessmentGroup struct {
@@ -55,13 +55,13 @@ const (
 	strategySelective    = "selective"
 )
 
-// NewReasoningEngine assesses every nonempty subject with the reasoner. This
+// NewReasoningEngine assesses every subject with the reasoner. This
 // operation provides the baseline for comparisons against selective assessment.
 func NewReasoningEngine(reasoner Reasoner) (*Engine, error) {
 	return newEngine(nil, reasoner, strategyReasoning, SelectivePolicy{})
 }
 
-// NewDisagreementEngine classifies and reasons about every nonempty subject.
+// NewDisagreementEngine classifies and reasons about every eligible subject.
 // Qualified pass/fail conflicts receive one additional adjudication. Classifier
 // predictions never bypass the initial independent reasoning call.
 func NewDisagreementEngine(classifier Classifier, reasoner Reasoner, qualifications []Qualification) (*Engine, error) {
@@ -69,8 +69,9 @@ func NewDisagreementEngine(classifier Classifier, reasoner Reasoner, qualificati
 }
 
 // NewSelectiveEngine accepts qualified passes directly unless chosen for audit.
-// All other predictions require reasoning; provider errors do not select a
-// different assessor or silently become product decisions.
+// Requirements without qualification, and requirements marked Reasoning, go
+// directly to reasoning. Other predictions require reasoning; provider errors
+// do not select a different assessor or silently become product decisions.
 func NewSelectiveEngine(classifier Classifier, reasoner Reasoner, policy SelectivePolicy) (*Engine, error) {
 	return newEngine(classifier, reasoner, strategySelective, policy)
 }
@@ -80,8 +81,9 @@ func (e *Engine) Policy() PolicyRecord {
 	return cloneRecord(e.policy)
 }
 
-// CheckSemantics tests the four label meanings with synthetic examples. The
-// caller must supply a deadline. Passing this check never creates a statistical
+// CheckSemantics tests four synthetic cases. A reasoner distinguishes all four
+// labels; a classifier distinguishes passing from failing. The caller must
+// supply a deadline. Passing this check never creates a statistical
 // qualification and never authorizes automatic application decisions.
 func (e *Engine) CheckSemantics(ctx context.Context) ([]ModelCall, error) {
 	if _, exists := ctx.Deadline(); !exists {
@@ -107,7 +109,8 @@ func (e *Engine) CheckSemantics(ctx context.Context) ([]ModelCall, error) {
 		}
 		byID := predictionMap(classified.Predictions)
 		for i, claim := range claims {
-			if byID[claim.ID].Label != expected[i] {
+			probability := byID[claim.ID].Probability
+			if (probability > .5) != (expected[i] == Entailed) || probability == .5 {
 				return calls, fmt.Errorf("classifier semantic sanity check failed for %s", claim.ID)
 			}
 		}
@@ -159,6 +162,9 @@ func newEngine(classifier Classifier, reasoner Reasoner, strategy string, policy
 		if err := qualification.Validate(); err != nil {
 			return nil, fmt.Errorf("invalid qualification: %w", err)
 		}
+		if qualification.Requirement.Reasoning {
+			return nil, fmt.Errorf("requirement %q requires reasoning and cannot use a native qualification", qualification.Requirement.ID)
+		}
 		if digest(qualification.Evaluator) != digest(engine.policy.Classifier) {
 			return nil, fmt.Errorf("qualification %q uses a different classifier configuration", qualification.ID)
 		}
@@ -197,12 +203,6 @@ func (e *Engine) assess(ctx context.Context, observationID string, requirements 
 				id = fmt.Sprintf("%s[%d]", id, ii)
 			}
 			reports[ri].Instances[ii] = Assessment{ID: id}
-			if subject.Content == "" {
-				reports[ri].Instances[ii].Decision = Reasoned{Judgment: Judgment{
-					ClaimID: id, Label: NotAddressed, Rationale: "The captured subject is empty.",
-				}}
-				continue
-			}
 			index, exists := groupIndex[subject]
 			if !exists {
 				index = len(groups)
@@ -211,6 +211,9 @@ func (e *Engine) assess(ctx context.Context, observationID string, requirements 
 			}
 			groups[index].tasks = append(groups[index].tasks, assessmentTask{
 				claim: Claim{ID: id, Text: requirement.Statement}, requirement: ri, instance: ii, qualification: qualification,
+				native: !requirement.Reasoning && (e.policy.Strategy == strategyDisagreement ||
+					qualification != nil && (qualification.Pass != nil && qualification.Pass.Qualified ||
+						qualification.Fail != nil && qualification.Fail.Qualified)),
 			})
 		}
 	}
@@ -236,10 +239,16 @@ func (e *Engine) assessGroup(ctx context.Context, observationID string, group as
 		recordError(span, err)
 		return nil, err
 	}
-	claims := taskClaims(group.tasks)
+	var nativeTasks []assessmentTask
+	for _, task := range group.tasks {
+		if task.native {
+			nativeTasks = append(nativeTasks, task)
+		}
+	}
 	var calls []ModelCall
 	predictions := make(map[string]Prediction)
-	if e.classifier != nil {
+	if e.classifier != nil && len(nativeTasks) > 0 {
+		claims := taskClaims(nativeTasks)
 		classified, err := e.classifier.Classify(ctx, group.subject.Content, claims, group.subject.Reference)
 		calls = append(calls, classified.Calls...)
 		if err == nil {
@@ -261,7 +270,7 @@ func (e *Engine) assessGroup(ctx context.Context, observationID string, group as
 		if exists {
 			assessment.Prediction = &prediction
 		}
-		if e.policy.Strategy == strategySelective && task.qualification != nil && qualifiedPass(task.qualification, prediction) {
+		if exists && e.policy.Strategy == strategySelective && task.qualification != nil && qualifiedPass(task.qualification, prediction) {
 			assessment.Audited = auditSelected(observationID, task.claim.ID, task.qualification.ID, e.policy.AuditFraction)
 			if !assessment.Audited {
 				assessment.Decision = Calibrated{
@@ -299,7 +308,10 @@ func (e *Engine) assessGroup(ctx context.Context, observationID string, group as
 		if !substantive || task.qualification == nil {
 			continue
 		}
-		prediction := predictions[task.claim.ID]
+		prediction, exists := predictions[task.claim.ID]
+		if !exists {
+			continue
+		}
 		passConflict := qualifiedPass(task.qualification, prediction) && judgment.Judgment.Label != Entailed
 		failConflict := qualifiedFail(task.qualification, prediction) && judgment.Judgment.Label == Entailed
 		if !passConflict && !failConflict {
@@ -347,7 +359,6 @@ func taskClaims(tasks []assessmentTask) []Claim {
 func predictionMap(predictions []Prediction) map[string]Prediction {
 	result := make(map[string]Prediction, len(predictions))
 	for _, prediction := range predictions {
-		prediction.Probabilities = maps.Clone(prediction.Probabilities)
 		result[prediction.ClaimID] = prediction
 	}
 	return result

@@ -28,6 +28,10 @@ type Service interface {
 	// returning complete probabilities for each requirement and the model that
 	// produced them.
 	Classify(context.Context, *Request) (res *Response, err error)
+	// Checks whether captured content establishes each fixed requirement,
+	// returning one native probability of yes per requirement without inventing a
+	// reason for failure.
+	Verify(context.Context, *NoulRequest) (res *NoulResponse, err error)
 }
 
 // APIName is the name of the API as defined in the design.
@@ -44,7 +48,7 @@ const ServiceName = "typesafe"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [1]string{"classify"}
+var MethodNames = [2]string{"classify", "verify"}
 
 type Answer struct {
 	// Native primitive that produced this answer.
@@ -79,6 +83,58 @@ type Instructions struct {
 // An immutable Jev release, such as jev-1.13.0; mutable aliases cannot qualify
 // decisions.
 type ModelVersion string
+
+type NoulAnswer struct {
+	// Native primitive that produced this answer.
+	Type string
+	// The native probability that the answer is yes.
+	Noul float64
+}
+
+type NoulCriteria struct {
+	// Meaning of satisfying the requirement.
+	True string
+	// Meaning of not satisfying the requirement.
+	False string
+}
+
+type NoulInstructions struct {
+	// The common grading contract.
+	Contract string
+	// The fixed semantic requirement.
+	Requirement string
+	// The yes/no question the model evaluates.
+	Question string
+}
+
+type NoulQuestion struct {
+	// Native primitive used for this question.
+	Type string
+	// The exact grading contract and yes/no question.
+	Instructions *NoulInstructions
+	// What satisfying and not satisfying the requirement mean.
+	Criteria *NoulCriteria
+}
+
+// NoulRequest is the payload type of the typesafe service verify method.
+type NoulRequest struct {
+	// Evidence shared by all questions in this request.
+	State *State
+	// Pinned Jev model version.
+	Model ModelVersion
+	// Requirements keyed by caller-owned identities.
+	Questions map[string]*NoulQuestion
+}
+
+// NoulResponse is the result type of the typesafe service verify method.
+type NoulResponse struct {
+	// Actual model version used for inference.
+	Model string
+	// Answers under the exact requested identities.
+	Answers map[string]*NoulAnswer
+	// Reported token usage; absent counts remain unknown.
+	Usage *Usage
+}
 
 type Probabilities struct {
 	// Probability for option a.
@@ -250,6 +306,216 @@ type jsonModelVersionTransport string
 // validatejsonModelVersionTransport checks decoded JSON before it becomes a service value.
 func validatejsonModelVersionTransport(value jsonModelVersionTransport) (err error) {
 	err = goa.MergeErrors(err, goa.ValidatePattern("body", string(value), "^jev-[0-9]+\\.[0-9]+\\.[0-9]+$"))
+	return err
+}
+
+// jsonNoulAnswerTransport stores JSON fields until they have been validated.
+type jsonNoulAnswerTransport struct {
+	// Native primitive that produced this answer.
+	Type *string `json:"type"`
+	// The native probability that the answer is yes.
+	Noul *float64 `json:"noul"`
+}
+
+// validatejsonNoulAnswerTransport checks decoded JSON before it becomes a service value.
+func validatejsonNoulAnswerTransport(value *jsonNoulAnswerTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Type == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("type", "body"))
+	}
+	if value.Noul == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("noul", "body"))
+	}
+	if value.Type != nil {
+		if !(*value.Type == "noul") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.type", *value.Type, []any{"noul"}))
+		}
+	}
+	if value.Noul != nil {
+		if *value.Noul < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.noul", *value.Noul, 0, true))
+		}
+		if *value.Noul > 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.noul", *value.Noul, 1, false))
+		}
+	}
+	return err
+}
+
+// jsonNoulCriteriaTransport stores JSON fields until they have been validated.
+type jsonNoulCriteriaTransport struct {
+	// Meaning of satisfying the requirement.
+	True *string `json:"true"`
+	// Meaning of not satisfying the requirement.
+	False *string `json:"false"`
+}
+
+// validatejsonNoulCriteriaTransport checks decoded JSON before it becomes a service value.
+func validatejsonNoulCriteriaTransport(value *jsonNoulCriteriaTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.True == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("true", "body"))
+	}
+	if value.False == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("false", "body"))
+	}
+	return err
+}
+
+// jsonNoulInstructionsTransport stores JSON fields until they have been validated.
+type jsonNoulInstructionsTransport struct {
+	// The common grading contract.
+	Contract *string `json:"contract"`
+	// The fixed semantic requirement.
+	Requirement *string `json:"requirement"`
+	// The yes/no question the model evaluates.
+	Question *string `json:"question"`
+}
+
+// validatejsonNoulInstructionsTransport checks decoded JSON before it becomes a service value.
+func validatejsonNoulInstructionsTransport(value *jsonNoulInstructionsTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Contract == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("contract", "body"))
+	}
+	if value.Requirement == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("requirement", "body"))
+	}
+	if value.Question == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("question", "body"))
+	}
+	return err
+}
+
+// jsonNoulQuestionTransport stores JSON fields until they have been validated.
+type jsonNoulQuestionTransport struct {
+	// Native primitive used for this question.
+	Type *string `json:"type"`
+	// The exact grading contract and yes/no question.
+	Instructions *jsonNoulInstructionsTransport `json:"instructions"`
+	// What satisfying and not satisfying the requirement mean.
+	Criteria *jsonNoulCriteriaTransport `json:"criteria"`
+}
+
+// validatejsonNoulQuestionTransport checks decoded JSON before it becomes a service value.
+func validatejsonNoulQuestionTransport(value *jsonNoulQuestionTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Type == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("type", "body"))
+	}
+	if value.Instructions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("instructions", "body"))
+	}
+	if value.Criteria == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("criteria", "body"))
+	}
+	if value.Type != nil {
+		if !(*value.Type == "noul") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.type", *value.Type, []any{"noul"}))
+		}
+	}
+	if value.Instructions != nil {
+		if err2 := validatejsonNoulInstructionsTransport(value.Instructions); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if value.Criteria != nil {
+		if err2 := validatejsonNoulCriteriaTransport(value.Criteria); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return err
+}
+
+// jsonNoulRequestTransport stores JSON fields until they have been validated.
+type jsonNoulRequestTransport struct {
+	// Evidence shared by all questions in this request.
+	State *jsonStateTransport `json:"state"`
+	// Pinned Jev model version.
+	Model *jsonModelVersionTransport `json:"model"`
+	// Requirements keyed by caller-owned identities.
+	Questions map[string]*jsonNoulQuestionTransport `json:"questions"`
+}
+
+// validatejsonNoulRequestTransport checks decoded JSON before it becomes a service value.
+func validatejsonNoulRequestTransport(value *jsonNoulRequestTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.State == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("state", "body"))
+	}
+	if value.Model == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("model", "body"))
+	}
+	if value.Questions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("questions", "body"))
+	}
+	if value.State != nil {
+		if err2 := validatejsonStateTransport(value.State); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if value.Model != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.model", string(*value.Model), "^jev-[0-9]+\\.[0-9]+\\.[0-9]+$"))
+	}
+	if len(value.Questions) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.questions", value.Questions, len(value.Questions), 1, true))
+	}
+	for _, v := range value.Questions {
+		if v != nil {
+			if err2 := validatejsonNoulQuestionTransport(v); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return err
+}
+
+// jsonNoulResponseTransport stores JSON fields until they have been validated.
+type jsonNoulResponseTransport struct {
+	// Actual model version used for inference.
+	Model *string `json:"model"`
+	// Answers under the exact requested identities.
+	Answers map[string]*jsonNoulAnswerTransport `json:"answers"`
+	// Reported token usage; absent counts remain unknown.
+	Usage *jsonUsageTransport `json:"usage"`
+}
+
+// validatejsonNoulResponseTransport checks decoded JSON before it becomes a service value.
+func validatejsonNoulResponseTransport(value *jsonNoulResponseTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Model == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("model", "body"))
+	}
+	if value.Answers == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("answers", "body"))
+	}
+	if value.Usage == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("usage", "body"))
+	}
+	for _, v := range value.Answers {
+		if v != nil {
+			if err2 := validatejsonNoulAnswerTransport(v); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if value.Usage != nil {
+		if err2 := validatejsonUsageTransport(value.Usage); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
 	return err
 }
 
@@ -551,6 +817,122 @@ func validateModelVersionOriginal(value ModelVersion) (err error) {
 	return err
 }
 
+// validateNoulAnswerOriginal checks the original typed value before JSON conversion.
+func validateNoulAnswerOriginal(value *NoulAnswer) (err error) {
+	if !(value.Type == "noul") {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.type", value.Type, []any{"noul"}))
+	}
+	if value.Noul < 0 {
+		err = goa.MergeErrors(err, goa.InvalidRangeError("value.noul", value.Noul, 0, true))
+	}
+	if value.Noul > 1 {
+		err = goa.MergeErrors(err, goa.InvalidRangeError("value.noul", value.Noul, 1, false))
+	}
+	return err
+}
+
+// validateNoulQuestionOriginal checks the original typed value before JSON conversion.
+func validateNoulQuestionOriginal(value *NoulQuestion) (err error) {
+	if value.Instructions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("instructions", "value"))
+	}
+	if value.Criteria == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("criteria", "value"))
+	}
+	if !(value.Type == "noul") {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.type", value.Type, []any{"noul"}))
+	}
+	return err
+}
+
+// validateNoulRequestOriginal checks the original typed value before JSON conversion.
+func validateNoulRequestOriginal(value *NoulRequest) (err error) {
+	if value.State == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("state", "value"))
+	}
+	if value.Questions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("questions", "value"))
+	}
+	err = goa.MergeErrors(err, goa.ValidatePattern("value.model", string(value.Model), "^jev-[0-9]+\\.[0-9]+\\.[0-9]+$"))
+	if len(value.Questions) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("value.questions", value.Questions, len(value.Questions), 1, true))
+	}
+	for _, v := range value.Questions {
+		if v != nil {
+			if err2 := validateNoulQuestionOriginal2(v); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return err
+}
+
+// validateNoulQuestionOriginal2 checks the original typed value before JSON conversion.
+func validateNoulQuestionOriginal2(value *NoulQuestion) (err error) {
+	if value.Instructions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("instructions", "value"))
+	}
+	if value.Criteria == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("criteria", "value"))
+	}
+	if !(value.Type == "noul") {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.type", value.Type, []any{"noul"}))
+	}
+	return err
+}
+
+// validateNoulResponseOriginal checks the original typed value before JSON conversion.
+func validateNoulResponseOriginal(value *NoulResponse) (err error) {
+	if value.Answers == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("answers", "value"))
+	}
+	if value.Usage == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("usage", "value"))
+	}
+	for _, v := range value.Answers {
+		if v != nil {
+			if err2 := validateNoulAnswerOriginal2(v); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if value.Usage != nil {
+		if err2 := validateUsageOriginal(value.Usage); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return err
+}
+
+// validateNoulAnswerOriginal2 checks the original typed value before JSON conversion.
+func validateNoulAnswerOriginal2(value *NoulAnswer) (err error) {
+	if !(value.Type == "noul") {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.type", value.Type, []any{"noul"}))
+	}
+	if value.Noul < 0 {
+		err = goa.MergeErrors(err, goa.InvalidRangeError("value.noul", value.Noul, 0, true))
+	}
+	if value.Noul > 1 {
+		err = goa.MergeErrors(err, goa.InvalidRangeError("value.noul", value.Noul, 1, false))
+	}
+	return err
+}
+
+// validateUsageOriginal checks the original typed value before JSON conversion.
+func validateUsageOriginal(value *Usage) (err error) {
+	if value.InputTokens != nil {
+		if *value.InputTokens < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("value.input_tokens", *value.InputTokens, 0, true))
+		}
+	}
+	if value.OutputTokens != nil {
+		if *value.OutputTokens < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("value.output_tokens", *value.OutputTokens, 0, true))
+		}
+	}
+	return err
+}
+
 // validateProbabilitiesOriginal2 checks the original typed value before JSON conversion.
 func validateProbabilitiesOriginal2(value *Probabilities) (err error) {
 	if value.A < 0 {
@@ -646,7 +1028,7 @@ func validateResponseOriginal(value *Response) (err error) {
 		}
 	}
 	if value.Usage != nil {
-		if err2 := validateUsageOriginal(value.Usage); err2 != nil {
+		if err2 := validateUsageOriginal2(value.Usage); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
@@ -707,8 +1089,8 @@ func validateProbabilitiesOriginal3(value *Probabilities) (err error) {
 	return err
 }
 
-// validateUsageOriginal checks the original typed value before JSON conversion.
-func validateUsageOriginal(value *Usage) (err error) {
+// validateUsageOriginal2 checks the original typed value before JSON conversion.
+func validateUsageOriginal2(value *Usage) (err error) {
 	if value.InputTokens != nil {
 		if *value.InputTokens < 0 {
 			err = goa.MergeErrors(err, goa.InvalidRangeError("value.input_tokens", *value.InputTokens, 0, true))
@@ -722,8 +1104,8 @@ func validateUsageOriginal(value *Usage) (err error) {
 	return err
 }
 
-// validateUsageOriginal2 checks the original typed value before JSON conversion.
-func validateUsageOriginal2(value *Usage) (err error) {
+// validateUsageOriginal3 checks the original typed value before JSON conversion.
+func validateUsageOriginal3(value *Usage) (err error) {
 	if value.InputTokens != nil {
 		if *value.InputTokens < 0 {
 			err = goa.MergeErrors(err, goa.InvalidRangeError("value.input_tokens", *value.InputTokens, 0, true))
@@ -965,6 +1347,388 @@ func DecodeModelVersion(data []byte) (out ModelVersion, err error) {
 	return out, nil
 }
 
+// EncodeNoulAnswer turns a service value into JSON using the field names in the Goa design.
+func EncodeNoulAnswer(in *NoulAnswer) ([]byte, error) {
+	if err := checkNoulAnswerValue(in); err != nil {
+		return nil, fmt.Errorf("encode NoulAnswer JSON: %w", err)
+	}
+	if err := validateNoulAnswerOriginal(in); err != nil {
+		return nil, fmt.Errorf("validate NoulAnswer value: %w", err)
+	}
+	var body *jsonNoulAnswerTransport
+	{
+		body = &jsonNoulAnswerTransport{
+			Type: &in.Type,
+			Noul: &in.Noul,
+		}
+	}
+	if err := validatejsonNoulAnswerTransport(body); err != nil {
+		return nil, fmt.Errorf("validate NoulAnswer JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode NoulAnswer JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeNoulAnswer checks JSON field names from the Goa design and returns a service value.
+func DecodeNoulAnswer(data []byte) (out *NoulAnswer, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode NoulAnswer JSON: %w", err)
+	}
+	if err := validateNoulAnswerJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode NoulAnswer JSON: %w", err)
+	}
+	var body *jsonNoulAnswerTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode NoulAnswer JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode NoulAnswer JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode NoulAnswer JSON after first value: %w", err)
+	}
+	if err := validatejsonNoulAnswerTransport(body); err != nil {
+		return out, fmt.Errorf("validate NoulAnswer JSON: %w", err)
+	}
+	{
+		out = &NoulAnswer{
+			Type: *body.Type,
+			Noul: *body.Noul,
+		}
+	}
+	return out, nil
+}
+
+// EncodeNoulCriteria turns a service value into JSON using the field names in the Goa design.
+func EncodeNoulCriteria(in *NoulCriteria) ([]byte, error) {
+	if err := checkNoulCriteriaValue(in); err != nil {
+		return nil, fmt.Errorf("encode NoulCriteria JSON: %w", err)
+	}
+	var body *jsonNoulCriteriaTransport
+	{
+		body = &jsonNoulCriteriaTransport{
+			True:  &in.True,
+			False: &in.False,
+		}
+	}
+	if err := validatejsonNoulCriteriaTransport(body); err != nil {
+		return nil, fmt.Errorf("validate NoulCriteria JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode NoulCriteria JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeNoulCriteria checks JSON field names from the Goa design and returns a service value.
+func DecodeNoulCriteria(data []byte) (out *NoulCriteria, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode NoulCriteria JSON: %w", err)
+	}
+	if err := validateNoulCriteriaJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode NoulCriteria JSON: %w", err)
+	}
+	var body *jsonNoulCriteriaTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode NoulCriteria JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode NoulCriteria JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode NoulCriteria JSON after first value: %w", err)
+	}
+	if err := validatejsonNoulCriteriaTransport(body); err != nil {
+		return out, fmt.Errorf("validate NoulCriteria JSON: %w", err)
+	}
+	{
+		out = &NoulCriteria{
+			True:  *body.True,
+			False: *body.False,
+		}
+	}
+	return out, nil
+}
+
+// EncodeNoulInstructions turns a service value into JSON using the field names in the Goa design.
+func EncodeNoulInstructions(in *NoulInstructions) ([]byte, error) {
+	if err := checkNoulInstructionsValue(in); err != nil {
+		return nil, fmt.Errorf("encode NoulInstructions JSON: %w", err)
+	}
+	var body *jsonNoulInstructionsTransport
+	{
+		body = &jsonNoulInstructionsTransport{
+			Contract:    &in.Contract,
+			Requirement: &in.Requirement,
+			Question:    &in.Question,
+		}
+	}
+	if err := validatejsonNoulInstructionsTransport(body); err != nil {
+		return nil, fmt.Errorf("validate NoulInstructions JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode NoulInstructions JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeNoulInstructions checks JSON field names from the Goa design and returns a service value.
+func DecodeNoulInstructions(data []byte) (out *NoulInstructions, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode NoulInstructions JSON: %w", err)
+	}
+	if err := validateNoulInstructionsJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode NoulInstructions JSON: %w", err)
+	}
+	var body *jsonNoulInstructionsTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode NoulInstructions JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode NoulInstructions JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode NoulInstructions JSON after first value: %w", err)
+	}
+	if err := validatejsonNoulInstructionsTransport(body); err != nil {
+		return out, fmt.Errorf("validate NoulInstructions JSON: %w", err)
+	}
+	{
+		out = &NoulInstructions{
+			Contract:    *body.Contract,
+			Requirement: *body.Requirement,
+			Question:    *body.Question,
+		}
+	}
+	return out, nil
+}
+
+// EncodeNoulQuestion turns a service value into JSON using the field names in the Goa design.
+func EncodeNoulQuestion(in *NoulQuestion) ([]byte, error) {
+	if err := checkNoulQuestionValue(in); err != nil {
+		return nil, fmt.Errorf("encode NoulQuestion JSON: %w", err)
+	}
+	if err := validateNoulQuestionOriginal(in); err != nil {
+		return nil, fmt.Errorf("validate NoulQuestion value: %w", err)
+	}
+	var body *jsonNoulQuestionTransport
+	{
+		body = &jsonNoulQuestionTransport{
+			Type: &in.Type,
+		}
+		body.Instructions = encodeNoulInstructionsToNoulInstructionsTransport(in.Instructions)
+		body.Criteria = encodeNoulCriteriaToNoulCriteriaTransport(in.Criteria)
+	}
+	if err := validatejsonNoulQuestionTransport(body); err != nil {
+		return nil, fmt.Errorf("validate NoulQuestion JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode NoulQuestion JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeNoulQuestion checks JSON field names from the Goa design and returns a service value.
+func DecodeNoulQuestion(data []byte) (out *NoulQuestion, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode NoulQuestion JSON: %w", err)
+	}
+	if err := validateNoulQuestionJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode NoulQuestion JSON: %w", err)
+	}
+	var body *jsonNoulQuestionTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode NoulQuestion JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode NoulQuestion JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode NoulQuestion JSON after first value: %w", err)
+	}
+	if err := validatejsonNoulQuestionTransport(body); err != nil {
+		return out, fmt.Errorf("validate NoulQuestion JSON: %w", err)
+	}
+	{
+		out = &NoulQuestion{
+			Type: *body.Type,
+		}
+		out.Instructions = decodeNoulInstructionsTransportToNoulInstructions(body.Instructions)
+		out.Criteria = decodeNoulCriteriaTransportToNoulCriteria(body.Criteria)
+	}
+	return out, nil
+}
+
+// EncodeNoulRequest turns a service value into JSON using the field names in the Goa design.
+func EncodeNoulRequest(in *NoulRequest) ([]byte, error) {
+	if err := checkNoulRequestValue(in); err != nil {
+		return nil, fmt.Errorf("encode NoulRequest JSON: %w", err)
+	}
+	if err := validateNoulRequestOriginal(in); err != nil {
+		return nil, fmt.Errorf("validate NoulRequest value: %w", err)
+	}
+	var body *jsonNoulRequestTransport
+	{
+		body = &jsonNoulRequestTransport{}
+		model := jsonModelVersionTransport(in.Model)
+		body.Model = &model
+		body.State = encodeStateToStateTransport(in.State)
+		body.Questions = make(map[string]*jsonNoulQuestionTransport, len(in.Questions))
+		for key, val := range in.Questions {
+			tk := key
+			if val == nil {
+				body.Questions[tk] = nil
+				continue
+			}
+			body.Questions[tk] = encodeNoulQuestionToNoulQuestionTransport(val)
+		}
+	}
+	if err := validatejsonNoulRequestTransport(body); err != nil {
+		return nil, fmt.Errorf("validate NoulRequest JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode NoulRequest JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeNoulRequest checks JSON field names from the Goa design and returns a service value.
+func DecodeNoulRequest(data []byte) (out *NoulRequest, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode NoulRequest JSON: %w", err)
+	}
+	if err := validateNoulRequestJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode NoulRequest JSON: %w", err)
+	}
+	var body *jsonNoulRequestTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode NoulRequest JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode NoulRequest JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode NoulRequest JSON after first value: %w", err)
+	}
+	if err := validatejsonNoulRequestTransport(body); err != nil {
+		return out, fmt.Errorf("validate NoulRequest JSON: %w", err)
+	}
+	{
+		out = &NoulRequest{
+			Model: ModelVersion(*body.Model),
+		}
+		out.State = decodeStateTransportToState(body.State)
+		out.Questions = make(map[string]*NoulQuestion, len(body.Questions))
+		for key, val := range body.Questions {
+			tk := key
+			if val == nil {
+				out.Questions[tk] = nil
+				continue
+			}
+			out.Questions[tk] = decodeNoulQuestionTransportToNoulQuestion(val)
+		}
+	}
+	return out, nil
+}
+
+// EncodeNoulResponse turns a service value into JSON using the field names in the Goa design.
+func EncodeNoulResponse(in *NoulResponse) ([]byte, error) {
+	if err := checkNoulResponseValue(in); err != nil {
+		return nil, fmt.Errorf("encode NoulResponse JSON: %w", err)
+	}
+	if err := validateNoulResponseOriginal(in); err != nil {
+		return nil, fmt.Errorf("validate NoulResponse value: %w", err)
+	}
+	var body *jsonNoulResponseTransport
+	{
+		body = &jsonNoulResponseTransport{
+			Model: &in.Model,
+		}
+		body.Answers = make(map[string]*jsonNoulAnswerTransport, len(in.Answers))
+		for key, val := range in.Answers {
+			tk := key
+			if val == nil {
+				body.Answers[tk] = nil
+				continue
+			}
+			body.Answers[tk] = encodeNoulAnswerToNoulAnswerTransport(val)
+		}
+		body.Usage = encodeUsageToUsageTransport(in.Usage)
+	}
+	if err := validatejsonNoulResponseTransport(body); err != nil {
+		return nil, fmt.Errorf("validate NoulResponse JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode NoulResponse JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeNoulResponse checks JSON field names from the Goa design and returns a service value.
+func DecodeNoulResponse(data []byte) (out *NoulResponse, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode NoulResponse JSON: %w", err)
+	}
+	if err := validateNoulResponseJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode NoulResponse JSON: %w", err)
+	}
+	var body *jsonNoulResponseTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode NoulResponse JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode NoulResponse JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode NoulResponse JSON after first value: %w", err)
+	}
+	if err := validatejsonNoulResponseTransport(body); err != nil {
+		return out, fmt.Errorf("validate NoulResponse JSON: %w", err)
+	}
+	{
+		out = &NoulResponse{
+			Model: *body.Model,
+		}
+		out.Answers = make(map[string]*NoulAnswer, len(body.Answers))
+		for key, val := range body.Answers {
+			tk := key
+			if val == nil {
+				out.Answers[tk] = nil
+				continue
+			}
+			out.Answers[tk] = decodeNoulAnswerTransportToNoulAnswer(val)
+		}
+		out.Usage = decodeUsageTransportToUsage(body.Usage)
+	}
+	return out, nil
+}
+
 // EncodeProbabilities turns a service value into JSON using the field names in the Goa design.
 func EncodeProbabilities(in *Probabilities) ([]byte, error) {
 	if err := checkProbabilitiesValue(in); err != nil {
@@ -1100,7 +1864,7 @@ func EncodeRequest(in *Request) ([]byte, error) {
 		body = &jsonRequestTransport{}
 		model := jsonModelVersionTransport(in.Model)
 		body.Model = &model
-		body.State = encodeStateToStateTransport(in.State)
+		body.State = encodeStateToStateTransport2(in.State)
 		body.Questions = make(map[string]*jsonQuestionTransport, len(in.Questions))
 		for key, val := range in.Questions {
 			tk := key
@@ -1149,7 +1913,7 @@ func DecodeRequest(data []byte) (out *Request, err error) {
 		out = &Request{
 			Model: ModelVersion(*body.Model),
 		}
-		out.State = decodeStateTransportToState(body.State)
+		out.State = decodeStateTransportToState2(body.State)
 		out.Questions = make(map[string]*Question, len(body.Questions))
 		for key, val := range body.Questions {
 			tk := key
@@ -1185,7 +1949,7 @@ func EncodeResponse(in *Response) ([]byte, error) {
 			}
 			body.Answers[tk] = encodeAnswerToAnswerTransport(val)
 		}
-		body.Usage = encodeUsageToUsageTransport(in.Usage)
+		body.Usage = encodeUsageToUsageTransport2(in.Usage)
 	}
 	if err := validatejsonResponseTransport(body); err != nil {
 		return nil, fmt.Errorf("validate Response JSON: %w", err)
@@ -1234,7 +1998,7 @@ func DecodeResponse(data []byte) (out *Response, err error) {
 			}
 			out.Answers[tk] = decodeAnswerTransportToAnswer(val)
 		}
-		out.Usage = decodeUsageTransportToUsage(body.Usage)
+		out.Usage = decodeUsageTransportToUsage2(body.Usage)
 	}
 	return out, nil
 }
@@ -1299,7 +2063,7 @@ func EncodeUsage(in *Usage) ([]byte, error) {
 	if err := checkUsageValue(in); err != nil {
 		return nil, fmt.Errorf("encode Usage JSON: %w", err)
 	}
-	if err := validateUsageOriginal2(in); err != nil {
+	if err := validateUsageOriginal3(in); err != nil {
 		return nil, fmt.Errorf("validate Usage value: %w", err)
 	}
 	var body *jsonUsageTransport
@@ -1403,6 +2167,63 @@ func decodeInstructionsTransportToInstructions2(v *jsonInstructionsTransport) *I
 	return res
 }
 
+func decodeNoulAnswerTransportToNoulAnswer(v *jsonNoulAnswerTransport) *NoulAnswer {
+	res := &NoulAnswer{
+		Type: *v.Type,
+		Noul: *v.Noul,
+	}
+
+	return res
+}
+
+func decodeNoulCriteriaTransportToNoulCriteria(v *jsonNoulCriteriaTransport) *NoulCriteria {
+	res := &NoulCriteria{
+		True:  *v.True,
+		False: *v.False,
+	}
+
+	return res
+}
+
+func decodeNoulCriteriaTransportToNoulCriteria2(v *jsonNoulCriteriaTransport) *NoulCriteria {
+	res := &NoulCriteria{
+		True:  *v.True,
+		False: *v.False,
+	}
+
+	return res
+}
+
+func decodeNoulInstructionsTransportToNoulInstructions(v *jsonNoulInstructionsTransport) *NoulInstructions {
+	res := &NoulInstructions{
+		Contract:    *v.Contract,
+		Requirement: *v.Requirement,
+		Question:    *v.Question,
+	}
+
+	return res
+}
+
+func decodeNoulInstructionsTransportToNoulInstructions2(v *jsonNoulInstructionsTransport) *NoulInstructions {
+	res := &NoulInstructions{
+		Contract:    *v.Contract,
+		Requirement: *v.Requirement,
+		Question:    *v.Question,
+	}
+
+	return res
+}
+
+func decodeNoulQuestionTransportToNoulQuestion(v *jsonNoulQuestionTransport) *NoulQuestion {
+	res := &NoulQuestion{
+		Type: *v.Type,
+	}
+	res.Instructions = decodeNoulInstructionsTransportToNoulInstructions2(v.Instructions)
+	res.Criteria = decodeNoulCriteriaTransportToNoulCriteria2(v.Criteria)
+
+	return res
+}
+
 func decodeProbabilitiesTransportToProbabilities(v *jsonProbabilitiesTransport) *Probabilities {
 	res := &Probabilities{
 		A: *v.A,
@@ -1444,7 +2265,25 @@ func decodeStateTransportToState(v *jsonStateTransport) *State {
 	return res
 }
 
+func decodeStateTransportToState2(v *jsonStateTransport) *State {
+	res := &State{
+		Subject:   *v.Subject,
+		Reference: *v.Reference,
+	}
+
+	return res
+}
+
 func decodeUsageTransportToUsage(v *jsonUsageTransport) *Usage {
+	res := &Usage{
+		InputTokens:  v.InputTokens,
+		OutputTokens: v.OutputTokens,
+	}
+
+	return res
+}
+
+func decodeUsageTransportToUsage2(v *jsonUsageTransport) *Usage {
 	res := &Usage{
 		InputTokens:  v.InputTokens,
 		OutputTokens: v.OutputTokens,
@@ -1504,6 +2343,63 @@ func encodeInstructionsToInstructionsTransport2(v *Instructions) *jsonInstructio
 	return res
 }
 
+func encodeNoulAnswerToNoulAnswerTransport(v *NoulAnswer) *jsonNoulAnswerTransport {
+	res := &jsonNoulAnswerTransport{
+		Type: &v.Type,
+		Noul: &v.Noul,
+	}
+
+	return res
+}
+
+func encodeNoulCriteriaToNoulCriteriaTransport(v *NoulCriteria) *jsonNoulCriteriaTransport {
+	res := &jsonNoulCriteriaTransport{
+		True:  &v.True,
+		False: &v.False,
+	}
+
+	return res
+}
+
+func encodeNoulCriteriaToNoulCriteriaTransport2(v *NoulCriteria) *jsonNoulCriteriaTransport {
+	res := &jsonNoulCriteriaTransport{
+		True:  &v.True,
+		False: &v.False,
+	}
+
+	return res
+}
+
+func encodeNoulInstructionsToNoulInstructionsTransport(v *NoulInstructions) *jsonNoulInstructionsTransport {
+	res := &jsonNoulInstructionsTransport{
+		Contract:    &v.Contract,
+		Requirement: &v.Requirement,
+		Question:    &v.Question,
+	}
+
+	return res
+}
+
+func encodeNoulInstructionsToNoulInstructionsTransport2(v *NoulInstructions) *jsonNoulInstructionsTransport {
+	res := &jsonNoulInstructionsTransport{
+		Contract:    &v.Contract,
+		Requirement: &v.Requirement,
+		Question:    &v.Question,
+	}
+
+	return res
+}
+
+func encodeNoulQuestionToNoulQuestionTransport(v *NoulQuestion) *jsonNoulQuestionTransport {
+	res := &jsonNoulQuestionTransport{
+		Type: &v.Type,
+	}
+	res.Instructions = encodeNoulInstructionsToNoulInstructionsTransport2(v.Instructions)
+	res.Criteria = encodeNoulCriteriaToNoulCriteriaTransport2(v.Criteria)
+
+	return res
+}
+
 func encodeProbabilitiesToProbabilitiesTransport(v *Probabilities) *jsonProbabilitiesTransport {
 	res := &jsonProbabilitiesTransport{
 		A: &v.A,
@@ -1545,7 +2441,25 @@ func encodeStateToStateTransport(v *State) *jsonStateTransport {
 	return res
 }
 
+func encodeStateToStateTransport2(v *State) *jsonStateTransport {
+	res := &jsonStateTransport{
+		Subject:   &v.Subject,
+		Reference: &v.Reference,
+	}
+
+	return res
+}
+
 func encodeUsageToUsageTransport(v *Usage) *jsonUsageTransport {
+	res := &jsonUsageTransport{
+		InputTokens:  v.InputTokens,
+		OutputTokens: v.OutputTokens,
+	}
+
+	return res
+}
+
+func encodeUsageToUsageTransport2(v *Usage) *jsonUsageTransport {
 	res := &jsonUsageTransport{
 		InputTokens:  v.InputTokens,
 		OutputTokens: v.OutputTokens,
@@ -1998,6 +2912,1180 @@ func validateModelVersionJSONValue(path string, value any, description string) e
 	_, ok := value.(string)
 	if !ok {
 		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateNoulAnswerJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulAnswerJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "noul":
+			if err := validateNoulAnswerJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "The native probability that the answer is yes.",
+			); err != nil {
+				return err
+			}
+		case "type":
+			if err := validateNoulAnswerJSONValue3(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Native primitive that produced this answer.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"noul",
+				"type",
+			})
+		}
+	}
+	return nil
+}
+
+// validateNoulAnswerJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulAnswerJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "number", "null", description)
+	}
+	_, ok := value.(json.Number)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "number", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateNoulAnswerJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulAnswerJSONValue3(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateNoulCriteriaJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulCriteriaJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "false":
+			if err := validateNoulCriteriaJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Meaning of not satisfying the requirement.",
+			); err != nil {
+				return err
+			}
+		case "true":
+			if err := validateNoulCriteriaJSONValue3(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Meaning of satisfying the requirement.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"false",
+				"true",
+			})
+		}
+	}
+	return nil
+}
+
+// validateNoulCriteriaJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulCriteriaJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateNoulCriteriaJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulCriteriaJSONValue3(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateNoulInstructionsJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulInstructionsJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "contract":
+			if err := validateNoulInstructionsJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "The common grading contract.",
+			); err != nil {
+				return err
+			}
+		case "question":
+			if err := validateNoulInstructionsJSONValue3(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "The yes/no question the model evaluates.",
+			); err != nil {
+				return err
+			}
+		case "requirement":
+			if err := validateNoulInstructionsJSONValue4(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "The fixed semantic requirement.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"contract",
+				"question",
+				"requirement",
+			})
+		}
+	}
+	return nil
+}
+
+// validateNoulInstructionsJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulInstructionsJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateNoulInstructionsJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulInstructionsJSONValue3(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateNoulInstructionsJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulInstructionsJSONValue4(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateNoulQuestionJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulQuestionJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "criteria":
+			if err := validateNoulQuestionJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "What satisfying and not satisfying the requirement mean.",
+			); err != nil {
+				return err
+			}
+		case "instructions":
+			if err := validateNoulQuestionJSONValue5(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "The exact grading contract and yes/no question.",
+			); err != nil {
+				return err
+			}
+		case "type":
+			if err := validateNoulQuestionJSONValue9(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Native primitive used for this question.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"criteria",
+				"instructions",
+				"type",
+			})
+		}
+	}
+	return nil
+}
+
+// validateNoulQuestionJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulQuestionJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "false":
+			if err := validateNoulQuestionJSONValue3(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Meaning of not satisfying the requirement.",
+			); err != nil {
+				return err
+			}
+		case "true":
+			if err := validateNoulQuestionJSONValue4(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Meaning of satisfying the requirement.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"false",
+				"true",
+			})
+		}
+	}
+	return nil
+}
+
+// validateNoulQuestionJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulQuestionJSONValue3(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateNoulQuestionJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulQuestionJSONValue4(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateNoulQuestionJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulQuestionJSONValue5(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "contract":
+			if err := validateNoulQuestionJSONValue6(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "The common grading contract.",
+			); err != nil {
+				return err
+			}
+		case "question":
+			if err := validateNoulQuestionJSONValue7(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "The yes/no question the model evaluates.",
+			); err != nil {
+				return err
+			}
+		case "requirement":
+			if err := validateNoulQuestionJSONValue8(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "The fixed semantic requirement.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"contract",
+				"question",
+				"requirement",
+			})
+		}
+	}
+	return nil
+}
+
+// validateNoulQuestionJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulQuestionJSONValue6(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateNoulQuestionJSONValue7 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulQuestionJSONValue7(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateNoulQuestionJSONValue8 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulQuestionJSONValue8(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateNoulQuestionJSONValue9 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulQuestionJSONValue9(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateNoulRequestJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulRequestJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "model":
+			if err := validateNoulRequestJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Pinned Jev model version.",
+			); err != nil {
+				return err
+			}
+		case "questions":
+			if err := validateNoulRequestJSONValue8(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Requirements keyed by caller-owned identities.",
+			); err != nil {
+				return err
+			}
+		case "state":
+			if err := validateNoulRequestJSONValue5(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Evidence shared by all questions in this request.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"model",
+				"questions",
+				"state",
+			})
+		}
+	}
+	return nil
+}
+
+// validateNoulRequestJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulRequestJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateNoulRequestJSONValue8 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulRequestJSONValue8(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if typed[key] == nil {
+			continue
+		}
+		if err := validateNoulRequestJSONValue9(
+			generatedJSONChildPath(path, key, true),
+			typed[key], description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateNoulRequestJSONValue9 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulRequestJSONValue9(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "criteria":
+			if err := validateNoulRequestJSONValue10(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "What satisfying and not satisfying the requirement mean.",
+			); err != nil {
+				return err
+			}
+		case "instructions":
+			if err := validateNoulRequestJSONValue13(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "The exact grading contract and yes/no question.",
+			); err != nil {
+				return err
+			}
+		case "type":
+			if err := validateNoulRequestJSONValue4(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Native primitive used for this question.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"criteria",
+				"instructions",
+				"type",
+			})
+		}
+	}
+	return nil
+}
+
+// validateNoulRequestJSONValue10 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulRequestJSONValue10(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "false":
+			if err := validateNoulRequestJSONValue11(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Meaning of not satisfying the requirement.",
+			); err != nil {
+				return err
+			}
+		case "true":
+			if err := validateNoulRequestJSONValue12(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Meaning of satisfying the requirement.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"false",
+				"true",
+			})
+		}
+	}
+	return nil
+}
+
+// validateNoulRequestJSONValue11 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulRequestJSONValue11(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateNoulRequestJSONValue12 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulRequestJSONValue12(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateNoulRequestJSONValue13 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulRequestJSONValue13(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "contract":
+			if err := validateNoulRequestJSONValue14(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "The common grading contract.",
+			); err != nil {
+				return err
+			}
+		case "question":
+			if err := validateNoulRequestJSONValue15(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "The yes/no question the model evaluates.",
+			); err != nil {
+				return err
+			}
+		case "requirement":
+			if err := validateNoulRequestJSONValue3(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "The fixed semantic requirement.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"contract",
+				"question",
+				"requirement",
+			})
+		}
+	}
+	return nil
+}
+
+// validateNoulRequestJSONValue14 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulRequestJSONValue14(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateNoulRequestJSONValue15 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulRequestJSONValue15(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateNoulRequestJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulRequestJSONValue3(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateNoulRequestJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulRequestJSONValue4(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateNoulRequestJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulRequestJSONValue5(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "reference":
+			if err := validateNoulRequestJSONValue6(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Captured facts; these cannot supply missing subject content.",
+			); err != nil {
+				return err
+			}
+		case "subject":
+			if err := validateNoulRequestJSONValue7(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Captured content being assessed.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"reference",
+				"subject",
+			})
+		}
+	}
+	return nil
+}
+
+// validateNoulRequestJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulRequestJSONValue6(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateNoulRequestJSONValue7 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulRequestJSONValue7(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateNoulResponseJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulResponseJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "answers":
+			if err := validateNoulResponseJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Answers under the exact requested identities.",
+			); err != nil {
+				return err
+			}
+		case "model":
+			if err := validateNoulResponseJSONValue6(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Actual model version used for inference.",
+			); err != nil {
+				return err
+			}
+		case "usage":
+			if err := validateNoulResponseJSONValue7(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Reported token usage; absent counts remain unknown.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"answers",
+				"model",
+				"usage",
+			})
+		}
+	}
+	return nil
+}
+
+// validateNoulResponseJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulResponseJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		if typed[key] == nil {
+			continue
+		}
+		if err := validateNoulResponseJSONValue3(
+			generatedJSONChildPath(path, key, true),
+			typed[key], description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateNoulResponseJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulResponseJSONValue3(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "noul":
+			if err := validateNoulResponseJSONValue4(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "The native probability that the answer is yes.",
+			); err != nil {
+				return err
+			}
+		case "type":
+			if err := validateNoulResponseJSONValue5(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Native primitive that produced this answer.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"noul",
+				"type",
+			})
+		}
+	}
+	return nil
+}
+
+// validateNoulResponseJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulResponseJSONValue4(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "number", "null", description)
+	}
+	_, ok := value.(json.Number)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "number", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateNoulResponseJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulResponseJSONValue5(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateNoulResponseJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulResponseJSONValue6(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateNoulResponseJSONValue7 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulResponseJSONValue7(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "input_tokens":
+			if err := validateNoulResponseJSONValue8(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Reported input tokens, when supplied.",
+			); err != nil {
+				return err
+			}
+		case "output_tokens":
+			if err := validateNoulResponseJSONValue9(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Reported output tokens, when supplied.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"input_tokens",
+				"output_tokens",
+			})
+		}
+	}
+	return nil
+}
+
+// validateNoulResponseJSONValue8 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulResponseJSONValue8(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
+	}
+	typed, ok := value.(json.Number)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
+	}
+	if _, err := strconv.ParseInt(typed.String(), 10, strconv.IntSize); err != nil {
+		return invalidGeneratedFieldTypeError(field, "integer", "number", description)
+	}
+	return nil
+}
+
+// validateNoulResponseJSONValue9 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateNoulResponseJSONValue9(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
+	}
+	typed, ok := value.(json.Number)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
+	}
+	if _, err := strconv.ParseInt(typed.String(), 10, strconv.IntSize); err != nil {
+		return invalidGeneratedFieldTypeError(field, "integer", "number", description)
 	}
 	return nil
 }
@@ -3693,6 +5781,401 @@ func checkModelVersionValue(in ModelVersion) error {
 func checkModelVersionModelVersionValue(in ModelVersion, field string, active map[any]bool) error {
 	if !utf8.ValidString(string(in)) {
 		return fmt.Errorf("%s: invalid UTF-8", field)
+	}
+	return nil
+}
+
+// checkNoulAnswerValue checks text and cycles before conversion.
+func checkNoulAnswerValue(in *NoulAnswer) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkNoulAnswerNoulAnswerValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkNoulAnswerNoulAnswerValue checks one generated value on the active path.
+func checkNoulAnswerNoulAnswerValue(in *NoulAnswer, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.Type)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "type", false))
+		}
+	}
+	return nil
+}
+
+// checkNoulCriteriaValue checks text and cycles before conversion.
+func checkNoulCriteriaValue(in *NoulCriteria) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkNoulCriteriaNoulCriteriaValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkNoulCriteriaNoulCriteriaValue checks one generated value on the active path.
+func checkNoulCriteriaNoulCriteriaValue(in *NoulCriteria, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.True)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "true", false))
+		}
+		if !utf8.ValidString(string(in.False)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "false", false))
+		}
+	}
+	return nil
+}
+
+// checkNoulInstructionsValue checks text and cycles before conversion.
+func checkNoulInstructionsValue(in *NoulInstructions) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkNoulInstructionsNoulInstructionsValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkNoulInstructionsNoulInstructionsValue checks one generated value on the active path.
+func checkNoulInstructionsNoulInstructionsValue(in *NoulInstructions, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.Contract)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "contract", false))
+		}
+		if !utf8.ValidString(string(in.Requirement)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "requirement", false))
+		}
+		if !utf8.ValidString(string(in.Question)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "question", false))
+		}
+	}
+	return nil
+}
+
+// checkNoulQuestionValue checks text and cycles before conversion.
+func checkNoulQuestionValue(in *NoulQuestion) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkNoulQuestionNoulQuestionValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkNoulQuestionNoulQuestionValue checks one generated value on the active path.
+func checkNoulQuestionNoulQuestionValue(in *NoulQuestion, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.Type)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "type", false))
+		}
+		if err := checkNoulQuestionNoulInstructionsValue(in.Instructions, generatedJSONChildPath(field, "instructions", false), active); err != nil {
+			return err
+		}
+		if err := checkNoulQuestionNoulCriteriaValue(in.Criteria, generatedJSONChildPath(field, "criteria", false), active); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkNoulQuestionNoulInstructionsValue checks one generated value on the active path.
+func checkNoulQuestionNoulInstructionsValue(in *NoulInstructions, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.Contract)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "contract", false))
+		}
+		if !utf8.ValidString(string(in.Requirement)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "requirement", false))
+		}
+		if !utf8.ValidString(string(in.Question)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "question", false))
+		}
+	}
+	return nil
+}
+
+// checkNoulQuestionNoulCriteriaValue checks one generated value on the active path.
+func checkNoulQuestionNoulCriteriaValue(in *NoulCriteria, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.True)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "true", false))
+		}
+		if !utf8.ValidString(string(in.False)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "false", false))
+		}
+	}
+	return nil
+}
+
+// checkNoulRequestValue checks text and cycles before conversion.
+func checkNoulRequestValue(in *NoulRequest) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkNoulRequestNoulRequestValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkNoulRequestNoulRequestValue checks one generated value on the active path.
+func checkNoulRequestNoulRequestValue(in *NoulRequest, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if err := checkNoulRequestStateValue(in.State, generatedJSONChildPath(field, "state", false), active); err != nil {
+			return err
+		}
+		if err := checkNoulRequestModelVersionValue(in.Model, generatedJSONChildPath(field, "model", false), active); err != nil {
+			return err
+		}
+		for key1, item1 := range in.Questions {
+			_ = item1
+			if !utf8.ValidString(string(key1)) {
+				return fmt.Errorf("%s: invalid UTF-8 map key", generatedJSONChildPath(field, "questions", false))
+			}
+			if err := checkNoulRequestNoulQuestionValue(item1, generatedJSONChildPath(generatedJSONChildPath(field, "questions", false), string(key1), true), active); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// checkNoulRequestStateValue checks one generated value on the active path.
+func checkNoulRequestStateValue(in *State, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.Subject)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "subject", false))
+		}
+		if !utf8.ValidString(string(in.Reference)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "reference", false))
+		}
+	}
+	return nil
+}
+
+// checkNoulRequestModelVersionValue checks one generated value on the active path.
+func checkNoulRequestModelVersionValue(in ModelVersion, field string, active map[any]bool) error {
+	if !utf8.ValidString(string(in)) {
+		return fmt.Errorf("%s: invalid UTF-8", field)
+	}
+	return nil
+}
+
+// checkNoulRequestNoulQuestionValue checks one generated value on the active path.
+func checkNoulRequestNoulQuestionValue(in *NoulQuestion, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.Type)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "type", false))
+		}
+		if err := checkNoulRequestNoulInstructionsValue(in.Instructions, generatedJSONChildPath(field, "instructions", false), active); err != nil {
+			return err
+		}
+		if err := checkNoulRequestNoulCriteriaValue(in.Criteria, generatedJSONChildPath(field, "criteria", false), active); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkNoulRequestNoulInstructionsValue checks one generated value on the active path.
+func checkNoulRequestNoulInstructionsValue(in *NoulInstructions, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.Contract)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "contract", false))
+		}
+		if !utf8.ValidString(string(in.Requirement)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "requirement", false))
+		}
+		if !utf8.ValidString(string(in.Question)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "question", false))
+		}
+	}
+	return nil
+}
+
+// checkNoulRequestNoulCriteriaValue checks one generated value on the active path.
+func checkNoulRequestNoulCriteriaValue(in *NoulCriteria, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.True)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "true", false))
+		}
+		if !utf8.ValidString(string(in.False)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "false", false))
+		}
+	}
+	return nil
+}
+
+// checkNoulResponseValue checks text and cycles before conversion.
+func checkNoulResponseValue(in *NoulResponse) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkNoulResponseNoulResponseValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkNoulResponseNoulResponseValue checks one generated value on the active path.
+func checkNoulResponseNoulResponseValue(in *NoulResponse, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.Model)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "model", false))
+		}
+		for key1, item1 := range in.Answers {
+			_ = item1
+			if !utf8.ValidString(string(key1)) {
+				return fmt.Errorf("%s: invalid UTF-8 map key", generatedJSONChildPath(field, "answers", false))
+			}
+			if err := checkNoulResponseNoulAnswerValue(item1, generatedJSONChildPath(generatedJSONChildPath(field, "answers", false), string(key1), true), active); err != nil {
+				return err
+			}
+		}
+		if err := checkNoulResponseUsageValue(in.Usage, generatedJSONChildPath(field, "usage", false), active); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkNoulResponseNoulAnswerValue checks one generated value on the active path.
+func checkNoulResponseNoulAnswerValue(in *NoulAnswer, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.Type)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "type", false))
+		}
+	}
+	return nil
+}
+
+// checkNoulResponseUsageValue checks one generated value on the active path.
+func checkNoulResponseUsageValue(in *Usage, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
 	}
 	return nil
 }

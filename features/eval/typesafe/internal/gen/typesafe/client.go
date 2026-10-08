@@ -16,12 +16,14 @@ import (
 // Client is the "typesafe" service client.
 type Client struct {
 	ClassifyEndpoint goa.Endpoint
+	VerifyEndpoint   goa.Endpoint
 }
 
 // NewClient initializes a "typesafe" service client given the endpoints.
-func NewClient(classify goa.Endpoint) *Client {
+func NewClient(classify, verify goa.Endpoint) *Client {
 	return &Client{
 		ClassifyEndpoint: classify,
+		VerifyEndpoint:   verify,
 	}
 }
 
@@ -33,4 +35,14 @@ func (c *Client) Classify(ctx context.Context, p *Request) (res *Response, err e
 		return
 	}
 	return ires.(*Response), nil
+}
+
+// Verify calls the "verify" endpoint of the "typesafe" service.
+func (c *Client) Verify(ctx context.Context, p *NoulRequest) (res *NoulResponse, err error) {
+	var ires any
+	ires, err = c.VerifyEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*NoulResponse), nil
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
 func TestSelectiveEngineRoutesByQualificationAndAudits(t *testing.T) {
@@ -43,7 +44,12 @@ func TestSelectiveEngineRoutesByQualificationAndAudits(t *testing.T) {
 			require.NoError(t, err)
 			require.Empty(t, report.Scenarios[0].Error)
 			assert.True(t, report.Passed)
-			assert.Len(t, classifier.requests, 1)
+			if test.qualified {
+				assert.Len(t, classifier.requests, 1)
+			} else {
+				assert.Empty(t, classifier.requests)
+				assert.Nil(t, report.Scenarios[0].Requirements[0].Instances[0].Prediction)
+			}
 			assert.Len(t, reasoner.requests, test.reasoned)
 			assessment := report.Scenarios[0].Requirements[0].Instances[0]
 			_, calibrated := assessment.Decision.(Calibrated)
@@ -151,7 +157,7 @@ func TestClassifierFailureNeverBecomesAReasonedFallback(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			reasoner := &testReasoner{}
-			engine, err := NewSelectiveEngine(&testClassifier{classify: test.classify}, reasoner, SelectivePolicy{})
+			engine, err := NewSelectiveEngine(&testClassifier{classify: test.classify}, reasoner, SelectivePolicy{Qualifications: []Qualification{qualifiedFixture(t, scenario.Requirements[0])}})
 			require.NoError(t, err)
 			_, report, err := mustRunner(t, engine, 1).Run(t.Context(), Suite{ID: "suite", Scenarios: []Scenario{scenario}})
 			require.NoError(t, err)
@@ -161,6 +167,84 @@ func TestClassifierFailureNeverBecomesAReasonedFallback(t *testing.T) {
 			assert.Nil(t, report.Scenarios[0].Requirements[0].Instances[0].Decision)
 		})
 	}
+}
+
+func TestReasoningRequirementNeverCallsNativeClassifier(t *testing.T) {
+	for _, strategy := range []string{strategySelective, strategyDisagreement} {
+		t.Run(strategy, func(t *testing.T) {
+			scenario := testScenario("answer", Subject{Content: "Captured answer.", Reference: "Captured evidence."})
+			scenario.Requirements[0].Reasoning = true
+			classifier := &testClassifier{classify: func(context.Context, reasonRequest) (Classification, error) {
+				t.Fatal("a reasoning requirement called the native classifier")
+				return Classification{}, nil
+			}}
+			reasoner := &testReasoner{}
+			engine, err := newEngine(classifier, reasoner, strategy, SelectivePolicy{})
+			require.NoError(t, err)
+			_, report, err := mustRunner(t, engine, 1).Run(t.Context(), Suite{ID: "suite", Scenarios: []Scenario{scenario}})
+			require.NoError(t, err)
+			assert.True(t, report.Passed)
+			assert.Len(t, reasoner.requests, 1)
+			assert.Empty(t, classifier.requests)
+			assessment := report.Scenarios[0].Requirements[0].Instances[0]
+			assert.Nil(t, assessment.Prediction)
+			assert.IsType(t, Reasoned{}, assessment.Decision)
+		})
+	}
+}
+
+func TestMixedGroupClassifiesOnlyQualifiedRequirements(t *testing.T) {
+	scenario := testScenario("answer", Subject{Content: "Captured answer.", Reference: "Same facts."})
+	first := scenario.Requirements[0]
+	second := first
+	second.ID = "suite/answer/overall"
+	second.Reasoning = true
+	third := first
+	third.ID = "suite/answer/unqualified"
+	scenario.Requirements = []Requirement{first, second, third}
+	scenario.Bind = func(rawjson.Message) (Binding, error) {
+		return Binding{Checks: []Check{{Name: "exact", Passed: true}}, Subjects: map[string][]Subject{
+			first.ID:  {{Content: "Captured answer.", Reference: "Same facts."}},
+			second.ID: {{Content: "Captured answer.", Reference: "Same facts."}},
+			third.ID:  {{Content: "Captured answer.", Reference: "Same facts."}},
+		}}, nil
+	}
+	classifier := &testClassifier{}
+	reasoner := &testReasoner{}
+	engine, err := NewSelectiveEngine(classifier, reasoner, SelectivePolicy{Qualifications: []Qualification{qualifiedFixture(t, first)}})
+	require.NoError(t, err)
+	_, report, err := mustRunner(t, engine, 1).Run(t.Context(), Suite{ID: "suite", Scenarios: []Scenario{scenario}})
+	require.NoError(t, err)
+	require.Empty(t, report.Scenarios[0].Error)
+	require.Len(t, classifier.requests, 1)
+	assert.Equal(t, []Claim{{ID: first.ID, Text: first.Statement}}, classifier.requests[0].claims)
+	require.Len(t, reasoner.requests, 1)
+	assert.Equal(t, []Claim{{ID: second.ID, Text: second.Statement}, {ID: third.ID, Text: third.Statement}}, reasoner.requests[0].claims)
+}
+
+func TestInsufficientQualificationDoesNotPayForNativePrediction(t *testing.T) {
+	scenario := testScenario("answer", Subject{Content: "Captured answer.", Reference: "Captured facts."})
+	qualification := qualifiedFixture(t, scenario.Requirements[0])
+	qualification.Config.MaxErrorRate = 0
+	qualification.Pass, qualification.Fail, qualification.Calibration = qualificationStatistics(qualification.Samples, qualification.Config)
+	qualification.ID = ""
+	qualification.ID = digest(qualification)
+	require.NoError(t, qualification.Validate())
+	require.True(t, qualification.Pass == nil || !qualification.Pass.Qualified)
+	require.True(t, qualification.Fail == nil || !qualification.Fail.Qualified)
+	classifier := &testClassifier{classify: func(context.Context, reasonRequest) (Classification, error) {
+		t.Error("an unqualified record must bypass native prediction")
+		return Classification{}, errors.New("unexpected native call")
+	}}
+	reasoner := &testReasoner{}
+	engine, err := NewSelectiveEngine(classifier, reasoner, SelectivePolicy{Qualifications: []Qualification{qualification}})
+	require.NoError(t, err)
+	_, report, err := mustRunner(t, engine, 1).Run(t.Context(), Suite{ID: "suite", Scenarios: []Scenario{scenario}})
+	require.NoError(t, err)
+	assert.True(t, report.Passed)
+	assert.Empty(t, classifier.requests)
+	assert.Len(t, reasoner.requests, 1)
+	assert.Nil(t, report.Scenarios[0].Requirements[0].Instances[0].Prediction)
 }
 
 func TestQualificationsCannotOutliveTheirExactContract(t *testing.T) {
