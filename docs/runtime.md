@@ -2412,6 +2412,26 @@ report the disconnected toolset unavailable. Resolution and discovery do
 not imply readiness; `CheckAdmission` still requires a live routable lease and a
 fresh authenticated pong.
 
+`ReplaceServiceToolset` saves a complete replacement against an exact current
+registration token, without attaching a provider. Supply a UUID `replacement_id`
+for this update and keep it unchanged when repeating that same request after a
+lost response. The saved result is returned while that replacement is current;
+changed content or a superseding update conflicts. Live old leases, including
+leases retained during graceful shutdown, return `admission_blocked` without
+accepting the update. Stop old providers, let their calls settle, and release
+all their leases before retrying. Attachment or renewal racing the update is
+checked by the same atomic catalog write.
+
+An accepted replacement permanently retires the old service token and returns
+a fresh token and registration time, with no provider lease or authenticated
+pong. Attach the new providers to that returned registration. A rollback is
+another replacement with a new request ID, even when restoring an old schema.
+A retired service can be reactivated through this explicit operation; initial
+declaration still cannot reclaim it. Existing published calls never move to
+the replacement. The operation reuses current storage and wire encoding. Upgrade
+registry servers before calling it; regenerated positional `NewClient` calls
+must include its endpoint after `DeclareServiceToolset`.
+
 To connect a provider to that declaration, capture its exact token in the
 `Registration.Register` closure and call `AttachProvider` with the name, token,
 provider ID, runtime-supplied incarnation, and `registrywire.WireProtocolVersion`.
@@ -2633,6 +2653,7 @@ func newRegistryClient(address string) (*genregistry.Client, func() error, error
 	transport := genregistrygrpc.NewClient(conn, grpc.WaitForReady(true))
 	return genregistry.NewClient(
 		transport.DeclareServiceToolset(),
+		transport.ReplaceServiceToolset(),
 		transport.AttachProvider(),
 		transport.Register(),
 		transport.RenewProvider(),
@@ -2721,7 +2742,8 @@ startup registration and renewal.
 
 Applications may attach an immutable `CatalogIdentity{Scope, Name}` through
 `RegisterWithIdentity`, `DeclareServiceToolsetWithIdentity`,
-`RegisterAgentToolsetWithIdentity`, and `ReplaceAgentToolsetWithIdentity`.
+`ReplaceServiceToolsetWithIdentity`, `RegisterAgentToolsetWithIdentity`, and
+`ReplaceAgentToolsetWithIdentity`.
 Identity lives in compact state; its derived sorted scope index changes in the
 same catalog commit. Declaration JSON, fingerprints, admission tokens and
 provider messages retain their existing encoding. Ordinary identity-free

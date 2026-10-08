@@ -1332,6 +1332,26 @@ provider contact or health tracker and creates no provider lease, stream, or
 ping. The existing catalog scheduler still observes its presence and may report
 it unavailable under the normal sampling lease.
 
+`ReplaceServiceToolset` saves a complete replacement against an exact current
+registration token, without attaching a provider. Supply a UUID `replacement_id`
+for this update and keep it unchanged when repeating that same request after a
+lost response. The saved result is returned while that replacement is current;
+changed content or a superseding update conflicts. Live old leases, including
+leases retained during graceful shutdown, return `admission_blocked` without
+accepting the update. Stop old providers, let their calls settle, and release
+all their leases before retrying. Attachment or renewal racing the update is
+checked by the same atomic catalog write.
+
+An accepted replacement permanently retires the old service token and returns
+a fresh token and registration time, with no provider lease or authenticated
+pong. Attach the new providers to that returned registration. A rollback is
+another replacement with a new request ID, even when restoring an old schema.
+A retired service can be reactivated through this explicit operation; initial
+declaration still cannot reclaim it. Existing published calls never move to
+the replacement. The operation reuses current storage and wire encoding. Upgrade
+registry servers before calling it; regenerated positional `NewClient` calls
+must include its endpoint after `DeclareServiceToolset`.
+
 `AttachProvider` requires the exact existing name and token, a stable provider ID,
 a lifecycle incarnation, and the current wire version. Its conditional write
 changes only leases and health. It preserves longer deadlines, rejects draining
@@ -1482,7 +1502,7 @@ completion still check the exact lease in the same Redis operation that records
 their effects.
 
 Application owners may call the explicit `WithIdentity` variants of Register,
-DeclareServiceToolset, RegisterAgentToolset and ReplaceAgentToolset. These share
+DeclareServiceToolset, ReplaceServiceToolset, RegisterAgentToolset and ReplaceAgentToolset. These share
 the existing compiler and catalog commit. Identity is immutable, is not part of
 the declaration fingerprint, and cannot be introduced by an ordinary retry.
 Existing identity-free registration remains supported. Assignment to historical

@@ -54,6 +54,47 @@ func NewDeclareServiceToolsetResult(message *registrypb.DeclareServiceToolsetRes
 	return result
 }
 
+// NewProtoReplaceServiceToolsetRequest builds
+// *registrypb.ReplaceServiceToolsetRequest from
+// *registry.ReplaceServiceToolsetPayload.
+func NewProtoReplaceServiceToolsetRequest(payload *registry.ReplaceServiceToolsetPayload) *registrypb.ReplaceServiceToolsetRequest {
+	message := &registrypb.ReplaceServiceToolsetRequest{
+		ExpectedRegistrationToken: &payload.ExpectedRegistrationToken,
+		ReplacementId:             &payload.ReplacementID,
+		Name:                      &payload.Name,
+		Description:               payload.Description,
+	}
+	if payload.Version != nil {
+		version := string(*payload.Version)
+		message.Version = &version
+	}
+	if payload.Tags != nil {
+		message.Tags = make([]string, len(payload.Tags))
+		for i, val := range payload.Tags {
+			message.Tags[i] = val
+		}
+	}
+	if payload.Tools != nil {
+		message.Tools = make([]*registrypb.ToolSchema, len(payload.Tools))
+		for i, val := range payload.Tools {
+			message.Tools[i] = transformToolSchemaToProtoToolSchema(val)
+		}
+	}
+	return message
+}
+
+// NewReplaceServiceToolsetResult builds *registry.ResolvedToolset from
+// *registrypb.ReplaceServiceToolsetResponse.
+func NewReplaceServiceToolsetResult(message *registrypb.ReplaceServiceToolsetResponse) *registry.ResolvedToolset {
+	result := &registry.ResolvedToolset{
+		RegistrationToken: *message.RegistrationToken,
+	}
+	if message.Toolset != nil {
+		result.Toolset = transformProtoToolsetToToolset(message.Toolset)
+	}
+	return result
+}
+
 // NewProtoAttachProviderRequest builds *registrypb.AttachProviderRequest from
 // *registry.AttachProviderPayload.
 func NewProtoAttachProviderRequest(payload *registry.AttachProviderPayload) *registrypb.AttachProviderRequest {
@@ -1082,6 +1123,73 @@ func validateregistry_registry_Toolset_At_toolset(toolset *registrypb.Toolset) (
 	}
 	if toolset.RegisteredAt != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat("toolset.registered_at", *toolset.RegisteredAt, goa.FormatDateTime))
+	}
+	return
+}
+
+// ValidateReplaceServiceToolsetRequest runs the validations defined on
+// ReplaceServiceToolsetRequest.
+func ValidateReplaceServiceToolsetRequest(message *registrypb.ReplaceServiceToolsetRequest) (err error) {
+	if message.ExpectedRegistrationToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("expected_registration_token", "message"))
+	}
+	if message.ReplacementId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("replacement_id", "message"))
+	}
+	if message.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "message"))
+	}
+	if message.ExpectedRegistrationToken != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.expected_registration_token", *message.ExpectedRegistrationToken, "^[0-9a-f]{64}$"))
+	}
+	if message.ReplacementId != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("message.replacement_id", *message.ReplacementId, goa.FormatUUID))
+	}
+	if message.Name != nil {
+		if utf8.RuneCountInString(*message.Name) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 1, true))
+		}
+		if utf8.RuneCountInString(*message.Name) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 256, false))
+		}
+	}
+	if message.Description != nil {
+		if utf8.RuneCountInString(*message.Description) > 4096 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.description", *message.Description, utf8.RuneCountInString(*message.Description), 4096, false))
+		}
+	}
+	if message.Version != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.version", string(*message.Version), "^v?\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?$"))
+	}
+	if len(message.Tools) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("message.tools", message.Tools, len(message.Tools), 1, true))
+	}
+	for _, e := range message.Tools {
+		if e != nil {
+			if err2 := validateregistry_registry_ToolSchema_At_elem(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateReplaceServiceToolsetResponse runs the validations defined on
+// ReplaceServiceToolsetResponse.
+func ValidateReplaceServiceToolsetResponse(message *registrypb.ReplaceServiceToolsetResponse) (err error) {
+	if message.Toolset == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("toolset", "message"))
+	}
+	if message.RegistrationToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("registration_token", "message"))
+	}
+	if message.Toolset != nil {
+		if err2 := validateregistry_registry_Toolset_At_toolset(message.Toolset); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if message.RegistrationToken != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.registration_token", *message.RegistrationToken, "^[0-9a-f]{64}$"))
 	}
 	return
 }

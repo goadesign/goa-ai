@@ -66,6 +66,27 @@ var _ = Service("registry", func() {
 		GRPC(func() {})
 	})
 
+	Method("ReplaceServiceToolset", func() {
+		Description("Replace or reactivate the expected service declaration after every old provider lease has released or expired. The replacement ID identifies this update of the expected registration; reuse it with the same complete declaration after an uncertain reply. An already-current matching replacement returns its saved definition, token, and time. A stale expected token, native Agent occupancy, or changed replacement intent conflicts. Live leases, including draining leases, return admission_blocked without replacing the declaration. Replacement permanently retires the previous service token, creates no provider lease, and requires new providers to attach and establish health.")
+		Payload(func() {
+			Extend(ServiceToolsetDeclaration)
+			Field(100, "expected_registration_token", String, "Exact service registration this update may replace.", func() {
+				Pattern(toolregistry.RegistrationTokenPattern)
+			})
+			Field(101, "replacement_id", String, "Stable UUID identifying this replacement of the expected registration. Reuse it for the same update; use a fresh ID for a new deployment or rollback.", func() {
+				Format(FormatUUID)
+			})
+			Required("expected_registration_token", "replacement_id")
+		})
+		Result(ResolvedToolset)
+		Error("admission_blocked")
+		Error("admission_conflict")
+		Error("admission_retired")
+		Error("validation_error")
+		Error("service_unavailable")
+		GRPC(func() {})
+	})
+
 	Method("AttachProvider", func() {
 		Description("Attach one provider incarnation to the exact existing service registration without sending or changing its definition. The expected token and current wire protocol are required. Missing, different, or native Agent registrations return admission_conflict; permanently retired tokens return admission_retired. Repeating attachment preserves the original registration time and any longer lease deadline. An already-draining incarnation returns provider_lease_lost. After startup, use RenewProvider; attachment is not a renewal recovery operation.")
 		Payload(AttachProviderPayload)

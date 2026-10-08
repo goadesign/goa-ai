@@ -49,6 +49,39 @@ func DecodeDeclareServiceToolsetRequest(ctx context.Context, v any, md metadata.
 	return payload, nil
 }
 
+// EncodeReplaceServiceToolsetResponse encodes responses from the "registry"
+// service "ReplaceServiceToolset" endpoint.
+func EncodeReplaceServiceToolsetResponse(ctx context.Context, v any, hdr, trlr *metadata.MD) (any, error) {
+	result, ok := v.(*registry.ResolvedToolset)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "ReplaceServiceToolset", "*registry.ResolvedToolset", v)
+	}
+	resp := NewProtoReplaceServiceToolsetResponse(result)
+	return resp, nil
+}
+
+// DecodeReplaceServiceToolsetRequest decodes requests sent to "registry"
+// service "ReplaceServiceToolset" endpoint.
+func DecodeReplaceServiceToolsetRequest(ctx context.Context, v any, md metadata.MD) (any, error) {
+	var (
+		message *registrypb.ReplaceServiceToolsetRequest
+		ok      bool
+	)
+	{
+		if message, ok = v.(*registrypb.ReplaceServiceToolsetRequest); !ok {
+			return nil, goagrpc.ErrInvalidType("registry", "ReplaceServiceToolset", "*registrypb.ReplaceServiceToolsetRequest", v)
+		}
+		if err := ValidateReplaceServiceToolsetRequest(message); err != nil {
+			return nil, err
+		}
+	}
+	var payload *registry.ReplaceServiceToolsetPayload
+	{
+		payload = NewReplaceServiceToolsetPayload(message)
+	}
+	return payload, nil
+}
+
 // EncodeAttachProviderResponse encodes responses from the "registry" service
 // "AttachProvider" endpoint.
 func EncodeAttachProviderResponse(ctx context.Context, v any, hdr, trlr *metadata.MD) (any, error) {
