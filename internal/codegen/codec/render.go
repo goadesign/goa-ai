@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"goa.design/goa-ai/codegen/internal/jsonshape"
+	"goa.design/goa-ai/internal/codegen/jsonshape"
 	goacodegen "goa.design/goa/v3/codegen"
 	goaexpr "goa.design/goa/v3/expr"
 )
@@ -243,6 +243,9 @@ func (v *Value) link() (*valueData, []*goacodegen.TransformFunctionData, error) 
 		Validator:    top.validatorDeclaration.Name(),
 	}
 	if v.standalone != nil {
+		if v.standalone.transportValidator != nil {
+			data.Validator = v.standalone.transportValidator.Name()
+		}
 		data.Shape = v.standalone.names[v.standalone.root].Name()
 		data.Preflight = v.standalone.preflight.Name()
 		if v.standalone.originalValidator != nil {
@@ -335,8 +338,13 @@ func {{ .Validator }}(value {{ .Reference }}) (err error) {
 }
 {{ end }}
 {{ range .OriginalValidators }}
-// {{ .Name }} checks the original typed value before JSON conversion.
+// {{ .Name }} checks the typed value using the rules of its Goa occurrence.
 func {{ .Name }}(value {{ .Reference }}) (err error) {
+	{{- if .Pointer }}
+	if value == nil {
+		return {{ $.Imports.Goa }}.MissingFieldError("value", "JSON value")
+	}
+	{{- end }}
 	{{ .Validation }}
 	return err
 }

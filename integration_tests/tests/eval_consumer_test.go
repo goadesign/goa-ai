@@ -45,7 +45,7 @@ func TestEvalConsumer(t *testing.T) {
 	// #nosec G304 -- scaffoldPath is rooted in the test's temporary fixture.
 	scaffold, err := os.ReadFile(scaffoldPath)
 	require.NoError(t, err)
-	require.Equal(t, 2, strings.Count(string(scaffold), "TODO: implement "))
+	require.Equal(t, 4, strings.Count(string(scaffold), "TODO: implement "))
 	require.Contains(t, string(scaffold), "RecordSummary")
 	require.Contains(t, string(scaffold), "SavedQueryReplay")
 	scaffold = append(scaffold, []byte("\n// application-owned marker\n")...)

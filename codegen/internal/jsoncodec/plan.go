@@ -6,7 +6,7 @@ package jsoncodec
 import (
 	"fmt"
 
-	"goa.design/goa-ai/codegen/internal/codec"
+	"goa.design/goa-ai/internal/codegen/codec"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/codegen/service"
 )

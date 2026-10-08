@@ -71,6 +71,8 @@ func TestQuickstart_DocumentsDeclaredEvalSuites(t *testing.T) {
 					goadsl.Description("Evaluates arithmetic answers end to end.")
 					goadsl.Timeout("30s")
 					evaldsl.Scenario("simple_sum", func() {
+						evaldsl.Observation(goadsl.String)
+						evaldsl.Check("valid", "Checks the captured value.")
 						goadsl.Description("The agent answers a simple addition question.")
 						evaldsl.Input(func() {
 							goadsl.Attribute("question", goadsl.String, "Question to ask")
@@ -79,6 +81,8 @@ func TestQuickstart_DocumentsDeclaredEvalSuites(t *testing.T) {
 						Tags("smoke")
 					})
 					evaldsl.Scenario("tool_contract", func() {
+						evaldsl.Observation(goadsl.String)
+						evaldsl.Check("valid", "Checks the captured value.")
 						goadsl.Description("The add tool contract is reachable from the agent.")
 						Tags("contract")
 					})
@@ -97,7 +101,12 @@ func TestQuickstart_DocumentsDeclaredEvalSuites(t *testing.T) {
 	require.Contains(t, content, "gen/evals/math_quality/")
 	require.Contains(t, content, "go run ./cmd/math_quality-evals")
 	require.Contains(t, content, "judge.New(modelClient, maxOutputTokens)")
-	require.Contains(t, content, "handle its returned error")
+	require.Contains(t, content, "eval.NewReasoningEngine(grader)")
+	require.Contains(t, content, "both errors")
+	require.Contains(t, content, "`ForAssessment` constructs an offline suite")
+	require.Contains(t, content, "-capture run.json")
+	require.Contains(t, content, "-assess run.json")
+	require.Contains(t, content, "accepts only qualified passes directly")
 	require.NotContains(t, content, "doesn't declare any evaluation suites yet")
 	// Sections after the inserted one keep sequential numbering.
 	require.Contains(t, content, "## 9. Ready for Prime Time")

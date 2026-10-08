@@ -25,6 +25,7 @@ type (
 		client          model.Client
 		modelClass      model.ModelClass
 		maxOutputTokens int
+		toolChoice      model.ToolChoiceMode
 		runOutput       func(context.Context, model.Client, *model.Request, completion.Spec[responseBody]) (responseBody, error)
 	}
 
@@ -75,7 +76,7 @@ Call the supplied grading tool exactly once. Each required property describes on
 // the limit does not guarantee a complete response.
 // The judge uses the high-reasoning class unless WithModelClass selects another.
 func New(client model.Client, maxOutputTokens int, opts ...Option) (*Judge, error) {
-	return newJudge(client, maxOutputTokens, tooloutput.Run[responseBody], opts...)
+	return newJudge(client, maxOutputTokens, model.ToolChoiceModeTool, tooloutput.Run[responseBody], opts...)
 }
 
 // NewAutomatic creates a judge that requests automatic tool choice but accepts
@@ -84,7 +85,7 @@ func New(client model.Client, maxOutputTokens int, opts ...Option) (*Judge, erro
 // that returns only text produces an error, not a grade. The caller selects this
 // operation explicitly; the judge never switches models or output mechanisms.
 func NewAutomatic(client model.Client, maxOutputTokens int, opts ...Option) (*Judge, error) {
-	return newJudge(client, maxOutputTokens, tooloutput.RunAutomatic[responseBody], opts...)
+	return newJudge(client, maxOutputTokens, model.ToolChoiceModeAuto, tooloutput.RunAutomatic[responseBody], opts...)
 }
 
 // WithModelClass selects the model class used by the private judge agent.
@@ -115,7 +116,7 @@ func (j *Judge) Judge(ctx context.Context, output string, claims []aieval.Claim,
 	if err != nil {
 		return nil, fmt.Errorf("encode judge schema: %w", err)
 	}
-	response, err := j.run(ctx, payload, spec)
+	response, err := j.run(ctx, payload, spec, judgePrompt)
 	if err != nil {
 		return nil, fmt.Errorf("judge claims: %w", err)
 	}
@@ -139,6 +140,7 @@ func (j *Judge) Judge(ctx context.Context, output string, claims []aieval.Claim,
 func newJudge(
 	client model.Client,
 	maxOutputTokens int,
+	toolChoice model.ToolChoiceMode,
 	runOutput func(context.Context, model.Client, *model.Request, completion.Spec[responseBody]) (responseBody, error),
 	opts ...Option,
 ) (*Judge, error) {
@@ -149,6 +151,7 @@ func newJudge(
 		client:          client,
 		modelClass:      model.ModelClassHighReasoning,
 		maxOutputTokens: maxOutputTokens,
+		toolChoice:      toolChoice,
 		runOutput:       runOutput,
 	}
 	for _, opt := range opts {
@@ -160,6 +163,16 @@ func newJudge(
 // judgmentToolSpec makes names and coverage part of the advertised schema. The
 // shared model validator owns required/unknown fields, labels, and rationales.
 func judgmentToolSpec(claims []aieval.Claim) (completion.Spec[responseBody], error) {
+	return decisionToolSpec(claims, false)
+}
+
+// decisionToolSpec adds an explicit abstention only for the assessment engine.
+// The direct Judge operation retains its four-label substantive contract.
+func decisionToolSpec(claims []aieval.Claim, abstention bool) (completion.Spec[responseBody], error) {
+	labels := json.RawMessage(`{"type":"string","enum":["entailed","contradicted","not_addressed","indeterminate"]}`)
+	if abstention {
+		labels = json.RawMessage(`{"type":"string","enum":["entailed","contradicted","not_addressed","indeterminate","unresolved"]}`)
+	}
 	schema := judgmentSchema{
 		Type:        "object",
 		Description: judgmentRootDescription,
@@ -173,7 +186,7 @@ func judgmentToolSpec(claims []aieval.Claim) (completion.Spec[responseBody], err
 			Description: claim.Text,
 			Required:    []string{"label", "rationale"},
 			Properties: map[string]json.RawMessage{
-				"label":     json.RawMessage(`{"type":"string","enum":["entailed","contradicted","not_addressed","indeterminate"]}`),
+				"label":     labels,
 				"rationale": json.RawMessage(`{"type":"string","minLength":1}`),
 			},
 		})
@@ -224,13 +237,13 @@ func decodeResponse(data []byte) (responseBody, error) {
 
 // run sends the candidate and reference separately with the claim schema, then
 // returns only the typed result accepted by the selected tool-output operation.
-func (j *Judge) run(ctx context.Context, payload []byte, spec completion.Spec[responseBody]) (responseBody, error) {
+func (j *Judge) run(ctx context.Context, payload []byte, spec completion.Spec[responseBody], prompt string) (responseBody, error) {
 	return j.runOutput(ctx, j.client, &model.Request{
 		ModelClass: j.modelClass,
 		Messages: []*model.Message{
 			{
 				Role:  model.ConversationRoleSystem,
-				Parts: []model.Part{model.TextPart{Text: judgePrompt}},
+				Parts: []model.Part{model.TextPart{Text: prompt}},
 			},
 			{
 				Role:  model.ConversationRoleUser,

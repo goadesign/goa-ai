@@ -1,7 +1,7 @@
 package codegen
 
 import (
-	"goa.design/goa-ai/codegen/internal/jsonshape"
+	"goa.design/goa-ai/internal/codegen/jsonshape"
 	"goa.design/goa/v3/codegen"
 )
 

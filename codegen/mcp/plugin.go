@@ -9,8 +9,8 @@ import (
 	"path/filepath"
 	"slices"
 
-	jsoncodec "goa.design/goa-ai/codegen/internal/codec"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
+	jsoncodec "goa.design/goa-ai/internal/codegen/codec"
 	goacodegen "goa.design/goa/v3/codegen"
 	goagenerator "goa.design/goa/v3/codegen/generator"
 	goaservice "goa.design/goa/v3/codegen/service"

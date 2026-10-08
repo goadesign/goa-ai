@@ -1,608 +1,655 @@
-# Generated Evaluations
+# Generated evaluations
 
-An evaluation (eval) is a repeatable test that runs your real product — usually
-an AI agent — and checks that the outcome is still correct. Evaluations are not
-unit tests: they call live systems and models, they can take minutes, and part
-of "is this correct?" requires reading a model-written answer rather than
-comparing exact values.
+Goa-AI evaluations capture what a product did, then assess those saved facts.
+Capture and assessment are separate operations: changing an evaluator does not
+require another product run, and a failed answer cannot remove its own assertions.
 
-Goa-AI splits an evaluation suite into three parts, each with one owner:
+The design declares each scenario's input, observation type, exact checks, and
+semantic requirements. Generated code owns identities, validation, and field
+selection. Application hooks execute the product and return typed observations;
+application predicates check exact facts. An assessment engine owns semantic
+classification, reasoning, and disagreement resolution.
 
-- **The design** describes every scenario: its name, what it tests, the shape
-  of its input, its tags, and its time limit. A design is the Go file where a
-  Goa application already declares its services and agents; evaluation suites
-  live in the same file set.
-- **Generated code** turns that description into Go types and one interface
-  method per scenario. If the design and the application drift apart, the
-  build breaks instead of a test silently disappearing.
-- **Your application code** implements those methods. It calls the product,
-  gathers evidence, and states what must be true.
+A native **System One classifier**, such as TypeSafe's Jev, answers constrained
+questions with probabilities instead of generating an explanation. Goa-AI uses
+that probability to reduce reasoning work only after application-reviewed data
+qualifies a decision band. Reasoning remains responsible for uncertain,
+unqualified, predicted-failing, and audited cases.
 
-A runner from `goa.design/goa-ai/eval` executes the suite: it selects
-scenarios, limits how many run at once, grades model answers, and produces a
-JSON report.
+```mermaid
+flowchart LR
+    H[Typed product hook] --> A[Saved observation archive]
+    A --> B[Generated decoding and field selection]
+    B --> X[Exact Go predicates]
+    B --> E[Reasoning required or unqualified]
+    E --> R[Independent reasoning]
+    B --> C[Qualified native classification]
+    C --> P[Qualified pass without audit]
+    C --> R
+    R --> D[One adjudication for a qualified disagreement]
+    X --> O[Independent assessment record]
+    P --> O
+    R --> O
+    D --> O
+```
 
-These terms appear throughout:
-
-- **Scenario**: one test case, such as "ask the assistant to list every
-  record".
-- **Hook**: the Go method you write for one scenario. It runs the product and
-  returns what happened.
-- **Check**: a pass/fail fact your code can verify exactly, such as "the agent
-  called the `list_records` tool" or "every result page was fetched".
-- **Claim**: a short English sentence that must be true of the model's answer,
-  such as "The answer reports every record in the window." Claims exist because
-  answer wording changes from run to run, so exact string comparison cannot
-  work.
-- **Judge**: a model-backed grader owned by the framework. It reads the answer
-  and labels each claim as supported, contradicted, and so on.
-- **Report**: the JSON summary of a run: what ran, what passed, why things
-  failed, and how long everything took.
-
-## Describe scenarios in the design
-
-The design declares the *shape* of each scenario input: which fields exist and
-what makes them valid. It never contains real values. Concrete requester IDs,
-workspace IDs, and queries stay in application code, so the same design works in
-every environment.
+## Declare observations and assertions
 
 ```go
-package design
-
 import (
-	. "goa.design/goa-ai/dsl"
-	. "goa.design/goa-ai/eval/dsl"
-	. "goa.design/goa/v3/dsl"
+    . "goa.design/goa-ai/eval/dsl"
+    . "goa.design/goa/v3/dsl"
 )
 
-var RecordEvalInput = Type("RecordEvalInput", func() {
-	Attribute("requester_id", String, "Requester running the evaluation.", func() {
-		Format(FormatUUID)
-	})
-	Attribute("query", String, "Assistant request.", func() {
-		MinLength(1)
-	})
-	Required("requester_id", "query")
+var InventoryInput = Type("InventoryInput", func() {
+    Attribute("question", String, "The request sent to the product.")
+    Required("question")
 })
 
-var _ = Service("assistant_service", func() {
-	Agent("assistant", "Answers user questions.", func() {
-		Suite("assistant", func() {
-			Description("Exercises assistant outcomes.")
-			Timeout("2m")
+var InventoryObservation = Type("InventoryObservation", func() {
+    Attribute("question", String, "The request actually sent.")
+    Attribute("answer", String, "Observed answer, including an empty answer.")
+    Attribute("facts", ArrayOf(String), "Facts obtained during capture.")
+    Attribute("complete", Boolean, "Whether the source read completed.")
+    Attribute("statements", ArrayOf(String), "Individual observed statements.")
+    Required("question", "answer", "complete")
+})
 
-			Scenario("record_inventory", func() {
-				Description("Retrieves every record in a fixed window.")
-				Input(RecordEvalInput)
-				Tags("integration", "records")
-				Timeout("3m")
-			})
-
-			Scenario("health_check", func() {
-				Description("Verifies application-owned setup.")
-			})
-		})
-	})
+var _ = Suite("records", func() {
+    Description("Evaluates record inventories.")
+    Timeout("2m")
+    Scenario("inventory", func() {
+        Description("Answers an inventory request using captured records.")
+        Input(InventoryInput)
+        Observation(InventoryObservation)
+        Check("data_complete", "The source read completed.")
+        Requirement("answers", "The answer satisfies the captured request.", func() {
+            Subject("answer")
+            Evidence("question", "facts", "complete")
+        })
+        Requirement("grounded_statements", "The statement agrees with the captured facts.", func() {
+            ForEach("statements")
+            Subject("@")
+            Evidence("$.facts")
+        })
+    })
 })
 ```
 
-The rules are:
+Suite, scenario, check, requirement, and tag names use `lower_snake_case`.
+Descriptions and a positive suite timeout are required. A scenario timeout
+replaces the suite timeout for that scenario. `Input` is optional; `Observation`
+and at least one `Check`, `Requirement`, or `Assess` are required.
 
-- Suite, scenario, and tag names use `lower_snake_case`. They become stable
-  identifiers in reports and command-line flags, so renaming one renames the
-  test everywhere.
-- Every suite and scenario needs a `Description`. Every suite needs a positive
-  `Timeout`; a scenario `Timeout` replaces the suite one for that scenario.
-- `Input` is optional. A scenario without `Input` generates a hook that
-  receives only a `context.Context`. `Input` accepts a named Goa type, a
-  primitive, an array or map, or an inline function listing attributes.
-  `OneOf` (a field that can hold one of several types) is not supported in
-  evaluation inputs.
-- A suite can be declared at the top level of the design or inside an `Agent`.
-  Declaring it inside an agent additionally gives the generated package access
-  to that agent's tool contracts (explained below).
+## Reuse an assessment in focused tests and complete flows
 
-## Generate the Go code
-
-Importing `goa.design/goa-ai/eval/dsl` in the design registers the evaluation
-generator. Running the normal `goa gen` command then writes
-`gen/evals/<suite>/suite.go`:
+A `Component` declares expectations over one named observation type. It does
+not execute the product. `Assess` applies all of those expectations to a typed
+field in a scenario's captured observation:
 
 ```go
-type RecordEvalInput struct {
-	RequesterID string
-	Query       string
-}
+var AnswerObservation = Type("AnswerObservation", func() {
+    Attribute("text", String, "The displayed answer, including an empty answer.")
+    Attribute("facts", ArrayOf(String), "Captured facts available to that answer.")
+    Required("text")
+})
 
-type Hooks interface {
-	RecordInventory(context.Context, *RecordEvalInput) (eval.Result, error)
-	HealthCheck(context.Context) (eval.Result, error)
-}
+var GroundedAnswer = Component("grounded_answer", func() {
+    Description("Checks an answer using only its captured facts.")
+    Observation(AnswerObservation)
+    Requirement("grounded", "The answer's factual statements agree with the captured facts.", func() {
+        Subject("text")
+        Evidence("facts")
+    })
+})
 
-type Inputs struct {
-	RecordInventory *RecordEvalInput
-}
+var ConversationObservation = Type("ConversationObservation", func() {
+    Attribute("first", AnswerObservation, "The first answer and its own facts.")
+    Attribute("follow_up", AnswerObservation, "The follow-up answer and its own facts.")
+    Attribute("goal", String, "The complete user goal.")
+    Required("first", "follow_up", "goal")
+})
 
-func New(hooks Hooks, inputs Inputs) (eval.Suite, error)
+var _ = Suite("conversation", func() {
+    Description("Checks individual answers and the complete conversation.")
+    Timeout("2m")
+    Scenario("focused", func() {
+        Description("Checks one captured answer.")
+        Observation(AnswerObservation)
+        Assess("answer", GroundedAnswer, "$")
+    })
+    Scenario("complete_flow", func() {
+        Description("Checks both answers and the overall outcome.")
+        Observation(ConversationObservation)
+        Assess("first", GroundedAnswer, "first")
+        Assess("follow_up", GroundedAnswer, "follow_up")
+        Requirement("goal_satisfied", "The complete conversation satisfies the user's goal.", func() {
+            Subject("$")
+            Evidence("goal")
+            Reasoning()
+        })
+    })
+})
 ```
 
-`Hooks` has one method per scenario, so adding a scenario to the design breaks
-the build until the application implements it. `Inputs` has one field per
-scenario that declared an `Input`; the application fills these with real
-values. `New` checks every supplied value against the design rules (required
-fields, formats, lengths) and returns an error before any scenario can start.
+The selected field must have the component's named Goa type. Within a component,
+`$` and `$.facts` mean that selected observation, including inside `ForEach`.
+They cannot read another answer's facts. Generated identities include the
+assessment name: `conversation/complete_flow/follow_up/grounded`. Repeated
+component checks share one typed predicate method; every assessment still runs
+and reports its own check.
 
-### Tool contracts for agent suites
+`Reasoning()` requires an independent reasoning assessment and excludes the
+requirement from native prediction, automatic acceptance, and qualification.
+Use it for complex interactions, authored algorithms, or assessments whose
+correctness depends on broader interpretation. Requirements without it are
+eligible for application-reviewed qualification; they still require reasoning
+until a qualification supports an automatic decision.
 
-Agents declare their tools in the design too, so the generator knows exactly
-which tools an agent can call — including the tools of other agents it uses.
-When a suite is declared inside an `Agent`, its generated package includes:
+Keep the complete-flow assertions. Passing each small component does not prove
+that their combined outcome satisfies the user's goal. Before reducing selected
+evidence, test omissions, misleading context, and interactions that require facts
+outside the component. Smaller evidence is useful only when it preserves the
+assessment's meaning.
 
-```go
-func MustToolContract(name tools.Ident) *tools.ToolSpec
-```
+## Observation shapes and selectors
 
-Given a tool name, it returns that tool's generated contract: its schema and
-the codec that decodes its arguments and results. Use it in hooks to decode
-recorded tool calls and check their arguments exactly, without writing JSON
-handling by hand. It covers every tool the agent can reach at build time; it
-does not cover tools discovered at runtime, whose contracts the generator
-cannot know. Asking for a tool the agent cannot use panics, because that is a
-bug in the evaluation itself.
+Observation schemas describe possible outcomes, including empty, partial, and
+failed outcomes. A desired property such as a correct answer belongs in an
+assertion. Defaults are rejected: decoding must not manufacture an unrecorded
+fact. Observation types use closed Goa JSON shapes; `Any`, custom Go types,
+non-string map keys, recursive shapes, and `OneOf` are unsupported. Existing
+input forms remain supported, except `OneOf`.
 
-## Create the runnable command
+Selectors are compiled against the observation type:
 
-Run `goa example` after `goa gen`:
+| Selector | Selected value |
+| --- | --- |
+| `answer` | A field, relative to the current array element inside `ForEach` |
+| `details.answer` | Nested object fields |
+| `$` | The complete observation |
+| `$.facts` | An observation field even inside `ForEach` |
+| `@` | The complete current element, or observation outside `ForEach` |
+
+`ForEach` selects an array; each element receives its own requirement instance
+in captured order. An empty array has zero visible instances. Declare an exact
+check when at least one item is required. A missing enclosing object is an error,
+not an empty collection. Empty subject text is assessed against the declared
+requirement: required content may be missing, while a prohibition can hold by
+absence. Missing selected factual context is an assessment error. Nil and
+empty arrays or maps have the same empty-collection meaning; capture availability
+in an explicit field when an empty result must differ from unavailable facts.
+
+The generated requirement identity is `suite/scenario/requirement`; quantified
+instances add `[index]`. Neither the product nor a model supplies these identities.
+Reference facts cannot supply information missing from the assessed subject.
+
+## Generate and implement the suite
+
+Importing `eval/dsl` registers the generator. Run the usual commands:
 
 ```bash
+goa gen example.com/product/design
 goa example example.com/product/design
 ```
 
-This creates `cmd/<suite>-evals/main.go` once and never overwrites it — the
-file belongs to the application from then on. Later design changes still
-update `gen/evals`: a changed hook signature fails compilation and a missing
-input value fails `New`, so the command cannot silently fall out of date.
-
-The generated file compiles immediately and contains a `TODO` at every place
-that needs application code: one empty hook per scenario, one input value per
-scenario that declares an `Input`, and the judge. It also comes with a working
-command line:
-
-- `--scenario <id>` runs one scenario; repeat the flag for several.
-- `--tag <tag>` runs every scenario carrying that tag; repeat for several.
-  Scenario and tag flags cannot be combined.
-- `--max-concurrency <n>` limits how many scenarios run at once (default 5).
-
-Every run writes the JSON report to standard output and exits non-zero when
-the suite fails. The command is a plain Go program, so it can run locally, in
-CI, or on a schedule. Applications that prefer `go test` can skip the command
-and call the generated `New` from a test instead.
-
-## Write the hooks
-
-Implement the generated interface on an ordinary type:
+`gen/evals/records/` contains observation and input types, strict codecs, compiled
+selectors, and these interfaces:
 
 ```go
-type hooks struct {
-	client *Client
+type Checks interface {
+    CheckInventoryDataComplete(*InventoryObservation) string
 }
 
-func (h *hooks) RecordInventory(
-	ctx context.Context,
-	input *genevals.RecordEvalInput,
-) (eval.Result, error) {
-	answer, evidence, err := h.client.Run(ctx, input.RequesterID, input.Query)
-	if err != nil {
-		return eval.Result{}, err
-	}
-	return eval.Result{
-		Checks: []eval.Check{{
-			Name:   "all_pages_retrieved",
-			Passed: evidence.Exhausted,
-		}},
-		Claims: []eval.Claim{{
-			ID:   "complete_answer",
-			Text: "The answer reports every record in the window.",
-		}},
-		Output: answer,
-		Artifacts: []eval.Artifact{{
-			Name: "protocol",
-			URI:  evidence.ArtifactURI,
-		}},
-	}, nil
+type Hooks interface {
+    Checks
+    Inventory(context.Context, *InventoryInput) (*InventoryObservation, error)
+}
+
+func New(Hooks, Inputs) (eval.Suite, error)
+func ForAssessment(Checks) (eval.Suite, error)
+```
+
+Suites without exact checks have `ForAssessment()` with no argument. A suite can
+be top-level or nested inside an agent. Agent suites also generate
+`MustToolContract(tools.Ident)`, covering the agent's statically reachable tool
+contracts, including nested agents. Unknown names panic because the design
+cannot supply their contracts; registry-discovered tools are not included.
+
+A capture hook calls the product and copies every fact its assertions need into
+the observation. Return an unsuccessful product outcome as data. Return an error
+when the capture operation could not obtain or encode its evidence.
+
+An exact predicate receives only the decoded observation:
+
+```go
+func (checks) CheckInventoryDataComplete(observed *genevals.InventoryObservation) string {
+    if !observed.Complete {
+        return "The source read did not complete."
+    }
+    return ""
 }
 ```
 
-A hook returns three kinds of information:
+Predicates must be read-only and must not call the product, reload context, or
+consult current external state. Keep inputs passed to `New` immutable; the suite
+records their constructor values. Record additional runtime-selected arguments
+in the observation. Hooks, predicates, and reporters must support the configured
+scenario concurrency.
 
-- **Checks** are facts the code can verify exactly: tool names, IDs, counts,
-  states. A failed check must include a diagnostic explaining what went wrong.
-- **Claims** are sentences about the model's answer, judged later. Write one
-  claim per fact ("The answer names the record", "The answer gives the
-  creation time") rather than one long compound claim, so a failure points
-  at the exact missing fact. Do not approximate answer meaning with regular
-  expressions or keyword lists — that is what claims and the judge replace.
-  Claims are judged against `Output`, the answer under evaluation. An empty
-  `Output` — the run produced no answer — labels every claim `not_addressed`
-  and fails the scenario without consulting the judge.
-- **Artifacts** are optional links to saved evidence — logs, transcripts,
-  screenshots — that help debug a failure.
+Generated codecs reject invalid UTF-8, unknown fields, duplicate JSON members,
+wrong shapes, and invalid Goa values. They do not repair evidence. Field selection
+uses typed Go access, not runtime schema interpretation or reflection.
 
-Use the returned error only for infrastructure problems: the product could not
-be reached, a timeout, a broken test environment. "The product answered but
-the answer is wrong" is a failed check or a non-supported claim, not an error.
-
-The runner rejects malformed results before scoring them: a result must
-contain at least one check or claim, names and IDs must be unique, and
-artifacts need both a name and a URI.
-
-## Collect evidence and declare expectations
-
-Most hooks do the same two things: watch a run's stream events to record what
-the agent did, and compare that record against the scenario's expectations.
-The `eval/evidence` package owns both so every suite shares one
-implementation.
-
-An `evidence.Collector` consumes the runtime's stream events (tool starts and
-ends, assistant replies, workflow lifecycle, confirmation boundaries) and
-builds an `evidence.Evidence`: every tool call with its canonical JSON
-arguments and result, correlated by tool call ID and ordered causally (each
-parent tool immediately before the nested calls its child run made), the
-accumulated assistant answer, any pending confirmation, and the terminal
-workflow phase. Applications that expose goa-ai streams natively feed events
-straight in; applications that re-encode the stream over their own transport
-write a small adapter that maps their wire type back to stream events.
+## Capture once and assess offline
 
 ```go
-collector := evidence.NewCollector()
-for !collector.Done() {
-	event, err := stream.Recv()
-	if err != nil {
-		return eval.Result{}, err
-	}
-	if err := collector.Consume(event); err != nil {
-		return eval.Result{}, err
-	}
+suite, err := genevals.New(productHooks, inputs)
+if err != nil {
+    return err
 }
-ev, err := collector.Finish()
-```
-
-`ToolCalls` contains only invocations started in the observed root run tree.
-`ToolCompletions` contains every result observed there, in stream order, including
-results for calls started before an accepted continuation. Each completion has
-the original `Call` and its `InvocationRootRunID`; the containing evidence's
-`RunID` identifies the root stream that delivered the result. These root scopes
-do not identify the native child workflow that executed a tool.
-
-For example, a clarification call may start in one root and receive its answer
-in the successor root. After the application successfully submits that answer
-through its real continuation operation, use the returned successor run ID:
-
-```go
-collector, err := evidence.NewContinuationCollector(previousEvidence, successorRunID)
-```
-
-The previous evidence must come from a collector that observed its root's
-`run_stream_end`. The constructor retains unresolved calls and their observed
-parents, binds the successor to the same logical session, and rejects changed
-root/session metadata. Pending calls can cross multiple accepted continuations.
-Their eventual results appear once in that successor's `ToolCompletions`;
-they do not become new `ToolCalls`. A new invocation of the same tool still
-counts normally. Consumers that build factual references or follow result
-cursors should process `ToolCompletions` in order.
-
-`Finish` returns independent snapshots. Editing public fields or serializing
-and decoding an `Evidence` cannot create continuation context. The application
-owns acceptance of the continuation; the collector neither submits an answer
-nor discovers a predecessor. Fresh conversations and unrelated Task runs use
-`NewCollector`. Transport adapters preserve the tool call ID, name, and parent
-ID exactly; unknown, duplicate, or mismatched results are errors.
-
-An `evidence.Expect` declares the deterministic expectations and converts the
-evidence into checks. Each generated toolset package exports one typed tool
-descriptor per tool (for example `helpers.AnswerTool`) pairing the tool
-identifier with its typed payload and result codecs. Build expectations from
-descriptors with `evidence.ExpectCall`: the pairing is fixed at generation
-time, assertions are typed Go predicates — no JSON traversal by hand — and a
-design change that renames or retypes a field breaks the suite at compile
-time instead of silently never matching:
-
-```go
-expect := evidence.Expect{
-	Tools: []evidence.Tool{
-		evidence.ExpectCall(helpers.AnswerTool,
-			func(p *helpers.AnswerPayload) error {
-				if p.Question == "" {
-					return errors.New("question must not be empty")
-				}
-				return nil
-			},
-			nil, // result unconstrained
-		),
-	},
-	ForbidTools: []tools.Ident{admin.DeleteRecords},
-}
-return eval.Result{
-	Checks: expect.Checks(ev),
-	Claims: claims,
-	Output: ev.Answer,
-}, nil
-```
-
-`Expect` supports two trajectory modes. The default binds the declared tools
-as an in-order subsequence of the observed calls, leaving undeclared calls
-unconstrained — a run may retry a rejected call or split work across several
-calls of one tool. Setting `Exact: true` compares the complete causal
-trajectory call for call, so hidden retries and extra tools fail. Per-tool
-policies cover failure semantics: `evidence.ExpectFailure` declares a call
-that must fail with exactly one classification, `ForbidFailureKinds` rejects
-protected failure classes across every attempt, and
-`RequireAllAttemptsSuccessful` rejects any failed or missing result.
-All these policies apply to the current root tree's new invocations in
-`ToolCalls`, including retries; earlier calls completed here are not new attempts.
-`evidence.ExpectConfirmation` asserts the run stopped at a pending operator
-confirmation instead of completing. For tools without generated descriptors
-(registry-discovered toolsets), declare a bare `evidence.Tool` with the tool
-identifier and `evidence.Decoded` asserts.
-
-Bounded-result metadata is carried beside the typed result rather than inside
-the generated domain result type. Set `Tool.Bounds` when the scenario must
-assert the returned count, total count, truncation state, refinement hint, or
-continuation cursor:
-
-```go
-recordCall := evidence.ExpectCall(records.ListRecordsTool, nil, nil)
-recordCall.Bounds = func(bounds *agent.Bounds) error {
-	if bounds == nil || bounds.Truncated {
-		return errors.New("expected a complete record inventory")
-	}
-	return nil
-}
-```
-
-## Run the suite
-
-```go
-suite, err := genevals.New(&hooks{client: client}, genevals.Inputs{
-	RecordInventory: &genevals.RecordEvalInput{
-		RequesterID: requesterID,
-		Query:       "List every record in the requested window.",
-	},
+runner, err := eval.NewRunner(engine, eval.RunnerConfig{
+    MaxConcurrency: 4,
+    Provenance: map[string]string{"revision": revision},
 })
 if err != nil {
-	return err
+    return err
 }
+archive, err := runner.Capture(ctx, suite)
+// Preserve the returned archive even when cancellation left partial evidence.
+```
 
+`Capture` calls no exact predicates or semantic models. The archive contains
+input bytes, exact encoded observation bytes, schema identities, capture times,
+per-scenario errors, and caller-supplied provenance. SHA-256 identities cover each
+observation and the complete archive. Observation bytes are base64-encoded in
+archive JSON so reformatting the archive cannot change them.
+
+`Archive.WriteTo` and `ReadArchive` verify identities. The application owns
+storage. A content hash detects changes; it does not authenticate the author.
+Capture errors are retained per scenario. Selection, configuration, and
+cancellation errors are also returned by the operation.
+
+```go
+offline, err := genevals.ForAssessment(exactChecks)
+if err != nil {
+    return err
+}
+report, err := runner.Assess(ctx, offline, archive)
+if err != nil {
+    return err
+}
+if !report.Passed {
+    return errors.New("evaluation failed")
+}
+```
+
+`Assess` uses only saved observations and compiled bindings. It requires no live
+inputs or capture hooks. The archived scenarios and observation schemas must
+match; requirement statements and assessment policy may change for an independent
+reassessment. Qualifications must still match the exact new contract.
+
+`Run` composes both operations and returns `(Archive, Report, error)`.
+`RunScenarios`, `RunTags`, `CaptureScenarios`, and `CaptureTags` validate all
+selectors before work begins. Tags use any-tag matching. Reports keep declaration
+order regardless of worker completion order.
+
+Concurrency bounds scenarios within one operation. Each scenario gets its own
+timeout for capture and a separate timeout for assessment, including all model
+calls, audits, and adjudication. Cancellation reaches in-flight contexts and
+prevents new product calls. Hooks and model implementations must honor context
+cancellation. Already completed evidence and assessment outcomes remain available.
+
+The create-once command supports:
+
+```bash
+go run ./cmd/records-evals --scenario inventory
+go run ./cmd/records-evals --tag smoke
+go run ./cmd/records-evals --capture capture.json
+go run ./cmd/records-evals --assess capture.json
+```
+
+`--capture` creates a new file with owner-only permissions and never overwrites
+one. It preserves capture errors and exits nonzero if any occurred. `--assess`
+uses the archive's scenario selection and cannot be combined with selection or
+capture flags. `--max-concurrency` controls each operation. Application code added
+to a previously generated command is never overwritten by `goa example`.
+
+## Choose an assessment strategy
+
+Exact checks always contribute to the final result. No model decision can
+turn a failed exact check into a pass. A nil engine supports exact-only suites.
+
+For a reasoning baseline:
+
+```go
 grader, err := judge.New(modelClient, maxOutputTokens)
 if err != nil {
-	return err
+    return err
 }
-runner, err := eval.NewRunner(grader, eval.RunnerConfig{
-	MaxConcurrency: 5,
-	Reporter:       reporter,
+engine, err := eval.NewReasoningEngine(grader)
+```
+
+Three constructors have distinct behavior:
+
+| Constructor | Behavior |
+| --- | --- |
+| `NewReasoningEngine` | Reasons about every subject |
+| `NewDisagreementEngine` | Classifies and independently reasons; adjudicates qualified pass/fail conflicts |
+| `NewSelectiveEngine` | Classifies qualified requirements, accepts qualified passes unless audited, and reasons about all other requirements; adjudicates qualified conflicts |
+
+Requirements sharing byte-identical subject and reference are batched. Initial
+reasoning receives original evidence without the classifier's prediction.
+`Reasoning()` requirements never call the classifier. Unqualified requirements
+also bypass it in the selective engine. The disagreement engine deliberately
+collects unqualified predictions for experiments, while preserving `Reasoning()`.
+A qualified pass opposed by a reasoned failure, or qualified failure opposed by a
+reasoned pass, receives one additional adjudication. The adjudicator sees original
+evidence and both assessments; it can abstain. There is no semantic retry loop.
+Provider or protocol errors remain errors and do not select a fallback model.
+
+Auditing uses a stable hash of the observation, requirement instance, and
+qualification identity. The same archived evidence receives the same audit
+selection. `AuditFraction` is explicit: zero audits none; one audits every
+eligible pass. Raising it can only add audits.
+
+### Labels and decisions
+
+| Label | Meaning |
+| --- | --- |
+| `entailed` | The subject establishes the requirement |
+| `contradicted` | The subject establishes that it is false |
+| `not_addressed` | Required content is absent; the subject neither establishes nor contradicts it |
+| `indeterminate` | The product content itself is ambiguous or conflicting |
+
+Only `entailed` passes. Conditions are interpreted semantically: omitting a price
+can satisfy a constraint on any price that is quoted, but cannot satisfy a
+requirement to quote one. Code does not classify requirements using keywords.
+
+Reports distinguish `Calibrated` decisions containing probabilities and a
+qualification identity, `Reasoned` decisions containing a label and explanation,
+and `Unresolved` decisions containing an abstention reason. A classifier never
+fabricates a prose rationale. Evaluator uncertainty is not `indeterminate`.
+An infrastructure error leaves the affected decision absent and records an error.
+
+## Native TypeSafe classification
+
+`features/eval/typesafe` implements `eval.Classifier` using TypeSafe's native
+Noul yes/no API or Choice API, rather than a chat adapter:
+
+```go
+classifier, err := typesafe.NewNoul(httpClient, typesafe.Config{
+    APIKey: apiKey,
+    Model: "jev-1.13.0",
+    MaxResponseBytes: 1 << 20,
 })
+```
+
+The response-byte ceiling in this example is an application-selected 1 MiB per
+HTTP response, including unsuccessful responses. It protects response allocation;
+it is not a suite-wide evidence allowance. Every call also needs a context
+deadline. Runners and qualification provide their own per-operation contexts.
+
+Both adapters send subject and captured reference as separate state fields, with
+one named question per requirement. Noul asks whether the subject establishes
+the requirement; its true and false criteria distinguish satisfaction from
+contradiction, omission, or ambiguity. Its answer contains only a probability.
+`NewChoice` asks the four semantic alternatives and selects the probability
+of `entailed` from the original distribution. Neither adapter fabricates a
+semantic failure label from that probability.
+
+Generated Goa records and codecs own wire validation. Both clients verify exact
+answer coverage, finite probabilities in `[0,1]`, and the exact returned model
+version. Choice additionally checks its complete distribution, its sum within
+floating-point serialization tolerance, and the selected most-probable option.
+Original decoded response bytes remain in the call record. Probabilities are
+never clipped or normalized. Mutable aliases such as
+`jev-latest` are rejected. The HTTP client is supplied by the application; the
+adapter performs no retries and follows no redirects.
+
+An optional `ChoiceOrder` permutation supports controlled order-sensitivity
+experiments. The resolved ordering and criterion text are recorded in evaluator
+configuration, so a qualification cannot be reused under another ordering or
+transferred between Noul and Choice. Compare primitives on development data
+and fix the primitive before collecting held-out qualification evidence.
+Routing uses `P(entailed)`, not the provider's derived confidence field. Neither
+number is assumed to be an accuracy guarantee.
+
+See TypeSafe's [API contract](https://docs.typesafe.ai/api),
+[model versions](https://docs.typesafe.ai/models), and
+[Noul primitive](https://docs.typesafe.ai/primitives/noul), and
+[Choice primitive](https://docs.typesafe.ai/primitives/choice). Provider context
+and rate limits apply to each native request; the adapter does not estimate token
+counts, truncate evidence, or silently split an oversized request.
+
+## Qualify automatic decisions
+
+`Qualify` collects native predictions for one generated requirement and an
+application-owned reviewed corpus:
+
+```go
+qualification, err := eval.Qualify(ctx, classifier, requirement, reviewedExamples,
+    eval.QualificationConfig{
+        MaxErrorRate: 0.01,
+        Confidence: 0.95,
+        Timeout: 10 * time.Second,
+    })
 if err != nil {
-	return err
+    return err
 }
-report, err := runner.Run(ctx, suite)
+engine, err := eval.NewSelectiveEngine(classifier, grader, eval.SelectivePolicy{
+    Qualifications: []eval.Qualification{qualification},
+    AuditFraction: 0.1,
+})
 ```
 
-`MaxConcurrency` is required and must be positive: at most that many scenarios
-run at the same time. One scenario failing does not stop the others. The
-report always lists scenarios in the order the design declares them, no matter
-which finished first. Because scenarios run in parallel, hooks and the judge
-must be safe to call concurrently.
+These numbers are explicit application choices, not framework defaults.
+`Timeout` bounds one example classification; requests execute sequentially.
+A `LabeledExample` records its ID, independent group, tuning or validation
+partition, selected subject/reference, reviewed gold label, and review provenance.
+Use generated bindings to obtain the selected fields from recorded observations.
+A model's unreviewed output is not a gold label.
 
-The optional `Reporter` receives a callback when each scenario starts and when
-it finishes, so an application can print progress without scheduling anything
-itself. Every selected scenario gets exactly one finished callback — including
-scenarios that never started because the run was canceled (those have a zero
-start time and no started callback).
+Dependent variants share a `Group` and cannot cross the tuning/validation split.
+Identical evidence cannot appear as different independent groups. Tuning chooses
+separate inclusive thresholds on `P(entailed)` for predicted passes and failures.
+Held-out validation tests each chosen threshold once and never retunes it.
 
-Canceling the context stops new scenarios from starting and cancels the ones
-in flight through their own contexts; `Run` then returns the context error
-together with the partial report. Hooks must honor cancellation.
+For accepted examples, a group is incorrect if any accepted variant in it has the
+wrong pass/fail decision. The qualification computes a one-sided exact binomial
+upper error bound across those groups. Half of the statistical error probability
+is assigned to each band, so the requested confidence covers both bands for this
+requirement. This assumes the reviewed independent groups represent the
+application population; it is not a guarantee about every future example.
 
-Pass a nil judge only when no hook returns claims:
+A band qualifies only with nonempty held-out evidence and an upper bound no
+greater than `MaxErrorRate`. Missing or insufficient evidence leaves reasoning
+required. The failure band authorizes disagreement detection, never automatic
+product failure. Qualifications retain the complete examples, predictions,
+coverage, error bounds, binary Brier score, call usage, and duration. The score
+measures squared error between the native pass probability and reviewed pass/fail
+outcomes; it does not measure the reasoner's four-label accuracy.
+
+The content identity binds the observation schema, requirement statement and
+selectors, component scope, reasoning policy, classifier version, instructions,
+and option order. Changed evidence,
+statistics, thresholds, or contracts cannot silently reuse the record. The
+application owns corpus review, population selection, qualification renewal,
+and responses to audit findings; the library does not train or auto-promote models.
+
+When the application limits qualification to particular inputs or extracts
+evidence before encoding an observation, include the population and extraction
+identities in its classifier's `EvaluatorConfig.Settings`. Enforce that input
+scope before making native requests. The library can compare recorded identities;
+it cannot discover whether an application has changed its representative
+population or discarded context before capture.
+
+`Engine.CheckSemantics` tests four fixed synthetic cases under a
+caller-supplied deadline. Reasoners must distinguish all four labels; native
+classifiers must distinguish satisfaction from failure. It is an explicit
+semantic sanity check, not statistical
+qualification, and is never automatically invoked by capture or assessment.
+
+## Challenge and compare
+
+`Engine.Challenge(ctx, requirement, reviewedExamples, timeout)` assesses authored
+examples with the normal engine policy and compares the exact labels with gold.
+It reports false passes, false failures, abstentions, errors, and complete calls.
+It neither tunes thresholds nor executes product hooks. Corpus grouping and
+partition rules are the same as qualification. Reported counts are per example;
+they are not independent-sample confidence estimates.
+
+Include paraphrases and reordered facts that preserve meaning, plus reviewed
+defects: omitted content, reference-only answers, planned work presented as done,
+contradictions, ambiguous outcomes, irrelevant passages, adversarial instructions,
+and conditional requirements. Run option-order experiments with separately
+configured classifiers. Authored labels must account for the intended changed
+meaning. Test observation encoding and field selection through the generated
+bindings as well as testing the selected text with the engine.
+
+Compare complete policies on one archive:
 
 ```go
-runner, err := eval.NewRunner(nil, eval.RunnerConfig{MaxConcurrency: 2})
+comparison, err := eval.Compare(ctx, offlineSuite, archive,
+    map[string]*eval.Runner{
+        "reasoning": reasoningRunner,
+        "disagreement": disagreementRunner,
+        "selective": selectiveRunner,
+    },
+    eval.ComparisonConfig{
+        Repetitions: 3,
+        Currency: "USD",
+        Price: priceProviderUsage,
+    })
 ```
 
-If a hook returns a claim and the judge is nil, that scenario fails with an
-error saying a judge is required.
+`Price` accepts one `model.TokenUsage` and returns its complete cost in the named
+currency. The application owns tariffs and provider-specific cache accounting;
+providers do not all include cached tokens in input counts in the same way.
+Omit both pricing and currency to compare usage without a monetary estimate.
+Missing usage makes total cost unknown, not zero. Pricing failures return an
+error with completed reports retained.
 
-### Select scenarios
+Comparisons retain every assessment and report calls by stage, usage by actual
+model, automatic passes, audits, disagreements, abstentions, scenario errors,
+and outcomes that vary across repetitions. Duration totals and minimum/maximum
+run durations exclude capture. Capture wall time is reported separately, once.
+Invocation records include failed format corrections and adjudication. Existing
+qualification work is recorded in its qualification rather than charged again
+to each assessment. A reasoning baseline is another evaluator, not gold truth.
+Use challenge results to assess accuracy alongside savings and variability.
 
-The runner validates every selection before calling the product or a model:
+`Compare` runs policies serially in name order, with each policy's repetitions
+together. For experiments affected by provider caches or changing load, rotate
+that order by calling `Compare` once per policy and repetition. Keep the actual
+schedule and every report; rotation makes order effects visible but does not
+prove that a provider cache was disabled.
 
-```go
-report, err := runner.Run(ctx, suite)
-report, err := runner.RunScenarios(ctx, suite, "record_inventory", "summary_check")
-report, err := runner.RunTags(ctx, suite, "smoke", "records")
-```
+## Reports and reasoning-model behavior
 
-`RunScenarios` runs exact scenario names. `RunTags` runs every scenario
-carrying at least one of the given tags. Both reject empty selections, empty
-values, duplicates, and names or tags that do not exist, so a typo fails
-loudly instead of silently running nothing.
+Each `Report` has its own content identity, archive identity, assessment policy,
+evaluation provenance, and scenario results. `Report.WriteTo` writes an appendable
+JSON record; `ReadReports` verifies a sequence of such records and restores the
+concrete decision forms. `CaptureDuration` and assessment `Duration` are separate.
+Per-scenario errors do not stop unrelated scenarios. Always check the returned
+error and `report.Passed`; exact failures, non-entailed decisions, unresolved
+assessments, and infrastructure failures all prevent a passing suite.
 
-## How judging works
+The reasoning adapter remains `eval/judge`. `judge.New` selects a forced named
+tool; `judge.NewAutomatic` explicitly selects automatic tool choice. Both require
+a positive output-token allowance per complete response, shared across that
+request's claims and unchanged for corrections. A finite allowance does not
+guarantee completion. The adapter never guesses model capabilities or switches
+output mechanisms after a failure.
 
-`eval/judge` builds a judge from any `model.Client`, the same model-client
-interface the rest of Goa-AI uses. The configured provider must support the
-selected tool-choice operation.
-The application must supply a positive `maxOutputTokens` to `judge.New` or
-`judge.NewAutomatic` and handle its construction error. This is the inclusive
-output-token limit for one complete model response, shared by every judgment and the tool JSON, not a
-per-claim or whole-suite allowance. Each permitted correction receives the same
-limit. The judge never multiplies it by claim count, clips it to a provider
-ceiling, or increases it after failure. Provider limits still apply, and any
-finite allowance can be exhausted without a usable judgment. Choose the value
-in application configuration alongside the model and acceptable resource use;
-there is no framework default or promise that a given limit will suffice.
+Its tool schema has one required property per claim, containing a label and
+nonempty rationale. Engine calls assign private request-local names such as
+`claim_1`, so scoped, long, or Unicode assertion IDs do not become provider schema
+names. The same names identify disagreement evidence during adjudication.
+Returned judgments and abstentions retain the original assertion IDs.
+Association is by property name, never response position.
+Strict decoding rejects missing, extra, and duplicate members. Engine calls also
+admit the explicit `unresolved` outcome. The existing structural correction policy
+permits one initial invocation and at most three corrections. A valid semantic
+decision or abstention does not trigger correction. Adjudication is one semantic
+attempt with the same bounded structural correction mechanism.
 
-This replaces `judge.New(modelClient, opts...)`, which returned only a judge and
-assigned 256 output tokens per claim. On upgrade, pass your explicit response
-limit as the second argument, handle the returned error, and keep options such
-as `judge.WithModelClass(...)` after that argument. This constructor migration
-does not change generated suites, stored reports, or custom `eval.Judge`
-implementations.
+The standalone `Judge.Judge` method keeps its existing claim-ID property names
+and returns four-label judgments. Engine
+`Reason` and `Adjudicate` additionally retain abstentions and every actual call's
+available usage. Provider and transport errors retain their causes. Full
+requirement text and references are not truncated; the existing runtime tool
+schema ceiling applies to each reasoning request. See
+[typed-output diagnostics](runtime.md#forced-typed-tool-output).
 
-`judge.New` requests a forced named grading tool. `judge.NewAutomatic` requests
-automatic tool selection and still requires one accepted grading-tool call.
-Both use the same prompt, schema, codec, claims and reference handling. Text
-alone is an error, never a grade. Select the constructor explicitly for the
-configured provider; neither constructor changes models or falls back to another
-output mechanism. Existing forced-tool callers do not need to change.
+## Collect tool evidence
 
-Custom judges implement this same batch contract:
+`eval/evidence` retains its existing collector and expectation contracts.
+A collector consumes stream events and correlates tool starts/results by exact
+call ID. `ToolCalls` contains new invocations in causal order within one root run
+tree; `ToolCompletions` contains results in observation order, including earlier
+invocations completed in an accepted successor run. Copy facts needed by the
+design into its typed observation during capture, then assess them offline.
 
-```go
-Judge(ctx context.Context, output string, claims []eval.Claim, reference string) ([]eval.Judgment, error)
-```
+After the application accepts a continuation, it can call
+`NewContinuationCollector(previousEvidence, successorRunID)`. Previous evidence
+must come from a collector that observed `run_stream_end`. The collector retains
+only pending calls and observed ancestry, binds the same session, and rejects
+changed root/session metadata. It does not submit continuations or discover
+predecessors. Public evidence fields and serialized snapshots cannot create this
+private continuation context. Completed earlier calls do not become new attempts;
+root stream identities do not claim native child-workflow identity.
 
-The output is supplied once for the whole ordered claim list. Reports and
-judgments retain claim IDs. The model-backed judge uses those IDs as required
-JSON property names, not identifier values that the model must copy between
-separate lists or calls.
+Use `evidence.ExpectCall(gentools.AnswerTool(), payloadPredicate,
+resultPredicate)` with the generated typed descriptor. `Expect.Checks` evaluates
+tool calls and terminal phase; `ToolChecks` evaluates tools when another product
+component owns completion. The default trajectory is an in-order subsequence;
+`Exact: true` requires call-for-call equality. `ExpectFailure`,
+`ForbidFailureKinds`, `RequireAllAttemptsSuccessful`, forbidden tools, and
+`ExpectConfirmation` retain their existing meanings for new invocations.
+`Tool.Bounds` checks bounded-result metadata beside the typed result. Applications
+using dynamically discovered tools can supply `evidence.Tool` with
+`evidence.Decoded` predicates.
 
-Hooks put shared factual context in `Result.Reference`, rather than repeating it
-inside several claims. The runner passes that string separately from the unchanged
-answer and retains it as `reference` in the JSON report; an empty reference is
-omitted and means no additional context is needed. The judge supplies it once per
-request, including corrections. Reference facts may establish whether the answer
-is accurate, but cannot supply content the answer omitted. An empty answer still
-receives `not_addressed` labels without a judge call, even with a rich reference.
+The runnable [quickstart example](../quickstart/cmd/chat_quality-evals/) captures
+tool JSON bytes and completion facts, then reconstructs the inputs to these
+existing exact predicates during offline assessment.
 
-Custom judges and direct callers must adopt the fourth argument; pass `""` when
-no reference is needed. Calibration uses an empty reference. Existing reports
-without `reference` retain that meaning; no generated suite or product service
-contract changes. Applications with strict external report readers must accept
-the new report field before consuming reports that include it.
+## Breaking upgrade
 
-For each scenario the judge receives the answer and the scenario's claims, and
-returns exactly one label and a short rationale per claim:
+Regenerate suites and migrate application hooks, commands, and report readers
+in the same change:
 
-- `entailed`: the answer establishes the claim is true;
-- `contradicted`: the answer establishes the claim is false;
-- `not_addressed`: the answer talks about something else;
-- `indeterminate`: the answer is too ambiguous or conflicting to decide.
+| Previous API | Replacement |
+| --- | --- |
+| Hooks return `eval.Result`, runtime checks, claims, and artifact links | Hooks return the declared typed observation; capture artifact identities as observation fields when needed |
+| Assertions can be omitted from a hook result | Declare every `Check` and `Requirement` in the design |
+| Hooks grade product results immediately | Generated typed exact predicates and semantic bindings assess saved bytes |
+| `Result.Output` and `Result.Reference` | `Subject` and `Evidence` selectors over the observation |
+| `NewRunner(judge, config)` | Construct an explicit engine, then `NewRunner(engine, config)` |
+| `Run` returns report and error | `Run` returns archive, report, and error; use `Capture` and `Assess` independently |
+| Automatic four-example “calibration” before each run | Explicit `CheckSemantics`; reviewed tuning/held-out qualification for automatic decisions |
+| Report-level output/claim/judgment fields | Archived observation bytes plus requirement instances and discriminated decisions |
+| `typesafe.New` | `typesafe.NewChoice`, or `NewNoul` with a separately reviewed qualification |
+| Native prediction label and four-label map | A pass `Probability`; original provider response remains in `ModelCall.Response` |
+| Empty subjects automatically receive `not_addressed` | The configured assessor evaluates the requirement's meaning, including conditions and prohibitions |
 
-Only `entailed` counts as passing.
+Regenerate when adding components: checks receive the component observation
+and reused methods have names such as `CheckComponentAnswerQualityPresent`
+for a component named `answer_quality` with a check named `present`.
+Reports identify each occurrence with its assessment name. Existing experimental
+qualifications and prediction readers must migrate and requalify; the old
+four-label prediction format cannot authorize the new native contract.
 
-The judge applies each claim's conditions as written. A requirement to report a
-price is not satisfied by omitting the price. A constraint that any quoted price
-must agree with the reference can be satisfied by quoting no price, when the
-claim permits that omission and its other requirements are satisfied. This is
-`entailed`, not `not_addressed`: the constraint itself was met. It does not
-supply missing required content, prove an unsupported statement, or resolve an
-unknown condition about the world. The separate no-answer rule still labels
-every claim `not_addressed` when the scenario produces an empty output.
+Input schemas, generated tool descriptors, scenario/tag selection, and
+`eval/evidence` expectations remain available. Exact-only suites use a nil
+engine. Existing custom judges can implement `Reasoner`; a native classifier
+implements the separate probability-only contract.
 
-This interpretation remains a model judgment. The framework neither parses
-claims into categories nor changes returned labels or rationales. Its prompt
-clarifies the distinction without adding model calls, labels, or report fields.
-
-Before any scenario runs, the runner tests the judge with four fixed examples,
-one per label. This step is called calibration. A judge that cannot tell the
-labels apart — for example one that answers `entailed` for everything, which
-would make every evaluation pass — fails calibration and the suite stops
-before touching the application. Calibration runs under a two-minute deadline
-owned by the runner, so an unreachable or stalled model endpoint fails the
-suite with a clear error instead of blocking it forever.
-
-The judge sends the answer and, when present, one shared reference in its user
-message. Its prompt asks for the supplied grading tool rather than spelling a
-provider-specific tool name. The private `eval.submit_judgments` tool requires
-one property per claim ID, with the exact claim
-text appearing once as that property's description. Each property contains a
-required label and nonempty rationale. For example, claims named `subject` and
-`severity` produce `{"subject":{"label":"entailed","rationale":"..."},
-"severity":{"label":"not_addressed","rationale":"..."}}`. JSON property
-order is irrelevant: the judge looks up each claim by name and returns judgments
-in the input claim order. It never assigns a result by list position.
-
-The schema rejects unknown or missing claim names, unknown fields, invalid labels,
-and empty rationales. The judge's raw JSON codec also rejects duplicate decoded
-member names at every object depth, including escaped spellings of the same name,
-before map decoding could discard one decision. These invalid arguments use the
-runtime's existing bounded correction flow through `runtime/agent/tooloutput.Run`
-or `RunAutomatic`, according to the constructor:
-one initial call and at most three corrections, with the same response allowance.
-The accepted response must contain exactly one grading call. A rejected response
-with multiple calls and invalid arguments can be corrected into one valid call;
-none of the rejected calls executes. A schema-valid semantic judgment is returned
-unchanged and does not trigger correction.
-Provider and transport failures are not retried by the judge. There is no new
-native strict-output requirement or per-claim model call.
-
-The judge's tool schema also describes the required object structure and carries
-field metadata for each claim, label, and rationale. The existing validator uses
-that metadata to provide precise correction guidance: an extra root property is
-identified as an undeclared field, while a judgment encoded as a JSON string is
-instructed to become a JSON object. A claim named `requests` remains valid when
-that name is required by the schema; there is no reserved-name filter.
-
-Full claim text and reference evidence remain available to the judge unchanged.
-Correction metadata describes structure only, so even a long claim is not copied
-into the limited-size feedback. The judge adds no example labels or rationales
-that could influence the semantic decision. This changes neither grading rules,
-accepted labels, model selection, token limits, nor the existing correction count;
-it improves guidance without guaranteeing that the model will follow it.
-
-Claim IDs remain unique, nonempty strings. The model-backed judge additionally
-requires valid UTF-8 so JSON encoding cannot silently change their names; it adds
-no naming pattern, trimming, or case normalization. Full claim texts count toward
-the existing 1 MiB tool-schema limit. An oversized schema fails before inference;
-claims and evidence are never truncated or automatically split across calls.
-
-Named properties replace the private positional-array tool protocol without
-changing generated suites, calibration, or labels. They enforce association and
-coverage, not semantic
-truth: a rationale about the wrong fact under a valid property is still a model
-judgment error. The framework preserves its label and rationale exactly; it does
-not repair, reassign, or approve the decision.
-
-When judging fails, the existing wrapped error retains the private run's original
-causes and full diagnostic messages. The runner includes that text in
-`ScenarioReport.Error`; it does not turn a failed judge call into semantic labels.
-See [typed-output diagnostics](runtime.md#forced-typed-tool-output) for available
-response facts and cancellation behavior. A valid `contradicted` judgment is
-still a successful judge call, although its scenario does not pass.
-
-## Read the report
-
-The report and everything in it use stable JSON field names, so tooling can
-depend on them. A scenario's duration covers the hook call, result validation,
-and judging.
-
-Failures land at two levels:
-
-- **Suite-level** failures — an invalid selection, a calibration failure, or
-  cancellation — are returned as the error from `Run` and recorded on the
-  report's `error` field.
-- **Scenario-level** failures — a hook error, an invalid result, a timeout, or
-  a judging failure — are recorded on that scenario's report so the remaining
-  scenarios still finish.
-
-After a run without a suite-level error, check `report.Passed`: it is true
-only when every selected scenario passed all of its checks and claims. A false
-value must fail the calling command or CI job.
-
-## Upgrade from string-input suites
-
-Earlier versions passed a single string to every hook. Typed inputs replace
-that:
-
-- replace `Input("some literal")` with a Goa input type and move the literal
-  into the generated `Inputs` value;
-- use Goa v3 `Description` and `Timeout`, plus Goa-AI `Tags`; `eval/dsl` now
-  declares only `Suite`, `Scenario`, and `Input`;
-- update hooks from `(context.Context, string)` to their generated typed
-  signatures; and
-- update `New(hooks)` to `New(hooks, inputs)` and handle its validation error.
-
-Regenerate before compiling application code. Generated suite packages and
-application hooks live in one Go binary, so there is no version-mixing concern
-across a network: a mismatch is a compile error, not a runtime surprise.
+Old reports are not observation archives and cannot authorize qualifications.
+Retain them as historical reports; produce new typed captures for replay. No
+production database migration or service deployment ordering is required by this
+library change. Generated suites and hooks compile together in one Go binary;
+external report readers need the new schema before consuming the new reports.
+To roll back an application, restore its prior library, generated code, and hooks
+together, and keep new archives separate from old-format reports.

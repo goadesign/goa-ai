@@ -1,403 +1,371 @@
-// This file implements the execution engine for generated evaluation suites:
-// scenario selection, judge calibration, bounded-concurrency orchestration,
-// and declaration-order report assembly. The contract types it executes are
-// defined in eval.go.
-
+// Package eval composes product capture and offline assessment. Capture hooks and
+// generated bindings have separate deadlines; both operations preserve selected
+// declaration order and completed evidence when other scenarios fail.
 package eval
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"sync"
 	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type (
-	// Runner executes generated suites using one semantic judge.
+	// Runner captures and assesses generated suites with bounded concurrency.
 	Runner struct {
-		judge          Judge
-		reporter       Reporter
-		maxConcurrency int
-		now            func() time.Time
+		engine *Engine
+		config RunnerConfig
 	}
 
-	// RunnerConfig defines bounded execution and progressive reporting.
+	// RunnerConfig owns per-operation concurrency and report provenance.
 	RunnerConfig struct {
-		// MaxConcurrency is the positive maximum number of scenarios in flight.
+		// MaxConcurrency is the positive maximum number of scenarios in flight
+		// within one Capture or Assess operation, not across all callers.
 		MaxConcurrency int
-		// Reporter receives progressive scenario lifecycle events. It may be
-		// nil when only the returned report is needed.
+		// Reporter receives assessment lifecycle events and may be nil.
 		Reporter Reporter
+		// Provenance records product and evaluation revisions supplied by the caller.
+		Provenance map[string]string
 	}
 )
 
-// calibrationTimeout bounds the fixed-size calibration judgment. The framework
-// owns the calibration batch, so it owns the deadline that keeps a stalled
-// model client from blocking a suite before any scenario runs.
-const calibrationTimeout = 2 * time.Minute
-
-var errCalibration = errors.New("judge calibration failed")
-
-// NewRunner creates a suite runner with an explicit concurrency limit. A nil
-// judge is valid for suites whose hooks return deterministic checks only.
-func NewRunner(judge Judge, config RunnerConfig) (*Runner, error) {
+// NewRunner creates a runner. Capture needs no engine. Assessment with a nil
+// engine supports scenarios that declare only exact checks.
+func NewRunner(engine *Engine, config RunnerConfig) (*Runner, error) {
 	if config.MaxConcurrency <= 0 {
 		return nil, errors.New("maximum evaluation concurrency must be greater than zero")
 	}
-	return &Runner{
-		judge:          judge,
-		reporter:       config.Reporter,
-		maxConcurrency: config.MaxConcurrency,
-		now:            time.Now,
-	}, nil
+	config.Provenance = maps.Clone(config.Provenance)
+	return &Runner{engine: engine, config: config}, nil
 }
 
-// Run executes every scenario in suite.
-func (r *Runner) Run(ctx context.Context, suite Suite) (Report, error) {
-	return r.run(ctx, suite, suite.Scenarios)
+// Run captures a suite once and assesses that same archive. The returned archive
+// can be saved even when capture or assessment fails, then assessed independently.
+func (r *Runner) Run(ctx context.Context, suite Suite) (Archive, Report, error) {
+	archive, captureErr := r.Capture(ctx, suite)
+	if archive.ID == "" {
+		return archive, Report{}, captureErr
+	}
+	report, assessErr := r.Assess(ctx, suite, archive)
+	return archive, report, errors.Join(captureErr, assessErr)
 }
 
-// RunScenarios executes the named scenarios and reports them in suite
-// declaration order. It rejects an empty selection, duplicate IDs, and IDs
-// absent from the suite.
-func (r *Runner) RunScenarios(ctx context.Context, suite Suite, ids ...string) (Report, error) {
+// RunScenarios validates IDs before capturing selected scenarios once.
+func (r *Runner) RunScenarios(ctx context.Context, suite Suite, ids ...string) (Archive, Report, error) {
 	selected, err := selectScenarios(suite.Scenarios, ids)
 	if err != nil {
-		return r.selectionErrorReport(suite.ID, err), err
+		return Archive{}, Report{SuiteID: suite.ID, Error: err.Error()}, err
 	}
-	return r.run(ctx, suite, selected)
+	suite.Scenarios = selected
+	return r.Run(ctx, suite)
 }
 
-// RunTags executes scenarios carrying at least one requested tag and reports
-// them in suite declaration order. It rejects empty, duplicate, and unknown
-// tags.
-func (r *Runner) RunTags(ctx context.Context, suite Suite, tags ...string) (Report, error) {
+// RunTags validates tags before capturing scenarios matching any requested tag.
+func (r *Runner) RunTags(ctx context.Context, suite Suite, tags ...string) (Archive, Report, error) {
 	selected, err := selectTags(suite.Scenarios, tags)
 	if err != nil {
-		return r.selectionErrorReport(suite.ID, err), err
+		return Archive{}, Report{SuiteID: suite.ID, Error: err.Error()}, err
 	}
-	return r.run(ctx, suite, selected)
+	suite.Scenarios = selected
+	return r.Run(ctx, suite)
 }
 
-// calibrationCases returns one unambiguous example for every framework-owned
-// label so a judge that collapses distinct outcomes cannot pass calibration.
-func calibrationCases() (string, []Claim, []Label) {
-	output := "The pump is running. Two readings at the same time disagree about whether the fan is running."
-	claims := []Claim{
-		{ID: "calibration_entailed", Text: "The pump is running."},
-		{ID: "calibration_contradicted", Text: "The pump is stopped."},
-		{ID: "calibration_not_addressed", Text: "The compressor is running."},
-		{ID: "calibration_indeterminate", Text: "The fan is running."},
-	}
-	expected := []Label{Entailed, Contradicted, NotAddressed, Indeterminate}
-	return output, claims, expected
-}
-
-// selectScenarios validates exact IDs and returns matching scenarios in suite
-// declaration order.
-func selectScenarios(scenarios []Scenario, ids []string) ([]Scenario, error) {
-	wanted, err := selectorSet("scenario", ids)
+// CaptureScenarios records only the named scenarios after validating all IDs.
+func (r *Runner) CaptureScenarios(ctx context.Context, suite Suite, ids ...string) (Archive, error) {
+	selected, err := selectScenarios(suite.Scenarios, ids)
 	if err != nil {
-		return nil, err
+		return Archive{}, err
 	}
-	known := make(map[string]struct{}, len(scenarios))
-	for _, scenario := range scenarios {
-		known[scenario.ID] = struct{}{}
-	}
-	if err := validateKnownSelectors("scenario", ids, known); err != nil {
-		return nil, err
-	}
-	selected := make([]Scenario, 0, len(wanted))
-	for _, scenario := range scenarios {
-		if _, ok := wanted[scenario.ID]; ok {
-			selected = append(selected, scenario)
-		}
-	}
-	return selected, nil
+	suite.Scenarios = selected
+	return r.Capture(ctx, suite)
 }
 
-// selectTags validates tags and returns matching scenarios in suite declaration
-// order using any-tag matching.
-func selectTags(scenarios []Scenario, tags []string) ([]Scenario, error) {
-	wanted, err := selectorSet("tag", tags)
+// CaptureTags records scenarios matching any of the validated requested tags.
+func (r *Runner) CaptureTags(ctx context.Context, suite Suite, tags ...string) (Archive, error) {
+	selected, err := selectTags(suite.Scenarios, tags)
 	if err != nil {
-		return nil, err
+		return Archive{}, err
 	}
-	known := make(map[string]struct{})
-	for _, scenario := range scenarios {
-		for _, tag := range scenario.Tags {
-			known[tag] = struct{}{}
-		}
-	}
-	if err := validateKnownSelectors("tag", tags, known); err != nil {
-		return nil, err
-	}
-	selected := make([]Scenario, 0, len(scenarios))
-	for _, scenario := range scenarios {
-		for _, tag := range scenario.Tags {
-			if _, ok := wanted[tag]; ok {
-				selected = append(selected, scenario)
-				break
-			}
-		}
-	}
-	return selected, nil
+	suite.Scenarios = selected
+	return r.Capture(ctx, suite)
 }
 
-// selectorSet validates one explicit selector list before any evaluation work.
-func selectorSet(kind string, values []string) (map[string]struct{}, error) {
-	if len(values) == 0 {
-		return nil, fmt.Errorf("evaluation %s selection is empty", kind)
+// Capture executes product hooks and saves their validated observation bytes.
+// Exact predicates and semantic models are not called during this operation.
+func (r *Runner) Capture(ctx context.Context, suite Suite) (Archive, error) {
+	ctx, span := otel.Tracer("goa.design/goa-ai/eval").Start(ctx, "eval.capture")
+	defer span.End()
+	if err := validateSuite(suite); err != nil {
+		recordError(span, err)
+		return Archive{}, err
 	}
-	selected := make(map[string]struct{}, len(values))
-	for _, value := range values {
-		if value == "" {
-			return nil, fmt.Errorf("evaluation %s is empty", kind)
+	for _, scenario := range suite.Scenarios {
+		if scenario.Capture == nil {
+			err := fmt.Errorf("scenario %q has no capture hook", scenario.ID)
+			recordError(span, err)
+			return Archive{}, err
 		}
-		if _, exists := selected[value]; exists {
-			return nil, fmt.Errorf("duplicate evaluation %s %q", kind, value)
-		}
-		selected[value] = struct{}{}
 	}
-	return selected, nil
+	archive := Archive{
+		SuiteID: suite.ID, StartedAt: time.Now(), Provenance: maps.Clone(r.config.Provenance),
+		Observations: make([]Observation, len(suite.Scenarios)),
+	}
+	r.parallel(suite.Scenarios, func(index int) {
+		archive.Observations[index] = captureScenario(ctx, suite.Scenarios[index])
+	})
+	archive.Duration = time.Since(archive.StartedAt)
+	archive.ID = digest(archive)
+	span.SetAttributes(attribute.String("eval.suite.id", suite.ID), attribute.Int("eval.observation.count", len(archive.Observations)))
+	if err := ctx.Err(); err != nil {
+		recordError(span, err)
+		return archive, err
+	}
+	return archive, nil
 }
 
-// validateKnownSelectors reports the first unknown value in caller order so
-// invalid selections always produce the same diagnostic.
-func validateKnownSelectors(kind string, values []string, known map[string]struct{}) error {
-	for _, value := range values {
-		if _, exists := known[value]; !exists {
-			return fmt.Errorf("unknown evaluation %s %q", kind, value)
-		}
+// Assess verifies saved identities, then uses only the archive's observations
+// and the generated bindings. It never calls Capture, even when hooks exist.
+func (r *Runner) Assess(ctx context.Context, suite Suite, archive Archive) (report Report, err error) {
+	ctx, span := otel.Tracer("goa.design/goa-ai/eval").Start(ctx, "eval.assess")
+	defer span.End()
+	report = Report{
+		SuiteID: suite.ID, ArchiveID: archive.ID, StartedAt: time.Now(),
+		Policy: PolicyRecord{Strategy: strategyExact}, Provenance: maps.Clone(r.config.Provenance),
 	}
-	return nil
-}
-
-// run validates the judge, executes selected scenarios with bounded
-// concurrency, and records reports in suite declaration order. Concurrent
-// runs start scenarios with larger declared timeouts first so long cases do
-// not leave the worker pool idle at the end.
-func (r *Runner) run(ctx context.Context, suite Suite, selected []Scenario) (Report, error) {
-	started := r.now()
-	report := Report{SuiteID: suite.ID, StartedAt: started}
-	if len(selected) == 0 {
-		err := errors.New("evaluation selection contains no scenarios")
+	defer func() {
+		report.Duration = time.Since(report.StartedAt)
+		report.ID = digest(report)
+	}()
+	if r.engine != nil {
+		report.Policy = r.engine.Policy()
+	}
+	selected, observations, err := assessmentSelection(suite, archive)
+	if err != nil {
 		report.Error = err.Error()
-		report.Duration = r.now().Sub(started)
+		recordError(span, err)
 		return report, err
 	}
-	if err := r.calibrate(ctx); err != nil {
-		report.Error = err.Error()
-		report.Duration = r.now().Sub(started)
-		return report, err
-	}
-
 	report.Scenarios = make([]ScenarioReport, len(selected))
-	schedule := scenarioSchedule(selected, r.maxConcurrency)
-	jobs := make(chan int)
-	workerCount := min(r.maxConcurrency, len(selected))
-	var workers sync.WaitGroup
-	workers.Add(workerCount)
-	for range workerCount {
-		go r.runScenarios(ctx, selected, report.Scenarios, jobs, &workers)
+	r.parallel(selected, func(index int) {
+		report.Scenarios[index] = r.assessScenario(ctx, selected[index], observations[index])
+	})
+	// Read cancellation once after every scenario finishes. The returned error
+	// and report then agree, and completed scenario results remain saveable.
+	err = ctx.Err()
+	if err != nil {
+		report.Error = err.Error()
+		recordError(span, err)
 	}
-dispatch:
-	for position, index := range schedule {
-		select {
-		case jobs <- index:
-		case <-ctx.Done():
-			for _, pending := range schedule[position:] {
-				report.Scenarios[pending] = r.canceledScenarioReport(selected[pending].ID, ctx.Err())
-			}
-			break dispatch
-		}
-	}
-	close(jobs)
-	workers.Wait()
-
-	report.Duration = r.now().Sub(started)
-	report.Passed = true
+	report.Passed = err == nil
 	for _, scenario := range report.Scenarios {
 		report.Passed = report.Passed && scenario.Passed
 	}
-	if err := ctx.Err(); err != nil {
-		report.Error = err.Error()
-		return report, err
-	}
-	return report, nil
+	span.SetAttributes(attribute.String("eval.suite.id", suite.ID), attribute.Bool("eval.passed", report.Passed))
+	return report, err
 }
 
-// calibrate proves every semantic label in one batch before any application
-// scenario runs. The framework owns these examples because it owns the label
-// meanings and the rule that only entailed claims pass. The batch is fixed
-// size, so the framework also owns its deadline: without one a blocking model
-// client would stall the whole suite before any scenario starts.
-func (r *Runner) calibrate(ctx context.Context) error {
-	if r.judge == nil {
-		return nil
+// captureScenario bounds one product call and makes a record even when it never
+// starts. A product's expected failed outcome belongs in typed Data; Error means
+// the capture operation itself could not finish correctly.
+func captureScenario(ctx context.Context, scenario Scenario) (observation Observation) {
+	observation = Observation{ScenarioID: scenario.ID, SchemaID: bytesDigest([]byte(scenario.Schema)), Input: slices.Clone(scenario.Input)}
+	defer func() { observation.ID = digest(observation) }()
+	if err := ctx.Err(); err != nil {
+		observation.Error = err.Error()
+		return observation
 	}
-	ctx, cancel := context.WithTimeout(ctx, calibrationTimeout)
+	ctx, cancel := context.WithTimeout(ctx, scenario.Timeout)
 	defer cancel()
-	output, claims, expected := calibrationCases()
-	judgments, err := r.judge.Judge(ctx, output, claims, "")
+	ctx, span := otel.Tracer("goa.design/goa-ai/eval").Start(ctx, "eval.capture.scenario",
+		trace.WithAttributes(attribute.String("eval.scenario.id", scenario.ID)))
+	defer span.End()
+	observation.CapturedAt = time.Now()
+	data, err := scenario.Capture(ctx)
+	observation.Data = slices.Clone(data)
+	observation.Duration = time.Since(observation.CapturedAt)
+	if err == nil {
+		err = ctx.Err()
+	}
+	if err == nil && len(data) == 0 {
+		err = errors.New("capture returned no encoded observation")
+	}
 	if err != nil {
-		return fmt.Errorf("%w: %w", errCalibration, err)
+		observation.Error = err.Error()
+		recordError(span, err)
 	}
-	if err := ValidateJudgments(claims, judgments); err != nil {
-		return fmt.Errorf("%w: %w", errCalibration, err)
+	return observation
+}
+
+// assessScenario decodes exactly one captured record, runs every exact predicate,
+// and then asks the engine about the statically declared semantic requirements.
+func (r *Runner) assessScenario(ctx context.Context, scenario Scenario, observation Observation) (report ScenarioReport) {
+	report = ScenarioReport{ID: scenario.ID, ObservationID: observation.ID, CaptureDuration: observation.Duration}
+	defer func() {
+		if !report.StartedAt.IsZero() {
+			report.Duration = time.Since(report.StartedAt)
+		}
+		if r.config.Reporter != nil {
+			r.config.Reporter.ScenarioFinished(report)
+		}
+	}()
+	if err := ctx.Err(); err != nil {
+		report.Error = err.Error()
+		return report
 	}
-	byID := make(map[string]Label, len(judgments))
-	for _, judgment := range judgments {
-		byID[judgment.ClaimID] = judgment.Label
+	report.StartedAt = time.Now()
+	if r.config.Reporter != nil {
+		r.config.Reporter.ScenarioStarted(scenario.ID, report.StartedAt)
 	}
-	for index, want := range expected {
-		id := claims[index].ID
-		if got := byID[id]; got != want {
-			return fmt.Errorf("%w: %s: got %s, want %s", errCalibration, id, got, want)
+	ctx, cancel := context.WithTimeout(ctx, scenario.Timeout)
+	defer cancel()
+	ctx, span := otel.Tracer("goa.design/goa-ai/eval").Start(ctx, "eval.assess.scenario",
+		trace.WithAttributes(attribute.String("eval.scenario.id", scenario.ID)))
+	defer span.End()
+	if observation.Error != "" {
+		report.Error = observation.Error
+		recordError(span, errors.New(report.Error))
+		return report
+	}
+	// Give generated decoders their own bytes so even a custom binding cannot
+	// change the archive that future assessments will receive.
+	binding, err := scenario.Bind(slices.Clone(observation.Data))
+	if err == nil {
+		err = validateBinding(scenario, binding)
+	}
+	if err == nil {
+		err = ctx.Err()
+	}
+	if err != nil {
+		report.Error = fmt.Sprintf("bind captured observation: %v", err)
+		recordError(span, err)
+		return report
+	}
+	report.Checks = binding.Checks
+	if len(scenario.Requirements) > 0 {
+		if r.engine == nil {
+			report.Error = "semantic assessment engine is required"
+			recordError(span, errors.New(report.Error))
+			return report
+		}
+		report.Requirements, report.Calls, err = r.engine.assess(ctx, observation.ID, scenario.Requirements, binding.Subjects)
+		if err != nil {
+			report.Error = err.Error()
+			recordError(span, err)
+			return report
+		}
+	}
+	report.Passed = true
+	for _, check := range report.Checks {
+		report.Passed = report.Passed && check.Passed
+	}
+	for _, requirement := range report.Requirements {
+		for _, instance := range requirement.Instances {
+			report.Passed = report.Passed && instance.Passed()
+		}
+	}
+	span.SetAttributes(attribute.Bool("eval.passed", report.Passed))
+	return report
+}
+
+// parallel runs at most the configured number of scenarios at once. Workers
+// still visit canceled slots so every selected case receives a terminal record.
+func (r *Runner) parallel(scenarios []Scenario, work func(int)) {
+	jobs := make(chan int)
+	var workers sync.WaitGroup
+	for range min(r.config.MaxConcurrency, len(scenarios)) {
+		workers.Go(func() {
+			for index := range jobs {
+				work(index)
+			}
+		})
+	}
+	for _, index := range scenarioSchedule(scenarios, r.config.MaxConcurrency) {
+		jobs <- index
+	}
+	close(jobs)
+	workers.Wait()
+}
+
+// assessmentSelection matches archived scenarios to the current suite before
+// any predicate or model runs. Requirements may change; observation schemas may
+// not, because that would reinterpret the saved evidence.
+func assessmentSelection(suite Suite, archive Archive) ([]Scenario, []Observation, error) {
+	if err := validateSuite(suite); err != nil {
+		return nil, nil, err
+	}
+	if err := archive.Validate(); err != nil {
+		return nil, nil, err
+	}
+	if archive.SuiteID != suite.ID {
+		return nil, nil, errors.New("capture archive belongs to a different suite")
+	}
+	byID := make(map[string]Observation, len(archive.Observations))
+	for _, observation := range archive.Observations {
+		byID[observation.ScenarioID] = observation
+	}
+	selected := make([]Scenario, 0, len(byID))
+	observations := make([]Observation, 0, len(byID))
+	for _, scenario := range suite.Scenarios {
+		observation, exists := byID[scenario.ID]
+		if !exists {
+			continue
+		}
+		if observation.SchemaID != bytesDigest([]byte(scenario.Schema)) {
+			return nil, nil, fmt.Errorf("observation schema changed for scenario %q", scenario.ID)
+		}
+		selected = append(selected, scenario)
+		observations = append(observations, observation)
+		delete(byID, scenario.ID)
+	}
+	if len(byID) > 0 {
+		return nil, nil, errors.New("capture archive contains scenarios absent from this suite")
+	}
+	return selected, observations, nil
+}
+
+func validateSuite(suite Suite) error {
+	if suite.ID == "" || len(suite.Scenarios) == 0 {
+		return errors.New("evaluation suite requires an ID and at least one scenario")
+	}
+	seen := make(map[string]bool, len(suite.Scenarios))
+	requirements := make(map[string]bool)
+	for _, scenario := range suite.Scenarios {
+		if scenario.ID == "" || seen[scenario.ID] || scenario.Timeout <= 0 || scenario.Schema == "" || scenario.Bind == nil {
+			return fmt.Errorf("invalid compiled scenario %q", scenario.ID)
+		}
+		seen[scenario.ID] = true
+		if len(scenario.CheckNames)+len(scenario.Requirements) == 0 {
+			return fmt.Errorf("scenario %q has no declared assertions", scenario.ID)
+		}
+		checks := make(map[string]bool, len(scenario.CheckNames))
+		for _, check := range scenario.CheckNames {
+			if check == "" || checks[check] {
+				return fmt.Errorf("invalid declared check %q", check)
+			}
+			checks[check] = true
+		}
+		for _, requirement := range scenario.Requirements {
+			if requirement.ID == "" || requirement.Statement == "" || requirement.Subject == "" || requirements[requirement.ID] {
+				return fmt.Errorf("invalid declared requirement %q", requirement.ID)
+			}
+			if requirement.SchemaID != bytesDigest([]byte(scenario.Schema)) {
+				return fmt.Errorf("requirement %q does not identify its observation schema", requirement.ID)
+			}
+			requirements[requirement.ID] = true
 		}
 	}
 	return nil
 }
 
-// runScenario executes one hook under its generated timeout and evaluates its
-// validated deterministic and semantic assertions.
-func (r *Runner) runScenario(ctx context.Context, scenario Scenario) (report ScenarioReport) {
-	if err := ctx.Err(); err != nil {
-		return r.canceledScenarioReport(scenario.ID, err)
-	}
-	started := r.now()
-	report = ScenarioReport{ID: scenario.ID, StartedAt: started}
-	defer func() {
-		report.Duration = r.now().Sub(started)
-		if r.reporter != nil {
-			r.reporter.ScenarioFinished(report)
-		}
-	}()
-	if r.reporter != nil {
-		r.reporter.ScenarioStarted(scenario.ID, started)
-	}
-	scenarioCtx, cancel := context.WithTimeout(ctx, scenario.Timeout)
-	defer cancel()
-	result, err := scenario.Run(scenarioCtx)
-	if err != nil {
-		report.Error = err.Error()
-		return report
-	}
-	if err := scenarioCtx.Err(); err != nil {
-		report.Error = err.Error()
-		return report
-	}
-	if err := validateResult(result); err != nil {
-		report.Error = err.Error()
-		return report
-	}
-	report.Result = &result
-	passed := true
-	for _, check := range result.Checks {
-		passed = passed && check.Passed
-	}
-	if len(result.Claims) > 0 {
-		if r.judge == nil {
-			report.Error = "semantic judge is required"
-			return report
-		}
-		judgments, err := r.judgeClaims(scenarioCtx, result)
-		if err != nil {
-			report.Error = err.Error()
-			return report
-		}
-		report.Judgments = judgments
-		for _, judgment := range judgments {
-			passed = passed && judgment.Label == Entailed
-		}
-	}
-	report.Passed = passed
-	return report
-}
-
-// judgeClaims labels every claim of a validated result. An empty output
-// neither establishes nor contradicts any claim, so the runner labels each
-// claim not_addressed itself; otherwise it batches the claims to the semantic
-// judge and validates the one-to-one response.
-func (r *Runner) judgeClaims(ctx context.Context, result Result) ([]Judgment, error) {
-	if result.Output == "" {
-		judgments := make([]Judgment, len(result.Claims))
-		for i, claim := range result.Claims {
-			judgments[i] = Judgment{
-				ClaimID:   claim.ID,
-				Label:     NotAddressed,
-				Rationale: "the scenario produced no output to judge",
-			}
-		}
-		return judgments, nil
-	}
-	judgments, err := r.judge.Judge(ctx, result.Output, result.Claims, result.Reference)
-	if err != nil {
-		return nil, err
-	}
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if err := ValidateJudgments(result.Claims, judgments); err != nil {
-		return nil, err
-	}
-	return judgments, nil
-}
-
-// scenarioSchedule returns report-slot indexes in dispatch order. Serial runs
-// retain declaration order; concurrent runs use stable longest-timeout-first
-// scheduling while reports continue to use their original slots.
-func scenarioSchedule(scenarios []Scenario, maxConcurrency int) []int {
-	schedule := make([]int, len(scenarios))
-	for index := range scenarios {
-		schedule[index] = index
-	}
-	if maxConcurrency == 1 {
-		return schedule
-	}
-	sort.SliceStable(schedule, func(left, right int) bool {
-		return scenarios[schedule[left]].Timeout > scenarios[schedule[right]].Timeout
-	})
-	return schedule
-}
-
-// runScenarios consumes scenario indexes from jobs and writes each index once
-// to its declaration-order report slot.
-func (r *Runner) runScenarios(
-	ctx context.Context,
-	scenarios []Scenario,
-	reports []ScenarioReport,
-	jobs <-chan int,
-	workers *sync.WaitGroup,
-) {
-	defer workers.Done()
-	for index := range jobs {
-		reports[index] = r.runScenario(ctx, scenarios[index])
-	}
-}
-
-// canceledScenarioReport records and reports a scenario whose hook never
-// started because the suite context was canceled.
-func (r *Runner) canceledScenarioReport(id string, err error) ScenarioReport {
-	report := ScenarioReport{
-		ID:    id,
-		Error: err.Error(),
-	}
-	if r.reporter != nil {
-		r.reporter.ScenarioFinished(report)
-	}
-	return report
-}
-
-// selectionErrorReport records a selection failure without starting a suite.
-func (r *Runner) selectionErrorReport(suiteID string, err error) Report {
-	started := r.now()
-	return Report{
-		SuiteID:   suiteID,
-		StartedAt: started,
-		Duration:  r.now().Sub(started),
-		Error:     err.Error(),
-	}
+func recordError(span trace.Span, err error) {
+	span.RecordError(err)
+	span.SetStatus(codes.Error, err.Error())
 }

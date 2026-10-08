@@ -9,26 +9,80 @@ package chatquality
 
 import (
 	"context"
+	json "encoding/json"
 	"fmt"
 	"time"
 
 	eval "goa.design/goa-ai/eval"
+	rawjson "goa.design/goa-ai/runtime/agent/rawjson"
 	goa "goa.design/goa/v3/pkg"
 )
 
 type (
-	// AskPayload is a generated evaluation input type.
+	// AskPayload is a generated evaluation value.
 	AskPayload struct {
 		// User question to answer
-		Question string
+		Question string `json:"question"`
 	}
-	// Hooks is implemented by the application running this evaluation suite.
-	// Methods can run at the same time. Each method completes one scenario.
+	// GreetingObservation is a generated evaluation value.
+	GreetingObservation struct {
+		// The original question sent to the agent.
+		Question string `json:"question"`
+		// Captured assistant text, including an empty answer.
+		Answer string `json:"answer"`
+		// Invocations in the collector's causal order.
+		ToolCalls []*CapturedToolCall `json:"tool_calls,omitempty"`
+		// Observed final workflow phase, or empty when absent.
+		TerminalPhase string `json:"terminal_phase"`
+		// Observed workflow failure explanation, or empty.
+		TerminalFailure string `json:"terminal_failure"`
+		// The product call's returned error, or empty on success.
+		RunError string `json:"run_error"`
+	}
+	// CapturedToolCall is a generated evaluation value.
+	CapturedToolCall struct {
+		// The invoked tool.
+		Name string `json:"name"`
+		// The identifier linking invocation and result.
+		CallID string `json:"call_id"`
+		// The parent call, or empty for a root call.
+		ParentCallID string `json:"parent_call_id"`
+		// Exact tool-argument JSON bytes.
+		Arguments []byte `json:"arguments,omitempty"`
+		// Exact result JSON bytes, when available.
+		Result []byte `json:"result,omitempty"`
+		// Whether a terminal tool result was observed.
+		Completed bool `json:"completed"`
+		// Observed failure, when the tool failed.
+		Failure *CapturedToolFailure `json:"failure,omitempty"`
+	}
+	// CapturedToolFailure is a generated evaluation value.
+	CapturedToolFailure struct {
+		// Observed failure classification.
+		Kind string `json:"kind"`
+		// Observed failure explanation.
+		Message string `json:"message"`
+		// The runtime's recorded recovery action.
+		RecoveryAction string `json:"recovery_action"`
+	}
+	// HelpersContractObservation is a generated evaluation value.
+	HelpersContractObservation bool
+	// Checks assesses captured values with exact, read-only predicates.
+	// An empty diagnostic passes; a nonempty diagnostic explains a failure.
+	// Methods must not call the product or reload reference data.
+	Checks interface {
+		// CheckGreetingReplyRunTools checks the saved observation. The agent completes and answers the original question through helpers.answer.
+		CheckGreetingReplyRunTools(*GreetingObservation) string
+		// CheckHelpersContractPayloadSchema checks the saved observation. The reachable helpers.answer contract includes a payload schema.
+		CheckHelpersContractPayloadSchema(HelpersContractObservation) string
+	}
+	// Hooks captures typed product evidence. Methods may run concurrently.
 	Hooks interface {
-		// GreetingReply executes the greeting_reply scenario.
-		GreetingReply(context.Context, *AskPayload) (eval.Result, error)
-		// HelpersContract executes the helpers_contract scenario.
-		HelpersContract(context.Context) (eval.Result, error)
+		Checks
+		// GreetingReply runs greeting_reply and returns its observed outcome.
+		GreetingReply(context.Context, *AskPayload) (*GreetingObservation, error)
+		// HelpersContract runs helpers_contract and returns its observed outcome.
+		HelpersContract(context.Context) (HelpersContractObservation, error)
 	}
 
 	// Inputs contains the application value for every typed scenario.
@@ -46,36 +100,124 @@ func New(hooks Hooks, inputs Inputs) (eval.Suite, error) {
 	if err := ValidateAskPayload(inputs.GreetingReply); err != nil {
 		return eval.Suite{}, fmt.Errorf("validate greeting_reply input: %w", err)
 	}
+	suite, err := ForAssessment(hooks)
+	if err != nil {
+		return eval.Suite{}, err
+	}
+	suite.Scenarios[0].Input, err = json.Marshal(inputs.GreetingReply)
+	if err != nil {
+		return eval.Suite{}, fmt.Errorf("encode greeting_reply input: %w", err)
+	}
+	suite.Scenarios[0].Capture = func(ctx context.Context) (rawjson.Message, error) {
+		observed, err := hooks.GreetingReply(ctx, inputs.GreetingReply)
+		if err != nil {
+			return nil, err
+		}
+		return EncodeGreetingObservation(observed)
+	}
+	suite.Scenarios[1].Capture = func(ctx context.Context) (rawjson.Message, error) {
+		observed, err := hooks.HelpersContract(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return EncodeHelpersContractObservation(observed)
+	}
+	return suite, nil
+}
+
+// ForAssessment builds an offline suite using saved observations only.
+// It requires no capture hooks, live inputs, or product clients.
+func ForAssessment(checks Checks) (eval.Suite, error) {
+	if checks == nil {
+		return eval.Suite{}, fmt.Errorf("evaluation checks are required")
+	}
 	return eval.Suite{
 		ID:          "chat_quality",
 		Description: "Evaluates the chat agent end to end against the in-memory runtime.",
 		Scenarios: []eval.Scenario{
 			{
-				ID:          "greeting_reply",
-				Description: "The agent produces a final assistant reply to a user question.",
-				Tags:        []string{"smoke"},
-				Timeout:     time.Duration(30000000000),
-				Run: func(ctx context.Context) (eval.Result, error) {
-					return hooks.GreetingReply(ctx, inputs.GreetingReply)
+				ID:           "greeting_reply",
+				Description:  "The agent produces a final assistant reply to a user question.",
+				Tags:         []string{"smoke"},
+				Timeout:      time.Duration(30000000000),
+				Schema:       "{\"additionalProperties\":false,\"properties\":{\"answer\":{\"type\":\"string\",\"description\":\"Captured assistant text, including an empty answer.\"},\"question\":{\"type\":\"string\",\"description\":\"The original question sent to the agent.\"},\"run_error\":{\"type\":\"string\",\"description\":\"The product call's returned error, or empty on success.\"},\"terminal_failure\":{\"type\":\"string\",\"description\":\"Observed workflow failure explanation, or empty.\"},\"terminal_phase\":{\"type\":\"string\",\"description\":\"Observed final workflow phase, or empty when absent.\"},\"tool_calls\":{\"type\":\"array\",\"description\":\"Invocations in the collector's causal order.\",\"items\":{\"type\":\"object\",\"required\":[\"name\",\"call_id\",\"parent_call_id\",\"completed\"],\"properties\":{\"arguments\":{\"type\":\"string\",\"description\":\"Exact tool-argument JSON bytes.\"},\"call_id\":{\"type\":\"string\",\"description\":\"The identifier linking invocation and result.\"},\"completed\":{\"type\":\"boolean\",\"description\":\"Whether a terminal tool result was observed.\"},\"failure\":{\"type\":\"object\",\"description\":\"Observed failure, when the tool failed.\",\"required\":[\"kind\",\"message\",\"recovery_action\"],\"properties\":{\"kind\":{\"type\":\"string\",\"description\":\"Observed failure classification.\"},\"message\":{\"type\":\"string\",\"description\":\"Observed failure explanation.\"},\"recovery_action\":{\"type\":\"string\",\"description\":\"The runtime's recorded recovery action.\"}},\"additionalProperties\":false},\"name\":{\"type\":\"string\",\"description\":\"The invoked tool.\"},\"parent_call_id\":{\"type\":\"string\",\"description\":\"The parent call, or empty for a root call.\"},\"result\":{\"type\":\"string\",\"description\":\"Exact result JSON bytes, when available.\"}},\"additionalProperties\":false}}},\"required\":[\"question\",\"answer\",\"terminal_phase\",\"terminal_failure\",\"run_error\"],\"type\":\"object\",\"x-goa-observation-contract\":\"1fe3b87cc8f36780e1b547d01977dd34343873d1fbde24aecc1c476d8d8910fb\"}",
+				CheckNames:   []string{"run_tools"},
+				Requirements: []eval.Requirement{},
+				Bind: func(data rawjson.Message) (eval.Binding, error) {
+					observed, err := DecodeGreetingObservation(data)
+					if err != nil {
+						return eval.Binding{}, err
+					}
+					binding := eval.Binding{Subjects: make(map[string][]eval.Subject)}
+
+					{
+						diagnostic := checks.CheckGreetingReplyRunTools(observed)
+						binding.Checks = append(binding.Checks, eval.Check{Name: "run_tools", Passed: diagnostic == "", Diagnostic: diagnostic})
+
+					}
+					return binding, nil
 				},
 			},
 			{
-				ID:          "helpers_contract",
-				Description: "The helpers.answer tool contract is reachable from the agent.",
-				Tags:        []string{"contract"},
-				Timeout:     time.Duration(30000000000),
-				Run: func(ctx context.Context) (eval.Result, error) {
-					return hooks.HelpersContract(ctx)
+				ID:           "helpers_contract",
+				Description:  "The helpers.answer tool contract is reachable from the agent.",
+				Tags:         []string{"contract"},
+				Timeout:      time.Duration(30000000000),
+				Schema:       "{\"type\":\"boolean\",\"x-goa-observation-contract\":\"dc6c289bf89bcebe01f5f28ece3f8408593e0e3d608cc3967c677bd29956d883\"}",
+				CheckNames:   []string{"payload_schema"},
+				Requirements: []eval.Requirement{},
+				Bind: func(data rawjson.Message) (eval.Binding, error) {
+					observed, err := DecodeHelpersContractObservation(data)
+					if err != nil {
+						return eval.Binding{}, err
+					}
+					binding := eval.Binding{Subjects: make(map[string][]eval.Subject)}
+
+					{
+						diagnostic := checks.CheckHelpersContractPayloadSchema(observed)
+						binding.Checks = append(binding.Checks, eval.Check{Name: "payload_schema", Passed: diagnostic == "", Diagnostic: diagnostic})
+
+					}
+					return binding, nil
 				},
 			},
 		},
 	}, nil
 }
 
-// ValidateAskPayload validates a generated evaluation input.
+// ValidateAskPayload validates a generated evaluation value.
 func ValidateAskPayload(value *AskPayload) error {
 	if value == nil {
 		return goa.MissingFieldError("input", "evaluation scenario")
 	}
+	return nil
+}
+
+// ValidateGreetingObservation validates a generated evaluation value.
+func ValidateGreetingObservation(value *GreetingObservation) error {
+	if value == nil {
+		return goa.MissingFieldError("input", "evaluation scenario")
+	}
+	return nil
+}
+
+// ValidateCapturedToolCall validates a generated evaluation value.
+func ValidateCapturedToolCall(value *CapturedToolCall) error {
+	if value == nil {
+		return goa.MissingFieldError("input", "evaluation scenario")
+	}
+	return nil
+}
+
+// ValidateCapturedToolFailure validates a generated evaluation value.
+func ValidateCapturedToolFailure(value *CapturedToolFailure) error {
+	if value == nil {
+		return goa.MissingFieldError("input", "evaluation scenario")
+	}
+	return nil
+}
+
+// ValidateHelpersContractObservation validates a generated evaluation value.
+func ValidateHelpersContractObservation(value HelpersContractObservation) error {
 	return nil
 }

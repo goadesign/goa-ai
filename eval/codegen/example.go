@@ -52,6 +52,8 @@ const exampleTemplate = `type (
 
 	{{ .ExampleOptions }} struct {
 		maxConcurrency int
+		capturePath string
+		assessPath string
 		scenarios      {{ .ExampleValues }}
 		tags           {{ .ExampleValues }}
 	}
@@ -60,6 +62,8 @@ const exampleTemplate = `type (
 func {{ .ExampleMain }}() {
 	opts := {{ .ExampleOptions }}{}
 	flag.IntVar(&opts.maxConcurrency, "max-concurrency", 5, "maximum scenarios to run concurrently")
+	flag.StringVar(&opts.capturePath, "capture", "", "capture evidence into a new archive without assessment")
+	flag.StringVar(&opts.assessPath, "assess", "", "assess an existing archive without running product hooks")
 	flag.Var(&opts.scenarios, "scenario", "scenario ID to run; repeat to select multiple scenarios")
 	flag.Var(&opts.tags, "tag", "scenario tag to run; repeat to select multiple tags")
 	flag.Parse()
@@ -73,30 +77,63 @@ func {{ .ExampleRun }}(ctx context.Context, opts {{ .ExampleOptions }}) error {
 	if len(opts.scenarios) > 0 && len(opts.tags) > 0 {
 		return errors.New("--scenario and --tag cannot be combined")
 	}
-	suite, err := {{ .ExampleAlias }}.{{ .New }}(&{{ .ExampleHooks }}{}, {{ .ExampleScenarioInputs }}())
-	if err != nil {
-		return err
+	if opts.capturePath != "" && opts.assessPath != "" {
+		return errors.New("--capture and --assess cannot be combined")
 	}
-	runner, err := eval.NewRunner(nil, eval.RunnerConfig{
-		MaxConcurrency: opts.maxConcurrency,
-		// TODO: replace nil above with an eval.Judge when a model must grade
-		// hook results. Call judge.New(client, maxOutputTokens) from
-		// goa.design/goa-ai/eval/judge with your model.Client and a positive
-		// per-response output-token limit; handle its returned error first.
-		// Nil is valid when code performs every check.
-		// TODO: supply an eval.Reporter if results should be shown as tests finish.
-	})
-	if err != nil {
-		return err
+	if opts.assessPath != "" && (len(opts.scenarios) > 0 || len(opts.tags) > 0) {
+		return errors.New("--assess uses the scenarios recorded in the archive")
 	}
+	// TODO: for semantic requirements, call judge.New(client, maxOutputTokens)
+	// from goa.design/goa-ai/eval/judge with your model.Client and a positive
+	// per-response output-token limit; handle its returned error first.
+	// Build eval.NewReasoningEngine(grader), handle its error, and pass the
+	// engine to NewRunner. Alternatively, qualify a native classifier and
+	// construct eval.NewSelectiveEngine with an explicit audit fraction.
+	runner, err := eval.NewRunner(nil, eval.RunnerConfig{MaxConcurrency: opts.maxConcurrency})
+	if err != nil { return err }
 	var report eval.Report
-	switch {
-	case len(opts.scenarios) > 0:
-		report, err = runner.RunScenarios(ctx, suite, opts.scenarios...)
-	case len(opts.tags) > 0:
-		report, err = runner.RunTags(ctx, suite, opts.tags...)
-	default:
-		report, err = runner.Run(ctx, suite)
+	if opts.assessPath != "" {
+		file, openErr := os.Open(opts.assessPath)
+		if openErr != nil { return openErr }
+		archive, readErr := eval.ReadArchive(file)
+		if err := errors.Join(readErr, file.Close()); err != nil { return err }
+		suite, buildErr := {{ .ExampleAlias }}.{{ .ForAssessment }}({{ if .HasChecks }}&{{ .ExampleHooks }}{}{{ end }})
+		if buildErr != nil { return buildErr }
+		report, err = runner.Assess(ctx, suite, archive)
+	} else {
+		suite, buildErr := {{ .ExampleAlias }}.{{ .New }}(&{{ .ExampleHooks }}{}, {{ .ExampleScenarioInputs }}())
+		if buildErr != nil { return buildErr }
+		var archive eval.Archive
+		if opts.capturePath != "" {
+			switch {
+			case len(opts.scenarios) > 0:
+				archive, err = runner.CaptureScenarios(ctx, suite, opts.scenarios...)
+			case len(opts.tags) > 0:
+				archive, err = runner.CaptureTags(ctx, suite, opts.tags...)
+			default:
+				archive, err = runner.Capture(ctx, suite)
+			}
+			if archive.ID == "" { return err }
+			file, openErr := os.OpenFile(opts.capturePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+			if openErr != nil { return errors.Join(err, openErr) }
+			_, writeErr := archive.WriteTo(file)
+			if saveErr := errors.Join(err, writeErr, file.Close()); saveErr != nil { return saveErr }
+			for _, observation := range archive.Observations {
+				if observation.Error != "" {
+					return fmt.Errorf("scenario %q capture failed: %s", observation.ScenarioID, observation.Error)
+				}
+			}
+			return nil
+		}
+		switch {
+		case len(opts.scenarios) > 0:
+			archive, report, err = runner.RunScenarios(ctx, suite, opts.scenarios...)
+		case len(opts.tags) > 0:
+			archive, report, err = runner.RunTags(ctx, suite, opts.tags...)
+		default:
+			archive, report, err = runner.Run(ctx, suite)
+		}
+		if archive.ID == "" && err != nil { return err }
 	}
 	encoder := json.NewEncoder(os.Stdout)
 	encoder.SetIndent("", "  ")
@@ -125,15 +162,18 @@ func {{ .ExampleScenarioInputs }}() {{ .ExampleAlias }}.{{ .Inputs }} {
 }
 
 {{- range .Scenarios }}
-// {{ .Method }} executes the {{ .RawID }} scenario. Run the product flow,
-// then check the result. Use goa.design/goa-ai/eval/evidence to collect tool
-// calls, use evidence.ExpectCall with the generated tool descriptions to state
-// which calls are required, and return both checks performed by code and checks
-// that require a model to judge their meaning.
-func (*{{ $.ExampleHooks }}) {{ .Method }}(context.Context{{ if .HasInput }}, {{ .ExampleInputRef }}{{ end }}) (eval.Result, error) {
-	return eval.Result{}, errors.New("TODO: implement {{ .RawID }}")
+// {{ .Method }} executes {{ .RawID }} and returns its observed outcome.
+// Use eval/evidence to collect tool calls and copy the facts needed by the
+// declared checks and requirements into the typed observation.
+func (*{{ $.ExampleHooks }}) {{ .Method }}(context.Context{{ if .HasInput }}, {{ .ExampleInputRef }}{{ end }}) ({{ .ExampleObservationRef }}, error) {
+	return {{ .ObservationZero }}, errors.New("TODO: implement {{ .RawID }} capture")
 }
-
+{{- end }}
+{{- range .CheckMethods }}
+// {{ .Method }} checks saved evidence only. {{ .Description }}
+func (*{{ $.ExampleHooks }}) {{ .Method }}(observed {{ .ExampleRef }}) string {
+	return "TODO: implement exact predicate"
+}
 {{- end }}
 func (v *{{ .ExampleValues }}) String() string {
 	return fmt.Sprint([]string(*v))

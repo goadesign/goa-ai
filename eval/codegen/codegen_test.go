@@ -41,23 +41,27 @@ func TestGenerateTypedSuiteAndExample(t *testing.T) {
 			goadsl.Description("Evaluates assistant answers.")
 			goadsl.Timeout("90s")
 			evaldsl.Scenario("record_inventory", func() {
+				evaldsl.Observation(goadsl.String)
+				evaldsl.Check("valid", "Checks the captured value.")
 				goadsl.Description("Lists every record.")
 				evaldsl.Input(input)
 				aidls.Tags("records", "integration")
 			})
 			evaldsl.Scenario("health_check", func() {
+				evaldsl.Observation(goadsl.String)
+				evaldsl.Check("valid", "Checks the captured value.")
 				goadsl.Description("Checks application health.")
 			})
 		})
 	})
 
 	files := generateEvalFiles(t, roots, false)
-	require.Len(t, files, 1)
+	require.Len(t, files, 2)
 	assert.Equal(t, filepath.Join("gen", "evals", "assistant_quality", "suite.go"), files[0].Path)
 	content := render(t, files[0])
 	assert.Contains(t, content, "QueryEvalInput struct")
-	assert.Contains(t, content, "RecordInventory(context.Context, *QueryEvalInput) (eval.Result, error)")
-	assert.Contains(t, content, "HealthCheck(context.Context) (eval.Result, error)")
+	assert.Contains(t, content, "RecordInventory(context.Context, *QueryEvalInput) (RecordInventoryObservation, error)")
+	assert.Contains(t, content, "HealthCheck(context.Context) (HealthCheckObservation, error)")
 	assert.Contains(t, content, "RecordInventory *QueryEvalInput")
 	assert.Contains(t, content, "func New(hooks Hooks, inputs Inputs) (eval.Suite, error)")
 	assert.Contains(t, content, "ValidateQueryEvalInput(inputs.RecordInventory)")
@@ -74,7 +78,7 @@ func TestGenerateTypedSuiteAndExample(t *testing.T) {
 	assert.Contains(t, example, "This file was generated once by goa example")
 	assert.Contains(t, example, "genevalassistantquality.New(&hooks{}, scenarioInputs())")
 	assert.Contains(t, example, "RecordInventory: new(genevalassistantquality.QueryEvalInput)")
-	assert.Contains(t, example, "func (*hooks) HealthCheck(context.Context) (eval.Result, error)")
+	assert.Contains(t, example, "func (*hooks) HealthCheck(context.Context) (genevalassistantquality.HealthCheckObservation, error)")
 	assert.Contains(t, example, `flag.Var(&opts.scenarios, "scenario"`)
 	assert.Contains(t, example, "runner.RunScenarios(ctx, suite, opts.scenarios...)")
 	assert.Contains(t, example, "runner.RunTags(ctx, suite, opts.tags...)")
@@ -92,18 +96,26 @@ func TestGenerateInputFormsAndDistinctCustomizations(t *testing.T) {
 			goadsl.Description("Exercises supported eval input forms.")
 			goadsl.Timeout("1m")
 			evaldsl.Scenario("primitive", func() {
+				evaldsl.Observation(goadsl.String)
+				evaldsl.Check("valid", "Checks the captured value.")
 				goadsl.Description("Uses a primitive.")
 				evaldsl.Input(goadsl.String)
 			})
 			evaldsl.Scenario("array", func() {
+				evaldsl.Observation(goadsl.String)
+				evaldsl.Check("valid", "Checks the captured value.")
 				goadsl.Description("Uses an array.")
 				evaldsl.Input(goadsl.ArrayOf(goadsl.String))
 			})
 			evaldsl.Scenario("mapping", func() {
+				evaldsl.Observation(goadsl.String)
+				evaldsl.Check("valid", "Checks the captured value.")
 				goadsl.Description("Uses a map.")
 				evaldsl.Input(goadsl.MapOf(goadsl.String, goadsl.Int))
 			})
 			evaldsl.Scenario("inline", func() {
+				evaldsl.Observation(goadsl.String)
+				evaldsl.Check("valid", "Checks the captured value.")
 				goadsl.Description("Uses an inline object.")
 				evaldsl.Input(func() {
 					goadsl.Attribute("value", goadsl.String, "Input value.")
@@ -111,12 +123,16 @@ func TestGenerateInputFormsAndDistinctCustomizations(t *testing.T) {
 				})
 			})
 			evaldsl.Scenario("first_custom", func() {
+				evaldsl.Observation(goadsl.String)
+				evaldsl.Check("valid", "Checks the captured value.")
 				goadsl.Description("Uses the first customization.")
 				evaldsl.Input(shared, func() {
 					goadsl.Required("value")
 				})
 			})
 			evaldsl.Scenario("second_custom", func() {
+				evaldsl.Observation(goadsl.String)
+				evaldsl.Check("valid", "Checks the captured value.")
 				goadsl.Description("Uses the second customization.")
 				evaldsl.Input(shared, func() {
 					goadsl.Required("value")
@@ -126,7 +142,7 @@ func TestGenerateInputFormsAndDistinctCustomizations(t *testing.T) {
 	})
 
 	files := generateEvalFiles(t, roots, false)
-	require.Len(t, files, 1)
+	require.Len(t, files, 2)
 	content := render(t, files[0])
 	assert.Contains(t, content, "Primitive(context.Context, string)")
 	assert.Contains(t, content, "Array(context.Context, []string)")
@@ -150,6 +166,8 @@ func TestGeneratePresenceOnlyInputValidator(t *testing.T) {
 			goadsl.Description("Evaluates chat answers.")
 			goadsl.Timeout("1m")
 			evaldsl.Scenario("greeting_reply", func() {
+				evaldsl.Observation(goadsl.String)
+				evaldsl.Check("valid", "Checks the captured value.")
 				goadsl.Description("Answers one question.")
 				evaldsl.Input(input)
 			})
@@ -157,7 +175,7 @@ func TestGeneratePresenceOnlyInputValidator(t *testing.T) {
 	})
 
 	files := generateEvalFiles(t, roots, false)
-	require.Len(t, files, 1)
+	require.Len(t, files, 2)
 	content := render(t, files[0])
 	assert.Contains(t, content, `goa "goa.design/goa/v3/pkg"`)
 	assert.Contains(t, content, "// New validates application inputs and builds the evaluation suite.")
@@ -204,6 +222,8 @@ func TestGenerateAgentAttachedReachableToolContracts(t *testing.T) {
 					goadsl.Description("Evaluates the assistant.")
 					goadsl.Timeout("1m")
 					evaldsl.Scenario("answer", func() {
+						evaldsl.Observation(goadsl.String)
+						evaldsl.Check("valid", "Checks the captured value.")
 						goadsl.Description("Answers a question.")
 					})
 				})
@@ -236,9 +256,9 @@ func TestGenerateAgentAttachedReachableToolContracts(t *testing.T) {
 	}
 	files, err := plan.Generate(nil)
 	require.NoError(t, err)
-	require.Len(t, files, 2)
-	assert.Equal(t, filepath.Join("gen", "evals", "assistant", "contract.go"), files[1].Path)
-	content := render(t, files[1])
+	require.Len(t, files, 3)
+	assert.Equal(t, filepath.Join("gen", "evals", "assistant", "contract.go"), files[2].Path)
+	content := render(t, files[2])
 	assert.Contains(t, content, "func MustToolContract2(name tools.Ident) *tools.ToolSpec")
 	assert.Contains(t, content, "genassistanttools.Spec(name)")
 	assert.Contains(t, content, "genrecords.Spec(name)")
@@ -260,6 +280,8 @@ func TestAgentContractUsesGoaPlannedServicePath(t *testing.T) {
 					goadsl.Description("Evaluates value reads.")
 					goadsl.Timeout("1m")
 					evaldsl.Scenario("read", func() {
+						evaldsl.Observation(goadsl.String)
+						evaldsl.Check("valid", "Checks the captured value.")
 						goadsl.Description("Reads one value.")
 					})
 				})
@@ -268,8 +290,8 @@ func TestAgentContractUsesGoaPlannedServicePath(t *testing.T) {
 	})
 
 	files := generateEvalFiles(t, roots, false)
-	require.Len(t, files, 2)
-	contract := render(t, files[1])
+	require.Len(t, files, 3)
+	contract := render(t, files[2])
 	assert.Contains(t, contract, `genreadertools "example.com/project/gen/read_value2/toolsets/reader_tools"`)
 	assert.NotContains(t, contract, `"example.com/project/gen/read_value/toolsets/reader_tools"`)
 }
@@ -288,6 +310,8 @@ func TestEvalPlansKeepRunDataSeparate(t *testing.T) {
 			goadsl.Description("Evaluates the first flow.")
 			goadsl.Timeout("1m")
 			evaldsl.Scenario("run_first", func() {
+				evaldsl.Observation(goadsl.String)
+				evaldsl.Check("valid", "Checks the captured value.")
 				goadsl.Description("Runs the first flow.")
 			})
 		})
@@ -297,6 +321,8 @@ func TestEvalPlansKeepRunDataSeparate(t *testing.T) {
 			goadsl.Description("Evaluates the second flow.")
 			goadsl.Timeout("1m")
 			evaldsl.Scenario("run_second", func() {
+				evaldsl.Observation(goadsl.String)
+				evaldsl.Check("valid", "Checks the captured value.")
 				goadsl.Description("Runs the second flow.")
 			})
 		})
@@ -343,6 +369,8 @@ func TestEvalPlanCopiesSuiteFacts(t *testing.T) {
 			goadsl.Description("Evaluates a stable flow.")
 			goadsl.Timeout("1m")
 			evaldsl.Scenario("before", func() {
+				evaldsl.Observation(goadsl.String)
+				evaldsl.Check("valid", "Checks the captured value.")
 				goadsl.Description("Runs before the change.")
 			})
 		})
@@ -376,6 +404,8 @@ func TestEvalPlanUsesPackageNamesChosenAfterPlanning(t *testing.T) {
 			goadsl.Description("Evaluates package claims.")
 			goadsl.Timeout("1m")
 			evaldsl.Scenario("run", func() {
+				evaldsl.Observation(goadsl.String)
+				evaldsl.Check("valid", "Checks the captured value.")
 				goadsl.Description("Runs the claim check.")
 				evaldsl.Input(input)
 			})
@@ -422,6 +452,8 @@ func TestEvalSuiteUsesGoaImportNames(t *testing.T) {
 			goadsl.Description("Evaluates imported values.")
 			goadsl.Timeout("1m")
 			evaldsl.Scenario("run", func() {
+				evaldsl.Observation(goadsl.String)
+				evaldsl.Check("valid", "Checks the captured value.")
 				goadsl.Description("Runs one imported value.")
 				evaldsl.Input(input)
 			})
@@ -429,7 +461,7 @@ func TestEvalSuiteUsesGoaImportNames(t *testing.T) {
 	})
 
 	files := generateEvalFiles(t, roots, false)
-	require.Len(t, files, 1)
+	require.Len(t, files, 2)
 	content := render(t, files[0])
 	assert.Contains(t, content, `"fmt"`)
 	assert.Contains(t, content, `fmt2 "example.com/custom/fmt"`)
@@ -444,6 +476,10 @@ func TestEvalSuiteUsesGoaImportNames(t *testing.T) {
 		[]byte(content),
 		0o600,
 	))
+	for _, generated := range files[1:] {
+		_, err := generated.Render(root)
+		require.NoError(t, err)
+	}
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "custom", "fmt"), 0o700))
 	require.NoError(t, os.WriteFile(
 		filepath.Join(root, "custom", "fmt", "value.go"),
@@ -472,6 +508,8 @@ func TestEvalExamplePlanUsesPackageNamesChosenAfterPlanning(t *testing.T) {
 			goadsl.Description("Evaluates command package claims.")
 			goadsl.Timeout("1m")
 			evaldsl.Scenario("run", func() {
+				evaldsl.Observation(goadsl.String)
+				evaldsl.Check("valid", "Checks the captured value.")
 				goadsl.Description("Runs the command claim check.")
 			})
 		})

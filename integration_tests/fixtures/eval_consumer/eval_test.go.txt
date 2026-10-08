@@ -1,10 +1,13 @@
-// Package evalconsumer implements and runs the hook interface generated from
-// the fixture design, proving the complete downstream consumption contract.
+// Package evalconsumer exercises generated capture and offline assessment in a
+// downstream application. Every product response and semantic decision is synthetic.
 package evalconsumer
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"sync/atomic"
 	"testing"
 
 	genevals "example.com/evalconsumer/gen/evals/assistant_quality"
@@ -14,88 +17,103 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-type hooks struct{}
-
-type judge struct{}
-
-func (judge) Judge(_ context.Context, output string, claims []aieval.Claim, _ string) ([]aieval.Judgment, error) {
-	judgments := make([]aieval.Judgment, len(claims))
-	for index, claim := range claims {
-		var label aieval.Label
-		switch {
-		case output == "The pump is running. Two readings at the same time disagree about whether the fan is running." &&
-			claim.Text == "The pump is running.":
-			label = aieval.Entailed
-		case output == "The pump is running. Two readings at the same time disagree about whether the fan is running." &&
-			claim.Text == "The pump is stopped.":
-			label = aieval.Contradicted
-		case output == "The pump is running. Two readings at the same time disagree about whether the fan is running." &&
-			claim.Text == "The compressor is running.":
-			label = aieval.NotAddressed
-		case output == "The pump is running. Two readings at the same time disagree about whether the fan is running." &&
-			claim.Text == "The fan is running.":
-			label = aieval.Indeterminate
-		case output == "Record summary complete." &&
-			claim.Text == "The response includes a record summary.":
-			label = aieval.Entailed
-		default:
-			return nil, fmt.Errorf("fixture judge received unknown semantic claim %q", claim.ID)
-		}
-		judgments[index] = aieval.Judgment{
-			ClaimID:   claim.ID,
-			Label:     label,
-			Rationale: "Deterministic fixture judgment.",
-		}
+type (
+	hooks struct {
+		checks
+		captures *atomic.Int64
 	}
-	return judgments, nil
+	checks struct{}
+	reasoner struct{}
+)
+
+func (reasoner) Config() aieval.EvaluatorConfig {
+	return aieval.EvaluatorConfig{ID: "fixture", Model: "synthetic-1", Instructions: "Scripted fixture decisions."}
 }
 
-func (hooks) RecordSummary(context.Context, *genevals.QueryEvalInput) (aieval.Result, error) {
-	return aieval.Result{
-		Checks: []aieval.Check{{
-			Name:   "record_summary",
-			Passed: true,
-		}},
-		Claims: []aieval.Claim{{
-			ID:   "response_includes_summary",
-			Text: "The response includes a record summary.",
-		}},
-		Output: "Record summary complete.",
-	}, nil
+func (reasoner) Reason(_ context.Context, subject string, claims []aieval.Claim, reference string) (aieval.Reasoning, error) {
+	result := aieval.Reasoning{}
+	for _, claim := range claims {
+		if subject != "Record summary complete." || claim.Text != "The response includes a record summary." || reference == "" {
+			return result, fmt.Errorf("fixture received unexpected evidence for %q", claim.ID)
+		}
+		result.Judgments = append(result.Judgments, aieval.Judgment{
+			ClaimID: claim.ID, Label: aieval.Entailed, Rationale: "Scripted fixture decision.",
+		})
+	}
+	return result, nil
 }
 
-func (hooks) SavedQueryReplay(context.Context, *genevals.SavedQueryEvalInput) (aieval.Result, error) {
-	return aieval.Result{
-		Checks: []aieval.Check{{
-			Name:   "saved_query_replay",
-			Passed: true,
-		}},
-	}, nil
+func (reasoner) Adjudicate(context.Context, string, []aieval.Claim, string, []aieval.Disagreement) (aieval.Reasoning, error) {
+	return aieval.Reasoning{}, errors.New("unexpected fixture adjudication")
 }
 
-func TestGeneratedSuite(t *testing.T) {
-	runner, err := aieval.NewRunner(judge{}, aieval.RunnerConfig{MaxConcurrency: 2})
+func (h hooks) RecordSummary(_ context.Context, input *genevals.QueryEvalInput) (*genevals.QueryObservation, error) {
+	h.captures.Add(1)
+	return &genevals.QueryObservation{Query: input.Query, Answer: "Record summary complete."}, nil
+}
+
+func (h hooks) SavedQueryReplay(context.Context, *genevals.SavedQueryEvalInput) (genevals.SavedQueryReplayObservation, error) {
+	h.captures.Add(1)
+	return genevals.SavedQueryReplayObservation(true), nil
+}
+
+func (checks) CheckRecordSummaryQuerySent(observed *genevals.QueryObservation) string {
+	if observed.Query == "" {
+		return "The recorded query is empty."
+	}
+	return ""
+}
+
+func (checks) CheckSavedQueryReplayCompleted(observed genevals.SavedQueryReplayObservation) string {
+	if !observed {
+		return "The saved query did not complete."
+	}
+	return ""
+}
+
+func TestGeneratedCaptureAndOfflineAssessment(t *testing.T) {
+	engine, err := aieval.NewReasoningEngine(reasoner{})
 	require.NoError(t, err)
-
-	suite, err := genevals.New(hooks{}, genevals.Inputs{
-		RecordSummary: &genevals.QueryEvalInput{
-			Query: "Summarize the matching records.",
-		},
-		SavedQueryReplay: &genevals.SavedQueryEvalInput{
-			SavedQueryID: "00000000-0000-4000-8000-000000000004",
-		},
+	runner, err := aieval.NewRunner(engine, aieval.RunnerConfig{MaxConcurrency: 2})
+	require.NoError(t, err)
+	var captures atomic.Int64
+	suite, err := genevals.New(hooks{captures: &captures}, genevals.Inputs{
+		RecordSummary: &genevals.QueryEvalInput{Query: "Summarize the matching records."},
+		SavedQueryReplay: &genevals.SavedQueryEvalInput{SavedQueryID: "00000000-0000-4000-8000-000000000004"},
 	})
 	require.NoError(t, err)
-	report, err := runner.RunScenarios(
-		context.Background(),
-		suite,
-		"record_summary",
-		"saved_query_replay",
-	)
-
+	archive, report, err := runner.RunScenarios(t.Context(), suite, "record_summary", "saved_query_replay")
 	require.NoError(t, err)
 	assert.True(t, report.Passed)
 	assert.Len(t, report.Scenarios, 2)
+	assert.EqualValues(t, 2, captures.Load())
 	assert.NotNil(t, genevals.MustToolContract(tools.Ident("assistant_tools.answer")))
 	assert.NotNil(t, genevals.MustToolContract(tools.Ident("records.lookup")))
+
+	var stored bytes.Buffer
+	_, err = archive.WriteTo(&stored)
+	require.NoError(t, err)
+	loaded, err := aieval.ReadArchive(&stored)
+	require.NoError(t, err)
+	offline, err := genevals.ForAssessment(checks{})
+	require.NoError(t, err)
+	replayed, err := runner.Assess(t.Context(), offline, loaded)
+	require.NoError(t, err)
+	assert.True(t, replayed.Passed)
+	assert.Equal(t, archive.ID, replayed.ArchiveID)
+	assert.NotEqual(t, report.ID, replayed.ID)
+	assert.EqualValues(t, 2, captures.Load())
+	assert.NoError(t, replayed.Validate())
+}
+
+func TestEmptyAnswerIsCapturedForItsDeclaredRequirement(t *testing.T) {
+	suite, err := genevals.ForAssessment(checks{})
+	require.NoError(t, err)
+	binding, err := suite.Scenarios[0].Bind([]byte(`{"query":"Summarize records.","answer":""}`))
+	require.NoError(t, err)
+	assert.True(t, binding.Checks[0].Passed)
+	require.Len(t, binding.Subjects["assistant_quality/record_summary/response_includes_summary"], 1)
+	assert.Empty(t, binding.Subjects["assistant_quality/record_summary/response_includes_summary"][0].Content)
+	_, err = suite.Scenarios[0].Bind([]byte(`{"query":"Summarize records.","answer":"","invented":true}`))
+	assert.Error(t, err)
 }

@@ -79,6 +79,45 @@ type (
 
 const judgmentTransportModel = "anthropic.claude-opus-5"
 
+func TestReasonAnthropicHTTPPreservesScopedIDsWithPrivateSchemaNames(t *testing.T) {
+	transport := &judgmentHTTPTransport{
+		t: t, arguments: `{"claim_2":{"label":"unresolved","rationale":"The unit is unknown."},"claim_1":{"label":"entailed","rationale":"The reading is present."}}`,
+		stopReason: "tool_use", outputTokens: 20,
+	}
+	client, _ := newJudgmentHTTPClient(t, transport)
+	evaluator, err := judge.NewAutomatic(client, 32768)
+	require.NoError(t, err)
+	claims := []aieval.Claim{
+		{ID: "measurement/sample/reading", Text: "The output includes the reading."},
+		{ID: "measurement/" + strings.Repeat("温度", 30), Text: "The output includes the unit."},
+	}
+	result, err := evaluator.Reason(t.Context(), "Reading: 12.", claims, "Reading: 12 °C.")
+	require.NoError(t, err)
+	assert.Equal(t, []aieval.Judgment{{ClaimID: claims[0].ID, Label: aieval.Entailed, Rationale: "The reading is present."}}, result.Judgments)
+	assert.Equal(t, []aieval.Abstention{{ClaimID: claims[1].ID, Reason: "The unit is unknown."}}, result.Abstentions)
+	require.Len(t, transport.requests, 1)
+	request := transport.requests[0]
+	assert.Empty(t, request.body.ToolChoice.Type, "the adapter selects automatic tool choice by omitting the override")
+	require.Len(t, request.body.Tools, 1)
+	var schema struct {
+		Required   []string `json:"required"`
+		Properties map[string]struct {
+			Description string `json:"description"`
+		} `json:"properties"`
+	}
+	require.NoError(t, json.Unmarshal(request.body.Tools[0].InputSchema, &schema))
+	assert.Equal(t, []string{"claim_1", "claim_2"}, schema.Required)
+	require.Len(t, schema.Properties, 2)
+	assert.Equal(t, claims[0].Text, schema.Properties["claim_1"].Description)
+	assert.Equal(t, claims[1].Text, schema.Properties["claim_2"].Description)
+	for _, key := range schema.Required {
+		assert.Regexp(t, `^[a-zA-Z0-9_.-]{1,64}$`, key)
+	}
+	require.Len(t, result.Calls, 1)
+	require.NotNil(t, result.Calls[0].Usage)
+	assert.Equal(t, judgmentTransportModel, result.Calls[0].Usage.Model)
+}
+
 func TestJudgeAnthropicHTTPOutputAllowance(t *testing.T) {
 	for _, test := range []struct {
 		cap    int
