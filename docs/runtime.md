@@ -3409,10 +3409,19 @@ reg := runtime.NewAgentToolsetRegistration(runtime.AgentToolConfig{
 
 ### ToolCallMeta
 
+Generated injection functions and executors use `tools.ToolCallMeta` from
+`goa.design/goa-ai/runtime/agent/tools`. This package does not import the agent
+engine or model adapters. `runtime.ToolCallMeta` remains an alias, so existing
+local executors can pass their metadata to regenerated injection functions.
+Upgrade Goa-AI and regenerate to remove the engine import from existing
+`provider.go` and `inject.go` files. Fields, JSON encoding, validation, and
+registry messages do not change.
+
 Executors receive explicit per-call metadata:
 
 ```go
 type ToolCallMeta struct {
+    TextOnly         bool    // Whether this call must avoid UI interaction
     RunID            string  // Workflow execution identifier
     SessionID        string  // Logical session grouping
     TurnID           string  // Conversational turn identifier
@@ -3448,7 +3457,7 @@ the labels map itself.
    injection supplies a string and the replacement type defines no general
    string conversion contract.
 2. Codegen time: each name is classified against the fixed
-   `runtime.ToolCallMeta` field set (`sessionId`/`session_id` -> `SessionID`,
+   `tools.ToolCallMeta` field set (`sessionId`/`session_id` -> `SessionID`,
    `runId`/`run_id` -> `RunID`, `turnId`/`turn_id` -> `TurnID`,
    `toolCallId`/`tool_call_id` -> `ToolCallID`,
    `parentToolCallId`/`parent_tool_call_id` -> `ParentToolCallID`). A match is
@@ -3458,7 +3467,7 @@ the labels map itself.
    generated tool input keeps the required field, and injection fills it after
    the model-visible JSON is decoded. Each toolset's `inject.go` (beside its
    `codecs.go`/`specs.go`) gets
-   one generated `Inject<Tool>(p *<Tool>Payload, meta runtime.ToolCallMeta,
+   one generated `Inject<Tool>(p *<Tool>Payload, meta tools.ToolCallMeta,
    labels map[string]string) error` function per injecting tool: meta-backed
    fields read from `meta`; label-backed fields look the key up in `labels`.
    Both sources run the field's declared Goa validation before assignment and
@@ -3479,7 +3488,7 @@ the labels map itself.
    - Custom (hand-written) `ToolCallExecutor`s -- for tools with no `BindTo`,
      registered directly with the runtime -- have no generated call site.
      **Use the toolset's generated `Decode<Tool>(payload []byte, meta
-     runtime.ToolCallMeta, labels map[string]string) (*<Tool>Payload, error)`
+     tools.ToolCallMeta, labels map[string]string) (*<Tool>Payload, error)`
      function to decode these tools' payloads**, not the raw
    `<Tool>PayloadCodec.FromJSON` followed by a manual `Inject<Tool>` call.
      `Decode<Tool>` composes both in one call; decoding with the codec alone

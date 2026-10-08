@@ -26,14 +26,14 @@ func TestInjectBoundToolUsesGeneratedContext(t *testing.T) {
 	files := buildWithPrepare(t, testscenarios.InjectBoundMetaExample())
 
 	inject := fileContent(t, files, "gen/catalog/toolsets/helpers/inject.go")
-	require.Contains(t, inject, "func InjectGetData(p *GetDataPayload, meta runtime.ToolCallMeta, labels map[string]string) error {")
+	require.Contains(t, inject, "func InjectGetData(p *GetDataPayload, meta tools.ToolCallMeta, labels map[string]string) error {")
 	require.Contains(t, inject, "v := meta.SessionID")
 	require.Contains(t, inject, `v, ok := labels["household_id"]`)
 	require.Contains(t, inject, `goa.InvalidLengthError("household_id", v, utf8.RuneCountInString(v), 8, true)`)
 	require.Contains(t, inject, "p.SessionID = v",
 		"the runtime fills the required public tool input after model JSON is decoded")
 	require.Contains(t, inject, `goa.InvalidLengthError("session_id", v, utf8.RuneCountInString(v), 8, true)`)
-	require.Contains(t, inject, "func DecodeGetData(payload []byte, meta runtime.ToolCallMeta, labels map[string]string) (*GetDataPayload, error) {",
+	require.Contains(t, inject, "func DecodeGetData(payload []byte, meta tools.ToolCallMeta, labels map[string]string) (*GetDataPayload, error) {",
 		"the composed decode helper must exist beside Inject<Tool> for custom executors")
 	require.Contains(t, inject, "p, err := GetDataPayloadCodec().FromJSON(payload)")
 	require.Contains(t, inject, "if err := InjectGetData(p, meta, labels); err != nil {")
@@ -41,7 +41,7 @@ func TestInjectBoundToolUsesGeneratedContext(t *testing.T) {
 	provider := fileContent(t, files, "gen/catalog/toolsets/helpers/provider.go")
 	require.NotContains(t, provider, "methodIn.SessionID = msg.Meta.SessionID",
 		"provider.go must retire its own inline meta assignment in favor of the shared Inject<Tool> function")
-	require.Contains(t, provider, "meta := runtime.ToolCallMeta{")
+	require.Contains(t, provider, "meta := tools.ToolCallMeta{")
 	require.Contains(t, provider, "Labels:           msg.Meta.Labels,")
 	require.Contains(t, provider, "if err := InjectGetData(args, meta, meta.Labels); err != nil {",
 		"registry-served bound tools receive the same immutable run labels as local executors")
@@ -93,7 +93,7 @@ func TestInjectLabelBackedWithValidation(t *testing.T) {
 	files := buildWithPrepare(t, testscenarios.InjectLabelExample())
 
 	inject := fileContent(t, files, "gen/calc/toolsets/helpers/inject.go")
-	require.Contains(t, inject, "func InjectLookupHousehold(p *LookupHouseholdPayload, meta runtime.ToolCallMeta, labels map[string]string) error {")
+	require.Contains(t, inject, "func InjectLookupHousehold(p *LookupHouseholdPayload, meta tools.ToolCallMeta, labels map[string]string) error {")
 	require.Contains(t, inject, `v, ok := labels["household_id"]`)
 	require.Contains(t, inject, `return fmt.Errorf("tool %q: required label %q is missing; call WithLabels(%q, ...) at run start", "helpers.lookup_household", "household_id", "household_id")`)
 	require.Contains(t, inject, `goa.ValidatePattern("household_id", v, "^[a-z0-9-]+$")`)
@@ -101,7 +101,7 @@ func TestInjectLabelBackedWithValidation(t *testing.T) {
 		"the runtime fills the required public tool input after model JSON is decoded")
 	require.Contains(t, inject, "v := meta.SessionID", "mixed tool: session_id stays meta-backed alongside the label-backed field")
 	require.Contains(t, inject, "p.SessionID = v")
-	require.Contains(t, inject, "func DecodeLookupHousehold(payload []byte, meta runtime.ToolCallMeta, labels map[string]string) (*LookupHouseholdPayload, error) {",
+	require.Contains(t, inject, "func DecodeLookupHousehold(payload []byte, meta tools.ToolCallMeta, labels map[string]string) (*LookupHouseholdPayload, error) {",
 		"the composed decode helper must exist for unbound (custom-executor-eligible) injecting tools too")
 
 	codecs := fileContent(t, files, "gen/calc/toolsets/helpers/codecs.go")
@@ -188,7 +188,7 @@ func TestInjectMixedBoundUnboundProviderScopesMeta(t *testing.T) {
 	files := buildWithPrepare(t, testscenarios.InjectMixedBoundUnboundExample())
 
 	provider := fileContent(t, files, "gen/catalog/toolsets/helpers/provider.go")
-	require.NotContains(t, provider, "meta := runtime.ToolCallMeta{",
+	require.NotContains(t, provider, "meta := tools.ToolCallMeta{",
 		"no method-backed tool injects, so provider.go must not declare meta")
 	require.Contains(t, provider, "ctx = run.WithTextOnlyContext(ctx, msg.Meta != nil && msg.Meta.TextOnly)",
 		"every provider passes the accepted execution policy to the service")
@@ -197,5 +197,5 @@ func TestInjectMixedBoundUnboundProviderScopesMeta(t *testing.T) {
 
 	// The unbound tool's compiled injection still exists for local executors.
 	inject := fileContent(t, files, "gen/catalog/toolsets/helpers/inject.go")
-	require.Contains(t, inject, "func InjectLookupHousehold(p *LookupHouseholdPayload, meta runtime.ToolCallMeta, labels map[string]string) error {")
+	require.Contains(t, inject, "func InjectLookupHousehold(p *LookupHouseholdPayload, meta tools.ToolCallMeta, labels map[string]string) error {")
 }
