@@ -1332,6 +1332,13 @@ provider contact or health tracker and creates no provider lease, stream, or
 ping. The existing catalog scheduler still observes its presence and may report
 it unavailable under the normal sampling lease.
 
+`ReplaceServiceToolset` compares the current registration and saves a complete
+replacement only after every old provider lease has ended. A stable replacement
+request ID lets repeated requests return the saved winner without a journal.
+The old service token is permanently retired; fresh attachment establishes
+availability for the replacement. The [service publication contract](docs/runtime.md#service-declarations-before-provider-startup)
+defines errors, replay, reactivation, rollback, and client upgrade steps.
+
 `AttachProvider` requires the exact existing name and token, a stable provider ID,
 a lifecycle incarnation, and the current wire version. Its conditional write
 changes only leases and health. It preserves longer deadlines, rejects draining
@@ -1482,7 +1489,7 @@ completion still check the exact lease in the same Redis operation that records
 their effects.
 
 Application owners may call the explicit `WithIdentity` variants of Register,
-DeclareServiceToolset, RegisterAgentToolset and ReplaceAgentToolset. These share
+DeclareServiceToolset, ReplaceServiceToolset, RegisterAgentToolset and ReplaceAgentToolset. These share
 the existing compiler and catalog commit. Identity is immutable, is not part of
 the declaration fingerprint, and cannot be introduced by an ordinary retry.
 Existing identity-free registration remains supported. Assignment to historical

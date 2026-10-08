@@ -333,3 +333,45 @@ func TestRedisAttachmentGeneratedValidationAndSavedCompatibility(t *testing.T) {
 	_, err = client.AttachProvider(ctx, payload)
 	requireServiceErrorName(t, err, "admission_retired")
 }
+
+// TestRedisServiceReplacementGeneratedGRPC verifies durable replay across
+// service instances and rejection of updates until the old lease is released.
+func TestRedisServiceReplacementGeneratedGRPC(t *testing.T) {
+	rdb := getRedis(t)
+	ctx := t.Context()
+	store := newRedisCatalogStore(rdb, t.Name())
+	clock := newRedisTimeSource(rdb)
+	svc := &Service{catalog: newToolsetCatalog(store, clock), validator: newSchemaValidator()}
+	client, _ := startServiceAndClients(t, svc)
+	first, err := client.DeclareServiceToolset(ctx, testServiceDeclaration())
+	require.NoError(t, err)
+	_, err = svc.catalog.AttachProvider(ctx, first.Toolset.Name, first.RegistrationToken, "provider", testIncarnationA, time.Minute)
+	require.NoError(t, err)
+	require.NoError(t, svc.catalog.DrainProvider(ctx, first.Toolset.Name, "provider", testIncarnationA, first.RegistrationToken, time.Minute))
+	request := serviceReplacementRequest(testServiceDeclaration(), first.RegistrationToken)
+	changedVersion := genregistry.SemVer("2.0.0")
+	request.Version = &changedVersion
+	_, err = client.ReplaceServiceToolset(ctx, request)
+	requireServiceErrorName(t, err, "admission_blocked")
+	require.NoError(t, svc.catalog.ReleaseProvider(ctx, first.Toolset.Name, "provider", testIncarnationA, first.RegistrationToken))
+	second, err := client.ReplaceServiceToolset(ctx, request)
+	require.NoError(t, err)
+	assert.NotEqual(t, first.RegistrationToken, second.RegistrationToken)
+	restarted := &Service{catalog: newToolsetCatalog(store, clock), validator: newSchemaValidator()}
+	require.NoError(t, restarted.catalog.validatePersistedEntries(ctx))
+	client2, _ := startServiceAndClients(t, restarted)
+	replayed, err := client2.ReplaceServiceToolset(ctx, request)
+	require.NoError(t, err)
+	assert.Equal(t, second, replayed)
+	_, err = client.ReplaceServiceToolset(ctx, serviceReplacementRequest(testServiceDeclaration(), first.RegistrationToken))
+	requireServiceErrorName(t, err, "admission_conflict")
+	_, err = svc.catalog.AttachProvider(ctx, first.Toolset.Name, first.RegistrationToken, "late-provider", testIncarnationB, time.Minute)
+	assert.ErrorIs(t, err, errAdmissionRetired)
+	require.NoError(t, svc.catalog.Retire(ctx, first.Toolset.Name, second.RegistrationToken))
+	_, err = client.ReplaceServiceToolset(ctx, request)
+	requireServiceErrorName(t, err, "admission_retired")
+	restored, err := client.ReplaceServiceToolset(ctx, serviceReplacementRequest(testServiceDeclaration(), second.RegistrationToken))
+	require.NoError(t, err)
+	assert.NotEqual(t, first.RegistrationToken, restored.RegistrationToken)
+	assert.NotEqual(t, second.RegistrationToken, restored.RegistrationToken)
+}

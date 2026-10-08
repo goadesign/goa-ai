@@ -27,6 +27,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	Registry_DeclareServiceToolset_FullMethodName  = "/goa_ai_registry.Registry/DeclareServiceToolset"
+	Registry_ReplaceServiceToolset_FullMethodName  = "/goa_ai_registry.Registry/ReplaceServiceToolset"
 	Registry_AttachProvider_FullMethodName         = "/goa_ai_registry.Registry/AttachProvider"
 	Registry_Register_FullMethodName               = "/goa_ai_registry.Registry/Register"
 	Registry_RenewProvider_FullMethodName          = "/goa_ai_registry.Registry/RenewProvider"
@@ -66,6 +67,17 @@ type RegistryClient interface {
 	// admission_conflict. A retired service declaration returns admission_retired.
 	// Declaration does not create a provider lease or establish health.
 	DeclareServiceToolset(ctx context.Context, in *DeclareServiceToolsetRequest, opts ...grpc.CallOption) (*DeclareServiceToolsetResponse, error)
+	// Replace or reactivate the expected service declaration after every old
+	// provider lease has released or expired. The replacement ID identifies this
+	// update of the expected registration; reuse it with the same complete
+	// declaration after an uncertain reply. An already-current matching
+	// replacement returns its saved definition, token, and time. A stale expected
+	// token, native Agent occupancy, or changed replacement intent conflicts. Live
+	// leases, including draining leases, return admission_blocked without
+	// replacing the declaration. Replacement permanently retires the previous
+	// service token, creates no provider lease, and requires new providers to
+	// attach and establish health.
+	ReplaceServiceToolset(ctx context.Context, in *ReplaceServiceToolsetRequest, opts ...grpc.CallOption) (*ReplaceServiceToolsetResponse, error)
 	// Attach one provider incarnation to the exact existing service registration
 	// without sending or changing its definition. The expected token and current
 	// wire protocol are required. Missing, different, or native Agent
@@ -220,6 +232,16 @@ func (c *registryClient) DeclareServiceToolset(ctx context.Context, in *DeclareS
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(DeclareServiceToolsetResponse)
 	err := c.cc.Invoke(ctx, Registry_DeclareServiceToolset_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *registryClient) ReplaceServiceToolset(ctx context.Context, in *ReplaceServiceToolsetRequest, opts ...grpc.CallOption) (*ReplaceServiceToolsetResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(ReplaceServiceToolsetResponse)
+	err := c.cc.Invoke(ctx, Registry_ReplaceServiceToolset_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -452,6 +474,17 @@ type RegistryServer interface {
 	// admission_conflict. A retired service declaration returns admission_retired.
 	// Declaration does not create a provider lease or establish health.
 	DeclareServiceToolset(context.Context, *DeclareServiceToolsetRequest) (*DeclareServiceToolsetResponse, error)
+	// Replace or reactivate the expected service declaration after every old
+	// provider lease has released or expired. The replacement ID identifies this
+	// update of the expected registration; reuse it with the same complete
+	// declaration after an uncertain reply. An already-current matching
+	// replacement returns its saved definition, token, and time. A stale expected
+	// token, native Agent occupancy, or changed replacement intent conflicts. Live
+	// leases, including draining leases, return admission_blocked without
+	// replacing the declaration. Replacement permanently retires the previous
+	// service token, creates no provider lease, and requires new providers to
+	// attach and establish health.
+	ReplaceServiceToolset(context.Context, *ReplaceServiceToolsetRequest) (*ReplaceServiceToolsetResponse, error)
 	// Attach one provider incarnation to the exact existing service registration
 	// without sending or changing its definition. The expected token and current
 	// wire protocol are required. Missing, different, or native Agent
@@ -605,6 +638,9 @@ type UnimplementedRegistryServer struct{}
 func (UnimplementedRegistryServer) DeclareServiceToolset(context.Context, *DeclareServiceToolsetRequest) (*DeclareServiceToolsetResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method DeclareServiceToolset not implemented")
 }
+func (UnimplementedRegistryServer) ReplaceServiceToolset(context.Context, *ReplaceServiceToolsetRequest) (*ReplaceServiceToolsetResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method ReplaceServiceToolset not implemented")
+}
 func (UnimplementedRegistryServer) AttachProvider(context.Context, *AttachProviderRequest) (*AttachProviderResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method AttachProvider not implemented")
 }
@@ -703,6 +739,24 @@ func _Registry_DeclareServiceToolset_Handler(srv interface{}, ctx context.Contex
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(RegistryServer).DeclareServiceToolset(ctx, req.(*DeclareServiceToolsetRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Registry_ReplaceServiceToolset_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ReplaceServiceToolsetRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RegistryServer).ReplaceServiceToolset(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Registry_ReplaceServiceToolset_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RegistryServer).ReplaceServiceToolset(ctx, req.(*ReplaceServiceToolsetRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1095,6 +1149,10 @@ var Registry_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeclareServiceToolset",
 			Handler:    _Registry_DeclareServiceToolset_Handler,
+		},
+		{
+			MethodName: "ReplaceServiceToolset",
+			Handler:    _Registry_ReplaceServiceToolset_Handler,
 		},
 		{
 			MethodName: "AttachProvider",

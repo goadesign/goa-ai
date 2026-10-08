@@ -16,6 +16,7 @@ import (
 // Client is the "registry" service client.
 type Client struct {
 	DeclareServiceToolsetEndpoint  goa.Endpoint
+	ReplaceServiceToolsetEndpoint  goa.Endpoint
 	AttachProviderEndpoint         goa.Endpoint
 	RegisterEndpoint               goa.Endpoint
 	RenewProviderEndpoint          goa.Endpoint
@@ -40,9 +41,10 @@ type Client struct {
 }
 
 // NewClient initializes a "registry" service client given the endpoints.
-func NewClient(declareServiceToolset, attachProvider, register, renewProvider, releaseProvider, drainProvider, unregister, pong, registerAgentToolset, replaceAgentToolset, listToolsets, getToolset, resolveToolset, checkAdmission, search, callTool, callResolvedTool, retryTool, completeToolCall, publishToolOutputDelta, reportToolCallOverload, claimToolCall goa.Endpoint) *Client {
+func NewClient(declareServiceToolset, replaceServiceToolset, attachProvider, register, renewProvider, releaseProvider, drainProvider, unregister, pong, registerAgentToolset, replaceAgentToolset, listToolsets, getToolset, resolveToolset, checkAdmission, search, callTool, callResolvedTool, retryTool, completeToolCall, publishToolOutputDelta, reportToolCallOverload, claimToolCall goa.Endpoint) *Client {
 	return &Client{
 		DeclareServiceToolsetEndpoint:  declareServiceToolset,
+		ReplaceServiceToolsetEndpoint:  replaceServiceToolset,
 		AttachProviderEndpoint:         attachProvider,
 		RegisterEndpoint:               register,
 		RenewProviderEndpoint:          renewProvider,
@@ -78,6 +80,24 @@ func NewClient(declareServiceToolset, attachProvider, register, renewProvider, r
 func (c *Client) DeclareServiceToolset(ctx context.Context, p *ServiceToolsetDeclaration) (res *ResolvedToolset, err error) {
 	var ires any
 	ires, err = c.DeclareServiceToolsetEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*ResolvedToolset), nil
+}
+
+// ReplaceServiceToolset calls the "ReplaceServiceToolset" endpoint of the
+// "registry" service.
+// ReplaceServiceToolset may return the following errors:
+//   - "admission_blocked" (type *goa.ServiceError): Another admission still has active provider leases
+//   - "admission_conflict" (type *goa.ServiceError): The expected admission token does not match the catalog record
+//   - "admission_retired" (type *goa.ServiceError): The requested admission was intentionally retired
+//   - "validation_error" (type *goa.ServiceError): Payload validation failed
+//   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
+//   - error: internal error
+func (c *Client) ReplaceServiceToolset(ctx context.Context, p *ReplaceServiceToolsetPayload) (res *ResolvedToolset, err error) {
+	var ires any
+	ires, err = c.ReplaceServiceToolsetEndpoint(ctx, p)
 	if err != nil {
 		return
 	}

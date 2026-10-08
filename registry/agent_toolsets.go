@@ -67,7 +67,7 @@ func (s *Service) LookupAgentToolsetRegistration(ctx context.Context, identity C
 	if err := checkAgentRegistration(current, owned, nativeAgentToken(definition.fingerprint), ""); err != nil {
 		return nil, false, genregistry.MakeAdmissionConflict(err)
 	}
-	saved, err := resolvedAgentRegistration(definition, current)
+	saved, err := resolvedToolsetRegistration(definition, current)
 	if err != nil {
 		return nil, false, err
 	}
@@ -127,7 +127,7 @@ func (s *Service) registerAgentToolset(ctx context.Context, toolset *genregistry
 		}
 		return nil, genregistry.MakeServiceUnavailable(err)
 	}
-	return resolvedAgentRegistration(definition, state)
+	return resolvedToolsetRegistration(definition, state)
 }
 
 // prepareAgentToolset applies registration's schema and native-tool checks to
@@ -151,9 +151,10 @@ func (s *Service) prepareAgentToolset(toolset *genregistry.Toolset, identity *Ca
 	return definition, nil
 }
 
-// resolvedAgentRegistration returns a separate copy of the matching declaration
-// with the saved token and time. It does not rewrite stored definition bytes.
-func resolvedAgentRegistration(definition *catalogToolset, state catalogState) (*genregistry.ResolvedToolset, error) {
+// resolvedToolsetRegistration decodes the selected saved declaration into a
+// separate response with its registration token and time. Callers receive the
+// selected definition without changing its stored bytes.
+func resolvedToolsetRegistration(definition *catalogToolset, state catalogState) (*genregistry.ResolvedToolset, error) {
 	registered, err := definition.decode(state.RegisteredAt)
 	if err != nil {
 		return nil, genregistry.MakeServiceUnavailable(err)

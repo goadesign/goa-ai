@@ -713,6 +713,7 @@ func startServiceAndClients(
 	grpcCli := grpcclient.NewClient(conn)
 	client := genregistry.NewClient(
 		grpcCli.DeclareServiceToolset(),
+		grpcCli.ReplaceServiceToolset(),
 		grpcCli.AttachProvider(),
 		grpcCli.Register(),
 		grpcCli.RenewProvider(),
