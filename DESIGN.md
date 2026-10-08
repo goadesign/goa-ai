@@ -2977,3 +2977,10 @@ Generated executors still do not advertise Tasks: cancellation after a
 suspension, one-successor admission, producer bindings and notifications must
 complete first. Registry protocol 13 and suspension version 13 reject prior
 contracts; providers, consumers and workers must migrate together.
+
+A suspended run owns one admitted successor. The existing atomic start command
+sets `RunMeta.SuccessorRunID` with the new run and its first records. That
+identity never changes and exact retries select the same records. Another
+successor cannot publish a run or child link. The owning store exposes the
+current identity through `LoadRun`; consumers do not scan history to select
+recent work. Each separate child call retains its own continuation chain.

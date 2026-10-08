@@ -3580,3 +3580,27 @@ answers once and completes the original tool once. The shared error package took
 the command including compilation took 11.29 s. Scoped lint reports zero issues.
 No full root suite was repeated. Suspended cancellation, one-successor admission,
 Task producer bindings and notifications remain release gates.
+
+### Atomic continuation admission — 2026-10-07
+
+The shared `Store.StartRootRun` and `StartChildRun` contract now requires one
+successor per suspended predecessor. `RunMeta.SuccessorRunID` is empty before
+admission, written with the successor and first records, and immutable afterward.
+The store owns this fact; neither callers nor cancellation infer a recent run
+from event order. Different successor IDs return `session.ErrRunConflict`
+without run records or child links. Exact retries preserve the selected ID
+after completion. Different child calls remain independent.
+
+The reference store passes competing root starts, child-call ownership, invalid
+predecessors and exact closed retries. Focused store and affected runtime checks
+took 0.542 s and 0.852 s (9.78 s with compilation). The durable store and generated
+caller changes are being composed with current remote main. This strengthens an
+existing start rather than adding a reservation API, scheduler or new persistence
+owner. Every host store must implement the new atomic guarantee at the same
+cutover; the existing incompatible-checkpoint drain remains required.
+
+Admission alone does not finish suspended cancellation or enable generated Task
+advertisement. Cancellation must follow the stored admitted successor and use
+the same restored execution and child-workflow paths to settle accepted Tasks.
+The remaining producer, notifications, dynamic catalog, authorization, Apps,
+Skills and caller/documentation gates remain open.

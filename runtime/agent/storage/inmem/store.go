@@ -732,6 +732,9 @@ func (s *Store) startSessionRun(requestDigest [32]byte, start session.RunStart, 
 		return sessionRunStartResult{}, err
 	}
 	if existing, ok := s.runs[start.RunID]; ok {
+		if start.PredecessorRunID != "" && s.runs[start.PredecessorRunID].SuccessorRunID != start.RunID {
+			return sessionRunStartResult{}, session.ErrRunConflict
+		}
 		if err := s.checkStartDigestLocked(start.RunID, requestDigest); err != nil {
 			return sessionRunStartResult{}, err
 		}
@@ -788,6 +791,17 @@ func (s *Store) startSessionRun(requestDigest [32]byte, start session.RunStart, 
 		if started.EventKey == canceled.EventKey {
 			return sessionRunStartResult{}, errors.New("started and canceled records require different event keys")
 		}
+	}
+	// All ownership and record checks have succeeded. Select this successor
+	// under the same lock that writes its first run and parent-link records.
+	if start.PredecessorRunID != "" {
+		predecessor := s.runs[start.PredecessorRunID]
+		if predecessor.SuccessorRunID != "" {
+			return sessionRunStartResult{}, session.ErrRunConflict
+		}
+		predecessor.SuccessorRunID = start.RunID
+		predecessor.UpdatedAt = time.Now().UTC()
+		s.runs[start.PredecessorRunID] = predecessor
 	}
 	s.runs[start.RunID] = newRunMeta(start, outcome, status)
 	keys := lifecycleRecords{startKind: engineRunStart, requestDigest: requestDigest, start: started.EventKey}

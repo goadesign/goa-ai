@@ -43,6 +43,9 @@ type (
 		// ParentRunID identifies the parent for an agent-as-tool child run.
 		// Root runs leave it empty.
 		ParentRunID string
+		// SuccessorRunID is the one workflow admitted to continue this suspended
+		// run. It is empty until admission and never changes afterward.
+		SuccessorRunID string
 		// Status indicates the current lifecycle state.
 		Status RunStatus
 		// StartOutcome records whether the accepted workflow was allowed to

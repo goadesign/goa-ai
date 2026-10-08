@@ -528,3 +528,9 @@ MIT License (C) Raphael Simon and the [Goa community](https://goa.design).
 Text-only runs use generated tool contracts without interactive rendering or
 confirmation tools. Domain result guidance remains available; declare guidance
 that assumes rendered output with `UIResultReminder(...)`. See [text-only execution](docs/runtime.md#text-only-execution).
+
+Suspended runs now require one atomically admitted successor. Durable runtime
+stores must set `RunMeta.SuccessorRunID` with the successor's first records and
+reject another successor before writing anything. Exact retries preserve that
+choice; regenerate and upgrade each store and its clients together. Suspended
+Task cancellation and complete Task advertisement remain release gates.

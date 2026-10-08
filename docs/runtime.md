@@ -7755,3 +7755,13 @@ responses instead of a structured wait.
 Generated MCP calls omit host input capabilities for these runs. Form, URL and
 state-only unfinished replies fail before suspension, while ordinary calls on
 the same caller retain their configured capabilities.
+
+A suspended predecessor admits one successor through `StartRootRun` or
+`StartChildRun`. The store writes `RunMeta.SuccessorRunID` with the successor's
+first records in the same atomic operation. A different successor receives
+`session.ErrRunConflict` before any run or parent link is written. Exact retries
+retain the admitted ID and records after either run has closed. Separate child
+calls still admit their own successors. This is a required store contract;
+update every durable implementation together with its generated clients.
+Suspended Task cancellation still requires the subsequent execution work and
+does not become available merely because admission is exclusive.

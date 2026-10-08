@@ -46,6 +46,9 @@ type (
 	// tool call, tool name and parent agent from the predecessor's stored link.
 	// The execution parent may change only after the runtime has proved the
 	// first pending child in that parent's accepted continuation checkpoint.
+	// The first valid start also sets the predecessor's SuccessorRunID in the
+	// same atomic write. A different successor is rejected with ErrRunConflict
+	// before any run or record is written. Exact retries keep the chosen ID.
 	// A fresh child still requires its execution parent to be running; exact
 	// closed-start retries select the original records. A failed check writes
 	// nothing. RunStarted stores the
