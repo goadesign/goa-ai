@@ -2151,6 +2151,15 @@ retryable rate-limit or unavailable error, no accepted response or observed
 text/thinking/tool/structured-output chunk, and clean observer, validation,
 usage, context, and shutdown phases. Other failures remain terminal.
 
+Certification does not depend on the configured allowance. The existing
+`ProviderFailure` field contains `*model.ProviderError`: provider, operation,
+HTTP status, kind, code, message, request ID, and retryability remain exact.
+The engine also preserves rendered diagnostic text and whether a cause was
+present, including an empty-text cause. A restored cause carries diagnostic
+text only; provider SDK types and cause identity do not cross this boundary.
+The exclusive successful activity result is the certificate. A provider error
+by itself never authorizes another invocation.
+
 The workflow publishes failed usage, waits on a durable timer, then schedules
 the same planning request as a new single-attempt activity with a new response
 ID. Completed tools and their outputs remain unchanged. Delays grow from about
@@ -2159,14 +2168,65 @@ replay. Cancellation stops waiting. Failed provider work and waits consume the
 separate finite recovery budget; successful work still consumes `TimeBudget`.
 External-input checkpoints retain the exact remaining recovery allowance,
 including zero when exhausted. No additional engine run timeout is introduced.
-Zero disables recovery and preserves existing behavior. Plan activities that
+An allowance owner's zero setting disables recovery. A disabled owner or an
+exhausted allowance returns the typed provider failure without scheduling another
+attempt. Plan activities that
 made multiple model invocations do not receive retry permission.
 
-The added policy and optional checkpoint state preserve older checkpoints whose
-policy disables recovery. Recovery-enabled checkpoints require their matching
+Helpers started by an enabled run share that run's remaining allowance. A helper
+retains its exact failed planning request and reports the completed certificate
+through its actual workflow parents. The allowance owner measures the union of
+completed certified failed-activity intervals and actually entered backoff
+intervals: overlapping elapsed time is counted once. The failed-activity interval
+includes queueing, preparation, model invocation, finalization, and publication;
+it does not claim to measure only provider execution. An initial failure can
+exceed the remaining allowance, which then becomes zero. Successful attempts
+consume active-work time rather than recovery allowance.
+
+A helper with inherited recovery and a default or explicit zero local setting
+uses the parent's allowance; zero is not a helper opt-out. A positive local
+setting additionally caps that helper's own failed activities and entered waits,
+without allocating more time at the owner. Failures forwarded from its
+descendants do not consume that local cap. A positive setting without inherited
+recovery creates a standalone allowance owner, preserving independent runs.
+Checkpoints restore the remaining local cap or owned allowance, including an
+exhausted zero, rather than the original maximum.
+
+Before each recovery wait or attempt, the owner issues a finite permission. A
+permission does not itself spend time or pause a clock, and it cannot be entered
+at or after its expiry. A helper waits for the owner's settlement of that phase
+before asking for another phase or returning a successful retry. Lost replies,
+native timeouts, and ambiguous cleanup never authorize another model invocation.
+Cancellation and a winning deadline remain terminal even if older evidence
+arrives later.
+
+Each runtime reports its own measured pause to its immediate parent. A parent
+waiting for several branches pauses only while every unfinished branch is known
+to be paused. A healthy sibling or unresolved branch keeps that parent's clock
+active. Native wrapper workflows retain descendant pause reports without
+claiming the same interval as their own pause. These reports neither refill the
+recovery allowance nor extend an already-issued permission.
+
+Planner activity outputs use the explicit `json/goa-ai-plan-output-v2`
+encoding. Provider facts, cause text, and the rendered diagnostic share the
+existing aggregate workflow payload budget with all other output fields and
+arguments; they are checked before JSON encoding, without truncation or a
+separate per-error limit. The declared historical `json/plain` reader still
+accepts old normal outputs. An old non-null `run.Failure` certificate lacks the
+canonical facts and is rejected by new workers instead of being reconstructed
+from its summary. Keep those histories and their activity producers on their
+matching retained worker builds. Verify actual workflow/activity routing before
+rollout; worker configuration alone does not prove that isolation. Rollback
+must retain workers capable of reading each already-written format.
+
+Accepted root start bytes, settings, memo values, digests, and checkpoint
+formats are unchanged. The policy and optional checkpoint state preserve older
+checkpoints whose policy disables recovery. Recovery-enabled checkpoints require their matching
 remaining-budget record. New activity records and enabled checkpoints require
 the updated runtime; do not roll their workers or continuations back to an older
-runtime. Workflow version routing and worker retention remain engine-owned.
+runtime. The consuming application owns verified workflow and activity routing
+and retention of matching worker builds. See
+[worker upgrade requirements](#rejected-call-recovery-and-worker-upgrades).
 
 Allowed text and thinking fragments are sent as soon as they arrive
 because delaying or combining them would remove the real-time behavior. Tool
@@ -2351,6 +2411,26 @@ tracker. The existing catalog scheduler may acquire its sampling lease and
 report the disconnected toolset unavailable. Resolution and discovery do
 not imply readiness; `CheckAdmission` still requires a live routable lease and a
 fresh authenticated pong.
+
+`ReplaceServiceToolset` saves a complete replacement against an exact current
+registration token, without attaching a provider. Supply a UUID `replacement_id`
+for this update and keep it unchanged when repeating that same request after a
+lost response. The saved result is returned while that replacement is current;
+changed content or a superseding update conflicts. Live old leases, including
+leases retained during graceful shutdown, return `admission_blocked` without
+accepting the update. Stop old providers, let their calls settle, and release
+all their leases before retrying. Attachment or renewal racing the update is
+checked by the same atomic catalog write.
+
+An accepted replacement permanently retires the old service token and returns
+a fresh token and registration time, with no provider lease or authenticated
+pong. Attach the new providers to that returned registration. A rollback is
+another replacement with a new request ID, even when restoring an old schema.
+A retired service can be reactivated through this explicit operation; initial
+declaration still cannot reclaim it. Existing published calls never move to
+the replacement. The operation reuses current storage and wire encoding. Upgrade
+registry servers before calling it; regenerated positional `NewClient` calls
+must include its endpoint after `DeclareServiceToolset`.
 
 To connect a provider to that declaration, capture its exact token in the
 `Registration.Register` closure and call `AttachProvider` with the name, token,
@@ -2573,6 +2653,7 @@ func newRegistryClient(address string) (*genregistry.Client, func() error, error
 	transport := genregistrygrpc.NewClient(conn, grpc.WaitForReady(true))
 	return genregistry.NewClient(
 		transport.DeclareServiceToolset(),
+		transport.ReplaceServiceToolset(),
 		transport.AttachProvider(),
 		transport.Register(),
 		transport.RenewProvider(),
@@ -2580,6 +2661,8 @@ func newRegistryClient(address string) (*genregistry.Client, func() error, error
 		transport.DrainProvider(),
 		transport.Unregister(),
 		transport.Pong(),
+		transport.RegisterAgentToolset(),
+		transport.ReplaceAgentToolset(),
 		transport.ListToolsets(),
 		transport.GetToolset(),
 		transport.ResolveToolset(),
@@ -2661,7 +2744,8 @@ startup registration and renewal.
 
 Applications may attach an immutable `CatalogIdentity{Scope, Name}` through
 `RegisterWithIdentity`, `DeclareServiceToolsetWithIdentity`,
-`RegisterAgentToolsetWithIdentity`, and `ReplaceAgentToolsetWithIdentity`.
+`ReplaceServiceToolsetWithIdentity`, `RegisterAgentToolsetWithIdentity`, and
+`ReplaceAgentToolsetWithIdentity`.
 Identity lives in compact state; its derived sorted scope index changes in the
 same catalog commit. Declaration JSON, fingerprints, admission tokens and
 provider messages retain their existing encoding. Ordinary identity-free
@@ -2707,18 +2791,29 @@ stored data. Existing installations require the [offline storage
 upgrade](#registry-storage-upgrade).
 
 Every definition-dependent read fetches state, definition, and retirement
-membership together and validates the complete snapshot. This includes
+membership together and checks the complete snapshot. This includes
 `GetToolset`, `ResolveToolset`, and call preparation or its availability retries.
 Declaration fingerprints ignore tool and tag ordering, and native replacement
-can reuse a token, so neither selects a previously cached definition. Returned
-definitions are independently owned and carry the selected state's token and time.
+can reuse a token, so neither selects a previously cached definition.
 
-The existing schema validator still reuses compiled schemas by digest. Each
-snapshot prepares its tool-name map from those compiled objects; dynamic
-arguments are checked against that map. Full definition transfer, decoding and
-fingerprinting therefore remain part of each definition-dependent read. Lease
-and health operations continue to read only compact state. This does not change
-live authorization or the consumer's per-planning-activity catalog lifetime.
+The catalog hashes every current saved definition byte with SHA-256. Identical
+bytes under the same service or native-agent rules reuse compact metadata,
+validated fingerprints, and compiled execution-schema maps. Changed bytes pass
+the existing strict validation, one cold definition at a time. Warm lookups do
+not wait for another definition's validation, and canceled queued reads return
+without decoding. The cache retains one validation
+result per name and discards names observed as removed; it holds no full JSON
+or decoded declarations. Each snapshot owns the current saved JSON, and callers
+requesting full definitions receive independently decoded values carrying the
+selected state's time and token. See [catalog validation](../DESIGN.md#registry-integration) for the
+ownership contract.
+
+Full definition transfer still occurs on every definition-dependent read.
+Warm call preparation avoids full JSON decoding and fingerprint reconstruction;
+full-definition responses still require decoding. Lease and health operations
+continue to read compact state only. Current authority is checked every time.
+There is no API or storage change, migration, or change to the consumer's
+per-planning-activity catalog lifetime.
 
 ##### Saved declaration identity
 
@@ -3672,6 +3767,40 @@ runtime.FinalizerFunc(func(ctx, input FinalizerInput) (ToolResult, error) {
 ```
 
 ---
+
+## Saved Pagination
+
+Use `PrepareNextTurn` to continue unfinished queries from a selected completed
+run. The runtime reads that run's exact saved history and restores original
+execution IDs, query arguments, cursors, and registry bindings. Provider call
+IDs stay unchanged in messages and may repeat in later responses. Two identical
+queries remain independent; finishing one does not retire the other.
+
+`PrepareContinuation` also retains completed sibling outputs from its saved
+checkpoint. Their events can follow the predecessor's transcript end; only the
+checkpoint's exact output references select them. The runtime does not widen
+the history end, republish those results, or count them as new work.
+
+Literal messages passed to `Prepare` or `Run` retain their existing exact
+execution-ID lookup behavior. They do not acquire saved-source provenance from
+matching provider IDs. Copying provider-ready messages into a literal run is
+therefore not a substitute for `PrepareNextTurn`.
+
+Start, Resume, and the runtime's continuation-availability activity use the same
+private reader and eligibility checks. A finish failure retains unfinished
+sibling pages. When none remain, direct finalization keeps its hard deadline
+and does not first charge a recovery turn. Availability read errors remain
+errors; they cannot become a negative answer.
+
+Custom engines must implement `RegisterContinuationActivity` and
+`ExecuteContinuationActivity`. The activity receives exact history/output
+references and existing eligibility policy and returns a recorded boolean.
+No Store method or saved-data migration is required. The additional activity
+changes workflow command history: retain the original worker build for existing
+Temporal executions and route new executions to the upgraded build. Do not
+replay an older open execution with changed workflow code on an unversioned
+queue. The runtime uses the existing worker activity route and introduces no
+version-selection flag.
 
 ## External Input and Workflow Continuations
 
@@ -6134,6 +6263,7 @@ type Engine interface {
     RegisterPlannerActivity(ctx, name, opts, fn) error
     RegisterExecuteToolActivity(ctx, name, opts, fn) error
     RegisterAgentChildActivity(ctx, name, opts, fn) error
+    RegisterContinuationActivity(ctx, name, opts, fn) error
     StartWorkflow(ctx, req WorkflowStartRequest) (WorkflowHandle, error)
     QueryRunCompletion(ctx, runID string) (RunCompletion, error)
 }
@@ -6158,14 +6288,62 @@ type WorkflowContext interface {
     ExecuteToolActivity(call engine.ToolActivityCall) (*api.ToolOutput, error)
     ExecuteToolActivityAsync(call engine.ToolActivityCall) (Future[*api.ToolOutput], error)
     ExecuteAgentChildActivity(call engine.AgentChildActivityCall) (*api.AgentChildActivityOutput, error)
+    ExecuteContinuationActivity(call engine.ContinuationActivityCall) (bool, error)
     NewTimer(ctx context.Context, d time.Duration) (Future[time.Time], error)
     Await(condition func() bool) error
     StartChildWorkflow(ctx context.Context, req engine.ChildWorkflowRequest) (engine.ChildWorkflowHandle, error)
+    ProviderRecovery() ProviderRecoveryPort
     Detached() WorkflowContext
     WithCancel() (WorkflowContext, func())
 }
 
 ```
+
+`WorkflowContext.ProviderRecovery` supplies execution-owned recovery control.
+The runtime registers its pause receiver before starting children, and its
+recovery request receiver when it owns or inherits recovery.
+The engine derives child identity from the accepted child request and handle;
+callers do not supply a parent address or select a latest child execution.
+Cancellation-derived and detached contexts retain the same control.
+
+Custom engines implement `ProviderRecoveryPort` and `ProviderRecovery` from
+`runtime/agent/engine/provider_recovery.go`. They serialize callbacks with
+ordinary workflow code, preserve message ordering, retain exact duplicate
+acceptance, and reject conflicting repeats. An accepted send completes only
+after the receiving workflow applies it and records required onward deliveries.
+The runtime separately decides whether a phase is permitted or settled.
+Callbacks must not block waiting for their own replies. Ordinary completion
+waits for accepted outgoing obligations; cancellation does not wait indefinitely
+for an unreachable parent.
+
+The Temporal engine installs its workflow control interceptor even when tracing
+is disabled. Native workflows running on that engine's worker must now handle
+the constructor's error:
+
+```go
+wfCtx, err := temporal.NewWorkflowContext(e, ctx)
+if err != nil {
+    return nil, err
+}
+```
+
+`NewWorkflowContext` returns `(engine.WorkflowContext, error)` rather than one
+value. A missing interceptor or one installed by another engine is an error
+before runtime work starts. The interceptor also retains wrapper forwarding and
+drains accepted deliveries before ordinary completion; native callers do not
+need a separate forwarding or completion call.
+
+Temporal binds control to the issued child's first execution and its retries
+and continuation executions. It preserves the native run that originated each
+delivery. The runtime uses those identities so
+retries and continuation do not create a new allowance or turn older messages
+into credit for a newer attempt. This binding assumes trusted participants in
+the workflow namespace; it does not
+authenticate against administrators who can read execution history. Child-start
+commands and control messages change recorded workflow history. Keep existing
+open histories on their matching retained workers, and route new work to the
+upgraded workers. Rollback must retain workers capable of reading every
+already-accepted history.
 
 Custom engine adapters must implement `RegisterStorageActivity` and
 `ExecuteStorageActivity`. The runtime registers one typed `runtime.store`

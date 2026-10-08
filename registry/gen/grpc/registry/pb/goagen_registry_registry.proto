@@ -23,6 +23,17 @@ service Registry {
 // admission_conflict. A retired service declaration returns admission_retired.
 // Declaration does not create a provider lease or establish health.
 	rpc DeclareServiceToolset (DeclareServiceToolsetRequest) returns (DeclareServiceToolsetResponse);
+	// Replace or reactivate the expected service declaration after every old
+// provider lease has released or expired. The replacement ID identifies this
+// update of the expected registration; reuse it with the same complete
+// declaration after an uncertain reply. An already-current matching
+// replacement returns its saved definition, token, and time. A stale expected
+// token, native Agent occupancy, or changed replacement intent conflicts. Live
+// leases, including draining leases, return admission_blocked without
+// replacing the declaration. Replacement permanently retires the previous
+// service token, creates no provider lease, and requires new providers to
+// attach and establish health.
+	rpc ReplaceServiceToolset (ReplaceServiceToolsetRequest) returns (ReplaceServiceToolsetResponse);
 	// Attach one provider incarnation to the exact existing service registration
 // without sending or changing its definition. The expected token and current
 // wire protocol are required. Missing, different, or native Agent
@@ -393,6 +404,33 @@ message Toolset {
 	repeated ToolSchema tools = 5;
 	// ISO 8601 registration timestamp
 	optional string registered_at = 6;
+}
+
+message ReplaceServiceToolsetRequest {
+	// Exact service registration this update may replace.
+	optional string expected_registration_token = 100;
+	// Stable UUID identifying this replacement of the expected registration. Reuse
+// it for the same update; use a fresh ID for a new deployment or rollback.
+	optional string replacement_id = 101;
+	// Unique toolset route name.
+	optional string name = 1;
+	// Human-readable description of the toolset.
+	optional string description = 2;
+	// Semantic version of the toolset.
+	optional string version = 3;
+	// Categories used by discovery filters.
+	repeated string tags = 4;
+	// Complete portable service tool declarations, including consumer contracts
+// and matching pagination partners.
+	repeated ToolSchema tools = 5;
+}
+
+message ReplaceServiceToolsetResponse {
+	// Complete toolset definition read from the active registration.
+	Toolset toolset = 1;
+	// Exact registration required when executing a call selected from this
+// definition.
+	optional string registration_token = 2;
 }
 
 message AttachProviderRequest {

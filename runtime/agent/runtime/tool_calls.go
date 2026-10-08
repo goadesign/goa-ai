@@ -629,6 +629,9 @@ func (e *toolBatchExec) collectAgentChildResults(wfCtx engine.WorkflowContext, c
 			}
 			return false
 		}); err != nil {
+			if errors.Is(err, engine.ErrPlannerActivityDeadlineExceeded) {
+				return out, pending, true, executionErr
+			}
 			return out, pending, false, err
 		}
 
@@ -756,6 +759,14 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 			)
 		}
 	}
+	// Runtime-owned workflows use one measured clock for the whole batch.
+	// Standalone helper callers retain their existing fixed finishBy timer.
+	recoveryWorkflow, runtimeOwned := wfCtx.(*providerRecoveryWorkflowContext)
+	if runtimeOwned {
+		scoped := *recoveryWorkflow
+		scoped.limit = &providerRecoveryWaitLimit{deadline: finishBy, elapsed: scoped.actor.elapsed}
+		wfCtx = &scoped
+	}
 	exec := &toolBatchExec{
 		r:                r,
 		activityName:     activityName,
@@ -829,7 +840,7 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 	defer cancelExecOnce()
 
 	var finalizeTimer engine.Future[time.Time]
-	if !finishBy.IsZero() {
+	if !runtimeOwned && !finishBy.IsZero() {
 		d := finishBy.Sub(wfCtx.Now())
 		t, err := wfCtx.NewTimer(ctx, d)
 		if err != nil {

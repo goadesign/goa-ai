@@ -36,10 +36,11 @@ type (
 
 		workflows map[string]engine.WorkflowDefinition
 
-		storageActivities    map[string]storageActivityDef
-		plannerActivities    map[string]plannerActivityDef
-		toolActivities       map[string]toolActivityDef
-		agentChildActivities map[string]agentChildActivityDef
+		storageActivities      map[string]storageActivityDef
+		plannerActivities      map[string]plannerActivityDef
+		toolActivities         map[string]toolActivityDef
+		agentChildActivities   map[string]agentChildActivityDef
+		continuationActivities map[string]continuationActivityDef
 
 		// statuses tracks workflow status by run ID (inmem uses workflow ID as run ID).
 		statuses map[string]engine.RunStatus
@@ -60,7 +61,7 @@ type (
 		eng             *eng
 		seq             *sequenceCounter
 		cancellations   *cancellationState
-		childMu         sync.Mutex
+		control         *workflowControl
 		startedChildren map[string]struct{}
 	}
 
@@ -75,30 +76,17 @@ type (
 		// cancellations belongs only to this workflow execution. Requests use it
 		// to wait for workflow code without a process-wide command registry.
 		cancellations *cancellationState
-	}
-
-	// cancellationState serializes commands for one workflow execution.
-	cancellationState struct {
-		lifecycle      sync.Mutex
-		mu             sync.Mutex
-		workflow       *wfCtx
-		handler        engine.CancellationHandler
-		cancel         context.CancelFunc
-		acceptedReason string
-		commands       []*cancellationCommand
-		processing     bool
-		closed         bool
-	}
-
-	// cancellationCommand returns the result of one queued request.
-	cancellationCommand struct {
-		request engine.CancellationRequest
-		result  chan error
+		// issuedControls records every workflow attempt created for this handle.
+		// Earlier attempts stay recorded so delayed evidence can be accepted
+		// without changing its original execution or assigning it to a retry.
+		issuedControls map[*workflowControl]struct{}
+		parent         *recoveryChild
 	}
 
 	// childHandle adapts an in-memory WorkflowHandle to engine.ChildWorkflowHandle.
 	childHandle struct {
-		h engine.WorkflowHandle
+		h        engine.WorkflowHandle
+		workflow *wfCtx
 	}
 
 	storageActivityDef struct {
@@ -126,6 +114,11 @@ type (
 		opts    engine.ActivityOptions
 	}
 
+	continuationActivityDef struct {
+		handler func(context.Context, *api.ContinuationActivityInput) (bool, error)
+		opts    engine.ActivityOptions
+	}
+
 	// activityTimeouts separates the limit for one attempt from the limit for
 	// the complete activity, including retries and retry delays.
 	activityTimeouts struct {
@@ -135,9 +128,12 @@ type (
 
 	// future is a simple typed Future implementation backed by a channel.
 	future[T any] struct {
-		ready  chan struct{}
-		result T
-		err    error
+		ready     chan struct{}
+		result    T
+		err       error
+		once      sync.Once
+		workflow  *wfCtx
+		onFailure func(error)
 	}
 )
 
@@ -278,6 +274,23 @@ func (e *eng) RegisterAgentChildActivity(_ context.Context, name string, opts en
 	return nil
 }
 
+// RegisterContinuationActivity registers a saved-page read outside workflow code.
+func (e *eng) RegisterContinuationActivity(_ context.Context, name string, opts engine.ActivityOptions, fn func(context.Context, *api.ContinuationActivityInput) (bool, error)) error {
+	if name == "" || fn == nil {
+		return errors.New("continuation activity name and handler are required")
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.continuationActivities == nil {
+		e.continuationActivities = make(map[string]continuationActivityDef)
+	}
+	if _, exists := e.continuationActivities[name]; exists {
+		return fmt.Errorf("continuation activity %q already registered", name)
+	}
+	e.continuationActivities[name] = continuationActivityDef{handler: fn, opts: opts}
+	return nil
+}
+
 // StartWorkflow snapshots and starts one in-process workflow. The accepted
 // workflow runs independently of the submission context and remains attached
 // to its exact recipe digest for the lifetime of this engine.
@@ -327,7 +340,12 @@ func (e *eng) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequest
 func (e *eng) reserveWorkflowLocked(executionCtx context.Context, id string) (*handle, context.Context) {
 	executionCtx, cancel := context.WithCancel(executionCtx)
 	cancellations := &cancellationState{cancel: cancel}
-	h := &handle{done: make(chan struct{}), cancel: cancel, cancellations: cancellations}
+	h := &handle{
+		done:           make(chan struct{}),
+		cancel:         cancel,
+		cancellations:  cancellations,
+		issuedControls: make(map[*workflowControl]struct{}),
+	}
 
 	if e.statuses == nil {
 		e.statuses = make(map[string]engine.RunStatus)
@@ -353,7 +371,7 @@ func (e *eng) executeWorkflow(
 	go func() {
 		defer h.cancel()
 		defer close(h.done)
-		res, err := e.runWorkflow(executionCtx, id, runTimeout, retryPolicy, def, inputPayload, requestDigest, h.cancellations)
+		res, err := e.runWorkflow(executionCtx, id, runTimeout, retryPolicy, def, inputPayload, requestDigest, h)
 		h.cancellations.finish()
 		h.mu.Lock()
 		h.result = res
@@ -386,8 +404,9 @@ func (e *eng) runWorkflow(
 	def engine.WorkflowDefinition,
 	inputPayload *commonpb.Payload,
 	requestDigest [32]byte,
-	cancellations *cancellationState,
+	h *handle,
 ) (*api.RunOutput, error) {
+	cancellations := h.cancellations
 	dataConverter := workflowcodec.NewDataConverter()
 	delay := retryPolicy.InitialInterval
 	if delay == 0 {
@@ -417,8 +436,17 @@ func (e *eng) runWorkflow(
 			cancellations:   cancellations,
 			startedChildren: make(map[string]struct{}),
 		}
+		control := wctx.executionControl()
+		control.parent = h.parent
+		if h.parent != nil {
+			control.inherited = h.parent.inherited
+		}
+		h.mu.Lock()
+		h.issuedControls[control] = struct{}{}
+		h.mu.Unlock()
 		cancellations.startAttempt(wctx)
 		result, err := def.Handler(wctx, input)
+		err = wctx.finish(err)
 		if err == nil && attemptCtx.Err() != nil {
 			err = attemptCtx.Err()
 		}
@@ -560,153 +588,12 @@ func (h *handle) Cancel(_ context.Context) error {
 	return nil
 }
 
-// request queues one command and waits for workflow code to finish handling
-// it. Once queued, the command still runs if the caller stops waiting.
-func (s *cancellationState) request(ctx context.Context, request engine.CancellationRequest) error {
-	command := &cancellationCommand{
-		request: request,
-		result:  make(chan error, 1),
-	}
-	s.mu.Lock()
-	if s.closed {
-		err := completedCancellationResult(s.acceptedReason, request)
-		s.mu.Unlock()
-		return err
-	}
-	s.commands = append(s.commands, command)
-	start := s.handler != nil && !s.processing
-	if start {
-		s.processing = true
-	}
-	s.mu.Unlock()
-	if start {
-		go s.process()
-	}
-	select {
-	case err := <-command.result:
-		return err
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-// setHandler installs the only cancellation handler for this workflow. It
-// handles commands that arrived before registration before returning.
-func (s *cancellationState) setHandler(handler engine.CancellationHandler) error {
-	if handler == nil {
-		return errors.New("cancellation handler is required")
-	}
-	s.mu.Lock()
-	if s.handler != nil {
-		s.mu.Unlock()
-		return errors.New("cancellation handler is already registered")
-	}
-	s.handler = handler
-	start := len(s.commands) > 0 && !s.processing
-	if start {
-		s.processing = true
-	}
-	s.mu.Unlock()
-	if start {
-		s.process()
-	}
-	return nil
-}
-
-// startAttempt points cancellation commands at the workflow attempt that is
-// currently running.
-func (s *cancellationState) startAttempt(workflow *wfCtx) {
-	s.lifecycle.Lock()
-	defer s.lifecycle.Unlock()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.workflow = workflow
-}
-
-// endAttempt removes the failed attempt's handler before the retry delay. A
-// cancellation received during the delay waits for the next attempt.
-func (s *cancellationState) endAttempt() {
-	s.lifecycle.Lock()
-	defer s.lifecycle.Unlock()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.workflow = nil
-	s.handler = nil
-}
-
-// process handles queued commands in arrival order. The first successful
-// reason cancels execution; retries reuse that result without calling the
-// handler again.
-func (s *cancellationState) process() {
-	for {
-		s.lifecycle.Lock()
-		s.mu.Lock()
-		if len(s.commands) == 0 {
-			s.processing = false
-			s.mu.Unlock()
-			s.lifecycle.Unlock()
-			return
-		}
-		command := s.commands[0]
-		s.commands = s.commands[1:]
-		acceptedReason := s.acceptedReason
-		handler := s.handler
-		closed := s.closed
-		s.mu.Unlock()
-
-		var err error
-		switch {
-		case closed:
-			err = completedCancellationResult(acceptedReason, command.request)
-		case acceptedReason == "":
-			err = handler(s.workflow, command.request)
-			if err == nil {
-				s.mu.Lock()
-				s.acceptedReason = command.request.Reason
-				s.mu.Unlock()
-				s.cancel()
-			}
-		case acceptedReason != command.request.Reason:
-			err = &engine.CancellationConflictError{
-				RunID:  command.request.RunID,
-				Reason: command.request.Reason,
-			}
-		}
-		s.lifecycle.Unlock()
-		command.result <- err
-	}
-}
-
-// finish closes cancellation admission before the workflow publishes its final
-// engine result. A handler already storing a reason completes first.
-func (s *cancellationState) finish() {
-	s.lifecycle.Lock()
-	s.mu.Lock()
-	s.closed = true
-	queued := s.commands
-	s.commands = nil
-	acceptedReason := s.acceptedReason
-	s.mu.Unlock()
-	s.lifecycle.Unlock()
-	for _, command := range queued {
-		command.result <- completedCancellationResult(acceptedReason, command.request)
-	}
-}
-
-// completedCancellationResult preserves an accepted reason after closure and
-// otherwise reports that the workflow can no longer accept a command.
-func completedCancellationResult(acceptedReason string, request engine.CancellationRequest) error {
-	switch acceptedReason {
-	case "":
-		return engine.ErrWorkflowCompleted
-	case request.Reason:
-		return nil
-	default:
-		return &engine.CancellationConflictError{RunID: request.RunID, Reason: request.Reason}
-	}
-}
-
 func (c *childHandle) Get(ctx context.Context) (*api.RunOutput, error) {
+	if c.workflow != nil {
+		if err := c.workflow.wait(ctx, c.IsReady, nil); err != nil {
+			return nil, err
+		}
+	}
 	return c.h.Wait(ctx)
 }
 
@@ -727,7 +614,7 @@ func (c *childHandle) Cancel(ctx context.Context) error {
 }
 
 func (w *wfCtx) Context() context.Context {
-	return engine.WithWorkflowContext(w.ctx, w)
+	return context.WithValue(engine.WithWorkflowContext(w.ctx, w), workflowScopeKey{}, w)
 }
 
 // SetQueryHandler is a no-op for the in-memory engine.
@@ -766,13 +653,10 @@ func (w *wfCtx) StartChildWorkflow(_ context.Context, req engine.ChildWorkflowRe
 		return nil, err
 	}
 	req = snapshot.Request
-	w.childMu.Lock()
 	if _, exists := w.startedChildren[req.ID]; exists {
-		w.childMu.Unlock()
 		return nil, &engine.ChildWorkflowIDReuseError{ID: req.ID}
 	}
 	w.startedChildren[req.ID] = struct{}{}
-	w.childMu.Unlock()
 
 	w.eng.mu.RLock()
 	def, ok := w.eng.workflows[req.Workflow]
@@ -789,11 +673,17 @@ func (w *wfCtx) StartChildWorkflow(_ context.Context, req engine.ChildWorkflowRe
 	h, executionCtx := w.eng.reserveWorkflowLocked(w.ctx, req.ID)
 	w.eng.mu.Unlock()
 
+	control := w.executionControl()
+	binding := &recoveryChild{parent: control, handle: h, id: req.ID, inherited: control.inherited || control.accept != nil, accepted: make(chan struct{})}
+	h.parent = binding
 	w.eng.executeWorkflow(executionCtx, req.ID, req.RunTimeout, req.RetryPolicy, def, snapshot.InputPayload, snapshot.Digest, h)
-	return &childHandle{h: h}, nil
+	control.children[req.ID] = binding
+	close(binding.accepted)
+	return &childHandle{h: h, workflow: w}, nil
 }
 
 func (w *wfCtx) Detached() engine.WorkflowContext {
+	w.executionControl()
 	cctx := context.WithoutCancel(w.ctx)
 	sub := *w
 	sub.ctx = cctx
@@ -801,6 +691,7 @@ func (w *wfCtx) Detached() engine.WorkflowContext {
 }
 
 func (w *wfCtx) WithCancel() (engine.WorkflowContext, func()) {
+	w.executionControl()
 	cctx, cancel := context.WithCancel(w.ctx)
 	sub := *w
 	sub.ctx = cctx
@@ -818,12 +709,12 @@ func (w *wfCtx) NextSequence() uint64 {
 func (w *wfCtx) NewTimer(ctx context.Context, d time.Duration) (engine.Future[time.Time], error) {
 	now := time.Now()
 	if d <= 0 {
-		fut := &future[time.Time]{ready: make(chan struct{}), result: now}
+		fut := &future[time.Time]{ready: make(chan struct{}), workflow: w, result: now}
 		close(fut.ready)
 		return fut, nil
 	}
 	fireAt := now.Add(d)
-	fut := &future[time.Time]{ready: make(chan struct{})}
+	fut := &future[time.Time]{ready: make(chan struct{}), workflow: w}
 	go func() {
 		defer close(fut.ready)
 		select {
@@ -840,18 +731,7 @@ func (w *wfCtx) Await(condition func() bool) error {
 	if condition == nil {
 		return errors.New("await condition is required")
 	}
-	ticker := time.NewTicker(5 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		if condition() {
-			return nil
-		}
-		select {
-		case <-w.ctx.Done():
-			return w.ctx.Err()
-		case <-ticker.C:
-		}
-	}
+	return w.wait(w.ctx, condition, nil)
 }
 
 func (w *wfCtx) ExecuteStorageActivity(call engine.StorageActivityCall) (*api.StorageActivityResult, error) {
@@ -878,7 +758,9 @@ func (w *wfCtx) ExecutePlannerActivity(call engine.PlannerActivityCall) (*api.Pl
 	scheduleCtx, cancel, scheduleDeadline := withOptionalTimeout(w.ctx, timeouts.scheduleToClose)
 	defer cancel()
 	retry := mergedRetryPolicy(def.opts.RetryPolicy, call.Options.RetryPolicy)
-	out, err := executeActivityAttempts(scheduleCtx, timeouts.startToClose, retry, call.Input, def.handler)
+	out, err := runBlockingActivity(w, func() (*api.PlanActivityOutput, error) {
+		return executeRecordedActivity(scheduleCtx, timeouts.startToClose, retry, call.Input, def.handler)
+	})
 	if scheduleDeadline && errors.Is(scheduleCtx.Err(), context.DeadlineExceeded) {
 		return nil, fmt.Errorf("%w: %w", engine.ErrPlannerActivityDeadlineExceeded, scheduleCtx.Err())
 	}
@@ -910,7 +792,7 @@ func (w *wfCtx) ExecuteToolActivityAsync(call engine.ToolActivityCall) (engine.F
 		return nil, fmt.Errorf("tool activity %q not registered", call.Name)
 	}
 
-	fut := &future[*api.ToolOutput]{ready: make(chan struct{})}
+	fut := &future[*api.ToolOutput]{ready: make(chan struct{}), workflow: w}
 	go func() {
 		defer close(fut.ready)
 		timeouts := resolveActivityTimeouts(call.Options, def.opts)
@@ -941,6 +823,28 @@ func (w *wfCtx) ExecuteAgentChildActivity(call engine.AgentChildActivityCall) (*
 	})
 }
 
+// ExecuteContinuationActivity copies the request and result through the same
+// activity transport as other recorded reads. A failed read returns its error.
+func (w *wfCtx) ExecuteContinuationActivity(call engine.ContinuationActivityCall) (bool, error) {
+	output, err := executeRegisteredRecordedActivity(w, call.Name, call.Input, call.Options, func() (engine.ActivityOptions, func(context.Context, *api.ContinuationActivityInput) (*bool, error), bool) {
+		def, ok := w.eng.continuationActivities[call.Name]
+		return def.opts, func(ctx context.Context, input *api.ContinuationActivityInput) (*bool, error) {
+			available, err := def.handler(ctx, input)
+			if err != nil {
+				return nil, err
+			}
+			return &available, nil
+		}, ok
+	})
+	if err != nil {
+		return false, err
+	}
+	if output == nil {
+		return false, errors.New("continuation activity returned no answer")
+	}
+	return *output, nil
+}
+
 // executeRegisteredRecordedActivity resolves one registered activity and runs
 // it with the serialization, timeout, and retry behavior shared by Temporal.
 func executeRegisteredRecordedActivity[I, O any](w *wfCtx, name string, input *I, options engine.ActivityOptions, lookup func() (engine.ActivityOptions, func(context.Context, *I) (*O, error), bool)) (*O, error) {
@@ -960,7 +864,9 @@ func executeRegisteredRecordedActivity[I, O any](w *wfCtx, name string, input *I
 	scheduleCtx, cancel, _ := withOptionalTimeout(w.ctx, timeouts.scheduleToClose)
 	defer cancel()
 	retry := mergedRetryPolicy(defaults.RetryPolicy, options.RetryPolicy)
-	return executeRecordedActivity(scheduleCtx, timeouts.startToClose, retry, input, handler)
+	return runBlockingActivity(w, func() (*O, error) {
+		return executeRecordedActivity(scheduleCtx, timeouts.startToClose, retry, input, handler)
+	})
 }
 
 // executeRecordedActivity serializes activity values at the same boundary as
@@ -1007,6 +913,13 @@ func executeActivityAttempts[I, O any](ctx context.Context, startToClose time.Du
 }
 
 func (f *future[T]) Get(ctx context.Context) (T, error) {
+	if f.workflow != nil {
+		if err := f.workflow.wait(ctx, f.IsReady, f.ready); err != nil {
+			var zero T
+			return zero, err
+		}
+		return f.result, f.err
+	}
 	select {
 	case <-ctx.Done():
 		var zero T

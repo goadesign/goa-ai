@@ -33,7 +33,8 @@ func TestToolActivityRetryPolicyKeepsRejectedInputFinal(t *testing.T) {
 			env.SetTestTimeout(5 * time.Second)
 			env.SetDataConverter(NewAgentDataConverter())
 			eng := newTestEngine(t)
-			eng.workerFactory = func(client.Client, string, worker.Options) worker.Worker {
+			eng.workerFactory = func(_ client.Client, _ string, options worker.Options) worker.Worker {
+				env.SetWorkerOptions(options)
 				return &boundedCompletionWorker{env: env}
 			}
 			operation, err := tooloperation.NewTaskCancel("")

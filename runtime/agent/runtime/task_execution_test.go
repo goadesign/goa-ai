@@ -136,7 +136,7 @@ func TestTaskInputSurvivesSuccessorRuns(t *testing.T) {
 		require.NoError(t, restoreContinuationRunInput(input, checkpoint))
 		seedRunMeta(t, rt, input)
 		wf = &testWorkflowContext{ctx: t.Context(), runtime: rt, hookRuntime: rt, plannerOutput: &PlanActivityOutput{PublicationBatchID: testPublicationBatchID, Result: &PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "done"}}}}}}}
-		out, err = rt.resumeSuspendedWorkflow(wf, registration, input, checkpoint, seedTestContinuationHistory(t, rt, input, checkpoint))
+		out, err = rt.resumeSuspendedWorkflow(recoveryContinuationWorkflow(t, wf, checkpoint), registration, input, checkpoint, seedTestContinuationHistory(t, rt, input, checkpoint))
 		require.NoError(t, err)
 	}
 	assert.Nil(t, out.Suspension)

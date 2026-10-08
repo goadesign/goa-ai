@@ -20,7 +20,7 @@ func TestCatalogIdentityPreservesDeclarationAndAdmission(t *testing.T) {
 	catalog := newToolsetCatalog(store, clock)
 	input := testCatalogToolset("route", "tool", []string{"retained"})
 	definition := testCatalogDefinition(t, input)
-	original := string(definition.raw)
+	original := definition.raw
 	definition.identity = &CatalogIdentity{Scope: "product", Name: "Public name / unchanged"}
 	first, err := catalog.Register(ctx, definition, testAdmissionRevisionA, "provider", testIncarnationA, time.Minute)
 	require.NoError(t, err)

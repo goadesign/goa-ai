@@ -43,7 +43,7 @@ func TestCatalogSavedEncodingPreservesRegistration(t *testing.T) {
 					}
 					definition := testCatalogDefinition(t, toolset)
 					definition.identity = &CatalogIdentity{Scope: "fixtures", Name: "records"}
-					raw := string(definition.raw)
+					raw := definition.raw
 					contract, err := json.Marshal(toolset.Tools[0].ConsumerContract)
 					require.NoError(t, err)
 					if encoding == "earlier" {
@@ -55,7 +55,7 @@ func TestCatalogSavedEncodingPreservesRegistration(t *testing.T) {
 					// The expected identity uses the explicitly saved contract as
 					// admission input, independently of the reload decoder.
 					fingerprint := savedFixtureFingerprint(toolset, contract)
-					definition.raw = json.RawMessage(raw)
+					definition.raw = raw
 					definition.fingerprint = fingerprint
 					var state catalogState
 					if native {
@@ -84,7 +84,7 @@ func TestCatalogSavedEncodingPreservesRegistration(t *testing.T) {
 					assert.Equal(t, fingerprint, loaded.SchemaFingerprint)
 					assert.Equal(t, state.RegistrationToken, loaded.RegistrationToken)
 					assert.Equal(t, definition.identity, loaded.Identity)
-					assert.Equal(t, raw, string(loaded.Toolset.raw))
+					assert.Equal(t, raw, loaded.Toolset.raw)
 					expectedState, err := parseCatalogState(toolset.Name, beforeState)
 					require.NoError(t, err)
 					assert.Equal(t, expectedState, loaded.catalogState)
@@ -141,7 +141,7 @@ func TestCatalogSavedEncodingRejectsChangedContractBytes(t *testing.T) {
 		strings.Replace(raw, `,"RequiresUI":false,"TextOnly":null`, "", 1),
 	} {
 		require.NotEqual(t, raw, changed)
-		_, err := catalog.decodeSnapshot("tools", state, changed, membership)
+		_, err := catalog.decodeSnapshot(t.Context(), "tools", state, changed, membership)
 		assert.ErrorContains(t, err, "schema fingerprint")
 	}
 }
@@ -170,7 +170,7 @@ func TestCatalogGeneratedDeclarationsKeepCurrentIdentity(t *testing.T) {
 	assert.Equal(t, payload.SchemaFingerprint, transportFingerprint)
 	definition, err := newCatalogToolset(toolset, fingerprint, newSchemaValidator())
 	require.NoError(t, err)
-	decoded, savedFingerprint, err := internaladmission.SavedToolsetFingerprint(definition.raw)
+	decoded, savedFingerprint, err := internaladmission.SavedToolsetFingerprint([]byte(definition.raw))
 	require.NoError(t, err)
 	assert.Equal(t, fingerprint, savedFingerprint)
 	assert.Equal(t, toolset, decoded)
@@ -185,7 +185,7 @@ func TestCatalogGeneratedDeclarationsKeepCurrentIdentity(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, fingerprint, loaded.SchemaFingerprint)
 	assert.Equal(t, state.RegistrationToken, loaded.RegistrationToken)
-	assert.Equal(t, string(definition.raw), string(loaded.Toolset.raw))
+	assert.Equal(t, definition.raw, loaded.Toolset.raw)
 }
 
 func TestCatalogSavedMissingAndNullContractsPreserveIdentity(t *testing.T) {
@@ -193,15 +193,15 @@ func TestCatalogSavedMissingAndNullContractsPreserveIdentity(t *testing.T) {
 	toolset.Tools[0].ConsumerContract = nil
 	definition := testCatalogDefinition(t, toolset)
 	for _, raw := range []string{
-		string(definition.raw),
-		strings.Replace(string(definition.raw), `,"ConsumerContract":null`, "", 1),
-		" \n" + string(definition.raw) + "\n ",
+		definition.raw,
+		strings.Replace(definition.raw, `,"ConsumerContract":null`, "", 1),
+		" \n" + definition.raw + "\n ",
 	} {
 		clock := newTestTimeSource(time.Unix(1_700_000_000, 0))
 		store := newTestCatalogMap(clock)
 		writer := newToolsetCatalog(store, clock)
 		incoming := *definition
-		incoming.raw = json.RawMessage(raw)
+		incoming.raw = raw
 		state, err := writer.Register(t.Context(), &incoming, testAdmissionRevisionA, "provider", testIncarnationA, time.Minute)
 		require.NoError(t, err)
 		cold := newToolsetCatalog(store, clock)
@@ -210,7 +210,7 @@ func TestCatalogSavedMissingAndNullContractsPreserveIdentity(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, state.SchemaFingerprint, loaded.SchemaFingerprint)
 		assert.Equal(t, state.RegistrationToken, loaded.RegistrationToken)
-		assert.Equal(t, raw, string(loaded.Toolset.raw))
+		assert.Equal(t, raw, loaded.Toolset.raw)
 		decoded, err := loaded.Toolset.decode("")
 		require.NoError(t, err)
 		assert.Equal(t, toolset, decoded)

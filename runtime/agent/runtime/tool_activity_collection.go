@@ -36,6 +36,9 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 			}
 			return false
 		}); err != nil {
+			if errors.Is(err, engine.ErrPlannerActivityDeadlineExceeded) {
+				return activityByID, pending, true, executionErr
+			}
 			return activityByID, pending, false, err
 		}
 

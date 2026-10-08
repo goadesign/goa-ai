@@ -1,6 +1,6 @@
 package temporal
 
-// A real Temporal workflow keeps accepted tool progress while durable timers
+// The Temporal SDK workflow test environment keeps accepted tool progress while timers
 // wait for a provider. Every planner activity remains single-attempt; only a
 // completed activity carrying proven retry permission schedules another one.
 
@@ -11,9 +11,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/testsuite"
+	"go.temporal.io/sdk/worker"
 
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
@@ -107,6 +110,7 @@ func TestProviderRecoveryWorkflowDoesNotRepeatCompletedTool(t *testing.T) {
 	}}
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
+	env.SetDataConverter(NewAgentDataConverter())
 	env.RegisterActivityWithOptions(storageEngine.store, activity.RegisterOptions{Name: "runtime.store"})
 	env.RegisterActivityWithOptions(rt.PlanStartActivity, activity.RegisterOptions{Name: planName})
 	env.RegisterActivityWithOptions(rt.PlanResumeActivity, activity.RegisterOptions{Name: resumeName})
@@ -115,6 +119,7 @@ func TestProviderRecoveryWorkflowDoesNotRepeatCompletedTool(t *testing.T) {
 		AgentID: agentID, RunID: "run", SessionID: "session", TurnID: "turn", SeedEndID: seed,
 		Policy: &api.PolicyOverrides{TimeBudget: time.Second, ProviderRetryBudget: time.Hour},
 	})
+	env.SetWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{&workflowControlInterceptor{engine: eng}}})
 	env.ExecuteWorkflow(eng.temporalWorkflowHandler(rt.ExecuteWorkflow), input)
 	require.NoError(t, env.GetWorkflowError())
 	var out api.RunOutput
@@ -123,4 +128,63 @@ func TestProviderRecoveryWorkflowDoesNotRepeatCompletedTool(t *testing.T) {
 	require.EqualValues(t, 1, toolCalls.Load())
 	require.EqualValues(t, 3, pl.resumes.Load())
 	require.EqualValues(t, 3, provider.calls.Load())
+}
+
+func TestProviderCertificateCrossesBothPlannerActivityAdapters(t *testing.T) {
+	for _, adapter := range []string{"inmem", "temporal"} {
+		t.Run(adapter, func(t *testing.T) {
+			const planName, workflowName, queue = "certificate.plan", "certificate.workflow", "certificate.queue"
+			failure := model.NewProviderError("synthetic", "complete", 503, model.ProviderErrorKindUnavailable,
+				"capacity", "", "request-1", true, errors.New("réseau indisponible 世界"))
+			produce := func(context.Context, *api.PlanActivityInput) (*api.PlanActivityOutput, error) {
+				return &api.PlanActivityOutput{PublicationBatchID: "publication-1", ProviderFailure: failure}, nil
+			}
+			handler := func(w engine.WorkflowContext, _ *api.RunInput) (*api.RunOutput, error) {
+				output, err := w.ExecutePlannerActivity(engine.PlannerActivityCall{
+					Name: planName, Input: &api.PlanActivityInput{},
+					Options: engine.ActivityOptions{StartToCloseTimeout: time.Minute, RetryPolicy: engine.RetryPolicy{MaxAttempts: 1}},
+				})
+				if err != nil {
+					return nil, err
+				}
+				actual := output.ProviderFailure
+				require.NotNil(t, actual)
+				assert.NotSame(t, failure, actual)
+				assert.Equal(t, failure.Provider(), actual.Provider())
+				assert.Equal(t, failure.Operation(), actual.Operation())
+				assert.Equal(t, failure.HTTPStatus(), actual.HTTPStatus())
+				assert.Equal(t, failure.Kind(), actual.Kind())
+				assert.Equal(t, failure.Code(), actual.Code())
+				assert.Equal(t, failure.Message(), actual.Message())
+				assert.Equal(t, failure.RequestID(), actual.RequestID())
+				assert.Equal(t, failure.Retryable(), actual.Retryable())
+				assert.Equal(t, failure.Error(), actual.Error())
+				require.EqualError(t, actual.Unwrap(), failure.Unwrap().Error())
+				assert.NotSame(t, failure.Unwrap(), actual.Unwrap())
+				return &api.RunOutput{}, nil
+			}
+			if adapter == "inmem" {
+				eng := engineinmem.New()
+				require.NoError(t, eng.RegisterPlannerActivity(t.Context(), planName, engine.ActivityOptions{}, produce))
+				require.NoError(t, eng.RegisterWorkflow(t.Context(), engine.WorkflowDefinition{Name: workflowName, Handler: handler}))
+				handle, err := eng.StartWorkflow(t.Context(), engine.WorkflowStartRequest{
+					ID: "certificate-run", Workflow: workflowName, TaskQueue: queue,
+					Input: &api.RunInput{RunID: "certificate-run"},
+				})
+				require.NoError(t, err)
+				_, err = handle.Wait(t.Context())
+				require.NoError(t, err)
+				return
+			}
+			eng := &Engine{defaultQueue: queue, activityOptions: map[string]engine.ActivityOptions{}}
+			var suite testsuite.WorkflowTestSuite
+			env := suite.NewTestWorkflowEnvironment()
+			env.SetDataConverter(NewAgentDataConverter())
+			env.RegisterActivityWithOptions(produce, activity.RegisterOptions{Name: planName})
+			input := prepareAcceptedTestWorkflow(t, env, workflowName, queue, &api.RunInput{RunID: "certificate-run"})
+			env.SetWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{&workflowControlInterceptor{engine: eng}}})
+			env.ExecuteWorkflow(eng.temporalWorkflowHandler(handler), input)
+			require.NoError(t, env.GetWorkflowError())
+		})
+	}
 }

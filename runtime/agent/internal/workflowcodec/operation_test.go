@@ -30,7 +30,7 @@ func TestDataConverterMeasuresExecutionContinuation(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, original, saved)
 	_, err = converter.ToPayloads(operation, operation)
-	assert.ErrorContains(t, err, "maximum aggregate size")
+	require.ErrorContains(t, err, "maximum aggregate size")
 	_, err = converter.ToPayload(tooloperation.Continuation{})
 	assert.Error(t, err)
 }

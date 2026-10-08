@@ -731,7 +731,10 @@ type (
 		// exclusive with every other result variant. The workflow publishes
 		// failed-attempt usage before deciding whether its recovery budget allows
 		// another activity. An activity error alone never permits recovery.
-		ProviderFailure *run.Failure `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
+		// Certification does not depend on the configured recovery allowance.
+		// The engine converter preserves provider facts and diagnostic cause text,
+		// not the identity or concrete type of a provider SDK cause.
+		ProviderFailure *model.ProviderError `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
 
 		// ModelInvocationRecovery is present instead of OutputContractFailure
 		// when generated input validation or provider response validation

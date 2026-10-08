@@ -229,6 +229,9 @@ func (l *workflowLoop) publishPendingInputPrompts(pending []*api.PendingInput) e
 // buildWorkflowCheckpoint converts every decoded tool value to canonical JSON
 // before the state crosses the workflow boundary.
 func (l *workflowLoop) buildWorkflowCheckpoint(batch stepBatch, confirmations []confirmationAwait, items []planner.AwaitItem, restoredPending []checkpointPendingInput) (*workflowCheckpoint, []*api.PendingInput, []tools.Ident, error) {
+	if control := l.base.providerControl; control != nil && control.owner != nil && !control.owner.canCheckpoint() {
+		return nil, nil, nil, errors.New("cannot suspend with unsettled provider recovery")
+	}
 	calls, err := recordedToolCalls(l.st.ToolOutputs)
 	if err != nil {
 		return nil, nil, nil, err
@@ -527,12 +530,13 @@ func decodeCheckpointToolEvent(event *api.ToolEvent, call ToolCall, lookup toolS
 
 // resumeSuspendedWorkflow consumes one exact pending response after
 // ExecuteWorkflow has restored and validated the checkpoint-owned input.
-func (r *Runtime) resumeSuspendedWorkflow(wfCtx engine.WorkflowContext, reg AgentRegistration, input *RunInput, checkpoint *workflowCheckpoint, historyEndID string) (*RunOutput, error) {
+func (r *Runtime) resumeSuspendedWorkflow(wfCtx *providerRecoveryWorkflowContext, reg AgentRegistration, input *RunInput, checkpoint *workflowCheckpoint, historyEndID string) (*RunOutput, error) {
 	base := &workflowConversation{
 		HistoryEndID: historyEndID,
 		RunContext:   restoreCheckpointRunContext(checkpoint.Context, input),
 	}
 	base.providerRecovery = checkpoint.ProviderRecovery
+	base.providerControl = wfCtx.actor
 	state, err := r.restoreCheckpointState(checkpoint.State)
 	if err != nil {
 		return nil, err
@@ -1059,7 +1063,7 @@ func (l *workflowLoop) applyChildContinuation(batch *stepBatch, pending *checkpo
 	if err != nil {
 		return nil, err
 	}
-	out, err := handle.Get(l.wfCtx.Detached().Context())
+	out, err := awaitAgentChild(l.wfCtx, handle, l.wfCtx.Context())
 	if err != nil {
 		return nil, err
 	}

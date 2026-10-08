@@ -181,6 +181,9 @@ type (
 		// agentChildActivityRegistered tracks whether child prompt preparation is
 		// available to every registered workflow.
 		agentChildActivityRegistered bool
+		// continuationActivityRegistered makes the saved-page read available
+		// before workflows choose recovery or finalization.
+		continuationActivityRegistered bool
 
 		// storageActivityTimeout overrides the StartToClose timeout used for
 		// `runtime.store`. Zero means use the runtime default.
@@ -1106,6 +1109,9 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 	if err := r.ensureAgentChildActivityRegistered(ctx); err != nil {
 		return err
 	}
+	if err := r.ensureContinuationActivityRegistered(ctx); err != nil {
+		return err
+	}
 
 	// Apply runtime-owned attempt defaults after queue rebasing. Engine-specific
 	// queue-wait and liveness mechanics are derived inside the engine adapter.
@@ -1718,7 +1724,7 @@ func (r *Runtime) executeAgentChild(
 	if err != nil {
 		return nil, err
 	}
-	out, err := handle.Get(wfCtx.Detached().Context())
+	out, err := awaitAgentChild(wfCtx, handle, wfCtx.Context())
 	if err != nil {
 		return nil, err
 	}

@@ -34,6 +34,17 @@ type Service interface {
 	// admission_conflict. A retired service declaration returns admission_retired.
 	// Declaration does not create a provider lease or establish health.
 	DeclareServiceToolset(context.Context, *ServiceToolsetDeclaration) (res *ResolvedToolset, err error)
+	// Replace or reactivate the expected service declaration after every old
+	// provider lease has released or expired. The replacement ID identifies this
+	// update of the expected registration; reuse it with the same complete
+	// declaration after an uncertain reply. An already-current matching
+	// replacement returns its saved definition, token, and time. A stale expected
+	// token, native Agent occupancy, or changed replacement intent conflicts. Live
+	// leases, including draining leases, return admission_blocked without
+	// replacing the declaration. Replacement permanently retires the previous
+	// service token, creates no provider lease, and requires new providers to
+	// attach and establish health.
+	ReplaceServiceToolset(context.Context, *ReplaceServiceToolsetPayload) (res *ResolvedToolset, err error)
 	// Attach one provider incarnation to the exact existing service registration
 	// without sending or changing its definition. The expected token and current
 	// wire protocol are required. Missing, different, or native Agent
@@ -190,7 +201,7 @@ const ServiceName = "registry"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [22]string{"DeclareServiceToolset", "AttachProvider", "Register", "RenewProvider", "ReleaseProvider", "DrainProvider", "Unregister", "Pong", "RegisterAgentToolset", "ReplaceAgentToolset", "ListToolsets", "GetToolset", "ResolveToolset", "CheckAdmission", "Search", "CallTool", "CallResolvedTool", "RetryTool", "CompleteToolCall", "PublishToolOutputDelta", "ReportToolCallOverload", "ClaimToolCall"}
+var MethodNames = [23]string{"DeclareServiceToolset", "ReplaceServiceToolset", "AttachProvider", "Register", "RenewProvider", "ReleaseProvider", "DrainProvider", "Unregister", "Pong", "RegisterAgentToolset", "ReplaceAgentToolset", "ListToolsets", "GetToolset", "ResolveToolset", "CheckAdmission", "Search", "CallTool", "CallResolvedTool", "RetryTool", "CompleteToolCall", "PublishToolOutputDelta", "ReportToolCallOverload", "ClaimToolCall"}
 
 // AdmissionStatus is the result type of the registry service CheckAdmission
 // method.
@@ -588,6 +599,27 @@ type ReplaceAgentToolsetPayload struct {
 	Tools []*ToolSchema
 }
 
+// ReplaceServiceToolsetPayload is the payload type of the registry service
+// ReplaceServiceToolset method.
+type ReplaceServiceToolsetPayload struct {
+	// Exact service registration this update may replace.
+	ExpectedRegistrationToken string
+	// Stable UUID identifying this replacement of the expected registration. Reuse
+	// it for the same update; use a fresh ID for a new deployment or rollback.
+	ReplacementID string
+	// Unique toolset route name.
+	Name string
+	// Human-readable description of the toolset.
+	Description *string
+	// Semantic version of the toolset.
+	Version *SemVer
+	// Categories used by discovery filters.
+	Tags []string
+	// Complete portable service tool declarations, including consumer contracts
+	// and matching pagination partners.
+	Tools []*ToolSchema
+}
+
 // ResolvedToolset is the result type of the registry service
 // DeclareServiceToolset method.
 type ResolvedToolset struct {
@@ -889,14 +921,14 @@ func MakeServiceUnavailable(err error) *goa.ServiceError {
 	return goa.NewServiceError(err, "service_unavailable", false, false, false)
 }
 
-// MakeProviderLeaseLost builds a goa.ServiceError from an error.
-func MakeProviderLeaseLost(err error) *goa.ServiceError {
-	return goa.NewServiceError(err, "provider_lease_lost", false, false, false)
-}
-
 // MakeAdmissionBlocked builds a goa.ServiceError from an error.
 func MakeAdmissionBlocked(err error) *goa.ServiceError {
 	return goa.NewServiceError(err, "admission_blocked", false, false, false)
+}
+
+// MakeProviderLeaseLost builds a goa.ServiceError from an error.
+func MakeProviderLeaseLost(err error) *goa.ServiceError {
+	return goa.NewServiceError(err, "provider_lease_lost", false, false, false)
 }
 
 // MakeNotFound builds a goa.ServiceError from an error.

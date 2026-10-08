@@ -31,7 +31,7 @@ func TestProductionWorkflowReplaysCompletedNativeTimeout(t *testing.T) {
 			name = "old generic completion"
 		}
 		t.Run(name, func(t *testing.T) {
-			plannerStub, handler := productionReplayWorkflow(t)
+			plannerStub, eng, handler := productionReplayWorkflow(t)
 			history := syntheticAcceptedProductionHistory(t, &api.PlanActivityOutput{}, false)
 			history.Events = history.Events[:28]
 			history.Events[24] = &historypb.HistoryEvent{
@@ -72,7 +72,7 @@ func TestProductionWorkflowReplaysCompletedNativeTimeout(t *testing.T) {
 			}
 			retainedFailure := proto.Clone(savedFailure)
 			history = deserializeReplayHistory(t, history)
-			replayProductionWorkflow(t, capture, history)
+			replayProductionWorkflow(t, eng, capture, history)
 			assert.Zero(t, plannerStub.calls.Load())
 			assert.True(t, temporalerrors.IsNativeTimeout(returned))
 			// Replaying an already-closed workflow checks command compatibility;

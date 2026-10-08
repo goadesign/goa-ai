@@ -1,7 +1,7 @@
-// Package registry separates immutable service declarations from provider
-// membership. Declaration creates no provider leases, streams, or pings. The
-// catalog scheduler may observe it as unavailable. Attachment grants a lease
-// only while the selected registration remains current.
+// Package registry saves service declarations separately from provider membership. Initial
+// declaration and explicit replacement create no leases or health pings. An
+// exact registration accepts providers until it is retired or replaced; a
+// replacement cannot commit while any old provider still has a live lease.
 package registry
 
 import (
@@ -12,6 +12,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"goa.design/goa-ai/internal/registrycontract"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/toolregistry"
@@ -34,47 +37,20 @@ func (s *Service) DeclareServiceToolsetWithIdentity(ctx context.Context, identit
 	return s.declareServiceToolset(ctx, p, owned)
 }
 
-func (s *Service) declareServiceToolset(ctx context.Context, p *genregistry.ServiceToolsetDeclaration, identity *CatalogIdentity) (*genregistry.ResolvedToolset, error) {
-	compiled, err := registrycontract.Compile(p.Tools)
+// ReplaceServiceToolset replaces one exact service registration without
+// creating a provider. Live old leases reject the update before any change.
+func (s *Service) ReplaceServiceToolset(ctx context.Context, p *genregistry.ReplaceServiceToolsetPayload) (*genregistry.ResolvedToolset, error) {
+	return s.replaceServiceToolset(ctx, p, nil)
+}
+
+// ReplaceServiceToolsetWithIdentity replaces the selected service declaration
+// while preserving its saved application scope and public name.
+func (s *Service) ReplaceServiceToolsetWithIdentity(ctx context.Context, identity CatalogIdentity, p *genregistry.ReplaceServiceToolsetPayload) (*genregistry.ResolvedToolset, error) {
+	owned, err := identityInput(identity)
 	if err != nil {
-		return nil, genregistry.MakeValidationError(err)
+		return nil, err
 	}
-	for _, spec := range compiled {
-		if spec.IsAgentTool {
-			return nil, genregistry.MakeValidationError(fmt.Errorf("tool %q is not a service tool", spec.Name))
-		}
-	}
-	toolset := &genregistry.Toolset{
-		Name: p.Name, Description: p.Description, Version: p.Version, Tags: p.Tags, Tools: p.Tools,
-	}
-	if err := s.validator.ValidateToolSchemas(toolset.Tools); err != nil {
-		return nil, genregistry.MakeValidationError(err)
-	}
-	fingerprint, err := toolcontract.Fingerprint(toolset)
-	if err != nil {
-		return nil, genregistry.MakeValidationError(err)
-	}
-	definition, err := newCatalogToolset(toolset, fingerprint, s.validator)
-	if err != nil {
-		return nil, genregistry.MakeValidationError(err)
-	}
-	definition.identity = identity
-	entry, err := s.catalog.DeclareService(ctx, definition)
-	if err != nil {
-		switch {
-		case errors.Is(err, errAdmissionConflict):
-			return nil, genregistry.MakeAdmissionConflict(err)
-		case errors.Is(err, errAdmissionRetired):
-			return nil, genregistry.MakeAdmissionRetired(err)
-		default:
-			return nil, genregistry.MakeServiceUnavailable(err)
-		}
-	}
-	saved, err := entry.Toolset.decode(entry.RegisteredAt)
-	if err != nil {
-		return nil, genregistry.MakeServiceUnavailable(err)
-	}
-	return &genregistry.ResolvedToolset{Toolset: saved, RegistrationToken: entry.RegistrationToken}, nil
+	return s.replaceServiceToolset(ctx, p, owned)
 }
 
 // AttachProvider starts membership for one exact service registration. It never
@@ -106,6 +82,77 @@ func (s *Service) AttachProvider(ctx context.Context, p *genregistry.AttachProvi
 		RegisteredAt: state.RegisteredAt, RegistrationToken: state.RegistrationToken,
 		LeaseDurationMs: s.providerLeaseDuration.Milliseconds(),
 	}, nil
+}
+
+func (s *Service) declareServiceToolset(ctx context.Context, p *genregistry.ServiceToolsetDeclaration, identity *CatalogIdentity) (*genregistry.ResolvedToolset, error) {
+	definition, err := s.prepareServiceToolset(p, identity)
+	if err != nil {
+		return nil, err
+	}
+	entry, err := s.catalog.DeclareService(ctx, definition)
+	if err != nil {
+		return nil, serviceDeclarationError(err)
+	}
+	return resolvedToolsetRegistration(entry.Toolset, entry.catalogState)
+}
+
+func (s *Service) replaceServiceToolset(ctx context.Context, p *genregistry.ReplaceServiceToolsetPayload, identity *CatalogIdentity) (*genregistry.ResolvedToolset, error) {
+	definition, err := s.prepareServiceToolset(&genregistry.ServiceToolsetDeclaration{
+		Name: p.Name, Description: p.Description, Version: p.Version, Tags: p.Tags, Tools: p.Tools,
+	}, identity)
+	if err != nil {
+		return nil, err
+	}
+	entry, err := s.catalog.ReplaceService(ctx, definition, p.ExpectedRegistrationToken, p.ReplacementID)
+	if err != nil {
+		return nil, serviceDeclarationError(err)
+	}
+	return resolvedToolsetRegistration(entry.Toolset, entry.catalogState)
+}
+
+// prepareServiceToolset applies the same complete schema checks to creation
+// and replacement. The returned definition includes immutable owner identity.
+func (s *Service) prepareServiceToolset(p *genregistry.ServiceToolsetDeclaration, identity *CatalogIdentity) (*catalogToolset, error) {
+	compiled, err := registrycontract.Compile(p.Tools)
+	if err != nil {
+		return nil, genregistry.MakeValidationError(err)
+	}
+	for _, spec := range compiled {
+		if spec.IsAgentTool {
+			return nil, genregistry.MakeValidationError(fmt.Errorf("tool %q is not a service tool", spec.Name))
+		}
+	}
+	toolset := &genregistry.Toolset{
+		Name: p.Name, Description: p.Description, Version: p.Version, Tags: p.Tags, Tools: p.Tools,
+	}
+	if err := s.validator.ValidateToolSchemas(toolset.Tools); err != nil {
+		return nil, genregistry.MakeValidationError(err)
+	}
+	fingerprint, err := toolcontract.Fingerprint(toolset)
+	if err != nil {
+		return nil, genregistry.MakeValidationError(err)
+	}
+	definition, err := newCatalogToolset(toolset, fingerprint, s.validator)
+	if err != nil {
+		return nil, genregistry.MakeValidationError(err)
+	}
+	definition.identity = identity
+	return definition, nil
+}
+
+// serviceDeclarationError preserves whether an update was blocked by live
+// leases, conflicted with another registration, or failed in storage.
+func serviceDeclarationError(err error) error {
+	switch {
+	case errors.Is(err, errAdmissionBlocked):
+		return genregistry.MakeAdmissionBlocked(err)
+	case errors.Is(err, errAdmissionConflict):
+		return genregistry.MakeAdmissionConflict(err)
+	case errors.Is(err, errAdmissionRetired):
+		return genregistry.MakeAdmissionRetired(err)
+	default:
+		return genregistry.MakeServiceUnavailable(err)
+	}
 }
 
 // DeclareService creates one admission with a registry-issued revision and no
@@ -144,13 +191,85 @@ func (c *toolsetCatalog) DeclareService(ctx context.Context, definition *catalog
 		}
 		state := newCatalogState(definition, revision, token, now)
 		updated, err := c.commit(ctx, toolsetCatalogKey(name), "", state, catalogWrite{
-			Definition: string(definition.raw), CandidateToken: token,
+			Definition: definition.raw, CandidateToken: token,
 		})
 		if err != nil {
 			return catalogEntry{}, err
 		}
 		if updated {
 			return catalogEntry{catalogState: state, Toolset: definition}, nil
+		}
+	}
+}
+
+// ReplaceService saves a replacement only after old provider authority has
+// ended. Its identity binds this request to the expected registration and the
+// complete new contract, so a lost reply can return the original saved result.
+func (c *toolsetCatalog) ReplaceService(ctx context.Context, definition *catalogToolset, expected, replacementID string) (entry catalogEntry, err error) {
+	name := definition.info.Name
+	ctx, span := otel.Tracer("goa.design/goa-ai/registry").Start(ctx, "toolregistry.catalog.service.replace",
+		trace.WithAttributes(attribute.String("toolregistry.toolset", name)))
+	defer finishServiceReplacementSpan(ctx, span, &err)
+	key := toolsetCatalogKey(name)
+	revision := uuid.NewSHA1(uuid.NameSpaceOID, []byte("service-toolset-replacement\x00"+expected+"\x00"+replacementID)).String()
+	token, err := admissionRegistrationToken(definition.fingerprint, revision, toolregistry.WireProtocolVersion)
+	if err != nil {
+		return catalogEntry{}, err
+	}
+	for {
+		raw, definitionRaw, tokenRetired, exists, err := c.store.Snapshot(ctx, key)
+		if err != nil {
+			return catalogEntry{}, err
+		}
+		if !exists {
+			return catalogEntry{}, errAdmissionConflict
+		}
+		current, err := c.decodeSnapshot(ctx, name, raw, definitionRaw, tokenRetired)
+		if err != nil {
+			return catalogEntry{}, err
+		}
+		if err := requireCatalogIdentity(current.Identity, definition.identity); err != nil {
+			return catalogEntry{}, err
+		}
+		if current.NativeAgent {
+			return catalogEntry{}, errAdmissionConflict
+		}
+		if current.RegistrationToken == token {
+			if current.State == catalogEntryRetired {
+				return catalogEntry{}, errAdmissionRetired
+			}
+			return current, nil
+		}
+		if current.RegistrationToken != expected {
+			return catalogEntry{}, errAdmissionConflict
+		}
+		now, err := c.clock.Now(ctx)
+		if err != nil {
+			return catalogEntry{}, err
+		}
+		pruneExpiredProviderLeases(&current.catalogState, now)
+		if len(current.ProviderLeases) > 0 {
+			return catalogEntry{}, errAdmissionBlocked
+		}
+
+		// The conditional write races attachment and renewal against the
+		// replacement. Only a state with no live old leases can win.
+		state := newCatalogState(definition, revision, token, now)
+		savedDefinition := definition
+		if current.SchemaFingerprint == definition.fingerprint {
+			savedDefinition = current.Toolset
+			state.Info = copyToolsetInfo(current.Info)
+			state.Info.RegisteredAt = state.RegisteredAt
+		}
+		updated, err := c.commit(ctx, key, raw, state, catalogWrite{
+			Definition: savedDefinition.raw, CandidateToken: token,
+			RetireToken: current.RegistrationToken,
+		})
+		if err != nil {
+			return catalogEntry{}, err
+		}
+		if updated {
+			return catalogEntry{catalogState: state, Toolset: savedDefinition}, nil
 		}
 	}
 }
@@ -218,4 +337,21 @@ func (c *toolsetCatalog) AttachProvider(ctx context.Context, name, token, provid
 			return state, nil
 		}
 	}
+}
+
+// finishServiceReplacementSpan records rejected updates as expected outcomes.
+// Storage failures remain failed operations, with their error on the span.
+func finishServiceReplacementSpan(ctx context.Context, span trace.Span, err *error) {
+	switch {
+	case errors.Is(*err, errAdmissionBlocked):
+		span.AddEvent("replacement_blocked_by_live_provider")
+	case errors.Is(*err, errAdmissionConflict):
+		span.AddEvent("replacement_registration_conflict")
+	case errors.Is(*err, errAdmissionRetired):
+		span.AddEvent("replacement_already_retired")
+	default:
+		finishCatalogSpan(ctx, span, err)
+		return
+	}
+	span.End()
 }

@@ -338,6 +338,8 @@ func TestStartChildWorkflowRejectsIncompleteRequest(t *testing.T) {
 func TestStartChildWorkflowRejectsCompletedIDReuse(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
+	eng := &Engine{}
+	installFirstAttemptRecoveryControl(t, env, eng, worker.Options{})
 	env.RegisterWorkflowWithOptions(
 		func(workflow.Context, *api.RunInput) (*api.RunOutput, error) {
 			return &api.RunOutput{}, nil
@@ -345,7 +347,10 @@ func TestStartChildWorkflowRejectsCompletedIDReuse(t *testing.T) {
 		workflow.RegisterOptions{Name: "child"},
 	)
 	env.ExecuteWorkflow(func(ctx workflow.Context) error {
-		wfCtx := &temporalWorkflowContext{engine: &Engine{}, ctx: ctx}
+		wfCtx, err := NewWorkflowContext(eng, ctx)
+		if err != nil {
+			return err
+		}
 		first, err := wfCtx.StartChildWorkflow(context.Background(), engine.ChildWorkflowRequest{
 			ID:        "single-use-child",
 			Workflow:  "child",
@@ -383,6 +388,8 @@ func TestStartChildWorkflowRejectsCompletedIDReuse(t *testing.T) {
 func TestStartChildWorkflowSnapshotsCallerInput(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
+	eng := &Engine{}
+	installFirstAttemptRecoveryControl(t, env, eng, worker.Options{})
 	env.RegisterWorkflowWithOptions(
 		func(_ workflow.Context, input *api.RunInput) (*api.RunOutput, error) {
 			return &api.RunOutput{RunID: input.Labels["tenant"]}, nil
@@ -390,7 +397,10 @@ func TestStartChildWorkflowSnapshotsCallerInput(t *testing.T) {
 		workflow.RegisterOptions{Name: "child"},
 	)
 	env.ExecuteWorkflow(func(ctx workflow.Context) error {
-		wfCtx := &temporalWorkflowContext{engine: &Engine{}, ctx: ctx}
+		wfCtx, err := NewWorkflowContext(eng, ctx)
+		if err != nil {
+			return err
+		}
 		input := &api.RunInput{RunID: "child", Labels: map[string]string{"tenant": "accepted"}}
 		child, err := wfCtx.StartChildWorkflow(context.Background(), engine.ChildWorkflowRequest{
 			ID: "child", Workflow: "child", TaskQueue: "test.queue", Input: input,
@@ -415,6 +425,8 @@ func TestStartChildWorkflowSnapshotsCallerInput(t *testing.T) {
 func TestStartChildWorkflowTerminatesWithParent(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
+	eng := &Engine{}
+	installFirstAttemptRecoveryControl(t, env, eng, worker.Options{})
 	env.RegisterWorkflowWithOptions(
 		func(ctx workflow.Context, _ *api.RunInput) (*api.RunOutput, error) {
 			if err := workflow.NewTimer(ctx, time.Hour).Get(ctx, nil); err != nil {
@@ -425,8 +437,11 @@ func TestStartChildWorkflowTerminatesWithParent(t *testing.T) {
 		workflow.RegisterOptions{Name: "owned-child"},
 	)
 	env.ExecuteWorkflow(func(ctx workflow.Context) error {
-		wfCtx := &temporalWorkflowContext{engine: &Engine{}, ctx: ctx}
-		_, err := wfCtx.StartChildWorkflow(context.Background(), engine.ChildWorkflowRequest{
+		wfCtx, err := NewWorkflowContext(eng, ctx)
+		if err != nil {
+			return err
+		}
+		_, err = wfCtx.StartChildWorkflow(context.Background(), engine.ChildWorkflowRequest{
 			ID:        "owned-child-run",
 			Workflow:  "owned-child",
 			TaskQueue: "test.queue",
@@ -442,7 +457,8 @@ func TestStartChildWorkflowTerminatesWithParent(t *testing.T) {
 func TestStartChildWorkflowEnforcesExactPayloadLimit(t *testing.T) {
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
-	env.SetWorkerOptions(worker.Options{DeadlockDetectionTimeout: 5 * time.Second})
+	eng := &Engine{}
+	installFirstAttemptRecoveryControl(t, env, eng, worker.Options{DeadlockDetectionTimeout: 5 * time.Second})
 	recipePayload, err := NewAgentDataConverter().ToPayload(make([]byte, 32))
 	require.NoError(t, err)
 	reserved := len(startrecipe.MemoKey) + temporalPayloadSize(recipePayload)
@@ -455,7 +471,10 @@ func TestStartChildWorkflowEnforcesExactPayloadLimit(t *testing.T) {
 		workflow.RegisterOptions{Name: "child"},
 	)
 	env.ExecuteWorkflow(func(ctx workflow.Context) error {
-		wfCtx := &temporalWorkflowContext{engine: &Engine{}, ctx: ctx}
+		wfCtx, err := NewWorkflowContext(eng, ctx)
+		if err != nil {
+			return err
+		}
 		child, err := wfCtx.StartChildWorkflow(context.Background(), engine.ChildWorkflowRequest{
 			ID: "child1", Workflow: "child", TaskQueue: "test.queue", Input: exact,
 		})
@@ -482,6 +501,8 @@ func TestStartChildWorkflowWaitsForCancellationCleanup(t *testing.T) {
 	var cleanupCalled atomic.Bool
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
+	eng := &Engine{}
+	installFirstAttemptRecoveryControl(t, env, eng, worker.Options{})
 	env.RegisterWorkflowWithOptions(
 		func(ctx workflow.Context, _ *api.RunInput) (*api.RunOutput, error) {
 			if err := workflow.NewTimer(ctx, time.Hour).Get(ctx, nil); err != nil {
@@ -497,7 +518,10 @@ func TestStartChildWorkflowWaitsForCancellationCleanup(t *testing.T) {
 		workflow.RegisterOptions{Name: "child-with-cancellation-cleanup"},
 	)
 	env.ExecuteWorkflow(func(ctx workflow.Context) error {
-		wfCtx := &temporalWorkflowContext{engine: &Engine{}, ctx: ctx}
+		wfCtx, err := NewWorkflowContext(eng, ctx)
+		if err != nil {
+			return err
+		}
 		child, err := wfCtx.StartChildWorkflow(context.Background(), engine.ChildWorkflowRequest{
 			ID:        "child-with-cleanup",
 			Workflow:  "child-with-cancellation-cleanup",

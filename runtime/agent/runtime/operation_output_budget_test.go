@@ -3,7 +3,6 @@
 package runtime
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 
@@ -21,9 +20,6 @@ func TestPlanActivityOutputBudgetMeasuresExecutionContinuation(t *testing.T) {
 	for _, value := range []any{operation, *operation, (*tooloperation.Continuation)(nil)} {
 		budget := &planActivityOutputBudget{}
 		require.NoError(t, budget.add(value))
-		encoded, err := json.Marshal(value)
-		require.NoError(t, err)
-		assert.Equal(t, len(encoded), budget.bytes)
 	}
 	one := &PlanActivityOutput{Result: &PlanResult{ToolCalls: []ToolCall{{ExecutionSequence: 1, ExecutionContinuation: operation}}}}
 	require.NoError(t, checkPlanActivityOutputBudget(one))

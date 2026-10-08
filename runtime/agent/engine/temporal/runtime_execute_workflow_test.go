@@ -18,8 +18,10 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/sdk/activity"
+	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
+	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 
 	agent "goa.design/goa-ai/runtime/agent"
@@ -209,6 +211,7 @@ func TestPlannerPublicationRetriesImmutableBatchWithoutReplanning(t *testing.T) 
 		AgentID: agentID, RunID: runID, SessionID: sessionID, TurnID: "turn-publication",
 		SeedEndID: seedEndID,
 	})
+	env.SetWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{&workflowControlInterceptor{engine: eng}}})
 	env.ExecuteWorkflow(eng.temporalWorkflowHandler(runtime.ExecuteWorkflow), input)
 
 	require.NoError(t, env.GetWorkflowError())
@@ -275,6 +278,7 @@ func TestExecuteWorkflowSuspendsAwaitQuestions(t *testing.T) {
 		AgentID: agentID, RunID: runID, SessionID: sessionID, TurnID: turnID,
 		SeedEndID: seedEndID,
 	})
+	env.SetWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{&workflowControlInterceptor{engine: eng}}})
 	env.ExecuteWorkflow(eng.temporalWorkflowHandler(runtime.ExecuteWorkflow), input)
 
 	require.NoError(t, env.GetWorkflowError())
@@ -373,6 +377,7 @@ func TestExecuteWorkflowServiceActivityCancellationClosesTemporalRunCanceled(t *
 		TurnID:    "turn-1",
 		SeedEndID: seedEndID,
 	})
+	env.SetWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{&workflowControlInterceptor{engine: eng}}})
 	env.ExecuteWorkflow(eng.temporalWorkflowHandler(runtime.ExecuteWorkflow), input)
 
 	workflowErr := env.GetWorkflowError()

@@ -106,7 +106,7 @@ func TestMCPInputSurvivesSuccessorRuns(t *testing.T) {
 				seedRunMeta(t, rt, input)
 				wfCtx = &testWorkflowContext{ctx: t.Context(), hookRuntime: rt, runtime: rt, plannerOutput: &PlanActivityOutput{PublicationBatchID: testPublicationBatchID, Result: &PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "done"}}}}}}}
 				endID := seedTestContinuationHistory(t, rt, input, checkpoint)
-				out, err := rt.resumeSuspendedWorkflow(wfCtx, registration, input, checkpoint, endID)
+				out, err := rt.resumeSuspendedWorkflow(recoveryContinuationWorkflow(t, wfCtx, checkpoint), registration, input, checkpoint, endID)
 				require.NoError(t, err)
 				require.NotNil(t, out)
 				if successor == 2 {
@@ -126,7 +126,7 @@ func TestMCPInputSurvivesSuccessorRuns(t *testing.T) {
 						require.NoError(t, restoreContinuationRunInput(next, checkpoint))
 						seedRunMeta(t, rt, next)
 						wfCtx = &testWorkflowContext{ctx: t.Context(), hookRuntime: rt, runtime: rt, plannerOutput: wfCtx.plannerOutput}
-						out, err = rt.resumeSuspendedWorkflow(wfCtx, registration, next, checkpoint, seedTestContinuationHistory(t, rt, next, checkpoint))
+						out, err = rt.resumeSuspendedWorkflow(recoveryContinuationWorkflow(t, wfCtx, checkpoint), registration, next, checkpoint, seedTestContinuationHistory(t, rt, next, checkpoint))
 						require.NoError(t, err)
 					}
 					assert.Nil(t, out.Suspension)

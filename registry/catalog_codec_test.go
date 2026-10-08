@@ -77,6 +77,7 @@ func TestCatalogDefinitionReadsObserveRemovedNames(t *testing.T) {
 			store.mu.Unlock()
 
 			tt.read(t, catalog)
+			assert.NotContains(t, catalog.definitions, "tools")
 
 			_, exists = store.Get(key)
 			assert.False(t, exists)
@@ -362,6 +363,7 @@ func TestCatalogColdReadValidatesAndCachesExecutionSchemas(t *testing.T) {
 		cached, err := cold.ActiveRegistration(t.Context(), "tools")
 		require.NoError(t, err)
 		assert.NotSame(t, first.Toolset, cached.Toolset)
+		assert.Same(t, first.Toolset.catalogDefinition, cached.Toolset.catalogDefinition)
 		assert.Same(t, compiled, cached.Toolset.executionSchemas["tools.lookup"])
 		require.NoError(t, validatePayload(cached.Toolset.executionSchemas["tools.lookup"], []byte(`{}`)))
 		require.Error(t, validatePayload(cached.Toolset.executionSchemas["tools.lookup"], []byte(`[]`)))
@@ -424,7 +426,7 @@ func TestCatalogLifecycleReadsNoDefinitions(t *testing.T) {
 	require.NoError(t, catalog.Retire(ctx, "tools", token))
 	assert.Zero(t, store.snapshotReads)
 	assert.Equal(t, 1, store.definitionWrites)
-	assert.Equal(t, string(first.Toolset.raw), store.definitions[toolsetCatalogKey("tools")])
+	assert.Equal(t, first.Toolset.raw, store.definitions[toolsetCatalogKey("tools")])
 }
 
 func TestCatalogDefinitionReadsObserveReplacement(t *testing.T) {
@@ -515,7 +517,7 @@ func TestCatalogSameFingerprintReplacementPreservesStoredTagOrder(t *testing.T) 
 			assert.Equal(t, []string{"alpha", "beta"}, replacement.Info.Tags)
 			assert.Equal(t, replacement.RegisteredAt, replacement.Info.RegisteredAt)
 			store.mu.RLock()
-			assert.Equal(t, string(definition.raw), store.definitions[toolsetCatalogKey("tools")])
+			assert.Equal(t, definition.raw, store.definitions[toolsetCatalogKey("tools")])
 			assert.Equal(t, 1, store.definitionWrites)
 			store.mu.RUnlock()
 			expected := testDefinitionToolset()
@@ -679,6 +681,7 @@ func TestCatalogDefinitionConcurrentReadersAndPongs(t *testing.T) {
 			continue
 		}
 		assert.NotSame(t, first, definition)
+		assert.Same(t, first.catalogDefinition, definition.catalogDefinition)
 		assert.Same(t, first.executionSchemas["tools.lookup"], definition.executionSchemas["tools.lookup"])
 	}
 	definition, err := first.decode("")

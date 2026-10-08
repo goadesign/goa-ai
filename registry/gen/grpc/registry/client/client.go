@@ -89,6 +89,61 @@ func (c *Client) DeclareServiceToolset() goa.Endpoint {
 	}
 }
 
+// ReplaceServiceToolset calls the "ReplaceServiceToolset" function in
+// registrypb.RegistryClient interface.
+func (c *Client) ReplaceServiceToolset() goa.Endpoint {
+	return func(ctx context.Context, v any) (any, error) {
+		remote := BuildReplaceServiceToolsetFunc(c.grpccli, c.opts...)
+		// Convert errors from the RPC call here so local encoding and decoding
+		// errors keep their original types and validation details.
+		inv := goagrpc.NewInvoker(
+			func(ctx context.Context, request any, opts ...grpc.CallOption) (any, error) {
+				res, err := remote(ctx, request, opts...)
+				if err != nil {
+					resp := goagrpc.DecodeError(err)
+					switch message := resp.(type) {
+					case *goapb.ErrorResponse:
+						return nil, goagrpc.NewServiceErrorWithCause(err, message)
+					}
+					if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+						return nil, ctxErr
+					}
+					// Inspect one cause chain so an independent failure cannot select
+					// a child's cancellation code for the complete returned error.
+					singleCause := true
+					for cause := err; cause != nil && singleCause; {
+						if joined, ok := cause.(interface{ Unwrap() []error }); ok {
+							cause = nil
+							for _, child := range joined.Unwrap() {
+								if child != nil {
+									if cause != nil {
+										singleCause = false
+										break
+									}
+									cause = child
+								}
+							}
+						} else {
+							cause = errors.Unwrap(cause)
+						}
+					}
+					if singleCause {
+						// A remote stop keeps its status while the caller is still active.
+						switch status.Code(err) {
+						case codes.Canceled, codes.DeadlineExceeded:
+							return nil, err
+						}
+					}
+					return nil, goa.Fault("%s", err.Error())
+				}
+				return res, nil
+			},
+			EncodeReplaceServiceToolsetRequest,
+			DecodeReplaceServiceToolsetResponse)
+		return inv.Invoke(ctx, v)
+	}
+}
+
 // AttachProvider calls the "AttachProvider" function in
 // registrypb.RegistryClient interface.
 func (c *Client) AttachProvider() goa.Endpoint {

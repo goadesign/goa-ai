@@ -675,20 +675,24 @@ func (r *Runtime) recordActivity(ctx context.Context, command *api.StorageActivi
 
 // testWorkflowContext is a lightweight engine.WorkflowContext implementation used by tests.
 type testWorkflowContext struct {
-	ctx context.Context
-	now func() time.Time
+	ctx          context.Context
+	now          func() time.Time
+	recoveryPort *testProviderRecoveryPort
 
-	lastHookCall       engine.StorageActivityCall
-	lastPlannerCall    engine.PlannerActivityCall
-	lastToolCall       engine.ToolActivityCall
-	lastAgentChildCall engine.AgentChildActivityCall
-	agentChildOutput   *api.AgentChildActivityOutput
-	agentChildCalls    int
+	lastHookCall         engine.StorageActivityCall
+	lastPlannerCall      engine.PlannerActivityCall
+	lastToolCall         engine.ToolActivityCall
+	lastAgentChildCall   engine.AgentChildActivityCall
+	lastContinuationCall engine.ContinuationActivityCall
+	continuationRead     func(*api.ContinuationActivityInput) (bool, error)
+	agentChildOutput     *api.AgentChildActivityOutput
+	agentChildCalls      int
 
 	asyncResult  ToolOutput
 	sequenceMu   sync.Mutex
 	nextSequence uint64
 	workflowID   string
+	runID        string
 
 	cancellationHandler engine.CancellationHandler
 
@@ -737,6 +741,9 @@ func (t *testWorkflowContext) WorkflowID() string {
 }
 
 func (t *testWorkflowContext) RunID() string {
+	if t.runID != "" {
+		return t.runID
+	}
 	return "run"
 }
 
@@ -755,6 +762,7 @@ func (t *testWorkflowContext) Detached() engine.WorkflowContext {
 
 		asyncResult: t.asyncResult,
 		workflowID:  t.workflowID,
+		runID:       t.runID,
 		now:         t.now,
 
 		planResult:      t.planResult,
@@ -792,6 +800,7 @@ func (t *testWorkflowContext) WithCancel() (engine.WorkflowContext, func()) {
 
 		asyncResult: t.asyncResult,
 		workflowID:  t.workflowID,
+		runID:       t.runID,
 		now:         t.now,
 
 		planResult:      t.planResult,
@@ -900,10 +909,33 @@ func (t *testWorkflowContext) StartChildWorkflow(ctx context.Context, req engine
 	if childRT == nil {
 		childRT = t.runtime
 	}
+	// A child request starts a separate workflow. Copy the activity fixtures,
+	// but give the child its own identity, sequence counter, and recovery port
+	// so registering its receivers cannot replace the parent's receivers.
+	child := &testWorkflowContext{
+		ctx:                    t.ctx,
+		now:                    t.now,
+		workflowID:             req.ID,
+		runID:                  req.ID,
+		asyncResult:            t.asyncResult,
+		planResult:             t.planResult,
+		hasPlanResult:          t.hasPlanResult,
+		plannerOutput:          t.plannerOutput,
+		recoveryCatalog:        t.recoveryCatalog,
+		barrier:                t.barrier,
+		hookRuntime:            t.hookRuntime,
+		runtime:                t.runtime,
+		childRuntime:           t.childRuntime,
+		continuationRead:       t.continuationRead,
+		agentChildOutput:       t.agentChildOutput,
+		toolFutures:            t.toolFutures,
+		controlledChildHandles: t.controlledChildHandles,
+	}
 	return &testChildHandle{
 		runtime: childRT,
 		request: req,
-		wfCtx:   t,
+		wfCtx:   child,
+		caller:  t,
 	}, nil
 }
 
@@ -1024,6 +1056,21 @@ func (t *testWorkflowContext) ExecuteToolActivityAsync(call engine.ToolActivityC
 	result := t.asyncResult
 	fut.result = &result
 	return fut, nil
+}
+
+func (t *testWorkflowContext) ExecuteContinuationActivity(call engine.ContinuationActivityCall) (bool, error) {
+	t.lastContinuationCall = call
+	if t.continuationRead != nil {
+		return t.continuationRead(call.Input)
+	}
+	rt := t.runtime
+	if rt == nil {
+		rt = t.hookRuntime
+	}
+	if rt == nil {
+		return false, errors.New("continuation activity runtime is required")
+	}
+	return rt.continuationAvailableActivity(t.Context(), call.Input)
 }
 
 func (t *testWorkflowContext) ExecuteAgentChildActivity(call engine.AgentChildActivityCall) (*api.AgentChildActivityOutput, error) {
@@ -1226,6 +1273,9 @@ func (s *stubEngine) RegisterAgentChildActivity(_ context.Context, name string, 
 	s.registeredAgentChildOptions[name] = opts
 	return nil
 }
+func (s *stubEngine) RegisterContinuationActivity(context.Context, string, engine.ActivityOptions, func(context.Context, *api.ContinuationActivityInput) (bool, error)) error {
+	return nil
+}
 func (s *stubEngine) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequest) (engine.WorkflowHandle, error) {
 	s.startCalls++
 	s.last = req
@@ -1325,10 +1375,11 @@ type testChildHandle struct {
 	runtime *Runtime
 	request engine.ChildWorkflowRequest
 	wfCtx   engine.WorkflowContext
+	caller  *testWorkflowContext
 }
 
 func (h *testChildHandle) Get(ctx context.Context) (*api.RunOutput, error) {
-	if tw, ok := h.wfCtx.(*testWorkflowContext); ok {
+	if tw := h.caller; tw != nil {
 		if !tw.sawFirstChildGet {
 			tw.sawFirstChildGet = true
 			tw.firstChildGetCount = len(tw.childRequests)
@@ -1340,7 +1391,8 @@ func (h *testChildHandle) Get(ctx context.Context) (*api.RunOutput, error) {
 		}
 	}
 	if h.runtime != nil && h.request.Input != nil {
-		// Execute the nested agent workflow
+		// After recording the parent's wait, execute the child with its own
+		// workflow context and return the child's ordinary result or error.
 		return h.runtime.ExecuteWorkflow(h.wfCtx, h.request.Input)
 	}
 	return &api.RunOutput{

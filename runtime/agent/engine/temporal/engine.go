@@ -20,6 +20,7 @@ import (
 	"go.temporal.io/sdk/client"
 	temporalotel "go.temporal.io/sdk/contrib/opentelemetry"
 	"go.temporal.io/sdk/converter"
+	"go.temporal.io/sdk/interceptor"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
@@ -261,6 +262,12 @@ func newEngine(opts Options, workerMode bool) (*Engine, error) {
 		activityOptions:         make(map[string]engine.ActivityOptions),
 		pendingActivities:       make(map[string]struct{}),
 	}
+	if workerMode {
+		e.workerOpts.Interceptors = append(
+			[]interceptor.WorkerInterceptor{&workflowControlInterceptor{engine: e}},
+			e.workerOpts.Interceptors...,
+		)
+	}
 	return e, nil
 }
 
@@ -309,8 +316,10 @@ func (e *Engine) temporalWorkflowHandler(
 	handler func(engine.WorkflowContext, *api.RunInput) (*api.RunOutput, error),
 ) func(workflow.Context, *api.RunInput) (*api.RunOutput, error) {
 	return func(tctx workflow.Context, input *api.RunInput) (*api.RunOutput, error) {
-		wfCtx := newTemporalWorkflowContext(e, tctx)
-		defer e.releaseWorkflowContext(wfCtx.runID)
+		wfCtx, err := NewWorkflowContext(e, tctx)
+		if err != nil {
+			return nil, err
+		}
 		out, err := handler(wfCtx, input)
 		if errors.Is(err, engine.ErrWorkflowCompleted) {
 			return out, temporal.NewNonRetryableApplicationError(
@@ -410,6 +419,24 @@ func (e *Engine) RegisterAgentChildActivity(_ context.Context, name string, opts
 		output, err := fn(e.injectWorkflowContextIntoActivity(ctx), in)
 		e.recordActivityError(ctx, err)
 		return output, temporalerrors.WrapActivity(err)
+	}
+	return e.registerActivityWithCtx(name, opts, wrapped)
+}
+
+// RegisterContinuationActivity installs a saved-page read on the worker's
+// existing activity route. Invalid immutable requests are not retried.
+func (e *Engine) RegisterContinuationActivity(_ context.Context, name string, opts engine.ActivityOptions, fn func(context.Context, *api.ContinuationActivityInput) (bool, error)) error {
+	if err := e.requireWorkerMode("register continuation activities"); err != nil {
+		return err
+	}
+	if name == "" || fn == nil {
+		return errors.New("continuation activity name and handler are required")
+	}
+	opts = e.applyActivityClassDefaults(activityKindPlanner, opts)
+	wrapped := func(ctx context.Context, input *api.ContinuationActivityInput) (bool, error) {
+		available, err := fn(e.injectWorkflowContextIntoActivity(ctx), input)
+		e.recordActivityError(ctx, err)
+		return available, temporalerrors.WrapActivity(err)
 	}
 	return e.registerActivityWithCtx(name, opts, wrapped)
 }

@@ -13,6 +13,7 @@ import (
 	"text/template"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
@@ -1141,6 +1142,11 @@ func TestRecoveryFinishFinalizesWithoutConsumingTurn(t *testing.T) {
 	wfCtx := &testWorkflowContext{
 		ctx:         context.Background(),
 		asyncResult: ToolOutput{Failure: testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "boom")},
+		continuationRead: func(input *api.ContinuationActivityInput) (bool, error) {
+			require.Len(t, input.ToolOutputs, 1)
+			assert.Equal(t, "fail-call", input.ToolOutputs[0].ToolCallID)
+			return false, nil
+		},
 	}
 	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
 	base := &workflowConversation{RunContext: run.Context{RunID: input.RunID}}

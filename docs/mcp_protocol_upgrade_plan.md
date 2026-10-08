@@ -3604,3 +3604,21 @@ advertisement. Cancellation must follow the stored admitted successor and use
 the same restored execution and child-workflow paths to settle accepted Tasks.
 The remaining producer, notifications, dynamic catalog, authorization, Apps,
 Skills and caller/documentation gates remain open.
+
+### Current main integration — 2026-10-07
+
+The upgrade now includes current main's exact historical pagination selection,
+shared parent/child provider recovery allowance, compact catalog validation cache
+and explicit service-toolset replacement. MCP output retains typed content and
+immutable unfinished operations through those same mechanisms. Planner output
+uses the shared workflow codec's conservative byte calculation; the duplicate
+runtime walker is removed. All activity classes serialize permanent rejection
+through the same activity-owned error function.
+
+The registry was regenerated from the combined design. Selected codec and
+registry checks passed in 0.597 s and 0.477 s. Selected runtime and Temporal
+checks passed in 26.650 s and 0.911 s; storage continuation checks passed in
+0.424 s. Additional ordinary MCP successor and continuation-activity checks
+passed in 0.757 s and 0.867 s. Scoped lint found no issues before the final
+continuation test assertion update. No full root suite was run. These checks
+verify integration, not completion of the remaining release gates.

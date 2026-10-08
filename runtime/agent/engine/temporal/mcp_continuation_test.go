@@ -152,7 +152,8 @@ func testMCPContinuationThroughTemporalWorkers(t *testing.T, taskMode, readOutag
 		eng.client.Close()
 		service := &testWorkflowService{}
 		eng.client = newWorkflowServiceClient(t, service)
-		eng.workerFactory = func(client.Client, string, worker.Options) worker.Worker {
+		eng.workerFactory = func(_ client.Client, _ string, options worker.Options) worker.Worker {
+			env.SetWorkerOptions(options)
 			return &boundedCompletionWorker{env: env}
 		}
 		rt := agentruntime.New(store, agentruntime.WithEngine(eng))
