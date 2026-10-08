@@ -23,7 +23,10 @@ type Service interface {
 	// identical active declaration returns the original saved definition, token,
 	// and time; a different declaration or native Agent occupancy returns
 	// admission_conflict. A retired service declaration returns admission_retired.
-	// Declaration does not create a provider lease or establish health.
+	// Declaration does not create a provider lease or establish health. When the
+	// declaration has a catalog identity scope, every tool name must be unused by
+	// other active toolsets in that scope; otherwise tool_name_conflict names the
+	// tool and the toolset that already provides it, and nothing is saved.
 	DeclareServiceToolset(context.Context, *ServiceToolsetDeclaration) (res *ResolvedToolset, err error)
 	// Replace or reactivate the expected service declaration after every old
 	// provider lease has released or expired. The replacement ID identifies this
@@ -34,7 +37,10 @@ type Service interface {
 	// leases, including draining leases, return admission_blocked without
 	// replacing the declaration. Replacement permanently retires the previous
 	// service token, creates no provider lease, and requires new providers to
-	// attach and establish health.
+	// attach and establish health. When the declaration has a catalog identity
+	// scope, every tool name must be unused by other active toolsets in that
+	// scope; otherwise tool_name_conflict names the tool and the toolset that
+	// already provides it, and nothing is saved.
 	ReplaceServiceToolset(context.Context, *ReplaceServiceToolsetPayload) (res *ResolvedToolset, err error)
 	// Attach one provider incarnation to the exact existing service registration
 	// without sending or changing its definition. The expected token and current
@@ -54,7 +60,10 @@ type Service interface {
 	// provider to retry. Any candidate in the permanent retired-token set returns
 	// admission_retired and cannot resurrect. An already-draining incarnation
 	// returns provider_lease_lost; full registration cannot reopen it. Active
-	// providers use RenewProvider without resending definitions.
+	// providers use RenewProvider without resending definitions. When the
+	// declaration has a catalog identity scope, every tool name must be unused by
+	// other active toolsets in that scope; otherwise tool_name_conflict names the
+	// tool and the toolset that already provides it, and nothing is saved.
 	Register(context.Context, *RegisterPayload) (res *RegisterResult, err error)
 	// Extend only the exact current unexpired provider-incarnation lease without
 	// reading or writing tool definitions. Preserve its registration token,
@@ -89,12 +98,18 @@ type Service interface {
 	Pong(context.Context, *PongPayload) (err error)
 	// Create a native Agent toolset without a Pulse provider lease. Repeating the
 	// same active declaration succeeds. A different existing declaration returns
-	// admission_conflict; use ReplaceAgentToolset with its current token.
+	// admission_conflict; use ReplaceAgentToolset with its current token. When the
+	// declaration has a catalog identity scope, every tool name must be unused by
+	// other active toolsets in that scope; otherwise tool_name_conflict names the
+	// tool and the toolset that already provides it, and nothing is saved.
 	RegisterAgentToolset(context.Context, *AgentToolsetDeclaration) (res *ResolvedToolset, err error)
 	// Replace or reactivate a native Agent toolset only when the current
 	// registration matches expected_registration_token. Already accepted child
 	// calls retain their original declarations. New discovery returns the
-	// replacement.
+	// replacement. When the declaration has a catalog identity scope, every tool
+	// name must be unused by other active toolsets in that scope; otherwise
+	// tool_name_conflict names the tool and the toolset that already provides it,
+	// and nothing is saved.
 	ReplaceAgentToolset(context.Context, *ReplaceAgentToolsetPayload) (res *ResolvedToolset, err error)
 	// List all registered toolsets with optional tag filtering
 	ListToolsets(context.Context, *ListToolsetsPayload) (res *ListToolsetsResult, err error)
@@ -893,6 +908,11 @@ func MakeAdmissionConflict(err error) *goa.ServiceError {
 // MakeAdmissionRetired builds a goa.ServiceError from an error.
 func MakeAdmissionRetired(err error) *goa.ServiceError {
 	return goa.NewServiceError(err, "admission_retired", false, false, false)
+}
+
+// MakeToolNameConflict builds a goa.ServiceError from an error.
+func MakeToolNameConflict(err error) *goa.ServiceError {
+	return goa.NewServiceError(err, "tool_name_conflict", false, false, false)
 }
 
 // MakeValidationError builds a goa.ServiceError from an error.

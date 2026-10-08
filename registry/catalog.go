@@ -71,6 +71,15 @@ type (
 		definitions     map[string]*catalogDefinition
 	}
 
+	// toolNameConflictError reports that a declaration was rejected because
+	// another active toolset in the same identity scope already provides Tool.
+	// Owner is that toolset's catalog identity name, for example the public
+	// toolset name an application shows its users. Nothing was saved.
+	toolNameConflictError struct {
+		Tool  string
+		Owner string
+	}
+
 	catalogEntryState string
 )
 
@@ -240,7 +249,7 @@ func (c *toolsetCatalog) Register(ctx context.Context, definition *catalogToolse
 		}
 		candidate := newCatalogState(definition, admissionRevision, token, now)
 		candidate.ProviderLeases[leaseKey] = lease
-		write := catalogWrite{CandidateToken: token}
+		write := catalogWrite{CandidateToken: token, ClaimToolNames: true, ToolNames: definition.toolNames()}
 		if !exists || existing.SchemaFingerprint != definition.fingerprint {
 			write.Definition = definition.raw
 		} else {
@@ -792,10 +801,40 @@ func (c *toolsetCatalog) commit(ctx context.Context, key, previous string, state
 		write.Indexed = state.State == catalogEntryActive
 	}
 	updated, err := c.store.Commit(ctx, key, previous, write)
+	var taken *toolNameTakenError
+	if errors.As(err, &taken) {
+		return false, c.toolNameConflict(ctx, taken)
+	}
 	if err != nil {
 		return false, fmt.Errorf("replace catalog key %q: %w", key, err)
 	}
 	return updated, nil
+}
+
+// toolNameConflict reads the saved identity of the toolset that holds the
+// rejected tool name and returns a *toolNameConflictError naming it. Only
+// scoped records hold names, so a missing record or identity means the saved
+// catalog is inconsistent and is returned as a storage error.
+func (c *toolsetCatalog) toolNameConflict(ctx context.Context, taken *toolNameTakenError) error {
+	raw, exists, err := c.exactRaw(ctx, toolsetCatalogKey(taken.OwnerRoute))
+	if err != nil {
+		return fmt.Errorf("read toolset holding tool %q: %w", taken.Tool, err)
+	}
+	if !exists {
+		return fmt.Errorf("tool %q is held by missing toolset %q", taken.Tool, taken.OwnerRoute)
+	}
+	owner, err := parseCatalogState(taken.OwnerRoute, raw)
+	if err != nil {
+		return fmt.Errorf("read toolset holding tool %q: %w", taken.Tool, err)
+	}
+	if owner.Identity == nil {
+		return fmt.Errorf("tool %q is held by toolset %q without a catalog identity", taken.Tool, taken.OwnerRoute)
+	}
+	return &toolNameConflictError{Tool: taken.Tool, Owner: owner.Identity.Name}
+}
+
+func (e *toolNameConflictError) Error() string {
+	return fmt.Sprintf("tool %q is already provided by toolset %q in the same catalog scope", e.Tool, e.Owner)
 }
 
 // exactRaw reads compact state and identifies the catalog key on storage errors.

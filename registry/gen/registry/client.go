@@ -74,6 +74,7 @@ func NewClient(declareServiceToolset, replaceServiceToolset, attachProvider, reg
 // DeclareServiceToolset may return the following errors:
 //   - "admission_conflict" (type *goa.ServiceError): The expected admission token does not match the catalog record
 //   - "admission_retired" (type *goa.ServiceError): The requested admission was intentionally retired
+//   - "tool_name_conflict" (type *goa.ServiceError): Another active toolset with the same catalog identity scope already provides one of the declared tool names. Nothing was saved; change the declaration's tool names or retire the other toolset
 //   - "validation_error" (type *goa.ServiceError): Payload validation failed
 //   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
 //   - error: internal error
@@ -92,6 +93,7 @@ func (c *Client) DeclareServiceToolset(ctx context.Context, p *ServiceToolsetDec
 //   - "admission_blocked" (type *goa.ServiceError): Another admission still has active provider leases
 //   - "admission_conflict" (type *goa.ServiceError): The expected admission token does not match the catalog record
 //   - "admission_retired" (type *goa.ServiceError): The requested admission was intentionally retired
+//   - "tool_name_conflict" (type *goa.ServiceError): Another active toolset with the same catalog identity scope already provides one of the declared tool names. Nothing was saved; change the declaration's tool names or retire the other toolset
 //   - "validation_error" (type *goa.ServiceError): Payload validation failed
 //   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
 //   - error: internal error
@@ -126,6 +128,7 @@ func (c *Client) AttachProvider(ctx context.Context, p *AttachProviderPayload) (
 //   - "admission_blocked" (type *goa.ServiceError): Another admission still has active provider leases
 //   - "admission_retired" (type *goa.ServiceError): The requested admission was intentionally retired
 //   - "provider_lease_lost" (type *goa.ServiceError): The exact provider incarnation no longer holds the admitted lease and must stop serving
+//   - "tool_name_conflict" (type *goa.ServiceError): Another active toolset with the same catalog identity scope already provides one of the declared tool names. Nothing was saved; change the declaration's tool names or retire the other toolset
 //   - "validation_error" (type *goa.ServiceError): Payload validation failed
 //   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
 //   - error: internal error
@@ -191,6 +194,7 @@ func (c *Client) Pong(ctx context.Context, p *PongPayload) (err error) {
 // "registry" service.
 // RegisterAgentToolset may return the following errors:
 //   - "admission_conflict" (type *goa.ServiceError): The expected admission token does not match the catalog record
+//   - "tool_name_conflict" (type *goa.ServiceError): Another active toolset with the same catalog identity scope already provides one of the declared tool names. Nothing was saved; change the declaration's tool names or retire the other toolset
 //   - "validation_error" (type *goa.ServiceError): Payload validation failed
 //   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
 //   - error: internal error
@@ -207,6 +211,7 @@ func (c *Client) RegisterAgentToolset(ctx context.Context, p *AgentToolsetDeclar
 // "registry" service.
 // ReplaceAgentToolset may return the following errors:
 //   - "admission_conflict" (type *goa.ServiceError): The expected admission token does not match the catalog record
+//   - "tool_name_conflict" (type *goa.ServiceError): Another active toolset with the same catalog identity scope already provides one of the declared tool names. Nothing was saved; change the declaration's tool names or retire the other toolset
 //   - "validation_error" (type *goa.ServiceError): Payload validation failed
 //   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
 //   - error: internal error

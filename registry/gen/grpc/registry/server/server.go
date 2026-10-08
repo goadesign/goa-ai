@@ -98,6 +98,8 @@ func (s *Server) DeclareServiceToolset(ctx context.Context, message *registrypb.
 				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
 			case "admission_retired":
 				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
+			case "tool_name_conflict":
+				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
 			case "validation_error":
 				return nil, goagrpc.NewStatusError(codes.InvalidArgument, err, goagrpc.NewErrorResponse(err))
 			case "service_unavailable":
@@ -133,6 +135,8 @@ func (s *Server) ReplaceServiceToolset(ctx context.Context, message *registrypb.
 			case "admission_conflict":
 				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
 			case "admission_retired":
+				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
+			case "tool_name_conflict":
 				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
 			case "validation_error":
 				return nil, goagrpc.NewStatusError(codes.InvalidArgument, err, goagrpc.NewErrorResponse(err))
@@ -205,6 +209,8 @@ func (s *Server) Register(ctx context.Context, message *registrypb.RegisterReque
 			case "admission_retired":
 				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
 			case "provider_lease_lost":
+				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
+			case "tool_name_conflict":
 				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
 			case "validation_error":
 				return nil, goagrpc.NewStatusError(codes.InvalidArgument, err, goagrpc.NewErrorResponse(err))
@@ -374,6 +380,8 @@ func (s *Server) RegisterAgentToolset(ctx context.Context, message *registrypb.R
 			switch en.GoaErrorName() {
 			case "admission_conflict":
 				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
+			case "tool_name_conflict":
+				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
 			case "validation_error":
 				return nil, goagrpc.NewStatusError(codes.InvalidArgument, err, goagrpc.NewErrorResponse(err))
 			case "service_unavailable":
@@ -405,6 +413,8 @@ func (s *Server) ReplaceAgentToolset(ctx context.Context, message *registrypb.Re
 		if errors.As(err, &en) {
 			switch en.GoaErrorName() {
 			case "admission_conflict":
+				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
+			case "tool_name_conflict":
 				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
 			case "validation_error":
 				return nil, goagrpc.NewStatusError(codes.InvalidArgument, err, goagrpc.NewErrorResponse(err))

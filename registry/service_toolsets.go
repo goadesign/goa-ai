@@ -141,7 +141,8 @@ func (s *Service) prepareServiceToolset(p *genregistry.ServiceToolsetDeclaration
 }
 
 // serviceDeclarationError preserves whether an update was blocked by live
-// leases, conflicted with another registration, or failed in storage.
+// leases, conflicted with another registration, reused a tool name another
+// toolset in the same scope provides, or failed in storage.
 func serviceDeclarationError(err error) error {
 	switch {
 	case errors.Is(err, errAdmissionBlocked):
@@ -150,6 +151,8 @@ func serviceDeclarationError(err error) error {
 		return genregistry.MakeAdmissionConflict(err)
 	case errors.Is(err, errAdmissionRetired):
 		return genregistry.MakeAdmissionRetired(err)
+	case errors.As(err, new(*toolNameConflictError)):
+		return genregistry.MakeToolNameConflict(err)
 	default:
 		return genregistry.MakeServiceUnavailable(err)
 	}
@@ -192,6 +195,7 @@ func (c *toolsetCatalog) DeclareService(ctx context.Context, definition *catalog
 		state := newCatalogState(definition, revision, token, now)
 		updated, err := c.commit(ctx, toolsetCatalogKey(name), "", state, catalogWrite{
 			Definition: definition.raw, CandidateToken: token,
+			ClaimToolNames: true, ToolNames: definition.toolNames(),
 		})
 		if err != nil {
 			return catalogEntry{}, err
@@ -263,7 +267,8 @@ func (c *toolsetCatalog) ReplaceService(ctx context.Context, definition *catalog
 		}
 		updated, err := c.commit(ctx, key, raw, state, catalogWrite{
 			Definition: savedDefinition.raw, CandidateToken: token,
-			RetireToken: current.RegistrationToken,
+			RetireToken:    current.RegistrationToken,
+			ClaimToolNames: true, ToolNames: savedDefinition.toolNames(),
 		})
 		if err != nil {
 			return catalogEntry{}, err

@@ -39,6 +39,16 @@ type (
 	// the previous lease to remain valid when Redis commits the update.
 	// A positive RoutableUntilUnixMilli requires existing routable membership
 	// to survive until commit; expiration retries without writing stale health.
+	//
+	// Tool names are unique among the active toolsets of one scope. A commit
+	// that makes a declaration current sets ClaimToolNames and lists every
+	// tool name of that declaration in ToolNames. For a scoped active record
+	// the store then rejects the whole commit when another toolset in the
+	// scope holds one of those names; otherwise it replaces the names this
+	// toolset held with ToolNames. Commits that keep the declaration, such as
+	// lease renewal or health updates, leave ClaimToolNames false and change
+	// no names. Every scoped commit that leaves a record retired releases all
+	// of its names. Records without a scope never claim names.
 	catalogWrite struct {
 		State                  string
 		Definition             string
@@ -48,6 +58,17 @@ type (
 		RoutableUntilUnixMilli int64
 		Scope                  string
 		Indexed                bool
+		ClaimToolNames         bool
+		ToolNames              []string
+	}
+
+	// toolNameTakenError is the store's report that a commit tried to claim a
+	// tool name another toolset in the same scope already holds. OwnerRoute is
+	// that toolset's catalog route. The catalog turns it into a
+	// toolNameConflictError that names the owner's catalog identity.
+	toolNameTakenError struct {
+		Tool       string
+		OwnerRoute string
 	}
 
 	redisCatalogStore struct {
@@ -56,6 +77,8 @@ type (
 		definitions string
 		retired     string
 		indexPrefix string
+		toolsPrefix string
+		claimPrefix string
 	}
 )
 
@@ -85,6 +108,12 @@ local retired = redis.call("SISMEMBER", KEYS[3], entry.registration_token)
 return {state, definition, tostring(retired)}
 `)
 
+	// catalogCommitScript runs every check before its first write, so a
+	// rejected commit changes nothing. For scoped records, KEYS[5] maps each
+	// tool name in the scope to the route that holds it and KEYS[6] lists the
+	// names this route holds. ARGV[11] is "claim", "release" or empty, and a
+	// claim lists its tool names from ARGV[12]. A name held by another route
+	// returns {"TOOLNAMETAKEN", tool, owner route} instead of 1 or 0.
 	catalogCommitScript = redis.NewScript(`
 local current = redis.call("HGET", KEYS[1], ARGV[1])
 if (current or "") ~= ARGV[2] then
@@ -122,6 +151,21 @@ if ARGV[9] ~= "" then
     return redis.error_reply("CATALOGINVALIDINDEX")
   end
 end
+if ARGV[11] ~= "" then
+  local names_type = redis.call("TYPE", KEYS[5]).ok
+  local held_type = redis.call("TYPE", KEYS[6]).ok
+  if (names_type ~= "none" and names_type ~= "hash") or (held_type ~= "none" and held_type ~= "set") then
+    return redis.error_reply("CATALOGINVALIDINDEX")
+  end
+end
+if ARGV[11] == "claim" then
+  for i = 12, #ARGV do
+    local owner = redis.call("HGET", KEYS[5], ARGV[i])
+    if owner and owner ~= ARGV[10] then
+      return {"TOOLNAMETAKEN", ARGV[i], owner}
+    end
+  end
+end
 if ARGV[4] ~= "" then
   redis.call("HSET", KEYS[2], ARGV[1], ARGV[4])
 end
@@ -133,6 +177,18 @@ if ARGV[9] == "active" then
   redis.call("ZADD", KEYS[4], 0, ARGV[10])
 elseif ARGV[9] == "retired" then
   redis.call("ZREM", KEYS[4], ARGV[10])
+end
+if ARGV[11] ~= "" then
+  for _, tool in ipairs(redis.call("SMEMBERS", KEYS[6])) do
+    redis.call("HDEL", KEYS[5], tool)
+  end
+  redis.call("DEL", KEYS[6])
+end
+if ARGV[11] == "claim" then
+  for i = 12, #ARGV do
+    redis.call("HSET", KEYS[5], ARGV[i], ARGV[10])
+    redis.call("SADD", KEYS[6], ARGV[i])
+  end
 end
 return 1
 `)
@@ -147,6 +203,8 @@ func newRedisCatalogStore(client *redis.Client, name string) *redisCatalogStore 
 		definitions: "registry:" + name + ":definitions",
 		retired:     "registry:" + name + ":retired",
 		indexPrefix: "registry:" + name + ":scope:",
+		toolsPrefix: "registry:" + name + ":scope-tools:",
+		claimPrefix: "registry:" + name + ":route-tools:",
 	}
 }
 
@@ -196,6 +254,10 @@ func (s *redisCatalogStore) RetiredTokens(ctx context.Context) ([]string, error)
 	return s.redis.SMembers(ctx, s.retired).Result()
 }
 
+// Commit runs one conditional catalog write. It returns true when Redis saved
+// the write and false when the previous state changed, so the caller re-reads
+// and retries. A claim of a tool name held by another toolset in the same
+// scope saves nothing and returns *toolNameTakenError.
 func (s *redisCatalogStore) Commit(ctx context.Context, key, previous string, next catalogWrite) (committed bool, err error) {
 	ctx, span := otel.Tracer("goa.design/goa-ai/registry").Start(ctx, "toolregistry.catalog.state.update",
 		trace.WithAttributes(
@@ -204,21 +266,32 @@ func (s *redisCatalogStore) Commit(ctx context.Context, key, previous string, ne
 			attribute.Int("toolregistry.catalog.state_write_bytes", len(next.State)),
 			attribute.Int("toolregistry.catalog.definition_write_bytes", len(next.Definition)),
 		))
-	defer finishCatalogSpan(ctx, span, &err)
-	indexState := ""
+	defer finishCatalogCommitSpan(ctx, span, &err)
+	route := strings.TrimPrefix(key, toolsetCatalogKeyPrefix)
+	indexState, toolNameAction := "", ""
 	keys := []string{s.state, s.definitions, s.retired}
 	if next.Scope != "" {
-		keys = append(keys, s.scopeIndex(next.Scope))
+		keys = append(keys, s.scopeIndex(next.Scope), s.scopeToolNames(next.Scope), s.routeToolNames(route))
 		indexState = string(catalogEntryRetired)
+		toolNameAction = "release"
 		if next.Indexed {
 			indexState = string(catalogEntryActive)
+			toolNameAction = ""
+			if next.ClaimToolNames {
+				toolNameAction = "claim"
+			}
 		}
 	}
-	result, err := catalogCommitScript.Run(ctx, s.redis,
-		keys,
+	args := []any{
 		key, previous, next.State, next.Definition, next.CandidateToken, next.RetireToken, next.LiveLease, next.RoutableUntilUnixMilli,
-		indexState, strings.TrimPrefix(key, toolsetCatalogKeyPrefix),
-	).Int()
+		indexState, route, toolNameAction,
+	}
+	if toolNameAction == "claim" {
+		for _, tool := range next.ToolNames {
+			args = append(args, tool)
+		}
+	}
+	result, err := catalogCommitScript.Run(ctx, s.redis, keys, args...).Result()
 	if err != nil {
 		switch {
 		case redis.HasErrorPrefix(err, "CATALOGRETIRED"):
@@ -229,12 +302,63 @@ func (s *redisCatalogStore) Commit(ctx context.Context, key, previous string, ne
 			return false, fmt.Errorf("commit catalog state: %w", err)
 		}
 	}
-	span.SetAttributes(attribute.Bool("toolregistry.catalog.conditional_retry", result == 0))
-	return result == 1, nil
+	switch value := result.(type) {
+	case int64:
+		span.SetAttributes(attribute.Bool("toolregistry.catalog.conditional_retry", value == 0))
+		return value == 1, nil
+	case []any:
+		return false, parseToolNameTaken(value)
+	default:
+		return false, fmt.Errorf("commit catalog state returned %T", result)
+	}
 }
 
 func (s *redisCatalogStore) scopeIndex(scope string) string {
 	return fmt.Sprintf("%s%x", s.indexPrefix, sha256.Sum256([]byte(scope)))
+}
+
+// scopeToolNames is the hash from each tool name in a scope to the route of
+// the active toolset that provides it.
+func (s *redisCatalogStore) scopeToolNames(scope string) string {
+	return fmt.Sprintf("%s%x", s.toolsPrefix, sha256.Sum256([]byte(scope)))
+}
+
+// routeToolNames is the set of tool names one route currently holds, so a
+// replacement or retirement can release them without reading the old
+// declaration.
+func (s *redisCatalogStore) routeToolNames(route string) string {
+	return fmt.Sprintf("%s%x", s.claimPrefix, sha256.Sum256([]byte(route)))
+}
+
+// parseToolNameTaken decodes the commit script's {"TOOLNAMETAKEN", tool,
+// owner route} reply. Any other shape is a storage contract failure.
+func parseToolNameTaken(reply []any) error {
+	if len(reply) != 3 {
+		return fmt.Errorf("commit catalog state returned %d values", len(reply))
+	}
+	kind, kindOK := reply[0].(string)
+	tool, toolOK := reply[1].(string)
+	owner, ownerOK := reply[2].(string)
+	if !kindOK || !toolOK || !ownerOK || kind != "TOOLNAMETAKEN" {
+		return fmt.Errorf("commit catalog state returned an unknown reply %v", reply)
+	}
+	return &toolNameTakenError{Tool: tool, OwnerRoute: owner}
+}
+
+func (e *toolNameTakenError) Error() string {
+	return fmt.Sprintf("tool %q is held by toolset route %q in the same scope", e.Tool, e.OwnerRoute)
+}
+
+// finishCatalogCommitSpan records a rejected tool-name claim as an expected
+// outcome with the tool name. Other results finish like every catalog span.
+func finishCatalogCommitSpan(ctx context.Context, span trace.Span, err *error) {
+	var taken *toolNameTakenError
+	if errors.As(*err, &taken) {
+		span.AddEvent("tool_name_taken", trace.WithAttributes(attribute.String("toolregistry.tool", taken.Tool)))
+		span.End()
+		return
+	}
+	finishCatalogSpan(ctx, span, err)
 }
 
 // finishCatalogSpan reports storage failures without turning caller cancellation

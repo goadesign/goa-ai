@@ -308,6 +308,8 @@ func (s *Service) register(ctx context.Context, p *genregistry.RegisterPayload, 
 			return nil, genregistry.MakeAdmissionRetired(err)
 		case errors.Is(err, errProviderLeaseLost):
 			return nil, genregistry.MakeProviderLeaseLost(err)
+		case errors.As(err, new(*toolNameConflictError)):
+			return nil, genregistry.MakeToolNameConflict(err)
 		default:
 			return nil, genregistry.MakeServiceUnavailable(fmt.Errorf("register toolset admission: %w", err))
 		}
