@@ -216,8 +216,7 @@ func TestRequiredDependenciesAndOrigins(t *testing.T) {
 				caller := genmcpclient.NewClient("http", strings.TrimPrefix(peer.URL, "http://"), originDoer{client: peer.Client(), origin: origin}, goahttp.RequestEncoder, goahttp.ResponseDecoder, false)
 				value, err := caller.ToolsCall()(t.Context(), &genmcp.ToolsCallPayload{Name: "read"})
 				require.NoError(t, err)
-				completedReply1, isCompleteReply1 := value.(*genmcp.ToolsCallResult).Outcome.AsComplete(); if !isCompleteReply1 {t.Fatalf("expected completed MCP result: %+v", value)}
-				result, ok := completedReply1
+				result, ok := value.(*genmcp.ToolsCallResult).Outcome.AsComplete()
 				require.True(t, ok)
 				assert.JSONEq(t, "\"accepted\"", string(result.StructuredContent))
 			}

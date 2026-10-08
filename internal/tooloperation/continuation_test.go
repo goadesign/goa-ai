@@ -141,7 +141,7 @@ func TestTaskUpdateSurvivesRegistryProtobuf(t *testing.T) {
 	input := &genregistry.CallResolvedToolPayload{
 		Toolset: "remote.tools", Tool: "lookup", PayloadJSON: []byte(`{}`),
 		ExpectedRegistrationToken: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		WireProtocolVersion:       12, Meta: &genregistry.ToolCallMeta{
+		WireProtocolVersion:       13, Meta: &genregistry.ToolCallMeta{
 			RunID: "run", SessionID: "session", ToolCallID: "call",
 			ExecutionSequence:     1,
 			ExecutionContinuation: Value(update),

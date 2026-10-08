@@ -53,6 +53,29 @@ func TestRequiredZeroAndIntegerWidth(t *testing.T) {
 	}
 }
 
+// Equivalent JSON integer spellings decode exactly and encode without an
+// exponent; fractional values remain invalid rather than being rounded.
+func TestEquivalentIntegerSpellings(t *testing.T) {
+	for _, test := range []struct {
+		text, canonical string
+		value           int
+	}{
+		{"1e2", "100", 100}, {"100.0", "100", 100}, {"10e-1", "1", 1},
+	} {
+		t.Run(test.text, func(t *testing.T) {
+			document := strings.Replace(valid, `"Count":0`, `"Count":`+test.text, 1)
+			got, err := gentypes.DecodeSettings([]byte(document))
+			if err != nil || got == nil || got.Count != test.value {
+				t.Fatalf("integer value changed: %#v %v", got, err)
+			}
+			encoded, err := gentypes.EncodeSettings(got)
+			if err != nil || !bytes.Contains(encoded, []byte(`"Count":`+test.canonical)) {
+				t.Fatalf("integer output changed: %s %v", encoded, err)
+			}
+		})
+	}
+}
+
 func TestStrictDecode(t *testing.T) {
 	cases := map[string]string{
 		"missing false default":            strings.Replace(valid, `"Enabled":false,`, "", 1),
@@ -77,7 +100,7 @@ func TestStrictDecode(t *testing.T) {
 		"range":                            strings.Replace(valid, `"Count":0`, `"Count":9223372036854775808`, 1),
 		"negative":                         strings.Replace(valid, `"Count":0`, `"Count":-1`, 1),
 		"fraction":                         strings.Replace(valid, `"Count":0`, `"Count":1.5`, 1),
-		"exponent":                         strings.Replace(valid, `"Count":0`, `"Count":1e2`, 1),
+		"fractional exponent":              strings.Replace(valid, `"Count":0`, `"Count":1e-2`, 1),
 		"empty title":                      strings.Replace(valid, `"hello"`, `""`, 1),
 		"extra document":                   valid + " {}",
 		"trailing invalid":                 valid + " x",

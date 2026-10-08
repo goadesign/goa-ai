@@ -264,6 +264,9 @@ func compileModule(t *testing.T, files []*codegen.File) string {
 	selected, err := command.CombinedOutput()
 	require.NoError(t, err, string(selected))
 	mod = append(mod, []byte("\nreplace goa.design/goa/v3 => "+filepath.ToSlash(strings.TrimSpace(string(selected)))+"\n")...)
+	framework, err := filepath.Abs("../../..")
+	require.NoError(t, err)
+	mod = append(mod, []byte("\nrequire goa.design/goa-ai v0.0.0\nreplace goa.design/goa-ai => "+filepath.ToSlash(framework)+"\n")...)
 
 	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), mod, 0o600)) // #nosec G703 -- root is t.TempDir, with a constant child name.
 	sum, err := os.ReadFile("../../../go.sum")

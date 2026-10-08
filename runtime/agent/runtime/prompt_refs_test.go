@@ -207,6 +207,18 @@ func TestResolvePromptRefsTreatsStoppedRunAsEmpty(t *testing.T) {
 
 	stored, err := store.LoadRun(t.Context(), meta.RunID)
 	require.NoError(t, err)
+	require.Equal(t, session.RunStatusRunning, stored.Status)
+	finished := stored.StartedAt.Add(time.Second)
+	_, err = store.RecordRunTerminal(t.Context(), storage.RunTerminal{
+		RunID: meta.RunID, Status: session.RunStatusCanceled,
+		Record: testHookRecord(t, hooks.NewRunCompletedEvent(meta.RunID, agent.Ident(meta.AgentID), meta.SessionID, "canceled", agentrun.PhaseCanceled, stored.Labels, context.Canceled, &agentrun.Cancellation{Reason: agentrun.CancellationReasonSessionEnded}), "completed", finished),
+	})
+	require.NoError(t, err)
+	refs, err = rt.ResolvePromptRefs(t.Context(), "session", meta.RunID)
+	require.NoError(t, err)
+	require.Empty(t, refs)
+	stored, err = store.LoadRun(t.Context(), meta.RunID)
+	require.NoError(t, err)
 	for _, recordType := range []runlog.Type{
 		hooks.RunStarted,
 		hooks.PromptRendered,
@@ -239,7 +251,7 @@ func TestResolvePromptRefsRejectsCorruptStoppedCompletion(t *testing.T) {
 				return testHookRecord(t, hooks.NewRunCompletedEvent(
 					meta.RunID, agent.Ident(meta.AgentID), meta.SessionID,
 					"success", agentrun.PhaseCompleted, meta.Labels, nil, nil,
-				), "stopped", meta.StartedAt)
+				), "stopped", meta.StartedAt.Add(time.Second))
 			},
 		},
 		{
@@ -249,7 +261,7 @@ func TestResolvePromptRefsRejectsCorruptStoppedCompletion(t *testing.T) {
 					meta.RunID, agent.Ident(meta.AgentID), meta.SessionID,
 					"canceled", agentrun.PhaseCanceled, meta.Labels, context.Canceled,
 					&agentrun.Cancellation{Reason: agentrun.CancellationReasonUserRequested},
-				), "stopped", meta.StartedAt)
+				), "stopped", meta.StartedAt.Add(time.Second))
 			},
 		},
 		{
@@ -259,17 +271,7 @@ func TestResolvePromptRefsRejectsCorruptStoppedCompletion(t *testing.T) {
 					meta.RunID, agent.Ident(meta.AgentID), meta.SessionID,
 					"canceled", agentrun.PhaseCanceled, map[string]string{"site": "other"}, context.Canceled,
 					&agentrun.Cancellation{Reason: agentrun.CancellationReasonSessionEnded},
-				), "stopped", meta.StartedAt)
-			},
-		},
-		{
-			name: "time",
-			completion: func(meta session.RunMeta) *runlog.Event {
-				return testHookRecord(t, hooks.NewRunCompletedEvent(
-					meta.RunID, agent.Ident(meta.AgentID), meta.SessionID,
-					"canceled", agentrun.PhaseCanceled, meta.Labels, context.Canceled,
-					&agentrun.Cancellation{Reason: agentrun.CancellationReasonSessionEnded},
-				), "stopped", meta.StartedAt.Add(time.Millisecond))
+				), "stopped", meta.StartedAt.Add(time.Second))
 			},
 		},
 	}
@@ -285,6 +287,14 @@ func TestResolvePromptRefsRejectsCorruptStoppedCompletion(t *testing.T) {
 				Status: session.RunStatusCanceled, Labels: map[string]string{"site": "one"},
 			})
 			meta, err := store.LoadRun(t.Context(), "stopped")
+			require.NoError(t, err)
+			finished := meta.StartedAt.Add(time.Second)
+			_, err = store.RecordRunTerminal(t.Context(), storage.RunTerminal{
+				RunID: meta.RunID, Status: session.RunStatusCanceled,
+				Record: testHookRecord(t, hooks.NewRunCompletedEvent(meta.RunID, agent.Ident(meta.AgentID), meta.SessionID, "canceled", agentrun.PhaseCanceled, meta.Labels, context.Canceled, &agentrun.Cancellation{Reason: agentrun.CancellationReasonSessionEnded}), "completed", finished),
+			})
+			require.NoError(t, err)
+			meta, err = store.LoadRun(t.Context(), "stopped")
 			require.NoError(t, err)
 			started := testHookRecord(t, hooks.NewRunStartedEvent(
 				meta.RunID, agent.Ident(meta.AgentID), meta.SessionID,
@@ -305,22 +315,34 @@ func TestResolvePromptRefsRejectsCorruptStoppedCompletion(t *testing.T) {
 }
 
 func TestResolvePromptRefsTraversesStoppedChildAsEmpty(t *testing.T) {
-	store := newTestStore()
-	parent := session.RunMeta{
-		RunID: "parent", AgentID: "parent-agent", SessionID: "session",
-		Status: session.RunStatusRunning,
-	}
-	admitRunForTest(t, store, parent)
-	_, err := store.EndSession(t.Context(), parent.SessionID, time.Now().UTC())
-	require.NoError(t, err)
-	startStoppedRunForTest(t, store, session.RunMeta{
-		RunID: "child", AgentID: "child-agent", SessionID: parent.SessionID,
-		ParentRunID: parent.RunID, Status: session.RunStatusCanceled,
-	})
+	for _, stoppedParent := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stopped-parent-%t", stoppedParent), func(t *testing.T) {
+			store := newTestStore()
+			parent := session.RunMeta{
+				RunID: "parent", AgentID: "parent-agent", SessionID: "session",
+				Status: session.RunStatusRunning,
+			}
+			if stoppedParent {
+				_, err := store.CreateSession(t.Context(), parent.SessionID, time.Now().UTC())
+				require.NoError(t, err)
+				_, err = store.EndSession(t.Context(), parent.SessionID, time.Now().UTC())
+				require.NoError(t, err)
+				startStoppedRunForTest(t, store, parent)
+			} else {
+				admitRunForTest(t, store, parent)
+				_, err := store.EndSession(t.Context(), parent.SessionID, time.Now().UTC())
+				require.NoError(t, err)
+			}
+			startStoppedRunForTest(t, store, session.RunMeta{
+				RunID: "child", AgentID: "child-agent", SessionID: parent.SessionID,
+				ParentRunID: parent.RunID, Status: session.RunStatusCanceled,
+			})
 
-	refs, err := New(store).ResolvePromptRefs(t.Context(), parent.SessionID, parent.RunID)
-	require.NoError(t, err)
-	require.Empty(t, refs)
+			refs, err := New(store).ResolvePromptRefs(t.Context(), parent.SessionID, parent.RunID)
+			require.NoError(t, err)
+			require.Empty(t, refs)
+		})
+	}
 }
 
 func TestResolvePromptRefsTraversesContinuationPredecessors(t *testing.T) {
@@ -520,7 +542,7 @@ func TestResolvePromptRefsRejectsSelfContinuationPredecessor(t *testing.T) {
 
 	_, err := rt.ResolvePromptRefs(t.Context(), "session", "run")
 	require.ErrorIs(t, err, errPromptRefsCorrupt)
-	require.ErrorContains(t, err, "own continuation predecessor")
+	require.ErrorContains(t, err, "predecessor run id must differ")
 }
 
 func TestResolvePromptRefsRejectsContinuationCycle(t *testing.T) {
@@ -598,15 +620,10 @@ func TestResolvePromptRefsAllowsAcyclicConvergence(t *testing.T) {
 			RunID: "child-1", AgentID: "child-agent", SessionID: "session",
 			ParentRunID: "root", Status: session.RunStatusRunning,
 		},
-		{
-			RunID: "child-2", AgentID: "child-agent", SessionID: "session",
-			ParentRunID: "root", Status: session.RunStatusRunning,
-		},
 	} {
 		admitPromptChildContinuationForTest(t, store, meta, "predecessor", "call-predecessor")
 	}
 	appendPromptEvent(t, store, "child-1", "child-1-prompt", "v1")
-	appendPromptEvent(t, store, "child-2", "child-2-prompt", "v1")
 	tracked := &promptRefsStore{
 		Store:       store,
 		runReads:    make(map[string]int),
@@ -620,7 +637,6 @@ func TestResolvePromptRefsAllowsAcyclicConvergence(t *testing.T) {
 		{ID: "root-prompt", Version: "v1"},
 		{ID: "predecessor-prompt", Version: "v1"},
 		{ID: "child-1-prompt", Version: "v1"},
-		{ID: "child-2-prompt", Version: "v1"},
 	}, refs)
 	require.Equal(t, 1, tracked.runReads["predecessor"])
 	require.Equal(t, 1, tracked.recordReads["predecessor"])

@@ -5490,11 +5490,13 @@ histories or reinterpret saved checkpoints. Each child must still keep the same
 Session and match the child agent and execution parent named by its own link
 record. A missing or mismatched related run, a relationship cycle, or more than
 one start record is a stored-data error; it is
-never skipped. A run stopped because its Session had already ended has
-`RunStarted` followed by a canceled `RunCompleted` record. The resolver
-validates both records against the stored run, including their owner, labels,
-reason, and start time. That run does no planner or tool work, so it contributes
-no prompt references or child relationships. The method collects each
+never skipped. A run admitted after its Session ended first has `RunStarted`
+and cancellation intent. Its worker can finish saved child work before writing
+an actual canceled or failed `RunCompleted` record. The resolver validates the
+stored start and any final record against the run's owner, labels, status, and
+cancellation reason. It reads saved predecessor and child relationships while
+cleanup is pending and after it finishes. Ended-session admission cannot render
+a new prompt, and rendering one is a stored-data error. The method collects each
 `PromptRendered` reference once and visits each run once. These records show
 which prompt versions and scopes contributed to the run. Exact rendered prompt
 text remains in the published initial history or subsequent transcript records
