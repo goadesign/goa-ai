@@ -69,6 +69,7 @@ type (
 		inputCodecs            *jsoncodec.Plan
 		inputCodecPackage      *goacodegen.GeneratedPackage
 		inputMethods           map[*goaexpr.MethodExpr]*nativeInputPlan
+		taskMethods            map[*goaexpr.MethodExpr]*nativeTaskPlan
 		inputImportPaths       []string
 	}
 

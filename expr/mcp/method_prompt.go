@@ -28,6 +28,9 @@ func (p *MethodPromptExpr) Validate() error {
 		verr.Add(p, "prompt method is required")
 		return verr
 	}
+	if _, declared := p.Method.Meta[mcpinput.TaskExchangeMetaKey]; declared {
+		verr.Add(p, "TaskExchange is supported only by MCP tools/call")
+	}
 	if p.Method.IsStreaming() {
 		verr.Add(p, "prompt method must be unary")
 	}

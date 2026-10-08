@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	mcpexpr "goa.design/goa-ai/expr/mcp"
+	"goa.design/goa-ai/internal/mcpinput"
 	"goa.design/goa/v3/expr"
 
 	"goa.design/goa-ai/codegen/shared"
@@ -20,6 +21,7 @@ type (
 		mcp             *mcpexpr.MCPExpr
 		mcpService      *expr.ServiceExpr
 		httpInputs      map[string]*protocolHTTPInputs
+		tasks           map[string]*mcpinput.TaskBinding
 	}
 
 	// mcpHTTPServiceConfig gives the shared route builder the JSON-RPC path.
@@ -180,7 +182,7 @@ func (b *mcpExprBuilder) buildHTTPService(mcpService *expr.ServiceExpr, routePat
 	}
 	for _, endpoint := range httpService.HTTPEndpoints {
 		switch endpoint.MethodExpr.Name {
-		case "tools/call", "resources/read", "prompts/get":
+		case "tools/call", "resources/read", "prompts/get", "tasks/get":
 			body := expr.DupAtt(endpoint.MethodExpr.Result.Find("outcome"))
 			body.AddMeta("origin:attribute", "outcome")
 			body.AddMeta("http:body")

@@ -144,11 +144,14 @@ func (a *MCPAdapter) ServerDiscover(ctx context.Context, _ {{ index .PayloadRefs
     _, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.server/discover")
     defer span.End()
     capabilities := &ServerCapabilities{}
+    {{- if .Tasks }}
+    capabilities.Extensions = json.RawMessage(`{"io.modelcontextprotocol/tasks":{}}`)
+    {{- end }}
     {{- if .Tools }}
     capabilities.Tools = &ToolsCapability{}
     {{- end }}
     {{- if or .Resources .ResourceTemplates }}
-    capabilities.Resources = &ResourcesCapability{ {{ if .ResourceSubscription }}Subscribe: boolPtr(true),{{ end }} }
+    capabilities.Resources = &ResourcesCapability{ {{ if and .SubscriptionSource .SubscriptionSource.Resources }}Subscribe: boolPtr(true),{{ end }} }
     {{- end }}
     {{- if or .StaticPrompts .MethodPrompts }}
     capabilities.Prompts = &PromptsCapability{}
@@ -207,7 +210,7 @@ func (e *endpointResultError) Error() string {
 
 {{- range .EndpointMethods }}
 {{- $endpoint := . }}
-{{- if .ExecutionView }}
+{{- if and .ExecutionView (not .TaskCreator) }}
 {{- with .Codec }}
 {{- if .ResultEncode }}
 // {{ .ResultEncode }} encodes the endpoint's selected view and its exact fields.
@@ -344,6 +347,9 @@ func convert{{ $endpoint.CallName }}Pending(pending {{ .PendingRef }}, meta json
 {{- with .InputExchange }}
 {{- if .Questions }}{{- $hasQuestions = true }}{{- end }}
 {{- end }}
+{{- end }}
+{{- range .Tasks }}
+{{- if .Input.Questions }}{{- $hasQuestions = true }}{{- end }}
 {{- end }}
 {{- if $hasQuestions }}
 // validateInputCapabilities reads support advertised on this request and returns

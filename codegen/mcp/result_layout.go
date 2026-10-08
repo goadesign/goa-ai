@@ -25,10 +25,18 @@ type (
 // The endpoint's full native outcome is planned separately so additional input
 // does not change the type checked at the configured service endpoint.
 func planMCPResult(services *goaservice.Plan, method *expr.MethodExpr) (*expr.AttributeExpr, *codegen.GoTypePlan, error) {
-	if view, fixed := mcpcontract.FixedView(method.Result); fixed {
+	owner := method
+	task, err := mcpinput.TaskExchange(method)
+	if err != nil {
+		return nil, nil, err
+	}
+	if task != nil {
+		owner = task.Read
+	}
+	if view, fixed := mcpcontract.FixedView(owner.Result); fixed {
 		return planMCPResultView(services, method, view)
 	}
-	source, layout, err := planEndpointResult(services, method)
+	source, layout, err := planEndpointResult(services, owner)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -36,14 +44,12 @@ func planMCPResult(services *goaservice.Plan, method *expr.MethodExpr) (*expr.At
 	if err != nil {
 		return nil, nil, err
 	}
-	if _, viewed := method.Result.Type.(*expr.ResultTypeExpr); viewed {
+	if _, viewed := owner.Result.Type.(*expr.ResultTypeExpr); viewed {
 		mapping, err := mcpinput.InputExchange(method)
 		if err != nil {
 			return nil, nil, err
 		}
-		if mapping != nil {
-			// Content conversion uses the completed branch's common native type.
-			// Each execution view still has its own selected codec and validator.
+		if mapping != nil || task != nil {
 			return planMCPResultView(services, method, expr.DefaultView)
 		}
 		return source, layout, nil
@@ -54,7 +60,15 @@ func planMCPResult(services *goaservice.Plan, method *expr.MethodExpr) (*expr.At
 // planMCPResultView keeps the native view's pointers and declarations while
 // encoding only its completed branch and the fields selected in that branch.
 func planMCPResultView(services *goaservice.Plan, method *expr.MethodExpr, view string) (*expr.AttributeExpr, *codegen.GoTypePlan, error) {
-	source, _, err := planEndpointResult(services, method)
+	owner := method
+	task, err := mcpinput.TaskExchange(method)
+	if err != nil {
+		return nil, nil, err
+	}
+	if task != nil {
+		owner = task.Read
+	}
+	source, _, err := planEndpointResult(services, owner)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -88,14 +102,27 @@ func planCompletedResult(services *goaservice.Plan, method *expr.MethodExpr, sou
 	if err != nil {
 		return nil, nil, err
 	}
-	if mapping != nil {
+	task, err := mcpinput.TaskExchange(method)
+	if err != nil {
+		return nil, nil, err
+	}
+	if mapping != nil && task == nil {
 		outcome := expr.AsUnion(source.Find(mapping.OutcomeName).Type)
 		for _, branch := range outcome.Values {
-			if branch.Name != "complete" {
+			if branch.Name != completeBranch {
 				continue
 			}
 			source = branch.Attribute
 			break
+		}
+	}
+	if task != nil {
+		method = task.Read
+		for _, branch := range expr.AsUnion(source.Find("outcome").Type).Values {
+			if branch.Name == completeBranch {
+				source = branch.Attribute
+				break
+			}
 		}
 	}
 	source = expr.DupAtt(source)

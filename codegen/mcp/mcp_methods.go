@@ -34,8 +34,11 @@ func (b *mcpExprBuilder) buildMethods() []*expr.MethodExpr {
 	if len(b.mcp.PromptCompletions)+len(b.mcp.ResourceCompletions) > 0 {
 		methods = append(methods, b.buildCompletionMethod())
 	}
-	if b.mcp.ResourceSubscription != nil {
+	if b.mcp.SubscriptionSource != nil {
 		methods = append(methods, b.buildSubscriptionsListenMethod())
+	}
+	if len(b.tasks) > 0 {
+		methods = append(methods, b.buildTaskMethods()...)
 	}
 	return methods
 }

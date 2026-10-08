@@ -1440,7 +1440,7 @@ Service("calculator", func() {
 ```
 
 Tool, resource, prompt and completion bindings select their generated MCP
-operations. `ResourceSubscription()` selects a distinct resource change stream;
+operations. `SubscriptionSource()` selects a distinct resource and task change stream;
 it does not create a model tool or executor. Other methods in the same
 service retain their ordinary HTTP or gRPC contract. For example, an HTTP-only
 `health` method can serve `/health` without becoming a model-callable tool.
@@ -1668,12 +1668,73 @@ prefix and composite variables. Unknown templates, variables and prior names
 fail before dispatch; a declared variable without a provider returns `[]`.
 Completion does not expand a URI or read the resource.
 
+### Native job tools
+
+`TaskExchange(read, answer, cancel)` binds a creator to three ordinary methods
+in the same Goa service. Use it when the application already owns durable jobs:
+
+```go
+Method("create_report", func() {
+    Description("Accept a durable report job and return its readable state")
+    Payload(CreateReportPayload)
+    Result(ReportObservation)
+    TaskExchange("read_report", "answer_report", "cancel_report")
+    Tool("create_report", "Create a report")
+})
+```
+
+`ReportObservation` is a named type with required `task` metadata and a required
+`outcome` OneOf. Declare all five branches: empty `working` and `cancelled`
+objects, `input_required` questions, the domain result in `complete`, and a
+JSON-RPC error in `failed`. Metadata requires string `taskId`, `createdAt` and
+`lastUpdatedAt` fields. Optional `statusMessage` is a string; optional `ttlMs` and
+`pollIntervalMs` are `Int64` milliseconds. Absent native `ttlMs` means unlimited
+retention; generated MCP replies always emit `ttlMs`, including explicit null.
+The service owns the meaning and lifetime of each observation's values.
+
+The read method returns that same named observation. Read and cancel require a
+string `taskId`. Answer requires `taskId` and a typed `responses` map. The
+`input_required` branch contains a required typed `requests` map. Their values
+contain matching `request` and `response` OneOf declarations, one branch per
+question kind. Form and URL question shapes follow
+[additional input](#additional-input-from-mcp-methods). Keys identify questions
+within a job and cannot be reused after an answer. Answer and cancel return no
+domain result. `failed` requires integer `code` and string `message`; optional
+`data` uses `Any` with the existing `rawjson.Message` field-type metadata to
+preserve exact JSON error details.
+
+The service must durably create the job and make it readable before returning
+its first observation. Each later method authorizes the native job ID. Generated
+MCP adapters call the configured endpoints, retaining security, interceptors,
+middleware, mapped HTTP fields, aliases and defaults. Later MCP requests supply
+only the saved job ID, typed answers, credentials and route fields. Generation
+rejects a required domain field those requests cannot supply. Derive such data
+from the job inside the service rather than saving creator arguments in an
+adapter-owned store.
+
+A declared `InputExchange` can precede creation. After creation, `tasks/get`
+reads the existing job, `tasks/update` submits answers, and `tasks/cancel` accepts
+cancellation intent. Update and cancel acknowledgments do not prove the job has
+already changed. The completed branch alone becomes the advertised tool result.
+`ToolContent` and read-selected Goa views use their ordinary output contracts;
+job metadata and presentation attachments stay out of structured domain output.
+Local `BindTo` executors and generated registry providers use the same typed
+question conversion and workflow-owned continuation operations.
+
+Generated servers with a Task binding advertise the Tasks extension. A client
+must declare support on each creating tool call; otherwise the adapter returns
+`-32021` before work starts. Ordinary tools retain ordinary replies. Applications
+must regenerate affected executors, providers, servers and clients together;
+there is no compatibility alias or older Task wire representation. See
+[Task client and workflow behavior](runtime.md#mcp-task-clients).
+
 ### Resource update subscriptions
 
-`ResourceSubscription()` binds one server-streaming Goa method per MCP service.
+`SubscriptionSource()` binds one server-streaming Goa method per MCP service.
 The service must already declare a `Resource` or `ResourceTemplate`. Its input
-contains only optional `resources`, an array of URI strings, apart from native
-annotated credentials. Each URI declares `Format(FormatURI)`. Empty selections
+selects optional `resources`, an array of URI strings, apart from native
+annotated credentials and mapped URL fields. The same source may also select
+Tasks as described below. Each URI declares `Format(FormatURI)`. Empty selections
 are valid, so the array is optional.
 
 The stream result contains only a required `change` OneOf with two object
@@ -1707,7 +1768,7 @@ Method("watch_resources", func() {
         Attribute("resources", ArrayOf(SubscriptionURI), "Requested resource URIs")
     })
     StreamingResult(ResourceChange)
-    ResourceSubscription()
+    SubscriptionSource()
 })
 ```
 
@@ -1731,9 +1792,61 @@ interface, prevents further authored sends.
 The generated HTTP mount owns each listen request's exact ID and event framing.
 Applications do not call raw protocol reporting functions or choose IDs. Closing
 the HTTP listener cancels its service context; no reconnect or replay occurs.
-Only services with this binding advertise `resources.subscribe`. Fixed catalogs
+Only services whose source selects resources advertise `resources.subscribe`. Fixed catalogs
 remain fixed, and unsupported catalog-change requests are omitted from the
 acknowledgment. See [client subscription behavior](runtime.md#mcp-change-subscriptions).
+
+### Task update subscriptions
+
+Use the same `SubscriptionSource()` when an application reports native job
+changes. Its optional `tasks` object contains optional arrays named after the
+service's Task creator methods. Each array holds native string job IDs, not MCP
+handles. A Task-only source needs no resource declaration. A combined source
+selects both `resources` and `tasks` in one method.
+
+```go
+var SelectedReports = Type("SelectedReports", func() {
+    Attribute("create_report", ArrayOf(String), "Native report job IDs")
+})
+var AcceptedReports = Type("AcceptedReports", func() {
+    Attribute("tasks", SelectedReports, "Authorized requested jobs")
+})
+var ChangedReports = Type("ChangedReports", func() {
+    Attribute("tasks", SelectedReports, "Native jobs whose state changed")
+    Required("tasks")
+})
+var ReportChanges = Type("ReportChanges", func() {
+    OneOf("change", "Accepted jobs or changed job IDs", func() {
+        Attribute("acknowledged", AcceptedReports, "Authorized job subset")
+        Attribute("tasks_updated", ChangedReports, "Changed native jobs")
+    })
+    Required("change")
+})
+Method("watch_reports", func() {
+    Description("Authorize requested report jobs and report their changes")
+    Payload(func() {
+        Attribute("tasks", SelectedReports, "Requested native jobs")
+    })
+    StreamingResult(ReportChanges)
+    SubscriptionSource()
+})
+```
+
+The acknowledgment must contain the same selection fields and creator names as
+the input. Send it once with the authorized subset, then send `tasks_updated`
+with changed native IDs. A combined source also declares the resource `updated`
+branch. Generation rejects unknown creators, ordinary methods, unexposed Task
+creators and mismatched selections. An unrequested acknowledgment or a job update
+outside the accepted subset fails before any observation read.
+
+For each changed job, generated code calls its existing configured read endpoint
+and sends the full snapshot using the same result codec as `tasks/get`. It fills
+that endpoint's native credentials and mapped URL fields from the listen request.
+The read-selected view and typed content remain intact. Multiple exposed tools
+for one native creator share one native selection, while each accepted MCP handle
+receives its corresponding snapshot. This mapping lasts only for the listen
+request; it stores no jobs or original tool arguments. The transport owns request
+IDs, ordering and closure. The source owns authorization and change detection.
 
 ### Method-backed MCP prompts
 
@@ -2089,7 +2202,8 @@ content field or compatibility decoder.
 | `Prompt(name, desc)` in Method | `prompts/list`, `prompts/get` with typed arguments and messages |
 | `StaticPrompt(...)`          | `prompts/list`, `prompts/get`      |
 | `ResourceTemplate(name, template, mime)` in Method | `resources/templates/list` and the service-owned URI reader |
-| `ResourceSubscription()` in Method | `subscriptions/listen` for service-owned resource updates over HTTP |
+| `SubscriptionSource()` in Method | `subscriptions/listen` for service-owned resource and Task updates over HTTP |
+| `TaskExchange(read, answer, cancel)` in Method | Task creation from `tools/call`, plus `tasks/get`, `tasks/update` and `tasks/cancel` |
 | `ResourceCompletion(template, variable)` in Method | `completion/complete` for declared template variables |
 | `PromptCompletion(prompt, argument)` in Method | `completion/complete` for declared prompt arguments |
 

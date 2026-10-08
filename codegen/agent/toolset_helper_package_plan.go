@@ -10,6 +10,7 @@ import (
 
 	agentir "goa.design/goa-ai/codegen/ir"
 	agentexpr "goa.design/goa-ai/expr/agent"
+	"goa.design/goa-ai/internal/mcpinput"
 	goacodegen "goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/codegen/service"
 	goaexpr "goa.design/goa/v3/expr"
@@ -44,13 +45,15 @@ type (
 
 	// plannedHelperToolNames stores the declaration family emitted for one tool.
 	plannedHelperToolNames struct {
-		constant     *goacodegen.NameDeclaration
-		payloadAlias *goacodegen.NameDeclaration
-		resultAlias  *goacodegen.NameDeclaration
-		call         *goacodegen.NameDeclaration
-		callerOption *goacodegen.NameDeclaration
-		callerField  string
-		bounds       *goacodegen.NameDeclaration
+		constant          *goacodegen.NameDeclaration
+		payloadAlias      *goacodegen.NameDeclaration
+		resultAlias       *goacodegen.NameDeclaration
+		call              *goacodegen.NameDeclaration
+		callerOption      *goacodegen.NameDeclaration
+		callerField       string
+		taskCallerFields  [3]string
+		taskCallerOptions [3]*goacodegen.NameDeclaration
+		bounds            *goacodegen.NameDeclaration
 	}
 
 	// toolsetHelperNameOrder keeps collision results stable across design order.
@@ -215,6 +218,19 @@ func (p *toolsetHelperPackagePlan) declareToolNames(agent *agentir.Agent, tools 
 				return err
 			}
 			names.callerField = callerFieldNames[tool.Name]
+			task, err := mcpinput.TaskExchange(tool.Method)
+			if err != nil {
+				return err
+			}
+			if task != nil {
+				for index, role := range []string{"Read", "Answer", "Cancel"} {
+					names.taskCallerFields[index] = callerFields.Unique(lowerCamel(tool.Name) + "Task" + role + "Caller")
+					names.taskCallerOptions[index], err = p.declarePreferred(goacodegen.NameFunction, "With"+base+"Task"+role, goacodegen.ExportedName, tool.Name+":task:"+role+":caller")
+					if err != nil {
+						return err
+					}
+				}
+			}
 		}
 		if tool.Method != nil && tool.Bounds != nil {
 			names.bounds, err = p.declarePreferred(goacodegen.NameFunction, "init"+base+"Bounds", goacodegen.UnexportedName, tool.Name+":bounds")
@@ -266,7 +282,7 @@ func (p *toolsetHelperPackagePlan) planMethodImports(servicePlan *service.Plan, 
 		serviceImports = append(serviceImports, goacodegen.NewImport("agent", "goa.design/goa-ai/runtime/agent"))
 	}
 	if hasInputExchangeTool(tools) {
-		serviceImports = append(serviceImports, goacodegen.SimpleImport("goa.design/goa-ai/runtime/toolregistry"), goacodegen.NewImport("mcpruntime", mcpRuntimeImportPath))
+		serviceImports = append(serviceImports, goacodegen.SimpleImport("goa.design/goa-ai/runtime/toolregistry"), goacodegen.NewImport("mcpruntime", mcpRuntimeImportPath), goacodegen.NewImport("api", "goa.design/goa-ai/runtime/agent/api"))
 	}
 	if hasServerDataTool(tools) {
 		serviceImports = append(serviceImports,
@@ -284,7 +300,22 @@ func (p *toolsetHelperPackagePlan) planMethodImports(servicePlan *service.Plan, 
 	if err := p.pkg.ReserveGeneratedImport(goacodegen.NewImport(p.reference.SpecsPackageName+"specs", p.reference.SpecsImportPath)); err != nil {
 		return err
 	}
-	typeImports, err := reserveMethodLayoutImports(p.pkg, servicePlan, serviceImport.Path, tools)
+	roleTools := append([]*agentexpr.ToolExpr{}, tools...)
+	for _, tool := range tools {
+		if tool.Method == nil {
+			continue
+		}
+		task, err := mcpinput.TaskExchange(tool.Method)
+		if err != nil {
+			return err
+		}
+		if task != nil {
+			for _, method := range []*goaexpr.MethodExpr{task.Read, task.Answer, task.Cancel} {
+				roleTools = append(roleTools, &agentexpr.ToolExpr{Method: method})
+			}
+		}
+	}
+	typeImports, err := reserveMethodLayoutImports(p.pkg, servicePlan, serviceImport.Path, roleTools)
 	if err != nil {
 		return err
 	}
@@ -378,11 +409,29 @@ func (p *toolsetHelperPackagePlan) link(toolset *ToolsetData, services *service.
 		for index, original := range toolset.Tools {
 			tool := *original
 			bindMethodTypeRefs(&tool, attributor)
+			if tool.Task != nil {
+				task := *tool.Task
+				task.ObservationRef = attributor.Ref(task.binding.Observation, "")
+				task.CompletedRef = attributor.Ref(task.binding.Complete, "")
+				task.API = p.pkg.ImportName("goa.design/goa-ai/runtime/agent/api")
+				for index, original := range tool.Task.Roles {
+					role := *original
+					role.PayloadRef = attributor.Ref(task.methods[index].Payload, "")
+					task.Roles[index] = &role
+				}
+				tool.Task = &task
+			}
 			names := p.tools[tool.Name]
 			if names == nil {
 				return fmt.Errorf("toolset %q helper tool %q was not planned", toolset.QualifiedName, tool.Name)
 			}
 			tool.ConstName = names.constant.Name()
+			if tool.Task != nil {
+				for index, role := range tool.Task.Roles {
+					role.CallerField = names.taskCallerFields[index]
+					role.CallerOption = names.taskCallerOptions[index].Name()
+				}
+			}
 			if names.bounds != nil {
 				tool.BoundsFunc = names.bounds.Name()
 			}

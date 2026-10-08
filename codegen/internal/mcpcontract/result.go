@@ -18,10 +18,17 @@ func Result(method *expr.MethodExpr) (*expr.AttributeExpr, error) {
 	if err != nil {
 		return nil, err
 	}
+	task, err := mcpinput.TaskExchange(method)
+	if err != nil {
+		return nil, err
+	}
 	attribute := method.Result
+	if task != nil {
+		attribute, mapping = task.Read.Result, nil
+	}
 	result, viewed := attribute.Type.(*expr.ResultTypeExpr)
 	if !viewed {
-		return completedContract(attribute, mapping)
+		return completedContract(attribute, mapping, task)
 	}
 	if view, fixed := FixedView(attribute); fixed {
 		return ResultView(method, view)
@@ -48,11 +55,19 @@ func ResultView(method *expr.MethodExpr, view string) (*expr.AttributeExpr, erro
 	if err != nil {
 		return nil, err
 	}
-	selected, err := SelectView(method.Result, view)
+	task, err := mcpinput.TaskExchange(method)
 	if err != nil {
 		return nil, err
 	}
-	return completedContract(selected, mapping)
+	attribute := method.Result
+	if task != nil {
+		attribute, mapping = task.Read.Result, nil
+	}
+	selected, err := SelectView(attribute, view)
+	if err != nil {
+		return nil, err
+	}
+	return completedContract(selected, mapping, task)
 }
 
 // SelectView returns only fields and validation included in the named view.
@@ -90,17 +105,30 @@ func FixedView(attribute *expr.AttributeExpr) (string, bool) {
 // completedContract removes an operation's unfinished branch after selecting
 // its native result view. Nested result types use their authored view or Goa's
 // default; only the top-level service result can choose a view during execution.
-func completedContract(attribute *expr.AttributeExpr, mapping *mcpinput.Exchange) (*expr.AttributeExpr, error) {
-	if mapping == nil {
-		return attribute, nil
+func completedContract(attribute *expr.AttributeExpr, mapping *mcpinput.Exchange, task *mcpinput.TaskBinding) (*expr.AttributeExpr, error) {
+	var err error
+	if mapping != nil {
+		attribute, err = completedOutcome(attribute, mapping.OutcomeName, "InputExchange")
+		if err != nil {
+			return nil, err
+		}
 	}
+	if task != nil {
+		return completedOutcome(attribute, "outcome", "TaskExchange")
+	}
+	return attribute, nil
+}
+
+// completedOutcome selects finished data from the authored or selected view.
+// Missing outcome fields are errors; omitted fields are never reconstructed.
+func completedOutcome(attribute *expr.AttributeExpr, outcomeName, contract string) (*expr.AttributeExpr, error) {
 	object := expr.AsObject(attribute.Type)
-	if object == nil || object.Attribute(mapping.OutcomeName) == nil {
-		return nil, fmt.Errorf("InputExchange selected result view omits outcome %q", mapping.OutcomeName)
+	if object == nil || object.Attribute(outcomeName) == nil {
+		return nil, fmt.Errorf("%s selected result view omits outcome %q", contract, outcomeName)
 	}
-	union := expr.AsUnion(object.Attribute(mapping.OutcomeName).Type)
+	union := expr.AsUnion(object.Attribute(outcomeName).Type)
 	if union == nil {
-		return nil, fmt.Errorf("InputExchange selected outcome is not a OneOf")
+		return nil, fmt.Errorf("%s selected outcome is not a OneOf", contract)
 	}
 	for _, branch := range union.Values {
 		if branch.Name != "complete" {
@@ -115,5 +143,5 @@ func completedContract(attribute *expr.AttributeExpr, mapping *mcpinput.Exchange
 		}
 		return SelectView(branch.Attribute, view)
 	}
-	return nil, fmt.Errorf("InputExchange selected outcome omits complete branch")
+	return nil, fmt.Errorf("%s selected outcome omits complete branch", contract)
 }

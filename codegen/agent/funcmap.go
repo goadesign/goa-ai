@@ -12,10 +12,11 @@ import (
 // share the same helpers (e.g., goify for consistent identifier casing).
 func templateFuncMap() map[string]any {
 	return map[string]any{
-		"goify":      goacodegen.Goify,
-		"trimPrefix": strings.TrimPrefix,
-		"trimSuffix": strings.TrimSuffix,
-		"ToLower":    strings.ToLower,
+		"goify":              goacodegen.Goify,
+		"nativeTaskDispatch": nativeTaskDispatchSource,
+		"trimPrefix":         strings.TrimPrefix,
+		"trimSuffix":         strings.TrimSuffix,
+		"ToLower":            strings.ToLower,
 		// isAPIKey reports whether the scheme kind is APIKeyKind.
 		"isAPIKey": func(kind goaexpr.SchemeKind) bool {
 			return kind == goaexpr.APIKeyKind

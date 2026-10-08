@@ -22,6 +22,8 @@ const (
 	registryClientOptionsFileT = "registry_client_options"
 	mcpExecutorFileT           = "mcp_executor"
 	nativeInputExchangeFileT   = "native_input_exchange"
+	nativeTaskExchangeFileT    = "native_task_exchange"
+	nativeTaskDispatchT        = "native_task_dispatch"
 	serviceExecutorFileT       = "service_executor"
 	toolCodecsFileT            = "tool_codecs"
 	toolInjectFileT            = "tool_inject"

@@ -49,7 +49,7 @@ type (
 		elicitation         *elicitationCodec
 	}
 
-	// TransportField describes one top-level field in a private JSON type.
+	// TransportField describes one uniquely retained field in a private JSON type.
 	// Generated adapters use these exact names and types when they already hold
 	// parsed values and do not need to decode JSON.
 	TransportField struct {
@@ -61,6 +61,8 @@ type (
 		ValueTypeRef string
 		// Pointer reports whether the field stores its value through a pointer.
 		Pointer bool
+		// Default retains Goa-rendered declarations and the expression for an authored default.
+		Default *goacodegen.GoValueCode
 		// KeyTypeRef is the generated key type for a map field.
 		KeyTypeRef string
 		// ElementTypeRef is the generated element type for an array or map field.
@@ -323,26 +325,29 @@ func (v *Value) TransportField(
 	if attribute == nil {
 		return nil, fmt.Errorf("link JSON value %q transport field %q: attribute must not be nil", v.key, designName)
 	}
-	top := v.types[0]
-	object := goaexpr.AsObject(top.userType.Attribute().Type)
-	if object == nil || top.layout.Kind() != goacodegen.GoStruct {
-		return nil, fmt.Errorf("link JSON value %q transport field %q: transport value is not an object", v.key, designName)
-	}
-	fields := top.layout.Fields()
+	var owner *plannedType
 	var selected *goacodegen.GoTypePlan
-	for index, named := range *object {
-		if named.Name != designName || named.Attribute.AuthoredAttribute() != attribute.AuthoredAttribute() {
+	var transportAttribute *goaexpr.AttributeExpr
+	for _, planned := range v.types {
+		object := goaexpr.AsObject(planned.userType.Attribute().Type)
+		if object == nil || planned.layout.Kind() != goacodegen.GoStruct {
 			continue
 		}
-		if selected != nil {
-			return nil, fmt.Errorf("link JSON value %q transport field %q: field occurs more than once", v.key, designName)
+		fields := planned.layout.Fields()
+		for index, named := range *object {
+			if named.Name != designName || named.Attribute.AuthoredAttribute() != attribute.AuthoredAttribute() {
+				continue
+			}
+			if selected != nil {
+				return nil, fmt.Errorf("link JSON value %q transport field %q: field occurs more than once", v.key, designName)
+			}
+			owner, selected, transportAttribute = planned, fields[index], named.Attribute
 		}
-		selected = fields[index]
 	}
 	if selected == nil {
 		return nil, fmt.Errorf("link JSON value %q transport field %q: field was not planned", v.key, designName)
 	}
-	linked := top.layout.Link(outputPath, qualifier).Enter(selected)
+	linked := owner.layout.Link(outputPath, qualifier).Enter(selected)
 	typeRef := linked.Def()
 	if selected.IsPointer() {
 		typeRef = "*" + typeRef
@@ -353,8 +358,25 @@ func (v *Value) TransportField(
 		ValueTypeRef: linked.Def(),
 		Pointer:      selected.IsPointer(),
 	}
+	if value := goaexpr.NewMappedAttributeExpr(owner.userType.Attribute()).GetDefault(designName); value != nil {
+		rendered, err := goacodegen.RenderGoValue(transportAttribute, value, linked, selected.IsPointer(), func(attribute *goaexpr.AttributeExpr, branch string) (string, error) {
+			declaration, err := v.plan.pkg.UnionBranch(attribute, branch)
+			if err != nil {
+				return "", err
+			}
+			name := declaration.Constructor()
+			if outputPath != v.plan.pkg.ImportPath() {
+				name = qualifier(v.plan.pkg.ImportPath()) + "." + name
+			}
+			return name, nil
+		}, designName+"Default")
+		if err != nil {
+			return nil, fmt.Errorf("render transport default for %q: %w", designName, err)
+		}
+		field.Default = &rendered
+	}
 	if selected.Kind() == goacodegen.GoArray {
-		array := goaexpr.AsArray((*object).Attribute(designName).Type)
+		array := goaexpr.AsArray(attribute.Type)
 		field.ElementTypeRef = linked.Enter(selected.Elem()).Def()
 		field.ElementPointer = goaexpr.IsObject(array.ElemType.Type) ||
 			transportArrayElementIsPointer(array)

@@ -7,7 +7,6 @@ import (
 	"fmt"
 
 	jsoncodec "goa.design/goa-ai/codegen/internal/codec"
-	"goa.design/goa-ai/codegen/jsonschema"
 	"goa.design/goa-ai/internal/mcpinput"
 	"goa.design/goa/v3/codegen"
 	goaservice "goa.design/goa/v3/codegen/service"
@@ -86,36 +85,9 @@ func New(services *goaservice.Plan, api *expr.APIExpr, method *expr.MethodExpr, 
 		return nil, err
 	}
 	for index, question := range mapping.Questions {
-		if err := checkAnswerGoType(question.Answer); err != nil {
-			return nil, fmt.Errorf("MCP question %q answer: %w", question.Name, err)
-		}
-		entry := &Question{Name: question.Name, question: question}
-		if question.Content != nil {
-			schema, err := jsonschema.BuildForm(api, question.Content, expr.MethodPayloadExampleIdentity(method).Member(mapping.ContinuationName).Member("responses").Member(question.Name).Member("answer").UnionMember("accept").Member("content"))
-			if err != nil {
-				return nil, fmt.Errorf("MCP question %q: %w", question.Name, err)
-			}
-			entry.Schema = string(schema)
-		}
-		entry.responseLayout, err = services.MethodTypeLayout(method, question.Response)
-		if err != nil {
-			return nil, err
-		}
-		answerLayout, err := services.MethodTypeLayout(method, question.Answer)
-		if err != nil {
-			return nil, err
-		}
-		answerFields := entry.responseLayout.PlansForOccurrence(question.Answer)
-		if len(answerFields) != 1 {
-			return nil, fmt.Errorf("MCP answer has %d native field layouts", len(answerFields))
-		}
-		entry.AnswerDereference = answerLayout.ReferenceIsPointer() && !answerFields[0].IsPointer()
-		entry.answer, err = codecs.AddElicitation(method.Service.Name+":"+method.Name+":answer:"+question.Name, fmt.Sprintf("%sAnswer%d", prefix, index), question.Answer, answerLayout, question.Content != nil)
-		if err != nil {
-			return nil, err
-		}
-		entry.request = input.pending.Find("requests").Find(question.Name)
-		entry.requestLayout, err = services.MethodTypeLayout(method, entry.request)
+		identity := expr.MethodPayloadExampleIdentity(method).Member(mapping.ContinuationName).Member("responses").Member(question.Name).Member("answer").UnionMember("accept").Member("content")
+		request := input.pending.Find("requests").Find(question.Name)
+		entry, err := newQuestion(services, api, method, method, question, request, identity, prefix, index, codecs)
 		if err != nil {
 			return nil, err
 		}
@@ -155,25 +127,9 @@ func (input *Plan) Bind(packagePath string, packageAlias codegen.GoTypeQualifier
 		input.RequestsField = codegen.GoifyAtt(input.pending.Find("requests"), "requests", true)
 	}
 	for _, entry := range input.Questions {
-		entry.ResponseField = codegen.GoifyAtt(entry.question.Response, entry.Name, true)
-		entry.ResponseRef = link(entry.responseLayout).RefWithPointer(false)
-		entry.AnswerField = codegen.GoifyAtt(entry.question.Answer, "answer", true)
-		entry.RequestField = codegen.GoifyAtt(entry.request, entry.Name, true)
-		entry.MessageField = codegen.GoifyAtt(entry.request.Find("message"), "message", true)
-		message := entry.requestLayout.PlansForOccurrence(entry.request.Find("message"))
-		if len(message) != 1 {
-			return fmt.Errorf("MCP request message has %d native layouts", len(message))
+		if err := bindQuestion(entry, packagePath, packageAlias, codecAlias); err != nil {
+			return err
 		}
-		entry.MessagePointer = message[0].IsPointer()
-		if url := entry.request.Find("url"); url != nil {
-			entry.URLField = codegen.GoifyAtt(url, "url", true)
-			urlLayout := entry.requestLayout.PlansForOccurrence(url)
-			if len(urlLayout) != 1 {
-				return fmt.Errorf("MCP request URL has %d native layouts", len(urlLayout))
-			}
-			entry.URLPointer = urlLayout[0].IsPointer()
-		}
-		entry.Decode = codecAlias + "." + entry.answer.DecodeDeclaration().Name()
 	}
 	return nil
 }

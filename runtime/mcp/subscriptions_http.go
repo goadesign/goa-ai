@@ -89,25 +89,25 @@ func ServeSubscriptions(w http.ResponseWriter, r *http.Request, id, params json.
 // request and sends its first notification. The transport rejects extra kinds,
 // extra resources, and repeated acknowledgment. Callers cannot choose its ID.
 func AcknowledgeSubscription(ctx context.Context, accepted SubscriptionFilter) error {
-	return sendSubscription(ctx, SubscriptionAcknowledged, &accepted, "")
+	return sendSubscription(ctx, SubscriptionAcknowledged, &accepted, "", nil)
 }
 
 // ReportToolsChanged tells the current listener to reload its tool catalog.
 // The source must own a changing catalog; unaccepted notifications are rejected.
 func ReportToolsChanged(ctx context.Context) error {
-	return sendSubscription(ctx, SubscriptionToolsChanged, nil, "")
+	return sendSubscription(ctx, SubscriptionToolsChanged, nil, "", nil)
 }
 
 // ReportPromptsChanged tells the current listener to reload its prompt catalog.
 // The source must own a changing catalog; unaccepted notifications are rejected.
 func ReportPromptsChanged(ctx context.Context) error {
-	return sendSubscription(ctx, SubscriptionPromptsChanged, nil, "")
+	return sendSubscription(ctx, SubscriptionPromptsChanged, nil, "", nil)
 }
 
 // ReportResourcesChanged tells the current listener to reload its resource catalog.
 // The source must own a changing catalog; unaccepted notifications are rejected.
 func ReportResourcesChanged(ctx context.Context) error {
-	return sendSubscription(ctx, SubscriptionResourcesChanged, nil, "")
+	return sendSubscription(ctx, SubscriptionResourcesChanged, nil, "", nil)
 }
 
 // ReportResourceUpdated sends a changed resource address to the current listener.
@@ -115,12 +115,38 @@ func ReportResourcesChanged(ctx context.Context) error {
 // that relationship and access checks; the transport checks its URI syntax and
 // requires acknowledged resource subscriptions.
 func ReportResourceUpdated(ctx context.Context, uri string) error {
-	return sendSubscription(ctx, SubscriptionResourceUpdated, nil, uri)
+	return sendSubscription(ctx, SubscriptionResourceUpdated, nil, uri, nil)
+}
+
+// ReportTaskChanged sends an encoded tasks/get result on the current listener.
+// Generated adapters reuse their read converter and codec to supply this complete
+// snapshot. The transport validates the same state as a task read, removes the
+// response discriminator, and adds the listen request's correlation metadata.
+// The source must authorize and acknowledge the exact task ID before this call.
+func ReportTaskChanged(ctx context.Context, snapshot json.RawMessage) error {
+	var result taskGetResult
+	if err := json.Unmarshal(snapshot, &result); err != nil {
+		return fmt.Errorf("invalid task subscription snapshot: %w", err)
+	}
+	if result.task.input != nil {
+		if err := result.task.input.Validate(InputSupport{Form: true, URL: true}); err != nil {
+			return err
+		}
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(snapshot, &fields); err != nil {
+		return err
+	}
+	if err := validateMeta(fields["_meta"]); err != nil {
+		return err
+	}
+	delete(fields, "resultType")
+	return sendSubscription(ctx, SubscriptionTaskChanged, nil, result.task.info.TaskID, fields)
 }
 
 // sendSubscription obtains the request-owned writer and refuses ordinary service
 // contexts. A source cannot accidentally send changes on another operation.
-func sendSubscription(ctx context.Context, kind SubscriptionEventKind, accepted *SubscriptionFilter, uri string) (err error) {
+func sendSubscription(ctx context.Context, kind SubscriptionEventKind, accepted *SubscriptionFilter, uri string, task map[string]json.RawMessage) (err error) {
 	ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.subscription.notification.send", trace.WithAttributes(attribute.String("notification.method", string(kind))))
 	defer span.End()
 	defer func() {
@@ -136,7 +162,7 @@ func sendSubscription(ctx context.Context, kind SubscriptionEventKind, accepted 
 	if !ok {
 		return errors.New("MCP subscription report requires an active listen request")
 	}
-	return sender.send(ctx, kind, accepted, uri)
+	return sender.send(ctx, kind, accepted, uri, task)
 }
 
 func (r *subscriptionHTTPResponse) Header() http.Header {
@@ -158,7 +184,7 @@ func (r *subscriptionHTTPResponse) Write(data []byte) (int, error) {
 
 // send checks the request's accepted filter before writing any bytes. Each
 // request serializes sends and remembers its first delivery error.
-func (r *subscriptionHTTPResponse) send(ctx context.Context, kind SubscriptionEventKind, accepted *SubscriptionFilter, uri string) error {
+func (r *subscriptionHTTPResponse) send(ctx context.Context, kind SubscriptionEventKind, accepted *SubscriptionFilter, uri string, task map[string]json.RawMessage) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if err := r.writable(ctx); err != nil {
@@ -172,7 +198,26 @@ func (r *subscriptionHTTPResponse) send(ctx context.Context, kind SubscriptionEv
 	} else if err := r.state.change(kind, uri); err != nil {
 		return err
 	}
-	data, err := json.Marshal(rpcNotification{JSONRPC: rpcVersion, Method: string(kind), Params: params})
+	var notificationParams any = params
+	if kind == SubscriptionTaskChanged {
+		meta := make(map[string]json.RawMessage)
+		if raw, present := task["_meta"]; present {
+			if err := json.Unmarshal(raw, &meta); err != nil {
+				return err
+			}
+		}
+		if _, present := meta[subscriptionIDKey]; present {
+			return errors.New("task source must leave subscription ID ownership to the transport")
+		}
+		meta[subscriptionIDKey] = r.id
+		encoded, err := json.Marshal(meta)
+		if err != nil {
+			return err
+		}
+		task["_meta"] = encoded
+		notificationParams = task
+	}
+	data, err := json.Marshal(rpcNotification{JSONRPC: rpcVersion, Method: string(kind), Params: notificationParams})
 	if err != nil {
 		return err
 	}

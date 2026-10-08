@@ -55,23 +55,8 @@ func (p *toolSpecsPackagePlan) planInputExchanges(services *service.Plan, api *e
 		if p.inputMethods[tool.Method] != nil {
 			continue
 		}
-		if p.inputCodecs == nil {
-			codecPath := p.public.ImportPath() + "/internal/inputcodec"
-			p.inputCodecs, err = jsoncodec.NewPlan(p.generation, codecPath)
-			if err != nil {
-				return err
-			}
-			p.inputCodecPackage, err = p.generation.ClaimPackage(codecPath)
-			if err != nil {
-				return err
-			}
-			if err := p.public.ReserveGeneratedImport(codegen.NewImport("geninputcodec", codecPath)); err != nil {
-				return err
-			}
-			if err := requirePackageImports(p.public, []*codegen.ImportSpec{codegen.SimpleImport("encoding/json"), codegen.NewImport("mcpruntime", "goa.design/goa-ai/runtime/mcp"), codegen.NewImport("goa", "goa.design/goa/v3/pkg")}); err != nil {
-				return err
-			}
-			p.inputMethods = make(map[*expr.MethodExpr]*nativeInputPlan)
+		if err := p.ensureInputCodecs(); err != nil {
+			return err
 		}
 		input := &nativeInputPlan{method: tool.Method}
 		input.conversion, err = inputexchange.New(services, api, tool.Method, mapping.Pending, p.inputCodecs)
@@ -138,20 +123,16 @@ func (p *toolSpecsPackagePlan) linkInputExchanges(services *service.ServicesData
 			return err
 		}
 		attributor := services.ServiceAttributor(input.method.Service.Name, p.public.ImportPath())
-		completed, err := mcpinput.CompleteResult(input.method)
+		mapping, err := mcpinput.InputExchange(input.method)
 		if err != nil {
 			return err
 		}
 		input.payloadRef = attributor.Ref(input.method.Payload, "")
 		input.resultRef = attributor.Ref(input.method.Result, "")
-		input.completedRef = attributor.Ref(completed, "")
+		input.completedRef = attributor.Ref(mapping.Complete, "")
 		alias := p.public.ImportName(p.inputCodecPackage.ImportPath())
 		input.payloadValidate = alias + "." + input.payloadValidation.ValidationDeclaration().Name()
 		input.resultValidate = alias + "." + input.resultValidation.ValidationDeclaration().Name()
-		mapping, err := mcpinput.InputExchange(input.method)
-		if err != nil {
-			return err
-		}
 		if err := input.conversion.Bind(p.public.ImportPath(), p.public.ImportName, alias, "result."+codegen.GoifyAtt(input.method.Result.Find(mapping.OutcomeName), mapping.OutcomeName, true)); err != nil {
 			return err
 		}
@@ -179,9 +160,15 @@ func nativeInputFiles(plan *toolSpecsPlan) ([]*codegen.File, error) {
 			return nil, err
 		}
 		files = append(files, codecs...)
+		if taskFile := nativeTaskFile(p); taskFile != nil {
+			files = append(files, taskFile)
+		}
 		var methods []*nativeInputPlan
 		for _, input := range p.inputMethods {
 			methods = append(methods, input)
+		}
+		if len(methods) == 0 {
+			continue
 		}
 		slices.SortFunc(methods, func(a, b *nativeInputPlan) int { return cmp.Compare(a.method.Name, b.method.Name) })
 		paths := []string{"encoding/json", "goa.design/goa-ai/runtime/mcp", "goa.design/goa/v3/pkg", p.inputCodecPackage.ImportPath(), p.serviceImportPath}

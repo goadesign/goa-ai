@@ -117,6 +117,13 @@ func InputExchange(method *expr.MethodExpr) (*Exchange, error) {
 // CompleteResult selects the finished service value for catalogs and model
 // codecs. The full native outcome remains the service and transport contract.
 func CompleteResult(method *expr.MethodExpr) (*expr.AttributeExpr, error) {
+	task, err := TaskExchange(method)
+	if err != nil {
+		return nil, err
+	}
+	if task != nil {
+		return task.Complete, nil
+	}
 	mapping, err := InputExchange(method)
 	if err != nil || mapping == nil {
 		return method.Result, err

@@ -83,7 +83,7 @@ var _=Service("records",func(){
    Required("credential")
   })
   StreamingResult(event)
-  ResourceSubscription()
+  SubscriptionSource()
  })
 })
 `

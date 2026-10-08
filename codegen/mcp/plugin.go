@@ -35,6 +35,7 @@ type (
 		transport       *expr.HTTPServiceExpr
 		resourcePolicy  *resourcePolicy
 		protocolLayouts map[string]*goacodegen.GoTypePlan
+		tasks           map[string]*mcpinput.TaskBinding
 	}
 
 	// plannedMCPService stores the attached service, Goa's saved service types,
@@ -55,6 +56,7 @@ type (
 		result          *jsoncodec.Value
 		views           []*plannedResultView
 		endpoint        *endpointMethodAdapter
+		resultMethod    *expr.MethodExpr
 	}
 
 	// mcpPlugin stores the MCP services added during Prepare and the file data
@@ -112,6 +114,9 @@ func (p *mcpPlugin) plan(plan *goagenerator.Plan) error {
 		if err := planRouteInputs(plan.Generation(), servicePlan, prepared, adapter); err != nil {
 			return err
 		}
+		if err := planTaskAdapters(plan.Generation(), servicePlan, prepared, adapter); err != nil {
+			return err
+		}
 		if err := planResourceReader(plan.Generation(), servicePlan, prepared, adapter); err != nil {
 			return err
 		}
@@ -121,7 +126,7 @@ func (p *mcpPlugin) plan(plan *goagenerator.Plan) error {
 		if err := planCompletionConversions(plan.Generation(), servicePlan, prepared, adapter); err != nil {
 			return err
 		}
-		if err := planResourceSubscription(plan.Generation(), adapter); err != nil {
+		if err := planSubscriptionSource(plan.Generation(), adapter); err != nil {
 			return err
 		}
 		if err := declareMCPNames(plan.Generation(), adapter); err != nil {
@@ -184,7 +189,7 @@ func (p *mcpPlugin) generate(plan *goagenerator.Plan, files []*goacodegen.File) 
 			return nil, err
 		}
 		planned.adapterData.MCPPackage = mcpService.PkgName
-		codecFiles, err := bindMCPCodecs(services, planned)
+		codecFiles, err := bindMCPCodecs(plan.Generation(), services, planned)
 		if err != nil {
 			return nil, err
 		}
@@ -201,7 +206,7 @@ func (p *mcpPlugin) generate(plan *goagenerator.Plan, files []*goacodegen.File) 
 		if err := bindCompletionConversions(services, planned); err != nil {
 			return nil, err
 		}
-		if err := bindResourceSubscription(plan.Generation(), services, planned); err != nil {
+		if err := bindSubscriptionSource(plan.Generation(), services, planned); err != nil {
 			return nil, err
 		}
 		if caller := clientCallerFile(planned.adapterData); caller != nil {
@@ -284,9 +289,13 @@ func planMCPImports(
 		data.serverImportPaths = append(data.serverImportPaths, "encoding/base64")
 		break
 	}
-	if data.ResourceSubscription != nil {
+	if data.SubscriptionSource != nil {
 		serverFixed = append(serverFixed, goacodegen.SimpleImport("sync"))
 		data.serverImportPaths = append(data.serverImportPaths, "sync")
+	}
+	if len(data.Tasks) > 0 {
+		serverFixed = append(serverFixed, goacodegen.SimpleImport("encoding/base64"), goacodegen.SimpleImport("strings"))
+		data.serverImportPaths = append(data.serverImportPaths, "encoding/base64", "strings")
 	}
 	if data.NeedsContentBytes {
 		serverFixed = append(serverFixed, goacodegen.SimpleImport("encoding/base64"))
@@ -470,6 +479,12 @@ func planMCPCodecs(
 		if err := planInputExchangeCodecs(services, prepared, data, planned, values.endpoint); err != nil {
 			return nil, nil, err
 		}
+		values.resultMethod = method
+		if task, err := mcpinput.TaskExchange(method); err != nil {
+			return nil, nil, err
+		} else if task != nil {
+			values.resultMethod = task.Read
+		}
 		preferred := goacodegen.Goify(method.Name, true)
 		payloadDirection, resultDirection := mcpCodecDirections(data, method.Name)
 		if tool := toolMethods[method.Name]; tool != nil {
@@ -498,7 +513,7 @@ func planMCPCodecs(
 				return nil, nil, fmt.Errorf("plan MCP payload codec for method %q: %w", method.Name, err)
 			}
 		}
-		if len(prepared.credentials[method.Name]) > 0 || len(values.endpoint.Paths) > 0 || values.endpoint.InputExchange != nil {
+		if len(prepared.credentials[method.Name]) > 0 || len(values.endpoint.Paths) > 0 || values.endpoint.InputExchange != nil || values.endpoint.TaskRole {
 			data.NeedsServerCodec = true
 			layout, layoutErr := services.MethodTypeLayout(method, method.Payload)
 			if layoutErr != nil {
@@ -510,8 +525,8 @@ func planMCPCodecs(
 			}
 		}
 		if hasMCPValue(method.Result) && resultDirection != 0 {
-			_, fixed := mcpcontract.FixedView(method.Result)
-			if _, viewed := method.Result.Type.(*expr.ResultTypeExpr); viewed && !fixed {
+			_, fixed := mcpcontract.FixedView(values.resultMethod.Result)
+			if _, viewed := values.resultMethod.Result.Type.(*expr.ResultTypeExpr); viewed && !fixed {
 				values.views, err = planExecutionViewCodecs(planned, services, method, resultDirection, preferred)
 				if err != nil {
 					return nil, nil, err
@@ -572,10 +587,41 @@ func planMCPCodecs(
 			}
 		}
 	}
-	if source := data.ResourceSubscription; source != nil {
+	for _, endpoint := range data.EndpointMethods {
+		if !endpoint.TaskRole {
+			continue
+		}
+		values := methodCodecs[endpoint.method.Name]
+		if values.payload.TransportConstructorDeclaration() == nil {
+			if err := values.payload.PlanTransportConstructor(); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+	if source := data.SubscriptionSource; source != nil {
 		data.NeedsServerCodec = true
 		values := methodCodecs[source.method.Name]
 		if err := values.payload.PlanTransportConstructor(); err != nil {
+			return nil, nil, err
+		}
+	}
+	if err := planTaskCodecs(services, prepared, data, planned); err != nil {
+		return nil, nil, err
+	}
+	if source := data.SubscriptionSource; source != nil && len(source.Tasks) > 0 {
+		method := prepared.mcpService.Method("tasks/get")
+		attribute := method.Result.Find("outcome")
+		layout, err := services.MethodTypeLayout(method, attribute)
+		if err != nil {
+			return nil, nil, err
+		}
+		source.TaskSnapshotPointer = layout.ReferenceIsPointer()
+		source.taskSnapshotPlan, err = jsoncodec.NewPlan(generation, data.mcpImportPath)
+		if err != nil {
+			return nil, nil, err
+		}
+		source.taskSnapshot, err = source.taskSnapshotPlan.Add(prepared.userService.Name+":subscription:task:snapshot", "TaskSnapshot", attribute, layout, jsoncodec.EncodeOnly)
+		if err != nil {
 			return nil, nil, err
 		}
 	}
@@ -586,7 +632,7 @@ func planMCPCodecs(
 
 // bindMCPCodecs joins codec types to Goa's final service declarations and adds
 // the chosen function names to the server adapters.
-func bindMCPCodecs(services *goaservice.ServicesData, planned *plannedMCPService) ([]*goacodegen.File, error) {
+func bindMCPCodecs(generation *goacodegen.Generation, services *goaservice.ServicesData, planned *plannedMCPService) ([]*goacodegen.File, error) {
 	if planned.codecPlan == nil {
 		return nil, nil
 	}
@@ -602,7 +648,7 @@ func bindMCPCodecs(services *goaservice.ServicesData, planned *plannedMCPService
 			}
 			writer := attributor
 			if value == values.result {
-				if _, viewed := method.Result.Type.(*expr.ResultTypeExpr); viewed {
+				if _, viewed := values.resultMethod.Result.Type.(*expr.ResultTypeExpr); viewed {
 					writer = services.ViewAttributor(planned.prepared.userService.Name, planned.adapterData.CodecImportPath)
 				}
 			}
@@ -633,8 +679,12 @@ func bindMCPCodecs(services *goaservice.ServicesData, planned *plannedMCPService
 		if tool.Content == nil {
 			continue
 		}
+		owner := tool.Content.tool.Method
+		if tool.Task != nil {
+			owner = tool.Task.binding.Read
+		}
 		writer := attributor
-		if _, viewed := tool.Content.tool.Method.Result.Type.(*expr.ResultTypeExpr); viewed {
+		if _, viewed := owner.Result.Type.(*expr.ResultTypeExpr); viewed {
 			writer = services.ViewAttributor(planned.prepared.userService.Name, planned.adapterData.CodecImportPath)
 		}
 		for _, selected := range tool.Content.Cases {
@@ -646,10 +696,27 @@ func bindMCPCodecs(services *goaservice.ServicesData, planned *plannedMCPService
 			}
 		}
 	}
+	if err := bindTaskAdapters(generation, services, planned); err != nil {
+		return nil, err
+	}
+	if source := planned.adapterData.SubscriptionSource; source != nil && source.taskSnapshot != nil {
+		protocol := services.ServiceAttributor(planned.prepared.mcpService.Name, planned.adapterData.mcpImportPath)
+		if err := source.taskSnapshot.BindService(protocol); err != nil {
+			return nil, err
+		}
+		source.TaskSnapshotEncode = source.taskSnapshot.EncodeDeclaration().Name()
+	}
 	bindMCPCodecData(planned.adapterData, planned.methodCodecs)
 	files, err := planned.codecPlan.Files("codec")
 	if err != nil {
 		return nil, fmt.Errorf("render MCP codecs for service %q: %w", planned.prepared.userService.Name, err)
+	}
+	if source := planned.adapterData.SubscriptionSource; source != nil && source.taskSnapshotPlan != nil {
+		snapshots, err := source.taskSnapshotPlan.Files(planned.adapterData.MCPPackage)
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, snapshots...)
 	}
 	return files, nil
 }
@@ -728,6 +795,11 @@ func mcpCodecDirections(data *AdapterData, methodName string) (jsoncodec.Directi
 		}
 	}
 	needsConstruction := false
+	for _, endpoint := range data.EndpointMethods {
+		if endpoint.method.Name == methodName && endpoint.TaskRole {
+			needsConstruction = true
+		}
+	}
 	for _, prompt := range data.MethodPrompts {
 		needsConstruction = needsConstruction || prompt.prompt.Method.Name == methodName
 	}
@@ -737,7 +809,7 @@ func mcpCodecDirections(data *AdapterData, methodName string) (jsoncodec.Directi
 	for _, completion := range data.Completions {
 		needsConstruction = needsConstruction || completion.method.Name == methodName
 	}
-	if source := data.ResourceSubscription; source != nil && source.method.Name == methodName {
+	if source := data.SubscriptionSource; source != nil && source.method.Name == methodName {
 		needsConstruction = true
 	}
 	if needsConstruction {
@@ -770,6 +842,11 @@ func mappedMCPMethods(prepared *preparedMCPService) []*expr.MethodExpr {
 	}
 	for _, tool := range prepared.mcp.Tools {
 		add(tool.Method)
+		if binding := prepared.tasks[tool.Name]; binding != nil {
+			add(binding.Read)
+			add(binding.Answer)
+			add(binding.Cancel)
+		}
 	}
 	for _, resource := range prepared.mcp.Resources {
 		add(resource.Method)
@@ -786,7 +863,7 @@ func mappedMCPMethods(prepared *preparedMCPService) []*expr.MethodExpr {
 	for _, completion := range prepared.mcp.ResourceCompletions {
 		add(completion.Method)
 	}
-	if source := prepared.mcp.ResourceSubscription; source != nil {
+	if source := prepared.mcp.SubscriptionSource; source != nil {
 		add(source.Method)
 	}
 	return methods

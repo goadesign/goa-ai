@@ -157,7 +157,7 @@ var _=Service("scoped",func(){
  })
  Method("watch",func(){
   Payload(func(){Field(1,"organization_id",organization,"Organization from the URL");Field(2,"resources",ArrayOf(uri),"Selected addresses");Required("organization_id")})
-  StreamingResult(event);ResourceSubscription()
+  StreamingResult(event);SubscriptionSource()
  })
 })
 `

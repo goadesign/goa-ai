@@ -626,6 +626,8 @@ type (
 		FillInputContinuation string
 		// ReadInputOutcome names the generated function that selects pending or completed output.
 		ReadInputOutcome string
+		// Task records the declared native methods that continue an existing job.
+		Task *nativeTaskCallData
 		// MethodPayloadLoc is the Goa location for the payload user type when specified via
 		// Meta("struct:pkg:path", ...). Nil when the payload is local to the service package
 		// or is not a user type.

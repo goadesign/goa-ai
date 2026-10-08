@@ -60,7 +60,18 @@ func prepareMCPServicesFromRoot(
 				return nil, err
 			}
 
+			tasks := make(map[string]*mcpinput.TaskBinding)
+			for _, tool := range mcp.Tools {
+				binding, err := mcpinput.TaskExchange(tool.Method)
+				if err != nil {
+					return nil, err
+				}
+				if binding != nil {
+					tasks[tool.Name] = binding
+				}
+			}
 			builder := newMCPExprBuilder(svc, mcp)
+			builder.tasks = tasks
 			for name, userType := range generatedTypes {
 				builder.Types()[name] = userType
 			}
@@ -112,6 +123,7 @@ func prepareMCPServicesFromRoot(
 				paths:          paths,
 				transport:      transport,
 				resourcePolicy: policy,
+				tasks:          tasks,
 			})
 		}
 		if len(attachedServices) > 0 {

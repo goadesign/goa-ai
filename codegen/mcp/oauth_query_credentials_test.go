@@ -78,7 +78,7 @@ var _=Service("records",func(){
   Security(key)
   Payload(func(){APIKey("domain_key","credential",String,"Domain query credential");Field(1,"resources",ArrayOf(uri),"Requested resource addresses");Required("credential")})
   JSONRPC(func(){Param("credential:api_key");ServerSentEvents()})
-  StreamingResult(event);ResourceSubscription()
+  StreamingResult(event);SubscriptionSource()
  })
 })
 `

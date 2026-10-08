@@ -75,6 +75,15 @@ func prepareHTTPInputs(root *expr.RootExpr, service *expr.ServiceExpr, mcp *mcpe
 	operations := make(map[string][]*expr.MethodExpr)
 	for _, tool := range mcp.Tools {
 		operations["tools/call"] = append(operations["tools/call"], tool.Method)
+		binding, err := mcpinput.TaskExchange(tool.Method)
+		if err != nil {
+			return nil, nil, err
+		}
+		if binding != nil {
+			operations["tasks/get"] = append(operations["tasks/get"], binding.Read)
+			operations["tasks/update"] = append(operations["tasks/update"], binding.Answer)
+			operations["tasks/cancel"] = append(operations["tasks/cancel"], binding.Cancel)
+		}
 	}
 	for _, resource := range mcp.Resources {
 		operations["resources/read"] = append(operations["resources/read"], resource.Method)
@@ -91,8 +100,17 @@ func prepareHTTPInputs(root *expr.RootExpr, service *expr.ServiceExpr, mcp *mcpe
 	for _, completion := range mcp.ResourceCompletions {
 		operations["completion/complete"] = append(operations["completion/complete"], completion.Method)
 	}
-	if source := mcp.ResourceSubscription; source != nil {
+	if source := mcp.SubscriptionSource; source != nil {
 		operations["subscriptions/listen"] = []*expr.MethodExpr{source.Method}
+		if selected := source.Method.Payload.Find("tasks"); selected != nil {
+			for _, field := range *expr.AsObject(selected.Type) {
+				binding, err := mcpinput.TaskExchange(service.Method(field.Name))
+				if err != nil {
+					return nil, nil, err
+				}
+				operations["subscriptions/listen"] = append(operations["subscriptions/listen"], binding.Read)
+			}
+		}
 	}
 	credentials := make(map[string][]*credentialInput)
 	bodies := make(map[string]*protocolHTTPInputs)

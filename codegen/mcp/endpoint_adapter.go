@@ -51,6 +51,10 @@ type (
 		ProjectedResult bool
 		// InputExchange fills typed host answers and selects pending outcomes.
 		InputExchange *inputExchangeAdapter
+		// TaskRole requires full payload validation for a native job operation.
+		TaskRole bool
+		// TaskCreator returns job metadata instead of a completed model result.
+		TaskCreator bool
 
 		method          *expr.MethodExpr
 		payloadLayout   *codegen.GoTypePlan
@@ -109,7 +113,7 @@ func planEndpointAdapters(generation *codegen.Generation, services *goaservice.P
 			}
 			*side.layout = layout
 		}
-		if source := data.ResourceSubscription; source != nil && source.method == method {
+		if source := data.SubscriptionSource; source != nil && source.method == method {
 			call.Streaming = true
 			source.Endpoint = call
 		}

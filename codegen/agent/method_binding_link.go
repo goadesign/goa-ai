@@ -95,6 +95,9 @@ func (p *toolSpecsPlan) linkMethodToolset(planned *toolSpecsPackagePlan, toolset
 			tool.FillInputContinuation = input.fill.Name()
 			tool.ReadInputOutcome = input.outcome.Name()
 		}
+		if task := planned.taskMethods[tool.method]; task != nil {
+			tool.Task = task.callData(attributor, planned.public.ImportName("goa.design/goa-ai/runtime/agent/api"))
+		}
 		if err := p.linkMethodResultFields(tool); err != nil {
 			return err
 		}

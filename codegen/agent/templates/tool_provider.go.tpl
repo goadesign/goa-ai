@@ -69,7 +69,7 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 {{- $tool := . }}
 {{- if .IsMethodBacked }}
 	case {{ .ConstName }}:
-{{- if not .FillInputContinuation }}
+{{- if not (or .FillInputContinuation .Task) }}
         if msg.Meta.ExecutionContinuation != nil || msg.Meta.ExecutionSequence != 0 {
             return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_call", "tool does not accept input continuation"), nil
         }
@@ -116,16 +116,25 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 {{- if .FillInputContinuation }}
         var inputContinuation *{{ $.MCPPackage }}.CallContinuation
         if msg.Meta.ExecutionContinuation != nil {
+            {{- if .Task }}
+            inputContinuation, _ = msg.Meta.ExecutionContinuation.AsInput()
+            {{- else }}
             var ok bool
             inputContinuation, ok = msg.Meta.ExecutionContinuation.AsInput()
+            {{- end }}
+            {{- if not .Task }}
             if !ok {
                 return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_call", "tool does not accept Task continuation"), nil
             }
+            {{- end }}
         }
         if err := {{ .FillInputContinuation }}(methodIn, inputContinuation); err != nil {
             return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_arguments", err.Error()), nil
         }
 {{- end }}
+{{- if .Task }}
+        {{ nativeTaskDispatch . "" "" "" true }}
+{{- else }}
 {{- if .HasMethodResult }}
         {{- if .MethodReturnsView }}
         // Registry output follows this tool's Return, independently of HTTP views.
@@ -149,8 +158,9 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
             return toolregistry.NewInputRequiredResult(msg.RegistrationToken,msg.ToolUseID,pending)
         }
 {{- end }}
+{{- end }}
 {{- if .HasResult }}
-        {{- if .ReadInputOutcome }}
+        {{- if and .ReadInputOutcome (not .Task) }}
         result := {{ .ToolResultTransform }}(completed)
         {{- else }}
 		result := {{ .ToolResultTransform }}(methodOut)
@@ -160,13 +170,13 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 			return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "encode_failed", err.Error()), nil
 		}
 {{- if and .Bounds .Bounds.Projection .Bounds.Projection.Returned .Bounds.Projection.Truncated }}
-		bounds := {{ .BoundsFunc }}({{ if .ReadInputOutcome }}completed{{ else }}methodOut{{ end }})
+		bounds := {{ .BoundsFunc }}({{ if and .ReadInputOutcome (not .Task) }}completed{{ else }}methodOut{{ end }})
 {{- end }}
 		var server []*toolregistry.ServerDataItem
 {{- range .ServerData }}
 {{- if .MethodResultField }}
 		{
-			data := {{ .Transform }}({{ if $tool.ReadInputOutcome }}completed{{ else }}methodOut{{ end }}.{{ .MethodResultFieldName }})
+			data := {{ .Transform }}({{ if and $tool.ReadInputOutcome (not $tool.Task) }}completed{{ else }}methodOut{{ end }}.{{ .MethodResultFieldName }})
 			dataJSON, err := {{ .CodecName }}().ToJSON(data)
 			if err != nil {
 				return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "encode_failed", err.Error()), nil

@@ -126,7 +126,7 @@ func withMCPTransport(h *{{ .Transport.ServerStructDeclaration.Name }}, {{ if an
         }
 
 		response := &mcpResponseWriter{ResponseWriter: w}
-        {{- if .ResourceSubscription }}
+        {{- if .SubscriptionSource }}
         if request.Method == "subscriptions/listen" {
             id, err := json.Marshal(request.ID)
             if err != nil {

@@ -1,7 +1,7 @@
-// Package codegen connects an authored resource stream to an MCP listen request.
-// Goa owns method types, authentication and middleware. The private adapter
-// copies typed URI selections and validates each stream value before the shared
-// MCP transport sends an acknowledgment or resource update.
+// Package codegen connects an authored resource and job stream to an MCP listen
+// request. Goa owns method types, authentication and middleware. The adapter
+// fills native selections and validates events before the shared transport sends
+// acknowledgment, resource updates or full job snapshots.
 package codegen
 
 import (
@@ -14,11 +14,14 @@ import (
 )
 
 type (
-	// resourceSubscriptionAdapter keeps source types and fields chosen by Goa.
-	resourceSubscriptionAdapter struct {
+	// subscriptionAdapter keeps source types and fields chosen by Goa.
+	subscriptionAdapter struct {
 		// Endpoint selects the configured original service method.
-		Endpoint *endpointMethodAdapter
-		// PayloadTransportRef names the private URI input record.
+		Endpoint                                          *endpointMethodAdapter
+		Tasks                                             []*subscriptionTaskSelection
+		TaskInput                                         *jsoncodec.TransportField
+		AcknowledgedTasks, UpdatedTasks, TasksUpdatedKind string
+		// PayloadTransportRef names the private resource and job selection record.
 		PayloadTransportRef string
 		// PayloadConstructor applies authored input constraints and defaults.
 		PayloadConstructor string
@@ -47,20 +50,24 @@ type (
 		// Codec validates authored stream values before protocol conversion.
 		Codec *MethodCodecData
 
-		method         *expr.MethodExpr
-		unionAttribute *expr.AttributeExpr
-		unionLayout    *codegen.GoTypePlan
+		TaskSnapshotEncode  string
+		TaskSnapshotPointer bool
+		taskSnapshot        *jsoncodec.Value
+		taskSnapshotPlan    *jsoncodec.Plan
+		method              *expr.MethodExpr
+		unionAttribute      *expr.AttributeExpr
+		unionLayout         *codegen.GoTypePlan
 	}
 )
 
-// planResourceSubscription reserves its private stream name before Goa freezes
+// planSubscriptionSource reserves its private stream name before Goa freezes
 // declarations and retains the original union attributes for later field lookup.
-func planResourceSubscription(generation *codegen.Generation, data *AdapterData) error {
-	source := data.ResourceSubscription
+func planSubscriptionSource(generation *codegen.Generation, data *AdapterData) error {
+	source := data.SubscriptionSource
 	if source == nil {
 		return nil
 	}
-	if err := generation.Package(data.mcpImportPath).DeclareName(codegen.NewExactName(codegen.NameType, "resourceSubscriptionStream")); err != nil {
+	if err := generation.Package(data.mcpImportPath).DeclareName(codegen.NewExactName(codegen.NameType, "subscriptionStream")); err != nil {
 		return err
 	}
 	choice := expr.AsObject(source.method.Result.Type).Attribute("change")
@@ -74,18 +81,18 @@ func planResourceSubscription(generation *codegen.Generation, data *AdapterData)
 	}
 	matches := source.Endpoint.resultLayout.PlansForOccurrence(source.unionAttribute)
 	if len(matches) != 1 || matches[0].UnionDeclaration() == nil {
-		return fmt.Errorf("resource subscription change must have one generated union declaration")
+		return fmt.Errorf("subscription change must have one generated union declaration")
 	}
 	source.unionLayout = matches[0]
-	return nil
+	return planSubscriptionTasks(data)
 }
 
-// bindResourceSubscription reads final constructors, fields and branch names.
+// bindSubscriptionSource reads final constructors, fields and branch names.
 // Goa's saved declaration supplies the original endpoint input record
 // name, including any suffix chosen to avoid a declaration conflict.
-func bindResourceSubscription(generation *codegen.Generation, services *goaservice.ServicesData, planned *plannedMCPService) error {
+func bindSubscriptionSource(generation *codegen.Generation, services *goaservice.ServicesData, planned *plannedMCPService) error {
 	data := planned.adapterData
-	source := data.ResourceSubscription
+	source := data.SubscriptionSource
 	if source == nil {
 		return nil
 	}
@@ -118,9 +125,11 @@ func bindResourceSubscription(generation *codegen.Generation, services *goaservi
 	}
 	source.PayloadConstructor = values.payload.TransportConstructorDeclaration().Name()
 	resources := expr.AsObject(source.method.Payload.Type).Attribute("resources")
-	source.Resources, err = values.payload.TransportField(resources, "resources", data.mcpImportPath, data.mcpPackage.ImportName)
-	if err != nil {
-		return err
+	if resources != nil {
+		source.Resources, err = values.payload.TransportField(resources, "resources", data.mcpImportPath, data.mcpPackage.ImportName)
+		if err != nil {
+			return err
+		}
 	}
 	scope := services.ServiceAttributor(planned.prepared.userService.Name, data.mcpImportPath)
 	source.ChangeField = scope.Field(expr.AsObject(source.method.Result.Type).Attribute("change"), "change", true)
@@ -137,7 +146,15 @@ func bindResourceSubscription(generation *codegen.Generation, services *goaservi
 		case "acknowledged":
 			source.AcknowledgedKind = kind
 			field := object.Attribute("resources")
-			source.AcknowledgedResources = scope.Field(field, "resources", true)
+			if field != nil {
+				source.AcknowledgedResources = scope.Field(field, "resources", true)
+			}
+			if tasks := object.Attribute("tasks"); tasks != nil {
+				source.AcknowledgedTasks = scope.Field(tasks, "tasks", true)
+			}
+		case "tasks_updated":
+			source.TasksUpdatedKind = kind
+			source.UpdatedTasks = scope.Field(object.Attribute("tasks"), "tasks", true)
 		case "updated":
 			source.UpdatedKind = kind
 			field := object.Attribute("uri")
@@ -152,13 +169,13 @@ func bindResourceSubscription(generation *codegen.Generation, services *goaservi
 			}
 		}
 	}
-	return nil
+	return bindSubscriptionTasks(services, planned)
 }
 
-// buildResourceSubscriptionAdapter requires the exact typed stream contract.
+// buildSubscriptionAdapter requires the exact typed stream contract.
 // Opaque Go substitutions cannot bypass the generated event validation.
-func (g *adapterGenerator) buildResourceSubscriptionAdapter() (*resourceSubscriptionAdapter, error) {
-	declaration := g.mcp.ResourceSubscription
+func (g *adapterGenerator) buildSubscriptionAdapter() (*subscriptionAdapter, error) {
+	declaration := g.mcp.SubscriptionSource
 	if declaration == nil {
 		return nil, nil
 	}
@@ -170,5 +187,5 @@ func (g *adapterGenerator) buildResourceSubscriptionAdapter() (*resourceSubscrip
 			return nil, err
 		}
 	}
-	return &resourceSubscriptionAdapter{method: declaration.Method}, nil
+	return &subscriptionAdapter{method: declaration.Method}, nil
 }

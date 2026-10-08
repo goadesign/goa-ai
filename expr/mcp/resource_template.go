@@ -54,6 +54,9 @@ func (r *ResourceTemplateExpr) Validate() error {
 		verr.Add(r, "resource template method is required")
 		return verr
 	}
+	if _, declared := r.Method.Meta[mcpinput.TaskExchangeMetaKey]; declared {
+		verr.Add(r, "TaskExchange is supported only by MCP tools/call")
+	}
 	if r.Method.IsStreaming() {
 		verr.Add(r, "resource template method must be unary")
 	}

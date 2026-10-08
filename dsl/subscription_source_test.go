@@ -23,11 +23,11 @@ func TestMCPResourceSubscription(t *testing.T) {
 			Method("watch", func() {
 				resourceSubscriptionPayload()
 				resourceSubscriptionResult()
-				ResourceSubscription()
+				SubscriptionSource()
 			})
 		})
 	})
-	source := mcpexpr.Root.MCPServers["records"].ResourceSubscription
+	source := mcpexpr.Root.MCPServers["records"].SubscriptionSource
 	require.NotNil(t, source)
 	assert.Equal(t, "watch", source.Method.Name)
 }
@@ -38,9 +38,9 @@ func TestMCPResourceSubscriptionRejectsInvalidDeclarations(t *testing.T) {
 		declare func()
 		want    string
 	}{
-		{"service context", func() { ResourceSubscription() }, "invalid use"},
+		{"service context", func() { SubscriptionSource() }, "invalid use"},
 		{"unary", func() {
-			Method("watch", func() { resourceSubscriptionPayload(); Result(String); ResourceSubscription() })
+			Method("watch", func() { resourceSubscriptionPayload(); Result(String); SubscriptionSource() })
 		}, "only StreamingResult"},
 		{"required resources", func() {
 			Method("watch", func() {
@@ -49,25 +49,25 @@ func TestMCPResourceSubscriptionRejectsInvalidDeclarations(t *testing.T) {
 					Required("resources")
 				})
 				resourceSubscriptionResult()
-				ResourceSubscription()
+				SubscriptionSource()
 			})
 		}, "optional array"},
 		{"unexpected input", func() {
 			Method("watch", func() {
 				Payload(func() { Attribute("query", String, "A query") })
 				resourceSubscriptionResult()
-				ResourceSubscription()
+				SubscriptionSource()
 			})
-		}, "only optional resources"},
+		}, "unsupported field"},
 		{"missing union", func() {
-			Method("watch", func() { resourceSubscriptionPayload(); StreamingResult(String); ResourceSubscription() })
+			Method("watch", func() { resourceSubscriptionPayload(); StreamingResult(String); SubscriptionSource() })
 		}, "required change OneOf"},
 		{"duplicate source", func() {
 			Method("watch", func() {
 				resourceSubscriptionPayload()
 				resourceSubscriptionResult()
-				ResourceSubscription()
-				ResourceSubscription()
+				SubscriptionSource()
+				SubscriptionSource()
 			})
 		}, "only one"},
 	} {

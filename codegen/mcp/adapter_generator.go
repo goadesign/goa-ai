@@ -52,6 +52,8 @@ type (
 		EndpointMethods []*endpointMethodAdapter
 		// Tools contains the Goa methods exposed as MCP tools.
 		Tools []*ToolAdapter
+		// Tasks contains configured creators with complete native job operations.
+		Tasks []*taskAdapter
 		// CredentialQueries lists native authentication query names by protocol method.
 		CredentialQueries map[string][]string
 		// Resources contains the Goa methods exposed as MCP resources.
@@ -60,8 +62,8 @@ type (
 		ResourceTemplates []*resourceTemplateAdapter
 		// ResourceReader owns reads that are not fixed resource bindings.
 		ResourceReader *resourceReaderAdapter
-		// ResourceSubscription connects an authored stream to resource notifications.
-		ResourceSubscription *resourceSubscriptionAdapter
+		// SubscriptionSource connects an authored stream to resource and job changes.
+		SubscriptionSource *subscriptionAdapter
 		// StaticPrompts contains the prompts written directly in the Goa design.
 		StaticPrompts []*StaticPromptAdapter
 		// MethodPrompts contains prompt operations implemented by service methods.
@@ -143,6 +145,8 @@ type (
 		Idempotent bool
 		// Endpoint calls the configured Goa endpoint for this method.
 		Endpoint *endpointMethodAdapter
+		// Task binds this tool to service-owned durable job methods.
+		Task *taskAdapter
 		// HasPayload reports whether the Goa method accepts a payload.
 		HasPayload bool
 		// HasResult reports whether the Goa method returns a result.
@@ -261,7 +265,7 @@ func (g *adapterGenerator) buildAdapterData() (*AdapterData, error) {
 	if err != nil {
 		return nil, err
 	}
-	subscription, err := g.buildResourceSubscriptionAdapter()
+	subscription, err := g.buildSubscriptionAdapter()
 	if err != nil {
 		return nil, err
 	}
@@ -275,7 +279,7 @@ func (g *adapterGenerator) buildAdapterData() (*AdapterData, error) {
 		Resources:            resources,
 		ResourceTemplates:    templates,
 		ResourceReader:       reader,
-		ResourceSubscription: subscription,
+		SubscriptionSource:   subscription,
 		MethodPrompts:        prompts,
 		Completions:          completions,
 		CompletionReferences: references,

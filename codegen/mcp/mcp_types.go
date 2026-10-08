@@ -54,9 +54,8 @@ func (b *mcpExprBuilder) buildServerCapabilitiesType() *expr.AttributeExpr {
 		return &expr.AttributeExpr{Type: &expr.Object{}, Description: "Tool capabilities"}
 	})
 	resources := b.getOrCreateType("ResourcesCapability", func() *expr.AttributeExpr {
-		fields := expr.Object{}
-		if b.mcp.ResourceSubscription != nil {
-			fields = append(fields, &expr.NamedAttributeExpr{Name: "subscribe", Attribute: &expr.AttributeExpr{Type: expr.Boolean, Description: "Accept resource update subscriptions through subscriptions/listen"}})
+		fields := expr.Object{
+			{Name: "subscribe", Attribute: &expr.AttributeExpr{Type: expr.Boolean, Description: "Accept resource update subscriptions through subscriptions/listen"}},
 		}
 		return &expr.AttributeExpr{Type: &fields, Description: "Resource capabilities"}
 	})
@@ -68,6 +67,7 @@ func (b *mcpExprBuilder) buildServerCapabilitiesType() *expr.AttributeExpr {
 	})
 	return &expr.AttributeExpr{
 		Type: &expr.Object{
+			{Name: "extensions", Attribute: protocolJSONAttribute("Declared extension identifiers and their open settings objects")},
 			{Name: "completions", Attribute: &expr.AttributeExpr{Type: completions, Description: "Declared argument suggestion providers"}},
 			{
 				Name: "tools",

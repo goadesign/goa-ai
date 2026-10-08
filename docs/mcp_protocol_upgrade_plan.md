@@ -1,6 +1,6 @@
 # Upgrade goa-ai to MCP 2026-07-28
 
-Research and implementation plan, prepared 2026-10-02 and revised 2026-10-07 after tracing framework composition and prevailing retry implementations. The transport and composition foundation is implemented in the isolated clone. The full upgrade remains incomplete until every capability required below is implemented and verified. No release is authorized before then. The baseline sections describe remote main before this upgrade; they are not the current implementation. The current implementation and verified checks are recorded below.
+Research and implementation plan, prepared 2026-10-02 and revised 2026-10-08 after tracing framework composition and prevailing retry implementations. The transport and composition foundation is implemented in the isolated clone. The full upgrade remains incomplete until every capability required below is implemented and verified. No release is authorized before then. The baseline sections describe remote main before this upgrade; they are not the current implementation. The current implementation and verified checks are recorded below.
 
 ## Current completion gates
 
@@ -12,7 +12,7 @@ and verification evidence and do not supersede unfinished gates.
 | Stable protocol and generated HTTP composition | Implemented. Final-head CI and review remain required. |
 | Native additional input and registry continuation | Implemented through shared typed execution and codecs. Final caller acceptance remains required. |
 | Durable Task consumption and cancellation | Implemented. Final caller/database acceptance remains required. |
-| Task production and notifications | In progress. Generate application-owned job methods and status notifications through the existing subscription operation. Do not advertise production before the complete path works. |
+| Task production and notifications | Implemented through existing typed job methods and one shared resource/Task subscription source. Generated HTTP lifecycle, native executor/provider paths, discovery, full snapshots and selected views are verified. Final-head integration and caller acceptance remain required. |
 | Dynamic catalogs | Required. Catalog reads and change notifications must share the application's authorization and catalog owner. |
 | OAuth | Built-in authorization paths are implemented; finish the remaining agreed profile and conformance assessment. |
 | MCP Apps and Skills | Required. Complete their authored, generated and consuming paths and verify extension contracts. |
@@ -27,21 +27,52 @@ Task consumers and notifications. Required `ttlMs` accepts a present null or an
 exact integer and rejects omission. This is external protocol validation, not a
 new application nullable-type contract or a second job owner.
 
-The producer design must keep domain job state and execution in the authored
-service. A native optional retention duration may mean unlimited retention;
-the generated protocol reply must always emit its `ttlMs` member. Validate this
-outgoing mapping through the generated server and both native and runtime
-clients before treating the nullable-member gap as resolved for production.
-Application authorization, durable creation before reply, status-specific typed
-results, input updates and notifications remain part of that same acceptance.
+Native `TaskExchange(read, answer, cancel)` binds existing typed Goa methods. The
+creator returns a durable job observation, while subsequent execution calls only
+the named read, answer or cancel method. The completed branch alone becomes the
+model result. Ordinary `InputExchange` may request input before job creation;
+after creation, the existing workflow owns polling and host input. Local and
+registry fixtures verify this distinction, shared role methods, mapped Go fields,
+exact job identity, partial answers, and form and URL requests. The generated MCP
+server fills later role inputs from the task ID, native credentials and mapped
+route values. It rejects required domain inputs that those requests cannot
+supply instead of retaining original arguments in an adapter-owned store.
 
-The four-case native outgoing fixture passed in 0.347 seconds: optional retention
-with an explicit `ttlMs` JSON tag always emits present null, zero, or an exact
-integer beyond floating-point precision, and the generated client preserves it.
-The six existing incoming-presence cases still pass. The shared Task transport
-checks passed in 1.51 seconds and scoped lint reported zero issues in 1.74 seconds.
-These are boundary proofs; they do not implement job binding or notification
-production and do not complete the generated MCP acceptance gate.
+Task producer ownership stays in the authored service. Creation and read may
+return different Goa representations of the same observation, such as a full
+value after ordinary input and a projected read view. One private observation
+planner retains each endpoint's layout and generates typed validation and
+metadata conversion. Read owns finished output, its selected view and authored
+content. Generated MCP discovery advertises the official extension only for
+services with Task bindings. Unsupported creating requests fail before effects.
+
+`SubscriptionSource()` replaces the resource-only declaration with one source
+for resource URIs and/or creator-named native job arrays. It acknowledges the
+requested authorized subset once and identifies changes. Generated code reads
+changed jobs through their configured endpoints and encodes full snapshots with
+the same protocol codec as `tasks/get`. MCP aliases share one native selection;
+each accepted opaque handle receives its corresponding snapshot. No adapter job
+store, original-argument cache, global broadcaster or duplicate snapshot schema
+is introduced. Ordering, accepted identity, correlation and closure stay in the
+shared transport. Dynamic catalogs remain a separate unfinished requirement.
+
+Focused evidence includes the native local/provider lifecycle, ordinary input
+before creation, read-only method defaults, form/URL questions, exact failure JSON,
+all five statuses and present-null/zero/large-integer retention. Resource/Task
+subscriptions share one authenticated stream. Unrequested acknowledgment,
+unaccepted updates and updates before acknowledgment fail before observation
+reads. Nine malformed DSL source contracts fail evaluation. The mixed HTTP
+fixture passed in 13.23 seconds; DSL checks took 4.07 seconds. Rich content after
+creation input with a read-selected view passed in 25.23 seconds. Earlier native,
+viewed subscription and multiple-handle checks remain recorded in milestone
+notes. Later task requests also apply authored defaults inherited from named
+Goa types before strict input validation. The generator uses Goa's retained
+scalar, collection and union rendering instead of changing codec presence rules.
+A required alias-default HTTP fixture passed in 42.66 seconds while other fixtures
+were competing for the toolchain. The shared protocol capability layout is
+independent of service declaration order; its focused check and typed-default
+codec check passed in 8.06 seconds. The sequential generated ordinary client/server
+checkpoint passed in 28.56 seconds. Final-head CI and caller acceptance remain open.
 
 ## Outcome and scope
 
@@ -756,7 +787,7 @@ cannot report after completion, and closing a quiet HTTP listener cancels its
 source. Header changes before the first event remain on the response. Configured
 lint reports zero issues and the complete uncached transport race suite passes
 with the final notification spans and header/cancellation checks. The generated HTTP resource producer now binds an authored Goa stream with
-`ResourceSubscription()`. Its configured endpoint preserves authentication,
+`SubscriptionSource()`. Its configured endpoint preserves authentication,
 scopes, interceptors and middleware. Generated constructors receive URI filters;
 generated codecs validate acknowledgment/update unions before transmission.
 Renamed fields and located URI declarations retain their owning Go types. The
@@ -1553,7 +1584,7 @@ The protocol revision and the set of optional capabilities are different decisio
 | Additional input / form elicitation | HTTP/stdio consumers and durable agent suspensions are implemented; generated server production is incomplete | Preserve the verified multi-round consumer path. Add a typed authored producer with operation-owned state and authorization before release. No-host callers reject unsupported interactions. Accepted text-only runs forbid form, URL and state-only host suspensions per operation, while ordinary shared callers retain support. |
 | URL elicitation | Consumers preserve URL requests and host consent across successor runs; generated server production is incomplete | The service must verify out-of-band completion independently of consent and bind it to the authenticated user. Host capabilities remain explicit; secrets never become form answers. |
 | Progress | Implemented through unary service contexts, HTTP/stdio callers and the agent host stream | Transports own per-request tokens and ordering; activities own invocation correlation. Generated HTTP and parallel stdio checks passed; the frozen referee passed 2/2. Private host events are not public MCP payloads. |
-| Subscriptions | Core HTTP/stdio listeners and generated HTTP resource sources are implemented; dynamic catalogs and stdio production are incomplete | Receivers enforce acknowledgment, accepted filters, exact request IDs, graceful closure and cancellation. `ResourceSubscription()` calls an owned authenticated Goa stream through generated `subscriptions/listen`; codecs validate its typed events. A fixed catalog needs no pretend notifications. Do not reuse private session streams, GET channels, or old broadcasters. |
+| Subscriptions | Core HTTP/stdio listeners and generated HTTP resource sources are implemented; dynamic catalogs and stdio production are incomplete | Receivers enforce acknowledgment, accepted filters, exact request IDs, graceful closure and cancellation. `SubscriptionSource()` calls an owned authenticated Goa stream through generated `subscriptions/listen`; codecs validate its typed events. A fixed catalog needs no pretend notifications. Do not reuse private session streams, GET channels, or old broadcasters. |
 | Tasks extension | Asynchronous starts, durable engine, completion queries, suspension, and cancellation exist | Viable workflow-backed extension milestone. The server owns durable work and task identity; the adapter maps its typed API. Arbitrary unary methods are not automatically tasks. Pin the extension separately and verify the complete lifecycle before advertising. |
 | Roots / sampling / logging | File/domain inputs, model clients, and tracing exist, but these old protocol features are deprecated | Their absence is a deliberate new-protocol design choice, not evidence the framework cannot access files or models. Do not implement deprecated request variants. |
 | OAuth | Authorized HTTP client injection and application middleware exist; built-in discovery/grant/token storage do not | Keep host/application authorization ownership. Preserve challenges/status/headers. A built-in profile needs its own complete security design and synthetic tests; do not label injection as built-in OAuth compliance. |

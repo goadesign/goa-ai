@@ -7,7 +7,7 @@ Build intelligent agents, MCP servers, and registry-integrated toolsets from you
 - **Agents**: Durable plan/execute loops with policy enforcement, memory, and streaming
 - **Typed Completions**: Service-owned structured assistant-output contracts with generated codecs and helpers
 - **Generated Evaluations**: Design-owned scenarios with typed application hooks, bounded execution, and trustworthy semantic judging
-- **MCP**: Unary tools, resources, static or method-backed prompts, and typed prompt-argument suggestions mapped from your Goa service over JSON-RPC HTTP
+- **MCP**: Tools, native asynchronous jobs, resources, static or method-backed prompts, typed argument suggestions, and authored change streams mapped from your Goa service over JSON-RPC HTTP
 - **Registries**: Centralized tool catalogs with federation, caching, and semantic search
 - **Unified Toolsets**: Single `Toolset` construct with providers (local, MCP, registry)
 
@@ -2198,29 +2198,32 @@ owning operation; cancellation releases bounded stdio delivery. A graceful reply
 closes the listener, while connection loss returns an interruption without an
 implicit reconnect. The host chooses a new listen request. This consumer does
 not make fixed catalogs dynamic or turn private session streams into public
-change sources. `ResourceSubscription()` now binds an authored Goa stream to generated HTTP resource updates. Dynamic catalog sources remain a release gate.
+change sources. `SubscriptionSource()` binds one authored Goa stream to generated HTTP resource and Task updates. Dynamic catalog sources remain a release gate.
 The shared HTTP producer keeps source authorization and change selection in the
 configured handler, while its transport owns acknowledgment order, exact request
 IDs, serialized writes and graceful completion. Producer and receiver use one
 private filter-state implementation. Source errors before acknowledgment retain
 their original protocol response; delivery failures stop the request. This
-transport neither advertises nor authorizes a source. A resource subscription
-binding generates a distinct `subscriptions/listen` endpoint and advertises only
-`resources.subscribe`. The original Goa stream receives requested URIs through
-a generated constructor, then sends a typed acknowledgment/update union. Its
-configured endpoint owns authentication, scopes, interceptors and middleware;
-its generated result codec validates every event before transmission. The source
-owns accepted URIs, related sub-resources and change detection. An empty accepted
-subset may complete successfully. Ordinary method return closes the response;
-HTTP cancellation reaches the original service context. Fixed catalogs gain no
-list-change flags. No private session stream or global notification registry is
-involved.
+transport neither advertises nor authorizes a source. The binding generates a
+distinct `subscriptions/listen` endpoint. Resource selection advertises
+`resources.subscribe`; a job-only source does not. The original Goa stream receives
+requested URIs and creator-named native job arrays through a generated constructor,
+then sends a typed acknowledgment/update union. Its configured endpoint owns
+authentication, scopes, interceptors and middleware; its generated result codec
+validates every event before transmission. The source owns accepted selections,
+related sub-resources and change detection. Each changed job is read through its
+configured observation endpoint and encoded as a full Task snapshot. Multiple MCP
+names for one creator share a native selection, while each accepted MCP handle
+receives its own snapshot. An empty accepted subset may complete successfully.
+Ordinary method return closes the response; HTTP cancellation reaches the original
+service context. Fixed catalogs gain no list-change flags. No private session
+stream, adapter job store or global notification registry is involved.
 See [the subscription contract](docs/runtime.md#mcp-change-subscriptions).
 
-Generated servers advertise only their implemented unary tools, fixed resource
-reads, parameterized resource reads, static or method-backed prompts, and
+Generated servers advertise only their implemented tools, native Task bindings,
+fixed and parameterized resource reads, static or method-backed prompts, and
 prompt/resource argument suggestion methods, plus resource subscriptions when an
-authored source is bound.
+authored resource source is bound.
 Resource representations are selected
 at generation time: byte results become base64 blobs, text results with a text MIME type remain
 text, and JSON results use the generated codec. Empty content preserves its field.
@@ -2257,7 +2260,7 @@ endpoint still returns its full typed result; generated code validates that
 result and converts content separately. A fixed result containing only the
 marked field returns content without structured JSON. Service-selected views
 retain their declared name and exclude content when that view omits the field.
-Tasks and dynamic catalogs still require their own typed service bindings.
+Tasks use `TaskExchange` to bind existing application-owned job methods. Dynamic catalogs still require their typed service bindings.
 Server-produced additional input now has its authored `InputExchange` binding;
 resource subscriptions use their existing typed stream binding.
 See [the MCP runtime contract](docs/runtime.md#mcp-callers) and
@@ -2765,7 +2768,23 @@ integer decoder owns exact decimal/exponent handling and native Go range checks
 for both Task durations and generated private codecs. No second numeric parser,
 untyped domain duration, or framework retention policy is introduced. Task
 metadata applies to one observation; retention and polling guidance can change.
-Generated Task production and workflow-owned consumption remain unfinished.
+Generated Task production and workflow-owned consumption are implemented.
+`TaskExchange` retains the creator and read endpoint's distinct native layouts,
+including full creation values and read-selected Goa views. One observation
+planner emits their validation and metadata conversion. Creation returns only a
+readable durable handle; the read endpoint owns complete typed output and content.
+The adapter derives opaque MCP IDs from tool and native job identities without
+storing jobs or original arguments. Later requests supply native credentials,
+mapped route values, saved IDs and typed answers, applying native defaults before
+full payload validation. Impossible required inputs fail generation.
+
+The same `SubscriptionSource` selects native resource URIs and creator-named job
+arrays. It authorizes and acknowledges a subset before reporting changed IDs.
+Generated code reuses each job's configured read endpoint, result views and
+protocol codec to send full snapshots. Accepted MCP aliases fan out from one
+native selection; that mapping lives only for the listen request. Source updates
+before acknowledgment or for unaccepted jobs fail before reading. No global
+broadcaster, shared job store or second snapshot schema owns this path.
 
 The generated MCP server's `ServeHTTP` checks the HTTP protocol envelope
 before invoking its configured HTTP handler. Direct serving and `Mount` use this
@@ -3052,8 +3071,8 @@ operation independently of the stopped run context. Temporary reads and
 cancellation delivery use workflow timers; permanent rejection remains an error.
 The shared activity serializer preserves rejection of one exact activity input
 without forbidding a fresh workflow attempt that chooses different input.
-Generated executors still do not advertise Tasks: producer bindings, complete
-caller-store migration and the remaining capability checks must complete first.
+Generated executors still do not advertise Tasks: final caller-store acceptance
+and the remaining capability checks must complete first.
 Public `CancelRun` accepts a durable cancellation job for a suspended run. The
 job obtains its route from the original accepted preparation, follows only
 storage-admitted successors, and publishes ordinary cancellation continuations.

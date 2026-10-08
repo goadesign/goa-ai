@@ -136,8 +136,8 @@ func resolveResourcePolicy(root *expr.RootExpr, service *expr.ServiceExpr, mcp *
 			policy.Operations["completion/complete"] = true
 		}
 	}
-	if mcp.ResourceSubscription != nil {
-		scopes := operationResourceScopes(root, service, policy, mcp.ResourceSubscription.Method)
+	if mcp.SubscriptionSource != nil {
+		scopes := operationResourceScopes(root, service, policy, mcp.SubscriptionSource.Method)
 		if !slices.EqualFunc(scopes, policy.BasicScopes, slices.Equal[[]string]) {
 			policy.Subscription = scopes
 		}

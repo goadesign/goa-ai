@@ -47,8 +47,8 @@ type (
 		PromptCompletions []*PromptCompletionExpr
 		// ResourceCompletions binds template variables to suggestion methods.
 		ResourceCompletions []*ResourceCompletionExpr
-		// ResourceSubscription selects the owned resource update stream.
-		ResourceSubscription *ResourceSubscriptionExpr
+		// SubscriptionSource selects the owned resource update stream.
+		SubscriptionSource *SubscriptionSourceExpr
 		// Service is the Goa service expression this MCP server is
 		// bound to.
 		Service *expr.ServiceExpr
@@ -241,8 +241,8 @@ func (m *MCPExpr) Validate() error {
 	m.validateResourceTemplates(verr)
 	m.validatePromptCompletions(verr)
 	m.validateResourceCompletions(verr)
-	if source := m.ResourceSubscription; source != nil {
-		if len(m.Resources)+len(m.ResourceTemplates) == 0 {
+	if source := m.SubscriptionSource; source != nil {
+		if source.Method.Payload.Find("resources") != nil && len(m.Resources)+len(m.ResourceTemplates) == 0 {
 			verr.Add(source, "resource subscription requires a declared resource or resource template")
 		}
 		if err := source.Validate(); err != nil {
@@ -272,6 +272,11 @@ func (t *ToolExpr) Validate() error {
 	}
 	if t.Method != nil && hasValue(t.Method.Payload) && expr.AsObject(t.Method.Payload.Type) == nil {
 		verr.Add(t, "tool %q method %q payload must be an object", t.Name, t.Method.Name)
+	}
+	if t.Method != nil {
+		if _, err := mcpinput.TaskExchange(t.Method); err != nil {
+			verr.Add(t, "%s", err.Error())
+		}
 	}
 	if t.ContentField != "" {
 		completed, err := mcpinput.CompleteResult(t.Method)
@@ -325,6 +330,9 @@ func (r *ResourceExpr) Validate() error {
 		verr.Add(r, "resource %q uses streaming method %q; MCP resources must return one result from one request", r.Name, r.Method.Name)
 	}
 	if r.Method != nil {
+		if _, declared := r.Method.Meta[mcpinput.TaskExchangeMetaKey]; declared {
+			verr.Add(r, "TaskExchange is supported only by MCP tools/call")
+		}
 		arguments, err := mcpinput.Arguments(r.Method)
 		if err != nil {
 			verr.Add(r, "%s", err.Error())

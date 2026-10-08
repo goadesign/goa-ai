@@ -9,6 +9,7 @@ import (
 	jsoncodec "goa.design/goa-ai/codegen/internal/codec"
 	"goa.design/goa-ai/codegen/internal/mcpcontract"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
+	"goa.design/goa-ai/internal/mcpinput"
 	"goa.design/goa/v3/codegen"
 	goaservice "goa.design/goa/v3/codegen/service"
 	"goa.design/goa/v3/expr"
@@ -51,8 +52,14 @@ func (g *adapterGenerator) buildToolContentAdapter(tool *mcpexpr.ToolExpr) (*too
 		return nil, err
 	}
 	adapter := &toolContentAdapter{tool: tool}
-	if result, viewed := tool.Method.Result.Type.(*expr.ResultTypeExpr); viewed {
-		if view, fixed := mcpcontract.FixedView(tool.Method.Result); fixed {
+	owner := tool.Method
+	if task, err := mcpinput.TaskExchange(tool.Method); err != nil {
+		return nil, err
+	} else if task != nil {
+		owner = task.Read
+	}
+	if result, viewed := owner.Result.Type.(*expr.ResultTypeExpr); viewed {
+		if view, fixed := mcpcontract.FixedView(owner.Result); fixed {
 			selected, err := mcpcontract.ResultView(tool.Method, view)
 			if err != nil {
 				return nil, err
@@ -127,9 +134,13 @@ func planToolContent(generation *codegen.Generation, services *goaservice.Plan, 
 		if err := values.planResultValidation(); err != nil {
 			return err
 		}
+		owner := content.tool.Method
+		if tool.Task != nil {
+			owner = tool.Task.binding.Read
+		}
 		for viewIndex, selected := range content.Cases {
 			var err error
-			if _, viewed := content.tool.Method.Result.Type.(*expr.ResultTypeExpr); viewed {
+			if _, viewed := owner.Result.Type.(*expr.ResultTypeExpr); viewed {
 				selected.result, selected.layout, err = planMCPResultView(services, content.tool.Method, selected.Name)
 			} else {
 				selected.result, selected.layout, err = planMCPResult(services, content.tool.Method)
@@ -157,7 +168,7 @@ func planToolContent(generation *codegen.Generation, services *goaservice.Plan, 
 			if len(*expr.AsObject(structured.Type)) == 0 && !content.ExecutionView {
 				continue
 			}
-			layout, err := services.MethodTypeLayout(content.tool.Method, structured)
+			layout, err := services.MethodTypeLayout(owner, structured)
 			if err != nil {
 				return err
 			}
@@ -185,13 +196,17 @@ func bindToolContent(services *goaservice.ServicesData, planned *plannedMCPServi
 		if content == nil {
 			continue
 		}
+		endpoint := tool.Endpoint
+		if tool.Task != nil {
+			endpoint = tool.Task.Read
+		}
 		source := services.ServiceAttributor(planned.prepared.userService.Name, data.mcpImportPath)
-		if tool.Endpoint.ProjectedResult || tool.Endpoint.ExecutionView {
+		if endpoint.ProjectedResult || endpoint.ExecutionView {
 			source = services.ViewAttributor(planned.prepared.userService.Name, data.mcpImportPath)
 		}
 		content.Name = content.declaration.Name()
-		content.SourceRef = tool.Endpoint.ResultRef
-		content.Validate = tool.Endpoint.Codec.ResultValidate
+		content.SourceRef = endpoint.ResultRef
+		content.Validate = endpoint.Codec.ResultValidate
 		if input := tool.Endpoint.InputExchange; input != nil {
 			if tool.Endpoint.ExecutionView {
 				content.OutcomeValue = input.OutcomeValue
@@ -199,10 +214,24 @@ func bindToolContent(services *goaservice.ServicesData, planned *plannedMCPServi
 				content.SourceRef = content.Cases[0].layout.Link(data.mcpImportPath, data.mcpPackage.ImportName).Ref()
 			}
 		}
+		if task := tool.Task; task != nil {
+			// Task reads validate the full observation before this private converter.
+			content.Validate = ""
+			content.ExecutionView = task.Read.ExecutionView
+			if task.Read.ExecutionView {
+				content.SourceRef = task.Read.ResultRef
+				content.OutcomeValue = task.Read.ResultValue + "." + task.Observed.OutcomeField
+			} else {
+				content.SourceRef = content.Cases[0].layout.Link(data.mcpImportPath, data.mcpPackage.ImportName).Ref()
+				content.OutcomeValue = ""
+			}
+		}
 		for _, selected := range content.Cases {
-			selected.Value = tool.Endpoint.ResultValue
-			if !tool.Endpoint.ExecutionView {
+			selected.Value = endpoint.ResultValue
+			if !content.ExecutionView {
 				selected.Value = "result"
+			} else if tool.Task != nil {
+				selected.Value = "completedResult"
 			}
 			if selected.conversion != nil {
 				attribute := expr.AsObject(selected.result.Type).Attribute(content.tool.ContentField)

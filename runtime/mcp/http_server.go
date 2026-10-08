@@ -166,6 +166,22 @@ func WriteProtocolError(writer http.ResponseWriter, body []byte, failure *Error)
 	return nil
 }
 
+// ValidateTaskCapabilities checks the capabilities on one operation request.
+// A task-only creator uses it before starting work; missing support returns the
+// protocol error naming the Tasks extension, while malformed objects are invalid
+// parameters. HTTP subscription admission uses the same extension check.
+func ValidateTaskCapabilities(meta json.RawMessage) *Error {
+	var metadata map[string]json.RawMessage
+	if json.Unmarshal(meta, &metadata) != nil || metadata == nil {
+		return &Error{Code: JSONRPCInvalidParams, Message: "params._meta must be an object"}
+	}
+	var capabilities map[string]json.RawMessage
+	if json.Unmarshal(metadata[clientCapabilitiesKey], &capabilities) != nil || capabilities == nil {
+		return &Error{Code: JSONRPCInvalidParams, Message: "clientCapabilities metadata must be an object"}
+	}
+	return requireTasksExtension(capabilities)
+}
+
 // requireTasksExtension checks one request's declared extension before a Task
 // subscription can reach the endpoint. Missing support names the required
 // capability; malformed extension objects are invalid parameters.
@@ -185,7 +201,7 @@ func requireTasksExtension(capabilities map[string]json.RawMessage) *Error {
 	}
 	return &Error{
 		Code:    MissingRequiredClientCapability,
-		Message: "Task subscriptions require the Tasks extension",
+		Message: "This operation requires the Tasks extension",
 		Data:    json.RawMessage(`{"requiredCapabilities":{"extensions":{"io.modelcontextprotocol/tasks":{}}}}`),
 	}
 }

@@ -9,7 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 
-	"goa.design/goa-ai/internal/tooloperation"
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -55,7 +55,7 @@ func ExecuteMCPTool(ctx context.Context, caller mcp.Caller, call *ToolCall, remo
 				if !ok {
 					return nil, engine.MarkActivityErrorNonRetryable(mcp.NewMalformedResponseError(errors.New("task input is missing questions")))
 				}
-				pending, err := tooloperation.NewPendingTaskInput(taskID, info.PollIntervalMs, questions)
+				pending, err := api.NewPendingTaskInput(taskID, info.PollIntervalMs, questions)
 				if err != nil {
 					return nil, engine.MarkActivityErrorNonRetryable(mcp.NewMalformedResponseError(err))
 				}
@@ -113,10 +113,10 @@ func ExecuteMCPTool(ctx context.Context, caller mcp.Caller, call *ToolCall, remo
 	return completedMCPExecution(call.Name, spec, response), nil
 }
 
-// awaitMCPTask records the next Task read without making that request in the
+// awaitMCPTask records the next job read without making that request in the
 // same activity as creation or an update acknowledgment.
 func awaitMCPTask(taskID string, pollIntervalMs *int64) (*ToolExecutionResult, error) {
-	pending, err := tooloperation.NewPendingTaskWait(taskID, pollIntervalMs)
+	pending, err := api.NewPendingTaskWait(taskID, pollIntervalMs)
 	if err != nil {
 		return nil, err
 	}

@@ -9,6 +9,11 @@ import (
 	"goa.design/goa/v3/expr"
 )
 
+const (
+	completeBranch      = "complete"
+	inputRequiredBranch = "input_required"
+)
+
 // inputResultAttr builds the two legal results for a tool call, resource read,
 // or prompt get. The union owns the resultType discriminator; branch objects
 // contain only their own fields and protocol metadata.
@@ -17,18 +22,22 @@ func (b *mcpExprBuilder) inputResultAttr(name string, builder func() *expr.Attri
 		prefix := strings.TrimSuffix(name, "Result")
 		complete := b.userTypeAttr(prefix+"CompleteResult", builder)
 		pending := &expr.AttributeExpr{Type: b.getOrCreateType("InputRequiredResult", b.buildInputRequiredResultType)}
+		choice := &expr.Union{
+			TypeName: prefix + "Outcome",
+			TypeKey:  "resultType",
+			Flatten:  true,
+			Values: []*expr.NamedAttributeExpr{
+				{Name: completeBranch, Attribute: complete},
+				{Name: inputRequiredBranch, Attribute: pending},
+			},
+		}
+		if name == "ToolsCallResult" {
+			choice.Values = append(choice.Values, &expr.NamedAttributeExpr{Name: "task", Attribute: &expr.AttributeExpr{Type: b.getOrCreateType("TaskCreated", b.buildTaskCreatedType)}})
+		}
 		return &expr.AttributeExpr{
 			Type: &expr.Object{{Name: "outcome", Attribute: &expr.AttributeExpr{
-				Type: &expr.Union{
-					TypeName: prefix + "Outcome",
-					TypeKey:  "resultType",
-					Flatten:  true,
-					Values: []*expr.NamedAttributeExpr{
-						{Name: "complete", Attribute: complete},
-						{Name: "input_required", Attribute: pending},
-					},
-				},
-				Description: "Completed operation data or additional input requested by the service",
+				Type:        choice,
+				Description: "Finished tool data, an input round, or a durable task observation",
 			}}},
 			Validation: &expr.ValidationExpr{Required: []string{"outcome"}},
 		}
@@ -96,7 +105,7 @@ func protocolJSONAttribute(description string) *expr.AttributeExpr {
 func protocolCompletedResult(attribute *expr.AttributeExpr) *expr.AttributeExpr {
 	choice := expr.AsUnion(attribute.Find("outcome").Type)
 	for _, branch := range choice.Values {
-		if branch.Name == "complete" {
+		if branch.Name == completeBranch {
 			return branch.Attribute
 		}
 	}
@@ -115,9 +124,10 @@ func (b *mcpExprBuilder) buildInputMethodErrors() []*expr.ErrorExpr {
 		}}
 	})
 	capabilities := b.getOrCreateType("RequiredClientCapabilities", func() *expr.AttributeExpr {
-		return &expr.AttributeExpr{Type: &expr.Object{{Name: "elicitation", Attribute: &expr.AttributeExpr{
-			Type: mode, Description: "Required forms of user input",
-		}}}, Validation: &expr.ValidationExpr{Required: []string{"elicitation"}}}
+		return &expr.AttributeExpr{Type: &expr.Object{
+			{Name: "elicitation", Attribute: &expr.AttributeExpr{Type: mode, Description: "Required forms of user input"}},
+			{Name: "extensions", Attribute: &expr.AttributeExpr{Type: &expr.Map{KeyType: &expr.AttributeExpr{Type: expr.String}, ElemType: &expr.AttributeExpr{Type: b.getOrCreateType("RequiredExtension", func() *expr.AttributeExpr { return &expr.AttributeExpr{Type: &expr.Object{}} })}}, Description: "Extensions required to fulfill the operation"}},
+		}}
 	})
 	failure := b.getOrCreateType("MissingClientCapabilityError", func() *expr.AttributeExpr {
 		return &expr.AttributeExpr{Type: &expr.Object{{Name: "requiredCapabilities", Attribute: &expr.AttributeExpr{

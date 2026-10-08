@@ -97,6 +97,9 @@ func TestValueReportsExactTransportFields(t *testing.T) {
 	serviceAttribute := codecTestAttribute()
 	payload := serviceAttribute.Type.(goaexpr.UserType).Attribute()
 	fields := *goaexpr.AsObject(payload.Type)
+	fields[0].Attribute.DefaultValue = "text/plain"
+	fields[1].Attribute.DefaultValue = []string{"named"}
+	fields[2].Attribute.DefaultValue = goaexpr.Val{"type": "active", "value": "ready"}
 	generation, err := goacodegen.NewGeneration("example.com/gen", nil)
 	require.NoError(t, err)
 	planned, err := NewPlan(
@@ -127,6 +130,8 @@ func TestValueReportsExactTransportFields(t *testing.T) {
 	require.Equal(t, "*string", mimeType.TypeRef)
 	require.Equal(t, "string", mimeType.ValueTypeRef)
 	require.True(t, mimeType.Pointer)
+	require.NotNil(t, mimeType.Default)
+	require.Equal(t, `"text/plain"`, mimeType.Default.Declarations[0][strings.Index(mimeType.Default.Declarations[0], " = ")+3:])
 	require.Empty(t, mimeType.ElementTypeRef)
 	aliases, err := value.TransportField(
 		fields[1].Attribute,
@@ -141,6 +146,12 @@ func TestValueReportsExactTransportFields(t *testing.T) {
 	require.Equal(t, "mcpcodec.CreatePayloadAliasTransport", aliases.ElementTypeRef)
 	require.False(t, aliases.Pointer)
 	require.True(t, aliases.ElementPointer)
+	require.NotNil(t, aliases.Default)
+	require.Contains(t, aliases.Default.Expression, "mcpcodec.CreatePayloadAliasTransport")
+	state, err := value.TransportField(fields[2].Attribute, "state", "example.com/gen/mcp_widgets", qualifier)
+	require.NoError(t, err)
+	require.NotNil(t, state.Default)
+	require.Contains(t, state.Default.Declarations[0], "mcpcodec.NewCreatePayloadStateTransportActive")
 }
 
 // TestPlanKeepsUnionSourceIdentity checks that copied OneOf fields reuse one

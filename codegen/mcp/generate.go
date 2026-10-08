@@ -13,10 +13,10 @@ import (
 type (
 	// mcpTransportData adds tool headers to Goa's finalized transport names.
 	mcpTransportData struct {
-		Transport            any
-		Tools                []*ToolAdapter
-		ResourceSubscription *resourceSubscriptionAdapter
-		ResourcePolicy       *resourcePolicy
+		Transport          any
+		Tools              []*ToolAdapter
+		SubscriptionSource *subscriptionAdapter
+		ResourcePolicy     *resourcePolicy
 	}
 )
 
@@ -77,10 +77,10 @@ func applyMCPHTTPRules(files []*codegen.File, services []*plannedMCPService) err
 			case "jsonrpc-server-mount":
 				s.Source = mcpTemplates.Read("jsonrpc_server_mount")
 				s.Data = mcpTransportData{
-					Transport:            s.Data,
-					Tools:                service.adapterData.Tools,
-					ResourceSubscription: service.adapterData.ResourceSubscription,
-					ResourcePolicy:       service.adapterData.ResourcePolicy,
+					Transport:          s.Data,
+					Tools:              service.adapterData.Tools,
+					SubscriptionSource: service.adapterData.SubscriptionSource,
+					ResourcePolicy:     service.adapterData.ResourcePolicy,
 				}
 				found = true
 			case "jsonrpc-server-init":
@@ -139,6 +139,15 @@ func generateMCPTransport(_ string, svc *expr.ServiceExpr, data *AdapterData) []
 				},
 			},
 			{
+				Name:   "mcp-adapter-tasks",
+				Source: mcpTemplates.Read("adapter_tasks"),
+				Data:   data,
+				FuncMap: map[string]any{
+					"quote":          func(s string) string { return fmt.Sprintf("%q", s) },
+					"taskOperations": taskOperations,
+				},
+			},
+			{
 				Name:   "mcp-adapter-resources",
 				Source: mcpTemplates.Read("adapter_resources"),
 				Data:   data,
@@ -158,7 +167,7 @@ func generateMCPTransport(_ string, svc *expr.ServiceExpr, data *AdapterData) []
 			},
 			{
 				Name:    "mcp-adapter-resource-subscription",
-				Source:  mcpTemplates.Read("adapter_resource_subscription"),
+				Source:  mcpTemplates.Read("adapter_subscription_source"),
 				Data:    data,
 				FuncMap: map[string]any{"quote": func(s string) string { return fmt.Sprintf("%q", s) }},
 			},

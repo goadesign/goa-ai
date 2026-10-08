@@ -59,6 +59,13 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p {{ index .PayloadRefs "too
     switch p.Name {
     {{- range .Tools }}
     case {{ quote .Name }}:
+        {{- if .Task }}
+        if err := validateTaskCapabilities(p.Meta); err != nil {
+            span.RecordError(err)
+            span.SetStatus(codes.Error, err.Error())
+            return nil, err
+        }
+        {{- end }}
         {{- if .HasPayload }}
         arguments := p.Arguments
         if len(arguments) == 0 {
@@ -111,10 +118,20 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p {{ index .PayloadRefs "too
             }
             return &ToolsCallResult{Outcome: NewToolsCallOutcomeInputRequired(input)}, nil
         }
-        {{- if not $endpoint.ExecutionView }}
+        {{- if or (not $endpoint.ExecutionView) $endpoint.TaskCreator }}
         completedResult, _ := {{ .OutcomeValue }}.AsComplete()
         {{- end }}
         {{- end }}
+        {{- if .Task }}
+        observation := {{ if .Endpoint.InputExchange }}completedResult{{ else }}{{ .Endpoint.ResultValue }}{{ end }}
+        if err := {{ .Task.Created.Validate }}(observation); err != nil {
+            span.RecordError(err)
+            span.SetStatus(codes.Error, err.Error())
+            return nil, goa.PermanentError("internal_error", "%s", err.Error())
+        }
+        state := {{ .Task.Created.Name }}Metadata(observation.{{ .Task.Created.MetadataField }}, string(observation.{{ .Task.Created.OutcomeField }}.Kind()))
+        return &ToolsCallResult{Outcome: NewToolsCallOutcomeTask(state)}, nil
+        {{- else }}
         {{- if .Content }}
         content, encoded, err := {{ .Content.Name }}({{ if and .Endpoint.InputExchange (not .Endpoint.ExecutionView) }}completedResult{{ else }}result{{ end }})
         {{- else }}
@@ -130,6 +147,7 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p {{ index .PayloadRefs "too
             Content: {{ if .Content }}content{{ else }}[]*ContentItem{}{{ end }},
             StructuredContent: json.RawMessage(encoded),
         })}, nil
+        {{- end }}
         {{- else }}
         {{- if .HasPayload }}
         err = a.{{ .Endpoint.CallName }}(ctx, payload)
@@ -159,7 +177,9 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p {{ index .PayloadRefs "too
 // {{ .Name }} validates the returned service value and separates content from
 // structured JSON. A service-selected view keeps both outputs within that view.
 func {{ .Name }}(result {{ .SourceRef }}) ([]*ContentItem, json.RawMessage, error) {
+    {{- if .Validate }}
     if err := {{ .Validate }}(result); err != nil { return nil, nil, err }
+    {{- end }}
     {{- if .OutcomeValue }}
     completedResult, _ := {{ .OutcomeValue }}.AsComplete()
     {{- end }}

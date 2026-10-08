@@ -4074,7 +4074,7 @@ For MCP services:
 - Add a service-level `JSONRPC` block with one `POST` route. `MCP(...)` no
   longer chooses an HTTP path implicitly.
 - Replace `WatchableResource` with `Resource` when the method is a fixed unary
-  read. Bind a separate typed Goa stream with `ResourceSubscription()` when the
+  read. Bind a separate typed Goa stream with `SubscriptionSource()` when the
   service owns resource update detection and authorization.
 - Replace `DynamicPrompt` with `StaticPrompt` only when the prompt is fixed in
   the design. Goa-AI no longer generates dynamic prompt providers.
@@ -6709,9 +6709,10 @@ adapter is removed. No optional interface lookup selects Task support.
 Pass `mcp.WithTaskSupport(ctx)` to a direct `CallTool` only when the host can retain
 the returned `CallResponse.Task` and observe that task afterward. The server may
 still return ordinary completed content or request synchronous input. Without the
-capability, a Task reply is a malformed response. Generated agent executors do
-not yet advertise Tasks: durable agent consumption and generated server bindings
-remain release requirements.
+capability, a Task reply is a malformed response. Generated server bindings use
+[TaskExchange](dsl.md#native-job-tools) for application-owned jobs. The durable
+agent path is implemented; its final caller-store acceptance remains a release
+requirement before generated executors advertise support.
 
 `GetTask(ctx, taskID)` returns a validated `Task`. `Info()` contains the current
 status, timestamps, optional status message, retention duration and polling
@@ -6743,8 +6744,8 @@ same intent and operation identity after a workflow wait. Each activity has one
 network attempt; configured activity deadlines apply to that attempt. Permanent
 rejections end delivery with an error. Observed terminal Tasks need no cancellation.
 Uncertain answer delivery never repeats answers or the creating tool. Generated
-advertisement still waits for complete producer bindings, caller-store migration
-and the remaining capability checks.
+advertisement still waits for final caller-store acceptance and the remaining
+capability checks.
 
 `Runtime.CancelRun` accepts cancellation of suspended work without asking the
 caller to reconstruct or answer its checkpoint. Temporal owns a cancellation job
@@ -7444,13 +7445,17 @@ and HTTP status. Cancellation ends delivery; retained contexts cannot send after
 the handler returns. Response headers written before acknowledgment remain on
 the stream. The producer neither authorizes a source nor advertises capability.
 
-Generated HTTP servers bind a typed resource source with
-[`ResourceSubscription()`](dsl.md#resource-update-subscriptions). The original
-configured Goa endpoint authenticates the request and receives typed URI
-selections. Its source sends an acknowledgment/update union through the ordinary
+Generated HTTP servers bind one typed source with
+[`SubscriptionSource()`](dsl.md#resource-update-subscriptions). The original
+configured Goa endpoint authenticates the request and receives native resource
+URIs and/or creator-named job selections. For a changed job, the adapter calls
+its configured observation endpoint and sends the same full snapshot as
+`tasks/get`, retaining its credentials, mapped URL fields, selected view and
+content. The source receives native IDs; each accepted MCP handle receives its
+own snapshot. The request retains only this selection mapping. Its source sends an acknowledgment/update union through the ordinary
 Goa streaming interface. Generated codecs validate each value; the shared
-transport owns IDs, ordering and framing. Only this bound service advertises
-`resources.subscribe`. Unsupported catalog-change flags are omitted from its
+transport owns IDs, ordering and framing. Only sources selecting resources
+advertise `resources.subscribe`. Task-only sources do not claim that capability. Unsupported catalog-change flags are omitted from its
 acknowledgment; dynamic catalog sources remain required work. Fixed generated catalogs do not emit pretend catalog changes, and
 private agent/session streams are not MCP subscription sources. See the
 [remaining implementation work](mcp_protocol_upgrade_plan.md#optional-features-and-security-boundaries)

@@ -22,7 +22,7 @@ func planInputExchangeCodecs(services *goaservice.Plan, prepared *preparedMCPSer
 	}
 	var pending *expr.AttributeExpr
 	for _, branch := range expr.AsUnion(call.resultAttribute.Find(mapping.OutcomeName).Type).Values {
-		if branch.Name == "input_required" {
+		if branch.Name == inputRequiredBranch {
 			pending = expr.DupAtt(branch.Attribute)
 			break
 		}
