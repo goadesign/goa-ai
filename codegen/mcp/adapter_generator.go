@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strings"
 
-	"goa.design/goa-ai/codegen/internal/jsonschema"
 	"goa.design/goa-ai/codegen/internal/mcpcontract"
+	"goa.design/goa-ai/codegen/jsonschema"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
 	"goa.design/goa-ai/internal/mcpinput"
 	"goa.design/goa-ai/internal/mcpprotocol"

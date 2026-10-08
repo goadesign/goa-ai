@@ -3660,3 +3660,25 @@ response boundary checks pass in 0.465 s. Caller migration remains in progress;
 this composition does not complete suspended cancellation or producer gates.
 Scoped runtime and executor lint passed; the admission assertion correction
 passes its owning lint check with zero issues. No full suite was repeated.
+
+### Shared schema generation for application artifacts — 2026-10-07
+
+Application generators still need complete original-type schemas for saved
+artifacts that are assembled outside tool results. The removed
+`codegen/shared.ToJSONSchema` API has no compatible replacement alias. The
+existing canonical builder now lives at `codegen/jsonschema`; MCP, agent and
+input-exchange generation import that package too. `Build` accepts the evaluated
+API, original attribute and Goa example identity. `BuildForm` preserves its
+separate restricted MCP form contract. Neither evaluates the design or adds a
+second schema algorithm. Consumers must migrate generation tooling and
+regenerate. The first selected form and MCP schema checks pass in 0.430 s and
+0.512 s (3.97 s including compilation). The codec package compiled in that
+command, but its fixture was not selected. All capability gates remain open.
+
+The compiled flat-union fixture then exposed a shared schema defect: field
+alignment discarded Goa's valid discriminator property. The owning union
+rewrite now retains it alongside aligned branch fields and requires it. The
+fixture accepts both valid branches and rejects missing/unknown discriminators,
+wrong fields and invalid values; it passes in 1.152 s (1.81 s with compilation).
+Selected agent schemas pass in 0.492 s. All affected generator lint scopes pass
+with zero issues, including the corrected builder. No full suite was run.

@@ -2545,6 +2545,11 @@ existing JSON methods. Application request budgets and stored-data conversion
 remain application-owned. See [Standalone JSON codecs](docs/json_codecs.md) for
 automatic coverage, supported values, errors, and adoption.
 
+Application-owned schema artifacts use `codegen/jsonschema.Build` with the
+evaluated original Goa type. MCP catalogs and agent specifications use that
+same builder; MCP forms use its separate restricted `BuildForm` contract.
+See [standalone schema generation](docs/json_codecs.md#generate-a-standalone-schema).
+
 ## Tool Input Schema
 
 Every model-visible tool input is an object. Designs may use an inline object or

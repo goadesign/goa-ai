@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"strings"
 
-	"goa.design/goa-ai/codegen/internal/jsonschema"
 	"goa.design/goa-ai/codegen/internal/jsonshape"
+	"goa.design/goa-ai/codegen/jsonschema"
 	"goa.design/goa/v3/codegen"
 	goaexpr "goa.design/goa/v3/expr"
 )

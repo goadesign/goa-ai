@@ -9,7 +9,7 @@ import (
 	"github.com/leanovate/gopter/gen"
 	"github.com/leanovate/gopter/prop"
 	"github.com/stretchr/testify/require"
-	"goa.design/goa-ai/codegen/internal/jsonschema"
+	"goa.design/goa-ai/codegen/jsonschema"
 	"goa.design/goa/v3/expr"
 )
 

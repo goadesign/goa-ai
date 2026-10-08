@@ -121,3 +121,28 @@ typed encode and decode functions.
 The codec does not migrate previously stored application data. Before replacing
 an existing serializer, verify that retained documents satisfy the declared Goa
 contract and handle any required conversion in the application that owns them.
+
+## Generate a standalone schema
+
+Application generators that publish a schema for a complete original Goa type
+use `codegen/jsonschema.Build`, the same builder used by MCP catalogs and agent
+specifications. Evaluate the Goa design before reading its type:
+
+```go
+import "goa.design/goa-ai/codegen/jsonschema"
+
+schema, err := jsonschema.Build(expr.Root.API, settings.Attribute(),
+    expr.UserTypeExampleIdentity(settings))
+```
+
+The result is JSON Schema 2020-12 bytes with local definitions, generated JSON
+field names, authored constraints and unknown-field rejection. Unsupported Go
+representations fail generation. Generated placeholder examples are removed.
+The schema describes the complete type; it does not apply tool-specific field
+injection or model visibility. Keep the original attribute from the evaluated
+design so its package and field metadata remain available.
+
+`BuildForm` instead emits MCP's restricted form contract and rejects unsupported
+form rules. Use it only when generating form requests. Neither function evaluates
+the design, fetches remote schemas or changes the Goa types. Replace old
+`codegen/shared.ToJSONSchema` calls with the appropriate builder when upgrading.

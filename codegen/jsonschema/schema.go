@@ -1,7 +1,8 @@
-// Package jsonschema builds the JSON contracts used by MCP catalogs and agent
-// tool specifications. Goa owns types and validation; this package preserves
-// local definitions and aligns object names and union branches with the generated
-// JSON codecs. It never fetches remote schemas or invents model examples.
+// Package jsonschema builds JSON contracts from evaluated Goa types for MCP
+// catalogs, agent specifications and application-owned generated artifacts. Goa
+// owns types and validation; this package preserves local definitions and aligns
+// field names and union branches with the generated JSON codecs. It never
+// fetches remote schemas or invents model examples.
 package jsonschema
 
 import (
@@ -22,6 +23,9 @@ const (
 
 // Build returns a JSON Schema 2020-12 contract for one attribute graph. Named
 // recursion remains in local $defs; synthesized OpenAPI examples are removed.
+// Callers evaluate the Goa design first and supply its API, original attribute
+// and example identity. The returned bytes use the generated JSON field names
+// and reject unknown object fields; unsupported representations return an error.
 func Build(api *goaexpr.APIExpr, att *goaexpr.AttributeExpr, identity goaexpr.ExampleIdentity) ([]byte, error) {
 	return build(api, att, identity, true)
 }
@@ -226,6 +230,11 @@ func rewriteUnionSchema(union *goaexpr.Union, schema map[string]any, defs map[st
 			if err := alignSchemaNodeWithGeneratedDecoder(nat.Attribute, branch, defs, seen, closeObjects); err != nil {
 				return err
 			}
+			// Field alignment replaces the branch's domain properties. Restore the
+			// union's verified discriminator so strict validation accepts it and
+			// requires the caller to select this exact branch.
+			properties = branch["properties"].(map[string]any)
+			properties[typeKey] = typeSchema
 			required, _ := branch["required"].([]string)
 			branch["required"] = append(required, typeKey)
 			continue

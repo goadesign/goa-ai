@@ -7,7 +7,7 @@ import (
 	"fmt"
 
 	jsoncodec "goa.design/goa-ai/codegen/internal/codec"
-	"goa.design/goa-ai/codegen/internal/jsonschema"
+	"goa.design/goa-ai/codegen/jsonschema"
 	"goa.design/goa-ai/internal/mcpinput"
 	"goa.design/goa/v3/codegen"
 	goaservice "goa.design/goa/v3/codegen/service"

@@ -10,7 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	contractschema "goa.design/goa-ai/codegen/internal/jsonschema"
+	contractschema "goa.design/goa-ai/codegen/jsonschema"
 	validator "goa.design/goa-ai/internal/jsonschema"
 	"goa.design/goa/v3/dsl"
 	"goa.design/goa/v3/expr"
@@ -56,6 +56,7 @@ func TestGeneratedFlatUnionCodecAndSchema(t *testing.T) {
 		{`{"outcome":{"resultType":"complete","reference":"done"}}`, true},
 		{`{"outcome":{"resultType":"input_required","state":"next"}}`, true},
 		{`{"outcome":{"resultType":"complete","reference":""}}`, false},
+		{`{"outcome":{"reference":"done"}}`, false},
 		{`{"outcome":{"resultType":"complete","state":"next"}}`, false},
 		{`{"outcome":{"resultType":"unknown","reference":"done"}}`, false},
 		{`{"outcome":{"resultType":"complete","reference":"done","extra":true}}`, false},
