@@ -728,7 +728,7 @@ type ToolCallMeta struct {
 	ExecutionSequence uint64
 	// The exact runtime-selected operation and its data; absent on the original
 	// tool call.
-	ExecutionContinuation *tooloperations.ExecutionContinuation
+	ExecutionContinuation *tooloperations.ToolOperationExecutionContinuation
 }
 
 // Marks one array index or map key without prescribing its value.
@@ -1859,34 +1859,6 @@ func validatejsonDrainProviderPayloadTransport(value *jsonDrainProviderPayloadTr
 	return err
 }
 
-// jsonExecutionContinuationTransport stores JSON fields until they have been validated.
-type jsonExecutionContinuationTransport struct {
-	Operation *jsonOperationTransport `json:"operation"`
-}
-
-// validatejsonExecutionContinuationTransport checks decoded JSON before it becomes a service value.
-func validatejsonExecutionContinuationTransport(value *jsonExecutionContinuationTransport) (err error) {
-	if value == nil {
-		return goa.MissingFieldError("body", "JSON value")
-	}
-	if value.Operation == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("operation", "body"))
-	}
-	if value.Operation != nil {
-		switch string(value.Operation.Kind()) {
-		case "task_update":
-			actual, _ := value.Operation.AsTaskUpdate()
-			if actual != nil {
-				if err2 := validatejsonTaskAnswersTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
-				}
-			}
-		}
-
-	}
-	return err
-}
-
 // jsonGetToolsetPayloadTransport stores JSON fields until they have been validated.
 type jsonGetToolsetPayloadTransport struct {
 	// Name of the toolset to retrieve
@@ -1906,23 +1878,6 @@ func validatejsonGetToolsetPayloadTransport(value *jsonGetToolsetPayloadTranspor
 			err = goa.MergeErrors(err, goa.InvalidLengthError("body.name", *value.Name, utf8.RuneCountInString(*value.Name), 1, true))
 		}
 	}
-	return err
-}
-
-// jsonInputContinuationTransport stores JSON fields until they have been validated.
-type jsonInputContinuationTransport struct {
-	// Opaque state returned by the service, including an explicitly empty string.
-	State *string `json:"state,omitempty"`
-	// Host answer JSON bytes keyed by the exact server request identifiers.
-	Responses map[string][]byte `json:"responses,omitempty"`
-}
-
-// validatejsonInputContinuationTransport checks decoded JSON before it becomes a service value.
-func validatejsonInputContinuationTransport(value *jsonInputContinuationTransport) (err error) {
-	if value == nil {
-		return goa.MissingFieldError("body", "JSON value")
-	}
-
 	return err
 }
 
@@ -2730,28 +2685,6 @@ func validatejsonServiceToolsetDeclarationTransport(value *jsonServiceToolsetDec
 	return err
 }
 
-// jsonTaskAnswersTransport stores JSON fields until they have been validated.
-type jsonTaskAnswersTransport struct {
-	// Exact server-owned Task identifier, including an empty string.
-	TaskID *string `json:"task_id"`
-	// Host answer JSON bytes for outstanding Task input requests.
-	Responses map[string][]byte `json:"responses"`
-}
-
-// validatejsonTaskAnswersTransport checks decoded JSON before it becomes a service value.
-func validatejsonTaskAnswersTransport(value *jsonTaskAnswersTransport) (err error) {
-	if value == nil {
-		return goa.MissingFieldError("body", "JSON value")
-	}
-	if value.TaskID == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("task_id", "body"))
-	}
-	if value.Responses == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("responses", "body"))
-	}
-	return err
-}
-
 // jsonTextOnlyToolContractTransport stores JSON fields until they have been validated.
 type jsonTextOnlyToolContractTransport struct {
 	// Domain instructions without optional UI guidance.
@@ -2853,7 +2786,7 @@ type jsonToolCallMetaTransport struct {
 	ExecutionSequence *callResolvedToolPayloadUint64Transport `json:"execution_sequence,omitempty"`
 	// The exact runtime-selected operation and its data; absent on the original
 	// tool call.
-	ExecutionContinuation *jsonExecutionContinuationTransport `json:"execution_continuation,omitempty"`
+	ExecutionContinuation *jsonToolOperationExecutionContinuationTransport `json:"execution_continuation,omitempty"`
 }
 
 // validatejsonToolCallMetaTransport checks decoded JSON before it becomes a service value.
@@ -2916,7 +2849,7 @@ func validatejsonToolCallMetaTransport(value *jsonToolCallMetaTransport) (err er
 		}
 	}
 	if value.ExecutionContinuation != nil {
-		if err2 := validatejsonExecutionContinuationTransport(value.ExecutionContinuation); err2 != nil {
+		if err2 := validatejsonToolOperationExecutionContinuationTransport(value.ExecutionContinuation); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
@@ -3036,6 +2969,73 @@ type jsonToolFieldSegmentBranchFieldTransport string
 // validatejsonToolFieldSegmentBranchFieldTransport checks decoded JSON before it becomes a service value.
 func validatejsonToolFieldSegmentBranchFieldTransport(value jsonToolFieldSegmentBranchFieldTransport) (err error) {
 
+	return err
+}
+
+// jsonToolOperationExecutionContinuationTransport stores JSON fields until they have been validated.
+type jsonToolOperationExecutionContinuationTransport struct {
+	Operation *jsonOperationTransport `json:"operation"`
+}
+
+// validatejsonToolOperationExecutionContinuationTransport checks decoded JSON before it becomes a service value.
+func validatejsonToolOperationExecutionContinuationTransport(value *jsonToolOperationExecutionContinuationTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Operation == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("operation", "body"))
+	}
+	if value.Operation != nil {
+		switch string(value.Operation.Kind()) {
+		case "task_update":
+			actual, _ := value.Operation.AsTaskUpdate()
+			if actual != nil {
+				if err2 := validatejsonToolOperationTaskAnswersTransport(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		}
+
+	}
+	return err
+}
+
+// jsonToolOperationInputContinuationTransport stores JSON fields until they have been validated.
+type jsonToolOperationInputContinuationTransport struct {
+	// Opaque state returned by the service, including an explicitly empty string.
+	State *string `json:"state,omitempty"`
+	// Host answer JSON bytes keyed by the exact server request identifiers.
+	Responses map[string][]byte `json:"responses,omitempty"`
+}
+
+// validatejsonToolOperationInputContinuationTransport checks decoded JSON before it becomes a service value.
+func validatejsonToolOperationInputContinuationTransport(value *jsonToolOperationInputContinuationTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+
+	return err
+}
+
+// jsonToolOperationTaskAnswersTransport stores JSON fields until they have been validated.
+type jsonToolOperationTaskAnswersTransport struct {
+	// Exact server-owned Task identifier, including an empty string.
+	TaskID *string `json:"task_id"`
+	// Host answer JSON bytes for outstanding Task input requests.
+	Responses map[string][]byte `json:"responses"`
+}
+
+// validatejsonToolOperationTaskAnswersTransport checks decoded JSON before it becomes a service value.
+func validatejsonToolOperationTaskAnswersTransport(value *jsonToolOperationTaskAnswersTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.TaskID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("task_id", "body"))
+	}
+	if value.Responses == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("responses", "body"))
+	}
 	return err
 }
 
@@ -3977,15 +3977,15 @@ func validateToolCallMetaOriginal(value *ToolCallMeta) (err error) {
 		}
 	}
 	if value.ExecutionContinuation != nil {
-		if err2 := validateExecutionContinuationOriginal(value.ExecutionContinuation); err2 != nil {
+		if err2 := validateToolOperationExecutionContinuationOriginal(value.ExecutionContinuation); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
 	return err
 }
 
-// validateExecutionContinuationOriginal checks the original typed value before JSON conversion.
-func validateExecutionContinuationOriginal(value *tooloperations.ExecutionContinuation) (err error) {
+// validateToolOperationExecutionContinuationOriginal checks the original typed value before JSON conversion.
+func validateToolOperationExecutionContinuationOriginal(value *tooloperations.ToolOperationExecutionContinuation) (err error) {
 	if value.Operation.Kind() == "" {
 		err = goa.MergeErrors(err, goa.MissingFieldError("operation", "value"))
 	}
@@ -3993,7 +3993,7 @@ func validateExecutionContinuationOriginal(value *tooloperations.ExecutionContin
 	case "task_update":
 		actual, _ := value.Operation.AsTaskUpdate()
 		if actual != nil {
-			if err2 := validateTaskAnswersOriginal(actual); err2 != nil {
+			if err2 := validateToolOperationTaskAnswersOriginal(actual); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -4002,8 +4002,8 @@ func validateExecutionContinuationOriginal(value *tooloperations.ExecutionContin
 	return err
 }
 
-// validateTaskAnswersOriginal checks the original typed value before JSON conversion.
-func validateTaskAnswersOriginal(value *tooloperations.TaskAnswers) (err error) {
+// validateToolOperationTaskAnswersOriginal checks the original typed value before JSON conversion.
+func validateToolOperationTaskAnswersOriginal(value *tooloperations.ToolOperationTaskAnswers) (err error) {
 	if value.Responses == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("responses", "value"))
 	}
@@ -4086,15 +4086,15 @@ func validateToolCallMetaOriginal2(value *ToolCallMeta) (err error) {
 		}
 	}
 	if value.ExecutionContinuation != nil {
-		if err2 := validateExecutionContinuationOriginal2(value.ExecutionContinuation); err2 != nil {
+		if err2 := validateToolOperationExecutionContinuationOriginal2(value.ExecutionContinuation); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
 	return err
 }
 
-// validateExecutionContinuationOriginal2 checks the original typed value before JSON conversion.
-func validateExecutionContinuationOriginal2(value *tooloperations.ExecutionContinuation) (err error) {
+// validateToolOperationExecutionContinuationOriginal2 checks the original typed value before JSON conversion.
+func validateToolOperationExecutionContinuationOriginal2(value *tooloperations.ToolOperationExecutionContinuation) (err error) {
 	if value.Operation.Kind() == "" {
 		err = goa.MergeErrors(err, goa.MissingFieldError("operation", "value"))
 	}
@@ -4102,7 +4102,7 @@ func validateExecutionContinuationOriginal2(value *tooloperations.ExecutionConti
 	case "task_update":
 		actual, _ := value.Operation.AsTaskUpdate()
 		if actual != nil {
-			if err2 := validateTaskAnswersOriginal2(actual); err2 != nil {
+			if err2 := validateToolOperationTaskAnswersOriginal2(actual); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -4111,8 +4111,8 @@ func validateExecutionContinuationOriginal2(value *tooloperations.ExecutionConti
 	return err
 }
 
-// validateTaskAnswersOriginal2 checks the original typed value before JSON conversion.
-func validateTaskAnswersOriginal2(value *tooloperations.TaskAnswers) (err error) {
+// validateToolOperationTaskAnswersOriginal2 checks the original typed value before JSON conversion.
+func validateToolOperationTaskAnswersOriginal2(value *tooloperations.ToolOperationTaskAnswers) (err error) {
 	if value.Responses == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("responses", "value"))
 	}
@@ -5394,15 +5394,15 @@ func validateToolCallMetaOriginal3(value *ToolCallMeta) (err error) {
 		}
 	}
 	if value.ExecutionContinuation != nil {
-		if err2 := validateExecutionContinuationOriginal3(value.ExecutionContinuation); err2 != nil {
+		if err2 := validateToolOperationExecutionContinuationOriginal3(value.ExecutionContinuation); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
 	return err
 }
 
-// validateExecutionContinuationOriginal3 checks the original typed value before JSON conversion.
-func validateExecutionContinuationOriginal3(value *tooloperations.ExecutionContinuation) (err error) {
+// validateToolOperationExecutionContinuationOriginal3 checks the original typed value before JSON conversion.
+func validateToolOperationExecutionContinuationOriginal3(value *tooloperations.ToolOperationExecutionContinuation) (err error) {
 	if value.Operation.Kind() == "" {
 		err = goa.MergeErrors(err, goa.MissingFieldError("operation", "value"))
 	}
@@ -5410,7 +5410,7 @@ func validateExecutionContinuationOriginal3(value *tooloperations.ExecutionConti
 	case "task_update":
 		actual, _ := value.Operation.AsTaskUpdate()
 		if actual != nil {
-			if err2 := validateTaskAnswersOriginal3(actual); err2 != nil {
+			if err2 := validateToolOperationTaskAnswersOriginal3(actual); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -5419,8 +5419,8 @@ func validateExecutionContinuationOriginal3(value *tooloperations.ExecutionConti
 	return err
 }
 
-// validateTaskAnswersOriginal3 checks the original typed value before JSON conversion.
-func validateTaskAnswersOriginal3(value *tooloperations.TaskAnswers) (err error) {
+// validateToolOperationTaskAnswersOriginal3 checks the original typed value before JSON conversion.
+func validateToolOperationTaskAnswersOriginal3(value *tooloperations.ToolOperationTaskAnswers) (err error) {
 	if value.Responses == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("responses", "value"))
 	}
@@ -5976,15 +5976,15 @@ func validateToolCallMetaOriginal4(value *ToolCallMeta) (err error) {
 		}
 	}
 	if value.ExecutionContinuation != nil {
-		if err2 := validateExecutionContinuationOriginal4(value.ExecutionContinuation); err2 != nil {
+		if err2 := validateToolOperationExecutionContinuationOriginal4(value.ExecutionContinuation); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
 	return err
 }
 
-// validateExecutionContinuationOriginal4 checks the original typed value before JSON conversion.
-func validateExecutionContinuationOriginal4(value *tooloperations.ExecutionContinuation) (err error) {
+// validateToolOperationExecutionContinuationOriginal4 checks the original typed value before JSON conversion.
+func validateToolOperationExecutionContinuationOriginal4(value *tooloperations.ToolOperationExecutionContinuation) (err error) {
 	if value.Operation.Kind() == "" {
 		err = goa.MergeErrors(err, goa.MissingFieldError("operation", "value"))
 	}
@@ -5992,7 +5992,7 @@ func validateExecutionContinuationOriginal4(value *tooloperations.ExecutionConti
 	case "task_update":
 		actual, _ := value.Operation.AsTaskUpdate()
 		if actual != nil {
-			if err2 := validateTaskAnswersOriginal4(actual); err2 != nil {
+			if err2 := validateToolOperationTaskAnswersOriginal4(actual); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -6001,8 +6001,8 @@ func validateExecutionContinuationOriginal4(value *tooloperations.ExecutionConti
 	return err
 }
 
-// validateTaskAnswersOriginal4 checks the original typed value before JSON conversion.
-func validateTaskAnswersOriginal4(value *tooloperations.TaskAnswers) (err error) {
+// validateToolOperationTaskAnswersOriginal4 checks the original typed value before JSON conversion.
+func validateToolOperationTaskAnswersOriginal4(value *tooloperations.ToolOperationTaskAnswers) (err error) {
 	if value.Responses == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("responses", "value"))
 	}
@@ -6930,9 +6930,9 @@ func validateUnregisterPayloadOriginal(value *UnregisterPayload) (err error) {
 // jsonOperationTransport stores exactly one selected Goa OneOf branch.
 type jsonOperationTransport struct {
 	kind       jsonOperationTransportKind
-	Input      *jsonInputContinuationTransport
+	Input      *jsonToolOperationInputContinuationTransport
 	TaskGet    jsonOperationBranchTaskGetTransport
-	TaskUpdate *jsonTaskAnswersTransport
+	TaskUpdate *jsonToolOperationTaskAnswersTransport
 	TaskCancel jsonOperationBranchTaskCancelTransport
 }
 
@@ -6952,12 +6952,12 @@ func (u jsonOperationTransport) Kind() jsonOperationTransportKind {
 }
 
 // newjsonOperationTransportInput creates jsonOperationTransport with its input branch selected.
-func newjsonOperationTransportInput(value *jsonInputContinuationTransport) jsonOperationTransport {
+func newjsonOperationTransportInput(value *jsonToolOperationInputContinuationTransport) jsonOperationTransport {
 	return jsonOperationTransport{kind: jsonOperationTransportKindInput, Input: value}
 }
 
 // AsInput returns the input branch when it is selected.
-func (u jsonOperationTransport) AsInput() (_ *jsonInputContinuationTransport, ok bool) {
+func (u jsonOperationTransport) AsInput() (_ *jsonToolOperationInputContinuationTransport, ok bool) {
 	if u.kind != jsonOperationTransportKindInput {
 		return
 	}
@@ -6965,7 +6965,7 @@ func (u jsonOperationTransport) AsInput() (_ *jsonInputContinuationTransport, ok
 }
 
 // SetInput selects the input branch.
-func (u *jsonOperationTransport) SetInput(value *jsonInputContinuationTransport) {
+func (u *jsonOperationTransport) SetInput(value *jsonToolOperationInputContinuationTransport) {
 	u.kind = jsonOperationTransportKindInput
 	u.Input = value
 }
@@ -6990,12 +6990,12 @@ func (u *jsonOperationTransport) SetTaskGet(value jsonOperationBranchTaskGetTran
 }
 
 // newjsonOperationTransportTaskUpdate creates jsonOperationTransport with its task_update branch selected.
-func newjsonOperationTransportTaskUpdate(value *jsonTaskAnswersTransport) jsonOperationTransport {
+func newjsonOperationTransportTaskUpdate(value *jsonToolOperationTaskAnswersTransport) jsonOperationTransport {
 	return jsonOperationTransport{kind: jsonOperationTransportKindTaskUpdate, TaskUpdate: value}
 }
 
 // AsTaskUpdate returns the task_update branch when it is selected.
-func (u jsonOperationTransport) AsTaskUpdate() (_ *jsonTaskAnswersTransport, ok bool) {
+func (u jsonOperationTransport) AsTaskUpdate() (_ *jsonToolOperationTaskAnswersTransport, ok bool) {
 	if u.kind != jsonOperationTransportKindTaskUpdate {
 		return
 	}
@@ -7003,7 +7003,7 @@ func (u jsonOperationTransport) AsTaskUpdate() (_ *jsonTaskAnswersTransport, ok 
 }
 
 // SetTaskUpdate selects the task_update branch.
-func (u *jsonOperationTransport) SetTaskUpdate(value *jsonTaskAnswersTransport) {
+func (u *jsonOperationTransport) SetTaskUpdate(value *jsonToolOperationTaskAnswersTransport) {
 	u.kind = jsonOperationTransportKindTaskUpdate
 	u.TaskUpdate = value
 }
@@ -7103,7 +7103,7 @@ func (u *jsonOperationTransport) UnmarshalJSON(data []byte) error {
 	}
 	switch raw.Type {
 	case string(jsonOperationTransportKindInput):
-		var value *jsonInputContinuationTransport
+		var value *jsonToolOperationInputContinuationTransport
 		decoder := json.NewDecoder(bytes.NewReader(raw.Value))
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&value); err != nil {
@@ -7121,7 +7121,7 @@ func (u *jsonOperationTransport) UnmarshalJSON(data []byte) error {
 		u.kind = jsonOperationTransportKindTaskGet
 		u.TaskGet = value
 	case string(jsonOperationTransportKindTaskUpdate):
-		var value *jsonTaskAnswersTransport
+		var value *jsonToolOperationTaskAnswersTransport
 		decoder := json.NewDecoder(bytes.NewReader(raw.Value))
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&value); err != nil {
@@ -9578,7 +9578,7 @@ func EncodeToolCallMeta(in *ToolCallMeta) ([]byte, error) {
 			}
 		}
 		if in.ExecutionContinuation != nil {
-			body.ExecutionContinuation = encodeExecutionContinuationToExecutionContinuationTransport4(in.ExecutionContinuation)
+			body.ExecutionContinuation = encodeToolOperationExecutionContinuationToToolOperationExecutionContinuationTransport4(in.ExecutionContinuation)
 		}
 	}
 	if err := validatejsonToolCallMetaTransport(body); err != nil {
@@ -9644,7 +9644,7 @@ func DecodeToolCallMeta(data []byte) (out *ToolCallMeta, err error) {
 			out.ExecutionSequence = 0
 		}
 		if body.ExecutionContinuation != nil {
-			out.ExecutionContinuation = decodeExecutionContinuationTransportToExecutionContinuation4(body.ExecutionContinuation)
+			out.ExecutionContinuation = decodeToolOperationExecutionContinuationTransportToToolOperationExecutionContinuation4(body.ExecutionContinuation)
 		}
 	}
 	return out, nil
@@ -11082,286 +11082,6 @@ func decodeConsumerContractTransportToConsumerContract6(v *jsonConsumerContractT
 	return res
 }
 
-func decodeExecutionContinuationTransportToExecutionContinuation(v *jsonExecutionContinuationTransport) *tooloperations.ExecutionContinuation {
-	res := &tooloperations.ExecutionContinuation{}
-	switch string(v.Operation.Kind()) {
-	case "input":
-		actual, _ := v.Operation.AsInput()
-		var obj *tooloperations.InputContinuation
-		if actual != nil {
-			obj = decodeInputContinuationTransportToInputContinuation(actual)
-		}
-		u := res.Operation
-		u.SetInput((*tooloperations.InputContinuation)(obj))
-		res.Operation = u
-	case "task_get":
-		actual, _ := v.Operation.AsTaskGet()
-		obj := tooloperations.OperationBranchTaskGet(actual)
-
-		u := res.Operation
-		u.SetTaskGet((tooloperations.OperationBranchTaskGet)(obj))
-		res.Operation = u
-	case "task_update":
-		actual, _ := v.Operation.AsTaskUpdate()
-		var obj *tooloperations.TaskAnswers
-		if actual != nil {
-			obj = decodeTaskAnswersTransportToTaskAnswers(actual)
-		}
-		u := res.Operation
-		u.SetTaskUpdate((*tooloperations.TaskAnswers)(obj))
-		res.Operation = u
-	case "task_cancel":
-		actual, _ := v.Operation.AsTaskCancel()
-		obj := tooloperations.OperationBranchTaskCancel(actual)
-
-		u := res.Operation
-		u.SetTaskCancel((tooloperations.OperationBranchTaskCancel)(obj))
-		res.Operation = u
-	}
-
-	return res
-}
-
-func decodeExecutionContinuationTransportToExecutionContinuation2(v *jsonExecutionContinuationTransport) *tooloperations.ExecutionContinuation {
-	res := &tooloperations.ExecutionContinuation{}
-	switch string(v.Operation.Kind()) {
-	case "input":
-		actual, _ := v.Operation.AsInput()
-		var obj *tooloperations.InputContinuation
-		if actual != nil {
-			obj = decodeInputContinuationTransportToInputContinuation2(actual)
-		}
-		u := res.Operation
-		u.SetInput((*tooloperations.InputContinuation)(obj))
-		res.Operation = u
-	case "task_get":
-		actual, _ := v.Operation.AsTaskGet()
-		obj := tooloperations.OperationBranchTaskGet(actual)
-
-		u := res.Operation
-		u.SetTaskGet((tooloperations.OperationBranchTaskGet)(obj))
-		res.Operation = u
-	case "task_update":
-		actual, _ := v.Operation.AsTaskUpdate()
-		var obj *tooloperations.TaskAnswers
-		if actual != nil {
-			obj = decodeTaskAnswersTransportToTaskAnswers2(actual)
-		}
-		u := res.Operation
-		u.SetTaskUpdate((*tooloperations.TaskAnswers)(obj))
-		res.Operation = u
-	case "task_cancel":
-		actual, _ := v.Operation.AsTaskCancel()
-		obj := tooloperations.OperationBranchTaskCancel(actual)
-
-		u := res.Operation
-		u.SetTaskCancel((tooloperations.OperationBranchTaskCancel)(obj))
-		res.Operation = u
-	}
-
-	return res
-}
-
-func decodeExecutionContinuationTransportToExecutionContinuation3(v *jsonExecutionContinuationTransport) *tooloperations.ExecutionContinuation {
-	res := &tooloperations.ExecutionContinuation{}
-	switch string(v.Operation.Kind()) {
-	case "input":
-		actual, _ := v.Operation.AsInput()
-		var obj *tooloperations.InputContinuation
-		if actual != nil {
-			obj = decodeInputContinuationTransportToInputContinuation3(actual)
-		}
-		u := res.Operation
-		u.SetInput((*tooloperations.InputContinuation)(obj))
-		res.Operation = u
-	case "task_get":
-		actual, _ := v.Operation.AsTaskGet()
-		obj := tooloperations.OperationBranchTaskGet(actual)
-
-		u := res.Operation
-		u.SetTaskGet((tooloperations.OperationBranchTaskGet)(obj))
-		res.Operation = u
-	case "task_update":
-		actual, _ := v.Operation.AsTaskUpdate()
-		var obj *tooloperations.TaskAnswers
-		if actual != nil {
-			obj = decodeTaskAnswersTransportToTaskAnswers3(actual)
-		}
-		u := res.Operation
-		u.SetTaskUpdate((*tooloperations.TaskAnswers)(obj))
-		res.Operation = u
-	case "task_cancel":
-		actual, _ := v.Operation.AsTaskCancel()
-		obj := tooloperations.OperationBranchTaskCancel(actual)
-
-		u := res.Operation
-		u.SetTaskCancel((tooloperations.OperationBranchTaskCancel)(obj))
-		res.Operation = u
-	}
-
-	return res
-}
-
-func decodeExecutionContinuationTransportToExecutionContinuation4(v *jsonExecutionContinuationTransport) *tooloperations.ExecutionContinuation {
-	res := &tooloperations.ExecutionContinuation{}
-	switch string(v.Operation.Kind()) {
-	case "input":
-		actual, _ := v.Operation.AsInput()
-		var obj *tooloperations.InputContinuation
-		if actual != nil {
-			obj = decodeInputContinuationTransportToInputContinuation4(actual)
-		}
-		u := res.Operation
-		u.SetInput((*tooloperations.InputContinuation)(obj))
-		res.Operation = u
-	case "task_get":
-		actual, _ := v.Operation.AsTaskGet()
-		obj := tooloperations.OperationBranchTaskGet(actual)
-
-		u := res.Operation
-		u.SetTaskGet((tooloperations.OperationBranchTaskGet)(obj))
-		res.Operation = u
-	case "task_update":
-		actual, _ := v.Operation.AsTaskUpdate()
-		var obj *tooloperations.TaskAnswers
-		if actual != nil {
-			obj = decodeTaskAnswersTransportToTaskAnswers4(actual)
-		}
-		u := res.Operation
-		u.SetTaskUpdate((*tooloperations.TaskAnswers)(obj))
-		res.Operation = u
-	case "task_cancel":
-		actual, _ := v.Operation.AsTaskCancel()
-		obj := tooloperations.OperationBranchTaskCancel(actual)
-
-		u := res.Operation
-		u.SetTaskCancel((tooloperations.OperationBranchTaskCancel)(obj))
-		res.Operation = u
-	}
-
-	return res
-}
-
-func decodeInputContinuationTransportToInputContinuation(v *jsonInputContinuationTransport) *tooloperations.InputContinuation {
-	res := &tooloperations.InputContinuation{
-		State: v.State,
-	}
-	if v.Responses != nil {
-		res.Responses = make(map[string][]byte, len(v.Responses))
-		for key, val := range v.Responses {
-			tk := key
-			tv := val
-			res.Responses[tk] = tv
-		}
-	}
-
-	return res
-}
-
-func decodeInputContinuationTransportToInputContinuation2(v *jsonInputContinuationTransport) *tooloperations.InputContinuation {
-	res := &tooloperations.InputContinuation{
-		State: v.State,
-	}
-	if v.Responses != nil {
-		res.Responses = make(map[string][]byte, len(v.Responses))
-		for key, val := range v.Responses {
-			tk := key
-			tv := val
-			res.Responses[tk] = tv
-		}
-	}
-
-	return res
-}
-
-func decodeInputContinuationTransportToInputContinuation3(v *jsonInputContinuationTransport) *tooloperations.InputContinuation {
-	res := &tooloperations.InputContinuation{
-		State: v.State,
-	}
-	if v.Responses != nil {
-		res.Responses = make(map[string][]byte, len(v.Responses))
-		for key, val := range v.Responses {
-			tk := key
-			tv := val
-			res.Responses[tk] = tv
-		}
-	}
-
-	return res
-}
-
-func decodeInputContinuationTransportToInputContinuation4(v *jsonInputContinuationTransport) *tooloperations.InputContinuation {
-	res := &tooloperations.InputContinuation{
-		State: v.State,
-	}
-	if v.Responses != nil {
-		res.Responses = make(map[string][]byte, len(v.Responses))
-		for key, val := range v.Responses {
-			tk := key
-			tv := val
-			res.Responses[tk] = tv
-		}
-	}
-
-	return res
-}
-
-func decodeTaskAnswersTransportToTaskAnswers(v *jsonTaskAnswersTransport) *tooloperations.TaskAnswers {
-	res := &tooloperations.TaskAnswers{
-		TaskID: *v.TaskID,
-	}
-	res.Responses = make(map[string][]byte, len(v.Responses))
-	for key, val := range v.Responses {
-		tk := key
-		tv := val
-		res.Responses[tk] = tv
-	}
-
-	return res
-}
-
-func decodeTaskAnswersTransportToTaskAnswers2(v *jsonTaskAnswersTransport) *tooloperations.TaskAnswers {
-	res := &tooloperations.TaskAnswers{
-		TaskID: *v.TaskID,
-	}
-	res.Responses = make(map[string][]byte, len(v.Responses))
-	for key, val := range v.Responses {
-		tk := key
-		tv := val
-		res.Responses[tk] = tv
-	}
-
-	return res
-}
-
-func decodeTaskAnswersTransportToTaskAnswers3(v *jsonTaskAnswersTransport) *tooloperations.TaskAnswers {
-	res := &tooloperations.TaskAnswers{
-		TaskID: *v.TaskID,
-	}
-	res.Responses = make(map[string][]byte, len(v.Responses))
-	for key, val := range v.Responses {
-		tk := key
-		tv := val
-		res.Responses[tk] = tv
-	}
-
-	return res
-}
-
-func decodeTaskAnswersTransportToTaskAnswers4(v *jsonTaskAnswersTransport) *tooloperations.TaskAnswers {
-	res := &tooloperations.TaskAnswers{
-		TaskID: *v.TaskID,
-	}
-	res.Responses = make(map[string][]byte, len(v.Responses))
-	for key, val := range v.Responses {
-		tk := key
-		tv := val
-		res.Responses[tk] = tv
-	}
-
-	return res
-}
-
 func decodeTextOnlyToolContractTransportToTextOnlyToolContract(v *jsonTextOnlyToolContractTransport) *TextOnlyToolContract {
 	res := &TextOnlyToolContract{
 		Description:     *v.Description,
@@ -11545,7 +11265,7 @@ func decodeToolCallMetaTransportToToolCallMeta(v *jsonToolCallMetaTransport) *To
 		res.ExecutionSequence = 0
 	}
 	if v.ExecutionContinuation != nil {
-		res.ExecutionContinuation = decodeExecutionContinuationTransportToExecutionContinuation(v.ExecutionContinuation)
+		res.ExecutionContinuation = decodeToolOperationExecutionContinuationTransportToToolOperationExecutionContinuation(v.ExecutionContinuation)
 	}
 
 	return res
@@ -11580,7 +11300,7 @@ func decodeToolCallMetaTransportToToolCallMeta2(v *jsonToolCallMetaTransport) *T
 		res.ExecutionSequence = 0
 	}
 	if v.ExecutionContinuation != nil {
-		res.ExecutionContinuation = decodeExecutionContinuationTransportToExecutionContinuation2(v.ExecutionContinuation)
+		res.ExecutionContinuation = decodeToolOperationExecutionContinuationTransportToToolOperationExecutionContinuation2(v.ExecutionContinuation)
 	}
 
 	return res
@@ -11615,7 +11335,7 @@ func decodeToolCallMetaTransportToToolCallMeta3(v *jsonToolCallMetaTransport) *T
 		res.ExecutionSequence = 0
 	}
 	if v.ExecutionContinuation != nil {
-		res.ExecutionContinuation = decodeExecutionContinuationTransportToExecutionContinuation3(v.ExecutionContinuation)
+		res.ExecutionContinuation = decodeToolOperationExecutionContinuationTransportToToolOperationExecutionContinuation3(v.ExecutionContinuation)
 	}
 
 	return res
@@ -14732,6 +14452,286 @@ func decodeToolFieldPathSegmentTransportToToolFieldPathSegment9(v *jsonToolField
 	return res
 }
 
+func decodeToolOperationExecutionContinuationTransportToToolOperationExecutionContinuation(v *jsonToolOperationExecutionContinuationTransport) *tooloperations.ToolOperationExecutionContinuation {
+	res := &tooloperations.ToolOperationExecutionContinuation{}
+	switch string(v.Operation.Kind()) {
+	case "input":
+		actual, _ := v.Operation.AsInput()
+		var obj *tooloperations.ToolOperationInputContinuation
+		if actual != nil {
+			obj = decodeToolOperationInputContinuationTransportToToolOperationInputContinuation(actual)
+		}
+		u := res.Operation
+		u.SetInput((*tooloperations.ToolOperationInputContinuation)(obj))
+		res.Operation = u
+	case "task_get":
+		actual, _ := v.Operation.AsTaskGet()
+		obj := tooloperations.OperationBranchTaskGet(actual)
+
+		u := res.Operation
+		u.SetTaskGet((tooloperations.OperationBranchTaskGet)(obj))
+		res.Operation = u
+	case "task_update":
+		actual, _ := v.Operation.AsTaskUpdate()
+		var obj *tooloperations.ToolOperationTaskAnswers
+		if actual != nil {
+			obj = decodeToolOperationTaskAnswersTransportToToolOperationTaskAnswers(actual)
+		}
+		u := res.Operation
+		u.SetTaskUpdate((*tooloperations.ToolOperationTaskAnswers)(obj))
+		res.Operation = u
+	case "task_cancel":
+		actual, _ := v.Operation.AsTaskCancel()
+		obj := tooloperations.OperationBranchTaskCancel(actual)
+
+		u := res.Operation
+		u.SetTaskCancel((tooloperations.OperationBranchTaskCancel)(obj))
+		res.Operation = u
+	}
+
+	return res
+}
+
+func decodeToolOperationExecutionContinuationTransportToToolOperationExecutionContinuation2(v *jsonToolOperationExecutionContinuationTransport) *tooloperations.ToolOperationExecutionContinuation {
+	res := &tooloperations.ToolOperationExecutionContinuation{}
+	switch string(v.Operation.Kind()) {
+	case "input":
+		actual, _ := v.Operation.AsInput()
+		var obj *tooloperations.ToolOperationInputContinuation
+		if actual != nil {
+			obj = decodeToolOperationInputContinuationTransportToToolOperationInputContinuation2(actual)
+		}
+		u := res.Operation
+		u.SetInput((*tooloperations.ToolOperationInputContinuation)(obj))
+		res.Operation = u
+	case "task_get":
+		actual, _ := v.Operation.AsTaskGet()
+		obj := tooloperations.OperationBranchTaskGet(actual)
+
+		u := res.Operation
+		u.SetTaskGet((tooloperations.OperationBranchTaskGet)(obj))
+		res.Operation = u
+	case "task_update":
+		actual, _ := v.Operation.AsTaskUpdate()
+		var obj *tooloperations.ToolOperationTaskAnswers
+		if actual != nil {
+			obj = decodeToolOperationTaskAnswersTransportToToolOperationTaskAnswers2(actual)
+		}
+		u := res.Operation
+		u.SetTaskUpdate((*tooloperations.ToolOperationTaskAnswers)(obj))
+		res.Operation = u
+	case "task_cancel":
+		actual, _ := v.Operation.AsTaskCancel()
+		obj := tooloperations.OperationBranchTaskCancel(actual)
+
+		u := res.Operation
+		u.SetTaskCancel((tooloperations.OperationBranchTaskCancel)(obj))
+		res.Operation = u
+	}
+
+	return res
+}
+
+func decodeToolOperationExecutionContinuationTransportToToolOperationExecutionContinuation3(v *jsonToolOperationExecutionContinuationTransport) *tooloperations.ToolOperationExecutionContinuation {
+	res := &tooloperations.ToolOperationExecutionContinuation{}
+	switch string(v.Operation.Kind()) {
+	case "input":
+		actual, _ := v.Operation.AsInput()
+		var obj *tooloperations.ToolOperationInputContinuation
+		if actual != nil {
+			obj = decodeToolOperationInputContinuationTransportToToolOperationInputContinuation3(actual)
+		}
+		u := res.Operation
+		u.SetInput((*tooloperations.ToolOperationInputContinuation)(obj))
+		res.Operation = u
+	case "task_get":
+		actual, _ := v.Operation.AsTaskGet()
+		obj := tooloperations.OperationBranchTaskGet(actual)
+
+		u := res.Operation
+		u.SetTaskGet((tooloperations.OperationBranchTaskGet)(obj))
+		res.Operation = u
+	case "task_update":
+		actual, _ := v.Operation.AsTaskUpdate()
+		var obj *tooloperations.ToolOperationTaskAnswers
+		if actual != nil {
+			obj = decodeToolOperationTaskAnswersTransportToToolOperationTaskAnswers3(actual)
+		}
+		u := res.Operation
+		u.SetTaskUpdate((*tooloperations.ToolOperationTaskAnswers)(obj))
+		res.Operation = u
+	case "task_cancel":
+		actual, _ := v.Operation.AsTaskCancel()
+		obj := tooloperations.OperationBranchTaskCancel(actual)
+
+		u := res.Operation
+		u.SetTaskCancel((tooloperations.OperationBranchTaskCancel)(obj))
+		res.Operation = u
+	}
+
+	return res
+}
+
+func decodeToolOperationExecutionContinuationTransportToToolOperationExecutionContinuation4(v *jsonToolOperationExecutionContinuationTransport) *tooloperations.ToolOperationExecutionContinuation {
+	res := &tooloperations.ToolOperationExecutionContinuation{}
+	switch string(v.Operation.Kind()) {
+	case "input":
+		actual, _ := v.Operation.AsInput()
+		var obj *tooloperations.ToolOperationInputContinuation
+		if actual != nil {
+			obj = decodeToolOperationInputContinuationTransportToToolOperationInputContinuation4(actual)
+		}
+		u := res.Operation
+		u.SetInput((*tooloperations.ToolOperationInputContinuation)(obj))
+		res.Operation = u
+	case "task_get":
+		actual, _ := v.Operation.AsTaskGet()
+		obj := tooloperations.OperationBranchTaskGet(actual)
+
+		u := res.Operation
+		u.SetTaskGet((tooloperations.OperationBranchTaskGet)(obj))
+		res.Operation = u
+	case "task_update":
+		actual, _ := v.Operation.AsTaskUpdate()
+		var obj *tooloperations.ToolOperationTaskAnswers
+		if actual != nil {
+			obj = decodeToolOperationTaskAnswersTransportToToolOperationTaskAnswers4(actual)
+		}
+		u := res.Operation
+		u.SetTaskUpdate((*tooloperations.ToolOperationTaskAnswers)(obj))
+		res.Operation = u
+	case "task_cancel":
+		actual, _ := v.Operation.AsTaskCancel()
+		obj := tooloperations.OperationBranchTaskCancel(actual)
+
+		u := res.Operation
+		u.SetTaskCancel((tooloperations.OperationBranchTaskCancel)(obj))
+		res.Operation = u
+	}
+
+	return res
+}
+
+func decodeToolOperationInputContinuationTransportToToolOperationInputContinuation(v *jsonToolOperationInputContinuationTransport) *tooloperations.ToolOperationInputContinuation {
+	res := &tooloperations.ToolOperationInputContinuation{
+		State: v.State,
+	}
+	if v.Responses != nil {
+		res.Responses = make(map[string][]byte, len(v.Responses))
+		for key, val := range v.Responses {
+			tk := key
+			tv := val
+			res.Responses[tk] = tv
+		}
+	}
+
+	return res
+}
+
+func decodeToolOperationInputContinuationTransportToToolOperationInputContinuation2(v *jsonToolOperationInputContinuationTransport) *tooloperations.ToolOperationInputContinuation {
+	res := &tooloperations.ToolOperationInputContinuation{
+		State: v.State,
+	}
+	if v.Responses != nil {
+		res.Responses = make(map[string][]byte, len(v.Responses))
+		for key, val := range v.Responses {
+			tk := key
+			tv := val
+			res.Responses[tk] = tv
+		}
+	}
+
+	return res
+}
+
+func decodeToolOperationInputContinuationTransportToToolOperationInputContinuation3(v *jsonToolOperationInputContinuationTransport) *tooloperations.ToolOperationInputContinuation {
+	res := &tooloperations.ToolOperationInputContinuation{
+		State: v.State,
+	}
+	if v.Responses != nil {
+		res.Responses = make(map[string][]byte, len(v.Responses))
+		for key, val := range v.Responses {
+			tk := key
+			tv := val
+			res.Responses[tk] = tv
+		}
+	}
+
+	return res
+}
+
+func decodeToolOperationInputContinuationTransportToToolOperationInputContinuation4(v *jsonToolOperationInputContinuationTransport) *tooloperations.ToolOperationInputContinuation {
+	res := &tooloperations.ToolOperationInputContinuation{
+		State: v.State,
+	}
+	if v.Responses != nil {
+		res.Responses = make(map[string][]byte, len(v.Responses))
+		for key, val := range v.Responses {
+			tk := key
+			tv := val
+			res.Responses[tk] = tv
+		}
+	}
+
+	return res
+}
+
+func decodeToolOperationTaskAnswersTransportToToolOperationTaskAnswers(v *jsonToolOperationTaskAnswersTransport) *tooloperations.ToolOperationTaskAnswers {
+	res := &tooloperations.ToolOperationTaskAnswers{
+		TaskID: *v.TaskID,
+	}
+	res.Responses = make(map[string][]byte, len(v.Responses))
+	for key, val := range v.Responses {
+		tk := key
+		tv := val
+		res.Responses[tk] = tv
+	}
+
+	return res
+}
+
+func decodeToolOperationTaskAnswersTransportToToolOperationTaskAnswers2(v *jsonToolOperationTaskAnswersTransport) *tooloperations.ToolOperationTaskAnswers {
+	res := &tooloperations.ToolOperationTaskAnswers{
+		TaskID: *v.TaskID,
+	}
+	res.Responses = make(map[string][]byte, len(v.Responses))
+	for key, val := range v.Responses {
+		tk := key
+		tv := val
+		res.Responses[tk] = tv
+	}
+
+	return res
+}
+
+func decodeToolOperationTaskAnswersTransportToToolOperationTaskAnswers3(v *jsonToolOperationTaskAnswersTransport) *tooloperations.ToolOperationTaskAnswers {
+	res := &tooloperations.ToolOperationTaskAnswers{
+		TaskID: *v.TaskID,
+	}
+	res.Responses = make(map[string][]byte, len(v.Responses))
+	for key, val := range v.Responses {
+		tk := key
+		tv := val
+		res.Responses[tk] = tv
+	}
+
+	return res
+}
+
+func decodeToolOperationTaskAnswersTransportToToolOperationTaskAnswers4(v *jsonToolOperationTaskAnswersTransport) *tooloperations.ToolOperationTaskAnswers {
+	res := &tooloperations.ToolOperationTaskAnswers{
+		TaskID: *v.TaskID,
+	}
+	res.Responses = make(map[string][]byte, len(v.Responses))
+	for key, val := range v.Responses {
+		tk := key
+		tv := val
+		res.Responses[tk] = tv
+	}
+
+	return res
+}
+
 func decodeToolPagingTransportToToolPaging(v *jsonToolPagingTransport) *ToolPaging {
 	res := &ToolPaging{
 		ContinueTool:    v.ContinueTool,
@@ -16873,294 +16873,6 @@ func encodeConsumerContractToConsumerContractTransport6(v *ConsumerContract) *js
 	return res
 }
 
-func encodeExecutionContinuationToExecutionContinuationTransport(v *tooloperations.ExecutionContinuation) *jsonExecutionContinuationTransport {
-	res := &jsonExecutionContinuationTransport{}
-	var operationValue jsonOperationTransport
-	switch string(v.Operation.Kind()) {
-	case "input":
-		actual, _ := v.Operation.AsInput()
-		var obj *jsonInputContinuationTransport
-		if actual != nil {
-			obj = encodeInputContinuationToInputContinuationTransport(actual)
-		}
-		u := operationValue
-		u.SetInput((*jsonInputContinuationTransport)(obj))
-		operationValue = u
-	case "task_get":
-		actual, _ := v.Operation.AsTaskGet()
-		obj := jsonOperationBranchTaskGetTransport(actual)
-
-		u := operationValue
-		u.SetTaskGet((jsonOperationBranchTaskGetTransport)(obj))
-		operationValue = u
-	case "task_update":
-		actual, _ := v.Operation.AsTaskUpdate()
-		var obj *jsonTaskAnswersTransport
-		if actual != nil {
-			obj = encodeTaskAnswersToTaskAnswersTransport(actual)
-		}
-		u := operationValue
-		u.SetTaskUpdate((*jsonTaskAnswersTransport)(obj))
-		operationValue = u
-	case "task_cancel":
-		actual, _ := v.Operation.AsTaskCancel()
-		obj := jsonOperationBranchTaskCancelTransport(actual)
-
-		u := operationValue
-		u.SetTaskCancel((jsonOperationBranchTaskCancelTransport)(obj))
-		operationValue = u
-	}
-	res.Operation = &operationValue
-
-	return res
-}
-
-func encodeExecutionContinuationToExecutionContinuationTransport2(v *tooloperations.ExecutionContinuation) *jsonExecutionContinuationTransport {
-	res := &jsonExecutionContinuationTransport{}
-	var operationValue jsonOperationTransport
-	switch string(v.Operation.Kind()) {
-	case "input":
-		actual, _ := v.Operation.AsInput()
-		var obj *jsonInputContinuationTransport
-		if actual != nil {
-			obj = encodeInputContinuationToInputContinuationTransport2(actual)
-		}
-		u := operationValue
-		u.SetInput((*jsonInputContinuationTransport)(obj))
-		operationValue = u
-	case "task_get":
-		actual, _ := v.Operation.AsTaskGet()
-		obj := jsonOperationBranchTaskGetTransport(actual)
-
-		u := operationValue
-		u.SetTaskGet((jsonOperationBranchTaskGetTransport)(obj))
-		operationValue = u
-	case "task_update":
-		actual, _ := v.Operation.AsTaskUpdate()
-		var obj *jsonTaskAnswersTransport
-		if actual != nil {
-			obj = encodeTaskAnswersToTaskAnswersTransport2(actual)
-		}
-		u := operationValue
-		u.SetTaskUpdate((*jsonTaskAnswersTransport)(obj))
-		operationValue = u
-	case "task_cancel":
-		actual, _ := v.Operation.AsTaskCancel()
-		obj := jsonOperationBranchTaskCancelTransport(actual)
-
-		u := operationValue
-		u.SetTaskCancel((jsonOperationBranchTaskCancelTransport)(obj))
-		operationValue = u
-	}
-	res.Operation = &operationValue
-
-	return res
-}
-
-func encodeExecutionContinuationToExecutionContinuationTransport3(v *tooloperations.ExecutionContinuation) *jsonExecutionContinuationTransport {
-	res := &jsonExecutionContinuationTransport{}
-	var operationValue jsonOperationTransport
-	switch string(v.Operation.Kind()) {
-	case "input":
-		actual, _ := v.Operation.AsInput()
-		var obj *jsonInputContinuationTransport
-		if actual != nil {
-			obj = encodeInputContinuationToInputContinuationTransport3(actual)
-		}
-		u := operationValue
-		u.SetInput((*jsonInputContinuationTransport)(obj))
-		operationValue = u
-	case "task_get":
-		actual, _ := v.Operation.AsTaskGet()
-		obj := jsonOperationBranchTaskGetTransport(actual)
-
-		u := operationValue
-		u.SetTaskGet((jsonOperationBranchTaskGetTransport)(obj))
-		operationValue = u
-	case "task_update":
-		actual, _ := v.Operation.AsTaskUpdate()
-		var obj *jsonTaskAnswersTransport
-		if actual != nil {
-			obj = encodeTaskAnswersToTaskAnswersTransport3(actual)
-		}
-		u := operationValue
-		u.SetTaskUpdate((*jsonTaskAnswersTransport)(obj))
-		operationValue = u
-	case "task_cancel":
-		actual, _ := v.Operation.AsTaskCancel()
-		obj := jsonOperationBranchTaskCancelTransport(actual)
-
-		u := operationValue
-		u.SetTaskCancel((jsonOperationBranchTaskCancelTransport)(obj))
-		operationValue = u
-	}
-	res.Operation = &operationValue
-
-	return res
-}
-
-func encodeExecutionContinuationToExecutionContinuationTransport4(v *tooloperations.ExecutionContinuation) *jsonExecutionContinuationTransport {
-	res := &jsonExecutionContinuationTransport{}
-	var operationValue jsonOperationTransport
-	switch string(v.Operation.Kind()) {
-	case "input":
-		actual, _ := v.Operation.AsInput()
-		var obj *jsonInputContinuationTransport
-		if actual != nil {
-			obj = encodeInputContinuationToInputContinuationTransport4(actual)
-		}
-		u := operationValue
-		u.SetInput((*jsonInputContinuationTransport)(obj))
-		operationValue = u
-	case "task_get":
-		actual, _ := v.Operation.AsTaskGet()
-		obj := jsonOperationBranchTaskGetTransport(actual)
-
-		u := operationValue
-		u.SetTaskGet((jsonOperationBranchTaskGetTransport)(obj))
-		operationValue = u
-	case "task_update":
-		actual, _ := v.Operation.AsTaskUpdate()
-		var obj *jsonTaskAnswersTransport
-		if actual != nil {
-			obj = encodeTaskAnswersToTaskAnswersTransport4(actual)
-		}
-		u := operationValue
-		u.SetTaskUpdate((*jsonTaskAnswersTransport)(obj))
-		operationValue = u
-	case "task_cancel":
-		actual, _ := v.Operation.AsTaskCancel()
-		obj := jsonOperationBranchTaskCancelTransport(actual)
-
-		u := operationValue
-		u.SetTaskCancel((jsonOperationBranchTaskCancelTransport)(obj))
-		operationValue = u
-	}
-	res.Operation = &operationValue
-
-	return res
-}
-
-func encodeInputContinuationToInputContinuationTransport(v *tooloperations.InputContinuation) *jsonInputContinuationTransport {
-	res := &jsonInputContinuationTransport{
-		State: v.State,
-	}
-	if v.Responses != nil {
-		res.Responses = make(map[string][]byte, len(v.Responses))
-		for key, val := range v.Responses {
-			tk := key
-			tv := val
-			res.Responses[tk] = tv
-		}
-	}
-
-	return res
-}
-
-func encodeInputContinuationToInputContinuationTransport2(v *tooloperations.InputContinuation) *jsonInputContinuationTransport {
-	res := &jsonInputContinuationTransport{
-		State: v.State,
-	}
-	if v.Responses != nil {
-		res.Responses = make(map[string][]byte, len(v.Responses))
-		for key, val := range v.Responses {
-			tk := key
-			tv := val
-			res.Responses[tk] = tv
-		}
-	}
-
-	return res
-}
-
-func encodeInputContinuationToInputContinuationTransport3(v *tooloperations.InputContinuation) *jsonInputContinuationTransport {
-	res := &jsonInputContinuationTransport{
-		State: v.State,
-	}
-	if v.Responses != nil {
-		res.Responses = make(map[string][]byte, len(v.Responses))
-		for key, val := range v.Responses {
-			tk := key
-			tv := val
-			res.Responses[tk] = tv
-		}
-	}
-
-	return res
-}
-
-func encodeInputContinuationToInputContinuationTransport4(v *tooloperations.InputContinuation) *jsonInputContinuationTransport {
-	res := &jsonInputContinuationTransport{
-		State: v.State,
-	}
-	if v.Responses != nil {
-		res.Responses = make(map[string][]byte, len(v.Responses))
-		for key, val := range v.Responses {
-			tk := key
-			tv := val
-			res.Responses[tk] = tv
-		}
-	}
-
-	return res
-}
-
-func encodeTaskAnswersToTaskAnswersTransport(v *tooloperations.TaskAnswers) *jsonTaskAnswersTransport {
-	res := &jsonTaskAnswersTransport{
-		TaskID: &v.TaskID,
-	}
-	res.Responses = make(map[string][]byte, len(v.Responses))
-	for key, val := range v.Responses {
-		tk := key
-		tv := val
-		res.Responses[tk] = tv
-	}
-
-	return res
-}
-
-func encodeTaskAnswersToTaskAnswersTransport2(v *tooloperations.TaskAnswers) *jsonTaskAnswersTransport {
-	res := &jsonTaskAnswersTransport{
-		TaskID: &v.TaskID,
-	}
-	res.Responses = make(map[string][]byte, len(v.Responses))
-	for key, val := range v.Responses {
-		tk := key
-		tv := val
-		res.Responses[tk] = tv
-	}
-
-	return res
-}
-
-func encodeTaskAnswersToTaskAnswersTransport3(v *tooloperations.TaskAnswers) *jsonTaskAnswersTransport {
-	res := &jsonTaskAnswersTransport{
-		TaskID: &v.TaskID,
-	}
-	res.Responses = make(map[string][]byte, len(v.Responses))
-	for key, val := range v.Responses {
-		tk := key
-		tv := val
-		res.Responses[tk] = tv
-	}
-
-	return res
-}
-
-func encodeTaskAnswersToTaskAnswersTransport4(v *tooloperations.TaskAnswers) *jsonTaskAnswersTransport {
-	res := &jsonTaskAnswersTransport{
-		TaskID: &v.TaskID,
-	}
-	res.Responses = make(map[string][]byte, len(v.Responses))
-	for key, val := range v.Responses {
-		tk := key
-		tv := val
-		res.Responses[tk] = tv
-	}
-
-	return res
-}
-
 func encodeTextOnlyToolContractToTextOnlyToolContractTransport(v *TextOnlyToolContract) *jsonTextOnlyToolContractTransport {
 	res := &jsonTextOnlyToolContractTransport{
 		Description:     &v.Description,
@@ -17335,7 +17047,7 @@ func encodeToolCallMetaToToolCallMetaTransport(v *ToolCallMeta) *jsonToolCallMet
 		}
 	}
 	if v.ExecutionContinuation != nil {
-		res.ExecutionContinuation = encodeExecutionContinuationToExecutionContinuationTransport(v.ExecutionContinuation)
+		res.ExecutionContinuation = encodeToolOperationExecutionContinuationToToolOperationExecutionContinuationTransport(v.ExecutionContinuation)
 	}
 
 	return res
@@ -17361,7 +17073,7 @@ func encodeToolCallMetaToToolCallMetaTransport2(v *ToolCallMeta) *jsonToolCallMe
 		}
 	}
 	if v.ExecutionContinuation != nil {
-		res.ExecutionContinuation = encodeExecutionContinuationToExecutionContinuationTransport2(v.ExecutionContinuation)
+		res.ExecutionContinuation = encodeToolOperationExecutionContinuationToToolOperationExecutionContinuationTransport2(v.ExecutionContinuation)
 	}
 
 	return res
@@ -17387,7 +17099,7 @@ func encodeToolCallMetaToToolCallMetaTransport3(v *ToolCallMeta) *jsonToolCallMe
 		}
 	}
 	if v.ExecutionContinuation != nil {
-		res.ExecutionContinuation = encodeExecutionContinuationToExecutionContinuationTransport3(v.ExecutionContinuation)
+		res.ExecutionContinuation = encodeToolOperationExecutionContinuationToToolOperationExecutionContinuationTransport3(v.ExecutionContinuation)
 	}
 
 	return res
@@ -20630,6 +20342,294 @@ func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport9(v *ToolFieldPath
 		segmentValue = u
 	}
 	res.Segment = &segmentValue
+
+	return res
+}
+
+func encodeToolOperationExecutionContinuationToToolOperationExecutionContinuationTransport(v *tooloperations.ToolOperationExecutionContinuation) *jsonToolOperationExecutionContinuationTransport {
+	res := &jsonToolOperationExecutionContinuationTransport{}
+	var operationValue jsonOperationTransport
+	switch string(v.Operation.Kind()) {
+	case "input":
+		actual, _ := v.Operation.AsInput()
+		var obj *jsonToolOperationInputContinuationTransport
+		if actual != nil {
+			obj = encodeToolOperationInputContinuationToToolOperationInputContinuationTransport(actual)
+		}
+		u := operationValue
+		u.SetInput((*jsonToolOperationInputContinuationTransport)(obj))
+		operationValue = u
+	case "task_get":
+		actual, _ := v.Operation.AsTaskGet()
+		obj := jsonOperationBranchTaskGetTransport(actual)
+
+		u := operationValue
+		u.SetTaskGet((jsonOperationBranchTaskGetTransport)(obj))
+		operationValue = u
+	case "task_update":
+		actual, _ := v.Operation.AsTaskUpdate()
+		var obj *jsonToolOperationTaskAnswersTransport
+		if actual != nil {
+			obj = encodeToolOperationTaskAnswersToToolOperationTaskAnswersTransport(actual)
+		}
+		u := operationValue
+		u.SetTaskUpdate((*jsonToolOperationTaskAnswersTransport)(obj))
+		operationValue = u
+	case "task_cancel":
+		actual, _ := v.Operation.AsTaskCancel()
+		obj := jsonOperationBranchTaskCancelTransport(actual)
+
+		u := operationValue
+		u.SetTaskCancel((jsonOperationBranchTaskCancelTransport)(obj))
+		operationValue = u
+	}
+	res.Operation = &operationValue
+
+	return res
+}
+
+func encodeToolOperationExecutionContinuationToToolOperationExecutionContinuationTransport2(v *tooloperations.ToolOperationExecutionContinuation) *jsonToolOperationExecutionContinuationTransport {
+	res := &jsonToolOperationExecutionContinuationTransport{}
+	var operationValue jsonOperationTransport
+	switch string(v.Operation.Kind()) {
+	case "input":
+		actual, _ := v.Operation.AsInput()
+		var obj *jsonToolOperationInputContinuationTransport
+		if actual != nil {
+			obj = encodeToolOperationInputContinuationToToolOperationInputContinuationTransport2(actual)
+		}
+		u := operationValue
+		u.SetInput((*jsonToolOperationInputContinuationTransport)(obj))
+		operationValue = u
+	case "task_get":
+		actual, _ := v.Operation.AsTaskGet()
+		obj := jsonOperationBranchTaskGetTransport(actual)
+
+		u := operationValue
+		u.SetTaskGet((jsonOperationBranchTaskGetTransport)(obj))
+		operationValue = u
+	case "task_update":
+		actual, _ := v.Operation.AsTaskUpdate()
+		var obj *jsonToolOperationTaskAnswersTransport
+		if actual != nil {
+			obj = encodeToolOperationTaskAnswersToToolOperationTaskAnswersTransport2(actual)
+		}
+		u := operationValue
+		u.SetTaskUpdate((*jsonToolOperationTaskAnswersTransport)(obj))
+		operationValue = u
+	case "task_cancel":
+		actual, _ := v.Operation.AsTaskCancel()
+		obj := jsonOperationBranchTaskCancelTransport(actual)
+
+		u := operationValue
+		u.SetTaskCancel((jsonOperationBranchTaskCancelTransport)(obj))
+		operationValue = u
+	}
+	res.Operation = &operationValue
+
+	return res
+}
+
+func encodeToolOperationExecutionContinuationToToolOperationExecutionContinuationTransport3(v *tooloperations.ToolOperationExecutionContinuation) *jsonToolOperationExecutionContinuationTransport {
+	res := &jsonToolOperationExecutionContinuationTransport{}
+	var operationValue jsonOperationTransport
+	switch string(v.Operation.Kind()) {
+	case "input":
+		actual, _ := v.Operation.AsInput()
+		var obj *jsonToolOperationInputContinuationTransport
+		if actual != nil {
+			obj = encodeToolOperationInputContinuationToToolOperationInputContinuationTransport3(actual)
+		}
+		u := operationValue
+		u.SetInput((*jsonToolOperationInputContinuationTransport)(obj))
+		operationValue = u
+	case "task_get":
+		actual, _ := v.Operation.AsTaskGet()
+		obj := jsonOperationBranchTaskGetTransport(actual)
+
+		u := operationValue
+		u.SetTaskGet((jsonOperationBranchTaskGetTransport)(obj))
+		operationValue = u
+	case "task_update":
+		actual, _ := v.Operation.AsTaskUpdate()
+		var obj *jsonToolOperationTaskAnswersTransport
+		if actual != nil {
+			obj = encodeToolOperationTaskAnswersToToolOperationTaskAnswersTransport3(actual)
+		}
+		u := operationValue
+		u.SetTaskUpdate((*jsonToolOperationTaskAnswersTransport)(obj))
+		operationValue = u
+	case "task_cancel":
+		actual, _ := v.Operation.AsTaskCancel()
+		obj := jsonOperationBranchTaskCancelTransport(actual)
+
+		u := operationValue
+		u.SetTaskCancel((jsonOperationBranchTaskCancelTransport)(obj))
+		operationValue = u
+	}
+	res.Operation = &operationValue
+
+	return res
+}
+
+func encodeToolOperationExecutionContinuationToToolOperationExecutionContinuationTransport4(v *tooloperations.ToolOperationExecutionContinuation) *jsonToolOperationExecutionContinuationTransport {
+	res := &jsonToolOperationExecutionContinuationTransport{}
+	var operationValue jsonOperationTransport
+	switch string(v.Operation.Kind()) {
+	case "input":
+		actual, _ := v.Operation.AsInput()
+		var obj *jsonToolOperationInputContinuationTransport
+		if actual != nil {
+			obj = encodeToolOperationInputContinuationToToolOperationInputContinuationTransport4(actual)
+		}
+		u := operationValue
+		u.SetInput((*jsonToolOperationInputContinuationTransport)(obj))
+		operationValue = u
+	case "task_get":
+		actual, _ := v.Operation.AsTaskGet()
+		obj := jsonOperationBranchTaskGetTransport(actual)
+
+		u := operationValue
+		u.SetTaskGet((jsonOperationBranchTaskGetTransport)(obj))
+		operationValue = u
+	case "task_update":
+		actual, _ := v.Operation.AsTaskUpdate()
+		var obj *jsonToolOperationTaskAnswersTransport
+		if actual != nil {
+			obj = encodeToolOperationTaskAnswersToToolOperationTaskAnswersTransport4(actual)
+		}
+		u := operationValue
+		u.SetTaskUpdate((*jsonToolOperationTaskAnswersTransport)(obj))
+		operationValue = u
+	case "task_cancel":
+		actual, _ := v.Operation.AsTaskCancel()
+		obj := jsonOperationBranchTaskCancelTransport(actual)
+
+		u := operationValue
+		u.SetTaskCancel((jsonOperationBranchTaskCancelTransport)(obj))
+		operationValue = u
+	}
+	res.Operation = &operationValue
+
+	return res
+}
+
+func encodeToolOperationInputContinuationToToolOperationInputContinuationTransport(v *tooloperations.ToolOperationInputContinuation) *jsonToolOperationInputContinuationTransport {
+	res := &jsonToolOperationInputContinuationTransport{
+		State: v.State,
+	}
+	if v.Responses != nil {
+		res.Responses = make(map[string][]byte, len(v.Responses))
+		for key, val := range v.Responses {
+			tk := key
+			tv := val
+			res.Responses[tk] = tv
+		}
+	}
+
+	return res
+}
+
+func encodeToolOperationInputContinuationToToolOperationInputContinuationTransport2(v *tooloperations.ToolOperationInputContinuation) *jsonToolOperationInputContinuationTransport {
+	res := &jsonToolOperationInputContinuationTransport{
+		State: v.State,
+	}
+	if v.Responses != nil {
+		res.Responses = make(map[string][]byte, len(v.Responses))
+		for key, val := range v.Responses {
+			tk := key
+			tv := val
+			res.Responses[tk] = tv
+		}
+	}
+
+	return res
+}
+
+func encodeToolOperationInputContinuationToToolOperationInputContinuationTransport3(v *tooloperations.ToolOperationInputContinuation) *jsonToolOperationInputContinuationTransport {
+	res := &jsonToolOperationInputContinuationTransport{
+		State: v.State,
+	}
+	if v.Responses != nil {
+		res.Responses = make(map[string][]byte, len(v.Responses))
+		for key, val := range v.Responses {
+			tk := key
+			tv := val
+			res.Responses[tk] = tv
+		}
+	}
+
+	return res
+}
+
+func encodeToolOperationInputContinuationToToolOperationInputContinuationTransport4(v *tooloperations.ToolOperationInputContinuation) *jsonToolOperationInputContinuationTransport {
+	res := &jsonToolOperationInputContinuationTransport{
+		State: v.State,
+	}
+	if v.Responses != nil {
+		res.Responses = make(map[string][]byte, len(v.Responses))
+		for key, val := range v.Responses {
+			tk := key
+			tv := val
+			res.Responses[tk] = tv
+		}
+	}
+
+	return res
+}
+
+func encodeToolOperationTaskAnswersToToolOperationTaskAnswersTransport(v *tooloperations.ToolOperationTaskAnswers) *jsonToolOperationTaskAnswersTransport {
+	res := &jsonToolOperationTaskAnswersTransport{
+		TaskID: &v.TaskID,
+	}
+	res.Responses = make(map[string][]byte, len(v.Responses))
+	for key, val := range v.Responses {
+		tk := key
+		tv := val
+		res.Responses[tk] = tv
+	}
+
+	return res
+}
+
+func encodeToolOperationTaskAnswersToToolOperationTaskAnswersTransport2(v *tooloperations.ToolOperationTaskAnswers) *jsonToolOperationTaskAnswersTransport {
+	res := &jsonToolOperationTaskAnswersTransport{
+		TaskID: &v.TaskID,
+	}
+	res.Responses = make(map[string][]byte, len(v.Responses))
+	for key, val := range v.Responses {
+		tk := key
+		tv := val
+		res.Responses[tk] = tv
+	}
+
+	return res
+}
+
+func encodeToolOperationTaskAnswersToToolOperationTaskAnswersTransport3(v *tooloperations.ToolOperationTaskAnswers) *jsonToolOperationTaskAnswersTransport {
+	res := &jsonToolOperationTaskAnswersTransport{
+		TaskID: &v.TaskID,
+	}
+	res.Responses = make(map[string][]byte, len(v.Responses))
+	for key, val := range v.Responses {
+		tk := key
+		tv := val
+		res.Responses[tk] = tv
+	}
+
+	return res
+}
+
+func encodeToolOperationTaskAnswersToToolOperationTaskAnswersTransport4(v *tooloperations.ToolOperationTaskAnswers) *jsonToolOperationTaskAnswersTransport {
+	res := &jsonToolOperationTaskAnswersTransport{
+		TaskID: &v.TaskID,
+	}
+	res.Responses = make(map[string][]byte, len(v.Responses))
+	for key, val := range v.Responses {
+		tk := key
+		tv := val
+		res.Responses[tk] = tv
+	}
 
 	return res
 }
@@ -46254,15 +46254,15 @@ func checkCallResolvedToolPayloadToolCallMetaValue(in *ToolCallMeta, field strin
 				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(generatedJSONChildPath(field, "labels", false), string(key1), true))
 			}
 		}
-		if err := checkCallResolvedToolPayloadExecutionContinuationValue(in.ExecutionContinuation, generatedJSONChildPath(field, "execution_continuation", false), active); err != nil {
+		if err := checkCallResolvedToolPayloadToolOperationExecutionContinuationValue(in.ExecutionContinuation, generatedJSONChildPath(field, "execution_continuation", false), active); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// checkCallResolvedToolPayloadExecutionContinuationValue checks one generated value on the active path.
-func checkCallResolvedToolPayloadExecutionContinuationValue(in *tooloperations.ExecutionContinuation, field string, active map[any]bool) error {
+// checkCallResolvedToolPayloadToolOperationExecutionContinuationValue checks one generated value on the active path.
+func checkCallResolvedToolPayloadToolOperationExecutionContinuationValue(in *tooloperations.ToolOperationExecutionContinuation, field string, active map[any]bool) error {
 	if in == nil {
 		return nil
 	}
@@ -46274,7 +46274,7 @@ func checkCallResolvedToolPayloadExecutionContinuationValue(in *tooloperations.E
 	if in != nil {
 		if branch1, ok := in.Operation.AsInput(); ok {
 			_ = branch1
-			if err := checkCallResolvedToolPayloadInputContinuationValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "operation", false), "value", false), active); err != nil {
+			if err := checkCallResolvedToolPayloadToolOperationInputContinuationValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "operation", false), "value", false), active); err != nil {
 				return err
 			}
 		}
@@ -46286,7 +46286,7 @@ func checkCallResolvedToolPayloadExecutionContinuationValue(in *tooloperations.E
 		}
 		if branch1, ok := in.Operation.AsTaskUpdate(); ok {
 			_ = branch1
-			if err := checkCallResolvedToolPayloadTaskAnswersValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "operation", false), "value", false), active); err != nil {
+			if err := checkCallResolvedToolPayloadToolOperationTaskAnswersValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "operation", false), "value", false), active); err != nil {
 				return err
 			}
 		}
@@ -46300,8 +46300,8 @@ func checkCallResolvedToolPayloadExecutionContinuationValue(in *tooloperations.E
 	return nil
 }
 
-// checkCallResolvedToolPayloadInputContinuationValue checks one generated value on the active path.
-func checkCallResolvedToolPayloadInputContinuationValue(in *tooloperations.InputContinuation, field string, active map[any]bool) error {
+// checkCallResolvedToolPayloadToolOperationInputContinuationValue checks one generated value on the active path.
+func checkCallResolvedToolPayloadToolOperationInputContinuationValue(in *tooloperations.ToolOperationInputContinuation, field string, active map[any]bool) error {
 	if in == nil {
 		return nil
 	}
@@ -46334,8 +46334,8 @@ func checkCallResolvedToolPayloadoperationTaskGetValue(in tooloperations.Operati
 	return nil
 }
 
-// checkCallResolvedToolPayloadTaskAnswersValue checks one generated value on the active path.
-func checkCallResolvedToolPayloadTaskAnswersValue(in *tooloperations.TaskAnswers, field string, active map[any]bool) error {
+// checkCallResolvedToolPayloadToolOperationTaskAnswersValue checks one generated value on the active path.
+func checkCallResolvedToolPayloadToolOperationTaskAnswersValue(in *tooloperations.ToolOperationTaskAnswers, field string, active map[any]bool) error {
 	if in == nil {
 		return nil
 	}
@@ -46441,15 +46441,15 @@ func checkCallToolPayloadToolCallMetaValue(in *ToolCallMeta, field string, activ
 				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(generatedJSONChildPath(field, "labels", false), string(key1), true))
 			}
 		}
-		if err := checkCallToolPayloadExecutionContinuationValue(in.ExecutionContinuation, generatedJSONChildPath(field, "execution_continuation", false), active); err != nil {
+		if err := checkCallToolPayloadToolOperationExecutionContinuationValue(in.ExecutionContinuation, generatedJSONChildPath(field, "execution_continuation", false), active); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// checkCallToolPayloadExecutionContinuationValue checks one generated value on the active path.
-func checkCallToolPayloadExecutionContinuationValue(in *tooloperations.ExecutionContinuation, field string, active map[any]bool) error {
+// checkCallToolPayloadToolOperationExecutionContinuationValue checks one generated value on the active path.
+func checkCallToolPayloadToolOperationExecutionContinuationValue(in *tooloperations.ToolOperationExecutionContinuation, field string, active map[any]bool) error {
 	if in == nil {
 		return nil
 	}
@@ -46461,7 +46461,7 @@ func checkCallToolPayloadExecutionContinuationValue(in *tooloperations.Execution
 	if in != nil {
 		if branch1, ok := in.Operation.AsInput(); ok {
 			_ = branch1
-			if err := checkCallToolPayloadInputContinuationValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "operation", false), "value", false), active); err != nil {
+			if err := checkCallToolPayloadToolOperationInputContinuationValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "operation", false), "value", false), active); err != nil {
 				return err
 			}
 		}
@@ -46473,7 +46473,7 @@ func checkCallToolPayloadExecutionContinuationValue(in *tooloperations.Execution
 		}
 		if branch1, ok := in.Operation.AsTaskUpdate(); ok {
 			_ = branch1
-			if err := checkCallToolPayloadTaskAnswersValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "operation", false), "value", false), active); err != nil {
+			if err := checkCallToolPayloadToolOperationTaskAnswersValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "operation", false), "value", false), active); err != nil {
 				return err
 			}
 		}
@@ -46487,8 +46487,8 @@ func checkCallToolPayloadExecutionContinuationValue(in *tooloperations.Execution
 	return nil
 }
 
-// checkCallToolPayloadInputContinuationValue checks one generated value on the active path.
-func checkCallToolPayloadInputContinuationValue(in *tooloperations.InputContinuation, field string, active map[any]bool) error {
+// checkCallToolPayloadToolOperationInputContinuationValue checks one generated value on the active path.
+func checkCallToolPayloadToolOperationInputContinuationValue(in *tooloperations.ToolOperationInputContinuation, field string, active map[any]bool) error {
 	if in == nil {
 		return nil
 	}
@@ -46521,8 +46521,8 @@ func checkCallToolPayloadoperationTaskGetValue(in tooloperations.OperationBranch
 	return nil
 }
 
-// checkCallToolPayloadTaskAnswersValue checks one generated value on the active path.
-func checkCallToolPayloadTaskAnswersValue(in *tooloperations.TaskAnswers, field string, active map[any]bool) error {
+// checkCallToolPayloadToolOperationTaskAnswersValue checks one generated value on the active path.
+func checkCallToolPayloadToolOperationTaskAnswersValue(in *tooloperations.ToolOperationTaskAnswers, field string, active map[any]bool) error {
 	if in == nil {
 		return nil
 	}
@@ -48750,15 +48750,15 @@ func checkRetryToolPayloadToolCallMetaValue(in *ToolCallMeta, field string, acti
 				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(generatedJSONChildPath(field, "labels", false), string(key1), true))
 			}
 		}
-		if err := checkRetryToolPayloadExecutionContinuationValue(in.ExecutionContinuation, generatedJSONChildPath(field, "execution_continuation", false), active); err != nil {
+		if err := checkRetryToolPayloadToolOperationExecutionContinuationValue(in.ExecutionContinuation, generatedJSONChildPath(field, "execution_continuation", false), active); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// checkRetryToolPayloadExecutionContinuationValue checks one generated value on the active path.
-func checkRetryToolPayloadExecutionContinuationValue(in *tooloperations.ExecutionContinuation, field string, active map[any]bool) error {
+// checkRetryToolPayloadToolOperationExecutionContinuationValue checks one generated value on the active path.
+func checkRetryToolPayloadToolOperationExecutionContinuationValue(in *tooloperations.ToolOperationExecutionContinuation, field string, active map[any]bool) error {
 	if in == nil {
 		return nil
 	}
@@ -48770,7 +48770,7 @@ func checkRetryToolPayloadExecutionContinuationValue(in *tooloperations.Executio
 	if in != nil {
 		if branch1, ok := in.Operation.AsInput(); ok {
 			_ = branch1
-			if err := checkRetryToolPayloadInputContinuationValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "operation", false), "value", false), active); err != nil {
+			if err := checkRetryToolPayloadToolOperationInputContinuationValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "operation", false), "value", false), active); err != nil {
 				return err
 			}
 		}
@@ -48782,7 +48782,7 @@ func checkRetryToolPayloadExecutionContinuationValue(in *tooloperations.Executio
 		}
 		if branch1, ok := in.Operation.AsTaskUpdate(); ok {
 			_ = branch1
-			if err := checkRetryToolPayloadTaskAnswersValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "operation", false), "value", false), active); err != nil {
+			if err := checkRetryToolPayloadToolOperationTaskAnswersValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "operation", false), "value", false), active); err != nil {
 				return err
 			}
 		}
@@ -48796,8 +48796,8 @@ func checkRetryToolPayloadExecutionContinuationValue(in *tooloperations.Executio
 	return nil
 }
 
-// checkRetryToolPayloadInputContinuationValue checks one generated value on the active path.
-func checkRetryToolPayloadInputContinuationValue(in *tooloperations.InputContinuation, field string, active map[any]bool) error {
+// checkRetryToolPayloadToolOperationInputContinuationValue checks one generated value on the active path.
+func checkRetryToolPayloadToolOperationInputContinuationValue(in *tooloperations.ToolOperationInputContinuation, field string, active map[any]bool) error {
 	if in == nil {
 		return nil
 	}
@@ -48830,8 +48830,8 @@ func checkRetryToolPayloadoperationTaskGetValue(in tooloperations.OperationBranc
 	return nil
 }
 
-// checkRetryToolPayloadTaskAnswersValue checks one generated value on the active path.
-func checkRetryToolPayloadTaskAnswersValue(in *tooloperations.TaskAnswers, field string, active map[any]bool) error {
+// checkRetryToolPayloadToolOperationTaskAnswersValue checks one generated value on the active path.
+func checkRetryToolPayloadToolOperationTaskAnswersValue(in *tooloperations.ToolOperationTaskAnswers, field string, active map[any]bool) error {
 	if in == nil {
 		return nil
 	}
@@ -49803,15 +49803,15 @@ func checkToolCallMetaToolCallMetaValue(in *ToolCallMeta, field string, active m
 				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(generatedJSONChildPath(field, "labels", false), string(key1), true))
 			}
 		}
-		if err := checkToolCallMetaExecutionContinuationValue(in.ExecutionContinuation, generatedJSONChildPath(field, "execution_continuation", false), active); err != nil {
+		if err := checkToolCallMetaToolOperationExecutionContinuationValue(in.ExecutionContinuation, generatedJSONChildPath(field, "execution_continuation", false), active); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-// checkToolCallMetaExecutionContinuationValue checks one generated value on the active path.
-func checkToolCallMetaExecutionContinuationValue(in *tooloperations.ExecutionContinuation, field string, active map[any]bool) error {
+// checkToolCallMetaToolOperationExecutionContinuationValue checks one generated value on the active path.
+func checkToolCallMetaToolOperationExecutionContinuationValue(in *tooloperations.ToolOperationExecutionContinuation, field string, active map[any]bool) error {
 	if in == nil {
 		return nil
 	}
@@ -49823,7 +49823,7 @@ func checkToolCallMetaExecutionContinuationValue(in *tooloperations.ExecutionCon
 	if in != nil {
 		if branch1, ok := in.Operation.AsInput(); ok {
 			_ = branch1
-			if err := checkToolCallMetaInputContinuationValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "operation", false), "value", false), active); err != nil {
+			if err := checkToolCallMetaToolOperationInputContinuationValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "operation", false), "value", false), active); err != nil {
 				return err
 			}
 		}
@@ -49835,7 +49835,7 @@ func checkToolCallMetaExecutionContinuationValue(in *tooloperations.ExecutionCon
 		}
 		if branch1, ok := in.Operation.AsTaskUpdate(); ok {
 			_ = branch1
-			if err := checkToolCallMetaTaskAnswersValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "operation", false), "value", false), active); err != nil {
+			if err := checkToolCallMetaToolOperationTaskAnswersValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "operation", false), "value", false), active); err != nil {
 				return err
 			}
 		}
@@ -49849,8 +49849,8 @@ func checkToolCallMetaExecutionContinuationValue(in *tooloperations.ExecutionCon
 	return nil
 }
 
-// checkToolCallMetaInputContinuationValue checks one generated value on the active path.
-func checkToolCallMetaInputContinuationValue(in *tooloperations.InputContinuation, field string, active map[any]bool) error {
+// checkToolCallMetaToolOperationInputContinuationValue checks one generated value on the active path.
+func checkToolCallMetaToolOperationInputContinuationValue(in *tooloperations.ToolOperationInputContinuation, field string, active map[any]bool) error {
 	if in == nil {
 		return nil
 	}
@@ -49883,8 +49883,8 @@ func checkToolCallMetaoperationTaskGetValue(in tooloperations.OperationBranchTas
 	return nil
 }
 
-// checkToolCallMetaTaskAnswersValue checks one generated value on the active path.
-func checkToolCallMetaTaskAnswersValue(in *tooloperations.TaskAnswers, field string, active map[any]bool) error {
+// checkToolCallMetaToolOperationTaskAnswersValue checks one generated value on the active path.
+func checkToolCallMetaToolOperationTaskAnswersValue(in *tooloperations.ToolOperationTaskAnswers, field string, active map[any]bool) error {
 	if in == nil {
 		return nil
 	}

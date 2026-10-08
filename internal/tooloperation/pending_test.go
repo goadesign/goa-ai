@@ -151,18 +151,18 @@ func TestPendingInputGeneratedPresence(t *testing.T) {
 	state := ""
 	for _, test := range []struct {
 		name  string
-		input *gentooloperations.PendingInput
+		input *gentooloperations.ToolOperationPendingInput
 		want  string
 	}{
-		{"state without questions", &gentooloperations.PendingInput{State: &state}, `{"outcome":{"type":"input","value":{"state":""}}}`},
-		{"empty questions", &gentooloperations.PendingInput{Requests: map[string]*gentooloperations.HostRequest{}}, `{"outcome":{"type":"input","value":{"requests":{}}}}`},
+		{"state without questions", &gentooloperations.ToolOperationPendingInput{State: &state}, `{"outcome":{"type":"input","value":{"state":""}}}`},
+		{"empty questions", &gentooloperations.ToolOperationPendingInput{Requests: map[string]*gentooloperations.ToolOperationHostRequest{}}, `{"outcome":{"type":"input","value":{"requests":{}}}}`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			value := &gentooloperations.PendingExecution{Outcome: gentooloperations.NewOutcomeInput(test.input)}
-			encoded, err := gentooloperations.EncodePendingExecution(value)
+			value := &gentooloperations.ToolOperationPendingExecution{Outcome: gentooloperations.NewOutcomeInput(test.input)}
+			encoded, err := gentooloperations.EncodeToolOperationPendingExecution(value)
 			require.NoError(t, err)
 			assert.JSONEq(t, test.want, string(encoded))
-			decoded, err := gentooloperations.DecodePendingExecution(encoded)
+			decoded, err := gentooloperations.DecodeToolOperationPendingExecution(encoded)
 			require.NoError(t, err)
 			input, ok := decoded.Outcome.AsInput()
 			require.True(t, ok)

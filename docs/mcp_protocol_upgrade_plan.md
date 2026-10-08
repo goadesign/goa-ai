@@ -3622,3 +3622,21 @@ checks passed in 26.650 s and 0.911 s; storage continuation checks passed in
 passed in 0.757 s and 0.867 s. Scoped lint found no issues before the final
 continuation test assertion update. No full root suite was run. These checks
 verify integration, not completion of the remaining release gates.
+
+### Shared registry schema composition — 2026-10-07
+
+Importing the shared registry schema registered eight generic unfinished-tool
+type names in Goa's global design. A consuming application's `TaskInput` type
+therefore failed before generation. These framework-owned types now use the
+`ToolOperation` prefix through the existing Goa `Type` declarations. No separate
+naming or conversion path was added. Generated Go and protobuf type names change;
+field numbers, field names, union branches and saved operation JSON do not.
+Consuming APIs must regenerate together with the breaking framework upgrade.
+
+The composition test accepts application declarations using all eight original
+generic names. Shared operation and workflow codec checks pass in 0.369 s and
+0.434 s. The registry executor's unfinished-input check passes in 0.626 s, and
+the native generated direct and registry-provider fixture passes in 3.471 s
+(7.93 s for that command including compilation). Caller regeneration and the
+remaining capability gates are still required. Scoped lint found zero issues in
+2.17 s; no full suite was repeated.

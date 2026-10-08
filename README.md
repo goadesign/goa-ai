@@ -270,6 +270,11 @@ explains how to keep those responsibilities clear.
 | [Policies and context](docs/runtime.md#policy-enforcement) | Enforce tool restrictions, call/recovery budgets, and timing. Opt into [durable provider recovery](docs/runtime.md#streaming-planners) before model output, with a separate finite allowance. Disabled or exhausted recovery preserves the typed provider failure. Configure [history compression](docs/runtime.md#history-policies) with instructions to retain critical identifiers verbatim, [prompt caching](docs/runtime.md#prompt-caching), and [prompt overrides](docs/runtime.md#prompt-registry-and-overrides). |
 | [Streaming and observability](docs/runtime.md#hooks-and-streaming) | Receive assistant text, tool progress, usage, and child-run events in a trusted application host, with [OpenTelemetry tracing](docs/runtime.md#telemetry). Your host selects what to expose to users. |
 
+Applications can [reuse the registry schemas](docs/tool_search.md#publish-complete-provider-contracts)
+in their own Goa APIs. Shared unfinished-tool types use `ToolOperation` names
+so ordinary application type names remain available. Regenerate consuming APIs
+when upgrading these generated types.
+
 ## Production
 
 Use the in-memory engine for local development. For durable execution across

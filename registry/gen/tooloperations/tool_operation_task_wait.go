@@ -10,7 +10,7 @@ package tooloperations
 // An existing Task to observe after the accepted creation, a working
 // observation or an acknowledged update. The saved operation identifies which
 // event occurred.
-type TaskWait struct {
+type ToolOperationTaskWait struct {
 	// Exact server-owned Task identifier, including an empty string.
 	TaskID string
 	// Optional server guidance for the next observation in integer milliseconds;

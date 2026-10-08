@@ -192,7 +192,12 @@ Goa generates your API's transport validation from the same schemas used by
 the registry. Registration and execution still use the registry's generated
 client and runtime contracts. If your design imported these declarations from
 `registry/design`, update that import to `registry/design/types`. Generated
-registry client types keep their existing package and names.
+registry client types keep their existing package and names. Shared unfinished-tool
+operation types use the `ToolOperation` prefix, such as
+`ToolOperationExecutionContinuation`, so applications can declare domain types
+such as `TaskInput` in the same Goa design. Regenerate consuming APIs when
+upgrading: the generated Go and protobuf type names change; field numbers,
+field names, union branch names, and saved operation JSON remain unchanged.
 
 ## Register Agent tools
 

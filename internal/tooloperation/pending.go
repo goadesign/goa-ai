@@ -28,7 +28,7 @@ func NewPendingInput(input *mcp.InputRequired) (*Pending, error) {
 	if input == nil {
 		return nil, errors.New("pending input is required")
 	}
-	return newPending(gentooloperations.NewOutcomeInput(&gentooloperations.PendingInput{
+	return newPending(gentooloperations.NewOutcomeInput(&gentooloperations.ToolOperationPendingInput{
 		State: cloneState(input.RequestState), Requests: storeRequests(input.Requests),
 	}))
 }
@@ -36,7 +36,7 @@ func NewPendingInput(input *mcp.InputRequired) (*Pending, error) {
 // NewPendingTaskWait saves the exact Task to read next. Polling guidance belongs
 // to this next observation and imposes no retention or complete-run time limit.
 func NewPendingTaskWait(taskID string, pollIntervalMs *int64) (*Pending, error) {
-	return newPending(gentooloperations.NewOutcomeTaskWait(&gentooloperations.TaskWait{
+	return newPending(gentooloperations.NewOutcomeTaskWait(&gentooloperations.ToolOperationTaskWait{
 		TaskID: taskID, PollIntervalMs: clonePollInterval(pollIntervalMs),
 	}))
 }
@@ -47,7 +47,7 @@ func NewPendingTaskInput(taskID string, pollIntervalMs *int64, input *mcp.InputR
 	if input == nil || input.RequestState != nil {
 		return nil, errors.New("task input requires questions without request state")
 	}
-	return newPending(gentooloperations.NewOutcomeTaskInput(&gentooloperations.TaskInput{
+	return newPending(gentooloperations.NewOutcomeTaskInput(&gentooloperations.ToolOperationTaskInput{
 		TaskID: taskID, PollIntervalMs: clonePollInterval(pollIntervalMs), Requests: storeRequests(input.Requests),
 	}))
 }
@@ -101,7 +101,7 @@ func (p Pending) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON validates the generated shape and opaque interaction parameters
 // before replacing the receiver. A failed decode leaves its old value unchanged.
 func (p *Pending) UnmarshalJSON(data []byte) error {
-	value, err := gentooloperations.DecodePendingExecution(data)
+	value, err := gentooloperations.DecodeToolOperationPendingExecution(data)
 	if err != nil {
 		return err
 	}
@@ -116,7 +116,7 @@ func (p *Pending) UnmarshalJSON(data []byte) error {
 // newPending encodes the selected native branch and checks host interactions.
 // The retained bytes let workflow guards measure this value without encoding it.
 func newPending(value gentooloperations.Outcome) (*Pending, error) {
-	encoded, err := gentooloperations.EncodePendingExecution(&gentooloperations.PendingExecution{Outcome: value})
+	encoded, err := gentooloperations.EncodeToolOperationPendingExecution(&gentooloperations.ToolOperationPendingExecution{Outcome: value})
 	if err != nil {
 		return nil, err
 	}
@@ -138,19 +138,19 @@ func newPending(value gentooloperations.Outcome) (*Pending, error) {
 
 // storeRequests copies exact request identifiers and parameter bytes into the
 // generated saved value. An absent object remains absent; an empty one is kept.
-func storeRequests(requests map[string]mcp.InputRequest) map[string]*gentooloperations.HostRequest {
+func storeRequests(requests map[string]mcp.InputRequest) map[string]*gentooloperations.ToolOperationHostRequest {
 	if requests == nil {
 		return nil
 	}
-	stored := make(map[string]*gentooloperations.HostRequest, len(requests))
+	stored := make(map[string]*gentooloperations.ToolOperationHostRequest, len(requests))
 	for id, request := range requests {
-		stored[id] = &gentooloperations.HostRequest{Method: request.Method, Params: bytes.Clone(request.Params)}
+		stored[id] = &gentooloperations.ToolOperationHostRequest{Method: request.Method, Params: bytes.Clone(request.Params)}
 	}
 	return stored
 }
 
 // loadRequests returns independently mutable requests for host presentation.
-func loadRequests(requests map[string]*gentooloperations.HostRequest) map[string]mcp.InputRequest {
+func loadRequests(requests map[string]*gentooloperations.ToolOperationHostRequest) map[string]mcp.InputRequest {
 	if requests == nil {
 		return nil
 	}

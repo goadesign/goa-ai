@@ -9,7 +9,7 @@ package tooloperations
 
 // Accepted host answers for one existing Task. An empty answer object is valid
 // and does not select a different operation.
-type TaskAnswers struct {
+type ToolOperationTaskAnswers struct {
 	// Exact server-owned Task identifier, including an empty string.
 	TaskID string
 	// Host answer JSON bytes for outstanding Task input requests.

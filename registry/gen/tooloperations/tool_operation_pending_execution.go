@@ -10,6 +10,6 @@ package tooloperations
 // Exactly one unfinished execution branch. Ordinary input continues the tool
 // call; Task waiting reads an existing Task; Task input submits host answers
 // to that Task.
-type PendingExecution struct {
+type ToolOperationPendingExecution struct {
 	Outcome Outcome
 }

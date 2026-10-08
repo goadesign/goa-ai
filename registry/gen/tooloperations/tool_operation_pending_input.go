@@ -9,10 +9,10 @@ package tooloperations
 
 // Host questions and optional service state for one ordinary unfinished tool
 // call.
-type PendingInput struct {
+type ToolOperationPendingInput struct {
 	// Exact optional service state, including an explicitly empty string.
 	State *string
 	// Host questions keyed by exact server identifiers. An explicit empty object
 	// is valid.
-	Requests map[string]*HostRequest `json:"requests,omitzero"`
+	Requests map[string]*ToolOperationHostRequest `json:"requests,omitzero"`
 }

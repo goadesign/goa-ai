@@ -9,7 +9,7 @@ package tooloperations
 
 // Exact service state and accepted host answers for continuing the original
 // tool invocation.
-type InputContinuation struct {
+type ToolOperationInputContinuation struct {
 	// Opaque state returned by the service, including an explicitly empty string.
 	State *string
 	// Host answer JSON bytes keyed by the exact server request identifiers.

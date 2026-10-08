@@ -29,7 +29,7 @@ type (
 // tool's next input round. The supplied continuation must be non-nil.
 func NewInput(input *mcp.CallContinuation) (*Continuation, error) {
 	state := cloneState(input.RequestState)
-	return newContinuation(gentooloperations.NewOperationInput(&gentooloperations.InputContinuation{
+	return newContinuation(gentooloperations.NewOperationInput(&gentooloperations.ToolOperationInputContinuation{
 		State:     state,
 		Responses: copyAnswers(input.InputResponses),
 	}))
@@ -43,7 +43,7 @@ func NewTaskGet(taskID string) (*Continuation, error) {
 // NewTaskUpdate copies host answers for the exact existing Task. An empty object
 // is valid; construction rejects a missing object before the operation is saved.
 func NewTaskUpdate(taskID string, answers map[string]json.RawMessage) (*Continuation, error) {
-	return newContinuation(gentooloperations.NewOperationTaskUpdate(&gentooloperations.TaskAnswers{
+	return newContinuation(gentooloperations.NewOperationTaskUpdate(&gentooloperations.ToolOperationTaskAnswers{
 		TaskID:    taskID,
 		Responses: copyAnswers(answers),
 	}))
@@ -57,11 +57,11 @@ func NewTaskCancel(taskID string) (*Continuation, error) {
 
 // FromValue validates a generated registry value and copies its mutable fields.
 // A missing optional value remains absent; malformed selected operations fail.
-func FromValue(value *gentooloperations.ExecutionContinuation) (*Continuation, error) {
+func FromValue(value *gentooloperations.ToolOperationExecutionContinuation) (*Continuation, error) {
 	if value == nil {
 		return nil, nil
 	}
-	encoded, err := gentooloperations.EncodeExecutionContinuation(value)
+	encoded, err := gentooloperations.EncodeToolOperationExecutionContinuation(value)
 	if err != nil {
 		return nil, err
 	}
@@ -74,11 +74,11 @@ func FromValue(value *gentooloperations.ExecutionContinuation) (*Continuation, e
 
 // Value returns a generated registry record with independent state and answers.
 // A missing continuation stays absent on an original tool call.
-func Value(operation *Continuation) *gentooloperations.ExecutionContinuation {
+func Value(operation *Continuation) *gentooloperations.ToolOperationExecutionContinuation {
 	if operation == nil {
 		return nil
 	}
-	return &gentooloperations.ExecutionContinuation{Operation: cloneOperation(operation.value)}
+	return &gentooloperations.ToolOperationExecutionContinuation{Operation: cloneOperation(operation.value)}
 }
 
 // EncodedJSONSize lets workflow guards charge only framework-owned saved values.
@@ -167,7 +167,7 @@ func (c Continuation) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON uses the generated codec before accepting a saved operation.
 // A failed decode leaves the receiver unchanged.
 func (c *Continuation) UnmarshalJSON(data []byte) error {
-	value, err := gentooloperations.DecodeExecutionContinuation(data)
+	value, err := gentooloperations.DecodeToolOperationExecutionContinuation(data)
 	if err != nil {
 		return err
 	}
@@ -186,7 +186,7 @@ func newContinuation(value gentooloperations.Operation) (*Continuation, error) {
 	if err := operation.validateAnswers(); err != nil {
 		return nil, err
 	}
-	encoded, err := gentooloperations.EncodeExecutionContinuation(&gentooloperations.ExecutionContinuation{Operation: value})
+	encoded, err := gentooloperations.EncodeToolOperationExecutionContinuation(&gentooloperations.ToolOperationExecutionContinuation{Operation: value})
 	if err != nil {
 		return nil, err
 	}
@@ -223,13 +223,13 @@ func readAnswers(answers map[string][]byte) map[string]json.RawMessage {
 // identifiers already have value ownership and keep their exact string bytes.
 func cloneOperation(operation gentooloperations.Operation) gentooloperations.Operation {
 	if input, ok := operation.AsInput(); ok {
-		return gentooloperations.NewOperationInput(&gentooloperations.InputContinuation{
+		return gentooloperations.NewOperationInput(&gentooloperations.ToolOperationInputContinuation{
 			State:     cloneState(input.State),
 			Responses: copyAnswers(readAnswers(input.Responses)),
 		})
 	}
 	if update, ok := operation.AsTaskUpdate(); ok {
-		return gentooloperations.NewOperationTaskUpdate(&gentooloperations.TaskAnswers{
+		return gentooloperations.NewOperationTaskUpdate(&gentooloperations.ToolOperationTaskAnswers{
 			TaskID:    update.TaskID,
 			Responses: copyAnswers(readAnswers(update.Responses)),
 		})

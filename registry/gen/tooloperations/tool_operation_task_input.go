@@ -9,7 +9,7 @@ package tooloperations
 
 // Outstanding host questions for one existing Task. Questions are answered
 // with tasks/update rather than repeating the original tool call.
-type TaskInput struct {
+type ToolOperationTaskInput struct {
 	// Exact server-owned Task identifier, including an empty string.
 	TaskID string
 	// Optional server guidance for observing the Task after host answers are
@@ -17,5 +17,5 @@ type TaskInput struct {
 	PollIntervalMs *int64
 	// Outstanding host questions keyed by exact identifiers unique over this
 	// Task's lifetime. An empty object is valid.
-	Requests map[string]*HostRequest
+	Requests map[string]*ToolOperationHostRequest
 }

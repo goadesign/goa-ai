@@ -61,8 +61,8 @@ func executionInput(input *mcp.CallContinuation) *api.ExecutionContinuation {
  if input==nil {return nil}
  answers:=make(map[string][]byte,len(input.InputResponses))
  for id,answer:=range input.InputResponses {answers[id]=answer}
- value:=&gentooloperations.ExecutionContinuation{Operation:gentooloperations.NewOperationInput(&gentooloperations.InputContinuation{State:input.RequestState,Responses:answers})}
- data,err:=gentooloperations.EncodeExecutionContinuation(value)
+ value:=&gentooloperations.ToolOperationExecutionContinuation{Operation:gentooloperations.NewOperationInput(&gentooloperations.ToolOperationInputContinuation{State:input.RequestState,Responses:answers})}
+ data,err:=gentooloperations.EncodeToolOperationExecutionContinuation(value)
  if err!=nil {panic(err)}
  var operation api.ExecutionContinuation
  if err:=json.Unmarshal(data,&operation);err!=nil {panic(err)}
@@ -270,8 +270,8 @@ func executionInput(input *mcp.CallContinuation) *api.ExecutionContinuation {
  if input==nil {return nil}
  answers:=make(map[string][]byte,len(input.InputResponses))
  for id,answer:=range input.InputResponses {answers[id]=answer}
- value:=&gentooloperations.ExecutionContinuation{Operation:gentooloperations.NewOperationInput(&gentooloperations.InputContinuation{State:input.RequestState,Responses:answers})}
- data,err:=gentooloperations.EncodeExecutionContinuation(value)
+ value:=&gentooloperations.ToolOperationExecutionContinuation{Operation:gentooloperations.NewOperationInput(&gentooloperations.ToolOperationInputContinuation{State:input.RequestState,Responses:answers})}
+ data,err:=gentooloperations.EncodeToolOperationExecutionContinuation(value)
  if err!=nil {panic(err)}
  var operation api.ExecutionContinuation
  if err:=json.Unmarshal(data,&operation);err!=nil {panic(err)}

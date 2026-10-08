@@ -1,12 +1,14 @@
 // Package types describes the runtime's saved operations on one unfinished tool
 // invocation. The registry and private value generator share these definitions;
 // model-facing tool arguments never contain operation identity or host answers.
+// Framework type names identify this owner so importing the registry schema
+// leaves ordinary domain type names available to application designs.
 package types
 
 import . "goa.design/goa/v3/dsl"
 
 // InputContinuation stores the service's state and the host's accepted answers.
-var InputContinuation = Type("InputContinuation", func() {
+var InputContinuation = Type("ToolOperationInputContinuation", func() {
 	Meta("struct:pkg:path", "tooloperations")
 	Description("Exact service state and accepted host answers for continuing the original tool invocation.")
 	Field(1, "state", String, "Opaque state returned by the service, including an explicitly empty string.")
@@ -14,7 +16,7 @@ var InputContinuation = Type("InputContinuation", func() {
 })
 
 // TaskAnswers stores the answers submitted to one server-owned Task.
-var TaskAnswers = Type("TaskAnswers", func() {
+var TaskAnswers = Type("ToolOperationTaskAnswers", func() {
 	Meta("struct:pkg:path", "tooloperations")
 	Description("Accepted host answers for one existing Task. An empty answer object is valid and does not select a different operation.")
 	Field(1, "task_id", String, "Exact server-owned Task identifier, including an empty string.")
@@ -23,7 +25,7 @@ var TaskAnswers = Type("TaskAnswers", func() {
 })
 
 // ExecutionContinuation selects one later operation without changing tool arguments.
-var ExecutionContinuation = Type("ExecutionContinuation", func() {
+var ExecutionContinuation = Type("ToolOperationExecutionContinuation", func() {
 	Meta("struct:pkg:path", "tooloperations")
 	Description("One runtime-selected operation on the unfinished original tool invocation. Its explicit branch determines the method; field presence never chooses whether to query, answer or cancel.")
 	OneOf("operation", func() {
@@ -36,7 +38,7 @@ var ExecutionContinuation = Type("ExecutionContinuation", func() {
 })
 
 // HostRequest retains one exact server request until the host answers it.
-var HostRequest = Type("HostRequest", func() {
+var HostRequest = Type("ToolOperationHostRequest", func() {
 	Meta("struct:pkg:path", "tooloperations")
 	Description("One server-authored host interaction. Its parameter bytes remain exact; the MCP interaction validator checks their content before admission.")
 	Field(1, "method", String, "Exact MCP interaction method.")
@@ -45,7 +47,7 @@ var HostRequest = Type("HostRequest", func() {
 })
 
 // PendingInput retains ordinary multi-round input without a Task identity.
-var PendingInput = Type("PendingInput", func() {
+var PendingInput = Type("ToolOperationPendingInput", func() {
 	Meta("struct:pkg:path", "tooloperations")
 	Description("Host questions and optional service state for one ordinary unfinished tool call.")
 	Field(1, "state", String, "Exact optional service state, including an explicitly empty string.")
@@ -55,7 +57,7 @@ var PendingInput = Type("PendingInput", func() {
 })
 
 // TaskWait identifies the Task whose next observation the workflow must read.
-var TaskWait = Type("TaskWait", func() {
+var TaskWait = Type("ToolOperationTaskWait", func() {
 	Meta("struct:pkg:path", "tooloperations")
 	Description("An existing Task to observe after the accepted creation, a working observation or an acknowledged update. The saved operation identifies which event occurred.")
 	Field(1, "task_id", String, "Exact server-owned Task identifier, including an empty string.")
@@ -64,7 +66,7 @@ var TaskWait = Type("TaskWait", func() {
 })
 
 // TaskInput retains questions that must be answered through tasks/update.
-var TaskInput = Type("TaskInput", func() {
+var TaskInput = Type("ToolOperationTaskInput", func() {
 	Meta("struct:pkg:path", "tooloperations")
 	Description("Outstanding host questions for one existing Task. Questions are answered with tasks/update rather than repeating the original tool call.")
 	Field(1, "task_id", String, "Exact server-owned Task identifier, including an empty string.")
@@ -74,7 +76,7 @@ var TaskInput = Type("TaskInput", func() {
 })
 
 // PendingExecution selects the next action for one unfinished tool invocation.
-var PendingExecution = Type("PendingExecution", func() {
+var PendingExecution = Type("ToolOperationPendingExecution", func() {
 	Meta("struct:pkg:path", "tooloperations")
 	Meta("type:generate:force")
 	Description("Exactly one unfinished execution branch. Ordinary input continues the tool call; Task waiting reads an existing Task; Task input submits host answers to that Task.")

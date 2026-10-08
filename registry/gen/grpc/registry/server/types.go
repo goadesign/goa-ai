@@ -1697,21 +1697,21 @@ func validateregistry_registry_ToolCallMeta_At_meta(meta *registrypb.ToolCallMet
 		}
 	}
 	if meta.ExecutionContinuation != nil {
-		if err2 := validateregistry_registry_ExecutionContinuation_Target_executionContinuation_Context_execution_5F_continuation(meta.ExecutionContinuation); err2 != nil {
+		if err2 := validateregistry_registry_ToolOperationExecutionContinuation_Target_executionContinuation_Context_execution_5F_continuation(meta.ExecutionContinuation); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
 	return
 }
 
-// validateregistry_registry_ExecutionContinuation_Target_executionContinuation_Context_execution_5F_continuation
-// runs the validations defined on ExecutionContinuation.
-func validateregistry_registry_ExecutionContinuation_Target_executionContinuation_Context_execution_5F_continuation(executionContinuation *registrypb.ExecutionContinuation) (err error) {
+// validateregistry_registry_ToolOperationExecutionContinuation_Target_executionContinuation_Context_execution_5F_continuation
+// runs the validations defined on ToolOperationExecutionContinuation.
+func validateregistry_registry_ToolOperationExecutionContinuation_Target_executionContinuation_Context_execution_5F_continuation(executionContinuation *registrypb.ToolOperationExecutionContinuation) (err error) {
 	if executionContinuation.Operation == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("operation", "execution_continuation"))
 	}
 	switch v := executionContinuation.Operation.(type) {
-	case *registrypb.ExecutionContinuation_Input:
+	case *registrypb.ToolOperationExecutionContinuation_Input:
 		if v == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("input", "execution_continuation.operation"))
 			break
@@ -1721,13 +1721,13 @@ func validateregistry_registry_ExecutionContinuation_Target_executionContinuatio
 			break
 		}
 
-	case *registrypb.ExecutionContinuation_TaskGet:
+	case *registrypb.ToolOperationExecutionContinuation_TaskGet:
 		if v == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("task_get", "execution_continuation.operation"))
 			break
 		}
 
-	case *registrypb.ExecutionContinuation_TaskUpdate:
+	case *registrypb.ToolOperationExecutionContinuation_TaskUpdate:
 		if v == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("task_update", "execution_continuation.operation"))
 			break
@@ -1737,12 +1737,12 @@ func validateregistry_registry_ExecutionContinuation_Target_executionContinuatio
 			break
 		}
 		if v.TaskUpdate != nil {
-			if err2 := validateregistry_registry_TaskAnswers_Target_taskUpdate_Context_task_5F_update(v.TaskUpdate); err2 != nil {
+			if err2 := validateregistry_registry_ToolOperationTaskAnswers_Target_taskUpdate_Context_task_5F_update(v.TaskUpdate); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
 
-	case *registrypb.ExecutionContinuation_TaskCancel:
+	case *registrypb.ToolOperationExecutionContinuation_TaskCancel:
 		if v == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("task_cancel", "execution_continuation.operation"))
 			break
@@ -1753,9 +1753,9 @@ func validateregistry_registry_ExecutionContinuation_Target_executionContinuatio
 	return
 }
 
-// validateregistry_registry_TaskAnswers_Target_taskUpdate_Context_task_5F_update
-// runs the validations defined on TaskAnswers.
-func validateregistry_registry_TaskAnswers_Target_taskUpdate_Context_task_5F_update(taskUpdate *registrypb.TaskAnswers) (err error) {
+// validateregistry_registry_ToolOperationTaskAnswers_Target_taskUpdate_Context_task_5F_update
+// runs the validations defined on ToolOperationTaskAnswers.
+func validateregistry_registry_ToolOperationTaskAnswers_Target_taskUpdate_Context_task_5F_update(taskUpdate *registrypb.ToolOperationTaskAnswers) (err error) {
 	if taskUpdate.TaskId == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("task_id", "task_update"))
 	}
@@ -2803,38 +2803,38 @@ func transformProtoToolCallMetaToToolCallMeta(v *registrypb.ToolCallMeta) *regis
 		res.ExecutionSequence = 0
 	}
 	if v.ExecutionContinuation != nil {
-		res.ExecutionContinuation = transformProtoExecutionContinuationToExecutionContinuation(v.ExecutionContinuation)
+		res.ExecutionContinuation = transformProtoToolOperationExecutionContinuationToToolOperationExecutionContinuation(v.ExecutionContinuation)
 	}
 
 	return res
 }
 
-// transformProtoExecutionContinuationToExecutionContinuation builds a value of
-// type *tooloperations.ExecutionContinuation from a value of type
-// *registrypb.ExecutionContinuation.
-func transformProtoExecutionContinuationToExecutionContinuation(v *registrypb.ExecutionContinuation) *tooloperations.ExecutionContinuation {
-	res := &tooloperations.ExecutionContinuation{}
+// transformProtoToolOperationExecutionContinuationToToolOperationExecutionContinuation
+// builds a value of type *tooloperations.ToolOperationExecutionContinuation
+// from a value of type *registrypb.ToolOperationExecutionContinuation.
+func transformProtoToolOperationExecutionContinuationToToolOperationExecutionContinuation(v *registrypb.ToolOperationExecutionContinuation) *tooloperations.ToolOperationExecutionContinuation {
+	res := &tooloperations.ToolOperationExecutionContinuation{}
 	if v.Operation != nil {
 		switch val := v.Operation.(type) {
-		case *registrypb.ExecutionContinuation_Input:
+		case *registrypb.ToolOperationExecutionContinuation_Input:
 			{
 				u := res.Operation
-				u.SetInput(transformProtoInputContinuationToInputContinuation(val.Input))
+				u.SetInput(transformProtoToolOperationInputContinuationToToolOperationInputContinuation(val.Input))
 				res.Operation = u
 			}
-		case *registrypb.ExecutionContinuation_TaskGet:
+		case *registrypb.ToolOperationExecutionContinuation_TaskGet:
 			{
 				u := res.Operation
 				u.SetTaskGet(tooloperations.OperationBranchTaskGet(val.TaskGet))
 				res.Operation = u
 			}
-		case *registrypb.ExecutionContinuation_TaskUpdate:
+		case *registrypb.ToolOperationExecutionContinuation_TaskUpdate:
 			{
 				u := res.Operation
-				u.SetTaskUpdate(transformProtoTaskAnswersToTaskAnswers(val.TaskUpdate))
+				u.SetTaskUpdate(transformProtoToolOperationTaskAnswersToToolOperationTaskAnswers(val.TaskUpdate))
 				res.Operation = u
 			}
-		case *registrypb.ExecutionContinuation_TaskCancel:
+		case *registrypb.ToolOperationExecutionContinuation_TaskCancel:
 			{
 				u := res.Operation
 				u.SetTaskCancel(tooloperations.OperationBranchTaskCancel(val.TaskCancel))
@@ -2846,11 +2846,11 @@ func transformProtoExecutionContinuationToExecutionContinuation(v *registrypb.Ex
 	return res
 }
 
-// transformProtoInputContinuationToInputContinuation builds a value of type
-// *tooloperations.InputContinuation from a value of type
-// *registrypb.InputContinuation.
-func transformProtoInputContinuationToInputContinuation(v *registrypb.InputContinuation) *tooloperations.InputContinuation {
-	res := &tooloperations.InputContinuation{
+// transformProtoToolOperationInputContinuationToToolOperationInputContinuation
+// builds a value of type *tooloperations.ToolOperationInputContinuation from a
+// value of type *registrypb.ToolOperationInputContinuation.
+func transformProtoToolOperationInputContinuationToToolOperationInputContinuation(v *registrypb.ToolOperationInputContinuation) *tooloperations.ToolOperationInputContinuation {
+	res := &tooloperations.ToolOperationInputContinuation{
 		State: v.State,
 	}
 	if v.Responses != nil {
@@ -2865,10 +2865,11 @@ func transformProtoInputContinuationToInputContinuation(v *registrypb.InputConti
 	return res
 }
 
-// transformProtoTaskAnswersToTaskAnswers builds a value of type
-// *tooloperations.TaskAnswers from a value of type *registrypb.TaskAnswers.
-func transformProtoTaskAnswersToTaskAnswers(v *registrypb.TaskAnswers) *tooloperations.TaskAnswers {
-	res := &tooloperations.TaskAnswers{
+// transformProtoToolOperationTaskAnswersToToolOperationTaskAnswers builds a
+// value of type *tooloperations.ToolOperationTaskAnswers from a value of type
+// *registrypb.ToolOperationTaskAnswers.
+func transformProtoToolOperationTaskAnswersToToolOperationTaskAnswers(v *registrypb.ToolOperationTaskAnswers) *tooloperations.ToolOperationTaskAnswers {
+	res := &tooloperations.ToolOperationTaskAnswers{
 		TaskID: *v.TaskId,
 	}
 	res.Responses = make(map[string][]byte, len(v.Responses))

@@ -3451,7 +3451,7 @@ type ToolCallMeta struct {
 	ExecutionSequence *uint64 `protobuf:"varint,8,opt,name=execution_sequence,json=executionSequence,proto3,oneof" json:"execution_sequence,omitempty"`
 	// The exact runtime-selected operation and its data; absent on the original
 	// tool call.
-	ExecutionContinuation *ExecutionContinuation `protobuf:"bytes,9,opt,name=execution_continuation,json=executionContinuation,proto3" json:"execution_continuation,omitempty"`
+	ExecutionContinuation *ToolOperationExecutionContinuation `protobuf:"bytes,9,opt,name=execution_continuation,json=executionContinuation,proto3" json:"execution_continuation,omitempty"`
 	unknownFields         protoimpl.UnknownFields
 	sizeCache             protoimpl.SizeCache
 }
@@ -3542,7 +3542,7 @@ func (x *ToolCallMeta) GetExecutionSequence() uint64 {
 	return 0
 }
 
-func (x *ToolCallMeta) GetExecutionContinuation() *ExecutionContinuation {
+func (x *ToolCallMeta) GetExecutionContinuation() *ToolOperationExecutionContinuation {
 	if x != nil {
 		return x.ExecutionContinuation
 	}
@@ -3552,33 +3552,33 @@ func (x *ToolCallMeta) GetExecutionContinuation() *ExecutionContinuation {
 // One runtime-selected operation on the unfinished original tool invocation.
 // Its explicit branch determines the method; field presence never chooses
 // whether to query, answer or cancel.
-type ExecutionContinuation struct {
+type ToolOperationExecutionContinuation struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Operation:
 	//
-	//	*ExecutionContinuation_Input
-	//	*ExecutionContinuation_TaskGet
-	//	*ExecutionContinuation_TaskUpdate
-	//	*ExecutionContinuation_TaskCancel
-	Operation     isExecutionContinuation_Operation `protobuf_oneof:"operation"`
+	//	*ToolOperationExecutionContinuation_Input
+	//	*ToolOperationExecutionContinuation_TaskGet
+	//	*ToolOperationExecutionContinuation_TaskUpdate
+	//	*ToolOperationExecutionContinuation_TaskCancel
+	Operation     isToolOperationExecutionContinuation_Operation `protobuf_oneof:"operation"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *ExecutionContinuation) Reset() {
-	*x = ExecutionContinuation{}
+func (x *ToolOperationExecutionContinuation) Reset() {
+	*x = ToolOperationExecutionContinuation{}
 	mi := &file_goagen_registry_registry_proto_msgTypes[51]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *ExecutionContinuation) String() string {
+func (x *ToolOperationExecutionContinuation) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*ExecutionContinuation) ProtoMessage() {}
+func (*ToolOperationExecutionContinuation) ProtoMessage() {}
 
-func (x *ExecutionContinuation) ProtoReflect() protoreflect.Message {
+func (x *ToolOperationExecutionContinuation) ProtoReflect() protoreflect.Message {
 	mi := &file_goagen_registry_registry_proto_msgTypes[51]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -3590,91 +3590,93 @@ func (x *ExecutionContinuation) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use ExecutionContinuation.ProtoReflect.Descriptor instead.
-func (*ExecutionContinuation) Descriptor() ([]byte, []int) {
+// Deprecated: Use ToolOperationExecutionContinuation.ProtoReflect.Descriptor instead.
+func (*ToolOperationExecutionContinuation) Descriptor() ([]byte, []int) {
 	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{51}
 }
 
-func (x *ExecutionContinuation) GetOperation() isExecutionContinuation_Operation {
+func (x *ToolOperationExecutionContinuation) GetOperation() isToolOperationExecutionContinuation_Operation {
 	if x != nil {
 		return x.Operation
 	}
 	return nil
 }
 
-func (x *ExecutionContinuation) GetInput() *InputContinuation {
+func (x *ToolOperationExecutionContinuation) GetInput() *ToolOperationInputContinuation {
 	if x != nil {
-		if x, ok := x.Operation.(*ExecutionContinuation_Input); ok {
+		if x, ok := x.Operation.(*ToolOperationExecutionContinuation_Input); ok {
 			return x.Input
 		}
 	}
 	return nil
 }
 
-func (x *ExecutionContinuation) GetTaskGet() string {
+func (x *ToolOperationExecutionContinuation) GetTaskGet() string {
 	if x != nil {
-		if x, ok := x.Operation.(*ExecutionContinuation_TaskGet); ok {
+		if x, ok := x.Operation.(*ToolOperationExecutionContinuation_TaskGet); ok {
 			return x.TaskGet
 		}
 	}
 	return ""
 }
 
-func (x *ExecutionContinuation) GetTaskUpdate() *TaskAnswers {
+func (x *ToolOperationExecutionContinuation) GetTaskUpdate() *ToolOperationTaskAnswers {
 	if x != nil {
-		if x, ok := x.Operation.(*ExecutionContinuation_TaskUpdate); ok {
+		if x, ok := x.Operation.(*ToolOperationExecutionContinuation_TaskUpdate); ok {
 			return x.TaskUpdate
 		}
 	}
 	return nil
 }
 
-func (x *ExecutionContinuation) GetTaskCancel() string {
+func (x *ToolOperationExecutionContinuation) GetTaskCancel() string {
 	if x != nil {
-		if x, ok := x.Operation.(*ExecutionContinuation_TaskCancel); ok {
+		if x, ok := x.Operation.(*ToolOperationExecutionContinuation_TaskCancel); ok {
 			return x.TaskCancel
 		}
 	}
 	return ""
 }
 
-type isExecutionContinuation_Operation interface {
-	isExecutionContinuation_Operation()
+type isToolOperationExecutionContinuation_Operation interface {
+	isToolOperationExecutionContinuation_Operation()
 }
 
-type ExecutionContinuation_Input struct {
+type ToolOperationExecutionContinuation_Input struct {
 	// Continue the original tool invocation with accepted host answers and saved
 	// service state.
-	Input *InputContinuation `protobuf:"bytes,1,opt,name=input,proto3,oneof"`
+	Input *ToolOperationInputContinuation `protobuf:"bytes,1,opt,name=input,proto3,oneof"`
 }
 
-type ExecutionContinuation_TaskGet struct {
+type ToolOperationExecutionContinuation_TaskGet struct {
 	// Read one existing Task by its exact server-owned identifier.
 	TaskGet string `protobuf:"bytes,2,opt,name=task_get,json=taskGet,proto3,oneof"`
 }
 
-type ExecutionContinuation_TaskUpdate struct {
+type ToolOperationExecutionContinuation_TaskUpdate struct {
 	// Submit accepted host answers to one existing Task.
-	TaskUpdate *TaskAnswers `protobuf:"bytes,3,opt,name=task_update,json=taskUpdate,proto3,oneof"`
+	TaskUpdate *ToolOperationTaskAnswers `protobuf:"bytes,3,opt,name=task_update,json=taskUpdate,proto3,oneof"`
 }
 
-type ExecutionContinuation_TaskCancel struct {
+type ToolOperationExecutionContinuation_TaskCancel struct {
 	// Request cancellation of one existing Task without repeating the original
 	// tool call.
 	TaskCancel string `protobuf:"bytes,4,opt,name=task_cancel,json=taskCancel,proto3,oneof"`
 }
 
-func (*ExecutionContinuation_Input) isExecutionContinuation_Operation() {}
+func (*ToolOperationExecutionContinuation_Input) isToolOperationExecutionContinuation_Operation() {}
 
-func (*ExecutionContinuation_TaskGet) isExecutionContinuation_Operation() {}
+func (*ToolOperationExecutionContinuation_TaskGet) isToolOperationExecutionContinuation_Operation() {}
 
-func (*ExecutionContinuation_TaskUpdate) isExecutionContinuation_Operation() {}
+func (*ToolOperationExecutionContinuation_TaskUpdate) isToolOperationExecutionContinuation_Operation() {
+}
 
-func (*ExecutionContinuation_TaskCancel) isExecutionContinuation_Operation() {}
+func (*ToolOperationExecutionContinuation_TaskCancel) isToolOperationExecutionContinuation_Operation() {
+}
 
 // Exact service state and accepted host answers for continuing the original
 // tool invocation.
-type InputContinuation struct {
+type ToolOperationInputContinuation struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Opaque state returned by the service, including an explicitly empty string.
 	State *string `protobuf:"bytes,1,opt,name=state,proto3,oneof" json:"state,omitempty"`
@@ -3684,20 +3686,20 @@ type InputContinuation struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *InputContinuation) Reset() {
-	*x = InputContinuation{}
+func (x *ToolOperationInputContinuation) Reset() {
+	*x = ToolOperationInputContinuation{}
 	mi := &file_goagen_registry_registry_proto_msgTypes[52]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *InputContinuation) String() string {
+func (x *ToolOperationInputContinuation) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*InputContinuation) ProtoMessage() {}
+func (*ToolOperationInputContinuation) ProtoMessage() {}
 
-func (x *InputContinuation) ProtoReflect() protoreflect.Message {
+func (x *ToolOperationInputContinuation) ProtoReflect() protoreflect.Message {
 	mi := &file_goagen_registry_registry_proto_msgTypes[52]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -3709,19 +3711,19 @@ func (x *InputContinuation) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use InputContinuation.ProtoReflect.Descriptor instead.
-func (*InputContinuation) Descriptor() ([]byte, []int) {
+// Deprecated: Use ToolOperationInputContinuation.ProtoReflect.Descriptor instead.
+func (*ToolOperationInputContinuation) Descriptor() ([]byte, []int) {
 	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{52}
 }
 
-func (x *InputContinuation) GetState() string {
+func (x *ToolOperationInputContinuation) GetState() string {
 	if x != nil && x.State != nil {
 		return *x.State
 	}
 	return ""
 }
 
-func (x *InputContinuation) GetResponses() map[string][]byte {
+func (x *ToolOperationInputContinuation) GetResponses() map[string][]byte {
 	if x != nil {
 		return x.Responses
 	}
@@ -3730,7 +3732,7 @@ func (x *InputContinuation) GetResponses() map[string][]byte {
 
 // Accepted host answers for one existing Task. An empty answer object is valid
 // and does not select a different operation.
-type TaskAnswers struct {
+type ToolOperationTaskAnswers struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Exact server-owned Task identifier, including an empty string.
 	TaskId *string `protobuf:"bytes,1,opt,name=task_id,json=taskId,proto3,oneof" json:"task_id,omitempty"`
@@ -3740,20 +3742,20 @@ type TaskAnswers struct {
 	sizeCache     protoimpl.SizeCache
 }
 
-func (x *TaskAnswers) Reset() {
-	*x = TaskAnswers{}
+func (x *ToolOperationTaskAnswers) Reset() {
+	*x = ToolOperationTaskAnswers{}
 	mi := &file_goagen_registry_registry_proto_msgTypes[53]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
 
-func (x *TaskAnswers) String() string {
+func (x *ToolOperationTaskAnswers) String() string {
 	return protoimpl.X.MessageStringOf(x)
 }
 
-func (*TaskAnswers) ProtoMessage() {}
+func (*ToolOperationTaskAnswers) ProtoMessage() {}
 
-func (x *TaskAnswers) ProtoReflect() protoreflect.Message {
+func (x *ToolOperationTaskAnswers) ProtoReflect() protoreflect.Message {
 	mi := &file_goagen_registry_registry_proto_msgTypes[53]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
@@ -3765,19 +3767,19 @@ func (x *TaskAnswers) ProtoReflect() protoreflect.Message {
 	return mi.MessageOf(x)
 }
 
-// Deprecated: Use TaskAnswers.ProtoReflect.Descriptor instead.
-func (*TaskAnswers) Descriptor() ([]byte, []int) {
+// Deprecated: Use ToolOperationTaskAnswers.ProtoReflect.Descriptor instead.
+func (*ToolOperationTaskAnswers) Descriptor() ([]byte, []int) {
 	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{53}
 }
 
-func (x *TaskAnswers) GetTaskId() string {
+func (x *ToolOperationTaskAnswers) GetTaskId() string {
 	if x != nil && x.TaskId != nil {
 		return *x.TaskId
 	}
 	return ""
 }
 
-func (x *TaskAnswers) GetResponses() map[string][]byte {
+func (x *ToolOperationTaskAnswers) GetResponses() map[string][]byte {
 	if x != nil {
 		return x.Responses
 	}
@@ -5167,7 +5169,7 @@ const file_goagen_registry_registry_proto_rawDesc = "" +
 	"\b_toolsetB\a\n" +
 	"\x05_toolB\x0f\n" +
 	"\r_payload_jsonB\x18\n" +
-	"\x16_wire_protocol_version\"\xee\x04\n" +
+	"\x16_wire_protocol_version\"\xfb\x04\n" +
 	"\fToolCallMeta\x12\x1a\n" +
 	"\x06run_id\x18\x01 \x01(\tH\x00R\x05runId\x88\x01\x01\x12\"\n" +
 	"\n" +
@@ -5178,8 +5180,8 @@ const file_goagen_registry_registry_proto_rawDesc = "" +
 	"\x13parent_tool_call_id\x18\x05 \x01(\tH\x04R\x10parentToolCallId\x88\x01\x01\x12A\n" +
 	"\x06labels\x18\x06 \x03(\v2).goa_ai_registry.ToolCallMeta.LabelsEntryR\x06labels\x12 \n" +
 	"\ttext_only\x18\a \x01(\bH\x05R\btextOnly\x88\x01\x01\x122\n" +
-	"\x12execution_sequence\x18\b \x01(\x04H\x06R\x11executionSequence\x88\x01\x01\x12]\n" +
-	"\x16execution_continuation\x18\t \x01(\v2&.goa_ai_registry.ExecutionContinuationR\x15executionContinuation\x1a9\n" +
+	"\x12execution_sequence\x18\b \x01(\x04H\x06R\x11executionSequence\x88\x01\x01\x12j\n" +
+	"\x16execution_continuation\x18\t \x01(\v23.goa_ai_registry.ToolOperationExecutionContinuationR\x15executionContinuation\x1a9\n" +
 	"\vLabelsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01B\t\n" +
@@ -5191,25 +5193,25 @@ const file_goagen_registry_registry_proto_rawDesc = "" +
 	"\x14_parent_tool_call_idB\f\n" +
 	"\n" +
 	"_text_onlyB\x15\n" +
-	"\x13_execution_sequence\"\xe1\x01\n" +
-	"\x15ExecutionContinuation\x12:\n" +
-	"\x05input\x18\x01 \x01(\v2\".goa_ai_registry.InputContinuationH\x00R\x05input\x12\x1b\n" +
-	"\btask_get\x18\x02 \x01(\tH\x00R\ataskGet\x12?\n" +
-	"\vtask_update\x18\x03 \x01(\v2\x1c.goa_ai_registry.TaskAnswersH\x00R\n" +
+	"\x13_execution_sequence\"\x88\x02\n" +
+	"\"ToolOperationExecutionContinuation\x12G\n" +
+	"\x05input\x18\x01 \x01(\v2/.goa_ai_registry.ToolOperationInputContinuationH\x00R\x05input\x12\x1b\n" +
+	"\btask_get\x18\x02 \x01(\tH\x00R\ataskGet\x12L\n" +
+	"\vtask_update\x18\x03 \x01(\v2).goa_ai_registry.ToolOperationTaskAnswersH\x00R\n" +
 	"taskUpdate\x12!\n" +
 	"\vtask_cancel\x18\x04 \x01(\tH\x00R\n" +
 	"taskCancelB\v\n" +
-	"\toperation\"\xc7\x01\n" +
-	"\x11InputContinuation\x12\x19\n" +
-	"\x05state\x18\x01 \x01(\tH\x00R\x05state\x88\x01\x01\x12O\n" +
-	"\tresponses\x18\x02 \x03(\v21.goa_ai_registry.InputContinuation.ResponsesEntryR\tresponses\x1a<\n" +
+	"\toperation\"\xe1\x01\n" +
+	"\x1eToolOperationInputContinuation\x12\x19\n" +
+	"\x05state\x18\x01 \x01(\tH\x00R\x05state\x88\x01\x01\x12\\\n" +
+	"\tresponses\x18\x02 \x03(\v2>.goa_ai_registry.ToolOperationInputContinuation.ResponsesEntryR\tresponses\x1a<\n" +
 	"\x0eResponsesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01B\b\n" +
-	"\x06_state\"\xc0\x01\n" +
-	"\vTaskAnswers\x12\x1c\n" +
-	"\atask_id\x18\x01 \x01(\tH\x00R\x06taskId\x88\x01\x01\x12I\n" +
-	"\tresponses\x18\x02 \x03(\v2+.goa_ai_registry.TaskAnswers.ResponsesEntryR\tresponses\x1a<\n" +
+	"\x06_state\"\xda\x01\n" +
+	"\x18ToolOperationTaskAnswers\x12\x1c\n" +
+	"\atask_id\x18\x01 \x01(\tH\x00R\x06taskId\x88\x01\x01\x12V\n" +
+	"\tresponses\x18\x02 \x03(\v28.goa_ai_registry.ToolOperationTaskAnswers.ResponsesEntryR\tresponses\x1a<\n" +
 	"\x0eResponsesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01B\n" +
@@ -5394,78 +5396,78 @@ func file_goagen_registry_registry_proto_rawDescGZIP() []byte {
 
 var file_goagen_registry_registry_proto_msgTypes = make([]protoimpl.MessageInfo, 72)
 var file_goagen_registry_registry_proto_goTypes = []any{
-	(*DeclareServiceToolsetRequest)(nil),   // 0: goa_ai_registry.DeclareServiceToolsetRequest
-	(*ToolSchema)(nil),                     // 1: goa_ai_registry.ToolSchema
-	(*ConsumerContract)(nil),               // 2: goa_ai_registry.ConsumerContract
-	(*ToolSearchDocument)(nil),             // 3: goa_ai_registry.ToolSearchDocument
-	(*ToolTypeMetadata)(nil),               // 4: goa_ai_registry.ToolTypeMetadata
-	(*ToolFieldMetadata)(nil),              // 5: goa_ai_registry.ToolFieldMetadata
-	(*ToolFieldPathSegment)(nil),           // 6: goa_ai_registry.ToolFieldPathSegment
-	(*ToolCollectionElement)(nil),          // 7: goa_ai_registry.ToolCollectionElement
-	(*ToolUnionBranch)(nil),                // 8: goa_ai_registry.ToolUnionBranch
-	(*ArrayOfString)(nil),                  // 9: goa_ai_registry.ArrayOfString
-	(*ToolBounds)(nil),                     // 10: goa_ai_registry.ToolBounds
-	(*ToolPaging)(nil),                     // 11: goa_ai_registry.ToolPaging
-	(*ToolConfirmation)(nil),               // 12: goa_ai_registry.ToolConfirmation
-	(*ToolServerData)(nil),                 // 13: goa_ai_registry.ToolServerData
-	(*AgentToolTarget)(nil),                // 14: goa_ai_registry.AgentToolTarget
-	(*TextOnlyToolContract)(nil),           // 15: goa_ai_registry.TextOnlyToolContract
-	(*DeclareServiceToolsetResponse)(nil),  // 16: goa_ai_registry.DeclareServiceToolsetResponse
-	(*Toolset)(nil),                        // 17: goa_ai_registry.Toolset
-	(*ReplaceServiceToolsetRequest)(nil),   // 18: goa_ai_registry.ReplaceServiceToolsetRequest
-	(*ReplaceServiceToolsetResponse)(nil),  // 19: goa_ai_registry.ReplaceServiceToolsetResponse
-	(*AttachProviderRequest)(nil),          // 20: goa_ai_registry.AttachProviderRequest
-	(*AttachProviderResponse)(nil),         // 21: goa_ai_registry.AttachProviderResponse
-	(*RegisterRequest)(nil),                // 22: goa_ai_registry.RegisterRequest
-	(*RegisterResponse)(nil),               // 23: goa_ai_registry.RegisterResponse
-	(*RenewProviderRequest)(nil),           // 24: goa_ai_registry.RenewProviderRequest
-	(*RenewProviderResponse)(nil),          // 25: goa_ai_registry.RenewProviderResponse
-	(*ReleaseProviderRequest)(nil),         // 26: goa_ai_registry.ReleaseProviderRequest
-	(*ReleaseProviderResponse)(nil),        // 27: goa_ai_registry.ReleaseProviderResponse
-	(*DrainProviderRequest)(nil),           // 28: goa_ai_registry.DrainProviderRequest
-	(*DrainProviderResponse)(nil),          // 29: goa_ai_registry.DrainProviderResponse
-	(*UnregisterRequest)(nil),              // 30: goa_ai_registry.UnregisterRequest
-	(*UnregisterResponse)(nil),             // 31: goa_ai_registry.UnregisterResponse
-	(*PongRequest)(nil),                    // 32: goa_ai_registry.PongRequest
-	(*PongResponse)(nil),                   // 33: goa_ai_registry.PongResponse
-	(*RegisterAgentToolsetRequest)(nil),    // 34: goa_ai_registry.RegisterAgentToolsetRequest
-	(*RegisterAgentToolsetResponse)(nil),   // 35: goa_ai_registry.RegisterAgentToolsetResponse
-	(*ReplaceAgentToolsetRequest)(nil),     // 36: goa_ai_registry.ReplaceAgentToolsetRequest
-	(*ReplaceAgentToolsetResponse)(nil),    // 37: goa_ai_registry.ReplaceAgentToolsetResponse
-	(*ListToolsetsRequest)(nil),            // 38: goa_ai_registry.ListToolsetsRequest
-	(*ListToolsetsResponse)(nil),           // 39: goa_ai_registry.ListToolsetsResponse
-	(*ToolsetInfo)(nil),                    // 40: goa_ai_registry.ToolsetInfo
-	(*GetToolsetRequest)(nil),              // 41: goa_ai_registry.GetToolsetRequest
-	(*GetToolsetResponse)(nil),             // 42: goa_ai_registry.GetToolsetResponse
-	(*ResolveToolsetRequest)(nil),          // 43: goa_ai_registry.ResolveToolsetRequest
-	(*ResolveToolsetResponse)(nil),         // 44: goa_ai_registry.ResolveToolsetResponse
-	(*CheckAdmissionRequest)(nil),          // 45: goa_ai_registry.CheckAdmissionRequest
-	(*CheckAdmissionResponse)(nil),         // 46: goa_ai_registry.CheckAdmissionResponse
-	(*SearchRequest)(nil),                  // 47: goa_ai_registry.SearchRequest
-	(*SearchResponse)(nil),                 // 48: goa_ai_registry.SearchResponse
-	(*CallToolRequest)(nil),                // 49: goa_ai_registry.CallToolRequest
-	(*ToolCallMeta)(nil),                   // 50: goa_ai_registry.ToolCallMeta
-	(*ExecutionContinuation)(nil),          // 51: goa_ai_registry.ExecutionContinuation
-	(*InputContinuation)(nil),              // 52: goa_ai_registry.InputContinuation
-	(*TaskAnswers)(nil),                    // 53: goa_ai_registry.TaskAnswers
-	(*CallToolResponse)(nil),               // 54: goa_ai_registry.CallToolResponse
-	(*CallResolvedToolRequest)(nil),        // 55: goa_ai_registry.CallResolvedToolRequest
-	(*CallResolvedToolResponse)(nil),       // 56: goa_ai_registry.CallResolvedToolResponse
-	(*RetryToolRequest)(nil),               // 57: goa_ai_registry.RetryToolRequest
-	(*RetryToolResponse)(nil),              // 58: goa_ai_registry.RetryToolResponse
-	(*CompleteToolCallRequest)(nil),        // 59: goa_ai_registry.CompleteToolCallRequest
-	(*CompleteToolCallResponse)(nil),       // 60: goa_ai_registry.CompleteToolCallResponse
-	(*PublishToolOutputDeltaRequest)(nil),  // 61: goa_ai_registry.PublishToolOutputDeltaRequest
-	(*PublishToolOutputDeltaResponse)(nil), // 62: goa_ai_registry.PublishToolOutputDeltaResponse
-	(*ReportToolCallOverloadRequest)(nil),  // 63: goa_ai_registry.ReportToolCallOverloadRequest
-	(*ReportToolCallOverloadResponse)(nil), // 64: goa_ai_registry.ReportToolCallOverloadResponse
-	(*ClaimToolCallRequest)(nil),           // 65: goa_ai_registry.ClaimToolCallRequest
-	(*ClaimToolCallResponse)(nil),          // 66: goa_ai_registry.ClaimToolCallResponse
-	nil,                                    // 67: goa_ai_registry.ConsumerContract.MetaEntry
-	nil,                                    // 68: goa_ai_registry.ToolSearchDocument.TermsEntry
-	nil,                                    // 69: goa_ai_registry.ToolCallMeta.LabelsEntry
-	nil,                                    // 70: goa_ai_registry.InputContinuation.ResponsesEntry
-	nil,                                    // 71: goa_ai_registry.TaskAnswers.ResponsesEntry
+	(*DeclareServiceToolsetRequest)(nil),       // 0: goa_ai_registry.DeclareServiceToolsetRequest
+	(*ToolSchema)(nil),                         // 1: goa_ai_registry.ToolSchema
+	(*ConsumerContract)(nil),                   // 2: goa_ai_registry.ConsumerContract
+	(*ToolSearchDocument)(nil),                 // 3: goa_ai_registry.ToolSearchDocument
+	(*ToolTypeMetadata)(nil),                   // 4: goa_ai_registry.ToolTypeMetadata
+	(*ToolFieldMetadata)(nil),                  // 5: goa_ai_registry.ToolFieldMetadata
+	(*ToolFieldPathSegment)(nil),               // 6: goa_ai_registry.ToolFieldPathSegment
+	(*ToolCollectionElement)(nil),              // 7: goa_ai_registry.ToolCollectionElement
+	(*ToolUnionBranch)(nil),                    // 8: goa_ai_registry.ToolUnionBranch
+	(*ArrayOfString)(nil),                      // 9: goa_ai_registry.ArrayOfString
+	(*ToolBounds)(nil),                         // 10: goa_ai_registry.ToolBounds
+	(*ToolPaging)(nil),                         // 11: goa_ai_registry.ToolPaging
+	(*ToolConfirmation)(nil),                   // 12: goa_ai_registry.ToolConfirmation
+	(*ToolServerData)(nil),                     // 13: goa_ai_registry.ToolServerData
+	(*AgentToolTarget)(nil),                    // 14: goa_ai_registry.AgentToolTarget
+	(*TextOnlyToolContract)(nil),               // 15: goa_ai_registry.TextOnlyToolContract
+	(*DeclareServiceToolsetResponse)(nil),      // 16: goa_ai_registry.DeclareServiceToolsetResponse
+	(*Toolset)(nil),                            // 17: goa_ai_registry.Toolset
+	(*ReplaceServiceToolsetRequest)(nil),       // 18: goa_ai_registry.ReplaceServiceToolsetRequest
+	(*ReplaceServiceToolsetResponse)(nil),      // 19: goa_ai_registry.ReplaceServiceToolsetResponse
+	(*AttachProviderRequest)(nil),              // 20: goa_ai_registry.AttachProviderRequest
+	(*AttachProviderResponse)(nil),             // 21: goa_ai_registry.AttachProviderResponse
+	(*RegisterRequest)(nil),                    // 22: goa_ai_registry.RegisterRequest
+	(*RegisterResponse)(nil),                   // 23: goa_ai_registry.RegisterResponse
+	(*RenewProviderRequest)(nil),               // 24: goa_ai_registry.RenewProviderRequest
+	(*RenewProviderResponse)(nil),              // 25: goa_ai_registry.RenewProviderResponse
+	(*ReleaseProviderRequest)(nil),             // 26: goa_ai_registry.ReleaseProviderRequest
+	(*ReleaseProviderResponse)(nil),            // 27: goa_ai_registry.ReleaseProviderResponse
+	(*DrainProviderRequest)(nil),               // 28: goa_ai_registry.DrainProviderRequest
+	(*DrainProviderResponse)(nil),              // 29: goa_ai_registry.DrainProviderResponse
+	(*UnregisterRequest)(nil),                  // 30: goa_ai_registry.UnregisterRequest
+	(*UnregisterResponse)(nil),                 // 31: goa_ai_registry.UnregisterResponse
+	(*PongRequest)(nil),                        // 32: goa_ai_registry.PongRequest
+	(*PongResponse)(nil),                       // 33: goa_ai_registry.PongResponse
+	(*RegisterAgentToolsetRequest)(nil),        // 34: goa_ai_registry.RegisterAgentToolsetRequest
+	(*RegisterAgentToolsetResponse)(nil),       // 35: goa_ai_registry.RegisterAgentToolsetResponse
+	(*ReplaceAgentToolsetRequest)(nil),         // 36: goa_ai_registry.ReplaceAgentToolsetRequest
+	(*ReplaceAgentToolsetResponse)(nil),        // 37: goa_ai_registry.ReplaceAgentToolsetResponse
+	(*ListToolsetsRequest)(nil),                // 38: goa_ai_registry.ListToolsetsRequest
+	(*ListToolsetsResponse)(nil),               // 39: goa_ai_registry.ListToolsetsResponse
+	(*ToolsetInfo)(nil),                        // 40: goa_ai_registry.ToolsetInfo
+	(*GetToolsetRequest)(nil),                  // 41: goa_ai_registry.GetToolsetRequest
+	(*GetToolsetResponse)(nil),                 // 42: goa_ai_registry.GetToolsetResponse
+	(*ResolveToolsetRequest)(nil),              // 43: goa_ai_registry.ResolveToolsetRequest
+	(*ResolveToolsetResponse)(nil),             // 44: goa_ai_registry.ResolveToolsetResponse
+	(*CheckAdmissionRequest)(nil),              // 45: goa_ai_registry.CheckAdmissionRequest
+	(*CheckAdmissionResponse)(nil),             // 46: goa_ai_registry.CheckAdmissionResponse
+	(*SearchRequest)(nil),                      // 47: goa_ai_registry.SearchRequest
+	(*SearchResponse)(nil),                     // 48: goa_ai_registry.SearchResponse
+	(*CallToolRequest)(nil),                    // 49: goa_ai_registry.CallToolRequest
+	(*ToolCallMeta)(nil),                       // 50: goa_ai_registry.ToolCallMeta
+	(*ToolOperationExecutionContinuation)(nil), // 51: goa_ai_registry.ToolOperationExecutionContinuation
+	(*ToolOperationInputContinuation)(nil),     // 52: goa_ai_registry.ToolOperationInputContinuation
+	(*ToolOperationTaskAnswers)(nil),           // 53: goa_ai_registry.ToolOperationTaskAnswers
+	(*CallToolResponse)(nil),                   // 54: goa_ai_registry.CallToolResponse
+	(*CallResolvedToolRequest)(nil),            // 55: goa_ai_registry.CallResolvedToolRequest
+	(*CallResolvedToolResponse)(nil),           // 56: goa_ai_registry.CallResolvedToolResponse
+	(*RetryToolRequest)(nil),                   // 57: goa_ai_registry.RetryToolRequest
+	(*RetryToolResponse)(nil),                  // 58: goa_ai_registry.RetryToolResponse
+	(*CompleteToolCallRequest)(nil),            // 59: goa_ai_registry.CompleteToolCallRequest
+	(*CompleteToolCallResponse)(nil),           // 60: goa_ai_registry.CompleteToolCallResponse
+	(*PublishToolOutputDeltaRequest)(nil),      // 61: goa_ai_registry.PublishToolOutputDeltaRequest
+	(*PublishToolOutputDeltaResponse)(nil),     // 62: goa_ai_registry.PublishToolOutputDeltaResponse
+	(*ReportToolCallOverloadRequest)(nil),      // 63: goa_ai_registry.ReportToolCallOverloadRequest
+	(*ReportToolCallOverloadResponse)(nil),     // 64: goa_ai_registry.ReportToolCallOverloadResponse
+	(*ClaimToolCallRequest)(nil),               // 65: goa_ai_registry.ClaimToolCallRequest
+	(*ClaimToolCallResponse)(nil),              // 66: goa_ai_registry.ClaimToolCallResponse
+	nil,                                        // 67: goa_ai_registry.ConsumerContract.MetaEntry
+	nil,                                        // 68: goa_ai_registry.ToolSearchDocument.TermsEntry
+	nil,                                        // 69: goa_ai_registry.ToolCallMeta.LabelsEntry
+	nil,                                        // 70: goa_ai_registry.ToolOperationInputContinuation.ResponsesEntry
+	nil,                                        // 71: goa_ai_registry.ToolOperationTaskAnswers.ResponsesEntry
 }
 var file_goagen_registry_registry_proto_depIdxs = []int32{
 	1,  // 0: goa_ai_registry.DeclareServiceToolsetRequest.tools:type_name -> goa_ai_registry.ToolSchema
@@ -5504,11 +5506,11 @@ var file_goagen_registry_registry_proto_depIdxs = []int32{
 	40, // 33: goa_ai_registry.SearchResponse.toolsets:type_name -> goa_ai_registry.ToolsetInfo
 	50, // 34: goa_ai_registry.CallToolRequest.meta:type_name -> goa_ai_registry.ToolCallMeta
 	69, // 35: goa_ai_registry.ToolCallMeta.labels:type_name -> goa_ai_registry.ToolCallMeta.LabelsEntry
-	51, // 36: goa_ai_registry.ToolCallMeta.execution_continuation:type_name -> goa_ai_registry.ExecutionContinuation
-	52, // 37: goa_ai_registry.ExecutionContinuation.input:type_name -> goa_ai_registry.InputContinuation
-	53, // 38: goa_ai_registry.ExecutionContinuation.task_update:type_name -> goa_ai_registry.TaskAnswers
-	70, // 39: goa_ai_registry.InputContinuation.responses:type_name -> goa_ai_registry.InputContinuation.ResponsesEntry
-	71, // 40: goa_ai_registry.TaskAnswers.responses:type_name -> goa_ai_registry.TaskAnswers.ResponsesEntry
+	51, // 36: goa_ai_registry.ToolCallMeta.execution_continuation:type_name -> goa_ai_registry.ToolOperationExecutionContinuation
+	52, // 37: goa_ai_registry.ToolOperationExecutionContinuation.input:type_name -> goa_ai_registry.ToolOperationInputContinuation
+	53, // 38: goa_ai_registry.ToolOperationExecutionContinuation.task_update:type_name -> goa_ai_registry.ToolOperationTaskAnswers
+	70, // 39: goa_ai_registry.ToolOperationInputContinuation.responses:type_name -> goa_ai_registry.ToolOperationInputContinuation.ResponsesEntry
+	71, // 40: goa_ai_registry.ToolOperationTaskAnswers.responses:type_name -> goa_ai_registry.ToolOperationTaskAnswers.ResponsesEntry
 	50, // 41: goa_ai_registry.CallResolvedToolRequest.meta:type_name -> goa_ai_registry.ToolCallMeta
 	50, // 42: goa_ai_registry.RetryToolRequest.meta:type_name -> goa_ai_registry.ToolCallMeta
 	9,  // 43: goa_ai_registry.ConsumerContract.MetaEntry.value:type_name -> goa_ai_registry.ArrayOfString
@@ -5615,10 +5617,10 @@ func file_goagen_registry_registry_proto_init() {
 	file_goagen_registry_registry_proto_msgTypes[49].OneofWrappers = []any{}
 	file_goagen_registry_registry_proto_msgTypes[50].OneofWrappers = []any{}
 	file_goagen_registry_registry_proto_msgTypes[51].OneofWrappers = []any{
-		(*ExecutionContinuation_Input)(nil),
-		(*ExecutionContinuation_TaskGet)(nil),
-		(*ExecutionContinuation_TaskUpdate)(nil),
-		(*ExecutionContinuation_TaskCancel)(nil),
+		(*ToolOperationExecutionContinuation_Input)(nil),
+		(*ToolOperationExecutionContinuation_TaskGet)(nil),
+		(*ToolOperationExecutionContinuation_TaskUpdate)(nil),
+		(*ToolOperationExecutionContinuation_TaskCancel)(nil),
 	}
 	file_goagen_registry_registry_proto_msgTypes[52].OneofWrappers = []any{}
 	file_goagen_registry_registry_proto_msgTypes[53].OneofWrappers = []any{}

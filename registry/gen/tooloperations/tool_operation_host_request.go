@@ -9,7 +9,7 @@ package tooloperations
 
 // One server-authored host interaction. Its parameter bytes remain exact; the
 // MCP interaction validator checks their content before admission.
-type HostRequest struct {
+type ToolOperationHostRequest struct {
 	// Exact MCP interaction method.
 	Method string
 	// Original JSON object describing the host interaction.

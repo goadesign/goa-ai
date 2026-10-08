@@ -18,9 +18,9 @@ import (
 // Operation holds exactly one of its branch values.
 type Operation struct {
 	kind       OperationKind
-	input      *InputContinuation
+	input      *ToolOperationInputContinuation
 	taskGet    OperationBranchTaskGet
-	taskUpdate *TaskAnswers
+	taskUpdate *ToolOperationTaskAnswers
 	taskCancel OperationBranchTaskCancel
 }
 
@@ -44,7 +44,7 @@ func (u Operation) Kind() OperationKind {
 }
 
 // NewOperationInput constructs Operation with the input branch set.
-func NewOperationInput(v *InputContinuation) Operation {
+func NewOperationInput(v *ToolOperationInputContinuation) Operation {
 	return Operation{
 		kind:  OperationKindInput,
 		input: v,
@@ -52,7 +52,7 @@ func NewOperationInput(v *InputContinuation) Operation {
 }
 
 // AsInput returns the value when the input branch is selected.
-func (u Operation) AsInput() (_ *InputContinuation, ok bool) {
+func (u Operation) AsInput() (_ *ToolOperationInputContinuation, ok bool) {
 	if u.kind != OperationKindInput {
 		return
 	}
@@ -60,7 +60,7 @@ func (u Operation) AsInput() (_ *InputContinuation, ok bool) {
 }
 
 // SetInput selects the input branch and stores v.
-func (u *Operation) SetInput(v *InputContinuation) {
+func (u *Operation) SetInput(v *ToolOperationInputContinuation) {
 	*u = Operation{
 		kind:  OperationKindInput,
 		input: v,
@@ -92,7 +92,7 @@ func (u *Operation) SetTaskGet(v OperationBranchTaskGet) {
 }
 
 // NewOperationTaskUpdate constructs Operation with the task_update branch set.
-func NewOperationTaskUpdate(v *TaskAnswers) Operation {
+func NewOperationTaskUpdate(v *ToolOperationTaskAnswers) Operation {
 	return Operation{
 		kind:       OperationKindTaskUpdate,
 		taskUpdate: v,
@@ -100,7 +100,7 @@ func NewOperationTaskUpdate(v *TaskAnswers) Operation {
 }
 
 // AsTaskUpdate returns the value when the task_update branch is selected.
-func (u Operation) AsTaskUpdate() (_ *TaskAnswers, ok bool) {
+func (u Operation) AsTaskUpdate() (_ *ToolOperationTaskAnswers, ok bool) {
 	if u.kind != OperationKindTaskUpdate {
 		return
 	}
@@ -108,7 +108,7 @@ func (u Operation) AsTaskUpdate() (_ *TaskAnswers, ok bool) {
 }
 
 // SetTaskUpdate selects the task_update branch and stores v.
-func (u *Operation) SetTaskUpdate(v *TaskAnswers) {
+func (u *Operation) SetTaskUpdate(v *ToolOperationTaskAnswers) {
 	*u = Operation{
 		kind:       OperationKindTaskUpdate,
 		taskUpdate: v,
@@ -219,7 +219,7 @@ func (u *Operation) UnmarshalJSON(data []byte) error {
 	}
 	switch raw.Type {
 	case string(OperationKindInput):
-		var v *InputContinuation
+		var v *ToolOperationInputContinuation
 		if err := json.Unmarshal(raw.Value, &v); err != nil {
 			return err
 		}
@@ -231,7 +231,7 @@ func (u *Operation) UnmarshalJSON(data []byte) error {
 		}
 		u.SetTaskGet(v)
 	case string(OperationKindTaskUpdate):
-		var v *TaskAnswers
+		var v *ToolOperationTaskAnswers
 		if err := json.Unmarshal(raw.Value, &v); err != nil {
 			return err
 		}
@@ -259,9 +259,9 @@ func (u *Operation) UnmarshalJSON(data []byte) error {
 // Outcome holds exactly one of its branch values.
 type Outcome struct {
 	kind      OutcomeKind
-	input     *PendingInput
-	taskWait  *TaskWait
-	taskInput *TaskInput
+	input     *ToolOperationPendingInput
+	taskWait  *ToolOperationTaskWait
+	taskInput *ToolOperationTaskInput
 }
 
 // OutcomeKind records which Outcome branch is selected.
@@ -282,7 +282,7 @@ func (u Outcome) Kind() OutcomeKind {
 }
 
 // NewOutcomeInput constructs Outcome with the input branch set.
-func NewOutcomeInput(v *PendingInput) Outcome {
+func NewOutcomeInput(v *ToolOperationPendingInput) Outcome {
 	return Outcome{
 		kind:  OutcomeKindInput,
 		input: v,
@@ -290,7 +290,7 @@ func NewOutcomeInput(v *PendingInput) Outcome {
 }
 
 // AsInput returns the value when the input branch is selected.
-func (u Outcome) AsInput() (_ *PendingInput, ok bool) {
+func (u Outcome) AsInput() (_ *ToolOperationPendingInput, ok bool) {
 	if u.kind != OutcomeKindInput {
 		return
 	}
@@ -298,7 +298,7 @@ func (u Outcome) AsInput() (_ *PendingInput, ok bool) {
 }
 
 // SetInput selects the input branch and stores v.
-func (u *Outcome) SetInput(v *PendingInput) {
+func (u *Outcome) SetInput(v *ToolOperationPendingInput) {
 	*u = Outcome{
 		kind:  OutcomeKindInput,
 		input: v,
@@ -306,7 +306,7 @@ func (u *Outcome) SetInput(v *PendingInput) {
 }
 
 // NewOutcomeTaskWait constructs Outcome with the task_wait branch set.
-func NewOutcomeTaskWait(v *TaskWait) Outcome {
+func NewOutcomeTaskWait(v *ToolOperationTaskWait) Outcome {
 	return Outcome{
 		kind:     OutcomeKindTaskWait,
 		taskWait: v,
@@ -314,7 +314,7 @@ func NewOutcomeTaskWait(v *TaskWait) Outcome {
 }
 
 // AsTaskWait returns the value when the task_wait branch is selected.
-func (u Outcome) AsTaskWait() (_ *TaskWait, ok bool) {
+func (u Outcome) AsTaskWait() (_ *ToolOperationTaskWait, ok bool) {
 	if u.kind != OutcomeKindTaskWait {
 		return
 	}
@@ -322,7 +322,7 @@ func (u Outcome) AsTaskWait() (_ *TaskWait, ok bool) {
 }
 
 // SetTaskWait selects the task_wait branch and stores v.
-func (u *Outcome) SetTaskWait(v *TaskWait) {
+func (u *Outcome) SetTaskWait(v *ToolOperationTaskWait) {
 	*u = Outcome{
 		kind:     OutcomeKindTaskWait,
 		taskWait: v,
@@ -330,7 +330,7 @@ func (u *Outcome) SetTaskWait(v *TaskWait) {
 }
 
 // NewOutcomeTaskInput constructs Outcome with the task_input branch set.
-func NewOutcomeTaskInput(v *TaskInput) Outcome {
+func NewOutcomeTaskInput(v *ToolOperationTaskInput) Outcome {
 	return Outcome{
 		kind:      OutcomeKindTaskInput,
 		taskInput: v,
@@ -338,7 +338,7 @@ func NewOutcomeTaskInput(v *TaskInput) Outcome {
 }
 
 // AsTaskInput returns the value when the task_input branch is selected.
-func (u Outcome) AsTaskInput() (_ *TaskInput, ok bool) {
+func (u Outcome) AsTaskInput() (_ *ToolOperationTaskInput, ok bool) {
 	if u.kind != OutcomeKindTaskInput {
 		return
 	}
@@ -346,7 +346,7 @@ func (u Outcome) AsTaskInput() (_ *TaskInput, ok bool) {
 }
 
 // SetTaskInput selects the task_input branch and stores v.
-func (u *Outcome) SetTaskInput(v *TaskInput) {
+func (u *Outcome) SetTaskInput(v *ToolOperationTaskInput) {
 	*u = Outcome{
 		kind:      OutcomeKindTaskInput,
 		taskInput: v,
@@ -430,19 +430,19 @@ func (u *Outcome) UnmarshalJSON(data []byte) error {
 	}
 	switch raw.Type {
 	case string(OutcomeKindInput):
-		var v *PendingInput
+		var v *ToolOperationPendingInput
 		if err := json.Unmarshal(raw.Value, &v); err != nil {
 			return err
 		}
 		u.SetInput(v)
 	case string(OutcomeKindTaskWait):
-		var v *TaskWait
+		var v *ToolOperationTaskWait
 		if err := json.Unmarshal(raw.Value, &v); err != nil {
 			return err
 		}
 		u.SetTaskWait(v)
 	case string(OutcomeKindTaskInput):
-		var v *TaskInput
+		var v *ToolOperationTaskInput
 		if err := json.Unmarshal(raw.Value, &v); err != nil {
 			return err
 		}
