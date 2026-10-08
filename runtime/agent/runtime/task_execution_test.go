@@ -67,6 +67,8 @@ func TestTaskInputSurvivesSuccessorRuns(t *testing.T) {
 		seedTestToolset(rt, "remote.tools", spec)
 		binding := rt.toolsets["remote.tools"]
 		binding.Execute = func(_ context.Context, call *ToolCall) (*ToolExecutionResult, error) {
+			assert.Equal(t, "run-1", call.RunID)
+			assert.Equal(t, "original-call", call.ToolCallID)
 			assert.Equal(t, uint64(len(seen)), call.ExecutionSequence)
 			seen = append(seen, call.ExecutionSequence)
 			assert.JSONEq(t, `{"query":"original"}`, string(call.Payload))

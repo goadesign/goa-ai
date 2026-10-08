@@ -219,7 +219,7 @@ func (e *toolBatchExec) scheduleToolActivity(wfCtx engine.WorkflowContext, call 
 		TextOnly:              call.TextOnly,
 		Registry:              call.Registry.Clone(),
 		AgentID:               e.agentID,
-		RunID:                 e.runID,
+		RunID:                 call.RunID,
 		ToolsetName:           toolsetName,
 		ToolName:              call.Name,
 		ToolCallID:            call.ToolCallID,

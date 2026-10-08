@@ -41,6 +41,7 @@ func TestRegistryActivityPreservesSelectedAdmission(t *testing.T) {
 		assert.Equal(t, "records.find", payload.Tool)
 		assert.JSONEq(t, `{"value":9007199254740993}`, string(payload.PayloadJSON))
 		assert.Equal(t, toolregistry.WireProtocolVersion, payload.WireProtocolVersion)
+		assert.Equal(t, "run-1", payload.Meta.RunID)
 		assert.Equal(t, "call-1", payload.Meta.ToolCallID)
 		assert.Equal(t, uint64(1), payload.Meta.ExecutionSequence)
 		require.NotNil(t, payload.Meta.ExecutionContinuation)
@@ -50,12 +51,18 @@ func TestRegistryActivityPreservesSelectedAdmission(t *testing.T) {
 		return nil, genregistry.MakeCallNotAdmitted(errors.New("registration was replaced"))
 	}}
 	require.NoError(t, rt.RegisterRegistry("company", client, unusedRegistryPulse{}))
-	output, err := rt.ExecuteToolActivity(t.Context(), &ToolInput{
-		Registry: binding, AgentID: definition.route.ID, ToolName: "records.find",
+	wf := &routeWorkflowContext{ctx: t.Context(), toolRoutes: map[string]func(context.Context, *ToolInput) (*ToolOutput, error){
+		"execute": rt.ExecuteToolActivity,
+	}}
+	execution := &toolBatchExec{r: rt, activityName: "execute", runID: "run-2", agentID: definition.route.ID}
+	future, err := execution.scheduleToolActivity(wf, ToolCall{
+		Registry: binding, AgentID: definition.route.ID, Name: "records.find",
 		RunID: "run-1", SessionID: "session-1", ToolCallID: "call-1",
 		Payload:           rawjson.Message(`{"value":9007199254740993}`),
 		ExecutionSequence: 1, ExecutionContinuation: operation,
 	})
+	require.NoError(t, err)
+	output, err := future.Get(t.Context())
 	require.NoError(t, err)
 	require.NotNil(t, output.Failure)
 	assert.Equal(t, planner.FailureUnavailable, output.Failure.Kind)
