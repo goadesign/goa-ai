@@ -225,8 +225,11 @@ func TestResolvePromptRefsTreatsStoppedRunAsEmpty(t *testing.T) {
 		hooks.ChildRunLinked,
 	} {
 		t.Run(string(recordType), func(t *testing.T) {
-			record := runStartedRecord(t, stored, "", "invalid-record")
+			record := runStartedRecord(t, store, stored, "", "invalid-record")
 			record.Type = recordType
+			if recordType == hooks.RunStarted {
+				record.Timestamp = stored.StartedAt.Add(time.Millisecond)
+			}
 			rt.Store = &promptRefsStore{
 				Store: store,
 				recordPages: map[string]map[string]runlog.Page{
@@ -420,7 +423,7 @@ func TestResolvePromptRefsContinuedChildKeepsExactCallAcrossParents(t *testing.T
 	// Replacing the predecessor still contradicts this child's accepted seed.
 	tracked.recordPages = map[string]map[string]runlog.Page{
 		child.RunID: {"": {Events: []*runlog.Event{
-			runStartedRecord(t, child, "independent-child", "start"),
+			runStartedRecord(t, store, child, "independent-child", "start"),
 		}}},
 	}
 	_, err = rt.ResolvePromptRefs(t.Context(), child.SessionID, child.RunID)
@@ -518,7 +521,7 @@ func TestResolvePromptRefsRejectsMissingContinuationPredecessor(t *testing.T) {
 		Store: store,
 		recordPages: map[string]map[string]runlog.Page{
 			meta.RunID: {"": {Events: []*runlog.Event{
-				runStartedRecord(t, meta, "missing", "continued-start"),
+				runStartedRecord(t, store, meta, "missing", "continued-start"),
 			}}},
 		},
 	})
@@ -536,7 +539,7 @@ func TestResolvePromptRefsRejectsSelfContinuationPredecessor(t *testing.T) {
 	rt := New(&promptRefsStore{
 		Store: store,
 		recordPages: map[string]map[string]runlog.Page{
-			meta.RunID: {"": {Events: []*runlog.Event{runStartedRecord(t, meta, meta.RunID, "self-start")}}},
+			meta.RunID: {"": {Events: []*runlog.Event{runStartedRecord(t, store, meta, meta.RunID, "self-start")}}},
 		},
 	})
 
@@ -559,10 +562,10 @@ func TestResolvePromptRefsRejectsContinuationCycle(t *testing.T) {
 		Store: store,
 		recordPages: map[string]map[string]runlog.Page{
 			first.RunID: {"": {Events: []*runlog.Event{
-				runStartedRecord(t, first, second.RunID, "first-start"),
+				runStartedRecord(t, store, first, second.RunID, "first-start"),
 			}}},
 			second.RunID: {"": {Events: []*runlog.Event{
-				runStartedRecord(t, second, first.RunID, "second-start"),
+				runStartedRecord(t, store, second, first.RunID, "second-start"),
 			}}},
 		},
 	})
@@ -583,11 +586,11 @@ func TestResolvePromptRefsRejectsMultipleStartRecordsAcrossPages(t *testing.T) {
 		recordPages: map[string]map[string]runlog.Page{
 			meta.RunID: {
 				"": {
-					Events:     []*runlog.Event{runStartedRecord(t, meta, "predecessor-1", "start-1")},
+					Events:     []*runlog.Event{runStartedRecord(t, store, meta, "predecessor-1", "start-1")},
 					NextCursor: "next",
 				},
 				"next": {
-					Events: []*runlog.Event{runStartedRecord(t, meta, "predecessor-2", "start-2")},
+					Events: []*runlog.Event{runStartedRecord(t, store, meta, "predecessor-2", "start-2")},
 				},
 			},
 		},
@@ -808,12 +811,17 @@ func startStoppedRunForTest(t *testing.T, store storage.Store, meta session.RunM
 	require.Equal(t, session.RunStartStop, result.Outcome)
 }
 
+// runStartedRecord preserves the admitted timestamp while a test changes
+// relationships or identity, so validation reaches the intended corruption.
 func runStartedRecord(
 	t *testing.T,
+	store storage.Store,
 	meta session.RunMeta,
 	predecessorRunID, eventKey string,
 ) *runlog.Event {
 	t.Helper()
+	stored, err := store.LoadRun(t.Context(), meta.RunID)
+	require.NoError(t, err)
 	return testHookRecord(t, hooks.NewRunStartedEvent(
 		meta.RunID,
 		agent.Ident(meta.AgentID),
@@ -821,7 +829,7 @@ func runStartedRecord(
 		meta.ParentRunID,
 		predecessorRunID,
 		meta.Labels,
-	), eventKey, time.Now().UTC().Truncate(time.Millisecond))
+	), eventKey, stored.StartedAt)
 }
 
 // LoadRun replaces selected stored identities so tests can prove that prompt
