@@ -485,8 +485,11 @@ Browser clients supply any constructed registration to
 `mcp.NewAuthorizationCodeHTTPTransport`. Public and signed HTTPS metadata documents
 use registration constructors rather than separate browser transports. All profiles
 share PKCE, issuer and redirect checks, refresh rotation and operation-specific
-scope upgrades. The host owns sign-in and consent; tokens stay private to its user
-and resource transport. See [browser authorization](docs/runtime.md#browser-authorization).
+scope upgrades. Initial consent uses the resource challenge's scopes, falling back
+to basic-access metadata when no scopes are challenged. Saved grants retain their
+permissions until an actual resource rejection requires more. The host owns sign-in
+and consent; tokens stay private to its user and resource transport. See
+[browser authorization](docs/runtime.md#browser-authorization).
 
 Application code owns planners, service behavior, authorization, side-effect
 idempotency, storage, and deployment. Deploy generated packages, callers, and

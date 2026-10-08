@@ -82,7 +82,9 @@ func exerciseAuthorization(endpoint string) error {
 		"auth/token-endpoint-auth-basic", "auth/token-endpoint-auth-post", "auth/token-endpoint-auth-none",
 		"auth/iss-supported", "auth/iss-not-advertised", "auth/iss-supported-missing",
 		"auth/iss-wrong-issuer", "auth/iss-unexpected", "auth/iss-normalized",
-		"auth/metadata-issuer-mismatch", "auth/resource-mismatch":
+		"auth/metadata-issuer-mismatch", "auth/resource-mismatch",
+		"auth/scope-from-www-authenticate", "auth/scope-from-scopes-supported",
+		"auth/scope-omitted-when-undefined", "auth/scope-step-up", "auth/scope-retry-limit":
 		transport, err = mcp.NewAuthorizationCodeHTTPTransport(mcp.HTTPOptions{Endpoint: endpoint, Client: browser, ClientInfo: info}, mcp.AuthorizationCode{
 			Registration: registration,
 			RedirectURI:  "http://127.0.0.1:3000/callback",

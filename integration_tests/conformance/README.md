@@ -122,6 +122,13 @@ retains every selected check at the current wire revision. Rejection scenarios
 allow the client to exit with its actual error; their assertions require the
 relevant metadata or callback to have been reached before declaring rejection.
 
+The same command also selects `auth/scope-from-www-authenticate`,
+`auth/scope-from-scopes-supported`, `auth/scope-omitted-when-undefined`,
+`auth/scope-step-up`, and `auth/scope-retry-limit`. Their synthetic registrations
+are supplied before client startup; original scope assertions and token handlers
+remain unchanged. The production client obtains its initial challenge through
+`server/discover`, then reuses established permissions until a resource rejection.
+
 The certificate's one-day validity is local test setup, not an OAuth token or
 product retention rule. Keep the private key and raw reports out of commits:
 reports contain synthetic secrets, authorization codes and tokens. After the
@@ -140,6 +147,9 @@ Verified on 2026-10-03 with the pinned referee:
 | Client / valid advertised issuer and omitted issuer support, HTTPS-adapted, verified 2026-10-07 | 13 passed each | Browser authorization accepts matching issuer and the permitted absence of an unadvertised issuer parameter. |
 | Client / missing advertised issuer, wrong issuer, unexpected mismatched issuer and normalized issuer variant, HTTPS-adapted, verified 2026-10-07 | 6 passed each | Metadata and callback reached, then no token exchange. Exact string comparison rejects a trailing-slash variant. |
 | Client / issuer metadata mismatch and protected-resource mismatch, HTTPS-adapted, verified 2026-10-07 | 3 and 2 passed | Relevant metadata fetched, then authorization stops before using mismatched issuer endpoints or starting consent. |
+| Client / initial challenge, metadata fallback and omitted-scope scenarios, HTTPS/preregistration-adapted, verified 2026-10-08 | 14 passed each; no warnings or failures | The production client selects the challenge before initial consent, uses metadata only as fallback and omits undefined scope. Runs took 0.93, 0.52 and 0.51 seconds. |
+| Client / `auth/scope-step-up`, HTTPS/preregistration-adapted, verified 2026-10-08 | 25 passed; no warnings or failures | Initial challenge overrides metadata. A later resource rejection adds the challenged scope while retaining prior permissions. Corrected run took 0.94 seconds. |
+| Client / `auth/scope-retry-limit`, HTTPS/preregistration-adapted, verified 2026-10-08 | 11 passed; no warnings or failures | Repeated insufficient-scope rejection stops after the permitted authorization recovery. Run took 0.51 seconds. |
 | Client / `tools_call` | 2 checks passed | Simple tool call and its wire schema |
 | Client / `request-metadata` | 4 passed, 3 skipped, 1 warning; overall failure | Roots, sampling, and elicitation are unclaimed by this driver. The peer rejects `2026-07-28` while advertising that same revision as supported; it warns because the client stops instead of repeating the request. This is not an old-version fallback test. |
 | Client / `http-standard-headers` | 3 passed, 8 skipped | Tool list/call method headers and tool name header. The driver does not exercise resource/prompt methods or removed initialization methods. |

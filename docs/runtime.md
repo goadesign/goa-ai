@@ -7219,6 +7219,14 @@ grants that have no browser callback; browser membership remains required.
 See [MCP client registration](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/client-registration)
 and its referenced [metadata authentication draft](https://www.ietf.org/archive/id/draft-ietf-oauth-client-id-metadata-document-00.html#section-6.2).
 
+Before initial consent, the transport requests `server/discover` without a token.
+The resource's Bearer challenge supplies the authoritative initial scopes. If it
+omits scopes, explicit host scopes or the resource's `scopes_supported` provide
+the fallback; if neither exists, the request omits scope. This probe does not
+execute a domain tool. Saved grants and refreshes retain established permissions:
+newly advertised scopes alone do not open another consent flow. A later resource
+challenge can request additional permissions as described below.
+
 An expired token can use its private refresh credential when the issuer supports
 refresh. A client-metadata registration must also include `refresh_token` in its
 registered grant list. A rotated refresh credential replaces the previous value;

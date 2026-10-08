@@ -27,27 +27,29 @@ import (
 type (
 	// browserOAuthPeer records browser requests and token forms for one issuer.
 	browserOAuthPeer struct {
-		server          *httptest.Server
-		resource        string
-		issuer          string
-		metadata        string
-		clientID        string
-		clientMetadata  string
-		clientMedia     string
-		missingMetadata bool
-		issuerBody      string
-		tokenBody       string
-		tokenStatus     int
-		tokenReply      func(int32) string
-		mcpHandle       func(http.ResponseWriter, *http.Request) bool
-		hostCalls       atomic.Int32
-		tokenCalls      atomic.Int32
-		mcpCalls        atomic.Int32
-		mutex           sync.Mutex
-		forms           []url.Values
-		requests        []url.Values
-		proofs          map[string]string
-		verifyClient    func(*http.Request) error
+		server           *httptest.Server
+		resource         string
+		issuer           string
+		metadata         string
+		clientID         string
+		clientMetadata   string
+		clientMedia      string
+		missingMetadata  bool
+		issuerBody       string
+		tokenBody        string
+		tokenStatus      int
+		tokenReply       func(int32) string
+		mcpHandle        func(http.ResponseWriter, *http.Request) bool
+		hostCalls        atomic.Int32
+		tokenCalls       atomic.Int32
+		mcpCalls         atomic.Int32
+		probeCalls       atomic.Int32
+		initialChallenge string
+		mutex            sync.Mutex
+		forms            []url.Values
+		requests         []url.Values
+		proofs           map[string]string
+		verifyClient     func(*http.Request) error
 	}
 )
 
@@ -519,27 +521,50 @@ func TestAuthorizationCodeClientMetadataValidIdentifiers(t *testing.T) {
 // The first unauthenticated discovery request selects permissions before browser
 // consent. Its challenge can require scopes absent from the basic metadata list.
 func TestAuthorizationCodeInitialChallengeSelectsScopes(t *testing.T) {
-	peer := newBrowserOAuthPeer(t)
-	peer.missingMetadata = true
-	peer.mcpHandle = func(w http.ResponseWriter, r *http.Request) bool {
-		if r.Header.Get("Authorization") == "" {
-			w.Header().Set("WWW-Authenticate", fmt.Sprintf(`Bearer resource_metadata=%q, scope="operations:start"`, peer.server.URL+"/challenged/resource"))
-			w.WriteHeader(http.StatusUnauthorized)
-			return true
-		}
-		return false
+	for _, missing := range []bool{false, true} {
+		t.Run(fmt.Sprintf("missing metadata=%t", missing), func(t *testing.T) {
+			peer := newBrowserOAuthPeer(t)
+			peer.missingMetadata = missing
+			peer.initialChallenge = fmt.Sprintf(`Bearer resource_metadata=%q, scope="operations:start"`, peer.server.URL+"/challenged/resource")
+			transport := peer.transport(t, peer.authorize(t))
+			require.NoError(t, callOAuthPeer(t.Context(), transport, peer.resource))
+			assert.EqualValues(t, 1, peer.hostCalls.Load())
+			assert.EqualValues(t, 1, peer.tokenCalls.Load())
+			assert.EqualValues(t, 1, peer.mcpCalls.Load())
+			assert.EqualValues(t, 1, peer.probeCalls.Load())
+			peer.mutex.Lock()
+			defer peer.mutex.Unlock()
+			require.Len(t, peer.requests, 1)
+			require.Len(t, peer.forms, 1)
+			assert.Equal(t, "operations:start", peer.requests[0].Get("scope"))
+			assert.Empty(t, peer.forms[0].Get("scope"))
+		})
 	}
-	transport := peer.transport(t, peer.authorize(t))
-	require.NoError(t, callOAuthPeer(t.Context(), transport, peer.resource))
-	assert.EqualValues(t, 1, peer.hostCalls.Load())
-	assert.EqualValues(t, 1, peer.tokenCalls.Load())
-	assert.EqualValues(t, 2, peer.mcpCalls.Load())
-	peer.mutex.Lock()
-	defer peer.mutex.Unlock()
-	require.Len(t, peer.requests, 1)
-	require.Len(t, peer.forms, 1)
-	assert.Equal(t, "operations:start", peer.requests[0].Get("scope"))
-	assert.Empty(t, peer.forms[0].Get("scope"))
+}
+
+// TestAuthorizationCodeRejectsInitialChallenge keeps an invalid realm or header
+// from starting host consent, token exchange or a domain request.
+func TestAuthorizationCodeRejectsInitialChallenge(t *testing.T) {
+	for _, test := range []struct{ name, challenge string }{
+		{"no bearer realm", `Basic realm="other"`},
+		{"invalid syntax", `Bearer scope="unterminated`},
+		{"missing metadata", `Bearer resource_metadata="https://other.example/metadata"`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			peer := newBrowserOAuthPeer(t)
+			if test.name == "missing metadata" {
+				peer.initialChallenge = fmt.Sprintf(`Bearer resource_metadata=%q`, peer.server.URL+"/missing")
+			} else {
+				peer.initialChallenge = test.challenge
+			}
+			transport := peer.transport(t, peer.authorize(t))
+			require.Error(t, callOAuthPeer(t.Context(), transport, peer.resource))
+			assert.EqualValues(t, 1, peer.probeCalls.Load())
+			assert.Zero(t, peer.hostCalls.Load())
+			assert.Zero(t, peer.tokenCalls.Load())
+			assert.Zero(t, peer.mcpCalls.Load())
+		})
+	}
 }
 
 func TestAuthorizationCodeClientMetadataRefresh(t *testing.T) {
@@ -627,29 +652,37 @@ func TestAuthorizationCodeRecoveryIsPerRequestRound(t *testing.T) {
 }
 
 func TestAuthorizationCodeMetadataScopesUseExistingGrant(t *testing.T) {
-	for _, tc := range []struct {
-		scope     string
-		exchanges int32
-	}{
-		{"records:write", 1},
-		{"records:admin", 2},
-	} {
-		t.Run(tc.scope, func(t *testing.T) {
+	for _, scope := range []string{"records:write", "records:admin"} {
+		t.Run(scope, func(t *testing.T) {
 			peer := newBrowserOAuthPeer(t)
 			peer.tokenBody = `{"access_token":"opaque-token","token_type":"Bearer","expires_in":3600,"scope":"records:read records:write"}`
 			transport := peer.transport(t, peer.authorize(t))
 			require.NoError(t, callOAuthPeer(t.Context(), transport, peer.resource))
-			peer.metadata = strings.Replace(peer.metadata, `["records:read"]`, fmt.Sprintf(`["records:read",%q]`, tc.scope), 1)
+			peer.metadata = strings.Replace(peer.metadata, `["records:read"]`, fmt.Sprintf(`["records:read",%q]`, scope), 1)
 			require.NoError(t, callOAuthPeer(t.Context(), transport, peer.resource))
-			assert.Equal(t, tc.exchanges, peer.hostCalls.Load())
-			assert.Equal(t, tc.exchanges, peer.tokenCalls.Load())
+			assert.EqualValues(t, 1, peer.hostCalls.Load())
+			assert.EqualValues(t, 1, peer.tokenCalls.Load())
 			assert.EqualValues(t, 2, peer.mcpCalls.Load())
-			if tc.exchanges == 2 {
-				peer.mutex.Lock()
-				defer peer.mutex.Unlock()
-				require.Len(t, peer.requests, 2)
-				assert.Equal(t, "records:read records:write records:admin", peer.requests[1].Get("scope"))
+
+			// An actual rejected operation requests another permission. The next
+			// consent retains prior permissions and adds the challenged scope.
+			var challenged atomic.Bool
+			peer.mcpHandle = func(w http.ResponseWriter, _ *http.Request) bool {
+				if challenged.Swap(true) {
+					return false
+				}
+				w.Header().Set("WWW-Authenticate", `Bearer error="insufficient_scope", scope="records:admin"`)
+				w.WriteHeader(http.StatusForbidden)
+				return true
 			}
+			require.NoError(t, callOAuthPeer(t.Context(), transport, peer.resource))
+			assert.EqualValues(t, 2, peer.hostCalls.Load())
+			assert.EqualValues(t, 2, peer.tokenCalls.Load())
+			assert.EqualValues(t, 4, peer.mcpCalls.Load())
+			peer.mutex.Lock()
+			defer peer.mutex.Unlock()
+			require.Len(t, peer.requests, 2)
+			assert.Equal(t, "records:read records:write records:admin", peer.requests[1].Get("scope"))
 		})
 	}
 }
@@ -709,6 +742,18 @@ func newBrowserOAuthPeer(t *testing.T) *browserOAuthPeer {
 				body = peer.tokenReply(count)
 			}
 		case "/mcp/a%2Fb":
+			if r.Header.Get("Authorization") == "" {
+				var discovery jsonrpc.RawRequest
+				encoded, err := io.ReadAll(r.Body)
+				assert.NoError(t, err)
+				assert.NoError(t, discovery.UnmarshalJSON(encoded))
+				assert.Equal(t, "server/discover", discovery.Method)
+				assert.Nil(t, ValidateHTTPRequest(r, encoded, nil))
+				peer.probeCalls.Add(1)
+				w.Header().Set("WWW-Authenticate", peer.initialChallenge)
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
 			peer.mcpCalls.Add(1)
 			if peer.mcpHandle != nil {
 				if peer.mcpHandle(w, r) {
@@ -744,6 +789,7 @@ func newBrowserOAuthPeer(t *testing.T) *browserOAuthPeer {
 	peer.resource = peer.server.URL + "/mcp/a%2Fb?tenant=selected"
 	peer.issuer = peer.server.URL + "/issuer"
 	peer.metadata = fmt.Sprintf(`{"resource":%q,"authorization_servers":[%q],"scopes_supported":["records:read"]}`, peer.resource, peer.issuer)
+	peer.initialChallenge = fmt.Sprintf(`Bearer resource_metadata=%q`, peer.server.URL+"/challenged/resource")
 	peer.issuerBody = fmt.Sprintf(`{"issuer":%q,"token_endpoint":%q,"authorization_endpoint":%q,"grant_types_supported":["authorization_code","refresh_token"],"token_endpoint_auth_methods_supported":["none"],"code_challenge_methods_supported":["S256"],"authorization_response_iss_parameter_supported":true}`, peer.issuer, peer.server.URL+"/token/a%2Fb?routing=selected", peer.server.URL+"/authorize?routing=selected")
 	return peer
 }

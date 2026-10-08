@@ -8,6 +8,7 @@ import { EnterpriseManagedAuthorizationScenario } from '../../.cache/mcp-conform
 import { ClientCredentialsBasicScenario, ClientCredentialsJwtScenario } from '../../.cache/mcp-conformance/src/scenarios/client/auth/client-credentials.ts';
 import { ClientSecretBasicAuthScenario, ClientSecretPostAuthScenario, PublicClientAuthScenario } from '../../.cache/mcp-conformance/src/scenarios/client/auth/token-endpoint-auth.ts';
 import { IssParameterSupportedScenario, IssParameterNotAdvertisedScenario, IssParameterSupportedMissingScenario, IssParameterWrongIssuerScenario, IssParameterUnexpectedScenario, IssParameterNormalizedVariantScenario, MetadataIssuerMismatchScenario } from '../../.cache/mcp-conformance/src/scenarios/client/auth/issuer-parameter.ts';
+import { ScopeFromWwwAuthenticateScenario, ScopeFromScopesSupportedScenario, ScopeOmittedWhenUndefinedScenario, ScopeStepUpAuthScenario, ScopeRetryLimitScenario } from '../../.cache/mcp-conformance/src/scenarios/client/auth/scope-handling.ts';
 import { ResourceMismatchScenario } from '../../.cache/mcp-conformance/src/scenarios/client/auth/resource-mismatch.ts';
 import { ServerLifecycle } from '../../.cache/mcp-conformance/src/scenarios/client/auth/helpers/serverLifecycle.ts';
 
@@ -77,7 +78,12 @@ for (const [scenario, method] of [
   [IssParameterUnexpectedScenario, 'none'],
   [IssParameterNormalizedVariantScenario, 'none'],
   [MetadataIssuerMismatchScenario, 'none'],
-  [ResourceMismatchScenario, 'none']
+  [ResourceMismatchScenario, 'none'],
+  [ScopeFromWwwAuthenticateScenario, 'none'],
+  [ScopeFromScopesSupportedScenario, 'none'],
+  [ScopeOmittedWhenUndefinedScenario, 'none'],
+  [ScopeStepUpAuthScenario, 'none'],
+  [ScopeRetryLimitScenario, 'none']
 ]) {
   const start = scenario.prototype.start;
   scenario.prototype.start = async function (context) {

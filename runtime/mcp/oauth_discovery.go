@@ -15,30 +15,40 @@ import (
 	genresourcemetadata "goa.design/goa-ai/internal/mcpauth/gen/resource_metadata"
 )
 
-// discoverProtectedResource reads specified metadata locations. If neither
-// well-known address exists, it asks only server/discover for a challenge; it
-// never calls a domain tool to discover credentials or permission requirements.
-func discoverProtectedResource(ctx context.Context, client *http.Client, resource, issuer *url.URL, info ClientInfo) (*genresourcemetadata.ReadResult, []string, error) {
+// discoverProtectedResource reads well-known metadata without a credential or
+// domain request. Missing locations return absence so the caller can obtain the
+// resource's advertised address from a read-only discovery challenge instead.
+func discoverProtectedResource(ctx context.Context, client *http.Client, resource, issuer *url.URL) (*genresourcemetadata.ReadResult, error) {
 	for _, address := range resourceMetadataAddresses(resource) {
 		metadata, err := readProtectedResource(ctx, client, address)
 		if metadataMissing(err) {
 			continue
 		}
 		if err != nil {
-			return nil, nil, err
+			return nil, err
 		}
-		bound, err := bindProtectedResource(metadata, resource, issuer)
-		return bound, nil, err
+		return bindProtectedResource(metadata, resource, issuer)
 	}
+	return nil, nil
+}
+
+// discoverResourceAuthorization asks only server/discover for initial scopes.
+// A successful public discovery keeps the already validated metadata. A 401
+// challenge selects metadata and scopes for the exact configured resource and
+// issuer before the host consents; no domain tool is invoked.
+func discoverResourceAuthorization(ctx context.Context, client *http.Client, resource, issuer *url.URL, info ClientInfo, metadata *genresourcemetadata.ReadResult) (*genresourcemetadata.ReadResult, []string, error) {
 	transport := NewHTTPTransport(client, info, HTTPBindings{}, InputSupport{}, HTTPRetryPolicy{})
 	var ignored json.RawMessage
 	err := transport.call(ctx, resource.String(), "server/discover", map[string]any{}, &ignored)
 	if ctx.Err() != nil {
 		return nil, nil, ctx.Err()
 	}
+	if err == nil && metadata != nil {
+		return metadata, nil, nil
+	}
 	var response *HTTPResponseError
 	if !errors.As(err, &response) || response.StatusCode != http.StatusUnauthorized {
-		return nil, nil, errors.New("mcp: resource metadata is absent and discovery did not return an authorization challenge")
+		return nil, nil, errors.New("mcp: resource discovery did not provide metadata or an authorization challenge")
 	}
 	challenges, err := oauthChallenges(response.WWWAuthenticate)
 	if err != nil {

@@ -80,7 +80,7 @@ func TestChallengeDiscoveryKeepsCancellation(t *testing.T) {
 	require.NoError(t, err)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	_, _, err = discoverProtectedResource(ctx, peer.server.Client(), resource, issuer, ClientInfo{Name: "host", Version: "1"})
+	_, _, err = discoverResourceAuthorization(ctx, peer.server.Client(), resource, issuer, ClientInfo{Name: "host", Version: "1"}, nil)
 	require.ErrorIs(t, err, context.Canceled)
 	assert.Zero(t, peer.tokenCalls.Load())
 	assert.Zero(t, peer.mcpCalls.Load())

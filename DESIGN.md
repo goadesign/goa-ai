@@ -2901,6 +2901,14 @@ Standard grant defaults are declared in the Goa design, rather than reconstructe
 by runtime code. The resource server owns scope hierarchies; clients record
 requested and returned scope tokens without interpreting those hierarchies.
 
+Before initial interactive authorization, the shared transport sends a credential-free
+`server/discover` request to obtain the resource's authorization challenge. It never
+executes a domain tool for this purpose. Challenge scopes take priority over basic
+resource metadata; absent both, the authorization request omits scope. A saved
+grant keeps its requested and granted permissions for reuse and refresh. Changes
+to advertised metadata do not start consent; an actual resource rejection owns
+later permission changes. Machine grants retain their explicitly configured policy.
+
 A browser operation may recover once from an explicit resource rejection after a
 successful fresh grant. An insufficient-scope challenge adds its scopes to prior
 requested and granted scopes before new consent. Challenge metadata is checked

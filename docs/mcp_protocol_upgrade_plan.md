@@ -3935,3 +3935,36 @@ HTTP integration checkpoint, including valid and
 malformed external resource/template descriptors and fixed resource behavior,
 passed in 8.56 seconds. OAuth assessment, Apps, Skills, affected caller
 acceptance and final website publication still gate release.
+
+### Initial authorization and later scope challenges (2026-10-08)
+
+The shared authorization owner now obtains the initial Bearer challenge through a
+credential-free `server/discover` request before interactive consent. This request
+never executes a domain tool. Its scopes override the resource's advertised
+basic-access scopes. Metadata supplies the fallback only for initial authorization;
+saved grants and refreshes retain requested and granted scopes. An actual resource
+rejection adds newly challenged scopes while preserving prior permissions. Machine
+grant configuration and the existing recovery allowance remain unchanged.
+
+The independent referee initially exposed two defects: missing initial challenge
+selection, then unnecessary consent after reapplying advertised scopes to a saved
+grant. Both are corrected in the shared owner. All five HTTPS/preregistration-adapted
+scope scenarios now pass without warnings or failures. Four unchanged cases took
+0.93, 0.52, 0.51 and 0.51 seconds; the corrected escalation case passed 25 checks in
+0.94 seconds. Focused browser, machine-challenge, enterprise, signed-registration
+and credential-store checks passed with race detection in 6.66 seconds. The
+[conformance report](../integration_tests/conformance/README.md) records each
+adaptation and the limits of this evidence. Remaining metadata/registration
+assessment and final caller acceptance still gate OAuth completion.
+
+### Authorization proposal assessment (2026-10-08)
+
+DPoP binds tokens to a client's signing key; workload identity exchanges a machine's
+identity assertion for access. The agreed work requires assessing these profiles.
+The MCP proposals remain open and unmerged: [DPoP proposal 1932](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/1932)
+and [workload identity proposal 1933](https://github.com/modelcontextprotocol/modelcontextprotocol/pull/1933).
+They are not stable requirements for this upgrade and no speculative second
+authorization owner is added. Browser grants, client credentials and enterprise
+authorization use the implemented shared ownership and native generated contracts.
+Reassess these proposals when MCP adopts their contracts; referee scenarios alone
+do not make a proposed profile mandatory or implemented.

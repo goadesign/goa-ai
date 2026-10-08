@@ -139,9 +139,17 @@ func (g *authorizationClient) prepare(request *http.Request, credentialQueries, 
 // prepareCredential uses only the record currently held by the store. It saves
 // any new credential before adding a bearer header and returning its issuance.
 func (g *authorizationClient) prepareCredential(ctx context.Context, request *http.Request, records []AuthorizationCredential) (string, error) {
-	resource, challenged, err := discoverProtectedResource(ctx, g.client, g.resource, g.issuer, g.clientInfo)
+	resource, err := discoverProtectedResource(ctx, g.client, g.resource, g.issuer)
 	if err != nil {
 		return "", err
+	}
+	var challenged []string
+	probed := resource == nil
+	if probed {
+		resource, challenged, err = discoverResourceAuthorization(ctx, g.client, g.resource, g.issuer, g.clientInfo, nil)
+		if err != nil {
+			return "", err
+		}
 	}
 	issuer, err := discoverAuthorizationIssuer(ctx, g.client, g.issuer)
 	if err != nil {
@@ -150,14 +158,27 @@ func (g *authorizationClient) prepareCredential(ctx context.Context, request *ht
 	if err := g.grant.validateIssuer(issuer); err != nil {
 		return "", err
 	}
-	scopes := g.requestScopes(resource)
-	if g.grant.recoversChallenges() {
-		if len(challenged) > 0 {
-			scopes = challenged
+	_, retained := g.state.State.AsReady()
+	if !probed && !retained && g.grant.recoversChallenges() {
+		resource, challenged, err = discoverResourceAuthorization(ctx, g.client, g.resource, g.issuer, g.clientInfo, resource)
+		if err != nil {
+			return "", err
 		}
-		scopes = unionScopes(g.state.Requested, g.state.Granted, scopes)
 	}
 	known := unionScopes(g.state.Requested, g.state.Granted)
+	scopes := g.requestScopes(resource)
+	if g.grant.recoversChallenges() {
+		// A saved grant keeps its permissions until the resource rejects an
+		// operation. Newly advertised scopes do not require another consent.
+		switch {
+		case retained:
+			scopes = known
+		case len(challenged) > 0:
+			scopes = unionScopes(known, challenged)
+		default:
+			scopes = unionScopes(known, scopes)
+		}
+	}
 	if !g.reusableGrant() || !includesScopes(known, scopes) {
 		ready, available := g.state.State.AsReady()
 		var previous *genaccesstokens.BearerToken
