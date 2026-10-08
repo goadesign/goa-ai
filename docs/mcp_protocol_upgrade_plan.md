@@ -2,6 +2,47 @@
 
 Research and implementation plan, prepared 2026-10-02 and revised 2026-10-07 after tracing framework composition and prevailing retry implementations. The transport and composition foundation is implemented in the isolated clone. The full upgrade remains incomplete until every capability required below is implemented and verified. No release is authorized before then. The baseline sections describe remote main before this upgrade; they are not the current implementation. The current implementation and verified checks are recorded below.
 
+## Current completion gates
+
+This inventory governs completion; earlier milestone notes preserve research
+and verification evidence and do not supersede unfinished gates.
+
+| Capability | Current state and required completion |
+|---|---|
+| Stable protocol and generated HTTP composition | Implemented. Final-head CI and review remain required. |
+| Native additional input and registry continuation | Implemented through shared typed execution and codecs. Final caller acceptance remains required. |
+| Durable Task consumption and cancellation | Implemented. Final caller/database acceptance remains required. |
+| Task production and notifications | In progress. Generate application-owned job methods and status notifications through the existing subscription operation. Do not advertise production before the complete path works. |
+| Dynamic catalogs | Required. Catalog reads and change notifications must share the application's authorization and catalog owner. |
+| OAuth | Built-in authorization paths are implemented; finish the remaining agreed profile and conformance assessment. |
+| MCP Apps and Skills | Required. Complete their authored, generated and consuming paths and verify extension contracts. |
+| Dependencies, documentation and website | Dependency updates are underway. Finish caller migration, authoritative docs, translations and the MCP home-page section after capability acceptance. |
+| Generated stdio servers | Explicitly deferred. Existing stdio consumers remain supported. |
+
+Task metadata has one existing protocol decoder. Every generated HTTP client
+already sends through `HTTPTransport` before Goa's typed response decoder. The
+transport now checks creation metadata, detailed task state, exact queried task
+identity and update/cancel acknowledgements through the same decoders used by
+Task consumers and notifications. Required `ttlMs` accepts a present null or an
+exact integer and rejects omission. This is external protocol validation, not a
+new application nullable-type contract or a second job owner.
+
+The producer design must keep domain job state and execution in the authored
+service. A native optional retention duration may mean unlimited retention;
+the generated protocol reply must always emit its `ttlMs` member. Validate this
+outgoing mapping through the generated server and both native and runtime
+clients before treating the nullable-member gap as resolved for production.
+Application authorization, durable creation before reply, status-specific typed
+results, input updates and notifications remain part of that same acceptance.
+
+The four-case native outgoing fixture passed in 0.347 seconds: optional retention
+with an explicit `ttlMs` JSON tag always emits present null, zero, or an exact
+integer beyond floating-point precision, and the generated client preserves it.
+The six existing incoming-presence cases still pass. The shared Task transport
+checks passed in 1.51 seconds and scoped lint reported zero issues in 1.74 seconds.
+These are boundary proofs; they do not implement job binding or notification
+production and do not complete the generated MCP acceptance gate.
+
 ## Outcome and scope
 
 Target **MCP 2026-07-28**, the latest stable protocol revision verified during this research. The MCP project published it on July 28, 2026. Do not target the moving draft or stop at 2025-11-25. [Release announcement](https://blog.modelcontextprotocol.io/posts/2026-07-28/), [released specification](https://modelcontextprotocol.io/specification/2026-07-28).

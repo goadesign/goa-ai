@@ -370,6 +370,33 @@ func (t *HTTPTransport) send(outgoing *http.Request, hasID bool, envelope map[st
 	if result.ResultType == resultInputRequired && outgoing.Header.Get("Mcp-Method") != methodToolsCall && outgoing.Header.Get("Mcp-Method") != "resources/read" && outgoing.Header.Get("Mcp-Method") != methodPromptsGet {
 		return nil, NewMalformedResponseError(errors.New("input_required is not permitted for this method"))
 	}
+	// Task replies pass through the same state decoder before a generated
+	// client decodes them. Present null retention remains valid; omitted
+	// retention and incomplete status data cannot become typed zero values.
+	if result.ResultType == resultTask {
+		if _, err := decodeTaskInfo(incoming.Result); err != nil {
+			return nil, NewMalformedResponseError(err)
+		}
+	} else {
+		switch outgoing.Header.Get("Mcp-Method") {
+		case methodTasksGet:
+			var task taskGetResult
+			if err := json.Unmarshal(incoming.Result, &task); err != nil {
+				return nil, NewMalformedResponseError(err)
+			}
+			if mcpprotocol.EncodeHeaderValue(task.task.info.TaskID) != outgoing.Header.Get("Mcp-Name") {
+				return nil, NewMalformedResponseError(errors.New("tasks/get returned another task ID"))
+			}
+		case methodTasksUpdate, methodTasksCancel:
+			var acknowledgment taskAcknowledgment
+			if err := json.Unmarshal(incoming.Result, &acknowledgment); err != nil {
+				return nil, NewMalformedResponseError(err)
+			}
+			if err := acknowledgment.validate(); err != nil {
+				return nil, err
+			}
+		}
+	}
 	if subscription != nil {
 		if err := subscription.finish(incoming.Result); err != nil {
 			return nil, err
