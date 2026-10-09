@@ -15,7 +15,7 @@ import (
 
 	recordprovider "goa.design/goa-ai/internal/testpresentation/gen/record_provider"
 	run "goa.design/goa-ai/runtime/agent/run"
-	runtime "goa.design/goa-ai/runtime/agent/runtime"
+	tools "goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/toolregistry"
 	goa "goa.design/goa/v3/pkg"
 )
@@ -71,7 +71,10 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 	if msg.Meta == nil {
 		return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_call", "meta is required"), nil
 	}
-	meta := runtime.ToolCallMeta{
+	if err := toolregistry.ValidateExecution(msg.Meta.ExecutionSequence, msg.Meta.ExecutionContinuation, msg.Meta.TextOnly); err != nil {
+		return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_call", err.Error()), nil
+	}
+	meta := tools.ToolCallMeta{
 		TextOnly:         msg.Meta.TextOnly,
 		RunID:            msg.Meta.RunID,
 		SessionID:        msg.Meta.SessionID,
@@ -83,6 +86,9 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 
 	switch msg.Tool {
 	case Read:
+		if msg.Meta.ExecutionContinuation != nil || msg.Meta.ExecutionSequence != 0 {
+			return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_call", "tool does not accept input continuation"), nil
+		}
 		if msg.Meta.TextOnly {
 			spec, ok := Spec(Read)
 			if !ok {

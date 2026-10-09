@@ -41,7 +41,7 @@ The runtime operates on three layers:
                                  │
 ┌────────────────────────────────▼────────────────────────────────────┐
 │                         Engine Layer                                │
-│  Provides durable execution: Temporal, in-memory, or custom         │
+│  Workflow execution: Temporal, in-memory, or custom                 │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -50,7 +50,7 @@ The runtime operates on three layers:
 | Concept | Purpose |
 |---------|---------|
 | **Runtime** | Central registry and coordinator. Holds agents, toolsets, models, hooks, and stores. |
-| **Engine** | Workflow backend (Temporal or in-memory). Provides durable execution, activities, terminal-result queries, and cancellation. |
+| **Engine** | Workflow execution, activities, terminal-result queries, and cancellation. Temporal supports durable execution; in-memory execution lasts one process. |
 | **Planner** | Decision-maker. Analyzes messages and returns tool calls or a final response. |
 | **Toolset** | Collection of tools with shared execution logic. Generated from DSL or registered manually. |
 | **Completion** | Service-owned typed direct assistant output. Generated under `gen/<service>/completions` with unary and streaming helpers backed by generated codecs. |
@@ -1581,10 +1581,9 @@ directly:
 
 These names and their serialized field names are intentionally breaking.
 Suspensions written by this runtime use `goa-ai.run-suspension.v13`. Earlier
-versions cannot resume on this runtime. Version nine references an exact saved
-history position; see [Runtime Store](#runtime-store-storagestore) for preparation
-and checkpoint upgrade requirements. It retains the recovery contract introduced
-in version eight: the advertised catalog is stored for every accepted recovery
+versions cannot resume on this runtime. Current checkpoints reference an exact
+saved history position; see [Runtime Store](#runtime-store-storagestore) for
+preparation and checkpoint upgrade requirements. They retain the recovery contract: the advertised catalog is stored for every accepted recovery
 plan that waits for input. Failed tool names cannot derive
 the other authorized choices shown during that turn. It
 also requires complete successful tool results: a result-bearing tool stores
@@ -3037,9 +3036,10 @@ repeats the check at the first line of CallTool or RetryTool, before catalog
 lookup, health checks, result-stream creation, call admission, or Pulse
 publication. Register applies the provider version check during startup.
 RenewProvider sends no version field: strict current-state validation and the
-exact expected token enforce the version admitted at startup. The storage
-upgrade keeps wire protocol 10, schema fingerprints, and token derivation
-unchanged.
+exact expected token enforce the version admitted at startup. The earlier catalog
+layout split did not itself change protocol-10 identity. The current release uses
+wire protocol 13; its version participates in token derivation, so regenerated
+declarations require current admission rather than reuse of old tokens.
 Incoming `run_id`, `session_id`, `turn_id`, `tool_call_id`, and
 `parent_tool_call_id` values are bounded to 256
 bytes and reject NUL at the generated transport boundary; provider and
@@ -4122,12 +4122,18 @@ For MCP services:
 
 ##### Registry storage upgrade
 
-This change keeps wire protocol 10, canonical schema fingerprints, and
-registration-token derivation unchanged. It changes persisted catalog storage
-from combined records to compact state, separate current definitions, and
-permanent retired tokens. Matching wire versions do **not** make old and new
-catalog writers compatible. Existing protocol-10 data requires offline
-conversion; do not delete the catalog or its retired-token history to upgrade.
+The catalog layout split separates combined records into compact state, current
+definitions, and permanent retired tokens. That earlier change preserved
+protocol-10 identity. The current release additionally uses wire protocol 13
+and generated operation contracts. Treat layout conversion and protocol cutover
+as separate steps; matching wire versions alone do not make old and new catalog
+writers compatible. Do not delete the catalog or its retired-token history.
+
+The procedure below preserves data during the layout conversion. Before admitting
+work on the current release, settle old executable calls, regenerate complete
+declarations, and re-admit providers under wire protocol 13. Compare generated
+fingerprints and preserve historical identity; a version-derived old token cannot
+serve as a new admission. See [current release actions](releases/v0.88.0.md#required-upgrade-actions).
 
 Source changes are also required:
 
@@ -4145,9 +4151,10 @@ Source changes are also required:
   Lease authority loss now arrives as the typed `provider_lease_lost` service
   error; `ErrRegistrationLeaseExpired` still reports the local safety cutoff.
   Preserve real failures joined with cancellation.
-- No DSL, tool availability, consumer catalog lifetime, or provider message
-  shape changes. Do not change an admission revision merely for this storage
-  conversion when its schema and deployment admission remain the same.
+- The layout conversion alone does not change DSL, tool availability, consumer
+  catalog lifetime, or provider messages. The current protocol and generated
+  declaration changes still apply separately. Do not change an admission revision
+  merely for layout conversion when its schema and admission remain the same.
 
 Use a coordinated maintenance cutover:
 
@@ -4158,8 +4165,8 @@ Use a coordinated maintenance cutover:
    If accepted work cannot settle, postpone the cutover and resolve that work.
 2. Stop **all old registry writers** and all processes that could start old
    registrations or publish tool calls. Disable automatic restarts/admissions
-   during maintenance. No old/new writer overlap is supported, even though both
-   use protocol 10. Take a consistent backup with all writers stopped.
+   during maintenance. No old/new writer overlap is supported.
+   Take a consistent backup with all writers stopped.
 3. Run an offline converter and verifier against that backup. Preserve exact
    tokens, fingerprints, revisions, registration times, lease identities,
    draining flags, lease expiries, health epochs, pong timestamps, and every
@@ -4174,12 +4181,10 @@ Use a coordinated maintenance cutover:
    Check each expected admission and representative tool calls before admitting
    new work. Stream and health recovery alone do not prove correct conversion.
 
-An offline converter/verifier is being prepared as release evidence. This
-preview does not yet provide a published conversion artifact, download link, or
-executable migration command. Do not begin an existing-data cutover until that
-artifact and its verification procedure have been reviewed and rehearsed for
-the target installation. An empty development installation can start directly;
-that is not a migration of an existing registry.
+No general-purpose offline converter/verifier is shipped. The installation owner
+must provide, review and rehearse the conversion and verification procedure
+before an existing-data cutover. An empty development installation can start
+directly; that is not a migration of an existing registry.
 
 Before new writes resume, a failed conversion can be abandoned and the untouched
 backup restored with every writer stopped. Once new writes resume, recover
@@ -6688,9 +6693,10 @@ loss still follows the existing tool trust and retry contract.
 
 The authorization client owns challenge parsing, credential renewal and consent.
 Error text omits the challenge headers and HTTP body. The signed-token resource
-profile implements generated server challenges before dispatch; complete OAuth
-remains a release gate. Retaining an HTTP response alone does not implement those
-flows. No checkpoint or model argument carries a credential.
+profile implements generated server challenges before dispatch. Built-in browser,
+machine, signed-client and enterprise transports perform those authorization
+flows with a host-owned credential store. No checkpoint or model argument carries
+a credential.
 
 The built-in client-secret profile is described below. It uses the shared
 transport before MCP dispatch; it does not change the error or retry contracts.
@@ -6733,8 +6739,8 @@ the returned `CallResponse.Task` and observe that task afterward. The server may
 still return ordinary completed content or request synchronous input. Without the
 capability, a Task reply is a malformed response. Generated server bindings use
 [TaskExchange](dsl.md#native-job-tools) for application-owned jobs. The durable
-agent path is implemented; its final caller-store acceptance remains a release
-requirement before generated executors advertise support.
+agent path retains Task identity in the runtime store. Generated executors
+advertise support when they can retain and observe accepted Tasks.
 
 `GetTask(ctx, taskID)` returns a validated `Task`. `Info()` contains the current
 status, timestamps, optional status message, retention duration and polling
@@ -6765,9 +6771,8 @@ ordinary observations. Temporary cancellation delivery failures repeat only the
 same intent and operation identity after a workflow wait. Each activity has one
 network attempt; configured activity deadlines apply to that attempt. Permanent
 rejections end delivery with an error. Observed terminal Tasks need no cancellation.
-Uncertain answer delivery never repeats answers or the creating tool. Generated
-advertisement still waits for final caller-store acceptance and the remaining
-capability checks.
+Uncertain answer delivery never repeats answers or the creating tool. Application
+stores must implement the retained-work contract before enabling durable execution.
 
 `Runtime.CancelRun` accepts cancellation of suspended work without asking the
 caller to reconstruct or answer its checkpoint. Temporal owns a cancellation job
@@ -6897,8 +6902,8 @@ issuer again. Direct Goa calls verify before returning authenticated context.
 Regenerate protected servers and update their composition roots together. There
 is no optional verifier or compatibility constructor. Independent API keys keep
 their native bindings; a different credential owner cannot share the bearer
-header. Independent OAuth conformance and the remaining protocol capabilities
-remain required before the full MCP upgrade is released.
+header. The [independent authorization checks](../integration_tests/conformance/README.md)
+record the verified profiles and their fixture limitations.
 
 For a fixed Goa result view, server encoding, the advertised result schema and
 the generated agent decoder use only the selected fields. Required fields in
@@ -7062,11 +7067,12 @@ credential is not reused. Storage errors stop before MCP dispatch and do not
 expose token bytes. Scope requests survive pending exchanges, and omitted issuer
 lifetimes create no local retention or expiry policy.
 
-This changes the unreleased client construction API: supply the explicit store
+This changes the client construction API: supply the explicit store
 and regenerate callers together. There is no previous durable record format to
 migrate and no compatibility reader. Reverting to process-only storage discards
-retained authorization and requires fresh host consent. Independent protocol
-conformance and all remaining MCP capabilities still gate release.
+retained authorization and requires fresh host consent. The
+[independent protocol checks](../integration_tests/conformance/README.md)
+record the tested profiles and their fixture limitations.
 
 ### Client registration
 
@@ -7135,7 +7141,7 @@ authentication. Machine grants require confidential authentication and advertise
 The independent Basic and ES256 machine fixtures pass with explicit HTTPS trust
 and registration issuer configuration. See the
 [conformance instructions](../integration_tests/conformance/README.md) for their
-exact scope; other extension profiles remain release gates.
+exact scope and the limitations of the broader independent referee runs.
 
 Supply the same transport to a generated HTTP client's `NewClient` with its normal
 encoder and decoder; generated `NewCaller` retains its grant. Native domain
@@ -7355,7 +7361,9 @@ usage, malformed shape or reported expiration fail before resource redemption.
 Host credential errors are returned without secret details; cancellation is preserved.
 
 Identity bootstrap and resource tokens use the same explicit host store.
-Independent conformance and coordinated caller regeneration remain release gates. See the [stable enterprise profile](https://github.com/modelcontextprotocol/ext-auth/blob/fb374c7db2b34f18ca9183882e0beecdf661892b/specification/stable/enterprise-managed-authorization.mdx)
+Independent checks and their fixture limitations are recorded in
+[the verification report](../integration_tests/conformance/README.md). Regenerate
+and coordinate callers before deployment. See the [stable enterprise profile](https://github.com/modelcontextprotocol/ext-auth/blob/fb374c7db2b34f18ca9183882e0beecdf661892b/specification/stable/enterprise-managed-authorization.mdx)
 and its [identity authorization grant contract](https://www.ietf.org/archive/id/draft-ietf-oauth-identity-assertion-authz-grant-04.html).
 
 
@@ -7434,8 +7442,10 @@ rejects a nonempty task selection without the Tasks extension using `-32021`
 and names the missing capability. A Task update does not
 ask the host to replay the original tool call.
 
-Generated native job sources and durable agent Task handling remain required
-release gates; these client callbacks implement notification reception.
+Generated native job sources use `SubscriptionSource()` to publish accepted full
+Task snapshots. Durable agent handling retains the Task and settles cancellation
+without repeating its creator. See [native job tools](dsl.md#native-job-tools)
+and [Task clients](#mcp-task-clients).
 
 The application supplies `handleMCPChange`. A catalog-change event tells it to
 reload that catalog; a resource-update event supplies the address to read again.
@@ -7494,10 +7504,11 @@ own snapshot. The request retains only this selection mapping. Its source sends 
 Goa streaming interface. Generated codecs validate each value; the shared
 transport owns IDs, ordering and framing. Only sources selecting resources
 advertise `resources.subscribe`. Task-only sources do not claim that capability. Unsupported catalog-change flags are omitted from its
-acknowledgment; dynamic catalog sources remain required work. Fixed generated catalogs do not emit pretend catalog changes, and
-private agent/session streams are not MCP subscription sources. See the
-[remaining implementation work](mcp_protocol_upgrade_plan.md#optional-features-and-security-boundaries)
-and the [released subscription contract](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/subscriptions).
+acknowledgment. Dynamic catalog sources select the supported catalog-change
+kinds through the same authored stream. Fixed generated catalogs do not emit
+catalog changes, and private agent/session streams are not MCP subscription
+sources. See the [generated source contract](dsl.md#resource-update-subscriptions)
+and the [MCP subscription contract](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/subscriptions).
 
 ### Interrupted HTTP responses
 
@@ -7569,10 +7580,10 @@ continuation, publish an input prompt or retry an accepted tool operation.
 
 Generated MCP and native `BindTo` executors return this unfinished outcome to
 the agent runtime. Generated registry providers send the same host requests
-through registry wire protocol 11; the consumer returns the existing unfinished
+through registry wire protocol 13; the consumer returns the existing unfinished
 execution outcome. Only the completed branch runs tool-result transforms,
 bounds and server-only data conversion.
-The runtime saves the original tool arguments and opaque state in a version-11
+The runtime saves the original tool arguments and opaque state in a version-13
 run suspension, then publishes `await_mcp_input` to the trusted host. The host
 resumes the exact saved suspension with `PendingInputResponse.MCP`, containing
 the tool call ID and a response for each requested input ID. The runtime validates
@@ -7594,10 +7605,12 @@ repeat an external side effect.
 
 This is a breaking upgrade. Remove the DSL `ProtocolVersion` option and
 regenerate all packages. Deploy clients and servers using the same current
-protocol. Drain version-9 suspended runs before installing the new runtime;
-version-9 checkpoints are rejected, with no legacy reader or conversion path.
-Rollback requires restoring the previous binaries and their matching generated
-contracts; version-11 suspensions cannot be resumed by the previous runtime.
+protocol. Resolve incompatible suspended runs on their owning worker version
+before installing the new runtime. Only `goa-ai.run-suspension.v13` is accepted;
+earlier checkpoints have no legacy reader or conversion path. Rollback requires
+compatible binaries, generated contracts and stored data; current suspensions
+cannot be resumed by the previous runtime. See the
+[complete release upgrade instructions](releases/v0.88.0.md#required-upgrade-actions).
 
 Registry wire protocol 13 carries a workflow-owned execution sequence and one
 typed operation separately from tool arguments. The original tool call uses
@@ -7636,10 +7649,10 @@ text/blob contents. No inferred variables or first-matching-template dispatch
 are exposed. RFC 6570 parsing and variable collection run during generation;
 resource reads do not use the parser. See
 [the resource contract](dsl.md#parameterized-mcp-resources).
-They do not advertise subscriptions, tasks, or
-server-originated elicitation. Host credential handling remains application-owned. The remaining
-feature and conformance work is tracked in the
-[MCP upgrade plan](mcp_protocol_upgrade_plan.md).
+Additional declarations enable subscriptions, Tasks, and additional input;
+the server advertises only authored capabilities. Host credential handling
+remains application-owned. Follow the [release upgrade actions](releases/v0.88.0.md#required-upgrade-actions)
+when replacing an older generated server.
 
 ## Stream Profiles
 

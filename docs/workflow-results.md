@@ -51,7 +51,7 @@ Callers that previously inspected `RunOutput.ToolEvents` must change source:
 No new history store, history API, automatic full-history read, or model-visible
 field is introduced by the result encoding. This change did not change the
 suspension schema. Current continuation restoration requires
-`goa-ai.run-suspension.v11`, which references saved history while retaining active tool and recovery state. The separate
+`goa-ai.run-suspension.v13`, which references saved history while retaining active tool and recovery state. The separate
 preparation and checkpoint upgrade requirements are described in
 [Runtime Store](runtime.md#runtime-store-storagestore).
 The result encoding itself does not change suspension-checkpoint size limits.
@@ -111,6 +111,6 @@ and migration-only tests/documentation after all supported deployments prove:
   copies have been migrated or have ended their supported retention.
 
 These are saved-result conditions, not authority to remove saved suspensions or
-canonical run-log records. The independent suspension-version release gate
-still applies. Public consumers
-must establish their own saved-copy and supported-retention obligations.
+canonical run-log records. Earlier suspension versions remain rejected; follow
+the [stored-work cutover](runtime.md#executable-ownership-and-upgrade) separately.
+Public consumers must establish their own saved-copy and supported-retention obligations.

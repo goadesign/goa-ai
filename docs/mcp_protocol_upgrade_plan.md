@@ -1,24 +1,39 @@
 # Upgrade goa-ai to MCP 2026-07-28
 
-Research and implementation plan, prepared 2026-10-02 and revised 2026-10-09 after tracing framework composition and prevailing retry implementations. The transport and composition foundation is implemented in the isolated clone. The full upgrade remains incomplete until every capability required below is implemented and verified. No release is authorized before then. The baseline sections describe remote main before this upgrade; they are not the current implementation. The current implementation and verified checks are recorded below.
+The agreed upgrade is implemented and merged in [PR #409](https://github.com/goadesign/goa-ai/pull/409).
+This document retains the research, architectural decisions and dated acceptance
+records from 2026-10-02 through 2026-10-09. Baseline descriptions and milestone
+statements about unfinished work describe their recorded point in time; they are
+not instructions for the current release. Use the [release upgrade guide](releases/v0.88.0.md)
+and the [runtime reference](runtime.md) for current application requirements.
 
 ## Current completion gates
 
-This inventory governs completion; earlier milestone notes preserve research
-and verification evidence and do not supersede unfinished gates.
+All agreed framework capabilities and final acceptance are complete. Final
+implementation [CI run 37960467033](https://github.com/goadesign/goa-ai/actions/runs/37960467033)
+passed build/lint, unit checks, HTTP integration, browser Apps, and all four
+MCP generator shards at `e155e2cc`. The merged commit has the same tested tree.
+Review findings were addressed before merge. The updated website was published
+through [goa.design PR #272](https://github.com/goadesign/goa.design/pull/272).
 
-| Capability | Current state and required completion |
+| Capability | Completed contract |
 |---|---|
-| Stable protocol and generated HTTP composition | Implemented. Final-head CI and review remain required. |
-| Native additional input and registry continuation | Implemented through shared typed execution and codecs. Final caller acceptance remains required. |
-| Durable Task consumption and cancellation | Implemented. Final caller/database acceptance remains required. |
-| Task production and notifications | Implemented through existing typed job methods and one shared resource/Task subscription source. Generated HTTP lifecycle, native executor/provider paths, discovery, full snapshots and selected views are verified. Final-head integration and caller acceptance remain required. |
-| Dynamic catalogs | Implemented through authenticated native methods for tools, prompts, resources and URI templates, with one shared subscription source. Final-head integration and review remain required. |
-| OAuth | Built-in authorization paths and the agreed metadata/profile assessment are implemented. Selected independent checks and explicit legacy-fixture mismatches are recorded. Final-head verification, review and caller acceptance remain required. |
-| MCP Apps | Implemented through authored app resources and tools, generated peers, and the official browser SDK. Final-head browser, build and integration CI passed. Final review remains required. |
-| MCP Skills | Implemented through generated discovery/read clients, shared `VerifySkillFile`, and a reference host that retains complete entries with model context. Generated HTTP and native agent acceptance covers lazy reads, origin isolation, complete YAML, cached bytes, nested activation, changed-manifest consent and local execution approval/denial. Directory discovery and selected views reuse ordinary methods. Final-head CI, caller assessment and review remain required. |
-| Dependencies, documentation and website | Root and all four maintained nested modules pin merged Goa `9fd65ad2c943`, including the shared native union renderer and template-safe selected values. Authoritative docs, five-language guides and the MCP home-page diagram are implemented. Final consumer acceptance and publication remain required. |
+| Stable protocol and HTTP composition | MCP 2026-07-28 uses original configured Goa endpoints, validation and transport mappings. |
+| Additional input and registry continuation | Generated typed exchanges work through MCP, local executors and registry providers. |
+| Durable Tasks | Existing job methods provide creation, observation, answers, cancellation and full subscription snapshots; durable execution retains completion ownership. |
+| Dynamic catalogs | Authenticated tools, prompts, resources and URI-template pages share change subscriptions. |
+| OAuth | Browser, machine, signed-client and enterprise flows use private host storage; independent checks retain explicit fixture limitations. |
+| Apps | Generated producers and the official browser SDK compose with checked visibility, origin isolation and host permissions. |
+| Skills | Generated discovery and reads, manifest verification, lazy host loading and content-bound execution consent are verified. |
+| Dependencies and documentation | Root and maintained nested modules use merged Goa; documentation and the five-language website are published. |
 | Generated stdio servers | Explicitly deferred. Existing stdio consumers remain supported. |
+
+Application database conversion, credential storage and production deployment
+remain owned by each installation. Framework acceptance does not claim a live
+cutover or universal independent conformance. The historical records below remain
+unchanged so failed checks and intermediate limitations remain inspectable.
+
+## Research and implementation records
 
 Generated unions now expose `Value() (any, error)` through Goa's shared renderer.
 Go templates use `Kind` to select a branch and `Value` to read it; Go callers

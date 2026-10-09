@@ -20,7 +20,8 @@ This directory hosts the golden tests for the agents Goa code generator. The goa
 
 - DSL execution: `eval.Reset()` → register Goa and agents roots → `eval.Execute(design)` → `eval.RunDSL()`
 - Code generation: call `codegen/agent.Generate` to obtain `[]*codegen.File`
-- Rendering: every `SectionTemplate` is executed with `text/template` using its `FuncMap` and `Data`
+- Section checks use `fileContent`, which executes `SectionTemplate` values with `text/template`.
+- Complete-source checks use `renderedFileContent`, which calls Goa `File.Render` and retains formatting, import cleanup, and real generated validators.
   - Default helpers for shared headers are injected for determinism:
     - `comment`: Goa codegen comment helper
     - `commandLine`: returns an empty string to avoid embedding environment‐dependent commands
@@ -41,7 +42,7 @@ go test ./codegen/agent/tests
 go test ./codegen/agent/tests -run Quickstart_Renders_Minimal -update
 ```
 
-### Test matrix (initial)
+### Finding the affected tests
 
 - Tool specs – minimal
   - DSL: `testscenarios.ToolSpecsMinimal()`
@@ -53,15 +54,13 @@ go test ./codegen/agent/tests -run Quickstart_Renders_Minimal -update
   - Verifies: `gen/<service>/agents/<agent>/<toolset>/transforms.go` contains transform helpers
   - Focus: presence of transform init helpers and header markers
 
-Planned additions (recommended next):
-
-- Tool result variants (primitive, inline object, user type w/ customization)
-- Tags surfaced in specs
-- BindTo cross‑service (imports/aliases, type refs)
-- Deterministic user type imports (custom packages, alias stability)
-- RunPolicy (caps, time budget, interrupts) emitted into agent config/registry
-- Toolset reuse (top‑level `Toolset(...)` referenced in `Uses`) – no duplicate specs
-- MCP `FromMCP` / `FromExternalMCP` + `Use` (external toolset registration) – minimal compile‑time scaffolding
+The package also covers result variants, tags, cross-service bindings, native
+input and Task exchanges, generated imports, policy settings, MCP executors,
+registry declarations, evaluations, and quickstart guidance. Search test names
+and `testscenarios/` for the contract being changed. Related compile tests also
+live directly under `codegen/agent` and `codegen/mcp`. Choose the smallest set
+that exercises the affected generated callers; use the full suite at an
+integration checkpoint rather than after every edit.
 
 ### Authoring conventions
 

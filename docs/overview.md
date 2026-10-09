@@ -1,1305 +1,185 @@
-# Goa‑AI: Design‑First Agentic Systems in Go
+# How Goa-AI fits together
 
-Build intelligent, tool‑wielding agents with the confidence of strong types and the power of
-durable execution. Goa‑AI brings the design‑first philosophy you love from Goa to the world of AI
-agents—declare your agents, toolsets, and policies in a clean DSL, and let code generation handle
-the rest.
+Goa-AI extends Goa's design and code generation with AI agents, MCP clients and
+servers, and distributed tool registries. One design describes the capabilities;
+generated code supplies typed contracts; your application supplies behavior and
+infrastructure.
 
-No more hand‑rolled JSON schemas. No more brittle tool wiring. No more wondering if your agent will
-survive a restart. Just elegant designs that compile into production‑grade systems.
+Use the [README](../README.md) to choose a starting point and the
+[quickstart](../quickstart/README.md) for a runnable project. This page explains the
+components and their responsibilities. The [DSL reference](dsl.md) and
+[runtime reference](runtime.md) own the detailed API contracts.
 
-## Why Goa‑AI?
-
-| Challenge                            | How Goa‑AI Helps                                                    |
-|--------------------------------------|---------------------------------------------------------------------|
-| **LLM workflows feel fragile**       | Type‑safe tool payloads with validations and examples—no ad‑hoc JSON guessing games |
-| **Long‑running agents crash**        | Durable orchestration with automatic retries, time budgets, and deterministic replay |
-| **Composing agents is messy**        | First‑class agent‑as‑tool composition, even across processes, with run trees and linked streams |
-| **Schema drift haunts you**          | Generated codecs and registries keep everything in sync—change the DSL, regenerate, done |
-| **Structured final answers drift**   | Service-owned `Completion(...)` contracts reuse Goa types and generated codecs for direct assistant output |
-| **Observability is an afterthought** | Built‑in streaming, transcripts, logs, metrics, and traces from day one |
-| **MCP integration is manual**        | Generated wrappers turn MCP servers into typed toolsets automatically |
-
-## The Mental Model
-
-```
-DSL → Codegen → Runtime → Engine + Features
-```
-
-Think of it as a pipeline from intention to execution:
-
-1. **DSL** (`goa-ai/dsl`) — Express what you want: agents, tools, policies. Clean, declarative,
-   version‑controlled.
-
-2. **Codegen** (`codegen/agent`, `codegen/mcp`) — Transform your design into typed Go packages:
-   tool specs, completion specs, codecs, workflow definitions, registry helpers. Lives under
-   `gen/`—never edit by hand.
-
-3. **Runtime** (`runtime/agent`, `runtime/mcp`) — The workhorse that executes your agents:
-   plan/execute loops, policy enforcement, memory, sessions, streaming, telemetry, and MCP
-   integration.
-
-4. **Engine** (`runtime/agent/engine`) — Swap backends without changing code. In‑memory for fast
-   iteration; Temporal for production durability.
-
-5. **Features** (`features/*`) — Plug in what you need: Mongo for memory and prompt overrides,
-   Pulse for real-time streams, Bedrock/OpenAI/Gateway model clients, policy engines.
-
-## Ways to Work
-
-### Fast Iteration (Single Process)
-
-Spin up the in‑memory engine, wire a stub planner, and iterate at the speed of thought. No external
-dependencies, no deployment ceremony—just ideas becoming reality.
-
-### Production Ready (Worker/Client Split)
-
-Workers poll for tasks with a durable Temporal engine. Clients submit runs through generated typed
-APIs. Runs survive restarts, scale horizontally, and replay deterministically.
-
-### Powerful Composition (Agent‑as‑Tool)
-
-One agent exports a toolset; another consumes it. The nested agent executes as a child workflow
-and forms a run tree with linked streams—clean composition without flattening run identity.
-
-### External Tools (MCP Toolsets)
-
-Reference MCP servers in your DSL and get generated registries with typed schemas, codecs, transport
-handling, retries, and tracing baked in.
-
-### Full Observability (Streaming & Telemetry)
-
-Configure a runtime store and stream sink once. The runtime stores the canonical
-transcript records needed for replay, publishes private real‑time events to a
-trusted host, and instruments everything with OTEL‑aware logging, metrics, and
-traces. Product transcripts remain owned by the application and may use a
-separate memory store.
-
----
-
-## Toolsets: Where the Magic Happens
-
-Toolsets are owned by Goa services—agents, MCP, and custom executors are consumers or
-implementations. The DSL keeps everything symmetric with `Toolset`, `Tool`, `BindTo`, `Use`, and
-`Export`.
-
-### Service‑Owned Toolsets
-
-Declare tools with `Toolset("name", func() { ... })`. Bind them to Goa service methods or provide
-custom executors. Codegen produces per‑toolset specs, types, and codecs under
-`gen/<service>/toolsets/<toolset>/`.
-
-Agents that `Use` these toolsets get typed call builders and executor factories—just wire up your
-service client and go.
-
-### Agent‑Implemented Toolsets (Agent‑as‑Tool)
-
-Define tools in an `Export` block, and other agents can `Use` them seamlessly. Ownership stays with
-the service; the agent provides the implementation.
-
-Codegen emits provider‑side helpers with `NewRegistration` and typed builders, plus consumer‑side
-helpers for agents using the exported toolset.
-
-### One Unified Tool Catalog
-
-No matter how tools are wired—service methods, custom executors, or nested agents—`Use` merges
-everything into a single, coherent catalog. Your planner sees one clean universe of tools.
-
-### Service-Owned Typed Completions
-
-Tool calls are not the only structured contract Goa-AI can own. `Completion(...)`
-lets a service declare a typed direct assistant response using the same Goa type
-system as tools.
-
-Completion names are part of the structured-output contract. They must be
-1-64 ASCII characters, may contain letters, digits, `_`, and `-`, and must
-start with a letter or digit.
-
-Codegen emits a dedicated package at `gen/<service>/completions/` with the result
-types, unions, JSON codecs, schemas, explicitly authored root examples, and
-typed completion helpers. Adapters send an authored Goa `Example(...)` through
-provider-native structured-output example fields when available.
-
-Unary helpers request provider-enforced structured output and decode the final
-assistant response through the generated codec instead of hand-parsing JSON.
-Before provider work, the validated model client compiles the canonical schema
-for that request. The compiler reads the raw schema bytes directly from an
-in-memory resource; no map-shaped schema becomes part of the runtime contract.
-It validates the returned JSON even when the provider also enforces the schema.
-When validation or the generated codec rejects
-model-authored JSON, the helper returns a non-retryable
-`planner.OutputContractError` and does not ask the model again.
-`completion.Response.ModelResponse` preserves that exact response and its token
-usage.
-
-Streaming helpers return a typed `completion.Streamer[T]`. Providers may emit
-preview `completion_delta` chunks. The low-level validated stream retains its
-final `completion` chunk until the provider ends normally, both the chunk and
-complete response satisfy the request schema, and their JSON bytes match.
-`Value` remains unavailable until the typed helper decodes that accepted
-completion. Streaming never restarts after exposing previews.
-Providers that do not implement structured output fail explicitly with
-`model.ErrStructuredOutputUnsupported`.
-The generated schema remains the canonical service contract; model adapters may
-normalize it for provider-specific constrained decoding, but they must reject
-providers that cannot represent the declared contract.
-
-### Tool Schemas JSON
-
-Every agent gets a backend‑agnostic JSON catalogue at:
+## Design, generation, and execution
 
 ```text
-gen/<service>/agents/<agent>/specs/tool_schemas.json
+Goa design
+    → service types, validation, and transport contracts
+    → tool schemas, codecs, and registration
+    → agent and completion clients
+    → MCP clients and HTTP servers
+
+Application behavior + generated contracts
+    → agent runtime + execution engine + application-owned stores
 ```
 
-Each entry contains the canonical tool ID with full JSON Schemas:
+The design is an ordinary Go package importing Goa and Goa-AI's DSL. `goa gen`
+produces packages under `gen/` and an application-specific `AGENTS_QUICKSTART.md`.
+Never edit generated contracts. `goa example` creates missing application files;
+it does not overwrite existing implementations.
 
-```json
-{
-  "tools": [
-    {
-      "id": "<service>.<toolset>.<tool>",
-      "service": "orchestrator",
-      "toolset": "helpers",
-      "title": "Answer a simple question",
-      "description": "Answer a simple question",
-      "tags": ["chat"],
-      "payload": { "name": "Ask", "schema": { /* JSON Schema */ } },
-      "result": { "name": "Answer", "schema": { /* JSON Schema */ } }
-    }
-  ]
-}
+Run generation with the Goa version selected by the application module:
+
+```sh
+go run goa.design/goa/v3/cmd/goa gen <design-package-import-path>
 ```
 
-Schemas derive from the same DSL as your generated specs and codecs. If schema generation fails,
-`goa gen` fails fast—no silent drift between runtime contracts and the JSON catalogue.
-
-Tool inputs are always objects. Generated objects reject unknown properties,
-maps keep accepting dynamic keys, and each `OneOf` value accepts only
-`{ "type": ..., "value": ... }`, with the selected value checked
-recursively. The runtime enforces the advertised schema before any attached
-input decoder. See the
-[runtime tool-input contract](runtime.md#model-visible-tool-arguments) for the
-accepted `Args` shapes and correction rules.
-
-### Bounded Tool Results and Bounds Metadata
-
-Some tools naturally return large lists, graphs, or time‑series windows. Goa‑AI lets you mark these
-as **bounded views** so that services remain responsible for trimming while the runtime enforces and
-surfaces the contract:
-
-- Use the DSL helper `BoundedResult()` inside a `Tool` to declare that its result is a bounded view
-  over a larger data set.
-- Codegen propagates this into generated `tools.ToolSpec.Bounds` metadata and projects the canonical
-  bounded fields into the generated JSON result schema without forcing authored result types to
-  duplicate those fields.
-- Successful bounded tool executions must populate `planner.ToolResult.Bounds`; the runtime then
-  projects those bounds into model-visible result JSON and attaches the same provider‑agnostic
-  `agent.Bounds` struct to planner results, hook events, streams, and memory events.
-- For tools marked `BoundedResult`, the runtime enforces that bounds metadata is present and that
-  any untruncated result stays under a configurable JSON size limit; trimming logic stays entirely
-  in service code.
-- Use `ContinueWith` when a cursor can resume the query without another model decision. The runtime
-  advertises the dedicated continuation only while a next page exists, accepts an empty model call,
-  and binds the opaque cursor plus any retained canonical query fields from the single live chain
-  head. Exact cursor lineage advances sequential pages; multiple parallel live heads are rejected.
-  One planner batch may contain only one call for that continuation chain. Use `Cursor` on the
-  original tool only when repeating the query is intentionally caller-owned.
-
-For bounded tools, bounds metadata is a hard contract:
-
-- `Returned` and `Truncated` must always be present.
-- `Total`, `NextCursor`, and `RefinementHint` are optional and should only be set when known.
-- A truncated result must provide `NextCursor` or `RefinementHint`.
-
-### Server Data (Sidecar Data)
-
-Tools can attach rich, non‑model data alongside their results using the `ServerData` DSL:
-
-```go
-Tool("get_time_series", "Get Time Series", func() {
-    Args(GetTimeSeriesToolArgs)
-    Return(GetTimeSeriesToolReturn)
-    ServerData("charts.time_series", GetTimeSeriesSidecar) // Full-fidelity data for observers (e.g., UIs)
-    ServerDataDefault("off")                             // Opt-in by default
-})
-```
-
-Server-data is never sent to model providers. Optional server-data can be projected into
-observer-facing UI artifacts (charts, tables, maps) while keeping the model-facing tool result
-bounded and token-efficient. Always-on server-data is emitted/persisted server-side and is not
-treated as optional observer data.
-
-### Tool Payload Defaults (Feature)
-
-Goa‑AI applies Goa‑style default semantics to **tool payloads**. Codecs decode into pointer‑field
-JSON helper types (to distinguish missing vs zero) and then transform into the final payload type
-using `codegen.GoTransform`, which injects default values deterministically.
-
-See [`docs/tool_payload_defaults.md`](tool_payload_defaults.md) for the full contract and the codegen
-invariants generator maintainers must keep consistent.
-
----
-
-## Your First Agent in Five Minutes
-
-### 1. Design (design/design.go)
-
-```go
-package design
-
-import (
-	. "goa.design/goa/v3/dsl"
-	. "goa.design/goa-ai/dsl"
-)
-
-var _ = API("orchestrator", func() {})
-
-var Ask = Type("Ask", func() {
-	Attribute("question", String, "User question")
-	Example(map[string]any{"question": "What is the capital of Japan?"})
-	Required("question")
-})
-
-var Answer = Type("Answer", func() {
-	Attribute("text", String, "Answer text")
-	Required("text")
-})
-
-var _ = Service("orchestrator", func() {
-	Agent("chat", "Friendly Q&A agent", func() {
-        Use("helpers", func() {
-            Tool("answer", "Answer a simple question", func() {
-                Args(Ask)
-                Return(Answer)
-            })
-        })
-		RunPolicy(func() {
-			DefaultCaps(MaxToolCalls(2), MaxRecoveryTurns(1))
-			TimeBudget("15s")
-			History(func() {
-				// For long sessions, summarize older turns and keep a bounded
-				// exact tail of newest complete turns.
-				CompressAtMaxInputTokens(120_000)
-				KeepMaxInputTokens(40_000)
-				KeepMaxTurns(10)
-			})
-		})
-	})
-})
-```
-
-### 2. Generate
-
-```bash
-goa gen example.com/quickstart/design
-```
-
-### 3. Run (cmd/demo/main.go)
-
-```go
-package main
-
-import (
-	"context"
-	"fmt"
-	"time"
-
-	chat "example.com/quickstart/gen/orchestrator/agents/chat"
-	"goa.design/goa-ai/runtime/agent/model"
-	"goa.design/goa-ai/runtime/agent/planner"
-	"goa.design/goa-ai/runtime/agent/runtime"
-	storageinmem "goa.design/goa-ai/runtime/agent/storage/inmem"
-)
-
-// A tiny planner: always replies, no tools (perfect for first run)
-type StubPlanner struct{}
-
-func (p *StubPlanner) PlanStart(
-	ctx context.Context,
-	in *planner.PlanInput,
-) (*planner.PlanResult, error) {
-	return &planner.PlanResult{
-		FinalResponse: &planner.FinalResponse{
-			Message: &model.Message{
-				Role:  model.ConversationRoleAssistant,
-				Parts: []model.Part{model.TextPart{Text: "Hello from Goa‑AI!"}},
-			},
-		},
-	}, nil
-}
-
-func (p *StubPlanner) PlanResume(
-	ctx context.Context,
-	in *planner.PlanResumeInput,
-) (*planner.PlanResult, error) {
-	return &planner.PlanResult{
-		FinalResponse: &planner.FinalResponse{
-			Message: &model.Message{
-				Role:  model.ConversationRoleAssistant,
-				Parts: []model.Part{model.TextPart{Text: "Done."}},
-			},
-		},
-	}, nil
-}
-
-func main() {
-	runtimeStore := storageinmem.New()
-	if _, err := runtimeStore.CreateSession(context.Background(), "session-1", time.Now().UTC()); err != nil {
-		panic(err)
-	}
-	rt := runtime.New(runtimeStore) // in-memory engine by default
-
-	if err := chat.RegisterChatAgent(context.Background(), rt, chat.ChatAgentConfig{
-		Planner: &StubPlanner{},
-	}); err != nil {
-		panic(err)
-	}
-
-	client := chat.NewClient(rt) // generated, typed
-	out, err := client.Run(
-		context.Background(),
-		"session-1",
-		[]*model.Message{{
-			Role:  model.ConversationRoleUser,
-			Parts: []model.Part{model.TextPart{Text: "Say hi"}},
-		}},
-		runtime.WithRunID("run-1"),
-	)
-	if err != nil {
-		panic(err)
-	}
-	fmt.Println("RunID:", out.RunID)
-	// Extract text from the final message parts
-	if out.Final != nil {
-		for _, p := range out.Final.Parts {
-			if tp, ok := p.(model.TextPart); ok {
-				fmt.Println("Assistant:", tp.Text)
-			}
-		}
-	}
-}
-```
-
-History compression is design-owned. Declare `History(...)` inside the agent's
-`RunPolicy`; regeneration then adds `HistoryModel` and
-`HistoryCompression` to that agent's generated configuration.
-
-**Want durability?** Just swap in a Temporal engine:
-
-```go
-rt := runtime.New(runtimeStore, runtime.WithEngine(temporalEngine))
-```
-
-Then use `Start/Wait` for asynchronous runs with task queues, memos, and search attributes.
-
----
-
-## Under the Hood
-
-### The Plan → Execute → Resume Loop
-
-1. **Start** — The runtime spins up a workflow for your agent (in‑memory or Temporal)
-2. **Plan** — Your planner's `PlanStart` receives the conversation and decides: final answer or
-   tool calls?
-3. **Execute** — Tool calls run through generated codecs, validated and type‑safe
-4. **Resume** — `PlanResume` gets tool results; the loop continues until a final response or policy
-   limits hit
-5. **Stream** — Private runtime events reach a trusted host; the host builds any public events
-
-### Policies Keep Things Sane
-
-Per‑turn enforcement of:
-
-- Maximum tool calls
-- Recovery-turn limits
-- Time budgets
-- Tool allowlists via policy engines
-
-### Three Flavors of Tool Execution
-
-| Type                | How It Works                                                                         |
-|---------------------|--------------------------------------------------------------------------------------|
-| **Native toolsets** | Your implementations + generated codecs = typed, validated tools                     |
-| **Agent‑as‑tool**   | Child workflow executes the nested agent with linked streams and run links           |
-| **MCP toolsets**    | Generated wrappers preserve JSON schemas and typed transport failures across HTTP and stdio |
-
-MCP callers use the framework-owned `2026-07-28` revision. Each request
-supplies its version and actual capabilities without an initialization handshake.
-Callers in `runtime/mcp` support two transports:
-
-- **`StdioCaller`** — Spawns MCP server as subprocess, communicates via stdin/stdout
-- **`HTTPCaller`** — Sends JSON-RPC over HTTP and accepts JSON or event-stream responses
-
-All callers implement the `Caller` interface, preserve structured MCP error data, and include
-distributed tracing. Recovery is selected by the runtime from the typed failure contract rather
-than by parsing error text or retrying transport calls implicitly.
-
-### Memory, Streaming & Telemetry
-
-The hook bus publishes events (`tool_start`, `tool_result`, `assistant_message`, `prompt_rendered`, ...) that:
-
-- **Memory stores** subscribe to for transcript persistence
-- **Stream sinks** (e.g., Pulse) carry private typed events to a trusted host.
-  Some events contain exact provider messages and other provider-only fields.
-  The host selects and converts the data it exposes through its smaller public
-  contract.
-- **OTEL instrumentation** captures for logs, metrics, and traces
-
-### Engine Abstraction
-
-| Engine        | Best For                                                       |
-|---------------|----------------------------------------------------------------|
-| **In‑memory** | Fast dev loops, no external dependencies                       |
-| **Temporal**  | Durable execution, replay, retries, terminal-result queries, horizontal scaling |
-
-### External Input (End & Continue)
-
-Agents can request human input or external tool results without keeping a
-workflow open:
-
-- **Await Clarification** — Planner returns `Await.Clarification` when it needs user input
-  (missing fields, ambiguous request). The runtime publishes an event and ends
-  the workflow with a typed suspension.
-- **Await External Tools** — Planner requests out‑of‑band tool execution and the
-  workflow ends with the exact calls awaiting results.
-- **Continue** — The runtime stores the opaque suspension in its required
-  runtime store before the workflow completes. `AgentClient.Continue` is a
-  convenience call for applications that need no database write between
-  validating an answer and starting its workflow. An application that must
-  accept one answer in a database transaction uses `PrepareContinuation`,
-  stores `MarshalBinary` bytes in that transaction, then uses
-  `ParsePreparedRun` and `StartPrepared`. Multiple pending requests are
-  consumed in order, one workflow per answer.
-
-The suspension records the remaining active-time budget and the tool names
-needed by the next worker. The next worker validates the concrete saved values
-through its generated codecs, allowing compatible tool changes without
-accepting data the new contract cannot decode. A child agent request propagates
-through its parent, so neither workflow remains open while the user is deciding.
-
-### Hook Bus (Internal Event Backbone)
-
-The hook bus (`runtime/agent/hooks`) is the internal pub/sub backbone for runtime observability:
-
-- **Publishers**: Workflows, planners, tool executors emit events (`run_started`, `tool_call_scheduled`,
-  `assistant_message`, `thinking_block`, etc.)
-- **Subscribers**: Memory stores, stream sinks, telemetry adapters receive events and react
-- **Decoupling**: Producers don't know about consumers; add observability without touching core logic
-
-`stream.Subscriber` selects hook events for a private trusted-host stream. It
-does not create a browser-safe or end-user event format.
-
-### Canonical Transcripts
-
-Ordered `model.Message` parts are the single provider-neutral transcript
-representation. Model adapters produce complete canonical responses, the
-runtime captures them before planner code observes completion, and workflow
-state persists the selected messages directly. Thinking, citations, tool use,
-provider metadata, and part ordering therefore cross durable boundaries without
-being rebuilt through a second ledger shape. The durable codec is a strict
-tagged union: each part carries its `kind`, unknown fields fail decoding, and
-tool inputs remain raw JSON bytes so replay never changes numbers or object
-representation. Canonical message copies are deep and exhaustive across the
-sealed part union, so planner, reminder, and workflow ownership boundaries
-cannot share mutable provider state.
-
-## DSL Reference
-
-The DSL package (`goa-ai/dsl`) provides declarative functions for defining agents, toolsets,
-policies, and MCP servers within Goa service designs.
-
-### Agent Definition
-
-| Function | Purpose |
-|----------|---------|
-| `Agent(name, description, func())` | Define an agent within a Service |
-| `Use(value, func()?)` | Consume a toolset (by name, expression, or provider) |
-| `Export(value, func()?)` | Export a toolset for other agents to consume |
-| `DisableAgentDocs()` | Skip AGENTS_QUICKSTART.md generation |
-
-### Tool Definition
-
-| Function | Purpose |
-|----------|---------|
-| `Tool(name, description?, func()?)` | Define a tool within a toolset or mark a method as MCP tool |
-| `Args(type)` | Define an object-shaped tool input (inline object or object user type) |
-| `Return(type)` | Define tool output schema |
-| `ServerData(kind, type, func()?)` | Attach server-only data alongside results (never sent to models) |
-| `ServerDataDefault("on" \| "off")` | Default emission for optional server-data when `server_data` is omitted or `"auto"` |
-| `Tags(...)` | Attach metadata labels for filtering/categorization |
-| `BindTo(method)` or `BindTo(service, method)` | Bind tool to service method implementation |
-| `Inject(fields...)` | Mark fields as infrastructure-only (hidden from LLM) |
-| `CallHintTemplate(tmpl)` | Go template for tool call `DisplayHint` (typed payload; rendered by runtime) |
-| `ResultHintTemplate(tmpl)` | Go template for successful tool result display (`.Args`, `.Result`, optional `.Bounds`; rendered by runtime) |
-| `BoundedResult()` | Mark result as bounded view over larger data |
-| `ResultReminder(text)` | Static result guidance in ordinary and text-only runs |
-| `UIResultReminder(text)` | Static result guidance only for runs that support interactive output |
-| `TerminalRun()` | Tool becomes bookkeeping and completes the run after successful execution |
-| `Bookkeeping()` | Durable control record: no tool-call budget; no automatic resume after success |
-
-### Toolset Definition
-
-| Function | Purpose |
-|----------|---------|
-| `Toolset(name, func())` | Define a named toolset with tools |
-| `FromMCP(service, toolset)` | Configure toolset backed by a Goa-defined MCP server in the same design |
-| `FromExternalMCP(service, toolset)` | Configure toolset backed by an external MCP server with inline schemas |
-| `FromRegistry(registry, toolset)` | Configure toolset sourced from registry |
-| `AgentToolset(service, agent, toolset)` | Reference toolset exported by another agent |
-| `Description(text)` | Set toolset description |
-| `Version(version)` | Pin registry-backed toolset version |
-
-Generated used-toolset registration is fail-fast: `RegisterUsedToolsets` returns
-an error if any required local executor is missing or nil, before registering
-the toolsets with the runtime.
-
-### Run Policy
-
-| Function | Purpose |
-|----------|---------|
-| `RunPolicy(func())` | Define execution constraints for an agent |
-| `DefaultCaps(opts...)` | Configure resource limits |
-| `MaxToolCalls(n)` | Cap budgeted (non-bookkeeping) tool invocations per run |
-| `MaxRecoveryTurns(n)` | Cap consecutive replacement planner activities after rejected tool or model output |
-| `TimeBudget(duration)` | Set the active planner/tool work budget; time between workflows does not consume it |
-| `OnMissingFields(action)` | Configure validation behavior |
-
-### History Management
-
-| Function | Purpose |
-|----------|---------|
-| `History(func())` | Configure conversation history management |
-| `KeepRecentTurns(n)` | Retain only the most recent N turns |
-| `CompressAtTurns(n)` | Summarize older turns when the turn threshold is reached |
-| `CompressAtMaxInputTokens(n)` | Summarize older turns when runtime input-token count exceeds the threshold |
-| `KeepMaxTurns(n)` | Keep at most N newest complete turns exact after summarization |
-| `KeepMaxInputTokens(n)` | Keep newest complete turns whose runtime token count fits the budget |
-
-### Prompt Caching
-
-| Function | Purpose |
-|----------|---------|
-| `Cache(func())` | Configure prompt cache checkpoint placement |
-| `AfterSystem()` | Place checkpoint after system messages |
-| `AfterTools()` | Place checkpoint after tool definitions |
-
-### Registry & Federation
-
-| Function | Purpose |
-|----------|---------|
-| `Registry(name, func()?)` | Declare a registry source for tool discovery |
-| `URL(string)` | Set registry endpoint URL |
-| `APIVersion(string)` | Set registry API version |
-| `Retry(maxRetries, backoff)` | Configure retry policy |
-| `SyncInterval(duration)` | Set catalog refresh interval |
-| `CacheTTL(duration)` | Set local cache duration |
-| `Federation(func())` | Configure external registry import |
-| `Include(patterns...)` | Glob patterns for namespaces to import |
-| `Exclude(patterns...)` | Glob patterns for namespaces to skip |
-| `PublishTo(registry)` | Configure registry publication for exported toolset |
-| `Timeout(duration)` | Set HTTP request timeout |
-| `Security(scheme)` | Reference Goa security scheme for auth |
-
-### MCP Server Definition
-
-| Function | Purpose |
-|----------|---------|
-| `MCP(name, version)` | Enable MCP support for a service |
-| `Resource(name, uri, mimeType)` | Mark method as MCP resource provider |
-| `StaticPrompt(name, desc, messages...)` | Add static prompt template |
-
-An MCP service must also declare a service-level JSON-RPC `POST` route. For
-example, `JSONRPC(func() { POST("/mcp") })` exposes the generated MCP methods at
-`/mcp`.
-
----
-
-## Runtime API Reference
-
-### Runtime Construction
-
-```go
-// Pass the required host-owned runtime store, then functional options.
-rt := runtime.New(
-    runtimeStore,
-    runtime.WithEngine(temporalEngine),
-    runtime.WithMemoryStore(memoryMongo),
-    runtime.WithPolicy(basicPolicy),
-    runtime.WithStream(pulseSink, stream.RuntimeHostProfile()),
-    runtime.WithHooks(hookBus),
-    runtime.WithLogger(logger),
-    runtime.WithMetrics(metrics),
-    runtime.WithTracer(tracer),
-)
-```
-
-Each generated `AgentDefinition` owns the workflow name and default task queue.
-Keep planner and tool attempt budgets in `RunPolicy.Timing` or
-`runtime.WithTiming(...)`. Configure Temporal queue-wait and liveness behavior
-on the Temporal engine itself. A caller may select another queue for one run
-with `runtime.WithTaskQueue(...)`.
-
-### Agent Registration
-
-```go
-// Register generated agent (typically called by generated code)
-err := rt.RegisterAgent(ctx, runtime.AgentRegistration{
-    Definition:      serviceagent.Definition(),
-    Planner:         myPlanner,
-    WorkflowHandler: rt.ExecuteWorkflow,
-    Policy:          policy,
-    // ... activity names and options
-})
-
-// Register external toolset
-err := rt.RegisterToolset(runtime.ToolsetRegistration{
-    Name:    "custom.tools",
-    Execute: customExecutor,
-    Specs:   toolSpecs,
-})
-
-// Register model client for planner use
-err := rt.RegisterModel("default", bedrockClient)
-```
-
-### Agent Client
-
-```go
-// Get client for registered agent
-client, err := rt.Client(agent.Ident("service.agent"))
-// or panic variant:
-client := rt.MustClient(agent.Ident("service.agent"))
-
-// Get client for a generated agent whose worker runs elsewhere.
-client, err := rt.ClientFor(serviceagent.Definition())
-
-// Synchronous run
-out, err := client.Run(ctx, "session-1", messages,
-    runtime.WithRunID("custom-id"),
-    runtime.WithLabels(map[string]string{"env": "prod"}),
-    runtime.WithTaskQueue("priority"),
-    runtime.WithRunTimeBudget(5*time.Minute),
-    runtime.WithTagPolicyClauses([]runtime.TagPolicyClause{{
-        AllowedAny: []string{"safe"},
-    }}),
-)
-
-// Asynchronous run
-handle, err := client.Start(ctx, "session-1", messages)
-// ... later
-out, err := handle.Wait(ctx)
-```
-
-### Run Control
-
-```go
-// Cancel a running workflow
-err := rt.CancelRun(ctx, runID)
-
-// Continue after the preceding workflow requested clarification.
-pending := out.Suspension.Pending[0]
-next, err := client.Continue(
-    ctx,
-    "session-1",
-    out.RunID,
-    "run-2",
-    "turn-2",
-    &api.PendingInputResponse{Clarification: &api.ClarificationAnswer{
-        ID:     pending.Await.Clarification.ID,
-        Answer: "The user meant Unit 7",
-    }},
-    runtime.WorkflowOptions{},
-)
-```
-
-### Introspection
-
-```go
-// List registered agents and toolsets
-agents := rt.ListAgents()
-toolsets := rt.ListToolsets()
-
-// Get tool spec by name
-spec, ok := rt.ToolSpec(tools.Ident("toolset.tool"))
-
-// Get the tool specs listed as executable by an agent
-specs := rt.ToolSpecsForAgent(agent.Ident("service.agent"))
-
-// Get parsed tool schema
-schema, ok := rt.ToolSchema(tools.Ident("toolset.tool"))
-```
-
-### Streaming
-
-```go
-```
-
----
-
-## Planner Interface
-
-Planners are the decision-makers: they analyze messages and return either tool calls to execute
-or a final assistant response.
-
-```go
-type Planner interface {
-    PlanStart(ctx context.Context, input *PlanInput) (*PlanResult, error)
-    PlanResume(ctx context.Context, input *PlanResumeInput) (*PlanResult, error)
-}
-```
-
-### PlanInput / PlanResumeInput
-
-```go
-type PlanInput struct {
-    Messages   []*model.Message   // Saved conversation history
-    RunContext run.Context         // Run metadata (IDs, caps, labels)
-    Agent      PlannerContext      // Runtime services (memory, logger, models)
-    Events     PlannerEvents       // Streaming event emitters
-    Reminders  []reminder.Reminder // Active system reminders for this turn
-}
-
-type PlanResumeInput struct {
-    Messages    []*model.Message
-    RunContext  run.Context
-    Agent       PlannerContext
-    Events      PlannerEvents
-    ToolOutputs []*ToolOutput      // Canonical executed tool-call history
-    SynthesisOnly bool             // Final response required; tools forbidden
-    Finalize    *Termination       // Non-nil for saved-message finalization
-    Reminders   []reminder.Reminder
-}
-```
-
-Read or transform conversation history through `Messages`. When the planner
-calls a runtime model client, the runtime applies history policy to that actual
-request using the destination model's counter. Reading messages alone performs
-no counting or summarization. This replaces both inputs' former
-`PrepareMessages` callback. Saved conversations remain unchanged; activity
-records can additionally carry a verified summary for reuse within one workflow. See the
-[preparation and migration contract](runtime.md#preparing-conversation-messages).
-
-### PlanResult
-
-```go
-type PlanResult struct {
-    ToolCalls     []ToolRequest    // Tools to execute
-    SynthesizeAfterTools bool      // Synthesize after success; repair stays allowed
-    FinalResponse *FinalResponse   // Terminal assistant message
-    FinalToolResult *FinalToolResult // Terminal tool result for nested agent runs
-    Await         *Await           // Pause for human input
-    ExpectedChildren int           // Optional hint for nested child results
-    Notes         []PlannerAnnotation // Intermediate reasoning
-}
-```
-
-`SynthesizeAfterTools` is batch intent, not recovery policy. Failed results
-carry `ToolFailure.Recovery`: `correct_call` keeps the failed tool available and
-supplies structured correction evidence without requiring a retry; `replan`
-receives the caller-allowed catalog without the failed tool; and `finish`
-requires tool-free synthesis. The planner may combine corrected work, choose
-another advertised tool, await input, or answer. Otherwise the runtime carries
-the batch intent as `SynthesisOnly`, which rejects additional tool calls.
-`Finalize` marks saved-message finalization after a runtime limit or a tool's
-`finish` recovery directive. Runs configured with `WithLimitTerminalPlans`
-execute the matching fixed terminal call at a time, tool-call, or recovery-turn
-limit without calling `PlanResume`.
-
-### PlannerContext
-
-Access runtime services from within planners:
-
-```go
-type PlannerContext interface {
-    ID() agent.Ident
-    RunID() string
-    Memory() memory.Reader
-    Logger() telemetry.Logger
-    Metrics() telemetry.Metrics
-    Tracer() telemetry.Tracer
-    State() AgentState                    // Ephemeral per-run state
-    AdvertisedToolDefinitions() []*model.ToolDefinition
-    ModelClient(id string) (model.Client, bool) // Direct validated model client
-    PlannerModelClient(id string) (planner.PlannerModelClient, bool) // Planner-scoped streaming client
-    RenderPrompt(ctx context.Context, id prompt.Ident, data any) (*prompt.PromptContent, error)
-    AddReminder(r reminder.Reminder)      // Register guidance for future turns
-    RemoveReminder(id string)             // Clear outdated guidance
-}
-```
-
-### PlannerEvents
-
-Planner-authored semantic progress and usage during planning. The designated
-planner model call sends validated text to the configured trusted-host stream
-and sends thinking when the selected profile enables it. Partial tool
-arguments stay inside model validation until the complete call is available.
-
-```go
-type PlannerEvents interface {
-    PlannerThought(ctx context.Context, note string, labels map[string]string)
-    UsageDelta(ctx context.Context, usage model.TokenUsage)
-}
-```
-
----
-
-## System Reminders
-
-Deliver structured, rate-limited guidance to models without polluting user conversations:
-
-```go
-// Register a reminder from your planner
-input.Agent.AddReminder(reminder.Reminder{
-    ID:              "search.truncated",
-    Text:            "Results are truncated. Consider narrowing your query.",
-    Priority:        reminder.TierGuidance,
-    Attachment:      reminder.Attachment{Kind: reminder.AttachmentUserTurn},
-    MinTurnsBetween: 2,
-})
-```
-
-Reminders are automatically wrapped in `<system-reminder>` tags and injected at appropriate points
-in the conversation. Use priority tiers to ensure critical guidance is never suppressed:
-
-| Tier | Purpose |
-|------|---------|
-| `TierSafety` | Highest priority (P0). Never dropped by policy. |
-| `TierGuidance` | Workflow suggestions (P2). First to be suppressed under budgets. |
-
----
-
-## Model Client Interface
-
-Provider-agnostic model interactions:
-
-```go
-type Client interface {
-    Complete(ctx context.Context, req *Request) (*Response, error)
-    Stream(ctx context.Context, req *Request) (*ValidatedStream, error)
-}
-
-type Streamer interface {
-    Recv() (Chunk, error)
-    Response() *Response
-    Close() error
-}
-```
-
-Every public client captures the request's immutable output contract before
-provider work and returns a `ValidatedStream`. Raw provider and transport
-adapters implement `Streamer` only so `RequestContract.ValidateStream` can own
-and validate them. Code that owns a complete receive-through-close operation
-passes the exact `Recv` or processing error to `Finalize`, or nil after clean
-EOF, before using `Response`. This preserves independent receive, lifecycle,
-context, and cleanup failures while keeping a validation error primary when
-provider cleanup alone also fails. Callers that intentionally handle receiving
-and cleanup as separate operations may continue to use `Close`. `UsageChunk`
-carries progressive usage while the stream is active; terminal errors do not
-produce a canonical response.
-
-### Message Types
-
-Messages are structured as typed parts:
-
-| Part Type | Purpose |
-|-----------|---------|
-| `TextPart` | Plain text content |
-| `ThinkingPart` | Provider-issued reasoning (text, signature, or redacted) |
-| `ToolUsePart` | Assistant's tool invocation declaration |
-| `ToolResultPart` | Tool result provided to the model |
-| `CacheCheckpointPart` | Cache boundary marker |
-
-### Request Options
-
-```go
-type Request struct {
-    Model            string
-    ModelClass       ModelClass
-    PromptRefs       []prompt.PromptRef
-    Messages         []*Message
-    Temperature      float32
-    Tools            []*ToolDefinition
-    ToolChoice       *ToolChoice
-    MaxTokens        int
-    Stream           bool
-    Thinking         *ThinkingOptions
-    StructuredOutput *StructuredOutput
-    Cache            *CacheOptions
-}
-```
-
-### Prompt Management Contracts
-
-Prompt rendering is runtime-native and versioned:
-
-- Register immutable baseline prompts as `prompt.PromptSpec` in `Runtime.PromptRegistry`.
-- Optionally configure scoped overrides with `runtime.WithPromptStore(...)` using a `prompt.Store`
-  implementation (for example, `features/prompt/mongo`).
-- Rendering returns text and a `prompt.PromptRef`; it does not write runtime
-  storage.
-- A context carrying `prompt.RenderRecorder` collects one `prompt.RenderEvent`
-  for each successful render. The event contains the resolved prompt ID,
-  version, and scope. Failed renders add no event.
-- Before `Start`, pass `recorder.Events()` through
-  `runtime.WithRenderedPrompts(...)` with the messages containing the rendered
-  text. The accepted workflow stores those events after its start record and
-  before planner work.
-- Planner rendering, consumer-side child prompt rendering, and `RunOneShot`
-  use the same event shape. The runtime carries planner events in the accepted
-  activity result, child events in the accepted child input, and one-shot events
-  to the already-created one-shot run.
-- Carry prompt provenance through model calls by setting `model.Request.PromptRefs`.
-- Observe render lifecycle through hook/stream `prompt_rendered` events.
-
----
-
-## Best Practices
-
-**Design first** — Put all agent and tool schemas in the DSL. Add examples and validations. Let
-codegen own schemas and codecs.
-
-**Never hand‑encode** — Use generated codecs and clients everywhere. Avoid `json.Marshal`/
-`Unmarshal` for tool payloads.
-
-**Keep planners focused** — Planners decide *what* (final answer vs. which tools). Tool
-implementations handle *how*.
-
-**Split client from worker** — Register agents on workers; use generated typed clients from other
-processes to submit runs.
-
-**Compose with export/use** — Prefer agent‑as‑tool over brittle cross‑service contracts. Single
-history, unified debugging.
-
-**Regenerate often** — DSL change → `goa gen` → lint/test → run. Never edit `gen/` manually.
-
-### Advertising Tools to Planners
-
-Register generated tool specs with the runtime using `specs.Specs()` from
-`gen/<svc>/agents/<agent>/specs`; use `specs.Spec(name)` when one generated
-contract is needed by name. Inside planners, use
-`input.Agent.AdvertisedToolDefinitions()` to get the runtime-filtered model-facing tool
-definitions. Tags stay in runtime policy metadata and are not exposed to model providers.
-
----
-
-## Temporal Runtime Flow (Deep Dive)
-
-For those who want the full picture of how execution flows through the system.
-
-### 1. Client Invocation
-
-Use the generated `NewClient(rt)` to get a `runtime.AgentClient`, then:
-
-- **Synchronous**: `Run(ctx, sessionID, messages, ...opts)` — start and wait
-- **Asynchronous**: `Start(ctx, sessionID, messages, ...opts)` → `engine.WorkflowHandle` → `Wait/Cancel`
-- **Continuation**: `Continue(ctx, sessionID, predecessorRunID, newRunID, newTurnID, response, runtime.WorkflowOptions{})` — start a new workflow from one stored request
-
-The `sessionID` argument is required and must be a non-empty, non-whitespace string.
-
-**RunOptions** let you configure per‑run behavior beyond the required `sessionID`:
-
-| Option                                  | Purpose                      |
-|-----------------------------------------|------------------------------|
-| `WithRunID(string)`                     | Set custom run identifier    |
-| `WithTurnID(string)`                    | Set conversational turn ID   |
-| `WithLabels(map[string]string)`         | Attach metadata labels       |
-| `WithMetadata(map[string]any)`          | Attach arbitrary metadata    |
-| `WithTaskQueue(string)`                 | Route to specific workers    |
-| `WithMemo(map[string]any)`              | Attach workflow memo         |
-| `WithSearchAttributes(map[string]any)`  | Enable queries               |
-| `WithRunMaxToolCalls(int)`              | Cap total tool calls         |
-| `WithRunTimeBudget(duration)`           | Set time limits              |
-| `WithRunFinalizerGrace(duration)`       | Reserve time for final message |
-| `WithLimitTerminalPlans(plans)`         | Fix terminal calls for runtime limits |
-| `WithRestrictToTool(tools.Ident)`       | Limit available tools        |
-| `WithTagPolicyClauses([]TagPolicyClause)` | Compose explicit tag clauses |
-| `WithTiming(Timing)`                    | Set multiple timing overrides |
-
-Ordinary `correct_call` recovery activities retain current agent tools and exact
-executable contracts for failed calls, after applying the same run policy to
-both. Finalization correction remains limited to its failed terminal tool.
-Recovery activities remove tools
-selected only by `replan` failures. Caller `WithRestrictToTool` policy remains
-run-scoped and continues to define the maximum available catalog.
-
-`WithTiming(Timing)` sets semantic run/planner/tool budgets. It does not expose
-engine-level queue-wait or heartbeat tuning.
-
-### 2. Engine Start
-
-`AgentClient.Start` calls `Prepare`, then passes the returned `PreparedRun` to
-`StartPrepared`. Preparation checks the generated agent definition and builds
-an `engine.WorkflowStartRequest` with:
-
-- `ID` equal to `Input.RunID`; sessionful callers provide it, while one-shot
-  preparation generates it when absent
-- `Workflow` (from registration)
-- `TaskQueue`, `Input` (`*runtime.RunInput`)
-- Optional encoded `Memo` and typed `SearchAttributes`
-
-`StartPrepared` checks the immutable request against the current generated
-definition, closes registration, and submits it to the engine. `Start` does not
-serialize the optional durable JSON form. Applications call `MarshalBinary`
-only when they need to store the exact request before submission.
-
-The agent runtime deliberately does not expose whole-workflow retries. One
-accepted workflow owns one durable run lifecycle, including its terminal
-record. Activities may retry temporary failures because each activity command
-is safe to repeat.
-
-`Engine.StartWorkflow` returns an `engine.WorkflowHandle` for waiting or cancellation.
-Custom engines call `engine/contract.NormalizeRootRequest` before retaining a
-root request and `contract.NormalizeChildRequest` before retaining a child.
-They call `contract.CopyRunInput` before every initial or retry handler attempt,
-retain one private `contract.CopyRunOutput` result, and copy that result again
-for every wait, query, or other caller-facing read. Shared normalization fixes
-portable search values and the root digest; each adapter still submits those
-values through its own backend. These functions apply the same ownership,
-validation, exact-retry identity, and size rules as the shipped engines without
-exposing backend types.
-
-### 3. Worker Execution
-
-During registration, generated code calls `rt.RegisterAgent(ctx, runtime.AgentRegistration{...})`,
-which:
-
-- Registers the workflow via `engine.WorkflowDefinition`
-- Registers activities: `PlanStartActivityHandler`, `PlanResumeActivityHandler`,
-  `ExecuteToolActivityHandler`
-
-The engine invokes the workflow handler, which calls `rt.ExecuteWorkflow`.
-
-### 4. The Plan/Execute/Resume Loop
-
-`ExecuteWorkflow(wfCtx, *RunInput)`:
-
-1. Publishes `run_started`, initializes caps/time budget
-2. Either restores a suspension or calls `runPlanActivity` for the first planner turn
-3. Enters `runLoop`:
-   - Enforce the active-time budget
-   - If `ToolCalls` present → `executeToolCalls`
-   - If `Await` present → publish, checkpoint, and return `RunOutput.Suspension`
-   - If `FinalResponse` present → complete
-   - At a configured limit, execute its fixed terminal call when present;
-     otherwise ask `PlanResume` to finish from saved messages
-
-### 5. Tool Execution
-
-`executeToolCalls` routes each call:
-
-| Path         | When           | How                                                               |
-|--------------|----------------|-------------------------------------------------------------------|
-| **Activity** | Default        | JSON‑encode via codec, schedule `ExecuteToolActivity`, collect futures |
-| **Child**    | Agent‑as‑tool  | Execute as a child workflow using its generated definition        |
-
-Before either path is scheduled, the validated model client applies the tool's
-advertised schema and attached decoder. Only the input rejections listed in the
-[runtime tool-input contract](runtime.md#model-visible-tool-arguments) qualify
-for a replacement model call; ordinary decoder and internal errors are
-terminal.
-
-`ExecuteToolActivity` decodes an accepted payload, calls the toolset's
-`Execute`, and encodes the result. A service can separately reject a domain
-value after execution begins. Generated providers preserve supported Goa
-validation errors as structured field issues in `planner.ToolFailure` instead
-of requiring callers to parse error text.
-
-### 6. Completion
-
-`runLoop` returns `*runtime.RunOutput` containing:
-
-- `Final` (the assistant's `*model.Message`) or `FinalToolResult` (the successful terminal tool), or `Suspension` when external input is required
-- `ToolCount` and combined `ToolTelemetry` for the complete invocation
-- `Notes` and aggregated `Usage`
-
-The runtime validates the exact workflow result before storing success or
-suspension. Full tool results and failures remain readable through the existing
-paged `Runtime.ListRunEvents` API, not a second copy in the workflow result.
-See [workflow completion and saved-result upgrades](workflow-results.md) for
-the caller and retained-history contract.
-
----
-
-## Agent‑as‑Tool: Child Workflow Composition
-
-Exported toolsets get first‑class helpers for registering agents as tools. Nested agents execute
-as child workflows, enabling linked streams and run links.
-
-### Generated Provider Helpers
-
-- **Tool IDs** (fully qualified) and type aliases for codecs
-- **`New<Agent>ToolsetRegistration(definition)`** — creates a provider
-  registration from that agent's generated definition
-- **`NewRegistration(definition, systemPrompt, ...runtime.AgentToolOption)`**
-  — configures per-tool text or templates while keeping the generated
-  definition as the only route and contract owner
-- **Typed call builders** like `New<Tool>Call(args)`. The runtime assigns the
-  execution ID after the planner returns its `PlanResult`.
-
-### Runtime Behavior
-
-1. Consumer registers with `rt.RegisterToolset(reg)`
-2. When the runtime sees a toolset call with `AgentTool` config:
-   - Publishes `ChildRunLinkedEvent` linking parent to child
-   - Starts the child workflow through `ExecuteAgentChild` using the child
-     `AgentDefinition`
-   - Child runs full plan/execute/resume loop
-3. Results flow back through `ToolResult` with `RunLink` for correlation
-
-### Key Types
-
-| Type                                   | Purpose                                          |
-|----------------------------------------|--------------------------------------------------|
-| `runtime.ToolsetRegistration`          | Tool specifications and execution implementation |
-| `runtime.AgentDefinition`              | Agent route, tool contracts, labels, policy, and reachable children |
-| `runtime.AgentToolConfig`              | Child definition and optional prompt content     |
-| `runtime.ExecuteAgentChild`            | Execute a nested child workflow                  |
-
----
-
-## Integration Points
-
-### Your Code
-
-- Implement `planner.Planner` (`PlanStart`, `PlanResume`)
-- Provide tool executors via `runtime.ToolCallExecutor`
-- Configure runtime: `runtime.New(runtimeStore, WithEngine, WithMemoryStore,
-  WithHooks, WithStream, WithLogger, WithMetrics, WithTracer)`
-- Register models: `rt.RegisterModel("model-id", client)`
-- Submit runs via generated clients
-- For agent‑as‑tool: configure text/templates with `runtime.WithText`, `runtime.WithTemplate`
-
-### Generated Code
-
-- Per agent: `AgentID`, `WorkflowName`, `DefaultTaskQueue`, activity names
-- `Register<Agent>(ctx, rt, Config)` — full registration
-- `Definition()` and `NewClient(rt)` — the shared caller and worker contract
-- Per toolset: `New<Agent><Toolset>ToolsetRegistration`
-
-### Runtime/Library
-
-- `runtime.RegisterAgent`, `runtime.RegisterToolset`
-- `runtime.Client`, `runtime.ClientFor`, `runtime.MustClient`, `runtime.MustClientFor`
-- `runtime.AgentClient` with sessionful `Run`, `Prepare`, and `Start`, one-shot
-  `OneShotRun`, `PrepareOneShot`, and `StartOneShot`, plus
-  `PrepareContinuation`, `StartPrepared`, and `Continue`
-- `runtime.PreparedRun` with `RunID`, `MarshalBinary`, and
-  `runtime.ParsePreparedRun` for identifying and storing one exact accepted
-  start request across process restarts
-- `engine.Engine`, `engine.WorkflowDefinition`, `engine.ActivityDefinition`, `engine.WorkflowHandle`
-- `engine/contract.NormalizeRootRequest`, `NormalizeChildRequest`,
-  `CopyRunInput`, and `CopyRunOutput` for custom engine adapters
-- Activities: `PlanStartActivity`, `PlanResumeActivity`, `ExecuteToolActivity`
-- Child composition: `runtime.ExecuteAgentChild`
-- Tool infrastructure: `tools.ToolSpec`, `tools.JSONCodec`
-- Tool errors: `toolerrors.ToolError` for structured error reporting
-- Hooks: `hooks.Bus`, `hooks.Subscriber`, `hooks.Event` for runtime observability
-- Continuations: `api.RunSuspension`, ordered pending requests, and one typed response per new workflow
-
----
-
-## Trusted Runtime Streams
-
-Deliver private real-time runtime data to trusted application code. Runtime
-events are inputs to that host, not a browser protocol. A host that serves an
-end-user interface must select and convert the data into its own smaller public
-contract.
-
-### Implement a Stream Sink
-
-```go
-type MySink struct{}
-
-func (s *MySink) Send(ctx context.Context, event stream.Event) error {
-    // Handle: assistant_reply, planner_thought, tool_start,
-    //         tool_update, tool_end, await_clarification, 
-    //         await_external_tools, usage, workflow, child_run_linked
-    // The selected profile decides which events reach this sink.
-    return nil
-}
-
-func (s *MySink) Close(ctx context.Context) error {
-    return nil
-}
-```
-
-### Trusted Host Stream
-
-```go
-sink := &MySink{}
-rt := runtime.New(runtimeStore,
-    runtime.WithStream(sink, stream.RuntimeHostProfile()),
-)
-```
-
-### Manual Subscriber (Direct Bus Access)
-
-```go
-subscriber, err := stream.NewSubscriber(sink, stream.RuntimeHostProfile())
-if err != nil {
-    return err
-}
-sub, err := rt.Bus.Register(subscriber)
-if err != nil {
-    return err
-}
-defer func() {
-    if err := sub.Close(); err != nil {
-        panic(err)
-    }
-}()
-```
-
-### Stream Profiles
-
-Control which events a sink receives:
-
-```go
-// Trusted host: private runtime input, including live thinking
-profile := stream.RuntimeHostProfile()
-
-// Restricted diagnostics: includes provider thinking
-profile := stream.AgentDebugProfile()
-
-// Metrics: only usage and workflow events
-profile := stream.MetricsProfile()
-```
-
-**Tips**:
-
-- Stream events are structured private inputs, not a browser wire format.
-- `RuntimeHostProfile` carries exact committed messages, including
-  provider-only fields, and live thinking for presentation. It is never safe
-  to forward unchanged to a browser. Select and convert the allowed data into
-  an application-owned public contract.
-- Use `AgentDebugProfile` only for a restricted diagnostic stream.
-
----
-
-## Learn More
-
-| Topic           | Resource                                           |
-|-----------------|----------------------------------------------------|
-| DSL reference   | `docs/dsl.md`                                      |
-| Runtime guide   | `docs/runtime.md`                                  |
-| Quickstart      | `quickstart/README.md`                             |
-| MCP integration | `codegen/mcp` and `runtime/mcp`                    |
-| Features        | `features/*` (memory, prompt, stream, and model integrations) |
-
-### Feature Packages
-
-| Package                  | Purpose                                                |
-|--------------------------|--------------------------------------------------------|
-| `features/memory/mongo`  | Mongo‑backed memory store for transcripts              |
-| `features/stream/pulse`  | Pulse message bus sink for real‑time streaming         |
-| `features/model/bedrock` | AWS Bedrock model client (Claude, etc.)                |
-| `features/model/openai`  | OpenAI‑compatible model client                         |
-| `features/model/anthropic` | Anthropic API model client                           |
-| `features/model/gateway` | Remote model gateway for centralized model serving     |
-| `features/model/middleware` | Model client middleware (rate limiting, etc.)       |
-| `features/policy/basic`  | Basic policy engine for tool filtering and caps        |
-
----
-
-*Build agents that are a joy to develop and a breeze to operate. Welcome to Goa‑AI.*
+## Services, tools, and agents
+
+A Goa service owns its methods, types, authorization, and domain behavior.
+A toolset groups capabilities an agent can call. An agent uses toolsets and
+provides a planner that chooses the next action from the current conversation
+and completed tool results.
+
+Tools can use a generated `BindTo` executor for a service method, an
+application-owned custom executor, a nested agent, an MCP client, or a registry
+provider. The consuming agent sees generated tool definitions and validated
+arguments regardless of the implementation.
+
+`Args`, `Return`, and Goa types describe the model-visible contract. Generated
+transforms connect it to the implementation's types. `Inject` supplies values
+owned by execution rather than asking the model to invent them. Generated codecs
+retain defaults, exact JSON names, constraints, and selected union branches.
+Tagged, flat, and distinct-kind untagged unions follow their authored Goa mapping.
+
+See [toolsets](dsl.md#toolset), [service bindings](dsl.md#bindto-service-method-binding),
+[JSON codecs](json_codecs.md), and [payload defaults](tool_payload_defaults.md).
+
+## The agent loop
+
+1. The generated client submits an accepted run to the runtime and engine.
+2. The planner receives the conversation and permitted tool definitions.
+3. The runtime validates requested arguments and executes admitted calls.
+4. Completed results return to the planner for another decision or final answer.
+5. A request for human input saves unfinished state and ends that workflow;
+   a trusted host can submit an answer to a continuing workflow.
+
+Invalid tool arguments can receive field-specific correction and authored
+examples within the agent's recovery budget. Business rules and authorization
+remain with the service. A lost response from a side-effecting tool does not
+establish that it is safe to execute again.
+
+Policies restrict permitted tools, call and recovery budgets, and time. History
+policies retain complete turns or request summaries; prompt caching and overrides
+configure model inputs. Runtime code owns correlation, pagination continuation,
+accepted tool identity, and valid execution transitions.
+
+See [planners](runtime.md#planner-contract), [policies](runtime.md#policy-enforcement),
+[history](runtime.md#history-policies), and [host continuations](runtime.md#external-input-and-workflow-continuations).
+
+## Typed answers and nested agents
+
+`Completion(...)` declares a direct structured assistant response. Generated
+unary and streaming helpers validate it and return the authored Go type.
+Forced or automatic typed tool output is a separate choice for responses that
+should use the tool execution and correction path.
+
+An agent can export tools for other agents. Calls create real child workflows;
+parents receive typed results and linked progress while retaining cancellation
+and continuation ownership.
+
+See [direct completions](runtime.md#typed-direct-completions),
+[typed tool output](runtime.md#forced-typed-tool-output), and
+[agent composition](runtime.md#agent-as-tool-composition).
+
+## MCP as another service interface
+
+A service declares `MCP(...)`, a shared JSON-RPC POST route, and methods for its
+MCP operations. The generator implements MCP 2026-07-28 through the original
+configured Goa endpoints. Security, middleware, mapped URL inputs, inherited
+contracts, and result views retain their ordinary meaning. HTTP and gRPC methods
+can coexist with MCP methods.
+
+Servers expose tools, resources, prompts, completions, paginated catalogs,
+progress, subscriptions, additional input, and native durable Tasks. Generated
+clients consume those contracts; shared runtime consumers support HTTP and stdio.
+Generated stdio servers remain deferred. MCP clients and servers do not require
+an agent runtime.
+
+`InputExchange` and `TaskExchange` bind existing service operations. They do not
+create an adapter-owned job store. Service code owns durable acceptance, job
+state, access, and cancellation. Local executors and registry providers use the
+same generated operations.
+
+OAuth clients own discovery, grants, and renewal; the host supplies trusted
+registration, consent, and private credential storage. Resource servers verify
+configured signed tokens or authenticated introspection before domain execution.
+Apps use ordinary HTML resources and caller visibility, with browser permissions
+owned by the host. Skills use discovery and resource reads, manifest verification,
+and host-owned loading and execution approval.
+
+See [MCP integration](https://goa.design/docs/2-goa-ai/mcp-integration/),
+[MCP declarations](dsl.md#mcp-server-definition), [authorization](runtime.md#mcp-callers),
+[Apps](../integration_tests/apps/README.md), and [Skills](mcp_skills.md).
+
+## Registries and tool search
+
+Providers publish complete generated tool declarations to a registry. Consumers
+can use a named toolset or discover its current catalog. The registry owns
+admission, provider leases, call routing, and saved operation outcomes. Providers
+own execution; consumers own their selected tool contracts and permissions.
+
+Deferred search is independent of discovery. `Deferred()` loads a whole toolset
+on demand; named selections defer only chosen compiled tools. A static catalog
+can use search, and a registry catalog can be advertised immediately.
+
+See [registry and search contracts](tool_search.md).
+
+## Storage, models, and production
+
+The in-memory engine and store support development within one process. Temporal
+and an application-owned durable runtime store retain accepted work, continuations,
+and cancellation across worker restarts. Configuring Temporal alone does not
+make an in-memory store durable.
+
+Applications construct model clients, stores, engines, and stream sinks at startup,
+register dependencies, and seal the runtime before serving runs. Model adapters
+support OpenAI, Anthropic, Bedrock, Vertex AI, and gateways with different provider
+capabilities. Optional MongoDB and Redis/Pulse integrations supply particular
+storage and streaming functions; they do not replace application authorization
+or deployment ownership.
+
+Large results retain explicit bounds and runtime-managed pagination. `ServerData`
+keeps host data outside model requests. `NativeImage` retains image evidence
+through a host reader that checks current access before supplying bytes.
+
+See [production configuration](runtime.md#production-configuration),
+[engines](runtime.md#available-engines), [model clients](runtime.md#model-clients),
+[bounded results](runtime.md#bounded-results), and [native images](native_images.md).
+
+## Evaluation and observation
+
+Evaluation suites generate typed scenario hooks. Application hooks run the
+product and supply tool calls, results, and final answers; exact checks and
+calibrated model judging produce the report. Deterministic examples can run
+without a live model, while live-model scenarios use their own infrastructure
+and credentials.
+
+A trusted host receives selected runtime stream events, including assistant text,
+tool progress, child runs, and usage. It owns the public events it shows to users.
+OpenTelemetry traces describe execution. The runtime store retains accepted
+transcript evidence; product conversation storage remains application-owned.
+
+See [evaluations](evals.md), [streaming](runtime.md#hooks-and-streaming), and
+[telemetry](runtime.md#telemetry).
+
+## Upgrade as one application release
+
+Generated clients, servers, executors, runtime workers, and storage implementations
+must share the current contract. Older MCP revisions, registry wire versions,
+and executable suspension checkpoints are not interchangeable.
+
+Read the [v0.88.0 release and upgrade instructions](releases/v0.88.0.md) before
+replacing an existing deployment. The [architecture](../DESIGN.md) explains
+ownership for contributors, and the [runtime reference](runtime.md) describes
+storage, recovery, and provider-specific requirements.

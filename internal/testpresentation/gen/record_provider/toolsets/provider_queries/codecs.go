@@ -19,7 +19,7 @@ import (
 	"strings"
 
 	toolhttp "goa.design/goa-ai/internal/testpresentation/gen/record_provider/toolsets/provider_queries/http"
-	"goa.design/goa-ai/runtime/agent/tools"
+	tools "goa.design/goa-ai/runtime/agent/tools"
 	goa "goa.design/goa/v3/pkg"
 )
 

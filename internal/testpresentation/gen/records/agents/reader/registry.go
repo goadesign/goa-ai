@@ -84,7 +84,7 @@ type usedToolsetRegistrationOptions struct {
 	resultMaterializers map[string]agentsruntime.ResultMaterializer
 }
 
-// RegisterUsedToolsets registers all non-MCP Used toolsets for this agent with
+// RegisterUsedToolsets registers the used toolsets for this agent with
 // the local runtime. Provide executors for each required toolset and optional
 // result materializers through typed generated options.
 //
@@ -113,7 +113,7 @@ func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts .
 	if len(missing) > 0 {
 		return fmt.Errorf("missing executors for toolsets: %v", missing)
 	}
-	// Register non-MCP used toolsets that are not provided by agent-as-tool exports.
+	// Register used toolsets that are not provided by agent-as-tool exports.
 	{
 		exec := cfg.executors[RecordsToolsetName]
 		reg := agentsruntime.ToolsetRegistration{

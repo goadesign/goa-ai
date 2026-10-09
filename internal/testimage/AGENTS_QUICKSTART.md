@@ -106,7 +106,9 @@ Here are the detailed cheat sheets for each agent you designed.
         ```
 * **Workflow Name:** `images.observer.workflow` (Queue: `images_observer_workflow`)
 
-#### Minimal Configuration```go
+#### Minimal Configuration
+
+```go
 cfg := observer.ObserverAgentConfig{
     Planner: myPlanner,
 }
@@ -442,23 +444,20 @@ If your agent uses tools from another service via MCP (`Use(MCPToolset(...))`):
 // 1. Get the generated JSON-RPC client for the remote MCP service.
 remoteClient := <mcp_jsonrpc_client_pkg>.NewClient(/* your endpoints */)
 
-// 2. Identify this program, initialize the MCP session, and build the runtime caller.
-clientInfo := mcpruntime.ClientInfo{
-    Name:    "<client_name>",
-    Version: "<client_version>",
-}
+// 2. Identify this program and declare only input modes this host can answer.
+clientInfo := mcpruntime.ClientInfo{Name: "<client_name>", Version: "<client_version>"}
 caller, err := <mcp_jsonrpc_client_pkg>.NewCaller(remoteClient, clientInfo, mcpruntime.InputSupport{}, mcpruntime.HTTPRetryPolicy{})
 if err != nil {
-    return fmt.Errorf("initialize MCP caller: %w", err)
+    return err
 }
 
-// 3. Supply it in the agent config.
-cfg := <agentpkg>.<AgentConfig>{
-    Planner: myPlanner,
-    MCPCallers: map[string]mcpruntime.Caller{
-        <agentpkg>.<ToolsetIDConst>: caller, // e.g., "assistant.assistant-mcp"
-    },
+// 3. Register one executable binding, then register the agent definition.
+executor := <generated_mcp_executor_pkg>.NewMCPExecutor(caller)
+if err := <agentpkg>.RegisterUsedToolsets(ctx, rt, <agentpkg>.<WithToolsetExecutor>(executor)); err != nil {
+    return err
 }
+cfg := <agentpkg>.<AgentConfig>{Planner: myPlanner}
+
 ```
 
 ---
@@ -588,7 +587,7 @@ defer eng.Close()
     * **Fix:** Always provide a unique, non-empty string for the `sessionID` when calling `agent.Run(...)`.
 * **Error: "session not found"**
     * **Fix:** Sessions are explicit. Create the session through the host service before starting runs under that session ID.
-* **Error: "mcp caller is required for <suite>"**
-    * **Fix:** Your agent's config is missing an entry in the `MCPCallers` map for the specified toolset ID. See section 5.
+* **Error: an MCP executable is missing**
+    * **Fix:** Register the generated MCP executor through its used-toolset executor option before starting runs. Shared bindings are registered once. See section 5.
 * **Agent-as-Tool isn't working?**
-    * **Fix:** Ensure you've provided `WithText` or `WithTemplate` for **every single tool** in the exported toolset when calling `NewRegistration`.
+    * **Fix:** Register the exported toolset with `agenttools.NewRegistration(...)` and run its provider worker on the generated workflow queue. Prompt overrides are optional; the runtime builds the default prompt from the tool payload. If you supply a template, validate it with `runtime.ValidateAgentToolTemplates` and provide every field it references.

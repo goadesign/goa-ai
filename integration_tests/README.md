@@ -4,7 +4,7 @@ These tests generate a small Goa application and exercise its generated Model Co
 
 ## Covered contract
 
-The assistant fixture declares the MCP surface currently supported by `goa-ai`:
+The assistant YAML fixture declares this subset of the supported MCP surface:
 
 - stateless `server/discover` and calls before discovery;
 - per-request protocol/capability metadata and mirrored headers;

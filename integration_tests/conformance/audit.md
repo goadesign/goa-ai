@@ -2,7 +2,9 @@
 
 This records the synthetic HTTP referee runs on 2026-10-03 at commit
 `d2fa82fe19af5ea6d0ac7eba2908336ddce31f19`. It is a failing baseline, not a
-conformance claim. The [driver instructions](README.md) name the pinned referee
+conformance claim. Capability gaps described below apply to that recorded commit.
+Later checks are recorded separately; use the [current release guide](../../docs/releases/v0.88.0.md)
+for implemented capabilities. The [driver instructions](README.md) name the pinned referee
 and generated fixture. Each role completed and returned exit status 1.
 
 Run the frozen requirement set, including its separately reported additional
@@ -21,7 +23,7 @@ plus one informational observation. Its seven additional scenarios produced
 15 failures and six skips. A scenario with no successful checks is not a pass.
 Passing wire-schema checks alongside a failed operation do not verify that operation.
 
-## What the failures establish
+## What the baseline failures established
 
 The client driver implements six scenarios. Unsupported scenarios terminate
 explicitly, including authorization and request-state scenarios. Authorization
