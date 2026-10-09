@@ -102,7 +102,7 @@ func challengedProtectedResource(ctx context.Context, client *http.Client, resou
 // the exact discovered URL. Only HTTP 404 retains its location-absent meaning;
 // other failures return bounded errors without endpoint or response content.
 func readProtectedResource(ctx context.Context, client *http.Client, address *url.URL) (*genresourcemetadata.ReadResult, error) {
-	generated := genresourceclient.NewClient(address.Scheme, address.Host, &authorizationDoer{client: client, address: address, operation: "resource_metadata"}, nil, authorizationDecoder, false)
+	generated := genresourceclient.NewClient(address.Scheme, address.Host, &authorizationDoer{client: client, address: address, operation: "resource_metadata"}, nil, generatedJSONDecoder, false)
 	value, err := generated.Read()(ctx, nil)
 	if err != nil {
 		return nil, authorizationFailure(ctx, "protected-resource metadata", err)

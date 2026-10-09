@@ -1,6 +1,6 @@
-// Package codegen binds authored content metadata to the shared JSON codecs.
-// Resource readers, prompts and tools retain their service types and selected
-// result views; only the open MCP metadata field receives encoded JSON.
+// Package codegen binds authored content and Skill discovery entries to shared
+// JSON codecs. Native service types and selected result views retain their
+// layouts; encoded values supply protocol metadata or cross-field verification.
 package codegen
 
 import (
@@ -28,7 +28,7 @@ type (
 )
 
 // bindContentMetadataCodecs supplies the owning service or view type writer to
-// each planned metadata encoder before its private codec package is rendered.
+// each planned content encoder before its private codec package is rendered.
 func bindContentMetadataCodecs(services *goaservice.ServicesData, planned *plannedMCPService) error {
 	data := planned.adapterData
 	bound := make(map[*jsoncodec.Value]struct{})
@@ -69,16 +69,21 @@ func bindContentMetadataCodecs(services *goaservice.ServicesData, planned *plann
 			}
 		}
 	}
-	for _, catalog := range []*catalogAdapter{data.ResourceCatalog, data.ResourceTemplateCatalog} {
-		if catalog == nil || catalog.metaCodec == nil {
+	for _, catalog := range []*discoveryAdapter{data.ResourceCatalog, data.ResourceTemplateCatalog, data.SkillCatalog, data.SkillLookup} {
+		if catalog == nil {
 			continue
 		}
 		writer := services.ServiceAttributor(planned.prepared.userService.Name, data.CodecImportPath)
 		if _, viewed := catalog.method.Result.Type.(*expr.ResultTypeExpr); viewed {
 			writer = services.ViewAttributor(planned.prepared.userService.Name, data.CodecImportPath)
 		}
-		if err := catalog.metaCodec.BindService(writer); err != nil {
-			return err
+		for _, value := range []*jsoncodec.Value{catalog.metaCodec, catalog.entryCodec} {
+			if value == nil {
+				continue
+			}
+			if err := value.BindService(writer); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -119,10 +124,10 @@ func planContentMetadata(codecs *jsoncodec.Plan, attribute *expr.AttributeExpr, 
 	return value, matches[0], nil
 }
 
-// planCatalogMetadata records the resource catalog encoders after the common
-// private codec package exists. Ordinary raw metadata needs no extra encoder.
-func planCatalogMetadata(codecs *jsoncodec.Plan, data *AdapterData) error {
-	for _, catalog := range []*catalogAdapter{data.ResourceCatalog, data.ResourceTemplateCatalog} {
+// planDiscoveryCodecs records resource metadata and complete Skill entry
+// encoders in the existing private codec package. Both retain native layouts.
+func planDiscoveryCodecs(codecs *jsoncodec.Plan, data *AdapterData) error {
+	for _, catalog := range []*discoveryAdapter{data.ResourceCatalog, data.ResourceTemplateCatalog} {
 		if catalog == nil || catalog.metaAttribute == nil {
 			continue
 		}
@@ -131,6 +136,16 @@ func planCatalogMetadata(codecs *jsoncodec.Plan, data *AdapterData) error {
 		if err != nil {
 			return err
 		}
+	}
+	for _, discovery := range []*discoveryAdapter{data.SkillCatalog, data.SkillLookup} {
+		if discovery == nil {
+			continue
+		}
+		value, _, err := planContentMetadata(codecs, discovery.entryAttribute, discovery.Endpoint.resultLayout, discovery.collection+"Entry")
+		if err != nil {
+			return err
+		}
+		discovery.entryCodec = value
 	}
 	return nil
 }

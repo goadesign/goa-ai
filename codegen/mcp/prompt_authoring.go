@@ -300,6 +300,28 @@ func checkContentFields(attribute *expr.AttributeExpr, allowed []string) error {
 // checkContentFieldType keeps author-defined names while requiring the declared
 // fields and validations needed by the MCP content contract.
 func checkContentFieldType(source, target *expr.AttributeExpr) error {
+	if expected := expr.AsUnion(target.Type); expected != nil {
+		actual := expr.AsUnion(source.Type)
+		if actual == nil || actual.Untagged != expected.Untagged || actual.Flatten != expected.Flatten || len(actual.Values) != len(expected.Values) || actual.GetTypeKey() != expected.GetTypeKey() || actual.GetValueKey() != expected.GetValueKey() {
+			return fmt.Errorf("must use the matching OneOf JSON mapping and branches")
+		}
+		for _, branch := range expected.Values {
+			var selected *expr.AttributeExpr
+			for _, candidate := range actual.Values {
+				if candidate.Name == branch.Name {
+					selected = candidate.Attribute
+					break
+				}
+			}
+			if selected == nil {
+				return fmt.Errorf("must declare the %s OneOf branch", branch.Name)
+			}
+			if err := checkContentFieldType(selected, branch.Attribute); err != nil {
+				return fmt.Errorf("%s: %w", branch.Name, err)
+			}
+		}
+		return nil
+	}
 	sourceObject, targetObject := expr.AsObject(source.Type), expr.AsObject(target.Type)
 	if primitiveType(target.Type) == expr.Any && sourceObject != nil {
 		return nil

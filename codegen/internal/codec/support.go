@@ -20,7 +20,7 @@ func supportsStandalone(attribute *expr.AttributeExpr, seen map[expr.UserType]bo
 		return false
 	}
 	if custom, _ := codegen.GetMetaType(attribute); custom != "" {
-		return false
+		return isRawJSON(attribute)
 	}
 	switch actual := attribute.Type.(type) {
 	case expr.Primitive:
@@ -61,4 +61,11 @@ func supportsStandalone(attribute *expr.AttributeExpr, seen map[expr.UserType]bo
 	default:
 		return false
 	}
+}
+
+// isRawJSON recognizes an explicit raw JSON field, whose bytes preserve open
+// external values. Other custom Go types do not promise JSON codec semantics.
+func isRawJSON(attribute *expr.AttributeExpr) bool {
+	name, imported := codegen.GetMetaType(attribute)
+	return attribute.Type == expr.Any && name == "json.RawMessage" && imported != nil && imported.Path == "encoding/json"
 }

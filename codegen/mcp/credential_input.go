@@ -112,6 +112,12 @@ func prepareHTTPInputs(root *expr.RootExpr, service *expr.ServiceExpr, mcp *mcpe
 	if mcp.ResourceTemplateCatalog != nil {
 		operations["resources/templates/list"] = []*expr.MethodExpr{mcp.ResourceTemplateCatalog}
 	}
+	if mcp.SkillCatalog != nil {
+		operations["skills/list"] = []*expr.MethodExpr{mcp.SkillCatalog}
+	}
+	if mcp.SkillLookup != nil {
+		operations["skills/get"] = []*expr.MethodExpr{mcp.SkillLookup}
+	}
 	if source := mcp.SubscriptionSource; source != nil {
 		operations["subscriptions/listen"] = []*expr.MethodExpr{source.Method}
 		if selected := source.Method.Payload.Find("tasks"); selected != nil {

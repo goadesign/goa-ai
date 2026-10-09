@@ -217,7 +217,7 @@ func (g *authorizationClient) prepareCredential(ctx context.Context, request *ht
 // exact issuer and HTTPS token endpoint are checked before any grant executes.
 func discoverAuthorizationIssuer(ctx context.Context, httpClient *http.Client, identifier *url.URL) (*genissuermetadata.ReadResult, error) {
 	for _, address := range issuerMetadataAddresses(identifier) {
-		client := genissuerclient.NewClient(address.Scheme, address.Host, &authorizationDoer{client: httpClient, address: address, operation: "issuer_metadata"}, nil, authorizationDecoder, false)
+		client := genissuerclient.NewClient(address.Scheme, address.Host, &authorizationDoer{client: httpClient, address: address, operation: "issuer_metadata"}, nil, generatedJSONDecoder, false)
 		value, err := client.Read()(ctx, nil)
 		if metadataMissing(err) {
 			continue

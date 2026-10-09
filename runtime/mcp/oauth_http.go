@@ -5,8 +5,6 @@ package mcp
 
 import (
 	"context"
-	"encoding/json/jsontext"
-	json "encoding/json/v2"
 	"errors"
 	"fmt"
 	"mime"
@@ -18,8 +16,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
-
-	goahttp "goa.design/goa/v3/http"
 )
 
 type (
@@ -36,8 +32,6 @@ type (
 		code int
 	}
 )
-
-var authorizationUnmarshalers = json.UnmarshalFromFunc[any](rejectAuthorizationNull)
 
 // Do preserves escaped paths, raw queries and empty query markers when sending
 // a generated request. Unsuccessful response bodies are closed without reading.
@@ -81,25 +75,6 @@ func (d *authorizationDoer) Do(request *http.Request) (response *http.Response, 
 // Error returns the issuer's HTTP status without its response content.
 func (e *authorizationStatus) Error() string {
 	return fmt.Sprintf("authorization endpoint returned HTTP %d", e.code)
-}
-
-// authorizationDecoder applies exact JSON field names and rejects duplicate
-// names, invalid UTF-8 and trailing data. Unknown OAuth extensions are ignored;
-// the generated decoder then checks required fields and declared validations.
-func authorizationDecoder(response *http.Response) goahttp.Decoder {
-	return goahttp.EncodingFunc(func(value any) error {
-		return json.UnmarshalRead(response.Body, value, json.WithUnmarshalers(authorizationUnmarshalers))
-	})
-}
-
-// rejectAuthorizationNull rejects null for declared OAuth values, then lets
-// the standard decoder handle every non-null value. Unknown extension fields
-// are skipped by that decoder and never enter this type-specific hook.
-func rejectAuthorizationNull(decoder *jsontext.Decoder, _ any) error {
-	if decoder.PeekKind() == 'n' {
-		return errors.New("declared authorization values cannot be null")
-	}
-	return errors.ErrUnsupported
 }
 
 // metadataMissing permits only an absent endpoint to advance to the next

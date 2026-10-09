@@ -2305,6 +2305,17 @@ SDK with generated endpoints and verifies app visibility, origin isolation,
 restrictive browser policy and request cancellation. The application host owns
 its authenticated connection and the permissions it grants to views.
 
+### MCP Skill discovery
+
+`SkillCatalog()` and `SkillLookup()` bind ordinary unary Goa methods to complete
+Skill discovery pages and direct URI lookup. Both require `ResourceReader()`
+for files. Native authentication, mapped URL fields and selected result views
+remain part of the same generated endpoint path. DSL evaluation checks the
+entry shape; generated adapters also verify frontmatter, directory membership
+and manifest completeness before publishing entries. Discovery never reads or
+activates a skill. See [serve Skills over MCP](mcp_skills.md) for declarations,
+errors and the remaining host-loading completion gate.
+
 ### Authored MCP tool content
 
 Use `ToolContent(field)` inside a method's `Tool` block to select a top-level

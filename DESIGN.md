@@ -2134,6 +2134,16 @@ Catalog projections use `MethodTypeLayout` for the selected result graph;
 content metadata uses the selected union's layout rather than unrelated result
 fields. There is no separate Apps resource converter or service serialization API.
 
+Skill discovery reuses the existing endpoint, result-view, codec and transform
+planning. `SkillCatalog` and `SkillLookup` select existing unary methods and
+require the existing resource reader. One private Goa expression defines the
+protocol entry for generation and consuming runtime codecs. Generated adapters
+validate the authored result, encode the complete entry with its native field
+layout, and use the runtime's shared cross-field verifier before publishing.
+No discovery operation reads files or grants approval. Host loading must retain
+the server identity and manifest, verify each requested file, compare all YAML
+fields and obtain required approval before use. That integration remains open.
+
 `ToolUI` associates a tool with an existing HTML resource, and `ToolVisibility`
 selects model callers, app callers, or both. Generation emits nested UI metadata
 and removes app-only tools from model toolsets. Generated model callers use
@@ -2573,9 +2583,14 @@ Each original package receives public encode/decode functions and private JSON
 helpers. Complete-original transport declarations are shared within that
 package, while field-occurrence rules remain attached to their actual fields.
 No codec subdirectory or public transport representation is introduced. Types
-containing `Any`, custom Go representations, or non-string map keys have their
+containing untyped `Any`, other custom Go representations, or non-string map keys have their
 complete codecs skipped; their original types remain valid and supported peers
 remain eligible. Runtime-owned builtin forms are excluded.
+
+An explicit `Any` field represented as `json.RawMessage` retains its open
+external contract. Complete-value codecs check raw syntax, text and duplicate
+members before encoding or typed decoding; future members and exact numbers
+remain intact. Other custom Go representations remain unsupported.
 
 Encoding checks the original typed value before conversion, including required
 nil fields, invalid text, and cycles. Decoding checks raw JSON names, types,

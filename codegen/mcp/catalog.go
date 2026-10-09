@@ -1,8 +1,8 @@
-// Package codegen connects changing catalog pages to configured Goa endpoints.
-// Application methods return declared operation names or resource descriptors
-// and opaque cursors. Generation retains native field layouts, supplies authored
-// operation metadata and copies validated resource descriptors. Authored extension
-// objects use the same private JSON codecs as resource, prompt and tool content.
+// Package codegen connects catalog pages and direct skill lookup to configured
+// Goa endpoints. Applications own visibility, pagination and returned entries.
+// Generation retains native layouts and selected views, supplies authored tool
+// and prompt metadata, and converts typed entries to the protocol representation.
+// Open extension values use the shared private JSON codecs.
 package codegen
 
 import (
@@ -16,25 +16,29 @@ import (
 )
 
 type (
-	// catalogAdapter retains one typed page owner and its input/output layouts.
-	catalogAdapter struct {
-		// Endpoint invokes the configured original catalog method.
+	// discoveryAdapter retains one discovery owner and its typed input/output layouts.
+	discoveryAdapter struct {
+		// Endpoint invokes the configured original discovery method.
 		Endpoint *endpointMethodAdapter
-		// PayloadTransportRef names the private cursor input record.
+		// PayloadTransportRef names the private discovery input record.
 		PayloadTransportRef string
-		// PayloadConstructor validates the cursor and constructs the native payload.
+		// PayloadConstructor validates discovery input and constructs the native payload.
 		PayloadConstructor string
-		// Cursor retains Goa's exact input field, alias and pointer representation.
-		Cursor *jsoncodec.TransportField
-		// Operation names the fixed protocol list method for native HTTP inputs.
+		// Input retains Goa's exact input field, alias and pointer representation.
+		Input *jsoncodec.TransportField
+		// InputName selects the protocol cursor or URI at generation time.
+		InputName string
+		// SingleEntry selects a required URI input and one complete returned entry.
+		SingleEntry bool
+		// Operation names the protocol method receiving native HTTP inputs.
 		Operation string
-		// EntriesField selects the validated native catalog entries.
+		// EntriesField selects the validated native page or single entry.
 		EntriesField string
 		// NamePointer records whether each returned name is a pointer in this view.
 		NamePointer bool
 		// NextCursor copies the native optional cursor using Goa's conversion plan.
 		NextCursor string
-		// EntriesConversion copies typed runtime descriptors to the protocol array.
+		// EntriesConversion copies the native page or entry to its protocol type.
 		EntriesConversion string
 		// Helpers contains Goa conversions for nested descriptor types.
 		Helpers []*codegen.TransformFunctionData
@@ -43,7 +47,11 @@ type (
 
 		// Metadata selects the generated encoder for an authored extension object.
 		Metadata *contentMetadataData
+		// EntryEncoder supplies the shared codec for cross-field Skill verification.
+		EntryEncoder string
 
+		entryAttribute               *expr.AttributeExpr
+		entryCodec                   *jsoncodec.Value
 		metaAttribute                *expr.AttributeExpr
 		metaLayout                   *codegen.GoTypePlan
 		metaCodec                    *jsoncodec.Value
@@ -56,18 +64,21 @@ type (
 	}
 )
 
-// planCatalogs selects the exact endpoint already retained by common dispatch.
+// planDiscovery selects the exact endpoint already retained by common dispatch.
 // Later conversion uses its selected result view rather than copying native types.
-func planCatalogs(generation *codegen.Generation, services *goaservice.Plan, prepared *preparedMCPService, data *AdapterData) error {
+func planDiscovery(generation *codegen.Generation, services *goaservice.Plan, prepared *preparedMCPService, data *AdapterData) error {
 	for _, catalog := range []struct {
-		method                *expr.MethodExpr
-		collection, operation string
-		target                **catalogAdapter
+		method                       *expr.MethodExpr
+		collection, operation, input string
+		single                       bool
+		target                       **discoveryAdapter
 	}{
-		{prepared.mcp.ToolCatalog, "tools", "tools/list", &data.ToolCatalog},
-		{prepared.mcp.PromptCatalog, "prompts", "prompts/list", &data.PromptCatalog},
-		{prepared.mcp.ResourceCatalog, "resources", "resources/list", &data.ResourceCatalog},
-		{prepared.mcp.ResourceTemplateCatalog, "resourceTemplates", "resources/templates/list", &data.ResourceTemplateCatalog},
+		{prepared.mcp.ToolCatalog, "tools", "tools/list", "cursor", false, &data.ToolCatalog},
+		{prepared.mcp.PromptCatalog, "prompts", "prompts/list", "cursor", false, &data.PromptCatalog},
+		{prepared.mcp.ResourceCatalog, "resources", "resources/list", "cursor", false, &data.ResourceCatalog},
+		{prepared.mcp.ResourceTemplateCatalog, "resourceTemplates", "resources/templates/list", "cursor", false, &data.ResourceTemplateCatalog},
+		{prepared.mcp.SkillCatalog, "skills", "skills/list", "cursor", false, &data.SkillCatalog},
+		{prepared.mcp.SkillLookup, "skill", "skills/get", "uri", true, &data.SkillLookup},
 	} {
 		if catalog.method == nil {
 			continue
@@ -77,7 +88,7 @@ func planCatalogs(generation *codegen.Generation, services *goaservice.Plan, pre
 			if entries == nil {
 				return fmt.Errorf("catalog view must contain %s", catalog.collection)
 			}
-			if catalog.collection == "resources" || catalog.collection == "resourceTemplates" {
+			if catalog.collection != "tools" && catalog.collection != "prompts" {
 				target := prepared.mcpService.Method(catalog.operation).Result.Find(catalog.collection)
 				return checkContentFieldType(entries, target)
 			}
@@ -92,7 +103,7 @@ func planCatalogs(generation *codegen.Generation, services *goaservice.Plan, pre
 		if err := checkContentGoType(catalog.method.Result); err != nil {
 			return err
 		}
-		adapter := &catalogAdapter{method: catalog.method, collection: catalog.collection, Operation: catalog.operation}
+		adapter := &discoveryAdapter{method: catalog.method, collection: catalog.collection, Operation: catalog.operation, InputName: catalog.input, SingleEntry: catalog.single}
 		for _, endpoint := range data.EndpointMethods {
 			if endpoint.method == catalog.method {
 				adapter.Endpoint = endpoint
@@ -103,7 +114,7 @@ func planCatalogs(generation *codegen.Generation, services *goaservice.Plan, pre
 		if result.Find(catalog.collection) == nil {
 			return fmt.Errorf("MCP catalog method %q selected view omits %s", catalog.method.Name, catalog.collection)
 		}
-		if catalog.collection == "resources" || catalog.collection == "resourceTemplates" {
+		if catalog.collection != "tools" && catalog.collection != "prompts" {
 			entries := result.Find(catalog.collection)
 			protocol := prepared.mcpService.Method(catalog.operation)
 			target := protocol.Result.Find(catalog.collection)
@@ -125,7 +136,13 @@ func planCatalogs(generation *codegen.Generation, services *goaservice.Plan, pre
 			}
 			adapter.entriesTarget = matches[0]
 			projection := entries
-			item := expr.AsArray(entries.Type).ElemType
+			item := entries
+			if !catalog.single {
+				item = expr.AsArray(entries.Type).ElemType
+			}
+			if catalog.operation == "skills/list" || catalog.operation == "skills/get" {
+				adapter.entryAttribute = item
+			}
 			if metadata := item.Find("_meta"); metadata != nil && expr.AsObject(metadata.Type) != nil {
 				adapter.metaAttribute = metadata
 				selected := expr.NewAttributeGraphCopier().Copy(result)
@@ -194,12 +211,12 @@ func planCatalogs(generation *codegen.Generation, services *goaservice.Plan, pre
 	return nil
 }
 
-// bindCatalogs resolves native selectors and typed cursor conversions after Goa
+// bindDiscovery resolves native selectors and typed cursor conversions after Goa
 // chooses final names. The same private constructor used by other MCP methods
 // validates domain input before native HTTP fields and endpoint authorization.
-func bindCatalogs(services *goaservice.ServicesData, planned *plannedMCPService) error {
+func bindDiscovery(services *goaservice.ServicesData, planned *plannedMCPService) error {
 	data := planned.adapterData
-	for _, catalog := range []*catalogAdapter{data.ToolCatalog, data.PromptCatalog, data.ResourceCatalog, data.ResourceTemplateCatalog} {
+	for _, catalog := range []*discoveryAdapter{data.ToolCatalog, data.PromptCatalog, data.ResourceCatalog, data.ResourceTemplateCatalog, data.SkillCatalog, data.SkillLookup} {
 		if catalog == nil {
 			continue
 		}
@@ -210,8 +227,11 @@ func bindCatalogs(services *goaservice.ServicesData, planned *plannedMCPService)
 			return err
 		}
 		catalog.PayloadConstructor = data.CodecPackage + "." + values.payload.TransportConstructorDeclaration().Name()
-		cursor := catalog.method.Payload.Find("cursor")
-		catalog.Cursor, err = values.payload.TransportField(cursor, "cursor", data.mcpImportPath, data.mcpPackage.ImportName)
+		if catalog.entryCodec != nil {
+			catalog.EntryEncoder = data.CodecPackage + "." + catalog.entryCodec.EncodeDeclaration().Name()
+		}
+		input := catalog.method.Payload.Find(catalog.InputName)
+		catalog.Input, err = values.payload.TransportField(input, catalog.InputName, data.mcpImportPath, data.mcpPackage.ImportName)
 		if err != nil {
 			return err
 		}
@@ -225,7 +245,9 @@ func bindCatalogs(services *goaservice.ServicesData, planned *plannedMCPService)
 		if len(layouts) != 1 {
 			return fmt.Errorf("MCP catalog names have %d layouts", len(layouts))
 		}
-		catalog.NamePointer = layouts[0].Elem().IsPointer()
+		if !catalog.SingleEntry {
+			catalog.NamePointer = layouts[0].Elem().IsPointer()
+		}
 		if catalog.entries != nil {
 			source, err := (&codegen.AttributeContext{Scope: scope, UseDefault: true, Pointer: catalog.entriesSource.Policy().Pointer}).WithGoTypeLayout(catalog.entriesSource.Link(data.mcpImportPath, data.mcpPackage.ImportName))
 			if err != nil {

@@ -80,6 +80,11 @@ defer delete(active, identity)
 func (v *Value) writeValueCheck(out *strings.Builder, writer codegen.Attributor, attribute *expr.AttributeExpr, target, field string, pointer bool, depth int) error {
 	imports := v.plan.importNames()
 	childPath := v.plan.jsonHelpers.child.Name()
+	if isRawJSON(attribute) {
+		fmt.Fprintf(out, "if len(%s) != 0 { if _, err := %s(%s); err != nil { return %s.Errorf(\"%%s: invalid raw JSON: %%w\", %s, err) } }\n",
+			target, v.plan.jsonHelpers.read.Name(), target, imports.Fmt, field)
+		return nil
+	}
 	if named, ok := attribute.Type.(expr.UserType); ok && named != expr.Empty {
 		name := v.standalone.typedChecks[named.Origin()].name
 		arg := target

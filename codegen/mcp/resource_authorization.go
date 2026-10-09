@@ -146,6 +146,8 @@ func resolveResourcePolicy(root *expr.RootExpr, service *expr.ServiceExpr, mcp *
 		{mcp.PromptCatalog, "prompts/list"},
 		{mcp.ResourceCatalog, "resources/list"},
 		{mcp.ResourceTemplateCatalog, "resources/templates/list"},
+		{mcp.SkillCatalog, "skills/list"},
+		{mcp.SkillLookup, "skills/get"},
 	} {
 		if catalog.method == nil {
 			continue

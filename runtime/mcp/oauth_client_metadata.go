@@ -57,7 +57,7 @@ func (g *authorizationCodeGrant) validateMetadata(ctx context.Context, client *h
 // readMetadata uses the registration's native decoder and checks its exact identity,
 // forbidden secrets and public keys. It returns grant relationships, never keys or tokens.
 func (r *ClientRegistration) readMetadata(ctx context.Context, client *http.Client) (*clientRegistrationMetadata, error) {
-	generated := genclientmetadataclient.NewClient(r.metadata.Scheme, r.metadata.Host, &authorizationDoer{client: client, address: r.metadata, operation: "client_metadata"}, nil, authorizationDecoder, false)
+	generated := genclientmetadataclient.NewClient(r.metadata.Scheme, r.metadata.Host, &authorizationDoer{client: client, address: r.metadata, operation: "client_metadata"}, nil, generatedJSONDecoder, false)
 	if r.signed == nil {
 		value, err := generated.Read()(ctx, nil)
 		if err != nil {

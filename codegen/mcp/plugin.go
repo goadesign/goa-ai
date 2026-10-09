@@ -114,7 +114,7 @@ func (p *mcpPlugin) plan(plan *goagenerator.Plan) error {
 		if err := planRouteInputs(plan.Generation(), servicePlan, prepared, adapter); err != nil {
 			return err
 		}
-		if err := planCatalogs(plan.Generation(), servicePlan, prepared, adapter); err != nil {
+		if err := planDiscovery(plan.Generation(), servicePlan, prepared, adapter); err != nil {
 			return err
 		}
 		if err := planTaskAdapters(plan.Generation(), servicePlan, prepared, adapter); err != nil {
@@ -133,7 +133,7 @@ func (p *mcpPlugin) plan(plan *goagenerator.Plan) error {
 		if err != nil {
 			return err
 		}
-		if err := planCatalogMetadata(codecPlan, adapter); err != nil {
+		if err := planDiscoveryCodecs(codecPlan, adapter); err != nil {
 			return err
 		}
 		if err := planResourceReader(plan.Generation(), servicePlan, prepared, adapter, codecPlan); err != nil {
@@ -206,7 +206,7 @@ func (p *mcpPlugin) generate(plan *goagenerator.Plan, files []*goacodegen.File) 
 			return nil, err
 		}
 		files = append(files, codecFiles...)
-		if err := bindCatalogs(services, planned); err != nil {
+		if err := bindDiscovery(services, planned); err != nil {
 			return nil, err
 		}
 		if err := bindResourceReader(services, planned); err != nil {
@@ -606,7 +606,7 @@ func planMCPCodecs(
 			}
 		}
 	}
-	for _, catalog := range []*catalogAdapter{data.ToolCatalog, data.PromptCatalog, data.ResourceCatalog, data.ResourceTemplateCatalog} {
+	for _, catalog := range []*discoveryAdapter{data.ToolCatalog, data.PromptCatalog, data.ResourceCatalog, data.ResourceTemplateCatalog, data.SkillCatalog, data.SkillLookup} {
 		if catalog == nil {
 			continue
 		}
@@ -845,7 +845,7 @@ func mcpCodecDirections(data *AdapterData, methodName string) (jsoncodec.Directi
 	for _, completion := range data.Completions {
 		needsConstruction = needsConstruction || completion.method.Name == methodName
 	}
-	for _, catalog := range []*catalogAdapter{data.ToolCatalog, data.PromptCatalog, data.ResourceCatalog, data.ResourceTemplateCatalog} {
+	for _, catalog := range []*discoveryAdapter{data.ToolCatalog, data.PromptCatalog, data.ResourceCatalog, data.ResourceTemplateCatalog, data.SkillCatalog, data.SkillLookup} {
 		needsConstruction = needsConstruction || (catalog != nil && catalog.method.Name == methodName)
 	}
 	if source := data.SubscriptionSource; source != nil && source.method.Name == methodName {
@@ -904,6 +904,8 @@ func mappedMCPMethods(prepared *preparedMCPService) []*expr.MethodExpr {
 	add(prepared.mcp.PromptCatalog)
 	add(prepared.mcp.ResourceCatalog)
 	add(prepared.mcp.ResourceTemplateCatalog)
+	add(prepared.mcp.SkillCatalog)
+	add(prepared.mcp.SkillLookup)
 	if source := prepared.mcp.SubscriptionSource; source != nil {
 		add(source.Method)
 	}

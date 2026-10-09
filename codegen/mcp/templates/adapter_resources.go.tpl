@@ -7,7 +7,7 @@ func (a *MCPAdapter) ResourcesList(ctx context.Context, p {{ index .PayloadRefs 
     defer span.End()
 
     {{- with .ResourceCatalog }}
-    {{ template "catalog-page" . }}
+    {{ template "discovery-call" . }}
     {{ .EntriesConversion }}
     seen := make(map[string]struct{}, len(resources))
     for {{ if .Metadata }}index{{ else }}_{{ end }}, entry := range resources {
@@ -179,7 +179,7 @@ func (a *MCPAdapter) ResourcesTemplatesList(ctx context.Context, p {{ index .Pay
     ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.resources/templates/list")
     defer span.End()
     {{- with .ResourceTemplateCatalog }}
-    {{ template "catalog-page" . }}
+    {{ template "discovery-call" . }}
     {{ .EntriesConversion }}
     seen := make(map[string]struct{}, len(resourceTemplates))
     for {{ if .Metadata }}index{{ else }}_{{ end }}, entry := range resourceTemplates {

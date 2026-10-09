@@ -57,6 +57,10 @@ type (
 		ResourceCatalog *expr.MethodExpr
 		// ResourceTemplateCatalog owns pages of runtime URI template descriptors.
 		ResourceTemplateCatalog *expr.MethodExpr
+		// SkillCatalog owns pages of complete skill manifests without loading files.
+		SkillCatalog *expr.MethodExpr
+		// SkillLookup owns direct skill lookup independently of catalog visibility.
+		SkillLookup *expr.MethodExpr
 		// SubscriptionSource selects the owned resource and job change stream.
 		SubscriptionSource *SubscriptionSourceExpr
 		// Service is the Goa service expression this MCP server is
@@ -256,6 +260,7 @@ func (m *MCPExpr) Validate() error {
 		}
 	}
 	m.validateCatalogs(verr)
+	m.validateSkills(verr)
 	m.validateResourceTemplates(verr)
 	m.validatePromptCompletions(verr)
 	m.validateResourceCompletions(verr)

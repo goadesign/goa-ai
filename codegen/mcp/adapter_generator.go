@@ -53,13 +53,17 @@ type (
 		// EndpointMethods contains one typed call per authored MCP method.
 		EndpointMethods []*endpointMethodAdapter
 		// ToolCatalog selects an authenticated page of declared tool names.
-		ToolCatalog *catalogAdapter
+		ToolCatalog *discoveryAdapter
 		// PromptCatalog selects an authenticated page of declared prompt names.
-		PromptCatalog *catalogAdapter
+		PromptCatalog *discoveryAdapter
 		// ResourceCatalog selects a typed page of runtime resource descriptors.
-		ResourceCatalog *catalogAdapter
+		ResourceCatalog *discoveryAdapter
 		// ResourceTemplateCatalog selects a typed page of URI template descriptors.
-		ResourceTemplateCatalog *catalogAdapter
+		ResourceTemplateCatalog *discoveryAdapter
+		// SkillCatalog returns authenticated pages of complete skill entries.
+		SkillCatalog *discoveryAdapter
+		// SkillLookup returns one complete entry for the requested skill URI.
+		SkillLookup *discoveryAdapter
 		// Tools contains the Goa methods exposed as MCP tools.
 		Tools []*ToolAdapter
 		// Tasks contains configured creators with complete native job operations.

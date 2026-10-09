@@ -45,6 +45,9 @@ func serverExtensionMetadata(data *AdapterData) (string, error) {
 	if len(data.Tasks) > 0 {
 		extensions["io.modelcontextprotocol/tasks"] = struct{}{}
 	}
+	if data.SkillCatalog != nil && data.SkillLookup != nil {
+		extensions["io.modelcontextprotocol/skills"] = struct{}{}
+	}
 	for _, tool := range data.Tools {
 		if tool.UIMetadata != "" {
 			extensions["io.modelcontextprotocol/ui"] = struct {

@@ -26,7 +26,7 @@ func (r *ClientRegistration) exchangeIdentity(ctx context.Context, client *http.
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	generated := genidentityclient.NewClient(address.Scheme, address.Host, &authorizationDoer{client: client, address: address, operation: "identity_exchange"}, goahttp.RequestEncoder, authorizationDecoder, false)
+	generated := genidentityclient.NewClient(address.Scheme, address.Host, &authorizationDoer{client: client, address: address, operation: "identity_exchange"}, goahttp.RequestEncoder, generatedJSONDecoder, false)
 	var scope *string
 	if len(scopes) > 0 {
 		permissions := strings.Join(scopes, " ")
@@ -91,7 +91,7 @@ func (r *ClientRegistration) bootstrapIdentity(ctx context.Context, client *http
 	if err != nil {
 		return nil, time.Time{}, err
 	}
-	generated := genidentityclient.NewClient(address.Scheme, address.Host, &authorizationDoer{client: client, address: address, operation: "identity_bootstrap"}, goahttp.RequestEncoder, authorizationDecoder, false)
+	generated := genidentityclient.NewClient(address.Scheme, address.Host, &authorizationDoer{client: client, address: address, operation: "identity_bootstrap"}, goahttp.RequestEncoder, generatedJSONDecoder, false)
 	obtained := time.Now()
 	var value any
 	switch r.authentication {

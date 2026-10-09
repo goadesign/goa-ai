@@ -38,7 +38,7 @@ func (r *ClientRegistration) tokenClient(ctx context.Context, client *http.Clien
 	if err != nil {
 		return nil, "", err
 	}
-	generated := gentokenclient.NewClient(address.Scheme, address.Host, &authorizationDoer{client: client, address: address, operation: operation}, goahttp.RequestEncoder, authorizationDecoder, false)
+	generated := gentokenclient.NewClient(address.Scheme, address.Host, &authorizationDoer{client: client, address: address, operation: operation}, goahttp.RequestEncoder, generatedJSONDecoder, false)
 	return generated, assertion, nil
 }
 

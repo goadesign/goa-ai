@@ -1,9 +1,14 @@
-{{- define "catalog-page" }}
+{{- define "discovery-call" }}
 body := &{{ .PayloadTransportRef }}{}
+{{- if .SingleEntry }}
+input := {{ .Input.ValueTypeRef }}(p.URI)
+body.{{ .Input.Selector }} = {{ if .Input.Pointer }}&{{ end }}input
+{{- else }}
 if p.Cursor != nil {
-    cursor := {{ .Cursor.ValueTypeRef }}(*p.Cursor)
-    body.{{ .Cursor.Selector }} = {{ if .Cursor.Pointer }}&{{ end }}cursor
+    input := {{ .Input.ValueTypeRef }}(*p.Cursor)
+    body.{{ .Input.Selector }} = {{ if .Input.Pointer }}&{{ end }}input
 }
+{{- end }}
 payload, err := {{ .PayloadConstructor }}(body)
 if err != nil {
     span.RecordError(err)
@@ -28,9 +33,9 @@ if err := {{ .Endpoint.Codec.ResultValidate }}(result); err != nil {
     span.SetStatus(codes.Error, err.Error())
     return nil, goa.PermanentError("internal_error", "%s", err.Error())
 }
-{{- if .NextCursor }}
+{{- if and (not .SingleEntry) .NextCursor }}
 {{ .NextCursor }}
-{{- else }}
+{{- else if not .SingleEntry }}
 var nextCursor *string
 {{- end }}
 {{- end }}

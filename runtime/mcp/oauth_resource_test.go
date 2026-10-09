@@ -107,7 +107,7 @@ func TestResourceServerGeneratedMetadata(t *testing.T) {
 			response := writer.Result()
 			// This factory returns a function, not a response. The generated
 			// decoder consumes and closes response.Body, including on failure.
-			decode := genmetadataclient.DecodeReadResponse(authorizationDecoder, false) //nolint:bodyclose // The analyzer mistakes the returned function type for an HTTP response.
+			decode := genmetadataclient.DecodeReadResponse(generatedJSONDecoder, false) //nolint:bodyclose // The analyzer mistakes the returned function type for an HTTP response.
 			value, err := decode(response)
 			require.NoError(t, err)
 			metadata, ok := value.(*genmetadata.ReadResult)

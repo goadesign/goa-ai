@@ -104,7 +104,7 @@ func decodeAccessTokenClaims(ctx context.Context, payload []byte) (*genclaims.De
 		Body:   io.NopCloser(bytes.NewReader(payload)),
 	}
 	decode := genclaimssrv.DecodeDecodeRequest(goahttp.NewMuxer(), func(request *http.Request) goahttp.Decoder {
-		return authorizationDecoder(&http.Response{Body: request.Body})
+		return generatedJSONDecoder(&http.Response{Body: request.Body})
 	})
 	return decode(request.WithContext(ctx))
 }

@@ -106,7 +106,13 @@ objects, arrays, maps with string or named-string keys, unions, and their named
 forms. Finite recursive values are supported; cyclic Go values are rejected
 before recursive conversion.
 
-Generation skips codec functions for a type if any reachable field or branch,
+An `Any` field explicitly represented as `json.RawMessage` through
+`Meta("struct:field:type", "json.RawMessage", "encoding/json")` retains open
+JSON values and exact numbers. Strict syntax, text and duplicate-key checks
+still apply inside those values; their members remain open. Encoding checks
+the raw bytes before returning a document and leaves the original bytes alone.
+
+Generation skips codec functions for a type if any other reachable field or branch,
 including an optional field, uses `Any`, custom Go representation metadata, or
 non-string map keys. This skips the complete codec; it never drops fields from
 an encoded value. Original type generation remains valid. Supported siblings

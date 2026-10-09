@@ -7,7 +7,7 @@ func (a *MCPAdapter) PromptsList(ctx context.Context, p {{ index .PayloadRefs "p
     ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.prompts/list")
     defer span.End()
     {{- with .PromptCatalog }}
-    {{ template "catalog-page" . }}
+    {{ template "discovery-call" . }}
     prompts := make([]*PromptInfo, 0, len({{ .Endpoint.ResultValue }}.{{ .EntriesField }}))
     seen := make(map[string]struct{}, len({{ .Endpoint.ResultValue }}.{{ .EntriesField }}))
     for _, name := range {{ .Endpoint.ResultValue }}.{{ .EntriesField }} {

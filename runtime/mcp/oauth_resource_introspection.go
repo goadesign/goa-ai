@@ -78,7 +78,7 @@ func NewIntrospectionResourceServer(config IntrospectionResource) (*ResourceServ
 	configured.CheckRedirect = rejectAuthorizationRedirect
 	generated := genintrospectclient.NewClient(endpoint.Scheme, endpoint.Host,
 		&authorizationDoer{client: &configured, address: endpoint, operation: "token_introspection"},
-		goahttp.RequestEncoder, authorizationDecoder, false)
+		goahttp.RequestEncoder, generatedJSONDecoder, false)
 	verifier := &introspectionResourceVerifier{
 		client: genintrospect.NewClient(generated.Read()),
 		issuer: config.Issuer, resource: config.Resource,

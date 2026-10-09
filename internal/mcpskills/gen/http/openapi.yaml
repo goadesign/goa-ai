@@ -1,0 +1,208 @@
+swagger: "2.0"
+info:
+    title: ""
+    description: Decode Skill discovery records before their manifests or instructions enter a host.
+    version: 0.0.1
+host: localhost:80
+consumes:
+    - application/json
+    - application/xml
+    - application/gob
+produces:
+    - application/json
+    - application/xml
+    - application/gob
+paths:
+    /entry:
+        post:
+            tags:
+                - skill_entries
+            summary: decode skill_entries
+            description: Decode one complete Skill entry before verifying its directory membership and frontmatter.
+            operationId: skill_entries#decode
+            parameters:
+                - name: DecodeRequestBody
+                  in: body
+                  required: true
+                  schema:
+                    $ref: '#/definitions/SkillEntriesDecodeRequestBody'
+                    required:
+                        - uri
+                        - frontmatter
+                        - resources
+            responses:
+                "204":
+                    description: No Content response.
+            schemes:
+                - http
+    /frontmatter:
+        post:
+            tags:
+                - skill_entries
+            summary: decode_frontmatter skill_entries
+            description: Validate known frontmatter fields while retaining the original open JSON object separately for comparison with served YAML.
+            operationId: skill_entries#decode_frontmatter
+            parameters:
+                - name: decode_frontmatter_request_body
+                  in: body
+                  required: true
+                  schema:
+                    $ref: '#/definitions/SkillEntriesDecodeFrontmatterRequestBody'
+                    required:
+                        - name
+                        - description
+            responses:
+                "204":
+                    description: No Content response.
+            schemes:
+                - http
+definitions:
+    SkillEntriesDecodeFrontmatterRequestBody:
+        title: SkillEntriesDecodeFrontmatterRequestBody
+        type: object
+        properties:
+            allowed-tools:
+                type: string
+                description: Requested tools; this declaration does not grant permission
+                example: Ex totam ipsa molestiae voluptates.
+            compatibility:
+                type: string
+                description: Environment requirements
+                example: p5o
+                minLength: 1
+                maxLength: 500
+            description:
+                type: string
+                description: What this skill does and when to use it
+                example: tg
+                minLength: 1
+                maxLength: 1024
+            license:
+                type: string
+                description: License name or reference to a license file
+                example: Sit non alias ab voluptas id.
+            metadata:
+                type: object
+                description: Authored string metadata
+                example:
+                    Placeat perspiciatis minima in.: Harum impedit est.
+                additionalProperties:
+                    type: string
+                    example: Harum impedit est.
+            name:
+                type: string
+                description: Skill label matching its directory name
+                example: in
+                pattern: ^[\p{L}\p{N}]+(-[\p{L}\p{N}]+)*$
+                minLength: 1
+                maxLength: 64
+        example:
+            allowed-tools: Ex totam ipsa molestiae voluptates.
+            compatibility: p5o
+            description: tg
+            license: Sit non alias ab voluptas id.
+            metadata:
+                Placeat perspiciatis minima in.: Harum impedit est.
+            name: in
+        required:
+            - name
+            - description
+    SkillEntriesDecodeRequestBody:
+        title: SkillEntriesDecodeRequestBody
+        type: object
+        properties:
+            frontmatter:
+                description: Every authored YAML frontmatter field preserved as an open JSON object
+                example: Repellendus eos veniam.
+            resources:
+                description: Complete file manifest or the literal dynamic
+                example:
+                    - digest: sha256:5bc47d4895b3bf8f3d51b071834dded06f50e977afccd68f7aaadcbdd4d91ebe
+                      size: 4992209264506615047
+                      uri: http://roberts.org/desiree_toy
+                    - digest: sha256:5bc47d4895b3bf8f3d51b071834dded06f50e977afccd68f7aaadcbdd4d91ebe
+                      size: 4992209264506615047
+                      uri: http://roberts.org/desiree_toy
+                    - digest: sha256:5bc47d4895b3bf8f3d51b071834dded06f50e977afccd68f7aaadcbdd4d91ebe
+                      size: 4992209264506615047
+                      uri: http://roberts.org/desiree_toy
+                    - digest: sha256:5bc47d4895b3bf8f3d51b071834dded06f50e977afccd68f7aaadcbdd4d91ebe
+                      size: 4992209264506615047
+                      uri: http://roberts.org/desiree_toy
+                anyOf:
+                    - $ref: '#/definitions/SkillResourcesManifest'
+                    - type: string
+                      enum:
+                        - dynamic
+            uri:
+                type: string
+                description: Full resource URI of this skill's SKILL.md
+                example: http://quitzonlittel.org/cary_stehr
+                format: uri
+        example:
+            frontmatter: Repellendus eos veniam.
+            resources:
+                - digest: sha256:5bc47d4895b3bf8f3d51b071834dded06f50e977afccd68f7aaadcbdd4d91ebe
+                  size: 4992209264506615047
+                  uri: http://roberts.org/desiree_toy
+                - digest: sha256:5bc47d4895b3bf8f3d51b071834dded06f50e977afccd68f7aaadcbdd4d91ebe
+                  size: 4992209264506615047
+                  uri: http://roberts.org/desiree_toy
+                - digest: sha256:5bc47d4895b3bf8f3d51b071834dded06f50e977afccd68f7aaadcbdd4d91ebe
+                  size: 4992209264506615047
+                  uri: http://roberts.org/desiree_toy
+                - digest: sha256:5bc47d4895b3bf8f3d51b071834dded06f50e977afccd68f7aaadcbdd4d91ebe
+                  size: 4992209264506615047
+                  uri: http://roberts.org/desiree_toy
+            uri: http://quitzonlittel.org/cary_stehr
+        required:
+            - uri
+            - frontmatter
+            - resources
+    SkillFile:
+        title: SkillFile
+        type: object
+        properties:
+            digest:
+                type: string
+                description: SHA-256 of the raw file bytes
+                example: sha256:5bc47d4895b3bf8f3d51b071834dded06f50e977afccd68f7aaadcbdd4d91ebe
+                pattern: ^sha256:[0-9a-f]{64}$
+            size:
+                type: integer
+                description: Length of the raw file content in bytes
+                example: 4992209264506615047
+                format: int64
+                minimum: 0
+            uri:
+                type: string
+                description: Full resource URI of the file
+                example: http://roberts.org/desiree_toy
+                format: uri
+        example:
+            digest: sha256:5bc47d4895b3bf8f3d51b071834dded06f50e977afccd68f7aaadcbdd4d91ebe
+            size: 4992209264506615047
+            uri: http://roberts.org/desiree_toy
+        required:
+            - uri
+            - digest
+            - size
+    SkillResourcesManifest:
+        title: SkillResourcesManifest
+        type: array
+        items:
+            $ref: '#/definitions/SkillFile'
+        description: Every file belonging to this skill
+        example:
+            - digest: sha256:5bc47d4895b3bf8f3d51b071834dded06f50e977afccd68f7aaadcbdd4d91ebe
+              size: 4992209264506615047
+              uri: http://roberts.org/desiree_toy
+            - digest: sha256:5bc47d4895b3bf8f3d51b071834dded06f50e977afccd68f7aaadcbdd4d91ebe
+              size: 4992209264506615047
+              uri: http://roberts.org/desiree_toy
+            - digest: sha256:5bc47d4895b3bf8f3d51b071834dded06f50e977afccd68f7aaadcbdd4d91ebe
+              size: 4992209264506615047
+              uri: http://roberts.org/desiree_toy
+            - digest: sha256:5bc47d4895b3bf8f3d51b071834dded06f50e977afccd68f7aaadcbdd4d91ebe
+              size: 4992209264506615047
+              uri: http://roberts.org/desiree_toy

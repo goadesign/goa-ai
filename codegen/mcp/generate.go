@@ -157,6 +157,11 @@ func generateMCPTransport(_ string, svc *expr.ServiceExpr, data *AdapterData) []
 				},
 			},
 			{
+				Name:   "mcp-adapter-skills",
+				Source: mcpTemplates.Read("catalog_page") + mcpTemplates.Read("adapter_skills"),
+				Data:   data,
+			},
+			{
 				Name:   "mcp-adapter-prompts",
 				Source: mcpTemplates.Read("catalog_page") + mcpTemplates.Read("adapter_prompts"),
 				Data:   data,

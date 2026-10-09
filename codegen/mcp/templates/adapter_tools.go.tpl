@@ -5,7 +5,7 @@ func (a *MCPAdapter) ToolsList(ctx context.Context, p {{ index .PayloadRefs "too
     ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.tools/list")
     defer span.End()
     {{- with .ToolCatalog }}
-    {{ template "catalog-page" . }}
+    {{ template "discovery-call" . }}
     tools := make([]*ToolInfo, 0, len({{ .Endpoint.ResultValue }}.{{ .EntriesField }}))
     seen := make(map[string]struct{}, len({{ .Endpoint.ResultValue }}.{{ .EntriesField }}))
     for _, name := range {{ .Endpoint.ResultValue }}.{{ .EntriesField }} {

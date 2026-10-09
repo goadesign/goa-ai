@@ -123,6 +123,10 @@ and connect a model. This README describes `main`; consult the
 [release notes](https://github.com/goadesign/goa-ai/releases) and
 [upgrade guide](docs/runtime.md#preview-upgrade-guide) when updating an existing application.
 
+[MCP Skill discovery](docs/mcp_skills.md) binds complete catalog pages and direct
+URI lookup to authenticated Goa methods. Generated adapters check entries and
+manifests; verified host loading remains part of the unfinished upgrade.
+
 ## How it works
 
 ### One design, from API to agent tool
