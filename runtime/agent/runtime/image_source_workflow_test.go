@@ -83,7 +83,7 @@ func TestNativeImageGeneratedWorkflowAndCopiedHistory(t *testing.T) {
 	client, err := model.NewClient(provider)
 	require.NoError(t, err)
 	require.NoError(t, rt.RegisterModel("fixture", client))
-	exec := genexecutor.NewObserverPicturesExec(genexecutor.WithView(owner.view))
+	exec := genexecutor.NewObserverPicturesExec(genexecutor.WithView(genimages.NewEndpoints(owner).View))
 	require.NoError(t, genobserver.RegisterUsedToolsets(ctx, rt, genobserver.WithPicturesExecutor(exec)))
 
 	var canonical []*model.Message
@@ -320,10 +320,11 @@ func newImageFixtureOwner(t *testing.T) *imageFixtureOwner {
 	return owner
 }
 
-func (o *imageFixtureOwner) view(_ context.Context, input any) (any, error) {
+// View receives a selected image ID and returns that ID with its format,
+// byte length, and checksum through the generated service contract.
+func (o *imageFixtureOwner) View(_ context.Context, selection *genimages.ImageSelection) (*genimages.ViewResult, error) {
 	o.mu.Lock()
 	defer o.mu.Unlock()
-	selection := input.(*genpictures.ViewPayload)
 	body, ok := o.bodies[selection.ID]
 	if !ok {
 		return nil, errors.New("selected resource missing")
