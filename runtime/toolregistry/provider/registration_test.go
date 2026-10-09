@@ -497,6 +497,7 @@ func TestRegisterUntilSuccessReturnsPermanentAdmissionError(t *testing.T) {
 		{name: "conflict", errorName: "admission_conflict", message: "different declaration"},
 		{name: "validation", errorName: "validation_error", message: "invalid registration"},
 		{name: "lease lost", errorName: "provider_lease_lost", message: "incarnation is draining"},
+		{name: "tool name conflict", errorName: "tool_name_conflict", message: "tool already provided in scope"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

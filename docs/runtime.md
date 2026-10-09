@@ -2767,11 +2767,16 @@ its names, and reactivation claims them again. Lease, health and drain writes
 change no names. Records without identity, and records in different scopes,
 never conflict.
 
-Claims are saved only by registries that include this rule. Upgrade every
-replica sharing the catalog before relying on it, because an older replica
-saves declarations without claiming names. A record with identity saved before
-the upgrade holds no claims until its next declaring write; the registry does
-not infer claims from saved history.
+Before serving, each registry rebuilds the claims from the saved records: every
+active record with identity claims the tool names of its saved declaration, and
+every retired one releases its names. This protects records saved before the
+upgrade, or by an older registry after a rollback. If two saved active records
+in one scope provide the same tool name, startup fails with an error naming the
+tool and both records; the registry does not choose which one keeps the name.
+Retire or replace one of them through a replica still running the older
+version, then start this version again. An older replica still saves
+declarations without claiming names, so upgrade every replica sharing the
+catalog before relying on the rule.
 
 Upgrade all registry replicas sharing the catalog before creating records with
 identity: older readers reject that new state field. Identity-free records need

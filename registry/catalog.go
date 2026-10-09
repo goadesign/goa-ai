@@ -110,6 +110,10 @@ func newToolsetCatalog(store catalogStore, clock registryTimeSource) *toolsetCat
 // validatePersistedEntries checks all definition/state pairs and permanent
 // retired tokens before the registry begins serving. Old combined records are
 // rejected by the new strict decoder and require the offline conversion.
+// When every record is valid, it then rebuilds the tool-name claims of records
+// with identity, so records saved before claims existed, or by an older
+// registry, are protected before this registry accepts any write. Two active
+// records in one scope that provide the same tool name fail startup.
 func (c *toolsetCatalog) validatePersistedEntries(ctx context.Context) error {
 	keys, err := c.store.Keys(ctx)
 	if err != nil {
@@ -142,18 +146,95 @@ func (c *toolsetCatalog) validatePersistedEntries(ctx context.Context) error {
 		keys = append(keys, key)
 	}
 	sort.Strings(keys)
+	var scoped []string
 	for _, key := range keys {
 		if !strings.HasPrefix(key, toolsetCatalogKeyPrefix) {
 			invalid = append(invalid, fmt.Errorf("catalog key %q has invalid prefix", key))
 			continue
 		}
-		_, err := c.snapshot(ctx, strings.TrimPrefix(key, toolsetCatalogKeyPrefix))
+		name := strings.TrimPrefix(key, toolsetCatalogKeyPrefix)
+		entry, err := c.snapshot(ctx, name)
 		if err != nil {
 			invalid = append(invalid, fmt.Errorf("catalog key %q: %w", key, err))
 			continue
 		}
+		if entry.Identity != nil {
+			scoped = append(scoped, name)
+		}
 	}
-	return errors.Join(invalid...)
+	if len(invalid) > 0 {
+		return errors.Join(invalid...)
+	}
+	return c.claimSavedToolNames(ctx, scoped)
+}
+
+// claimSavedToolNames makes the saved tool-name claims of the named records
+// match their current state: each active record claims every tool name of its
+// saved declaration, and each retired record releases its names.
+//
+// A record whose claim conflicts is retried after the other records, because
+// the conflicting name may be a stale claim that another record releases when
+// its own turn comes, for example a name an older registry dropped in a
+// replacement without updating claims. The passes stop when one pass makes no
+// progress. The conflicts left then are two active records providing the same
+// tool name; they are returned together, and the registry does not choose
+// which record keeps the name.
+func (c *toolsetCatalog) claimSavedToolNames(ctx context.Context, names []string) error {
+	pending := names
+	for {
+		var conflicts []string
+		var conflictErrs []error
+		for _, name := range pending {
+			err := c.claimSavedRecordToolNames(ctx, name)
+			if errors.As(err, new(*toolNameConflictError)) {
+				conflicts = append(conflicts, name)
+				conflictErrs = append(conflictErrs, fmt.Errorf("toolset %q: %w", name, err))
+				continue
+			}
+			if err != nil {
+				return fmt.Errorf("claim tool names of toolset %q: %w", name, err)
+			}
+		}
+		if len(conflicts) == 0 {
+			return nil
+		}
+		if len(conflicts) == len(pending) {
+			return errors.Join(conflictErrs...)
+		}
+		pending = conflicts
+	}
+}
+
+// claimSavedRecordToolNames rewrites one record's claims from its current
+// saved state with a conditional commit, re-reading when the record changes
+// concurrently. A record removed since it was listed needs no claims.
+func (c *toolsetCatalog) claimSavedRecordToolNames(ctx context.Context, name string) error {
+	key := toolsetCatalogKey(name)
+	for {
+		raw, definitionRaw, tokenRetired, exists, err := c.store.Snapshot(ctx, key)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return nil
+		}
+		current, err := c.decodeSnapshot(ctx, name, raw, definitionRaw, tokenRetired)
+		if err != nil {
+			return err
+		}
+		write := catalogWrite{}
+		if current.State == catalogEntryActive {
+			write.ClaimToolNames = true
+			write.ToolNames = current.Toolset.toolNames()
+		}
+		updated, err := c.commit(ctx, key, raw, current.catalogState, write)
+		if err != nil {
+			return err
+		}
+		if updated {
+			return nil
+		}
+	}
 }
 
 // Register admits an already validated definition and one provider incarnation.

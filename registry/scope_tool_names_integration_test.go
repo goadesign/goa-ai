@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	genregistry "goa.design/goa-ai/registry/gen/registry"
 	goa "goa.design/goa/v3/pkg"
 )
 
@@ -87,6 +88,107 @@ func TestRedisScopedToolNameClaimsFollowLifecycle(t *testing.T) {
 	_, err = declareScopedService(t, svc, "tenant-a", "second", "inventory.lookup")
 	require.NoError(t, err)
 	assert.Equal(t, map[string]string{"inventory.lookup": "second"}, scopeToolOwners(t, store, "tenant-a"))
+}
+
+func TestRedisStartupClaimsToolNamesOfSavedRecords(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		saved func(*testing.T, *Service) error
+	}{
+		{
+			name: "service declaration",
+			saved: func(t *testing.T, svc *Service) error {
+				_, err := declareScopedService(t, svc, "tenant-a", "first", "inventory.lookup")
+				return err
+			},
+		},
+		{
+			name: "native Agent registration",
+			saved: func(t *testing.T, svc *Service) error {
+				_, err := registerScopedAgent(t, svc, "tenant-a", "first", "inventory.lookup")
+				return err
+			},
+		},
+		{
+			name: "provider registration",
+			saved: func(t *testing.T, svc *Service) error {
+				declaration := scopedServiceDeclaration("first", "inventory.lookup")
+				definition := testCatalogDefinition(t, &genregistry.Toolset{Name: declaration.Name, Tags: declaration.Tags, Tools: declaration.Tools})
+				definition.identity = &CatalogIdentity{Scope: "tenant-a", Name: "first"}
+				_, err := svc.catalog.Register(t.Context(), definition, testAdmissionRevisionA, "provider", testIncarnationA, time.Minute)
+				return err
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rdb := getRedis(t)
+			store := newRedisCatalogStore(rdb, t.Name())
+			require.NoError(t, test.saved(t, newRedisScopeToolNamesService(store)))
+			forgetToolNameClaims(t, store, "tenant-a", "first")
+
+			restarted := newRedisScopeToolNamesService(store)
+			require.NoError(t, restarted.catalog.validatePersistedEntries(t.Context()))
+			assert.Equal(t, map[string]string{"inventory.lookup": "first"}, scopeToolOwners(t, store, "tenant-a"))
+			_, err := declareScopedService(t, restarted, "tenant-a", "second", "inventory.lookup")
+			requireServiceErrorName(t, err, "tool_name_conflict")
+		})
+	}
+}
+
+func TestRedisStartupRejectsSavedRecordsThatRepeatAToolName(t *testing.T) {
+	rdb := getRedis(t)
+	store := newRedisCatalogStore(rdb, t.Name())
+	svc := newRedisScopeToolNamesService(store)
+	_, err := declareScopedService(t, svc, "tenant-a", "first", "inventory.lookup")
+	require.NoError(t, err)
+	forgetToolNameClaims(t, store, "tenant-a", "first")
+	_, err = declareScopedService(t, svc, "tenant-a", "second", "inventory.lookup")
+	require.NoError(t, err, "without claims the older catalog accepted the repeated name")
+	forgetToolNameClaims(t, store, "tenant-a", "second")
+
+	err = newRedisScopeToolNamesService(store).catalog.validatePersistedEntries(t.Context())
+	require.ErrorContains(t, err, `"inventory.lookup"`)
+	require.ErrorContains(t, err, `"first"`)
+	require.ErrorContains(t, err, `"second"`)
+}
+
+func TestRedisStartupReleasesStaleClaimsBeforeReportingConflicts(t *testing.T) {
+	rdb := getRedis(t)
+	store := newRedisCatalogStore(rdb, t.Name())
+	svc := newRedisScopeToolNamesService(store)
+	_, err := declareScopedService(t, svc, "tenant-a", "alpha", "inventory.lookup")
+	require.NoError(t, err)
+	forgetToolNameClaims(t, store, "tenant-a", "alpha")
+	_, err = declareScopedService(t, svc, "tenant-a", "zeta", "inventory.count")
+	require.NoError(t, err)
+
+	// zeta still holds a claim on a name its saved declaration no longer
+	// provides, as if an older registry replaced it without releasing names.
+	// Startup visits alpha first, so alpha must be retried after zeta
+	// releases the stale claim.
+	require.NoError(t, rdb.HSet(t.Context(), store.scopeToolNames("tenant-a"), "inventory.lookup", "zeta").Err())
+	require.NoError(t, rdb.SAdd(t.Context(), store.routeToolNames("zeta"), "inventory.lookup").Err())
+
+	require.NoError(t, newRedisScopeToolNamesService(store).catalog.validatePersistedEntries(t.Context()))
+	assert.Equal(t, map[string]string{"inventory.lookup": "alpha", "inventory.count": "zeta"}, scopeToolOwners(t, store, "tenant-a"))
+}
+
+// newRedisScopeToolNamesService returns a Service whose catalog uses store,
+// like a registry replica sharing that Redis catalog.
+func newRedisScopeToolNamesService(store *redisCatalogStore) *Service {
+	return &Service{catalog: newToolsetCatalog(store, newRedisTimeSource(store.redis)), validator: newSchemaValidator()}
+}
+
+// forgetToolNameClaims deletes every claim the routes hold in scope, leaving
+// the records as a registry without tool-name claims would have saved them.
+func forgetToolNameClaims(t *testing.T, store *redisCatalogStore, scope string, routes ...string) {
+	t.Helper()
+	for _, route := range routes {
+		for _, tool := range routeToolClaims(t, store, route) {
+			require.NoError(t, store.redis.HDel(t.Context(), store.scopeToolNames(scope), tool).Err())
+		}
+		require.NoError(t, store.redis.Del(t.Context(), store.routeToolNames(route)).Err())
+	}
 }
 
 // scopeToolOwners returns the saved map from tool name to owning route for scope.
