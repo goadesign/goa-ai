@@ -206,7 +206,7 @@ func(s *jobOwner)Resource(context.Context)(string,error){return "record",nil}
 
 // runMCPPeer uses the normal generator and limits compilation to a small
 // synthetic module, recording both generation and verification duration.
-func runMCPPeer(t *testing.T, moduleName, design, runtime string) {
+func runMCPPeer(t *testing.T, moduleName, design, runtime string, additionalFiles ...map[string]string) {
 	t.Helper()
 	dir := t.TempDir()
 	module := fmt.Sprintf(`module %s
@@ -223,6 +223,11 @@ replace goa.design/goa/v3 => %s
 	require.NoError(t, os.Mkdir(filepath.Join(dir, "design"), 0o700))
 	for name, source := range map[string]string{"go.mod": module, "design/design.go": design, "peer_test.go": runtime} {
 		require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(source), 0o600))
+	}
+	for _, files := range additionalFiles {
+		for name, source := range files {
+			require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(source), 0o600))
+		}
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
 	defer cancel()

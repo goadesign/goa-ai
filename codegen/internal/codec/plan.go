@@ -458,8 +458,9 @@ func (v *Value) declareTypes(localTypes []goaexpr.UserType) error {
 			declaration:          declaration,
 			typeDeclaration:      typeDeclaration,
 			validatorDeclaration: validator,
-			// A named union keeps the underlying transport's JSON methods.
-			alias: goaexpr.IsUnion(userType),
+			// Named unions and raw JSON keep the underlying transport's JSON
+			// methods so decoding receives the authored value rather than bytes.
+			alias: goaexpr.IsUnion(userType) || isRawJSON(userType.Attribute()),
 		})
 	}
 	return nil

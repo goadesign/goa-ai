@@ -131,7 +131,7 @@ func (p *Plan) copyOriginalTransport(attribute *expr.AttributeExpr, layout *code
 		}
 		planned := &plannedType{
 			userType: local, declaration: name, validatorDeclaration: validator,
-			alias: expr.IsUnion(actual),
+			alias: expr.IsUnion(actual) || isRawJSON(actual.Attribute()),
 		}
 		p.originals.types[source] = planned
 		p.originals.typesByLocal[local] = planned

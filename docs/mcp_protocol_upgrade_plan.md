@@ -16,7 +16,7 @@ and verification evidence and do not supersede unfinished gates.
 | Dynamic catalogs | Implemented through authenticated native methods for tools, prompts, resources and URI templates, with one shared subscription source. Final-head integration and review remain required. |
 | OAuth | Built-in authorization paths and the agreed metadata/profile assessment are implemented. Selected independent checks and explicit legacy-fixture mismatches are recorded. Final-head verification, review and caller acceptance remain required. |
 | MCP Apps | Implemented through authored app resources and tools, generated peers, and the official browser SDK. Final-head browser, build and integration CI passed. Final review remains required. |
-| MCP Skills | In progress. Native `SkillCatalog`/`SkillLookup` discovery and optional `ResourceDirectory` pages preserve mapped HTTP inputs, authentication and ordinary resource reads. Selected discovery views are verified. One shared generated entry codec and cross-field verifier reject invalid frontmatter, duplicate or incomplete manifests and directory escapes before publication. Directory pages reject recursive or unrelated children and advertise support only when declared. Unknown skills/files/directories return `-32602`; invalid server entries/pages return `-32603`. Private file-byte/YAML checks and model-facing union mappings pass focused acceptance. Complete host loading, approval, origin identity and context retention remain open. |
+| MCP Skills | Implemented through generated discovery/read clients, shared `VerifySkillFile`, and a reference host that retains complete entries with model context. Generated HTTP and native agent acceptance covers lazy reads, origin isolation, complete YAML, cached bytes, nested activation, changed-manifest consent and local execution approval/denial. Directory discovery and selected views reuse ordinary methods. Final-head CI, caller assessment and review remain required. |
 | Dependencies, documentation and website | Root and all four maintained nested modules pin merged Goa `ee33017cd4aa`, which exposes the native union renderer for plugin reuse. Finish external caller migration, authoritative docs, translations and the MCP home-page section after capability acceptance. |
 | Generated stdio servers | Explicitly deferred. Existing stdio consumers remain supported. |
 
@@ -39,6 +39,17 @@ check and combines coverage. CI at `dd9f7de5` passed all seven jobs. The slowest
 job took 7 minutes 48 seconds; all checks were retained. Later changes still
 require final-head CI.
 
+CI at `e209b02c` passed the build, Apps and integration jobs but three generated
+fixtures reached their individual three-minute deadlines. Their root assertions
+passed; the same commands were still checking remaining generated packages when
+killed. The logs do not identify the exact slow compiler dependency. The shard
+runner now prepares the shared race-instrumented agent runtime before fixture
+deadlines begin. No checks were removed or timeout raised. This preparation took
+0.39 seconds on the local warm cache; the new Skill host plus all three failed
+fixtures passed in 46.49 seconds. A new cold-cache CI run must verify the repair.
+The current inventory includes the new Skill host test and is distributed by the
+existing shard rule rather than a fixed per-shard count.
+
 The OAuth audience review retains the existing JOSE `jwt.Audience` value in the
 private generated contracts. Its decoder accepts a string or an array containing
 only strings and rejects other shapes, including null elements. Both signed-token
@@ -53,8 +64,48 @@ retains future fields and exact numbers, supports ordinary aliases and merged
 mappings, and rejects cycles, duplicate fields and values without an equivalent
 JSON type. CRLF files retain their original hashed bytes. Supporting reads of a
 nested `SKILL.md` do not activate it. Focused race checks passed in 4.69 seconds.
-These helpers are not yet connected to a complete host-loading flow; approval,
-origin identity, context retention and lazy caching still gate completion.
+`VerifySkillFile` now exposes those checks through the existing generated entry
+codec. The reference host uses generated clients and native agent confirmation;
+its complete HTTP and executor fixture passed with race checks in 4.41 seconds.
+Host consent is bound to origin, exact Skill URI and the full manifest. Cached
+supporting content is verified again before a nested activation. One process owns
+context and retained entries together; restart requires fresh consent.
+
+### Skill host ownership and remaining acceptance
+
+Generated protocol clients already expose Skill discovery, direct lookup,
+directory pages and ordinary resource reads. Reuse these typed methods rather
+than add another client or exported parsed-entry wrapper. The shared runtime
+verifier will own entry decoding, exact manifest membership, byte length, digest
+and complete frontmatter comparison. The application that owns model context
+also owns consent, local execution permissions and the retained entry. A Skill
+does not become a new model message authority or grant tools through frontmatter.
+
+The implemented host path follows this ownership:
+
+1. Expose one complete file-verification operation around the existing generated
+   entry codec and private checks. Test malformed discovery and file bytes at this
+   public boundary.
+2. Add a reference host using the generated Skill protocol client. Assign server
+   labels in its composition root, retain complete entries with model context,
+   and cache verified bytes in memory only after a requested read. Listing and
+   approval must read no files.
+3. Compose its local execution tool with existing runtime confirmation. Bind the
+   trusted approval to the originating server, exact Skill URI and complete
+   manifest. Decline cross-origin reads and dynamic entries; ignore `allowed-tools`.
+   Supporting reads of nested instructions must not activate a second Skill.
+4. Verify the complete generated peer and host path: same-URI origins, unknown
+   direct lookup, manifest rotation/addition/removal, nested consent, lazy reads,
+   cached byte ownership, model context retention and approval denial. Complete
+   documentation and final-head review after these checks pass. Focused HTTP and
+   native continuation checks pass; final-head review remains required.
+
+This reference host supplies application policy, as the existing Apps host does.
+The generic agent runtime cannot infer whether arbitrary application code is a
+local execution tool. Hosts must declare and enforce that policy through their
+configured tool contracts; no tool-name heuristic or automatic permission grant
+is introduced. Its process-local context and cache make no claim of durable
+approvals across restart. A restarted host must obtain fresh consent before load.
 
 Compiled agent-tool acceptance exposed a wider union mapping gap. Ordinary tagged
 unions pass, but both flat and untagged values pass their advertised schema and
@@ -76,7 +127,7 @@ focused checkpoint across generated codecs, golden output, metadata, correction
 and registry consumers passed in 32.16 seconds. Generated declarations also
 preserved their union selections through protobuf and JSON round trips in
 8.40 seconds. Scoped lint reported zero issues in 2.76 seconds. Host loading is
-still unfinished; these checks do not finish Skills support or authorize release.
+covered by the reference host; these union checks alone do not authorize release.
 
 Early MCP validation now resolves inherited arguments and results through one
 shared reader. A detached Goa attribute graph retains concrete type identity and

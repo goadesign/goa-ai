@@ -5,13 +5,33 @@ package mcp
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"unicode/utf8"
 
 	genskills "goa.design/goa-ai/internal/mcpskills/gen/skill_entries"
 )
+
+// VerifySkillFile checks fetched bytes against the complete discovery entry
+// retained by the host. It validates the entry, requires exact manifest membership,
+// and checks byte length and SHA-256. For the entry's own SKILL.md it also compares
+// every YAML frontmatter field with discovery. A nested SKILL.md remains supporting
+// content. Dynamic entries are declined because their bytes cannot be verified.
+// This check grants no permissions; the host retains the entry while its Skill
+// instructions remain in model context and obtains any required user consent.
+func VerifySkillFile(ctx context.Context, entryJSON json.RawMessage, uri string, content []byte) error {
+	entry, err := decodeSkillEntry(ctx, entryJSON)
+	if err != nil {
+		return err
+	}
+	if uri == entry.URI {
+		return verifySkillMarkdown(entry, content)
+	}
+	return verifySkillResource(entry, uri, content)
+}
 
 // verifySkillResource accepts bytes only for an exact file in the held manifest.
 // Dynamic entries have no stable digest, so this host declines their contents.

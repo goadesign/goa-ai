@@ -20,6 +20,41 @@ const (
 	skillFrontmatterFixture = `{"name":"review","description":"Review changes","future":{"exact":9007199254740993,"nullable":null}}`
 )
 
+func TestVerifySkillFileBoundary(t *testing.T) {
+	content := []byte(skillMarkdownFixture)
+	entry := heldSkillFixture(t, content, skillFrontmatterFixture)
+	manifest, selected := entry.Resources.AsManifest()
+	require.True(t, selected)
+	nested := []byte("---\nname: nested\nallowed-tools: RunEverything\n---\nNested instructions.\n")
+	nestedURI := "skill://review/nested/SKILL.md"
+	entry.Resources.SetManifest(append(manifest, &genskills.SkillFile{
+		URI: nestedURI, Digest: fmt.Sprintf("sha256:%x", sha256.Sum256(nested)), Size: int64(len(nested)),
+	}))
+	encoded, err := genskills.EncodeSkillEntry(entry)
+	require.NoError(t, err)
+	for _, test := range []struct {
+		name, entry, uri string
+		content          []byte
+		want             string
+	}{
+		{"entry file", string(encoded), entry.URI, content, ""},
+		{"supporting nested file", string(encoded), nestedURI, nested, ""},
+		{"malformed discovery", `{`, entry.URI, content, "invalid skill entry"},
+		{"missing manifest", `{"uri":"skill://review/SKILL.md","frontmatter":{"name":"review","description":"Review"}}`, entry.URI, content, "resources"},
+		{"unlisted supporting file", string(encoded), "skill://review/new.md", nested, "absent"},
+		{"changed file", string(encoded), entry.URI, []byte(strings.Replace(skillMarkdownFixture, "supplied", "modified", 1)), "digest"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := VerifySkillFile(t.Context(), json.RawMessage(test.entry), test.uri, test.content)
+			if test.want == "" {
+				assert.NoError(t, err)
+				return
+			}
+			assert.ErrorContains(t, err, test.want)
+		})
+	}
+}
+
 func TestSkillResourceVerification(t *testing.T) {
 	content := []byte(skillMarkdownFixture)
 	entry := heldSkillFixture(t, content, skillFrontmatterFixture)

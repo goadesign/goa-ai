@@ -14,6 +14,15 @@ import (
 
 func TestGeneratedRawJSONValueCodec(t *testing.T) {
 	files, err := generate(t, func() {
+		raw := dsl.Type("Raw", dsl.Any, func() {
+			dsl.Meta("struct:pkg:path", "types")
+			dsl.Meta("type:generate:force")
+			dsl.Meta("struct:field:type", "json.RawMessage", "encoding/json")
+		})
+		dsl.Type("RawMap", dsl.MapOf(dsl.String, raw), func() {
+			dsl.Meta("struct:pkg:path", "types")
+			dsl.Meta("type:generate:force")
+		})
 		located("Packet", func() {
 			dsl.Attribute("data", dsl.Any, "Open JSON kept as authored bytes", func() {
 				dsl.Meta("struct:field:type", "json.RawMessage", "encoding/json")
@@ -47,6 +56,16 @@ func TestRawJSONRoundTrip(t *testing.T) {
   require.NoError(t,err,raw)
   assert.Equal(t,raw,string(decoded.Data))
   assert.Equal(t,raw,string(value.Data))
+ }
+}
+func TestNamedRawJSONMapRoundTrip(t *testing.T) {
+ for _, raw := range []string{"null", "true", "9007199254740993", "[1,null]", "{\"open\":9007199254740993}"} {
+  value:=gentypes.RawMap{"extension":gentypes.Raw(raw)}
+  encoded,err:=gentypes.EncodeRawMap(value)
+  require.NoError(t,err,raw)
+  decoded,err:=gentypes.DecodeRawMap(encoded)
+  require.NoError(t,err,raw)
+  assert.Equal(t,raw,string(decoded["extension"]))
  }
 }
 func TestRawJSONRejectsInvalidBytes(t *testing.T) {

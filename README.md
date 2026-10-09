@@ -126,7 +126,9 @@ and connect a model. This README describes `main`; consult the
 [MCP Skill discovery](docs/mcp_skills.md) binds complete catalog pages and direct
 URI lookup to authenticated Goa methods. `ResourceDirectory()` adds direct-child
 directory pages through the same endpoints. Generated adapters check entries,
-manifests and directory relationships; verified host loading remains unfinished.
+manifests and directory relationships. `mcp.VerifySkillFile` verifies fetched
+bytes against a retained entry. The reference host composes lazy loading,
+origin isolation and content-bound consent with existing tool confirmation.
 
 ## How it works
 

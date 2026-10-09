@@ -31,6 +31,7 @@ func TestSkillFrontmatterComparison(t *testing.T) {
 		{"aliased string key", "key: &key field\nmap:\n  *key: 2\n", `{"key":"field","map":{"field":2}}`, ""},
 		{"merged mapping", "base: &base {a: 1, b: 2}\nitem: {<<: *base, b: 3}\n", `{"base":{"a":1,"b":2},"item":{"a":1,"b":3}}`, ""},
 		{"merge precedence", "a: &a {value: 1}\nb: &b {value: 2, other: 3}\nitem: {<<: [*a, *b]}\n", `{"a":{"value":1},"b":{"value":2,"other":3},"item":{"value":1,"other":3}}`, ""},
+		{"aliased merge sequence", "sources: &sources [{value: 1}, {value: 2, other: 3}]\nitem: {<<: *sources}\n", `{"sources":[{"value":1},{"value":2,"other":3}],"item":{"value":1,"other":3}}`, ""},
 		{"quoted merge name", "'<<': 1\n", `{"<<":1}`, ""},
 		{"duplicate fields", "value: 1\nvalue: 1\n", `{"value":1}`, "duplicate"},
 		{"duplicate merge keys", "item: {<<: {a: 1}, <<: {b: 2}}\n", `{"item":{"a":1,"b":2}}`, "duplicate"},

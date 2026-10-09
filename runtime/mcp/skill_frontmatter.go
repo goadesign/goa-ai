@@ -226,6 +226,9 @@ func (c *skillYAMLComparison) mapping(node *yaml.Node) (map[string]*yaml.Node, e
 		fields[key.Value] = value
 	}
 	if merge != nil {
+		for merge.Kind == yaml.AliasNode {
+			merge = merge.Alias
+		}
 		sources := []*yaml.Node{merge}
 		if merge.Kind == yaml.SequenceNode {
 			sources = merge.Content

@@ -99,9 +99,30 @@ verify raw file bytes against the retained size and digest, compare all YAML
 frontmatter fields, and obtain any required approval before use. A read does
 not grant tool permissions or activate a nested skill.
 
-The verified host-loading integration is still being implemented for this
-upgrade. Discovery support alone does not complete that integration or authorize
-automatic loading. See the [upgrade completion gates](mcp_protocol_upgrade_plan.md#current-completion-gates).
+Use the generated protocol client for discovery and ordinary resource reads.
+After fetching a file, call `mcp.VerifySkillFile(ctx, retainedEntryJSON, uri, bytes)`.
+The verifier decodes the complete retained entry, checks exact file membership,
+size and SHA-256, and compares every YAML field when reading the entry's own
+`SKILL.md`. It accepts original LF or CRLF bytes, preserves exact numbers, and
+rejects invalid bytes or frontmatter. A nested entry remains supporting content
+until separately discovered and approved. Dynamic entries have no stable
+manifest and cannot pass this verification operation.
+
+The [reference host](../codegen/mcp/testdata/skills_host/README.md) composes these
+clients with existing agent tool confirmation and a native `BindTo` executor.
+It assigns server labels in the application, retains complete entries alongside
+ordinary user context, and reads files lazily after consent. Its cache separates
+origins and digests and verifies each cached file against the entry being used.
+Manifest changes revoke consent; frontmatter such as `allowed-tools` grants no
+permissions. Local code execution needs explicit consent for that exact Skill
+and complete manifest. Denial reads no script and executes nothing.
+
+Consent and model context belong to the host application. This reference keeps
+both in memory and requires a fresh context and approval for a changed version
+or a restarted host. Applications that persist context must retain its entries
+with it and define their consent lifetime. The shared verifier makes no storage
+or approval decisions. The complete upgrade still requires the
+[remaining completion gates](mcp_protocol_upgrade_plan.md#current-completion-gates).
 
 The authoritative contracts are the [MCP Skills extension](https://modelcontextprotocol.io/extensions/skills/overview)
 and [Agent Skills format](https://agentskills.io/specification).

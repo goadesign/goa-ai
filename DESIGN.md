@@ -2148,9 +2148,14 @@ advertise `directoryRead`; live pages never expand a held Skill manifest.
 Metadata callers distinguish pointer fields from standalone value references
 using Goa's retained layouts, including anonymous objects in catalogs, prompts
 and tool results. No discovery operation reads files or grants approval.
-Host loading must retain
-the server identity and manifest, verify each requested file, compare all YAML
-fields and obtain required approval before use. That integration remains open.
+`VerifySkillFile` consumes the complete retained entry and requested bytes through
+that same generated codec. It checks membership, size, digest and complete YAML
+before use. The reference host retains entries with ordinary model context and
+assigns server identity from application connections. It owns lazy reads, a
+private origin-and-digest cache and content-bound consent. Existing native tool
+confirmation suspends local execution until approval; neither discovery nor
+remote frontmatter supplies permissions. A changed manifest revokes consent.
+Restart-persistent context and approval remain application responsibilities.
 
 `ToolUI` associates a tool with an existing HTML resource, and `ToolVisibility`
 selects model callers, app callers, or both. Generation emits nested UI metadata
