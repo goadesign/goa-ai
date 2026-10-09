@@ -10,7 +10,6 @@ package assistant
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 
 	goa "goa.design/goa/v3/pkg"
 )
@@ -114,30 +113,37 @@ func (u *Content) SetResource(v *RefereePromptResource) {
 
 // Validate ensures exactly one valid branch is selected.
 func (u Content) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u Content) Value() (any, error) {
 	switch u.kind {
 	case "":
-		return goa.InvalidEnumValueError("type", "", []any{
+		return nil, goa.InvalidEnumValueError("type", "", []any{
 			string(ContentKindText),
 			string(ContentKindImage),
 			string(ContentKindResource),
 		})
 	case ContentKindText:
 		if u.text == nil {
-			return goa.MissingFieldError("value", "Content")
+			return nil, goa.MissingFieldError("value", "Content")
 		}
-		return nil
+		return u.text, nil
 	case ContentKindImage:
 		if u.image == nil {
-			return goa.MissingFieldError("value", "Content")
+			return nil, goa.MissingFieldError("value", "Content")
 		}
-		return nil
+		return u.image, nil
 	case ContentKindResource:
 		if u.resource == nil {
-			return goa.MissingFieldError("value", "Content")
+			return nil, goa.MissingFieldError("value", "Content")
 		}
-		return nil
+		return u.resource, nil
 	default:
-		return goa.InvalidEnumValueError("type", u.kind, []any{
+		return nil, goa.InvalidEnumValueError("type", u.kind, []any{
 			string(ContentKindText),
 			string(ContentKindImage),
 			string(ContentKindResource),
@@ -147,21 +153,9 @@ func (u Content) Validate() error {
 
 // MarshalJSON marshals the union into the canonical {type,value} JSON shape.
 func (u Content) MarshalJSON() ([]byte, error) {
-	if err := u.Validate(); err != nil {
+	value, err := u.Value()
+	if err != nil {
 		return nil, err
-	}
-	var (
-		value any
-	)
-	switch u.kind {
-	case ContentKindText:
-		value = u.text
-	case ContentKindImage:
-		value = u.image
-	case ContentKindResource:
-		value = u.resource
-	default:
-		return nil, fmt.Errorf("unexpected Content kind %q", u.kind)
 	}
 	return json.Marshal(struct {
 		Type  string `json:"type"`
@@ -264,18 +258,25 @@ func (u *Resource) SetText(v *RefereeEmbeddedText) {
 
 // Validate ensures exactly one valid branch is selected.
 func (u Resource) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u Resource) Value() (any, error) {
 	switch u.kind {
 	case "":
-		return goa.InvalidEnumValueError("type", "", []any{
+		return nil, goa.InvalidEnumValueError("type", "", []any{
 			string(ResourceKindText),
 		})
 	case ResourceKindText:
 		if u.text == nil {
-			return goa.MissingFieldError("value", "Resource")
+			return nil, goa.MissingFieldError("value", "Resource")
 		}
-		return nil
+		return u.text, nil
 	default:
-		return goa.InvalidEnumValueError("type", u.kind, []any{
+		return nil, goa.InvalidEnumValueError("type", u.kind, []any{
 			string(ResourceKindText),
 		})
 	}
@@ -283,17 +284,9 @@ func (u Resource) Validate() error {
 
 // MarshalJSON marshals the union into the canonical {type,value} JSON shape.
 func (u Resource) MarshalJSON() ([]byte, error) {
-	if err := u.Validate(); err != nil {
+	value, err := u.Value()
+	if err != nil {
 		return nil, err
-	}
-	var (
-		value any
-	)
-	switch u.kind {
-	case ResourceKindText:
-		value = u.text
-	default:
-		return nil, fmt.Errorf("unexpected Resource kind %q", u.kind)
 	}
 	return json.Marshal(struct {
 		Type  string `json:"type"`
@@ -409,24 +402,31 @@ func (u *TemplateRepresentation) SetBlob(v *TemplateBlob) {
 
 // Validate ensures exactly one valid branch is selected.
 func (u TemplateRepresentation) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u TemplateRepresentation) Value() (any, error) {
 	switch u.kind {
 	case "":
-		return goa.InvalidEnumValueError("type", "", []any{
+		return nil, goa.InvalidEnumValueError("type", "", []any{
 			string(TemplateRepresentationKindText),
 			string(TemplateRepresentationKindBlob),
 		})
 	case TemplateRepresentationKindText:
 		if u.text == nil {
-			return goa.MissingFieldError("value", "TemplateRepresentation")
+			return nil, goa.MissingFieldError("value", "TemplateRepresentation")
 		}
-		return nil
+		return u.text, nil
 	case TemplateRepresentationKindBlob:
 		if u.blob == nil {
-			return goa.MissingFieldError("value", "TemplateRepresentation")
+			return nil, goa.MissingFieldError("value", "TemplateRepresentation")
 		}
-		return nil
+		return u.blob, nil
 	default:
-		return goa.InvalidEnumValueError("type", u.kind, []any{
+		return nil, goa.InvalidEnumValueError("type", u.kind, []any{
 			string(TemplateRepresentationKindText),
 			string(TemplateRepresentationKindBlob),
 		})
@@ -435,19 +435,9 @@ func (u TemplateRepresentation) Validate() error {
 
 // MarshalJSON marshals the union into the canonical {type,value} JSON shape.
 func (u TemplateRepresentation) MarshalJSON() ([]byte, error) {
-	if err := u.Validate(); err != nil {
+	value, err := u.Value()
+	if err != nil {
 		return nil, err
-	}
-	var (
-		value any
-	)
-	switch u.kind {
-	case TemplateRepresentationKindText:
-		value = u.text
-	case TemplateRepresentationKindBlob:
-		value = u.blob
-	default:
-		return nil, fmt.Errorf("unexpected TemplateRepresentation kind %q", u.kind)
 	}
 	return json.Marshal(struct {
 		Type  string `json:"type"`

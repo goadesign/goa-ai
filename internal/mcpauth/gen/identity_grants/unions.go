@@ -10,7 +10,6 @@ package identitygrants
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 
 	goa "goa.design/goa/v3/pkg"
 )
@@ -87,21 +86,28 @@ func (u *State) SetPending(v StateBranchPending) {
 
 // Validate ensures exactly one valid branch is selected.
 func (u State) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u State) Value() (any, error) {
 	switch u.kind {
 	case "":
-		return goa.InvalidEnumValueError("type", "", []any{
+		return nil, goa.InvalidEnumValueError("type", "", []any{
 			string(StateKindReady),
 			string(StateKindPending),
 		})
 	case StateKindReady:
 		if u.ready == nil {
-			return goa.MissingFieldError("value", "State")
+			return nil, goa.MissingFieldError("value", "State")
 		}
-		return nil
+		return u.ready, nil
 	case StateKindPending:
-		return nil
+		return u.pending, nil
 	default:
-		return goa.InvalidEnumValueError("type", u.kind, []any{
+		return nil, goa.InvalidEnumValueError("type", u.kind, []any{
 			string(StateKindReady),
 			string(StateKindPending),
 		})
@@ -110,19 +116,9 @@ func (u State) Validate() error {
 
 // MarshalJSON marshals the union into the canonical {type,value} JSON shape.
 func (u State) MarshalJSON() ([]byte, error) {
-	if err := u.Validate(); err != nil {
+	value, err := u.Value()
+	if err != nil {
 		return nil, err
-	}
-	var (
-		value any
-	)
-	switch u.kind {
-	case StateKindReady:
-		value = u.ready
-	case StateKindPending:
-		value = u.pending
-	default:
-		return nil, fmt.Errorf("unexpected State kind %q", u.kind)
 	}
 	return json.Marshal(struct {
 		Type  string `json:"type"`

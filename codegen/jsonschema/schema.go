@@ -91,6 +91,15 @@ func alignSchemaNodeWithGeneratedDecoder(att *goaexpr.AttributeExpr, schema map[
 	if att == nil || att.Type == nil || len(schema) == 0 {
 		return nil
 	}
+	if att.Description != "" {
+		schema["description"] = att.Description
+	}
+	if header, ok := att.Meta["mcp:header"]; ok {
+		if len(header) != 1 {
+			return fmt.Errorf("mcp:header requires exactly one HTTP field-name token")
+		}
+		schema["x-mcp-header"] = header[0]
+	}
 	if refName := schemaRefName(schema); refName != "" {
 		if _, ok := seen[refName]; ok {
 			return nil
@@ -101,16 +110,13 @@ func alignSchemaNodeWithGeneratedDecoder(att *goaexpr.AttributeExpr, schema map[
 		}
 		seen[refName] = struct{}{}
 		defer delete(seen, refName)
-		return alignSchemaNodeWithGeneratedDecoder(att, defSchema, defs, seen, closeObjects)
-	}
-	if att.Description != "" {
-		schema["description"] = att.Description
-	}
-	if header, ok := att.Meta["mcp:header"]; ok {
-		if len(header) != 1 {
-			return fmt.Errorf("mcp:header requires exactly one HTTP field-name token")
+		// A field's description belongs beside its reference. Align the shared
+		// definition with the named type so another field keeps its own wording.
+		definition := att
+		if named, ok := att.Type.(goaexpr.UserType); ok {
+			definition = named.Attribute()
 		}
-		schema["x-mcp-header"] = header[0]
+		return alignSchemaNodeWithGeneratedDecoder(definition, defSchema, defs, seen, closeObjects)
 	}
 	switch dt := att.Type.(type) {
 	case goaexpr.Primitive:
@@ -123,9 +129,12 @@ func alignSchemaNodeWithGeneratedDecoder(att *goaexpr.AttributeExpr, schema map[
 			}
 		}
 	case goaexpr.UserType:
-		// Named attributes may add required fields at the use site. Merge those
-		// constraints into a private copy; the original Goa graph stays intact.
+		// A field using a named type keeps its own description. Combine its
+		// evaluated constraints with the type in a copy, leaving the design intact.
 		effective := *dt.Attribute()
+		if att.Description != "" {
+			effective.Description = att.Description
+		}
 		if att.Validation != nil {
 			if effective.Validation == nil {
 				effective.Validation = att.Validation.Dup()

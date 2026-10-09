@@ -1057,6 +1057,11 @@ Tool("search", "Search documents", func() {
 Templates are compiled with `missingkey=error`. Keep hints concise (≤140 characters recommended).
 Template variables use Go field names, not JSON keys.
 
+For a generated union, select a branch with `Kind` and read its typed value with
+`Value`, for example `{{if eq .Choice.Kind "complete"}}{{with .Choice.Value}}{{.Reference}}{{end}}{{end}}`.
+An invalid selection stops template execution. The typed `AsX` methods are for
+Go callers; their `(value, bool)` return shape cannot be called from Go templates.
+
 - Call templates receive the typed payload as the template root (for example,
 `.Query`, `.Limit`).
 - Result templates receive an explicit wrapper where payload fields live under

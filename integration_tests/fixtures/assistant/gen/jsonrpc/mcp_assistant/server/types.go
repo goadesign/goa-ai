@@ -481,6 +481,8 @@ type CompletionCompleteInternalErrorResponseBody struct {
 // ServerCapabilitiesResponseBody is used to define fields on response body
 // types.
 type ServerCapabilitiesResponseBody struct {
+	// Declared extension identifiers and their open settings objects
+	Extensions json.RawMessage `form:"extensions,omitempty" json:"extensions,omitempty" xml:"extensions,omitempty"`
 	// Declared argument suggestion providers
 	Completions *CompletionsCapabilityResponseBody `form:"completions,omitempty" json:"completions,omitempty" xml:"completions,omitempty"`
 	// Tool capabilities
@@ -498,16 +500,24 @@ type CompletionsCapabilityResponseBody struct {
 
 // ToolsCapabilityResponseBody is used to define fields on response body types.
 type ToolsCapabilityResponseBody struct {
+	// Send authorized tool catalog changes through subscriptions/listen
+	ListChanged *bool `form:"listChanged,omitempty" json:"listChanged,omitempty" xml:"listChanged,omitempty"`
 }
 
 // ResourcesCapabilityResponseBody is used to define fields on response body
 // types.
 type ResourcesCapabilityResponseBody struct {
+	// Send authorized resource catalog changes through subscriptions/listen
+	ListChanged *bool `form:"listChanged,omitempty" json:"listChanged,omitempty" xml:"listChanged,omitempty"`
+	// Accept resource update subscriptions through subscriptions/listen
+	Subscribe *bool `form:"subscribe,omitempty" json:"subscribe,omitempty" xml:"subscribe,omitempty"`
 }
 
 // PromptsCapabilityResponseBody is used to define fields on response body
 // types.
 type PromptsCapabilityResponseBody struct {
+	// Send authorized prompt catalog changes through subscriptions/listen
+	ListChanged *bool `form:"listChanged,omitempty" json:"listChanged,omitempty" xml:"listChanged,omitempty"`
 }
 
 // ToolInfoResponseBody is used to define fields on response body types.
@@ -516,6 +526,8 @@ type ToolInfoResponseBody struct {
 	Name string `form:"name" json:"name" xml:"name"`
 	// Tool description
 	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
+	// Namespaced extension metadata retained without interpreting its fields
+	Meta json.RawMessage `json:"_meta,omitempty"`
 	// Optional behavior hints; clients must trust the server before acting on them
 	Annotations *ToolAnnotationsResponseBody `form:"annotations,omitempty" json:"annotations,omitempty" xml:"annotations,omitempty"`
 	// JSON Schema for tool input
@@ -572,17 +584,17 @@ type ContentItemResponse struct {
 	// Raw bytes in the linked resource before base64 encoding
 	Size *float64 `form:"size,omitempty" json:"size,omitempty" xml:"size,omitempty"`
 	// Optional resource link icons
-	Icons []*ContentIconResponse `form:"icons,omitempty" json:"icons,omitempty" xml:"icons,omitempty"`
+	Icons []*ContentIcon `form:"icons,omitempty" json:"icons,omitempty" xml:"icons,omitempty"`
 	// Required text or binary contents for embedded resources
 	Resource *ResourceContentResponse `form:"resource,omitempty" json:"resource,omitempty" xml:"resource,omitempty"`
 	// Optional audience and importance for this content
-	Annotations *ContentAnnotationsResponse `form:"annotations,omitempty" json:"annotations,omitempty" xml:"annotations,omitempty"`
+	Annotations *ContentAnnotations `form:"annotations,omitempty" json:"annotations,omitempty" xml:"annotations,omitempty"`
 	// Namespaced extension metadata retained without interpreting its fields
 	Meta json.RawMessage `json:"_meta,omitempty"`
 }
 
-// ContentIconResponse is used to define fields on response body types.
-type ContentIconResponse struct {
+// ContentIcon is used to define fields on response body types.
+type ContentIcon struct {
 	// URI of the icon; decoding does not fetch it
 	Src string `form:"src" json:"src" xml:"src"`
 	// Optional image MIME type
@@ -607,8 +619,8 @@ type ResourceContentResponse struct {
 	Meta json.RawMessage `json:"_meta,omitempty"`
 }
 
-// ContentAnnotationsResponse is used to define fields on response body types.
-type ContentAnnotationsResponse struct {
+// ContentAnnotations is used to define fields on response body types.
+type ContentAnnotations struct {
 	// Roles that should see this content
 	Audience []string `form:"audience,omitempty" json:"audience,omitempty" xml:"audience,omitempty"`
 	// Importance from zero through one, inclusive, for this content item
@@ -652,11 +664,34 @@ type ElicitationURLParamsResponse struct {
 	URL string `form:"url" json:"url" xml:"url"`
 }
 
+// TaskCreatedResponse is used to define fields on response body types.
+type TaskCreatedResponse struct {
+	// Opaque identifier used for later requests to this task
+	TaskID string `form:"taskId" json:"taskId" xml:"taskId"`
+	// Creation time reported by the service
+	CreatedAt string `form:"createdAt" json:"createdAt" xml:"createdAt"`
+	// Time of this task observation reported by the service
+	LastUpdatedAt string `form:"lastUpdatedAt" json:"lastUpdatedAt" xml:"lastUpdatedAt"`
+	// Optional explanation of this task state
+	StatusMessage *string `form:"statusMessage,omitempty" json:"statusMessage,omitempty" xml:"statusMessage,omitempty"`
+	// Retention from creation in integer milliseconds, or null for unlimited
+	// retention
+	TTLMs *int64 `json:"ttlMs"`
+	// Suggested interval before the next read in integer milliseconds
+	PollIntervalMs *int64 `form:"pollIntervalMs,omitempty" json:"pollIntervalMs,omitempty" xml:"pollIntervalMs,omitempty"`
+	// Current state derived from the service's observation
+	Status string `form:"status" json:"status" xml:"status"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `form:"_meta,omitempty" json:"_meta,omitempty" xml:"_meta,omitempty"`
+}
+
 // RequiredClientCapabilitiesResponseBody is used to define fields on response
 // body types.
 type RequiredClientCapabilitiesResponseBody struct {
 	// Required forms of user input
-	Elicitation *ElicitationCapabilitiesResponseBody `form:"elicitation" json:"elicitation" xml:"elicitation"`
+	Elicitation *ElicitationCapabilitiesResponseBody `form:"elicitation,omitempty" json:"elicitation,omitempty" xml:"elicitation,omitempty"`
+	// Extensions required to fulfill the operation
+	Extensions map[string]*RequiredExtensionResponseBody `form:"extensions,omitempty" json:"extensions,omitempty" xml:"extensions,omitempty"`
 }
 
 // ElicitationCapabilitiesResponseBody is used to define fields on response
@@ -670,16 +705,31 @@ type ElicitationCapabilitiesResponseBody struct {
 	} `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
 }
 
+// RequiredExtensionResponseBody is used to define fields on response body
+// types.
+type RequiredExtensionResponseBody struct {
+}
+
 // ResourceInfoResponseBody is used to define fields on response body types.
 type ResourceInfoResponseBody struct {
-	// Resource URI
-	URI string `form:"uri" json:"uri" xml:"uri"`
-	// Resource name
+	// Resource or template identifier
 	Name string `form:"name" json:"name" xml:"name"`
-	// Resource description
+	// Optional display name
+	Title *string `form:"title,omitempty" json:"title,omitempty" xml:"title,omitempty"`
+	// Available resource contents
 	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
-	// Resource MIME type
+	// Resource MIME type when known
 	MimeType *string `form:"mimeType,omitempty" json:"mimeType,omitempty" xml:"mimeType,omitempty"`
+	// Optional resource icons
+	Icons []*ContentIcon `form:"icons,omitempty" json:"icons,omitempty" xml:"icons,omitempty"`
+	// Optional audience, importance and modification time
+	Annotations *ContentAnnotations `form:"annotations,omitempty" json:"annotations,omitempty" xml:"annotations,omitempty"`
+	// Namespaced extension metadata retained without interpreting its fields
+	Meta json.RawMessage `json:"_meta,omitempty"`
+	// Exact resource address
+	URI string `form:"uri" json:"uri" xml:"uri"`
+	// Raw resource content size in bytes before base64 encoding
+	Size *float64 `form:"size,omitempty" json:"size,omitempty" xml:"size,omitempty"`
 }
 
 // ResourcesReadCompleteResultResponse is used to define fields on response
@@ -698,14 +748,22 @@ type ResourcesReadCompleteResultResponse struct {
 // ResourceTemplateInfoResponseBody is used to define fields on response body
 // types.
 type ResourceTemplateInfoResponseBody struct {
+	// Resource or template identifier
+	Name string `form:"name" json:"name" xml:"name"`
+	// Optional display name
+	Title *string `form:"title,omitempty" json:"title,omitempty" xml:"title,omitempty"`
+	// Available resource contents
+	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
+	// Resource MIME type when known
+	MimeType *string `form:"mimeType,omitempty" json:"mimeType,omitempty" xml:"mimeType,omitempty"`
+	// Optional resource icons
+	Icons []*ContentIcon `form:"icons,omitempty" json:"icons,omitempty" xml:"icons,omitempty"`
+	// Optional audience, importance and modification time
+	Annotations *ContentAnnotations `form:"annotations,omitempty" json:"annotations,omitempty" xml:"annotations,omitempty"`
+	// Namespaced extension metadata retained without interpreting its fields
+	Meta json.RawMessage `json:"_meta,omitempty"`
 	// RFC 6570 template expanded by the client
 	URITemplate string `form:"uriTemplate" json:"uriTemplate" xml:"uriTemplate"`
-	// Resource template name
-	Name string `form:"name" json:"name" xml:"name"`
-	// Resources available through this template
-	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
-	// Hint for the resource content type
-	MimeType *string `form:"mimeType,omitempty" json:"mimeType,omitempty" xml:"mimeType,omitempty"`
 }
 
 // PromptInfoResponseBody is used to define fields on response body types.
@@ -857,24 +915,31 @@ func (u *ElicitationParamsResponseBody) SetURL(v *ElicitationURLParamsResponse) 
 
 // Validate ensures exactly one valid branch is selected.
 func (u ElicitationParamsResponseBody) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u ElicitationParamsResponseBody) Value() (any, error) {
 	switch u.kind {
 	case "":
-		return goa.InvalidEnumValueError("mode", "", []any{
+		return nil, goa.InvalidEnumValueError("mode", "", []any{
 			string(ElicitationParamsResponseBodyKindForm),
 			string(ElicitationParamsResponseBodyKindURL),
 		})
 	case ElicitationParamsResponseBodyKindForm:
 		if u.form == nil {
-			return goa.MissingFieldError("value", "ElicitationParamsResponseBody")
+			return nil, goa.MissingFieldError("value", "ElicitationParamsResponseBody")
 		}
-		return nil
+		return u.form, nil
 	case ElicitationParamsResponseBodyKindURL:
 		if u.url_ == nil {
-			return goa.MissingFieldError("value", "ElicitationParamsResponseBody")
+			return nil, goa.MissingFieldError("value", "ElicitationParamsResponseBody")
 		}
-		return nil
+		return u.url_, nil
 	default:
-		return goa.InvalidEnumValueError("mode", u.kind, []any{
+		return nil, goa.InvalidEnumValueError("mode", u.kind, []any{
 			string(ElicitationParamsResponseBodyKindForm),
 			string(ElicitationParamsResponseBodyKindURL),
 		})
@@ -883,19 +948,9 @@ func (u ElicitationParamsResponseBody) Validate() error {
 
 // MarshalJSON writes the selected object branch beside its discriminator.
 func (u ElicitationParamsResponseBody) MarshalJSON() ([]byte, error) {
-	if err := u.Validate(); err != nil {
+	value, err := u.Value()
+	if err != nil {
 		return nil, err
-	}
-	var (
-		value any
-	)
-	switch u.kind {
-	case ElicitationParamsResponseBodyKindForm:
-		value = u.form
-	case ElicitationParamsResponseBodyKindURL:
-		value = u.url_
-	default:
-		return nil, fmt.Errorf("unexpected ElicitationParamsResponseBody kind %q", u.kind)
 	}
 	data, err := json.Marshal(value)
 	if err != nil {
@@ -1042,24 +1097,31 @@ func (u *PromptsGetOutcomeResponseBody) SetInputRequired(v *InputRequiredResultR
 
 // Validate ensures exactly one valid branch is selected.
 func (u PromptsGetOutcomeResponseBody) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u PromptsGetOutcomeResponseBody) Value() (any, error) {
 	switch u.kind {
 	case "":
-		return goa.InvalidEnumValueError("resultType", "", []any{
+		return nil, goa.InvalidEnumValueError("resultType", "", []any{
 			string(PromptsGetOutcomeResponseBodyKindComplete),
 			string(PromptsGetOutcomeResponseBodyKindInputRequired),
 		})
 	case PromptsGetOutcomeResponseBodyKindComplete:
 		if u.complete == nil {
-			return goa.MissingFieldError("value", "PromptsGetOutcomeResponseBody")
+			return nil, goa.MissingFieldError("value", "PromptsGetOutcomeResponseBody")
 		}
-		return nil
+		return u.complete, nil
 	case PromptsGetOutcomeResponseBodyKindInputRequired:
 		if u.inputRequired == nil {
-			return goa.MissingFieldError("value", "PromptsGetOutcomeResponseBody")
+			return nil, goa.MissingFieldError("value", "PromptsGetOutcomeResponseBody")
 		}
-		return nil
+		return u.inputRequired, nil
 	default:
-		return goa.InvalidEnumValueError("resultType", u.kind, []any{
+		return nil, goa.InvalidEnumValueError("resultType", u.kind, []any{
 			string(PromptsGetOutcomeResponseBodyKindComplete),
 			string(PromptsGetOutcomeResponseBodyKindInputRequired),
 		})
@@ -1068,19 +1130,9 @@ func (u PromptsGetOutcomeResponseBody) Validate() error {
 
 // MarshalJSON writes the selected object branch beside its discriminator.
 func (u PromptsGetOutcomeResponseBody) MarshalJSON() ([]byte, error) {
-	if err := u.Validate(); err != nil {
+	value, err := u.Value()
+	if err != nil {
 		return nil, err
-	}
-	var (
-		value any
-	)
-	switch u.kind {
-	case PromptsGetOutcomeResponseBodyKindComplete:
-		value = u.complete
-	case PromptsGetOutcomeResponseBodyKindInputRequired:
-		value = u.inputRequired
-	default:
-		return nil, fmt.Errorf("unexpected PromptsGetOutcomeResponseBody kind %q", u.kind)
 	}
 	data, err := json.Marshal(value)
 	if err != nil {
@@ -1227,24 +1279,31 @@ func (u *ResourcesReadOutcomeResponseBody) SetInputRequired(v *InputRequiredResu
 
 // Validate ensures exactly one valid branch is selected.
 func (u ResourcesReadOutcomeResponseBody) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u ResourcesReadOutcomeResponseBody) Value() (any, error) {
 	switch u.kind {
 	case "":
-		return goa.InvalidEnumValueError("resultType", "", []any{
+		return nil, goa.InvalidEnumValueError("resultType", "", []any{
 			string(ResourcesReadOutcomeResponseBodyKindComplete),
 			string(ResourcesReadOutcomeResponseBodyKindInputRequired),
 		})
 	case ResourcesReadOutcomeResponseBodyKindComplete:
 		if u.complete == nil {
-			return goa.MissingFieldError("value", "ResourcesReadOutcomeResponseBody")
+			return nil, goa.MissingFieldError("value", "ResourcesReadOutcomeResponseBody")
 		}
-		return nil
+		return u.complete, nil
 	case ResourcesReadOutcomeResponseBodyKindInputRequired:
 		if u.inputRequired == nil {
-			return goa.MissingFieldError("value", "ResourcesReadOutcomeResponseBody")
+			return nil, goa.MissingFieldError("value", "ResourcesReadOutcomeResponseBody")
 		}
-		return nil
+		return u.inputRequired, nil
 	default:
-		return goa.InvalidEnumValueError("resultType", u.kind, []any{
+		return nil, goa.InvalidEnumValueError("resultType", u.kind, []any{
 			string(ResourcesReadOutcomeResponseBodyKindComplete),
 			string(ResourcesReadOutcomeResponseBodyKindInputRequired),
 		})
@@ -1253,19 +1312,9 @@ func (u ResourcesReadOutcomeResponseBody) Validate() error {
 
 // MarshalJSON writes the selected object branch beside its discriminator.
 func (u ResourcesReadOutcomeResponseBody) MarshalJSON() ([]byte, error) {
-	if err := u.Validate(); err != nil {
+	value, err := u.Value()
+	if err != nil {
 		return nil, err
-	}
-	var (
-		value any
-	)
-	switch u.kind {
-	case ResourcesReadOutcomeResponseBodyKindComplete:
-		value = u.complete
-	case ResourcesReadOutcomeResponseBodyKindInputRequired:
-		value = u.inputRequired
-	default:
-		return nil, fmt.Errorf("unexpected ResourcesReadOutcomeResponseBody kind %q", u.kind)
 	}
 	data, err := json.Marshal(value)
 	if err != nil {
@@ -1345,6 +1394,7 @@ type ToolsCallOutcomeResponseBody struct {
 	kind          ToolsCallOutcomeResponseBodyKind
 	complete      *ToolsCallCompleteResultResponse
 	inputRequired *InputRequiredResultResponse
+	task          *TaskCreatedResponse
 }
 
 // ToolsCallOutcomeResponseBodyKind records which ToolsCallOutcomeResponseBody branch is selected.
@@ -1355,6 +1405,8 @@ const (
 	ToolsCallOutcomeResponseBodyKindComplete ToolsCallOutcomeResponseBodyKind = "complete"
 	// ToolsCallOutcomeResponseBodyKindInputRequired identifies the input_required branch.
 	ToolsCallOutcomeResponseBodyKindInputRequired ToolsCallOutcomeResponseBodyKind = "input_required"
+	// ToolsCallOutcomeResponseBodyKindTask identifies the task branch.
+	ToolsCallOutcomeResponseBodyKindTask ToolsCallOutcomeResponseBodyKind = "task"
 )
 
 // Kind returns the selected branch.
@@ -1410,47 +1462,75 @@ func (u *ToolsCallOutcomeResponseBody) SetInputRequired(v *InputRequiredResultRe
 	}
 }
 
+// NewToolsCallOutcomeResponseBodyTask constructs ToolsCallOutcomeResponseBody with the task branch set.
+func NewToolsCallOutcomeResponseBodyTask(v *TaskCreatedResponse) ToolsCallOutcomeResponseBody {
+	return ToolsCallOutcomeResponseBody{
+		kind: ToolsCallOutcomeResponseBodyKindTask,
+		task: v,
+	}
+}
+
+// AsTask returns the value when the task branch is selected.
+func (u ToolsCallOutcomeResponseBody) AsTask() (_ *TaskCreatedResponse, ok bool) {
+	if u.kind != ToolsCallOutcomeResponseBodyKindTask {
+		return
+	}
+	return u.task, true
+}
+
+// SetTask selects the task branch and stores v.
+func (u *ToolsCallOutcomeResponseBody) SetTask(v *TaskCreatedResponse) {
+	*u = ToolsCallOutcomeResponseBody{
+		kind: ToolsCallOutcomeResponseBodyKindTask,
+		task: v,
+	}
+}
+
 // Validate ensures exactly one valid branch is selected.
 func (u ToolsCallOutcomeResponseBody) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u ToolsCallOutcomeResponseBody) Value() (any, error) {
 	switch u.kind {
 	case "":
-		return goa.InvalidEnumValueError("resultType", "", []any{
+		return nil, goa.InvalidEnumValueError("resultType", "", []any{
 			string(ToolsCallOutcomeResponseBodyKindComplete),
 			string(ToolsCallOutcomeResponseBodyKindInputRequired),
+			string(ToolsCallOutcomeResponseBodyKindTask),
 		})
 	case ToolsCallOutcomeResponseBodyKindComplete:
 		if u.complete == nil {
-			return goa.MissingFieldError("value", "ToolsCallOutcomeResponseBody")
+			return nil, goa.MissingFieldError("value", "ToolsCallOutcomeResponseBody")
 		}
-		return nil
+		return u.complete, nil
 	case ToolsCallOutcomeResponseBodyKindInputRequired:
 		if u.inputRequired == nil {
-			return goa.MissingFieldError("value", "ToolsCallOutcomeResponseBody")
+			return nil, goa.MissingFieldError("value", "ToolsCallOutcomeResponseBody")
 		}
-		return nil
+		return u.inputRequired, nil
+	case ToolsCallOutcomeResponseBodyKindTask:
+		if u.task == nil {
+			return nil, goa.MissingFieldError("value", "ToolsCallOutcomeResponseBody")
+		}
+		return u.task, nil
 	default:
-		return goa.InvalidEnumValueError("resultType", u.kind, []any{
+		return nil, goa.InvalidEnumValueError("resultType", u.kind, []any{
 			string(ToolsCallOutcomeResponseBodyKindComplete),
 			string(ToolsCallOutcomeResponseBodyKindInputRequired),
+			string(ToolsCallOutcomeResponseBodyKindTask),
 		})
 	}
 }
 
 // MarshalJSON writes the selected object branch beside its discriminator.
 func (u ToolsCallOutcomeResponseBody) MarshalJSON() ([]byte, error) {
-	if err := u.Validate(); err != nil {
+	value, err := u.Value()
+	if err != nil {
 		return nil, err
-	}
-	var (
-		value any
-	)
-	switch u.kind {
-	case ToolsCallOutcomeResponseBodyKindComplete:
-		value = u.complete
-	case ToolsCallOutcomeResponseBodyKindInputRequired:
-		value = u.inputRequired
-	default:
-		return nil, fmt.Errorf("unexpected ToolsCallOutcomeResponseBody kind %q", u.kind)
 	}
 	data, err := json.Marshal(value)
 	if err != nil {
@@ -1513,6 +1593,12 @@ func (u *ToolsCallOutcomeResponseBody) UnmarshalJSON(data []byte) error {
 			return err
 		}
 		u.SetInputRequired(v)
+	case string(ToolsCallOutcomeResponseBodyKindTask):
+		var v *TaskCreatedResponse
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetTask(v)
 	default:
 		if raw.Type == "" {
 			return goa.MissingFieldError("resultType", "ToolsCallOutcomeResponseBody")
@@ -1520,6 +1606,7 @@ func (u *ToolsCallOutcomeResponseBody) UnmarshalJSON(data []byte) error {
 		return goa.InvalidEnumValueError("resultType", raw.Type, []any{
 			string(ToolsCallOutcomeResponseBodyKindComplete),
 			string(ToolsCallOutcomeResponseBodyKindInputRequired),
+			string(ToolsCallOutcomeResponseBodyKindTask),
 		})
 	}
 	return nil
@@ -1595,6 +1682,15 @@ func NewToolsCallResponseBody(res *mcpassistant.ToolsCallResult) *ToolsCallOutco
 		}
 		var u ToolsCallOutcomeResponseBody
 		u.SetInputRequired((*InputRequiredResultResponse)(obj))
+		body = &u
+	case "task":
+		actual, _ := res.Outcome.AsTask()
+		var obj *TaskCreatedResponse
+		if actual != nil {
+			obj = marshalMcpassistantTaskCreatedToTaskCreatedResponse(actual)
+		}
+		var u ToolsCallOutcomeResponseBody
+		u.SetTask((*TaskCreatedResponse)(obj))
 		body = &u
 	}
 	return body

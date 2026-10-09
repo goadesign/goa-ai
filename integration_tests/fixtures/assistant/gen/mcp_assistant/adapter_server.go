@@ -467,10 +467,10 @@ func (e *endpointResultError) Error() string {
 	return fmt.Sprintf("endpoint %s returned an unexpected Go result type", e.method)
 }
 
-// ToolsList returns the stable catalog declared by the design. A supplied
-// cursor is invalid because this generated catalog has only one page.
+// ToolsList returns either the fixed catalog or an authenticated page of
+// declared tool names. The generated tool definitions keep their exact schemas.
 func (a *MCPAdapter) ToolsList(ctx context.Context, p *ToolsListPayload) (*ToolsListResult, error) {
-	_, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.tools/list")
+	ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.tools/list")
 	defer span.End()
 	if p.Cursor != nil {
 		failure := goa.PermanentError("invalid_params", "tools/list does not accept a cursor")
@@ -478,55 +478,52 @@ func (a *MCPAdapter) ToolsList(ctx context.Context, p *ToolsListPayload) (*Tools
 		span.SetStatus(codes.Error, failure.Error())
 		return nil, failure
 	}
-	return &ToolsListResult{
-		ResultType: "complete",
-		Meta:       resultMeta(),
-		TTLMs:      0,
-		CacheScope: "private",
-		Tools: []*ToolInfo{
-			{
-				Name:         "analyze_sentiment",
-				Description:  stringPtr("Analyze sentiment of text"),
-				InputSchema:  json.RawMessage("{\"$defs\":{\"AnalyzeSentimentPayload\":{\"properties\":{\"text\":{\"description\":\"Input text to analyze\",\"type\":\"string\"}},\"required\":[\"text\"],\"title\":\"AnalyzeSentimentPayload\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"text\":{\"description\":\"Input text to analyze\",\"type\":\"string\"}},\"required\":[\"text\"],\"title\":\"AnalyzeSentimentPayload\",\"type\":\"object\"}"),
-				OutputSchema: json.RawMessage("{\"$defs\":{\"AnalyzeSentimentResult\":{\"properties\":{\"sentiment\":{\"description\":\"Detected sentiment\",\"type\":\"string\"}},\"title\":\"AnalyzeSentimentResult\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"sentiment\":{\"description\":\"Detected sentiment\",\"type\":\"string\"}},\"title\":\"AnalyzeSentimentResult\",\"type\":\"object\"}"),
-			},
-			{
-				Name:         "execute_code",
-				Description:  stringPtr("Execute code"),
-				InputSchema:  json.RawMessage("{\"$defs\":{\"ExecuteCodePayload\":{\"properties\":{\"code\":{\"description\":\"Code to execute\",\"type\":\"string\"},\"language\":{\"description\":\"Language to execute\",\"enum\":[\"python\",\"javascript\"],\"type\":\"string\"}},\"required\":[\"language\",\"code\"],\"title\":\"ExecuteCodePayload\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"code\":{\"description\":\"Code to execute\",\"type\":\"string\"},\"language\":{\"description\":\"Language to execute\",\"enum\":[\"python\",\"javascript\"],\"type\":\"string\"}},\"required\":[\"language\",\"code\"],\"title\":\"ExecuteCodePayload\",\"type\":\"object\"}"),
-				OutputSchema: json.RawMessage("{\"$defs\":{\"ExecuteCodeResult\":{\"properties\":{\"output\":{\"description\":\"Execution output\",\"type\":\"string\"}},\"title\":\"ExecuteCodeResult\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"output\":{\"description\":\"Execution output\",\"type\":\"string\"}},\"title\":\"ExecuteCodeResult\",\"type\":\"object\"}"),
-			},
-			{
-				Name:         "extract_keywords",
-				Description:  stringPtr("Extract keywords from text"),
-				InputSchema:  json.RawMessage("{\"$defs\":{\"ExtractKeywordsPayload\":{\"properties\":{\"text\":{\"description\":\"Input text\",\"type\":\"string\"}},\"required\":[\"text\"],\"title\":\"ExtractKeywordsPayload\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"text\":{\"description\":\"Input text\",\"type\":\"string\"}},\"required\":[\"text\"],\"title\":\"ExtractKeywordsPayload\",\"type\":\"object\"}"),
-				OutputSchema: json.RawMessage("{\"$defs\":{\"ExtractKeywordsResult\":{\"properties\":{\"keywords\":{\"description\":\"Extracted keywords\",\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"title\":\"ExtractKeywordsResult\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"keywords\":{\"description\":\"Extracted keywords\",\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"title\":\"ExtractKeywordsResult\",\"type\":\"object\"}"),
-			},
-			{
-				Name:         "process_batch",
-				Description:  stringPtr("Process a batch of items"),
-				InputSchema:  json.RawMessage("{\"$defs\":{\"ProcessBatchPayload\":{\"properties\":{\"blob\":{\"description\":\"Base64 blob\",\"type\":\"string\"},\"format\":{\"description\":\"Output format\",\"enum\":[\"json\",\"text\",\"blob\",\"uri\"],\"type\":\"string\"},\"items\":{\"description\":\"Items to process\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"mimeType\":{\"description\":\"MIME type\",\"type\":\"string\"},\"uri\":{\"description\":\"Resource URI\",\"type\":\"string\"}},\"required\":[\"items\"],\"title\":\"ProcessBatchPayload\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"blob\":{\"description\":\"Base64 blob\",\"type\":\"string\"},\"format\":{\"description\":\"Output format\",\"enum\":[\"json\",\"text\",\"blob\",\"uri\"],\"type\":\"string\"},\"items\":{\"description\":\"Items to process\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"mimeType\":{\"description\":\"MIME type\",\"type\":\"string\"},\"uri\":{\"description\":\"Resource URI\",\"type\":\"string\"}},\"required\":[\"items\"],\"title\":\"ProcessBatchPayload\",\"type\":\"object\"}"),
-				OutputSchema: json.RawMessage("{\"$defs\":{\"ProcessBatchResult\":{\"properties\":{\"ok\":{\"description\":\"Operation status\",\"type\":\"boolean\"}},\"title\":\"ProcessBatchResult\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"ok\":{\"description\":\"Operation status\",\"type\":\"boolean\"}},\"title\":\"ProcessBatchResult\",\"type\":\"object\"}"),
-			},
-			{
-				Name:         "search",
-				Description:  stringPtr("Search knowledge base"),
-				InputSchema:  json.RawMessage("{\"$defs\":{\"SearchPayload\":{\"properties\":{\"limit\":{\"description\":\"Maximum number of results\",\"format\":\"int64\",\"type\":\"integer\"},\"query\":{\"description\":\"Search query\",\"type\":\"string\"}},\"required\":[\"query\"],\"title\":\"SearchPayload\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"limit\":{\"description\":\"Maximum number of results\",\"format\":\"int64\",\"type\":\"integer\"},\"query\":{\"description\":\"Search query\",\"type\":\"string\"}},\"required\":[\"query\"],\"title\":\"SearchPayload\",\"type\":\"object\"}"),
-				OutputSchema: json.RawMessage("{\"$defs\":{\"SearchResult\":{\"properties\":{\"results\":{\"description\":\"Search results\",\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"title\":\"SearchResult\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"results\":{\"description\":\"Search results\",\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"title\":\"SearchResult\",\"type\":\"object\"}"),
-			},
-			{
-				Name:         "summarize_text",
-				Description:  stringPtr("Summarize text"),
-				InputSchema:  json.RawMessage("{\"$defs\":{\"SummarizeTextPayload\":{\"properties\":{\"text\":{\"description\":\"Input text to summarize\",\"type\":\"string\"}},\"required\":[\"text\"],\"title\":\"SummarizeTextPayload\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"text\":{\"description\":\"Input text to summarize\",\"type\":\"string\"}},\"required\":[\"text\"],\"title\":\"SummarizeTextPayload\",\"type\":\"object\"}"),
-				OutputSchema: json.RawMessage("{\"$defs\":{\"SummarizeTextResult\":{\"properties\":{\"summary\":{\"description\":\"Summary\",\"type\":\"string\"}},\"title\":\"SummarizeTextResult\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"summary\":{\"description\":\"Summary\",\"type\":\"string\"}},\"title\":\"SummarizeTextResult\",\"type\":\"object\"}"),
-			},
-			{
-				Name:         "test_tool_with_progress",
-				Description:  stringPtr("Perform synthetic work with progress updates"),
-				InputSchema:  json.RawMessage("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"),
-				OutputSchema: json.RawMessage("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"),
-			},
+	tools := []*ToolInfo{
+		{
+			Name:         "analyze_sentiment",
+			Description:  stringPtr("Analyze sentiment of text"),
+			InputSchema:  json.RawMessage("{\"$defs\":{\"AnalyzeSentimentPayload\":{\"properties\":{\"text\":{\"description\":\"Input text to analyze\",\"type\":\"string\"}},\"required\":[\"text\"],\"title\":\"AnalyzeSentimentPayload\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"text\":{\"description\":\"Input text to analyze\",\"type\":\"string\"}},\"required\":[\"text\"],\"title\":\"AnalyzeSentimentPayload\",\"type\":\"object\"}"),
+			OutputSchema: json.RawMessage("{\"$defs\":{\"AnalyzeSentimentResult\":{\"properties\":{\"sentiment\":{\"description\":\"Detected sentiment\",\"type\":\"string\"}},\"title\":\"AnalyzeSentimentResult\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"sentiment\":{\"description\":\"Detected sentiment\",\"type\":\"string\"}},\"title\":\"AnalyzeSentimentResult\",\"type\":\"object\"}"),
 		},
+		{
+			Name:         "execute_code",
+			Description:  stringPtr("Execute code"),
+			InputSchema:  json.RawMessage("{\"$defs\":{\"ExecuteCodePayload\":{\"properties\":{\"code\":{\"description\":\"Code to execute\",\"type\":\"string\"},\"language\":{\"description\":\"Language to execute\",\"enum\":[\"python\",\"javascript\"],\"type\":\"string\"}},\"required\":[\"language\",\"code\"],\"title\":\"ExecuteCodePayload\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"code\":{\"description\":\"Code to execute\",\"type\":\"string\"},\"language\":{\"description\":\"Language to execute\",\"enum\":[\"python\",\"javascript\"],\"type\":\"string\"}},\"required\":[\"language\",\"code\"],\"title\":\"ExecuteCodePayload\",\"type\":\"object\"}"),
+			OutputSchema: json.RawMessage("{\"$defs\":{\"ExecuteCodeResult\":{\"properties\":{\"output\":{\"description\":\"Execution output\",\"type\":\"string\"}},\"title\":\"ExecuteCodeResult\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"output\":{\"description\":\"Execution output\",\"type\":\"string\"}},\"title\":\"ExecuteCodeResult\",\"type\":\"object\"}"),
+		},
+		{
+			Name:         "extract_keywords",
+			Description:  stringPtr("Extract keywords from text"),
+			InputSchema:  json.RawMessage("{\"$defs\":{\"ExtractKeywordsPayload\":{\"properties\":{\"text\":{\"description\":\"Input text\",\"type\":\"string\"}},\"required\":[\"text\"],\"title\":\"ExtractKeywordsPayload\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"text\":{\"description\":\"Input text\",\"type\":\"string\"}},\"required\":[\"text\"],\"title\":\"ExtractKeywordsPayload\",\"type\":\"object\"}"),
+			OutputSchema: json.RawMessage("{\"$defs\":{\"ExtractKeywordsResult\":{\"properties\":{\"keywords\":{\"description\":\"Extracted keywords\",\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"title\":\"ExtractKeywordsResult\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"keywords\":{\"description\":\"Extracted keywords\",\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"title\":\"ExtractKeywordsResult\",\"type\":\"object\"}"),
+		},
+		{
+			Name:         "process_batch",
+			Description:  stringPtr("Process a batch of items"),
+			InputSchema:  json.RawMessage("{\"$defs\":{\"ProcessBatchPayload\":{\"properties\":{\"blob\":{\"description\":\"Base64 blob\",\"type\":\"string\"},\"format\":{\"description\":\"Output format\",\"enum\":[\"json\",\"text\",\"blob\",\"uri\"],\"type\":\"string\"},\"items\":{\"description\":\"Items to process\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"mimeType\":{\"description\":\"MIME type\",\"type\":\"string\"},\"uri\":{\"description\":\"Resource URI\",\"type\":\"string\"}},\"required\":[\"items\"],\"title\":\"ProcessBatchPayload\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"blob\":{\"description\":\"Base64 blob\",\"type\":\"string\"},\"format\":{\"description\":\"Output format\",\"enum\":[\"json\",\"text\",\"blob\",\"uri\"],\"type\":\"string\"},\"items\":{\"description\":\"Items to process\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"mimeType\":{\"description\":\"MIME type\",\"type\":\"string\"},\"uri\":{\"description\":\"Resource URI\",\"type\":\"string\"}},\"required\":[\"items\"],\"title\":\"ProcessBatchPayload\",\"type\":\"object\"}"),
+			OutputSchema: json.RawMessage("{\"$defs\":{\"ProcessBatchResult\":{\"properties\":{\"ok\":{\"description\":\"Operation status\",\"type\":\"boolean\"}},\"title\":\"ProcessBatchResult\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"ok\":{\"description\":\"Operation status\",\"type\":\"boolean\"}},\"title\":\"ProcessBatchResult\",\"type\":\"object\"}"),
+		},
+		{
+			Name:         "search",
+			Description:  stringPtr("Search knowledge base"),
+			InputSchema:  json.RawMessage("{\"$defs\":{\"SearchPayload\":{\"properties\":{\"limit\":{\"description\":\"Maximum number of results\",\"format\":\"int64\",\"type\":\"integer\"},\"query\":{\"description\":\"Search query\",\"type\":\"string\"}},\"required\":[\"query\"],\"title\":\"SearchPayload\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"limit\":{\"description\":\"Maximum number of results\",\"format\":\"int64\",\"type\":\"integer\"},\"query\":{\"description\":\"Search query\",\"type\":\"string\"}},\"required\":[\"query\"],\"title\":\"SearchPayload\",\"type\":\"object\"}"),
+			OutputSchema: json.RawMessage("{\"$defs\":{\"SearchResult\":{\"properties\":{\"results\":{\"description\":\"Search results\",\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"title\":\"SearchResult\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"results\":{\"description\":\"Search results\",\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"title\":\"SearchResult\",\"type\":\"object\"}"),
+		},
+		{
+			Name:         "summarize_text",
+			Description:  stringPtr("Summarize text"),
+			InputSchema:  json.RawMessage("{\"$defs\":{\"SummarizeTextPayload\":{\"properties\":{\"text\":{\"description\":\"Input text to summarize\",\"type\":\"string\"}},\"required\":[\"text\"],\"title\":\"SummarizeTextPayload\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"text\":{\"description\":\"Input text to summarize\",\"type\":\"string\"}},\"required\":[\"text\"],\"title\":\"SummarizeTextPayload\",\"type\":\"object\"}"),
+			OutputSchema: json.RawMessage("{\"$defs\":{\"SummarizeTextResult\":{\"properties\":{\"summary\":{\"description\":\"Summary\",\"type\":\"string\"}},\"title\":\"SummarizeTextResult\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"summary\":{\"description\":\"Summary\",\"type\":\"string\"}},\"title\":\"SummarizeTextResult\",\"type\":\"object\"}"),
+		},
+		{
+			Name:         "test_tool_with_progress",
+			Description:  stringPtr("Perform synthetic work with progress updates"),
+			InputSchema:  json.RawMessage("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"),
+			OutputSchema: json.RawMessage("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"),
+		},
+	}
+	return &ToolsListResult{
+		ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private", Tools: tools,
 	}, nil
 }
 
@@ -760,7 +757,7 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 
 // Resources handling
 
-// ResourcesList returns the fixed resources declared in the Goa design.
+// ResourcesList returns the declared catalog or one authenticated resource page.
 func (a *MCPAdapter) ResourcesList(ctx context.Context, p *ResourcesListPayload) (*ResourcesListResult, error) {
 	ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.resources/list")
 	defer span.End()
@@ -777,9 +774,7 @@ func (a *MCPAdapter) ResourcesList(ctx context.Context, p *ResourcesListPayload)
 		{URI: "test://empty-binary", Name: "empty_binary", Description: stringPtr("Read an existing binary resource whose content is empty"), MimeType: stringPtr("application/octet-stream")},
 		{URI: "test://static-binary", Name: "binary", Description: stringPtr("Read the synthetic binary resource used by independent MCP verification"), MimeType: stringPtr("image/png")},
 	}
-	res := &ResourcesListResult{ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private", Resources: resources}
-
-	return res, nil
+	return &ResourcesListResult{ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private", Resources: resources}, nil
 }
 
 // ResourcesRead calls the Goa method that owns the requested resource.
@@ -902,8 +897,9 @@ func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload)
 // ResourcesTemplatesList returns the URI templates advertised by the service.
 // Templates guide discovery; the typed reader owns URI interpretation and access.
 func (a *MCPAdapter) ResourcesTemplatesList(ctx context.Context, p *ResourceTemplatesListPayload) (*ResourceTemplatesListResult, error) {
-	_, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.resources/templates/list")
+	ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.resources/templates/list")
 	defer span.End()
+
 	if p.Cursor != nil {
 		failure := goa.PermanentError("invalid_params", "resources/templates/list does not accept a cursor")
 		span.RecordError(failure)
@@ -921,11 +917,11 @@ func (a *MCPAdapter) ResourcesTemplatesList(ctx context.Context, p *ResourceTemp
 
 // Prompts handling
 
-// PromptsList describes the fixed prompts and service-owned prompt operations.
+// PromptsList returns either the fixed catalog or an authenticated page of
+// declared prompt names. Descriptions and argument contracts remain generated.
 func (a *MCPAdapter) PromptsList(ctx context.Context, p *PromptsListPayload) (*PromptsListResult, error) {
 	ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.prompts/list")
 	defer span.End()
-
 	if p.Cursor != nil {
 		failure := goa.PermanentError("invalid_params", "prompts/list does not accept a cursor")
 		span.RecordError(failure)
@@ -937,14 +933,11 @@ func (a *MCPAdapter) PromptsList(ctx context.Context, p *PromptsListPayload) (*P
 		{Name: "code_review", Description: stringPtr("Simple code review prompt")},
 
 		{Name: "test_prompt_with_arguments", Description: stringPtr("Synthetic parameterized instructions"), Arguments: []*PromptArgument{
-
 			{Name: "arg1", Description: stringPtr("First prompt argument"), Required: boolPtr(true)},
-
 			{Name: "arg2", Description: stringPtr("Second prompt argument"), Required: boolPtr(true)},
 		}},
 
 		{Name: "test_prompt_with_embedded_resource", Description: stringPtr("Synthetic resource instructions"), Arguments: []*PromptArgument{
-
 			{Name: "resourceUri", Description: stringPtr("Requested embedded resource identifier"), Required: boolPtr(true)},
 		}},
 
@@ -952,9 +945,9 @@ func (a *MCPAdapter) PromptsList(ctx context.Context, p *PromptsListPayload) (*P
 
 		{Name: "test_simple_prompt", Description: stringPtr("Synthetic text instructions"), Arguments: []*PromptArgument{}},
 	}
-	res := &PromptsListResult{ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private", Prompts: prompts}
-
-	return res, nil
+	return &PromptsListResult{
+		ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private", Prompts: prompts,
+	}, nil
 }
 
 // PromptsGet returns fixed messages or calls the service with validated arguments.

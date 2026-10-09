@@ -18,12 +18,6 @@ import (
 func TestGeneratedCodecRejectsNullRequiredAliasArrayElement(t *testing.T) {
 	files := testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", requiredAliasArrayDesign())
 	root := writeGeneratedModule(t, files)
-	writeGeneratedPackageTest(
-		t,
-		root,
-		"alpha/toolsets/aliases/http/validate.go",
-		fileContent(t, files, "gen/alpha/toolsets/aliases/http/validate.go"),
-	)
 	writeGeneratedPackageTest(t, root, "alpha/toolsets/aliases/required_array_alias_test.go", `package aliases
 
 import (

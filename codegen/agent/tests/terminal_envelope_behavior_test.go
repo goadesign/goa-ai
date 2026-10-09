@@ -14,20 +14,6 @@ func TestGeneratedTerminalEnvelopeServerDataRoundTrip(t *testing.T) {
 	root := writeGeneratedModule(t, testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", testscenarios.ServiceToolsetBindSelfServerData()))
 	removeGeneratedPackageFile(t, root, "alpha/toolsets/lookup/provider.go")
 	removeGeneratedPackageFile(t, root, "alpha/toolsets/lookup/transforms.go")
-	writeGeneratedPackageTest(t, root, "alpha/toolsets/lookup/http/validate_stub.go", `package http
-
-func ValidateByIDPayloadTransport(v *ByIDPayloadTransport) error {
-	return nil
-}
-
-func ValidateByIDResultTransport(v *ByIDResultTransport) error {
-	return nil
-}
-
-func ValidateByIDRecordsEvidenceServerDataTransport(v ByIDRecordsEvidenceServerDataTransport) error {
-	return nil
-}
-`)
 	writeGeneratedPackageTest(t, root, "alpha/toolsets/lookup/terminal_envelope_test.go", `package lookup
 
 import (
@@ -109,32 +95,6 @@ func TestGeneratedTerminalEnvelopeBoundedResultRoundTrip(t *testing.T) {
 	root := writeGeneratedModule(t, testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", testscenarios.ServiceToolsetBindSelfBoundedResult()))
 	removeGeneratedPackageFile(t, root, "alpha/toolsets/lookup/provider.go")
 	removeGeneratedPackageFile(t, root, "alpha/toolsets/lookup/transforms.go")
-	writeGeneratedPackageTest(t, root, "alpha/toolsets/lookup/http/validate_stub.go", `package http
-
-func ValidateSearchPayloadTransport(v *SearchPayloadTransport) error {
-	return nil
-}
-
-func ValidateSearchResultTransport(v *SearchResultTransport) error {
-	return nil
-}
-
-func ValidateSearchCopyPayloadTransport(v *SearchCopyPayloadTransport) error {
-	return nil
-}
-
-func ValidateSearchCopyResultTransport(v *SearchCopyResultTransport) error {
-	return nil
-}
-
-func ValidateSearchAllPayloadTransport(v *SearchAllPayloadTransport) error {
-	return nil
-}
-
-func ValidateSearchAllResultTransport(v *SearchAllResultTransport) error {
-	return nil
-}
-`)
 	writeGeneratedPackageTest(t, root, "alpha/toolsets/lookup/terminal_envelope_test.go", `package lookup
 
 import (

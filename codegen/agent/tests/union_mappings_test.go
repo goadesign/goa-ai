@@ -25,12 +25,13 @@ func TestGeneratedToolUnionMappings(t *testing.T) {
 		t.Run(test.mapping, func(t *testing.T) {
 			files := testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", unionMappingDesign(test.mapping))
 			root := writeGeneratedModule(t, files)
-			writeGeneratedPackageTest(t, root, "alpha/toolsets/union/http/validate.go", renderedFileContent(t, files, "gen/alpha/toolsets/union/http/validate.go"))
 			writeGeneratedPackageTest(t, root, "alpha/toolsets/union/union_mapping_test.go", fmt.Sprintf(`package union
 
 import (
+ "bytes"
  "encoding/json"
  "testing"
+ "text/template"
  "github.com/stretchr/testify/assert"
  "github.com/stretchr/testify/require"
  "github.com/santhosh-tekuri/jsonschema/v6"
@@ -53,6 +54,13 @@ func TestSchemaAndTypedCodecAgree(t *testing.T) {
  decoded,err:=UnmarshalEchoPayload(input);require.NoError(t,err)
  structured,selected:=decoded.Value.AsStructured();require.True(t,selected)
  assert.Equal(t,"checked",structured.Label)
+ selectedValue,err:=decoded.Value.Value();require.NoError(t,err)
+ assert.Same(t,structured,selectedValue)
+ renderer,err:=template.New("selected").Parse("{{if eq .Value.Kind \"structured\"}}{{with .Value.Value}}{{.Label}}{{end}}{{end}}")
+ require.NoError(t,err)
+ var rendered bytes.Buffer
+ require.NoError(t,renderer.Execute(&rendered,decoded))
+ assert.Equal(t,"checked",rendered.String())
  encoded,err:=MarshalEchoPayload(decoded);require.NoError(t,err)
  assert.JSONEq(t,string(input),string(encoded))
  var document map[string]any

@@ -85,18 +85,25 @@ func (u *OptionalValue) SetText(v OptionalValueText) {
 
 // Validate ensures exactly one valid branch is selected.
 func (u OptionalValue) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u OptionalValue) Value() (any, error) {
 	switch u.kind {
 	case "":
-		return goa.InvalidEnumValueError("type", "", []any{
+		return nil, goa.InvalidEnumValueError("type", "", []any{
 			string(OptionalValueKindNumber),
 			string(OptionalValueKindText),
 		})
 	case OptionalValueKindNumber:
-		return nil
+		return u.number, nil
 	case OptionalValueKindText:
-		return nil
+		return u.text, nil
 	default:
-		return goa.InvalidEnumValueError("type", u.kind, []any{
+		return nil, goa.InvalidEnumValueError("type", u.kind, []any{
 			string(OptionalValueKindNumber),
 			string(OptionalValueKindText),
 		})
@@ -105,19 +112,9 @@ func (u OptionalValue) Validate() error {
 
 // MarshalJSON marshals the union into the canonical {type,value} JSON shape.
 func (u OptionalValue) MarshalJSON() ([]byte, error) {
-	if err := u.Validate(); err != nil {
+	value, err := u.Value()
+	if err != nil {
 		return nil, err
-	}
-	var (
-		value any
-	)
-	switch u.kind {
-	case OptionalValueKindNumber:
-		value = u.number
-	case OptionalValueKindText:
-		value = u.text
-	default:
-		return nil, fmt.Errorf("unexpected OptionalValue kind %q", u.kind)
 	}
 	return json.Marshal(struct {
 		Type  string `json:"type"`
@@ -267,24 +264,31 @@ func (u *Value) SetStructured(v *StructuredValue) {
 
 // Validate ensures exactly one valid branch is selected.
 func (u Value) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u Value) Value() (any, error) {
 	switch u.kind {
 	case "":
-		return goa.InvalidEnumValueError("type", "", []any{
+		return nil, goa.InvalidEnumValueError("type", "", []any{
 			string(ValueKindNumber),
 			string(ValueKindText),
 			string(ValueKindStructured),
 		})
 	case ValueKindNumber:
-		return nil
+		return u.number, nil
 	case ValueKindText:
-		return nil
+		return u.text, nil
 	case ValueKindStructured:
 		if u.structured == nil {
-			return goa.MissingFieldError("value", "Value")
+			return nil, goa.MissingFieldError("value", "Value")
 		}
-		return nil
+		return u.structured, nil
 	default:
-		return goa.InvalidEnumValueError("type", u.kind, []any{
+		return nil, goa.InvalidEnumValueError("type", u.kind, []any{
 			string(ValueKindNumber),
 			string(ValueKindText),
 			string(ValueKindStructured),
@@ -294,21 +298,9 @@ func (u Value) Validate() error {
 
 // MarshalJSON marshals the union into the canonical {type,value} JSON shape.
 func (u Value) MarshalJSON() ([]byte, error) {
-	if err := u.Validate(); err != nil {
+	value, err := u.Value()
+	if err != nil {
 		return nil, err
-	}
-	var (
-		value any
-	)
-	switch u.kind {
-	case ValueKindNumber:
-		value = u.number
-	case ValueKindText:
-		value = u.text
-	case ValueKindStructured:
-		value = u.structured
-	default:
-		return nil, fmt.Errorf("unexpected Value kind %q", u.kind)
 	}
 	return json.Marshal(struct {
 		Type  string `json:"type"`

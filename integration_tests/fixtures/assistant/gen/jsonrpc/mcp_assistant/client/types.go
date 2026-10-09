@@ -14,6 +14,7 @@ import (
 	"fmt"
 
 	mcpassistant "example.com/assistant/gen/mcp_assistant"
+	uritemplate "github.com/yosida95/uritemplate/v3"
 	goa "goa.design/goa/v3/pkg"
 )
 
@@ -470,6 +471,8 @@ type CompletionCompleteInternalErrorResponseBody struct {
 // ServerCapabilitiesResponseBody is used to define fields on response body
 // types.
 type ServerCapabilitiesResponseBody struct {
+	// Declared extension identifiers and their open settings objects
+	Extensions json.RawMessage `form:"extensions,omitempty" json:"extensions,omitempty" xml:"extensions,omitempty"`
 	// Declared argument suggestion providers
 	Completions *CompletionsCapabilityResponseBody `form:"completions,omitempty" json:"completions,omitempty" xml:"completions,omitempty"`
 	// Tool capabilities
@@ -487,16 +490,24 @@ type CompletionsCapabilityResponseBody struct {
 
 // ToolsCapabilityResponseBody is used to define fields on response body types.
 type ToolsCapabilityResponseBody struct {
+	// Send authorized tool catalog changes through subscriptions/listen
+	ListChanged *bool `form:"listChanged,omitempty" json:"listChanged,omitempty" xml:"listChanged,omitempty"`
 }
 
 // ResourcesCapabilityResponseBody is used to define fields on response body
 // types.
 type ResourcesCapabilityResponseBody struct {
+	// Send authorized resource catalog changes through subscriptions/listen
+	ListChanged *bool `form:"listChanged,omitempty" json:"listChanged,omitempty" xml:"listChanged,omitempty"`
+	// Accept resource update subscriptions through subscriptions/listen
+	Subscribe *bool `form:"subscribe,omitempty" json:"subscribe,omitempty" xml:"subscribe,omitempty"`
 }
 
 // PromptsCapabilityResponseBody is used to define fields on response body
 // types.
 type PromptsCapabilityResponseBody struct {
+	// Send authorized prompt catalog changes through subscriptions/listen
+	ListChanged *bool `form:"listChanged,omitempty" json:"listChanged,omitempty" xml:"listChanged,omitempty"`
 }
 
 // ToolInfoResponseBody is used to define fields on response body types.
@@ -505,6 +516,8 @@ type ToolInfoResponseBody struct {
 	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
 	// Tool description
 	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
+	// Namespaced extension metadata retained without interpreting its fields
+	Meta json.RawMessage `json:"_meta,omitempty"`
 	// Optional behavior hints; clients must trust the server before acting on them
 	Annotations *ToolAnnotationsResponseBody `form:"annotations,omitempty" json:"annotations,omitempty" xml:"annotations,omitempty"`
 	// JSON Schema for tool input
@@ -561,17 +574,17 @@ type ContentItemResponse struct {
 	// Raw bytes in the linked resource before base64 encoding
 	Size *float64 `form:"size,omitempty" json:"size,omitempty" xml:"size,omitempty"`
 	// Optional resource link icons
-	Icons []*ContentIconResponse `form:"icons,omitempty" json:"icons,omitempty" xml:"icons,omitempty"`
+	Icons []*ContentIcon `form:"icons,omitempty" json:"icons,omitempty" xml:"icons,omitempty"`
 	// Required text or binary contents for embedded resources
 	Resource *ResourceContentResponse `form:"resource,omitempty" json:"resource,omitempty" xml:"resource,omitempty"`
 	// Optional audience and importance for this content
-	Annotations *ContentAnnotationsResponse `form:"annotations,omitempty" json:"annotations,omitempty" xml:"annotations,omitempty"`
+	Annotations *ContentAnnotations `form:"annotations,omitempty" json:"annotations,omitempty" xml:"annotations,omitempty"`
 	// Namespaced extension metadata retained without interpreting its fields
 	Meta json.RawMessage `json:"_meta,omitempty"`
 }
 
-// ContentIconResponse is used to define fields on response body types.
-type ContentIconResponse struct {
+// ContentIcon is used to define fields on response body types.
+type ContentIcon struct {
 	// URI of the icon; decoding does not fetch it
 	Src *string `form:"src,omitempty" json:"src,omitempty" xml:"src,omitempty"`
 	// Optional image MIME type
@@ -596,8 +609,8 @@ type ResourceContentResponse struct {
 	Meta json.RawMessage `json:"_meta,omitempty"`
 }
 
-// ContentAnnotationsResponse is used to define fields on response body types.
-type ContentAnnotationsResponse struct {
+// ContentAnnotations is used to define fields on response body types.
+type ContentAnnotations struct {
 	// Roles that should see this content
 	Audience []string `form:"audience,omitempty" json:"audience,omitempty" xml:"audience,omitempty"`
 	// Importance from zero through one, inclusive, for this content item
@@ -641,11 +654,34 @@ type ElicitationURLParamsResponse struct {
 	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
 }
 
+// TaskCreatedResponse is used to define fields on response body types.
+type TaskCreatedResponse struct {
+	// Opaque identifier used for later requests to this task
+	TaskID *string `form:"taskId,omitempty" json:"taskId,omitempty" xml:"taskId,omitempty"`
+	// Creation time reported by the service
+	CreatedAt *string `form:"createdAt,omitempty" json:"createdAt,omitempty" xml:"createdAt,omitempty"`
+	// Time of this task observation reported by the service
+	LastUpdatedAt *string `form:"lastUpdatedAt,omitempty" json:"lastUpdatedAt,omitempty" xml:"lastUpdatedAt,omitempty"`
+	// Optional explanation of this task state
+	StatusMessage *string `form:"statusMessage,omitempty" json:"statusMessage,omitempty" xml:"statusMessage,omitempty"`
+	// Retention from creation in integer milliseconds, or null for unlimited
+	// retention
+	TTLMs *int64 `json:"ttlMs"`
+	// Suggested interval before the next read in integer milliseconds
+	PollIntervalMs *int64 `form:"pollIntervalMs,omitempty" json:"pollIntervalMs,omitempty" xml:"pollIntervalMs,omitempty"`
+	// Current state derived from the service's observation
+	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `form:"_meta,omitempty" json:"_meta,omitempty" xml:"_meta,omitempty"`
+}
+
 // RequiredClientCapabilitiesResponseBody is used to define fields on response
 // body types.
 type RequiredClientCapabilitiesResponseBody struct {
 	// Required forms of user input
 	Elicitation *ElicitationCapabilitiesResponseBody `form:"elicitation,omitempty" json:"elicitation,omitempty" xml:"elicitation,omitempty"`
+	// Extensions required to fulfill the operation
+	Extensions map[string]*RequiredExtensionResponseBody `form:"extensions,omitempty" json:"extensions,omitempty" xml:"extensions,omitempty"`
 }
 
 // ElicitationCapabilitiesResponseBody is used to define fields on response
@@ -659,16 +695,31 @@ type ElicitationCapabilitiesResponseBody struct {
 	} `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
 }
 
+// RequiredExtensionResponseBody is used to define fields on response body
+// types.
+type RequiredExtensionResponseBody struct {
+}
+
 // ResourceInfoResponseBody is used to define fields on response body types.
 type ResourceInfoResponseBody struct {
-	// Resource URI
-	URI *string `form:"uri,omitempty" json:"uri,omitempty" xml:"uri,omitempty"`
-	// Resource name
+	// Resource or template identifier
 	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
-	// Resource description
+	// Optional display name
+	Title *string `form:"title,omitempty" json:"title,omitempty" xml:"title,omitempty"`
+	// Available resource contents
 	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
-	// Resource MIME type
+	// Resource MIME type when known
 	MimeType *string `form:"mimeType,omitempty" json:"mimeType,omitempty" xml:"mimeType,omitempty"`
+	// Optional resource icons
+	Icons []*ContentIcon `form:"icons,omitempty" json:"icons,omitempty" xml:"icons,omitempty"`
+	// Optional audience, importance and modification time
+	Annotations *ContentAnnotations `form:"annotations,omitempty" json:"annotations,omitempty" xml:"annotations,omitempty"`
+	// Namespaced extension metadata retained without interpreting its fields
+	Meta json.RawMessage `json:"_meta,omitempty"`
+	// Exact resource address
+	URI *string `form:"uri,omitempty" json:"uri,omitempty" xml:"uri,omitempty"`
+	// Raw resource content size in bytes before base64 encoding
+	Size *float64 `form:"size,omitempty" json:"size,omitempty" xml:"size,omitempty"`
 }
 
 // ResourcesReadCompleteResultResponse is used to define fields on response
@@ -687,14 +738,22 @@ type ResourcesReadCompleteResultResponse struct {
 // ResourceTemplateInfoResponseBody is used to define fields on response body
 // types.
 type ResourceTemplateInfoResponseBody struct {
+	// Resource or template identifier
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// Optional display name
+	Title *string `form:"title,omitempty" json:"title,omitempty" xml:"title,omitempty"`
+	// Available resource contents
+	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
+	// Resource MIME type when known
+	MimeType *string `form:"mimeType,omitempty" json:"mimeType,omitempty" xml:"mimeType,omitempty"`
+	// Optional resource icons
+	Icons []*ContentIcon `form:"icons,omitempty" json:"icons,omitempty" xml:"icons,omitempty"`
+	// Optional audience, importance and modification time
+	Annotations *ContentAnnotations `form:"annotations,omitempty" json:"annotations,omitempty" xml:"annotations,omitempty"`
+	// Namespaced extension metadata retained without interpreting its fields
+	Meta json.RawMessage `json:"_meta,omitempty"`
 	// RFC 6570 template expanded by the client
 	URITemplate *string `form:"uriTemplate,omitempty" json:"uriTemplate,omitempty" xml:"uriTemplate,omitempty"`
-	// Resource template name
-	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
-	// Resources available through this template
-	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
-	// Hint for the resource content type
-	MimeType *string `form:"mimeType,omitempty" json:"mimeType,omitempty" xml:"mimeType,omitempty"`
 }
 
 // PromptInfoResponseBody is used to define fields on response body types.
@@ -846,24 +905,31 @@ func (u *ElicitationParamsResponseBody) SetURL(v *ElicitationURLParamsResponse) 
 
 // Validate ensures exactly one valid branch is selected.
 func (u ElicitationParamsResponseBody) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u ElicitationParamsResponseBody) Value() (any, error) {
 	switch u.kind {
 	case "":
-		return goa.InvalidEnumValueError("mode", "", []any{
+		return nil, goa.InvalidEnumValueError("mode", "", []any{
 			string(ElicitationParamsResponseBodyKindForm),
 			string(ElicitationParamsResponseBodyKindURL),
 		})
 	case ElicitationParamsResponseBodyKindForm:
 		if u.form == nil {
-			return goa.MissingFieldError("value", "ElicitationParamsResponseBody")
+			return nil, goa.MissingFieldError("value", "ElicitationParamsResponseBody")
 		}
-		return nil
+		return u.form, nil
 	case ElicitationParamsResponseBodyKindURL:
 		if u.url_ == nil {
-			return goa.MissingFieldError("value", "ElicitationParamsResponseBody")
+			return nil, goa.MissingFieldError("value", "ElicitationParamsResponseBody")
 		}
-		return nil
+		return u.url_, nil
 	default:
-		return goa.InvalidEnumValueError("mode", u.kind, []any{
+		return nil, goa.InvalidEnumValueError("mode", u.kind, []any{
 			string(ElicitationParamsResponseBodyKindForm),
 			string(ElicitationParamsResponseBodyKindURL),
 		})
@@ -872,19 +938,9 @@ func (u ElicitationParamsResponseBody) Validate() error {
 
 // MarshalJSON writes the selected object branch beside its discriminator.
 func (u ElicitationParamsResponseBody) MarshalJSON() ([]byte, error) {
-	if err := u.Validate(); err != nil {
+	value, err := u.Value()
+	if err != nil {
 		return nil, err
-	}
-	var (
-		value any
-	)
-	switch u.kind {
-	case ElicitationParamsResponseBodyKindForm:
-		value = u.form
-	case ElicitationParamsResponseBodyKindURL:
-		value = u.url_
-	default:
-		return nil, fmt.Errorf("unexpected ElicitationParamsResponseBody kind %q", u.kind)
 	}
 	data, err := json.Marshal(value)
 	if err != nil {
@@ -1031,24 +1087,31 @@ func (u *PromptsGetOutcomeResponseBody) SetInputRequired(v *InputRequiredResultR
 
 // Validate ensures exactly one valid branch is selected.
 func (u PromptsGetOutcomeResponseBody) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u PromptsGetOutcomeResponseBody) Value() (any, error) {
 	switch u.kind {
 	case "":
-		return goa.InvalidEnumValueError("resultType", "", []any{
+		return nil, goa.InvalidEnumValueError("resultType", "", []any{
 			string(PromptsGetOutcomeResponseBodyKindComplete),
 			string(PromptsGetOutcomeResponseBodyKindInputRequired),
 		})
 	case PromptsGetOutcomeResponseBodyKindComplete:
 		if u.complete == nil {
-			return goa.MissingFieldError("value", "PromptsGetOutcomeResponseBody")
+			return nil, goa.MissingFieldError("value", "PromptsGetOutcomeResponseBody")
 		}
-		return nil
+		return u.complete, nil
 	case PromptsGetOutcomeResponseBodyKindInputRequired:
 		if u.inputRequired == nil {
-			return goa.MissingFieldError("value", "PromptsGetOutcomeResponseBody")
+			return nil, goa.MissingFieldError("value", "PromptsGetOutcomeResponseBody")
 		}
-		return nil
+		return u.inputRequired, nil
 	default:
-		return goa.InvalidEnumValueError("resultType", u.kind, []any{
+		return nil, goa.InvalidEnumValueError("resultType", u.kind, []any{
 			string(PromptsGetOutcomeResponseBodyKindComplete),
 			string(PromptsGetOutcomeResponseBodyKindInputRequired),
 		})
@@ -1057,19 +1120,9 @@ func (u PromptsGetOutcomeResponseBody) Validate() error {
 
 // MarshalJSON writes the selected object branch beside its discriminator.
 func (u PromptsGetOutcomeResponseBody) MarshalJSON() ([]byte, error) {
-	if err := u.Validate(); err != nil {
+	value, err := u.Value()
+	if err != nil {
 		return nil, err
-	}
-	var (
-		value any
-	)
-	switch u.kind {
-	case PromptsGetOutcomeResponseBodyKindComplete:
-		value = u.complete
-	case PromptsGetOutcomeResponseBodyKindInputRequired:
-		value = u.inputRequired
-	default:
-		return nil, fmt.Errorf("unexpected PromptsGetOutcomeResponseBody kind %q", u.kind)
 	}
 	data, err := json.Marshal(value)
 	if err != nil {
@@ -1216,24 +1269,31 @@ func (u *ResourcesReadOutcomeResponseBody) SetInputRequired(v *InputRequiredResu
 
 // Validate ensures exactly one valid branch is selected.
 func (u ResourcesReadOutcomeResponseBody) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u ResourcesReadOutcomeResponseBody) Value() (any, error) {
 	switch u.kind {
 	case "":
-		return goa.InvalidEnumValueError("resultType", "", []any{
+		return nil, goa.InvalidEnumValueError("resultType", "", []any{
 			string(ResourcesReadOutcomeResponseBodyKindComplete),
 			string(ResourcesReadOutcomeResponseBodyKindInputRequired),
 		})
 	case ResourcesReadOutcomeResponseBodyKindComplete:
 		if u.complete == nil {
-			return goa.MissingFieldError("value", "ResourcesReadOutcomeResponseBody")
+			return nil, goa.MissingFieldError("value", "ResourcesReadOutcomeResponseBody")
 		}
-		return nil
+		return u.complete, nil
 	case ResourcesReadOutcomeResponseBodyKindInputRequired:
 		if u.inputRequired == nil {
-			return goa.MissingFieldError("value", "ResourcesReadOutcomeResponseBody")
+			return nil, goa.MissingFieldError("value", "ResourcesReadOutcomeResponseBody")
 		}
-		return nil
+		return u.inputRequired, nil
 	default:
-		return goa.InvalidEnumValueError("resultType", u.kind, []any{
+		return nil, goa.InvalidEnumValueError("resultType", u.kind, []any{
 			string(ResourcesReadOutcomeResponseBodyKindComplete),
 			string(ResourcesReadOutcomeResponseBodyKindInputRequired),
 		})
@@ -1242,19 +1302,9 @@ func (u ResourcesReadOutcomeResponseBody) Validate() error {
 
 // MarshalJSON writes the selected object branch beside its discriminator.
 func (u ResourcesReadOutcomeResponseBody) MarshalJSON() ([]byte, error) {
-	if err := u.Validate(); err != nil {
+	value, err := u.Value()
+	if err != nil {
 		return nil, err
-	}
-	var (
-		value any
-	)
-	switch u.kind {
-	case ResourcesReadOutcomeResponseBodyKindComplete:
-		value = u.complete
-	case ResourcesReadOutcomeResponseBodyKindInputRequired:
-		value = u.inputRequired
-	default:
-		return nil, fmt.Errorf("unexpected ResourcesReadOutcomeResponseBody kind %q", u.kind)
 	}
 	data, err := json.Marshal(value)
 	if err != nil {
@@ -1334,6 +1384,7 @@ type ToolsCallOutcomeResponseBody struct {
 	kind          ToolsCallOutcomeResponseBodyKind
 	complete      *ToolsCallCompleteResultResponse
 	inputRequired *InputRequiredResultResponse
+	task          *TaskCreatedResponse
 }
 
 // ToolsCallOutcomeResponseBodyKind records which ToolsCallOutcomeResponseBody branch is selected.
@@ -1344,6 +1395,8 @@ const (
 	ToolsCallOutcomeResponseBodyKindComplete ToolsCallOutcomeResponseBodyKind = "complete"
 	// ToolsCallOutcomeResponseBodyKindInputRequired identifies the input_required branch.
 	ToolsCallOutcomeResponseBodyKindInputRequired ToolsCallOutcomeResponseBodyKind = "input_required"
+	// ToolsCallOutcomeResponseBodyKindTask identifies the task branch.
+	ToolsCallOutcomeResponseBodyKindTask ToolsCallOutcomeResponseBodyKind = "task"
 )
 
 // Kind returns the selected branch.
@@ -1399,47 +1452,75 @@ func (u *ToolsCallOutcomeResponseBody) SetInputRequired(v *InputRequiredResultRe
 	}
 }
 
+// NewToolsCallOutcomeResponseBodyTask constructs ToolsCallOutcomeResponseBody with the task branch set.
+func NewToolsCallOutcomeResponseBodyTask(v *TaskCreatedResponse) ToolsCallOutcomeResponseBody {
+	return ToolsCallOutcomeResponseBody{
+		kind: ToolsCallOutcomeResponseBodyKindTask,
+		task: v,
+	}
+}
+
+// AsTask returns the value when the task branch is selected.
+func (u ToolsCallOutcomeResponseBody) AsTask() (_ *TaskCreatedResponse, ok bool) {
+	if u.kind != ToolsCallOutcomeResponseBodyKindTask {
+		return
+	}
+	return u.task, true
+}
+
+// SetTask selects the task branch and stores v.
+func (u *ToolsCallOutcomeResponseBody) SetTask(v *TaskCreatedResponse) {
+	*u = ToolsCallOutcomeResponseBody{
+		kind: ToolsCallOutcomeResponseBodyKindTask,
+		task: v,
+	}
+}
+
 // Validate ensures exactly one valid branch is selected.
 func (u ToolsCallOutcomeResponseBody) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u ToolsCallOutcomeResponseBody) Value() (any, error) {
 	switch u.kind {
 	case "":
-		return goa.InvalidEnumValueError("resultType", "", []any{
+		return nil, goa.InvalidEnumValueError("resultType", "", []any{
 			string(ToolsCallOutcomeResponseBodyKindComplete),
 			string(ToolsCallOutcomeResponseBodyKindInputRequired),
+			string(ToolsCallOutcomeResponseBodyKindTask),
 		})
 	case ToolsCallOutcomeResponseBodyKindComplete:
 		if u.complete == nil {
-			return goa.MissingFieldError("value", "ToolsCallOutcomeResponseBody")
+			return nil, goa.MissingFieldError("value", "ToolsCallOutcomeResponseBody")
 		}
-		return nil
+		return u.complete, nil
 	case ToolsCallOutcomeResponseBodyKindInputRequired:
 		if u.inputRequired == nil {
-			return goa.MissingFieldError("value", "ToolsCallOutcomeResponseBody")
+			return nil, goa.MissingFieldError("value", "ToolsCallOutcomeResponseBody")
 		}
-		return nil
+		return u.inputRequired, nil
+	case ToolsCallOutcomeResponseBodyKindTask:
+		if u.task == nil {
+			return nil, goa.MissingFieldError("value", "ToolsCallOutcomeResponseBody")
+		}
+		return u.task, nil
 	default:
-		return goa.InvalidEnumValueError("resultType", u.kind, []any{
+		return nil, goa.InvalidEnumValueError("resultType", u.kind, []any{
 			string(ToolsCallOutcomeResponseBodyKindComplete),
 			string(ToolsCallOutcomeResponseBodyKindInputRequired),
+			string(ToolsCallOutcomeResponseBodyKindTask),
 		})
 	}
 }
 
 // MarshalJSON writes the selected object branch beside its discriminator.
 func (u ToolsCallOutcomeResponseBody) MarshalJSON() ([]byte, error) {
-	if err := u.Validate(); err != nil {
+	value, err := u.Value()
+	if err != nil {
 		return nil, err
-	}
-	var (
-		value any
-	)
-	switch u.kind {
-	case ToolsCallOutcomeResponseBodyKindComplete:
-		value = u.complete
-	case ToolsCallOutcomeResponseBodyKindInputRequired:
-		value = u.inputRequired
-	default:
-		return nil, fmt.Errorf("unexpected ToolsCallOutcomeResponseBody kind %q", u.kind)
 	}
 	data, err := json.Marshal(value)
 	if err != nil {
@@ -1502,6 +1583,12 @@ func (u *ToolsCallOutcomeResponseBody) UnmarshalJSON(data []byte) error {
 			return err
 		}
 		u.SetInputRequired(v)
+	case string(ToolsCallOutcomeResponseBodyKindTask):
+		var v *TaskCreatedResponse
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetTask(v)
 	default:
 		if raw.Type == "" {
 			return goa.MissingFieldError("resultType", "ToolsCallOutcomeResponseBody")
@@ -1509,6 +1596,7 @@ func (u *ToolsCallOutcomeResponseBody) UnmarshalJSON(data []byte) error {
 		return goa.InvalidEnumValueError("resultType", raw.Type, []any{
 			string(ToolsCallOutcomeResponseBodyKindComplete),
 			string(ToolsCallOutcomeResponseBodyKindInputRequired),
+			string(ToolsCallOutcomeResponseBodyKindTask),
 		})
 	}
 	return nil
@@ -1725,6 +1813,15 @@ func NewToolsCallResultOK(body *ToolsCallOutcomeResponseBody) *mcpassistant.Tool
 		}
 		var u mcpassistant.ToolsCallOutcome
 		u.SetInputRequired((*mcpassistant.InputRequiredResult)(obj))
+		v = &u
+	case "task":
+		actual, _ := body.AsTask()
+		var obj *mcpassistant.TaskCreated
+		if actual != nil {
+			obj = unmarshalTaskCreatedResponseToMcpassistantTaskCreated(actual)
+		}
+		var u mcpassistant.ToolsCallOutcome
+		u.SetTask((*mcpassistant.TaskCreated)(obj))
 		v = &u
 	}
 	res := &mcpassistant.ToolsCallResult{
@@ -2375,11 +2472,6 @@ func ValidateToolsCallMissingClientCapabilityResponseBody(body *ToolsCallMissing
 	if body.RequiredCapabilities == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("requiredCapabilities", "body"))
 	}
-	if body.RequiredCapabilities != nil {
-		if err2 := validateRequiredClientCapabilitiesResponseBody(body.RequiredCapabilities, "body.requiredCapabilities"); err2 != nil {
-			err = goa.MergeErrors(err, err2)
-		}
-	}
 	return
 }
 
@@ -2460,11 +2552,6 @@ func ValidateResourcesReadInternalErrorResponseBody(body *ResourcesReadInternalE
 func ValidateResourcesReadMissingClientCapabilityResponseBody(body *ResourcesReadMissingClientCapabilityResponseBody) (err error) {
 	if body.RequiredCapabilities == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("requiredCapabilities", "body"))
-	}
-	if body.RequiredCapabilities != nil {
-		if err2 := validateRequiredClientCapabilitiesResponseBody(body.RequiredCapabilities, "body.requiredCapabilities"); err2 != nil {
-			err = goa.MergeErrors(err, err2)
-		}
 	}
 	return
 }
@@ -2570,11 +2657,6 @@ func ValidatePromptsGetInternalErrorResponseBody(body *PromptsGetInternalErrorRe
 func ValidatePromptsGetMissingClientCapabilityResponseBody(body *PromptsGetMissingClientCapabilityResponseBody) (err error) {
 	if body.RequiredCapabilities == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("requiredCapabilities", "body"))
-	}
-	if body.RequiredCapabilities != nil {
-		if err2 := validateRequiredClientCapabilitiesResponseBody(body.RequiredCapabilities, "body.requiredCapabilities"); err2 != nil {
-			err = goa.MergeErrors(err, err2)
-		}
 	}
 	return
 }
@@ -2711,7 +2793,7 @@ func ValidateContentItemResponse(body *ContentItemResponse) (err error) {
 			err = goa.MergeErrors(err, goa.MissingFieldError("body.icons", "[*]"))
 		}
 		if e != nil {
-			if err2 := validateContentIconResponse(e, "body.icons[*]"); err2 != nil {
+			if err2 := validateContentIcon(e, "body.icons[*]"); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -2722,7 +2804,7 @@ func ValidateContentItemResponse(body *ContentItemResponse) (err error) {
 		}
 	}
 	if body.Annotations != nil {
-		if err2 := validateContentAnnotationsResponse(body.Annotations, "body.annotations"); err2 != nil {
+		if err2 := validateContentAnnotations(body.Annotations, "body.annotations"); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
@@ -2790,7 +2872,7 @@ func validateContentItemResponse(body *ContentItemResponse, path string) (err er
 			err = goa.MergeErrors(err, goa.MissingFieldError(path+".icons", "[*]"))
 		}
 		if e != nil {
-			if err2 := validateContentIconResponse(e, path+".icons[*]"); err2 != nil {
+			if err2 := validateContentIcon(e, path+".icons[*]"); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -2801,7 +2883,7 @@ func validateContentItemResponse(body *ContentItemResponse, path string) (err er
 		}
 	}
 	if body.Annotations != nil {
-		if err2 := validateContentAnnotationsResponse(body.Annotations, path+".annotations"); err2 != nil {
+		if err2 := validateContentAnnotations(body.Annotations, path+".annotations"); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
@@ -2845,8 +2927,8 @@ func validateContentItemResponse(body *ContentItemResponse, path string) (err er
 	return
 }
 
-// ValidateContentIconResponse runs the validations defined on ContentIcon
-func ValidateContentIconResponse(body *ContentIconResponse) (err error) {
+// ValidateContentIcon runs the validations defined on ContentIcon
+func ValidateContentIcon(body *ContentIcon) (err error) {
 	if body.Src == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("src", "body"))
 	}
@@ -2861,9 +2943,9 @@ func ValidateContentIconResponse(body *ContentIconResponse) (err error) {
 	return
 }
 
-// validateContentIconResponse checks ContentIcon and reports errors using the
-// path supplied by its caller
-func validateContentIconResponse(body *ContentIconResponse, path string) (err error) {
+// validateContentIcon checks ContentIcon and reports errors using the path
+// supplied by its caller
+func validateContentIcon(body *ContentIcon, path string) (err error) {
 	if body.Src == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("src", path))
 	}
@@ -2936,9 +3018,8 @@ func validateResourceContentResponse(body *ResourceContentResponse, path string)
 	return
 }
 
-// ValidateContentAnnotationsResponse runs the validations defined on
-// ContentAnnotations
-func ValidateContentAnnotationsResponse(body *ContentAnnotationsResponse) (err error) {
+// ValidateContentAnnotations runs the validations defined on ContentAnnotations
+func ValidateContentAnnotations(body *ContentAnnotations) (err error) {
 	for _, e := range body.Audience {
 		if !(e == "user" || e == "assistant") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.audience[*]", e, []any{"user", "assistant"}))
@@ -2955,9 +3036,9 @@ func ValidateContentAnnotationsResponse(body *ContentAnnotationsResponse) (err e
 	return
 }
 
-// validateContentAnnotationsResponse checks ContentAnnotations and reports
-// errors using the path supplied by its caller
-func validateContentAnnotationsResponse(body *ContentAnnotationsResponse, path string) (err error) {
+// validateContentAnnotations checks ContentAnnotations and reports errors
+// using the path supplied by its caller
+func validateContentAnnotations(body *ContentAnnotations, path string) (err error) {
 	for _, e := range body.Audience {
 		if !(e == "user" || e == "assistant") {
 			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".audience[*]", e, []any{"user", "assistant"}))
@@ -3125,21 +3206,47 @@ func validateElicitationURLParamsResponse(body *ElicitationURLParamsResponse, pa
 	return
 }
 
-// ValidateRequiredClientCapabilitiesResponseBody runs the validations defined
-// on RequiredClientCapabilities
-func ValidateRequiredClientCapabilitiesResponseBody(body *RequiredClientCapabilitiesResponseBody) (err error) {
-	if body.Elicitation == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("elicitation", "body"))
+// ValidateTaskCreatedResponse runs the validations defined on TaskCreated
+func ValidateTaskCreatedResponse(body *TaskCreatedResponse) (err error) {
+	if body.TaskID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("taskId", "body"))
+	}
+	if body.CreatedAt == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("createdAt", "body"))
+	}
+	if body.LastUpdatedAt == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("lastUpdatedAt", "body"))
+	}
+	if body.Status == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("status", "body"))
+	}
+	if body.Status != nil {
+		if !(*body.Status == "working" || *body.Status == "input_required" || *body.Status == "completed" || *body.Status == "failed" || *body.Status == "cancelled") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.status", *body.Status, []any{"working", "input_required", "completed", "failed", "cancelled"}))
+		}
 	}
 	return
 }
 
-// validateRequiredClientCapabilitiesResponseBody checks
-// RequiredClientCapabilities and reports errors using the path supplied by its
-// caller
-func validateRequiredClientCapabilitiesResponseBody(body *RequiredClientCapabilitiesResponseBody, path string) (err error) {
-	if body.Elicitation == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("elicitation", path))
+// validateTaskCreatedResponse checks TaskCreated and reports errors using the
+// path supplied by its caller
+func validateTaskCreatedResponse(body *TaskCreatedResponse, path string) (err error) {
+	if body.TaskID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("taskId", path))
+	}
+	if body.CreatedAt == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("createdAt", path))
+	}
+	if body.LastUpdatedAt == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("lastUpdatedAt", path))
+	}
+	if body.Status == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("status", path))
+	}
+	if body.Status != nil {
+		if !(*body.Status == "working" || *body.Status == "input_required" || *body.Status == "completed" || *body.Status == "failed" || *body.Status == "cancelled") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".status", *body.Status, []any{"working", "input_required", "completed", "failed", "cancelled"}))
+		}
 	}
 	return
 }
@@ -3152,6 +3259,36 @@ func ValidateResourceInfoResponseBody(body *ResourceInfoResponseBody) (err error
 	if body.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
 	}
+	for _, e := range body.Icons {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("body.icons", "[*]"))
+		}
+		if e != nil {
+			if err2 := validateContentIcon(e, "body.icons[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.Annotations != nil {
+		if err2 := validateContentAnnotations(body.Annotations, "body.annotations"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.URI != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.uri", *body.URI, goa.FormatURI))
+	}
+	if body.Size != nil {
+		if *body.Size < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.size", *body.Size, 0, true))
+		}
+	}
+	if len(body.Meta) > 0 {
+		var metadata map[string]json.RawMessage
+		if metadataErr := json.Unmarshal(body.Meta, &metadata); metadataErr != nil || metadata == nil {
+			err = goa.MergeErrors(err, goa.InvalidFieldTypeError("body"+"._meta", string(body.Meta), "JSON object"))
+		}
+	}
+
 	return
 }
 
@@ -3164,6 +3301,36 @@ func validateResourceInfoResponseBody(body *ResourceInfoResponseBody, path strin
 	if body.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))
 	}
+	for _, e := range body.Icons {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError(path+".icons", "[*]"))
+		}
+		if e != nil {
+			if err2 := validateContentIcon(e, path+".icons[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.Annotations != nil {
+		if err2 := validateContentAnnotations(body.Annotations, path+".annotations"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.URI != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat(path+".uri", *body.URI, goa.FormatURI))
+	}
+	if body.Size != nil {
+		if *body.Size < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError(path+".size", *body.Size, 0, true))
+		}
+	}
+	if len(body.Meta) > 0 {
+		var metadata map[string]json.RawMessage
+		if metadataErr := json.Unmarshal(body.Meta, &metadata); metadataErr != nil || metadata == nil {
+			err = goa.MergeErrors(err, goa.InvalidFieldTypeError(path+"._meta", string(body.Meta), "JSON object"))
+		}
+	}
+
 	return
 }
 
@@ -3247,6 +3414,34 @@ func ValidateResourceTemplateInfoResponseBody(body *ResourceTemplateInfoResponse
 	if body.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
 	}
+	for _, e := range body.Icons {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("body.icons", "[*]"))
+		}
+		if e != nil {
+			if err2 := validateContentIcon(e, "body.icons[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.Annotations != nil {
+		if err2 := validateContentAnnotations(body.Annotations, "body.annotations"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.URITemplate != nil {
+		if _, templateErr := uritemplate.New(*body.URITemplate); templateErr != nil {
+			err = goa.MergeErrors(err, goa.PermanentError("invalid_resource_template", "%s.uriTemplate must be an RFC 6570 template", "body"))
+		}
+	}
+
+	if len(body.Meta) > 0 {
+		var metadata map[string]json.RawMessage
+		if metadataErr := json.Unmarshal(body.Meta, &metadata); metadataErr != nil || metadata == nil {
+			err = goa.MergeErrors(err, goa.InvalidFieldTypeError("body"+"._meta", string(body.Meta), "JSON object"))
+		}
+	}
+
 	return
 }
 
@@ -3259,6 +3454,34 @@ func validateResourceTemplateInfoResponseBody(body *ResourceTemplateInfoResponse
 	if body.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))
 	}
+	for _, e := range body.Icons {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError(path+".icons", "[*]"))
+		}
+		if e != nil {
+			if err2 := validateContentIcon(e, path+".icons[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.Annotations != nil {
+		if err2 := validateContentAnnotations(body.Annotations, path+".annotations"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.URITemplate != nil {
+		if _, templateErr := uritemplate.New(*body.URITemplate); templateErr != nil {
+			err = goa.MergeErrors(err, goa.PermanentError("invalid_resource_template", "%s.uriTemplate must be an RFC 6570 template", path))
+		}
+	}
+
+	if len(body.Meta) > 0 {
+		var metadata map[string]json.RawMessage
+		if metadataErr := json.Unmarshal(body.Meta, &metadata); metadataErr != nil || metadata == nil {
+			err = goa.MergeErrors(err, goa.InvalidFieldTypeError(path+"._meta", string(body.Meta), "JSON object"))
+		}
+	}
+
 	return
 }
 

@@ -154,6 +154,9 @@ schema, err := jsonschema.Build(expr.Root.API, settings.Attribute(),
 The result is JSON Schema 2020-12 bytes with local definitions, generated JSON
 field names, authored constraints and unknown-field rejection. Unsupported Go
 representations fail generation. Generated placeholder examples are removed.
+Each field retains its authored description when it uses a named type. A shared
+type's description belongs to its definition; reusing that type does not replace
+another field's instructions. The named type's validation still applies to every use.
 The schema describes the complete type; it does not apply tool-specific field
 injection or model visibility. Keep the original attribute from the evaluated
 design so its package and field metadata remain available.

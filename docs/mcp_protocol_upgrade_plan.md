@@ -1,6 +1,6 @@
 # Upgrade goa-ai to MCP 2026-07-28
 
-Research and implementation plan, prepared 2026-10-02 and revised 2026-10-08 after tracing framework composition and prevailing retry implementations. The transport and composition foundation is implemented in the isolated clone. The full upgrade remains incomplete until every capability required below is implemented and verified. No release is authorized before then. The baseline sections describe remote main before this upgrade; they are not the current implementation. The current implementation and verified checks are recorded below.
+Research and implementation plan, prepared 2026-10-02 and revised 2026-10-09 after tracing framework composition and prevailing retry implementations. The transport and composition foundation is implemented in the isolated clone. The full upgrade remains incomplete until every capability required below is implemented and verified. No release is authorized before then. The baseline sections describe remote main before this upgrade; they are not the current implementation. The current implementation and verified checks are recorded below.
 
 ## Current completion gates
 
@@ -17,8 +17,26 @@ and verification evidence and do not supersede unfinished gates.
 | OAuth | Built-in authorization paths and the agreed metadata/profile assessment are implemented. Selected independent checks and explicit legacy-fixture mismatches are recorded. Final-head verification, review and caller acceptance remain required. |
 | MCP Apps | Implemented through authored app resources and tools, generated peers, and the official browser SDK. Final-head browser, build and integration CI passed. Final review remains required. |
 | MCP Skills | Implemented through generated discovery/read clients, shared `VerifySkillFile`, and a reference host that retains complete entries with model context. Generated HTTP and native agent acceptance covers lazy reads, origin isolation, complete YAML, cached bytes, nested activation, changed-manifest consent and local execution approval/denial. Directory discovery and selected views reuse ordinary methods. Final-head CI, caller assessment and review remain required. |
-| Dependencies, documentation and website | Root and all four maintained nested modules pin merged Goa `ee33017cd4aa`, which exposes the native union renderer for plugin reuse. Finish external caller migration, authoritative docs, translations and the MCP home-page section after capability acceptance. |
+| Dependencies, documentation and website | Root and all four maintained nested modules pin merged Goa `9fd65ad2c943`, including the shared native union renderer and template-safe selected values. Authoritative docs, five-language guides and the MCP home-page diagram are implemented. Final consumer acceptance and publication remain required. |
 | Generated stdio servers | Explicitly deferred. Existing stdio consumers remain supported. |
+
+Generated unions now expose `Value() (any, error)` through Goa's shared renderer.
+Go templates use `Kind` to select a branch and `Value` to read it; Go callers
+retain typed `AsX` accessors. Selected zero, false and empty values remain valid.
+Goa PR #4039 is merged at `9fd65ad2c943`; every maintained framework module pins
+that published commit. Agent, HTTP and service unions use the same implementation.
+Codec fixtures now render every file through Goa's ordinary `File.Render`,
+including real validators, rather than concatenate sections and substitute
+validation functions. The full generator-package checkpoint passed in 129.54 seconds. Fresh evaluation
+consumer acceptance passed in 9.40 seconds; regenerated OAuth and Skills contracts
+and focused runtime checks passed in 3.27 seconds. Scoped lint reported zero
+issues in 6.35 seconds. These results precede publication; final-head CI remains
+required.
+
+The shared schema builder retains field descriptions beside named-type references
+and keeps the shared definition's own description. An evaluated DSL test verifies
+that `Required` still applies to every use of the shared named type. This changes
+field instructions without introducing a separate validation interpretation.
 
 Directory discovery uses the same discovery planner as catalogs and direct Skill
 lookup. Its generated endpoint retains native authentication and mapped URL fields;

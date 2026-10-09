@@ -5,7 +5,7 @@ go 1.27.0
 require (
 	github.com/openai/openai-go/v3 v3.71.2
 	goa.design/goa-ai v0.42.0
-	goa.design/goa/v3 v3.34.1-0.20261009041524-ee33017cd4aa
+	goa.design/goa/v3 v3.34.1-0.20261009061557-9fd65ad2c943
 )
 
 require (

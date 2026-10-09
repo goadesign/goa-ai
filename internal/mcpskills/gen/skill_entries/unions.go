@@ -87,21 +87,28 @@ func (u *SkillResources) SetDynamic(v SkillResourcesBranchDynamic) {
 
 // Validate ensures exactly one valid branch is selected.
 func (u SkillResources) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u SkillResources) Value() (any, error) {
 	switch u.kind {
 	case "":
-		return goa.InvalidEnumValueError("type", "", []any{
+		return nil, goa.InvalidEnumValueError("type", "", []any{
 			string(SkillResourcesKindManifest),
 			string(SkillResourcesKindDynamic),
 		})
 	case SkillResourcesKindManifest:
 		if u.manifest == nil {
-			return goa.MissingFieldError("value", "SkillResources")
+			return nil, goa.MissingFieldError("value", "SkillResources")
 		}
-		return nil
+		return u.manifest, nil
 	case SkillResourcesKindDynamic:
-		return nil
+		return u.dynamic, nil
 	default:
-		return goa.InvalidEnumValueError("type", u.kind, []any{
+		return nil, goa.InvalidEnumValueError("type", u.kind, []any{
 			string(SkillResourcesKindManifest),
 			string(SkillResourcesKindDynamic),
 		})
@@ -110,19 +117,9 @@ func (u SkillResources) Validate() error {
 
 // MarshalJSON writes the selected branch value without a discriminator or envelope.
 func (u SkillResources) MarshalJSON() ([]byte, error) {
-	if err := u.Validate(); err != nil {
+	value, err := u.Value()
+	if err != nil {
 		return nil, err
-	}
-	var (
-		value any
-	)
-	switch u.kind {
-	case SkillResourcesKindManifest:
-		value = u.manifest
-	case SkillResourcesKindDynamic:
-		value = u.dynamic
-	default:
-		return nil, fmt.Errorf("unexpected SkillResources kind %q", u.kind)
 	}
 	return json.Marshal(value)
 }

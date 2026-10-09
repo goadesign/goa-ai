@@ -10,7 +10,6 @@ package tooloperations
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 
 	goa "goa.design/goa/v3/pkg"
 )
@@ -141,9 +140,16 @@ func (u *Operation) SetTaskCancel(v OperationBranchTaskCancel) {
 
 // Validate ensures exactly one valid branch is selected.
 func (u Operation) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u Operation) Value() (any, error) {
 	switch u.kind {
 	case "":
-		return goa.InvalidEnumValueError("type", "", []any{
+		return nil, goa.InvalidEnumValueError("type", "", []any{
 			string(OperationKindInput),
 			string(OperationKindTaskGet),
 			string(OperationKindTaskUpdate),
@@ -151,20 +157,20 @@ func (u Operation) Validate() error {
 		})
 	case OperationKindInput:
 		if u.input == nil {
-			return goa.MissingFieldError("value", "Operation")
+			return nil, goa.MissingFieldError("value", "Operation")
 		}
-		return nil
+		return u.input, nil
 	case OperationKindTaskGet:
-		return nil
+		return u.taskGet, nil
 	case OperationKindTaskUpdate:
 		if u.taskUpdate == nil {
-			return goa.MissingFieldError("value", "Operation")
+			return nil, goa.MissingFieldError("value", "Operation")
 		}
-		return nil
+		return u.taskUpdate, nil
 	case OperationKindTaskCancel:
-		return nil
+		return u.taskCancel, nil
 	default:
-		return goa.InvalidEnumValueError("type", u.kind, []any{
+		return nil, goa.InvalidEnumValueError("type", u.kind, []any{
 			string(OperationKindInput),
 			string(OperationKindTaskGet),
 			string(OperationKindTaskUpdate),
@@ -175,23 +181,9 @@ func (u Operation) Validate() error {
 
 // MarshalJSON marshals the union into the canonical {type,value} JSON shape.
 func (u Operation) MarshalJSON() ([]byte, error) {
-	if err := u.Validate(); err != nil {
+	value, err := u.Value()
+	if err != nil {
 		return nil, err
-	}
-	var (
-		value any
-	)
-	switch u.kind {
-	case OperationKindInput:
-		value = u.input
-	case OperationKindTaskGet:
-		value = u.taskGet
-	case OperationKindTaskUpdate:
-		value = u.taskUpdate
-	case OperationKindTaskCancel:
-		value = u.taskCancel
-	default:
-		return nil, fmt.Errorf("unexpected Operation kind %q", u.kind)
 	}
 	return json.Marshal(struct {
 		Type  string `json:"type"`
@@ -355,30 +347,37 @@ func (u *Outcome) SetTaskInput(v *ToolOperationTaskInput) {
 
 // Validate ensures exactly one valid branch is selected.
 func (u Outcome) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u Outcome) Value() (any, error) {
 	switch u.kind {
 	case "":
-		return goa.InvalidEnumValueError("type", "", []any{
+		return nil, goa.InvalidEnumValueError("type", "", []any{
 			string(OutcomeKindInput),
 			string(OutcomeKindTaskWait),
 			string(OutcomeKindTaskInput),
 		})
 	case OutcomeKindInput:
 		if u.input == nil {
-			return goa.MissingFieldError("value", "Outcome")
+			return nil, goa.MissingFieldError("value", "Outcome")
 		}
-		return nil
+		return u.input, nil
 	case OutcomeKindTaskWait:
 		if u.taskWait == nil {
-			return goa.MissingFieldError("value", "Outcome")
+			return nil, goa.MissingFieldError("value", "Outcome")
 		}
-		return nil
+		return u.taskWait, nil
 	case OutcomeKindTaskInput:
 		if u.taskInput == nil {
-			return goa.MissingFieldError("value", "Outcome")
+			return nil, goa.MissingFieldError("value", "Outcome")
 		}
-		return nil
+		return u.taskInput, nil
 	default:
-		return goa.InvalidEnumValueError("type", u.kind, []any{
+		return nil, goa.InvalidEnumValueError("type", u.kind, []any{
 			string(OutcomeKindInput),
 			string(OutcomeKindTaskWait),
 			string(OutcomeKindTaskInput),
@@ -388,21 +387,9 @@ func (u Outcome) Validate() error {
 
 // MarshalJSON marshals the union into the canonical {type,value} JSON shape.
 func (u Outcome) MarshalJSON() ([]byte, error) {
-	if err := u.Validate(); err != nil {
+	value, err := u.Value()
+	if err != nil {
 		return nil, err
-	}
-	var (
-		value any
-	)
-	switch u.kind {
-	case OutcomeKindInput:
-		value = u.input
-	case OutcomeKindTaskWait:
-		value = u.taskWait
-	case OutcomeKindTaskInput:
-		value = u.taskInput
-	default:
-		return nil, fmt.Errorf("unexpected Outcome kind %q", u.kind)
 	}
 	return json.Marshal(struct {
 		Type  string `json:"type"`

@@ -87,24 +87,31 @@ func (u *ElicitationParams) SetURL(v *ElicitationURLParams) {
 
 // Validate ensures exactly one valid branch is selected.
 func (u ElicitationParams) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u ElicitationParams) Value() (any, error) {
 	switch u.kind {
 	case "":
-		return goa.InvalidEnumValueError("mode", "", []any{
+		return nil, goa.InvalidEnumValueError("mode", "", []any{
 			string(ElicitationParamsKindForm),
 			string(ElicitationParamsKindURL),
 		})
 	case ElicitationParamsKindForm:
 		if u.form == nil {
-			return goa.MissingFieldError("value", "ElicitationParams")
+			return nil, goa.MissingFieldError("value", "ElicitationParams")
 		}
-		return nil
+		return u.form, nil
 	case ElicitationParamsKindURL:
 		if u.url_ == nil {
-			return goa.MissingFieldError("value", "ElicitationParams")
+			return nil, goa.MissingFieldError("value", "ElicitationParams")
 		}
-		return nil
+		return u.url_, nil
 	default:
-		return goa.InvalidEnumValueError("mode", u.kind, []any{
+		return nil, goa.InvalidEnumValueError("mode", u.kind, []any{
 			string(ElicitationParamsKindForm),
 			string(ElicitationParamsKindURL),
 		})
@@ -113,19 +120,9 @@ func (u ElicitationParams) Validate() error {
 
 // MarshalJSON writes the selected object branch beside its discriminator.
 func (u ElicitationParams) MarshalJSON() ([]byte, error) {
-	if err := u.Validate(); err != nil {
+	value, err := u.Value()
+	if err != nil {
 		return nil, err
-	}
-	var (
-		value any
-	)
-	switch u.kind {
-	case ElicitationParamsKindForm:
-		value = u.form
-	case ElicitationParamsKindURL:
-		value = u.url_
-	default:
-		return nil, fmt.Errorf("unexpected ElicitationParams kind %q", u.kind)
 	}
 	data, err := json.Marshal(value)
 	if err != nil {
@@ -272,24 +269,31 @@ func (u *PromptsGetOutcome) SetInputRequired(v *InputRequiredResult) {
 
 // Validate ensures exactly one valid branch is selected.
 func (u PromptsGetOutcome) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u PromptsGetOutcome) Value() (any, error) {
 	switch u.kind {
 	case "":
-		return goa.InvalidEnumValueError("resultType", "", []any{
+		return nil, goa.InvalidEnumValueError("resultType", "", []any{
 			string(PromptsGetOutcomeKindComplete),
 			string(PromptsGetOutcomeKindInputRequired),
 		})
 	case PromptsGetOutcomeKindComplete:
 		if u.complete == nil {
-			return goa.MissingFieldError("value", "PromptsGetOutcome")
+			return nil, goa.MissingFieldError("value", "PromptsGetOutcome")
 		}
-		return nil
+		return u.complete, nil
 	case PromptsGetOutcomeKindInputRequired:
 		if u.inputRequired == nil {
-			return goa.MissingFieldError("value", "PromptsGetOutcome")
+			return nil, goa.MissingFieldError("value", "PromptsGetOutcome")
 		}
-		return nil
+		return u.inputRequired, nil
 	default:
-		return goa.InvalidEnumValueError("resultType", u.kind, []any{
+		return nil, goa.InvalidEnumValueError("resultType", u.kind, []any{
 			string(PromptsGetOutcomeKindComplete),
 			string(PromptsGetOutcomeKindInputRequired),
 		})
@@ -298,19 +302,9 @@ func (u PromptsGetOutcome) Validate() error {
 
 // MarshalJSON writes the selected object branch beside its discriminator.
 func (u PromptsGetOutcome) MarshalJSON() ([]byte, error) {
-	if err := u.Validate(); err != nil {
+	value, err := u.Value()
+	if err != nil {
 		return nil, err
-	}
-	var (
-		value any
-	)
-	switch u.kind {
-	case PromptsGetOutcomeKindComplete:
-		value = u.complete
-	case PromptsGetOutcomeKindInputRequired:
-		value = u.inputRequired
-	default:
-		return nil, fmt.Errorf("unexpected PromptsGetOutcome kind %q", u.kind)
 	}
 	data, err := json.Marshal(value)
 	if err != nil {
@@ -457,24 +451,31 @@ func (u *ResourcesReadOutcome) SetInputRequired(v *InputRequiredResult) {
 
 // Validate ensures exactly one valid branch is selected.
 func (u ResourcesReadOutcome) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u ResourcesReadOutcome) Value() (any, error) {
 	switch u.kind {
 	case "":
-		return goa.InvalidEnumValueError("resultType", "", []any{
+		return nil, goa.InvalidEnumValueError("resultType", "", []any{
 			string(ResourcesReadOutcomeKindComplete),
 			string(ResourcesReadOutcomeKindInputRequired),
 		})
 	case ResourcesReadOutcomeKindComplete:
 		if u.complete == nil {
-			return goa.MissingFieldError("value", "ResourcesReadOutcome")
+			return nil, goa.MissingFieldError("value", "ResourcesReadOutcome")
 		}
-		return nil
+		return u.complete, nil
 	case ResourcesReadOutcomeKindInputRequired:
 		if u.inputRequired == nil {
-			return goa.MissingFieldError("value", "ResourcesReadOutcome")
+			return nil, goa.MissingFieldError("value", "ResourcesReadOutcome")
 		}
-		return nil
+		return u.inputRequired, nil
 	default:
-		return goa.InvalidEnumValueError("resultType", u.kind, []any{
+		return nil, goa.InvalidEnumValueError("resultType", u.kind, []any{
 			string(ResourcesReadOutcomeKindComplete),
 			string(ResourcesReadOutcomeKindInputRequired),
 		})
@@ -483,19 +484,9 @@ func (u ResourcesReadOutcome) Validate() error {
 
 // MarshalJSON writes the selected object branch beside its discriminator.
 func (u ResourcesReadOutcome) MarshalJSON() ([]byte, error) {
-	if err := u.Validate(); err != nil {
+	value, err := u.Value()
+	if err != nil {
 		return nil, err
-	}
-	var (
-		value any
-	)
-	switch u.kind {
-	case ResourcesReadOutcomeKindComplete:
-		value = u.complete
-	case ResourcesReadOutcomeKindInputRequired:
-		value = u.inputRequired
-	default:
-		return nil, fmt.Errorf("unexpected ResourcesReadOutcome kind %q", u.kind)
 	}
 	data, err := json.Marshal(value)
 	if err != nil {
@@ -575,6 +566,7 @@ type ToolsCallOutcome struct {
 	kind          ToolsCallOutcomeKind
 	complete      *ToolsCallCompleteResult
 	inputRequired *InputRequiredResult
+	task          *TaskCreated
 }
 
 // ToolsCallOutcomeKind records which ToolsCallOutcome branch is selected.
@@ -585,6 +577,8 @@ const (
 	ToolsCallOutcomeKindComplete ToolsCallOutcomeKind = "complete"
 	// ToolsCallOutcomeKindInputRequired identifies the input_required branch.
 	ToolsCallOutcomeKindInputRequired ToolsCallOutcomeKind = "input_required"
+	// ToolsCallOutcomeKindTask identifies the task branch.
+	ToolsCallOutcomeKindTask ToolsCallOutcomeKind = "task"
 )
 
 // Kind returns the selected branch.
@@ -640,47 +634,75 @@ func (u *ToolsCallOutcome) SetInputRequired(v *InputRequiredResult) {
 	}
 }
 
+// NewToolsCallOutcomeTask constructs ToolsCallOutcome with the task branch set.
+func NewToolsCallOutcomeTask(v *TaskCreated) ToolsCallOutcome {
+	return ToolsCallOutcome{
+		kind: ToolsCallOutcomeKindTask,
+		task: v,
+	}
+}
+
+// AsTask returns the value when the task branch is selected.
+func (u ToolsCallOutcome) AsTask() (_ *TaskCreated, ok bool) {
+	if u.kind != ToolsCallOutcomeKindTask {
+		return
+	}
+	return u.task, true
+}
+
+// SetTask selects the task branch and stores v.
+func (u *ToolsCallOutcome) SetTask(v *TaskCreated) {
+	*u = ToolsCallOutcome{
+		kind: ToolsCallOutcomeKindTask,
+		task: v,
+	}
+}
+
 // Validate ensures exactly one valid branch is selected.
 func (u ToolsCallOutcome) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u ToolsCallOutcome) Value() (any, error) {
 	switch u.kind {
 	case "":
-		return goa.InvalidEnumValueError("resultType", "", []any{
+		return nil, goa.InvalidEnumValueError("resultType", "", []any{
 			string(ToolsCallOutcomeKindComplete),
 			string(ToolsCallOutcomeKindInputRequired),
+			string(ToolsCallOutcomeKindTask),
 		})
 	case ToolsCallOutcomeKindComplete:
 		if u.complete == nil {
-			return goa.MissingFieldError("value", "ToolsCallOutcome")
+			return nil, goa.MissingFieldError("value", "ToolsCallOutcome")
 		}
-		return nil
+		return u.complete, nil
 	case ToolsCallOutcomeKindInputRequired:
 		if u.inputRequired == nil {
-			return goa.MissingFieldError("value", "ToolsCallOutcome")
+			return nil, goa.MissingFieldError("value", "ToolsCallOutcome")
 		}
-		return nil
+		return u.inputRequired, nil
+	case ToolsCallOutcomeKindTask:
+		if u.task == nil {
+			return nil, goa.MissingFieldError("value", "ToolsCallOutcome")
+		}
+		return u.task, nil
 	default:
-		return goa.InvalidEnumValueError("resultType", u.kind, []any{
+		return nil, goa.InvalidEnumValueError("resultType", u.kind, []any{
 			string(ToolsCallOutcomeKindComplete),
 			string(ToolsCallOutcomeKindInputRequired),
+			string(ToolsCallOutcomeKindTask),
 		})
 	}
 }
 
 // MarshalJSON writes the selected object branch beside its discriminator.
 func (u ToolsCallOutcome) MarshalJSON() ([]byte, error) {
-	if err := u.Validate(); err != nil {
+	value, err := u.Value()
+	if err != nil {
 		return nil, err
-	}
-	var (
-		value any
-	)
-	switch u.kind {
-	case ToolsCallOutcomeKindComplete:
-		value = u.complete
-	case ToolsCallOutcomeKindInputRequired:
-		value = u.inputRequired
-	default:
-		return nil, fmt.Errorf("unexpected ToolsCallOutcome kind %q", u.kind)
 	}
 	data, err := json.Marshal(value)
 	if err != nil {
@@ -743,6 +765,12 @@ func (u *ToolsCallOutcome) UnmarshalJSON(data []byte) error {
 			return err
 		}
 		u.SetInputRequired(v)
+	case string(ToolsCallOutcomeKindTask):
+		var v *TaskCreated
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetTask(v)
 	default:
 		if raw.Type == "" {
 			return goa.MissingFieldError("resultType", "ToolsCallOutcome")
@@ -750,6 +778,7 @@ func (u *ToolsCallOutcome) UnmarshalJSON(data []byte) error {
 		return goa.InvalidEnumValueError("resultType", raw.Type, []any{
 			string(ToolsCallOutcomeKindComplete),
 			string(ToolsCallOutcomeKindInputRequired),
+			string(ToolsCallOutcomeKindTask),
 		})
 	}
 	return nil

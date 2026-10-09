@@ -112,27 +112,34 @@ func (u *StepState) SetSince(v StepStateSinceTransport) {
 
 // Validate ensures exactly one valid branch is selected.
 func (u StepState) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u StepState) Value() (any, error) {
 	switch u.kind {
 	case "":
-		return goa.InvalidEnumValueError("type", "", []any{
+		return nil, goa.InvalidEnumValueError("type", "", []any{
 			string(StepStateKindActive),
 			string(StepStateKindInactive),
 			string(StepStateKindSince),
 		})
 	case StepStateKindActive:
 		if u.active == nil {
-			return goa.MissingFieldError("value", "StepState")
+			return nil, goa.MissingFieldError("value", "StepState")
 		}
-		return nil
+		return u.active, nil
 	case StepStateKindInactive:
 		if u.inactive == nil {
-			return goa.MissingFieldError("value", "StepState")
+			return nil, goa.MissingFieldError("value", "StepState")
 		}
-		return nil
+		return u.inactive, nil
 	case StepStateKindSince:
-		return nil
+		return u.since, nil
 	default:
-		return goa.InvalidEnumValueError("type", u.kind, []any{
+		return nil, goa.InvalidEnumValueError("type", u.kind, []any{
 			string(StepStateKindActive),
 			string(StepStateKindInactive),
 			string(StepStateKindSince),
@@ -142,21 +149,9 @@ func (u StepState) Validate() error {
 
 // MarshalJSON marshals the union into the canonical {type,value} JSON shape.
 func (u StepState) MarshalJSON() ([]byte, error) {
-	if err := u.Validate(); err != nil {
+	value, err := u.Value()
+	if err != nil {
 		return nil, err
-	}
-	var (
-		value any
-	)
-	switch u.kind {
-	case StepStateKindActive:
-		value = u.active
-	case StepStateKindInactive:
-		value = u.inactive
-	case StepStateKindSince:
-		value = u.since
-	default:
-		return nil, fmt.Errorf("unexpected StepState kind %q", u.kind)
 	}
 	return json.Marshal(struct {
 		Type  string `json:"type"`

@@ -425,6 +425,13 @@ func DecodeToolsCallResponse(decoder func(*http.Response) goahttp.Decoder, resto
 					err = goa.MergeErrors(err, err2)
 				}
 			}
+		case "task":
+			actual, _ := body.AsTask()
+			if actual != nil {
+				if err2 := validateTaskCreatedResponse(actual, "body.value"); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
 		}
 
 		if err != nil {
@@ -1342,7 +1349,9 @@ func DecodeCompletionCompleteResponse(decoder func(*http.Response) goahttp.Decod
 // builds a value of type *mcpassistant.ServerCapabilities from a value of type
 // *ServerCapabilitiesResponseBody.
 func unmarshalServerCapabilitiesResponseBodyToMcpassistantServerCapabilities(v *ServerCapabilitiesResponseBody) *mcpassistant.ServerCapabilities {
-	res := &mcpassistant.ServerCapabilities{}
+	res := &mcpassistant.ServerCapabilities{
+		Extensions: v.Extensions,
+	}
 	if v.Completions != nil {
 		res.Completions = unmarshalCompletionsCapabilityResponseBodyToMcpassistantCompletionsCapability(v.Completions)
 	}
@@ -1372,7 +1381,9 @@ func unmarshalCompletionsCapabilityResponseBodyToMcpassistantCompletionsCapabili
 // value of type *mcpassistant.ToolsCapability from a value of type
 // *ToolsCapabilityResponseBody.
 func unmarshalToolsCapabilityResponseBodyToMcpassistantToolsCapability(v *ToolsCapabilityResponseBody) *mcpassistant.ToolsCapability {
-	res := &mcpassistant.ToolsCapability{}
+	res := &mcpassistant.ToolsCapability{
+		ListChanged: v.ListChanged,
+	}
 
 	return res
 }
@@ -1381,7 +1392,10 @@ func unmarshalToolsCapabilityResponseBodyToMcpassistantToolsCapability(v *ToolsC
 // builds a value of type *mcpassistant.ResourcesCapability from a value of
 // type *ResourcesCapabilityResponseBody.
 func unmarshalResourcesCapabilityResponseBodyToMcpassistantResourcesCapability(v *ResourcesCapabilityResponseBody) *mcpassistant.ResourcesCapability {
-	res := &mcpassistant.ResourcesCapability{}
+	res := &mcpassistant.ResourcesCapability{
+		ListChanged: v.ListChanged,
+		Subscribe:   v.Subscribe,
+	}
 
 	return res
 }
@@ -1390,7 +1404,9 @@ func unmarshalResourcesCapabilityResponseBodyToMcpassistantResourcesCapability(v
 // a value of type *mcpassistant.PromptsCapability from a value of type
 // *PromptsCapabilityResponseBody.
 func unmarshalPromptsCapabilityResponseBodyToMcpassistantPromptsCapability(v *PromptsCapabilityResponseBody) *mcpassistant.PromptsCapability {
-	res := &mcpassistant.PromptsCapability{}
+	res := &mcpassistant.PromptsCapability{
+		ListChanged: v.ListChanged,
+	}
 
 	return res
 }
@@ -1401,6 +1417,7 @@ func unmarshalToolInfoResponseBodyToMcpassistantToolInfo(v *ToolInfoResponseBody
 	res := &mcpassistant.ToolInfo{
 		Name:         *v.Name,
 		Description:  v.Description,
+		Meta:         v.Meta,
 		InputSchema:  v.InputSchema,
 		OutputSchema: v.OutputSchema,
 	}
@@ -1469,22 +1486,22 @@ func unmarshalContentItemResponseToMcpassistantContentItem(v *ContentItemRespons
 				res.Icons[i] = nil
 				continue
 			}
-			res.Icons[i] = unmarshalContentIconResponseToMcpassistantContentIcon(val)
+			res.Icons[i] = unmarshalContentIconToMcpassistantContentIcon(val)
 		}
 	}
 	if v.Resource != nil {
 		res.Resource = unmarshalResourceContentResponseToMcpassistantResourceContent(v.Resource)
 	}
 	if v.Annotations != nil {
-		res.Annotations = unmarshalContentAnnotationsResponseToMcpassistantContentAnnotations(v.Annotations)
+		res.Annotations = unmarshalContentAnnotationsToMcpassistantContentAnnotations(v.Annotations)
 	}
 
 	return res
 }
 
-// unmarshalContentIconResponseToMcpassistantContentIcon builds a value of type
-// *mcpassistant.ContentIcon from a value of type *ContentIconResponse.
-func unmarshalContentIconResponseToMcpassistantContentIcon(v *ContentIconResponse) *mcpassistant.ContentIcon {
+// unmarshalContentIconToMcpassistantContentIcon builds a value of type
+// *mcpassistant.ContentIcon from a value of type *ContentIcon.
+func unmarshalContentIconToMcpassistantContentIcon(v *ContentIcon) *mcpassistant.ContentIcon {
 	res := &mcpassistant.ContentIcon{
 		Src:      *v.Src,
 		MimeType: v.MimeType,
@@ -1515,10 +1532,10 @@ func unmarshalResourceContentResponseToMcpassistantResourceContent(v *ResourceCo
 	return res
 }
 
-// unmarshalContentAnnotationsResponseToMcpassistantContentAnnotations builds a
-// value of type *mcpassistant.ContentAnnotations from a value of type
-// *ContentAnnotationsResponse.
-func unmarshalContentAnnotationsResponseToMcpassistantContentAnnotations(v *ContentAnnotationsResponse) *mcpassistant.ContentAnnotations {
+// unmarshalContentAnnotationsToMcpassistantContentAnnotations builds a value
+// of type *mcpassistant.ContentAnnotations from a value of type
+// *ContentAnnotations.
+func unmarshalContentAnnotationsToMcpassistantContentAnnotations(v *ContentAnnotations) *mcpassistant.ContentAnnotations {
 	res := &mcpassistant.ContentAnnotations{
 		Priority:     v.Priority,
 		LastModified: v.LastModified,
@@ -1610,12 +1627,42 @@ func unmarshalElicitationURLParamsResponseToMcpassistantElicitationURLParams(v *
 	return res
 }
 
+// unmarshalTaskCreatedResponseToMcpassistantTaskCreated builds a value of type
+// *mcpassistant.TaskCreated from a value of type *TaskCreatedResponse.
+func unmarshalTaskCreatedResponseToMcpassistantTaskCreated(v *TaskCreatedResponse) *mcpassistant.TaskCreated {
+	res := &mcpassistant.TaskCreated{
+		TaskID:         *v.TaskID,
+		CreatedAt:      *v.CreatedAt,
+		LastUpdatedAt:  *v.LastUpdatedAt,
+		StatusMessage:  v.StatusMessage,
+		TTLMs:          v.TTLMs,
+		PollIntervalMs: v.PollIntervalMs,
+		Status:         *v.Status,
+		Meta:           v.Meta,
+	}
+
+	return res
+}
+
 // unmarshalRequiredClientCapabilitiesResponseBodyToMcpassistantRequiredClientCapabilities
 // builds a value of type *mcpassistant.RequiredClientCapabilities from a value
 // of type *RequiredClientCapabilitiesResponseBody.
 func unmarshalRequiredClientCapabilitiesResponseBodyToMcpassistantRequiredClientCapabilities(v *RequiredClientCapabilitiesResponseBody) *mcpassistant.RequiredClientCapabilities {
 	res := &mcpassistant.RequiredClientCapabilities{}
-	res.Elicitation = unmarshalElicitationCapabilitiesResponseBodyToMcpassistantElicitationCapabilities(v.Elicitation)
+	if v.Elicitation != nil {
+		res.Elicitation = unmarshalElicitationCapabilitiesResponseBodyToMcpassistantElicitationCapabilities(v.Elicitation)
+	}
+	if v.Extensions != nil {
+		res.Extensions = make(map[string]*mcpassistant.RequiredExtension, len(v.Extensions))
+		for key, val := range v.Extensions {
+			tk := key
+			if val == nil {
+				res.Extensions[tk] = nil
+				continue
+			}
+			res.Extensions[tk] = unmarshalRequiredExtensionResponseBodyToMcpassistantRequiredExtension(val)
+		}
+	}
 
 	return res
 }
@@ -1637,15 +1684,40 @@ func unmarshalElicitationCapabilitiesResponseBodyToMcpassistantElicitationCapabi
 	return res
 }
 
+// unmarshalRequiredExtensionResponseBodyToMcpassistantRequiredExtension builds
+// a value of type *mcpassistant.RequiredExtension from a value of type
+// *RequiredExtensionResponseBody.
+func unmarshalRequiredExtensionResponseBodyToMcpassistantRequiredExtension(v *RequiredExtensionResponseBody) *mcpassistant.RequiredExtension {
+	res := &mcpassistant.RequiredExtension{}
+
+	return res
+}
+
 // unmarshalResourceInfoResponseBodyToMcpassistantResourceInfo builds a value
 // of type *mcpassistant.ResourceInfo from a value of type
 // *ResourceInfoResponseBody.
 func unmarshalResourceInfoResponseBodyToMcpassistantResourceInfo(v *ResourceInfoResponseBody) *mcpassistant.ResourceInfo {
 	res := &mcpassistant.ResourceInfo{
-		URI:         *v.URI,
 		Name:        *v.Name,
+		Title:       v.Title,
 		Description: v.Description,
 		MimeType:    v.MimeType,
+		Meta:        v.Meta,
+		URI:         *v.URI,
+		Size:        v.Size,
+	}
+	if v.Icons != nil {
+		res.Icons = make([]*mcpassistant.ContentIcon, len(v.Icons))
+		for i, val := range v.Icons {
+			if val == nil {
+				res.Icons[i] = nil
+				continue
+			}
+			res.Icons[i] = unmarshalContentIconToMcpassistantContentIcon(val)
+		}
+	}
+	if v.Annotations != nil {
+		res.Annotations = unmarshalContentAnnotationsToMcpassistantContentAnnotations(v.Annotations)
 	}
 
 	return res
@@ -1677,10 +1749,25 @@ func unmarshalResourcesReadCompleteResultResponseToMcpassistantResourcesReadComp
 // type *ResourceTemplateInfoResponseBody.
 func unmarshalResourceTemplateInfoResponseBodyToMcpassistantResourceTemplateInfo(v *ResourceTemplateInfoResponseBody) *mcpassistant.ResourceTemplateInfo {
 	res := &mcpassistant.ResourceTemplateInfo{
-		URITemplate: *v.URITemplate,
 		Name:        *v.Name,
+		Title:       v.Title,
 		Description: v.Description,
 		MimeType:    v.MimeType,
+		Meta:        v.Meta,
+		URITemplate: *v.URITemplate,
+	}
+	if v.Icons != nil {
+		res.Icons = make([]*mcpassistant.ContentIcon, len(v.Icons))
+		for i, val := range v.Icons {
+			if val == nil {
+				res.Icons[i] = nil
+				continue
+			}
+			res.Icons[i] = unmarshalContentIconToMcpassistantContentIcon(val)
+		}
+	}
+	if v.Annotations != nil {
+		res.Annotations = unmarshalContentAnnotationsToMcpassistantContentAnnotations(v.Annotations)
 	}
 
 	return res

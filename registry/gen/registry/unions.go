@@ -10,7 +10,6 @@ package registry
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 
 	goa "goa.design/goa/v3/pkg"
 )
@@ -87,21 +86,28 @@ func (u *ToolFieldSegment) SetElement(v *ToolCollectionElement) {
 
 // Validate ensures exactly one valid branch is selected.
 func (u ToolFieldSegment) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u ToolFieldSegment) Value() (any, error) {
 	switch u.kind {
 	case "":
-		return goa.InvalidEnumValueError("type", "", []any{
+		return nil, goa.InvalidEnumValueError("type", "", []any{
 			string(ToolFieldSegmentKindField),
 			string(ToolFieldSegmentKindElement),
 		})
 	case ToolFieldSegmentKindField:
-		return nil
+		return u.field, nil
 	case ToolFieldSegmentKindElement:
 		if u.element == nil {
-			return goa.MissingFieldError("value", "ToolFieldSegment")
+			return nil, goa.MissingFieldError("value", "ToolFieldSegment")
 		}
-		return nil
+		return u.element, nil
 	default:
-		return goa.InvalidEnumValueError("type", u.kind, []any{
+		return nil, goa.InvalidEnumValueError("type", u.kind, []any{
 			string(ToolFieldSegmentKindField),
 			string(ToolFieldSegmentKindElement),
 		})
@@ -110,19 +116,9 @@ func (u ToolFieldSegment) Validate() error {
 
 // MarshalJSON marshals the union into the canonical {type,value} JSON shape.
 func (u ToolFieldSegment) MarshalJSON() ([]byte, error) {
-	if err := u.Validate(); err != nil {
+	value, err := u.Value()
+	if err != nil {
 		return nil, err
-	}
-	var (
-		value any
-	)
-	switch u.kind {
-	case ToolFieldSegmentKindField:
-		value = u.field
-	case ToolFieldSegmentKindElement:
-		value = u.element
-	default:
-		return nil, fmt.Errorf("unexpected ToolFieldSegment kind %q", u.kind)
 	}
 	return json.Marshal(struct {
 		Type  string `json:"type"`
@@ -245,24 +241,31 @@ func (u *ToolUnionSelection) SetUntagged(v *ToolUntaggedUnionBranch) {
 
 // Validate ensures exactly one valid branch is selected.
 func (u ToolUnionSelection) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u ToolUnionSelection) Value() (any, error) {
 	switch u.kind {
 	case "":
-		return goa.InvalidEnumValueError("type", "", []any{
+		return nil, goa.InvalidEnumValueError("type", "", []any{
 			string(ToolUnionSelectionKindTagged),
 			string(ToolUnionSelectionKindUntagged),
 		})
 	case ToolUnionSelectionKindTagged:
 		if u.tagged == nil {
-			return goa.MissingFieldError("value", "ToolUnionSelection")
+			return nil, goa.MissingFieldError("value", "ToolUnionSelection")
 		}
-		return nil
+		return u.tagged, nil
 	case ToolUnionSelectionKindUntagged:
 		if u.untagged == nil {
-			return goa.MissingFieldError("value", "ToolUnionSelection")
+			return nil, goa.MissingFieldError("value", "ToolUnionSelection")
 		}
-		return nil
+		return u.untagged, nil
 	default:
-		return goa.InvalidEnumValueError("type", u.kind, []any{
+		return nil, goa.InvalidEnumValueError("type", u.kind, []any{
 			string(ToolUnionSelectionKindTagged),
 			string(ToolUnionSelectionKindUntagged),
 		})
@@ -271,19 +274,9 @@ func (u ToolUnionSelection) Validate() error {
 
 // MarshalJSON marshals the union into the canonical {type,value} JSON shape.
 func (u ToolUnionSelection) MarshalJSON() ([]byte, error) {
-	if err := u.Validate(); err != nil {
+	value, err := u.Value()
+	if err != nil {
 		return nil, err
-	}
-	var (
-		value any
-	)
-	switch u.kind {
-	case ToolUnionSelectionKindTagged:
-		value = u.tagged
-	case ToolUnionSelectionKindUntagged:
-		value = u.untagged
-	default:
-		return nil, fmt.Errorf("unexpected ToolUnionSelection kind %q", u.kind)
 	}
 	return json.Marshal(struct {
 		Type  string `json:"type"`

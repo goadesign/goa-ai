@@ -10,7 +10,6 @@ package types
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 
 	goa "goa.design/goa/v3/pkg"
 )
@@ -87,24 +86,31 @@ func (u *Conclusion) SetNone(v *NoCycles) {
 
 // Validate ensures exactly one valid branch is selected.
 func (u Conclusion) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u Conclusion) Value() (any, error) {
 	switch u.kind {
 	case "":
-		return goa.InvalidEnumValueError("type", "", []any{
+		return nil, goa.InvalidEnumValueError("type", "", []any{
 			string(ConclusionKindObserved),
 			string(ConclusionKindNone),
 		})
 	case ConclusionKindObserved:
 		if u.observed == nil {
-			return goa.MissingFieldError("value", "Conclusion")
+			return nil, goa.MissingFieldError("value", "Conclusion")
 		}
-		return nil
+		return u.observed, nil
 	case ConclusionKindNone:
 		if u.none == nil {
-			return goa.MissingFieldError("value", "Conclusion")
+			return nil, goa.MissingFieldError("value", "Conclusion")
 		}
-		return nil
+		return u.none, nil
 	default:
-		return goa.InvalidEnumValueError("type", u.kind, []any{
+		return nil, goa.InvalidEnumValueError("type", u.kind, []any{
 			string(ConclusionKindObserved),
 			string(ConclusionKindNone),
 		})
@@ -113,19 +119,9 @@ func (u Conclusion) Validate() error {
 
 // MarshalJSON marshals the union into the canonical {type,value} JSON shape.
 func (u Conclusion) MarshalJSON() ([]byte, error) {
-	if err := u.Validate(); err != nil {
+	value, err := u.Value()
+	if err != nil {
 		return nil, err
-	}
-	var (
-		value any
-	)
-	switch u.kind {
-	case ConclusionKindObserved:
-		value = u.observed
-	case ConclusionKindNone:
-		value = u.none
-	default:
-		return nil, fmt.Errorf("unexpected Conclusion kind %q", u.kind)
 	}
 	return json.Marshal(struct {
 		Type  string `json:"type"`

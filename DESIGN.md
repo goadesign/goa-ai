@@ -184,6 +184,11 @@ preview chunks, but its typed `Value` stays unavailable until the complete
 provider stream and final response pass validation.
 Providers that do not implement structured output fail explicitly with
 `model.ErrStructuredOutputUnsupported`.
+Each field's authored description remains on that field, including references
+to a shared type. Shared definitions retain their own descriptions and constraints,
+so reusing a type does not copy one caller's instructions to another. Validation
+continues to follow the evaluated Goa design.
+
 Generated schemas stay provider-neutral. Provider adapters may normalize that
 canonical schema to a provider-specific subset for constrained decoding, but
 they must fail explicitly instead of redefining the service contract.

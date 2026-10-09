@@ -10,7 +10,6 @@ package http
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 
 	goa "goa.design/goa/v3/pkg"
 )
@@ -87,21 +86,28 @@ func (u *Filter) SetAll(v *MatchAllTransport) {
 
 // Validate ensures exactly one valid branch is selected.
 func (u Filter) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u Filter) Value() (any, error) {
 	switch u.kind {
 	case "":
-		return goa.InvalidEnumValueError("type", "", []any{
+		return nil, goa.InvalidEnumValueError("type", "", []any{
 			string(FilterKindName),
 			string(FilterKindAll),
 		})
 	case FilterKindName:
-		return nil
+		return u.name, nil
 	case FilterKindAll:
 		if u.all == nil {
-			return goa.MissingFieldError("value", "Filter")
+			return nil, goa.MissingFieldError("value", "Filter")
 		}
-		return nil
+		return u.all, nil
 	default:
-		return goa.InvalidEnumValueError("type", u.kind, []any{
+		return nil, goa.InvalidEnumValueError("type", u.kind, []any{
 			string(FilterKindName),
 			string(FilterKindAll),
 		})
@@ -110,19 +116,9 @@ func (u Filter) Validate() error {
 
 // MarshalJSON marshals the union into the canonical {type,value} JSON shape.
 func (u Filter) MarshalJSON() ([]byte, error) {
-	if err := u.Validate(); err != nil {
+	value, err := u.Value()
+	if err != nil {
 		return nil, err
-	}
-	var (
-		value any
-	)
-	switch u.kind {
-	case FilterKindName:
-		value = u.name
-	case FilterKindAll:
-		value = u.all
-	default:
-		return nil, fmt.Errorf("unexpected Filter kind %q", u.kind)
 	}
 	return json.Marshal(struct {
 		Type  string `json:"type"`

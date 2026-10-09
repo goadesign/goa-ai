@@ -85,21 +85,28 @@ func (u *Draft) SetExistingTaskID(v DraftExistingTaskID) {
 
 // Validate ensures exactly one valid branch is selected.
 func (u Draft) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u Draft) Value() (any, error) {
 	switch u.kind {
 	case "":
-		return goa.InvalidEnumValueError("type", "", []any{
+		return nil, goa.InvalidEnumValueError("type", "", []any{
 			string(DraftKindNewTask),
 			string(DraftKindExistingTaskID),
 		})
 	case DraftKindNewTask:
 		if u.newTask == nil {
-			return goa.MissingFieldError("value", "Draft")
+			return nil, goa.MissingFieldError("value", "Draft")
 		}
-		return nil
+		return u.newTask, nil
 	case DraftKindExistingTaskID:
-		return nil
+		return u.existingTaskID, nil
 	default:
-		return goa.InvalidEnumValueError("type", u.kind, []any{
+		return nil, goa.InvalidEnumValueError("type", u.kind, []any{
 			string(DraftKindNewTask),
 			string(DraftKindExistingTaskID),
 		})
@@ -108,19 +115,9 @@ func (u Draft) Validate() error {
 
 // MarshalJSON marshals the union into the canonical {type,value} JSON shape.
 func (u Draft) MarshalJSON() ([]byte, error) {
-	if err := u.Validate(); err != nil {
+	value, err := u.Value()
+	if err != nil {
 		return nil, err
-	}
-	var (
-		value any
-	)
-	switch u.kind {
-	case DraftKindNewTask:
-		value = u.newTask
-	case DraftKindExistingTaskID:
-		value = u.existingTaskID
-	default:
-		return nil, fmt.Errorf("unexpected Draft kind %q", u.kind)
 	}
 	return json.Marshal(struct {
 		Type  string `json:"type"`
