@@ -64,6 +64,8 @@ type (
 		SkillCatalog *discoveryAdapter
 		// SkillLookup returns one complete entry for the requested skill URI.
 		SkillLookup *discoveryAdapter
+		// ResourceDirectory returns one page of a directory's direct children.
+		ResourceDirectory *discoveryAdapter
 		// Tools contains the Goa methods exposed as MCP tools.
 		Tools []*ToolAdapter
 		// Tasks contains configured creators with complete native job operations.

@@ -24,10 +24,8 @@ type (
 		PayloadTransportRef string
 		// PayloadConstructor validates discovery input and constructs the native payload.
 		PayloadConstructor string
-		// Input retains Goa's exact input field, alias and pointer representation.
-		Input *jsoncodec.TransportField
-		// InputName selects the protocol cursor or URI at generation time.
-		InputName string
+		// Inputs retain each authored protocol field and its native representation.
+		Inputs []*discoveryInput
 		// SingleEntry selects a required URI input and one complete returned entry.
 		SingleEntry bool
 		// Operation names the protocol method receiving native HTTP inputs.
@@ -62,23 +60,31 @@ type (
 		next                         *codegen.TransformPlan
 		nextSource, nextTarget       *codegen.GoTypePlan
 	}
+
+	// discoveryInput supplies one known protocol field to a typed native payload.
+	discoveryInput struct {
+		Field    *jsoncodec.TransportField
+		Name     string
+		Required bool
+	}
 )
 
 // planDiscovery selects the exact endpoint already retained by common dispatch.
 // Later conversion uses its selected result view rather than copying native types.
 func planDiscovery(generation *codegen.Generation, services *goaservice.Plan, prepared *preparedMCPService, data *AdapterData) error {
 	for _, catalog := range []struct {
-		method                       *expr.MethodExpr
-		collection, operation, input string
-		single                       bool
-		target                       **discoveryAdapter
+		method                *expr.MethodExpr
+		collection, operation string
+		single                bool
+		target                **discoveryAdapter
 	}{
-		{prepared.mcp.ToolCatalog, "tools", "tools/list", "cursor", false, &data.ToolCatalog},
-		{prepared.mcp.PromptCatalog, "prompts", "prompts/list", "cursor", false, &data.PromptCatalog},
-		{prepared.mcp.ResourceCatalog, "resources", "resources/list", "cursor", false, &data.ResourceCatalog},
-		{prepared.mcp.ResourceTemplateCatalog, "resourceTemplates", "resources/templates/list", "cursor", false, &data.ResourceTemplateCatalog},
-		{prepared.mcp.SkillCatalog, "skills", "skills/list", "cursor", false, &data.SkillCatalog},
-		{prepared.mcp.SkillLookup, "skill", "skills/get", "uri", true, &data.SkillLookup},
+		{prepared.mcp.ToolCatalog, "tools", "tools/list", false, &data.ToolCatalog},
+		{prepared.mcp.PromptCatalog, "prompts", "prompts/list", false, &data.PromptCatalog},
+		{prepared.mcp.ResourceCatalog, "resources", "resources/list", false, &data.ResourceCatalog},
+		{prepared.mcp.ResourceTemplateCatalog, "resourceTemplates", "resources/templates/list", false, &data.ResourceTemplateCatalog},
+		{prepared.mcp.SkillCatalog, "skills", "skills/list", false, &data.SkillCatalog},
+		{prepared.mcp.SkillLookup, "skill", "skills/get", true, &data.SkillLookup},
+		{prepared.mcp.ResourceDirectory, "resources", "resources/directory/read", false, &data.ResourceDirectory},
 	} {
 		if catalog.method == nil {
 			continue
@@ -103,7 +109,7 @@ func planDiscovery(generation *codegen.Generation, services *goaservice.Plan, pr
 		if err := checkContentGoType(catalog.method.Result); err != nil {
 			return err
 		}
-		adapter := &discoveryAdapter{method: catalog.method, collection: catalog.collection, Operation: catalog.operation, InputName: catalog.input, SingleEntry: catalog.single}
+		adapter := &discoveryAdapter{method: catalog.method, collection: catalog.collection, Operation: catalog.operation, SingleEntry: catalog.single}
 		for _, endpoint := range data.EndpointMethods {
 			if endpoint.method == catalog.method {
 				adapter.Endpoint = endpoint
@@ -167,7 +173,7 @@ func planDiscovery(generation *codegen.Generation, services *goaservice.Plan, pr
 				return err
 			}
 			for i, helper := range adapter.entries.Helpers() {
-				declaration := codegen.NewExactName(codegen.NameFunction, fmt.Sprintf("%sCatalogHelper%d", catalog.collection, i))
+				declaration := codegen.NewExactName(codegen.NameFunction, fmt.Sprintf("%sDiscoveryHelper%d", codegen.Goify(catalog.operation, true), i))
 				if err := generation.Package(data.mcpImportPath).DeclareName(declaration); err != nil {
 					return err
 				}
@@ -216,7 +222,7 @@ func planDiscovery(generation *codegen.Generation, services *goaservice.Plan, pr
 // validates domain input before native HTTP fields and endpoint authorization.
 func bindDiscovery(services *goaservice.ServicesData, planned *plannedMCPService) error {
 	data := planned.adapterData
-	for _, catalog := range []*discoveryAdapter{data.ToolCatalog, data.PromptCatalog, data.ResourceCatalog, data.ResourceTemplateCatalog, data.SkillCatalog, data.SkillLookup} {
+	for _, catalog := range []*discoveryAdapter{data.ToolCatalog, data.PromptCatalog, data.ResourceCatalog, data.ResourceTemplateCatalog, data.SkillCatalog, data.SkillLookup, data.ResourceDirectory} {
 		if catalog == nil {
 			continue
 		}
@@ -230,10 +236,17 @@ func bindDiscovery(services *goaservice.ServicesData, planned *plannedMCPService
 		if catalog.entryCodec != nil {
 			catalog.EntryEncoder = data.CodecPackage + "." + catalog.entryCodec.EncodeDeclaration().Name()
 		}
-		input := catalog.method.Payload.Find(catalog.InputName)
-		catalog.Input, err = values.payload.TransportField(input, catalog.InputName, data.mcpImportPath, data.mcpPackage.ImportName)
-		if err != nil {
-			return err
+		protocolMethod := planned.prepared.mcpService.Method(catalog.Operation)
+		for _, name := range []string{"uri", "cursor"} {
+			if protocolMethod.Payload.Find(name) == nil {
+				continue
+			}
+			input := catalog.method.Payload.Find(name)
+			field, err := values.payload.TransportField(input, name, data.mcpImportPath, data.mcpPackage.ImportName)
+			if err != nil {
+				return err
+			}
+			catalog.Inputs = append(catalog.Inputs, &discoveryInput{Field: field, Name: codegen.Goify(name, true), Required: protocolMethod.Payload.IsRequired(name)})
 		}
 		scope := services.ServiceAttributor(planned.prepared.userService.Name, data.mcpImportPath)
 		if catalog.Endpoint.ProjectedResult || catalog.Endpoint.ExecutionView {
@@ -266,6 +279,7 @@ func bindDiscovery(services *goaservice.ServicesData, planned *plannedMCPService
 					Field:       scope.Field(catalog.metaAttribute, "_meta", true),
 					Encode:      data.CodecPackage + "." + catalog.metaCodec.EncodeDeclaration().Name(),
 					Optional:    !expr.AsArray(names.Type).ElemType.IsRequired("_meta") && catalog.metaLayout.IsPointer(),
+					Dereference: catalog.metaLayout.IsPointer() && !catalog.metaLayout.ReferenceIsPointer(),
 					TargetField: protocol.Field(expr.AsArray(planned.prepared.mcpService.Method(catalog.Operation).Result.Find(catalog.collection).Type).ElemType.Find("_meta"), "_meta", true),
 				}
 			}

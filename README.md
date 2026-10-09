@@ -124,8 +124,9 @@ and connect a model. This README describes `main`; consult the
 [upgrade guide](docs/runtime.md#preview-upgrade-guide) when updating an existing application.
 
 [MCP Skill discovery](docs/mcp_skills.md) binds complete catalog pages and direct
-URI lookup to authenticated Goa methods. Generated adapters check entries and
-manifests; verified host loading remains part of the unfinished upgrade.
+URI lookup to authenticated Goa methods. `ResourceDirectory()` adds direct-child
+directory pages through the same endpoints. Generated adapters check entries,
+manifests and directory relationships; verified host loading remains unfinished.
 
 ## How it works
 

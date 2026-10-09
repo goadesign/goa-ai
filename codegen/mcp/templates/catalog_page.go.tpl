@@ -1,13 +1,15 @@
 {{- define "discovery-call" }}
 body := &{{ .PayloadTransportRef }}{}
-{{- if .SingleEntry }}
-input := {{ .Input.ValueTypeRef }}(p.URI)
-body.{{ .Input.Selector }} = {{ if .Input.Pointer }}&{{ end }}input
+{{- range .Inputs }}
+{{- if .Required }}
+input{{ .Name }} := {{ .Field.ValueTypeRef }}(p.{{ .Name }})
+body.{{ .Field.Selector }} = {{ if .Field.Pointer }}&{{ end }}input{{ .Name }}
 {{- else }}
-if p.Cursor != nil {
-    input := {{ .Input.ValueTypeRef }}(*p.Cursor)
-    body.{{ .Input.Selector }} = {{ if .Input.Pointer }}&{{ end }}input
+if p.{{ .Name }} != nil {
+    input{{ .Name }} := {{ .Field.ValueTypeRef }}(*p.{{ .Name }})
+    body.{{ .Field.Selector }} = {{ if .Field.Pointer }}&{{ end }}input{{ .Name }}
 }
+{{- end }}
 {{- end }}
 payload, err := {{ .PayloadConstructor }}(body)
 if err != nil {
@@ -57,7 +59,7 @@ func {{ .Declaration.Name }}(v {{ .ParamTypeRef }}) {{ .ResultTypeRef }} {
 {{- with .Metadata }}
 metadataValue := {{ $catalog.Endpoint.ResultValue }}.{{ $catalog.EntriesField }}[index].{{ .Field }}
 {{ if .Optional }}if metadataValue != nil { {{ end }}
-    encodedMetadata, err := {{ .Encode }}(metadataValue)
+    encodedMetadata, err := {{ .Encode }}({{ if .Dereference }}*{{ end }}metadataValue)
     if err != nil {
         span.RecordError(err)
         span.SetStatus(codes.Error, err.Error())

@@ -37,6 +37,25 @@ func (b *mcpExprBuilder) buildSkillsMethods() []*expr.MethodExpr {
 	}
 }
 
+// buildResourceDirectoryMethod returns the same resource descriptors as ordinary
+// listing, with a directory URI and cursor. It adds no cache or file-read state.
+func (b *mcpExprBuilder) buildResourceDirectoryMethod() *expr.MethodExpr {
+	return &expr.MethodExpr{
+		Name: "resources/directory/read", Description: "List the direct children of one directory resource without reading its files",
+		Payload: b.userTypeAttr("ResourcesDirectoryReadPayload", func() *expr.AttributeExpr {
+			return &expr.AttributeExpr{
+				Type: &expr.Object{
+					{Name: "uri", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "Exact directory resource URI without a trailing slash", Validation: &expr.ValidationExpr{Format: expr.FormatURI}}},
+					{Name: "cursor", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "Opaque cursor for the next direct-child page"}},
+				},
+				Validation: &expr.ValidationExpr{Required: []string{"uri"}},
+			}
+		}),
+		Result: b.userTypeAttr("ResourceDirectoryResult", b.buildResourcesListResultType),
+		Errors: buildMCPMethodErrors(mcpInvalidParamsError),
+	}
+}
+
 // buildSkillsListResultType preserves whole entries within each catalog page.
 func (b *mcpExprBuilder) buildSkillsListResultType() *expr.AttributeExpr {
 	return &expr.AttributeExpr{

@@ -17,8 +17,10 @@ func TestMCPSkillDiscoveryBindings(t *testing.T) {
 	server := mcpexpr.Root.MCPServers["instructions"]
 	require.NotNil(t, server.SkillCatalog)
 	require.NotNil(t, server.SkillLookup)
+	require.NotNil(t, server.ResourceDirectory)
 	assert.Equal(t, "list", server.SkillCatalog.Name)
 	assert.Equal(t, "lookup", server.SkillLookup.Name)
+	assert.Equal(t, "directory", server.ResourceDirectory.Name)
 }
 
 func TestMCPSkillDiscoveryRejectsInvalidDeclarations(t *testing.T) {
@@ -28,6 +30,11 @@ func TestMCPSkillDiscoveryRejectsInvalidDeclarations(t *testing.T) {
 		{"no reader", "requires ResourceReader"},
 		{"duplicate catalog", "only one skill catalog"},
 		{"duplicate lookup", "only one skill lookup"},
+		{"duplicate directory", "only one resource directory"},
+		{"directory required cursor", "required uri and optional cursor"},
+		{"directory optional uri", "required uri and optional cursor"},
+		{"directory extra input", "required uri and optional cursor"},
+		{"directory nullable children", "ArrayOfRequired"},
 		{"required cursor", "optional cursor"},
 		{"extra input", "only a required uri"},
 		{"optional skill", "required skill object"},
@@ -113,6 +120,11 @@ func skillDiscoveryDesign(mode string) {
 		OneOf("content", "Requested file", func() { Attribute("text", text, "Text contents") })
 		Required("content")
 	})
+	descriptor := Type("DirectoryChild", func() {
+		Field(1, "uri", String, "Full child resource URI", func() { Format(FormatURI) })
+		Field(2, "name", String, "Child resource name")
+		Required("uri", "name")
+	})
 	Service("instructions", func() {
 		MCP("instructions", "1")
 		JSONRPC(func() { POST("/mcp") })
@@ -162,5 +174,32 @@ func skillDiscoveryDesign(mode string) {
 				ResourceReader()
 			})
 		}
+		Method("directory", func() {
+			Payload(func() {
+				Field(1, "uri", String, "Directory URI")
+				Field(2, "cursor", String, "Next child page")
+				if mode != "directory optional uri" {
+					Required("uri")
+				}
+				if mode == "directory required cursor" {
+					Required("cursor")
+				}
+				if mode == "directory extra input" {
+					Field(3, "recursive", Boolean, "Unsupported recursive listing")
+				}
+			})
+			Result(func() {
+				if mode == "directory nullable children" {
+					Field(1, "resources", ArrayOf(descriptor), "Invalid nullable descriptors")
+				} else {
+					Field(1, "resources", ArrayOfRequired(descriptor), "Direct child descriptors")
+				}
+				Field(2, "nextCursor", String, "Next child page")
+			})
+			ResourceDirectory()
+			if mode == "duplicate directory" {
+				ResourceDirectory()
+			}
+		})
 	})
 }

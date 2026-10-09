@@ -208,7 +208,7 @@ func {{ .Name }}(result {{ .SourceRef }}) ([]*ContentItem, json.RawMessage, json
         {{- if .Optional }}
         if {{ $selected.Value }}.{{ .Field }} != nil {
         {{- end }}
-            encodedMetadata, err := {{ .Encode }}({{ $selected.Value }}.{{ .Field }})
+            encodedMetadata, err := {{ .Encode }}({{ if .Dereference }}*{{ end }}{{ $selected.Value }}.{{ .Field }})
             if err != nil { return nil, nil, nil, err }
             metadata = toolResultMeta(encodedMetadata)
         {{- if .Optional }}

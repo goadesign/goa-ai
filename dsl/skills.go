@@ -41,3 +41,21 @@ func SkillLookup() {
 	}
 	server.SkillLookup = method
 }
+
+// ResourceDirectory selects the current unary method to list a directory's
+// direct children. Apart from native HTTP inputs, its payload contains required
+// uri and optional cursor strings. Its result contains optional resources using
+// the ordinary resource descriptor contract and optional nextCursor. The method
+// must serve every directory in its Skill namespaces. SkillCatalog, SkillLookup
+// and ResourceReader must also be declared. Listing never reads or approves files.
+func ResourceDirectory() {
+	method, server := mcpMethod()
+	if method == nil {
+		return
+	}
+	if server.ResourceDirectory != nil {
+		eval.ReportError("an MCP service can declare only one resource directory reader")
+		return
+	}
+	server.ResourceDirectory = method
+}

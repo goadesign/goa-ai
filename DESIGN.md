@@ -2140,7 +2140,15 @@ require the existing resource reader. One private Goa expression defines the
 protocol entry for generation and consuming runtime codecs. Generated adapters
 validate the authored result, encode the complete entry with its native field
 layout, and use the runtime's shared cross-field verifier before publishing.
-No discovery operation reads files or grants approval. Host loading must retain
+`ResourceDirectory` selects another ordinary unary method for directory URI and
+cursor inputs. The shared discovery planner specializes each operation's inputs
+and preserves its resource metadata. A runtime validator checks direct-child
+membership without resolving URI authorities. Only declared directory methods
+advertise `directoryRead`; live pages never expand a held Skill manifest.
+Metadata callers distinguish pointer fields from standalone value references
+using Goa's retained layouts, including anonymous objects in catalogs, prompts
+and tool results. No discovery operation reads files or grants approval.
+Host loading must retain
 the server identity and manifest, verify each requested file, compare all YAML
 fields and obtain required approval before use. That integration remains open.
 

@@ -46,6 +46,7 @@ type (
 		conversion *contentConversion
 		structured *jsoncodec.Value
 		metaCodec  *jsoncodec.Value
+		metaLayout *codegen.GoTypePlan
 	}
 )
 
@@ -179,7 +180,7 @@ func planToolResults(generation *codegen.Generation, services *goaservice.Plan, 
 				contentConversionNeeds(data, selected.conversion)
 			}
 			if attribute := expr.AsObject(selected.result.Type).Attribute(content.tool.MetadataField); attribute != nil {
-				selected.metaCodec, _, err = planContentMetadata(codecs, attribute, selected.layout, fmt.Sprintf("Tool%dView%dMetadata", index, viewIndex))
+				selected.metaCodec, selected.metaLayout, err = planContentMetadata(codecs, attribute, selected.layout, fmt.Sprintf("Tool%dView%dMetadata", index, viewIndex))
 				if err != nil {
 					return err
 				}
@@ -272,9 +273,10 @@ func bindToolResults(services *goaservice.ServicesData, planned *plannedMCPServi
 			if selected.metaCodec != nil {
 				attribute := expr.AsObject(selected.result.Type).Attribute(content.tool.MetadataField)
 				selected.Metadata = &contentMetadataData{
-					Field:    source.Field(attribute, content.tool.MetadataField, true),
-					Encode:   data.CodecPackage + "." + selected.metaCodec.EncodeDeclaration().Name(),
-					Optional: !selected.result.IsRequired(content.tool.MetadataField),
+					Field:       source.Field(attribute, content.tool.MetadataField, true),
+					Encode:      data.CodecPackage + "." + selected.metaCodec.EncodeDeclaration().Name(),
+					Optional:    !selected.result.IsRequired(content.tool.MetadataField),
+					Dereference: selected.metaLayout.IsPointer() && !selected.metaLayout.ReferenceIsPointer(),
 				}
 			}
 		}

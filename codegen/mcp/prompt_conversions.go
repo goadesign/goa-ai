@@ -292,6 +292,7 @@ func bindContentConversion(data *AdapterData, conversion *contentConversion, sou
 				Field:       sourceScope.Field(object.Attribute("_meta"), "_meta", true),
 				Encode:      data.CodecPackage + "." + branch.metaCodec.EncodeDeclaration().Name(),
 				Optional:    !branch.attribute.IsRequired("_meta") && branch.metaLayout.IsPointer(),
+				Dereference: branch.metaLayout.IsPointer() && !branch.metaLayout.ReferenceIsPointer(),
 				TargetField: targetScope.Field(expr.AsObject(conversion.target.Type).Attribute("_meta"), "_meta", true),
 			}
 		}

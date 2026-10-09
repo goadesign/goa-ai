@@ -14,7 +14,7 @@ import (
 // validateSkills requires both discovery owners and the existing file reader.
 // Each authored result is checked before generation can advertise the extension.
 func (m *MCPExpr) validateSkills(verr *eval.ValidationErrors) {
-	if m.SkillCatalog == nil && m.SkillLookup == nil {
+	if m.SkillCatalog == nil && m.SkillLookup == nil && m.ResourceDirectory == nil {
 		return
 	}
 	if m.SkillCatalog == nil || m.SkillLookup == nil {
@@ -35,6 +35,32 @@ func (m *MCPExpr) validateSkills(verr *eval.ValidationErrors) {
 	if method := m.SkillLookup; method != nil {
 		validateSkillLookup(verr, method)
 	}
+	if method := m.ResourceDirectory; method != nil {
+		validateResourceDirectory(verr, method)
+	}
+}
+
+// validateResourceDirectory checks a completed direct-child page with a URI
+// and optional cursor. Native authentication and route values keep their owners.
+func validateResourceDirectory(verr *eval.ValidationErrors, method *expr.MethodExpr) {
+	if method.IsStreaming() {
+		verr.Add(method, "resource directory method must be unary")
+	}
+	for _, key := range []string{mcpinput.ExchangeMetaKey, mcpinput.TaskExchangeMetaKey} {
+		if _, declared := method.Meta[key]; declared {
+			verr.Add(method, "resource directory method must return a completed page")
+		}
+	}
+	arguments, err := mcpinput.Arguments(method)
+	if err != nil {
+		verr.Add(method, "%s", err.Error())
+		return
+	}
+	payload := expr.AsObject(arguments.Type)
+	if payload == nil || len(*payload) != 2 || payload.Attribute("uri") == nil || !isPrimitive(payload.Attribute("uri").Type, expr.String) || !arguments.IsRequired("uri") || payload.Attribute("cursor") == nil || !isPrimitive(payload.Attribute("cursor").Type, expr.String) || arguments.IsRequired("cursor") {
+		verr.Add(method, "resource directory payload must contain required uri and optional cursor strings apart from native HTTP inputs")
+	}
+	validateCatalogResult(verr, method, resourceCatalogCollection)
 }
 
 // validateSkillLookup checks the direct URI request and complete returned entry.

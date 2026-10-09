@@ -16,9 +16,26 @@ and verification evidence and do not supersede unfinished gates.
 | Dynamic catalogs | Implemented through authenticated native methods for tools, prompts, resources and URI templates, with one shared subscription source. Final-head integration and review remain required. |
 | OAuth | Built-in authorization paths and the agreed metadata/profile assessment are implemented. Selected independent checks and explicit legacy-fixture mismatches are recorded. Final-head verification, review and caller acceptance remain required. |
 | MCP Apps | Implemented through authored app resources and tools, generated peers, and the official browser SDK. Final-head browser, build and integration CI passed. Final review remains required. |
-| MCP Skills | In progress. Native `SkillCatalog`/`SkillLookup` discovery, selected views, mapped HTTP inputs, authentication and existing resource reads are verified. One shared generated entry codec and cross-field verifier reject invalid frontmatter, duplicate or incomplete manifests and directory escapes before publication. Unknown skills/files return `-32602`; invalid server entries return `-32603`. Host file-byte/YAML verification, approval, origin identity, context retention and directory support remain open. Model-facing raw union mappings still require acceptance. |
+| MCP Skills | In progress. Native `SkillCatalog`/`SkillLookup` discovery and optional `ResourceDirectory` pages preserve mapped HTTP inputs, authentication and ordinary resource reads. Selected discovery views are verified. One shared generated entry codec and cross-field verifier reject invalid frontmatter, duplicate or incomplete manifests and directory escapes before publication. Directory pages reject recursive or unrelated children and advertise support only when declared. Unknown skills/files/directories return `-32602`; invalid server entries/pages return `-32603`. Host file-byte/YAML verification, approval, origin identity and context retention remain open. Model-facing raw union mappings still require acceptance. |
 | Dependencies, documentation and website | Root and all four maintained nested modules pin merged Goa `bde76c5dfcbf`. CI identified the old quickstart pin after framework tests passed; nested modules are now updated and tidied. Finish external caller migration, authoritative docs, translations and the MCP home-page section after capability acceptance. |
 | Generated stdio servers | Explicitly deferred. Existing stdio consumers remain supported. |
+
+Directory discovery uses the same discovery planner as catalogs and direct Skill
+lookup. Its generated endpoint retains native authentication and mapped URL fields;
+listing reads no files and cannot expand a host's retained manifest. Ordinary
+resource catalogs and directory pages coexist, including typed anonymous metadata.
+The shared JSON codec now uses Goa's retained selected-view type reference as well
+as its conversion layout. Inline prompt and completed Task metadata therefore keep
+the generated view's pointer fields. These generated HTTP checks and focused codec
+checks passed in 29.78 seconds.
+
+CI at `dbdd81a8` passed browser Apps and HTTP integration, but the generated MCP
+test package exhausted its cumulative ten-minute timeout. The test named in the
+timeout had run for only two seconds; this does not establish a hung test. The
+generated MCP package now runs in four CI processes without raising its timeout
+or removing checks. The current inventory assigns all 104 tests exactly once,
+26 per process. `make test` still runs every root, generated MCP and quickstart
+check and combines coverage. Final-head CI must verify the new scheduling.
 
 Early MCP validation now resolves inherited arguments and results through one
 shared reader. A detached Goa attribute graph retains concrete type identity and

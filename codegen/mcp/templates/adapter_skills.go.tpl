@@ -59,3 +59,31 @@ func (a *MCPAdapter) SkillsGet(ctx context.Context, p {{ index .PayloadRefs "ski
 {{- with .SkillCatalog }}{{ template "catalog-helpers" . }}{{ end }}
 {{- with .SkillLookup }}{{ template "catalog-helpers" . }}{{ end }}
 {{- end }}
+{{- with .ResourceDirectory }}
+
+// ResourcesDirectoryRead invokes the configured directory endpoint and returns
+// one page of direct children. Its live result never changes held Skill entries.
+func (a *MCPAdapter) ResourcesDirectoryRead(ctx context.Context, p {{ index $.PayloadRefs "resources/directory/read" }}) (*ResourceDirectoryResult, error) {
+    ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.resources/directory/read")
+    defer span.End()
+    if err := mcpruntime.ValidateResourceDirectory(p.URI, nil); err != nil {
+        span.RecordError(err)
+        span.SetStatus(codes.Error, err.Error())
+        return nil, goa.PermanentError("invalid_params", "%s", err.Error())
+    }
+    {{ template "discovery-call" . }}
+    {{ .EntriesConversion }}
+    children := make([]string, len(resources))
+    for index, entry := range resources {
+        {{ template "catalog-entry-checks" . }}
+        children[index] = entry.URI
+    }
+    if err := mcpruntime.ValidateResourceDirectory(p.URI, children); err != nil {
+        span.RecordError(err)
+        span.SetStatus(codes.Error, err.Error())
+        return nil, goa.PermanentError("internal_error", "%s", err.Error())
+    }
+    return &ResourceDirectoryResult{ResultType: "complete", Meta: resultMeta(), Resources: resources, NextCursor: nextCursor}, nil
+}
+{{ template "catalog-helpers" . }}
+{{- end }}

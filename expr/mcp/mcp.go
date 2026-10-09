@@ -61,6 +61,8 @@ type (
 		SkillCatalog *expr.MethodExpr
 		// SkillLookup owns direct skill lookup independently of catalog visibility.
 		SkillLookup *expr.MethodExpr
+		// ResourceDirectory owns direct children of a directory resource.
+		ResourceDirectory *expr.MethodExpr
 		// SubscriptionSource selects the owned resource and job change stream.
 		SubscriptionSource *SubscriptionSourceExpr
 		// Service is the Goa service expression this MCP server is

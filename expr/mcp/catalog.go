@@ -60,6 +60,12 @@ func validateCatalogMethod(verr *eval.ValidationErrors, method *expr.MethodExpr,
 	if payload == nil || len(*payload) != 1 || payload.Attribute("cursor") == nil || !isPrimitive(payload.Attribute("cursor").Type, expr.String) || arguments.IsRequired("cursor") {
 		verr.Add(method, "MCP catalog payload must contain only an optional cursor string apart from native HTTP inputs")
 	}
+	validateCatalogResult(verr, method, collection)
+}
+
+// validateCatalogResult checks the shared page shape independently of its input.
+// Catalogs and directory reads return the same descriptors and optional cursor.
+func validateCatalogResult(verr *eval.ValidationErrors, method *expr.MethodExpr, collection string) {
 	output := mcpinput.Resolved(method.Result)
 	var result *expr.Object
 	if hasValue(output) {

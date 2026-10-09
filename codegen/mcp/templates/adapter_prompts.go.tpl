@@ -224,7 +224,7 @@ func {{ .Name }}(value {{ .SourceRef }}) ({{ .TargetRef }}, error) {
         {{ .Transform }}
         {{ with .Metadata }}
         {{ if .Optional }}if selected.{{ .Field }} != nil { {{ end }}
-            metadata, err := {{ .Encode }}(selected.{{ .Field }})
+            metadata, err := {{ .Encode }}({{ if .Dereference }}*{{ end }}selected.{{ .Field }})
             if err != nil { return nil, err }
             out.{{ .TargetField }} = metadata
         {{ if .Optional }} } {{ end }}

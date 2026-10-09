@@ -91,14 +91,12 @@ func decodeSkillEntry(ctx context.Context, data json.RawMessage) (*genskills.Ski
 // Decoded path segments cannot escape the directory or become local separators
 // on another operating system. The original URI remains the file's identity.
 func skillFileAddress(uri string) (*url.URL, error) {
-	address, err := url.Parse(uri)
-	if err != nil || address.Scheme == "" || address.Opaque != "" || !strings.HasPrefix(address.Path, "/") || strings.HasSuffix(address.Path, "/") {
-		return nil, errors.New("mcp: skill file requires an absolute hierarchical resource URI")
+	address, err := resourceAddress(uri)
+	if err != nil {
+		return nil, err
 	}
-	for _, segment := range strings.Split(address.Path, "/") {
-		if segment == "." || segment == ".." || strings.ContainsAny(segment, "\\\x00") {
-			return nil, errors.New("mcp: skill resource path contains an unsafe segment")
-		}
+	if !strings.HasPrefix(address.Path, "/") {
+		return nil, errors.New("mcp: skill file requires an absolute hierarchical resource URI")
 	}
 	return address, nil
 }

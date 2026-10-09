@@ -252,9 +252,12 @@ func (v *Value) link() (*valueData, []*goacodegen.TransformFunctionData, error) 
 		UseDefault: true,
 		Scope:      serviceWriter,
 	}
+	serviceReference := serviceWriter.Ref(v.service, "")
 	// Service-value codecs keep the exact Go fields supplied by Goa. Codecs
 	// for declarations created in this package use their original type writer.
 	if v.originalLayout == nil {
+		serviceLayout := v.serviceLayout.Link(v.plan.pkg.ImportPath(), v.plan.pkg.ImportName)
+		serviceReference = serviceLayout.Ref()
 		policy := v.serviceLayout.Policy()
 		serviceContext.Pointer = policy.Pointer
 		serviceContext.UseDefault = policy.UseDefault
@@ -262,7 +265,7 @@ func (v *Value) link() (*valueData, []*goacodegen.TransformFunctionData, error) 
 		serviceContext.IgnoreRequiredCollections = policy.IgnoreRequiredCollections
 		serviceContext.UnionPointer = policy.UnionPointer
 		serviceContext.ArrayElementPointer = policy.ArrayElementPointer
-		serviceContext, err = serviceContext.WithGoTypeLayout(v.serviceLayout.Link(v.plan.pkg.ImportPath(), v.plan.pkg.ImportName))
+		serviceContext, err = serviceContext.WithGoTypeLayout(serviceLayout)
 		if err != nil {
 			return nil, nil, fmt.Errorf("link JSON value %q service layout: %w", v.key, err)
 		}
@@ -270,7 +273,7 @@ func (v *Value) link() (*valueData, []*goacodegen.TransformFunctionData, error) 
 	top := v.types[0]
 	data := &valueData{
 		Name:         v.preferredName,
-		ServiceRef:   serviceWriter.Ref(v.service, ""),
+		ServiceRef:   serviceReference,
 		TransportRef: transportLayout.Ref(),
 		Validator:    top.validatorDeclaration.Name(),
 	}

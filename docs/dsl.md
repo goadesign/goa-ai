@@ -2310,8 +2310,13 @@ its authenticated connection and the permissions it grants to views.
 `SkillCatalog()` and `SkillLookup()` bind ordinary unary Goa methods to complete
 Skill discovery pages and direct URI lookup. Both require `ResourceReader()`
 for files. Native authentication, mapped URL fields and selected result views
-remain part of the same generated endpoint path. DSL evaluation checks the
-entry shape; generated adapters also verify frontmatter, directory membership
+remain part of the same generated endpoint path. DSL evaluation checks method
+shapes. `ResourceDirectory()` optionally binds a method accepting required
+`uri` and optional `cursor`, with a resource descriptor page and optional
+`nextCursor`. Its direct-child result uses the ordinary resource metadata contract.
+Generated discovery advertises directory support only for this declaration.
+DSL evaluation checks the entry shape; generated adapters also verify frontmatter,
+directory membership
 and manifest completeness before publishing entries. Discovery never reads or
 activates a skill. See [serve Skills over MCP](mcp_skills.md) for declarations,
 errors and the remaining host-loading completion gate.

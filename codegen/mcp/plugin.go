@@ -606,7 +606,7 @@ func planMCPCodecs(
 			}
 		}
 	}
-	for _, catalog := range []*discoveryAdapter{data.ToolCatalog, data.PromptCatalog, data.ResourceCatalog, data.ResourceTemplateCatalog, data.SkillCatalog, data.SkillLookup} {
+	for _, catalog := range []*discoveryAdapter{data.ToolCatalog, data.PromptCatalog, data.ResourceCatalog, data.ResourceTemplateCatalog, data.SkillCatalog, data.SkillLookup, data.ResourceDirectory} {
 		if catalog == nil {
 			continue
 		}
@@ -845,7 +845,7 @@ func mcpCodecDirections(data *AdapterData, methodName string) (jsoncodec.Directi
 	for _, completion := range data.Completions {
 		needsConstruction = needsConstruction || completion.method.Name == methodName
 	}
-	for _, catalog := range []*discoveryAdapter{data.ToolCatalog, data.PromptCatalog, data.ResourceCatalog, data.ResourceTemplateCatalog, data.SkillCatalog, data.SkillLookup} {
+	for _, catalog := range []*discoveryAdapter{data.ToolCatalog, data.PromptCatalog, data.ResourceCatalog, data.ResourceTemplateCatalog, data.SkillCatalog, data.SkillLookup, data.ResourceDirectory} {
 		needsConstruction = needsConstruction || (catalog != nil && catalog.method.Name == methodName)
 	}
 	if source := data.SubscriptionSource; source != nil && source.method.Name == methodName {
@@ -906,6 +906,7 @@ func mappedMCPMethods(prepared *preparedMCPService) []*expr.MethodExpr {
 	add(prepared.mcp.ResourceTemplateCatalog)
 	add(prepared.mcp.SkillCatalog)
 	add(prepared.mcp.SkillLookup)
+	add(prepared.mcp.ResourceDirectory)
 	if source := prepared.mcp.SubscriptionSource; source != nil {
 		add(source.Method)
 	}

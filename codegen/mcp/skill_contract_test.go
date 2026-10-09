@@ -67,6 +67,13 @@ var entry=Type("Entry",func(){
 })
 var text=Type("Text",func(){Field(1,"uri",String,"Full resource URI",func(){Format(FormatURI)});Field(2,"text",String,"Requested contents");Required("uri","text")})
 var item=Type("Item",func(){OneOf("content","Requested file",func(){Attribute("text",text,"Text content")});Required("content")})
+var descriptor=Type("DirectoryChild",func(){
+ Field(1,"uri",String,"Full child URI",func(){Format(FormatURI);Meta("struct:field:name","Address")})
+ Field(2,"name",String,"Child resource name",func(){Meta("struct:field:name","Label")})
+ Field(3,"mimeType",String,"Child media type")
+ Field(4,"_meta",func(){Description("Authored descriptor metadata");Field(1,"revision",Int64,"Server revision")})
+ Required("uri","name")
+})
 func nativeInput(field string){Payload(func(){
  Token("credential",String,"Native bearer credential")
  Field(1,"organizationId",String,"Organization from the URL",func(){Meta("struct:field:name","Organization")})
@@ -92,6 +99,23 @@ var _=Service("instructions",func(){
   Security(access,func(){Scope("skills:read")});nativeInput("uri")
   Error("invalid_params",func(){Description("The skill file URI is unknown")})
   Result(func(){Field(1,"contents",ArrayOfRequired(item),"Requested contents")});ResourceReader()
+ })
+ Method("directory",func(){
+  Security(access,func(){Scope("skills:read")})
+  Payload(func(){
+   Token("credential",String,"Native bearer credential")
+   Field(1,"organizationId",String,"Organization from the URL",func(){Meta("struct:field:name","Organization")})
+   Field(2,"uri",String,"Directory URI",func(){Meta("struct:field:name","Address")})
+   Field(3,"cursor",String,"Next directory page",func(){Meta("struct:field:name","Page")})
+   Required("organizationId","credential","uri")
+  })
+  Error("invalid_params",func(){Description("The resource is not a known directory")})
+  Result(func(){Field(1,"resources",ArrayOfRequired(descriptor),"Direct children",func(){Meta("struct:field:name","Children")});Field(2,"nextCursor",String,"Next page")})
+  ResourceDirectory()
+ })
+ Method("resources_catalog",func(){
+  Security(access,func(){Scope("skills:read")});nativeInput("cursor")
+  Result(func(){Field(1,"resources",ArrayOfRequired(descriptor),"Visible resources")});ResourceCatalog()
  })
 })
 `
@@ -120,7 +144,7 @@ import (
 )
 type authorized struct{}
 type composed struct{}
-type skillService struct{lists,lookups,reads,auth int}
+type skillService struct{lists,lookups,reads,directories,auth int}
 func(s *skillService)JWTAuth(ctx context.Context,token string,scheme *security.JWTScheme)(context.Context,error){
  s.auth++
  if token!="allowed"||len(scheme.RequiredScopes)!=1||scheme.RequiredScopes[0]!="skills:read"{return ctx,errors.New("credential rejected")}
@@ -156,6 +180,18 @@ func(s *skillService)Read(ctx context.Context,p *genservice.ReadPayload)(*genser
  if p.Selection=="skill://unknown/review/missing.md"{return nil,goa.PermanentError("invalid_params","unknown file")}
  return &genservice.ReadResult{Contents:[]*genservice.Item{{Content:genservice.NewContentText(&genservice.Text{URI:p.Selection,Text:"requested"})}}},nil
 }
+func(s *skillService)Directory(ctx context.Context,p *genservice.DirectoryPayload)(*genservice.DirectoryResult,error){
+ if err:=nativeContext(ctx,p.Organization);err!=nil{return nil,err};s.directories++
+ if p.Address=="skill://unknown"{return nil,goa.PermanentError("invalid_params","unknown directory")}
+ if p.Page!=nil{return &genservice.DirectoryResult{},nil}
+ address:=p.Address+"/SKILL.md";mime:="text/markdown"
+ if p.Address=="skill://recursive"{address=p.Address+"/nested/SKILL.md"}
+ next:="next";return &genservice.DirectoryResult{Children:[]*genservice.DirectoryChild{{Address:address,Label:"SKILL.md",MimeType:&mime,Meta:&struct{Revision *int64}{Revision:new(int64(42))}}},NextCursor:&next},nil
+}
+func(s *skillService)ResourcesCatalog(ctx context.Context,p *genservice.ResourcesCatalogPayload)(*genservice.ResourcesCatalogResult,error){
+ if err:=nativeContext(ctx,p.Organization);err!=nil{return nil,err}
+ return &genservice.ResourcesCatalogResult{Resources:[]*genservice.DirectoryChild{{Address:"skill://review/SKILL.md",Label:"SKILL.md",Meta:&struct{Revision *int64}{Revision:new(int64(42))}}}},nil
+}
 type authenticatedClient struct{client *http.Client;credential string;response []byte}
 func(c *authenticatedClient)Do(r *http.Request)(*http.Response,error){
  r.Header.Set("Authorization","Bearer "+c.credential)
@@ -177,7 +213,7 @@ func TestSkillHTTPComposition(t *testing.T){
  client:=genclient.NewClient(address.Scheme,address.Host,transport,goahttp.RequestEncoder,goahttp.ResponseDecoder,false)
  discovery,err:=client.ServerDiscover()(t.Context(),&genmcp.ServerDiscoverPayload{HTTPPath0:"blue"});require.NoError(t,err)
  capabilities:=discovery.(*genmcp.DiscoverResult).Capabilities;require.NotNil(t,capabilities.Resources)
- assert.JSONEq(t,"{\"io.modelcontextprotocol/skills\":{}}",string(capabilities.Extensions))
+ assert.JSONEq(t,"{\"io.modelcontextprotocol/skills\":{\"directoryRead\":true}}",string(capabilities.Extensions))
  result,err:=client.SkillsList()(t.Context(),&genmcp.SkillsListPayload{HTTPPath0:"blue"});require.NoError(t,err)
  page:=result.(*genmcp.SkillsListResult);require.Len(t,page.Skills,1);require.NotNil(t,page.NextCursor)
  files,ok:=page.Skills[0].Resources.AsManifest();require.True(t,ok);require.Len(t,files,1);assert.Equal(t,int64(9007199254740993),files[0].Size)
@@ -198,5 +234,16 @@ func TestSkillHTTPComposition(t *testing.T){
  transport.credential="allowed"
  _,err=client.ResourcesRead()(t.Context(),&genmcp.ResourcesReadPayload{HTTPPath0:"blue",URI:known});require.NoError(t,err);assert.Equal(t,1,s.reads)
  _,err=client.ResourcesRead()(t.Context(),&genmcp.ResourcesReadPayload{HTTPPath0:"blue",URI:"skill://unknown/review/missing.md"});require.Error(t,err);assert.Contains(t,string(transport.response),"\"code\":-32602")
+ directory,err:=client.ResourcesDirectoryRead()(t.Context(),&genmcp.ResourcesDirectoryReadPayload{HTTPPath0:"blue",URI:"skill://review"});require.NoError(t,err)
+ directoryPage:=directory.(*genmcp.ResourceDirectoryResult);require.Len(t,directoryPage.Resources,1);assert.Equal(t,"skill://review/SKILL.md",directoryPage.Resources[0].URI)
+ assert.JSONEq(t,"{\"revision\":42}",string(directoryPage.Resources[0].Meta));assert.Equal(t,"complete",directoryPage.ResultType)
+ _,err=client.ResourcesDirectoryRead()(t.Context(),&genmcp.ResourcesDirectoryReadPayload{HTTPPath0:"blue",URI:"skill://review",Cursor:directoryPage.NextCursor});require.NoError(t,err);assert.Contains(t,string(transport.response),"\"resources\":[]")
+ _,err=client.ResourcesList()(t.Context(),&genmcp.ResourcesListPayload{HTTPPath0:"blue"});require.NoError(t,err);assert.Contains(t,string(transport.response),"\"revision\":42")
+ directoryCalls:=s.directories
+ _,err=client.ResourcesDirectoryRead()(t.Context(),&genmcp.ResourcesDirectoryReadPayload{HTTPPath0:"blue",URI:"skill://review/"});require.Error(t,err);assert.Contains(t,string(transport.response),"\"code\":-32602");assert.Equal(t,directoryCalls,s.directories)
+ _,err=client.ResourcesDirectoryRead()(t.Context(),&genmcp.ResourcesDirectoryReadPayload{HTTPPath0:"blue",URI:"skill://unknown"});require.Error(t,err);assert.Contains(t,string(transport.response),"\"code\":-32602")
+ _,err=client.ResourcesDirectoryRead()(t.Context(),&genmcp.ResourcesDirectoryReadPayload{HTTPPath0:"blue",URI:"skill://recursive"});require.Error(t,err);assert.Contains(t,string(transport.response),"\"code\":-32603")
+ directoryCalls=s.directories;transport.credential="denied"
+ _,err=client.ResourcesDirectoryRead()(t.Context(),&genmcp.ResourcesDirectoryReadPayload{HTTPPath0:"blue",URI:"skill://review"});require.Error(t,err);assert.Equal(t,directoryCalls,s.directories)
 }
 `

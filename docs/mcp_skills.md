@@ -8,7 +8,8 @@ visibility, authorization, pagination and the exact bytes it serves.
 
 Declare all three methods together. Generation advertises
 `io.modelcontextprotocol/skills` only when both discovery methods are present.
-Directory reading is not advertised by these declarations.
+Add `ResourceDirectory()` when the service also owns directory pages. Generation
+advertises `directoryRead: true` only when that method is declared.
 
 ## Declare complete entries
 
@@ -65,6 +66,30 @@ Serve direct lookups even when a skill is absent from the catalog. Return a
 declared Goa `invalid_params` error for an unknown skill or file; the generated
 protocol maps it to JSON-RPC `-32602`. Regenerate both peers when adding these
 methods. This is a breaking protocol upgrade; mixed revisions are unsupported.
+
+## List directory children
+
+Declare `ResourceDirectory()` on an ordinary unary method. Apart from native HTTP
+inputs, its payload has required `uri` and optional `cursor` strings. Its result
+has an optional `resources` collection declared with `ArrayOfRequired`, plus
+optional `nextCursor`. Each child uses the ordinary resource descriptor shape:
+required `uri` and `name`, with optional media type, description, icons,
+annotations and authored metadata.
+
+Directory URIs have no trailing slash. Return files and subdirectories one level
+below the requested URI. Subdirectories declare `mimeType: "inode/directory"`.
+An empty directory returns an empty protocol array. Pagination works like
+`resources/list`; the client returns `nextCursor` as the following request's
+`cursor`. Serve every directory in the Skill namespaces your service exposes.
+
+The generated adapter rejects malformed directory requests with `-32602` and
+invalid server pages with `-32603`. Declare and return `invalid_params` when a
+resource is unknown or is not a directory. Native authentication, mapped route
+inputs and selected result views keep their ordinary Goa behavior.
+
+A directory page describes the server's current contents. It does not change
+the complete manifest held by a host acting on a Skill. Newly listed files require
+a refreshed entry and any renewed content-bound approval before use.
 
 ## Loading belongs to the host
 

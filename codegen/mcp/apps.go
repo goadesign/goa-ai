@@ -46,7 +46,9 @@ func serverExtensionMetadata(data *AdapterData) (string, error) {
 		extensions["io.modelcontextprotocol/tasks"] = struct{}{}
 	}
 	if data.SkillCatalog != nil && data.SkillLookup != nil {
-		extensions["io.modelcontextprotocol/skills"] = struct{}{}
+		extensions["io.modelcontextprotocol/skills"] = struct {
+			DirectoryRead bool `json:"directoryRead,omitempty"` //nolint:tagliatelle // The Skills extension defines this field.
+		}{DirectoryRead: data.ResourceDirectory != nil}
 	}
 	for _, tool := range data.Tools {
 		if tool.UIMetadata != "" {

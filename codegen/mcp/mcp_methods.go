@@ -43,6 +43,9 @@ func (b *mcpExprBuilder) buildMethods() []*expr.MethodExpr {
 	if b.mcp.SkillCatalog != nil && b.mcp.SkillLookup != nil {
 		methods = append(methods, b.buildSkillsMethods()...)
 	}
+	if b.mcp.ResourceDirectory != nil {
+		methods = append(methods, b.buildResourceDirectoryMethod())
+	}
 	return methods
 }
 

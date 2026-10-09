@@ -40,11 +40,25 @@ func TestMCPTypedResourceCatalogMetadataViews(t *testing.T) {
 }
 
 func TestMCPTypedPromptMetadata(t *testing.T) {
+	design, runtime := typedPromptMetadataPeer()
+	runMCPPeer(t, "input-peer.local", design, runtime)
+}
+
+func TestMCPInlinePromptMetadata(t *testing.T) {
+	design, runtime := typedPromptMetadataPeer()
+	design = strings.Replace(design, `Field(2,"_meta",resourceMetadata,"Authored extension fields",func(){`, `Field(2,"_meta",func(){Description("Authored extension fields");`+inlineMetadataFields, 1)
+	runtime = strings.ReplaceAll(runtime, "genrecords.ResourceMetadata", "struct{Policy *genrecords.UIPolicy;Note string}")
+	runMCPPeer(t, "input-peer.local", design, runtime)
+}
+
+// typedPromptMetadataPeer supplies one ordinary authored prompt with metadata.
+// Named and inline object cases use the same authorization and content checks.
+func typedPromptMetadataPeer() (string, string) {
 	design := strings.Replace(inputExchangeDesign, `var promptText=`, typedResourceMetadataDesign+`var promptText=`, 1)
 	design = strings.Replace(design, `Field(1,"text",String,"Instructions shown to the user");`, `Field(1,"text",String,"Instructions shown to the user");Field(2,"_meta",resourceMetadata,"Authored extension fields",func(){Meta("struct:field:name","Metadata")});`, 1)
 	runtime := strings.Replace(inputExchangeRuntime, `Text:string(label)`, `Text:string(label),Metadata:&genrecords.ResourceMetadata{Policy:&genrecords.UIPolicy{PrefersBorder:new(true)},Note:"checked"}`, 1)
 	runtime = strings.ReplaceAll(runtime, `require.Len(t,instructions.Messages,1);`, `require.Len(t,instructions.Messages,1);assert.JSONEq(t,"{\"ui\":{\"prefersBorder\":true},\"note\":\"checked\"}",string(instructions.Messages[0].Content.Meta));`)
-	runMCPPeer(t, "input-peer.local", design, runtime)
+	return design, runtime
 }
 
 func TestMCPTypedTaskContentMetadata(t *testing.T) {
@@ -58,6 +72,21 @@ func TestMCPTypedTaskContentMetadata(t *testing.T) {
 }
 
 func TestMCPTypedTaskResultMetadata(t *testing.T) {
+	design, runtime := typedTaskResultMetadataPeer(t)
+	runMCPPeer(t, "task-peer.local", design, runtime)
+}
+
+func TestMCPInlineTaskResultMetadata(t *testing.T) {
+	design, runtime := typedTaskResultMetadataPeer(t)
+	design = strings.Replace(design, `Field(3,"hostData",resourceMetadata,"Private app result",func(){`, `Field(3,"hostData",func(){Description("Private app result");`+inlineMetadataFields, 1)
+	runtime = strings.ReplaceAll(runtime, "genjobs.ResourceMetadata", "struct{Policy *genjobs.UIPolicy;Note string}")
+	runMCPPeer(t, "task-peer.local", design, runtime)
+}
+
+// typedTaskResultMetadataPeer follows native job completion through tasks/get.
+// Both object representations retain the same authored result metadata.
+func typedTaskResultMetadataPeer(t *testing.T) (string, string) {
+	t.Helper()
 	design, runtime := taskContentPeer(t)
 	design = strings.Replace(design, `var text=`, typedResourceMetadataDesign+`var text=`, 1)
 	design = strings.Replace(design, `Required("summary")`, `Field(3,"hostData",resourceMetadata,"Private app result",func(){Meta("struct:field:name","PrivateInfo")});Required("summary")`, 1)
@@ -73,7 +102,7 @@ func TestMCPTypedTaskResultMetadata(t *testing.T) {
  assert.JSONEq(t,"{\"ui\":{\"prefersBorder\":true},\"note\":\"checked\",\"io.modelcontextprotocol/serverInfo\":{\"name\":\"jobs\",\"version\":\"1\"}}",string(metadataTask.Result.Meta))
  assert.NotContains(t,string(metadataTask.Result.StructuredContent),"hostData")
  assert.NotContains(t,string(metadataTask.Result.StructuredContent),"checked")`, 1)
-	runMCPPeer(t, "task-peer.local", design, runtime)
+	return design, runtime
 }
 
 // typedResourceCatalogMetadataPeer uses the same authored metadata in both
@@ -121,6 +150,8 @@ func(s *resourceService)metadata()*genservice.ResourceMetadata {
 `
 	return design, runtime
 }
+
+const inlineMetadataFields = `Field(1,"ui",uiPolicy,"Browser policy for this content",func(){Meta("struct:field:name","Policy")});Field(2,"note",String,"Validated extension value",func(){Enum("checked")});Required("ui","note");`
 
 const typedResourceMetadataDesign = `
 var uiCSP=Type("UICSP",func(){Field(1,"connectDomains",ArrayOfRequired(String),"Allowed network origins")})

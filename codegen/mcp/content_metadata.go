@@ -22,6 +22,9 @@ type (
 		Encode string
 		// Optional omits absent objects instead of encoding a JSON null value.
 		Optional bool
+		// Dereference converts a pointer field to its standalone value reference.
+		// Named objects already have pointer references and require no conversion.
+		Dereference bool
 		// TargetField holds the encoded metadata in the protocol record.
 		TargetField string
 	}
@@ -69,7 +72,7 @@ func bindContentMetadataCodecs(services *goaservice.ServicesData, planned *plann
 			}
 		}
 	}
-	for _, catalog := range []*discoveryAdapter{data.ResourceCatalog, data.ResourceTemplateCatalog, data.SkillCatalog, data.SkillLookup} {
+	for _, catalog := range []*discoveryAdapter{data.ResourceCatalog, data.ResourceTemplateCatalog, data.SkillCatalog, data.SkillLookup, data.ResourceDirectory} {
 		if catalog == nil {
 			continue
 		}
@@ -127,12 +130,12 @@ func planContentMetadata(codecs *jsoncodec.Plan, attribute *expr.AttributeExpr, 
 // planDiscoveryCodecs records resource metadata and complete Skill entry
 // encoders in the existing private codec package. Both retain native layouts.
 func planDiscoveryCodecs(codecs *jsoncodec.Plan, data *AdapterData) error {
-	for _, catalog := range []*discoveryAdapter{data.ResourceCatalog, data.ResourceTemplateCatalog} {
+	for _, catalog := range []*discoveryAdapter{data.ResourceCatalog, data.ResourceTemplateCatalog, data.ResourceDirectory} {
 		if catalog == nil || catalog.metaAttribute == nil {
 			continue
 		}
 		var err error
-		catalog.metaCodec, catalog.metaLayout, err = planContentMetadata(codecs, catalog.metaAttribute, catalog.Endpoint.resultLayout, catalog.collection+"Metadata")
+		catalog.metaCodec, catalog.metaLayout, err = planContentMetadata(codecs, catalog.metaAttribute, catalog.Endpoint.resultLayout, codegen.Goify(catalog.Operation, true)+"Metadata")
 		if err != nil {
 			return err
 		}
