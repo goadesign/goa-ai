@@ -2298,9 +2298,12 @@ authored JSON fields that would replace it, including renamed JSON fields.
 
 Regenerate servers and consumers after adding these declarations. Stdio model
 callers now read `tools/list` before execution and validate arguments and
-completed output against that catalog. Apps browser integration remains a
-release gate: these declarations do not supply a browser sandbox or grant
-permission to render HTML or forward app requests.
+completed output against that catalog. These declarations do not themselves
+grant permission to render HTML or forward app requests. The
+[browser host example](../integration_tests/apps/README.md) composes the official
+SDK with generated endpoints and verifies app visibility, origin isolation,
+restrictive browser policy and request cancellation. The application host owns
+its authenticated connection and the permissions it grants to views.
 
 ### Authored MCP tool content
 

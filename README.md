@@ -364,7 +364,9 @@ through `ToolUI` and `ToolVisibility`. App-only helpers stay out of model
 toolsets and model callers reject their execution. `ToolMetadata` sends a typed
 completed-result object to hosts and apps while excluding it from model output.
 HTML contents and browser policy reuse ordinary resource methods and codecs.
-The browser host integration is still a release requirement.
+The [browser host example](integration_tests/apps/README.md) composes the
+official Apps SDK with generated endpoints and verifies app permissions,
+origin isolation, browser policy and request cancellation in Chromium.
 
 Direct HTTP and stdio clients can [observe and answer Tasks](docs/runtime.md#mcp-task-clients)
 through `GetTask`, `UpdateTask`, and `CancelTask`. The `mcp.Caller` contract includes

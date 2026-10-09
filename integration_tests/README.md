@@ -14,7 +14,11 @@ The assistant fixture declares the MCP surface currently supported by `goa-ai`:
 - argument-free static prompts through `prompts/list` and `prompts/get`; and
 - JSON-RPC error codes, including `-32602` for unknown tool names, resource URIs, and prompt names.
 
-The fixture does not cover dynamic prompts, arbitrary server notifications, resource subscriptions, query-bearing resource URIs, tool streaming, server-sent event responses, or task execution. Those modes are not part of the supported generated MCP server contract.
+This YAML fixture does not cover the full generated MCP surface. Generated
+contract tests under `codegen/mcp` verify input exchanges, native Tasks,
+authenticated catalogs, URI readers, result views and subscription streams.
+The [Apps host example](apps/README.md) verifies browser integration with the
+official SDK and a generated server.
 
 ## Run the tests
 
@@ -36,20 +40,18 @@ integration_tests/
 ├── fixtures/assistant/       # Goa design, implementation stub, generated service, and example command
 ├── framework/                # HTTP JSON-RPC scenario runner
 ├── scenarios/
-│   ├── protocol.yaml         # Initialization, notification, version header, and JSON-RPC errors
+│   ├── protocol.yaml         # Stateless discovery, removed initialization, metadata and errors
 │   ├── tools.yaml            # Unary tool discovery, calls, and argument validation
 │   ├── resources.yaml        # Fixed resource discovery and reads
 │   └── prompts.yaml          # Static prompt discovery and retrieval
 └── tests/mcp_integration_test.go
 ```
 
-Each YAML scenario contains optional default headers, an `auto_initialize` setting, and ordered steps:
+Each YAML scenario contains optional default headers and ordered steps:
 
 ```yaml
 scenarios:
   - name: resources_read_documents
-    pre:
-      auto_initialize: true
     steps:
       - name: read
         op: ResourcesRead

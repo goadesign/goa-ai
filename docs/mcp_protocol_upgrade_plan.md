@@ -4107,3 +4107,55 @@ checked handlers with an `AppBridge` constructed without an automatic client.
 Prove real browser exchange, blocked model-only and foreign-origin operations,
 declared content policy and teardown before closing this gate. Skills, caller
 acceptance and final website work also remain required; keep this PR draft.
+
+### Apps browser composition and acceptance
+
+Goa AI has no browser rendering layer or frontend SDK. Its existing typed
+protocol clients, resource methods and result codecs already own the server
+contract. A new browser protocol or DOM API would duplicate the official Apps
+SDK and assign application permissions to the framework. The maintained
+reference host in `integration_tests/apps` instead composes official Apps 2.0.3
+and client 2.3.1 with an authored generated Goa server. The Node dependency
+graph is isolated to this example; the Go framework gains no browser dependency.
+
+The official client is pinned to `2026-07-28`; no legacy discovery or SSE
+fallback is selected. The host constructs `AppBridge` without automatic
+forwarding and checks the current, credential-bound tool catalog before each
+app call. It reads the associated exact URI and HTML MIME type through that
+same connection. The host supplies approved browser policy; its restrictive
+example denies all external domains and browser permissions, including broader
+requests in resource metadata. Those choices are host policy, not framework-wide
+limits or a rule that applications must deny every permission.
+
+The official postMessage transport checks message shape and window identity,
+but sends to `*` and does not check origin. One private example subclass retains
+SDK parsing and dispatch while enforcing the configured outer-frame origin for
+both incoming requests and outgoing private data. The sandbox uses a separate
+origin, an opaque inner view, immutable HTTP content/permission policies, and
+exact parent/child source checks. Views cannot send sandbox-control messages.
+The wildcard inner destination is required for the opaque origin; HTTP policy
+blocks navigation to external frame origins.
+
+View teardown aborts its requests before the SDK teardown exchange, removes
+listeners and the frame, and retains the host-owned server connection. The
+byte proxy carries response cancellation to the generated Goa request context.
+Controls serialize view creation, and failed setup also removes its frame.
+Browser acceptance passed both tests in 3.89 seconds: generated tool/resource
+exchange, private metadata, app-only refresh, model-only rejection, blocked
+network/frame/host access, close/reopen, matching-origin delivery, foreign-origin
+rejection and listener removal. A waiting Goa method independently records
+receipt of cancellation. TypeScript passed; fixture generation/build took
+4.39 seconds. A separate CI lane prepares once and caches its pinned Chromium.
+
+CI for preceding commit `d2c2e491` passed HTTP integration and lint but failed
+five generated contracts. Typed metadata planning had moved subscription
+planning after codecs, omitting the Task snapshot encoder; planning now follows
+its actual dependencies. The OAuth fixture also treated initial credential-free
+discovery as domain execution; it now tests those distinct contracts. All five
+failed contracts passed in 40.46 seconds, including native views, shared creator
+aliases and mixed resource/Task streams. Generator lint reported zero issues
+in 2.05 seconds. These repairs restore intended behavior and add no fallback.
+
+Apps producer, model caller and maintained browser composition acceptance are
+implemented. Final-head CI, Skills, affected caller/store cutover and website
+completion remain required. Keep the PR draft and do not release.

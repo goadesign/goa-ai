@@ -2148,8 +2148,18 @@ results, selected views and completed Tasks; existing codecs validate and encode
 the selected object. The framework's server identity is added at the protocol
 boundary without decoding or rewriting authored JSON numbers. Generation uses
 the shared JSON-name resolver to reject fields that would replace that identity.
-Browser messaging, sandbox policy and app permission acceptance remain separate
-release requirements; declarations alone do not complete Apps integration.
+The maintained browser host in `integration_tests/apps` composes the official
+client and Apps SDK with generated endpoints. Its client is pinned to this
+protocol; its bridge uses checked handlers rather than automatic forwarding.
+One bound connection owns every resource read and app tool call. The current
+catalog controls app visibility, and the host controls credentials and browser
+permissions. A separate-origin proxy and opaque inner frame isolate the view;
+HTTP headers deny undeclared network and frame access. An origin-restricted
+transport prevents a navigated frame from receiving private results. Teardown
+aborts view requests, closes SDK listeners and removes the frame while the host
+retains its server connection. Chromium verifies the full path and the generated
+Goa method's cancellation. This introduces no framework browser API or second
+MCP serialization path.
 
 `internal/mcpinput` reads inherited method contracts for early DSL validation.
 Goa validates every root before finalizing inherited fields, so this reader
