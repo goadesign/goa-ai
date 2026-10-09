@@ -7,7 +7,7 @@ never edit `gen/`.
 
 ## Prerequisites
 
-- Go 1.26.0+
+- Go 1.27.0+
 
 ## 1) Run the checked-in project
 
@@ -384,6 +384,7 @@ upgrade steps. No registry is required for the static example above.
 An existing registry needs the [offline storage upgrade](../docs/runtime.md#registry-storage-upgrade)
 before using this layout. Stop all old writers and preserve the current
 catalog, retired-token history, calls, streams, and their expiry during
-conversion. The wire version and schema fingerprints remain unchanged.
-The preview guide describes the required verification; a published converter
-is not yet supplied.
+conversion. The layout change alone preserves existing identity; the current
+release also requires registry wire protocol 13 and regenerated declarations.
+Compare fingerprints and re-admit providers under the current wire contract.
+No general-purpose converter is shipped. See the [release upgrade instructions](../docs/releases/v0.88.0.md#required-upgrade-actions).

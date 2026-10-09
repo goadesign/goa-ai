@@ -63,7 +63,7 @@ func (declarations registryDeclarations) schema1() *genregistry.ToolSchema {
 					Audience:    "evidence",
 					NativeImage: true,
 					Description: &registryText2,
-					Schema:      []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"format\":{\"description\":\"Accepted image encoding.\",\"enum\":[\"png\"],\"type\":\"string\"},\"id\":{\"description\":\"Exact retained image identity.\",\"minLength\":1,\"type\":\"string\"},\"sha256\":{\"description\":\"SHA-256 of the accepted bytes.\",\"pattern\":\"^[a-f0-9]{64}$\",\"type\":\"string\"},\"size\":{\"description\":\"Accepted image byte length.\",\"format\":\"int64\",\"minimum\":1,\"type\":\"integer\"}},\"required\":[\"id\",\"format\",\"size\",\"sha256\"],\"type\":\"object\"}"),
+					Schema:      []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"description\":\"Immutable image identity supplied by the fixture's retained owner.\",\"properties\":{\"format\":{\"description\":\"Accepted image encoding.\",\"enum\":[\"png\"],\"type\":\"string\"},\"id\":{\"description\":\"Exact retained image identity.\",\"minLength\":1,\"type\":\"string\"},\"sha256\":{\"description\":\"SHA-256 of the accepted bytes.\",\"pattern\":\"^[a-f0-9]{64}$\",\"type\":\"string\"},\"size\":{\"description\":\"Accepted image byte length.\",\"format\":\"int64\",\"minimum\":1,\"type\":\"integer\"}},\"required\":[\"id\",\"format\",\"size\",\"sha256\"],\"type\":\"object\"}"),
 					Type:        declarations.metadata8(),
 				},
 			},
@@ -144,7 +144,7 @@ func (declarations registryDeclarations) metadata8() *genregistry.ToolTypeMetada
 	registryText1 := "ViewFixtureImageV1ServerData"
 	return &genregistry.ToolTypeMetadata{
 		Name:                     &registryText1,
-		SchemaWithoutRootExample: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"format\":{\"description\":\"Accepted image encoding.\",\"enum\":[\"png\"],\"type\":\"string\"},\"id\":{\"description\":\"Exact retained image identity.\",\"minLength\":1,\"type\":\"string\"},\"sha256\":{\"description\":\"SHA-256 of the accepted bytes.\",\"pattern\":\"^[a-f0-9]{64}$\",\"type\":\"string\"},\"size\":{\"description\":\"Accepted image byte length.\",\"format\":\"int64\",\"minimum\":1,\"type\":\"integer\"}},\"required\":[\"id\",\"format\",\"size\",\"sha256\"],\"type\":\"object\"}"),
+		SchemaWithoutRootExample: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"description\":\"Immutable image identity supplied by the fixture's retained owner.\",\"properties\":{\"format\":{\"description\":\"Accepted image encoding.\",\"enum\":[\"png\"],\"type\":\"string\"},\"id\":{\"description\":\"Exact retained image identity.\",\"minLength\":1,\"type\":\"string\"},\"sha256\":{\"description\":\"SHA-256 of the accepted bytes.\",\"pattern\":\"^[a-f0-9]{64}$\",\"type\":\"string\"},\"size\":{\"description\":\"Accepted image byte length.\",\"format\":\"int64\",\"minimum\":1,\"type\":\"integer\"}},\"required\":[\"id\",\"format\",\"size\",\"sha256\"],\"type\":\"object\"}"),
 		Fields: []*genregistry.ToolFieldMetadata{
 			declarations.field9(),
 			declarations.field10(),

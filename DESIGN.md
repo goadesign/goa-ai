@@ -98,7 +98,8 @@ existing response-decoder argument with the standard `encoding/json/v2` package.
 This preserves generated response validation while matching JSON names exactly
 and accepting metadata extensions. Closed tool codecs retain their stricter
 unknown-field rules. The [upgrade plan](docs/mcp_protocol_upgrade_plan.md#verified-metadata-decoding-and-toolchain-choice)
-records the compiled evidence and the remaining authorization work.
+records the compiled evidence; [the current release guide](docs/releases/v0.88.0.md)
+describes the completed authorization paths and application upgrade requirements.
 
 ## Layout
 
@@ -107,7 +108,9 @@ records the compiled evidence and the remaining authorization work.
 - Service completions: `gen/<svc>/completions/`
 - Evaluation suites: `gen/evals/<suite>/`
 - MCP service: `gen/mcp_<service>/`
-- Registry clients: `gen/<svc>/registry/<name>/`
+- Registry source clients: `gen/<svc>/registry/<name>/`
+- Registry service clients: `registry/gen/registry/` and its generated transports;
+  application startup registers these clients through `runtime.RegisterRegistry`.
 
 ## Unified Toolset Model
 
@@ -526,7 +529,7 @@ remain evidence rather than typed inputs to current work. The runtime verifies
 the saved events and paging metadata without decoding old result bodies or
 server data against today's tool contract. Active outputs, suspended work, and
 new page requests retain their current codec checks. See the
-[historical paging contract](README.md#bounded-results-and-server-data).
+[historical paging contract](docs/runtime.md#bounded-results).
 
 When a completed model reply or planner result breaks its required shape, the
 planner returns `OutputContractError`. The runtime validates the full result
@@ -2232,7 +2235,7 @@ JSON number type; typed decoding owns integrality and range without floating-poi
 rounding. Explicit custom Go types retain their own decoding contract.
 
 An unfinished remote call returns `input_required`. The runtime stores its
-original arguments and opaque state in a version-11 checkpoint, publishes typed
+original arguments and opaque state in a version-13 checkpoint, publishes typed
 host input requests, and validates the exact answers before the next activity.
 Server-assigned input keys are arbitrary strings, including an empty string;
 validation preserves their exact value and requires matching answer keys. Typed
@@ -2274,7 +2277,7 @@ owning operation; cancellation releases bounded stdio delivery. A graceful reply
 closes the listener, while connection loss returns an interruption without an
 implicit reconnect. The host chooses a new listen request. This consumer does
 not make fixed catalogs dynamic or turn private session streams into public
-change sources. `SubscriptionSource()` binds one authored Goa stream to generated HTTP catalog, resource and Task updates. Dynamic resource and template catalogs remain a release gate.
+change sources. `SubscriptionSource()` binds one authored Goa stream to generated HTTP catalog, resource and Task updates. Dynamic resource and template catalogs bind authenticated native page methods; their source shares resource-list notifications.
 The shared HTTP producer keeps source authorization and change selection in the
 configured handler, while its transport owns acknowledgment order, exact request
 IDs, serialized writes and graceful completion. Producer and receiver use one
@@ -2340,7 +2343,8 @@ Tasks use `TaskExchange` to bind existing application-owned job methods. `ToolCa
 Server-produced additional input now has its authored `InputExchange` binding;
 resource subscriptions use their existing typed stream binding.
 See [the MCP runtime contract](docs/runtime.md#mcp-callers) and
-[the upgrade plan](docs/mcp_protocol_upgrade_plan.md) for remaining proof and scope.
+[the completed upgrade inventory](docs/mcp_protocol_upgrade_plan.md#current-completion-gates)
+for verification scope and explicit conformance limitations.
 
 ## Agent run lifecycle streaming contract
 
@@ -2941,8 +2945,10 @@ for access tokens usable by this resource. Missing subject/client claims remain
 empty identity values. Every guard and native callback asks the issuer anew;
 there is no introspection cache or token-format fallback. Inactive tokens receive
 401; issuer transport, authentication or response-contract failures receive 503
-without an invalid-token challenge. Enterprise authorization, durable host
-credentials and complete extension conformance remain release gates.
+without an invalid-token challenge. Enterprise authorization and durable host
+credentials use the same private authorization store. Independent verification
+records its supported profiles and fixture limitations rather than claiming
+universal conformance; see [the verification report](integration_tests/conformance/README.md).
 
 The shared MCP HTTP transport records whether any attempt reached its
 configured HTTP dependency. Preparation failures retain their local error;
@@ -3026,8 +3032,9 @@ The limit spans one HTTP request round, including stream retries. Concurrent
 rejections reuse a credential already changed by another call instead of rotating
 the same refresh token again. Definite authorization rejections remain distinct
 from lost tool results. A rejection after an earlier lost response retains the
-unknown outcome and the later HTTP status. Independent authorization conformance
-and complete caller cutover remain release gates.
+unknown outcome and the later HTTP status. Independent authorization checks
+and their fixture limitations are recorded in [the verification report](integration_tests/conformance/README.md).
+Applications still own their coordinated caller and storage cutover before deployment.
 
 Enterprise authorization adds a user identity owner above the existing resource
 grant owner. Application registration remains immutable and user-independent.
@@ -3178,7 +3185,7 @@ persistence. The current branch has no deployed durable format to migrate.
 This plugin gives you agents, MCP, and registries with familiar Goa patterns, minimal surface area, and a directory layout that feels natural. It's accurate, easy to maintain, and designed to evolve alongside Goa.
 
 
-The draft Task consumer shares the ordinary workflow activity collector. Its
+The Task consumer shares the ordinary workflow activity collector. Its
 unfinished output is one generated `PendingExecution` union: ordinary input,
 Task waiting or Task input. A workflow timer separates creation, each read and
 each acknowledged update. Exact Task identity and answered request keys survive
@@ -3188,8 +3195,9 @@ operation independently of the stopped run context. Temporary reads and
 cancellation delivery use workflow timers; permanent rejection remains an error.
 The shared activity serializer preserves rejection of one exact activity input
 without forbidding a fresh workflow attempt that chooses different input.
-Generated executors still do not advertise Tasks: final caller-store acceptance
-and the remaining capability checks must complete first.
+Generated executors retain Task handles and use the same generated read, answer
+and cancel operations. The server requires Task capability before its creator
+can run. Applications must adopt the current store ownership contract before deployment.
 Public `CancelRun` accepts a durable cancellation job for a suspended run. The
 job obtains its route from the original accepted preparation, follows only
 storage-admitted successors, and publishes ordinary cancellation continuations.

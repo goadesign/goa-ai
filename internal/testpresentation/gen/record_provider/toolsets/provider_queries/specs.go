@@ -12,7 +12,7 @@ import (
 	"fmt"
 
 	"goa.design/goa-ai/runtime/agent/policy"
-	"goa.design/goa-ai/runtime/agent/tools"
+	tools "goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/toolregistry"
 	"goa.design/goa-ai/runtime/toolserverdata"
 )

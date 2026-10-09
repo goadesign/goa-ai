@@ -107,10 +107,11 @@ Here are the detailed cheat sheets for each agent you designed.
         ```
 * **Workflow Name:** `orchestrator.chat.workflow` (Queue: `orchestrator_chat_workflow`)
 
-#### Minimal Configuration```go
+#### Minimal Configuration
+
+```go
 cfg := chat.ChatAgentConfig{
     Planner: myPlanner,
-
 }
 ```
 </details>
@@ -448,4 +449,4 @@ defer eng.Close()
 * **Error: an MCP executable is missing**
     * **Fix:** Register the generated MCP executor through its used-toolset executor option before starting runs. Shared bindings are registered once. See section 5.
 * **Agent-as-Tool isn't working?**
-    * **Fix:** Ensure you've provided `WithText` or `WithTemplate` for **every single tool** in the exported toolset when calling `NewRegistration`.
+    * **Fix:** Register the exported toolset with `agenttools.NewRegistration(...)` and run its provider worker on the generated workflow queue. Prompt overrides are optional; the runtime builds the default prompt from the tool payload. If you supply a template, validate it with `runtime.ValidateAgentToolTemplates` and provide every field it references.

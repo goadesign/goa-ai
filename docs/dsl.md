@@ -45,6 +45,20 @@ var DocsToolset = Toolset("docs.search", func() {
 
 var AssistantSuite = Toolset(FromMCP("assistant", "assistant-mcp"))
 
+var _ = Service("assistant", func() {
+    Description("Expose assistant status to applications and agents.")
+    MCP("assistant-mcp", "1.0.0")
+    JSONRPC(func() { POST("/mcp") })
+    Method("status", func() {
+        Description("Report whether the assistant service is available.")
+        Result(func() {
+            Attribute("status", String, "Current service status")
+            Required("status")
+        })
+        Tool("status", "Read assistant service status")
+    })
+})
+
 var _ = Service("orchestrator", func() {
 	Description("Human front door for the knowledge agent.")
 
@@ -85,20 +99,11 @@ Running `goa gen example.com/assistant/design` produces:
 service declares `Completion(...)`.
 - MCP registration helpers when an MCP toolset is referenced via `Use`.
 
-Each per-toolset specs package defines typed tool identifiers (`tools.Ident`) and uses those
-constants inside the exported `Specs` slice:
-
-```go
-const (
-    Search tools.Ident = "orchestrator.search.search"
-)
-
-var Specs = []tools.ToolSpec{
-    { Name: Search, /* ... */ },
-}
-```
-
-Use these constants anywhere you need to reference tools.
+Each toolset package defines typed tool identifiers (`tools.Ident`). Its `Specs()`
+factory returns fresh specifications, and `Spec<Name>()` returns one tool's fresh
+specification. Typed `<Name>Tool()` descriptors pair an identifier with its payload
+and result codecs. Use generated identifiers and factories rather than constructing
+a second name-to-codec map or retaining mutable package-level specifications.
 
 ### Service-Owned Typed Completions
 
@@ -194,8 +199,9 @@ does not need the exporter’s planner locally; it only needs routing metadata.
 generated route metadata. The parent emits `ChildRunLinked` and the returned `ToolResult`
 includes a `RunLink` handle to the child run.
 
-Each run has its own event stream. Stream profiles select which event kinds are emitted to
-different audiences and link child runs via run handles rather than flattening run identity.
+Runs publish to the session-owned stream and retain their own run IDs and
+`run_stream_end` markers. Stream profiles select which event kinds reach the
+trusted host; child-run links preserve distinct execution identity.
 
 ---
 
@@ -2324,7 +2330,7 @@ DSL evaluation checks the entry shape; generated adapters also verify frontmatte
 directory membership
 and manifest completeness before publishing entries. Discovery never reads or
 activates a skill. See [serve Skills over MCP](mcp_skills.md) for declarations,
-errors and the remaining host-loading completion gate.
+errors, manifest verification, and the maintained host-loading example.
 
 ### Authored MCP tool content
 

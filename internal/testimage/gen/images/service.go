@@ -17,6 +17,7 @@ import (
 	strconv "strconv"
 	utf8 "unicode/utf8"
 
+	rawjson "goa.design/goa-ai/runtime/agent/rawjson"
 	goa "goa.design/goa/v3/pkg"
 )
 
@@ -73,6 +74,26 @@ type ViewResult struct {
 	Source *ImageSource
 }
 
+// imageSourceInt64Transport stores JSON fields until they have been validated.
+type imageSourceInt64Transport int64
+
+// UnmarshalJSON reads an exact whole JSON number and stores it within this type's
+// declared range. Decimal and exponent spellings do not change its value.
+func (value *imageSourceInt64Transport) UnmarshalJSON(data []byte) error {
+	number, err := rawjson.DecodeInteger[int64](data)
+	if err != nil {
+		return fmt.Errorf("decode imageSourceInt64Transport integer: %w", err)
+	}
+	*value = imageSourceInt64Transport(number)
+	return nil
+}
+
+// ValidateimageSourceInt64Transport checks decoded JSON before it becomes a service value.
+func ValidateimageSourceInt64Transport(value imageSourceInt64Transport) (err error) {
+
+	return err
+}
+
 // jsonImageSelectedTransport stores JSON fields until they have been validated.
 type jsonImageSelectedTransport struct {
 	// Exact selected image identity.
@@ -119,7 +140,7 @@ type jsonImageSourceTransport struct {
 	// Accepted image encoding.
 	Format *string `json:"format"`
 	// Accepted image byte length.
-	Size *int64 `json:"size"`
+	Size *imageSourceInt64Transport `json:"size"`
 	// SHA-256 of the accepted bytes.
 	Sha256 *string `json:"sha256"`
 }
@@ -152,8 +173,8 @@ func validatejsonImageSourceTransport(value *jsonImageSourceTransport) (err erro
 		}
 	}
 	if value.Size != nil {
-		if *value.Size < 1 {
-			err = goa.MergeErrors(err, goa.InvalidRangeError("body.size", *value.Size, 1, true))
+		if int64(*value.Size) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.size", int64(*value.Size), 1, true))
 		}
 	}
 	if value.Sha256 != nil {
@@ -307,9 +328,10 @@ func EncodeImageSource(in *ImageSource) ([]byte, error) {
 		body = &jsonImageSourceTransport{
 			ID:     &in.ID,
 			Format: &in.Format,
-			Size:   &in.Size,
 			Sha256: &in.Sha256,
 		}
+		size := imageSourceInt64Transport(in.Size)
+		body.Size = &size
 	}
 	if err := validatejsonImageSourceTransport(body); err != nil {
 		return nil, fmt.Errorf("validate ImageSource JSON: %w", err)
@@ -349,7 +371,7 @@ func DecodeImageSource(data []byte) (out *ImageSource, err error) {
 		out = &ImageSource{
 			ID:     *body.ID,
 			Format: *body.Format,
-			Size:   *body.Size,
+			Size:   int64(*body.Size),
 			Sha256: *body.Sha256,
 		}
 	}
@@ -577,12 +599,9 @@ func validateImageSourceJSONValue5(path string, value any, description string) e
 	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
 	}
-	typed, ok := value.(json.Number)
+	_, ok := value.(json.Number)
 	if !ok {
 		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
-	}
-	if _, err := strconv.ParseInt(typed.String(), 10, 64); err != nil {
-		return invalidGeneratedFieldTypeError(field, "integer", "number", description)
 	}
 	return nil
 }

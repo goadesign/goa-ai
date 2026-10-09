@@ -35,7 +35,7 @@ You are an agentic systems engineer. Optimize for elegance, strong contracts, co
 
 ### Go style
 
-- Go 1.24+ with `go fmt ./...`.
+- Go 1.27.0+ with `go fmt ./...`.
 - Group imports with stdlib separate from external.
 - Use `lower_snake_case.go`; split large files proactively and prefer <=1000 lines.
 - Use short lowercase package names. Exported identifiers and exported struct fields need GoDoc.

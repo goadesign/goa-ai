@@ -470,11 +470,12 @@ static integrations but are rejected by dynamic consumers.
 The [registry storage upgrade](runtime.md#registry-storage-upgrade) is separate
 from consumer loading and earlier wire-version migrations. It requires the
 new Renew callback and an offline conversion with all old writers stopped.
-Wire protocol 10, schema fingerprints, saved calls, absolute expiry, and
-permanent retirement history remain intact. Do not reset current catalog data
-to adopt the new layout. The preview guide lists source changes, including
-removed provider error symbols, and the prerequisites for the conversion
-artifact being prepared.
+The layout conversion preserves original fingerprints, saved calls, absolute
+expiry, and permanent retirement history. The current release separately requires
+wire protocol 13, regenerated declarations, and current provider admission. Do
+not reset catalog data or reuse old version-derived tokens. The upgrade guide
+lists source changes and the installation-owned conversion requirements; no
+general-purpose converter is shipped.
 
 Confirmation templates now read canonical JSON names: change `{{ .Key }}` to
 `{{ .key }}` and use `{{ json .value }}` when inserting JSON values.

@@ -52,6 +52,7 @@
             "schema": {
               "$schema": "https://json-schema.org/draft/2020-12/schema",
               "additionalProperties": false,
+              "description": "Immutable image identity supplied by the fixture's retained owner.",
               "properties": {
                 "format": {
                   "description": "Accepted image encoding.",

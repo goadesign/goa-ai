@@ -8,7 +8,7 @@
 
 package provider_queries
 
-import runtime "goa.design/goa-ai/runtime/agent/runtime"
+import tools "goa.design/goa-ai/runtime/agent/tools"
 
 // InjectRead fills the fields that Inject() marked on the
 // provider_queries.read tool input. It copies call information from meta and
@@ -17,7 +17,7 @@ import runtime "goa.design/goa-ai/runtime/agent/runtime"
 //
 // Generated executors call this after decoding and before running the tool.
 // The model never supplies these fields.
-func InjectRead(p *ReadPayload, meta runtime.ToolCallMeta, labels map[string]string) error {
+func InjectRead(p *ReadPayload, meta tools.ToolCallMeta, labels map[string]string) error {
 	{
 		v := meta.SessionID
 		p.SessionID = v
@@ -31,7 +31,7 @@ func InjectRead(p *ReadPayload, meta runtime.ToolCallMeta, labels map[string]str
 // Custom executors for provider_queries.read must call this function. Calling
 // ReadPayloadCodec().FromJSON alone does not fill fields marked by
 // Inject().
-func DecodeRead(payload []byte, meta runtime.ToolCallMeta, labels map[string]string) (*ReadPayload, error) {
+func DecodeRead(payload []byte, meta tools.ToolCallMeta, labels map[string]string) (*ReadPayload, error) {
 	p, err := ReadPayloadCodec().FromJSON(payload)
 	if err != nil {
 		return nil, err
