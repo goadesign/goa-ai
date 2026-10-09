@@ -139,7 +139,7 @@ func newHealthTracker(
 	for _, option := range opts {
 		option(&options)
 	}
-	schedulerCtx, cancelScheduler := context.WithCancel(context.Background()) //nolint:gosec // Close owns cancellation.
+	schedulerCtx, cancelScheduler := context.WithCancel(context.Background())
 	tracker := &healthTracker{
 		streamManager:      streamManager,
 		catalog:            catalog,

@@ -12,7 +12,7 @@ func MCPUse() func() {
 			Version("1.2.3")
 		})
 		Service("calc", func() {
-			MCP("core", "1.0.0", ProtocolVersion("2025-06-18"))
+			MCP("core", "1.0.0")
 			JSONRPC(func() {
 				POST("/calc")
 			})

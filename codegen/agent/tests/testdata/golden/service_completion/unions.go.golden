@@ -9,74 +9,28 @@ package completions
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"goa.design/goa-ai/runtime/agent/tools"
-	"io"
+	goa "goa.design/goa/v3/pkg"
 )
 
-// decodeUnionStrictJSON decodes one union JSON document and rejects fields that
-// are not present in the generated union envelope or selected branch contract.
-func decodeUnionStrictJSON(data []byte, v any) error {
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(v); err != nil {
-		return err
-	}
-	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		return fmt.Errorf("multiple JSON documents")
-	}
-	return nil
-}
-
-// missingUnionValueError reports an omitted value in a tagged union envelope.
-func missingUnionValueError() error {
-	return tools.NewValidationError(
-		"missing required union field \"value\"",
-		[]*tools.FieldIssue{
-			{
-				Field:      "value",
-				Constraint: "missing_field",
-			},
-		},
-		nil,
-	)
-}
-
-// nullUnionValueError reports a null value in a tagged union envelope.
-func nullUnionValueError(expected string) error {
-	return tools.NewValidationError(
-		fmt.Sprintf("union field \"value\" must be a %s, not null", expected),
-		[]*tools.FieldIssue{
-			{
-				Field:            "value",
-				Constraint:       "invalid_field_type",
-				ExpectedJSONType: expected,
-				ActualJSONType:   "null",
-			},
-		},
-		nil,
-	)
-}
-
-// Draft is a sum-type union.
+// Draft holds exactly one of its branch values.
 type Draft struct {
 	kind           DraftKind
-	NewTask        *CompletionDraft
-	ExistingTaskID DraftExistingTaskID
+	newTask        *CompletionDraft
+	existingTaskID DraftExistingTaskID
 }
 
-// DraftKind enumerates the union variants for Draft.
+// DraftKind records which Draft branch is selected.
 type DraftKind string
 
 const (
-	// DraftKindNewTask identifies the new_task branch of the union.
+	// DraftKindNewTask identifies the new_task branch.
 	DraftKindNewTask DraftKind = "new_task"
-	// DraftKindExistingTaskID identifies the existing_task_id branch of the union.
+	// DraftKindExistingTaskID identifies the existing_task_id branch.
 	DraftKindExistingTaskID DraftKind = "existing_task_id"
 )
 
-// Kind returns the discriminator value of the union.
+// Kind returns the selected branch.
 func (u Draft) Kind() DraftKind {
 	return u.kind
 }
@@ -85,80 +39,85 @@ func (u Draft) Kind() DraftKind {
 func NewDraftNewTask(v *CompletionDraft) Draft {
 	return Draft{
 		kind:    DraftKindNewTask,
-		NewTask: v,
+		newTask: v,
 	}
 }
 
-// AsNewTask returns the value of the new_task branch if set.
+// AsNewTask returns the value when the new_task branch is selected.
 func (u Draft) AsNewTask() (_ *CompletionDraft, ok bool) {
 	if u.kind != DraftKindNewTask {
 		return
 	}
-	return u.NewTask, true
+	return u.newTask, true
 }
 
-// SetNewTask sets the new_task branch of the union.
+// SetNewTask selects the new_task branch and stores v.
 func (u *Draft) SetNewTask(v *CompletionDraft) {
-	u.kind = DraftKindNewTask
-	u.NewTask = v
+	*u = Draft{
+		kind:    DraftKindNewTask,
+		newTask: v,
+	}
 }
 
 // NewDraftExistingTaskID constructs Draft with the existing_task_id branch set.
 func NewDraftExistingTaskID(v DraftExistingTaskID) Draft {
 	return Draft{
 		kind:           DraftKindExistingTaskID,
-		ExistingTaskID: v,
+		existingTaskID: v,
 	}
 }
 
-// AsExistingTaskID returns the value of the existing_task_id branch if set.
+// AsExistingTaskID returns the value when the existing_task_id branch is selected.
 func (u Draft) AsExistingTaskID() (_ DraftExistingTaskID, ok bool) {
 	if u.kind != DraftKindExistingTaskID {
 		return
 	}
-	return u.ExistingTaskID, true
+	return u.existingTaskID, true
 }
 
-// SetExistingTaskID sets the existing_task_id branch of the union.
+// SetExistingTaskID selects the existing_task_id branch and stores v.
 func (u *Draft) SetExistingTaskID(v DraftExistingTaskID) {
-	u.kind = DraftKindExistingTaskID
-	u.ExistingTaskID = v
+	*u = Draft{
+		kind:           DraftKindExistingTaskID,
+		existingTaskID: v,
+	}
 }
 
-// Validate ensures the union discriminant is valid.
+// Validate ensures exactly one valid branch is selected.
 func (u Draft) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u Draft) Value() (any, error) {
 	switch u.kind {
 	case "":
-		return newDraftDiscriminatorError("", false)
+		return nil, goa.InvalidEnumValueError("type", "", []any{
+			string(DraftKindNewTask),
+			string(DraftKindExistingTaskID),
+		})
 	case DraftKindNewTask:
-		if u.NewTask == nil {
-			return missingUnionValueError()
+		if u.newTask == nil {
+			return nil, goa.MissingFieldError("value", "Draft")
 		}
-		return nil
+		return u.newTask, nil
 	case DraftKindExistingTaskID:
-		return nil
+		return u.existingTaskID, nil
 	default:
-		got := string(u.kind)
-		return newDraftDiscriminatorError(got, true)
+		return nil, goa.InvalidEnumValueError("type", u.kind, []any{
+			string(DraftKindNewTask),
+			string(DraftKindExistingTaskID),
+		})
 	}
 }
 
 // MarshalJSON marshals the union into the canonical {type,value} JSON shape.
 func (u Draft) MarshalJSON() ([]byte, error) {
-	if err := u.Validate(); err != nil {
+	value, err := u.Value()
+	if err != nil {
 		return nil, err
-	}
-	var (
-		value any
-	)
-	switch u.kind {
-	case DraftKindNewTask:
-		value = u.NewTask
-	case DraftKindExistingTaskID:
-		value = u.ExistingTaskID
-	default:
-		got := string(u.kind)
-		return nil, newDraftDiscriminatorError(got, true)
 	}
 	return json.Marshal(struct {
 		Type  string `json:"type"`
@@ -172,78 +131,39 @@ func (u Draft) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON unmarshals the union from the canonical {type,value} JSON shape.
 func (u *Draft) UnmarshalJSON(data []byte) error {
 	var raw struct {
-		Type  *string         `json:"type"`
+		Type  string          `json:"type"`
 		Value json.RawMessage `json:"value"`
 	}
-	if err := decodeUnionStrictJSON(data, &raw); err != nil {
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	if raw.Type == nil {
-		return newDraftDiscriminatorError("", false)
-	}
 	if len(raw.Value) == 0 {
-		return missingUnionValueError()
+		return goa.MissingFieldError("value", "Draft")
 	}
-	switch *raw.Type {
+	if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
+		return goa.InvalidFieldTypeError("value", nil, "non-null JSON value")
+	}
+	switch raw.Type {
 	case string(DraftKindNewTask):
-		if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
-			return nullUnionValueError("object")
-		}
 		var v *CompletionDraft
-		if err := decodeUnionStrictJSON(raw.Value, &v); err != nil {
-			var typeErr *json.UnmarshalTypeError
-			if errors.As(err, &typeErr) && typeErr.Value != "" {
-				return tools.NewValidationError(
-					err.Error(),
-					[]*tools.FieldIssue{
-						{
-							Field:            "value",
-							Constraint:       "invalid_field_type",
-							ExpectedJSONType: "object",
-							ActualJSONType:   typeErr.Value,
-						},
-					},
-					nil,
-				)
-			}
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
 			return err
 		}
-		u.kind = DraftKindNewTask
-		u.NewTask = v
+		u.SetNewTask(v)
 	case string(DraftKindExistingTaskID):
-		if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
-			return nullUnionValueError("string")
-		}
 		var v DraftExistingTaskID
-		if err := decodeUnionStrictJSON(raw.Value, &v); err != nil {
-			var typeErr *json.UnmarshalTypeError
-			if errors.As(err, &typeErr) && typeErr.Value != "" {
-				return tools.NewValidationError(
-					err.Error(),
-					[]*tools.FieldIssue{
-						{
-							Field:            "value",
-							Constraint:       "invalid_field_type",
-							ExpectedJSONType: "string",
-							ActualJSONType:   typeErr.Value,
-						},
-					},
-					nil,
-				)
-			}
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
 			return err
 		}
-		u.kind = DraftKindExistingTaskID
-		u.ExistingTaskID = v
+		u.SetExistingTaskID(v)
 	default:
-		return newDraftDiscriminatorError(*raw.Type, true)
+		if raw.Type == "" {
+			return goa.MissingFieldError("type", "Draft")
+		}
+		return goa.InvalidEnumValueError("type", raw.Type, []any{
+			string(DraftKindNewTask),
+			string(DraftKindExistingTaskID),
+		})
 	}
 	return nil
-}
-
-func newDraftDiscriminatorError(got string, typePresent bool) error {
-	return tools.NewUnionDiscriminatorError("Draft", got, typePresent, []string{
-		string(DraftKindNewTask),
-		string(DraftKindExistingTaskID),
-	})
 }

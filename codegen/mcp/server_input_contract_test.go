@@ -26,7 +26,7 @@ func TestGenerateMCPTransportUsesOneExactURIForEachResource(t *testing.T) {
 			{Name: "documents", URI: "doc://list", MimeType: "application/json", Method: methods["read_document"]},
 		},
 	}
-	data, err := newAdapterGenerator(
+	data, err := newAdapterGenerator(testSchemaAPI(),
 		svc,
 		mcp,
 	).buildAdapterData()
@@ -34,9 +34,10 @@ func TestGenerateMCPTransportUsesOneExactURIForEachResource(t *testing.T) {
 	data.CodecImportPath = testCodecImportPath
 	data.CodecPackage = testCodecPackage
 	data.NeedsServerCodec = true
-	data.Resources[0].ServiceMethodName = "ReadDocument"
+	data.EndpointsName = "Endpoints"
+	data.Resources[0].Endpoint = &endpointMethodAdapter{CallName: "invokeMCPMethod0"}
 	data.Resources[0].Codec = &MethodCodecData{
-		ResultEncode: "EncodeReadDocumentResult",
+		ResultEncode: testCodecPackage + ".EncodeReadDocumentResult",
 	}
 
 	files := generateMCPTransport("example.com/assistant/gen", svc, data)
@@ -45,7 +46,7 @@ func TestGenerateMCPTransportUsesOneExactURIForEachResource(t *testing.T) {
 
 	require.Contains(t, rendered, `switch p.URI`)
 	require.Contains(t, rendered, `case "doc://list":`)
-	require.Contains(t, rendered, `result, err := a.service.ReadDocument(ctx)`)
+	require.Contains(t, rendered, `result, err := a.invokeMCPMethod0(ctx)`)
 	require.NotContains(t, rendered, "ParseQuery")
 	require.NotContains(t, rendered, "PayloadTransport")
 }
@@ -65,7 +66,7 @@ func TestGenerateMCPTransportRejectsInputForMethodsWithoutPayloads(t *testing.T)
 			{Name: "status", URI: "status://current", MimeType: "application/json", Method: methods["read_status"]},
 		},
 	}
-	data, err := newAdapterGenerator(
+	data, err := newAdapterGenerator(testSchemaAPI(),
 		svc,
 		mcp,
 	).buildAdapterData()
@@ -73,8 +74,11 @@ func TestGenerateMCPTransportRejectsInputForMethodsWithoutPayloads(t *testing.T)
 	data.CodecImportPath = testCodecImportPath
 	data.CodecPackage = testCodecPackage
 	data.NeedsServerCodec = true
-	data.Tools[0].Codec = &MethodCodecData{ResultEncode: "EncodeRunResult"}
-	data.Resources[0].Codec = &MethodCodecData{ResultEncode: "EncodeReadStatusResult"}
+	data.EndpointsName = "Endpoints"
+	data.Tools[0].Endpoint = &endpointMethodAdapter{CallName: "invokeMCPMethod0"}
+	data.Resources[0].Endpoint = &endpointMethodAdapter{CallName: "invokeMCPMethod1"}
+	data.Tools[0].Codec = &MethodCodecData{ResultEncode: testCodecPackage + ".EncodeRunResult"}
+	data.Resources[0].Codec = &MethodCodecData{ResultEncode: testCodecPackage + ".EncodeReadStatusResult"}
 
 	files := generateMCPTransport("example.com/assistant/gen", svc, data)
 	require.NotEmpty(t, files)
@@ -83,8 +87,7 @@ func TestGenerateMCPTransportRejectsInputForMethodsWithoutPayloads(t *testing.T)
 	require.Contains(t, rendered, "if len(arguments) == 0 {")
 	require.Contains(t, rendered, "if fields == nil || len(fields) > 0 {")
 	require.Contains(t, rendered, `if err := validateNoArguments(p.Arguments); err != nil {`)
-	require.Contains(t, rendered, `return nil, goa.PermanentError("invalid_params", "invalid arguments for tool %s: %s", p.Name, err.Error())`)
-	require.NotContains(t, rendered, `toolCallError("invalid arguments`)
+	require.Contains(t, rendered, `return toolCallError("invalid arguments: " + err.Error()), nil`)
 	require.Contains(t, rendered, `switch p.URI`)
 	require.NotContains(t, rendered, "ParseQuery")
 }

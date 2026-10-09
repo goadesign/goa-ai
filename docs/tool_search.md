@@ -192,7 +192,12 @@ Goa generates your API's transport validation from the same schemas used by
 the registry. Registration and execution still use the registry's generated
 client and runtime contracts. If your design imported these declarations from
 `registry/design`, update that import to `registry/design/types`. Generated
-registry client types keep their existing package and names.
+registry client types keep their existing package and names. Shared unfinished-tool
+operation types use the `ToolOperation` prefix, such as
+`ToolOperationExecutionContinuation`, so applications can declare domain types
+such as `TaskInput` in the same Goa design. Regenerate consuming APIs when
+upgrading: the generated Go and protobuf type names change; field numbers,
+field names, union branch names, and saved operation JSON remain unchanged.
 
 ## Register Agent tools
 
@@ -451,7 +456,10 @@ Replace `Use(Records, Deferred)` with `Use(Records, func() { Deferred() })`,
 and wrap other `func()` callback assignments the same way. Calls to `Deferred()`
 remain valid.
 
-Regenerate providers and consumers with Goa v3.32.0. Replace generated
+Regenerate providers and consumers with the Goa revision pinned in this module.
+Compare regenerated schema records and fingerprints against saved declarations;
+the MCP upgrade also aligns shared schema metadata. Follow the
+[declaration cutover requirements](runtime.md#executable-ownership-and-upgrade). Replace generated
 startup `Discover` calls, `RegistryToolsets` inputs, and dynamic executor wiring
 with `RegisterRegistry`. Publish generated `ToolSchemas()` records before
 turning on dynamic consumers. Upgrade the registry to serve `ResolveToolset`

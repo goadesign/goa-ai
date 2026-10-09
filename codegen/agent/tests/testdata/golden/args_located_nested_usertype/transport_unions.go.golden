@@ -9,77 +9,31 @@ package http
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"goa.design/goa-ai/runtime/agent/tools"
-	"io"
+	goa "goa.design/goa/v3/pkg"
 )
 
-// decodeUnionStrictJSON decodes one union JSON document and rejects fields that
-// are not present in the generated union envelope or selected branch contract.
-func decodeUnionStrictJSON(data []byte, v any) error {
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(v); err != nil {
-		return err
-	}
-	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		return fmt.Errorf("multiple JSON documents")
-	}
-	return nil
-}
-
-// missingUnionValueError reports an omitted value in a tagged union envelope.
-func missingUnionValueError() error {
-	return tools.NewValidationError(
-		"missing required union field \"value\"",
-		[]*tools.FieldIssue{
-			{
-				Field:      "value",
-				Constraint: "missing_field",
-			},
-		},
-		nil,
-	)
-}
-
-// nullUnionValueError reports a null value in a tagged union envelope.
-func nullUnionValueError(expected string) error {
-	return tools.NewValidationError(
-		fmt.Sprintf("union field \"value\" must be a %s, not null", expected),
-		[]*tools.FieldIssue{
-			{
-				Field:            "value",
-				Constraint:       "invalid_field_type",
-				ExpectedJSONType: expected,
-				ActualJSONType:   "null",
-			},
-		},
-		nil,
-	)
-}
-
-// StepState is a sum-type union.
+// StepState holds exactly one of its branch values.
 type StepState struct {
 	kind     StepStateKind
-	Active   *ActiveStatusTransport
-	Inactive *InactiveStatusTransport
-	Since    StepStateSinceTransport
+	active   *ActiveStatusTransport
+	inactive *InactiveStatusTransport
+	since    StepStateSinceTransport
 }
 
-// StepStateKind enumerates the union variants for StepState.
+// StepStateKind records which StepState branch is selected.
 type StepStateKind string
 
 const (
-	// StepStateKindActive identifies the active branch of the union.
+	// StepStateKindActive identifies the active branch.
 	StepStateKindActive StepStateKind = "active"
-	// StepStateKindInactive identifies the inactive branch of the union.
+	// StepStateKindInactive identifies the inactive branch.
 	StepStateKindInactive StepStateKind = "inactive"
-	// StepStateKindSince identifies the since branch of the union.
+	// StepStateKindSince identifies the since branch.
 	StepStateKindSince StepStateKind = "since"
 )
 
-// Kind returns the discriminator value of the union.
+// Kind returns the selected branch.
 func (u StepState) Kind() StepStateKind {
 	return u.kind
 }
@@ -88,109 +42,116 @@ func (u StepState) Kind() StepStateKind {
 func NewStepStateActive(v *ActiveStatusTransport) StepState {
 	return StepState{
 		kind:   StepStateKindActive,
-		Active: v,
+		active: v,
 	}
 }
 
-// AsActive returns the value of the active branch if set.
+// AsActive returns the value when the active branch is selected.
 func (u StepState) AsActive() (_ *ActiveStatusTransport, ok bool) {
 	if u.kind != StepStateKindActive {
 		return
 	}
-	return u.Active, true
+	return u.active, true
 }
 
-// SetActive sets the active branch of the union.
+// SetActive selects the active branch and stores v.
 func (u *StepState) SetActive(v *ActiveStatusTransport) {
-	u.kind = StepStateKindActive
-	u.Active = v
+	*u = StepState{
+		kind:   StepStateKindActive,
+		active: v,
+	}
 }
 
 // NewStepStateInactive constructs StepState with the inactive branch set.
 func NewStepStateInactive(v *InactiveStatusTransport) StepState {
 	return StepState{
 		kind:     StepStateKindInactive,
-		Inactive: v,
+		inactive: v,
 	}
 }
 
-// AsInactive returns the value of the inactive branch if set.
+// AsInactive returns the value when the inactive branch is selected.
 func (u StepState) AsInactive() (_ *InactiveStatusTransport, ok bool) {
 	if u.kind != StepStateKindInactive {
 		return
 	}
-	return u.Inactive, true
+	return u.inactive, true
 }
 
-// SetInactive sets the inactive branch of the union.
+// SetInactive selects the inactive branch and stores v.
 func (u *StepState) SetInactive(v *InactiveStatusTransport) {
-	u.kind = StepStateKindInactive
-	u.Inactive = v
+	*u = StepState{
+		kind:     StepStateKindInactive,
+		inactive: v,
+	}
 }
 
 // NewStepStateSince constructs StepState with the since branch set.
 func NewStepStateSince(v StepStateSinceTransport) StepState {
 	return StepState{
 		kind:  StepStateKindSince,
-		Since: v,
+		since: v,
 	}
 }
 
-// AsSince returns the value of the since branch if set.
+// AsSince returns the value when the since branch is selected.
 func (u StepState) AsSince() (_ StepStateSinceTransport, ok bool) {
 	if u.kind != StepStateKindSince {
 		return
 	}
-	return u.Since, true
+	return u.since, true
 }
 
-// SetSince sets the since branch of the union.
+// SetSince selects the since branch and stores v.
 func (u *StepState) SetSince(v StepStateSinceTransport) {
-	u.kind = StepStateKindSince
-	u.Since = v
+	*u = StepState{
+		kind:  StepStateKindSince,
+		since: v,
+	}
 }
 
-// Validate ensures the union discriminant is valid.
+// Validate ensures exactly one valid branch is selected.
 func (u StepState) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u StepState) Value() (any, error) {
 	switch u.kind {
 	case "":
-		return newStepStateDiscriminatorError("", false)
+		return nil, goa.InvalidEnumValueError("type", "", []any{
+			string(StepStateKindActive),
+			string(StepStateKindInactive),
+			string(StepStateKindSince),
+		})
 	case StepStateKindActive:
-		if u.Active == nil {
-			return missingUnionValueError()
+		if u.active == nil {
+			return nil, goa.MissingFieldError("value", "StepState")
 		}
-		return nil
+		return u.active, nil
 	case StepStateKindInactive:
-		if u.Inactive == nil {
-			return missingUnionValueError()
+		if u.inactive == nil {
+			return nil, goa.MissingFieldError("value", "StepState")
 		}
-		return nil
+		return u.inactive, nil
 	case StepStateKindSince:
-		return nil
+		return u.since, nil
 	default:
-		got := string(u.kind)
-		return newStepStateDiscriminatorError(got, true)
+		return nil, goa.InvalidEnumValueError("type", u.kind, []any{
+			string(StepStateKindActive),
+			string(StepStateKindInactive),
+			string(StepStateKindSince),
+		})
 	}
 }
 
 // MarshalJSON marshals the union into the canonical {type,value} JSON shape.
 func (u StepState) MarshalJSON() ([]byte, error) {
-	if err := u.Validate(); err != nil {
+	value, err := u.Value()
+	if err != nil {
 		return nil, err
-	}
-	var (
-		value any
-	)
-	switch u.kind {
-	case StepStateKindActive:
-		value = u.Active
-	case StepStateKindInactive:
-		value = u.Inactive
-	case StepStateKindSince:
-		value = u.Since
-	default:
-		got := string(u.kind)
-		return nil, newStepStateDiscriminatorError(got, true)
 	}
 	return json.Marshal(struct {
 		Type  string `json:"type"`
@@ -204,104 +165,46 @@ func (u StepState) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON unmarshals the union from the canonical {type,value} JSON shape.
 func (u *StepState) UnmarshalJSON(data []byte) error {
 	var raw struct {
-		Type  *string         `json:"type"`
+		Type  string          `json:"type"`
 		Value json.RawMessage `json:"value"`
 	}
-	if err := decodeUnionStrictJSON(data, &raw); err != nil {
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	if raw.Type == nil {
-		return newStepStateDiscriminatorError("", false)
-	}
 	if len(raw.Value) == 0 {
-		return missingUnionValueError()
+		return goa.MissingFieldError("value", "StepState")
 	}
-	switch *raw.Type {
+	if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
+		return goa.InvalidFieldTypeError("value", nil, "non-null JSON value")
+	}
+	switch raw.Type {
 	case string(StepStateKindActive):
-		if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
-			return nullUnionValueError("object")
-		}
 		var v *ActiveStatusTransport
-		if err := decodeUnionStrictJSON(raw.Value, &v); err != nil {
-			var typeErr *json.UnmarshalTypeError
-			if errors.As(err, &typeErr) && typeErr.Value != "" {
-				return tools.NewValidationError(
-					err.Error(),
-					[]*tools.FieldIssue{
-						{
-							Field:            "value",
-							Constraint:       "invalid_field_type",
-							ExpectedJSONType: "object",
-							ActualJSONType:   typeErr.Value,
-						},
-					},
-					nil,
-				)
-			}
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
 			return err
 		}
-		u.kind = StepStateKindActive
-		u.Active = v
+		u.SetActive(v)
 	case string(StepStateKindInactive):
-		if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
-			return nullUnionValueError("object")
-		}
 		var v *InactiveStatusTransport
-		if err := decodeUnionStrictJSON(raw.Value, &v); err != nil {
-			var typeErr *json.UnmarshalTypeError
-			if errors.As(err, &typeErr) && typeErr.Value != "" {
-				return tools.NewValidationError(
-					err.Error(),
-					[]*tools.FieldIssue{
-						{
-							Field:            "value",
-							Constraint:       "invalid_field_type",
-							ExpectedJSONType: "object",
-							ActualJSONType:   typeErr.Value,
-						},
-					},
-					nil,
-				)
-			}
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
 			return err
 		}
-		u.kind = StepStateKindInactive
-		u.Inactive = v
+		u.SetInactive(v)
 	case string(StepStateKindSince):
-		if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
-			return nullUnionValueError("string")
-		}
 		var v StepStateSinceTransport
-		if err := decodeUnionStrictJSON(raw.Value, &v); err != nil {
-			var typeErr *json.UnmarshalTypeError
-			if errors.As(err, &typeErr) && typeErr.Value != "" {
-				return tools.NewValidationError(
-					err.Error(),
-					[]*tools.FieldIssue{
-						{
-							Field:            "value",
-							Constraint:       "invalid_field_type",
-							ExpectedJSONType: "string",
-							ActualJSONType:   typeErr.Value,
-						},
-					},
-					nil,
-				)
-			}
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
 			return err
 		}
-		u.kind = StepStateKindSince
-		u.Since = v
+		u.SetSince(v)
 	default:
-		return newStepStateDiscriminatorError(*raw.Type, true)
+		if raw.Type == "" {
+			return goa.MissingFieldError("type", "StepState")
+		}
+		return goa.InvalidEnumValueError("type", raw.Type, []any{
+			string(StepStateKindActive),
+			string(StepStateKindInactive),
+			string(StepStateKindSince),
+		})
 	}
 	return nil
-}
-
-func newStepStateDiscriminatorError(got string, typePresent bool) error {
-	return tools.NewUnionDiscriminatorError("StepState", got, typePresent, []string{
-		string(StepStateKindActive),
-		string(StepStateKindInactive),
-		string(StepStateKindSince),
-	})
 }

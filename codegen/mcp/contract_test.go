@@ -19,9 +19,7 @@ import (
 	"goa.design/goa/v3/expr"
 )
 
-const readDocumentMethod = "ReadDocument"
-
-func TestPrepareServices_RejectsUnmappedMCPMethods(t *testing.T) {
+func TestPrepareServices_PreservesMethodsWithoutMCPDeclarations(t *testing.T) {
 	restore := resetMCPCodegenState(t)
 	defer restore()
 
@@ -30,9 +28,8 @@ func TestPrepareServices_RejectsUnmappedMCPMethods(t *testing.T) {
 		jsonrpcService(svc, "/rpc"),
 	})
 	mcpexpr.Root.RegisterMCP(svc, &mcpexpr.MCPExpr{
-		Name:            "calc",
-		Version:         "1.0.0",
-		ProtocolVersion: "2025-06-18",
+		Name:    "calc",
+		Version: "1.0.0",
 		Tools: []*mcpexpr.ToolExpr{
 			{Name: "add", Method: methods["add"]},
 		},
@@ -40,9 +37,10 @@ func TestPrepareServices_RejectsUnmappedMCPMethods(t *testing.T) {
 
 	err := prepareServices([]eval.Root{root})
 
-	require.Error(t, err)
-	require.ErrorContains(t, err, `service "calc"`)
-	require.ErrorContains(t, err, "subtract")
+	require.NoError(t, err)
+	require.Same(t, methods["subtract"], svc.Method("subtract"))
+	require.Nil(t, root.Service("mcp_calc").Method("subtract"))
+	require.Len(t, mcpexpr.Root.GetMCP(svc).Tools, 1)
 }
 
 func TestPrepareServices_AttachesGeneratedMCPDesign(t *testing.T) {
@@ -54,9 +52,8 @@ func TestPrepareServices_AttachesGeneratedMCPDesign(t *testing.T) {
 		jsonrpcService(svc, "/rpc"),
 	})
 	mcpexpr.Root.RegisterMCP(svc, &mcpexpr.MCPExpr{
-		Name:            "calc",
-		Version:         "1.0.0",
-		ProtocolVersion: "2025-06-18",
+		Name:    "calc",
+		Version: "1.0.0",
 		Tools: []*mcpexpr.ToolExpr{
 			{Name: "add", Method: methods["add"]},
 		},
@@ -71,22 +68,13 @@ func TestPrepareServices_AttachesGeneratedMCPDesign(t *testing.T) {
 	require.Empty(t, root.API.HTTP.Services)
 	require.Len(t, root.API.JSONRPC.Services, 1)
 	require.Same(t, root.Services[1], root.API.JSONRPC.Services[0].ServiceExpr)
-	require.Equal(t, "/rpc", root.API.JSONRPC.Services[0].JSONRPCRoute.Path)
+	require.Equal(t, []string{"/rpc"}, root.API.JSONRPC.Services[0].HTTPEndpoints[0].Routes[0].FullPaths())
 	mcpService := root.Services[1]
-	initialized := mcpService.Method("notifications/initialized")
-	require.NotNil(t, initialized)
-	initializedPayload := expr.AsObject(initialized.Payload.Type)
-	require.NotNil(t, initializedPayload)
-	require.Empty(t, *initializedPayload)
-	initializedEndpoint := root.API.JSONRPC.Services[0].EndpointFor(initialized)
-	require.NotNil(t, initializedEndpoint)
-	require.True(t, initializedEndpoint.IsJSONRPCNotification())
-	initialize := mcpService.Method("initialize")
-	require.NotNil(t, initialize)
-	initializePayload := expr.AsObject(initialize.Payload.Type)
-	require.NotNil(t, initializePayload.Attribute("capabilities"))
-	require.Nil(t, initializePayload.Attribute("protocolVersion").Validation)
-	require.True(t, initialize.Payload.IsRequired("capabilities"))
+	discover := mcpService.Method("server/discover")
+	require.NotNil(t, discover)
+	require.True(t, discover.Payload.IsRequired("_meta"))
+	require.Nil(t, mcpService.Method("initialize"))
+	require.Nil(t, mcpService.Method("notifications/initialized"))
 	toolsCall := mcpService.Method("tools/call")
 	require.NotNil(t, toolsCall.Result)
 	require.Same(t, toolsCall.Result, toolsCall.StreamingResult)
@@ -95,12 +83,10 @@ func TestPrepareServices_AttachesGeneratedMCPDesign(t *testing.T) {
 	require.Nil(t, mcpService.Method("resources/subscribe"))
 	require.Nil(t, mcpService.Method("resources/unsubscribe"))
 	require.Nil(t, mcpService.Method("events/stream"))
-	ping := mcpService.Method("ping")
-	require.NotNil(t, ping)
-	require.Empty(t, *expr.AsObject(ping.Result.Type))
+	require.Nil(t, mcpService.Method("ping"))
 }
 
-func TestPrepareServices_BuildsMCP202506WireTypes(t *testing.T) {
+func TestPrepareServices_BuildsCurrentMCPWireTypes(t *testing.T) {
 	restore := resetMCPCodegenState(t)
 	defer restore()
 
@@ -134,21 +120,26 @@ func TestPrepareServices_BuildsMCP202506WireTypes(t *testing.T) {
 	require.True(t, toolInfo.IsRequired("name"))
 	require.True(t, toolInfo.IsRequired("inputSchema"))
 	require.NotNil(t, expr.AsObject(toolInfo.Type).Attribute("outputSchema"))
-	callResult := testRootType(t, root, "ToolsCallResult")
+	callOutcome := testRootType(t, root, "ToolsCallResult")
+	require.True(t, callOutcome.IsRequired("outcome"))
+	choice := expr.AsUnion(callOutcome.Find("outcome").Type)
+	require.Equal(t, "resultType", choice.TypeKey)
+	require.True(t, choice.Flatten)
+	callResult := testRootType(t, root, "ToolsCallCompleteResult")
 	require.NotNil(t, expr.AsObject(callResult.Type).Attribute("structuredContent"))
 	content := testRootType(t, root, "ContentItem")
-	require.Equal(t, []string{"type", "text"}, content.Validation.Required)
-	require.Equal(t, []any{"text"}, expr.AsObject(content.Type).Attribute("type").Validation.Values)
-	require.Nil(t, expr.AsObject(content.Type).Attribute("mimeType"))
-	require.Nil(t, expr.AsObject(content.Type).Attribute("data"))
-	require.Nil(t, expr.AsObject(content.Type).Attribute("uri"))
+	require.Equal(t, []string{"type"}, content.Validation.Required)
+	require.Equal(t, []any{"text", "image", "audio", "resource_link", "resource"}, expr.AsObject(content.Type).Attribute("type").Validation.Values)
+	require.NotNil(t, expr.AsObject(content.Type).Attribute("mimeType"))
+	require.NotNil(t, expr.AsObject(content.Type).Attribute("data"))
+	require.NotNil(t, expr.AsObject(content.Type).Attribute("uri"))
 
 	resource := testRootType(t, root, "ResourceInfo")
 	require.True(t, resource.IsRequired("uri"))
 	require.True(t, resource.IsRequired("name"))
 	resourceContent := testRootType(t, root, "ResourceContent")
-	require.Equal(t, []string{"uri", "text"}, resourceContent.Validation.Required)
-	require.Nil(t, expr.AsObject(resourceContent.Type).Attribute("blob"))
+	require.Equal(t, []string{"uri"}, resourceContent.Validation.Required)
+	require.NotNil(t, expr.AsObject(resourceContent.Type).Attribute("blob"))
 
 	promptArgument := testRootType(t, root, "PromptArgument")
 	require.True(t, promptArgument.IsRequired("name"))
@@ -156,8 +147,7 @@ func TestPrepareServices_BuildsMCP202506WireTypes(t *testing.T) {
 	promptMessage := testRootType(t, root, "PromptMessage")
 	role := expr.AsObject(promptMessage.Type).Attribute("role")
 	require.Equal(t, []any{"user", "assistant"}, role.Validation.Values)
-	messageContent := testRootType(t, root, "MessageContent")
-	require.Equal(t, []string{"type", "text"}, messageContent.Validation.Required)
+	require.Same(t, content.Type, expr.AsObject(promptMessage.Type).Attribute("content").Type.(*expr.UserTypeExpr).Type)
 	promptsGet := testRootType(t, root, "PromptsGetPayload")
 	arguments := expr.AsMap(expr.AsObject(promptsGet.Type).Attribute("arguments").Type)
 	require.NotNil(t, arguments)
@@ -173,12 +163,12 @@ func TestPrepareServices_BuildsMCP202506WireTypes(t *testing.T) {
 		fieldName string
 	}{
 		{typeName: "ToolsListResult", fieldName: "tools"},
-		{typeName: "ToolsCallResult", fieldName: "content"},
+		{typeName: "ToolsCallCompleteResult", fieldName: "content"},
 		{typeName: "ResourcesListResult", fieldName: "resources"},
-		{typeName: "ResourcesReadResult", fieldName: "contents"},
+		{typeName: "ResourcesReadCompleteResult", fieldName: "contents"},
 		{typeName: "PromptsListResult", fieldName: "prompts"},
 		{typeName: "PromptInfo", fieldName: "arguments"},
-		{typeName: "PromptsGetResult", fieldName: "messages"},
+		{typeName: "PromptsGetCompleteResult", fieldName: "messages"},
 	} {
 		attribute := expr.AsObject(testRootType(t, root, tc.typeName).Type).Attribute(tc.fieldName)
 		require.True(t, expr.AsArray(attribute.Type).NonNullableElems, "%s.%s", tc.typeName, tc.fieldName)
@@ -226,7 +216,7 @@ func TestBuildAdapterDataRejectsAnExampleThatCannotBeEncodedAsJSON(t *testing.T)
 		},
 	}
 
-	_, err := newAdapterGenerator(
+	_, err := newAdapterGenerator(testSchemaAPI(),
 		svc,
 		mcp,
 	).buildAdapterData()
@@ -237,7 +227,8 @@ func TestBuildAdapterDataRejectsAnExampleThatCannotBeEncodedAsJSON(t *testing.T)
 
 func TestStaticPromptsRenderWithoutAProvider(t *testing.T) {
 	data := &AdapterData{
-		MCPPackage: "mcpassistant",
+		PayloadRefs: testProtocolPayloadRefs(),
+		MCPPackage:  "mcpassistant",
 		StaticPrompts: []*StaticPromptAdapter{{
 			Name:        "daily_report",
 			Description: "Summarize the day",
@@ -249,14 +240,14 @@ func TestStaticPromptsRenderWithoutAProvider(t *testing.T) {
 	}
 
 	files := generateMCPTransport("example.com/assistant/gen", &expr.ServiceExpr{Name: "assistant"}, data)
-	require.Len(t, files, 2)
+	require.Len(t, files, 1)
 	for _, file := range files {
 		require.NotEqual(t, "gen/mcp_assistant/prompt_provider.go", filepath.ToSlash(file.Path))
 	}
 
 	adapter := renderGeneratedFile(t, files[0])
 	require.Contains(t, adapter, `case "daily_report":`)
-	require.Contains(t, adapter, `Text: "Summarize today."`)
+	require.Contains(t, adapter, `Text: stringPtr("Summarize today.")`)
 	require.NotContains(t, adapter, "PromptProvider")
 	require.NotContains(t, adapter, "promptProvider")
 }
@@ -330,7 +321,7 @@ func TestPrepareServices_AcceptedMCPServiceAssignsEveryOriginalEndpoint(t *testi
 	require.False(t, resourcesRead.IsStreaming())
 	require.False(t, resourcesRead.HasMixedResults())
 
-	data, err := newAdapterGenerator(
+	data, err := newAdapterGenerator(testSchemaAPI(),
 		svc,
 		mcp,
 	).buildAdapterData()
@@ -341,13 +332,14 @@ func TestPrepareServices_AcceptedMCPServiceAssignsEveryOriginalEndpoint(t *testi
 	data.CodecPackage = testCodecPackage
 	data.Tools[0].Codec = &MethodCodecData{
 		PayloadDecode: "DecodeAnalyzePayload",
-		ResultEncode:  "EncodeAnalyzeResult",
+		ResultEncode:  testCodecPackage + ".EncodeAnalyzeResult",
 	}
 	data.Resources[0].Codec = &MethodCodecData{
-		ResultEncode: "EncodeReadDocumentResult",
+		ResultEncode: testCodecPackage + ".EncodeReadDocumentResult",
 	}
-	data.Tools[0].ServiceMethodName = "Analyze"
-	data.Resources[0].ServiceMethodName = readDocumentMethod
+	data.EndpointsName = "Endpoints"
+	data.Tools[0].Endpoint = &endpointMethodAdapter{CallName: "invokeMCPMethod0"}
+	data.Resources[0].Endpoint = &endpointMethodAdapter{CallName: "invokeMCPMethod1"}
 
 	data.NeedsServerCodec = true
 	data.MCPPackage = "mcpassistant"
@@ -478,6 +470,7 @@ func testRootExpr(services []*expr.ServiceExpr, jsonrpcServices []*expr.HTTPServ
 func jsonrpcService(svc *expr.ServiceExpr, path string) *expr.HTTPServiceExpr {
 	return &expr.HTTPServiceExpr{
 		ServiceExpr: svc,
+		Root:        &expr.HTTPExpr{},
 		JSONRPCRoute: &expr.RouteExpr{
 			Method: http.MethodPost,
 			Path:   path,
@@ -516,4 +509,26 @@ func renderGeneratedFile(t *testing.T, file *gcodegen.File) string {
 func prepareServices(roots []eval.Root) error {
 	_, err := prepareMCPServices(append(roots, mcpexpr.Root))
 	return err
+}
+
+// testSchemaAPI gives isolated generator tests a deterministic example source.
+func testSchemaAPI() *expr.APIExpr {
+	return &expr.APIExpr{RandomizerFactory: expr.NewDeterministicRandomizerFactory()}
+}
+
+// testProtocolPayloadRefs supplies the exact synthetic method types used by
+// isolated template tests. Generated runtime tests resolve actual Goa layouts.
+func testProtocolPayloadRefs() map[string]string {
+	return map[string]string{
+		"server/discover":          "*DiscoverPayload",
+		"tools/list":               "*ToolsListPayload",
+		"tools/call":               "*ToolsCallPayload",
+		"resources/list":           "*ResourcesListPayload",
+		"resources/read":           "*ResourcesReadPayload",
+		"resources/templates/list": "*ResourceTemplatesListPayload",
+		"prompts/list":             "*PromptsListPayload",
+		"prompts/get":              "*PromptsGetPayload",
+		"completion/complete":      "*CompletionCompletePayload",
+		"subscriptions/listen":     "*SubscriptionsListenPayload",
+	}
 }

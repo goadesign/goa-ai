@@ -140,9 +140,9 @@ func TestPrepareContinuationRejectsWrongPendingResponseBeforeWorkflowStart(t *te
 		"run-3",
 		"turn-3",
 		suspension,
-		&api.PendingInputResponse{Clarification: &api.ClarificationAnswer{
+		&api.RunContinuationInput{Response: &api.PendingInputResponse{Clarification: &api.ClarificationAnswer{
 			ID: "clarification-other",
-		}},
+		}}},
 	)
 	require.NoError(t, err)
 	err = runtime.buildAndSubmitWorkflowForTest(context.Background(), directInput, "agent.workflow", "q", true)

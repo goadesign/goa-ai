@@ -9,9 +9,12 @@ import (
 	"strings"
 	"time"
 
+	"goa.design/goa-ai/internal/tooloperation"
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/mcp"
 	goa "goa.design/goa/v3/pkg"
 )
 
@@ -28,13 +31,19 @@ type (
 	// applying session-scoped policies without polluting tool payload schemas).
 	ToolCallMeta struct {
 		// TextOnly is the accepted execution restriction supplied by the runtime.
-		TextOnly  bool   `json:"text_only,omitempty"`
-		RunID     string `json:"run_id"`
-		SessionID string `json:"session_id"`
-		TurnID    string `json:"turn_id,omitempty"`
+		TextOnly bool `json:"text_only,omitempty"`
+		// ExecutionSequence identifies one new operation on an unfinished invocation.
+		// Zero is the first invocation; repeated delivery keeps the same value.
+		ExecutionSequence uint64 `json:"execution_sequence"`
+		// ExecutionContinuation selects the exact saved operation outside tool arguments.
+		// It is absent on the original call and present on each later operation.
+		ExecutionContinuation *api.ExecutionContinuation `json:"execution_continuation,omitempty"`
+		RunID                 string                     `json:"run_id"`
+		SessionID             string                     `json:"session_id"`
+		TurnID                string                     `json:"turn_id,omitempty"`
 		// ToolCallID is the model/provider call identity. The registry preserves it
-		// as metadata and derives the separate global ToolUseID from RunID plus
-		// ToolCallID.
+		// as metadata and derives the separate global ToolUseID from RunID,
+		// ToolCallID and ExecutionSequence.
 		ToolCallID       string `json:"tool_call_id"`
 		ParentToolCallID string `json:"parent_tool_call_id,omitempty"`
 		// Labels carries run labels and runtime-supplied values fixed for this call.
@@ -84,8 +93,8 @@ type (
 	}
 
 	// ToolResultMessage is published to a per-call result stream. The gateway
-	// interprets only the retry-control variant; consumers decode terminal
-	// success and error variants using compiled tool contracts.
+	// interprets retry control and saves every admitted round outcome. Consumers
+	// decode completed values with compiled contracts or retain unfinished execution.
 	ToolResultMessage struct {
 		// RegistrationToken echoes the exact token stamped on the tool call.
 		RegistrationToken string          `json:"registration_token"`
@@ -107,6 +116,9 @@ type (
 		// Retry asks registry orchestration to republish this exact admitted call.
 		// It is mutually exclusive with every terminal success and error field.
 		Retry *ToolRetry `json:"retry,omitempty"`
+		// PendingExecution finishes this admitted operation with an unfinished outcome.
+		// The runtime saves it and resumes later without publishing a completed result.
+		PendingExecution *api.PendingExecution `json:"pending_execution,omitempty"`
 	}
 
 	// ToolOutputDeltaMessage is published to a per-call result stream while a tool
@@ -281,6 +293,9 @@ func ValidateToolCallMessage(message ToolCallMessage) error {
 			message.Meta.ToolCallID == "" {
 			return fmt.Errorf("tool call run, session, and tool call metadata are required")
 		}
+		if err := ValidateExecution(message.Meta.ExecutionSequence, message.Meta.ExecutionContinuation, message.Meta.TextOnly); err != nil {
+			return err
+		}
 		for name, value := range map[string]string{
 			"run ID":              message.Meta.RunID,
 			"session ID":          message.Meta.SessionID,
@@ -404,14 +419,30 @@ func NewToolResultInvalidArgumentsMessage(
 	return out
 }
 
-// ValidateToolResultMessage enforces the top-level success, terminal-error, or
-// retry-control union before a consumer acts on the message.
+// NewInputRequiredResult copies and validates host input before publishing one
+// unfinished provider operation. Completed result fields remain absent.
+func NewInputRequiredResult(registrationToken, toolUseID string, input *mcp.InputRequired) (ToolResultMessage, error) {
+	pending, err := tooloperation.NewPendingInput(input)
+	if err != nil {
+		return ToolResultMessage{}, err
+	}
+	return ToolResultMessage{RegistrationToken: registrationToken, ToolUseID: toolUseID, PendingExecution: pending}, nil
+}
+
+// ValidateToolResultMessage checks that each message contains one completed,
+// error, retry-control or unfinished outcome before the consumer acts on it.
 func ValidateToolResultMessage(message ToolResultMessage) error {
 	if err := ValidateRegistrationToken(message.RegistrationToken); err != nil {
 		return err
 	}
 	if err := ValidateToolUseID(message.ToolUseID); err != nil {
 		return err
+	}
+	if message.PendingExecution != nil {
+		if message.Retry != nil || message.Error != nil || rawMessageHasNonNullJSON(message.Result) || message.Bounds != nil || len(message.ServerData) > 0 {
+			return fmt.Errorf("unfinished outcome cannot contain a completed result, error, retry, bounds or server data")
+		}
+		return message.PendingExecution.Validate()
 	}
 	if message.Retry != nil {
 		if message.Error != nil {

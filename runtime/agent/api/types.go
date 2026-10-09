@@ -3,8 +3,10 @@
 package api
 
 import (
+	"encoding/json"
 	"time"
 
+	"goa.design/goa-ai/internal/tooloperation"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/internal/responseevidence"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -17,9 +19,19 @@ import (
 	"goa.design/goa-ai/runtime/agent/storage"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/content"
+	"goa.design/goa-ai/runtime/mcp"
 )
 
 type (
+	// ExecutionContinuation retains one workflow-selected later operation. Its
+	// accessors expose copied input or exact Task identifiers, never model arguments.
+	ExecutionContinuation = tooloperation.Continuation
+
+	// PendingExecution retains exactly one unfinished input or Task outcome.
+	// Accessors return copies; completed data cannot be added to its branch.
+	PendingExecution = tooloperation.Pending
+
 	// RunInput captures everything an initial or continuation workflow needs.
 	// Initial history has already been published; engine commands carry its
 	// position plus caller-provided control values.
@@ -87,15 +99,25 @@ type (
 		Continuation *RunContinuationInput
 	}
 
-	// RunContinuationInput starts a new workflow from one exact suspended run.
-	// The runtime validates Response against the first pending request before it
-	// decodes Checkpoint or schedules additional work.
+	// CancellationRequest identifies one run and the first accepted cancellation
+	// reason. Runtime callers and workflow engines use the same contract.
+	CancellationRequest struct {
+		// RunID identifies the run whose unfinished work must be canceled.
+		RunID string
+		// Reason records why cancellation was requested.
+		Reason string
+	}
+
+	// RunContinuationInput restores one exact suspended run to answer its first
+	// pending request or cancel saved work. Exactly one operation is required.
 	RunContinuationInput struct {
 		// Suspension is the terminal result returned by the preceding workflow.
 		Suspension *RunSuspension
-
-		// Response satisfies the first request in Suspension.Pending.
+		// Response satisfies the first pending request and excludes Cancellation.
 		Response *PendingInputResponse
+		// Cancellation selects the saved run or one of its suspended descendants.
+		// It excludes Response and never supplies an answer to a pending request.
+		Cancellation *CancellationRequest
 	}
 
 	// TagPolicyClause describes one tag-filtering clause for a run.
@@ -272,6 +294,8 @@ type (
 	// PendingInput describes one exact external input requested by the runtime.
 	// Exactly one payload field must be set and must match Kind.
 	PendingInput struct {
+		// MCP is set for input needed by an unfinished remote tool invocation.
+		MCP *PendingMCPInput
 		// Kind selects the required response shape.
 		Kind PendingInputKind
 
@@ -282,6 +306,24 @@ type (
 		// tools. Tool-bound awaits carry the runtime ToolCallID used by callers
 		// and the provider ModelToolCallID retained for transcript reconstruction.
 		Await *planner.AwaitItem
+	}
+
+	// PendingMCPInput contains host interactions for one unfinished tool call.
+	// Server state remains in the trusted checkpoint and never reaches a model.
+	PendingMCPInput struct {
+		// ToolName names the remote tool being completed.
+		ToolName tools.Ident
+		// ToolCallID distinguishes concurrent invocations of the same tool.
+		ToolCallID string
+		// Requests preserves the server's exact interaction IDs and contracts.
+		Requests map[string]mcp.InputRequest
+	}
+	// MCPInputResponse supplies one host response for each requested interaction.
+	MCPInputResponse struct {
+		// ToolCallID selects the exact pending invocation from the suspension.
+		ToolCallID string
+		// Responses maps server IDs to accepted input, decline, or cancellation.
+		Responses map[string]json.RawMessage
 	}
 
 	// PendingConfirmation describes one tool call that cannot execute until a
@@ -309,6 +351,8 @@ type (
 	// PendingInputResponse supplies exactly one response to the first pending
 	// request in a RunSuspension. Exactly one field must be set.
 	PendingInputResponse struct {
+		// MCP supplies host answers for the exact unfinished invocation.
+		MCP *MCPInputResponse
 		// Clarification supplies free-form user text.
 		Clarification *ClarificationAnswer
 
@@ -326,6 +370,10 @@ type (
 	// nested agents because workflow engines decode arbitrary Go values as
 	// generic maps.
 	ToolEvent struct {
+		// Blocks retains ordered text, media and resource descriptions for this
+		// invocation, including when execution failed.
+		Blocks content.Blocks
+
 		// Name is the fully-qualified tool identifier that produced this result.
 		Name tools.Ident
 
@@ -542,6 +590,12 @@ type (
 	// workflow execution. Planner implementations cannot construct this type
 	// through their PlanResult contract.
 	ToolCall struct {
+		// ExecutionContinuation selects the workflow-owned next operation on this
+		// invocation. It is never advertised as a model-authored argument.
+		ExecutionContinuation *ExecutionContinuation
+		// ExecutionSequence identifies each new operation on this invocation.
+		// The workflow saves it so duplicate activity delivery keeps one identity.
+		ExecutionSequence uint64
 		// TextOnly is derived from the accepted run policy and disables UI interaction.
 		TextOnly bool `json:",omitempty"` //nolint:tagliatelle // Saved execution records retain Go field names.
 		// Registry retains the exact registered contract selected for this call.
@@ -768,11 +822,11 @@ type (
 		// Append stores ordinary records without changing run lifecycle state.
 		Append *AppendRecordsCommand
 		// RootStart stores the start of a session root run. An ended session also
-		// stores the canceled completion that prevents the run from doing work.
+		// stores cancellation intent; the workflow settles inherited work before closing.
 		RootStart *RootRunStartCommand
 		// ChildStart stores a parent link and the start of a child run. An ended
-		// session also stores the canceled completion that prevents the run from
-		// doing work.
+		// session also stores cancellation intent; the workflow settles inherited
+		// work before closing.
 		ChildStart *ChildRunStartCommand
 		// OneShotStart stores the first record for a sessionless run.
 		OneShotStart *OneShotRunStartCommand
@@ -945,12 +999,19 @@ type (
 	// ToolInput carries the execution payload for one tool call from workflow
 	// code to its activity. The workflow retains model-authored transcript data.
 	ToolInput struct {
+		// ExecutionContinuation selects the saved next operation on this unfinished
+		// invocation. The original tool arguments stay in Payload.
+		ExecutionContinuation *ExecutionContinuation
+		// ExecutionSequence identifies each new operation on this invocation.
+		// The workflow saves it so duplicate activity delivery keeps one identity.
+		ExecutionSequence uint64
 		// TextOnly is derived from the accepted run policy and disables UI interaction.
 		TextOnly bool `json:",omitempty"` //nolint:tagliatelle // Saved execution records retain Go field names.
 		// Registry carries the selected registration into the execution activity.
 		// Static tool calls leave it absent.
 		Registry *tools.RegistryBinding
-		// RunID identifies the run that owns this tool call.
+		// RunID identifies the run that first issued this invocation. Later Task
+		// and input operations retain it; the workflow owns new result records.
 		RunID string
 
 		// AgentID identifies the agent that owns this tool call.
@@ -1020,6 +1081,13 @@ type (
 
 	// ToolOutput is returned by tool executors after invoking the tool implementation.
 	ToolOutput struct {
+		// Blocks retains ordered text, media and resource descriptions for this
+		// invocation, including when execution failed.
+		Blocks content.Blocks
+
+		// PendingExecution is an unfinished outcome, mutually exclusive with every final
+		// result field. The workflow saves it before requesting host interaction.
+		PendingExecution *PendingExecution
 		// Payload is the tool result encoded as JSON. The runtime decodes it using the registered tool codec.
 		Payload rawjson.Message
 
@@ -1105,6 +1173,10 @@ type (
 	//   canonical JSON, but server-only sidecars are never provided here; the
 	//   runtime materializes them after decoding.
 	ProvidedToolResult struct {
+		// Blocks retains ordered text, media and resource descriptions for this
+		// invocation, including when execution failed.
+		Blocks content.Blocks
+
 		// Name is the fully-qualified tool identifier that produced this result.
 		Name tools.Ident
 
@@ -1178,17 +1250,20 @@ const (
 	// PendingInputKindClarification requires a Clarification response.
 	PendingInputKindClarification PendingInputKind = "clarification"
 
+	// PendingInputKindMCP requires host input for an unfinished MCP invocation.
+	PendingInputKindMCP PendingInputKind = "mcp_input"
+
 	// PendingInputKindConfirmation requires a Confirmation response.
 	PendingInputKindConfirmation PendingInputKind = "confirmation"
 
 	// PendingInputKindToolResults requires a ToolResults response.
 	PendingInputKindToolResults PendingInputKind = "tool_results"
 
-	// RunSuspensionVersion is the checkpoint schema emitted by this runtime.
-	// Version 8 retains the advertised catalog for every accepted recovery plan
-	// that waits for input. Failed tool names cannot reconstruct other choices
-	// advertised during that plan. Earlier versions are rejected.
-	RunSuspensionVersion = "goa-ai.run-suspension.v9"
+	// RunSuspensionVersion identifies the checkpoint emitted by this runtime.
+	// Version 13 retains one closed unfinished outcome and its saved execution
+	// sequence alongside ordered tool content, the accepted catalog, unfinished arguments and host
+	// requests. Earlier versions are rejected without conversion.
+	RunSuspensionVersion = "goa-ai.run-suspension.v13"
 
 	// ModelResponseFingerprintVersionV1 identifies the first stable rejected
 	// model-response fingerprint encoding stored in workflow payloads.

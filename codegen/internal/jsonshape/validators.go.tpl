@@ -12,7 +12,27 @@ func {{ .Name }}(path string, value any, description string) error {
     if value == nil {
         return {{ $names.InvalidFieldType }}(field, {{ printf "%q" .Expected }}, "null", description)
     }
-    {{- $usesTyped := or .SignedInteger .UnsignedInteger (eq .Kind "object") (eq .Kind "array") (eq .Kind "map") (eq .Kind "union") }}
+    {{- if and (eq .Kind "union") .Untagged }}
+    switch value.(type) {
+    {{- range .Branches }}
+    {{- if eq .JSONKind 34 }}
+    case string:
+    {{- else if eq .JSONKind 48 }}
+    case {{ $names.JSON }}.Number:
+    {{- else if eq .JSONKind 116 }}
+    case bool:
+    {{- else if eq .JSONKind 91 }}
+    case []any:
+    {{- else if eq .JSONKind 123 }}
+    case map[string]any:
+    {{- end }}
+        return {{ .Call.Name }}(path, value, {{ printf "%q" .Call.Description }})
+    {{- end }}
+    default:
+        return {{ $names.InvalidFieldType }}(field, "a declared union branch", {{ $names.DecodedType }}(value), description)
+    }
+    {{- else }}
+    {{- $usesTyped := or (eq .Kind "object") (eq .Kind "array") (eq .Kind "map") (eq .Kind "union") (and $names.IntegerRangeInShape (or .SignedInteger .UnsignedInteger)) }}
     {{- if or (eq .Expected "integer") (eq .Expected "number") }}
     {{ if $usesTyped }}typed{{ else }}_{{ end }}, ok := value.({{ $names.JSON }}.Number)
     {{- else if eq .Expected "string" }}
@@ -27,33 +47,60 @@ func {{ .Name }}(path string, value any, description string) error {
     if !ok {
         return {{ $names.InvalidFieldType }}(field, {{ printf "%q" .Expected }}, {{ $names.DecodedType }}(value), description)
     }
-    {{- if .SignedInteger }}
-    if _, err := {{ $names.Strconv }}.ParseInt(typed.String(), 10, {{ if .IntegerBits }}{{ .IntegerBits }}{{ else }}{{ $names.Strconv }}.IntSize{{ end }}); err != nil {
-        return {{ $names.InvalidFieldType }}(field, "integer", "number", description)
-    }
-    {{- else if .UnsignedInteger }}
-    if _, err := {{ $names.Strconv }}.ParseUint(typed.String(), 10, {{ if .IntegerBits }}{{ .IntegerBits }}{{ else }}{{ $names.Strconv }}.IntSize{{ end }}); err != nil {
+    {{- if and $names.IntegerRangeInShape (or .SignedInteger .UnsignedInteger) }}
+    if _, err := {{ $names.Strconv }}.{{ if .UnsignedInteger }}ParseUint{{ else }}ParseInt{{ end }}(typed.String(), 10, {{ if .IntegerBits }}{{ .IntegerBits }}{{ else }}{{ $names.Strconv }}.IntSize{{ end }}); err != nil {
         return {{ $names.InvalidFieldType }}(field, "integer", "number", description)
     }
     {{- end }}
     {{- if eq .Kind "union" }}
+    {{- if not .Flatten }}
     for key := range typed {
         if key != {{printf "%q" .TypeKey}} && key != {{printf "%q" .ValueKey}} {
             return {{ $names.UnknownField }}(path, key, []string{ {{printf "%q" .TypeKey}}, {{printf "%q" .ValueKey}} })
         }
     }
+    {{- end }}
+    {{- if $names.UnionDiscriminator }}
+    rawDiscriminator, discriminatorPresent := typed[{{printf "%q" .TypeKey}}]
+    discriminator, ok := rawDiscriminator.(string)
+    if !ok {
+        return {{ $names.UnionDiscriminator }}({{ $names.ChildPath }}(path, {{printf "%q" .TypeKey}}, false), rawDiscriminator, discriminatorPresent, []string{
+            {{- range .Branches }}{{printf "%q" .Name}},{{- end }}
+        })
+    }
+    {{- else }}
     discriminator, ok := typed[{{printf "%q" .TypeKey}}].(string)
     if !ok { return {{ $names.Fmt }}.Errorf("%s: missing or invalid union discriminator", field) }
+    {{- end }}
+    {{- if .Flatten }}
+    branch := make(map[string]any, len(typed)-1)
+    for key, item := range typed {
+        if key != {{printf "%q" .TypeKey}} {
+            branch[key] = item
+        }
+    }
+    {{- else }}
     branch, exists := typed[{{printf "%q" .ValueKey}}]
+    {{- if $names.MissingField }}
+    if !exists { return {{ $names.MissingField }}({{ $names.ChildPath }}(path, {{printf "%q" .ValueKey}}, false)) }
+    {{- else }}
     if !exists || branch == nil { return {{ $names.Fmt }}.Errorf("%s: missing union value", field) }
+    {{- end }}
+    {{- end }}
     switch discriminator {
     {{- $union := . }}
     {{- range .Branches }}
     case {{printf "%q" .Name}}:
-        return {{.Call.Name}}({{ $names.ChildPath }}(path, {{printf "%q" $union.ValueKey}}, false), branch, {{printf "%q" .Call.Description}})
+        return {{.Call.Name}}({{ if $union.Flatten }}path{{ else }}{{ $names.ChildPath }}(path, {{printf "%q" $union.ValueKey}}, false){{ end }}, branch, {{printf "%q" .Call.Description}})
     {{- end }}
     default:
+        {{- if $names.UnionDiscriminator }}
+        return {{ $names.UnionDiscriminator }}({{ $names.ChildPath }}(path, {{printf "%q" .TypeKey}}, false), discriminator, true, []string{
+            {{- range .Branches }}{{printf "%q" .Name}},{{- end }}
+        })
+        {{- else }}
         return {{ $names.Fmt }}.Errorf("%s: unknown union discriminator %q", field, discriminator)
+        {{- end }}
     }
     {{- else if eq .Kind "object" }}
     keys := make([]string, 0, len(typed))
@@ -121,6 +168,7 @@ func {{ .Name }}(path string, value any, description string) error {
     {{- end }}
     {{- if ne .Kind "union" }}
     return nil
+    {{- end }}
     {{- end }}
     {{- end }}
 }

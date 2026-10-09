@@ -7,18 +7,8 @@
 
 package server
 
-// InitializeMcpAssistantPath returns the URL path to the mcp_assistant service initialize HTTP endpoint.
-func InitializeMcpAssistantPath() string {
-	return "/rpc"
-}
-
-// NotificationsInitializedMcpAssistantPath returns the URL path to the mcp_assistant service notifications/initialized HTTP endpoint.
-func NotificationsInitializedMcpAssistantPath() string {
-	return "/rpc"
-}
-
-// PingMcpAssistantPath returns the URL path to the mcp_assistant service ping HTTP endpoint.
-func PingMcpAssistantPath() string {
+// ServerDiscoverMcpAssistantPath returns the URL path to the mcp_assistant service server/discover HTTP endpoint.
+func ServerDiscoverMcpAssistantPath() string {
 	return "/rpc"
 }
 
@@ -42,6 +32,11 @@ func ResourcesReadMcpAssistantPath() string {
 	return "/rpc"
 }
 
+// ResourcesTemplatesListMcpAssistantPath returns the URL path to the mcp_assistant service resources/templates/list HTTP endpoint.
+func ResourcesTemplatesListMcpAssistantPath() string {
+	return "/rpc"
+}
+
 // PromptsListMcpAssistantPath returns the URL path to the mcp_assistant service prompts/list HTTP endpoint.
 func PromptsListMcpAssistantPath() string {
 	return "/rpc"
@@ -49,5 +44,10 @@ func PromptsListMcpAssistantPath() string {
 
 // PromptsGetMcpAssistantPath returns the URL path to the mcp_assistant service prompts/get HTTP endpoint.
 func PromptsGetMcpAssistantPath() string {
+	return "/rpc"
+}
+
+// CompletionCompleteMcpAssistantPath returns the URL path to the mcp_assistant service completion/complete HTTP endpoint.
+func CompletionCompleteMcpAssistantPath() string {
 	return "/rpc"
 }

@@ -15,7 +15,6 @@ import (
 func TestGeneratedTextOnlyContinuationExecutionContracts(t *testing.T) {
 	files := testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", testscenarios.TextOnlyContinuationInputCodecs())
 	root := writeGeneratedModule(t, files)
-	writeGeneratedPackageTest(t, root, "alpha/toolsets/lookup/http/validate.go", fileContent(t, files, "gen/alpha/toolsets/lookup/http/validate.go"))
 	writeGeneratedPackageTest(t, root, "alpha/toolsets/lookup/text_only_continuation_test.go", `package lookup
 
 import (

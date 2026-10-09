@@ -15,12 +15,6 @@ import (
 func TestGeneratedCodecCollectionBehavior(t *testing.T) {
 	files := testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", testscenarios.CodecCollections())
 	root := writeGeneratedModule(t, files)
-	writeGeneratedPackageTest(
-		t,
-		root,
-		"alpha/toolsets/collections/http/validate.go",
-		renderedFileContent(t, files, "gen/alpha/toolsets/collections/http/validate.go"),
-	)
 	writeGeneratedPackageTest(t, root, "alpha/toolsets/collections/codecs_behavior_test.go", `package collections
 
 import (

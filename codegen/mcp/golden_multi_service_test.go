@@ -42,16 +42,20 @@ func TestMultiServiceGeneratesAdapterStubs(t *testing.T) {
 	// Generate adapter stubs for both services and replace bodies
 	_, err := generateExampleAdapterStubs([]exampleMCPService{
 		{
-			service:             alpha,
-			mcpConstructorName:  "NewMcpAlpha",
-			userConstructorName: "NewAlpha",
-			mcpServiceInterface: "Service",
+			service:                  alpha,
+			mcpConstructorName:       "NewMcpAlpha",
+			userConstructorName:      "NewAlpha",
+			userImport:               codegen.NewImport("genalpha", "example.com/assistant/gen/alpha"),
+			mcpServiceInterface:      "Service",
+			userEndpointsConstructor: "NewEndpoints",
 		},
 		{
-			service:             beta,
-			mcpConstructorName:  "NewMcpBeta",
-			userConstructorName: "NewBeta",
-			mcpServiceInterface: "Service",
+			service:                  beta,
+			mcpConstructorName:       "NewMcpBeta",
+			userConstructorName:      "NewBeta",
+			userImport:               codegen.NewImport("genbeta", "example.com/assistant/gen/beta"),
+			mcpServiceInterface:      "Service",
+			userEndpointsConstructor: "NewEndpoints",
 		},
 	}, files)
 	require.NoError(t, err)

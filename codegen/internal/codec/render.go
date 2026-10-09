@@ -38,6 +38,8 @@ type (
 		Reference  string
 		Pointer    bool
 		Validation string
+		// IntegerDecode emits numeric decoding only for a required integer transport type.
+		IntegerDecode bool
 	}
 
 	// unionData contains one Goa OneOf type and its JSON behavior.
@@ -46,8 +48,11 @@ type (
 		KindName string
 		TypeKey  string
 		ValueKey string
+		Flatten  bool
+		Untagged bool
 		Encode   bool
 		Decode   bool
+		Open     bool
 		Branches []*unionBranchData
 	}
 
@@ -59,14 +64,17 @@ type (
 		Kind        string
 		Constructor string
 		Nilable     bool
+		JSONKind    byte
 	}
 
 	// valueData contains the generated functions for one service value.
 	valueData struct {
 		Name              string
 		ServiceRef        string
+		ServicePointer    bool
 		TransportRef      string
 		Validator         string
+		Validate          string
 		Constructor       string
 		Encode            string
 		Decode            string
@@ -75,6 +83,10 @@ type (
 		Shape             string
 		Preflight         string
 		OriginalValidator string
+		// Elicitation checks protocol actions before decoding native answer fields.
+		Elicitation bool
+		// Form selects non-sensitive form content rather than URL consent.
+		Form bool
 	}
 
 	// serviceTypeWriter lets Goa's service resolver add the package name to each
@@ -156,13 +168,14 @@ func (p *Plan) link() (*fileData, []*goacodegen.ImportSpec, error) {
 				return nil, nil, err
 			}
 			data.Types = append(data.Types, &typeData{
-				Name:       planned.declaration.Name(),
-				Definition: linkedType.Def(),
-				Alias:      planned.alias,
-				Validator:  planned.validatorDeclaration.Name(),
-				Reference:  parameter.Ref(),
-				Pointer:    parameter.ReferenceIsPointer(),
-				Validation: linkedValidation.Render("value", "body"),
+				IntegerDecode: planned.integerDecode,
+				Name:          planned.declaration.Name(),
+				Definition:    linkedType.Def(),
+				Alias:         planned.alias,
+				Validator:     planned.validatorDeclaration.Name(),
+				Reference:     parameter.Ref(),
+				Pointer:       parameter.ReferenceIsPointer(),
+				Validation:    linkedValidation.Render("value", "body"),
 			})
 		}
 		for _, planned := range value.unions {
@@ -177,11 +190,14 @@ func (p *Plan) link() (*fileData, []*goacodegen.ImportSpec, error) {
 				KindName: planned.kind.Name(),
 				TypeKey:  expression.GetTypeKey(),
 				ValueKey: expression.GetValueKey(),
+				Flatten:  expression.Flatten,
+				Untagged: expression.Untagged,
 				Encode:   value.direction.encodes(),
 				Decode:   value.direction.decodes(),
+				Open:     value.elicitation != nil,
 			}
 			unionKeys[planned.name] = union
-			for _, branch := range planned.branches {
+			for index, branch := range planned.branches {
 				fieldType := branch.layout.Link(p.pkg.ImportPath(), p.pkg.ImportName).Ref()
 				union.Branches = append(union.Branches, &unionBranchData{
 					Name:        branch.name,
@@ -189,6 +205,7 @@ func (p *Plan) link() (*fileData, []*goacodegen.ImportSpec, error) {
 					FieldType:   fieldType,
 					Kind:        branch.kind.Name(),
 					Constructor: branch.constructor.Name(),
+					JSONKind:    goaexpr.JSONKind(expression.Values[index].Attribute.Type),
 					Nilable: strings.HasPrefix(fieldType, "*") ||
 						strings.HasPrefix(fieldType, "[]") || strings.HasPrefix(fieldType, "map["),
 				})
@@ -235,12 +252,34 @@ func (v *Value) link() (*valueData, []*goacodegen.TransformFunctionData, error) 
 		UseDefault: true,
 		Scope:      serviceWriter,
 	}
+	serviceReference := serviceWriter.Ref(v.service, "")
+	// Service-value codecs keep the exact Go fields supplied by Goa. Codecs
+	// for declarations created in this package use their original type writer.
+	if v.originalLayout == nil {
+		serviceLayout := v.serviceLayout.Link(v.plan.pkg.ImportPath(), v.plan.pkg.ImportName)
+		serviceReference = serviceLayout.Ref()
+		policy := v.serviceLayout.Policy()
+		serviceContext.Pointer = policy.Pointer
+		serviceContext.UseDefault = policy.UseDefault
+		serviceContext.IgnoreRequired = policy.IgnoreRequired
+		serviceContext.IgnoreRequiredCollections = policy.IgnoreRequiredCollections
+		serviceContext.UnionPointer = policy.UnionPointer
+		serviceContext.ArrayElementPointer = policy.ArrayElementPointer
+		serviceContext, err = serviceContext.WithGoTypeLayout(serviceLayout)
+		if err != nil {
+			return nil, nil, fmt.Errorf("link JSON value %q service layout: %w", v.key, err)
+		}
+	}
 	top := v.types[0]
 	data := &valueData{
 		Name:         v.preferredName,
-		ServiceRef:   serviceWriter.Ref(v.service, ""),
+		ServiceRef:   serviceReference,
 		TransportRef: transportLayout.Ref(),
 		Validator:    top.validatorDeclaration.Name(),
+	}
+	if v.elicitation != nil {
+		data.Elicitation = true
+		data.Form = v.elicitation.form
 	}
 	if v.standalone != nil {
 		data.Shape = v.standalone.names[v.standalone.root].Name()
@@ -253,7 +292,7 @@ func (v *Value) link() (*valueData, []*goacodegen.TransformFunctionData, error) 
 		data.Constructor = v.constructor.Name()
 	}
 	var helpers []*goacodegen.TransformFunctionData
-	if v.direction.encodes() {
+	if v.encode != nil {
 		if err := v.encode.BindContexts(serviceContext, transportContext); err != nil {
 			return nil, nil, fmt.Errorf("link JSON value %q encoder: %w", v.key, err)
 		}
@@ -261,7 +300,13 @@ func (v *Value) link() (*valueData, []*goacodegen.TransformFunctionData, error) 
 		if err != nil {
 			return nil, nil, fmt.Errorf("render JSON value %q encoder: %w", v.key, err)
 		}
-		data.Encode = v.encodeDeclaration.Name()
+		if v.encodeDeclaration != nil {
+			data.Encode = v.encodeDeclaration.Name()
+		}
+		if v.validateDeclaration != nil {
+			data.Validate = v.validateDeclaration.Name()
+			data.ServicePointer = v.serviceLayout.Link(v.plan.pkg.ImportPath(), v.plan.pkg.ImportName).ReferenceIsPointer()
+		}
 		data.EncodeTransform = transform
 		helpers = append(helpers, encodeHelpers...)
 	}
@@ -323,6 +368,16 @@ const codecSource = `
 // {{ .Name }} stores JSON fields until they have been validated.
 type {{ .Name }} {{ if .Alias }}= {{ end }}{{ .Definition }}
 
+{{ if .IntegerDecode }}
+// UnmarshalJSON reads an exact whole JSON number and stores it within this type's
+// declared range. Decimal and exponent spellings do not change its value.
+func (value *{{ .Name }}) UnmarshalJSON(data []byte) error {
+ number, err := {{ $.Imports.RawJSON }}.DecodeInteger[{{ .Definition }}](data)
+ if err != nil { return {{ $.Imports.Fmt }}.Errorf("decode {{ .Name }} integer: %w", err) }
+ *value = {{ .Name }}(number)
+ return nil
+}
+{{ end }}
 // {{ .Validator }} checks decoded JSON before it becomes a service value.
 func {{ .Validator }}(value {{ .Reference }}) (err error) {
 	{{- if .Pointer }}
@@ -406,7 +461,11 @@ func (u {{ .Name }}) Validate() error {
 }
 
 {{ if .Encode }}
+{{- if .Untagged }}
+// MarshalJSON writes the selected branch value without an envelope.
+{{- else }}
 // MarshalJSON writes the selected branch name and value.
+{{- end }}
 func (u {{ .Name }}) MarshalJSON() ([]byte, error) {
 	if err := u.Validate(); err != nil {
 		return nil, err
@@ -420,16 +479,87 @@ func (u {{ .Name }}) MarshalJSON() ([]byte, error) {
 	default:
 		return nil, {{ $.Imports.Fmt }}.Errorf("unexpected {{ .Name }} branch %q", u.kind)
 	}
+	{{- if .Untagged }}
+	return {{ $.Imports.JSON }}.Marshal(value)
+	{{- else if .Flatten }}
+	data, err := {{ $.Imports.JSON }}.Marshal(value)
+	if err != nil { return nil, err }
+	var fields map[string]{{ $.Imports.JSON }}.RawMessage
+	if err := {{ $.Imports.JSON }}.Unmarshal(data, &fields); err != nil { return nil, err }
+	if fields == nil { return nil, {{ $.Imports.Goa }}.InvalidFieldTypeError({{ printf "%q" .TypeKey }}, nil, "non-null JSON object") }
+	if _, exists := fields[{{ printf "%q" .TypeKey }}]; exists {
+		return nil, {{ $.Imports.Fmt }}.Errorf("{{ .Name }} branch already contains discriminator %q", {{ printf "%q" .TypeKey }})
+	}
+	tag, err := {{ $.Imports.JSON }}.Marshal(string(u.kind))
+	if err != nil { return nil, err }
+	fields[{{ printf "%q" .TypeKey }}] = tag
+	return {{ $.Imports.JSON }}.Marshal(fields)
+	{{- else }}
 	return {{ $.Imports.JSON }}.Marshal(struct {
 		Type string ` + "`json:\"{{ .TypeKey }}\"`" + `
 		Value any ` + "`json:\"{{ .ValueKey }}\"`" + `
 	}{Type: string(u.kind), Value: value})
+	{{- end }}
 }
 {{ end }}
 
 {{ if .Decode }}
+{{- if .Untagged }}
+// UnmarshalJSON selects a typed branch by JSON kind and rejects unknown fields.
+{{- else }}
 // UnmarshalJSON reads one complete branch name and value.
+{{- end }}
 func (u *{{ .Name }}) UnmarshalJSON(data []byte) error {
+	{{- $union := . }}
+	{{- if .Untagged }}
+	data = {{ $.Imports.Bytes }}.Trim(data, " \t\r\n")
+	if len(data) == 0 {
+		return {{ $.Imports.Fmt }}.Errorf("{{ .Name }} requires a non-null JSON value")
+	}
+	switch data[0] {
+	{{- range .Branches }}
+	{{- if eq .JSONKind 48 }}
+	case '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+	{{- else if eq .JSONKind 116 }}
+	case 't', 'f':
+	{{- else }}
+	case {{ printf "%q" .JSONKind }}:
+	{{- end }}
+		var value {{ .FieldType }}
+		decoder := {{ $.Imports.JSON }}.NewDecoder({{ $.Imports.Bytes }}.NewReader(data))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&value); err != nil { return err }
+		if err := decoder.Decode(&struct{}{}); err != {{ $.Imports.IO }}.EOF {
+			if err == nil { return {{ $.Imports.Fmt }}.Errorf("decode {{ $union.Name }} JSON: multiple JSON values") }
+			return err
+		}
+		selected := {{ .Constructor }}(value)
+		if err := selected.Validate(); err != nil { return err }
+		*u = selected
+		return nil
+	{{- end }}
+	default:
+		return {{ $.Imports.Fmt }}.Errorf("{{ .Name }} has no branch for this JSON value")
+	}
+	{{- else }}
+	{{- if .Flatten }}
+	var fields map[string]{{ $.Imports.JSON }}.RawMessage
+	if err := {{ $.Imports.JSON }}.Unmarshal(data, &fields); err != nil { return err }
+	tag, exists := fields[{{ printf "%q" .TypeKey }}]
+	if !exists { return {{ $.Imports.Goa }}.MissingFieldError({{ printf "%q" .TypeKey }}, {{ printf "%q" .Name }}) }
+	if {{ $.Imports.Bytes }}.Equal({{ $.Imports.Bytes }}.TrimSpace(tag), []byte("null")) {
+		return {{ $.Imports.Goa }}.InvalidFieldTypeError({{ printf "%q" .TypeKey }}, nil, "JSON string")
+	}
+	var raw struct {
+		Type string
+		Value {{ $.Imports.JSON }}.RawMessage
+	}
+	if err := {{ $.Imports.JSON }}.Unmarshal(tag, &raw.Type); err != nil { return err }
+	delete(fields, {{ printf "%q" .TypeKey }})
+	value, err := {{ $.Imports.JSON }}.Marshal(fields)
+	if err != nil { return err }
+	raw.Value = value
+	{{- else }}
 	var raw struct {
 		Type string ` + "`json:\"{{ .TypeKey }}\"`" + `
 		Value {{ $.Imports.JSON }}.RawMessage ` + "`json:\"{{ .ValueKey }}\"`" + `
@@ -454,15 +584,22 @@ func (u *{{ .Name }}) UnmarshalJSON(data []byte) error {
 	if {{ $.Imports.Bytes }}.Equal({{ $.Imports.Bytes }}.TrimSpace(raw.Value), []byte("null")) {
 		return {{ $.Imports.Goa }}.InvalidFieldTypeError({{ printf "%q" .ValueKey }}, nil, "non-null JSON value")
 	}
+	{{- end }}
 	switch raw.Type {
 	{{- range .Branches }}
 	case string({{ .Kind }}):
 		var value {{ .FieldType }}
+		{{- if $union.Open }}
+		if err := {{ $.Imports.JSONV2 }}.Unmarshal(raw.Value, &value); err != nil {
+			return err
+		}
+		{{- else }}
 		decoder := {{ $.Imports.JSON }}.NewDecoder({{ $.Imports.Bytes }}.NewReader(raw.Value))
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&value); err != nil {
 			return err
 		}
+		{{- end }}
 		u.kind = {{ .Kind }}
 		u.{{ .FieldName }} = value
 	{{- end }}
@@ -472,6 +609,7 @@ func (u *{{ .Name }}) UnmarshalJSON(data []byte) error {
 		})
 	}
 	return u.Validate()
+	{{- end }}
 }
 {{ end }}
 {{ end }}
@@ -504,6 +642,25 @@ func {{ .Encode }}(in {{ .ServiceRef }}) ([]byte, error) {
 }
 {{ end }}
 
+{{ if .Validate }}
+// {{ .Validate }} checks a service value against its declared field validation.
+func {{ .Validate }}(in {{ .ServiceRef }}) error {
+ {{ if .ServicePointer }}
+ if in == nil {
+  return {{ $.Imports.Goa }}.MissingFieldError("result", {{ printf "%q" .Name }})
+ }
+ {{ end }}
+ var body {{ .TransportRef }}
+ {
+  {{ .EncodeTransform }}
+ }
+ if err := {{ .Validator }}(body); err != nil {
+  return {{ $.Imports.Fmt }}.Errorf("validate {{ .Name }} value: %w", err)
+ }
+ return nil
+}
+{{ end }}
+
 {{ if .Constructor }}
 // {{ .Constructor }} validates a decoded transport value and returns the service value.
 func {{ .Constructor }}(body {{ .TransportRef }}) (out {{ .ServiceRef }}, err error) {
@@ -520,6 +677,15 @@ func {{ .Constructor }}(body {{ .TransportRef }}) (out {{ .ServiceRef }}, err er
 {{ if .Decode }}
 // {{ .Decode }} checks JSON field names from the Goa design and returns a service value.
 func {{ .Decode }}(data []byte) (out {{ .ServiceRef }}, err error) {
+	{{- if .Elicitation }}
+	{{- if .Form }}
+	if err := {{ $.Imports.MCP }}.ValidateFormResponse(data); err != nil {
+	{{- else }}
+	if err := {{ $.Imports.MCP }}.ValidateURLResponse(data); err != nil {
+	{{- end }}
+		return out, err
+	}
+	{{- end }}
 	{{- if .Shape }}
 	root, err := {{ $.ReadStrictJSON }}(data)
 	if err != nil {
@@ -530,6 +696,11 @@ func {{ .Decode }}(data []byte) (out {{ .ServiceRef }}, err error) {
 	}
 	{{- end }}
 	var body {{ .TransportRef }}
+	{{- if .Elicitation }}
+	if err := {{ $.Imports.JSONV2 }}.Unmarshal(data, &body); err != nil {
+		return out, {{ $.Imports.Fmt }}.Errorf("decode {{ .Name }} JSON: %w", err)
+	}
+	{{- else }}
 	decoder := {{ $.Imports.JSON }}.NewDecoder({{ $.Imports.Bytes }}.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&body); err != nil {
@@ -541,6 +712,7 @@ func {{ .Decode }}(data []byte) (out {{ .ServiceRef }}, err error) {
 		}
 		return out, {{ $.Imports.Fmt }}.Errorf("decode {{ .Name }} JSON after first value: %w", err)
 	}
+	{{- end }}
 	{{- if .Constructor }}
 	return {{ .Constructor }}(body)
 	{{- else }}

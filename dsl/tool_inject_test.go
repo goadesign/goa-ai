@@ -347,7 +347,7 @@ func TestInjectRejectsPagingCursor(t *testing.T) {
 // TestInjectRejectsFieldMissingFromDivergentArgs reproduces the
 // generation-soundness gap: a BindTo tool with explicit Args that
 // structurally diverge from the bound method payload (the
-// MethodComplexEmbedded / PayloadAliasesMethod=false shape) injecting a name
+// MethodComplexEmbedded conversion shape) injecting a name
 // that exists on the method payload but not on Args. Codegen resolves
 // injection against the effective tool Args, so without this eval-time error
 // the generated inject.go would assign a field the tool payload struct does

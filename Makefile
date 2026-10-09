@@ -4,6 +4,10 @@ GO ?= go
 HTTP_PORT ?= 8888
 
 PROTOC := $(shell command -v protoc 2>/dev/null)
+GOLANGCI_LINT ?= golangci-lint
+GOLANGCI_LINT_TARGET := $(shell grep '^github.com/golangci/golangci-lint/v2/cmd/golangci-lint@' .go-install)
+GOLANGCI_LINT_VERSION := $(patsubst v%,%,$(word 2,$(subst @, ,$(GOLANGCI_LINT_TARGET))))
+
 PROTOC_GEN_GO := protoc-gen-go
 PROTOC_GEN_GO_GRPC := protoc-gen-go-grpc
 PROTOC_VERSION := $(shell awk '$$1 == "protoc" { print $$2; exit }' .tool-versions)
@@ -12,7 +16,7 @@ PROTOC_GEN_GO_GRPC_TARGET := $(shell grep '^google.golang.org/grpc/cmd/protoc-ge
 PROTOC_GEN_GO_VERSION := $(word 2,$(subst @, ,$(PROTOC_GEN_GO_TARGET)))
 PROTOC_GEN_GO_GRPC_VERSION := $(word 2,$(subst @, ,$(PROTOC_GEN_GO_GRPC_TARGET)))
 
-.PHONY: all setup build lint test itest ci tools ensure-golangci ensure-protoc-plugins protoc-check run-example gen-example
+.PHONY: all setup build lint test test-unit test-mcp itest ci tools ensure-golangci ensure-protoc-plugins protoc-check run-example gen-example gen-registry gen-mcp-auth gen-mcp-skills
 
 all: build lint test
 
@@ -23,11 +27,23 @@ build: tools
 	$(GO) build ./...
 
 lint: tools
-	$(GO) tool golangci-lint run --timeout=5m
+	$(GOLANGCI_LINT) run --timeout=5m
 
-test: tools
-	$(GO) test -race -covermode=atomic -coverprofile=cover.out `$(GO) list ./... | grep -v '/integration_tests'`
-	cd quickstart && $(GO) test ./...
+# Generator tests compile other repository packages in separate modules. Go's
+# test cache cannot track those subprocess inputs, so acceptance runs uncached.
+test: test-unit test-mcp
+	awk 'FNR == 1 && NR != 1 { next } { print }' cover.out .cache/cover-mcp.out > .cache/cover-all.out
+	cp .cache/cover-all.out cover.out
+
+# MCP generator peers have their own processes and CI shards. All other root
+# packages and the maintained quickstart remain in this acceptance target.
+test-unit: tools
+	$(GO) test -count=1 -race -covermode=atomic -coverprofile=cover.out `$(GO) list ./... | grep -v '/integration_tests' | grep -v '^goa.design/goa-ai/codegen/mcp$$'`
+	cd quickstart && $(GO) test -count=1 ./...
+
+# Without a shard argument the script runs every MCP test and merges coverage.
+test-mcp: tools
+	GO="$(GO)" bash ./scripts/test-mcp
 
 # Run integration tests: end-to-end scenarios under integration_tests/ and
 # Docker-backed tests guarded by the `integration` build tag (registry health
@@ -42,7 +58,12 @@ ci: build lint test
 tools: ensure-golangci ensure-protoc-plugins protoc-check
 
 ensure-golangci:
-	@$(GO) tool golangci-lint version >/dev/null
+	@version="$$( $(GOLANGCI_LINT) version 2>/dev/null | awk '{ print $$4 }' || true)"; \
+	if [ "$$version" != "$(GOLANGCI_LINT_VERSION)" ]; then \
+		echo "Error: golangci-lint $(GOLANGCI_LINT_VERSION) is required, but $${version:-none} is in PATH."; \
+		echo "Run 'make setup' and ensure GOPATH/bin is in PATH."; \
+		exit 1; \
+	fi
 
 ensure-protoc-plugins:
 	@installed="$$(command -v $(PROTOC_GEN_GO) 2>/dev/null || true)"; \
@@ -83,3 +104,11 @@ gen-example:
 
 gen-registry:
 	$(GO) run goa.design/goa/v3/cmd/goa gen goa.design/goa-ai/registry/design -o registry
+
+# Generate the typed metadata and token contracts used by MCP OAuth clients and servers.
+gen-mcp-auth:
+	$(GO) run goa.design/goa/v3/cmd/goa gen goa.design/goa-ai/internal/mcpauth/design -o internal/mcpauth
+
+# Generate private Skill entry and frontmatter decoders from the shared contract.
+gen-mcp-skills:
+	$(GO) run goa.design/goa/v3/cmd/goa gen goa.design/goa-ai/internal/mcpskills/design -o internal/mcpskills

@@ -14,6 +14,7 @@ import (
 	io "io"
 
 	assistant "example.com/assistant/gen/assistant"
+	rawjson "goa.design/goa-ai/runtime/agent/rawjson"
 	goa "goa.design/goa/v3/pkg"
 )
 
@@ -46,6 +47,201 @@ func ValidateAnalyzeSentimentResultTransport(value *AnalyzeSentimentResultTransp
 		return goa.MissingFieldError("body", "JSON value")
 	}
 
+	return err
+}
+
+// ArgumentPromptPayloadTransport stores JSON fields until they have been validated.
+type ArgumentPromptPayloadTransport struct {
+	// First prompt argument
+	Arg1 *string `json:"arg1"`
+	// Second prompt argument
+	Arg2 *string `json:"arg2"`
+}
+
+// ValidateArgumentPromptPayloadTransport checks decoded JSON before it becomes a service value.
+func ValidateArgumentPromptPayloadTransport(value *ArgumentPromptPayloadTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Arg1 == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("arg1", "body"))
+	}
+	if value.Arg2 == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("arg2", "body"))
+	}
+	return err
+}
+
+// ArgumentPromptResultRefereeEmbeddedTextTransport stores JSON fields until they have been validated.
+type ArgumentPromptResultRefereeEmbeddedTextTransport struct {
+	// Embedded resource identifier
+	URI *string `json:"uri"`
+	// Embedded resource contents
+	Text *string `json:"text"`
+}
+
+// ValidateArgumentPromptResultRefereeEmbeddedTextTransport checks decoded JSON before it becomes a service value.
+func ValidateArgumentPromptResultRefereeEmbeddedTextTransport(value *ArgumentPromptResultRefereeEmbeddedTextTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.URI == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("uri", "body"))
+	}
+	if value.Text == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("text", "body"))
+	}
+	if value.URI != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.uri", *value.URI, goa.FormatURI))
+	}
+	return err
+}
+
+// ArgumentPromptResultRefereePromptImageTransport stores JSON fields until they have been validated.
+type ArgumentPromptResultRefereePromptImageTransport struct {
+	// Encoded synthetic PNG bytes
+	Data []byte `json:"data,omitempty"`
+	// Image media type
+	MimeType *string `json:"mimeType"`
+}
+
+// ValidateArgumentPromptResultRefereePromptImageTransport checks decoded JSON before it becomes a service value.
+func ValidateArgumentPromptResultRefereePromptImageTransport(value *ArgumentPromptResultRefereePromptImageTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.MimeType == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("mimeType", "body"))
+	}
+	return err
+}
+
+// ArgumentPromptResultRefereePromptMessageTransport stores JSON fields until they have been validated.
+type ArgumentPromptResultRefereePromptMessageTransport struct {
+	// Message author
+	Role *string `json:"role"`
+	// Selected message content
+	Content *ArgumentPromptResultcontentTransport `json:"content"`
+}
+
+// ValidateArgumentPromptResultRefereePromptMessageTransport checks decoded JSON before it becomes a service value.
+func ValidateArgumentPromptResultRefereePromptMessageTransport(value *ArgumentPromptResultRefereePromptMessageTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Role == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("role", "body"))
+	}
+	if value.Content == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("content", "body"))
+	}
+	if value.Role != nil {
+		if !(*value.Role == "user") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.role", *value.Role, []any{"user"}))
+		}
+	}
+	if value.Content != nil {
+		switch string(value.Content.Kind()) {
+		case "text":
+			actual, _ := value.Content.AsText()
+			if actual != nil {
+				if err2 := ValidateArgumentPromptResultRefereePromptTextTransport(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		case "image":
+			actual, _ := value.Content.AsImage()
+			if actual != nil {
+				if err2 := ValidateArgumentPromptResultRefereePromptImageTransport(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		case "resource":
+			actual, _ := value.Content.AsResource()
+			if actual != nil {
+				if err2 := ValidateArgumentPromptResultRefereePromptResourceTransport(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		}
+
+	}
+	return err
+}
+
+// ArgumentPromptResultRefereePromptResourceTransport stores JSON fields until they have been validated.
+type ArgumentPromptResultRefereePromptResourceTransport struct {
+	// Embedded resource representation
+	Resource *ArgumentPromptResultresourceTransport `json:"resource"`
+}
+
+// ValidateArgumentPromptResultRefereePromptResourceTransport checks decoded JSON before it becomes a service value.
+func ValidateArgumentPromptResultRefereePromptResourceTransport(value *ArgumentPromptResultRefereePromptResourceTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Resource == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("resource", "body"))
+	}
+	if value.Resource != nil {
+		switch string(value.Resource.Kind()) {
+		case "text":
+			actual, _ := value.Resource.AsText()
+			if actual != nil {
+				if err2 := ValidateArgumentPromptResultRefereeEmbeddedTextTransport(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		}
+
+	}
+	return err
+}
+
+// ArgumentPromptResultRefereePromptTextTransport stores JSON fields until they have been validated.
+type ArgumentPromptResultRefereePromptTextTransport struct {
+	// Message text
+	Text *string `json:"text"`
+}
+
+// ValidateArgumentPromptResultRefereePromptTextTransport checks decoded JSON before it becomes a service value.
+func ValidateArgumentPromptResultRefereePromptTextTransport(value *ArgumentPromptResultRefereePromptTextTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Text == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("text", "body"))
+	}
+	return err
+}
+
+// ArgumentPromptResultTransport stores JSON fields until they have been validated.
+type ArgumentPromptResultTransport struct {
+	// Ordered prompt messages
+	Messages []*ArgumentPromptResultRefereePromptMessageTransport `json:"messages"`
+}
+
+// ValidateArgumentPromptResultTransport checks decoded JSON before it becomes a service value.
+func ValidateArgumentPromptResultTransport(value *ArgumentPromptResultTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Messages == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("messages", "body"))
+	}
+	if len(value.Messages) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.messages", value.Messages, len(value.Messages), 1, true))
+	}
+	for _, e := range value.Messages {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("body.messages", "[*]"))
+		}
+		if e != nil {
+			if err2 := ValidateArgumentPromptResultRefereePromptMessageTransport(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
 	return err
 }
 
@@ -123,6 +319,179 @@ func ValidateExtractKeywordsResultTransport(value *ExtractKeywordsResultTranspor
 	return err
 }
 
+// ImagePromptResultRefereeEmbeddedTextTransport stores JSON fields until they have been validated.
+type ImagePromptResultRefereeEmbeddedTextTransport struct {
+	// Embedded resource identifier
+	URI *string `json:"uri"`
+	// Embedded resource contents
+	Text *string `json:"text"`
+}
+
+// ValidateImagePromptResultRefereeEmbeddedTextTransport checks decoded JSON before it becomes a service value.
+func ValidateImagePromptResultRefereeEmbeddedTextTransport(value *ImagePromptResultRefereeEmbeddedTextTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.URI == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("uri", "body"))
+	}
+	if value.Text == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("text", "body"))
+	}
+	if value.URI != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.uri", *value.URI, goa.FormatURI))
+	}
+	return err
+}
+
+// ImagePromptResultRefereePromptImageTransport stores JSON fields until they have been validated.
+type ImagePromptResultRefereePromptImageTransport struct {
+	// Encoded synthetic PNG bytes
+	Data []byte `json:"data,omitempty"`
+	// Image media type
+	MimeType *string `json:"mimeType"`
+}
+
+// ValidateImagePromptResultRefereePromptImageTransport checks decoded JSON before it becomes a service value.
+func ValidateImagePromptResultRefereePromptImageTransport(value *ImagePromptResultRefereePromptImageTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.MimeType == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("mimeType", "body"))
+	}
+	return err
+}
+
+// ImagePromptResultRefereePromptMessageTransport stores JSON fields until they have been validated.
+type ImagePromptResultRefereePromptMessageTransport struct {
+	// Message author
+	Role *string `json:"role"`
+	// Selected message content
+	Content *ImagePromptResultcontentTransport `json:"content"`
+}
+
+// ValidateImagePromptResultRefereePromptMessageTransport checks decoded JSON before it becomes a service value.
+func ValidateImagePromptResultRefereePromptMessageTransport(value *ImagePromptResultRefereePromptMessageTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Role == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("role", "body"))
+	}
+	if value.Content == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("content", "body"))
+	}
+	if value.Role != nil {
+		if !(*value.Role == "user") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.role", *value.Role, []any{"user"}))
+		}
+	}
+	if value.Content != nil {
+		switch string(value.Content.Kind()) {
+		case "text":
+			actual, _ := value.Content.AsText()
+			if actual != nil {
+				if err2 := ValidateImagePromptResultRefereePromptTextTransport(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		case "image":
+			actual, _ := value.Content.AsImage()
+			if actual != nil {
+				if err2 := ValidateImagePromptResultRefereePromptImageTransport(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		case "resource":
+			actual, _ := value.Content.AsResource()
+			if actual != nil {
+				if err2 := ValidateImagePromptResultRefereePromptResourceTransport(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		}
+
+	}
+	return err
+}
+
+// ImagePromptResultRefereePromptResourceTransport stores JSON fields until they have been validated.
+type ImagePromptResultRefereePromptResourceTransport struct {
+	// Embedded resource representation
+	Resource *ImagePromptResultresourceTransport `json:"resource"`
+}
+
+// ValidateImagePromptResultRefereePromptResourceTransport checks decoded JSON before it becomes a service value.
+func ValidateImagePromptResultRefereePromptResourceTransport(value *ImagePromptResultRefereePromptResourceTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Resource == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("resource", "body"))
+	}
+	if value.Resource != nil {
+		switch string(value.Resource.Kind()) {
+		case "text":
+			actual, _ := value.Resource.AsText()
+			if actual != nil {
+				if err2 := ValidateImagePromptResultRefereeEmbeddedTextTransport(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		}
+
+	}
+	return err
+}
+
+// ImagePromptResultRefereePromptTextTransport stores JSON fields until they have been validated.
+type ImagePromptResultRefereePromptTextTransport struct {
+	// Message text
+	Text *string `json:"text"`
+}
+
+// ValidateImagePromptResultRefereePromptTextTransport checks decoded JSON before it becomes a service value.
+func ValidateImagePromptResultRefereePromptTextTransport(value *ImagePromptResultRefereePromptTextTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Text == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("text", "body"))
+	}
+	return err
+}
+
+// ImagePromptResultTransport stores JSON fields until they have been validated.
+type ImagePromptResultTransport struct {
+	// Ordered prompt messages
+	Messages []*ImagePromptResultRefereePromptMessageTransport `json:"messages"`
+}
+
+// ValidateImagePromptResultTransport checks decoded JSON before it becomes a service value.
+func ValidateImagePromptResultTransport(value *ImagePromptResultTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Messages == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("messages", "body"))
+	}
+	if len(value.Messages) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.messages", value.Messages, len(value.Messages), 1, true))
+	}
+	for _, e := range value.Messages {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("body.messages", "[*]"))
+		}
+		if e != nil {
+			if err2 := ValidateImagePromptResultRefereePromptMessageTransport(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return err
+}
+
 // ListDocumentsResultTransport stores JSON fields until they have been validated.
 type ListDocumentsResultTransport struct {
 	// Document entries
@@ -185,12 +554,371 @@ func ValidateProcessBatchResultTransport(value *ProcessBatchResultTransport) (er
 	return err
 }
 
+// ReadResourcePayloadTransport stores JSON fields until they have been validated.
+type ReadResourcePayloadTransport struct {
+	// Exact requested resource identifier
+	Address *string `json:"uri"`
+}
+
+// ValidateReadResourcePayloadTransport checks decoded JSON before it becomes a service value.
+func ValidateReadResourcePayloadTransport(value *ReadResourcePayloadTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Address == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("uri", "body"))
+	}
+	if value.Address != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.uri", *value.Address, goa.FormatURI))
+	}
+	return err
+}
+
+// ReadResourceResultTemplateBlobTransport stores JSON fields until they have been validated.
+type ReadResourceResultTemplateBlobTransport struct {
+	// Resource identifier
+	URI *string `json:"uri"`
+	// Content media type
+	MimeType *string `json:"mimeType,omitempty"`
+	// Binary resource contents
+	Blob []byte `json:"blob,omitempty"`
+}
+
+// ValidateReadResourceResultTemplateBlobTransport checks decoded JSON before it becomes a service value.
+func ValidateReadResourceResultTemplateBlobTransport(value *ReadResourceResultTemplateBlobTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.URI == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("uri", "body"))
+	}
+	if value.URI != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.uri", *value.URI, goa.FormatURI))
+	}
+	return err
+}
+
+// ReadResourceResultTemplateItemTransport stores JSON fields until they have been validated.
+type ReadResourceResultTemplateItemTransport struct {
+	// Selected resource representation
+	Selected *ReadResourceResultTemplateRepresentationTransport `json:"content"`
+}
+
+// ValidateReadResourceResultTemplateItemTransport checks decoded JSON before it becomes a service value.
+func ValidateReadResourceResultTemplateItemTransport(value *ReadResourceResultTemplateItemTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Selected == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("content", "body"))
+	}
+	if value.Selected != nil {
+		switch string(value.Selected.Kind()) {
+		case "text":
+			actual, _ := value.Selected.AsText()
+			if actual != nil {
+				if err2 := ValidateReadResourceResultTemplateTextTransport(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		case "blob":
+			actual, _ := value.Selected.AsBlob()
+			if actual != nil {
+				if err2 := ValidateReadResourceResultTemplateBlobTransport(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		}
+
+	}
+	return err
+}
+
+// ReadResourceResultTemplateTextTransport stores JSON fields until they have been validated.
+type ReadResourceResultTemplateTextTransport struct {
+	// Resource identifier
+	URI *string `json:"uri"`
+	// Content media type
+	MimeType *string `json:"mimeType,omitempty"`
+	// Resource contents
+	Text *string `json:"text"`
+}
+
+// ValidateReadResourceResultTemplateTextTransport checks decoded JSON before it becomes a service value.
+func ValidateReadResourceResultTemplateTextTransport(value *ReadResourceResultTemplateTextTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.URI == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("uri", "body"))
+	}
+	if value.Text == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("text", "body"))
+	}
+	if value.URI != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.uri", *value.URI, goa.FormatURI))
+	}
+	return err
+}
+
+// ReadResourceResultTransport stores JSON fields until they have been validated.
+type ReadResourceResultTransport struct {
+	// Ordered resource contents
+	Parts []*ReadResourceResultTemplateItemTransport `json:"contents"`
+}
+
+// ValidateReadResourceResultTransport checks decoded JSON before it becomes a service value.
+func ValidateReadResourceResultTransport(value *ReadResourceResultTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Parts == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("contents", "body"))
+	}
+	if len(value.Parts) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.contents", value.Parts, len(value.Parts), 1, true))
+	}
+	for _, e := range value.Parts {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("body.contents", "[*]"))
+		}
+		if e != nil {
+			if err2 := ValidateReadResourceResultTemplateItemTransport(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return err
+}
+
+// ReportWorkResultTransport stores JSON fields until they have been validated.
+type ReportWorkResultTransport string
+
+// ValidateReportWorkResultTransport checks decoded JSON before it becomes a service value.
+func ValidateReportWorkResultTransport(value ReportWorkResultTransport) (err error) {
+
+	return err
+}
+
+// ResourcePromptPayloadTransport stores JSON fields until they have been validated.
+type ResourcePromptPayloadTransport struct {
+	// Requested embedded resource identifier
+	ResourceURI *string `json:"resourceUri"`
+}
+
+// ValidateResourcePromptPayloadTransport checks decoded JSON before it becomes a service value.
+func ValidateResourcePromptPayloadTransport(value *ResourcePromptPayloadTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.ResourceURI == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("resourceUri", "body"))
+	}
+	if value.ResourceURI != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.resourceUri", *value.ResourceURI, goa.FormatURI))
+	}
+	return err
+}
+
+// ResourcePromptResultRefereeEmbeddedTextTransport stores JSON fields until they have been validated.
+type ResourcePromptResultRefereeEmbeddedTextTransport struct {
+	// Embedded resource identifier
+	URI *string `json:"uri"`
+	// Embedded resource contents
+	Text *string `json:"text"`
+}
+
+// ValidateResourcePromptResultRefereeEmbeddedTextTransport checks decoded JSON before it becomes a service value.
+func ValidateResourcePromptResultRefereeEmbeddedTextTransport(value *ResourcePromptResultRefereeEmbeddedTextTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.URI == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("uri", "body"))
+	}
+	if value.Text == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("text", "body"))
+	}
+	if value.URI != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.uri", *value.URI, goa.FormatURI))
+	}
+	return err
+}
+
+// ResourcePromptResultRefereePromptImageTransport stores JSON fields until they have been validated.
+type ResourcePromptResultRefereePromptImageTransport struct {
+	// Encoded synthetic PNG bytes
+	Data []byte `json:"data,omitempty"`
+	// Image media type
+	MimeType *string `json:"mimeType"`
+}
+
+// ValidateResourcePromptResultRefereePromptImageTransport checks decoded JSON before it becomes a service value.
+func ValidateResourcePromptResultRefereePromptImageTransport(value *ResourcePromptResultRefereePromptImageTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.MimeType == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("mimeType", "body"))
+	}
+	return err
+}
+
+// ResourcePromptResultRefereePromptMessageTransport stores JSON fields until they have been validated.
+type ResourcePromptResultRefereePromptMessageTransport struct {
+	// Message author
+	Role *string `json:"role"`
+	// Selected message content
+	Content *ResourcePromptResultcontentTransport `json:"content"`
+}
+
+// ValidateResourcePromptResultRefereePromptMessageTransport checks decoded JSON before it becomes a service value.
+func ValidateResourcePromptResultRefereePromptMessageTransport(value *ResourcePromptResultRefereePromptMessageTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Role == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("role", "body"))
+	}
+	if value.Content == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("content", "body"))
+	}
+	if value.Role != nil {
+		if !(*value.Role == "user") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.role", *value.Role, []any{"user"}))
+		}
+	}
+	if value.Content != nil {
+		switch string(value.Content.Kind()) {
+		case "text":
+			actual, _ := value.Content.AsText()
+			if actual != nil {
+				if err2 := ValidateResourcePromptResultRefereePromptTextTransport(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		case "image":
+			actual, _ := value.Content.AsImage()
+			if actual != nil {
+				if err2 := ValidateResourcePromptResultRefereePromptImageTransport(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		case "resource":
+			actual, _ := value.Content.AsResource()
+			if actual != nil {
+				if err2 := ValidateResourcePromptResultRefereePromptResourceTransport(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		}
+
+	}
+	return err
+}
+
+// ResourcePromptResultRefereePromptResourceTransport stores JSON fields until they have been validated.
+type ResourcePromptResultRefereePromptResourceTransport struct {
+	// Embedded resource representation
+	Resource *ResourcePromptResultresourceTransport `json:"resource"`
+}
+
+// ValidateResourcePromptResultRefereePromptResourceTransport checks decoded JSON before it becomes a service value.
+func ValidateResourcePromptResultRefereePromptResourceTransport(value *ResourcePromptResultRefereePromptResourceTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Resource == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("resource", "body"))
+	}
+	if value.Resource != nil {
+		switch string(value.Resource.Kind()) {
+		case "text":
+			actual, _ := value.Resource.AsText()
+			if actual != nil {
+				if err2 := ValidateResourcePromptResultRefereeEmbeddedTextTransport(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		}
+
+	}
+	return err
+}
+
+// ResourcePromptResultRefereePromptTextTransport stores JSON fields until they have been validated.
+type ResourcePromptResultRefereePromptTextTransport struct {
+	// Message text
+	Text *string `json:"text"`
+}
+
+// ValidateResourcePromptResultRefereePromptTextTransport checks decoded JSON before it becomes a service value.
+func ValidateResourcePromptResultRefereePromptTextTransport(value *ResourcePromptResultRefereePromptTextTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Text == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("text", "body"))
+	}
+	return err
+}
+
+// ResourcePromptResultTransport stores JSON fields until they have been validated.
+type ResourcePromptResultTransport struct {
+	// Ordered prompt messages
+	Messages []*ResourcePromptResultRefereePromptMessageTransport `json:"messages"`
+}
+
+// ValidateResourcePromptResultTransport checks decoded JSON before it becomes a service value.
+func ValidateResourcePromptResultTransport(value *ResourcePromptResultTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Messages == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("messages", "body"))
+	}
+	if len(value.Messages) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.messages", value.Messages, len(value.Messages), 1, true))
+	}
+	for _, e := range value.Messages {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("body.messages", "[*]"))
+		}
+		if e != nil {
+			if err2 := ValidateResourcePromptResultRefereePromptMessageTransport(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return err
+}
+
+// SearchPayloadIntTransport stores JSON fields until they have been validated.
+type SearchPayloadIntTransport int
+
+// UnmarshalJSON reads an exact whole JSON number and stores it within this type's
+// declared range. Decimal and exponent spellings do not change its value.
+func (value *SearchPayloadIntTransport) UnmarshalJSON(data []byte) error {
+	number, err := rawjson.DecodeInteger[int](data)
+	if err != nil {
+		return fmt.Errorf("decode SearchPayloadIntTransport integer: %w", err)
+	}
+	*value = SearchPayloadIntTransport(number)
+	return nil
+}
+
+// ValidateSearchPayloadIntTransport checks decoded JSON before it becomes a service value.
+func ValidateSearchPayloadIntTransport(value SearchPayloadIntTransport) (err error) {
+
+	return err
+}
+
 // SearchPayloadTransport stores JSON fields until they have been validated.
 type SearchPayloadTransport struct {
 	// Search query
 	Query *string `json:"query"`
 	// Maximum number of results
-	Limit *int `json:"limit,omitempty"`
+	Limit *SearchPayloadIntTransport `json:"limit,omitempty"`
 }
 
 // ValidateSearchPayloadTransport checks decoded JSON before it becomes a service value.
@@ -216,6 +944,219 @@ func ValidateSearchResultTransport(value *SearchResultTransport) (err error) {
 		return goa.MissingFieldError("body", "JSON value")
 	}
 
+	return err
+}
+
+// SimplePromptResultRefereeEmbeddedTextTransport stores JSON fields until they have been validated.
+type SimplePromptResultRefereeEmbeddedTextTransport struct {
+	// Embedded resource identifier
+	URI *string `json:"uri"`
+	// Embedded resource contents
+	Text *string `json:"text"`
+}
+
+// ValidateSimplePromptResultRefereeEmbeddedTextTransport checks decoded JSON before it becomes a service value.
+func ValidateSimplePromptResultRefereeEmbeddedTextTransport(value *SimplePromptResultRefereeEmbeddedTextTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.URI == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("uri", "body"))
+	}
+	if value.Text == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("text", "body"))
+	}
+	if value.URI != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.uri", *value.URI, goa.FormatURI))
+	}
+	return err
+}
+
+// SimplePromptResultRefereePromptImageTransport stores JSON fields until they have been validated.
+type SimplePromptResultRefereePromptImageTransport struct {
+	// Encoded synthetic PNG bytes
+	Data []byte `json:"data,omitempty"`
+	// Image media type
+	MimeType *string `json:"mimeType"`
+}
+
+// ValidateSimplePromptResultRefereePromptImageTransport checks decoded JSON before it becomes a service value.
+func ValidateSimplePromptResultRefereePromptImageTransport(value *SimplePromptResultRefereePromptImageTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.MimeType == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("mimeType", "body"))
+	}
+	return err
+}
+
+// SimplePromptResultRefereePromptMessageTransport stores JSON fields until they have been validated.
+type SimplePromptResultRefereePromptMessageTransport struct {
+	// Message author
+	Role *string `json:"role"`
+	// Selected message content
+	Content *SimplePromptResultcontentTransport `json:"content"`
+}
+
+// ValidateSimplePromptResultRefereePromptMessageTransport checks decoded JSON before it becomes a service value.
+func ValidateSimplePromptResultRefereePromptMessageTransport(value *SimplePromptResultRefereePromptMessageTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Role == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("role", "body"))
+	}
+	if value.Content == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("content", "body"))
+	}
+	if value.Role != nil {
+		if !(*value.Role == "user") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.role", *value.Role, []any{"user"}))
+		}
+	}
+	if value.Content != nil {
+		switch string(value.Content.Kind()) {
+		case "text":
+			actual, _ := value.Content.AsText()
+			if actual != nil {
+				if err2 := ValidateSimplePromptResultRefereePromptTextTransport(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		case "image":
+			actual, _ := value.Content.AsImage()
+			if actual != nil {
+				if err2 := ValidateSimplePromptResultRefereePromptImageTransport(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		case "resource":
+			actual, _ := value.Content.AsResource()
+			if actual != nil {
+				if err2 := ValidateSimplePromptResultRefereePromptResourceTransport(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		}
+
+	}
+	return err
+}
+
+// SimplePromptResultRefereePromptResourceTransport stores JSON fields until they have been validated.
+type SimplePromptResultRefereePromptResourceTransport struct {
+	// Embedded resource representation
+	Resource *SimplePromptResultresourceTransport `json:"resource"`
+}
+
+// ValidateSimplePromptResultRefereePromptResourceTransport checks decoded JSON before it becomes a service value.
+func ValidateSimplePromptResultRefereePromptResourceTransport(value *SimplePromptResultRefereePromptResourceTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Resource == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("resource", "body"))
+	}
+	if value.Resource != nil {
+		switch string(value.Resource.Kind()) {
+		case "text":
+			actual, _ := value.Resource.AsText()
+			if actual != nil {
+				if err2 := ValidateSimplePromptResultRefereeEmbeddedTextTransport(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		}
+
+	}
+	return err
+}
+
+// SimplePromptResultRefereePromptTextTransport stores JSON fields until they have been validated.
+type SimplePromptResultRefereePromptTextTransport struct {
+	// Message text
+	Text *string `json:"text"`
+}
+
+// ValidateSimplePromptResultRefereePromptTextTransport checks decoded JSON before it becomes a service value.
+func ValidateSimplePromptResultRefereePromptTextTransport(value *SimplePromptResultRefereePromptTextTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Text == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("text", "body"))
+	}
+	return err
+}
+
+// SimplePromptResultTransport stores JSON fields until they have been validated.
+type SimplePromptResultTransport struct {
+	// Ordered prompt messages
+	Messages []*SimplePromptResultRefereePromptMessageTransport `json:"messages"`
+}
+
+// ValidateSimplePromptResultTransport checks decoded JSON before it becomes a service value.
+func ValidateSimplePromptResultTransport(value *SimplePromptResultTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Messages == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("messages", "body"))
+	}
+	if len(value.Messages) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.messages", value.Messages, len(value.Messages), 1, true))
+	}
+	for _, e := range value.Messages {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("body.messages", "[*]"))
+		}
+		if e != nil {
+			if err2 := ValidateSimplePromptResultRefereePromptMessageTransport(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return err
+}
+
+// SuggestArgumentPayloadTransport stores JSON fields until they have been validated.
+type SuggestArgumentPayloadTransport struct {
+	// Partial argument text
+	Value *string `json:"value"`
+	// Prior prompt argument values
+	Arguments map[string]string `json:"arguments,omitempty"`
+}
+
+// ValidateSuggestArgumentPayloadTransport checks decoded JSON before it becomes a service value.
+func ValidateSuggestArgumentPayloadTransport(value *SuggestArgumentPayloadTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Value == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("value", "body"))
+	}
+	return err
+}
+
+// SuggestArgumentResultTransport stores JSON fields until they have been validated.
+type SuggestArgumentResultTransport struct {
+	// Suggestions in relevance order
+	Values []string `json:"values,omitempty"`
+	// All available suggestions
+	Total *int64 `json:"total,omitempty"`
+	// Whether further suggestions exist
+	HasMore *bool `json:"hasMore,omitempty"`
+}
+
+// ValidateSuggestArgumentResultTransport checks decoded JSON before it becomes a service value.
+func ValidateSuggestArgumentResultTransport(value *SuggestArgumentResultTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if len(value.Values) > 100 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.values", value.Values, len(value.Values), 100, false))
+	}
 	return err
 }
 
@@ -268,20 +1209,706 @@ func ValidateSystemInfoResultTransport(value *SystemInfoResultTransport) (err er
 	return err
 }
 
-// EncodeAnalyzeSentimentPayload turns a service value into JSON using the field names in the Goa design.
-func EncodeAnalyzeSentimentPayload(in *assistant.AnalyzeSentimentPayload) ([]byte, error) {
-	var body *AnalyzeSentimentPayloadTransport
-	body = &AnalyzeSentimentPayloadTransport{
-		Text: &in.Text,
+// ArgumentPromptResultcontentTransport stores exactly one selected Goa OneOf branch.
+type ArgumentPromptResultcontentTransport struct {
+	kind     ArgumentPromptResultcontentTransportKind
+	Text     *ArgumentPromptResultRefereePromptTextTransport
+	Image    *ArgumentPromptResultRefereePromptImageTransport
+	Resource *ArgumentPromptResultRefereePromptResourceTransport
+}
+
+// ArgumentPromptResultcontentTransportKind identifies the selected branch of ArgumentPromptResultcontentTransport.
+type ArgumentPromptResultcontentTransportKind string
+
+const (
+	ArgumentPromptResultcontentTransportKindText     ArgumentPromptResultcontentTransportKind = "text"
+	ArgumentPromptResultcontentTransportKindImage    ArgumentPromptResultcontentTransportKind = "image"
+	ArgumentPromptResultcontentTransportKindResource ArgumentPromptResultcontentTransportKind = "resource"
+)
+
+// Kind returns the selected branch.
+func (u ArgumentPromptResultcontentTransport) Kind() ArgumentPromptResultcontentTransportKind {
+	return u.kind
+}
+
+// NewArgumentPromptResultcontentTransportText creates ArgumentPromptResultcontentTransport with its text branch selected.
+func NewArgumentPromptResultcontentTransportText(value *ArgumentPromptResultRefereePromptTextTransport) ArgumentPromptResultcontentTransport {
+	return ArgumentPromptResultcontentTransport{kind: ArgumentPromptResultcontentTransportKindText, Text: value}
+}
+
+// AsText returns the text branch when it is selected.
+func (u ArgumentPromptResultcontentTransport) AsText() (_ *ArgumentPromptResultRefereePromptTextTransport, ok bool) {
+	if u.kind != ArgumentPromptResultcontentTransportKindText {
+		return
 	}
-	if err := ValidateAnalyzeSentimentPayloadTransport(body); err != nil {
-		return nil, fmt.Errorf("validate AnalyzeSentimentPayload JSON: %w", err)
+	return u.Text, true
+}
+
+// SetText selects the text branch.
+func (u *ArgumentPromptResultcontentTransport) SetText(value *ArgumentPromptResultRefereePromptTextTransport) {
+	u.kind = ArgumentPromptResultcontentTransportKindText
+	u.Text = value
+}
+
+// NewArgumentPromptResultcontentTransportImage creates ArgumentPromptResultcontentTransport with its image branch selected.
+func NewArgumentPromptResultcontentTransportImage(value *ArgumentPromptResultRefereePromptImageTransport) ArgumentPromptResultcontentTransport {
+	return ArgumentPromptResultcontentTransport{kind: ArgumentPromptResultcontentTransportKindImage, Image: value}
+}
+
+// AsImage returns the image branch when it is selected.
+func (u ArgumentPromptResultcontentTransport) AsImage() (_ *ArgumentPromptResultRefereePromptImageTransport, ok bool) {
+	if u.kind != ArgumentPromptResultcontentTransportKindImage {
+		return
 	}
-	data, err := json.Marshal(body)
-	if err != nil {
-		return nil, fmt.Errorf("encode AnalyzeSentimentPayload JSON: %w", err)
+	return u.Image, true
+}
+
+// SetImage selects the image branch.
+func (u *ArgumentPromptResultcontentTransport) SetImage(value *ArgumentPromptResultRefereePromptImageTransport) {
+	u.kind = ArgumentPromptResultcontentTransportKindImage
+	u.Image = value
+}
+
+// NewArgumentPromptResultcontentTransportResource creates ArgumentPromptResultcontentTransport with its resource branch selected.
+func NewArgumentPromptResultcontentTransportResource(value *ArgumentPromptResultRefereePromptResourceTransport) ArgumentPromptResultcontentTransport {
+	return ArgumentPromptResultcontentTransport{kind: ArgumentPromptResultcontentTransportKindResource, Resource: value}
+}
+
+// AsResource returns the resource branch when it is selected.
+func (u ArgumentPromptResultcontentTransport) AsResource() (_ *ArgumentPromptResultRefereePromptResourceTransport, ok bool) {
+	if u.kind != ArgumentPromptResultcontentTransportKindResource {
+		return
 	}
-	return data, nil
+	return u.Resource, true
+}
+
+// SetResource selects the resource branch.
+func (u *ArgumentPromptResultcontentTransport) SetResource(value *ArgumentPromptResultRefereePromptResourceTransport) {
+	u.kind = ArgumentPromptResultcontentTransportKindResource
+	u.Resource = value
+}
+
+// Validate checks that one complete branch is selected.
+func (u ArgumentPromptResultcontentTransport) Validate() error {
+	switch u.kind {
+	case ArgumentPromptResultcontentTransportKindText:
+		if u.Text == nil {
+			return goa.MissingFieldError("value", "ArgumentPromptResultcontentTransport")
+		}
+		return nil
+	case ArgumentPromptResultcontentTransportKindImage:
+		if u.Image == nil {
+			return goa.MissingFieldError("value", "ArgumentPromptResultcontentTransport")
+		}
+		return nil
+	case ArgumentPromptResultcontentTransportKindResource:
+		if u.Resource == nil {
+			return goa.MissingFieldError("value", "ArgumentPromptResultcontentTransport")
+		}
+		return nil
+	case "":
+		return goa.MissingFieldError("type", "ArgumentPromptResultcontentTransport")
+	default:
+		return goa.InvalidEnumValueError("type", u.kind, []any{string(ArgumentPromptResultcontentTransportKindText), string(ArgumentPromptResultcontentTransportKindImage), string(ArgumentPromptResultcontentTransportKindResource)})
+	}
+}
+
+// ArgumentPromptResultresourceTransport stores exactly one selected Goa OneOf branch.
+type ArgumentPromptResultresourceTransport struct {
+	kind ArgumentPromptResultresourceTransportKind
+	Text *ArgumentPromptResultRefereeEmbeddedTextTransport
+}
+
+// ArgumentPromptResultresourceTransportKind identifies the selected branch of ArgumentPromptResultresourceTransport.
+type ArgumentPromptResultresourceTransportKind string
+
+const (
+	ArgumentPromptResultresourceTransportKindText ArgumentPromptResultresourceTransportKind = "text"
+)
+
+// Kind returns the selected branch.
+func (u ArgumentPromptResultresourceTransport) Kind() ArgumentPromptResultresourceTransportKind {
+	return u.kind
+}
+
+// NewArgumentPromptResultresourceTransportText creates ArgumentPromptResultresourceTransport with its text branch selected.
+func NewArgumentPromptResultresourceTransportText(value *ArgumentPromptResultRefereeEmbeddedTextTransport) ArgumentPromptResultresourceTransport {
+	return ArgumentPromptResultresourceTransport{kind: ArgumentPromptResultresourceTransportKindText, Text: value}
+}
+
+// AsText returns the text branch when it is selected.
+func (u ArgumentPromptResultresourceTransport) AsText() (_ *ArgumentPromptResultRefereeEmbeddedTextTransport, ok bool) {
+	if u.kind != ArgumentPromptResultresourceTransportKindText {
+		return
+	}
+	return u.Text, true
+}
+
+// SetText selects the text branch.
+func (u *ArgumentPromptResultresourceTransport) SetText(value *ArgumentPromptResultRefereeEmbeddedTextTransport) {
+	u.kind = ArgumentPromptResultresourceTransportKindText
+	u.Text = value
+}
+
+// Validate checks that one complete branch is selected.
+func (u ArgumentPromptResultresourceTransport) Validate() error {
+	switch u.kind {
+	case ArgumentPromptResultresourceTransportKindText:
+		if u.Text == nil {
+			return goa.MissingFieldError("value", "ArgumentPromptResultresourceTransport")
+		}
+		return nil
+	case "":
+		return goa.MissingFieldError("type", "ArgumentPromptResultresourceTransport")
+	default:
+		return goa.InvalidEnumValueError("type", u.kind, []any{string(ArgumentPromptResultresourceTransportKindText)})
+	}
+}
+
+// ImagePromptResultcontentTransport stores exactly one selected Goa OneOf branch.
+type ImagePromptResultcontentTransport struct {
+	kind     ImagePromptResultcontentTransportKind
+	Text     *ImagePromptResultRefereePromptTextTransport
+	Image    *ImagePromptResultRefereePromptImageTransport
+	Resource *ImagePromptResultRefereePromptResourceTransport
+}
+
+// ImagePromptResultcontentTransportKind identifies the selected branch of ImagePromptResultcontentTransport.
+type ImagePromptResultcontentTransportKind string
+
+const (
+	ImagePromptResultcontentTransportKindText     ImagePromptResultcontentTransportKind = "text"
+	ImagePromptResultcontentTransportKindImage    ImagePromptResultcontentTransportKind = "image"
+	ImagePromptResultcontentTransportKindResource ImagePromptResultcontentTransportKind = "resource"
+)
+
+// Kind returns the selected branch.
+func (u ImagePromptResultcontentTransport) Kind() ImagePromptResultcontentTransportKind {
+	return u.kind
+}
+
+// NewImagePromptResultcontentTransportText creates ImagePromptResultcontentTransport with its text branch selected.
+func NewImagePromptResultcontentTransportText(value *ImagePromptResultRefereePromptTextTransport) ImagePromptResultcontentTransport {
+	return ImagePromptResultcontentTransport{kind: ImagePromptResultcontentTransportKindText, Text: value}
+}
+
+// AsText returns the text branch when it is selected.
+func (u ImagePromptResultcontentTransport) AsText() (_ *ImagePromptResultRefereePromptTextTransport, ok bool) {
+	if u.kind != ImagePromptResultcontentTransportKindText {
+		return
+	}
+	return u.Text, true
+}
+
+// SetText selects the text branch.
+func (u *ImagePromptResultcontentTransport) SetText(value *ImagePromptResultRefereePromptTextTransport) {
+	u.kind = ImagePromptResultcontentTransportKindText
+	u.Text = value
+}
+
+// NewImagePromptResultcontentTransportImage creates ImagePromptResultcontentTransport with its image branch selected.
+func NewImagePromptResultcontentTransportImage(value *ImagePromptResultRefereePromptImageTransport) ImagePromptResultcontentTransport {
+	return ImagePromptResultcontentTransport{kind: ImagePromptResultcontentTransportKindImage, Image: value}
+}
+
+// AsImage returns the image branch when it is selected.
+func (u ImagePromptResultcontentTransport) AsImage() (_ *ImagePromptResultRefereePromptImageTransport, ok bool) {
+	if u.kind != ImagePromptResultcontentTransportKindImage {
+		return
+	}
+	return u.Image, true
+}
+
+// SetImage selects the image branch.
+func (u *ImagePromptResultcontentTransport) SetImage(value *ImagePromptResultRefereePromptImageTransport) {
+	u.kind = ImagePromptResultcontentTransportKindImage
+	u.Image = value
+}
+
+// NewImagePromptResultcontentTransportResource creates ImagePromptResultcontentTransport with its resource branch selected.
+func NewImagePromptResultcontentTransportResource(value *ImagePromptResultRefereePromptResourceTransport) ImagePromptResultcontentTransport {
+	return ImagePromptResultcontentTransport{kind: ImagePromptResultcontentTransportKindResource, Resource: value}
+}
+
+// AsResource returns the resource branch when it is selected.
+func (u ImagePromptResultcontentTransport) AsResource() (_ *ImagePromptResultRefereePromptResourceTransport, ok bool) {
+	if u.kind != ImagePromptResultcontentTransportKindResource {
+		return
+	}
+	return u.Resource, true
+}
+
+// SetResource selects the resource branch.
+func (u *ImagePromptResultcontentTransport) SetResource(value *ImagePromptResultRefereePromptResourceTransport) {
+	u.kind = ImagePromptResultcontentTransportKindResource
+	u.Resource = value
+}
+
+// Validate checks that one complete branch is selected.
+func (u ImagePromptResultcontentTransport) Validate() error {
+	switch u.kind {
+	case ImagePromptResultcontentTransportKindText:
+		if u.Text == nil {
+			return goa.MissingFieldError("value", "ImagePromptResultcontentTransport")
+		}
+		return nil
+	case ImagePromptResultcontentTransportKindImage:
+		if u.Image == nil {
+			return goa.MissingFieldError("value", "ImagePromptResultcontentTransport")
+		}
+		return nil
+	case ImagePromptResultcontentTransportKindResource:
+		if u.Resource == nil {
+			return goa.MissingFieldError("value", "ImagePromptResultcontentTransport")
+		}
+		return nil
+	case "":
+		return goa.MissingFieldError("type", "ImagePromptResultcontentTransport")
+	default:
+		return goa.InvalidEnumValueError("type", u.kind, []any{string(ImagePromptResultcontentTransportKindText), string(ImagePromptResultcontentTransportKindImage), string(ImagePromptResultcontentTransportKindResource)})
+	}
+}
+
+// ImagePromptResultresourceTransport stores exactly one selected Goa OneOf branch.
+type ImagePromptResultresourceTransport struct {
+	kind ImagePromptResultresourceTransportKind
+	Text *ImagePromptResultRefereeEmbeddedTextTransport
+}
+
+// ImagePromptResultresourceTransportKind identifies the selected branch of ImagePromptResultresourceTransport.
+type ImagePromptResultresourceTransportKind string
+
+const (
+	ImagePromptResultresourceTransportKindText ImagePromptResultresourceTransportKind = "text"
+)
+
+// Kind returns the selected branch.
+func (u ImagePromptResultresourceTransport) Kind() ImagePromptResultresourceTransportKind {
+	return u.kind
+}
+
+// NewImagePromptResultresourceTransportText creates ImagePromptResultresourceTransport with its text branch selected.
+func NewImagePromptResultresourceTransportText(value *ImagePromptResultRefereeEmbeddedTextTransport) ImagePromptResultresourceTransport {
+	return ImagePromptResultresourceTransport{kind: ImagePromptResultresourceTransportKindText, Text: value}
+}
+
+// AsText returns the text branch when it is selected.
+func (u ImagePromptResultresourceTransport) AsText() (_ *ImagePromptResultRefereeEmbeddedTextTransport, ok bool) {
+	if u.kind != ImagePromptResultresourceTransportKindText {
+		return
+	}
+	return u.Text, true
+}
+
+// SetText selects the text branch.
+func (u *ImagePromptResultresourceTransport) SetText(value *ImagePromptResultRefereeEmbeddedTextTransport) {
+	u.kind = ImagePromptResultresourceTransportKindText
+	u.Text = value
+}
+
+// Validate checks that one complete branch is selected.
+func (u ImagePromptResultresourceTransport) Validate() error {
+	switch u.kind {
+	case ImagePromptResultresourceTransportKindText:
+		if u.Text == nil {
+			return goa.MissingFieldError("value", "ImagePromptResultresourceTransport")
+		}
+		return nil
+	case "":
+		return goa.MissingFieldError("type", "ImagePromptResultresourceTransport")
+	default:
+		return goa.InvalidEnumValueError("type", u.kind, []any{string(ImagePromptResultresourceTransportKindText)})
+	}
+}
+
+// ReadResourceResultTemplateRepresentationTransport stores exactly one selected Goa OneOf branch.
+type ReadResourceResultTemplateRepresentationTransport struct {
+	kind ReadResourceResultTemplateRepresentationTransportKind
+	Text *ReadResourceResultTemplateTextTransport
+	Blob *ReadResourceResultTemplateBlobTransport
+}
+
+// ReadResourceResultTemplateRepresentationTransportKind identifies the selected branch of ReadResourceResultTemplateRepresentationTransport.
+type ReadResourceResultTemplateRepresentationTransportKind string
+
+const (
+	ReadResourceResultTemplateRepresentationTransportKindText ReadResourceResultTemplateRepresentationTransportKind = "text"
+	ReadResourceResultTemplateRepresentationTransportKindBlob ReadResourceResultTemplateRepresentationTransportKind = "blob"
+)
+
+// Kind returns the selected branch.
+func (u ReadResourceResultTemplateRepresentationTransport) Kind() ReadResourceResultTemplateRepresentationTransportKind {
+	return u.kind
+}
+
+// NewReadResourceResultTemplateRepresentationTransportText creates ReadResourceResultTemplateRepresentationTransport with its text branch selected.
+func NewReadResourceResultTemplateRepresentationTransportText(value *ReadResourceResultTemplateTextTransport) ReadResourceResultTemplateRepresentationTransport {
+	return ReadResourceResultTemplateRepresentationTransport{kind: ReadResourceResultTemplateRepresentationTransportKindText, Text: value}
+}
+
+// AsText returns the text branch when it is selected.
+func (u ReadResourceResultTemplateRepresentationTransport) AsText() (_ *ReadResourceResultTemplateTextTransport, ok bool) {
+	if u.kind != ReadResourceResultTemplateRepresentationTransportKindText {
+		return
+	}
+	return u.Text, true
+}
+
+// SetText selects the text branch.
+func (u *ReadResourceResultTemplateRepresentationTransport) SetText(value *ReadResourceResultTemplateTextTransport) {
+	u.kind = ReadResourceResultTemplateRepresentationTransportKindText
+	u.Text = value
+}
+
+// NewReadResourceResultTemplateRepresentationTransportBlob creates ReadResourceResultTemplateRepresentationTransport with its blob branch selected.
+func NewReadResourceResultTemplateRepresentationTransportBlob(value *ReadResourceResultTemplateBlobTransport) ReadResourceResultTemplateRepresentationTransport {
+	return ReadResourceResultTemplateRepresentationTransport{kind: ReadResourceResultTemplateRepresentationTransportKindBlob, Blob: value}
+}
+
+// AsBlob returns the blob branch when it is selected.
+func (u ReadResourceResultTemplateRepresentationTransport) AsBlob() (_ *ReadResourceResultTemplateBlobTransport, ok bool) {
+	if u.kind != ReadResourceResultTemplateRepresentationTransportKindBlob {
+		return
+	}
+	return u.Blob, true
+}
+
+// SetBlob selects the blob branch.
+func (u *ReadResourceResultTemplateRepresentationTransport) SetBlob(value *ReadResourceResultTemplateBlobTransport) {
+	u.kind = ReadResourceResultTemplateRepresentationTransportKindBlob
+	u.Blob = value
+}
+
+// Validate checks that one complete branch is selected.
+func (u ReadResourceResultTemplateRepresentationTransport) Validate() error {
+	switch u.kind {
+	case ReadResourceResultTemplateRepresentationTransportKindText:
+		if u.Text == nil {
+			return goa.MissingFieldError("value", "ReadResourceResultTemplateRepresentationTransport")
+		}
+		return nil
+	case ReadResourceResultTemplateRepresentationTransportKindBlob:
+		if u.Blob == nil {
+			return goa.MissingFieldError("value", "ReadResourceResultTemplateRepresentationTransport")
+		}
+		return nil
+	case "":
+		return goa.MissingFieldError("type", "ReadResourceResultTemplateRepresentationTransport")
+	default:
+		return goa.InvalidEnumValueError("type", u.kind, []any{string(ReadResourceResultTemplateRepresentationTransportKindText), string(ReadResourceResultTemplateRepresentationTransportKindBlob)})
+	}
+}
+
+// ResourcePromptResultcontentTransport stores exactly one selected Goa OneOf branch.
+type ResourcePromptResultcontentTransport struct {
+	kind     ResourcePromptResultcontentTransportKind
+	Text     *ResourcePromptResultRefereePromptTextTransport
+	Image    *ResourcePromptResultRefereePromptImageTransport
+	Resource *ResourcePromptResultRefereePromptResourceTransport
+}
+
+// ResourcePromptResultcontentTransportKind identifies the selected branch of ResourcePromptResultcontentTransport.
+type ResourcePromptResultcontentTransportKind string
+
+const (
+	ResourcePromptResultcontentTransportKindText     ResourcePromptResultcontentTransportKind = "text"
+	ResourcePromptResultcontentTransportKindImage    ResourcePromptResultcontentTransportKind = "image"
+	ResourcePromptResultcontentTransportKindResource ResourcePromptResultcontentTransportKind = "resource"
+)
+
+// Kind returns the selected branch.
+func (u ResourcePromptResultcontentTransport) Kind() ResourcePromptResultcontentTransportKind {
+	return u.kind
+}
+
+// NewResourcePromptResultcontentTransportText creates ResourcePromptResultcontentTransport with its text branch selected.
+func NewResourcePromptResultcontentTransportText(value *ResourcePromptResultRefereePromptTextTransport) ResourcePromptResultcontentTransport {
+	return ResourcePromptResultcontentTransport{kind: ResourcePromptResultcontentTransportKindText, Text: value}
+}
+
+// AsText returns the text branch when it is selected.
+func (u ResourcePromptResultcontentTransport) AsText() (_ *ResourcePromptResultRefereePromptTextTransport, ok bool) {
+	if u.kind != ResourcePromptResultcontentTransportKindText {
+		return
+	}
+	return u.Text, true
+}
+
+// SetText selects the text branch.
+func (u *ResourcePromptResultcontentTransport) SetText(value *ResourcePromptResultRefereePromptTextTransport) {
+	u.kind = ResourcePromptResultcontentTransportKindText
+	u.Text = value
+}
+
+// NewResourcePromptResultcontentTransportImage creates ResourcePromptResultcontentTransport with its image branch selected.
+func NewResourcePromptResultcontentTransportImage(value *ResourcePromptResultRefereePromptImageTransport) ResourcePromptResultcontentTransport {
+	return ResourcePromptResultcontentTransport{kind: ResourcePromptResultcontentTransportKindImage, Image: value}
+}
+
+// AsImage returns the image branch when it is selected.
+func (u ResourcePromptResultcontentTransport) AsImage() (_ *ResourcePromptResultRefereePromptImageTransport, ok bool) {
+	if u.kind != ResourcePromptResultcontentTransportKindImage {
+		return
+	}
+	return u.Image, true
+}
+
+// SetImage selects the image branch.
+func (u *ResourcePromptResultcontentTransport) SetImage(value *ResourcePromptResultRefereePromptImageTransport) {
+	u.kind = ResourcePromptResultcontentTransportKindImage
+	u.Image = value
+}
+
+// NewResourcePromptResultcontentTransportResource creates ResourcePromptResultcontentTransport with its resource branch selected.
+func NewResourcePromptResultcontentTransportResource(value *ResourcePromptResultRefereePromptResourceTransport) ResourcePromptResultcontentTransport {
+	return ResourcePromptResultcontentTransport{kind: ResourcePromptResultcontentTransportKindResource, Resource: value}
+}
+
+// AsResource returns the resource branch when it is selected.
+func (u ResourcePromptResultcontentTransport) AsResource() (_ *ResourcePromptResultRefereePromptResourceTransport, ok bool) {
+	if u.kind != ResourcePromptResultcontentTransportKindResource {
+		return
+	}
+	return u.Resource, true
+}
+
+// SetResource selects the resource branch.
+func (u *ResourcePromptResultcontentTransport) SetResource(value *ResourcePromptResultRefereePromptResourceTransport) {
+	u.kind = ResourcePromptResultcontentTransportKindResource
+	u.Resource = value
+}
+
+// Validate checks that one complete branch is selected.
+func (u ResourcePromptResultcontentTransport) Validate() error {
+	switch u.kind {
+	case ResourcePromptResultcontentTransportKindText:
+		if u.Text == nil {
+			return goa.MissingFieldError("value", "ResourcePromptResultcontentTransport")
+		}
+		return nil
+	case ResourcePromptResultcontentTransportKindImage:
+		if u.Image == nil {
+			return goa.MissingFieldError("value", "ResourcePromptResultcontentTransport")
+		}
+		return nil
+	case ResourcePromptResultcontentTransportKindResource:
+		if u.Resource == nil {
+			return goa.MissingFieldError("value", "ResourcePromptResultcontentTransport")
+		}
+		return nil
+	case "":
+		return goa.MissingFieldError("type", "ResourcePromptResultcontentTransport")
+	default:
+		return goa.InvalidEnumValueError("type", u.kind, []any{string(ResourcePromptResultcontentTransportKindText), string(ResourcePromptResultcontentTransportKindImage), string(ResourcePromptResultcontentTransportKindResource)})
+	}
+}
+
+// ResourcePromptResultresourceTransport stores exactly one selected Goa OneOf branch.
+type ResourcePromptResultresourceTransport struct {
+	kind ResourcePromptResultresourceTransportKind
+	Text *ResourcePromptResultRefereeEmbeddedTextTransport
+}
+
+// ResourcePromptResultresourceTransportKind identifies the selected branch of ResourcePromptResultresourceTransport.
+type ResourcePromptResultresourceTransportKind string
+
+const (
+	ResourcePromptResultresourceTransportKindText ResourcePromptResultresourceTransportKind = "text"
+)
+
+// Kind returns the selected branch.
+func (u ResourcePromptResultresourceTransport) Kind() ResourcePromptResultresourceTransportKind {
+	return u.kind
+}
+
+// NewResourcePromptResultresourceTransportText creates ResourcePromptResultresourceTransport with its text branch selected.
+func NewResourcePromptResultresourceTransportText(value *ResourcePromptResultRefereeEmbeddedTextTransport) ResourcePromptResultresourceTransport {
+	return ResourcePromptResultresourceTransport{kind: ResourcePromptResultresourceTransportKindText, Text: value}
+}
+
+// AsText returns the text branch when it is selected.
+func (u ResourcePromptResultresourceTransport) AsText() (_ *ResourcePromptResultRefereeEmbeddedTextTransport, ok bool) {
+	if u.kind != ResourcePromptResultresourceTransportKindText {
+		return
+	}
+	return u.Text, true
+}
+
+// SetText selects the text branch.
+func (u *ResourcePromptResultresourceTransport) SetText(value *ResourcePromptResultRefereeEmbeddedTextTransport) {
+	u.kind = ResourcePromptResultresourceTransportKindText
+	u.Text = value
+}
+
+// Validate checks that one complete branch is selected.
+func (u ResourcePromptResultresourceTransport) Validate() error {
+	switch u.kind {
+	case ResourcePromptResultresourceTransportKindText:
+		if u.Text == nil {
+			return goa.MissingFieldError("value", "ResourcePromptResultresourceTransport")
+		}
+		return nil
+	case "":
+		return goa.MissingFieldError("type", "ResourcePromptResultresourceTransport")
+	default:
+		return goa.InvalidEnumValueError("type", u.kind, []any{string(ResourcePromptResultresourceTransportKindText)})
+	}
+}
+
+// SimplePromptResultcontentTransport stores exactly one selected Goa OneOf branch.
+type SimplePromptResultcontentTransport struct {
+	kind     SimplePromptResultcontentTransportKind
+	Text     *SimplePromptResultRefereePromptTextTransport
+	Image    *SimplePromptResultRefereePromptImageTransport
+	Resource *SimplePromptResultRefereePromptResourceTransport
+}
+
+// SimplePromptResultcontentTransportKind identifies the selected branch of SimplePromptResultcontentTransport.
+type SimplePromptResultcontentTransportKind string
+
+const (
+	SimplePromptResultcontentTransportKindText     SimplePromptResultcontentTransportKind = "text"
+	SimplePromptResultcontentTransportKindImage    SimplePromptResultcontentTransportKind = "image"
+	SimplePromptResultcontentTransportKindResource SimplePromptResultcontentTransportKind = "resource"
+)
+
+// Kind returns the selected branch.
+func (u SimplePromptResultcontentTransport) Kind() SimplePromptResultcontentTransportKind {
+	return u.kind
+}
+
+// NewSimplePromptResultcontentTransportText creates SimplePromptResultcontentTransport with its text branch selected.
+func NewSimplePromptResultcontentTransportText(value *SimplePromptResultRefereePromptTextTransport) SimplePromptResultcontentTransport {
+	return SimplePromptResultcontentTransport{kind: SimplePromptResultcontentTransportKindText, Text: value}
+}
+
+// AsText returns the text branch when it is selected.
+func (u SimplePromptResultcontentTransport) AsText() (_ *SimplePromptResultRefereePromptTextTransport, ok bool) {
+	if u.kind != SimplePromptResultcontentTransportKindText {
+		return
+	}
+	return u.Text, true
+}
+
+// SetText selects the text branch.
+func (u *SimplePromptResultcontentTransport) SetText(value *SimplePromptResultRefereePromptTextTransport) {
+	u.kind = SimplePromptResultcontentTransportKindText
+	u.Text = value
+}
+
+// NewSimplePromptResultcontentTransportImage creates SimplePromptResultcontentTransport with its image branch selected.
+func NewSimplePromptResultcontentTransportImage(value *SimplePromptResultRefereePromptImageTransport) SimplePromptResultcontentTransport {
+	return SimplePromptResultcontentTransport{kind: SimplePromptResultcontentTransportKindImage, Image: value}
+}
+
+// AsImage returns the image branch when it is selected.
+func (u SimplePromptResultcontentTransport) AsImage() (_ *SimplePromptResultRefereePromptImageTransport, ok bool) {
+	if u.kind != SimplePromptResultcontentTransportKindImage {
+		return
+	}
+	return u.Image, true
+}
+
+// SetImage selects the image branch.
+func (u *SimplePromptResultcontentTransport) SetImage(value *SimplePromptResultRefereePromptImageTransport) {
+	u.kind = SimplePromptResultcontentTransportKindImage
+	u.Image = value
+}
+
+// NewSimplePromptResultcontentTransportResource creates SimplePromptResultcontentTransport with its resource branch selected.
+func NewSimplePromptResultcontentTransportResource(value *SimplePromptResultRefereePromptResourceTransport) SimplePromptResultcontentTransport {
+	return SimplePromptResultcontentTransport{kind: SimplePromptResultcontentTransportKindResource, Resource: value}
+}
+
+// AsResource returns the resource branch when it is selected.
+func (u SimplePromptResultcontentTransport) AsResource() (_ *SimplePromptResultRefereePromptResourceTransport, ok bool) {
+	if u.kind != SimplePromptResultcontentTransportKindResource {
+		return
+	}
+	return u.Resource, true
+}
+
+// SetResource selects the resource branch.
+func (u *SimplePromptResultcontentTransport) SetResource(value *SimplePromptResultRefereePromptResourceTransport) {
+	u.kind = SimplePromptResultcontentTransportKindResource
+	u.Resource = value
+}
+
+// Validate checks that one complete branch is selected.
+func (u SimplePromptResultcontentTransport) Validate() error {
+	switch u.kind {
+	case SimplePromptResultcontentTransportKindText:
+		if u.Text == nil {
+			return goa.MissingFieldError("value", "SimplePromptResultcontentTransport")
+		}
+		return nil
+	case SimplePromptResultcontentTransportKindImage:
+		if u.Image == nil {
+			return goa.MissingFieldError("value", "SimplePromptResultcontentTransport")
+		}
+		return nil
+	case SimplePromptResultcontentTransportKindResource:
+		if u.Resource == nil {
+			return goa.MissingFieldError("value", "SimplePromptResultcontentTransport")
+		}
+		return nil
+	case "":
+		return goa.MissingFieldError("type", "SimplePromptResultcontentTransport")
+	default:
+		return goa.InvalidEnumValueError("type", u.kind, []any{string(SimplePromptResultcontentTransportKindText), string(SimplePromptResultcontentTransportKindImage), string(SimplePromptResultcontentTransportKindResource)})
+	}
+}
+
+// SimplePromptResultresourceTransport stores exactly one selected Goa OneOf branch.
+type SimplePromptResultresourceTransport struct {
+	kind SimplePromptResultresourceTransportKind
+	Text *SimplePromptResultRefereeEmbeddedTextTransport
+}
+
+// SimplePromptResultresourceTransportKind identifies the selected branch of SimplePromptResultresourceTransport.
+type SimplePromptResultresourceTransportKind string
+
+const (
+	SimplePromptResultresourceTransportKindText SimplePromptResultresourceTransportKind = "text"
+)
+
+// Kind returns the selected branch.
+func (u SimplePromptResultresourceTransport) Kind() SimplePromptResultresourceTransportKind {
+	return u.kind
+}
+
+// NewSimplePromptResultresourceTransportText creates SimplePromptResultresourceTransport with its text branch selected.
+func NewSimplePromptResultresourceTransportText(value *SimplePromptResultRefereeEmbeddedTextTransport) SimplePromptResultresourceTransport {
+	return SimplePromptResultresourceTransport{kind: SimplePromptResultresourceTransportKindText, Text: value}
+}
+
+// AsText returns the text branch when it is selected.
+func (u SimplePromptResultresourceTransport) AsText() (_ *SimplePromptResultRefereeEmbeddedTextTransport, ok bool) {
+	if u.kind != SimplePromptResultresourceTransportKindText {
+		return
+	}
+	return u.Text, true
+}
+
+// SetText selects the text branch.
+func (u *SimplePromptResultresourceTransport) SetText(value *SimplePromptResultRefereeEmbeddedTextTransport) {
+	u.kind = SimplePromptResultresourceTransportKindText
+	u.Text = value
+}
+
+// Validate checks that one complete branch is selected.
+func (u SimplePromptResultresourceTransport) Validate() error {
+	switch u.kind {
+	case SimplePromptResultresourceTransportKindText:
+		if u.Text == nil {
+			return goa.MissingFieldError("value", "SimplePromptResultresourceTransport")
+		}
+		return nil
+	case "":
+		return goa.MissingFieldError("type", "SimplePromptResultresourceTransport")
+	default:
+		return goa.InvalidEnumValueError("type", u.kind, []any{string(SimplePromptResultresourceTransportKindText)})
+	}
 }
 
 // DecodeAnalyzeSentimentPayload checks JSON field names from the Goa design and returns a service value.
@@ -301,8 +1928,10 @@ func DecodeAnalyzeSentimentPayload(data []byte) (out *assistant.AnalyzeSentiment
 	if err := ValidateAnalyzeSentimentPayloadTransport(body); err != nil {
 		return out, fmt.Errorf("validate AnalyzeSentimentPayload JSON: %w", err)
 	}
-	out = &assistant.AnalyzeSentimentPayload{
-		Text: *body.Text,
+	{
+		out = &assistant.AnalyzeSentimentPayload{
+			Text: *body.Text,
+		}
 	}
 	return out, nil
 }
@@ -310,8 +1939,10 @@ func DecodeAnalyzeSentimentPayload(data []byte) (out *assistant.AnalyzeSentiment
 // EncodeAnalyzeSentimentResult turns a service value into JSON using the field names in the Goa design.
 func EncodeAnalyzeSentimentResult(in *assistant.AnalyzeSentimentResult) ([]byte, error) {
 	var body *AnalyzeSentimentResultTransport
-	body = &AnalyzeSentimentResultTransport{
-		Sentiment: in.Sentiment,
+	{
+		body = &AnalyzeSentimentResultTransport{
+			Sentiment: in.Sentiment,
+		}
 	}
 	if err := ValidateAnalyzeSentimentResultTransport(body); err != nil {
 		return nil, fmt.Errorf("validate AnalyzeSentimentResult JSON: %w", err)
@@ -323,44 +1954,43 @@ func EncodeAnalyzeSentimentResult(in *assistant.AnalyzeSentimentResult) ([]byte,
 	return data, nil
 }
 
-// DecodeAnalyzeSentimentResult checks JSON field names from the Goa design and returns a service value.
-func DecodeAnalyzeSentimentResult(data []byte) (out *assistant.AnalyzeSentimentResult, err error) {
-	var body *AnalyzeSentimentResultTransport
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&body); err != nil {
-		return out, fmt.Errorf("decode AnalyzeSentimentResult JSON: %w", err)
+// NewArgumentPromptPayload validates a decoded transport value and returns the service value.
+func NewArgumentPromptPayload(body *ArgumentPromptPayloadTransport) (out *assistant.ArgumentPromptPayload, err error) {
+	if err := ValidateArgumentPromptPayloadTransport(body); err != nil {
+		return out, fmt.Errorf("validate ArgumentPromptPayload JSON: %w", err)
 	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		if err == nil {
-			return out, fmt.Errorf("decode AnalyzeSentimentResult JSON: multiple JSON values")
+	{
+		out = &assistant.ArgumentPromptPayload{
+			Arg1: *body.Arg1,
+			Arg2: *body.Arg2,
 		}
-		return out, fmt.Errorf("decode AnalyzeSentimentResult JSON after first value: %w", err)
-	}
-	if err := ValidateAnalyzeSentimentResultTransport(body); err != nil {
-		return out, fmt.Errorf("validate AnalyzeSentimentResult JSON: %w", err)
-	}
-	out = &assistant.AnalyzeSentimentResult{
-		Sentiment: body.Sentiment,
 	}
 	return out, nil
 }
 
-// EncodeExecuteCodePayload turns a service value into JSON using the field names in the Goa design.
-func EncodeExecuteCodePayload(in *assistant.ExecuteCodePayload) ([]byte, error) {
-	var body *ExecuteCodePayloadTransport
-	body = &ExecuteCodePayloadTransport{
-		Language: &in.Language,
-		Code:     &in.Code,
+// ValidateArgumentPromptResultValue checks a service value against its declared field validation.
+func ValidateArgumentPromptResultValue(in *assistant.RefereePromptResult) error {
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ArgumentPromptResult")
 	}
-	if err := ValidateExecuteCodePayloadTransport(body); err != nil {
-		return nil, fmt.Errorf("validate ExecuteCodePayload JSON: %w", err)
+
+	var body *ArgumentPromptResultTransport
+	{
+		body = &ArgumentPromptResultTransport{}
+		body.Messages = make([]*ArgumentPromptResultRefereePromptMessageTransport, len(in.Messages))
+		for i, val := range in.Messages {
+			if val == nil {
+				body.Messages[i] = nil
+				continue
+			}
+			body.Messages[i] = encodeRefereePromptMessageToArgumentPromptResultRefereePromptMessageTransport(val)
+		}
 	}
-	data, err := json.Marshal(body)
-	if err != nil {
-		return nil, fmt.Errorf("encode ExecuteCodePayload JSON: %w", err)
+	if err := ValidateArgumentPromptResultTransport(body); err != nil {
+		return fmt.Errorf("validate ArgumentPromptResult value: %w", err)
 	}
-	return data, nil
+	return nil
 }
 
 // DecodeExecuteCodePayload checks JSON field names from the Goa design and returns a service value.
@@ -380,9 +2010,11 @@ func DecodeExecuteCodePayload(data []byte) (out *assistant.ExecuteCodePayload, e
 	if err := ValidateExecuteCodePayloadTransport(body); err != nil {
 		return out, fmt.Errorf("validate ExecuteCodePayload JSON: %w", err)
 	}
-	out = &assistant.ExecuteCodePayload{
-		Language: *body.Language,
-		Code:     *body.Code,
+	{
+		out = &assistant.ExecuteCodePayload{
+			Language: *body.Language,
+			Code:     *body.Code,
+		}
 	}
 	return out, nil
 }
@@ -390,8 +2022,10 @@ func DecodeExecuteCodePayload(data []byte) (out *assistant.ExecuteCodePayload, e
 // EncodeExecuteCodeResult turns a service value into JSON using the field names in the Goa design.
 func EncodeExecuteCodeResult(in *assistant.ExecuteCodeResult) ([]byte, error) {
 	var body *ExecuteCodeResultTransport
-	body = &ExecuteCodeResultTransport{
-		Output: in.Output,
+	{
+		body = &ExecuteCodeResultTransport{
+			Output: in.Output,
+		}
 	}
 	if err := ValidateExecuteCodeResultTransport(body); err != nil {
 		return nil, fmt.Errorf("validate ExecuteCodeResult JSON: %w", err)
@@ -399,45 +2033,6 @@ func EncodeExecuteCodeResult(in *assistant.ExecuteCodeResult) ([]byte, error) {
 	data, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("encode ExecuteCodeResult JSON: %w", err)
-	}
-	return data, nil
-}
-
-// DecodeExecuteCodeResult checks JSON field names from the Goa design and returns a service value.
-func DecodeExecuteCodeResult(data []byte) (out *assistant.ExecuteCodeResult, err error) {
-	var body *ExecuteCodeResultTransport
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&body); err != nil {
-		return out, fmt.Errorf("decode ExecuteCodeResult JSON: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		if err == nil {
-			return out, fmt.Errorf("decode ExecuteCodeResult JSON: multiple JSON values")
-		}
-		return out, fmt.Errorf("decode ExecuteCodeResult JSON after first value: %w", err)
-	}
-	if err := ValidateExecuteCodeResultTransport(body); err != nil {
-		return out, fmt.Errorf("validate ExecuteCodeResult JSON: %w", err)
-	}
-	out = &assistant.ExecuteCodeResult{
-		Output: body.Output,
-	}
-	return out, nil
-}
-
-// EncodeExtractKeywordsPayload turns a service value into JSON using the field names in the Goa design.
-func EncodeExtractKeywordsPayload(in *assistant.ExtractKeywordsPayload) ([]byte, error) {
-	var body *ExtractKeywordsPayloadTransport
-	body = &ExtractKeywordsPayloadTransport{
-		Text: &in.Text,
-	}
-	if err := ValidateExtractKeywordsPayloadTransport(body); err != nil {
-		return nil, fmt.Errorf("validate ExtractKeywordsPayload JSON: %w", err)
-	}
-	data, err := json.Marshal(body)
-	if err != nil {
-		return nil, fmt.Errorf("encode ExtractKeywordsPayload JSON: %w", err)
 	}
 	return data, nil
 }
@@ -459,8 +2054,10 @@ func DecodeExtractKeywordsPayload(data []byte) (out *assistant.ExtractKeywordsPa
 	if err := ValidateExtractKeywordsPayloadTransport(body); err != nil {
 		return out, fmt.Errorf("validate ExtractKeywordsPayload JSON: %w", err)
 	}
-	out = &assistant.ExtractKeywordsPayload{
-		Text: *body.Text,
+	{
+		out = &assistant.ExtractKeywordsPayload{
+			Text: *body.Text,
+		}
 	}
 	return out, nil
 }
@@ -468,11 +2065,13 @@ func DecodeExtractKeywordsPayload(data []byte) (out *assistant.ExtractKeywordsPa
 // EncodeExtractKeywordsResult turns a service value into JSON using the field names in the Goa design.
 func EncodeExtractKeywordsResult(in *assistant.ExtractKeywordsResult) ([]byte, error) {
 	var body *ExtractKeywordsResultTransport
-	body = &ExtractKeywordsResultTransport{}
-	if in.Keywords != nil {
-		body.Keywords = make([]string, len(in.Keywords))
-		for i, val := range in.Keywords {
-			body.Keywords[i] = val
+	{
+		body = &ExtractKeywordsResultTransport{}
+		if in.Keywords != nil {
+			body.Keywords = make([]string, len(in.Keywords))
+			for i, val := range in.Keywords {
+				body.Keywords[i] = val
+			}
 		}
 	}
 	if err := ValidateExtractKeywordsResultTransport(body); err != nil {
@@ -485,40 +2084,40 @@ func EncodeExtractKeywordsResult(in *assistant.ExtractKeywordsResult) ([]byte, e
 	return data, nil
 }
 
-// DecodeExtractKeywordsResult checks JSON field names from the Goa design and returns a service value.
-func DecodeExtractKeywordsResult(data []byte) (out *assistant.ExtractKeywordsResult, err error) {
-	var body *ExtractKeywordsResultTransport
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&body); err != nil {
-		return out, fmt.Errorf("decode ExtractKeywordsResult JSON: %w", err)
+// ValidateImagePromptResultValue checks a service value against its declared field validation.
+func ValidateImagePromptResultValue(in *assistant.RefereePromptResult) error {
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ImagePromptResult")
 	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		if err == nil {
-			return out, fmt.Errorf("decode ExtractKeywordsResult JSON: multiple JSON values")
-		}
-		return out, fmt.Errorf("decode ExtractKeywordsResult JSON after first value: %w", err)
-	}
-	if err := ValidateExtractKeywordsResultTransport(body); err != nil {
-		return out, fmt.Errorf("validate ExtractKeywordsResult JSON: %w", err)
-	}
-	out = &assistant.ExtractKeywordsResult{}
-	if body.Keywords != nil {
-		out.Keywords = make([]string, len(body.Keywords))
-		for i, val := range body.Keywords {
-			out.Keywords[i] = val
+
+	var body *ImagePromptResultTransport
+	{
+		body = &ImagePromptResultTransport{}
+		body.Messages = make([]*ImagePromptResultRefereePromptMessageTransport, len(in.Messages))
+		for i, val := range in.Messages {
+			if val == nil {
+				body.Messages[i] = nil
+				continue
+			}
+			body.Messages[i] = encodeRefereePromptMessageToImagePromptResultRefereePromptMessageTransport(val)
 		}
 	}
-	return out, nil
+	if err := ValidateImagePromptResultTransport(body); err != nil {
+		return fmt.Errorf("validate ImagePromptResult value: %w", err)
+	}
+	return nil
 }
 
 // EncodeListDocumentsResult turns a service value into JSON using the field names in the Goa design.
 func EncodeListDocumentsResult(in *assistant.Documents) ([]byte, error) {
 	var body *ListDocumentsResultTransport
-	body = &ListDocumentsResultTransport{}
-	body.Items = make([]string, len(in.Items))
-	for i, val := range in.Items {
-		body.Items[i] = val
+	{
+		body = &ListDocumentsResultTransport{}
+		body.Items = make([]string, len(in.Items))
+		for i, val := range in.Items {
+			body.Items[i] = val
+		}
 	}
 	if err := ValidateListDocumentsResultTransport(body); err != nil {
 		return nil, fmt.Errorf("validate ListDocumentsResult JSON: %w", err)
@@ -526,29 +2125,6 @@ func EncodeListDocumentsResult(in *assistant.Documents) ([]byte, error) {
 	data, err := json.Marshal(body)
 	if err != nil {
 		return nil, fmt.Errorf("encode ListDocumentsResult JSON: %w", err)
-	}
-	return data, nil
-}
-
-// EncodeProcessBatchPayload turns a service value into JSON using the field names in the Goa design.
-func EncodeProcessBatchPayload(in *assistant.ProcessBatchPayload) ([]byte, error) {
-	var body *ProcessBatchPayloadTransport
-	body = &ProcessBatchPayloadTransport{
-		Format:   in.Format,
-		Blob:     in.Blob,
-		URI:      in.URI,
-		MimeType: in.MimeType,
-	}
-	body.Items = make([]string, len(in.Items))
-	for i, val := range in.Items {
-		body.Items[i] = val
-	}
-	if err := ValidateProcessBatchPayloadTransport(body); err != nil {
-		return nil, fmt.Errorf("validate ProcessBatchPayload JSON: %w", err)
-	}
-	data, err := json.Marshal(body)
-	if err != nil {
-		return nil, fmt.Errorf("encode ProcessBatchPayload JSON: %w", err)
 	}
 	return data, nil
 }
@@ -570,15 +2146,17 @@ func DecodeProcessBatchPayload(data []byte) (out *assistant.ProcessBatchPayload,
 	if err := ValidateProcessBatchPayloadTransport(body); err != nil {
 		return out, fmt.Errorf("validate ProcessBatchPayload JSON: %w", err)
 	}
-	out = &assistant.ProcessBatchPayload{
-		Format:   body.Format,
-		Blob:     body.Blob,
-		URI:      body.URI,
-		MimeType: body.MimeType,
-	}
-	out.Items = make([]string, len(body.Items))
-	for i, val := range body.Items {
-		out.Items[i] = val
+	{
+		out = &assistant.ProcessBatchPayload{
+			Format:   body.Format,
+			Blob:     body.Blob,
+			URI:      body.URI,
+			MimeType: body.MimeType,
+		}
+		out.Items = make([]string, len(body.Items))
+		for i, val := range body.Items {
+			out.Items[i] = val
+		}
 	}
 	return out, nil
 }
@@ -586,8 +2164,10 @@ func DecodeProcessBatchPayload(data []byte) (out *assistant.ProcessBatchPayload,
 // EncodeProcessBatchResult turns a service value into JSON using the field names in the Goa design.
 func EncodeProcessBatchResult(in *assistant.ProcessBatchResult) ([]byte, error) {
 	var body *ProcessBatchResultTransport
-	body = &ProcessBatchResultTransport{
-		OK: in.OK,
+	{
+		body = &ProcessBatchResultTransport{
+			OK: in.OK,
+		}
 	}
 	if err := ValidateProcessBatchResultTransport(body); err != nil {
 		return nil, fmt.Errorf("validate ProcessBatchResult JSON: %w", err)
@@ -599,44 +2179,96 @@ func EncodeProcessBatchResult(in *assistant.ProcessBatchResult) ([]byte, error) 
 	return data, nil
 }
 
-// DecodeProcessBatchResult checks JSON field names from the Goa design and returns a service value.
-func DecodeProcessBatchResult(data []byte) (out *assistant.ProcessBatchResult, err error) {
-	var body *ProcessBatchResultTransport
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&body); err != nil {
-		return out, fmt.Errorf("decode ProcessBatchResult JSON: %w", err)
+// NewReadResourcePayload validates a decoded transport value and returns the service value.
+func NewReadResourcePayload(body *ReadResourcePayloadTransport) (out *assistant.ReadResourcePayload, err error) {
+	if err := ValidateReadResourcePayloadTransport(body); err != nil {
+		return out, fmt.Errorf("validate ReadResourcePayload JSON: %w", err)
 	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		if err == nil {
-			return out, fmt.Errorf("decode ProcessBatchResult JSON: multiple JSON values")
+	{
+		out = &assistant.ReadResourcePayload{
+			Address: *body.Address,
 		}
-		return out, fmt.Errorf("decode ProcessBatchResult JSON after first value: %w", err)
-	}
-	if err := ValidateProcessBatchResultTransport(body); err != nil {
-		return out, fmt.Errorf("validate ProcessBatchResult JSON: %w", err)
-	}
-	out = &assistant.ProcessBatchResult{
-		OK: body.OK,
 	}
 	return out, nil
 }
 
-// EncodeSearchPayload turns a service value into JSON using the field names in the Goa design.
-func EncodeSearchPayload(in *assistant.SearchPayload) ([]byte, error) {
-	var body *SearchPayloadTransport
-	body = &SearchPayloadTransport{
-		Query: &in.Query,
-		Limit: in.Limit,
+// ValidateReadResourceResultValue checks a service value against its declared field validation.
+func ValidateReadResourceResultValue(in *assistant.ReadResourceResult) error {
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ReadResourceResult")
 	}
-	if err := ValidateSearchPayloadTransport(body); err != nil {
-		return nil, fmt.Errorf("validate SearchPayload JSON: %w", err)
+
+	var body *ReadResourceResultTransport
+	{
+		body = &ReadResourceResultTransport{}
+		body.Parts = make([]*ReadResourceResultTemplateItemTransport, len(in.Parts))
+		for i, val := range in.Parts {
+			if val == nil {
+				body.Parts[i] = nil
+				continue
+			}
+			body.Parts[i] = encodeTemplateItemToReadResourceResultTemplateItemTransport(val)
+		}
+	}
+	if err := ValidateReadResourceResultTransport(body); err != nil {
+		return fmt.Errorf("validate ReadResourceResult value: %w", err)
+	}
+	return nil
+}
+
+// EncodeReportWorkResult turns a service value into JSON using the field names in the Goa design.
+func EncodeReportWorkResult(in string) ([]byte, error) {
+	var body ReportWorkResultTransport
+	{
+		body = ReportWorkResultTransport(in)
+	}
+	if err := ValidateReportWorkResultTransport(body); err != nil {
+		return nil, fmt.Errorf("validate ReportWorkResult JSON: %w", err)
 	}
 	data, err := json.Marshal(body)
 	if err != nil {
-		return nil, fmt.Errorf("encode SearchPayload JSON: %w", err)
+		return nil, fmt.Errorf("encode ReportWorkResult JSON: %w", err)
 	}
 	return data, nil
+}
+
+// NewResourcePromptPayload validates a decoded transport value and returns the service value.
+func NewResourcePromptPayload(body *ResourcePromptPayloadTransport) (out *assistant.ResourcePromptPayload, err error) {
+	if err := ValidateResourcePromptPayloadTransport(body); err != nil {
+		return out, fmt.Errorf("validate ResourcePromptPayload JSON: %w", err)
+	}
+	{
+		out = &assistant.ResourcePromptPayload{
+			ResourceURI: *body.ResourceURI,
+		}
+	}
+	return out, nil
+}
+
+// ValidateResourcePromptResultValue checks a service value against its declared field validation.
+func ValidateResourcePromptResultValue(in *assistant.RefereePromptResult) error {
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ResourcePromptResult")
+	}
+
+	var body *ResourcePromptResultTransport
+	{
+		body = &ResourcePromptResultTransport{}
+		body.Messages = make([]*ResourcePromptResultRefereePromptMessageTransport, len(in.Messages))
+		for i, val := range in.Messages {
+			if val == nil {
+				body.Messages[i] = nil
+				continue
+			}
+			body.Messages[i] = encodeRefereePromptMessageToResourcePromptResultRefereePromptMessageTransport(val)
+		}
+	}
+	if err := ValidateResourcePromptResultTransport(body); err != nil {
+		return fmt.Errorf("validate ResourcePromptResult value: %w", err)
+	}
+	return nil
 }
 
 // DecodeSearchPayload checks JSON field names from the Goa design and returns a service value.
@@ -656,9 +2288,14 @@ func DecodeSearchPayload(data []byte) (out *assistant.SearchPayload, err error) 
 	if err := ValidateSearchPayloadTransport(body); err != nil {
 		return out, fmt.Errorf("validate SearchPayload JSON: %w", err)
 	}
-	out = &assistant.SearchPayload{
-		Query: *body.Query,
-		Limit: body.Limit,
+	{
+		out = &assistant.SearchPayload{
+			Query: *body.Query,
+		}
+		if body.Limit != nil {
+			limit := int(*body.Limit)
+			out.Limit = &limit
+		}
 	}
 	return out, nil
 }
@@ -666,11 +2303,13 @@ func DecodeSearchPayload(data []byte) (out *assistant.SearchPayload, err error) 
 // EncodeSearchResult turns a service value into JSON using the field names in the Goa design.
 func EncodeSearchResult(in *assistant.SearchResult) ([]byte, error) {
 	var body *SearchResultTransport
-	body = &SearchResultTransport{}
-	if in.Results != nil {
-		body.Results = make([]string, len(in.Results))
-		for i, val := range in.Results {
-			body.Results[i] = val
+	{
+		body = &SearchResultTransport{}
+		if in.Results != nil {
+			body.Results = make([]string, len(in.Results))
+			for i, val := range in.Results {
+				body.Results[i] = val
+			}
 		}
 	}
 	if err := ValidateSearchResultTransport(body); err != nil {
@@ -683,47 +2322,76 @@ func EncodeSearchResult(in *assistant.SearchResult) ([]byte, error) {
 	return data, nil
 }
 
-// DecodeSearchResult checks JSON field names from the Goa design and returns a service value.
-func DecodeSearchResult(data []byte) (out *assistant.SearchResult, err error) {
-	var body *SearchResultTransport
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&body); err != nil {
-		return out, fmt.Errorf("decode SearchResult JSON: %w", err)
+// ValidateSimplePromptResultValue checks a service value against its declared field validation.
+func ValidateSimplePromptResultValue(in *assistant.RefereePromptResult) error {
+
+	if in == nil {
+		return goa.MissingFieldError("result", "SimplePromptResult")
 	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		if err == nil {
-			return out, fmt.Errorf("decode SearchResult JSON: multiple JSON values")
+
+	var body *SimplePromptResultTransport
+	{
+		body = &SimplePromptResultTransport{}
+		body.Messages = make([]*SimplePromptResultRefereePromptMessageTransport, len(in.Messages))
+		for i, val := range in.Messages {
+			if val == nil {
+				body.Messages[i] = nil
+				continue
+			}
+			body.Messages[i] = encodeRefereePromptMessageToSimplePromptResultRefereePromptMessageTransport(val)
 		}
-		return out, fmt.Errorf("decode SearchResult JSON after first value: %w", err)
 	}
-	if err := ValidateSearchResultTransport(body); err != nil {
-		return out, fmt.Errorf("validate SearchResult JSON: %w", err)
+	if err := ValidateSimplePromptResultTransport(body); err != nil {
+		return fmt.Errorf("validate SimplePromptResult value: %w", err)
 	}
-	out = &assistant.SearchResult{}
-	if body.Results != nil {
-		out.Results = make([]string, len(body.Results))
-		for i, val := range body.Results {
-			out.Results[i] = val
+	return nil
+}
+
+// NewSuggestArgumentPayload validates a decoded transport value and returns the service value.
+func NewSuggestArgumentPayload(body *SuggestArgumentPayloadTransport) (out *assistant.SuggestArgumentPayload, err error) {
+	if err := ValidateSuggestArgumentPayloadTransport(body); err != nil {
+		return out, fmt.Errorf("validate SuggestArgumentPayload JSON: %w", err)
+	}
+	{
+		out = &assistant.SuggestArgumentPayload{
+			Value: *body.Value,
+		}
+		if body.Arguments != nil {
+			out.Arguments = make(map[string]string, len(body.Arguments))
+			for key, val := range body.Arguments {
+				tk := key
+				tv := val
+				out.Arguments[tk] = tv
+			}
 		}
 	}
 	return out, nil
 }
 
-// EncodeSummarizeTextPayload turns a service value into JSON using the field names in the Goa design.
-func EncodeSummarizeTextPayload(in *assistant.SummarizeTextPayload) ([]byte, error) {
-	var body *SummarizeTextPayloadTransport
-	body = &SummarizeTextPayloadTransport{
-		Text: &in.Text,
+// ValidateSuggestArgumentResultValue checks a service value against its declared field validation.
+func ValidateSuggestArgumentResultValue(in *assistant.SuggestArgumentResult) error {
+
+	if in == nil {
+		return goa.MissingFieldError("result", "SuggestArgumentResult")
 	}
-	if err := ValidateSummarizeTextPayloadTransport(body); err != nil {
-		return nil, fmt.Errorf("validate SummarizeTextPayload JSON: %w", err)
+
+	var body *SuggestArgumentResultTransport
+	{
+		body = &SuggestArgumentResultTransport{
+			Total:   in.Total,
+			HasMore: in.HasMore,
+		}
+		if in.Values != nil {
+			body.Values = make([]string, len(in.Values))
+			for i, val := range in.Values {
+				body.Values[i] = val
+			}
+		}
 	}
-	data, err := json.Marshal(body)
-	if err != nil {
-		return nil, fmt.Errorf("encode SummarizeTextPayload JSON: %w", err)
+	if err := ValidateSuggestArgumentResultTransport(body); err != nil {
+		return fmt.Errorf("validate SuggestArgumentResult value: %w", err)
 	}
-	return data, nil
+	return nil
 }
 
 // DecodeSummarizeTextPayload checks JSON field names from the Goa design and returns a service value.
@@ -743,8 +2411,10 @@ func DecodeSummarizeTextPayload(data []byte) (out *assistant.SummarizeTextPayloa
 	if err := ValidateSummarizeTextPayloadTransport(body); err != nil {
 		return out, fmt.Errorf("validate SummarizeTextPayload JSON: %w", err)
 	}
-	out = &assistant.SummarizeTextPayload{
-		Text: *body.Text,
+	{
+		out = &assistant.SummarizeTextPayload{
+			Text: *body.Text,
+		}
 	}
 	return out, nil
 }
@@ -752,8 +2422,10 @@ func DecodeSummarizeTextPayload(data []byte) (out *assistant.SummarizeTextPayloa
 // EncodeSummarizeTextResult turns a service value into JSON using the field names in the Goa design.
 func EncodeSummarizeTextResult(in *assistant.SummarizeTextResult) ([]byte, error) {
 	var body *SummarizeTextResultTransport
-	body = &SummarizeTextResultTransport{
-		Summary: in.Summary,
+	{
+		body = &SummarizeTextResultTransport{
+			Summary: in.Summary,
+		}
 	}
 	if err := ValidateSummarizeTextResultTransport(body); err != nil {
 		return nil, fmt.Errorf("validate SummarizeTextResult JSON: %w", err)
@@ -765,35 +2437,14 @@ func EncodeSummarizeTextResult(in *assistant.SummarizeTextResult) ([]byte, error
 	return data, nil
 }
 
-// DecodeSummarizeTextResult checks JSON field names from the Goa design and returns a service value.
-func DecodeSummarizeTextResult(data []byte) (out *assistant.SummarizeTextResult, err error) {
-	var body *SummarizeTextResultTransport
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&body); err != nil {
-		return out, fmt.Errorf("decode SummarizeTextResult JSON: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		if err == nil {
-			return out, fmt.Errorf("decode SummarizeTextResult JSON: multiple JSON values")
-		}
-		return out, fmt.Errorf("decode SummarizeTextResult JSON after first value: %w", err)
-	}
-	if err := ValidateSummarizeTextResultTransport(body); err != nil {
-		return out, fmt.Errorf("validate SummarizeTextResult JSON: %w", err)
-	}
-	out = &assistant.SummarizeTextResult{
-		Summary: body.Summary,
-	}
-	return out, nil
-}
-
 // EncodeSystemInfoResult turns a service value into JSON using the field names in the Goa design.
 func EncodeSystemInfoResult(in *assistant.SystemInfoResult) ([]byte, error) {
 	var body *SystemInfoResultTransport
-	body = &SystemInfoResultTransport{
-		Name:    in.Name,
-		Version: in.Version,
+	{
+		body = &SystemInfoResultTransport{
+			Name:    in.Name,
+			Version: in.Version,
+		}
 	}
 	if err := ValidateSystemInfoResultTransport(body); err != nil {
 		return nil, fmt.Errorf("validate SystemInfoResult JSON: %w", err)
@@ -803,4 +2454,388 @@ func EncodeSystemInfoResult(in *assistant.SystemInfoResult) ([]byte, error) {
 		return nil, fmt.Errorf("encode SystemInfoResult JSON: %w", err)
 	}
 	return data, nil
+}
+
+func encodeRefereeEmbeddedTextToArgumentPromptResultRefereeEmbeddedTextTransport(v *assistant.RefereeEmbeddedText) *ArgumentPromptResultRefereeEmbeddedTextTransport {
+	res := &ArgumentPromptResultRefereeEmbeddedTextTransport{
+		URI:  &v.URI,
+		Text: &v.Text,
+	}
+
+	return res
+}
+
+func encodeRefereeEmbeddedTextToImagePromptResultRefereeEmbeddedTextTransport(v *assistant.RefereeEmbeddedText) *ImagePromptResultRefereeEmbeddedTextTransport {
+	res := &ImagePromptResultRefereeEmbeddedTextTransport{
+		URI:  &v.URI,
+		Text: &v.Text,
+	}
+
+	return res
+}
+
+func encodeRefereeEmbeddedTextToResourcePromptResultRefereeEmbeddedTextTransport(v *assistant.RefereeEmbeddedText) *ResourcePromptResultRefereeEmbeddedTextTransport {
+	res := &ResourcePromptResultRefereeEmbeddedTextTransport{
+		URI:  &v.URI,
+		Text: &v.Text,
+	}
+
+	return res
+}
+
+func encodeRefereeEmbeddedTextToSimplePromptResultRefereeEmbeddedTextTransport(v *assistant.RefereeEmbeddedText) *SimplePromptResultRefereeEmbeddedTextTransport {
+	res := &SimplePromptResultRefereeEmbeddedTextTransport{
+		URI:  &v.URI,
+		Text: &v.Text,
+	}
+
+	return res
+}
+
+func encodeRefereePromptImageToArgumentPromptResultRefereePromptImageTransport(v *assistant.RefereePromptImage) *ArgumentPromptResultRefereePromptImageTransport {
+	res := &ArgumentPromptResultRefereePromptImageTransport{
+		Data:     v.Data,
+		MimeType: &v.MimeType,
+	}
+
+	return res
+}
+
+func encodeRefereePromptImageToImagePromptResultRefereePromptImageTransport(v *assistant.RefereePromptImage) *ImagePromptResultRefereePromptImageTransport {
+	res := &ImagePromptResultRefereePromptImageTransport{
+		Data:     v.Data,
+		MimeType: &v.MimeType,
+	}
+
+	return res
+}
+
+func encodeRefereePromptImageToResourcePromptResultRefereePromptImageTransport(v *assistant.RefereePromptImage) *ResourcePromptResultRefereePromptImageTransport {
+	res := &ResourcePromptResultRefereePromptImageTransport{
+		Data:     v.Data,
+		MimeType: &v.MimeType,
+	}
+
+	return res
+}
+
+func encodeRefereePromptImageToSimplePromptResultRefereePromptImageTransport(v *assistant.RefereePromptImage) *SimplePromptResultRefereePromptImageTransport {
+	res := &SimplePromptResultRefereePromptImageTransport{
+		Data:     v.Data,
+		MimeType: &v.MimeType,
+	}
+
+	return res
+}
+
+func encodeRefereePromptMessageToArgumentPromptResultRefereePromptMessageTransport(v *assistant.RefereePromptMessage) *ArgumentPromptResultRefereePromptMessageTransport {
+	res := &ArgumentPromptResultRefereePromptMessageTransport{
+		Role: &v.Role,
+	}
+	var contentValue ArgumentPromptResultcontentTransport
+	switch string(v.Content.Kind()) {
+	case "text":
+		actual, _ := v.Content.AsText()
+		var obj *ArgumentPromptResultRefereePromptTextTransport
+		if actual != nil {
+			obj = encodeRefereePromptTextToArgumentPromptResultRefereePromptTextTransport(actual)
+		}
+		u := contentValue
+		u.SetText((*ArgumentPromptResultRefereePromptTextTransport)(obj))
+		contentValue = u
+	case "image":
+		actual, _ := v.Content.AsImage()
+		var obj *ArgumentPromptResultRefereePromptImageTransport
+		if actual != nil {
+			obj = encodeRefereePromptImageToArgumentPromptResultRefereePromptImageTransport(actual)
+		}
+		u := contentValue
+		u.SetImage((*ArgumentPromptResultRefereePromptImageTransport)(obj))
+		contentValue = u
+	case "resource":
+		actual, _ := v.Content.AsResource()
+		var obj *ArgumentPromptResultRefereePromptResourceTransport
+		if actual != nil {
+			obj = encodeRefereePromptResourceToArgumentPromptResultRefereePromptResourceTransport(actual)
+		}
+		u := contentValue
+		u.SetResource((*ArgumentPromptResultRefereePromptResourceTransport)(obj))
+		contentValue = u
+	}
+	res.Content = &contentValue
+
+	return res
+}
+
+func encodeRefereePromptMessageToImagePromptResultRefereePromptMessageTransport(v *assistant.RefereePromptMessage) *ImagePromptResultRefereePromptMessageTransport {
+	res := &ImagePromptResultRefereePromptMessageTransport{
+		Role: &v.Role,
+	}
+	var contentValue ImagePromptResultcontentTransport
+	switch string(v.Content.Kind()) {
+	case "text":
+		actual, _ := v.Content.AsText()
+		var obj *ImagePromptResultRefereePromptTextTransport
+		if actual != nil {
+			obj = encodeRefereePromptTextToImagePromptResultRefereePromptTextTransport(actual)
+		}
+		u := contentValue
+		u.SetText((*ImagePromptResultRefereePromptTextTransport)(obj))
+		contentValue = u
+	case "image":
+		actual, _ := v.Content.AsImage()
+		var obj *ImagePromptResultRefereePromptImageTransport
+		if actual != nil {
+			obj = encodeRefereePromptImageToImagePromptResultRefereePromptImageTransport(actual)
+		}
+		u := contentValue
+		u.SetImage((*ImagePromptResultRefereePromptImageTransport)(obj))
+		contentValue = u
+	case "resource":
+		actual, _ := v.Content.AsResource()
+		var obj *ImagePromptResultRefereePromptResourceTransport
+		if actual != nil {
+			obj = encodeRefereePromptResourceToImagePromptResultRefereePromptResourceTransport(actual)
+		}
+		u := contentValue
+		u.SetResource((*ImagePromptResultRefereePromptResourceTransport)(obj))
+		contentValue = u
+	}
+	res.Content = &contentValue
+
+	return res
+}
+
+func encodeRefereePromptMessageToResourcePromptResultRefereePromptMessageTransport(v *assistant.RefereePromptMessage) *ResourcePromptResultRefereePromptMessageTransport {
+	res := &ResourcePromptResultRefereePromptMessageTransport{
+		Role: &v.Role,
+	}
+	var contentValue ResourcePromptResultcontentTransport
+	switch string(v.Content.Kind()) {
+	case "text":
+		actual, _ := v.Content.AsText()
+		var obj *ResourcePromptResultRefereePromptTextTransport
+		if actual != nil {
+			obj = encodeRefereePromptTextToResourcePromptResultRefereePromptTextTransport(actual)
+		}
+		u := contentValue
+		u.SetText((*ResourcePromptResultRefereePromptTextTransport)(obj))
+		contentValue = u
+	case "image":
+		actual, _ := v.Content.AsImage()
+		var obj *ResourcePromptResultRefereePromptImageTransport
+		if actual != nil {
+			obj = encodeRefereePromptImageToResourcePromptResultRefereePromptImageTransport(actual)
+		}
+		u := contentValue
+		u.SetImage((*ResourcePromptResultRefereePromptImageTransport)(obj))
+		contentValue = u
+	case "resource":
+		actual, _ := v.Content.AsResource()
+		var obj *ResourcePromptResultRefereePromptResourceTransport
+		if actual != nil {
+			obj = encodeRefereePromptResourceToResourcePromptResultRefereePromptResourceTransport(actual)
+		}
+		u := contentValue
+		u.SetResource((*ResourcePromptResultRefereePromptResourceTransport)(obj))
+		contentValue = u
+	}
+	res.Content = &contentValue
+
+	return res
+}
+
+func encodeRefereePromptMessageToSimplePromptResultRefereePromptMessageTransport(v *assistant.RefereePromptMessage) *SimplePromptResultRefereePromptMessageTransport {
+	res := &SimplePromptResultRefereePromptMessageTransport{
+		Role: &v.Role,
+	}
+	var contentValue SimplePromptResultcontentTransport
+	switch string(v.Content.Kind()) {
+	case "text":
+		actual, _ := v.Content.AsText()
+		var obj *SimplePromptResultRefereePromptTextTransport
+		if actual != nil {
+			obj = encodeRefereePromptTextToSimplePromptResultRefereePromptTextTransport(actual)
+		}
+		u := contentValue
+		u.SetText((*SimplePromptResultRefereePromptTextTransport)(obj))
+		contentValue = u
+	case "image":
+		actual, _ := v.Content.AsImage()
+		var obj *SimplePromptResultRefereePromptImageTransport
+		if actual != nil {
+			obj = encodeRefereePromptImageToSimplePromptResultRefereePromptImageTransport(actual)
+		}
+		u := contentValue
+		u.SetImage((*SimplePromptResultRefereePromptImageTransport)(obj))
+		contentValue = u
+	case "resource":
+		actual, _ := v.Content.AsResource()
+		var obj *SimplePromptResultRefereePromptResourceTransport
+		if actual != nil {
+			obj = encodeRefereePromptResourceToSimplePromptResultRefereePromptResourceTransport(actual)
+		}
+		u := contentValue
+		u.SetResource((*SimplePromptResultRefereePromptResourceTransport)(obj))
+		contentValue = u
+	}
+	res.Content = &contentValue
+
+	return res
+}
+
+func encodeRefereePromptResourceToArgumentPromptResultRefereePromptResourceTransport(v *assistant.RefereePromptResource) *ArgumentPromptResultRefereePromptResourceTransport {
+	res := &ArgumentPromptResultRefereePromptResourceTransport{}
+	var resourceValue ArgumentPromptResultresourceTransport
+	switch string(v.Resource.Kind()) {
+	case "text":
+		actual, _ := v.Resource.AsText()
+		var obj *ArgumentPromptResultRefereeEmbeddedTextTransport
+		if actual != nil {
+			obj = encodeRefereeEmbeddedTextToArgumentPromptResultRefereeEmbeddedTextTransport(actual)
+		}
+		u := resourceValue
+		u.SetText((*ArgumentPromptResultRefereeEmbeddedTextTransport)(obj))
+		resourceValue = u
+	}
+	res.Resource = &resourceValue
+
+	return res
+}
+
+func encodeRefereePromptResourceToImagePromptResultRefereePromptResourceTransport(v *assistant.RefereePromptResource) *ImagePromptResultRefereePromptResourceTransport {
+	res := &ImagePromptResultRefereePromptResourceTransport{}
+	var resourceValue ImagePromptResultresourceTransport
+	switch string(v.Resource.Kind()) {
+	case "text":
+		actual, _ := v.Resource.AsText()
+		var obj *ImagePromptResultRefereeEmbeddedTextTransport
+		if actual != nil {
+			obj = encodeRefereeEmbeddedTextToImagePromptResultRefereeEmbeddedTextTransport(actual)
+		}
+		u := resourceValue
+		u.SetText((*ImagePromptResultRefereeEmbeddedTextTransport)(obj))
+		resourceValue = u
+	}
+	res.Resource = &resourceValue
+
+	return res
+}
+
+func encodeRefereePromptResourceToResourcePromptResultRefereePromptResourceTransport(v *assistant.RefereePromptResource) *ResourcePromptResultRefereePromptResourceTransport {
+	res := &ResourcePromptResultRefereePromptResourceTransport{}
+	var resourceValue ResourcePromptResultresourceTransport
+	switch string(v.Resource.Kind()) {
+	case "text":
+		actual, _ := v.Resource.AsText()
+		var obj *ResourcePromptResultRefereeEmbeddedTextTransport
+		if actual != nil {
+			obj = encodeRefereeEmbeddedTextToResourcePromptResultRefereeEmbeddedTextTransport(actual)
+		}
+		u := resourceValue
+		u.SetText((*ResourcePromptResultRefereeEmbeddedTextTransport)(obj))
+		resourceValue = u
+	}
+	res.Resource = &resourceValue
+
+	return res
+}
+
+func encodeRefereePromptResourceToSimplePromptResultRefereePromptResourceTransport(v *assistant.RefereePromptResource) *SimplePromptResultRefereePromptResourceTransport {
+	res := &SimplePromptResultRefereePromptResourceTransport{}
+	var resourceValue SimplePromptResultresourceTransport
+	switch string(v.Resource.Kind()) {
+	case "text":
+		actual, _ := v.Resource.AsText()
+		var obj *SimplePromptResultRefereeEmbeddedTextTransport
+		if actual != nil {
+			obj = encodeRefereeEmbeddedTextToSimplePromptResultRefereeEmbeddedTextTransport(actual)
+		}
+		u := resourceValue
+		u.SetText((*SimplePromptResultRefereeEmbeddedTextTransport)(obj))
+		resourceValue = u
+	}
+	res.Resource = &resourceValue
+
+	return res
+}
+
+func encodeRefereePromptTextToArgumentPromptResultRefereePromptTextTransport(v *assistant.RefereePromptText) *ArgumentPromptResultRefereePromptTextTransport {
+	res := &ArgumentPromptResultRefereePromptTextTransport{
+		Text: &v.Text,
+	}
+
+	return res
+}
+
+func encodeRefereePromptTextToImagePromptResultRefereePromptTextTransport(v *assistant.RefereePromptText) *ImagePromptResultRefereePromptTextTransport {
+	res := &ImagePromptResultRefereePromptTextTransport{
+		Text: &v.Text,
+	}
+
+	return res
+}
+
+func encodeRefereePromptTextToResourcePromptResultRefereePromptTextTransport(v *assistant.RefereePromptText) *ResourcePromptResultRefereePromptTextTransport {
+	res := &ResourcePromptResultRefereePromptTextTransport{
+		Text: &v.Text,
+	}
+
+	return res
+}
+
+func encodeRefereePromptTextToSimplePromptResultRefereePromptTextTransport(v *assistant.RefereePromptText) *SimplePromptResultRefereePromptTextTransport {
+	res := &SimplePromptResultRefereePromptTextTransport{
+		Text: &v.Text,
+	}
+
+	return res
+}
+
+func encodeTemplateBlobToReadResourceResultTemplateBlobTransport(v *assistant.TemplateBlob) *ReadResourceResultTemplateBlobTransport {
+	res := &ReadResourceResultTemplateBlobTransport{
+		URI:      &v.URI,
+		MimeType: v.MimeType,
+		Blob:     v.Blob,
+	}
+
+	return res
+}
+
+func encodeTemplateItemToReadResourceResultTemplateItemTransport(v *assistant.TemplateItem) *ReadResourceResultTemplateItemTransport {
+	res := &ReadResourceResultTemplateItemTransport{}
+	var contentValue ReadResourceResultTemplateRepresentationTransport
+	switch string(v.Selected.Kind()) {
+	case "text":
+		actual, _ := v.Selected.AsText()
+		var obj *ReadResourceResultTemplateTextTransport
+		if actual != nil {
+			obj = encodeTemplateTextToReadResourceResultTemplateTextTransport(actual)
+		}
+		u := contentValue
+		u.SetText((*ReadResourceResultTemplateTextTransport)(obj))
+		contentValue = u
+	case "blob":
+		actual, _ := v.Selected.AsBlob()
+		var obj *ReadResourceResultTemplateBlobTransport
+		if actual != nil {
+			obj = encodeTemplateBlobToReadResourceResultTemplateBlobTransport(actual)
+		}
+		u := contentValue
+		u.SetBlob((*ReadResourceResultTemplateBlobTransport)(obj))
+		contentValue = u
+	}
+	res.Selected = &contentValue
+
+	return res
+}
+
+func encodeTemplateTextToReadResourceResultTemplateTextTransport(v *assistant.TemplateText) *ReadResourceResultTemplateTextTransport {
+	res := &ReadResourceResultTemplateTextTransport{
+		URI:      &v.URI,
+		MimeType: v.MimeType,
+		Text:     &v.Text,
+	}
+
+	return res
 }

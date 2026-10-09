@@ -32,9 +32,9 @@ func TestCompilePreservesPortableContract(t *testing.T) {
 	assert.Equal(t, []tools.FieldPathSegment{
 		tools.FixedField("items"), tools.DynamicField{}, tools.FixedField("*"),
 	}, spec.Payload.Fields[0].Path)
-	assert.Equal(t, "text", spec.Payload.Fields[0].Branches[0].Value)
+	assert.Equal(t, "text", spec.Payload.Fields[0].Branches[0].(tools.TaggedUnionBranch).Value)
 	assert.Equal(t, []tools.FieldPathSegment{tools.FixedField("choice"), tools.FixedField("type")},
-		spec.Payload.Fields[0].Branches[0].Discriminator)
+		spec.Payload.Fields[0].Branches[0].(tools.TaggedUnionBranch).Discriminator)
 
 	// After resolution the source response can be released or changed without
 	// altering the selected tool's declaration or private server-data validators.
@@ -50,6 +50,35 @@ func TestCompilePreservesPortableContract(t *testing.T) {
 	require.NoError(t, err)
 	_, err = spec.CanonicalizeServerData(rawjson.Message(`[{"kind":"record","audience":"timeline","data":{"value":9007199254740993}}]`))
 	require.NoError(t, err)
+}
+
+func TestCompilePreservesUntaggedUnionSelection(t *testing.T) {
+	for _, root := range []bool{false, true} {
+		declaration := testDeclaration()
+		var path []*genregistry.ToolFieldPathSegment
+		if !root {
+			path = []*genregistry.ToolFieldPathSegment{
+				{Segment: genregistry.NewToolFieldSegmentField("items")},
+				{Segment: genregistry.NewToolFieldSegmentElement(&genregistry.ToolCollectionElement{})},
+			}
+		}
+		declaration.ConsumerContract.Payload.Fields[0].Branches = []*genregistry.ToolUnionBranch{{
+			Selection: genregistry.NewToolUnionSelectionUntagged(&genregistry.ToolUntaggedUnionBranch{
+				Path: path, JSONKind: "object", Index: 2,
+			}),
+		}}
+		spec, err := Compile(declaration)
+		require.NoError(t, err)
+		selection, selected := spec.Payload.Fields[0].Branches[0].(tools.UntaggedUnionBranch)
+		require.True(t, selected)
+		assert.Equal(t, "object", selection.JSONKind)
+		assert.Equal(t, 2, selection.Index)
+		if root {
+			assert.Empty(t, selection.Path)
+		} else {
+			assert.Equal(t, []tools.FieldPathSegment{tools.FixedField("items"), tools.DynamicField{}}, selection.Path)
+		}
+	}
 }
 
 func TestCompileServerDataRejectsContractChanges(t *testing.T) {
@@ -109,11 +138,13 @@ func testDeclaration() *genregistry.ToolSchema {
 						{Segment: genregistry.NewToolFieldSegmentField("*")},
 					},
 					Branches: []*genregistry.ToolUnionBranch{{
-						Discriminator: []*genregistry.ToolFieldPathSegment{
-							{Segment: genregistry.NewToolFieldSegmentField("choice")},
-							{Segment: genregistry.NewToolFieldSegmentField("type")},
-						},
-						Value: "text",
+						Selection: genregistry.NewToolUnionSelectionTagged(&genregistry.ToolTaggedUnionBranch{
+							Discriminator: []*genregistry.ToolFieldPathSegment{
+								{Segment: genregistry.NewToolFieldSegmentField("choice")},
+								{Segment: genregistry.NewToolFieldSegmentField("type")},
+							},
+							Value: "text",
+						}),
 					}},
 				}},
 			},

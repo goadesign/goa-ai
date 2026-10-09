@@ -20,13 +20,15 @@ import (
 //
 //  2. Inside a Method (MCP tools): Marks a Goa service method as an MCP tool.
 //     The method's payload becomes the tool input schema and the method result
-//     becomes the tool output schema. This automatically exposes the method via
+//     becomes the tool output schema. ToolContent can select an attachment field
+//     for MCP content while the remaining fields form that output schema.
+//     This automatically exposes the method via
 //     the service's MCP server.
 //
 // Tool takes two required arguments and one optional DSL function:
 //   - name: the tool identifier
 //   - description: a concise summary presented to the LLM
-//   - dsl (optional): configuration block (only for toolset tools, ignored for method tools)
+//   - dsl (optional): configuration block (argument/result settings for toolsets; content and behavior hints for MCP methods)
 //
 // Inside toolsets, the DSL function can use:
 //   - Args: defines the input parameter schema
@@ -130,6 +132,9 @@ func Tool(name string, args ...any) {
 		}
 		tool.Expression = parent
 		mcp.Tools = append(mcp.Tools, tool)
+		if dslf != nil {
+			eval.Execute(dslf, tool)
+		}
 	default:
 		eval.IncompatibleDSL()
 		return

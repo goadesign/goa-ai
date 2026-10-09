@@ -10,7 +10,7 @@ import (
 )
 
 // TestRegistryFileDataClassifiesToolsets verifies that exported agent tools do
-// not enter direct registration and MCP toolsets use the remote path only.
+// not enter direct registration while MCP toolsets require explicit executors.
 func TestRegistryFileDataClassifiesToolsets(t *testing.T) {
 	direct := &ToolsetData{Name: "direct"}
 	remote := &ToolsetData{Name: "remote", MCP: &MCPToolsetMeta{SuiteName: "RemoteSuite"}}
@@ -21,8 +21,8 @@ func TestRegistryFileDataClassifiesToolsets(t *testing.T) {
 		AllToolsets:  []*ToolsetData{agentTool, direct, remote},
 	})
 
-	require.Equal(t, []*ToolsetData{remote}, data.MCPToolsets)
-	require.Len(t, data.DirectToolsets, 1)
+	require.Equal(t, []*ToolsetData{direct, remote}, data.DirectToolsets)
+	require.Len(t, data.DirectToolsets, 2)
 	require.Same(t, direct, data.DirectToolsets[0])
 }
 

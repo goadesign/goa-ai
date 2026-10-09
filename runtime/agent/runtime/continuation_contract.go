@@ -17,12 +17,14 @@ import (
 	"reflect"
 	"slices"
 	"time"
+	"unicode/utf8"
 
 	"goa.design/goa-ai/internal/registrycontract"
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/mcp"
 )
 
 // continuationContractError marks a validation result that proves no
@@ -42,6 +44,9 @@ func prepareContinuation(input *RunInput, definition AgentDefinition) (*workflow
 		return nil, err
 	}
 	if err := validateContinuationAgainstCheckpoint(input, checkpoint, definition); err != nil {
+		return nil, err
+	}
+	if err := validateCheckpointMCPInputs(checkpoint); err != nil {
 		return nil, err
 	}
 	return checkpoint, nil
@@ -265,7 +270,7 @@ func validateCheckpointToolValues(checkpoint *workflowCheckpoint, definition Age
 		}
 	}
 	for i, record := range checkpoint.Batch.Records {
-		if record.ChildSuspension != nil {
+		if record.ChildSuspension != nil || record.MCPPending != nil {
 			if record.ResultRecord != nil {
 				return fmt.Errorf("unfinished child %q has a materialized result record", record.Call.ToolCallID)
 			}
@@ -331,6 +336,7 @@ func validateCheckpointToolOutput(output *planner.ToolOutput, definition AgentDe
 		call,
 		output.Result,
 		output.ServerData,
+		output.Blocks,
 		output.Bounds,
 		output.Failure,
 	); err != nil {
@@ -596,7 +602,7 @@ func validateWorkflowRunInput(input *RunInput) error {
 		}
 		return nil
 	}
-	if err := validatePendingInputResponse(input.Continuation.Response); err != nil {
+	if err := validateRunContinuationOperation(input.Continuation); err != nil {
 		return err
 	}
 	if len(input.Labels) > 0 || len(input.Metadata) > 0 ||
@@ -608,13 +614,42 @@ func validateWorkflowRunInput(input *RunInput) error {
 	return nil
 }
 
+// validateRunContinuationOperation rejects missing or mixed operations before
+// a worker restores saved values or schedules any external work.
+func validateRunContinuationOperation(input *api.RunContinuationInput) error {
+	if (input.Response == nil) == (input.Cancellation == nil) {
+		return errors.New("run continuation requires exactly one answer or cancellation")
+	}
+	if input.Response != nil {
+		return validatePendingInputResponse(input.Response)
+	}
+	request := input.Cancellation
+	if request.RunID == "" || request.Reason == "" {
+		return errors.New("run continuation cancellation requires run id and reason")
+	}
+	if !utf8.ValidString(request.RunID) || !utf8.ValidString(request.Reason) {
+		return errors.New("run continuation cancellation contains invalid UTF-8")
+	}
+	return nil
+}
+
 // validatePendingInput enforces the public request union before callers render
 // it or select the corresponding response shape.
 func validatePendingInput(input *api.PendingInput) error {
 	if input == nil {
 		return errors.New("pending input is nil")
 	}
+	if input.Kind != api.PendingInputKindMCP && input.MCP != nil {
+		return errors.New("MCP input cannot accompany another pending request")
+	}
 	switch input.Kind {
+	case api.PendingInputKindMCP:
+		if input.MCP == nil || input.Confirmation != nil || input.Await != nil || input.MCP.ToolName == "" || input.MCP.ToolCallID == "" {
+			return errors.New("MCP pending input requires an exact invocation")
+		}
+		if input.MCP.Requests != nil {
+			return (&mcp.InputRequired{Requests: input.MCP.Requests}).Validate(mcp.InputSupport{Form: true, URL: true})
+		}
 	case api.PendingInputKindConfirmation:
 		if input.Confirmation == nil || input.Await != nil {
 			return errors.New("confirmation pending input has an invalid payload")
@@ -655,6 +690,9 @@ func validatePendingInputResponse(response *api.PendingInputResponse) error {
 		return errors.New("pending input response is required")
 	}
 	variants := 0
+	if response.MCP != nil {
+		variants++
+	}
 	if response.Clarification != nil {
 		variants++
 	}
@@ -679,7 +717,15 @@ func validatePendingInputResponseFor(pending *api.PendingInput, response *api.Pe
 	if err := validatePendingInputResponse(response); err != nil {
 		return err
 	}
+	if response.MCP != nil && pending.Kind != api.PendingInputKindMCP {
+		return errors.New("MCP response cannot complete another pending input")
+	}
 	switch pending.Kind {
+	case api.PendingInputKindMCP:
+		if response.MCP == nil || response.MCP.ToolCallID != pending.MCP.ToolCallID {
+			return errors.New("MCP response does not match the pending tool call")
+		}
+		return (&mcp.InputRequired{Requests: pending.MCP.Requests}).ValidateResponses(response.MCP.Responses)
 	case api.PendingInputKindConfirmation:
 		if response.Confirmation == nil {
 			return errors.New("run continuation requires a confirmation response")
@@ -741,6 +787,19 @@ func validateContinuationAgainstCheckpoint(input *RunInput, checkpoint *workflow
 	if err := validateContinuationIdentity(input, checkpoint); err != nil {
 		return err
 	}
+	if err := validateRunContinuationOperation(input.Continuation); err != nil {
+		return err
+	}
+	if request := input.Continuation.Cancellation; request != nil {
+		found, err := checkpointContainsRun(checkpoint, definition, request.RunID)
+		if err != nil {
+			return err
+		}
+		if !found {
+			return fmt.Errorf("cancellation run %q is not saved in the selected checkpoint", request.RunID)
+		}
+		return nil
+	}
 	publicPending, err := publicPendingInputs(checkpoint.Pending)
 	if err != nil {
 		return err
@@ -749,6 +808,40 @@ func validateContinuationAgainstCheckpoint(input *RunInput, checkpoint *workflow
 		return err
 	}
 	return validateContinuationResponse(checkpoint, input.Continuation.Response, definition)
+}
+
+// checkpointContainsRun follows only the child calls proved by the selected
+// checkpoint and generated definitions. Another run in the same session cannot
+// be canceled through this continuation.
+func checkpointContainsRun(checkpoint *workflowCheckpoint, definition AgentDefinition, runID string) (bool, error) {
+	if checkpoint.PreviousRunID == runID {
+		return true, nil
+	}
+	for _, record := range checkpoint.Batch.Records {
+		if record.ChildSuspension == nil {
+			continue
+		}
+		found, err := checkpointChildContainsRun(record.Call, record.ChildSuspension, definition, runID)
+		if err != nil || found {
+			return found, err
+		}
+	}
+	return false, nil
+}
+
+// checkpointChildContainsRun checks one saved child and its descendants with
+// the generated definition that owns that call. Current and restored batches
+// use the same check before accepting cancellation for a child.
+func checkpointChildContainsRun(call ToolCall, suspension *api.RunSuspension, definition AgentDefinition, runID string) (bool, error) {
+	childDefinition, err := childDefinitionForCall(call, definition)
+	if err != nil {
+		return false, err
+	}
+	child, err := decodeWorkflowCheckpoint(suspension, childDefinition)
+	if err != nil {
+		return false, err
+	}
+	return checkpointContainsRun(child, childDefinition, runID)
 }
 
 // validateContinuationResponse checks caller-supplied tool results with the
@@ -760,6 +853,9 @@ func validateContinuationResponse(
 	definition AgentDefinition,
 ) error {
 	pending := checkpoint.Pending[0]
+	if pending.MCP != nil {
+		return nil
+	}
 	if pending.Child != nil {
 		record, ok := checkpointRecordByCallID(checkpoint.Batch.Records, pending.Child.ToolCallID)
 		if !ok {
@@ -810,6 +906,9 @@ func validateProvidedToolResults(
 	for _, result := range results.Results {
 		if result == nil {
 			return errors.New("tool-results response contains a nil result")
+		}
+		if err := result.Blocks.Validate(); err != nil {
+			return fmt.Errorf("tool result %q content: %w", result.ToolCallID, err)
 		}
 		if result.ToolCallID == "" {
 			return fmt.Errorf("tool result for %q requires tool_call_id", result.Name)

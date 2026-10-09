@@ -13,6 +13,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"goa.design/goa-ai/internal/tooloperation"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 )
@@ -60,6 +61,14 @@ func (b *encodedOutputBudget) walk(value reflect.Value, depth int, quoted bool) 
 	}
 	if !value.IsValid() {
 		return b.addBytes(len("null"))
+	}
+	if value.CanInterface() {
+		if size, known, err := tooloperation.EncodedJSONSize(value.Interface()); known {
+			if err != nil {
+				return err
+			}
+			return b.addBytes(size)
+		}
 	}
 	if value.Type() == reflect.TypeFor[api.PlanActivityOutput]() {
 		value = reflect.ValueOf(*planOutputView(value.Interface().(api.PlanActivityOutput)))

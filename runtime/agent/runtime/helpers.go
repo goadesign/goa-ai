@@ -191,6 +191,10 @@ func cloneToolCall(src ToolCall) ToolCall {
 	cloned.ModelPayload = append(rawjson.Message(nil), src.ModelPayload...)
 	cloned.Labels = cloneLabels(src.Labels)
 	cloned.Registry = src.Registry.Clone()
+	if src.ExecutionContinuation != nil {
+		continuation := *src.ExecutionContinuation
+		cloned.ExecutionContinuation = &continuation
+	}
 	return cloned
 }
 
@@ -219,6 +223,7 @@ func cloneToolResults(src []*planner.ToolResult) []*planner.ToolResult {
 			continue
 		}
 		cp := *tr
+		cp.Blocks = tr.Blocks.Clone()
 		cp.Failure = planner.CloneToolFailure(tr.Failure)
 		out = append(out, &cp)
 	}

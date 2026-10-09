@@ -40,7 +40,7 @@ type (
 )
 
 func TestTemporalChildContinuationBindsExecutionParentAndRetainsCheckpoint(t *testing.T) {
-	data, err := os.ReadFile("../../runtime/testdata/retained_child_suspension_v9.json")
+	data, err := os.ReadFile("../../runtime/testdata/retained_child_suspension_v13.json")
 	require.NoError(t, err)
 	var suspension api.RunSuspension
 	require.NoError(t, json.Unmarshal(data, &suspension))

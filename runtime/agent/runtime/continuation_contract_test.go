@@ -6,6 +6,7 @@ package runtime
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	agent "goa.design/goa-ai/runtime/agent"
@@ -203,17 +204,75 @@ func TestValidateContinuationIdentityRequiresNewRunAndTurn(t *testing.T) {
 	checkpoint, err := decodeWorkflowCheckpoint(suspensionContractFixture(t, spec.Name), testRuntimeDefinition(runtime, "svc.agent"))
 	require.NoError(t, err)
 
+	operation := &api.RunContinuationInput{Response: &api.PendingInputResponse{Clarification: &api.ClarificationAnswer{ID: "clarification-1", Answer: "chosen"}}}
 	err = validateContinuationIdentity(&RunInput{
-		AgentID: "svc.agent", SessionID: "session-1", RunID: "run-1", TurnID: "turn-2",
+		Continuation: operation, AgentID: "svc.agent", SessionID: "session-1", RunID: "run-1", TurnID: "turn-2",
 	}, checkpoint)
 	require.ErrorContains(t, err, "new run id")
 
 	err = validateContinuationIdentity(&RunInput{
-		AgentID: "svc.agent", SessionID: "session-1", RunID: "run-2", TurnID: "turn-1",
+		Continuation: operation, AgentID: "svc.agent", SessionID: "session-1", RunID: "run-2", TurnID: "turn-1",
 	}, checkpoint)
 	require.ErrorContains(t, err, "new turn id")
 
 	require.NoError(t, validateContinuationIdentity(&RunInput{
-		AgentID: "svc.agent", SessionID: "session-1", RunID: "run-2", TurnID: "turn-2",
+		Continuation: operation, AgentID: "svc.agent", SessionID: "session-1", RunID: "run-2", TurnID: "turn-2",
 	}, checkpoint))
+	cancellation := &api.RunContinuationInput{Cancellation: &api.CancellationRequest{RunID: "run-1", Reason: "user_requested"}}
+	require.NoError(t, validateContinuationIdentity(&RunInput{
+		Continuation: cancellation, AgentID: "svc.agent", SessionID: "session-1", RunID: "run-2", TurnID: "turn-1",
+	}, checkpoint))
+	err = validateContinuationIdentity(&RunInput{
+		Continuation: cancellation, AgentID: "svc.agent", SessionID: "session-1", RunID: "run-1", TurnID: "turn-1",
+	}, checkpoint)
+	require.ErrorContains(t, err, "new run id")
+}
+
+func TestRunContinuationRequiresOneOperation(t *testing.T) {
+	answer := &api.PendingInputResponse{Clarification: &api.ClarificationAnswer{ID: "question", Answer: "chosen"}}
+	request := &api.CancellationRequest{RunID: "run", Reason: "user_requested"}
+	tests := []struct {
+		name      string
+		input     api.RunContinuationInput
+		wantError string
+	}{
+		{name: "answer", input: api.RunContinuationInput{Response: answer}},
+		{name: "cancellation", input: api.RunContinuationInput{Cancellation: request}},
+		{name: "neither", wantError: "exactly one"},
+		{name: "both", input: api.RunContinuationInput{Response: answer, Cancellation: request}, wantError: "exactly one"},
+		{name: "missing subject", input: api.RunContinuationInput{Cancellation: &api.CancellationRequest{Reason: request.Reason}}, wantError: "run id and reason"},
+		{name: "missing reason", input: api.RunContinuationInput{Cancellation: &api.CancellationRequest{RunID: request.RunID}}, wantError: "run id and reason"},
+		{name: "invalid reason text", input: api.RunContinuationInput{Cancellation: &api.CancellationRequest{RunID: request.RunID, Reason: string([]byte{0xff})}}, wantError: "invalid UTF-8"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateRunContinuationOperation(&test.input)
+			if test.wantError != "" {
+				assert.ErrorContains(t, err, test.wantError)
+				return
+			}
+			assert.NoError(t, err)
+		})
+	}
+}
+
+func TestCancellationContinuationRequiresSelectedRun(t *testing.T) {
+	rt := New(newTestStore())
+	spec := newAnyJSONSpec("svc.lookup")
+	seedTestToolSpecs(rt, spec)
+	definition := testRuntimeDefinition(rt, "svc.agent")
+	suspension := suspensionContractFixture(t, spec.Name)
+	for _, subject := range []string{"run-1", "other-run"} {
+		t.Run(subject, func(t *testing.T) {
+			input := &RunInput{AgentID: "svc.agent", SessionID: "session-1", RunID: "cleanup", TurnID: "turn-1",
+				Continuation: &api.RunContinuationInput{Suspension: suspension, Cancellation: &api.CancellationRequest{RunID: subject, Reason: "user_requested"}},
+			}
+			_, err := prepareContinuation(input, definition)
+			if subject == "other-run" {
+				assert.ErrorContains(t, err, "not saved in the selected checkpoint")
+				return
+			}
+			assert.NoError(t, err)
+		})
+	}
 }

@@ -21,6 +21,9 @@ const (
 	registryClientFileT        = "registry_client"
 	registryClientOptionsFileT = "registry_client_options"
 	mcpExecutorFileT           = "mcp_executor"
+	nativeInputExchangeFileT   = "native_input_exchange"
+	nativeTaskExchangeFileT    = "native_task_exchange"
+	nativeTaskDispatchT        = "native_task_dispatch"
 	serviceExecutorFileT       = "service_executor"
 	toolCodecsFileT            = "tool_codecs"
 	toolInjectFileT            = "tool_inject"
@@ -32,7 +35,6 @@ const (
 	toolTransportTypesFileT    = "tool_transport_types"
 	toolTransportValidateFileT = "tool_transport_validate"
 	toolTypesFileT             = "tool_types"
-	toolUnionTypesFileT        = "tool_union_types"
 	serviceToolsetExportsT     = "toolset_exports"
 	usedToolsFileT             = "used_tools"
 )

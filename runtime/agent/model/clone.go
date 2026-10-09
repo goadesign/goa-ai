@@ -312,6 +312,10 @@ func clonePart(part Part) (Part, error) {
 		actual.Input = slices.Clone(actual.Input)
 		return actual, nil
 	case ToolResultPart:
+		if err := preflightToolContent(actual.Blocks, &dynamicValueWalk{}); err != nil {
+			return nil, fmt.Errorf("tool result %q blocks: %w", actual.ToolUseID, err)
+		}
+		actual.Blocks = actual.Blocks.Clone()
 		content, err := cloneMetadataValue(reflect.ValueOf(actual.Content))
 		if err != nil {
 			return nil, fmt.Errorf("tool result %q content: %w", actual.ToolUseID, err)

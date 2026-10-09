@@ -13,6 +13,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/content"
 	"goa.design/goa-ai/runtime/toolserverdata"
 )
 
@@ -68,6 +69,9 @@ func validateToolResultContract(spec tools.ToolSpec, call ToolCall, tr *planner.
 	if tr == nil {
 		return fmt.Errorf("nil tool result for %q (%s)", call.Name, call.ToolCallID)
 	}
+	if err := tr.Blocks.Validate(); err != nil {
+		return fmt.Errorf("tool %q content is invalid (tool_call_id=%s): %w", call.Name, call.ToolCallID, err)
+	}
 	if tr.Result != nil && tr.Failure != nil {
 		return fmt.Errorf("tool %q result is invalid: failure and result are both set (tool_call_id=%s)", call.Name, call.ToolCallID)
 	}
@@ -90,9 +94,13 @@ func validatePersistedToolResult(
 	spec *tools.ToolSpec,
 	call ToolCall,
 	result, serverData rawjson.Message,
+	blocks content.Blocks,
 	bounds *agent.Bounds,
 	failure *planner.ToolFailure,
 ) (any, error) {
+	if err := blocks.Validate(); err != nil {
+		return nil, fmt.Errorf("invalid stored tool content: %w", err)
+	}
 	if failure != nil {
 		if len(result) > 0 {
 			return nil, errors.New("failure and result JSON are both set")

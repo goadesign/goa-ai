@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -20,6 +21,8 @@ import (
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/content"
+	"goa.design/goa-ai/runtime/mcp"
 
 	"go.temporal.io/sdk/temporal"
 )
@@ -208,6 +211,10 @@ type (
 	// a result or error.
 	ToolResultReceivedEvent struct {
 		baseEvent
+		// Blocks retains ordered text, media and resource descriptions for this
+		// invocation, including when execution failed.
+		Blocks content.Blocks
+
 		// CallRunID identifies the workflow run that emitted the matching
 		// ToolCallScheduledEvent. It differs from RunID when external input ends
 		// one workflow and the supplied result starts its continuation.
@@ -389,6 +396,13 @@ type (
 		RestrictToTool tools.Ident
 		// ExampleJSON optionally provides a schema-compliant JSON example.
 		ExampleJSON rawjson.Message
+	}
+
+	// AwaitMCPInputEvent carries input requests for one unfinished remote call.
+	AwaitMCPInputEvent struct {
+		baseEvent
+		// Input identifies the call and the current server requests.
+		Input api.PendingMCPInput
 	}
 
 	// AwaitConfirmationEvent indicates the runtime requested an explicit operator
@@ -695,8 +709,10 @@ func RunFailureFromError(err error) *run.Failure {
 			kind = ErrorKindModelOutput
 		case planner.OutputContractOriginPlanner:
 			kind = ErrorKindPlannerOutput
+		case planner.OutputContractOriginTool:
+			// Tool result failures use the neutral output-contract kind.
 		default:
-			// Errors created before origin classification use the neutral kind.
+			// Unclassified failures use the neutral output-contract kind.
 		}
 		return &run.Failure{
 			Message:      PublicErrorOutputContract,
@@ -814,6 +830,19 @@ func NewAwaitClarificationEvent(runID string, agentID agent.Ident, sessionID, id
 	}
 }
 
+// NewAwaitMCPInputEvent records the host requests for an unfinished MCP call.
+func NewAwaitMCPInputEvent(runID string, agentID agent.Ident, sessionID string, input api.PendingMCPInput) *AwaitMCPInputEvent {
+	be := newBaseEvent(runID, agentID)
+	be.sessionID = sessionID
+	requests := make(map[string]mcp.InputRequest, len(input.Requests))
+	for id, request := range input.Requests {
+		request.Params = append(json.RawMessage(nil), request.Params...)
+		requests[id] = request
+	}
+	input.Requests = requests
+	return &AwaitMCPInputEvent{baseEvent: be, Input: input}
+}
+
 // NewAwaitConfirmationEvent constructs an AwaitConfirmationEvent with the provided details.
 func NewAwaitConfirmationEvent(runID string, agentID agent.Ident, sessionID, id, title, prompt string, toolName tools.Ident, toolCallID string, payload rawjson.Message) *AwaitConfirmationEvent {
 	be := newBaseEvent(runID, agentID)
@@ -899,6 +928,9 @@ func NewPolicyDecisionEvent(runID string, agentID agent.Ident, sessionID string,
 // Type implements Event for AwaitClarificationEvent.
 func (e *AwaitClarificationEvent) Type() EventType { return AwaitClarification }
 
+// Type identifies a host input request for an unfinished MCP call.
+func (e *AwaitMCPInputEvent) Type() EventType { return AwaitMCPInput }
+
 // Type implements Event for AwaitConfirmationEvent.
 func (e *AwaitConfirmationEvent) Type() EventType { return AwaitConfirmation }
 
@@ -935,8 +967,8 @@ func NewToolCallScheduledEvent(runID string, agentID agent.Ident, sessionID stri
 // NewToolResultReceivedEvent constructs a ToolResultReceivedEvent. callRunID
 // identifies the exact run that emitted the matching scheduled-call event;
 // runID identifies the run emitting this result. The canonical result JSON and
-// server-side data are stored exactly once here.
-func NewToolResultReceivedEvent(runID string, agentID agent.Ident, sessionID, callRunID string, toolName tools.Ident, toolCallID, parentToolCallID string, resultJSON rawjson.Message, serverData rawjson.Message, resultPreview string, bounds *agent.Bounds, duration time.Duration, telemetry *telemetry.ToolTelemetry, failure *planner.ToolFailure) *ToolResultReceivedEvent {
+// server-side data and validated content blocks are retained for this invocation.
+func NewToolResultReceivedEvent(runID string, agentID agent.Ident, sessionID, callRunID string, toolName tools.Ident, toolCallID, parentToolCallID string, resultJSON rawjson.Message, serverData rawjson.Message, blocks content.Blocks, resultPreview string, bounds *agent.Bounds, duration time.Duration, telemetry *telemetry.ToolTelemetry, failure *planner.ToolFailure) *ToolResultReceivedEvent {
 	be := newBaseEvent(runID, agentID)
 	be.sessionID = sessionID
 	return &ToolResultReceivedEvent{
@@ -948,6 +980,7 @@ func NewToolResultReceivedEvent(runID string, agentID agent.Ident, sessionID, ca
 		ResultJSON:       resultJSON,
 		ResultBytes:      len(resultJSON),
 		ServerData:       serverData,
+		Blocks:           blocks.Clone(),
 		ResultPreview:    resultPreview,
 		Bounds:           agent.CloneBounds(bounds),
 		Duration:         duration,

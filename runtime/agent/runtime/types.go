@@ -99,12 +99,16 @@ type (
 	// invocation.
 	//
 	// Contract:
-	// - ToolResult is required and carries the durable planner-visible tool
+	// - ToolResult or an unfinished MCP outcome is required. A final result carries the planner-visible tool
 	//   outcome for transcript, hooks, and cumulative ToolOutputs history.
 	// - Clarification is optional and is consumed only by the current execution batch.
 	// - Clarification is never copied into cumulative planner ToolOutputs history.
 	ToolExecutionResult struct {
 		ToolResult        *planner.ToolResult
+		mcpPending        *api.PendingExecution
+		mcpToolCallID     string
+		task              *taskExecution
+		executionSequence uint64
 		Clarification     *ToolClarification
 		childSuspension   *api.RunSuspension
 		resultPublished   bool

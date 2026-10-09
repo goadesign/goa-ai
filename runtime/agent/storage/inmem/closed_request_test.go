@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/runlog"
 	"goa.design/goa-ai/runtime/agent/session"
 	"goa.design/goa-ai/runtime/agent/storage"
@@ -156,26 +157,40 @@ func TestRequestBindingDoesNotResumeRunningRun(t *testing.T) {
 
 func TestClosedRequestKeepsEndedSessionDecision(t *testing.T) {
 	for _, kind := range []string{requestKindRoot, requestKindChild} {
-		t.Run(kind, func(t *testing.T) {
-			store, start := requestStartFixture(t, kind)
-			_, err := store.EndSession(t.Context(), start.SessionID, start.StartedAt.Add(time.Second))
-			require.NoError(t, err)
-			first, err := applyRequestStart(t, store, kind, start, [32]byte{1})
-			require.NoError(t, err)
-			require.Equal(t, session.RunStartStop, first.outcome)
-			before := requestRecordSnapshot(store)
-			start.StartedAt = start.StartedAt.Add(time.Hour)
-			retry, err := applyRequestStart(t, store, kind, start, [32]byte{1})
-			require.NoError(t, err)
-			assert.Equal(t, first.outcome, retry.outcome)
-			assert.Equal(t, session.RunStatusCanceled, retry.runStatus)
-			require.Len(t, retry.records, len(first.records))
-			for i, record := range retry.records {
-				assert.Equal(t, first.records[i].ID, record.ID)
-				assert.False(t, record.Inserted)
-			}
-			assert.Equal(t, before, requestRecordSnapshot(store))
-		})
+		for _, status := range []session.RunStatus{session.RunStatusCanceled, session.RunStatusFailed} {
+			t.Run(kind+"/"+string(status), func(t *testing.T) {
+				store, start := requestStartFixture(t, kind)
+				_, err := store.EndSession(t.Context(), start.SessionID, start.StartedAt.Add(time.Second))
+				require.NoError(t, err)
+				first, err := applyRequestStart(t, store, kind, start, [32]byte{1})
+				require.NoError(t, err)
+				require.Equal(t, session.RunStartStop, first.outcome)
+				assert.Equal(t, session.RunStatusRunning, first.runStatus)
+				finished := start
+				finished.StartedAt = start.StartedAt.Add(5 * time.Second)
+				var provenance *run.Cancellation
+				if status == session.RunStatusCanceled {
+					provenance = &run.Cancellation{Reason: run.CancellationReasonSessionEnded}
+				}
+				_, err = store.RecordRunTerminal(t.Context(), storage.RunTerminal{
+					RunID: start.RunID, Status: status,
+					Record: completedRecord(t, "finished", finished, string(status), provenance),
+				})
+				require.NoError(t, err)
+				before := requestRecordSnapshot(store)
+				start.StartedAt = start.StartedAt.Add(time.Hour)
+				retry, err := applyRequestStart(t, store, kind, start, [32]byte{1})
+				require.NoError(t, err)
+				assert.Equal(t, first.outcome, retry.outcome)
+				assert.Equal(t, status, retry.runStatus)
+				require.Len(t, retry.records, len(first.records))
+				for i, record := range retry.records {
+					assert.Equal(t, first.records[i].ID, record.ID)
+					assert.False(t, record.Inserted)
+				}
+				assert.Equal(t, before, requestRecordSnapshot(store))
+			})
+		}
 	}
 }
 
@@ -256,17 +271,17 @@ func applyRequestStart(t *testing.T, store *Store, kind string, start session.Ru
 		result, err := store.StartRootRun(t.Context(), root)
 		records := []storage.AppendResult{result.Started}
 		if result.Outcome == session.RunStartStop {
-			records = append(records, result.Canceled)
+			records = append(records, result.Cancellation)
 		}
 		return startReplayResult{result.Outcome, result.RunStatus, records}, err
 	case requestKindChild:
 		result, err := store.StartChildRun(t.Context(), storage.ChildRunStart{
-			RequestDigest: digest, Run: start, Started: root.Started, Canceled: root.Canceled,
+			RequestDigest: digest, Run: start, Started: root.Started, Cancellation: root.Cancellation,
 			ParentLinked: childLinkRecord(t, "link-"+start.RunID, parent, start),
 		})
 		records := []storage.AppendResult{result.ParentRecord, result.Started}
 		if result.Outcome == session.RunStartStop {
-			records = append(records, result.Canceled)
+			records = append(records, result.Cancellation)
 		}
 		return startReplayResult{result.Outcome, result.RunStatus, records}, err
 	case requestKindOneShot:
@@ -295,4 +310,27 @@ func requestRecordSnapshot(store *Store) map[string][]*runlog.Event {
 		}
 	}
 	return result
+}
+
+func TestEndedSessionStartRejectsCompletionAndSuspension(t *testing.T) {
+	store, start := requestStartFixture(t, requestKindRoot)
+	_, err := store.EndSession(t.Context(), start.SessionID, start.StartedAt)
+	require.NoError(t, err)
+	_, err = applyRequestStart(t, store, requestKindRoot, start, [32]byte{1})
+	require.NoError(t, err)
+	before := requestRecordSnapshot(store)
+	_, err = store.RecordRunTerminal(t.Context(), storage.RunTerminal{
+		RunID: start.RunID, Status: session.RunStatusCompleted,
+		Record: completedRecord(t, "finished", start, "success", nil),
+	})
+	require.ErrorContains(t, err, "ended-session start cannot complete successfully")
+	_, err = store.RecordRunSuspension(t.Context(), storage.RunSuspension{
+		RunID: start.RunID, Suspension: session.RunSuspension{ID: "checkpoint", Data: []byte(`{"version":"v6"}`)},
+		Record: suspendedRecord(t, "finished", start, "checkpoint"),
+	})
+	require.ErrorContains(t, err, "ended-session start cannot suspend")
+	assert.Equal(t, before, requestRecordSnapshot(store))
+	meta, err := store.LoadRun(t.Context(), start.RunID)
+	require.NoError(t, err)
+	assert.Equal(t, session.RunStatusRunning, meta.Status)
 }

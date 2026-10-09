@@ -141,7 +141,7 @@ func TestProviderRecoveryRetainsRequestAndActiveBudget(t *testing.T) {
 	w.routeWorkflowContext = &routeWorkflowContext{
 		ctx: t.Context(), runID: "run", hookRuntime: rt,
 		plannerRoutes: map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error){
-			"resume": func(_ context.Context, actual *PlanActivityInput) (*PlanActivityOutput, error) { //nolint:unparam // Planner route requires an error result.
+			"resume": func(_ context.Context, actual *PlanActivityInput) (*PlanActivityOutput, error) {
 				calls++
 				require.Equal(t, input, *actual)
 				w.clock = w.clock.Add(2 * time.Second)
@@ -224,7 +224,7 @@ func TestProviderRecoveryBoundsRetryQueueAndExecution(t *testing.T) {
 	w.routeWorkflowContext = &routeWorkflowContext{
 		ctx: t.Context(), hookRuntime: rt,
 		plannerRoutes: map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error){
-			"plan": func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error) { //nolint:unparam // Planner route requires an error result.
+			"plan": func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error) {
 				calls++
 				if calls == 1 {
 					return providerRecoveryFailureOutput(), nil
@@ -258,7 +258,7 @@ func TestProviderRecoveryDisabledAndExhaustedPreserveTypedFailure(t *testing.T) 
 			w.routeWorkflowContext = &routeWorkflowContext{
 				ctx: t.Context(), hookRuntime: rt,
 				plannerRoutes: map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error){
-					"plan": func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error) { //nolint:unparam // Planner route requires an error result.
+					"plan": func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error) {
 						calls++
 						w.clock = w.clock.Add(time.Second)
 						return output, nil

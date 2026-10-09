@@ -27,6 +27,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/stream"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/toolregistry"
 )
 
 // plannerActivityInvocation is the shared prepared state for one planner
@@ -1238,6 +1239,9 @@ func validatePlannerFinalToolResult(spec tools.ToolSpec, final *planner.FinalToo
 	if final == nil {
 		return nil
 	}
+	if err := final.Blocks.Validate(); err != nil {
+		return fmt.Errorf("planner final tool content: %w", err)
+	}
 	resultJSON := bytes.TrimSpace(final.Result)
 	serverJSON := bytes.TrimSpace(final.ServerData)
 	if len(resultJSON) > 0 && !json.Valid(resultJSON) {
@@ -1386,6 +1390,9 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	if req == nil {
 		return nil, errors.New("tool input is required")
 	}
+	if err := toolregistry.ValidateExecution(req.ExecutionSequence, req.ExecutionContinuation, req.TextOnly); err != nil {
+		return nil, engine.MarkActivityErrorNonRetryable(err)
+	}
 	if req.ToolName == "" {
 		return nil, errors.New("tool name is required")
 	}
@@ -1396,17 +1403,19 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	// retains the model-authored call and owns any later correction evidence.
 	raw := append(rawjson.Message(nil), req.Payload...)
 	call := ToolCall{
-		TextOnly:         req.TextOnly,
-		Registry:         req.Registry.Clone(),
-		Name:             req.ToolName,
-		Payload:          raw,
-		RunID:            req.RunID,
-		AgentID:          req.AgentID,
-		SessionID:        req.SessionID,
-		Labels:           cloneLabels(req.Labels),
-		TurnID:           req.TurnID,
-		ParentToolCallID: req.ParentToolCallID,
-		ToolCallID:       req.ToolCallID,
+		ExecutionContinuation: req.ExecutionContinuation,
+		ExecutionSequence:     req.ExecutionSequence,
+		TextOnly:              req.TextOnly,
+		Registry:              req.Registry.Clone(),
+		Name:                  req.ToolName,
+		Payload:               raw,
+		RunID:                 req.RunID,
+		AgentID:               req.AgentID,
+		SessionID:             req.SessionID,
+		Labels:                cloneLabels(req.Labels),
+		TurnID:                req.TurnID,
+		ParentToolCallID:      req.ParentToolCallID,
+		ToolCallID:            req.ToolCallID,
 	}
 
 	spec, hasSpec, err := lookupCallSpec(call, r.toolSpec)
@@ -1474,12 +1483,28 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	meta := ToolCallMetaFromCall(call)
 	start := time.Now()
 	executorCall := cloneToolCall(call)
-	execResult, err := reg.Execute(ctx, &executorCall)
+	execResult, err := reg.Execute(r.withMCPProgress(ctx, call), &executorCall)
 	if err != nil {
 		return nil, err
 	}
 	if execResult == nil {
 		return nil, errors.New("tool execution returned nil execution result")
+	}
+	if execResult.mcpPending != nil {
+		if call.TextOnly && pendingHostInput(execResult.mcpPending) != nil {
+			return nil, engine.MarkActivityErrorNonRetryable(errors.New("text-only tools cannot request MCP host input"))
+		}
+		if execResult.ToolResult != nil || execResult.Clarification != nil || execResult.childSuspension != nil {
+			return nil, errors.New("MCP input cannot accompany a completed tool result")
+		}
+		if err := execResult.mcpPending.Validate(); err != nil {
+			return nil, err
+		}
+		out := &ToolOutput{PendingExecution: execResult.mcpPending}
+		if err := validateToolActivityOutputBudget(out); err != nil {
+			return nil, outputcontract.NewWithOrigin(err, outputcontract.OriginTool)
+		}
+		return out, nil
 	}
 	// Enrich or build telemetry via registration builder when available.
 	if reg.TelemetryBuilder != nil {
@@ -1498,6 +1523,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 		Payload:    resultJSON,
 		Bounds:     result.Bounds,
 		ServerData: result.ServerData,
+		Blocks:     result.Blocks.Clone(),
 		Telemetry:  result.Telemetry,
 	}
 	if result.Failure != nil {

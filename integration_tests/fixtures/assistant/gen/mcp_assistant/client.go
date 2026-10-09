@@ -15,57 +15,41 @@ import (
 
 // Client is the "mcp_assistant" service client.
 type Client struct {
-	InitializeEndpoint               goa.Endpoint
-	NotificationsInitializedEndpoint goa.Endpoint
-	PingEndpoint                     goa.Endpoint
-	ToolsListEndpoint                goa.Endpoint
-	ToolsCallEndpoint                goa.Endpoint
-	ResourcesListEndpoint            goa.Endpoint
-	ResourcesReadEndpoint            goa.Endpoint
-	PromptsListEndpoint              goa.Endpoint
-	PromptsGetEndpoint               goa.Endpoint
+	ServerDiscoverEndpoint         goa.Endpoint
+	ToolsListEndpoint              goa.Endpoint
+	ToolsCallEndpoint              goa.Endpoint
+	ResourcesListEndpoint          goa.Endpoint
+	ResourcesReadEndpoint          goa.Endpoint
+	ResourcesTemplatesListEndpoint goa.Endpoint
+	PromptsListEndpoint            goa.Endpoint
+	PromptsGetEndpoint             goa.Endpoint
+	CompletionCompleteEndpoint     goa.Endpoint
 }
 
 // NewClient initializes a "mcp_assistant" service client given the endpoints.
-func NewClient(initialize, notificationsInitialized, ping, toolsList, toolsCall, resourcesList, resourcesRead, promptsList, promptsGet goa.Endpoint) *Client {
+func NewClient(serverDiscover, toolsList, toolsCall, resourcesList, resourcesRead, resourcesTemplatesList, promptsList, promptsGet, completionComplete goa.Endpoint) *Client {
 	return &Client{
-		InitializeEndpoint:               initialize,
-		NotificationsInitializedEndpoint: notificationsInitialized,
-		PingEndpoint:                     ping,
-		ToolsListEndpoint:                toolsList,
-		ToolsCallEndpoint:                toolsCall,
-		ResourcesListEndpoint:            resourcesList,
-		ResourcesReadEndpoint:            resourcesRead,
-		PromptsListEndpoint:              promptsList,
-		PromptsGetEndpoint:               promptsGet,
+		ServerDiscoverEndpoint:         serverDiscover,
+		ToolsListEndpoint:              toolsList,
+		ToolsCallEndpoint:              toolsCall,
+		ResourcesListEndpoint:          resourcesList,
+		ResourcesReadEndpoint:          resourcesRead,
+		ResourcesTemplatesListEndpoint: resourcesTemplatesList,
+		PromptsListEndpoint:            promptsList,
+		PromptsGetEndpoint:             promptsGet,
+		CompletionCompleteEndpoint:     completionComplete,
 	}
 }
 
-// Initialize calls the "initialize" endpoint of the "mcp_assistant" service.
-func (c *Client) Initialize(ctx context.Context, p *InitializePayload) (res *InitializeResult, err error) {
+// ServerDiscover calls the "server/discover" endpoint of the "mcp_assistant"
+// service.
+func (c *Client) ServerDiscover(ctx context.Context, p *DiscoverPayload) (res *DiscoverResult, err error) {
 	var ires any
-	ires, err = c.InitializeEndpoint(ctx, p)
+	ires, err = c.ServerDiscoverEndpoint(ctx, p)
 	if err != nil {
 		return
 	}
-	return ires.(*InitializeResult), nil
-}
-
-// NotificationsInitialized calls the "notifications/initialized" endpoint of
-// the "mcp_assistant" service.
-func (c *Client) NotificationsInitialized(ctx context.Context) (err error) {
-	_, err = c.NotificationsInitializedEndpoint(ctx, nil)
-	return
-}
-
-// Ping calls the "ping" endpoint of the "mcp_assistant" service.
-func (c *Client) Ping(ctx context.Context) (res *PingResult, err error) {
-	var ires any
-	ires, err = c.PingEndpoint(ctx, nil)
-	if err != nil {
-		return
-	}
-	return ires.(*PingResult), nil
+	return ires.(*DiscoverResult), nil
 }
 
 // ToolsList calls the "tools/list" endpoint of the "mcp_assistant" service.
@@ -85,6 +69,7 @@ func (c *Client) ToolsList(ctx context.Context, p *ToolsListPayload) (res *Tools
 // ToolsCall may return the following errors:
 //   - "invalid_params" (type *goa.ServiceError): The request parameters do not match the MCP method.
 //   - "internal_error" (type *goa.ServiceError): The MCP service could not complete the request.
+//   - "missing_client_capability" (type *MissingClientCapabilityError): The client did not declare support for the requested input.
 //   - error: internal error
 func (c *Client) ToolsCall(ctx context.Context, p *ToolsCallPayload) (res *ToolsCallResult, err error) {
 	var ires any
@@ -114,6 +99,7 @@ func (c *Client) ResourcesList(ctx context.Context, p *ResourcesListPayload) (re
 // ResourcesRead may return the following errors:
 //   - "invalid_params" (type *goa.ServiceError): The request parameters do not match the MCP method.
 //   - "internal_error" (type *goa.ServiceError): The MCP service could not complete the request.
+//   - "missing_client_capability" (type *MissingClientCapabilityError): The client did not declare support for the requested input.
 //   - error: internal error
 func (c *Client) ResourcesRead(ctx context.Context, p *ResourcesReadPayload) (res *ResourcesReadResult, err error) {
 	var ires any
@@ -122,6 +108,20 @@ func (c *Client) ResourcesRead(ctx context.Context, p *ResourcesReadPayload) (re
 		return
 	}
 	return ires.(*ResourcesReadResult), nil
+}
+
+// ResourcesTemplatesList calls the "resources/templates/list" endpoint of the
+// "mcp_assistant" service.
+// ResourcesTemplatesList may return the following errors:
+//   - "invalid_params" (type *goa.ServiceError): The request parameters do not match the MCP method.
+//   - error: internal error
+func (c *Client) ResourcesTemplatesList(ctx context.Context, p *ResourceTemplatesListPayload) (res *ResourceTemplatesListResult, err error) {
+	var ires any
+	ires, err = c.ResourcesTemplatesListEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*ResourceTemplatesListResult), nil
 }
 
 // PromptsList calls the "prompts/list" endpoint of the "mcp_assistant" service.
@@ -141,6 +141,7 @@ func (c *Client) PromptsList(ctx context.Context, p *PromptsListPayload) (res *P
 // PromptsGet may return the following errors:
 //   - "invalid_params" (type *goa.ServiceError): The request parameters do not match the MCP method.
 //   - "internal_error" (type *goa.ServiceError): The MCP service could not complete the request.
+//   - "missing_client_capability" (type *MissingClientCapabilityError): The client did not declare support for the requested input.
 //   - error: internal error
 func (c *Client) PromptsGet(ctx context.Context, p *PromptsGetPayload) (res *PromptsGetResult, err error) {
 	var ires any
@@ -149,4 +150,19 @@ func (c *Client) PromptsGet(ctx context.Context, p *PromptsGetPayload) (res *Pro
 		return
 	}
 	return ires.(*PromptsGetResult), nil
+}
+
+// CompletionComplete calls the "completion/complete" endpoint of the
+// "mcp_assistant" service.
+// CompletionComplete may return the following errors:
+//   - "invalid_params" (type *goa.ServiceError): The request parameters do not match the MCP method.
+//   - "internal_error" (type *goa.ServiceError): The MCP service could not complete the request.
+//   - error: internal error
+func (c *Client) CompletionComplete(ctx context.Context, p *CompletionCompletePayload) (res *CompletionCompleteResult, err error) {
+	var ires any
+	ires, err = c.CompletionCompleteEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*CompletionCompleteResult), nil
 }

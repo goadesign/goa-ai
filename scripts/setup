@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# This script installs the exact protobuf compiler and Go generators used by
+# This script installs the exact protobuf compiler and Go developer tools used by
 # local development and CI. Version-controlled files own every version so a
 # clean checkout always regenerates the same code.
 
 REPO_ROOT="$(git rev-parse --show-toplevel)"
+# Versioned tool installation ignores the current module. Select the module's
+# compiler first so installed tools can check the same Go version as the code.
+GOA_TOOLCHAIN="$(cd "$REPO_ROOT" && go env GOVERSION)"
+export GOTOOLCHAIN="$GOA_TOOLCHAIN"
 PROTOC_VERSION="$(awk '$1 == "protoc" { print $2; exit }' "$REPO_ROOT/.tool-versions")"
 INSTALLED_PROTOC_VERSION="$(protoc --version 2>/dev/null | awk '{ print $2 }' || true)"
 

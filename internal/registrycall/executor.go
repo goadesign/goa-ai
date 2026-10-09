@@ -1,6 +1,7 @@
 // Package registrycall owns registry admission and result-stream handling for
-// static executors and runtime-discovered tools. It returns the decoded tool
-// result without depending on workflow scheduling or runtime registration.
+// static executors and runtime-discovered tools. It returns completed JSON or
+// required input as the existing activity output. Consumers decode completed
+// values before returning a model result; workflow scheduling stays separate.
 package registrycall
 
 import (
@@ -11,9 +12,12 @@ import (
 	"maps"
 	"net"
 	"os"
+	"strconv"
 	"time"
 
 	pulsec "goa.design/goa-ai/features/stream/pulse/clients/pulse"
+	"goa.design/goa-ai/internal/tooloperation"
+	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -32,27 +36,15 @@ import (
 )
 
 type (
-	// Client initiates tool calls and returns both transport identity and the
-	// exact admission-generation token stamped on the routed request.
+	// Client sends generated registry requests without translating runtime metadata.
+	// The executor owns payload construction and admission-response validation.
 	Client interface {
-		CallTool(
-			ctx context.Context,
-			toolset string,
-			tool tools.Ident,
-			payload []byte,
-			meta toolregistry.ToolCallMeta,
-		) (toolregistry.ToolCallRef, error)
-		RetryTool(
-			ctx context.Context,
-			toolset string,
-			tool tools.Ident,
-			payload []byte,
-			meta toolregistry.ToolCallMeta,
-			expectedRegistrationToken string,
-		) (toolregistry.ToolCallRef, error)
+		CallTool(context.Context, *genregistry.CallToolPayload) (*genregistry.CallToolResult, error)
+		RetryTool(context.Context, *genregistry.RetryToolPayload) (*genregistry.CallToolResult, error)
 	}
 
-	// SpecLookup resolves tool specifications for decoding results and server data.
+	// SpecLookup supplies immutable tool contracts for one admitted invocation.
+	// The same generated codecs decode its result and server data after delivery.
 	SpecLookup interface {
 		Spec(name tools.Ident) (*tools.ToolSpec, bool)
 	}
@@ -153,27 +145,28 @@ func New(client Client, pulse pulsec.Client, toolset string, specs SpecLookup, o
 	return e, nil
 }
 
-// Execute sends one tool call to the registry and waits for its final result.
-func (e *Executor) Execute(ctx context.Context, meta *toolregistry.ToolCallMeta, call *api.ToolCall) (*planner.ToolResult, error) {
+// Execute admits one service round and returns its saved activity outcome.
+// Host input remains unfinished; completed JSON is decoded only by the consumer.
+func (e *Executor) Execute(ctx context.Context, meta *toolregistry.ToolCallMeta, call *api.ToolCall) (*api.ToolOutput, error) {
 	if call == nil {
-		return internalFailureResult("", "", "tool request is nil"), nil
+		return internalFailureResult("tool request is nil"), nil
 	}
 	if meta == nil {
-		return internalFailureResult(call.Name, "", "tool call meta is nil"), nil
+		return internalFailureResult("tool call meta is nil"), nil
 	}
 	if e.client == nil {
-		return internalFailureResult(call.Name, meta.ToolCallID, "registry client is nil"), nil
+		return internalFailureResult("registry client is nil"), nil
 	}
 	if e.pulse == nil {
-		return internalFailureResult(call.Name, meta.ToolCallID, "pulse client is nil"), nil
+		return internalFailureResult("pulse client is nil"), nil
 	}
 	if e.specs == nil {
-		return internalFailureResult(call.Name, meta.ToolCallID, "tool specs lookup is nil"), nil
+		return internalFailureResult("tool specs lookup is nil"), nil
 	}
 
-	spec, ok := e.specs.Spec(call.Name)
+	_, ok := e.specs.Spec(call.Name)
 	if !ok {
-		result := internalFailureResult(call.Name, meta.ToolCallID, fmt.Sprintf("unknown tool %q", call.Name))
+		result := internalFailureResult(fmt.Sprintf("unknown tool %q", call.Name))
 		result.Failure.Kind = planner.FailureInvalidCall
 		result.Failure.Recovery.Action = planner.RecoveryReplan
 		return result, nil
@@ -186,6 +179,7 @@ func (e *Executor) Execute(ctx context.Context, meta *toolregistry.ToolCallMeta,
 		trace.WithAttributes(
 			attribute.String("toolregistry.toolset", toolsetID),
 			attribute.String("toolregistry.tool", call.Name.String()),
+			attribute.String("toolregistry.execution_sequence", strconv.FormatUint(call.ExecutionSequence, 10)),
 			attribute.String("toolregistry.run_id", meta.RunID),
 			attribute.String("toolregistry.session_id", meta.SessionID),
 			attribute.String("toolregistry.turn_id", meta.TurnID),
@@ -198,33 +192,65 @@ func (e *Executor) Execute(ctx context.Context, meta *toolregistry.ToolCallMeta,
 	defer span.End()
 
 	tmeta := toolregistry.ToolCallMeta{
-		RunID:            meta.RunID,
-		SessionID:        meta.SessionID,
-		TurnID:           meta.TurnID,
-		ToolCallID:       meta.ToolCallID,
-		ParentToolCallID: meta.ParentToolCallID,
-		Labels:           maps.Clone(meta.Labels),
+		TextOnly:              meta.TextOnly,
+		ExecutionSequence:     call.ExecutionSequence,
+		ExecutionContinuation: call.ExecutionContinuation,
+		RunID:                 meta.RunID,
+		SessionID:             meta.SessionID,
+		TurnID:                meta.TurnID,
+		ToolCallID:            meta.ToolCallID,
+		ParentToolCallID:      meta.ParentToolCallID,
+		Labels:                maps.Clone(meta.Labels),
+	}
+	if err := toolregistry.ValidateExecution(tmeta.ExecutionSequence, tmeta.ExecutionContinuation, tmeta.TextOnly); err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "invalid workflow execution operation")
+		return internalFailureResult(err.Error()), nil
 	}
 	admissionCtx, cancelAdmission := context.WithTimeout(
 		ctx,
 		toolregistry.MaxToolCallWait+toolregistry.ResultStreamTransportBudget,
 	)
-	callRef, err := e.client.CallTool(admissionCtx, toolsetID, call.Name, call.Payload, tmeta)
+	// The workflow selected this operation before admission. Encode its metadata
+	// here so every generated client sends the same identity and continuation.
+	payload := &genregistry.CallToolPayload{
+		Toolset:             toolsetID,
+		Tool:                call.Name.String(),
+		PayloadJSON:         call.Payload,
+		WireProtocolVersion: toolregistry.WireProtocolVersion,
+		Meta: &genregistry.ToolCallMeta{
+			TextOnly:              tmeta.TextOnly,
+			ExecutionSequence:     tmeta.ExecutionSequence,
+			ExecutionContinuation: tooloperation.Value(tmeta.ExecutionContinuation),
+			RunID:                 tmeta.RunID,
+			SessionID:             tmeta.SessionID,
+			ToolCallID:            tmeta.ToolCallID,
+			Labels:                tmeta.Labels,
+		},
+	}
+	// Empty optional identifiers mean this call has no turn or parent. Omit
+	// them from the generated request; present identifiers keep Goa validation.
+	if tmeta.TurnID != "" {
+		payload.Meta.TurnID = &tmeta.TurnID
+	}
+	if tmeta.ParentToolCallID != "" {
+		payload.Meta.ParentToolCallID = &tmeta.ParentToolCallID
+	}
+	admitted, err := e.client.CallTool(admissionCtx, payload)
 	cancelAdmission()
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "call tool via registry failed")
-		if result, classified := preAdmissionFailureResult(call, meta.ToolCallID, err); classified {
+		if result, classified := preAdmissionFailureResult(err); classified {
 			return result, nil
 		}
-		return e.outcomeUnknownResult(call, meta, err), nil
+		return outcomeUnknownResult(err), nil
 	}
-	if err := toolregistry.ValidateToolCallRef(callRef); err != nil {
+	callRef, err := decodeAdmission(admitted)
+	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "call tool returned invalid reference")
-		return e.outcomeUnknownResult(
-			call,
-			meta,
+		return outcomeUnknownResult(
 			fmt.Errorf("call tool returned invalid reference: %w", err),
 		), nil
 	}
@@ -246,9 +272,7 @@ func (e *Executor) Execute(ctx context.Context, meta *toolregistry.ToolCallMeta,
 	if err != nil {
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "open tool result stream failed")
-		return e.outcomeUnknownResult(
-			call,
-			meta,
+		return outcomeUnknownResult(
 			fmt.Errorf("open tool result stream %q: %w", resultStreamID, err),
 		), nil
 	}
@@ -305,7 +329,7 @@ func (e *Executor) Execute(ctx context.Context, meta *toolregistry.ToolCallMeta,
 		)
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "create reader for tool result stream failed")
-		return e.outcomeUnknownResult(call, meta, err), nil
+		return outcomeUnknownResult(err), nil
 	}
 	defer reader.Close()
 	span.AddEvent("toolregistry.result_subscribed", "toolregistry.result_stream_id", resultStreamID)
@@ -319,9 +343,7 @@ func (e *Executor) Execute(ctx context.Context, meta *toolregistry.ToolCallMeta,
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
-			return e.outcomeUnknownResult(
-				call,
-				meta,
+			return outcomeUnknownResult(
 				fmt.Errorf("tool execution deadline elapsed: %w", executionCtx.Err()),
 			), nil
 		case ev, ok := <-events:
@@ -329,7 +351,7 @@ func (e *Executor) Execute(ctx context.Context, meta *toolregistry.ToolCallMeta,
 				err := fmt.Errorf("tool result stream subscription closed")
 				span.RecordError(err)
 				span.SetStatus(codes.Error, "tool result stream subscription closed")
-				return e.outcomeUnknownResult(call, meta, err), nil
+				return outcomeUnknownResult(err), nil
 			}
 			if ev.EventName == e.outputDeltaKey {
 				var msg toolregistry.ToolOutputDeltaMessage
@@ -398,23 +420,22 @@ func (e *Executor) Execute(ctx context.Context, meta *toolregistry.ToolCallMeta,
 				)
 			}
 			if msg.Retry != nil {
-				retryRef, err := e.client.RetryTool(
-					executionCtx,
-					toolsetID,
-					call.Name,
-					call.Payload,
-					tmeta,
-					callRef.RegistrationToken,
-				)
+				retried, err := e.client.RetryTool(executionCtx, &genregistry.RetryToolPayload{
+					ExpectedRegistrationToken: callRef.RegistrationToken,
+					Toolset:                   payload.Toolset,
+					Tool:                      payload.Tool,
+					PayloadJSON:               payload.PayloadJSON,
+					WireProtocolVersion:       payload.WireProtocolVersion,
+					Meta:                      payload.Meta,
+				})
 				if err != nil {
 					span.RecordError(err)
-					return e.outcomeUnknownResult(call, meta, err), nil
+					return outcomeUnknownResult(err), nil
 				}
-				if err := toolregistry.ValidateToolCallRef(retryRef); err != nil {
+				retryRef, err := decodeAdmission(retried)
+				if err != nil {
 					span.RecordError(err)
-					return e.outcomeUnknownResult(
-						call,
-						meta,
+					return outcomeUnknownResult(
 						fmt.Errorf("retry tool returned invalid reference: %w", err),
 					), nil
 				}
@@ -428,7 +449,7 @@ func (e *Executor) Execute(ctx context.Context, meta *toolregistry.ToolCallMeta,
 						retryRef,
 					)
 					span.RecordError(err)
-					return e.outcomeUnknownResult(call, meta, err), nil
+					return outcomeUnknownResult(err), nil
 				}
 				continue
 			}
@@ -437,9 +458,26 @@ func (e *Executor) Execute(ctx context.Context, meta *toolregistry.ToolCallMeta,
 				"toolregistry.tool_use_id", toolUseID,
 				"toolregistry.result_stream_id", resultStreamID,
 			)
-			result := e.decodeToolResult(spec, call, meta.ToolCallID, msg)
+			if msg.PendingExecution != nil {
+				if _, _, waiting := msg.PendingExecution.AsTaskWait(); tmeta.TextOnly && !waiting {
+					err := errors.New("text-only registry call returned host input")
+					span.RecordError(err)
+					span.SetStatus(codes.Error, "provider returned unsupported host input")
+					return &api.ToolOutput{Failure: malformedResultFailure(err)}, nil
+				}
+				span.AddEvent("toolregistry.unfinished")
+				span.SetStatus(codes.Ok, "unfinished execution saved")
+				return &api.ToolOutput{PendingExecution: msg.PendingExecution}, nil
+			}
+			if msg.Error != nil {
+				return &api.ToolOutput{Failure: toolFailureFromRegistryError(msg.Error)}, nil
+			}
+			serverData, err := toolregistry.EncodeServerData(msg.ServerData)
+			if err != nil {
+				return &api.ToolOutput{Failure: malformedResultFailure(fmt.Errorf("toolregistry server data for %q could not be encoded: %w", call.Name, err))}, nil
+			}
 			span.SetStatus(codes.Ok, "ok")
-			return result, nil
+			return &api.ToolOutput{Payload: rawjson.Message(msg.Result), Bounds: agent.CloneBounds(msg.Bounds), ServerData: rawjson.Message(serverData)}, nil
 		}
 	}
 }
@@ -449,20 +487,14 @@ func (e *Executor) Execute(ctx context.Context, meta *toolregistry.ToolCallMeta,
 // or the registry replayed a durable rejected decision. Other failures remain
 // ambiguous because the registry may have admitted the call before the response
 // was lost.
-func preAdmissionFailureResult(
-	call *api.ToolCall,
-	toolCallID string,
-	err error,
-) (*planner.ToolResult, bool) {
+func preAdmissionFailureResult(err error) (*api.ToolOutput, bool) {
 	var serviceErr *goa.ServiceError
 	if !errors.As(err, &serviceErr) {
 		return nil, false
 	}
 	switch serviceErr.Name {
 	case "call_not_admitted", "not_found":
-		return &planner.ToolResult{
-			Name:       call.Name,
-			ToolCallID: toolCallID,
+		return &api.ToolOutput{
 			Failure: &planner.ToolFailure{
 				Kind:  planner.FailureUnavailable,
 				Error: planner.ToolErrorFromError(err),
@@ -483,8 +515,6 @@ func preAdmissionFailureResult(
 		goa.DecodePayload,
 		goa.MissingPayload:
 		return internalFailureResult(
-			call.Name,
-			toolCallID,
 			fmt.Sprintf("registry rejected a codec-validated tool call: %v", err),
 		), true
 	default:
@@ -494,19 +524,13 @@ func preAdmissionFailureResult(
 
 // outcomeUnknownResult terminates planning after an invocation may have been
 // admitted. A replacement call could repeat an external side effect.
-func (e *Executor) outcomeUnknownResult(
-	call *api.ToolCall,
-	meta *toolregistry.ToolCallMeta,
-	err error,
-) *planner.ToolResult {
+func outcomeUnknownResult(err error) *api.ToolOutput {
 	outcomeErr := fmt.Errorf(
 		"%s: tool execution outcome is unknown; do not retry or issue a replacement call because the effect may have occurred: %w",
 		toolregistry.ToolErrorCodeOutcomeUnknown,
 		err,
 	)
-	return &planner.ToolResult{
-		Name:       call.Name,
-		ToolCallID: meta.ToolCallID,
+	return &api.ToolOutput{
 		Failure: &planner.ToolFailure{
 			Kind:  planner.FailureInternal,
 			Error: planner.ToolErrorFromError(outcomeErr),
@@ -517,53 +541,39 @@ func (e *Executor) outcomeUnknownResult(
 	}
 }
 
-func (e *Executor) decodeToolResult(spec *tools.ToolSpec, call *api.ToolCall, toolCallID string, msg toolregistry.ToolResultMessage) *planner.ToolResult {
-	tool := tools.Ident("")
+// DecodeCompletedResult checks a completed activity outcome against the tool's
+// generated codec and server-data contract. Callers route required input to the
+// durable runtime before calling this method; no model result exists for it.
+func (e *Executor) DecodeCompletedResult(call *api.ToolCall, meta *toolregistry.ToolCallMeta, output *api.ToolOutput) *planner.ToolResult {
+	out := &planner.ToolResult{Failure: output.Failure}
 	if call != nil {
-		tool = call.Name
+		out.Name = call.Name
 	}
-	out := &planner.ToolResult{
-		Name:       tool,
-		ToolCallID: toolCallID,
+	if meta != nil {
+		out.ToolCallID = meta.ToolCallID
 	}
-	if msg.Error != nil {
-		out.Failure = toolFailureFromRegistryError(msg.Error)
+	if output.Failure != nil {
 		return out
 	}
-	out.Bounds = agent.CloneBounds(msg.Bounds)
+	spec, ok := e.specs.Spec(call.Name)
+	if !ok {
+		panic(fmt.Sprintf("registry result contract for %q disappeared during one invocation", call.Name))
+	}
+	out.Bounds = agent.CloneBounds(output.Bounds)
 	if spec.Result.Codec.FromJSON != nil {
-		res, err := spec.Result.Codec.FromJSON(msg.Result)
+		res, err := spec.Result.Codec.FromJSON(output.Payload)
 		if err != nil {
 			out.Bounds = nil
-			out.Failure = malformedResultFailure(fmt.Errorf(
-				"toolregistry result for %q did not match registered schema: %w",
-				tool,
-				err,
-			))
+			out.Failure = malformedResultFailure(fmt.Errorf("toolregistry result for %q did not match registered schema: %w", call.Name, err))
 			return out
 		}
 		out.Result = res
 	}
-	serverDataEnvelope, err := toolregistry.EncodeServerData(msg.ServerData)
+	serverData, err := toolserverdata.Apply(spec.CanonicalizeServerData, output.ServerData)
 	if err != nil {
 		out.Bounds = nil
 		out.Result = nil
-		out.Failure = malformedResultFailure(fmt.Errorf(
-			"toolregistry server data for %q could not be encoded: %w",
-			tool,
-			err,
-		))
-		return out
-	}
-	serverData, err := toolserverdata.Apply(spec.CanonicalizeServerData, rawjson.Message(serverDataEnvelope))
-	if err != nil {
-		out.Bounds = nil
-		out.Result = nil
-		out.Failure = malformedResultFailure(fmt.Errorf(
-			"toolregistry server data for %q did not match registered schema: %w",
-			tool,
-			err,
-		))
+		out.Failure = malformedResultFailure(fmt.Errorf("toolregistry server data for %q did not match registered schema: %w", call.Name, err))
 		return out
 	}
 	out.ServerData = serverData
@@ -590,10 +600,8 @@ func toolFailureFromRegistryError(msg *toolregistry.ToolError) *planner.ToolFail
 
 // internalFailureResult constructs the terminal result for executor invariant
 // failures that a planner cannot correct.
-func internalFailureResult(name tools.Ident, toolCallID, message string) *planner.ToolResult {
-	return &planner.ToolResult{
-		Name:       name,
-		ToolCallID: toolCallID,
+func internalFailureResult(message string) *api.ToolOutput {
+	return &api.ToolOutput{
 		Failure: &planner.ToolFailure{
 			Kind:  planner.FailureInternal,
 			Error: planner.NewToolError(message),

@@ -75,9 +75,6 @@ func (p *jsonValidatorPlanner) adapt(node *jsonshape.Node, suffix string, root b
 	if node.Kind == jsonValidatorPrimitive || node.Kind == jsonValidatorAny {
 		return p.primitiveValidator(node.Primitive)
 	}
-	if node.Kind == "union" {
-		return p.categoryValidator(jsonSchemaTypeObject)
-	}
 	if existing := p.named[node]; existing != nil {
 		return existing
 	}
@@ -87,6 +84,22 @@ func (p *jsonValidatorPlanner) adapt(node *jsonshape.Node, suffix string, root b
 	validator := p.newValidator(suffix, node.Attribute, root)
 	p.named[node] = validator
 	validator.kind = node.Kind
+	if node.Union != nil {
+		validator.typeKey = node.Union.GetTypeKey()
+		validator.valueKey = node.Union.GetValueKey()
+		validator.flatten = node.Union.Flatten
+		validator.untagged = node.Union.Untagged
+		if validator.untagged {
+			validator.expected = "a declared union branch"
+		}
+		for _, branch := range node.Branches {
+			child := p.adapt(branch.Node, suffix+goacodegen.Goify(branch.Name, true), false)
+			validator.branches = append(validator.branches, &plannedJSONValidatorField{
+				name: branch.Name, jsonKind: goaexpr.JSONKind(branch.Node.Attribute.Type),
+				call: &plannedJSONValidatorCall{validator: child, description: branch.Description},
+			})
+		}
+	}
 	for _, field := range node.Fields {
 		child := p.adapt(field.Node, suffix+goacodegen.Goify(field.Name, true), false)
 		validator.fields = append(validator.fields, &plannedJSONValidatorField{
@@ -307,9 +320,11 @@ func (p *toolSpecsPackagePlan) finalizeJSONValidators() error {
 		canonical[validator] = shared
 	}
 	for _, validator := range kept {
-		for _, field := range validator.fields {
-			if field.call != nil {
-				field.call.validator = canonical[field.call.validator]
+		for _, fields := range [][]*plannedJSONValidatorField{validator.fields, validator.branches} {
+			for _, field := range fields {
+				if field.call != nil {
+					field.call.validator = canonical[field.call.validator]
+				}
 			}
 		}
 		if validator.element != nil {
@@ -367,9 +382,11 @@ func reachableJSONValidators(graphs []*plannedJSONValidatorGraph) map[*plannedJS
 			continue
 		}
 		reachable[validator] = true
-		for _, field := range validator.fields {
-			if field.call != nil {
-				remaining = append(remaining, field.call.validator)
+		for _, fields := range [][]*plannedJSONValidatorField{validator.fields, validator.branches} {
+			for _, field := range fields {
+				if field.call != nil {
+					remaining = append(remaining, field.call.validator)
+				}
 			}
 		}
 		if validator.element != nil {
@@ -416,13 +433,23 @@ func sameJSONValidator(left, right *plannedJSONValidator, groups map[*plannedJSO
 		left.signedInteger != right.signedInteger ||
 		left.unsignedInteger != right.unsignedInteger ||
 		left.integerBits != right.integerBits ||
+		left.typeKey != right.typeKey || left.valueKey != right.valueKey ||
+		left.flatten != right.flatten || left.untagged != right.untagged ||
 		len(left.fields) != len(right.fields) ||
+		len(left.branches) != len(right.branches) ||
 		!sameJSONValidatorCall(left.element, right.element, groups) {
 		return false
 	}
 	for index, leftField := range left.fields {
 		rightField := right.fields[index]
 		if leftField.name != rightField.name || !sameJSONValidatorCall(leftField.call, rightField.call, groups) {
+			return false
+		}
+	}
+	for index, leftBranch := range left.branches {
+		rightBranch := right.branches[index]
+		if leftBranch.name != rightBranch.name || leftBranch.jsonKind != rightBranch.jsonKind ||
+			!sameJSONValidatorCall(leftBranch.call, rightBranch.call, groups) {
 			return false
 		}
 	}
@@ -481,6 +508,10 @@ func materializeJSONValidators(plannedValidators []*plannedJSONValidator) []*jso
 			SignedInteger:   planned.signedInteger,
 			UnsignedInteger: planned.unsignedInteger,
 			IntegerBits:     planned.integerBits,
+			TypeKey:         planned.typeKey,
+			ValueKey:        planned.valueKey,
+			Flatten:         planned.flatten,
+			Untagged:        planned.untagged,
 		}
 		for _, field := range planned.fields {
 			rendered := &jsonValidatorFieldData{
@@ -490,6 +521,12 @@ func materializeJSONValidators(plannedValidators []*plannedJSONValidator) []*jso
 				rendered.Call = materializeJSONValidatorCall(field.call)
 			}
 			validator.Fields = append(validator.Fields, rendered)
+		}
+		for _, branch := range planned.branches {
+			validator.Branches = append(validator.Branches, &jsonValidatorFieldData{
+				Name: branch.name, JSONKind: branch.jsonKind,
+				Call: materializeJSONValidatorCall(branch.call),
+			})
 		}
 		if planned.element != nil {
 			validator.Element = materializeJSONValidatorCall(planned.element)

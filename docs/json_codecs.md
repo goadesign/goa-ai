@@ -79,15 +79,40 @@ case-sensitive. Maps retain their declared dynamic string keys.
 Required fields and length constraints remain distinct. A required collection
 cannot be nil, but an empty collection is valid unless its Goa constraints
 forbid it. Collection element nullability follows the declared element contract.
-For a union, the discriminator selects the branch whose fields and constraints
-are checked. Named types retain the constraints of their underlying definitions.
+For a tagged union, the discriminator selects the branch whose fields and
+constraints are checked. Named types retain the constraints of their underlying
+definitions.
+
+A `OneOf` with `Meta("oneof:json:flatten")` encodes its selected object's fields
+beside the discriminator. For example, a `complete` branch can write
+`{"type":"complete","reference":"123"}`. Use `oneof:type:field` to select another
+discriminator name. The codec and advertised schemas check only that branch,
+including its required fields, and reject unknown fields. Unions without this
+metadata keep the nested `value` property. Regenerate both JSON peers together
+when selecting a different mapping, and migrate any stored documents before
+adopting it. The protobuf representation is unchanged.
+
+Use `Meta("oneof:json:untagged")` when each branch has a distinct JSON kind.
+An array branch writes an array directly; a string branch writes a string.
+The codec selects that kind, then validates the complete typed branch. Empty
+collections remain valid when the design permits them, and integers retain
+their exact values. Goa rejects ambiguous branch kinds during DSL evaluation.
+The standalone schema describes the same raw values. Regenerate and update
+both JSON peers together, and migrate stored values before changing their
+mapping. This mapping does not change protobuf's representation.
 
 The supported values are closed generated Go representations: primitives,
 objects, arrays, maps with string or named-string keys, unions, and their named
 forms. Finite recursive values are supported; cyclic Go values are rejected
 before recursive conversion.
 
-Generation skips codec functions for a type if any reachable field or branch,
+An `Any` field explicitly represented as `json.RawMessage` through
+`Meta("struct:field:type", "json.RawMessage", "encoding/json")` retains open
+JSON values and exact numbers. Strict syntax, text and duplicate-key checks
+still apply inside those values; their members remain open. Encoding checks
+the raw bytes before returning a document and leaves the original bytes alone.
+
+Generation skips codec functions for a type if any other reachable field or branch,
 including an optional field, uses `Any`, custom Go representation metadata, or
 non-string map keys. This skips the complete codec; it never drops fields from
 an encoded value. Original type generation remains valid. Supported siblings
@@ -112,3 +137,31 @@ typed encode and decode functions.
 The codec does not migrate previously stored application data. Before replacing
 an existing serializer, verify that retained documents satisfy the declared Goa
 contract and handle any required conversion in the application that owns them.
+
+## Generate a standalone schema
+
+Application generators that publish a schema for a complete original Goa type
+use `codegen/jsonschema.Build`, the same builder used by MCP catalogs and agent
+specifications. Evaluate the Goa design before reading its type:
+
+```go
+import "goa.design/goa-ai/codegen/jsonschema"
+
+schema, err := jsonschema.Build(expr.Root.API, settings.Attribute(),
+    expr.UserTypeExampleIdentity(settings))
+```
+
+The result is JSON Schema 2020-12 bytes with local definitions, generated JSON
+field names, authored constraints and unknown-field rejection. Unsupported Go
+representations fail generation. Generated placeholder examples are removed.
+Each field retains its authored description when it uses a named type. A shared
+type's description belongs to its definition; reusing that type does not replace
+another field's instructions. The named type's validation still applies to every use.
+The schema describes the complete type; it does not apply tool-specific field
+injection or model visibility. Keep the original attribute from the evaluated
+design so its package and field metadata remain available.
+
+`BuildForm` instead emits MCP's restricted form contract and rejects unsupported
+form rules. Use it only when generating form requests. Neither function evaluates
+the design, fetches remote schemas or changes the Goa types. Replace old
+`codegen/shared.ToJSONSchema` calls with the appropriate builder when upgrading.

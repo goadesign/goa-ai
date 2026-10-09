@@ -123,6 +123,14 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			Base: newBaseFromHook(evt, EventAwaitClarification, payload),
 			Data: payload,
 		})
+	case *hooks.AwaitMCPInputEvent:
+		if !s.profile.AwaitMCPInput {
+			return nil
+		}
+		return s.sink.Send(ctx, AwaitMCPInput{
+			Base: newBaseFromHook(evt, EventAwaitMCPInput, evt.Input),
+			Data: evt.Input,
+		})
 	case *hooks.AwaitConfirmationEvent:
 		if !s.profile.AwaitConfirmation {
 			return nil
@@ -300,6 +308,7 @@ func (s *Subscriber) HandleEvent(ctx context.Context, event hooks.Event) error {
 			ParentToolCallID: evt.ParentToolCallID,
 			ToolName:         string(evt.ToolName),
 			Result:           evt.ResultJSON,
+			Blocks:           evt.Blocks.Clone(),
 			Bounds:           evt.Bounds,
 			Duration:         evt.Duration,
 			Telemetry:        evt.Telemetry,

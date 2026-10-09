@@ -24,12 +24,14 @@ import (
 	"time"
 
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
+	"goa.design/goa-ai/runtime/content"
 )
 
 type (
@@ -305,6 +307,12 @@ type (
 		Data AwaitClarificationPayload
 	}
 
+	// AwaitMCPInput exposes the current host requests for an unfinished remote call.
+	AwaitMCPInput struct {
+		Base
+		Data api.PendingMCPInput
+	}
+
 	// AwaitConfirmation streams an operator confirmation request from the runtime.
 	AwaitConfirmation struct {
 		Base
@@ -383,6 +391,10 @@ type (
 
 	// ToolEndPayload carries private result metadata for a completed tool invocation.
 	ToolEndPayload struct {
+		// Blocks retains ordered text, media and resource descriptions for this
+		// invocation, including when execution failed.
+		Blocks content.Blocks `json:"blocks,omitempty"`
+
 		// CallRunID identifies the workflow run whose ToolStart event opened this
 		// tool invocation. It differs from the enclosing event's run ID when a
 		// continuation workflow supplies an externally produced result.
@@ -628,12 +640,16 @@ type (
 		ToolStart bool
 		// ToolUpdate controls emission of tool_update events.
 		ToolUpdate bool
+		// ToolProgress controls emission of service-reported work updates.
+		ToolProgress bool
 		// ToolOutputDelta controls emission of incremental tool output.
 		ToolOutputDelta bool
 		// ToolEnd controls emission of tool_end events.
 		ToolEnd bool
 		// AwaitClarification controls emission of await_clarification events.
 		AwaitClarification bool
+		// AwaitMCPInput controls emission of unfinished remote call input requests.
+		AwaitMCPInput bool
 		// AwaitConfirmation controls emission of await_confirmation events.
 		AwaitConfirmation bool
 		// AwaitQuestions controls emission of await_questions events.
@@ -665,9 +681,11 @@ func RuntimeHostProfile() StreamProfile {
 		PromptRendered:     true,
 		ToolStart:          true,
 		ToolUpdate:         true,
+		ToolProgress:       true,
 		ToolOutputDelta:    true,
 		ToolEnd:            true,
 		AwaitClarification: true,
+		AwaitMCPInput:      true,
 		AwaitConfirmation:  true,
 		AwaitQuestions:     true,
 		AwaitExternalTools: true,
@@ -738,6 +756,9 @@ const (
 
 	// EventAwaitClarification streams when a planner requests human clarification.
 	EventAwaitClarification EventType = "await_clarification"
+
+	// EventAwaitMCPInput identifies an unfinished remote call input request.
+	EventAwaitMCPInput EventType = "await_mcp_input"
 
 	// EventAwaitConfirmation streams when the runtime requests operator confirmation.
 	EventAwaitConfirmation EventType = "await_confirmation"

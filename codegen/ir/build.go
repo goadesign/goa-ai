@@ -114,6 +114,10 @@ func Build(generation *goacodegen.Generation, servicePlan *service.Plan) (*Desig
 		return nil, err
 	}
 
+	toolsets, serviceExports, err = addMCPToolsets(genpkg, roots, servicesByName, toolsets, serviceExports)
+	if err != nil {
+		return nil, err
+	}
 	return &Design{
 		Genpkg:         genpkg,
 		GoaRoot:        goaRoot,

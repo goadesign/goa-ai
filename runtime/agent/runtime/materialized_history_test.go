@@ -70,7 +70,7 @@ func TestMaterializedHistoryAcrossSuspendedChildAndPreparedStart(t *testing.T) {
 					Execute: wrapExecute(func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
 						executions.Add(1)
 						return &planner.ToolResult{Name: call.Name, ToolCallID: call.ToolCallID,
-							Result: &genpictures.ViewResult{ID: resultID}}, nil
+							Result: &genpictures.ViewResult{ID: resultID}, Blocks: richToolContentForTest()}, nil
 					}),
 				}))
 				require.NoError(t, rt.RegisterAgent(ctx, AgentRegistration{
@@ -89,7 +89,7 @@ func TestMaterializedHistoryAcrossSuspendedChildAndPreparedStart(t *testing.T) {
 								))}, nil
 							}
 							value, err := genpictures.MarshalViewResult(&genpictures.ViewResult{ID: "child-result"})
-							return &planner.PlanResult{FinalToolResult: &planner.FinalToolResult{Result: value}}, err
+							return &planner.PlanResult{FinalToolResult: &planner.FinalToolResult{Result: value, Blocks: richToolContentForTest()}}, err
 						},
 					},
 				}))
@@ -135,6 +135,7 @@ func TestMaterializedHistoryAcrossSuspendedChildAndPreparedStart(t *testing.T) {
 			require.NoError(t, err)
 			require.Equal(t, "Accepted accepted-selection", event.ResultPreview)
 			require.Equal(t, rawjson.Message(resultJSON), event.ResultJSON)
+			require.Equal(t, richToolContentForTest(), event.Blocks)
 			firstBytes := append(rawjson.Message(nil), first.Suspension.Checkpoint...)
 
 			// Prepare while old code still owns the contract, then submit its
@@ -173,6 +174,9 @@ func TestMaterializedHistoryAcrossSuspendedChildAndPreparedStart(t *testing.T) {
 			require.Zero(t, currentDecodes.Load())
 			in := <-resumed
 			require.Len(t, in.ToolOutputs, 2)
+			for _, output := range in.ToolOutputs {
+				require.Equal(t, richToolContentForTest(), output.Blocks)
+			}
 			require.Equal(t, accepted.Call.ToolCallID, in.ToolOutputs[0].ToolCallID)
 			require.Equal(t, rawjson.Message(payload), in.ToolOutputs[0].Payload)
 			require.Equal(t, rawjson.Message(resultJSON), in.ToolOutputs[0].Result)
@@ -183,6 +187,7 @@ func TestMaterializedHistoryAcrossSuspendedChildAndPreparedStart(t *testing.T) {
 				for _, part := range message.Parts {
 					if result, ok := part.(model.ToolResultPart); ok {
 						resultIDs = append(resultIDs, result.ToolUseID)
+						require.Equal(t, richToolContentForTest(), result.Blocks)
 						if result.ToolUseID == transcriptToolCallID(accepted.Call) {
 							require.Equal(t, expectedContent, result.Content)
 						}
@@ -211,6 +216,7 @@ func TestMaterializedHistoryAcrossSuspendedChildAndPreparedStart(t *testing.T) {
 						acceptedEvents++
 						require.Equal(t, rawjson.Message(resultJSON), result.ResultJSON)
 						require.Equal(t, event.ResultPreview, result.ResultPreview)
+						require.Equal(t, richToolContentForTest(), result.Blocks)
 					}
 				}
 			}

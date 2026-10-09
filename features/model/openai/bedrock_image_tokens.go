@@ -19,30 +19,38 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 )
 
-// bedrockImageTokens replaces image URLs only in the freshly prepared counting
-// request and returns their separate token cost. The message encoder puts every
-// canonical user image in an OfMessage content list with a base64 data URL.
+// bedrockImageTokens counts images in user messages and correlated function
+// outputs. It changes only the fresh counting request; inference keeps every
+// original image byte and remains subject to provider validation.
 func bedrockImageTokens(prepared *preparedRequest) (int, error) {
-	tokens := 0
+	var images []*param.Opt[string]
 	for _, item := range prepared.request.Input.OfInputItemList {
-		if item.OfMessage == nil {
-			continue
+		if item.OfMessage != nil {
+			for _, content := range item.OfMessage.Content.OfInputItemContentList {
+				if content.OfInputImage != nil {
+					images = append(images, &content.OfInputImage.ImageURL)
+				}
+			}
 		}
-		for _, content := range item.OfMessage.Content.OfInputItemContentList {
-			img := content.OfInputImage
-			if img == nil {
-				continue
+		if item.OfFunctionCallOutput != nil {
+			for _, content := range item.OfFunctionCallOutput.Output.OfResponseFunctionCallOutputItemArray {
+				if content.OfInputImage != nil {
+					images = append(images, &content.OfInputImage.ImageURL)
+				}
 			}
-			count, err := bedrockImageTokenCount(prepared.resolvedModelID, img.ImageURL.Value)
-			if err != nil {
-				return 0, err
-			}
-			if count > math.MaxInt-tokens {
-				return 0, fmt.Errorf("openai: image token estimate exceeds supported integer range")
-			}
-			tokens += count
-			img.ImageURL = param.NewOpt("")
 		}
+	}
+	tokens := 0
+	for _, address := range images {
+		count, err := bedrockImageTokenCount(prepared.resolvedModelID, address.Value)
+		if err != nil {
+			return 0, err
+		}
+		if count > math.MaxInt-tokens {
+			return 0, fmt.Errorf("openai: image token estimate exceeds supported integer range")
+		}
+		tokens += count
+		*address = param.NewOpt("")
 	}
 	return tokens, nil
 }

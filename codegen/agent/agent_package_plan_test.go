@@ -91,8 +91,7 @@ func TestAgentPackagePlanCoversEveryRenderedDeclaration(t *testing.T) {
 
 	require.Equal(t, plannedAgentPackageNames(planned.byAgent[agent.ID]), packageNames)
 	require.Equal(t, map[string]struct{}{
-		"Validate":      {},
-		"WithMCPCaller": {},
+		"Validate": {},
 	}, receiverMethods)
 	for method := range receiverMethods {
 		_, collides := configFields[method]
@@ -271,9 +270,6 @@ func plannedAgentPackageNames(planned *agentPackagePlan) map[string]struct{} {
 		planned.register,
 		planned.usedOptions,
 	} {
-		add(declaration)
-	}
-	for _, declaration := range planned.mcp {
 		add(declaration)
 	}
 	for _, toolset := range planned.used {

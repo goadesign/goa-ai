@@ -10,9 +10,12 @@ import (
 	"path"
 	"slices"
 
+	jsoncodec "goa.design/goa-ai/codegen/internal/codec"
+	"goa.design/goa-ai/codegen/internal/mcpcontract"
 	"goa.design/goa-ai/codegen/ir"
 	"goa.design/goa-ai/expr/agent"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
+	"goa.design/goa-ai/internal/mcpinput"
 	goacodegen "goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/codegen/service"
 	goaexpr "goa.design/goa/v3/expr"
@@ -33,36 +36,41 @@ type (
 	// toolSpecsPackagePlan stores the public specs package and the HTTP helper
 	// package written for one toolset.
 	toolSpecsPackagePlan struct {
-		generation             *goacodegen.Generation
-		definition             *ir.Toolset
-		genpkg                 string
-		public                 *goacodegen.GeneratedPackage
-		transport              *goacodegen.GeneratedPackage
-		types                  map[specTypeKey]*plannedSpecType
-		publicTypes            map[localizedTypeKey]*goacodegen.TypeDeclaration
-		transportTypes         map[localizedTypeKey]*goacodegen.TypeDeclaration
-		publicTypeUses         map[goaexpr.UserType]*goacodegen.NameDeclaration
-		transportTypeUses      map[goaexpr.UserType]*goacodegen.NameDeclaration
-		transportValidators    map[*goacodegen.TypeDeclaration]*goacodegen.NameDeclaration
-		publicFixed            map[string]*goacodegen.NameDeclaration
-		transportFixed         map[string]*goacodegen.NameDeclaration
-		publicUnionErrors      map[goacodegen.UnionDeclarationID]*goacodegen.NameDeclaration
-		transportUnionErrors   map[goacodegen.UnionDeclarationID]*goacodegen.NameDeclaration
-		jsonValidatorGraphs    []*plannedJSONValidatorGraph
-		jsonDocumentValidators []*plannedJSONValidatorGraph
-		jsonValidators         []*plannedJSONValidator
-		tools                  map[string]*plannedToolNames
-		completionNames        map[string]*plannedCompletionNames
-		transformPlans         []*plannedPackageTransform
-		adapterTransformPlans  []*plannedPackageTransform
-		specs                  *toolSpecsData
-		completion             *completionSpecsData
-		fileImports            *toolSpecsFileImports
-		providerImportPaths    []string
-		transformImportPaths   []string
-		serviceImportPath      string
-		registrationRoutes     []string
-		render                 *ToolsetData
+		generation                 *goacodegen.Generation
+		definition                 *ir.Toolset
+		genpkg                     string
+		public                     *goacodegen.GeneratedPackage
+		transport                  *goacodegen.GeneratedPackage
+		types                      map[specTypeKey]*plannedSpecType
+		publicTypes                map[localizedTypeKey]*goacodegen.TypeDeclaration
+		transportTypes             map[localizedTypeKey]*goacodegen.TypeDeclaration
+		publicTypeUses             map[goaexpr.UserType]*goacodegen.NameDeclaration
+		transportTypeUses          map[goaexpr.UserType]*goacodegen.NameDeclaration
+		transportValidators        map[*goacodegen.TypeDeclaration]*goacodegen.NameDeclaration
+		publicFixed                map[string]*goacodegen.NameDeclaration
+		transportFixed             map[string]*goacodegen.NameDeclaration
+		publicUnionDeclarations    map[goacodegen.UnionDeclarationID]*goacodegen.UnionDeclaration
+		transportUnionDeclarations map[goacodegen.UnionDeclarationID]*goacodegen.UnionDeclaration
+		jsonValidatorGraphs        []*plannedJSONValidatorGraph
+		jsonDocumentValidators     []*plannedJSONValidatorGraph
+		jsonValidators             []*plannedJSONValidator
+		tools                      map[string]*plannedToolNames
+		completionNames            map[string]*plannedCompletionNames
+		transformPlans             []*plannedPackageTransform
+		adapterTransformPlans      []*plannedPackageTransform
+		specs                      *toolSpecsData
+		completion                 *completionSpecsData
+		fileImports                *toolSpecsFileImports
+		providerImportPaths        []string
+		transformImportPaths       []string
+		serviceImportPath          string
+		registrationRoutes         []string
+		render                     *ToolsetData
+		inputCodecs                *jsoncodec.Plan
+		inputCodecPackage          *goacodegen.GeneratedPackage
+		inputMethods               map[*goaexpr.MethodExpr]*nativeInputPlan
+		taskMethods                map[*goaexpr.MethodExpr]*nativeTaskPlan
+		inputImportPaths           []string
 	}
 
 	// toolSpecsFileImports keeps the imports used by each generated file. Goa
@@ -129,15 +137,21 @@ type (
 		signedInteger   bool
 		unsignedInteger bool
 		integerBits     int
+		typeKey         string
+		valueKey        string
+		flatten         bool
+		untagged        bool
 		fields          []*plannedJSONValidatorField
+		branches        []*plannedJSONValidatorField
 		element         *plannedJSONValidatorCall
 	}
 
 	// plannedJSONValidatorField stores one accepted object field and the check
 	// applied to its value. A nil check accepts the value unchanged.
 	plannedJSONValidatorField struct {
-		name string
-		call *plannedJSONValidatorCall
+		name     string
+		jsonKind byte
+		call     *plannedJSONValidatorCall
 	}
 
 	// plannedJSONValidatorCall links a child value to its generated validator.
@@ -156,11 +170,13 @@ type (
 		declaration  *goacodegen.TypeDeclaration
 	}
 
-	// localizedTypeKey keeps the same named type separate when its native-image
-	// and ordinary JSON transport fields differ. Public types always use model.
+	// localizedTypeKey shares Goa result views by their media identifier, which
+	// includes the selected view. Other named types retain their source identity.
+	// Native-image and ordinary JSON transport definitions stay separate.
 	localizedTypeKey struct {
-		source       goaexpr.UserType
-		jsonContract specJSONContract
+		resultIdentifier string
+		source           goaexpr.UserType
+		jsonContract     specJSONContract
 	}
 
 	// localizedSpecTypeShapes stores the public and JSON-decoding shapes used by
@@ -224,13 +240,6 @@ type (
 		packagePath string
 		key         string
 		location    goacodegen.TransformHelperDefinitionLocation
-	}
-
-	// unionErrorNameOrder stores the package and exact union name that own one
-	// function for reporting an unknown OneOf branch.
-	unionErrorNameOrder struct {
-		packagePath string
-		unionName   string
 	}
 
 	// localizedTypeNameOrder stores the stable Goa type details used to order
@@ -486,8 +495,15 @@ func expandToolExpressions(mcpRoot *mcpexpr.RootExpr, name string, expr *agent.T
 			Description: tool.Description,
 		}
 		if tool.Method != nil {
-			planned.Args = tool.Method.Payload
-			planned.Return = tool.Method.Result
+			var err error
+			planned.Args, err = mcpinput.Arguments(tool.Method)
+			if err != nil {
+				return nil, err
+			}
+			planned.Return, err = mcpcontract.ToolResult(tool)
+			if err != nil {
+				return nil, err
+			}
 		}
 		tools = append(tools, planned)
 	}

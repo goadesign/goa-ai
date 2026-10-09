@@ -10,8 +10,6 @@ type (
 	agentRegistryFileData struct {
 		*AgentData
 		*agentRegistryImports
-		// MCPToolsets contains remote toolsets registered during agent startup.
-		MCPToolsets []*ToolsetData
 		// DirectToolsets contains toolsets supplied by application executors.
 		DirectToolsets []*ToolsetData
 		// PlanActivity contains the planning activity and its chosen import names.
@@ -33,8 +31,7 @@ type (
 	}
 )
 
-// newAgentRegistryFileData separates remote MCP registrations from direct
-// application executors before the registry template is rendered.
+// newAgentRegistryFileData collects application-owned executors before the registry template is rendered.
 func newAgentRegistryFileData(agent *AgentData) *agentRegistryFileData {
 	data := &agentRegistryFileData{AgentData: agent}
 	if agent.packageFiles != nil {
@@ -43,13 +40,8 @@ func newAgentRegistryFileData(agent *AgentData) *agentRegistryFileData {
 		data.ResumeActivity = newRegistryActivityData(agent.Runtime.ResumeActivity, data.agentRegistryImports)
 		data.ExecuteToolActivity = newRegistryActivityData(agent.Runtime.ExecuteTool, data.agentRegistryImports)
 	}
-	for _, toolset := range agent.AllToolsets {
-		if toolset.MCP != nil {
-			data.MCPToolsets = append(data.MCPToolsets, toolset)
-		}
-	}
 	for _, toolset := range agent.UsedToolsets {
-		if toolset.MCP == nil && toolset.AgentToolsImportPath == "" && !toolset.IsRegistryBacked {
+		if toolset.AgentToolsImportPath == "" && !toolset.IsRegistryBacked {
 			data.DirectToolsets = append(data.DirectToolsets, toolset)
 		}
 	}

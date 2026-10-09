@@ -75,7 +75,7 @@ func assertNativeImagePreparedContinuation(t *testing.T, ctx context.Context, me
 	first, err := handle.Wait(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, first.Suspension)
-	assert.Equal(t, "goa-ai.run-suspension.v9", first.Suspension.Version)
+	assert.Equal(t, api.RunSuspensionVersion, first.Suspension.Version)
 	assert.NotContains(t, string(first.Suspension.Checkpoint), `"BaseMessages"`)
 	assert.NotContains(t, string(first.Suspension.Checkpoint), `"image_source"`)
 	assert.Contains(t, string(first.Suspension.Checkpoint), `"HistoryEndID"`)

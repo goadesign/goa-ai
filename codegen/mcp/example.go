@@ -3,6 +3,7 @@ package codegen
 
 import (
 	"fmt"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -18,25 +19,31 @@ type (
 	mcpExamplePlugin struct {
 		mcpRoot     *mcpexpr.RootExpr
 		exampleRoot *expr.RootExpr
+		prepared    []*preparedMCPService
 	}
 
 	// exampleMCPService stores the generated names needed to replace one example stub.
 	exampleMCPService struct {
-		service             *expr.ServiceExpr
-		stubPath            string
-		mcpPackagePath      string
-		mcpConstructorName  string
-		userConstructorName string
-		mcpServiceInterface string
+		service                     *expr.ServiceExpr
+		stubPath                    string
+		mcpPackagePath              string
+		mcpConstructorName          string
+		userConstructorName         string
+		mcpServiceInterface         string
+		userImport                  *codegen.ImportSpec
+		userEndpointsConstructor    string
+		userInterceptorsConstructor string
+		userInterceptorsImport      *codegen.ImportSpec
 	}
 )
 
-// newMCPExamplePlugin returns a plugin whose Prepare and Generate methods share
+// newMCPExamplePlugin returns a plugin whose Prepare, Plan and Generate methods share
 // a new mcpExamplePlugin for one command.
 func newMCPExamplePlugin() goagenerator.Plugin {
 	plugin := new(mcpExamplePlugin)
 	return goagenerator.Plugin{
 		Prepare:  plugin.prepare,
+		Plan:     plugin.plan,
 		Generate: plugin.generate,
 	}
 }
@@ -49,8 +56,19 @@ func (p *mcpExamplePlugin) prepare(_ string, roots []eval.Root) error {
 	}
 	p.mcpRoot = mcpRoot
 	p.exampleRoot, _ = firstRootWithJSONRPC(roots)
-	_, err = prepareMCPServicesFromRoot(roots, mcpRoot)
+	p.prepared, err = prepareMCPServicesFromRoot(roots, mcpRoot)
 	return err
+}
+
+// plan submits the same resource dependency as normal server generation. Goa's
+// native example generator then creates its factory and passes it to the server.
+func (p *mcpExamplePlugin) plan(plan *goagenerator.Plan) error {
+	for _, prepared := range p.prepared {
+		if err := planResourceAuthorization(plan, prepared); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // generate makes the example server return the MCP service backed by the user
@@ -78,46 +96,7 @@ func (p *mcpExamplePlugin) generate(
 	if err != nil {
 		return nil, err
 	}
-	return removeMCPClientCommands(p.exampleRoot, mcpServices, files), nil
-}
-
-// removeMCPClientCommands removes command-line clients for servers that expose
-// MCP. One command invocation cannot initialize a session and then perform a
-// separate MCP operation, so advertising those commands would be misleading.
-func removeMCPClientCommands(
-	root *expr.RootExpr,
-	services []exampleMCPService,
-	files []*codegen.File,
-) []*codegen.File {
-	mcpNames := make(map[string]struct{}, len(services))
-	for _, service := range services {
-		mcpNames["mcp_"+service.service.Name] = struct{}{}
-	}
-	servers := make(map[string]struct{})
-	for _, server := range root.API.Servers {
-		for _, service := range server.Services {
-			if _, ok := mcpNames[service]; ok {
-				servers[codegen.SnakeCase(codegen.Goify(server.Name, true))] = struct{}{}
-				break
-			}
-		}
-	}
-	kept := files[:0]
-	for _, file := range files {
-		path := filepath.ToSlash(file.Path)
-		remove := false
-		for server := range servers {
-			if strings.HasPrefix(path, "cmd/"+server+"-cli/") ||
-				strings.HasPrefix(path, "gen/jsonrpc/cli/"+server+"/") {
-				remove = true
-				break
-			}
-		}
-		if !remove {
-			kept = append(kept, file)
-		}
-	}
-	return kept
+	return files, nil
 }
 
 // bindExampleMCPServices copies the final constructor, interface, package, and
@@ -143,6 +122,21 @@ func bindExampleMCPServices(
 		service.mcpConstructorName = mcp.ExampleConstructorDeclaration.Name()
 		service.userConstructorName = user.ExampleConstructorDeclaration.Name()
 		service.mcpServiceInterface = mcp.ServiceDeclaration.Name()
+		service.userImport = codegen.NewImport("gen"+user.PkgName, path.Join(planned.GenPkg(), user.PathName))
+		service.userEndpointsConstructor = user.NewEndpointsDeclaration.Name()
+		if len(user.ServerInterceptors) > 0 {
+			service.userInterceptorsConstructor = user.ExampleServerInterceptorsConstructorDeclaration.Name()
+			interceptorsPath := path.Join(path.Dir(planned.GenPkg()), "interceptors")
+			for _, spec := range plan.Service(root).ExampleImports() {
+				if spec.Path == interceptorsPath {
+					service.userInterceptorsImport = spec
+					break
+				}
+			}
+			if service.userInterceptorsImport == nil {
+				return fmt.Errorf("goa did not plan example interceptor import for service %q", service.service.Name)
+			}
+		}
 	}
 	return nil
 }
@@ -195,7 +189,7 @@ func generateExampleAdapterStubs(
 		if f == nil {
 			return nil, fmt.Errorf("expected MCP example stub %q for service %q", stubPath, svc.Name)
 		}
-		header := findSection(f, headerSection)
+		header := findHeaderSection(f)
 		if header == nil {
 			return nil, fmt.Errorf("example stub %q for service %q is missing %q", f.Path, svc.Name, headerSection)
 		}
@@ -203,11 +197,21 @@ func generateExampleAdapterStubs(
 		if err != nil {
 			return nil, err
 		}
+		codegen.AddImport(header, mcpService.userImport)
+		interceptorsAlias := ""
+		if mcpService.userInterceptorsImport != nil {
+			codegen.AddImport(header, mcpService.userInterceptorsImport)
+			interceptorsAlias = mcpService.userInterceptorsImport.Name
+		}
 		body := mcpTemplates.MustRender("example_mcp_stub", map[string]any{
-			"MCPConstructorName":  mcpService.mcpConstructorName,
-			"UserConstructorName": mcpService.userConstructorName,
-			"MCPServiceInterface": mcpService.mcpServiceInterface,
-			"MCPAlias":            mcpAlias,
+			"MCPConstructorName":          mcpService.mcpConstructorName,
+			"UserConstructorName":         mcpService.userConstructorName,
+			"MCPServiceInterface":         mcpService.mcpServiceInterface,
+			"MCPAlias":                    mcpAlias,
+			"UserAlias":                   mcpService.userImport.Name,
+			"UserEndpointsConstructor":    mcpService.userEndpointsConstructor,
+			"UserInterceptorsConstructor": mcpService.userInterceptorsConstructor,
+			"UserInterceptorsAlias":       interceptorsAlias,
 		})
 		// Replace file content except header with our body
 		f.SectionTemplates = []*codegen.SectionTemplate{header, {Name: exampleMCPStubSection, Source: body}}
@@ -263,10 +267,11 @@ func exampleStubImportAlias(header *codegen.SectionTemplate, service exampleMCPS
 	)
 }
 
-// findSection returns the first section with the given name in file f.
-func findSection(f *codegen.File, name string) *codegen.SectionTemplate {
+// findHeaderSection returns the generated file header so callers can add imports
+// without changing the declarations emitted by Goa.
+func findHeaderSection(f *codegen.File) *codegen.SectionTemplate {
 	for _, s := range f.SectionTemplates {
-		if s.Name == name {
+		if s.Name == headerSection {
 			return s
 		}
 	}

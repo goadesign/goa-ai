@@ -273,7 +273,7 @@ func TestTemporalServerClosedContinuationSelectsOriginalStart(t *testing.T) {
 	output, err := first.Wait(ctx)
 	require.NoError(t, err)
 	require.NotNil(t, output.Suspension)
-	assert.Equal(t, "goa-ai.run-suspension.v9", output.Suspension.Version)
+	assert.Equal(t, api.RunSuspensionVersion, output.Suspension.Version)
 	response := &api.PendingInputResponse{Clarification: &api.ClarificationAnswer{
 		ID: "question", Answer: "exact accepted answer",
 	}}

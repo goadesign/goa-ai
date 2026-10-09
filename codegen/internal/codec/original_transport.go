@@ -46,6 +46,14 @@ func (p *Plan) addOriginal(key, preferredName string, attribute *expr.AttributeE
 		plan: p, key: key, preferredName: preferredName, direction: EncodeAndDecode,
 		service: attribute, transport: transport, originalLayout: layout,
 	}
+	added := integerTransportFields(transport, key, preferredName)
+	if err := value.declareTypes(added); err != nil {
+		return nil, err
+	}
+	for _, planned := range value.types {
+		p.originals.typesByLocal[planned.userType] = planned
+	}
+	value.types = nil
 	seenTypes := make(map[*plannedType]bool)
 	seenUnions := make(map[*plannedUnion]bool)
 	if err := walkAttribute(transport, make(map[expr.UserType]struct{}), func(current *expr.AttributeExpr) error {
@@ -71,6 +79,9 @@ func (p *Plan) addOriginal(key, preferredName string, attribute *expr.AttributeE
 		return nil, err
 	}
 	if err := p.requireValueImports(EncodeAndDecode, layout); err != nil {
+		return nil, err
+	}
+	if err := value.planIntegerJSON(); err != nil {
 		return nil, err
 	}
 	if err := value.planTypes(); err != nil {
@@ -120,7 +131,7 @@ func (p *Plan) copyOriginalTransport(attribute *expr.AttributeExpr, layout *code
 		}
 		planned := &plannedType{
 			userType: local, declaration: name, validatorDeclaration: validator,
-			alias: expr.IsUnion(actual),
+			alias: expr.IsUnion(actual) || isRawJSON(actual.Attribute()),
 		}
 		p.originals.types[source] = planned
 		p.originals.typesByLocal[local] = planned
@@ -143,8 +154,11 @@ func (p *Plan) copyOriginalTransport(attribute *expr.AttributeExpr, layout *code
 			if child.Meta == nil {
 				child.Meta = make(expr.MetaExpr)
 			}
-			delete(child.Meta, "struct:tag:json")
-			child.Meta["struct:tag:json:name"] = []string{field.Name}
+			if _, full := child.Meta["struct:tag:json"]; !full {
+				if _, named := child.Meta["struct:tag:json:name"]; !named {
+					child.Meta["struct:tag:json:name"] = []string{field.Name}
+				}
+			}
 			fields = append(fields, &expr.NamedAttributeExpr{Name: field.Name, Attribute: child})
 		}
 		copied.Type = &fields

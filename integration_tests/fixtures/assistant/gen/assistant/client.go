@@ -15,27 +15,45 @@ import (
 
 // Client is the "assistant" service client.
 type Client struct {
-	ListDocumentsEndpoint    goa.Endpoint
-	SystemInfoEndpoint       goa.Endpoint
-	AnalyzeSentimentEndpoint goa.Endpoint
-	ExtractKeywordsEndpoint  goa.Endpoint
-	SummarizeTextEndpoint    goa.Endpoint
-	SearchEndpoint           goa.Endpoint
-	ExecuteCodeEndpoint      goa.Endpoint
-	ProcessBatchEndpoint     goa.Endpoint
+	ListDocumentsEndpoint       goa.Endpoint
+	SystemInfoEndpoint          goa.Endpoint
+	BinaryResourceEndpoint      goa.Endpoint
+	EmptyBinaryResourceEndpoint goa.Endpoint
+	SimplePromptEndpoint        goa.Endpoint
+	ArgumentPromptEndpoint      goa.Endpoint
+	ResourcePromptEndpoint      goa.Endpoint
+	ImagePromptEndpoint         goa.Endpoint
+	SuggestArgumentEndpoint     goa.Endpoint
+	ReadResourceEndpoint        goa.Endpoint
+	ReportWorkEndpoint          goa.Endpoint
+	AnalyzeSentimentEndpoint    goa.Endpoint
+	ExtractKeywordsEndpoint     goa.Endpoint
+	SummarizeTextEndpoint       goa.Endpoint
+	SearchEndpoint              goa.Endpoint
+	ExecuteCodeEndpoint         goa.Endpoint
+	ProcessBatchEndpoint        goa.Endpoint
 }
 
 // NewClient initializes a "assistant" service client given the endpoints.
-func NewClient(listDocuments, systemInfo, analyzeSentiment, extractKeywords, summarizeText, search, executeCode, processBatch goa.Endpoint) *Client {
+func NewClient(listDocuments, systemInfo, binaryResource, emptyBinaryResource, simplePrompt, argumentPrompt, resourcePrompt, imagePrompt, suggestArgument, readResource, reportWork, analyzeSentiment, extractKeywords, summarizeText, search, executeCode, processBatch goa.Endpoint) *Client {
 	return &Client{
-		ListDocumentsEndpoint:    listDocuments,
-		SystemInfoEndpoint:       systemInfo,
-		AnalyzeSentimentEndpoint: analyzeSentiment,
-		ExtractKeywordsEndpoint:  extractKeywords,
-		SummarizeTextEndpoint:    summarizeText,
-		SearchEndpoint:           search,
-		ExecuteCodeEndpoint:      executeCode,
-		ProcessBatchEndpoint:     processBatch,
+		ListDocumentsEndpoint:       listDocuments,
+		SystemInfoEndpoint:          systemInfo,
+		BinaryResourceEndpoint:      binaryResource,
+		EmptyBinaryResourceEndpoint: emptyBinaryResource,
+		SimplePromptEndpoint:        simplePrompt,
+		ArgumentPromptEndpoint:      argumentPrompt,
+		ResourcePromptEndpoint:      resourcePrompt,
+		ImagePromptEndpoint:         imagePrompt,
+		SuggestArgumentEndpoint:     suggestArgument,
+		ReadResourceEndpoint:        readResource,
+		ReportWorkEndpoint:          reportWork,
+		AnalyzeSentimentEndpoint:    analyzeSentiment,
+		ExtractKeywordsEndpoint:     extractKeywords,
+		SummarizeTextEndpoint:       summarizeText,
+		SearchEndpoint:              search,
+		ExecuteCodeEndpoint:         executeCode,
+		ProcessBatchEndpoint:        processBatch,
 	}
 }
 
@@ -57,6 +75,101 @@ func (c *Client) SystemInfo(ctx context.Context) (res *SystemInfoResult, err err
 		return
 	}
 	return ires.(*SystemInfoResult), nil
+}
+
+// BinaryResource calls the "binary_resource" endpoint of the "assistant"
+// service.
+func (c *Client) BinaryResource(ctx context.Context) (res Image, err error) {
+	var ires any
+	ires, err = c.BinaryResourceEndpoint(ctx, nil)
+	if err != nil {
+		return
+	}
+	return ires.(Image), nil
+}
+
+// EmptyBinaryResource calls the "empty_binary_resource" endpoint of the
+// "assistant" service.
+func (c *Client) EmptyBinaryResource(ctx context.Context) (res []byte, err error) {
+	var ires any
+	ires, err = c.EmptyBinaryResourceEndpoint(ctx, nil)
+	if err != nil {
+		return
+	}
+	return ires.([]byte), nil
+}
+
+// SimplePrompt calls the "simple_prompt" endpoint of the "assistant" service.
+func (c *Client) SimplePrompt(ctx context.Context) (res *RefereePromptResult, err error) {
+	var ires any
+	ires, err = c.SimplePromptEndpoint(ctx, nil)
+	if err != nil {
+		return
+	}
+	return ires.(*RefereePromptResult), nil
+}
+
+// ArgumentPrompt calls the "argument_prompt" endpoint of the "assistant"
+// service.
+func (c *Client) ArgumentPrompt(ctx context.Context, p *ArgumentPromptPayload) (res *RefereePromptResult, err error) {
+	var ires any
+	ires, err = c.ArgumentPromptEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*RefereePromptResult), nil
+}
+
+// ResourcePrompt calls the "resource_prompt" endpoint of the "assistant"
+// service.
+func (c *Client) ResourcePrompt(ctx context.Context, p *ResourcePromptPayload) (res *RefereePromptResult, err error) {
+	var ires any
+	ires, err = c.ResourcePromptEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*RefereePromptResult), nil
+}
+
+// ImagePrompt calls the "image_prompt" endpoint of the "assistant" service.
+func (c *Client) ImagePrompt(ctx context.Context) (res *RefereePromptResult, err error) {
+	var ires any
+	ires, err = c.ImagePromptEndpoint(ctx, nil)
+	if err != nil {
+		return
+	}
+	return ires.(*RefereePromptResult), nil
+}
+
+// SuggestArgument calls the "suggest_argument" endpoint of the "assistant"
+// service.
+func (c *Client) SuggestArgument(ctx context.Context, p *SuggestArgumentPayload) (res *SuggestArgumentResult, err error) {
+	var ires any
+	ires, err = c.SuggestArgumentEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*SuggestArgumentResult), nil
+}
+
+// ReadResource calls the "read_resource" endpoint of the "assistant" service.
+func (c *Client) ReadResource(ctx context.Context, p *ReadResourcePayload) (res *ReadResourceResult, err error) {
+	var ires any
+	ires, err = c.ReadResourceEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*ReadResourceResult), nil
+}
+
+// ReportWork calls the "report_work" endpoint of the "assistant" service.
+func (c *Client) ReportWork(ctx context.Context) (res string, err error) {
+	var ires any
+	ires, err = c.ReportWorkEndpoint(ctx, nil)
+	if err != nil {
+		return
+	}
+	return ires.(string), nil
 }
 
 // AnalyzeSentiment calls the "analyze_sentiment" endpoint of the "assistant"

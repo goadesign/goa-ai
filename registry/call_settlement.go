@@ -42,7 +42,7 @@ func newCallSettlementTracker(
 	if logger == nil {
 		logger = telemetry.NewNoopLogger()
 	}
-	trackerCtx, cancel := context.WithCancel(ctx) //nolint:gosec // Close stores and invokes cancel.
+	trackerCtx, cancel := context.WithCancel(ctx)
 	tracker := &callSettlementTracker{
 		store:  store,
 		logger: logger,

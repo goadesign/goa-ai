@@ -5,8 +5,12 @@ package jsonshape
 
 import (
 	"fmt"
+	"reflect"
 	"slices"
 	"sort"
+	"strings"
+
+	"goa.design/goa/v3/codegen"
 
 	"goa.design/goa/v3/expr"
 )
@@ -30,7 +34,7 @@ type (
 		Element *Node
 		// ElementDescription retains a map element occurrence's description.
 		ElementDescription string
-		// Union is the authored discriminator/value contract.
+		// Union records the authored branch selection and JSON mapping.
 		Union *expr.Union
 		// Branches are the union alternatives in declaration order.
 		Branches []*Field
@@ -60,6 +64,24 @@ func Build(attribute *expr.AttributeExpr) (*Node, error) {
 		unions: make(map[*expr.Union]*Node),
 	}
 	return b.build(attribute)
+}
+
+// FieldName reads Goa's JSON tag for one authored field and returns its wire
+// name. A hidden field has no JSON member, and an untagged field keeps its
+// design name. Goa decides which tag wins when both tag forms are present.
+func FieldName(field *expr.NamedAttributeExpr) (string, bool) {
+	tags := strings.Trim(codegen.AttributeTagsWithName(nil, "", field.Attribute), " `")
+	tag, present := reflect.StructTag(tags).Lookup("json")
+	if present {
+		name, _, _ := strings.Cut(tag, ",")
+		if name == "-" {
+			return "", false
+		}
+		if name != "" {
+			return name, true
+		}
+	}
+	return field.Name, true
 }
 
 // build preserves named identity and union sharing before following children.
@@ -108,14 +130,23 @@ func (b *builder) populate(node *Node, attribute *expr.AttributeExpr) error {
 		return b.populate(node, actual.Attribute())
 	case *expr.Object:
 		node.Kind = "object"
+		wireNames := make(map[string]string, len(*actual))
 		fields := slices.Clone(*actual)
 		sort.Slice(fields, func(i, j int) bool { return fields[i].Name < fields[j].Name })
 		for _, field := range fields {
+			name, visible := FieldName(field)
+			if !visible {
+				continue
+			}
+			if previous, duplicate := wireNames[name]; duplicate {
+				return fmt.Errorf("JSON fields %q and %q share the wire name %q", previous, field.Name, name)
+			}
+			wireNames[name] = field.Name
 			child, err := b.build(field.Attribute)
 			if err != nil {
 				return err
 			}
-			node.Fields = append(node.Fields, &Field{Name: field.Name, Description: field.Attribute.Description, Node: child})
+			node.Fields = append(node.Fields, &Field{Name: name, Description: field.Attribute.Description, Node: child})
 		}
 	case *expr.Array:
 		node.Kind = "array"
@@ -168,6 +199,9 @@ func Category(dt expr.DataType) string {
 	case expr.UserType:
 		return Category(actual.Attribute().Type)
 	case *expr.Object, *expr.Map, *expr.Union:
+		if union, ok := actual.(*expr.Union); ok && union.Untagged {
+			return ""
+		}
 		return "object"
 	case *expr.Array:
 		return "array"

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"reflect"
+	"strings"
 
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa/v3/codegen"
@@ -149,10 +150,17 @@ func registryTypeMetadata(data *typeData) *genregistry.ToolTypeMetadata {
 			record.DiscriminatorValues = field.DiscriminatorValues
 		}
 		for _, branch := range field.Branches {
-			record.Branches = append(record.Branches, &genregistry.ToolUnionBranch{
-				Discriminator: registryFieldPath(branch.Discriminator),
-				Value:         branch.Value,
-			})
+			var selection genregistry.ToolUnionSelection
+			if branch.JSONKind != "" {
+				selection = genregistry.NewToolUnionSelectionUntagged(&genregistry.ToolUntaggedUnionBranch{
+					Path: registryFieldPath(branch.Path), JSONKind: branch.JSONKind, Index: branch.Index,
+				})
+			} else {
+				selection = genregistry.NewToolUnionSelectionTagged(&genregistry.ToolTaggedUnionBranch{
+					Discriminator: registryFieldPath(branch.Discriminator), Value: branch.Value,
+				})
+			}
+			record.Branches = append(record.Branches, &genregistry.ToolUnionBranch{Selection: selection})
 		}
 		result.Fields = append(result.Fields, record)
 	}
@@ -247,6 +255,7 @@ func ToolSchemas() []*genregistry.ToolSchema {
 			Source: agentsTemplates.Read(toolRegistrySchemasFileT),
 			Data:   function,
 			FuncMap: map[string]any{
+				"unionBranch": registryUnionBranchLiteral,
 				"pointer": func(value *string) (string, error) {
 					name, ok := function.references[value]
 					if !ok {
@@ -330,4 +339,41 @@ func registryFieldSegmentLiteral(segment genregistry.ToolFieldSegment) (string, 
 		return "genregistry.NewToolFieldSegmentElement(&genregistry.ToolCollectionElement{})", nil
 	}
 	return "", fmt.Errorf("registry declaration has an invalid field path segment")
+}
+
+// registryUnionBranchLiteral writes the selected generated constructor and its
+// static path. An unselected declaration fails generation rather than leaving
+// provider startup to guess whether a discriminator or JSON kind selects it.
+func registryUnionBranchLiteral(selection genregistry.ToolUnionSelection) (string, error) {
+	if tagged, ok := selection.AsTagged(); ok {
+		path, err := registryFieldPathLiteral(tagged.Discriminator)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("genregistry.NewToolUnionSelectionTagged(&genregistry.ToolTaggedUnionBranch{Discriminator: %s, Value: %q})", path, tagged.Value), nil
+	}
+	if untagged, ok := selection.AsUntagged(); ok {
+		path, err := registryFieldPathLiteral(untagged.Path)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("genregistry.NewToolUnionSelectionUntagged(&genregistry.ToolUntaggedUnionBranch{Path: %s, JSONKind: %q, Index: %d})", path, untagged.JSONKind, untagged.Index), nil
+	}
+	return "", fmt.Errorf("registry declaration has an unselected union requirement")
+}
+
+// registryFieldPathLiteral writes each planned fixed or collection segment with
+// its generated constructor. Property names remain exact, including punctuation.
+func registryFieldPathLiteral(path []*genregistry.ToolFieldPathSegment) (string, error) {
+	var out strings.Builder
+	out.WriteString("[]*genregistry.ToolFieldPathSegment{")
+	for _, segment := range path {
+		literal, err := registryFieldSegmentLiteral(segment.Segment)
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintf(&out, "{Segment: %s},", literal)
+	}
+	out.WriteByte('}')
+	return out.String(), nil
 }

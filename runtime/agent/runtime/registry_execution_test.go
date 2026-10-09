@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/internal/registrycontract"
+	"goa.design/goa-ai/internal/tooloperation"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/hooks"
@@ -29,6 +30,8 @@ func TestRegistryActivityPreservesSelectedAdmission(t *testing.T) {
 	require.NoError(t, err)
 	binding, err := resolved.Select("company", "records.find")
 	require.NoError(t, err)
+	operation, err := tooloperation.NewTaskGet("")
+	require.NoError(t, err)
 	calls := 0
 	client := &genregistry.Client{CallResolvedToolEndpoint: func(_ context.Context, value any) (any, error) {
 		calls++
@@ -38,15 +41,28 @@ func TestRegistryActivityPreservesSelectedAdmission(t *testing.T) {
 		assert.Equal(t, "records.find", payload.Tool)
 		assert.JSONEq(t, `{"value":9007199254740993}`, string(payload.PayloadJSON))
 		assert.Equal(t, toolregistry.WireProtocolVersion, payload.WireProtocolVersion)
+		assert.Equal(t, "run-1", payload.Meta.RunID)
 		assert.Equal(t, "call-1", payload.Meta.ToolCallID)
+		assert.Equal(t, uint64(1), payload.Meta.ExecutionSequence)
+		require.NotNil(t, payload.Meta.ExecutionContinuation)
+		id, ok := payload.Meta.ExecutionContinuation.Operation.AsTaskGet()
+		require.True(t, ok)
+		assert.Empty(t, id)
 		return nil, genregistry.MakeCallNotAdmitted(errors.New("registration was replaced"))
 	}}
 	require.NoError(t, rt.RegisterRegistry("company", client, unusedRegistryPulse{}))
-	output, err := rt.ExecuteToolActivity(t.Context(), &ToolInput{
-		Registry: binding, AgentID: definition.route.ID, ToolName: "records.find",
+	wf := &routeWorkflowContext{ctx: t.Context(), toolRoutes: map[string]func(context.Context, *ToolInput) (*ToolOutput, error){
+		"execute": rt.ExecuteToolActivity,
+	}}
+	execution := &toolBatchExec{r: rt, activityName: "execute", runID: "run-2", agentID: definition.route.ID}
+	future, err := execution.scheduleToolActivity(wf, ToolCall{
+		Registry: binding, AgentID: definition.route.ID, Name: "records.find",
 		RunID: "run-1", SessionID: "session-1", ToolCallID: "call-1",
-		Payload: rawjson.Message(`{"value":9007199254740993}`),
+		Payload:           rawjson.Message(`{"value":9007199254740993}`),
+		ExecutionSequence: 1, ExecutionContinuation: operation,
 	})
+	require.NoError(t, err)
+	output, err := future.Get(t.Context())
 	require.NoError(t, err)
 	require.NotNil(t, output.Failure)
 	assert.Equal(t, planner.FailureUnavailable, output.Failure.Kind)
@@ -89,7 +105,7 @@ func TestRegistryResultRestoresWithoutCurrentCatalog(t *testing.T) {
 	scheduled := newToolCallScheduledEvent("run-1", "records.agent", "session-1", call, "", "", 0)
 	result := hooks.NewToolResultReceivedEvent(
 		"run-1", "records.agent", "session-1", "run-1", "records.find", "call-1", "",
-		rawjson.Message(`{"value":9007199254740993}`), nil, "", nil, 0, nil, nil,
+		rawjson.Message(`{"value":9007199254740993}`), nil, nil, "", nil, 0, nil, nil,
 	)
 	output, err := rt.plannerToolOutputFromCanonicalEvents("run-1", "run-1", "call-1",
 		&canonicalToolEvents{scheduled: scheduled}, &canonicalToolEvents{result: result})
@@ -113,7 +129,7 @@ func TestRegistryCorrectionUsesNewlyResolvedContract(t *testing.T) {
 		newToolCallScheduledEvent("run", definition.route.ID, "session", call, "", "", 0), "turn"))
 	require.NoError(t, rt.publishHookErr(t.Context(), hooks.NewToolResultReceivedEvent(
 		"run", definition.route.ID, "session", "run", call.Name, call.ToolCallID, "",
-		nil, nil, "", nil, 0, nil, testToolFailure(planner.FailureInvalidCall, planner.RecoveryCorrectCall, "choose another value"),
+		nil, nil, nil, "", nil, 0, nil, testToolFailure(planner.FailureInvalidCall, planner.RecoveryCorrectCall, "choose another value"),
 	), "turn"))
 
 	current := testRuntimeRegistryResolution("records.find", strings.Repeat("b", 64))

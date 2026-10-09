@@ -1,4 +1,4 @@
-// {{ .MCPConstructorName }} returns the MCP service backed by the user service.
+// {{ .MCPConstructorName }} returns the MCP service backed by configured Goa endpoints.
 func {{ .MCPConstructorName }}() {{ .MCPAlias }}.{{ .MCPServiceInterface }} {
-    return {{ .MCPAlias }}.NewMCPAdapter({{ .UserConstructorName }}(), nil)
+    return {{ .MCPAlias }}.NewMCPAdapter({{ .UserAlias }}.{{ .UserEndpointsConstructor }}({{ .UserConstructorName }}(){{ if .UserInterceptorsConstructor }}, {{ .UserInterceptorsAlias }}.{{ .UserInterceptorsConstructor }}(){{ end }}), nil)
 }

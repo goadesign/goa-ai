@@ -9,8 +9,10 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 
+	"goa.design/goa-ai/internal/mcpinput"
 	"goa.design/goa/v3/eval"
 	"goa.design/goa/v3/expr"
 )
@@ -27,18 +29,42 @@ type (
 		// Description provides a human-readable explanation of the
 		// server's purpose.
 		Description string
-		// ProtocolVersion is the MCP protocol version this server
-		// implements.
-		ProtocolVersion string
+		// Requirements declares bearer access and basic scopes for the MCP resource.
+		Requirements []*expr.SecurityExpr
 		// Tools is the collection of tool expressions exposed by this
 		// server.
 		Tools []*ToolExpr
 		// Resources is the collection of resource expressions exposed
 		// by this server.
 		Resources []*ResourceExpr
-		// Prompts is the collection of static prompt expressions
-		// exposed by this server.
+		// ResourceTemplates advertises parameterized addresses owned by one URI reader.
+		ResourceTemplates []*ResourceTemplateExpr
+		// ResourceReader owns exact URI reads independently of catalog entries.
+		ResourceReader *expr.MethodExpr
+		// Prompts contains fixed message sequences declared at service level.
 		Prompts []*PromptExpr
+		// MethodPrompts contains prompt operations implemented by service methods.
+		MethodPrompts []*MethodPromptExpr
+		// PromptCompletions binds known prompt arguments to suggestion methods.
+		PromptCompletions []*PromptCompletionExpr
+		// ResourceCompletions binds template variables to suggestion methods.
+		ResourceCompletions []*ResourceCompletionExpr
+		// ToolCatalog selects the configured method returning visible declared tool names.
+		ToolCatalog *expr.MethodExpr
+		// PromptCatalog selects the configured method returning visible declared prompt names.
+		PromptCatalog *expr.MethodExpr
+		// ResourceCatalog owns pages of runtime resource descriptors.
+		ResourceCatalog *expr.MethodExpr
+		// ResourceTemplateCatalog owns pages of runtime URI template descriptors.
+		ResourceTemplateCatalog *expr.MethodExpr
+		// SkillCatalog owns pages of complete skill manifests without loading files.
+		SkillCatalog *expr.MethodExpr
+		// SkillLookup owns direct skill lookup independently of catalog visibility.
+		SkillLookup *expr.MethodExpr
+		// ResourceDirectory owns direct children of a directory resource.
+		ResourceDirectory *expr.MethodExpr
+		// SubscriptionSource selects the owned resource and job change stream.
+		SubscriptionSource *SubscriptionSourceExpr
 		// Service is the Goa service expression this MCP server is
 		// bound to.
 		Service *expr.ServiceExpr
@@ -55,6 +81,30 @@ type (
 		Description string
 		// Method is the Goa service method that implements this tool.
 		Method *expr.MethodExpr
+		// ContentField names the result array sent as MCP content instead of structured JSON.
+		ContentField string
+		// MetadataField names the typed result object sent only to MCP hosts as _meta.
+		MetadataField string
+		// Annotations describes the tool behavior declared by its service author.
+		Annotations *ToolAnnotationsExpr
+		// UIResourceURI identifies the existing HTML resource for an embedded app.
+		UIResourceURI string
+		// Visibility selects callers allowed to use the tool; zero permits both.
+		Visibility ToolVisibility
+	}
+
+	// ToolAnnotationsExpr records optional MCP tool behavior hints at design time.
+	ToolAnnotationsExpr struct {
+		// Title is the display name advertised to clients.
+		Title *string
+		// ReadOnlyHint states that the tool does not change its environment.
+		ReadOnlyHint *bool
+		// DestructiveHint states that the tool may remove or replace existing data.
+		DestructiveHint *bool
+		// IdempotentHint states that repeating arguments has no additional effects.
+		IdempotentHint *bool
+		// OpenWorldHint states that the tool interacts with external entities.
+		OpenWorldHint *bool
 	}
 
 	// ResourceExpr defines an MCP resource that the server exposes for access.
@@ -89,6 +139,28 @@ type (
 		Messages []*MessageExpr
 	}
 
+	// MethodPromptExpr binds a named MCP prompt to a typed Goa operation.
+	MethodPromptExpr struct {
+		eval.Expression
+		// Name is the prompt identifier sent by the client.
+		Name string
+		// Description explains when the client should select this prompt.
+		Description string
+		// Method owns the prompt's arguments and returned messages.
+		Method *expr.MethodExpr
+	}
+
+	// PromptCompletionExpr selects one service method for one prompt argument.
+	PromptCompletionExpr struct {
+		eval.Expression
+		// Prompt is the declared prompt name selected by the client.
+		Prompt string
+		// Argument is the declared prompt argument being completed.
+		Argument string
+		// Method receives partial input and returns ordered suggestions.
+		Method *expr.MethodExpr
+	}
+
 	// MessageExpr defines a single message within a prompt template.
 	MessageExpr struct {
 		eval.Expression
@@ -101,8 +173,7 @@ type (
 )
 
 const (
-	defaultProtocolVersion = "2025-06-18"
-	jsonRPCRouteMessage    = `service %q must declare JSONRPC(func(){ POST(...) }) with a service-level path`
+	jsonRPCRouteMessage = `service %q must declare JSONRPC(func(){ POST(...) }) with a service-level path`
 	// ResourceURIPattern requires the scheme that identifies an MCP resource.
 	ResourceURIPattern = `^[a-zA-Z][a-zA-Z0-9+.-]*:.*`
 )
@@ -114,11 +185,11 @@ func (m *MCPExpr) EvalName() string {
 	return "MCP server for " + m.Service.Name
 }
 
-// Finalize finalizes the MCP expression
-func (m *MCPExpr) Finalize() {
-	if m.ProtocolVersion == "" {
-		m.ProtocolVersion = defaultProtocolVersion
-	}
+// AddSecurityRequirement records native Goa Security declarations from the MCP
+// block. Code generation combines these basic scopes with each operation's
+// resource-owned scopes before the original configured endpoint is invoked.
+func (m *MCPExpr) AddSecurityRequirement(requirement *expr.SecurityExpr) {
+	m.Requirements = append(m.Requirements, requirement)
 }
 
 // Validate validates the MCP expression
@@ -130,9 +201,7 @@ func (m *MCPExpr) Validate() error {
 	if m.Version == "" {
 		verr.Add(m, "MCP server version is required")
 	}
-	if m.ProtocolVersion != "" && m.ProtocolVersion != defaultProtocolVersion {
-		verr.Add(m, "protocol version must be %q", defaultProtocolVersion)
-	}
+
 	route := m.jsonRPCRoute()
 	switch {
 	case route == nil || route.Path == "":
@@ -146,6 +215,7 @@ func (m *MCPExpr) Validate() error {
 			verr.Add(t, "tool name %q is used more than once", t.Name)
 		}
 		toolNames[t.Name] = struct{}{}
+		m.validateToolUI(t, verr)
 		if err := t.Validate(); err != nil {
 			var ve *eval.ValidationErrors
 			if errors.As(err, &ve) {
@@ -179,6 +249,34 @@ func (m *MCPExpr) Validate() error {
 			}
 		}
 	}
+	for _, p := range m.MethodPrompts {
+		if _, exists := promptNames[p.Name]; p.Name != "" && exists {
+			verr.Add(p, "prompt name %q is used more than once", p.Name)
+		}
+		promptNames[p.Name] = struct{}{}
+		if err := p.Validate(); err != nil {
+			var ve *eval.ValidationErrors
+			if errors.As(err, &ve) {
+				verr.Merge(ve)
+			}
+		}
+	}
+	m.validateCatalogs(verr)
+	m.validateSkills(verr)
+	m.validateResourceTemplates(verr)
+	m.validatePromptCompletions(verr)
+	m.validateResourceCompletions(verr)
+	if source := m.SubscriptionSource; source != nil {
+		if source.Method.Payload.Find("resources") != nil && len(m.Resources) == 0 && m.ResourceReader == nil {
+			verr.Add(source, "resource subscription requires a declared resource or URI reader")
+		}
+		if err := source.Validate(); err != nil {
+			var validation *eval.ValidationErrors
+			if errors.As(err, &validation) {
+				verr.Merge(validation)
+			}
+		}
+	}
 	if len(verr.Errors) > 0 {
 		return verr
 	}
@@ -188,6 +286,7 @@ func (m *MCPExpr) Validate() error {
 // Validate validates a tool expression
 func (t *ToolExpr) Validate() error {
 	verr := new(eval.ValidationErrors)
+	t.validateAppDeclarations(verr)
 	if t.Name == "" {
 		verr.Add(t, "tool name is required")
 	}
@@ -199,6 +298,50 @@ func (t *ToolExpr) Validate() error {
 	}
 	if t.Method != nil && hasValue(t.Method.Payload) && expr.AsObject(t.Method.Payload.Type) == nil {
 		verr.Add(t, "tool %q method %q payload must be an object", t.Name, t.Method.Name)
+	}
+	if t.Method != nil {
+		if _, err := mcpinput.TaskExchange(t.Method); err != nil {
+			verr.Add(t, "%s", err.Error())
+		}
+	}
+	if t.ContentField != "" {
+		completed, err := mcpinput.CompleteResult(t.Method)
+		if err != nil {
+			verr.Add(t, "%s", err.Error())
+			return verr
+		}
+		object := expr.AsObject(completed.Type)
+		if object == nil || object.Attribute(t.ContentField) == nil {
+			verr.Add(t, "ToolContent(%q) must name a field on the method result", t.ContentField)
+		} else {
+			content := expr.AsArray(object.Attribute(t.ContentField).Type)
+			if content == nil || !content.NonNullableElems {
+				verr.Add(t, "ToolContent(%q) must use ArrayOfRequired with a required content OneOf field", t.ContentField)
+			} else {
+				element := expr.AsObject(content.ElemType.Type)
+				if element == nil || element.Attribute("content") == nil || expr.AsUnion(element.Attribute("content").Type) == nil || !content.ElemType.IsRequired("content") {
+					verr.Add(t, "ToolContent(%q) elements must declare a required content OneOf field", t.ContentField)
+				}
+			}
+			validation := expr.EffectiveValidation(object.Attribute(t.ContentField))
+			required := expr.EffectiveValidation(completed)
+			if required != nil && slices.Contains(required.Required, t.ContentField) && (validation == nil || validation.MinLength == nil || *validation.MinLength < 1) {
+				verr.Add(t, "required ToolContent(%q) must declare MinLength(1)", t.ContentField)
+			}
+		}
+	}
+	if t.MetadataField != "" {
+		completed, err := mcpinput.CompleteResult(t.Method)
+		if err != nil {
+			verr.Add(t, "%s", err.Error())
+			return verr
+		}
+		object := expr.AsObject(completed.Type)
+		if object == nil || object.Attribute(t.MetadataField) == nil {
+			verr.Add(t, "ToolMetadata(%q) must name a field on the completed method result", t.MetadataField)
+		} else if metadata := expr.AsObject(object.Attribute(t.MetadataField).Type); metadata == nil {
+			verr.Add(t, "ToolMetadata(%q) must name a typed object", t.MetadataField)
+		}
 	}
 	if len(verr.Errors) > 0 {
 		return verr
@@ -225,27 +368,40 @@ func (r *ResourceExpr) Validate() error {
 	if r.Method != nil && r.Method.IsStreaming() {
 		verr.Add(r, "resource %q uses streaming method %q; MCP resources must return one result from one request", r.Name, r.Method.Name)
 	}
-	if r.Method != nil && hasValue(r.Method.Payload) {
-		verr.Add(r, "resource %q method %q must not define a payload", r.Name, r.Method.Name)
+	if r.Method != nil {
+		if _, declared := r.Method.Meta[mcpinput.TaskExchangeMetaKey]; declared {
+			verr.Add(r, "TaskExchange is supported only by MCP tools/call")
+		}
+		arguments, err := mcpinput.Arguments(r.Method)
+		if err != nil {
+			verr.Add(r, "%s", err.Error())
+		} else if hasValue(arguments) && (expr.AsObject(arguments.Type) == nil || len(*expr.AsObject(arguments.Type)) > 0) {
+			verr.Add(r, "resource %q method %q must not define a payload with domain arguments", r.Name, r.Method.Name)
+		}
 	}
 	if r.Method != nil && !hasValue(r.Method.Result) {
 		verr.Add(r, "resource %q method %q must define a result", r.Name, r.Method.Name)
 	}
 	if r.Method != nil && hasValue(r.Method.Result) && r.MimeType != "" {
+		completed, err := mcpinput.CompleteResult(r.Method)
+		if err != nil {
+			verr.Add(r, "%s", err.Error())
+			return verr
+		}
 		mediaType, _, err := mime.ParseMediaType(r.MimeType)
 		switch {
 		case err != nil:
 			verr.Add(r, "resource %q MIME type %q is invalid", r.Name, r.MimeType)
-		case strings.HasPrefix(mediaType, "text/") && !isString(r.Method.Result.Type):
+		case strings.HasPrefix(mediaType, "text/") && !isPrimitive(completed.Type, expr.String) && !isPrimitive(completed.Type, expr.Bytes):
 			verr.Add(
 				r,
-				"resource %q uses MIME type %q but method %q does not return a string",
+				"resource %q uses MIME type %q but method %q does not return a string or bytes",
 				r.Name,
 				r.MimeType,
 				r.Method.Name,
 			)
-		case !strings.HasPrefix(mediaType, "text/") && mediaType != "application/json":
-			verr.Add(r, "resource %q MIME type %q is not supported", r.Name, r.MimeType)
+		case !strings.HasPrefix(mediaType, "text/") && mediaType != "application/json" && !isPrimitive(completed.Type, expr.Bytes):
+			verr.Add(r, "resource %q uses MIME type %q but method %q does not return bytes", r.Name, r.MimeType, r.Method.Name)
 		}
 	}
 	if len(verr.Errors) > 0 {
@@ -299,15 +455,16 @@ func hasValue(attribute *expr.AttributeExpr) bool {
 	return attribute != nil && attribute.Type != nil && attribute.Type != expr.Empty
 }
 
-// isString follows a named type to determine whether its value is a string.
-func isString(dataType expr.DataType) bool {
+// isPrimitive follows a named result type so MIME validation checks the actual
+// service value and accepts aliases with the same content representation.
+func isPrimitive(dataType expr.DataType, primitive expr.Primitive) bool {
 	switch actual := dataType.(type) {
 	case expr.Primitive:
-		return actual == expr.String
+		return actual == primitive
 	case *expr.UserTypeExpr:
-		return isString(actual.Type)
+		return isPrimitive(actual.Type, primitive)
 	case *expr.ResultTypeExpr:
-		return isString(actual.Type)
+		return isPrimitive(actual.Type, primitive)
 	default:
 		return false
 	}

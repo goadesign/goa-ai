@@ -80,6 +80,11 @@ defer delete(active, identity)
 func (v *Value) writeValueCheck(out *strings.Builder, writer codegen.Attributor, attribute *expr.AttributeExpr, target, field string, pointer bool, depth int) error {
 	imports := v.plan.importNames()
 	childPath := v.plan.jsonHelpers.child.Name()
+	if isRawJSON(attribute) {
+		fmt.Fprintf(out, "if len(%s) != 0 { if _, err := %s(%s); err != nil { return %s.Errorf(\"%%s: invalid raw JSON: %%w\", %s, err) } }\n",
+			target, v.plan.jsonHelpers.read.Name(), target, imports.Fmt, field)
+		return nil
+	}
 	if named, ok := attribute.Type.(expr.UserType); ok && named != expr.Empty {
 		name := v.standalone.typedChecks[named.Origin()].name
 		arg := target
@@ -157,6 +162,9 @@ func (v *Value) writeValueCheck(out *strings.Builder, writer codegen.Attributor,
 			item := fmt.Sprintf("branch%d", depth)
 			fmt.Fprintf(out, "if %s, ok := %s.As%s(); ok {\n_ = %s\n", item, target, name, item)
 			childField := fmt.Sprintf("%s(%s, %q, false)", childPath, field, actual.GetValueKey())
+			if actual.Flatten || actual.Untagged {
+				childField = field
+			}
 			if err := v.writeValueCheck(out, writer.Enter(attribute), branch.Attribute, item, childField,
 				expr.IsObject(branch.Attribute.Type) || expr.IsUnion(branch.Attribute.Type), depth+1); err != nil {
 				return err

@@ -1,8 +1,7 @@
+// Package runtime checks planner activities with the engine codec's conservative size check before
+// returning output. Provider failures and immutable MCP operations share one
+// budget; oversized output retains the runtime's existing rejection type.
 package runtime
-
-// Planner activities use the engine codec's conservative size walk
-// before returning output. This file preserves the runtime's rejection type so
-// oversized planner output continues through its existing failure handling.
 
 import (
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -10,10 +9,13 @@ import (
 )
 
 type (
+	// planActivityOutputBudgetError reports an output rejected before encoding.
 	planActivityOutputBudgetError struct {
 		reason string
 	}
 
+	// planActivityOutputBudget retains one size total across planner output and
+	// its later events, so they cannot each spend the full activity allowance.
 	planActivityOutputBudget struct {
 		budget workflowcodec.Budget
 	}
@@ -25,7 +27,9 @@ const (
 )
 
 // Error states the activity-envelope contract that rejected the output.
-func (e *planActivityOutputBudgetError) Error() string { return e.reason }
+func (e *planActivityOutputBudgetError) Error() string {
+	return e.reason
+}
 
 // checkPlanActivityOutputBudget checks the complete output before encoding it.
 func checkPlanActivityOutputBudget(output *PlanActivityOutput) error {

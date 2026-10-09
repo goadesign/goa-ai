@@ -298,12 +298,33 @@ message ToolFieldPathSegment {
 // Marks one array index or map key without prescribing its value.
 message ToolCollectionElement {
 }
-// One discriminator value that makes a generated field applicable.
+// One generated branch requirement. A tagged union selects by a string
+// property; an untagged union selects by the JSON kind of its value.
 message ToolUnionBranch {
+	oneof selection {
+		// A declared string discriminator selects this branch.
+	ToolTaggedUnionBranch tagged = 1;
+		// The JSON kind of the union value selects this branch.
+	ToolUntaggedUnionBranch untagged = 2;
+	}
+}
+// One string discriminator value that makes a generated field applicable.
+message ToolTaggedUnionBranch {
 	// Path to the union's discriminator property.
 	repeated ToolFieldPathSegment discriminator = 1;
 	// Branch name required at the discriminator.
 	optional string value = 2;
+}
+// The JSON kind of a union value that makes a generated field applicable.
+// Distinct branch kinds are established during Goa DSL validation.
+message ToolUntaggedUnionBranch {
+	// Path to the union value. An omitted path identifies the root value.
+	repeated ToolFieldPathSegment path = 1;
+	// JSON kind that selects this branch; integer branches use number.
+	optional string json_kind = 2;
+	// Zero-based position of this branch in the advertised oneOf, used to select
+// its structured validation diagnostic.
+	optional sint32 index = 3;
 }
 
 message ArrayOfString {
@@ -731,6 +752,46 @@ message ToolCallMeta {
 	map<string, string> labels = 6;
 	// Accepted execution restriction prohibiting UI output or external interaction.
 	optional bool text_only = 7;
+	// Sequence of the runtime-selected operation on this tool invocation. Zero
+// identifies the original tool call; each new continuation advances it, while
+// repeated delivery retains the same sequence.
+	optional uint64 execution_sequence = 8;
+	// The exact runtime-selected operation and its data; absent on the original
+// tool call.
+	ToolOperationExecutionContinuation execution_continuation = 9;
+}
+// One runtime-selected operation on the unfinished original tool invocation.
+// Its explicit branch determines the method; field presence never chooses
+// whether to query, answer or cancel.
+message ToolOperationExecutionContinuation {
+	oneof operation {
+		// Continue the original tool invocation with accepted host answers and saved
+// service state.
+	ToolOperationInputContinuation input = 1;
+		// Read one existing Task by its exact server-owned identifier.
+	string task_get = 2;
+		// Submit accepted host answers to one existing Task.
+	ToolOperationTaskAnswers task_update = 3;
+		// Request cancellation of one existing Task without repeating the original
+// tool call.
+	string task_cancel = 4;
+	}
+}
+// Exact service state and accepted host answers for continuing the original
+// tool invocation.
+message ToolOperationInputContinuation {
+	// Opaque state returned by the service, including an explicitly empty string.
+	optional string state = 1;
+	// Host answer JSON bytes keyed by the exact server request identifiers.
+	map<string, bytes> responses = 2;
+}
+// Accepted host answers for one existing Task. An empty answer object is valid
+// and does not select a different operation.
+message ToolOperationTaskAnswers {
+	// Exact server-owned Task identifier, including an empty string.
+	optional string task_id = 1;
+	// Host answer JSON bytes for outstanding Task input requests.
+	map<string, bytes> responses = 2;
 }
 
 message CallToolResponse {

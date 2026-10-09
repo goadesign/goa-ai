@@ -10,6 +10,7 @@ import (
 	"slices"
 
 	"goa.design/goa-ai/expr/agent"
+	"goa.design/goa-ai/internal/mcpinput"
 	goacodegen "goa.design/goa/v3/codegen"
 	goaexpr "goa.design/goa/v3/expr"
 )
@@ -59,7 +60,16 @@ func (p *toolSpecsPlan) link(data *GeneratorData) error {
 		}
 		if toolsetHasMethodTools(owner) {
 			planned.specs.providerImports = importsForPaths(planned.public, planned.providerImportPaths)
+			if len(planned.inputMethods) != 0 || len(planned.taskMethods) != 0 {
+				planned.specs.mcpPackage = planned.public.ImportName(mcpRuntimeImportPath)
+			}
 			planned.specs.serviceTypeRef = planned.public.ImportName(planned.serviceImportPath) + "." + owner.SourceService.ServiceDeclaration.Name()
+		}
+		if err := planned.linkInputExchanges(services); err != nil {
+			return err
+		}
+		if err := planned.linkTaskExchanges(services); err != nil {
+			return err
 		}
 		if err := planned.linkToolTransforms(owner, services); err != nil {
 			return err
@@ -116,6 +126,15 @@ func (p *toolSpecsPlan) link(data *GeneratorData) error {
 // and server data before generated declarations request names in the same Go
 // package.
 func (p *toolSpecsPackagePlan) declareToolTypeImports(toolset string, tool *agent.ToolExpr) error {
+	var methodResult *goaexpr.AttributeExpr
+	if tool.Method != nil {
+		var err error
+		methodResult, err = mcpinput.CompleteResult(tool.Method)
+		if err != nil {
+			return err
+		}
+	}
+
 	// Planning hides only fields the provider supplies after it receives the
 	// call. Continuation fields remain so generated registry schemas describe
 	// the complete payload sent to the provider.
@@ -124,7 +143,7 @@ func (p *toolSpecsPackagePlan) declareToolTypeImports(toolset string, tool *agen
 		Name:                     tool.Name,
 		QualifiedName:            toolset + "." + tool.Name,
 		ScopeName:                toolset,
-		Bounds:                   boundsData(tool.Bounds, tool.Method),
+		Bounds:                   boundsData(tool.Bounds, methodResult),
 		ModelHiddenPayloadFields: slices.Clone(tool.InjectedFields),
 		UIOnlyFields:             slices.Clone(tool.UIOnlyFields),
 	}
@@ -162,7 +181,7 @@ func (p *toolSpecsPackagePlan) declareToolTypeImports(toolset string, tool *agen
 	}
 	result := tool.Return
 	if (result == nil || result.Type == nil || result.Type == goaexpr.Empty) && tool.Method != nil {
-		result = tool.Method.Result
+		result = methodResult
 	}
 	if result == nil {
 		result = &goaexpr.AttributeExpr{Type: goaexpr.Empty}
@@ -188,6 +207,15 @@ func (p *toolSpecsPackagePlan) declareToolTypeImports(toolset string, tool *agen
 // declareToolTypes records the input, result, and server-data types generated
 // for tool.
 func (p *toolSpecsPackagePlan) declareToolTypes(toolset string, tool *agent.ToolExpr) error {
+	var methodResult *goaexpr.AttributeExpr
+	if tool.Method != nil {
+		var err error
+		methodResult, err = mcpinput.CompleteResult(tool.Method)
+		if err != nil {
+			return err
+		}
+	}
+
 	// Planning hides only fields the provider supplies after it receives the
 	// call. Continuation fields remain so generated registry schemas describe
 	// the complete payload sent to the provider.
@@ -196,7 +224,7 @@ func (p *toolSpecsPackagePlan) declareToolTypes(toolset string, tool *agent.Tool
 		Name:                     tool.Name,
 		QualifiedName:            toolset + "." + tool.Name,
 		ScopeName:                toolset,
-		Bounds:                   boundsData(tool.Bounds, tool.Method),
+		Bounds:                   boundsData(tool.Bounds, methodResult),
 		ModelHiddenPayloadFields: slices.Clone(tool.InjectedFields),
 		UIOnlyFields:             slices.Clone(tool.UIOnlyFields),
 	}
@@ -257,7 +285,7 @@ func (p *toolSpecsPackagePlan) declareToolTypes(toolset string, tool *agent.Tool
 	}
 	result := tool.Return
 	if (result == nil || result.Type == nil || result.Type == goaexpr.Empty) && tool.Method != nil {
-		result = tool.Method.Result
+		result = methodResult
 	}
 	if result == nil {
 		result = &goaexpr.AttributeExpr{Type: goaexpr.Empty}
@@ -291,6 +319,10 @@ func (p *toolSpecsPackagePlan) declareToolTransforms(toolset string, tool *agent
 	if tool.Method == nil {
 		return nil
 	}
+	completed, err := mcpinput.CompleteResult(tool.Method)
+	if err != nil {
+		return err
+	}
 	qualified := toolset + "." + tool.Name
 	names := p.tools[tool.Name]
 	owner := &contractTypeOwner{
@@ -310,9 +342,9 @@ func (p *toolSpecsPackagePlan) declareToolTransforms(toolset string, tool *agent
 		}
 	}
 	result := p.types[stableTypeKey(owner, usageResult, "")]
-	if result != nil && tool.Method.Result != nil && tool.Method.Result.Type != goaexpr.Empty {
-		if err := goacodegen.IsCompatible(tool.Method.Result.Type, result.public.Type, "in", "out"); err == nil {
-			planned, err := p.declareAdapterTransform(qualified+":tool-result", tool.Method.Result, result.public)
+	if result != nil && completed != nil && completed.Type != goaexpr.Empty {
+		if err := goacodegen.IsCompatible(completed.Type, result.public.Type, "in", "out"); err == nil {
+			planned, err := p.declareAdapterTransform(qualified+":tool-result", completed, result.public)
 			if err != nil {
 				return err
 			}
@@ -323,7 +355,7 @@ func (p *toolSpecsPackagePlan) declareToolTransforms(toolset string, tool *agent
 		if serverData.Source == nil || serverData.Source.MethodResultField == "" {
 			continue
 		}
-		source := tool.Method.Result.Find(serverData.Source.MethodResultField)
+		source := completed.Find(serverData.Source.MethodResultField)
 		target := p.types[stableTypeKey(owner, usageServerData, serverData.Kind)]
 		if source == nil || target == nil {
 			return fmt.Errorf("server data kind %q has no source or output type", serverData.Kind)
@@ -399,7 +431,7 @@ func (p *toolSpecsPackagePlan) declareType(owner *contractTypeOwner, attribute *
 		}
 		publicDeclaration = publicTypeDeclaration.Declaration()
 		p.publicTypeUses[publicType] = publicDeclaration
-		if err := declareAttributeUnions(p.public, p.publicFixed, p.publicUnionErrors, public); err != nil {
+		if err := declareAttributeUnions(p.public, p.publicUnionDeclarations, public); err != nil {
 			return err
 		}
 		publicLayout, err = p.planDeclaredTypeLayout(publicAttribute, p.public, goacodegen.GoLayoutPolicy{UseDefault: true, SumType: true})
@@ -435,7 +467,7 @@ func (p *toolSpecsPackagePlan) declareType(owner *contractTypeOwner, attribute *
 		}
 		transportDeclaration = transportTypeDeclaration.Declaration()
 		p.transportTypeUses[transportType] = transportDeclaration
-		if err := declareAttributeUnions(p.transport, p.transportFixed, p.transportUnionErrors, shapes.transport); err != nil {
+		if err := declareAttributeUnions(p.transport, p.transportUnionDeclarations, shapes.transport); err != nil {
 			return err
 		}
 		transportLayout, err = p.planDeclaredTypeLayout(
@@ -725,6 +757,10 @@ func (p *toolSpecsPackagePlan) declareTypeNames(key, preferred string, completio
 func (p *toolSpecsPackagePlan) declareLocalTypes(pkg *goacodegen.GeneratedPackage, declared map[localizedTypeKey]*goacodegen.TypeDeclaration, uses map[goaexpr.UserType]*goacodegen.NameDeclaration, types []*localizedType) error {
 	for _, localized := range types {
 		key := localizedTypeKey{source: localized.source, jsonContract: localized.jsonContract}
+		if result, ok := localized.source.(*goaexpr.ResultTypeExpr); ok {
+			key.resultIdentifier = result.Identifier
+			key.source = nil
+		}
 		if declaration := declared[key]; declaration != nil {
 			if err := pkg.BindGeneratedType(localized.generated, declaration); err != nil {
 				return err
@@ -799,7 +835,7 @@ func (p *toolSpecsPackagePlan) recordTransform(key string, source, target *goaex
 }
 
 // declareAttributeUnions records every union reachable from attribute once.
-func declareAttributeUnions(pkg *goacodegen.GeneratedPackage, fixed map[string]*goacodegen.NameDeclaration, helpers map[goacodegen.UnionDeclarationID]*goacodegen.NameDeclaration, attribute *goaexpr.AttributeExpr) error {
+func declareAttributeUnions(pkg *goacodegen.GeneratedPackage, declarations map[goacodegen.UnionDeclarationID]*goacodegen.UnionDeclaration, attribute *goaexpr.AttributeExpr) error {
 	seenTypes := make(map[goaexpr.UserType]struct{})
 	seenUnions := make(map[goacodegen.UnionDeclarationID]struct{})
 	var visit func(*goaexpr.AttributeExpr) error
@@ -832,11 +868,6 @@ func declareAttributeUnions(pkg *goacodegen.GeneratedPackage, fixed map[string]*
 			}
 			return visit(actual.ElemType)
 		case *goaexpr.Union:
-			if err := declareExactNames(pkg, fixed, map[goacodegen.PackageNameKind][]string{
-				goacodegen.NameFunction: {"decodeUnionStrictJSON", "missingUnionValueError", "nullUnionValueError"},
-			}); err != nil {
-				return err
-			}
 			identity := goacodegen.NewUnionDeclarationID(current)
 			if _, ok := seenUnions[identity]; ok {
 				return nil
@@ -846,19 +877,7 @@ func declareAttributeUnions(pkg *goacodegen.GeneratedPackage, fixed map[string]*
 			if err != nil {
 				return err
 			}
-			if helpers[identity] == nil {
-				helper, err := pkg.DeclareDependentName(
-					goacodegen.NameFunction,
-					declaration.Declaration(),
-					"new",
-					"DiscriminatorError",
-					unionErrorNameOrder{packagePath: pkg.ImportPath(), unionName: actual.Name()},
-				)
-				if err != nil {
-					return err
-				}
-				helpers[identity] = helper
-			}
+			declarations[identity] = declaration
 			for _, branch := range actual.Values {
 				if err := visit(branch.Attribute); err != nil {
 					return err

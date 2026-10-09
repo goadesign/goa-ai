@@ -43,6 +43,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/content"
 )
 
 // Planner is the core decision-making interface for agents. Each agent has exactly
@@ -184,6 +185,10 @@ type ToolRequest struct {
 
 // ToolResult captures the outcome of a tool invocation.
 type ToolResult struct {
+	// Blocks retains ordered text, media and resource descriptions for this
+	// invocation, including when execution failed.
+	Blocks content.Blocks
+
 	// Name is the fully-qualified tool identifier that produced this result.
 	Name tools.Ident
 
@@ -248,6 +253,10 @@ func (ToolResult) MarshalJSON() ([]byte, error) {
 //     canonical run log before invoking planner code.
 //   - This type intentionally does not carry decoded `any` values.
 type ToolOutput struct {
+	// Blocks retains ordered text, media and resource descriptions for this
+	// invocation, including when execution failed.
+	Blocks content.Blocks
+
 	// Registry retains the executed registration for result interpretation and
 	// runtime-owned pagination. It is never part of a model request.
 	Registry *tools.RegistryBinding
@@ -313,6 +322,10 @@ type FinalResponse struct {
 //   - Top-level planners normally leave this nil and return FinalResponse
 //     instead.
 type FinalToolResult struct {
+	// Blocks retains ordered text, media and resource descriptions for this
+	// invocation, including when execution failed.
+	Blocks content.Blocks
+
 	// Result is the canonical JSON result payload encoded with the parent tool's
 	// result codec.
 	Result rawjson.Message

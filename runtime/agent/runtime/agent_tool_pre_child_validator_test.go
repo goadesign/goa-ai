@@ -77,7 +77,7 @@ func TestExecuteToolCalls_AgentToolPreChildValidatorReturnsToolError(t *testing.
 		[]ToolCall{call},
 		0,
 		nil,
-		time.Time{},
+		time.Time{}, nil,
 	)
 	require.NoError(t, err)
 	require.Len(t, results, 1)

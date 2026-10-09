@@ -116,7 +116,7 @@ func TestCancellationUpdateWaitsForWorkflowHandler(t *testing.T) {
 
 	require.NoError(t, env.GetWorkflowError())
 	require.NoError(t, completedErr)
-	require.Equal(t, request.Reason, completedValue)
+	require.Equal(t, request, completedValue)
 }
 
 func TestCancellationUpdateStopsExecutionBeforeAcknowledgement(t *testing.T) {
@@ -158,7 +158,7 @@ func TestCancellationUpdateStopsExecutionBeforeAcknowledgement(t *testing.T) {
 
 	require.True(t, temporalsdk.IsCanceledError(env.GetWorkflowError()))
 	require.NoError(t, completedErr)
-	require.Equal(t, request.Reason, completedValue)
+	require.Equal(t, request, completedValue)
 }
 
 func TestCancellationUpdateMapsHandlerConflict(t *testing.T) {

@@ -423,17 +423,21 @@ func encodeToolResultMessage(part model.ToolResultPart, sequence int, index int)
 	if err != nil {
 		return responses.ResponseInputItemUnionParam{}, fmt.Errorf("openai: tool_result %q: %w", part.ToolUseID, err)
 	}
+	output, err := encodeToolContent(part, content)
+	if err != nil {
+		return responses.ResponseInputItemUnionParam{}, fmt.Errorf("openai: tool_result %q: %w", part.ToolUseID, err)
+	}
 	return responses.ResponseInputItemUnionParam{
 		OfFunctionCallOutput: &responses.ResponseInputItemFunctionCallOutputParam{
 			CallID: param.NewOpt(part.ToolUseID),
 			ID:     param.NewOpt(syntheticID("tool_result", sequence, index)),
-			Output: responses.ResponseInputItemFunctionCallOutputOutputUnionParam{OfString: param.NewOpt(content)},
+			Output: output,
 		},
 	}, nil
 }
 
-// encodeToolResultMessageContent preserves explicit tool failure semantics even
-// though OpenAI function_call_output items only accept string content.
+// encodeToolResultMessageContent preserves explicit tool failure semantics in
+// the text portion of a native function_call_output item.
 func encodeToolResultMessageContent(part model.ToolResultPart) (string, error) {
 	if !part.IsError {
 		return encodeToolResultContent(part.Content)

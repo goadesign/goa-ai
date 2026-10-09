@@ -243,6 +243,9 @@ func preflightRequestPart(part Part, walk *dynamicValueWalk) error {
 		}
 		return chargeString(walk, actual.ThoughtSignature)
 	case ToolResultPart:
+		if err := preflightToolContent(actual.Blocks, walk); err != nil {
+			return fmt.Errorf("tool content: %w", err)
+		}
 		if err := chargeString(walk, actual.ToolUseID); err != nil {
 			return err
 		}

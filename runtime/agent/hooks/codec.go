@@ -21,6 +21,8 @@ import (
 	"goa.design/goa-ai/runtime/agent/runlog"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/content"
+	"goa.design/goa-ai/runtime/mcp"
 )
 
 type (
@@ -64,6 +66,7 @@ type (
 	}
 
 	toolResultReceivedPayload struct {
+		Blocks           content.Blocks           `json:"blocks,omitempty"`
 		CallRunID        string                   `json:"call_run_id"`
 		ToolCallID       string                   `json:"tool_call_id"`
 		ParentToolCallID string                   `json:"parent_tool_call_id,omitempty"`
@@ -185,6 +188,7 @@ func EncodeRecordPayload(evt Event) (rawjson.Message, error) {
 			ResultJSON:       e.ResultJSON,
 			ResultBytes:      e.ResultBytes,
 			ServerData:       e.ServerData,
+			Blocks:           e.Blocks,
 			ResultPreview:    e.ResultPreview,
 			Bounds:           e.Bounds,
 			Duration:         e.Duration,
@@ -308,6 +312,22 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 			p.Questions,
 		)
 
+	case AwaitMCPInput:
+		var p AwaitMCPInputEvent
+		if err := json.Unmarshal(input.Payload, &p); err != nil {
+			return nil, fmt.Errorf("decode %s payload: %w", AwaitMCPInput, err)
+		}
+		if p.Input.ToolName == "" || p.Input.ToolCallID == "" {
+			return nil, fmt.Errorf("decode %s: missing tool identity", AwaitMCPInput)
+		}
+		requests := &mcp.InputRequired{Requests: p.Input.Requests}
+		if len(p.Input.Requests) > 0 {
+			if err := requests.Validate(mcp.InputSupport{Form: true, URL: true}); err != nil {
+				return nil, fmt.Errorf("decode %s input requests: %w", AwaitMCPInput, err)
+			}
+		}
+		evt = NewAwaitMCPInputEvent(input.RunID, input.AgentID, input.SessionID, p.Input)
+
 	case AwaitConfirmation:
 		var p AwaitConfirmationEvent
 		if err := json.Unmarshal(input.Payload, &p); err != nil {
@@ -392,7 +412,7 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 			p.ParentToolCallID,
 			p.ResultJSON,
 			p.ServerData,
-			p.ResultPreview,
+			p.Blocks, p.ResultPreview,
 			p.Bounds,
 			p.Duration,
 			p.Telemetry,

@@ -1,76 +1,67 @@
-// Caller lets the runtime call tools through the generated MCP client.
+// Caller invokes typed tools through the generated stateless MCP client.
 type Caller struct {
-	client       *Client
-	clientInfo   mcpruntime.ClientInfo
-	session      *mcpruntime.HTTPSession
-	initializeMu sync.Mutex
+	client    *Client
+	transport *mcpruntime.HTTPTransport
 }
 
-// NewCaller initializes the MCP session and returns a caller only when the
-// server accepts the generated protocol version and client information.
-func NewCaller(ctx context.Context, client *Client, clientInfo mcpruntime.ClientInfo) (mcpruntime.Caller, error) {
-	if err := InitializeSession(ctx, client, clientInfo); err != nil {
+// NewCaller checks application identity and fixes the authored URL values for
+// this caller. Each request keeps those values outside tool arguments; creating
+// the caller does not contact the server.
+func NewCaller(client *Client, info mcpruntime.ClientInfo, support mcpruntime.InputSupport, retry mcpruntime.HTTPRetryPolicy) (*Caller, error) {
+	if err := retry.Validate(); err != nil {
 		return nil, err
 	}
-	return &Caller{
-		client:     client,
-		clientInfo: clientInfo,
-		session:    client.Doer.(*mcpruntime.HTTPSession),
-	}, nil
+	if err := info.Validate(); err != nil {
+		return nil, err
+	}
+	transport := mcpruntime.NewHTTPTransport(client.Doer, info, mcpHTTPBindings(), support, retry)
+
+	return &Caller{client: client, transport: transport}, nil
 }
 
-// CallTool sends one tools/call request and returns its content to the runtime.
+// CallTool sends exact arguments and returns validated content beside domain JSON.
 func (c *Caller) CallTool(ctx context.Context, req mcpruntime.CallRequest) (mcpruntime.CallResponse, error) {
-	if err := c.ensureSession(ctx); err != nil {
+	payload := &mcpreports.ToolsCallPayload{Name: req.Tool, Arguments: json.RawMessage(req.Payload)}
+	request, err := c.client.BuildToolsCallRequest(ctx, payload)
+	if err != nil {
 		return mcpruntime.CallResponse{}, err
 	}
-	payload := &mcpreports.ToolsCallPayload{Name: req.Tool, Arguments: json.RawMessage(req.Payload)}
-	ires, err := c.client.ToolsCall()(ctx, payload)
-	if err != nil {
-		if initializeErr := c.ensureSession(ctx); initializeErr != nil {
-			return mcpruntime.CallResponse{}, errors.Join(
-				callerError(err),
-				fmt.Errorf("start new MCP session: %w", initializeErr),
-			)
-		}
-		return mcpruntime.CallResponse{}, callerError(err)
-	}
-	result := ires.(*mcpreports.ToolsCallResult)
-	content := make([]mcpruntime.ContentBlock, len(result.Content))
-	for i, item := range result.Content {
-		content[i] = &mcpruntime.TextContent{Text: item.Text}
-	}
-	response := mcpruntime.CallResponse{Content: content}
-	if len(result.StructuredContent) > 0 {
-		var object map[string]json.RawMessage
-		if err := json.Unmarshal(result.StructuredContent, &object); err != nil || object == nil {
-			return mcpruntime.CallResponse{}, mcpruntime.NewMalformedResponseError(
-				errors.New("structuredContent must be a JSON object"),
-			)
-		}
-		response.StructuredContent = append(json.RawMessage(nil), result.StructuredContent...)
-	}
-	if result.IsError != nil && *result.IsError {
-		return mcpruntime.CallResponse{}, mcpruntime.NewToolExecutionError(response)
-	}
-	if req.Tool == "summarize" && len(response.StructuredContent) == 0 {
-		return mcpruntime.CallResponse{}, mcpruntime.NewMalformedResponseError(
-			errors.New("MCP response is missing structured content"),
-		)
-	}
-	return response, nil
+	return c.transport.CallTool(ctx, request.URL.String(), req)
 }
 
-// ensureSession starts one replacement handshake after the server expires the
-// current HTTP session. It never repeats the tool call that observed expiry.
-func (c *Caller) ensureSession(ctx context.Context) error {
-	if c.session.Initialized() {
-		return nil
+// GetTask reads the current state using this caller's authored endpoint values.
+func (c *Caller) GetTask(ctx context.Context, taskID string) (mcpruntime.Task, error) {
+	endpoint, err := c.taskEndpoint(ctx)
+	if err != nil {
+		return mcpruntime.Task{}, err
 	}
-	c.initializeMu.Lock()
-	defer c.initializeMu.Unlock()
-	if c.session.Initialized() {
-		return nil
+	return c.transport.GetTask(ctx, endpoint, taskID)
+}
+
+// UpdateTask submits answers and returns the server's acknowledgement.
+func (c *Caller) UpdateTask(ctx context.Context, taskID string, responses map[string]json.RawMessage) error {
+	endpoint, err := c.taskEndpoint(ctx)
+	if err != nil {
+		return err
 	}
-	return InitializeSession(ctx, c.client, c.clientInfo)
+	return c.transport.UpdateTask(ctx, endpoint, taskID, responses)
+}
+
+// CancelTask requests cancellation; a later GetTask reports the final state.
+func (c *Caller) CancelTask(ctx context.Context, taskID string) error {
+	endpoint, err := c.taskEndpoint(ctx)
+	if err != nil {
+		return err
+	}
+	return c.transport.CancelTask(ctx, endpoint, taskID)
+}
+
+// taskEndpoint asks the generated request builder for its fixed route. Only
+// authored URL values enter this builder; the shared transport encodes task data.
+func (c *Caller) taskEndpoint(ctx context.Context) (string, error) {
+	request, err := c.client.BuildToolsCallRequest(ctx, &mcpreports.ToolsCallPayload{})
+	if err != nil {
+		return "", err
+	}
+	return request.URL.String(), nil
 }

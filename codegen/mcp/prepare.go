@@ -7,6 +7,7 @@ import (
 	"slices"
 
 	mcpexpr "goa.design/goa-ai/expr/mcp"
+	"goa.design/goa-ai/internal/mcpinput"
 	"goa.design/goa/v3/eval"
 	"goa.design/goa/v3/expr"
 )
@@ -46,22 +47,57 @@ func prepareMCPServicesFromRoot(
 				continue
 			}
 			mcp := mcpRoot.GetMCP(svc)
-			if err := validateMCPService(svc, mcp); err != nil {
+			transport, ok := source.transports[svc]
+			if !ok {
+				return nil, fmt.Errorf("MCP service %q has no authored JSON-RPC transport in its generation roots", svc.Name)
+			}
+			mcpinput.BindTransport(transport)
+			policy, err := resolveResourcePolicy(r, svc, mcp)
+			if err != nil {
+				return nil, err
+			}
+			if err := validateMCPResources(svc, mcp.Resources); err != nil {
 				return nil, err
 			}
 
+			tasks := make(map[string]*mcpinput.TaskBinding)
+			for _, tool := range mcp.Tools {
+				binding, err := mcpinput.TaskExchange(tool.Method)
+				if err != nil {
+					return nil, err
+				}
+				if binding != nil {
+					tasks[tool.Name] = binding
+				}
+			}
 			builder := newMCPExprBuilder(svc, mcp)
+			builder.tasks = tasks
 			for name, userType := range generatedTypes {
 				builder.Types()[name] = userType
 			}
 			mcpService := builder.BuildServiceExpr()
+			if policy != nil {
+				// The resolved resource policy is enforced by the generated HTTP
+				// guard, with a required verifier, before every protocol operation.
+				// Original service methods retain their native inherited security.
+				mcpService.Requirements = []*expr.SecurityExpr{{Schemes: []*expr.SchemeExpr{{Kind: expr.NoKind}}}}
+			}
+			paths, routePaths := prepareRouteInputs(transport)
+			credentials, inputs, err := prepareHTTPInputs(r, svc, mcp, mcpService, paths)
+			if err != nil {
+				return nil, err
+			}
+			builder.httpInputs = inputs
+			if err := validateResourceCredentials(r, svc, policy, credentials); err != nil {
+				return nil, err
+			}
 			for _, server := range r.API.Servers {
 				if slices.Contains(server.Services, svc.Name) &&
 					!slices.Contains(server.Services, mcpService.Name) {
 					server.Services = append(server.Services, mcpService.Name)
 				}
 			}
-			_, protocolTypes := builder.Attach(r, mcpService, source.jsonrpcPaths[svc.Name])
+			_, protocolTypes := builder.Attach(r, mcpService, routePaths)
 
 			for _, userType := range protocolTypes {
 				name := userType.Name()
@@ -79,10 +115,15 @@ func prepareMCPServicesFromRoot(
 			}
 			attachedServices = append(attachedServices, mcpService)
 			prepared = append(prepared, &preparedMCPService{
-				root:        r,
-				userService: svc,
-				mcpService:  mcpService,
-				mcp:         mcp,
+				root:           r,
+				userService:    svc,
+				mcpService:     mcpService,
+				mcp:            mcp,
+				credentials:    credentials,
+				paths:          paths,
+				transport:      transport,
+				resourcePolicy: policy,
+				tasks:          tasks,
 			})
 		}
 		if len(attachedServices) > 0 {

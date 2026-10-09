@@ -6,11 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"mime"
+	"sort"
 	"strings"
 
-	"goa.design/goa-ai/codegen/naming"
-	"goa.design/goa-ai/codegen/shared"
+	"goa.design/goa-ai/codegen/internal/mcpcontract"
+	"goa.design/goa-ai/codegen/jsonschema"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
+	"goa.design/goa-ai/internal/mcpinput"
+	"goa.design/goa-ai/internal/mcpprotocol"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/expr"
 )
@@ -22,17 +25,20 @@ type (
 		ServiceName string
 		// ServiceGoName is the final Go name of the service.
 		ServiceGoName string
-		// MCPName is the server name returned during MCP initialization.
+		// ResultMeta is the generated server identity encoded as protocol metadata.
+		ResultMeta string
+		// ExtensionMetadata contains the generated server extension declarations.
+		ExtensionMetadata string
+		// MCPName is the server name returned in MCP response metadata.
 		MCPName string
-		// MCPVersion is the server version returned during MCP initialization.
+		// MCPVersion is the server version returned in MCP response metadata.
 		MCPVersion string
-		// ProtocolVersion is the MCP protocol version implemented by the generated
-		// server.
-		ProtocolVersion string
 		// Package is the import name of the generated Goa service package.
 		Package string
 		// MCPPackage is the import name of the generated MCP service package.
 		MCPPackage string
+		// PayloadRefs names each protocol input using Goa's linked method layout.
+		PayloadRefs map[string]string
 		// CodecImportPath is the private generated package that converts service
 		// values to and from the JSON carried by MCP.
 		CodecImportPath string
@@ -40,26 +46,67 @@ type (
 		CodecPackage string
 		// NeedsServerCodec reports whether the MCP server adapter calls a codec.
 		NeedsServerCodec bool
-		// NeedsRegisterCodec reports whether generated tool registration decodes
-		// results.
-		NeedsRegisterCodec bool
+		// EndpointsName is Goa's final name for the configured endpoint collection.
+		EndpointsName string
+		// NeedsEndpointResultCheck reports whether endpoints return typed results.
+		NeedsEndpointResultCheck bool
+		// EndpointMethods contains one typed call per authored MCP method.
+		EndpointMethods []*endpointMethodAdapter
+		// ToolCatalog selects an authenticated page of declared tool names.
+		ToolCatalog *discoveryAdapter
+		// PromptCatalog selects an authenticated page of declared prompt names.
+		PromptCatalog *discoveryAdapter
+		// ResourceCatalog selects a typed page of runtime resource descriptors.
+		ResourceCatalog *discoveryAdapter
+		// ResourceTemplateCatalog selects a typed page of URI template descriptors.
+		ResourceTemplateCatalog *discoveryAdapter
+		// SkillCatalog returns authenticated pages of complete skill entries.
+		SkillCatalog *discoveryAdapter
+		// SkillLookup returns one complete entry for the requested skill URI.
+		SkillLookup *discoveryAdapter
+		// ResourceDirectory returns one page of a directory's direct children.
+		ResourceDirectory *discoveryAdapter
 		// Tools contains the Goa methods exposed as MCP tools.
 		Tools []*ToolAdapter
+		// Tasks contains configured creators with complete native job operations.
+		Tasks []*taskAdapter
+		// CredentialQueries lists native authentication query names by protocol method.
+		CredentialQueries map[string][]string
 		// Resources contains the Goa methods exposed as MCP resources.
 		Resources []*ResourceAdapter
+		// ResourceTemplates contains the advertised parameterized addresses.
+		ResourceTemplates []*resourceTemplateAdapter
+		// ResourceReader owns reads that are not fixed resource bindings.
+		ResourceReader *resourceReaderAdapter
+		// SubscriptionSource connects an authored stream to resource and job changes.
+		SubscriptionSource *subscriptionAdapter
 		// StaticPrompts contains the prompts written directly in the Goa design.
 		StaticPrompts []*StaticPromptAdapter
+		// MethodPrompts contains prompt operations implemented by service methods.
+		MethodPrompts []*MethodPromptAdapter
+		// CompletionReferences contains the argument names accepted by each reference.
+		CompletionReferences []*completionReferenceAdapter
+		// Completions contains typed providers for known prompt and resource arguments.
+		Completions []*completionAdapter
+		// ContentConversions contains the shared generated content and resource converters.
+		ContentConversions []*contentConversionData
+		// NeedsContentBytes reports that authored content includes binary bytes.
+		NeedsContentBytes bool
+		// NeedsContentMeta reports that authored metadata needs object validation.
+		NeedsContentMeta bool
+		// NeedsToolMetadata reports that typed tool results add host-only metadata.
+		NeedsToolMetadata bool
+		// NeedsContentNumbers reports that content needs finite JSON number checks.
+		NeedsContentNumbers bool
 		// NeedsNoArgumentsValidation reports whether a tool has no payload.
 		NeedsNoArgumentsValidation bool
 		// NeedsBoolPtr reports that generated tool errors set MCP's optional flag.
 		NeedsBoolPtr bool
 
-		// Register contains the values used to generate agent runtime registration.
-		Register *RegisterData
-		// ClientSession contains the values used to generate MCP initialization.
-		ClientSession *ClientSessionData
 		// ClientCaller contains the values used to generate tool calls.
 		ClientCaller *ClientCallerData
+		// ResourcePolicy supplies the authored resource and operation scopes.
+		ResourcePolicy *resourcePolicy
 
 		mcpPackage              *codegen.GeneratedPackage
 		serviceImportPath       string
@@ -69,109 +116,37 @@ type (
 		mcpGeneratedImport      *codegen.ImportSpec
 		jsonrpcClientImportPath string
 		jsonrpcServerImports    *codegen.GeneratedImportPlan
+		jsonrpcClientImports    *codegen.GeneratedImportPlan
 		serverImportPaths       []string
-		registerImportPaths     []string
 		serverImports           []*codegen.ImportSpec
-		registerImports         []*codegen.ImportSpec
 	}
 
 	// MethodCodecData names the generated JSON functions for one service method.
 	// Empty names mean the method has no value in that direction.
 	MethodCodecData struct {
-		// PayloadEncode converts a service payload into MCP JSON.
-		PayloadEncode string
-		// PayloadDecode converts MCP JSON into a validated service payload.
+		// PayloadDecode validates domain JSON and constructs the original typed payload.
 		PayloadDecode string
 		// ResultEncode converts a service result into MCP JSON.
 		ResultEncode string
-		// ResultDecode converts MCP JSON into a validated service result.
-		ResultDecode string
-	}
-
-	// RegisterData drives generation of runtime registration helpers.
-	RegisterData struct {
-		// HelperName is the Go name shared by the generated registration helpers.
-		HelperName string
-		// ServiceName is the Goa service that owns the tools.
-		ServiceName string
-		// SuiteName is the local MCP toolset name.
-		SuiteName string
-		// SuiteQualifiedName identifies the toolset by its service and suite names.
-		SuiteQualifiedName string
-		// Description explains the generated toolset to the agent runtime.
-		Description string
-		// Tools contains the tools registered with the agent runtime.
-		Tools []RegisterTool
+		// ResultViews records the declared execution-selected views.
+		ResultViews []*resultViewCodec
+		// ResultValidate checks the typed result before MCP conversion.
+		ResultValidate string
 	}
 
 	// ClientCallerData contains the names and result shapes used by the generated
 	// MCP caller.
 	ClientCallerData struct {
-		// MCPPackage is the final import name for the generated MCP service.
-		MCPPackage string
+		// PayloadRef is Goa's linked tools/call type used by the native caller.
+		PayloadRef string
 		// Tools describes the statically known result contract for each tool.
 		Tools []*ToolAdapter
+		// Paths binds required URL inputs outside model-facing tool arguments.
+		Paths []*callerRouteInput
 
 		clientPackage     *codegen.GeneratedPackage
 		clientImportPaths []string
 		imports           []*codegen.ImportSpec
-	}
-
-	// ClientSessionData drives the generated MCP initialization helper.
-	ClientSessionData struct {
-		// MCPPackage is the final import name for the generated MCP service.
-		MCPPackage string
-		// JSONRPCPackage is the final import name for Goa's JSON-RPC package.
-		JSONRPCPackage string
-		// InitializedRequestBuilder is Goa's final request builder name for the
-		// notifications/initialized method.
-		InitializedRequestBuilder string
-		// InitializedRequestEncoder is Goa's final request encoder name for the
-		// notifications/initialized method.
-		InitializedRequestEncoder string
-		// HasTools reports that the generated client can call MCP tools.
-		HasTools bool
-		// HasResources reports that the generated client can read MCP resources.
-		HasResources bool
-		// HasPrompts reports that the generated client can get MCP prompts.
-		HasPrompts bool
-
-		clientPackage     *codegen.GeneratedPackage
-		clientImportPaths []string
-		imports           []*codegen.ImportSpec
-	}
-
-	// RegisterTool represents a single tool entry in the helper file.
-	RegisterTool struct {
-		// ID is the tool name sent through MCP.
-		ID string
-		// Title is the tool name shown to users.
-		Title string
-		// QualifiedName identifies the service, toolset, and tool.
-		QualifiedName string
-		// Description explains the tool to the model.
-		Description string
-		// HasPayload reports whether the Goa method accepts a payload.
-		HasPayload bool
-		// HasResult reports whether the Goa method returns a result.
-		HasResult bool
-		// HasStructuredResult reports whether MCP returns the result as structured
-		// JSON.
-		HasStructuredResult bool
-		// TextResult reports whether MCP returns the result as plain text.
-		TextResult bool
-		// PayloadType is the final Go payload type.
-		PayloadType string
-		// ResultType is the final Go result type.
-		ResultType string
-		// InputSchema is the JSON Schema for tool arguments.
-		InputSchema string
-		// ResultSchema is the JSON Schema for the tool result.
-		ResultSchema string
-		// ExampleArgs is a valid JSON example for tool arguments.
-		ExampleArgs string
-		// Codec names the generated result decoder used after an MCP call.
-		Codec *MethodCodecData
 	}
 
 	// ToolAdapter contains the generated code choices for one MCP tool.
@@ -180,29 +155,37 @@ type (
 		Name string
 		// Description explains the tool to MCP clients.
 		Description string
-		// ServiceMethodName is Goa's final Go name for the original service method.
-		ServiceMethodName string
+		// Annotations contains the behavior hints advertised by this tool.
+		Annotations *mcpexpr.ToolAnnotationsExpr
+		// UIMetadata is the generated JSON object for Apps resource and caller choices.
+		UIMetadata string
+		// AppOnly excludes this tool from model-facing invocations.
+		AppOnly bool
+		// ReadOnly is the design-time promise used by the generated HTTP binding.
+		ReadOnly bool
+		// Idempotent is the design-time promise that repeated arguments have no additional effects.
+		Idempotent bool
+		// Endpoint calls the configured Goa endpoint for this method.
+		Endpoint *endpointMethodAdapter
+		// Task binds this tool to service-owned durable job methods.
+		Task *taskAdapter
 		// HasPayload reports whether the Goa method accepts a payload.
 		HasPayload bool
 		// HasResult reports whether the Goa method returns a result.
 		HasResult bool
-		// PayloadType is the final Go payload type.
-		PayloadType string
-		// ResultType is the final Go result type.
-		ResultType string
+		// ResultConversion separates content, structured output and host metadata
+		// from the completed service result using its selected view.
+		ResultConversion *toolResultAdapter
 		// InputSchema is the JSON Schema sent by tools/list.
 		InputSchema string
+		// Headers contains precomputed paths mirrored to HTTP headers.
+		Headers []mcpprotocol.HeaderBinding
 		// ResultSchema is the JSON Schema used by the agent runtime for the
 		// authored result type.
 		ResultSchema string
-		// OutputSchema is the JSON Schema for an object result. It is empty
-		// when the method has no result or returns a non-object value.
+		// OutputSchema describes the structured fields, including scalar and array roots.
+		// It is empty when the tool returns only content or no result.
 		OutputSchema string
-		// HasStructuredResult reports that successful calls include the
-		// object result in MCP structuredContent.
-		HasStructuredResult bool
-		// TextResult reports that the result is a string sent as plain MCP text.
-		TextResult bool
 		// Codec names the functions for the original method payload and result.
 		Codec *MethodCodecData
 		// ExampleArguments contains a minimal valid JSON value for tool arguments.
@@ -222,11 +205,13 @@ type (
 		URI string
 		// MimeType describes the resource content.
 		MimeType string
-		// ServiceMethodName is Goa's final Go name for the original service method.
-		ServiceMethodName string
+		// Endpoint calls the configured Goa endpoint for this method.
+		Endpoint *endpointMethodAdapter
 		// TextResult reports that the method result is a string returned without
 		// JSON quoting because the resource declares a text MIME type.
 		TextResult bool
+		// BinaryResult selects base64 blob content for a byte-valued service result.
+		BinaryResult bool
 		// Codec names the functions for the original method payload and result.
 		Codec *MethodCodecData
 
@@ -254,16 +239,18 @@ type (
 	// adapterGenerator builds the values used to generate an MCP adapter for one
 	// Goa service.
 	adapterGenerator struct {
+		api             *expr.APIExpr
 		originalService *expr.ServiceExpr
 		mcp             *mcpexpr.MCPExpr
 	}
 )
 
-const noArgumentsSchema = `{"type":"object","properties":{},"additionalProperties":false}`
+const noArgumentsSchema = `{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{},"additionalProperties":false}`
 
 // newAdapterGenerator creates a generator for one Goa service and MCP server.
-func newAdapterGenerator(svc *expr.ServiceExpr, mcp *mcpexpr.MCPExpr) *adapterGenerator {
+func newAdapterGenerator(api *expr.APIExpr, svc *expr.ServiceExpr, mcp *mcpexpr.MCPExpr) *adapterGenerator {
 	return &adapterGenerator{
+		api:             api,
 		originalService: svc,
 		mcp:             mcp,
 	}
@@ -281,29 +268,63 @@ func (g *adapterGenerator) buildAdapterData() (*AdapterData, error) {
 	if err != nil {
 		return nil, err
 	}
+	prompts, err := g.buildMethodPromptAdapters()
+	if err != nil {
+		return nil, err
+	}
+	templates, err := buildResourceTemplateAdapters(g.mcp.ResourceTemplates)
+	if err != nil {
+		return nil, err
+	}
+	reader, err := g.buildResourceReaderAdapter()
+	if err != nil {
+		return nil, err
+	}
+	completions, err := g.buildCompletionAdapters()
+	if err != nil {
+		return nil, err
+	}
+	references, err := g.buildCompletionReferences(templates)
+	if err != nil {
+		return nil, err
+	}
+	subscription, err := g.buildSubscriptionAdapter()
+	if err != nil {
+		return nil, err
+	}
 	data := &AdapterData{
-		ServiceName:     g.originalService.Name,
-		ServiceGoName:   codegen.Goify(g.originalService.Name, true),
-		MCPName:         g.mcp.Name,
-		MCPVersion:      g.mcp.Version,
-		ProtocolVersion: g.mcp.ProtocolVersion,
-		Package:         codegen.SnakeCase(g.originalService.Name),
-		Tools:           tools,
-		Resources:       resources,
-		NeedsBoolPtr:    len(tools) > 0,
+		ServiceName:          g.originalService.Name,
+		ServiceGoName:        codegen.Goify(g.originalService.Name, true),
+		MCPName:              g.mcp.Name,
+		MCPVersion:           g.mcp.Version,
+		Package:              codegen.SnakeCase(g.originalService.Name),
+		Tools:                tools,
+		Resources:            resources,
+		ResourceTemplates:    templates,
+		ResourceReader:       reader,
+		SubscriptionSource:   subscription,
+		MethodPrompts:        prompts,
+		Completions:          completions,
+		CompletionReferences: references,
+		NeedsBoolPtr:         len(tools)+len(prompts) > 0 || subscription != nil,
 	}
 
 	// Static prompts are handled directly in the adapter
 	data.StaticPrompts = g.buildStaticPrompts()
 
-	data.NeedsNoArgumentsValidation = adapterDataNeedsNoArgumentsValidation(data)
-
-	data.Register = g.buildRegisterData(data)
-	data.ClientSession = &ClientSessionData{
-		HasTools:     len(data.Tools) > 0,
-		HasResources: len(data.Resources) > 0,
-		HasPrompts:   len(data.StaticPrompts) > 0,
+	metadata, err := json.Marshal(map[string]any{"io.modelcontextprotocol/serverInfo": map[string]string{"name": g.mcp.Name, "version": g.mcp.Version}})
+	if err != nil {
+		return nil, fmt.Errorf("encode MCP server metadata: %w", err)
 	}
+	data.ResultMeta = string(metadata)
+	data.NeedsNoArgumentsValidation = adapterDataNeedsNoArgumentsValidation(data)
+	for _, tool := range g.mcp.Tools {
+		if tool.MetadataField != "" {
+			data.NeedsToolMetadata = true
+			break
+		}
+	}
+
 	data.ClientCaller = g.buildClientCallerData(data)
 
 	return data, nil
@@ -320,54 +341,8 @@ func adapterDataNeedsNoArgumentsValidation(data *AdapterData) bool {
 	return false
 }
 
-func (g *adapterGenerator) buildRegisterData(data *AdapterData) *RegisterData {
-	if len(data.Tools) == 0 {
-		return nil
-	}
-	serviceGoName := data.ServiceGoName
-	suiteGoName := codegen.Goify(g.mcp.Name, true)
-	desc := g.mcp.Description
-	if desc == "" {
-		desc = fmt.Sprintf("MCP toolset %s.%s", g.originalService.Name, g.mcp.Name)
-	}
-	helper := serviceGoName + suiteGoName + "Toolset"
-	reg := &RegisterData{
-		HelperName:         helper,
-		ServiceName:        g.originalService.Name,
-		SuiteName:          g.mcp.Name,
-		SuiteQualifiedName: fmt.Sprintf("%s.%s", g.originalService.Name, g.mcp.Name),
-		Description:        desc,
-	}
-	for _, tool := range data.Tools {
-		payloadType := tool.PayloadType
-		if payloadType == "" {
-			payloadType = "any"
-		}
-		resultType := tool.ResultType
-		if resultType == "" {
-			resultType = "any"
-		}
-		reg.Tools = append(reg.Tools, RegisterTool{
-			ID:                  tool.Name,
-			Title:               naming.HumanizeTitle(tool.Name),
-			QualifiedName:       fmt.Sprintf("%s.%s.%s", reg.ServiceName, reg.SuiteName, tool.Name),
-			Description:         tool.Description,
-			HasPayload:          tool.HasPayload,
-			HasResult:           tool.HasResult,
-			HasStructuredResult: tool.HasStructuredResult,
-			TextResult:          tool.TextResult,
-			PayloadType:         payloadType,
-			ResultType:          resultType,
-			InputSchema:         tool.InputSchema,
-			ResultSchema:        tool.ResultSchema,
-			ExampleArgs:         tool.ExampleArguments,
-		})
-	}
-	return reg
-}
-
 func (g *adapterGenerator) buildClientCallerData(data *AdapterData) *ClientCallerData {
-	if data.Register == nil {
+	if len(data.Tools) == 0 {
 		return nil
 	}
 	return &ClientCallerData{Tools: data.Tools}
@@ -384,19 +359,37 @@ func (g *adapterGenerator) buildToolAdapters() ([]*ToolAdapter, error) {
 		adapter := &ToolAdapter{
 			Name:           tool.Name,
 			Description:    tool.Description,
+			Annotations:    tool.Annotations,
 			HasPayload:     hasRealPayload,
 			HasResult:      hasMCPValue(tool.Method.Result),
 			userMethodName: tool.Method.Name,
 		}
 
+		var err error
+		adapter.UIMetadata, err = toolUIMetadata(tool)
+		if err != nil {
+			return nil, fmt.Errorf("encode tool %q Apps metadata: %w", tool.Name, err)
+		}
+		adapter.AppOnly = tool.Visibility == mcpexpr.AppVisibility
+
+		if tool.Annotations != nil {
+			adapter.ReadOnly = tool.Annotations.ReadOnlyHint != nil && *tool.Annotations.ReadOnlyHint
+			adapter.Idempotent = tool.Annotations.IdempotentHint != nil && *tool.Annotations.IdempotentHint
+		}
+
+		arguments, err := mcpinput.Arguments(tool.Method)
+		if err != nil {
+			return nil, fmt.Errorf("tool %q arguments: %w", tool.Name, err)
+		}
+
 		// Set payload type reference only for real payloads
 		if hasRealPayload {
 			// Generate a minimal JSON Schema for MCP tools/list
-			schema, err := shared.ToJSONSchema(tool.Method.Payload)
+			schema, err := jsonschema.Build(g.api, arguments, expr.MethodPayloadExampleIdentity(tool.Method))
 			if err != nil {
 				return nil, fmt.Errorf("build schema for tool %q: %w", tool.Name, err)
 			}
-			adapter.InputSchema = schema
+			adapter.InputSchema = string(schema)
 			// Produce a minimal valid example JSON for arguments.
 			example, err := g.buildExampleJSON(tool.Method)
 			if err != nil {
@@ -407,22 +400,39 @@ func (g *adapterGenerator) buildToolAdapters() ([]*ToolAdapter, error) {
 			adapter.InputSchema = noArgumentsSchema
 			adapter.ExampleArguments = "{}"
 		}
+		headers, err := mcpprotocol.CompileHeaderBindings(json.RawMessage(adapter.InputSchema))
+		if err != nil {
+			return nil, fmt.Errorf("tool %q header annotations: %w", tool.Name, err)
+		}
+		adapter.Headers = headers
+		if tool.ContentField != "" || tool.MetadataField != "" {
+			content, err := g.buildToolResultAdapter(tool)
+			if err != nil {
+				return nil, err
+			}
+			adapter.ResultConversion = content
+		}
 		if adapter.HasResult {
-			schema, err := shared.ToJSONSchema(tool.Method.Result)
+			result, err := mcpcontract.ToolResult(tool)
+			if err != nil {
+				return nil, err
+			}
+			if !hasMCPValue(result) {
+				adapters = append(adapters, adapter)
+				continue
+			}
+			schema, err := jsonschema.Build(g.api, result, expr.MethodResultExampleIdentity(tool.Method))
 			if err != nil {
 				return nil, fmt.Errorf("build output schema for tool %q: %w", tool.Name, err)
 			}
-			adapter.ResultSchema = schema
-			if expr.AsObject(tool.Method.Result.Type) != nil {
-				adapter.OutputSchema = schema
-				adapter.HasStructuredResult = true
-			}
-			adapter.TextResult = shared.IsStringType(tool.Method.Result.Type)
+			adapter.ResultSchema = string(schema)
+			adapter.OutputSchema = string(schema)
 		}
 
 		adapters = append(adapters, adapter)
 	}
 
+	sort.Slice(adapters, func(i, j int) bool { return adapters[i].Name < adapters[j].Name })
 	return adapters, nil
 }
 
@@ -435,18 +445,32 @@ func (g *adapterGenerator) buildResourceAdapters() ([]*ResourceAdapter, error) {
 		if err != nil {
 			return nil, fmt.Errorf("parse MIME type for resource %q: %w", resource.Name, err)
 		}
+		completed, err := mcpinput.CompleteResult(resource.Method)
+		if err != nil {
+			return nil, err
+		}
+		resultType := completed.Type
+		for {
+			named, ok := resultType.(expr.UserType)
+			if !ok {
+				break
+			}
+			resultType = named.Attribute().Type
+		}
 		adapter := &ResourceAdapter{
 			Name:           resource.Name,
 			Description:    resource.Description,
 			URI:            resource.URI,
 			MimeType:       resource.MimeType,
-			TextResult:     strings.HasPrefix(mediaType, "text/"),
+			TextResult:     strings.HasPrefix(mediaType, "text/") && resultType != expr.Bytes,
+			BinaryResult:   resultType == expr.Bytes,
 			userMethodName: resource.Method.Name,
 		}
 
 		adapters = append(adapters, adapter)
 	}
 
+	sort.Slice(adapters, func(i, j int) bool { return adapters[i].URI < adapters[j].URI })
 	return adapters, nil
 }
 
@@ -457,7 +481,10 @@ func hasMCPValue(attribute *expr.AttributeExpr) bool {
 
 // buildExampleJSON returns a repeatable JSON example for a method payload.
 func (g *adapterGenerator) buildExampleJSON(method *expr.MethodExpr) (string, error) {
-	attr := method.Payload
+	attr, err := mcpinput.Arguments(method)
+	if err != nil {
+		return "", err
+	}
 	if attr == nil || attr.Type == nil || attr.Type == expr.Empty {
 		return "{}", nil
 	}
@@ -496,5 +523,6 @@ func (g *adapterGenerator) buildStaticPrompts() []*StaticPromptAdapter {
 		prompts = append(prompts, adapter)
 	}
 
+	sort.Slice(prompts, func(i, j int) bool { return prompts[i].Name < prompts[j].Name })
 	return prompts
 }

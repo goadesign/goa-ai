@@ -18,12 +18,6 @@ import (
 func TestGeneratedRecursiveRootArgsRegister(t *testing.T) {
 	files := testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", testscenarios.RecursiveRootArgs())
 	root := writeGeneratedModule(t, files)
-	writeGeneratedPackageTest(t, root, "trees/toolsets/nodes/http/validate_stub.go", `package http
-
-func ValidateWalkPayloadTransport(v *WalkPayloadTransport) error {
-	return nil
-}
-`)
 	writeGeneratedPackageTest(t, root, "trees/toolsets/nodes/recursive_contract_test.go", `package nodes
 
 import (

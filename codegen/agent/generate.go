@@ -8,10 +8,8 @@ import (
 	"path/filepath"
 	"slices"
 
-	"goa.design/goa-ai/codegen/shared"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/eval"
-	goaexpr "goa.design/goa/v3/expr"
 )
 
 // generateAgentFiles appends the agent, tool specification, completion, and
@@ -19,6 +17,11 @@ import (
 func generateAgentFiles(data *GeneratorData, roots []eval.Root, specsPlan *toolSpecsPlan, helpersPlan *toolsetHelperPackagesPlan, aggregates *aggregateSpecsPackagesPlan, exportsPlan *serviceExportPackagesPlan, registryPlan *registryClientPlan, files []*codegen.File) ([]*codegen.File, error) {
 	generated := serviceExportFiles(exportsPlan)
 	generated = append(generated, toolsetSpecsFiles(specsPlan)...)
+	inputFiles, err := nativeInputFiles(specsPlan)
+	if err != nil {
+		return nil, err
+	}
+	generated = append(generated, inputFiles...)
 	helperFiles, err := toolsetHelperFiles(helpersPlan)
 	if err != nil {
 		return nil, err
@@ -304,6 +307,7 @@ func serviceExecutorFile(plan *toolsetHelperPackagePlan) *codegen.File {
 	toolset := *plan.toolset
 	toolset.SpecsPackageName = linked.SpecsPackageAlias
 	data := serviceToolsetFileData{
+		MCPPackage:       linked.MCPPackage,
 		PackageName:      toolset.PackageName,
 		Toolset:          &toolset,
 		Tools:            linked.Tools,
@@ -339,12 +343,10 @@ func mcpExecutorFile(plan *toolsetHelperPackagePlan) (*codegen.File, error) {
 			return nil, fmt.Errorf("toolset %q MCP spec for %q is missing", toolset.QualifiedName, tool.QualifiedName)
 		}
 		tools = append(tools, mcpExecutorToolData{
-			LocalName:        tool.Name,
-			ConstName:        entry.ConstName,
-			SpecVar:          entry.SpecVar,
-			HasResult:        entry.HasResult,
-			StructuredResult: entry.HasResult && goaexpr.AsObject(tool.Return.Type) != nil,
-			TextResult:       entry.HasResult && shared.IsStringType(tool.Return.Type),
+			LocalName: tool.Name,
+			ConstName: entry.ConstName,
+			SpecVar:   entry.SpecVar,
+			HasResult: entry.HasResult,
 		})
 	}
 	data := mcpExecutorFileData{

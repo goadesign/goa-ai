@@ -99,6 +99,7 @@ func (r *Runtime) executeGroupedToolCalls(
 	grouped [][]ToolCall,
 	timeouts []time.Duration,
 	toolOpts engine.ActivityOptions,
+	taskStates map[string]*taskExecution,
 ) ([]*ToolExecutionResult, bool, error) {
 	var out []*ToolExecutionResult
 	timedOutAny := false
@@ -116,7 +117,7 @@ func (r *Runtime) executeGroupedToolCalls(
 		if base.providerControl != nil && !finishBy.IsZero() {
 			groupDeadline = finishBy.Add(base.providerControl.elapsed - recoveryElapsed)
 		}
-		sub, timedOut, err := r.executeToolCalls(wfCtx, reg.ExecuteToolActivity, opt, agentID, &base.RunContext, base.HistoryEndID, grouped[i], expectedChildren, parentTracker, groupDeadline)
+		sub, timedOut, err := r.executeToolCalls(wfCtx, reg.ExecuteToolActivity, opt, agentID, &base.RunContext, base.HistoryEndID, grouped[i], expectedChildren, parentTracker, groupDeadline, taskStates)
 		out = append(out, sub...)
 		if timedOut {
 			timedOutAny = true
@@ -156,15 +157,11 @@ func (r *Runtime) appendUserToolRecordResults(
 		if err != nil {
 			return err
 		}
-		content, err := toolResultRecordContent(record)
+		part, err := toolResultRecordPart(record)
 		if err != nil {
 			return err
 		}
-		parts = append(parts, model.ToolResultPart{
-			ToolUseID: transcriptToolCallID(call),
-			Content:   content,
-			IsError:   tr.Failure != nil,
-		})
+		parts = append(parts, part)
 		if hasSpec && tr.Failure == nil {
 			sources, err := r.toolImageSources(spec, tr.ServerData)
 			if err != nil {
@@ -265,6 +262,15 @@ func (r *Runtime) filterResumeRequiredToolRecords(records []stepToolRecord) ([]s
 func validateStepToolRecord(context string, record stepToolRecord) error {
 	if record.call.ToolCallID == "" {
 		return fmt.Errorf("%s: missing call tool_call_id for %s", context, record.call.Name)
+	}
+	if record.mcpPending != nil {
+		if pendingHostInput(record.mcpPending) == nil {
+			return fmt.Errorf("%s: Task waiting escaped activity collection", context)
+		}
+		if record.result != nil || record.clarification != nil || record.childSuspension != nil || record.resultPublished || record.resultRecord != nil {
+			return fmt.Errorf("%s: unfinished MCP call has a completed result", context)
+		}
+		return nil
 	}
 	if record.result == nil {
 		return fmt.Errorf("%s: nil tool result for %s", context, record.call.Name)

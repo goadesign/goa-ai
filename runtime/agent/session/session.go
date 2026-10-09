@@ -43,6 +43,9 @@ type (
 		// ParentRunID identifies the parent for an agent-as-tool child run.
 		// Root runs leave it empty.
 		ParentRunID string
+		// SuccessorRunID is the one workflow admitted to continue this suspended
+		// run. It is empty until admission and never changes afterward.
+		SuccessorRunID string
 		// Status indicates the current lifecycle state.
 		Status RunStatus
 		// StartOutcome records whether the accepted workflow was allowed to
@@ -124,8 +127,8 @@ const (
 	// RunStartProceed records that the first start allowed planner and tool
 	// work. An exact retry must also inspect the current run status.
 	RunStartProceed RunStartOutcome = "proceed"
-	// RunStartStop prevents the workflow from doing work because its session
-	// had already ended.
+	// RunStartStop prevents ordinary work because the session had already ended.
+	// The workflow cancels inherited work before recording its terminal result.
 	RunStartStop RunStartOutcome = "stop"
 )
 

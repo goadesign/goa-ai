@@ -20,6 +20,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/runlog"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/mcp"
 )
 
 const (
@@ -435,7 +436,7 @@ func TestDecodeFromRecordInput_ToolResultReceivedPreservesServerDataBytes(t *tes
 		"",
 		resultJSON,
 		serverData,
-		"preview",
+		nil, "preview",
 		nil,
 		250*time.Millisecond,
 		nil,
@@ -472,7 +473,7 @@ func TestEncodeRecordPayloadRejectsFailureWithResultJSON(t *testing.T) {
 		"",
 		rawjson.Message(`{"summary":"partial"}`),
 		nil,
-		"",
+		nil, "",
 		nil,
 		0,
 		nil,
@@ -715,4 +716,34 @@ func TestDecodeFromRecordInput_RunCompletedRejectsCanceledPayloadWithoutReason(t
 		Payload:     rawjson.Message(payload),
 	})
 	require.ErrorContains(t, err, "canceled run completion requires cancellation reason")
+}
+
+// Durable host events retain exact request IDs and JSON, without opaque server state.
+func TestMCPInputCodecOwnsHostRequests(t *testing.T) {
+	params := json.RawMessage(`{"message":"Continue","mode":"url","url":"https://example.test/approve"}`)
+	requests := map[string]mcp.InputRequest{"approve": {Method: "elicitation/create", Params: params}}
+	event := NewAwaitMCPInputEvent(testRunID, "service.agent", testSessionID, api.PendingMCPInput{ToolName: "remote.lookup", ToolCallID: "call-1", Requests: requests})
+	params[0] = 'x'
+	delete(requests, "approve")
+	record, err := EncodeToRecordInput(event, EncodeOptions{EventKey: "mcp-input", TimestampMS: 1})
+	require.NoError(t, err)
+	decoded, err := DecodeFromRecordInput(record)
+	require.NoError(t, err)
+	pending, ok := decoded.(*AwaitMCPInputEvent)
+	require.True(t, ok)
+	assert.Equal(t, event.Input, pending.Input)
+	assert.NotContains(t, string(record.Payload), "requestState")
+	assert.JSONEq(t, `{"message":"Continue","mode":"url","url":"https://example.test/approve"}`, string(pending.Input.Requests["approve"].Params))
+}
+
+// Stored input records must describe an interaction the host can actually show.
+func TestMCPInputCodecRejectsMalformedStoredInteraction(t *testing.T) {
+	event := NewAwaitMCPInputEvent(testRunID, "service.agent", testSessionID, api.PendingMCPInput{
+		ToolName: "remote.lookup", ToolCallID: "call-1",
+		Requests: map[string]mcp.InputRequest{"approve": {Method: "elicitation/create", Params: json.RawMessage(`{"message":"Continue","mode":"url","url":"relative"}`)}},
+	})
+	record, err := EncodeToRecordInput(event, EncodeOptions{EventKey: "mcp-input", TimestampMS: 1})
+	require.NoError(t, err)
+	_, err = DecodeFromRecordInput(record)
+	assert.ErrorContains(t, err, "elicitation URL must be absolute")
 }

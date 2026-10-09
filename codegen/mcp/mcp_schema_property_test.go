@@ -9,7 +9,7 @@ import (
 	"github.com/leanovate/gopter/gen"
 	"github.com/leanovate/gopter/prop"
 	"github.com/stretchr/testify/require"
-	"goa.design/goa-ai/codegen/shared"
+	"goa.design/goa-ai/codegen/jsonschema"
 	"goa.design/goa/v3/expr"
 )
 
@@ -26,7 +26,7 @@ func TestToolSchemaRoundTripProperty(t *testing.T) {
 	properties.Property("tool schema round-trip preserves structure", prop.ForAll(
 		func(attr *expr.AttributeExpr) bool {
 			// Serialize to JSON
-			jsonStr, err := shared.ToJSONSchema(attr)
+			jsonStr, err := buildSchemaForTest(attr)
 			if err != nil {
 				return false
 			}
@@ -71,7 +71,7 @@ func TestToolSchemaRoundTripWithValidations(t *testing.T) {
 
 	properties.Property("schema with validations round-trips correctly", prop.ForAll(
 		func(attr *expr.AttributeExpr) bool {
-			jsonStr, err := shared.ToJSONSchema(attr)
+			jsonStr, err := buildSchemaForTest(attr)
 			if err != nil {
 				return false
 			}
@@ -108,7 +108,7 @@ func TestToolSchemaRoundTripNestedObjects(t *testing.T) {
 
 	properties.Property("nested object schema round-trips correctly", prop.ForAll(
 		func(attr *expr.AttributeExpr) bool {
-			jsonStr, err := shared.ToJSONSchema(attr)
+			jsonStr, err := buildSchemaForTest(attr)
 			if err != nil {
 				return false
 			}
@@ -372,7 +372,7 @@ func TestToolSchemaRoundTripWithEnums(t *testing.T) {
 
 	properties.Property("schema with enums round-trips correctly", prop.ForAll(
 		func(attr *expr.AttributeExpr) bool {
-			jsonStr, err := shared.ToJSONSchema(attr)
+			jsonStr, err := buildSchemaForTest(attr)
 			if err != nil {
 				return false
 			}
@@ -409,7 +409,7 @@ func TestToolSchemaRoundTripWithUserTypes(t *testing.T) {
 
 	properties.Property("schema with user types round-trips correctly", prop.ForAll(
 		func(attr *expr.AttributeExpr) bool {
-			jsonStr, err := shared.ToJSONSchema(attr)
+			jsonStr, err := buildSchemaForTest(attr)
 			if err != nil {
 				return false
 			}
@@ -519,7 +519,7 @@ func TestToolSchemaPreservesWrapperMetadata(t *testing.T) {
 		},
 	}
 
-	jsonStr, err := shared.ToJSONSchema(attr)
+	jsonStr, err := buildSchemaForTest(attr)
 
 	require.NoError(t, err)
 	var schema map[string]any
@@ -528,7 +528,7 @@ func TestToolSchemaPreservesWrapperMetadata(t *testing.T) {
 	require.Contains(t, schema["required"], "id")
 }
 
-func TestToolSchemaRejectsRecursiveUserTypes(t *testing.T) {
+func TestToolSchemaRetainsRecursiveUserTypes(t *testing.T) {
 	recursive := &expr.UserTypeExpr{TypeName: "Node"}
 	object := expr.Object{
 		&expr.NamedAttributeExpr{
@@ -540,10 +540,10 @@ func TestToolSchemaRejectsRecursiveUserTypes(t *testing.T) {
 	}
 	recursive.AttributeExpr = &expr.AttributeExpr{Type: &object}
 
-	_, err := shared.ToJSONSchema(&expr.AttributeExpr{Type: recursive})
-
-	require.Error(t, err)
-	require.ErrorContains(t, err, "recursive")
+	encoded, err := buildSchemaForTest(&expr.AttributeExpr{Type: recursive})
+	require.NoError(t, err)
+	require.Contains(t, encoded, `"$defs"`)
+	require.Contains(t, encoded, `"$ref":"#/$defs/Node"`)
 }
 
 func TestToolSchemaUsesArrayBoundsKeywords(t *testing.T) {
@@ -561,7 +561,7 @@ func TestToolSchemaUsesArrayBoundsKeywords(t *testing.T) {
 		},
 	}
 
-	jsonStr, err := shared.ToJSONSchema(attr)
+	jsonStr, err := buildSchemaForTest(attr)
 
 	require.NoError(t, err)
 	var schema map[string]any
@@ -570,4 +570,10 @@ func TestToolSchemaUsesArrayBoundsKeywords(t *testing.T) {
 	require.InDelta(t, float64(maxItems), schema["maxItems"], 0)
 	require.NotContains(t, schema, "minLength")
 	require.NotContains(t, schema, "maxLength")
+}
+
+// buildSchemaForTest runs the common schema builder with isolated design state.
+func buildSchemaForTest(attribute *expr.AttributeExpr) (string, error) {
+	encoded, err := jsonschema.Build(testSchemaAPI(), attribute, expr.UserTypeExampleIdentity(&expr.UserTypeExpr{TypeName: "schema-test", UID: "schema-test"}))
+	return string(encoded), err
 }

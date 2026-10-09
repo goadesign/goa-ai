@@ -318,6 +318,11 @@ type (
 		// Used by the runtime for JSON marshaling/unmarshaling and schema validation.
 		Specs []tools.ToolSpec
 
+		// ActivityRetryPolicy overrides the agent policy for this executable binding.
+		// Nil uses the agent policy. Remote MCP bindings use one total attempt so
+		// an uncertain network outcome cannot repeat a side effect automatically.
+		ActivityRetryPolicy *engine.RetryPolicy
+
 		// TaskQueue optionally overrides the queue used when scheduling this toolset's activities.
 		TaskQueue string
 
@@ -1130,6 +1135,19 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 	}); err != nil {
 		return err
 	}
+	// Cancellation jobs share this agent's worker queue. The existing one-second
+	// infrastructure interval limits observations of one outstanding request;
+	// it does not cap cleanup lifetime or remote Task retention.
+	cancellationOptions := engine.ActivityOptions{
+		Queue:               reg.Definition.route.DefaultTaskQueue,
+		StartToCloseTimeout: defaultStorageActivityTimeout,
+		RetryPolicy:         defaultRetriedActivityPolicy(),
+	}
+	cancellationOptions.RetryPolicy.MaxAttempts = 0
+	cancellationOptions.RetryPolicy.UnlimitedAttempts = true
+	if err := r.Engine.RegisterCancellationWorkflow(ctx, reg.Definition.route.WorkflowName+".cancel", cancellationOptions, r.cancellationActivity); err != nil {
+		return err
+	}
 	// Register typed activities for planner (start/resume) and execute_tool.
 	if reg.PlanActivityName != "" {
 		if err := r.Engine.RegisterPlannerActivity(ctx,
@@ -1292,6 +1310,14 @@ func (r *Runtime) RegisterToolset(ts ToolsetRegistration) error {
 	r.mu.RUnlock()
 	if ts.Name == "" {
 		return errors.New("toolset name is required")
+	}
+	if ts.ActivityRetryPolicy != nil {
+		if ts.Inline {
+			return errors.New("inline toolset cannot configure activity retries")
+		}
+		if err := engine.ValidateWorkflowLaunchSettings(0, *ts.ActivityRetryPolicy); err != nil {
+			return fmt.Errorf("toolset retry policy: %w", err)
+		}
 	}
 	if err := validateToolsetSpecs(ts); err != nil {
 		return err
@@ -1897,14 +1923,12 @@ func validateRequiredLabels(definition AgentDefinition, labels map[string]string
 		ErrMissingLabels, definition.route.ID, missing)
 }
 
-// CancelRun requests cancellation of the workflow identified by req.RunID.
-//
-// Cancellation must work across process restarts, so the engine sends the
-// request to the workflow identified by RunID. The workflow stores the reason
-// before the engine stops it.
-//
-// CancelRun is idempotent: if the workflow does not exist (already completed,
-// canceled, or never started), CancelRun returns nil.
+// CancelRun delivers the reason to a running workflow or accepts a durable
+// cancellation job for saved suspended work. The job follows the successor
+// accepted by storage and performs cleanup without another client request.
+// Successful delivery acknowledges ownership; it does not wait for cleanup.
+// Repeating the same request is safe. A different accepted reason is rejected.
+// A run that never started or already settled needs no further work.
 func (r *Runtime) CancelRun(ctx context.Context, req CancelRequest) error {
 	if req.RunID == "" {
 		return errors.New("run id is required")
@@ -1916,10 +1940,7 @@ func (r *Runtime) CancelRun(ctx context.Context, req CancelRequest) error {
 	if !ok || requester == nil {
 		return errors.New("engine does not support durable cancellation")
 	}
-	err := requester.RequestCancellation(ctx, engine.CancellationRequest{
-		RunID:  req.RunID,
-		Reason: req.Reason,
-	})
+	err := requester.RequestCancellation(ctx, req.RunID, req)
 	if err == nil {
 		return nil
 	}
@@ -1937,6 +1958,9 @@ func (r *Runtime) CancelRun(ctx context.Context, req CancelRequest) error {
 		}
 		if loadErr != nil {
 			return loadErr
+		}
+		if meta.Status == session.RunStatusSuspended {
+			return r.startSuspendedCancellation(ctx, req, meta)
 		}
 		if !session.IsTerminalRunStatus(meta.Status) {
 			return fmt.Errorf("runtime: active run %q has no engine workflow: %w", req.RunID, err)

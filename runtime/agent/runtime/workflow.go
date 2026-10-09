@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"time"
 
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/engine/contract"
 	"goa.design/goa-ai/runtime/agent/hooks"
@@ -154,6 +155,9 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	var (
 		finalErr             error
 		recordTerminalResult bool
+		executionLoop        *workflowLoop
+		cleanupRequest       = api.CancellationRequest{RunID: input.RunID, Reason: run.CancellationReasonEngineCanceled}
+		cancellationRecorded bool
 	)
 	defer func() {
 		cancellationAccepted, err := finalization.beginFinalization(wfCtx.Detached())
@@ -186,6 +190,16 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 			} else {
 				return
 			}
+		}
+		// Cancellation admission is closed before cleanup starts. Tasks and
+		// children still held by unfinished records must settle before this run.
+		if executionLoop != nil && executionLoop.unfinishedBatch != nil && workflowErr != nil {
+			if !cancellationAccepted && !cancellationRecorded {
+				if err := r.publishRunCancellation(wfCtx, input, engine.CancellationRequest{RunID: input.RunID, Reason: cleanupRequest.Reason}); err != nil {
+					workflowErr = errors.Join(workflowErr, fmt.Errorf("record unfinished work cancellation: %w", err))
+				}
+			}
+			workflowErr = errors.Join(workflowErr, executionLoop.cancelSavedWork(cleanupRequest))
 		}
 		if workflowErr != nil {
 			finalErr = workflowErr
@@ -232,7 +246,20 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		return nil, err
 	}
 	if err := wfCtx.SetCancellationHandler(func(cancelCtx engine.WorkflowContext, request engine.CancellationRequest) error {
-		return r.handleWorkflowCancellation(finalization, cancelCtx, input, startCommand, request)
+		if request.RunID != input.RunID {
+			owned, err := workflowOwnsCancellation(checkpoint, executionLoop, reg.Definition, request.RunID)
+			if err != nil {
+				return err
+			}
+			if !owned {
+				return engine.ErrCancellationRunNotOwned
+			}
+		}
+		if err := r.handleWorkflowCancellation(finalization, cancelCtx, input, startCommand, request); err != nil {
+			return err
+		}
+		cleanupRequest = request
+		return nil
 	}); err != nil {
 		return nil, fmt.Errorf("register cancellation handler: %w", err)
 	}
@@ -241,14 +268,60 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		return nil, err
 	}
 	startResult := runStartStorageResult(input, startOutput)
-	if startResult.Outcome == session.RunStartStop {
-		return nil, context.Canceled
-	}
 	if session.IsTerminalRunStatus(startResult.RunStatus) {
 		return nil, engine.ErrWorkflowCompleted
 	}
 	historyEndID := startResult.Records[len(startResult.Records)-1].ID
 	recordTerminalResult = true
+	var recoveryBudget *providerRecoveryBudget
+	if checkpoint != nil {
+		recoveryBudget = checkpoint.ProviderRecovery
+	} else if input.Policy != nil && input.Policy.ProviderRetryBudget > 0 {
+		recoveryBudget = &providerRecoveryBudget{Remaining: input.Policy.ProviderRetryBudget}
+	}
+	recoveryWorkflow, err := installProviderRecovery(wfCtx, recoveryBudget)
+	if err != nil {
+		return nil, err
+	}
+	wfCtx = recoveryWorkflow
+	recoveryWorkflow.actor.finalization = finalization
+	defer func() {
+		if err := recoveryWorkflow.actor.close(wfCtx, workflowErr); err != nil {
+			workflowErr = errors.Join(workflowErr, err)
+			output = nil
+		}
+	}()
+	// Restore inherited ownership before publishing prompts or consuming answers.
+	// An engine cancellation at either step still leaves this workflow responsible.
+	if checkpoint != nil {
+		executionLoop, err = r.restoreSuspendedWorkflow(recoveryWorkflow, reg, input, checkpoint, historyEndID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if startResult.Outcome == session.RunStartStop || checkpoint != nil && input.Continuation.Cancellation != nil {
+		cancellationRecorded = startResult.Outcome == session.RunStartStop
+		if checkpoint == nil {
+			return nil, context.Canceled
+		}
+		if cancellationRecorded {
+			cleanupRequest.Reason = run.CancellationReasonSessionEnded
+		} else {
+			cleanupRequest = *input.Continuation.Cancellation
+			reason := cleanupRequest.Reason
+			if cleanupRequest.RunID != checkpoint.PreviousRunID {
+				reason = run.CancellationReasonEngineCanceled
+			}
+			if err := r.publishRunCancellation(wfCtx, input, engine.CancellationRequest{RunID: input.RunID, Reason: reason}); err != nil {
+				return nil, err
+			}
+			cancellationRecorded = true
+		}
+		return nil, context.Canceled
+	}
+	if err := wfCtx.Context().Err(); err != nil {
+		return nil, err
+	}
 	promptEvents := make([]hooks.Event, 0, len(startResult.RenderedPrompts))
 	for _, rendered := range startResult.RenderedPrompts {
 		promptEvents = append(promptEvents, hooks.NewPromptRenderedEvent(
@@ -273,24 +346,6 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	); err != nil {
 		return nil, err
 	}
-	var recoveryBudget *providerRecoveryBudget
-	if checkpoint != nil {
-		recoveryBudget = checkpoint.ProviderRecovery
-	} else if input.Policy != nil && input.Policy.ProviderRetryBudget > 0 {
-		recoveryBudget = &providerRecoveryBudget{Remaining: input.Policy.ProviderRetryBudget}
-	}
-	recoveryWorkflow, err := installProviderRecovery(wfCtx, recoveryBudget)
-	if err != nil {
-		return nil, err
-	}
-	wfCtx = recoveryWorkflow
-	recoveryWorkflow.actor.finalization = finalization
-	defer func() {
-		if err := recoveryWorkflow.actor.close(wfCtx, workflowErr); err != nil {
-			workflowErr = errors.Join(workflowErr, err)
-			output = nil
-		}
-	}()
 	if checkpoint != nil {
 		if err := r.publishHook(
 			wfCtx.Context(),
@@ -301,7 +356,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 			finalStatus = terminalRunStatusForError(err)
 			return nil, err
 		}
-		out, err := r.resumeSuspendedWorkflow(recoveryWorkflow, reg, input, checkpoint, historyEndID)
+		out, err := executionLoop.resumeRestoredWorkflow()
 		if err != nil {
 			finalErr = err
 			finalStatus = terminalRunStatusForError(err)
@@ -479,7 +534,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		finalStatus = terminalRunStatusForError(err)
 		return nil, err
 	}
-	out, err := r.runLoopWithState(
+	executionLoop, err = r.newRunLoopWithState(
 		wfCtx,
 		reg,
 		input,
@@ -491,6 +546,10 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		parentTracker,
 	)
 	if err != nil {
+		return nil, err
+	}
+	out, err := executionLoop.run()
+	if err != nil {
 		finalErr = err
 		finalStatus = terminalRunStatusForError(err)
 		return nil, err
@@ -501,7 +560,9 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	return out, nil
 }
 
-func (r *Runtime) runLoopWithState(
+// newRunLoopWithState validates constructed planner state and binds deadlines
+// and activity options. The returned loop owns any work awaiting host input.
+func (r *Runtime) newRunLoopWithState(
 	wfCtx engine.WorkflowContext,
 	reg AgentRegistration,
 	input *RunInput,
@@ -511,7 +572,7 @@ func (r *Runtime) runLoopWithState(
 	hardDeadline time.Time,
 	turnID string,
 	parentTracker *childTracker,
-) (*RunOutput, error) {
+) (*workflowLoop, error) {
 	if base == nil {
 		return nil, errors.New("base plan input is required")
 	}
@@ -577,5 +638,5 @@ func (r *Runtime) runLoopWithState(
 		resumeOpts,
 		toolOpts,
 	)
-	return loop.run()
+	return loop, nil
 }

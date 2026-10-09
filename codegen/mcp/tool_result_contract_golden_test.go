@@ -21,138 +21,70 @@ func TestBuildToolAdaptersClassifiesResultWireShape(t *testing.T) {
 	}}
 	methods["notify"].Result = &expr.AttributeExpr{Type: expr.Empty}
 
-	tools, err := newAdapterGenerator(svc, mcpWithTools(methods)).buildToolAdapters()
+	tools, err := newAdapterGenerator(testSchemaAPI(), svc, mcpWithTools(methods)).buildToolAdapters()
 	require.NoError(t, err)
 	require.Len(t, tools, 4)
 
-	require.True(t, tools[0].HasStructuredResult)
-	require.NotEmpty(t, tools[0].OutputSchema)
-	require.NotEmpty(t, tools[0].ResultSchema)
-	require.False(t, tools[0].TextResult)
-
-	require.True(t, tools[1].TextResult)
-	require.Empty(t, tools[1].OutputSchema)
-	require.NotEmpty(t, tools[1].ResultSchema)
-
-	require.False(t, tools[2].TextResult)
-	require.False(t, tools[2].HasStructuredResult)
-	require.NotEmpty(t, tools[2].ResultSchema)
-
-	require.False(t, tools[3].HasResult)
-	require.Empty(t, tools[3].ResultSchema)
+	byName := make(map[string]*ToolAdapter)
+	for _, tool := range tools {
+		byName[tool.Name] = tool
+	}
+	for _, name := range []string{"object", "text", "list"} {
+		require.True(t, byName[name].HasResult)
+		require.NotEmpty(t, byName[name].OutputSchema)
+		require.NotEmpty(t, byName[name].ResultSchema)
+	}
+	require.False(t, byName["notify"].HasResult)
+	require.Empty(t, byName["notify"].OutputSchema)
 }
 
 func TestMCPToolResultContractGoldens(t *testing.T) {
 	codec := func(name string) *MethodCodecData {
 		return &MethodCodecData{
-			PayloadEncode: "Encode" + name + "Payload",
 			PayloadDecode: "Decode" + name + "Payload",
-			ResultEncode:  "Encode" + name + "Result",
-			ResultDecode:  "Decode" + name + "Result",
+			ResultEncode:  "mcpcodec.Encode" + name + "Result",
 		}
 	}
 	data := &AdapterData{
+		PayloadRefs:  testProtocolPayloadRefs(),
 		CodecPackage: "mcpcodec",
-		Register: &RegisterData{
-			HelperName:         "ReportsCoreToolset",
-			ServiceName:        "reports",
-			SuiteName:          "core",
-			SuiteQualifiedName: "reports.core",
-			Description:        "Report tools",
-			Tools: []RegisterTool{
-				{
-					ID:                  "summarize",
-					Title:               "Summarize",
-					QualifiedName:       "reports.core.summarize",
-					Description:         "Summarize a report",
-					HasPayload:          true,
-					HasResult:           true,
-					HasStructuredResult: true,
-					PayloadType:         "*reports.SummarizePayload",
-					ResultType:          "*reports.SummarizeResult",
-					InputSchema:         `{"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false}`,
-					ResultSchema:        `{"type":"object","additionalProperties":false}`,
-					ExampleArgs:         `{"text":"report"}`,
-					Codec:               codec("Summarize"),
-				},
-				{
-					ID:            "title",
-					Title:         "Title",
-					QualifiedName: "reports.core.title",
-					Description:   "Return a title",
-					HasResult:     true,
-					TextResult:    true,
-					PayloadType:   "any",
-					ResultType:    "string",
-					InputSchema:   noArgumentsSchema,
-					ResultSchema:  `{"type":"string"}`,
-					ExampleArgs:   `{}`,
-					Codec:         codec("Title"),
-				},
-				{
-					ID:            "tags",
-					Title:         "Tags",
-					QualifiedName: "reports.core.tags",
-					Description:   "Return report tags",
-					HasResult:     true,
-					PayloadType:   "any",
-					ResultType:    "[]string",
-					InputSchema:   noArgumentsSchema,
-					ResultSchema:  `{"type":"array","items":{"type":"string"}}`,
-					ExampleArgs:   `{}`,
-					Codec:         codec("Tags"),
-				},
-				{
-					ID:            "notify",
-					Title:         "Notify",
-					QualifiedName: "reports.core.notify",
-					Description:   "Send a notification",
-					PayloadType:   "any",
-					ResultType:    "any",
-					InputSchema:   noArgumentsSchema,
-					ExampleArgs:   `{}`,
-				},
-			},
-		},
 	}
 
 	data.Tools = []*ToolAdapter{
 		{
-			Name:                "summarize",
-			Description:         "Summarize a report",
-			ServiceMethodName:   "Summarize",
-			HasPayload:          true,
-			HasResult:           true,
-			InputSchema:         `{"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false}`,
-			OutputSchema:        `{"type":"object","additionalProperties":false}`,
-			HasStructuredResult: true,
-			Codec:               codec("Summarize"),
+			Name:         "summarize",
+			Description:  "Summarize a report",
+			Endpoint:     &endpointMethodAdapter{CallName: "invokeMCPMethod0"},
+			HasPayload:   true,
+			HasResult:    true,
+			InputSchema:  `{"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false}`,
+			OutputSchema: `{"type":"object","additionalProperties":false}`,
+			Codec:        codec("Summarize"),
 		},
 		{
-			Name:              "title",
-			Description:       "Return a title",
-			ServiceMethodName: "Title",
-			HasResult:         true,
-			InputSchema:       noArgumentsSchema,
-			TextResult:        true,
-			Codec:             codec("Title"),
+			Name:        "title",
+			Description: "Return a title",
+			Endpoint:    &endpointMethodAdapter{CallName: "invokeMCPMethod1"},
+			HasResult:   true,
+			InputSchema: noArgumentsSchema,
+			Codec:       codec("Title"),
 		},
 		{
-			Name:              "tags",
-			Description:       "Return report tags",
-			ServiceMethodName: "Tags",
-			HasResult:         true,
-			InputSchema:       noArgumentsSchema,
-			Codec:             codec("Tags"),
+			Name:        "tags",
+			Description: "Return report tags",
+			Endpoint:    &endpointMethodAdapter{CallName: "invokeMCPMethod2"},
+			HasResult:   true,
+			InputSchema: noArgumentsSchema,
+			Codec:       codec("Tags"),
 		},
 		{
-			Name:              "notify",
-			Description:       "Send a notification",
-			ServiceMethodName: "Notify",
-			InputSchema:       noArgumentsSchema,
+			Name:        "notify",
+			Description: "Send a notification",
+			Endpoint:    &endpointMethodAdapter{CallName: "invokeMCPMethod3"},
+			InputSchema: noArgumentsSchema,
 		},
 	}
-	data.ClientCaller = &ClientCallerData{MCPPackage: "mcpreports", Tools: data.Tools}
+	data.ClientCaller = &ClientCallerData{PayloadRef: "mcpreports.ToolsCallPayload", Tools: data.Tools}
 
 	testutil.AssertGo(
 		t,
@@ -164,14 +96,6 @@ func TestMCPToolResultContractGoldens(t *testing.T) {
 		"testdata/golden/tool_results/caller.go.golden",
 		renderTemplateSection(t, "mcp_client_caller", data.ClientCaller),
 	)
-	register := renderTemplateSection(t, "mcp_register", data)
-	require.Contains(t, register, "encoded, err := json.Marshal(text.Text)")
-	require.Contains(t, register, "MCP response for a method without a result must be empty")
-	require.NotContains(t, register, "strconv.Quote")
-	require.NotContains(t, register, "Service:")
-	require.NotContains(t, register, "Toolset:")
-	require.Contains(t, register, `Name:        "reports.core"`)
-	testutil.AssertGo(t, "testdata/golden/tool_results/register.go.golden", register)
 }
 
 // mcpWithTools builds one MCP expression in the method order used by the test.

@@ -101,15 +101,6 @@ func TestNewValidationErrorPanicsOnInvalidConstruction(t *testing.T) {
 	}
 }
 
-func TestNewUnionDiscriminatorErrorDistinguishesMissingAndEmpty(t *testing.T) {
-	missing := NewUnionDiscriminatorError("Rule", "", false, []string{"schedule"})
-	explicitEmpty := NewUnionDiscriminatorError("Rule", "", true, []string{"schedule"})
-
-	assert.Equal(t, "missing_field", missing.Issues()[0].Constraint)
-	assert.Equal(t, "invalid_enum_value", explicitEmpty.Issues()[0].Constraint)
-	assert.Equal(t, []string{"schedule"}, explicitEmpty.Issues()[0].Allowed)
-}
-
 func TestFieldDescriptionsForIssuesDistinguishesFieldsFromEnumValues(t *testing.T) {
 	descriptions := []FieldMetadata{
 		{Path: []FieldPathSegment{FixedField("mode")}, Description: "Execution mode"},
@@ -168,41 +159,4 @@ func TestFieldDescriptionsForIssuesMatchesIndexedCollections(t *testing.T) {
 	assert.Equal(t, map[string]string{
 		"/groups/0/name": "Group name",
 	}, unknownDescriptions)
-}
-
-func TestNewUnionDiscriminatorErrorPanicsOnInvalidConstruction(t *testing.T) {
-	tests := []struct {
-		name string
-		fn   func(*testing.T)
-	}{
-		{
-			name: "empty union",
-			fn: func(t *testing.T) {
-				err := NewUnionDiscriminatorError("", "schedule", true, []string{"schedule"})
-				assert.Nil(t, err)
-			},
-		},
-		{
-			name: "empty allowed values",
-			fn: func(t *testing.T) {
-				err := NewUnionDiscriminatorError("Rule", "schedule", true, nil)
-				assert.Nil(t, err)
-			},
-		},
-		{
-			name: "empty allowed value",
-			fn: func(t *testing.T) {
-				err := NewUnionDiscriminatorError("Rule", "schedule", true, []string{""})
-				assert.Nil(t, err)
-			},
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			assert.Panics(t, func() {
-				tt.fn(t)
-			})
-		})
-	}
 }

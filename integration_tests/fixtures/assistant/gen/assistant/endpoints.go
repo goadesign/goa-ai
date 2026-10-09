@@ -15,27 +15,45 @@ import (
 
 // Endpoints wraps the "assistant" service endpoints.
 type Endpoints struct {
-	ListDocuments    goa.Endpoint
-	SystemInfo       goa.Endpoint
-	AnalyzeSentiment goa.Endpoint
-	ExtractKeywords  goa.Endpoint
-	SummarizeText    goa.Endpoint
-	Search           goa.Endpoint
-	ExecuteCode      goa.Endpoint
-	ProcessBatch     goa.Endpoint
+	ListDocuments       goa.Endpoint
+	SystemInfo          goa.Endpoint
+	BinaryResource      goa.Endpoint
+	EmptyBinaryResource goa.Endpoint
+	SimplePrompt        goa.Endpoint
+	ArgumentPrompt      goa.Endpoint
+	ResourcePrompt      goa.Endpoint
+	ImagePrompt         goa.Endpoint
+	SuggestArgument     goa.Endpoint
+	ReadResource        goa.Endpoint
+	ReportWork          goa.Endpoint
+	AnalyzeSentiment    goa.Endpoint
+	ExtractKeywords     goa.Endpoint
+	SummarizeText       goa.Endpoint
+	Search              goa.Endpoint
+	ExecuteCode         goa.Endpoint
+	ProcessBatch        goa.Endpoint
 }
 
 // NewEndpoints wraps the methods of the "assistant" service with endpoints.
 func NewEndpoints(s Service) *Endpoints {
 	return &Endpoints{
-		ListDocuments:    NewListDocumentsEndpoint(s),
-		SystemInfo:       NewSystemInfoEndpoint(s),
-		AnalyzeSentiment: NewAnalyzeSentimentEndpoint(s),
-		ExtractKeywords:  NewExtractKeywordsEndpoint(s),
-		SummarizeText:    NewSummarizeTextEndpoint(s),
-		Search:           NewSearchEndpoint(s),
-		ExecuteCode:      NewExecuteCodeEndpoint(s),
-		ProcessBatch:     NewProcessBatchEndpoint(s),
+		ListDocuments:       NewListDocumentsEndpoint(s),
+		SystemInfo:          NewSystemInfoEndpoint(s),
+		BinaryResource:      NewBinaryResourceEndpoint(s),
+		EmptyBinaryResource: NewEmptyBinaryResourceEndpoint(s),
+		SimplePrompt:        NewSimplePromptEndpoint(s),
+		ArgumentPrompt:      NewArgumentPromptEndpoint(s),
+		ResourcePrompt:      NewResourcePromptEndpoint(s),
+		ImagePrompt:         NewImagePromptEndpoint(s),
+		SuggestArgument:     NewSuggestArgumentEndpoint(s),
+		ReadResource:        NewReadResourceEndpoint(s),
+		ReportWork:          NewReportWorkEndpoint(s),
+		AnalyzeSentiment:    NewAnalyzeSentimentEndpoint(s),
+		ExtractKeywords:     NewExtractKeywordsEndpoint(s),
+		SummarizeText:       NewSummarizeTextEndpoint(s),
+		Search:              NewSearchEndpoint(s),
+		ExecuteCode:         NewExecuteCodeEndpoint(s),
+		ProcessBatch:        NewProcessBatchEndpoint(s),
 	}
 }
 
@@ -43,6 +61,15 @@ func NewEndpoints(s Service) *Endpoints {
 func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.ListDocuments = m(e.ListDocuments)
 	e.SystemInfo = m(e.SystemInfo)
+	e.BinaryResource = m(e.BinaryResource)
+	e.EmptyBinaryResource = m(e.EmptyBinaryResource)
+	e.SimplePrompt = m(e.SimplePrompt)
+	e.ArgumentPrompt = m(e.ArgumentPrompt)
+	e.ResourcePrompt = m(e.ResourcePrompt)
+	e.ImagePrompt = m(e.ImagePrompt)
+	e.SuggestArgument = m(e.SuggestArgument)
+	e.ReadResource = m(e.ReadResource)
+	e.ReportWork = m(e.ReportWork)
 	e.AnalyzeSentiment = m(e.AnalyzeSentiment)
 	e.ExtractKeywords = m(e.ExtractKeywords)
 	e.SummarizeText = m(e.SummarizeText)
@@ -64,6 +91,82 @@ func NewListDocumentsEndpoint(s Service) goa.Endpoint {
 func NewSystemInfoEndpoint(s Service) goa.Endpoint {
 	return func(ctx context.Context, req any) (any, error) {
 		return s.SystemInfo(ctx)
+	}
+}
+
+// NewBinaryResourceEndpoint returns an endpoint function that calls the method
+// "binary_resource" of service "assistant".
+func NewBinaryResourceEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		return s.BinaryResource(ctx)
+	}
+}
+
+// NewEmptyBinaryResourceEndpoint returns an endpoint function that calls the
+// method "empty_binary_resource" of service "assistant".
+func NewEmptyBinaryResourceEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		return s.EmptyBinaryResource(ctx)
+	}
+}
+
+// NewSimplePromptEndpoint returns an endpoint function that calls the method
+// "simple_prompt" of service "assistant".
+func NewSimplePromptEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		return s.SimplePrompt(ctx)
+	}
+}
+
+// NewArgumentPromptEndpoint returns an endpoint function that calls the method
+// "argument_prompt" of service "assistant".
+func NewArgumentPromptEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*ArgumentPromptPayload)
+		return s.ArgumentPrompt(ctx, p)
+	}
+}
+
+// NewResourcePromptEndpoint returns an endpoint function that calls the method
+// "resource_prompt" of service "assistant".
+func NewResourcePromptEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*ResourcePromptPayload)
+		return s.ResourcePrompt(ctx, p)
+	}
+}
+
+// NewImagePromptEndpoint returns an endpoint function that calls the method
+// "image_prompt" of service "assistant".
+func NewImagePromptEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		return s.ImagePrompt(ctx)
+	}
+}
+
+// NewSuggestArgumentEndpoint returns an endpoint function that calls the
+// method "suggest_argument" of service "assistant".
+func NewSuggestArgumentEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*SuggestArgumentPayload)
+		return s.SuggestArgument(ctx, p)
+	}
+}
+
+// NewReadResourceEndpoint returns an endpoint function that calls the method
+// "read_resource" of service "assistant".
+func NewReadResourceEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*ReadResourcePayload)
+		return s.ReadResource(ctx, p)
+	}
+}
+
+// NewReportWorkEndpoint returns an endpoint function that calls the method
+// "report_work" of service "assistant".
+func NewReportWorkEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		return s.ReportWork(ctx)
 	}
 }
 

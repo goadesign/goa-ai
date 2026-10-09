@@ -10,9 +10,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	core "goa.design/goa-ai/gen/alpha/agents/scribe/core"
 	specs "goa.design/goa-ai/gen/alpha/agents/scribe/specs"
-	core2 "goa.design/goa-ai/gen/calc/toolsets/core"
+	core "goa.design/goa-ai/gen/calc/toolsets/core"
 	"goa.design/goa-ai/runtime/agent/engine"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
 	"time"
@@ -72,22 +71,55 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 	if err := rt.RegisterAgent(ctx, registration); err != nil {
 		return err
 	}
-	// Register MCP-backed toolsets using local executors and callers from config.
-	if cfg.MCPCallers == nil {
-		return fmt.Errorf("mcp callers are required for agent %s", "alpha.scribe")
+
+	// Application code registers toolsets that call Goa service methods.
+	// Generated helpers register toolsets provided by another agent.
+	return nil
+}
+
+type usedToolsetRegistrationOptions struct {
+	executors           map[string]agentsruntime.ToolCallExecutor
+	resultMaterializers map[string]agentsruntime.ResultMaterializer
+}
+
+// RegisterUsedToolsets registers the used toolsets for this agent with
+// the local runtime. Provide executors for each required toolset and optional
+// result materializers through typed generated options.
+//
+// Example:
+//
+//	err := RegisterUsedToolsets(ctx, rt,
+//	    WithCoreExecutor(exec),
+//	)
+func RegisterUsedToolsets(ctx context.Context, rt *agentsruntime.Runtime, opts ...func(*usedToolsetRegistrationOptions)) error {
+	if rt == nil {
+		return errors.New("runtime is required")
 	}
-	{
-		caller := cfg.MCPCallers[ScribeCalcServiceCoreSuiteToolsetID]
-		if caller == nil {
-			return fmt.Errorf("mcp caller for %s is required", ScribeCalcServiceCoreSuiteToolsetID)
+	cfg := &usedToolsetRegistrationOptions{
+		executors:           make(map[string]agentsruntime.ToolCallExecutor),
+		resultMaterializers: make(map[string]agentsruntime.ResultMaterializer),
+	}
+	for _, o := range opts {
+		if o != nil {
+			o(cfg)
 		}
-		exec := core.NewScribeCoreMCPExecutor(caller)
-		// Register this remote toolset without exposing its generated service caller.
+	}
+	var missing []string
+	if cfg.executors[CoreToolsetName] == nil {
+		missing = append(missing, CoreToolsetName)
+	}
+	if len(missing) > 0 {
+		return fmt.Errorf("missing executors for toolsets: %v", missing)
+	}
+	// Register used toolsets that are not provided by agent-as-tool exports.
+	{
+		exec := cfg.executors[CoreToolsetName]
 		reg := agentsruntime.ToolsetRegistration{
-			Name: "core",
-			// Decode calls and results with the schemas generated for this toolset.
-			Specs:              core2.Specs(),
-			ToolMetadataLookup: core2.MetadataByName,
+			Name:                CoreToolsetName,
+			ActivityRetryPolicy: &engine.RetryPolicy{MaxAttempts: 1},
+			Specs:               core.Specs(),
+			ToolMetadataLookup:  core.MetadataByName,
+			ResultMaterializer:  cfg.resultMaterializers[CoreToolsetName],
 			Execute: func(ctx context.Context, call *agentsruntime.ToolCall) (*agentsruntime.ToolExecutionResult, error) {
 				if call == nil {
 					return nil, fmt.Errorf("tool request is nil")
@@ -107,8 +139,22 @@ func RegisterScribeAgent(ctx context.Context, rt *agentsruntime.Runtime, cfg Scr
 			return err
 		}
 	}
-
-	// Application code registers toolsets that call Goa service methods.
-	// Generated helpers register toolsets provided by another agent.
 	return nil
+}
+
+// CoreToolsetName is the local registration name for core.
+const CoreToolsetName = "core"
+
+// WithCoreExecutor associates an executor for core.
+func WithCoreExecutor(exec agentsruntime.ToolCallExecutor) func(*usedToolsetRegistrationOptions) {
+	return func(cfg *usedToolsetRegistrationOptions) {
+		cfg.executors[CoreToolsetName] = exec
+	}
+}
+
+// WithCoreResultMaterializer associates a result materializer for core.
+func WithCoreResultMaterializer(materializer agentsruntime.ResultMaterializer) func(*usedToolsetRegistrationOptions) {
+	return func(cfg *usedToolsetRegistrationOptions) {
+		cfg.resultMaterializers[CoreToolsetName] = materializer
+	}
 }

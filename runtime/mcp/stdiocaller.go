@@ -1,5 +1,5 @@
 // This file starts an MCP server process and exchanges one JSON message per
-// line over standard input and output while the agent runtime calls tools.
+// line over standard input and output while clients call tools or listen for changes.
 
 package mcp
 
@@ -12,8 +12,13 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strconv"
+	"strings"
 	"sync"
-	"time"
+
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 )
 
 type (
@@ -29,33 +34,43 @@ type (
 		Dir string
 		// ClientInfo identifies this application to the MCP server.
 		ClientInfo ClientInfo
-		// InitTimeout limits initialization when it is greater than zero.
-		InitTimeout time.Duration
+		// InputSupport names the interactions the host can fulfill.
+		InputSupport InputSupport
 	}
 
 	// StdioCaller implements Caller using the MCP stdio transport.
 	StdioCaller struct {
-		cmd         *exec.Cmd
-		stdin       io.WriteCloser
-		pending     map[uint64]chan callResult
-		pendingMu   sync.Mutex
-		writeMu     sync.Mutex
-		nextID      uint64
-		closed      chan struct{}
-		closeOnce   sync.Once
-		shutdownErr error
-		closeErr    error
-		closeErrMu  sync.Mutex
+		clientInfo   ClientInfo
+		inputSupport InputSupport
+		cmd          *exec.Cmd
+		stdin        io.WriteCloser
+		pending      map[uint64]*pendingCall
+		progress     map[string]*pendingCall
+		pendingMu    sync.Mutex
+		writeMu      sync.Mutex
+		nextID       uint64
+		closed       chan struct{}
+		closeOnce    sync.Once
+		shutdownErr  error
+		closeErr     error
+		closeErrMu   sync.Mutex
 	}
 
 	callResult struct {
-		resp rpcResponse
-		err  error
+		resp         rpcResponse
+		progress     *progressWire
+		subscription *rpcMessage
+	}
+	pendingCall struct {
+		ctx          context.Context
+		results      chan callResult
+		progress     *progressReceiver
+		subscription *subscriptionReceiver
 	}
 )
 
-// NewStdioCaller launches the target command, performs the MCP initialize handshake,
-// and returns a Caller that keeps the stdio session alive across tool invocations.
+// NewStdioCaller launches the target command, and returns a caller without
+// initialization. Each invocation carries its own identity and capabilities.
 func NewStdioCaller(ctx context.Context, opts StdioOptions) (*StdioCaller, error) {
 	if err := opts.ClientInfo.Validate(); err != nil {
 		return nil, err
@@ -66,7 +81,7 @@ func NewStdioCaller(ctx context.Context, opts StdioOptions) (*StdioCaller, error
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	//nolint:gosec,noctx // The constructor context covers initialization; Close owns the process lifetime.
+	//nolint:gosec,noctx // The constructor context covers process startup; Close owns the process lifetime.
 	cmd := exec.Command(opts.Command, opts.Args...)
 	if opts.Dir != "" {
 		cmd.Dir = opts.Dir
@@ -97,16 +112,15 @@ func NewStdioCaller(ctx context.Context, opts StdioOptions) (*StdioCaller, error
 		}
 		return nil, errors.Join(fmt.Errorf("start MCP server: %w", err), stdinErr, stdoutErr)
 	}
-	caller := &StdioCaller{cmd: cmd, stdin: stdin, pending: make(map[uint64]chan callResult), closed: make(chan struct{})}
+	caller := &StdioCaller{clientInfo: opts.ClientInfo,
+		inputSupport: opts.InputSupport, cmd: cmd, stdin: stdin, pending: make(map[uint64]*pendingCall), progress: make(map[string]*pendingCall), closed: make(chan struct{})}
 	go caller.readLoop(stdout)
-	if err := caller.initialize(ctx, opts); err != nil {
-		return nil, errors.Join(err, caller.Close())
-	}
 	return caller, nil
 }
 
-// Close terminates the stdio process and releases resources.
-func (c *StdioCaller) Close() error {
+// Close closes server input and waits for a clean exit. When ctx ends, it kills
+// the process and waits for it to be reaped before returning.
+func (c *StdioCaller) Close(ctx context.Context) error {
 	c.closeOnce.Do(func() {
 		var closeErr error
 		if c.stdin != nil {
@@ -114,98 +128,161 @@ func (c *StdioCaller) Close() error {
 				closeErr = errors.Join(closeErr, fmt.Errorf("close MCP server input: %w", err))
 			}
 		}
-		killed := false
-		if c.cmd != nil && c.cmd.ProcessState == nil {
-			if err := c.cmd.Process.Kill(); err == nil {
-				killed = true
-			} else if !errors.Is(err, os.ErrProcessDone) {
-				closeErr = errors.Join(closeErr, fmt.Errorf("stop MCP server: %w", err))
+		done := make(chan error, 1)
+		go func() { done <- c.cmd.Wait() }()
+		select {
+		case err := <-done:
+			if err != nil {
+				closeErr = errors.Join(closeErr, fmt.Errorf("wait for MCP server: %w", err))
 			}
-		}
-		if c.cmd != nil {
-			if err := c.cmd.Wait(); err != nil {
-				var exitErr *exec.ExitError
-				if !killed || !errors.As(err, &exitErr) {
-					closeErr = errors.Join(closeErr, fmt.Errorf("wait for MCP server: %w", err))
-				}
+		case <-ctx.Done():
+			killErr := c.cmd.Process.Kill()
+			if killErr != nil && !errors.Is(killErr, os.ErrProcessDone) {
+				closeErr = errors.Join(closeErr, fmt.Errorf("stop MCP server: %w", killErr))
+			}
+			waitErr := <-done
+			var exitErr *exec.ExitError
+			if waitErr != nil && !errors.As(waitErr, &exitErr) {
+				closeErr = errors.Join(closeErr, fmt.Errorf("wait for MCP server: %w", waitErr))
 			}
 		}
 		c.shutdownErr = closeErr
+		c.setCloseError(errors.New("MCP stdio caller closed"))
 		close(c.closed)
 	})
 	return c.shutdownErr
 }
 
-// CallTool invokes tools/call over the stdio transport.
+// CallTool checks the current catalog's model visibility and schemas, then
+// invokes tools/call over the stdio transport and returns validated output.
 func (c *StdioCaller) CallTool(ctx context.Context, req CallRequest) (CallResponse, error) {
-	params := map[string]any{"name": req.Tool, "arguments": req.Payload}
-	addTraceMeta(ctx, params)
-	var result toolsCallResult
-	if err := c.call(ctx, "tools/call", params, &result); err != nil {
+	params, err := toolParams(ctx, req)
+	if err != nil {
 		return CallResponse{}, err
 	}
-	return normalizeToolResult(result)
-}
-
-// initialize sends the client identity and requested protocol version to the
-// server process before any tool call can run.
-func (c *StdioCaller) initialize(ctx context.Context, opts StdioOptions) error {
-	payload := map[string]any{
-		"protocolVersion": DefaultProtocolVersion,
-		"capabilities":    map[string]any{},
-		"clientInfo": map[string]any{
-			"name":    opts.ClientInfo.Name,
-			"version": opts.ClientInfo.Version,
-		},
+	contract, err := readToolContract(ctx, req.Tool, c.call)
+	if err != nil {
+		return CallResponse{}, err
 	}
-	initCtx := ctx
-	if opts.InitTimeout > 0 {
-		var cancel context.CancelFunc
-		initCtx, cancel = context.WithTimeout(ctx, opts.InitTimeout)
-		defer cancel()
+	if err := contract.validateArguments(req.Payload); err != nil {
+		return CallResponse{}, err
 	}
-	var result initializeResult
-	if err := c.call(initCtx, "initialize", payload, &result); err != nil {
-		return err
+	var result toolsCallResult
+	if err := c.call(ctx, methodToolsCall, params, &result); err != nil {
+		return CallResponse{}, err
 	}
-	if err := validateInitializeResult(result); err != nil {
-		return err
+	response, err := normalizeCallResult(ctx, result, c.inputSupport)
+	if err != nil {
+		return CallResponse{}, err
 	}
-	return c.notify(rpcMethodInitialized, map[string]any{})
+	if err := contract.validateResult(response); err != nil {
+		return CallResponse{}, err
+	}
+	return response, nil
 }
 
 // call writes one request and waits for the read loop to return the response
 // with the same request number.
-func (c *StdioCaller) call(ctx context.Context, method string, params any, result any) error {
+func (c *StdioCaller) call(ctx context.Context, method string, params map[string]any, result any) (err error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.stdio.request")
+	span.SetAttributes(attribute.String("rpc.method", method))
+	defer span.End()
+	defer func() {
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+		}
+	}()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	meta, err := requestMeta(ctx, c.clientInfo, c.inputSupport, nil)
+	if err != nil {
+		return err
+	}
 	id := c.next()
-	ch := make(chan callResult, 1)
+	encodedID, err := json.Marshal(id)
+	if err != nil {
+		return NewInternalError(err)
+	}
+	var receiver *progressReceiver
+	var subscription *subscriptionReceiver
+	if method == methodSubscriptionsListen {
+		filter, encodeErr := json.Marshal(params["notifications"])
+		if encodeErr != nil {
+			return NewInternalError(encodeErr)
+		}
+		subscription, err = newSubscriptionReceiver(ctx, encodedID, filter, c.inputSupport)
+	} else {
+		receiver, err = newProgressReceiver(ctx, method, encodedID, meta)
+	}
+	if err != nil {
+		return NewInternalError(err)
+	}
+	params["_meta"] = meta
+	pending := &pendingCall{ctx: ctx, results: make(chan callResult, 1), progress: receiver, subscription: subscription}
 	c.pendingMu.Lock()
-	c.pending[id] = ch
+	c.pending[id] = pending
+	if receiver != nil {
+		c.progress[receiver.token] = pending
+	}
 	c.pendingMu.Unlock()
 	req := rpcRequest{JSONRPC: rpcVersion, Method: method, ID: id, Params: params}
+	if method == methodToolsCall {
+		defer func() { err = unknownToolOutcome(err) }()
+	}
 	if err := c.writeMessage(req); err != nil {
 		c.removePending(id)
 		return err
 	}
-	select {
-	case res := <-ch:
-		if res.err != nil {
-			return res.err
-		}
-		if res.resp.Error != nil {
-			return res.resp.Error.callerError()
-		}
-		if result != nil && res.resp.Result != nil {
-			if err := json.Unmarshal(res.resp.Result, result); err != nil {
-				return NewMalformedResponseError(err)
+	for {
+		select {
+		case res := <-pending.results:
+			if res.subscription != nil {
+				if err := subscription.notification(ctx, *res.subscription); err != nil {
+					c.removePending(id)
+					var cancelled *SubscriptionCancelledError
+					if errors.As(err, &cancelled) {
+						return err
+					}
+					cancelErr := c.notify(methodCancelled, map[string]any{"requestId": id})
+					return errors.Join(err, cancelErr)
+				}
+				continue
 			}
+			if res.progress != nil {
+				if err := receiver.accept(ctx, res.progress); err != nil {
+					c.removePending(id)
+					cancelErr := c.notify(methodCancelled, map[string]any{"requestId": id})
+					return errors.Join(err, cancelErr)
+				}
+				continue
+			}
+			if res.resp.Error != nil {
+				return res.resp.Error.callerError()
+			}
+			if subscription != nil {
+				if err := subscription.finish(res.resp.Result); err != nil {
+					return err
+				}
+			}
+			if result != nil && res.resp.Result != nil {
+				if err := json.Unmarshal(res.resp.Result, result); err != nil {
+					return NewMalformedResponseError(err)
+				}
+			}
+			return nil
+		case <-ctx.Done():
+			if c.removePending(id) {
+				err := c.notify(methodCancelled, map[string]any{"requestId": id})
+				return errors.Join(ctx.Err(), err)
+			}
+			return ctx.Err()
+		case <-c.closed:
+			return c.closeError()
 		}
-		return nil
-	case <-ctx.Done():
-		c.removePending(id)
-		return ctx.Err()
-	case <-c.closed:
-		return c.closeError()
 	}
 }
 
@@ -250,62 +327,97 @@ func (c *StdioCaller) readLoop(stdout io.Reader) {
 			return
 		}
 		if !ok {
-			if incoming.Method == "" || len(incoming.ID) == 0 {
+			if len(incoming.ID) > 0 {
+				c.failPending(NewMalformedResponseError(errors.New("independent server requests are not supported by this protocol")))
+				return
+			}
+			if isSubscriptionNotification(incoming.Method) {
+				if err := c.deliverSubscription(incoming); err != nil {
+					c.failPending(err)
+					return
+				}
 				continue
 			}
-			if err := c.replyToServerRequest(incoming); err != nil {
-				c.failPending(err)
-				return
+			if incoming.Method == "notifications/progress" {
+				update, err := decodeProgress(incoming.Params)
+				if err != nil {
+					c.failPending(NewMalformedResponseError(err))
+					return
+				}
+				if err := c.deliverProgress(update); err != nil {
+					c.failPending(err)
+					return
+				}
 			}
 			continue
 		}
 		c.pendingMu.Lock()
-		ch, ok := c.pending[resp.ID]
+		pending, ok := c.pending[resp.ID]
 		if ok {
 			delete(c.pending, resp.ID)
+			if pending.progress != nil {
+				delete(c.progress, pending.progress.token)
+			}
 		}
 		c.pendingMu.Unlock()
 		if ok {
-			ch <- callResult{resp: resp}
-			close(ch)
+			select {
+			case pending.results <- callResult{resp: resp}:
+			case <-pending.ctx.Done():
+			case <-c.closed:
+			}
 		}
 	}
-}
-
-// replyToServerRequest answers ping and rejects methods this client did not
-// advertise, preserving the string or numeric identifier sent by the server.
-func (c *StdioCaller) replyToServerRequest(message rpcMessage) error {
-	reply := rpcReply{JSONRPC: rpcVersion, ID: message.ID}
-	if message.Method == "ping" {
-		reply.Result = json.RawMessage(`{}`)
-	} else {
-		reply.Error = &rpcError{Code: JSONRPCMethodNotFound, Message: "method not found"}
-	}
-	return c.writeMessage(reply)
 }
 
 // failPending returns the stream failure to every waiting call and closes the
 // server process.
 func (c *StdioCaller) failPending(err error) {
-	c.pendingMu.Lock()
-	for id, ch := range c.pending {
-		delete(c.pending, id)
-		ch <- callResult{err: err}
-		close(ch)
-	}
-	c.pendingMu.Unlock()
 	c.setCloseError(err)
-	if closeErr := c.Close(); closeErr != nil {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if closeErr := c.Close(ctx); closeErr != nil {
 		c.setCloseError(closeErr)
 	}
+	c.pendingMu.Lock()
+	clear(c.pending)
+	clear(c.progress)
+	c.pendingMu.Unlock()
+}
+
+// deliverProgress sends one update to its operation's goroutine. The single
+// waiting slot applies backpressure without running host callbacks in the read
+// loop. Cancellation releases a blocked send; late tokens reach no other call.
+func (c *StdioCaller) deliverProgress(update *progressWire) error {
+	key, err := protocolIDKey(update.Token)
+	if err != nil {
+		return NewMalformedResponseError(err)
+	}
+	c.pendingMu.Lock()
+	pending := c.progress[key]
+	c.pendingMu.Unlock()
+	if pending == nil {
+		return nil
+	}
+	select {
+	case pending.results <- callResult{progress: update}:
+	case <-pending.ctx.Done():
+	case <-c.closed:
+	}
+	return nil
 }
 
 // removePending stops waiting for the request after its context ends or its
 // request cannot be written.
-func (c *StdioCaller) removePending(id uint64) {
+func (c *StdioCaller) removePending(id uint64) bool {
 	c.pendingMu.Lock()
+	pending, present := c.pending[id]
+	if present && pending.progress != nil {
+		delete(c.progress, pending.progress.token)
+	}
 	delete(c.pending, id)
 	c.pendingMu.Unlock()
+	return present
 }
 
 // next returns the next JSON-RPC request number for this process.
@@ -337,4 +449,48 @@ func (c *StdioCaller) closeError() error {
 		return errors.New("stdio caller closed")
 	}
 	return c.closeErr
+}
+
+// deliverSubscription routes a notification by the originating listen ID.
+// One waiting slot applies backpressure; cancellation releases a blocked send.
+func (c *StdioCaller) deliverSubscription(message rpcMessage) error {
+	if message.Method == methodCancelled {
+		if _, err := decodeSubscriptionCancellation(message.Params); err != nil {
+			// A malformed cancellation does not identify valid work to stop.
+			// The cancellation contract asks receivers to ignore it.
+			return nil //nolint:nilerr // The protocol asks receivers to ignore malformed cancellation notifications.
+		}
+	}
+	rawID, err := subscriptionMessageID(message)
+	if err != nil {
+		return NewMalformedResponseError(err)
+	}
+	key, err := protocolIDKey(rawID)
+	if err != nil {
+		return NewMalformedResponseError(err)
+	}
+	id, err := strconv.ParseUint(strings.TrimPrefix(key, "integer:"), 10, 64)
+	if err != nil {
+		// A valid ID outside this caller's numeric sequence cannot name an
+		// active request. Late or unknown cancellation and changes are ignored.
+		return nil //nolint:nilerr // A valid but unassigned ID cannot identify an active request.
+	}
+	c.pendingMu.Lock()
+	pending := c.pending[id]
+	c.pendingMu.Unlock()
+	if pending == nil {
+		return nil
+	}
+	if pending.subscription == nil {
+		if message.Method == methodCancelled {
+			return nil
+		}
+		return NewMalformedResponseError(errors.New("subscription notification does not identify a listen request"))
+	}
+	select {
+	case pending.results <- callResult{subscription: &message}:
+	case <-pending.ctx.Done():
+	case <-c.closed:
+	}
+	return nil
 }

@@ -77,7 +77,7 @@ func dispatchTestAgentTool(t *testing.T, rt *Runtime, ctx context.Context, call 
 	position := testToolHistory(t, rt, call.AgentID, parent, nil)
 	results, timedOut, err := rt.executeToolCalls(
 		engine.WorkflowContextFromContext(ctx), "execute", engine.ActivityOptions{},
-		call.AgentID, &parent, position, []ToolCall{call}, 0, nil, time.Time{},
+		call.AgentID, &parent, position, []ToolCall{call}, 0, nil, time.Time{}, nil,
 	)
 	if err != nil {
 		return nil, err

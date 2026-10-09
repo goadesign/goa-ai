@@ -134,8 +134,8 @@ func (r *Runtime) listRunPromptData(ctx context.Context, current session.RunMeta
 					)
 				}
 				runStartedSeen = true
-				if err := validatePromptRecordOwner(record, current); err != nil {
-					return nil, nil, err
+				if err := lifecycle.ValidateStoredRunStart(record, current); err != nil {
+					return nil, nil, fmt.Errorf("%w: run %q has an invalid start record: %w", errPromptRefsCorrupt, current.RunID, err)
 				}
 				event, err := hooks.DecodeFromRecordInput(&RecordActivityInput{
 					Type: record.Type, RunID: record.RunID, AgentID: record.AgentID,
@@ -161,46 +161,21 @@ func (r *Runtime) listRunPromptData(ctx context.Context, current session.RunMeta
 				}
 				continue
 			}
-			if current.StartOutcome == session.RunStartStop {
-				if record.Type != hooks.RunCompleted {
-					return nil, nil, fmt.Errorf(
-						"%w: stopped run %q has record type %q",
-						errPromptRefsCorrupt,
-						current.RunID,
-						record.Type,
-					)
-				}
+			// Admission to an ended Session records intent before cleanup
+			// completes. Read the same child relationships while that work runs;
+			// validate an actual final record only when one exists.
+			if record.Type == hooks.RunCompleted {
 				if runCompletedSeen {
-					return nil, nil, fmt.Errorf(
-						"%w: stopped run %q has more than one completion record",
-						errPromptRefsCorrupt,
-						current.RunID,
-					)
+					return nil, nil, fmt.Errorf("%w: run %q has duplicate completion records", errPromptRefsCorrupt, current.RunID)
 				}
-				if err := validatePromptRecordOwner(record, current); err != nil {
-					return nil, nil, err
-				}
-				if !record.Timestamp.Equal(current.StartedAt) {
-					return nil, nil, fmt.Errorf(
-						"%w: stopped run %q completion time does not match its start time",
-						errPromptRefsCorrupt,
-						current.RunID,
-					)
-				}
-				if err := lifecycle.ValidateRunTerminal(storage.RunTerminal{
-					RunID:  current.RunID,
-					Status: session.RunStatusCanceled,
-					Record: record,
-				}, current); err != nil {
-					return nil, nil, fmt.Errorf(
-						"%w: stopped run %q has invalid completion record: %w",
-						errPromptRefsCorrupt,
-						current.RunID,
-						err,
-					)
+				if err := lifecycle.ValidateRunTerminal(storage.RunTerminal{RunID: current.RunID, Status: current.Status, Record: record}, current); err != nil {
+					return nil, nil, fmt.Errorf("%w: run %q has an invalid completion record: %w", errPromptRefsCorrupt, current.RunID, err)
 				}
 				runCompletedSeen = true
 				continue
+			}
+			if current.StartOutcome == session.RunStartStop && record.Type == hooks.PromptRendered {
+				return nil, nil, fmt.Errorf("%w: stopped run %q rendered a new prompt", errPromptRefsCorrupt, current.RunID)
 			}
 			if record.Type != hooks.PromptRendered && record.Type != hooks.ChildRunLinked {
 				continue
@@ -234,16 +209,6 @@ func (r *Runtime) listRunPromptData(ctx context.Context, current session.RunMeta
 					errPromptRefsCorrupt,
 					current.RunID,
 				)
-			}
-			if current.StartOutcome == session.RunStartStop {
-				if !runCompletedSeen {
-					return nil, nil, fmt.Errorf(
-						"%w: stopped run %q has no completion record",
-						errPromptRefsCorrupt,
-						current.RunID,
-					)
-				}
-				return nil, relatedRuns, nil
 			}
 			return refs, relatedRuns, nil
 		}

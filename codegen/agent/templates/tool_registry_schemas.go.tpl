@@ -157,8 +157,7 @@ func ({{ if or (eq .Kind "schema") (and (eq .Kind "metadata") .Value.Fields) }}d
     Branches: []*genregistry.ToolUnionBranch{
     {{- range .Branches }}
         {
-            Discriminator: {{ template "path" .Discriminator }},
-            Value: {{ printf "%q" .Value }},
+            Selection: {{ unionBranch .Selection }},
         },
     {{- end }}
     },

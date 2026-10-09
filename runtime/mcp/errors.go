@@ -2,11 +2,21 @@
 package mcp
 
 import (
+	"errors"
 	"fmt"
+	"net/http"
 	"strings"
+
+	toolcontent "goa.design/goa-ai/runtime/content"
 )
 
 type (
+	// OutcomeUnknownError means a sent tool request lost its usable response.
+	// The operation may have completed; issuing it again can repeat its effects.
+	OutcomeUnknownError struct {
+		cause error
+	}
+
 	// MalformedResponseError reports an MCP response with missing or invalid fields.
 	MalformedResponseError struct {
 		cause error
@@ -17,6 +27,19 @@ type (
 		cause error
 	}
 
+	// HTTPResponseError retains an HTTP failure before a caller handles its
+	// protocol error or authorization challenge. Error() describes the failure
+	// without including the challenge header values.
+	HTTPResponseError struct {
+		// StatusCode is the HTTP status returned for this request attempt.
+		StatusCode int
+		// WWWAuthenticate preserves the response's challenge header values in
+		// their received order. The authorization client owns their interpretation.
+		WWWAuthenticate []string
+
+		cause error
+	}
+
 	// ToolExecutionError reports an MCP tools/call response whose isError flag
 	// says the remote tool rejected or failed the call.
 	ToolExecutionError struct {
@@ -24,6 +47,22 @@ type (
 		Response CallResponse
 	}
 )
+
+// NewOutcomeUnknownError retains the failure that prevented proof of completion.
+func NewOutcomeUnknownError(cause error) *OutcomeUnknownError {
+	if cause == nil {
+		panic("mcp: unknown outcome requires a cause")
+	}
+	return &OutcomeUnknownError{cause: cause}
+}
+
+// Error describes the missing completion evidence for the sent operation.
+func (e *OutcomeUnknownError) Error() string {
+	return fmt.Sprintf("MCP tool outcome is unknown: %v", e.cause)
+}
+
+// Unwrap returns the transport or response failure.
+func (e *OutcomeUnknownError) Unwrap() error { return e.cause }
 
 // NewMalformedResponseError wraps a response decoding or shape failure.
 func NewMalformedResponseError(cause error) *MalformedResponseError {
@@ -64,7 +103,8 @@ func (e *InternalError) Unwrap() error {
 // NewToolExecutionError preserves the validated result returned by a tool that
 // set MCP's isError flag.
 func NewToolExecutionError(response CallResponse) *ToolExecutionError {
-	response.Content = cloneContentBlocks(response.Content)
+	response.IsError = true
+	response.Content = response.Content.Clone()
 	response.StructuredContent = append([]byte(nil), response.StructuredContent...)
 	return &ToolExecutionError{Response: response}
 }
@@ -76,7 +116,7 @@ func (e *ToolExecutionError) Error() string {
 	}
 	var messages []string
 	for _, block := range e.Response.Content {
-		if text, ok := block.(*TextContent); ok {
+		if text, ok := block.(*toolcontent.TextContent); ok {
 			messages = append(messages, text.Text)
 		}
 	}
@@ -86,94 +126,29 @@ func (e *ToolExecutionError) Error() string {
 	return "MCP tool execution error: " + strings.Join(messages, "\n")
 }
 
-// cloneContentBlocks copies tool error content so callers cannot change the
-// error after it is created.
-func cloneContentBlocks(content []ContentBlock) []ContentBlock {
-	cloned := make([]ContentBlock, len(content))
-	for i, block := range content {
-		switch value := block.(type) {
-		case *TextContent:
-			copy := *value
-			copy.Annotations = cloneAnnotations(value.Annotations)
-			copy.Meta = cloneRaw(value.Meta)
-			cloned[i] = &copy
-		case *ImageContent:
-			copy := *value
-			copy.Annotations = cloneAnnotations(value.Annotations)
-			copy.Meta = cloneRaw(value.Meta)
-			cloned[i] = &copy
-		case *AudioContent:
-			copy := *value
-			copy.Annotations = cloneAnnotations(value.Annotations)
-			copy.Meta = cloneRaw(value.Meta)
-			cloned[i] = &copy
-		case *ResourceLink:
-			copy := *value
-			copy.Title = cloneString(value.Title)
-			copy.Description = cloneString(value.Description)
-			copy.MIMEType = cloneString(value.MIMEType)
-			copy.Size = cloneInt64(value.Size)
-			copy.Annotations = cloneAnnotations(value.Annotations)
-			copy.Meta = cloneRaw(value.Meta)
-			cloned[i] = &copy
-		case *EmbeddedResource:
-			copy := *value
-			copy.Resource = cloneResourceContents(value.Resource)
-			copy.Annotations = cloneAnnotations(value.Annotations)
-			copy.Meta = cloneRaw(value.Meta)
-			cloned[i] = &copy
-		}
-	}
-	return cloned
+// Error describes the HTTP status and underlying failure without including
+// challenge headers or the response body.
+func (e *HTTPResponseError) Error() string {
+	return fmt.Sprintf("MCP HTTP response %d: %v", e.StatusCode, e.cause)
 }
 
-// cloneResourceContents copies one embedded resource value.
-func cloneResourceContents(resource ResourceContents) ResourceContents {
-	switch value := resource.(type) {
-	case *TextResourceContents:
-		copy := *value
-		copy.MIMEType = cloneString(value.MIMEType)
-		copy.Meta = cloneRaw(value.Meta)
-		return &copy
-	case *BlobResourceContents:
-		copy := *value
-		copy.MIMEType = cloneString(value.MIMEType)
-		copy.Meta = cloneRaw(value.Meta)
-		return &copy
-	default:
-		panic("mcp: unknown resource contents")
-	}
+// Unwrap returns the protocol, response-read or body-close failure. Callers can
+// still inspect a JSON-RPC error without parsing the HTTP error's text.
+func (e *HTTPResponseError) Unwrap() error {
+	return e.cause
 }
 
-// cloneAnnotations copies optional presentation metadata.
-func cloneAnnotations(annotations *Annotations) *Annotations {
-	if annotations == nil {
-		return nil
+// unknownToolOutcome preserves explicit protocol and HTTP request rejections.
+// Other failures after dispatch lack proof of completion; callers receive an
+// unknown outcome rather than permission to repeat the tool.
+func unknownToolOutcome(err error) error {
+	var protocol *Error
+	if err == nil || errors.As(err, &protocol) {
+		return err
 	}
-	copy := *annotations
-	copy.Audience = append([]Role(nil), annotations.Audience...)
-	if annotations.Priority != nil {
-		priority := *annotations.Priority
-		copy.Priority = &priority
+	var response *HTTPResponseError
+	if errors.As(err, &response) && (response.StatusCode == http.StatusBadRequest || response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden) {
+		return err
 	}
-	copy.LastModified = cloneString(annotations.LastModified)
-	return &copy
-}
-
-// cloneString copies an optional string.
-func cloneString(value *string) *string {
-	if value == nil {
-		return nil
-	}
-	copy := *value
-	return &copy
-}
-
-// cloneInt64 copies an optional integer.
-func cloneInt64(value *int64) *int64 {
-	if value == nil {
-		return nil
-	}
-	copy := *value
-	return &copy
+	return NewOutcomeUnknownError(err)
 }

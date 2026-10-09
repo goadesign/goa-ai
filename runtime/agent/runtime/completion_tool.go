@@ -108,6 +108,9 @@ func completionToolSucceeded(records []stepToolRecord, completion tools.Ident) (
 		if record.call.Name != completion {
 			continue
 		}
+		if record.mcpPending != nil {
+			return false, nil
+		}
 		return record.result.Failure == nil, nil
 	}
 	return false, nil
@@ -126,7 +129,7 @@ func validateCompletionToolRecords(records []stepToolRecord, completion tools.Id
 		if record.clarification != nil {
 			return fmt.Errorf("completion tool %q cannot request clarification", completion)
 		}
-		if record.result == nil {
+		if record.result == nil && record.mcpPending == nil {
 			return fmt.Errorf("completion tool %q returned no result", completion)
 		}
 	}

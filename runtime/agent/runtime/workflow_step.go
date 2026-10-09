@@ -60,6 +60,8 @@ type (
 		duration         time.Duration
 		clarification    *ToolClarification
 		childSuspension  *api.RunSuspension
+		mcpPending       *api.PendingExecution
+		task             *taskExecution
 		requiresResume   bool
 	}
 
@@ -1250,7 +1252,9 @@ func stepToolResults(records []stepToolRecord) []*planner.ToolResult {
 	}
 	results := make([]*planner.ToolResult, 0, len(records))
 	for _, record := range records {
-		results = append(results, record.result)
+		if record.mcpPending == nil {
+			results = append(results, record.result)
+		}
 	}
 	return results
 }
@@ -1264,12 +1268,9 @@ func stepToolRecordsFromExecutions(calls []ToolCall, outcomes []*ToolExecutionRe
 	}
 	byID := make(map[string]*ToolExecutionResult, len(outcomes))
 	for _, outcome := range outcomes {
-		if outcome == nil || outcome.ToolResult == nil {
-			return nil, errors.New("workflow step execution returned an empty outcome")
-		}
-		id := outcome.ToolResult.ToolCallID
-		if id == "" {
-			return nil, fmt.Errorf("workflow step execution result for %q is missing tool_call_id", outcome.ToolResult.Name)
+		id, err := executionToolCallID(outcome)
+		if err != nil {
+			return nil, err
 		}
 		if _, exists := byID[id]; exists {
 			return nil, fmt.Errorf("workflow step execution returned duplicate tool_call_id %s", id)
@@ -1287,6 +1288,8 @@ func stepToolRecordsFromExecutions(calls []ToolCall, outcomes []*ToolExecutionRe
 			result:           outcome.ToolResult,
 			clarification:    outcome.Clarification,
 			childSuspension:  outcome.childSuspension,
+			mcpPending:       outcome.mcpPending,
+			task:             outcome.task,
 			resultPublished:  outcome.resultPublished,
 			resultRecord:     outcome.resultRecord,
 			scheduleRequired: !outcome.schedulePublished,
@@ -1295,6 +1298,7 @@ func stepToolRecordsFromExecutions(calls []ToolCall, outcomes []*ToolExecutionRe
 			expectedChildren: outcome.expectedChildren,
 			duration:         outcome.duration,
 		}
+		record.call.ExecutionSequence = max(record.call.ExecutionSequence, outcome.executionSequence)
 		if err := validateStepToolRecord("workflow step execution", record); err != nil {
 			return nil, err
 		}
@@ -1323,11 +1327,11 @@ func stepToolRecordsAfterExecution(
 	recordsByID := make(map[string]stepToolRecord, len(outcomes))
 	var resultErr error
 	for _, outcome := range outcomes {
-		if outcome == nil || outcome.ToolResult == nil {
-			resultErr = errors.Join(resultErr, errors.New("workflow step execution returned an empty outcome"))
+		id, err := executionToolCallID(outcome)
+		if err != nil {
+			resultErr = errors.Join(resultErr, err)
 			continue
 		}
-		id := outcome.ToolResult.ToolCallID
 		call, ok := callsByID[id]
 		if !ok {
 			resultErr = errors.Join(
@@ -1348,6 +1352,8 @@ func stepToolRecordsAfterExecution(
 			result:           outcome.ToolResult,
 			clarification:    outcome.Clarification,
 			childSuspension:  outcome.childSuspension,
+			mcpPending:       outcome.mcpPending,
+			task:             outcome.task,
 			resultPublished:  outcome.resultPublished,
 			resultRecord:     outcome.resultRecord,
 			scheduleRequired: !outcome.schedulePublished,
@@ -1356,6 +1362,7 @@ func stepToolRecordsAfterExecution(
 			expectedChildren: outcome.expectedChildren,
 			duration:         outcome.duration,
 		}
+		record.call.ExecutionSequence = max(record.call.ExecutionSequence, outcome.executionSequence)
 		if err := validateStepToolRecord("workflow step execution", record); err != nil {
 			resultErr = errors.Join(resultErr, err)
 			continue

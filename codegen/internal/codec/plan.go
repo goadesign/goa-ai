@@ -27,26 +27,29 @@ type (
 
 	// Value records one service value and its private JSON representation.
 	Value struct {
-		plan              *Plan
-		key               string
-		preferredName     string
-		direction         Direction
-		service           *goaexpr.AttributeExpr
-		transport         *goaexpr.AttributeExpr
-		transportLayout   *goacodegen.GoTypePlan
-		types             []*plannedType
-		unions            []*plannedUnion
-		decode            *goacodegen.TransformPlan
-		encode            *goacodegen.TransformPlan
-		decodeDeclaration *goacodegen.NameDeclaration
-		encodeDeclaration *goacodegen.NameDeclaration
-		constructor       *goacodegen.NameDeclaration
-		serviceAttributor goacodegen.Attributor
-		standalone        *standalonePlan
-		originalLayout    *goacodegen.GoTypePlan
+		plan                *Plan
+		key                 string
+		preferredName       string
+		direction           Direction
+		service             *goaexpr.AttributeExpr
+		serviceLayout       *goacodegen.GoTypePlan
+		transport           *goaexpr.AttributeExpr
+		transportLayout     *goacodegen.GoTypePlan
+		types               []*plannedType
+		unions              []*plannedUnion
+		decode              *goacodegen.TransformPlan
+		encode              *goacodegen.TransformPlan
+		decodeDeclaration   *goacodegen.NameDeclaration
+		validateDeclaration *goacodegen.NameDeclaration
+		encodeDeclaration   *goacodegen.NameDeclaration
+		constructor         *goacodegen.NameDeclaration
+		serviceAttributor   goacodegen.Attributor
+		standalone          *standalonePlan
+		originalLayout      *goacodegen.GoTypePlan
+		elicitation         *elicitationCodec
 	}
 
-	// TransportField describes one top-level field in a private JSON type.
+	// TransportField describes one uniquely retained field in a private JSON type.
 	// Generated adapters use these exact names and types when they already hold
 	// parsed values and do not need to decode JSON.
 	TransportField struct {
@@ -58,7 +61,11 @@ type (
 		ValueTypeRef string
 		// Pointer reports whether the field stores its value through a pointer.
 		Pointer bool
-		// ElementTypeRef is the generated element type for an array field.
+		// Default retains Goa-rendered declarations and the expression for an authored default.
+		Default *goacodegen.GoValueCode
+		// KeyTypeRef is the generated key type for a map field.
+		KeyTypeRef string
+		// ElementTypeRef is the generated element type for an array or map field.
 		ElementTypeRef string
 		// ElementPointer reports whether an array stores each value through a pointer.
 		ElementPointer bool
@@ -74,6 +81,7 @@ type (
 		layout               *goacodegen.GoTypePlan
 		parameter            *goacodegen.GoTypePlan
 		validation           *goacodegen.ValidationPlan
+		integerDecode        bool
 	}
 
 	// plannedUnion contains one generated Goa OneOf declaration and its branches.
@@ -110,6 +118,8 @@ const (
 	EncodeAndDecode
 	// ConstructOnly generates a typed transport-to-service constructor without a raw JSON decoder.
 	ConstructOnly
+	// ValidateOnly checks a typed service value without encoding it as JSON.
+	ValidateOnly
 )
 
 // NewPlan creates a codec plan for one output package. Original-value codecs may
@@ -141,6 +151,13 @@ func (p *Plan) Add(
 	layout *goacodegen.GoTypePlan,
 	direction Direction,
 ) (*Value, error) {
+	return p.add(key, preferredName, attribute, layout, direction, nil)
+}
+
+// add records a value after the caller has selected its external JSON contract.
+// Ordinary tool values stay closed; elicitation answers use MCP's open result
+// fields and validate the complete response before typed decoding.
+func (p *Plan) add(key, preferredName string, attribute *goaexpr.AttributeExpr, layout *goacodegen.GoTypePlan, direction Direction, elicitation *elicitationCodec) (*Value, error) {
 	if key == "" {
 		return nil, fmt.Errorf("plan JSON value: key must not be empty")
 	}
@@ -152,7 +169,7 @@ func (p *Plan) Add(
 	}
 	if !direction.valid() {
 		return nil, fmt.Errorf(
-			"plan JSON value %q: direction must select encoding, decoding, or typed construction",
+			"plan JSON value %q: direction must select encoding, decoding, typed construction, or typed validation",
 			key,
 		)
 	}
@@ -163,6 +180,26 @@ func (p *Plan) Add(
 		return nil, fmt.Errorf("plan JSON value %q: service layout must not be nil", key)
 	}
 	transport, localTypes := localTransportAttribute(attribute, key, preferredName)
+	if direction.decodes() {
+		localTypes = append(localTypes, integerTransportFields(transport, key, preferredName)...)
+	}
+	if elicitation != nil {
+		choice := goaexpr.AsUnion(transport.Type)
+		choice.TypeKey = "action"
+		choice.Flatten = true
+		if elicitation.form {
+			// MCP fixes the accepted-answer envelope's content name. The fields
+			// inside that content retain their authored JSON names and constraints.
+			for _, branch := range choice.Values {
+				if branch.Name != "accept" {
+					continue
+				}
+				content := goaexpr.AsObject(branch.Attribute.Type).Attribute("content")
+				delete(content.Meta, "struct:tag:json")
+				content.Meta["struct:tag:json:name"] = []string{"content"}
+			}
+		}
+	}
 	if err := p.requireValueImports(direction, layout); err != nil {
 		return nil, fmt.Errorf("plan JSON value %q imports: %w", key, err)
 	}
@@ -172,10 +209,15 @@ func (p *Plan) Add(
 		preferredName: preferredName,
 		direction:     direction,
 		service:       attribute,
+		serviceLayout: layout,
 		transport:     transport,
+		elicitation:   elicitation,
 	}
 	if err := value.declareTypes(localTypes); err != nil {
 		return nil, fmt.Errorf("plan JSON value %q types: %w", key, err)
+	}
+	if err := value.planIntegerJSON(); err != nil {
+		return nil, err
 	}
 	if err := value.declareUnions(); err != nil {
 		return nil, fmt.Errorf("plan JSON value %q unions: %w", key, err)
@@ -197,6 +239,28 @@ func (p *Plan) Add(
 // EncodeDeclaration returns the function that turns a service value into JSON.
 func (v *Value) EncodeDeclaration() *goacodegen.NameDeclaration {
 	return v.encodeDeclaration
+}
+
+// ValidationDeclaration returns the function that checks a service value.
+// It returns nil when no typed service-value validator was planned.
+func (v *Value) ValidationDeclaration() *goacodegen.NameDeclaration {
+	return v.validateDeclaration
+}
+
+// PlanValidation adds a typed result check to a value that already converts to
+// its private transport type. Callers use it when they do not need JSON bytes.
+func (v *Value) PlanValidation() error {
+	if v.validateDeclaration != nil {
+		return fmt.Errorf("validation for %q is already planned", v.key)
+	}
+	if v.encode == nil {
+		return fmt.Errorf("validation for %q requires a service-to-transport conversion", v.key)
+	}
+	v.validateDeclaration = goacodegen.NewPreferredName(
+		goacodegen.NameFunction, "Validate"+v.preferredName+"Value", goacodegen.ExportedName,
+		nameOrder{packagePath: v.plan.pkg.ImportPath(), key: v.key + ":validate"},
+	)
+	return v.plan.pkg.DeclareName(v.validateDeclaration)
 }
 
 // DecodeDeclaration returns the function that turns JSON into a service value.
@@ -261,26 +325,29 @@ func (v *Value) TransportField(
 	if attribute == nil {
 		return nil, fmt.Errorf("link JSON value %q transport field %q: attribute must not be nil", v.key, designName)
 	}
-	top := v.types[0]
-	object := goaexpr.AsObject(top.userType.Attribute().Type)
-	if object == nil || top.layout.Kind() != goacodegen.GoStruct {
-		return nil, fmt.Errorf("link JSON value %q transport field %q: transport value is not an object", v.key, designName)
-	}
-	fields := top.layout.Fields()
+	var owner *plannedType
 	var selected *goacodegen.GoTypePlan
-	for index, named := range *object {
-		if named.Name != designName || named.Attribute.AuthoredAttribute() != attribute.AuthoredAttribute() {
+	var transportAttribute *goaexpr.AttributeExpr
+	for _, planned := range v.types {
+		object := goaexpr.AsObject(planned.userType.Attribute().Type)
+		if object == nil || planned.layout.Kind() != goacodegen.GoStruct {
 			continue
 		}
-		if selected != nil {
-			return nil, fmt.Errorf("link JSON value %q transport field %q: field occurs more than once", v.key, designName)
+		fields := planned.layout.Fields()
+		for index, named := range *object {
+			if named.Name != designName || named.Attribute.AuthoredAttribute() != attribute.AuthoredAttribute() {
+				continue
+			}
+			if selected != nil {
+				return nil, fmt.Errorf("link JSON value %q transport field %q: field occurs more than once", v.key, designName)
+			}
+			owner, selected, transportAttribute = planned, fields[index], named.Attribute
 		}
-		selected = fields[index]
 	}
 	if selected == nil {
 		return nil, fmt.Errorf("link JSON value %q transport field %q: field was not planned", v.key, designName)
 	}
-	linked := top.layout.Link(outputPath, qualifier).Enter(selected)
+	linked := owner.layout.Link(outputPath, qualifier).Enter(selected)
 	typeRef := linked.Def()
 	if selected.IsPointer() {
 		typeRef = "*" + typeRef
@@ -291,11 +358,32 @@ func (v *Value) TransportField(
 		ValueTypeRef: linked.Def(),
 		Pointer:      selected.IsPointer(),
 	}
+	if value := goaexpr.NewMappedAttributeExpr(owner.userType.Attribute()).GetDefault(designName); value != nil {
+		rendered, err := goacodegen.RenderGoValue(transportAttribute, value, linked, selected.IsPointer(), func(attribute *goaexpr.AttributeExpr, branch string) (string, error) {
+			declaration, err := v.plan.pkg.UnionBranch(attribute, branch)
+			if err != nil {
+				return "", err
+			}
+			name := declaration.Constructor()
+			if outputPath != v.plan.pkg.ImportPath() {
+				name = qualifier(v.plan.pkg.ImportPath()) + "." + name
+			}
+			return name, nil
+		}, designName+"Default")
+		if err != nil {
+			return nil, fmt.Errorf("render transport default for %q: %w", designName, err)
+		}
+		field.Default = &rendered
+	}
 	if selected.Kind() == goacodegen.GoArray {
-		array := goaexpr.AsArray((*object).Attribute(designName).Type)
+		array := goaexpr.AsArray(attribute.Type)
 		field.ElementTypeRef = linked.Enter(selected.Elem()).Def()
 		field.ElementPointer = goaexpr.IsObject(array.ElemType.Type) ||
 			transportArrayElementIsPointer(array)
+	}
+	if selected.Kind() == goacodegen.GoMap {
+		field.KeyTypeRef = linked.Enter(selected.Key()).Def()
+		field.ElementTypeRef = linked.Enter(selected.Elem()).Def()
 	}
 	return field, nil
 }
@@ -323,7 +411,7 @@ func (o nameOrder) ComparePackageName(other goacodegen.PackageNameOrder) int {
 
 // valid reports whether the caller selected one supported generated direction.
 func (d Direction) valid() bool {
-	return d == EncodeOnly || d == DecodeOnly || d == EncodeAndDecode || d == ConstructOnly
+	return d == EncodeOnly || d == DecodeOnly || d == EncodeAndDecode || d == ConstructOnly || d == ValidateOnly
 }
 
 // encodes reports whether this value needs a service-to-JSON conversion.
@@ -339,17 +427,22 @@ func (d Direction) decodes() bool {
 // declareTypes records the package-level type and validation names.
 func (v *Value) declareTypes(localTypes []goaexpr.UserType) error {
 	for index, userType := range localTypes {
-		typeDeclaration, err := v.plan.pkg.DeclareGeneratedType(
-			userType.Name(),
-			nameOrder{
-				packagePath: v.plan.pkg.ImportPath(),
-				key:         fmt.Sprintf("%s:type:%s:%06d", v.key, userType.Name(), index),
-			},
-		)
-		if err != nil {
-			return err
+		order := nameOrder{packagePath: v.plan.pkg.ImportPath(), key: fmt.Sprintf("%s:type:%s:%06d", v.key, userType.Name(), index)}
+		var typeDeclaration *goacodegen.TypeDeclaration
+		var declaration *goacodegen.NameDeclaration
+		if v.originalLayout != nil {
+			declaration = goacodegen.NewPreferredName(goacodegen.NameType, userType.Name(), goacodegen.UnexportedName, order)
+			if err := v.plan.pkg.DeclareName(declaration); err != nil {
+				return err
+			}
+		} else {
+			var err error
+			typeDeclaration, err = v.plan.pkg.DeclareGeneratedType(userType.Name(), order)
+			if err != nil {
+				return err
+			}
+			declaration = typeDeclaration.Declaration()
 		}
-		declaration := typeDeclaration.Declaration()
 		validator, err := v.plan.pkg.DeclareDependentName(
 			goacodegen.NameFunction,
 			declaration,
@@ -365,8 +458,9 @@ func (v *Value) declareTypes(localTypes []goaexpr.UserType) error {
 			declaration:          declaration,
 			typeDeclaration:      typeDeclaration,
 			validatorDeclaration: validator,
-			// A named union keeps the underlying transport's JSON methods.
-			alias: goaexpr.IsUnion(userType),
+			// Named unions and raw JSON keep the underlying transport's JSON
+			// methods so decoding receives the authored value rather than bytes.
+			alias: goaexpr.IsUnion(userType) || isRawJSON(userType.Attribute()),
 		})
 	}
 	return nil
@@ -566,7 +660,7 @@ func (v *Value) planTransforms() error {
 			}
 		}
 	}
-	if v.direction.encodes() {
+	if v.direction.encodes() || v.direction == ValidateOnly {
 		encode, err := goacodegen.NewTransformPlan(v.service, v.transport, "encode", nil)
 		if err != nil {
 			return err
@@ -575,6 +669,9 @@ func (v *Value) planTransforms() error {
 			return err
 		}
 		v.encode = encode
+		if v.direction == ValidateOnly {
+			return v.PlanValidation()
+		}
 		if v.originalLayout != nil {
 			var err error
 			v.encodeDeclaration, err = v.plan.pkg.DeclareDependentName(

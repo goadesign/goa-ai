@@ -3,19 +3,20 @@
 package codec
 
 import (
+	"strconv"
 	"strings"
 
 	goaexpr "goa.design/goa/v3/expr"
 )
 
 // localTransportAttribute builds one named JSON value and every nested named
-// type it needs. Object fields keep the names written in the Goa design.
+// type it needs. Object fields retain authored JSON names and use design names when untagged.
 func localTransportAttribute(attribute *goaexpr.AttributeExpr, key, preferredName string) (*goaexpr.AttributeExpr, []goaexpr.UserType) {
 	shape := attribute
 	if userType, ok := attribute.Type.(goaexpr.UserType); ok && userType != goaexpr.Empty {
 		shape = userType.Attribute()
 	}
-	transportShape := goaexpr.DupAtt(shape)
+	transportShape := goaexpr.NewAttributeGraphCopier().Copy(shape)
 	normalizeTransportAttribute(
 		transportShape,
 		preferredName,
@@ -31,8 +32,8 @@ func localTransportAttribute(attribute *goaexpr.AttributeExpr, key, preferredNam
 	return &goaexpr.AttributeExpr{Type: top}, append([]goaexpr.UserType{top}, nested...)
 }
 
-// normalizeTransportAttribute removes service package locations and writes
-// each design field name into its JSON tag. Repeated named types and unions are
+// normalizeTransportAttribute removes service package locations and supplies
+// JSON names for untagged fields. Authored tags remain intact. Named types and unions are
 // visited once so recursive designs finish and union names change only once.
 func normalizeTransportAttribute(
 	attribute *goaexpr.AttributeExpr,
@@ -46,11 +47,10 @@ func normalizeTransportAttribute(
 	stripPackageMetadata(attribute)
 	switch actual := attribute.Type.(type) {
 	case goaexpr.UserType:
-		origin := actual.Origin()
-		if _, exists := seenTypes[origin]; exists {
+		if _, exists := seenTypes[actual]; exists {
 			return
 		}
-		seenTypes[origin] = struct{}{}
+		seenTypes[actual] = struct{}{}
 		normalizeTransportAttribute(actual.Attribute(), prefix, seenTypes, seenUnions)
 	case *goaexpr.Object:
 		for _, field := range *actual {
@@ -60,8 +60,11 @@ func normalizeTransportAttribute(
 			if field.Attribute.Meta == nil {
 				field.Attribute.Meta = make(goaexpr.MetaExpr)
 			}
-			delete(field.Attribute.Meta, "struct:tag:json")
-			field.Attribute.Meta["struct:tag:json:name"] = []string{field.Name}
+			if _, full := field.Attribute.Meta["struct:tag:json"]; !full {
+				if _, named := field.Attribute.Meta["struct:tag:json:name"]; !named {
+					field.Attribute.Meta["struct:tag:json:name"] = []string{field.Name}
+				}
+			}
 			normalizeTransportAttribute(field.Attribute, prefix, seenTypes, seenUnions)
 		}
 	case *goaexpr.Array:
@@ -82,22 +85,23 @@ func normalizeTransportAttribute(
 }
 
 // localizeNestedTypes replaces service user types with copies declared in the
-// private codec package. Repeated and recursive references share one copy.
+// private codec package. Repeated and recursive references share one copy;
+// different selected views remain separate even when their Goa origin matches.
 func localizeNestedTypes(attribute *goaexpr.AttributeExpr, key, prefix string) (*goaexpr.AttributeExpr, []goaexpr.UserType) {
-	localByOrigin := make(map[goaexpr.UserType]goaexpr.UserType)
+	localByType := make(map[goaexpr.UserType]goaexpr.UserType)
 	var locals []goaexpr.UserType
-	localizeNestedAttribute(attribute, key, prefix, localByOrigin, &locals)
+	localizeNestedAttribute(attribute, key, prefix, localByType, &locals)
 	return attribute, locals
 }
 
 // localizeNestedAttribute replaces each copied service type with one local
-// type. It records the local type before following its fields so a recursive
-// field can point back to that same declaration.
+// type for its selected fields. It records that copy before following fields
+// so recursive references return to the same private declaration.
 func localizeNestedAttribute(
 	attribute *goaexpr.AttributeExpr,
 	key string,
 	prefix string,
-	localByOrigin map[goaexpr.UserType]goaexpr.UserType,
+	localByType map[goaexpr.UserType]goaexpr.UserType,
 	locals *[]goaexpr.UserType,
 ) {
 	if attribute == nil || attribute.Type == nil || attribute.Type == goaexpr.Empty {
@@ -105,32 +109,31 @@ func localizeNestedAttribute(
 	}
 	switch actual := attribute.Type.(type) {
 	case goaexpr.UserType:
-		origin := actual.Origin()
-		if local := localByOrigin[origin]; local != nil {
+		if local := localByType[actual]; local != nil {
 			attribute.Type = local
 			return
 		}
 		local := &goaexpr.UserTypeExpr{
 			AttributeExpr: actual.Attribute(),
 			TypeName:      prefix + actual.Name() + "Transport",
-			UID:           "goa-ai-json:" + key + ":" + origin.ID(),
+			UID:           "goa-ai-json:" + key + ":" + strconv.Itoa(len(*locals)),
 		}
-		localByOrigin[origin] = local
+		localByType[actual] = local
 		*locals = append(*locals, local)
 		attribute.Type = local
-		localizeNestedAttribute(local.Attribute(), key, prefix, localByOrigin, locals)
+		localizeNestedAttribute(local.Attribute(), key, prefix, localByType, locals)
 	case *goaexpr.Object:
 		for _, field := range *actual {
-			localizeNestedAttribute(field.Attribute, key, prefix, localByOrigin, locals)
+			localizeNestedAttribute(field.Attribute, key, prefix, localByType, locals)
 		}
 	case *goaexpr.Array:
-		localizeNestedAttribute(actual.ElemType, key, prefix, localByOrigin, locals)
+		localizeNestedAttribute(actual.ElemType, key, prefix, localByType, locals)
 	case *goaexpr.Map:
-		localizeNestedAttribute(actual.KeyType, key, prefix, localByOrigin, locals)
-		localizeNestedAttribute(actual.ElemType, key, prefix, localByOrigin, locals)
+		localizeNestedAttribute(actual.KeyType, key, prefix, localByType, locals)
+		localizeNestedAttribute(actual.ElemType, key, prefix, localByType, locals)
 	case *goaexpr.Union:
 		for _, branch := range actual.Values {
-			localizeNestedAttribute(branch.Attribute, key, prefix, localByOrigin, locals)
+			localizeNestedAttribute(branch.Attribute, key, prefix, localByType, locals)
 		}
 	}
 }

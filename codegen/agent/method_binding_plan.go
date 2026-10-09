@@ -8,6 +8,7 @@ import (
 
 	"goa.design/goa-ai/codegen/ir"
 	"goa.design/goa-ai/expr/agent"
+	"goa.design/goa-ai/internal/mcpinput"
 	goacodegen "goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/codegen/service"
 	goaexpr "goa.design/goa/v3/expr"
@@ -39,6 +40,12 @@ func (p *toolSpecsPlan) planMethodBindings(design *ir.Design, servicePlan *servi
 		}
 		if err := specs.setMethodTransformLayouts(servicePlan, tools); err != nil {
 			return fmt.Errorf("plan method toolset %q conversion layouts: %w", reference.QualifiedName, err)
+		}
+		if err := specs.planInputExchanges(servicePlan, p.api, tools); err != nil {
+			return err
+		}
+		if err := specs.planTaskExchanges(servicePlan, p.api, tools); err != nil {
+			return err
 		}
 		if err := specs.planAdapterTransformImports(); err != nil {
 			return fmt.Errorf("plan method toolset %q conversion imports: %w", reference.QualifiedName, err)
@@ -74,6 +81,9 @@ func planProviderImports(
 		goacodegen.SimpleImport("fmt"),
 		goacodegen.SimpleImport("goa.design/goa-ai/runtime/toolregistry"),
 		goacodegen.NewImport("goa", "goa.design/goa/v3/pkg"),
+	}
+	if hasInputExchangeTool(tools) {
+		fixed = append(fixed, goacodegen.NewImport("mcpruntime", mcpRuntimeImportPath), goacodegen.NewImport("api", "goa.design/goa-ai/runtime/agent/api"))
 	}
 	if hasBoundsTool(tools) {
 		fixed = append(fixed, goacodegen.SimpleImport("goa.design/goa-ai/runtime/agent"))
@@ -217,6 +227,17 @@ func hasServerDataTool(tools []*agent.ToolExpr) bool {
 			if data != nil && data.Source != nil && data.Source.MethodResultField != "" {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// hasInputExchangeTool reports whether this generated executor needs host-round
+// admission checks before invoking any native method.
+func hasInputExchangeTool(tools []*agent.ToolExpr) bool {
+	for _, tool := range tools {
+		if tool.Method != nil && (len(tool.Method.Meta[mcpinput.ExchangeMetaKey]) > 0 || len(tool.Method.Meta[mcpinput.TaskExchangeMetaKey]) > 0) {
+			return true
 		}
 	}
 	return false

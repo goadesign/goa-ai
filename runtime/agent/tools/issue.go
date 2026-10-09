@@ -56,38 +56,6 @@ func NewValidationError(message string, issues []*FieldIssue, descriptions map[s
 	}
 }
 
-// NewUnionDiscriminatorError creates the canonical validation error for a
-// generated union's {type,value} discriminator.
-//
-// typePresent=false means the discriminator field was absent. An empty got with
-// typePresent=true is an explicit empty string and is therefore invalid.
-func NewUnionDiscriminatorError(union, got string, typePresent bool, allowed []string) *ValidationError {
-	if union == "" {
-		panic("tools.NewUnionDiscriminatorError requires a union name")
-	}
-	if len(allowed) == 0 {
-		panic("tools.NewUnionDiscriminatorError requires allowed values")
-	}
-	for _, value := range allowed {
-		if value == "" {
-			panic("tools.NewUnionDiscriminatorError allowed values must be non-empty")
-		}
-	}
-	constraint := "missing_field"
-	if typePresent {
-		constraint = "invalid_enum_value"
-	}
-	return NewValidationError(
-		fmt.Sprintf("unexpected %s type %q (allowed: %q)", union, got, allowed),
-		[]*FieldIssue{{
-			Field:      "type",
-			Constraint: constraint,
-			Allowed:    allowed,
-		}},
-		nil,
-	)
-}
-
 // Error returns the human-readable validation summary.
 func (e *ValidationError) Error() string {
 	return e.message

@@ -19,14 +19,14 @@ import (
 	goa "goa.design/goa/v3/pkg"
 )
 
-// DecodeInitializeRequest returns a decoder for requests sent to the
-// mcp_assistant initialize endpoint.
-func DecodeInitializeRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request, *jsonrpc.RawRequest) (*mcpassistant.InitializePayload, error) {
-	return func(r *http.Request, req *jsonrpc.RawRequest) (*mcpassistant.InitializePayload, error) {
+// DecodeServerDiscoverRequest returns a decoder for requests sent to the
+// mcp_assistant server/discover endpoint.
+func DecodeServerDiscoverRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request, *jsonrpc.RawRequest) (*mcpassistant.DiscoverPayload, error) {
+	return func(r *http.Request, req *jsonrpc.RawRequest) (*mcpassistant.DiscoverPayload, error) {
 		r.Body = io.NopCloser(bytes.NewReader(req.Params))
-		var payload *mcpassistant.InitializePayload
+		var payload *mcpassistant.DiscoverPayload
 		var (
-			body InitializeRequestBody
+			body ServerDiscoverRequestBody
 			err  error
 		)
 		err = decoder(r).Decode(&body)
@@ -40,11 +40,11 @@ func DecodeInitializeRequest(mux goahttp.Muxer, decoder func(*http.Request) goah
 			}
 			return payload, goa.DecodePayloadError(err.Error())
 		}
-		err = ValidateInitializeRequestBody(&body)
+		err = ValidateServerDiscoverRequestBody(&body)
 		if err != nil {
 			return payload, err
 		}
-		payload = NewInitializePayload(&body)
+		payload = NewServerDiscoverDiscoverPayload(&body)
 
 		return payload, nil
 	}
@@ -57,24 +57,25 @@ func DecodeToolsListRequest(mux goahttp.Muxer, decoder func(*http.Request) goaht
 		r.Body = io.NopCloser(bytes.NewReader(req.Params))
 		var payload *mcpassistant.ToolsListPayload
 		var (
-			body *ToolsListRequestBody
+			body ToolsListRequestBody
 			err  error
 		)
 		err = decoder(r).Decode(&body)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				err = nil
-			} else {
-				var gerr *goa.ServiceError
-				if errors.As(err, &gerr) {
-					return payload, gerr
-				}
-				return payload, goa.DecodePayloadError(err.Error())
+				return payload, goa.MissingPayloadError()
 			}
+			var gerr *goa.ServiceError
+			if errors.As(err, &gerr) {
+				return payload, gerr
+			}
+			return payload, goa.DecodePayloadError(err.Error())
 		}
-		if body != nil {
+		err = ValidateToolsListRequestBody(&body)
+		if err != nil {
+			return payload, err
 		}
-		payload = NewToolsListPayload(body)
+		payload = NewToolsListPayload(&body)
 
 		return payload, nil
 	}
@@ -118,24 +119,25 @@ func DecodeResourcesListRequest(mux goahttp.Muxer, decoder func(*http.Request) g
 		r.Body = io.NopCloser(bytes.NewReader(req.Params))
 		var payload *mcpassistant.ResourcesListPayload
 		var (
-			body *ResourcesListRequestBody
+			body ResourcesListRequestBody
 			err  error
 		)
 		err = decoder(r).Decode(&body)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				err = nil
-			} else {
-				var gerr *goa.ServiceError
-				if errors.As(err, &gerr) {
-					return payload, gerr
-				}
-				return payload, goa.DecodePayloadError(err.Error())
+				return payload, goa.MissingPayloadError()
 			}
+			var gerr *goa.ServiceError
+			if errors.As(err, &gerr) {
+				return payload, gerr
+			}
+			return payload, goa.DecodePayloadError(err.Error())
 		}
-		if body != nil {
+		err = ValidateResourcesListRequestBody(&body)
+		if err != nil {
+			return payload, err
 		}
-		payload = NewResourcesListPayload(body)
+		payload = NewResourcesListPayload(&body)
 
 		return payload, nil
 	}
@@ -172,6 +174,37 @@ func DecodeResourcesReadRequest(mux goahttp.Muxer, decoder func(*http.Request) g
 	}
 }
 
+// DecodeResourcesTemplatesListRequest returns a decoder for requests sent to
+// the mcp_assistant resources/templates/list endpoint.
+func DecodeResourcesTemplatesListRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request, *jsonrpc.RawRequest) (*mcpassistant.ResourceTemplatesListPayload, error) {
+	return func(r *http.Request, req *jsonrpc.RawRequest) (*mcpassistant.ResourceTemplatesListPayload, error) {
+		r.Body = io.NopCloser(bytes.NewReader(req.Params))
+		var payload *mcpassistant.ResourceTemplatesListPayload
+		var (
+			body ResourcesTemplatesListRequestBody
+			err  error
+		)
+		err = decoder(r).Decode(&body)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return payload, goa.MissingPayloadError()
+			}
+			var gerr *goa.ServiceError
+			if errors.As(err, &gerr) {
+				return payload, gerr
+			}
+			return payload, goa.DecodePayloadError(err.Error())
+		}
+		err = ValidateResourcesTemplatesListRequestBody(&body)
+		if err != nil {
+			return payload, err
+		}
+		payload = NewResourcesTemplatesListResourceTemplatesListPayload(&body)
+
+		return payload, nil
+	}
+}
+
 // DecodePromptsListRequest returns a decoder for requests sent to the
 // mcp_assistant prompts/list endpoint.
 func DecodePromptsListRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request, *jsonrpc.RawRequest) (*mcpassistant.PromptsListPayload, error) {
@@ -179,24 +212,25 @@ func DecodePromptsListRequest(mux goahttp.Muxer, decoder func(*http.Request) goa
 		r.Body = io.NopCloser(bytes.NewReader(req.Params))
 		var payload *mcpassistant.PromptsListPayload
 		var (
-			body *PromptsListRequestBody
+			body PromptsListRequestBody
 			err  error
 		)
 		err = decoder(r).Decode(&body)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
-				err = nil
-			} else {
-				var gerr *goa.ServiceError
-				if errors.As(err, &gerr) {
-					return payload, gerr
-				}
-				return payload, goa.DecodePayloadError(err.Error())
+				return payload, goa.MissingPayloadError()
 			}
+			var gerr *goa.ServiceError
+			if errors.As(err, &gerr) {
+				return payload, gerr
+			}
+			return payload, goa.DecodePayloadError(err.Error())
 		}
-		if body != nil {
+		err = ValidatePromptsListRequestBody(&body)
+		if err != nil {
+			return payload, err
 		}
-		payload = NewPromptsListPayload(body)
+		payload = NewPromptsListPayload(&body)
 
 		return payload, nil
 	}
@@ -233,31 +267,47 @@ func DecodePromptsGetRequest(mux goahttp.Muxer, decoder func(*http.Request) goah
 	}
 }
 
-// unmarshalClientInfoRequestBodyToMcpassistantClientInfo builds a value of
-// type *mcpassistant.ClientInfo from a value of type *ClientInfoRequestBody.
-func unmarshalClientInfoRequestBodyToMcpassistantClientInfo(v *ClientInfoRequestBody) *mcpassistant.ClientInfo {
-	res := &mcpassistant.ClientInfo{
-		Name:    *v.Name,
-		Version: *v.Version,
+// DecodeCompletionCompleteRequest returns a decoder for requests sent to the
+// mcp_assistant completion/complete endpoint.
+func DecodeCompletionCompleteRequest(mux goahttp.Muxer, decoder func(*http.Request) goahttp.Decoder) func(*http.Request, *jsonrpc.RawRequest) (*mcpassistant.CompletionCompletePayload, error) {
+	return func(r *http.Request, req *jsonrpc.RawRequest) (*mcpassistant.CompletionCompletePayload, error) {
+		r.Body = io.NopCloser(bytes.NewReader(req.Params))
+		var payload *mcpassistant.CompletionCompletePayload
+		var (
+			body CompletionCompleteRequestBody
+			err  error
+		)
+		err = decoder(r).Decode(&body)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return payload, goa.MissingPayloadError()
+			}
+			var gerr *goa.ServiceError
+			if errors.As(err, &gerr) {
+				return payload, gerr
+			}
+			return payload, goa.DecodePayloadError(err.Error())
+		}
+		err = ValidateCompletionCompleteRequestBody(&body)
+		if err != nil {
+			return payload, err
+		}
+		payload = NewCompletionCompletePayload(&body)
+
+		return payload, nil
 	}
-
-	return res
-}
-
-// unmarshalClientCapabilitiesRequestBodyToMcpassistantClientCapabilities
-// builds a value of type *mcpassistant.ClientCapabilities from a value of type
-// *ClientCapabilitiesRequestBody.
-func unmarshalClientCapabilitiesRequestBodyToMcpassistantClientCapabilities(v *ClientCapabilitiesRequestBody) *mcpassistant.ClientCapabilities {
-	res := &mcpassistant.ClientCapabilities{}
-
-	return res
 }
 
 // marshalMcpassistantServerCapabilitiesToServerCapabilitiesResponseBody builds
 // a value of type *ServerCapabilitiesResponseBody from a value of type
 // *mcpassistant.ServerCapabilities.
 func marshalMcpassistantServerCapabilitiesToServerCapabilitiesResponseBody(v *mcpassistant.ServerCapabilities) *ServerCapabilitiesResponseBody {
-	res := &ServerCapabilitiesResponseBody{}
+	res := &ServerCapabilitiesResponseBody{
+		Extensions: v.Extensions,
+	}
+	if v.Completions != nil {
+		res.Completions = marshalMcpassistantCompletionsCapabilityToCompletionsCapabilityResponseBody(v.Completions)
+	}
 	if v.Tools != nil {
 		res.Tools = marshalMcpassistantToolsCapabilityToToolsCapabilityResponseBody(v.Tools)
 	}
@@ -271,11 +321,22 @@ func marshalMcpassistantServerCapabilitiesToServerCapabilitiesResponseBody(v *mc
 	return res
 }
 
+// marshalMcpassistantCompletionsCapabilityToCompletionsCapabilityResponseBody
+// builds a value of type *CompletionsCapabilityResponseBody from a value of
+// type *mcpassistant.CompletionsCapability.
+func marshalMcpassistantCompletionsCapabilityToCompletionsCapabilityResponseBody(v *mcpassistant.CompletionsCapability) *CompletionsCapabilityResponseBody {
+	res := &CompletionsCapabilityResponseBody{}
+
+	return res
+}
+
 // marshalMcpassistantToolsCapabilityToToolsCapabilityResponseBody builds a
 // value of type *ToolsCapabilityResponseBody from a value of type
 // *mcpassistant.ToolsCapability.
 func marshalMcpassistantToolsCapabilityToToolsCapabilityResponseBody(v *mcpassistant.ToolsCapability) *ToolsCapabilityResponseBody {
-	res := &ToolsCapabilityResponseBody{}
+	res := &ToolsCapabilityResponseBody{
+		ListChanged: v.ListChanged,
+	}
 
 	return res
 }
@@ -284,7 +345,10 @@ func marshalMcpassistantToolsCapabilityToToolsCapabilityResponseBody(v *mcpassis
 // builds a value of type *ResourcesCapabilityResponseBody from a value of type
 // *mcpassistant.ResourcesCapability.
 func marshalMcpassistantResourcesCapabilityToResourcesCapabilityResponseBody(v *mcpassistant.ResourcesCapability) *ResourcesCapabilityResponseBody {
-	res := &ResourcesCapabilityResponseBody{}
+	res := &ResourcesCapabilityResponseBody{
+		ListChanged: v.ListChanged,
+		Subscribe:   v.Subscribe,
+	}
 
 	return res
 }
@@ -293,17 +357,8 @@ func marshalMcpassistantResourcesCapabilityToResourcesCapabilityResponseBody(v *
 // value of type *PromptsCapabilityResponseBody from a value of type
 // *mcpassistant.PromptsCapability.
 func marshalMcpassistantPromptsCapabilityToPromptsCapabilityResponseBody(v *mcpassistant.PromptsCapability) *PromptsCapabilityResponseBody {
-	res := &PromptsCapabilityResponseBody{}
-
-	return res
-}
-
-// marshalMcpassistantServerInfoToServerInfoResponseBody builds a value of type
-// *ServerInfoResponseBody from a value of type *mcpassistant.ServerInfo.
-func marshalMcpassistantServerInfoToServerInfoResponseBody(v *mcpassistant.ServerInfo) *ServerInfoResponseBody {
-	res := &ServerInfoResponseBody{
-		Name:    v.Name,
-		Version: v.Version,
+	res := &PromptsCapabilityResponseBody{
+		ListChanged: v.ListChanged,
 	}
 
 	return res
@@ -315,20 +370,284 @@ func marshalMcpassistantToolInfoToToolInfoResponseBody(v *mcpassistant.ToolInfo)
 	res := &ToolInfoResponseBody{
 		Name:         v.Name,
 		Description:  v.Description,
+		Meta:         v.Meta,
 		InputSchema:  v.InputSchema,
 		OutputSchema: v.OutputSchema,
+	}
+	if v.Annotations != nil {
+		res.Annotations = marshalMcpassistantToolAnnotationsToToolAnnotationsResponseBody(v.Annotations)
 	}
 
 	return res
 }
 
-// marshalMcpassistantContentItemToContentItemResponseBody builds a value of
-// type *ContentItemResponseBody from a value of type *mcpassistant.ContentItem.
-func marshalMcpassistantContentItemToContentItemResponseBody(v *mcpassistant.ContentItem) *ContentItemResponseBody {
-	res := &ContentItemResponseBody{
-		Type: v.Type,
-		Text: v.Text,
+// marshalMcpassistantToolAnnotationsToToolAnnotationsResponseBody builds a
+// value of type *ToolAnnotationsResponseBody from a value of type
+// *mcpassistant.ToolAnnotations.
+func marshalMcpassistantToolAnnotationsToToolAnnotationsResponseBody(v *mcpassistant.ToolAnnotations) *ToolAnnotationsResponseBody {
+	res := &ToolAnnotationsResponseBody{
+		Title:           v.Title,
+		ReadOnlyHint:    v.ReadOnlyHint,
+		DestructiveHint: v.DestructiveHint,
+		IdempotentHint:  v.IdempotentHint,
+		OpenWorldHint:   v.OpenWorldHint,
 	}
+
+	return res
+}
+
+// marshalMcpassistantToolsCallCompleteResultToToolsCallCompleteResultResponse
+// builds a value of type *ToolsCallCompleteResultResponse from a value of type
+// *mcpassistant.ToolsCallCompleteResult.
+func marshalMcpassistantToolsCallCompleteResultToToolsCallCompleteResultResponse(v *mcpassistant.ToolsCallCompleteResult) *ToolsCallCompleteResultResponse {
+	res := &ToolsCallCompleteResultResponse{
+		IsError:           v.IsError,
+		StructuredContent: v.StructuredContent,
+		Meta:              v.Meta,
+	}
+	if v.Content != nil {
+		res.Content = make([]*ContentItemResponse, len(v.Content))
+		for i, val := range v.Content {
+			if val == nil {
+				res.Content[i] = nil
+				continue
+			}
+			res.Content[i] = marshalMcpassistantContentItemToContentItemResponse(val)
+		}
+	} else {
+		res.Content = []*ContentItemResponse{}
+	}
+
+	return res
+}
+
+// marshalMcpassistantContentItemToContentItemResponse builds a value of type
+// *ContentItemResponse from a value of type *mcpassistant.ContentItem.
+func marshalMcpassistantContentItemToContentItemResponse(v *mcpassistant.ContentItem) *ContentItemResponse {
+	res := &ContentItemResponse{
+		Type:        v.Type,
+		Text:        v.Text,
+		Data:        v.Data,
+		MimeType:    v.MimeType,
+		Name:        v.Name,
+		URI:         v.URI,
+		Title:       v.Title,
+		Description: v.Description,
+		Size:        v.Size,
+		Meta:        v.Meta,
+	}
+	if v.Icons != nil {
+		res.Icons = make([]*ContentIcon, len(v.Icons))
+		for i, val := range v.Icons {
+			if val == nil {
+				res.Icons[i] = nil
+				continue
+			}
+			res.Icons[i] = marshalMcpassistantContentIconToContentIcon(val)
+		}
+	}
+	if v.Resource != nil {
+		res.Resource = marshalMcpassistantResourceContentToResourceContentResponse(v.Resource)
+	}
+	if v.Annotations != nil {
+		res.Annotations = marshalMcpassistantContentAnnotationsToContentAnnotations(v.Annotations)
+	}
+
+	return res
+}
+
+// marshalMcpassistantContentIconToContentIcon builds a value of type
+// *ContentIcon from a value of type *mcpassistant.ContentIcon.
+func marshalMcpassistantContentIconToContentIcon(v *mcpassistant.ContentIcon) *ContentIcon {
+	res := &ContentIcon{
+		Src:      v.Src,
+		MimeType: v.MimeType,
+		Theme:    v.Theme,
+	}
+	if v.Sizes != nil {
+		res.Sizes = make([]string, len(v.Sizes))
+		for i, val := range v.Sizes {
+			res.Sizes[i] = val
+		}
+	}
+
+	return res
+}
+
+// marshalMcpassistantResourceContentToResourceContentResponse builds a value
+// of type *ResourceContentResponse from a value of type
+// *mcpassistant.ResourceContent.
+func marshalMcpassistantResourceContentToResourceContentResponse(v *mcpassistant.ResourceContent) *ResourceContentResponse {
+	res := &ResourceContentResponse{
+		URI:      v.URI,
+		MimeType: v.MimeType,
+		Text:     v.Text,
+		Blob:     v.Blob,
+		Meta:     v.Meta,
+	}
+
+	return res
+}
+
+// marshalMcpassistantContentAnnotationsToContentAnnotations builds a value of
+// type *ContentAnnotations from a value of type
+// *mcpassistant.ContentAnnotations.
+func marshalMcpassistantContentAnnotationsToContentAnnotations(v *mcpassistant.ContentAnnotations) *ContentAnnotations {
+	res := &ContentAnnotations{
+		Priority:     v.Priority,
+		LastModified: v.LastModified,
+	}
+	if v.Audience != nil {
+		res.Audience = make([]string, len(v.Audience))
+		for i, val := range v.Audience {
+			res.Audience[i] = val
+		}
+	}
+
+	return res
+}
+
+// marshalMcpassistantInputRequiredResultToInputRequiredResultResponse builds a
+// value of type *InputRequiredResultResponse from a value of type
+// *mcpassistant.InputRequiredResult.
+func marshalMcpassistantInputRequiredResultToInputRequiredResultResponse(v *mcpassistant.InputRequiredResult) *InputRequiredResultResponse {
+	res := &InputRequiredResultResponse{
+		RequestState: v.RequestState,
+		Meta:         v.Meta,
+	}
+	if v.InputRequests != nil {
+		res.InputRequests = make(map[string]*InputRequestResponse, len(v.InputRequests))
+		for key, val := range v.InputRequests {
+			tk := key
+			if val == nil {
+				res.InputRequests[tk] = nil
+				continue
+			}
+			res.InputRequests[tk] = marshalMcpassistantInputRequestToInputRequestResponse(val)
+		}
+	}
+
+	return res
+}
+
+// marshalMcpassistantInputRequestToInputRequestResponse builds a value of type
+// *InputRequestResponse from a value of type *mcpassistant.InputRequest.
+func marshalMcpassistantInputRequestToInputRequestResponse(v *mcpassistant.InputRequest) *InputRequestResponse {
+	res := &InputRequestResponse{
+		Method: v.Method,
+	}
+	if v.Params.Kind() != "" {
+		switch string(v.Params.Kind()) {
+		case "form":
+			actual, _ := v.Params.AsForm()
+			var obj *ElicitationFormParamsResponse
+			if actual != nil {
+				obj = marshalMcpassistantElicitationFormParamsToElicitationFormParamsResponse(actual)
+			}
+			u := res.Params
+			u.SetForm((*ElicitationFormParamsResponse)(obj))
+			res.Params = u
+		case "url":
+			actual, _ := v.Params.AsURL()
+			var obj *ElicitationURLParamsResponse
+			if actual != nil {
+				obj = marshalMcpassistantElicitationURLParamsToElicitationURLParamsResponse(actual)
+			}
+			u := res.Params
+			u.SetURL((*ElicitationURLParamsResponse)(obj))
+			res.Params = u
+		}
+	}
+
+	return res
+}
+
+// marshalMcpassistantElicitationFormParamsToElicitationFormParamsResponse
+// builds a value of type *ElicitationFormParamsResponse from a value of type
+// *mcpassistant.ElicitationFormParams.
+func marshalMcpassistantElicitationFormParamsToElicitationFormParamsResponse(v *mcpassistant.ElicitationFormParams) *ElicitationFormParamsResponse {
+	res := &ElicitationFormParamsResponse{
+		Message:         v.Message,
+		RequestedSchema: v.RequestedSchema,
+	}
+
+	return res
+}
+
+// marshalMcpassistantElicitationURLParamsToElicitationURLParamsResponse builds
+// a value of type *ElicitationURLParamsResponse from a value of type
+// *mcpassistant.ElicitationURLParams.
+func marshalMcpassistantElicitationURLParamsToElicitationURLParamsResponse(v *mcpassistant.ElicitationURLParams) *ElicitationURLParamsResponse {
+	res := &ElicitationURLParamsResponse{
+		Message: v.Message,
+		URL:     v.URL,
+	}
+
+	return res
+}
+
+// marshalMcpassistantTaskCreatedToTaskCreatedResponse builds a value of type
+// *TaskCreatedResponse from a value of type *mcpassistant.TaskCreated.
+func marshalMcpassistantTaskCreatedToTaskCreatedResponse(v *mcpassistant.TaskCreated) *TaskCreatedResponse {
+	res := &TaskCreatedResponse{
+		TaskID:         v.TaskID,
+		CreatedAt:      v.CreatedAt,
+		LastUpdatedAt:  v.LastUpdatedAt,
+		StatusMessage:  v.StatusMessage,
+		TTLMs:          v.TTLMs,
+		PollIntervalMs: v.PollIntervalMs,
+		Status:         v.Status,
+		Meta:           v.Meta,
+	}
+
+	return res
+}
+
+// marshalMcpassistantRequiredClientCapabilitiesToRequiredClientCapabilitiesResponseBody
+// builds a value of type *RequiredClientCapabilitiesResponseBody from a value
+// of type *mcpassistant.RequiredClientCapabilities.
+func marshalMcpassistantRequiredClientCapabilitiesToRequiredClientCapabilitiesResponseBody(v *mcpassistant.RequiredClientCapabilities) *RequiredClientCapabilitiesResponseBody {
+	res := &RequiredClientCapabilitiesResponseBody{}
+	if v.Elicitation != nil {
+		res.Elicitation = marshalMcpassistantElicitationCapabilitiesToElicitationCapabilitiesResponseBody(v.Elicitation)
+	}
+	if v.Extensions != nil {
+		res.Extensions = make(map[string]*RequiredExtensionResponseBody, len(v.Extensions))
+		for key, val := range v.Extensions {
+			tk := key
+			if val == nil {
+				res.Extensions[tk] = nil
+				continue
+			}
+			res.Extensions[tk] = marshalMcpassistantRequiredExtensionToRequiredExtensionResponseBody(val)
+		}
+	}
+
+	return res
+}
+
+// marshalMcpassistantElicitationCapabilitiesToElicitationCapabilitiesResponseBody
+// builds a value of type *ElicitationCapabilitiesResponseBody from a value of
+// type *mcpassistant.ElicitationCapabilities.
+func marshalMcpassistantElicitationCapabilitiesToElicitationCapabilitiesResponseBody(v *mcpassistant.ElicitationCapabilities) *ElicitationCapabilitiesResponseBody {
+	res := &ElicitationCapabilitiesResponseBody{}
+	if v.Form != nil {
+		res.Form = &struct {
+		}{}
+	}
+	if v.URL != nil {
+		res.URL = &struct {
+		}{}
+	}
+
+	return res
+}
+
+// marshalMcpassistantRequiredExtensionToRequiredExtensionResponseBody builds a
+// value of type *RequiredExtensionResponseBody from a value of type
+// *mcpassistant.RequiredExtension.
+func marshalMcpassistantRequiredExtensionToRequiredExtensionResponseBody(v *mcpassistant.RequiredExtension) *RequiredExtensionResponseBody {
+	res := &RequiredExtensionResponseBody{}
 
 	return res
 }
@@ -338,23 +657,80 @@ func marshalMcpassistantContentItemToContentItemResponseBody(v *mcpassistant.Con
 // *mcpassistant.ResourceInfo.
 func marshalMcpassistantResourceInfoToResourceInfoResponseBody(v *mcpassistant.ResourceInfo) *ResourceInfoResponseBody {
 	res := &ResourceInfoResponseBody{
-		URI:         v.URI,
 		Name:        v.Name,
+		Title:       v.Title,
 		Description: v.Description,
 		MimeType:    v.MimeType,
+		Meta:        v.Meta,
+		URI:         v.URI,
+		Size:        v.Size,
+	}
+	if v.Icons != nil {
+		res.Icons = make([]*ContentIcon, len(v.Icons))
+		for i, val := range v.Icons {
+			if val == nil {
+				res.Icons[i] = nil
+				continue
+			}
+			res.Icons[i] = marshalMcpassistantContentIconToContentIcon(val)
+		}
+	}
+	if v.Annotations != nil {
+		res.Annotations = marshalMcpassistantContentAnnotationsToContentAnnotations(v.Annotations)
 	}
 
 	return res
 }
 
-// marshalMcpassistantResourceContentToResourceContentResponseBody builds a
-// value of type *ResourceContentResponseBody from a value of type
-// *mcpassistant.ResourceContent.
-func marshalMcpassistantResourceContentToResourceContentResponseBody(v *mcpassistant.ResourceContent) *ResourceContentResponseBody {
-	res := &ResourceContentResponseBody{
-		URI:      v.URI,
-		MimeType: v.MimeType,
-		Text:     v.Text,
+// marshalMcpassistantResourcesReadCompleteResultToResourcesReadCompleteResultResponse
+// builds a value of type *ResourcesReadCompleteResultResponse from a value of
+// type *mcpassistant.ResourcesReadCompleteResult.
+func marshalMcpassistantResourcesReadCompleteResultToResourcesReadCompleteResultResponse(v *mcpassistant.ResourcesReadCompleteResult) *ResourcesReadCompleteResultResponse {
+	res := &ResourcesReadCompleteResultResponse{
+		Meta:       v.Meta,
+		TTLMs:      v.TTLMs,
+		CacheScope: v.CacheScope,
+	}
+	if v.Contents != nil {
+		res.Contents = make([]*ResourceContentResponse, len(v.Contents))
+		for i, val := range v.Contents {
+			if val == nil {
+				res.Contents[i] = nil
+				continue
+			}
+			res.Contents[i] = marshalMcpassistantResourceContentToResourceContentResponse(val)
+		}
+	} else {
+		res.Contents = []*ResourceContentResponse{}
+	}
+
+	return res
+}
+
+// marshalMcpassistantResourceTemplateInfoToResourceTemplateInfoResponseBody
+// builds a value of type *ResourceTemplateInfoResponseBody from a value of
+// type *mcpassistant.ResourceTemplateInfo.
+func marshalMcpassistantResourceTemplateInfoToResourceTemplateInfoResponseBody(v *mcpassistant.ResourceTemplateInfo) *ResourceTemplateInfoResponseBody {
+	res := &ResourceTemplateInfoResponseBody{
+		Name:        v.Name,
+		Title:       v.Title,
+		Description: v.Description,
+		MimeType:    v.MimeType,
+		Meta:        v.Meta,
+		URITemplate: v.URITemplate,
+	}
+	if v.Icons != nil {
+		res.Icons = make([]*ContentIcon, len(v.Icons))
+		for i, val := range v.Icons {
+			if val == nil {
+				res.Icons[i] = nil
+				continue
+			}
+			res.Icons[i] = marshalMcpassistantContentIconToContentIcon(val)
+		}
+	}
+	if v.Annotations != nil {
+		res.Annotations = marshalMcpassistantContentAnnotationsToContentAnnotations(v.Annotations)
 	}
 
 	return res
@@ -394,27 +770,101 @@ func marshalMcpassistantPromptArgumentToPromptArgumentResponseBody(v *mcpassista
 	return res
 }
 
-// marshalMcpassistantPromptMessageToPromptMessageResponseBody builds a value
-// of type *PromptMessageResponseBody from a value of type
-// *mcpassistant.PromptMessage.
-func marshalMcpassistantPromptMessageToPromptMessageResponseBody(v *mcpassistant.PromptMessage) *PromptMessageResponseBody {
-	res := &PromptMessageResponseBody{
-		Role: v.Role,
+// marshalMcpassistantPromptsGetCompleteResultToPromptsGetCompleteResultResponse
+// builds a value of type *PromptsGetCompleteResultResponse from a value of
+// type *mcpassistant.PromptsGetCompleteResult.
+func marshalMcpassistantPromptsGetCompleteResultToPromptsGetCompleteResultResponse(v *mcpassistant.PromptsGetCompleteResult) *PromptsGetCompleteResultResponse {
+	res := &PromptsGetCompleteResultResponse{
+		Description: v.Description,
+		Meta:        v.Meta,
 	}
-	if v.Content != nil {
-		res.Content = marshalMcpassistantMessageContentToMessageContentResponseBody(v.Content)
+	if v.Messages != nil {
+		res.Messages = make([]*PromptMessageResponse, len(v.Messages))
+		for i, val := range v.Messages {
+			if val == nil {
+				res.Messages[i] = nil
+				continue
+			}
+			res.Messages[i] = marshalMcpassistantPromptMessageToPromptMessageResponse(val)
+		}
+	} else {
+		res.Messages = []*PromptMessageResponse{}
 	}
 
 	return res
 }
 
-// marshalMcpassistantMessageContentToMessageContentResponseBody builds a value
-// of type *MessageContentResponseBody from a value of type
-// *mcpassistant.MessageContent.
-func marshalMcpassistantMessageContentToMessageContentResponseBody(v *mcpassistant.MessageContent) *MessageContentResponseBody {
-	res := &MessageContentResponseBody{
-		Type: v.Type,
-		Text: v.Text,
+// marshalMcpassistantPromptMessageToPromptMessageResponse builds a value of
+// type *PromptMessageResponse from a value of type *mcpassistant.PromptMessage.
+func marshalMcpassistantPromptMessageToPromptMessageResponse(v *mcpassistant.PromptMessage) *PromptMessageResponse {
+	res := &PromptMessageResponse{
+		Role: v.Role,
+	}
+	if v.Content != nil {
+		res.Content = marshalMcpassistantContentItemToContentItemResponse(v.Content)
+	}
+
+	return res
+}
+
+// unmarshalCompletionReferenceRequestBodyToMcpassistantCompletionReference
+// builds a value of type *mcpassistant.CompletionReference from a value of
+// type *CompletionReferenceRequestBody.
+func unmarshalCompletionReferenceRequestBodyToMcpassistantCompletionReference(v *CompletionReferenceRequestBody) *mcpassistant.CompletionReference {
+	res := &mcpassistant.CompletionReference{
+		Type:  *v.Type,
+		Name:  v.Name,
+		Title: v.Title,
+		URI:   v.URI,
+	}
+
+	return res
+}
+
+// unmarshalCompletionArgumentRequestBodyToMcpassistantCompletionArgument
+// builds a value of type *mcpassistant.CompletionArgument from a value of type
+// *CompletionArgumentRequestBody.
+func unmarshalCompletionArgumentRequestBodyToMcpassistantCompletionArgument(v *CompletionArgumentRequestBody) *mcpassistant.CompletionArgument {
+	res := &mcpassistant.CompletionArgument{
+		Name:  *v.Name,
+		Value: *v.Value,
+	}
+
+	return res
+}
+
+// unmarshalCompletionContextRequestBodyToMcpassistantCompletionContext builds
+// a value of type *mcpassistant.CompletionContext from a value of type
+// *CompletionContextRequestBody.
+func unmarshalCompletionContextRequestBodyToMcpassistantCompletionContext(v *CompletionContextRequestBody) *mcpassistant.CompletionContext {
+	res := &mcpassistant.CompletionContext{}
+	if v.Arguments != nil {
+		res.Arguments = make(map[string]string, len(v.Arguments))
+		for key, val := range v.Arguments {
+			tk := key
+			tv := val
+			res.Arguments[tk] = tv
+		}
+	}
+
+	return res
+}
+
+// marshalMcpassistantCompletionSuggestionToCompletionSuggestionResponseBody
+// builds a value of type *CompletionSuggestionResponseBody from a value of
+// type *mcpassistant.CompletionSuggestion.
+func marshalMcpassistantCompletionSuggestionToCompletionSuggestionResponseBody(v *mcpassistant.CompletionSuggestion) *CompletionSuggestionResponseBody {
+	res := &CompletionSuggestionResponseBody{
+		Total:   v.Total,
+		HasMore: v.HasMore,
+	}
+	if v.Values != nil {
+		res.Values = make([]string, len(v.Values))
+		for i, val := range v.Values {
+			res.Values[i] = val
+		}
+	} else {
+		res.Values = []string{}
 	}
 
 	return res

@@ -1134,7 +1134,9 @@ runtime also rejects an event without a prompt ID or version, or whose scoped
 session differs from the run session. The
 accepted root or child workflow stores `RunStarted` and then these prompt events
 before planner work. If session ending prevents the run from starting, it stores
-the canceled start and no prompt events. Consumer-side agent-tool rendering runs
+the cancellation intent and no prompt events. The workflow settles inherited
+Tasks and children before it stores its terminal result; failed cleanup records
+failure. Consumer-side agent-tool rendering runs
 in an activity and carries its recorded text and events in the child input.
 Workflow replay therefore reuses the activity result instead of reading prompt
 storage again. `RunOneShot` gives
@@ -1578,7 +1580,7 @@ directly:
   `codegen.CapsData.MaxRecoveryTurns`.
 
 These names and their serialized field names are intentionally breaking.
-Suspensions written by this runtime use `goa-ai.run-suspension.v9`. Earlier
+Suspensions written by this runtime use `goa-ai.run-suspension.v13`. Earlier
 versions cannot resume on this runtime. Version nine references an exact saved
 history position; see [Runtime Store](#runtime-store-storagestore) for preparation
 and checkpoint upgrade requirements. It retains the recovery contract introduced
@@ -1924,9 +1926,22 @@ metadata; callers that construct a `ToolSpec` directly may include it too.
 The runtime gathers independently required constraints, including `allOf`, but
 does not treat alternative `anyOf` branches, array `contains` candidates, or
 property-name checks as instructions to change every corresponding value.
-For a union, only the branch named by a valid string discriminator participates.
+For a tagged or flat union, only the branch named by a valid string discriminator participates.
 A missing, non-string, or unknown discriminator receives no branch-specific
 instruction; sound instructions for unrelated fields remain available.
+For an untagged union, the submitted JSON kind selects the branch. Generated
+metadata retains that branch's position in the advertised schema, so correction
+guidance follows its own validator diagnostic. Each array item or map value
+selects independently. Supporting a union mapping does not require reading
+JSON Schema again at runtime.
+
+Generated tool and completion codecs use the same union constructors and JSON
+methods as Goa service types. Use their generated codecs for strict input
+decoding; direct union `Validate` calls return Goa's native errors. If you author
+field metadata manually, `tools.TaggedUnionBranch` carries a discriminator path
+and string value. `tools.UntaggedUnionBranch` carries the union value's path,
+JSON kind and zero-based schema branch position. Regenerate registry contracts,
+providers and consumers together when adopting this metadata contract.
 
 Instructions are sorted and deduplicated. Different instructions for the same
 displayed path are omitted; the runtime does not try to combine their
@@ -3225,25 +3240,17 @@ if err != nil {
 // Use exec.Execute as the executor for registry-backed toolsets.
 ```
 
-`executor.Client` receives `toolregistry.ToolCallMeta` by value. A handwritten
-adapter to the generated registry client must copy every field, including
-`Labels`, into both `CallToolPayload.Meta` and `RetryToolPayload.Meta`:
+`executor.Client` uses the generated `CallTool` and `RetryTool` payloads and
+results. Pass `*genregistry.Client` directly, or forward these exact typed
+methods through an application client. The executor owns request metadata,
+including labels, operation sequence and the saved continuation. It also checks
+the registry's independent execution deadline and result-stream expiration.
+Applications do not copy runtime metadata or parse these timestamps.
 
-```go
-func registryMeta(meta toolregistry.ToolCallMeta) *genregistry.ToolCallMeta {
-    return &genregistry.ToolCallMeta{
-        RunID:            meta.RunID,
-        SessionID:        meta.SessionID,
-        TurnID:           meta.TurnID,
-        ToolCallID:       meta.ToolCallID,
-        ParentToolCallID: meta.ParentToolCallID,
-        Labels:           maps.Clone(meta.Labels),
-    }
-}
-```
-
-Use the same conversion for a retry. Labels are part of the immutable call
-identity, so changing or omitting them on a retry is rejected.
+For this breaking upgrade, replace handwritten domain-shaped admission methods
+with the generated signatures. Registry-directed overload recovery retains the
+original arguments, metadata, registration token and deadlines; changing any
+admitted identity is rejected.
 
 The registry wire protocol and deterministic stream IDs are defined in `runtime/toolregistry`:
 
@@ -4089,16 +4096,18 @@ For MCP services:
 - Add a service-level `JSONRPC` block with one `POST` route. `MCP(...)` no
   longer chooses an HTTP path implicitly.
 - Replace `WatchableResource` with `Resource` when the method is a fixed unary
-  read. Generated resource subscriptions are no longer supported.
+  read. Bind a separate typed Goa stream with `SubscriptionSource()` when the
+  service owns resource update detection and authorization.
 - Replace `DynamicPrompt` with `StaticPrompt` only when the prompt is fixed in
   the design. Goa-AI no longer generates dynamic prompt providers.
 - Remove uses of the generated `Notification`, `Subscription`, and
-  `SubscriptionMonitor` APIs. This preview has no generated replacement for
-  server notifications or subscriptions.
+  `SubscriptionMonitor` APIs. The replacement uses a distinct authored stream
+  and the originating listen request, as described in
+  [resource subscriptions](dsl.md#resource-update-subscriptions).
 - Remove `AllowedResourceURIs`, `DeniedResourceURIs`,
   `StructuredStreamJSON`, and `ProtocolVersionOverride` from generated
   `MCPAdapterOptions`. Enforce resource authorization in the Goa service, return
-  the declared result shape, and set the protocol version in the design.
+  the declared result shape. The framework owns the protocol revision.
 - Replace `SSECaller` and `NewSSECaller` with `HTTPCaller` and
   `NewHTTPCaller`. The HTTP caller accepts a normal JSON response or an HTTP
   event-stream response for a unary call.
@@ -4348,13 +4357,13 @@ For runtime storage and workflow adapters:
 - Stop setting `policy.CapsState.ExpiresAt`. The workflow owns its budget and
   hard deadlines directly.
 - Treat saved suspensions from versions before
-  `goa-ai.run-suspension.v9` as incompatible. They cannot be resumed by this
+  `goa-ai.run-suspension.v13` as incompatible. They cannot be resumed by this
   runtime.
 
 Install the Goa revision required by this module before regenerating:
 
 ```bash
-go install goa.design/goa/v3/cmd/goa@v3.32.0
+go install goa.design/goa/v3/cmd/goa@v3.34.1-0.20261007074038-7e04829cef48
 ```
 
 For a release that changes generated or persisted runtime shapes:
@@ -4370,7 +4379,7 @@ For a release that changes generated or persisted runtime shapes:
    new work.
 
 Completed run history keeps the same meaning. Suspensions restored for
-continuation must use the current `goa-ai.run-suspension.v9` contract. Historical
+continuation must use the current `goa-ai.run-suspension.v13` contract. Historical
 reporting does not restore private checkpoint state; see
 [Runtime Store](#runtime-store-storagestore). A host may still need to convert
 its physical records or collections so the new store can read them. That
@@ -4386,8 +4395,8 @@ workflow still requires attachment by exact ID. Deploy every workflow starter
 together before admission resumes. A queryable execution without the reserved
 recipe memo is a conflict; the runtime never infers its original start request.
 
-`goa-ai.run-suspension.v9` is the only accepted suspension schema for
-continuation restoration. Version eight and earlier are rejected without an
+`goa-ai.run-suspension.v13` is the only accepted suspension schema for
+continuation restoration. Version eleven and earlier are rejected without an
 omission fallback. Before coordinated
 worker upgrade, finish old-format saved work under its owning runtime; if any
 must remain unfinished, obtain a separate host-owned preservation decision.
@@ -5356,16 +5365,16 @@ selected result before publishing any hook:
 | --- | --- |
 | `proceed`, `running` | Existing start publication and execution continue. |
 | `proceed`, any closed state | No start or parent-link publication. Execution returns `engine.ErrWorkflowCompleted`. |
-| `stop`, `canceled`, newly inserted records | Existing ended-Session cancellation behavior remains. |
-| `stop`, `canceled`, original records | No new publication or execution. |
+| `stop`, `running` | The accepted workflow settles inherited work before storing its terminal result. |
+| `stop`, `canceled` or `failed`, original records | No new publication or execution; preserve the actual cleanup outcome. |
 | Missing status or inconsistent result | The result is rejected before publication or execution. |
 
 `stop` is valid only for Session root and child starts. It requires
-`CancellationReason == "session_ended"` and the canceled completion record.
+`CancellationReason == "session_ended"` and the cancellation intent record.
 `proceed` carries no initial cancellation reason. Its ordered record counts
 are one for root/one-shot starts and two for child starts; `stop` adds one
-completion record. Every record needs its committed ID and the existing
-consistent Session status. A closed `proceed` replay must report
+intent record. Every record needs its committed ID and the existing
+consistent Session status. Every closed start replay must report
 `Inserted == false` for every start and parent-link record.
 
 `ExecuteWorkflow`, its cancellation handler, and direct `RunOneShot` calls all
@@ -5503,11 +5512,13 @@ histories or reinterpret saved checkpoints. Each child must still keep the same
 Session and match the child agent and execution parent named by its own link
 record. A missing or mismatched related run, a relationship cycle, or more than
 one start record is a stored-data error; it is
-never skipped. A run stopped because its Session had already ended has
-`RunStarted` followed by a canceled `RunCompleted` record. The resolver
-validates both records against the stored run, including their owner, labels,
-reason, and start time. That run does no planner or tool work, so it contributes
-no prompt references or child relationships. The method collects each
+never skipped. A run admitted after its Session ended first has `RunStarted`
+and cancellation intent. Its worker can finish saved child work before writing
+an actual canceled or failed `RunCompleted` record. The resolver validates the
+stored start and any final record against the run's owner, labels, status, and
+cancellation reason. It reads saved predecessor and child relationships while
+cleanup is pending and after it finishes. Ended-session admission cannot render
+a new prompt, and rendering one is a stored-data error. The method collects each
 `PromptRendered` reference once and visits each run once. These records show
 which prompt versions and scopes contributed to the run. Exact rendered prompt
 text remains in the published initial history or subsequent transcript records
@@ -6642,80 +6653,993 @@ lifecycle contract is in [GenAI observability](../DESIGN.md#genai-observability-
 
 ## MCP Callers
 
-The `runtime/mcp` package provides callers for stdio and HTTP MCP servers. Both
-callers perform the MCP initialize handshake when they are created and require
-the application's name and version.
+`runtime/mcp` invokes tools using MCP `2026-07-28`. Each request supplies its
+protocol version and actual client capabilities in `params._meta`. There is no
+initialization handshake, negotiated version, or session ID. Generated servers
+implement `server/discover`; clients can call tools without discovery first.
 
-### StdioCaller
-
-Spawns an MCP server as a subprocess and communicates via stdin/stdout:
-
-```go
-import "goa.design/goa-ai/runtime/mcp"
-
-caller, err := mcp.NewStdioCaller(ctx, mcp.StdioOptions{
-    Command: "npx",
-    Args:    []string{"-y", "@modelcontextprotocol/server-filesystem"},
-    Env:     []string{"HOME=" + os.Getenv("HOME")},
-    ClientInfo: mcp.ClientInfo{
-        Name:    "my-agent",
-        Version: "1.0.0",
-    },
-})
-if err != nil {
-    log.Fatal(err)
-}
-defer caller.Close()
-```
-
-### HTTPCaller
-
-Sends JSON-RPC requests to an MCP HTTP endpoint. The server may return each
-response as JSON or as an HTTP event stream; the same caller handles both
-formats.
+HTTP callers accept JSON or a request-scoped event stream. They preserve exact
+response IDs and protocol error codes and data, including HTTP 400 and 404
+responses. Without an explicitly trusted safe tool declaration and a retry
+allowance, a sent tool request that loses its usable response returns
+`OutcomeUnknownError`. They load every catalog
+page for the current caller, validate tool schemas using JSON Schema 2020-12, and derive mirrored headers from valid
+`x-mcp-header` annotations. Invalid annotations on another tool do not prevent
+calling a valid tool. Caller constructors receive an already-built HTTP client
+so the application owns credentials and transport configuration.
 
 ```go
-caller, err := mcp.NewHTTPCaller(ctx, mcp.HTTPOptions{
+caller, err := mcp.NewHTTPCaller(mcp.HTTPOptions{
     Endpoint: "https://mcp-server.example.com/mcp",
-    ClientInfo: mcp.ClientInfo{
-        Name:    "my-agent",
-        Version: "1.0.0",
-    },
+    Client: authenticatedHTTPClient,
+    ClientInfo: mcp.ClientInfo{Name: "my-agent", Version: "1.0.0"},
+})
+```
+
+HTTP failures return `HTTPResponseError` with the response's `StatusCode` and
+an independent copy of its exact `WWWAuthenticate` header values. Use
+`errors.As` to inspect it. Valid JSON-RPC errors remain available as `mcp.Error`
+through unwrapping. HTTP 401 and 403, and HTTP 400 carrying an authorization
+challenge, are handled before decoding an MCP body; a missing content type or
+an event-stream body does not hide the challenge. The transport closes that
+body without reading it. Explicit HTTP 400/401/403 rejections are not unknown
+execution outcomes and never trigger interrupted-stream retries. Other response
+loss still follows the existing tool trust and retry contract.
+
+The authorization client owns challenge parsing, credential renewal and consent.
+Error text omits the challenge headers and HTTP body. The signed-token resource
+profile implements generated server challenges before dispatch; complete OAuth
+remains a release gate. Retaining an HTTP response alone does not implement those
+flows. No checkpoint or model argument carries a credential.
+
+The built-in client-secret profile is described below. It uses the shared
+transport before MCP dispatch; it does not change the error or retry contracts.
+
+For a subprocess, use `NewStdioCaller(ctx, StdioOptions{...})`. Each message
+carries the same request metadata. Canceling a call sends its actual request ID;
+a late response cannot finish another call. `caller.Close(ctx)` closes standard
+input and waits for exit, killing and reaping the process if the supplied context
+ends. The application chooses that shutdown deadline.
+
+Generated MCP servers receive the application's configured Goa endpoints through
+`NewMCPAdapter(endpoints, options)`. Configure authentication, interceptors and
+endpoint middleware before constructing the adapter. Tools, resource reads,
+method-backed prompts and completion call the same endpoint instances, keeping
+method scopes and authenticated context under Goa's ownership. Regenerate and
+replace bare-service constructor calls when upgrading. This endpoint composition
+preserves native HTTP credential delivery. A protected server also requires the
+[resource verifier](#mcp-resource-servers) before its complete endpoint pipeline.
+
+Mounted MCP requests pass protocol checks before running HTTP middleware
+installed with the generated server's `Use` method. The middleware may be
+installed before or after mounting, but before requests start. Its context reaches
+original endpoint authentication, service work and progress delivery. A middleware
+rejection returns its own HTTP response without calling the next handler.
+Regenerate with the pinned Goa dependency; older generated mounts can bypass
+this middleware.
+
+### MCP Task clients
+
+The [Tasks extension](https://github.com/modelcontextprotocol/ext-tasks/blob/0d0a6bd4c258b35caa3c810a1dd506cf105b1501/specification/2026-07-28/tasks.md)
+lets a server durably accept a tool call and return an asynchronous Task instead
+of its final result. Direct HTTP and stdio clients implement its three operations;
+generated callers use the same HTTP transport and authored URL values. The shared
+`mcp.Caller` interface includes `CallTool`, `GetTask`, `UpdateTask`, and `CancelTask`.
+Custom callers must implement all four methods; the function-only `CallerFunc`
+adapter is removed. No optional interface lookup selects Task support.
+
+Pass `mcp.WithTaskSupport(ctx)` to a direct `CallTool` only when the host can retain
+the returned `CallResponse.Task` and observe that task afterward. The server may
+still return ordinary completed content or request synchronous input. Without the
+capability, a Task reply is a malformed response. Generated server bindings use
+[TaskExchange](dsl.md#native-job-tools) for application-owned jobs. The durable
+agent path is implemented; its final caller-store acceptance remains a release
+requirement before generated executors advertise support.
+
+`GetTask(ctx, taskID)` returns a validated `Task`. `Info()` contains the current
+status, timestamps, optional status message, retention duration and polling
+guidance. `AsInputRequired()` exposes outstanding host requests;
+`AsCompleted()` exposes the final tool result; `AsFailed()` exposes a JSON-RPC
+execution error. A completed result with `IsError` set is a tool-level error,
+not a failed Task. Working and cancelled observations carry metadata alone.
+A response naming another task is rejected.
+
+`UpdateTask(ctx, taskID, responses)` accepts a possibly partial answer object.
+An empty object is valid; nil and non-object answers fail before dispatch. The
+server owns which keys remain outstanding. An acknowledgement does not prove
+that a subsequent observation already reflects the answers. Fulfill each host
+request under the same consent and form-validation rules as ordinary input;
+answers go to `tasks/update`, never a repeated `tools/call`.
+
+`CancelTask(ctx, taskID)` acknowledges cancellation intent. Work can finish while
+cancellation is being processed, and the acknowledgement does not prove that
+execution stopped. No further read is required after sending cancellation.
+These client methods send one
+request and start no polling loop. The server remains responsible for completing
+its durably accepted work.
+
+The shared agent execution path retains accepted Task identity, acknowledged
+answer keys and the original tool result codec across replacement workers.
+Temporary read failures use the same workflow timer and last polling hint as
+ordinary observations. Temporary cancellation delivery failures repeat only the
+same intent and operation identity after a workflow wait. Each activity has one
+network attempt; configured activity deadlines apply to that attempt. Permanent
+rejections end delivery with an error. Observed terminal Tasks need no cancellation.
+Uncertain answer delivery never repeats answers or the creating tool. Generated
+advertisement still waits for final caller-store acceptance and the remaining
+capability checks.
+
+`Runtime.CancelRun` accepts cancellation of suspended work without asking the
+caller to reconstruct or answer its checkpoint. Temporal owns a cancellation job
+on the route saved by the original accepted preparation. The job follows the
+successor selected by storage, including a competing answer, and restores saved
+work through the ordinary continuation path. It also follows saved child work to
+its execution parent rather than starting an unrelated root. Duplicate requests
+retain the first accepted reason. A different request is rejected. Acceptance
+does not mean cleanup has finished; replacement workers continue without another
+client call. Temporal may roll the job into a fresh execution to keep recorded
+history manageable; the same request and observation delay continue. Temporary
+delivery failures retry, while contract rejections and
+closed executions with unfinished storage state fail explicitly. The in-memory
+engine provides the same behavior only for the life of its process.
+
+Hosts must retain suspended runs with no admitted successor until cancellation
+or another continuation settles their work. A suspended predecessor with an
+admitted successor transfers that obligation to the successor. Purge checks
+that consider only running engine executions can delete unfinished work and
+must be updated before cutover. Custom engine implementations must implement
+`RegisterCancellationWorkflow` and `StartCancellationWorkflow`; cancellation
+delivery now carries the receiving workflow ID separately from the requested
+run ID. Deploy providers, consumers, workers and storage owners together.
+
+The `ttlMs` member is required on the wire; null means unlimited retention, while
+an absent member is invalid. `TaskInfo.TTLMs` represents that value with `*int64`
+and always emits the JSON member. `pollIntervalMs` is optional. Both durations
+use integer milliseconds and decode equivalent whole-number spellings such as
+`3.0` without floating-point conversion. The client derives no retention, timeout or polling default from
+them. Regenerate existing callers for the new methods and shared numeric decoder.
+
+### MCP resource servers
+
+Author basic resource access with Goa `Security` inside `MCP`, or use an inherited
+service/API bearer policy. The generated server requires a concrete resource
+verifier before the origin arguments in its constructor. Build it in the
+application's composition root:
+
+```go
+owner, err := mcp.NewJWTResourceServer(mcp.JWTResource{
+    Issuer:     "https://issuer.example",
+    Resource:   "https://api.example/mcp",
+    Keys:       trustedPublicKeys,
+    Algorithms: []jose.SignatureAlgorithm{jose.RS256},
+})
+```
+
+Check the returned error and supply `owner` to the regenerated server constructor.
+The host loads trusted keys and constructs a replacement owner and server when
+that trust configuration changes. Keys are copied at construction; token-supplied
+keys and key URLs cannot change trust. Construct a separate owner
+for each independently registered resource. The registered URI is the audience
+identifier; it may differ from the internal route behind a reverse proxy.
+
+The signed-token profile implements RFC 9068: access-token purpose, signature,
+exact issuer, resource audience, required claims and validity times are checked
+before HTTP middleware. Audience strings and arrays are accepted. Fractional
+timestamps retain their meaning: not-before is inclusive and expiration is
+exclusive. No clock allowance is added. Access tokens belong in the bearer
+header; query tokens are rejected.
+
+RSA public keys must contain at least 2048 bits each, as required by the JWT
+algorithm standard. RSA-PSS signatures must use a salt exactly as long as the
+selected hash. JOSE's verifier extension calls Go's cryptographic primitives
+with that required salt length; the SDK's default verification accepts a wider
+range. These constraints apply to individual keys and signatures.
+
+For opaque tokens, construct the same required owner with authenticated
+introspection instead of signing keys:
+
+```go
+owner, err := mcp.NewIntrospectionResourceServer(mcp.IntrospectionResource{
+    Issuer:       "https://issuer.example",
+    Resource:     "https://api.example/mcp",
+    Endpoint:     "https://issuer.example/introspect",
+    ClientID:     resourceClientID,
+    ClientSecret: resourceClientSecret,
+    Client:       issuerHTTPClient,
+})
+```
+
+Check the error and pass this owner to the same generated constructor. The host
+supplies a trusted HTTPS endpoint and a separate resource-server registration
+that supports HTTP Basic authentication. Goa generates the form and Basic header;
+credentials are individually form encoded before header encoding and never enter
+the token form. A private HTTP client copy rejects redirects. An omitted client
+uses `http.DefaultClient`; the host controls network timeouts.
+
+The trusted issuer must report `active: true` only for access tokens currently
+usable by this resource, including revocation and token-purpose checks. The
+`access_token` lookup hint does not prove purpose. Active responses must include
+the exact resource audience. Supplied issuer claims must match; supplied integer
+timestamps use whole Unix seconds, with inclusive not-before and exclusive
+expiration. Missing times leave validity with the issuer's current activity
+decision. Missing subject and client identifiers are returned as empty strings;
+the resource owner does not invent identities.
+
+Introspection checks are uncached, including native Goa authentication callbacks.
+A generated operation followed by an original resource-auth callback makes two
+checks; catalogs normally make one. This keeps each decision current with issuer
+revocation at the cost of network latency. Token spelling never selects a profile
+or causes fallback to signed-token parsing. An issuer outage, rejected resource
+registration, or malformed issuer response receives HTTP 503 without a bearer
+invalid-token challenge. It cannot trigger automatic client reauthorization.
+
+Missing or invalid tokens receive 401. A valid token lacking the selected
+operation's scopes receives 403 with an `insufficient_scope` challenge. Challenges
+identify the configured metadata address and one complete scope alternative.
+The generated mount also serves public protected-resource metadata through Goa's
+native handler. It advertises basic-access scopes, not every tool's permissions.
+Origin rejection and domain failures retain their own meanings; errors returned
+after dispatch never trigger a resource authorization retry.
+
+Successful requests carry verified identity. Service code reads
+`mcp.ResourcePrincipalFromContext(ctx)` to obtain the issuer, subject and client
+identifier; these values do not come from model arguments. Identity alone does
+not establish permission for a domain operation. Keep domain authorization in
+the original configured Goa endpoint.
+
+`owner.OAuth2Auth`, `owner.JWTAuth` and `owner.BearerAuth` implement Goa's native
+authentication signatures. A service may embed the owner or delegate its original
+authentication callback to the matching method. Each callback runs Goa's own
+scope validator. The signed profile reuses token verification only for the same
+owner, exact token hash and still-valid interval. Introspection always asks the
+issuer again. Direct Goa calls verify before returning authenticated context.
+
+Regenerate protected servers and update their composition roots together. There
+is no optional verifier or compatibility constructor. Independent API keys keep
+their native bindings; a different credential owner cannot share the bearer
+header. Independent OAuth conformance and the remaining protocol capabilities
+remain required before the full MCP upgrade is released.
+
+For a fixed Goa result view, server encoding, the advertised result schema and
+the generated agent decoder use only the selected fields. Required fields in
+that view remain required. Fields outside the view are rejected if they appear
+in the decoded response; they are never restored as zero values. Nested
+occurrences of the same result type can retain different views. A missing object returned by a service is an internal
+error; empty collections remain valid. A view selected during service execution
+returns `{"type":"view-name","value":...}` for tools and JSON resources.
+Generated agent codecs and stored result validation keep this tag and enforce
+only that branch's declared fields. Two views with identical fields retain
+separate names. Prompts, resource-template reads and suggestions keep their flat
+protocol responses, with every selectable view checked during generation.
+Deploy regenerated servers and consumers together when changing the result shape.
+
+Generated JSON-RPC clients use the same transport implementation. Their tool
+caller is constructed with `NewCaller(client, clientInfo, inputSupport, retryPolicy)`.
+The generated client supplies one private HTTP binding factory derived from the
+same design that defines the server catalog. Both `NewClient` and `NewCaller`
+use its tool behavior and native credential query names; neither reconstructs
+these facts from schemas during a request.
+
+For a domain API key mapped with `Param("credential:api_key")`, supply its value
+through the generated protocol payload's HTTP credential field. Goa encodes that
+value in the query and the original service authentication receives it. OAuth
+still identifies the configured resource without that credential, and sends only
+the access token in `Authorization: Bearer`. Metadata discovery and token grants
+never receive the domain key. Every other URL component, including escaped paths
+and ordinary query values, must match the configured resource exactly. A resource
+address containing any credential query field declared by the service is rejected
+before discovery, including when the current operation is a catalog request.
+
+The third argument of `mcp.NewHTTPTransport` is now `mcp.HTTPBindings`. Replace a
+previous tool map with `mcp.HTTPBindings{Tools: toolBindings}`; imported callers
+have no native credential query names. Regenerate native clients to obtain the
+new factory. There is no compatibility constructor.
+
+`CallResponse.Content` is `content.Blocks` from `runtime/content`. It contains
+ordered, typed text, image, audio, resource-link, or embedded-resource blocks.
+The same closed value contract has a validating JSON codec and deep-copy method
+for transport replies and saved values. Decoding checks every block before
+replacing the receiver; encoding rejects malformed caller-built values.
+An empty sequence encodes as `[]`. `StructuredContent` retains the exact JSON
+value,
+including primitive values, arrays, and explicit null. Generated executors decode
+it using the declared result codec. Text content is never parsed as a substitute
+for a missing structured result.
+
+Generated direct clients preserve those same five kinds in a shared `ContentItem`
+for tool and prompt replies. `Text` and `Data` are presence pointers, so empty
+content is distinct from a missing required field. Resource links retain icons,
+annotations and extension metadata; embedded resources retain their own metadata.
+The generated decoder rejects missing kind-specific fields, invalid base64,
+invalid annotation values and ambiguous text/blob representations. Annotation
+priority bounds zero through one, inclusive, apply to each content item; there
+is no sum or operation-wide priority limit.
+
+This is a breaking generated Go contract: regenerate direct clients, replace
+references to the removed `MessageContent` with `ContentItem`, and dereference
+`Text` only after selecting a text item. Runtime content types now live in
+`runtime/content`; replace references such as
+`mcp.TextContent` with `content.TextContent`. The old namespace has no aliases.
+`content.ResourceLink.Size` preserves MCP's JSON number as `*float64`, and
+`Icons` retains the supplied descriptions.
+Decoding icons never fetches or renders their URIs. Method-backed prompt
+services can also author these five kinds through typed Goa results; see
+[the prompt contract](dsl.md#method-backed-mcp-prompts). The generated adapter
+rejects non-finite authored priorities and resource sizes before response
+encoding, so clients receive an internal-error response.
+
+Generated MCP executors preserve validated `Content` in `planner.ToolResult.Blocks`
+while decoding domain JSON with the declared result codec. A tool that declares
+structured fields must still return that JSON; content alone cannot satisfy it.
+A tool without structured fields can return content while omitting structured
+JSON, including a Goa method whose `ToolContent` field is its entire result.
+MCP tool failures also keep their returned blocks.
+
+A domain error from a configured service endpoint becomes a completed tool-error
+result. A Goa server fault, a method's declared fault error, an invalid returned
+value, or an undeclared result view becomes an internal protocol error instead.
+`MCPAdapterOptions.ErrorMapper` controls the disclosed message while the original
+error keeps its classification. For example, replacing a result-validation fault
+with `errors.New("service unavailable")` still returns an internal error; replacing
+a domain rejection with `goa.Fault("request rejected")` still returns a tool error.
+The generated executor records an internal failure with `RecoveryFinish` and
+does not replay the service operation. A fault response does not prove that the
+service rolled back effects that occurred before returning it.
+
+Tool activities, externally supplied results, saved result events, planner outputs,
+child final results and host `ToolEndPayload.Blocks` retain the same ordered value.
+`NewToolResultReceivedEvent` requires a blocks argument; pass the validated content
+or an empty sequence. Each owner receives an independent copy. Checkpoint version
+eleven stores content and verifies that the saved event and batch result agree;
+zero blocks has the same meaning whether its in-memory slice is nil or empty.
+Model history reads content from the accepted saved event for the exact call,
+including when the structured JSON is replaced by the existing omission preview.
+Goa methods author rich content with [ToolContent](dsl.md#authored-mcp-tool-content).
+The generated adapter excludes the marked field from structured JSON, model
+schemas, examples and field metadata. Fixed and service-selected views retain
+only their selected content. Content-only methods use the same executor path
+without inventing an empty domain result.
+
+Model tool results now expose `model.ToolResultPart.Blocks` beside their semantic
+`Content`. Message JSON and independent copies retain every block, order and
+metadata. The complete-request byte and work checks include blocks before
+copying or decoding media; this adds no per-run content limit. Native provider
+encoders keep text, supported images and documents inside the matching tool
+result. OpenAI and Bedrock encode PDF, plain text, CSV, Word, Excel, HTML and
+Markdown in the nine formats represented by `model.DocumentFormat`. Anthropic
+and Vertex encode PDF and plain text and reject the other document formats.
+Explicit user-only content, icons and opaque `_meta` stay out of provider requests. Resource links remain descriptions; encoding does
+not open their addresses. `model.ErrToolContentUnsupported` identifies media
+that the selected tool-result API cannot represent, including audio in the
+current adapters and GIF images in Vertex function responses. Empty media
+remains valid MCP content but cannot be sent as a native model image or file.
+Storage and host content must retain those values. Vertex uses the documented
+Gemini 3 function-response media contract; selected-model acceptance remains
+owned by the provider. Regenerate or update both sides of any model gateway
+before sending content-bearing message records to older decoders.
+
+Content types now contain raw JSON extension metadata. The generic standalone
+codec generator deliberately excludes custom raw JSON fields, so it no longer
+emits `EncodeContentItem`/`DecodeContentItem`, `EncodePromptMessage`/`DecodePromptMessage`
+or `EncodeResourceContent`/`DecodeResourceContent`. Use the generated MCP endpoint
+clients and servers to encode and decode protocol envelopes; their content
+validators enforce MCP's selected variant. No text-only codec alias remains.
+
+### Private authorization storage
+
+Every built-in OAuth client requires an `AuthorizationStore` scoped to one host
+user or application. Set `ClientCredentials.Store` or `AuthorizationCode.Store`;
+enterprise identity constructors receive the same dependency, and their resource
+transports use it automatically. Share a store across that user's resource
+transports and reconstruct it against the same private storage namespace after a
+restart. Different users must have separate namespaces even when they share a
+client registration. For process-only sessions, choose
+`mcp.NewMemoryAuthorizationStore()` explicitly.
+
+The host implements `WithCredentials(ctx, keys, use)`. It gives the callback
+exclusive access to the complete requested record set, in the supplied key order,
+and releases access when the callback returns. Access must be serialized across
+all host instances using the same account storage. There is no nested locking
+requirement. Each record provides `Load() (data, exists, err)` and `Save(data)`.
+`Save` commits before returning and a later callback failure must not roll back an
+earlier save. Waiting and storage operations respect the supplied context.
+
+Keys and record bytes are private framework values. Goa-AI derives keys from the
+exact issuer, registered client, grant purpose and resource; the generated record
+codec checks the same identity before reuse. The host stores the bytes unchanged
+in encrypted storage and does not inspect their fields. Corrupt or incorrectly
+bound records stop authorization rather than silently triggering new consent.
+Neither keys nor records belong in logs, model arguments, agent checkpoints or
+shared storage owned by another service. The initiating host service owns its
+credential backend; other services use its authenticated APIs.
+
+Before a browser refresh or SAML bootstrap, the runtime commits a pending record.
+It saves the completed credential before sending any MCP request. If an exchange
+or save has an uncertain outcome, a subsequent load determines whether the new
+credential was committed. A pending browser record starts fresh host consent;
+a pending SAML record requests a fresh host assertion. The possibly consumed
+credential is not reused. Storage errors stop before MCP dispatch and do not
+expose token bytes. Scope requests survive pending exchanges, and omitted issuer
+lifetimes create no local retention or expiry policy.
+
+This changes the unreleased client construction API: supply the explicit store
+and regenerate callers together. There is no previous durable record format to
+migrate and no compatibility reader. Reverting to process-only storage discards
+retained authorization and requires fresh host consent. Independent protocol
+conformance and all remaining MCP capabilities still gate release.
+
+### Client registration
+
+An OAuth application registration identifies one client at one exact HTTPS issuer
+and chooses its authentication. Construct it separately from the grant:
+
+| Registered authentication | Constructor |
+| --- | --- |
+| Public client with no secret | `NewPublicClientRegistration(issuer, clientID)` |
+| Secret in the Basic header | `NewBasicClientRegistration(issuer, clientID, secret)` |
+| Secret in the token request body | `NewSecretClientRegistration(issuer, clientID, secret)` |
+| Signed client assertion | `NewSignedClientRegistration(ClientAssertion)` |
+| Public HTTPS metadata document | `NewPublicClientMetadataRegistration(issuer, documentURL)` |
+| Signed HTTPS metadata document | `NewSignedClientMetadataRegistration(ClientAssertion)` |
+
+Each constructor returns `(*ClientRegistration, error)`. Registration contains no
+user, resource permission or access token. Applications may share it across grants;
+each constructed transport owns its user and resource credentials independently.
+The issuer must support the exact selected authentication method. When
+`token_endpoint_auth_methods_supported` is omitted, the generated metadata decoder
+applies the [RFC 8414 default](https://www.rfc-editor.org/rfc/rfc8414.html#section-2):
+`client_secret_basic`. An explicit empty list or another method does not permit
+Basic, and null is rejected. The runtime never tries another method, relocates a
+secret or performs dynamic registration.
+
+Goa generates separate required authentication fields for each grant. Basic
+credentials are individually form-encoded before native header encoding; they
+are absent from the request body. POST credentials appear only in the generated
+token form. Signed authentication uses a fresh assertion for every exchange.
+No application supplies a form encoder or a callback editing authentication fields.
+
+### Client-secret authorization
+
+Construct a confidential registration, then request machine permissions with
+`NewClientCredentialsHTTPTransport`:
+
+```go
+registration, err := mcp.NewSecretClientRegistration(
+    "https://identity.example/tenant", registeredClientID, registeredClientSecret,
+)
+if err != nil {
+    return err
+}
+transport, err := mcp.NewClientCredentialsHTTPTransport(mcp.HTTPOptions{
+    Endpoint: "https://records.example/mcp",
+    Client: httpClient,
+    ClientInfo: mcp.ClientInfo{Name: "records-agent", Version: "1"},
+}, mcp.ClientCredentials{
+    Store: accountAuthorizationStore,
+    Registration: registration,
+    Scopes: []string{"records:read"},
 })
 if err != nil {
-    log.Fatal(err)
+    return err
 }
-```
-
-Both callers implement the `mcp.Caller` interface. They return typed transport,
-protocol, malformed-response, and tool-execution errors without retrying or
-turning error text into control flow. Generated MCP executors classify those
-errors into the canonical `planner.ToolFailure` contract.
-
-```go
-type Caller interface {
-    CallTool(ctx context.Context, req CallRequest) (CallResponse, error)
-}
-
-type CallRequest struct {
-    Tool    string
-    Payload json.RawMessage
-}
-
-type CallResponse struct {
-    Content           []string
-    StructuredContent json.RawMessage
-}
-```
-
-A Goa-generated MCP client exposes the same caller contract:
-
-```go
-caller, err := mcpservice.NewCaller(ctx, client, mcp.ClientInfo{
-    Name:    "my-agent",
-    Version: "1.0.0",
+caller, err := mcp.NewHTTPCaller(mcp.HTTPOptions{
+    Endpoint: "https://records.example/mcp",
+    Client: transport,
+    ClientInfo: mcp.ClientInfo{Name: "records-agent", Version: "1"},
 })
 ```
+
+Use `NewBasicClientRegistration` when the application is registered for Basic
+authentication. Machine grants require confidential authentication and advertised
+`client_credentials` support. Public registrations are rejected at construction.
+The independent Basic and ES256 machine fixtures pass with explicit HTTPS trust
+and registration issuer configuration. See the
+[conformance instructions](../integration_tests/conformance/README.md) for their
+exact scope; other extension profiles remain release gates.
+
+Supply the same transport to a generated HTTP client's `NewClient` with its normal
+encoder and decoder; generated `NewCaller` retains its grant. Native domain
+arguments and URL credentials still follow the original generated contract.
+Before each MCP attempt, generated clients read protected-resource and issuer
+metadata and verify their exact identities. Missing well-known resource metadata
+can use a validated discovery challenge without executing a domain tool.
+
+Token reuse ends at the returned lifetime in seconds, measured from before
+exchange. Missing lifetime means obtain again for the next operation; zero means
+expired. Cancellation covers discovery, exchange and waiting behind another call.
+The constructor copies the supplied `*http.Client` and rejects redirects.
+Failures before MCP dispatch disclose no credentials or issuer diagnostics.
+Machine HTTP 401/403 responses remain terminal; unchanged credentials are not retried.
+
+### Signed client-assertion authorization
+
+A signed JSON Web Token (JWT) authenticates the application independently of its
+grant. The host supplies facts agreed during registration:
+
+```go
+registration, err := mcp.NewSignedClientRegistration(mcp.ClientAssertion{
+    Issuer: "https://identity.example",
+    ClientID: registeredClientID,
+    AssertionIssuer: registeredAssertionIssuer,
+    Audience: registeredAssertionAudience,
+    Lifetime: registeredAssertionLifetime,
+    Signer: registeredSigner,
+})
+```
+
+Check the constructor error, then supply `registration` to `ClientCredentials` or
+`AuthorizationCode`. Their permission sets belong to each grant, not this signing
+configuration. `registeredSigner` is a constructed `jose.Signer` from
+`github.com/go-jose/go-jose/v4`. Its key implementation owns signing timeouts;
+options must not override the algorithm header. Issuer metadata must advertise
+`private_key_jwt` and the actual asymmetric signing algorithm. RSA, RSA-PSS,
+ECDSA and Ed25519 are supported. Shared-secret signatures are rejected.
+
+`ClientID` becomes the signed subject. `AssertionIssuer` identifies the registered
+signing entity; `Audience` is the registered authorization-server identity.
+Discovery never guesses those values. `Lifetime` is the validity of one assertion
+in positive whole seconds, with exclusive expiration; it imposes no access-token
+or operation lifetime. Each exchange signs fresh issued-at, expiry and random
+identifier claims. Signing cancellation, expiration or failure stops before exchange.
+The form contains no duplicate client identifier or secret. Only the returned
+resource access token reaches MCP; assertions and signer diagnostics never enter
+arguments, checkpoints, errors or traces.
+
+[RFC 7523](https://www.rfc-editor.org/rfc/rfc7523.html) defines signed authentication.
+The [pinned MCP machine profile](https://github.com/modelcontextprotocol/ext-auth/blob/fb374c7db2b34f18ca9183882e0beecdf661892b/specification/draft/oauth-client-credentials.mdx)
+remains subject to independent conformance verification before release.
+
+### Browser authorization
+
+Browser grants use the same constructed registration for public, Basic, POST or
+signed authentication. The registration fixes one trusted issuer. If
+resource metadata changes to another issuer, the transport stops before sending
+credentials there. The host must construct a registration for the new issuer;
+peer metadata cannot transfer existing issuer credentials or establish that trust. A host supplies sign-in and consent for one user:
+
+```go
+registration, err := mcp.NewPublicClientRegistration(
+    "https://identity.example/tenant", registeredPublicClientID,
+)
+if err != nil {
+    return err
+}
+transport, err := mcp.NewAuthorizationCodeHTTPTransport(mcp.HTTPOptions{
+    Endpoint: "https://records.example/mcp",
+    Client: httpClient,
+    ClientInfo: mcp.ClientInfo{Name: "records-host", Version: "1"},
+}, mcp.AuthorizationCode{
+    Store: accountAuthorizationStore,
+    Registration: registration,
+    RedirectURI: "https://host.example/oauth/callback",
+    Authorize: authorizeInBrowser,
+})
+```
+
+Check the transport error. Construct a separate transport for each host user and
+resource, even when their application registration is shared. The endpoint
+restricts request delivery. Validated resource metadata selects the token audience,
+which can be that exact endpoint or the exact origin from origin well-known
+metadata. Grants, refreshes and private saved records use that audience without
+allowing requests to sibling endpoints. A changed audience receives its own saved
+record and does not inherit another audience's permissions or refresh credential. `Authorize(ctx, URL)`
+returns the complete redirect URL and respects cancellation; neither URL may be logged.
+The runtime creates fresh state and a private Proof Key for Code Exchange (PKCE)
+verifier, verifies advertised S256 support, and checks the exact redirect and issuer
+before exchanging the code through a native generated client. A present callback
+`iss` always matches the selected issuer, including error responses. Omission is
+rejected when issuer metadata requires it. Authorization-code support uses its
+standard metadata default when the grant list is omitted.
+
+For self-hosted registration, select `NewPublicClientMetadataRegistration` or
+`NewSignedClientMetadataRegistration` before constructing this same browser grant.
+The client identifier is the exact HTTPS document URL with a path and no dot
+segments. The issuer must advertise document support. The document must identify
+that URL, provide a name, register the callback and declare the selected public or
+signed authentication. Grant and response lists use their standard code defaults
+when omitted. Shared-secret properties are forbidden. The host publishes the
+document; the client validates it before consent.
+
+Signed documents declare `private_key_jwt` and exactly one HTTPS `jwks_uri` or
+inline `jwks` containing valid public keys only. The authorization server resolves
+key URLs and verifies assertions; the client does not fetch another key catalog.
+Documents with another identity, authentication, callback, private keys or both/neither
+key sources are rejected. `redirect_uris` must be present but may be empty for
+grants that have no browser callback; browser membership remains required.
+See [MCP client registration](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/client-registration)
+and its referenced [metadata authentication draft](https://www.ietf.org/archive/id/draft-ietf-oauth-client-id-metadata-document-00.html#section-6.2).
+
+Before initial consent, the transport requests `server/discover` without a token.
+The resource's Bearer challenge supplies the authoritative initial scopes. If it
+omits scopes, explicit host scopes or the resource's `scopes_supported` provide
+the fallback; if neither exists, the request omits scope. This probe does not
+execute a domain tool. Saved grants and refreshes retain established permissions:
+newly advertised scopes alone do not open another consent flow. A later resource
+challenge can request additional permissions as described below.
+
+An expired token can use its private refresh credential when the issuer supports
+refresh. A client-metadata registration must also include `refresh_token` in its
+registered grant list. A rotated refresh credential replaces the previous value;
+omission retains it. A rejected refresh stops with an error instead of opening a
+second consent flow. Refresh requests use the current operation's cancellation
+context, and refresh credentials never enter MCP arguments, checkpoints or errors.
+
+A fresh grant can retain the same opaque token value; the runtime tracks the
+private grant result rather than interpreting token bytes. A browser client may
+recover once after an explicit HTTP authorization rejection
+within one HTTP request round, including its stream retries. A 401 can obtain a
+fresh credential; a 403 requires an `insufficient_scope` Bearer challenge naming new scopes. Advertised
+metadata takes priority over well-known locations and must bind the configured
+resource and issuer. The new request preserves prior requested and returned
+scopes alongside the challenged scopes. Returned scope names are issuer facts;
+the resource server owns their hierarchy and decides whether a token permits an
+operation. Ordinary 403s, repeated scope requests and a second
+rejection stop. Concurrent calls share a refresh exchange.
+
+This recovery applies to a request rejected before tool execution. A lost event
+stream still follows the separate trusted read-only or idempotent retry policy.
+The authorization limit applies across all such stream attempts for that
+request round. A later host-input round receives its own allowance. If an
+earlier stream lost its tool result, a later rejected attempt
+returns `OutcomeUnknownError`; its HTTP rejection remains available through
+`errors.As`. That rejection cannot establish that the earlier tool never ran.
+Durable host authorization and independent conformance remain release requirements.
+
+### Enterprise authorization
+
+An enterprise client can use a user's existing single sign-on (SSO) credential to
+request access to an MCP resource. The identity provider issues a signed grant for
+the resource's authorization server. That server validates the grant and issues the
+access token sent to MCP. These are separate registrations and token purposes;
+an identity credential or intermediate grant is never an MCP bearer token.
+
+Construct one `EnterpriseIdentity` per host user and identity-provider registration:
+
+- `NewIDTokenEnterpriseIdentity` uses the host's validated OpenID Connect ID token,
+  including an encrypted token.
+- `NewSAMLEnterpriseIdentity` uses a validated SAML assertion. The runtime applies
+  the required base64url encoding and exchanges it once for an identity-provider
+  refresh credential shared across that user's MCP resources.
+- `NewRefreshTokenEnterpriseIdentity` obtains the current identity-provider refresh
+  credential from the host's existing SSO owner.
+
+Each constructor takes a constructed `ClientRegistration`, an already-built trusted
+`*http.Client`, an `AuthorizationStore` for that host user, and
+`func(context.Context) (string, error)`. The callback returns a
+credential already validated for this registration and user; the host owns sign-in,
+identity validation and any new user interaction. Share registrations across users,
+but never share their identities. Prefer confidential registration for enterprise
+authorization; explicitly configured public registration is also supported.
+
+```go
+identity, err := mcp.NewIDTokenEnterpriseIdentity(idpRegistration, idpClient, accountAuthorizationStore, hostIDToken)
+if err != nil {
+    return err
+}
+transport, err := mcp.NewEnterpriseHTTPTransport(mcp.HTTPOptions{
+    Endpoint: resourceURL,
+    Client: resourceClient,
+    ClientInfo: mcp.ClientInfo{Name: "host", Version: "1"},
+}, mcp.EnterpriseAuthorization{
+    Identity: identity,
+    Registration: resourceRegistration,
+    Scopes: []string{"records:read"},
+})
+if err != nil {
+    return err
+}
+```
+
+The identity-provider client and resource client retain their own trust settings.
+All four registration authentication methods compose through native generated
+forms. A fresh signed client assertion authenticates each signed exchange. The
+identity request names the exact resource issuer as its audience and the exact
+MCP resource. Returned scope restrictions are preserved during redemption and
+when the final response omits scope.
+
+The ordinary HTTP transport retains final resource tokens, serializes replacement
+and bounds recovery after an explicit authorization rejection. Token renewal asks
+for a fresh identity grant; it does not use a resource refresh credential as a
+substitute browser flow. Resource transports keep separate access tokens even
+when they share one user's SAML bootstrap. A pending bootstrap or reported refresh
+expiration calls the host for a fresh assertion. The SAML callback must obtain a
+newly issued assertion each time it runs; a previously submitted assertion is
+never retained or automatically resent.
+
+Optional enterprise metadata advertisements may be absent when the host explicitly
+configures this flow. An advertised profile must satisfy its mandatory grant
+relationships. Metadata documents still require the configured authentication,
+exact client identity and registered enterprise grant; non-browser documents can
+have an empty redirect list. Intermediate grants with the wrong purpose, bearer
+usage, malformed shape or reported expiration fail before resource redemption.
+Host credential errors are returned without secret details; cancellation is preserved.
+
+Identity bootstrap and resource tokens use the same explicit host store.
+Independent conformance and coordinated caller regeneration remain release gates. See the [stable enterprise profile](https://github.com/modelcontextprotocol/ext-auth/blob/fb374c7db2b34f18ca9183882e0beecdf661892b/specification/stable/enterprise-managed-authorization.mdx)
+and its [identity authorization grant contract](https://www.ietf.org/archive/id/draft-ietf-oauth-identity-assertion-authz-grant-04.html).
+
+
+### Request-scoped MCP progress
+
+A unary service method can call `mcp.ReportProgress(ctx, value, total, message)`
+and check its error. The generated HTTP adapter supplies the client's token and
+sends updates before the final result. Reporting without a requested token is a
+no-op, so the same method remains usable through ordinary transports. Progress
+values must be finite and strictly increase within that request. They are not
+normalized percentages; the protocol does not require a non-negative value or
+that progress stay below the optional total.
+
+Direct HTTP and stdio callers request updates with
+`mcp.WithProgress(ctx, handler)`. The transport creates a unique token and gives
+the handler a typed `mcp.Progress` containing the actual request ID, work value,
+optional total and optional message. A permitted HTTP retry gets a new token and
+request ID, so its work values start a separate sequence. The transport verifies
+the final reply against the network attempt's ID before restoring the original
+ID solely for Goa's generated decoder.
+
+Task get, update and cancel operations do not support progress. They send no
+progress token even when their context inherits a `WithProgress` callback.
+An explicit progress token on a direct Task request is rejected before dispatch.
+The server progress wrapper leaves Task replies as ordinary responses; service
+work reports its changing state through Task observations.
+
+Handlers run synchronously in the operation's goroutine before its final reply.
+Keep them short, honor their context, and check delivery errors. Stdio retains
+one waiting message per operation and applies backpressure instead of growing an
+unbounded notification queue. Cancellation or a callback error stops waiting and
+sends cancellation for that actual stdio request. Late notifications cannot
+complete or update a different call. A callback failure does not authorize a
+retry; a tool's outcome may be unknown.
+
+Tool activities forward updates to `stream.ToolProgress` when a session and host
+stream exist. `StreamProfile.ToolProgress` controls visibility;
+`RuntimeHostProfile()` enables it. Each event retains runtime-owned tool-call,
+parent-call, run and session identity alongside the transport request ID.
+Progress is live host information. It creates no completed tool result, model
+argument, durable run event or continuation state. The trusted host owns any
+smaller public representation it shows to users.
+
+### MCP change subscriptions
+
+HTTP and stdio callers expose `Listen(ctx, filter, handler)`. One invocation
+sends `subscriptions/listen` and waits until the server completes it, the host
+cancels it, the handler fails, or the connection ends. The handler first receives
+`SubscriptionAcknowledged` with the subset of requested changes the server
+supports. It then receives accepted catalog changes, resource updates or full
+Task state. Check that acknowledgment before relying on a notification kind.
+
+```go
+err := caller.Listen(ctx, mcp.SubscriptionFilter{
+    ResourcesListChanged: true,
+    ResourceSubscriptions: []string{"file:///documents/readme"},
+}, func(ctx context.Context, event mcp.SubscriptionEvent) error {
+    return handleMCPChange(ctx, event)
+})
+```
+
+For a generated Goa JSON-RPC client, bind the same event handler with
+`WithSubscriptionEvents(ctx, handler)`, then call its typed
+`SubscriptionsListen` endpoint with the generated filter payload. The handler
+receives validated acknowledgment and update events; the endpoint returns the
+final typed result. Calling that endpoint without an event handler fails before
+network dispatch. The shared callers' `Listen` methods bind the handler for you.
+
+Set `TaskIDs` to select existing server tasks. The shared `Listen` methods then
+advertise the Tasks extension for this request. A `SubscriptionTaskChanged`
+event supplies its full validated observation in `event.Task`, with the same
+status accessors as `GetTask`. The server may acknowledge only some selected
+IDs; notifications for any other task fail before the callback. Task input
+requires the caller's advertised form or URL support. The HTTP request validator
+rejects a nonempty task selection without the Tasks extension using `-32021`
+and names the missing capability. A Task update does not
+ask the host to replay the original tool call.
+
+Generated native job sources and durable agent Task handling remain required
+release gates; these client callbacks implement notification reception.
+
+The application supplies `handleMCPChange`. A catalog-change event tells it to
+reload that catalog; a resource-update event supplies the address to read again.
+An updated address may identify a sub-resource of an accepted resource, so the
+transport does not invent a URI-prefix or filesystem authorization rule. The
+resource service owns access and which changes belong to a subscription.
+
+The transport owns the exact listen request ID and checks every notification's
+subscription metadata. A change before acknowledgment, duplicate acknowledgment,
+unrequested notification kind, or mismatched request ID fails that listener.
+The acknowledgment can omit unsupported kinds; it cannot add unrequested kinds or
+resource addresses. An empty filter and an empty acknowledgment are valid.
+Resource strings retain their exact values without trimming or normalization.
+
+Handlers run synchronously in their operation's goroutine and must honor their
+context. Stdio retains one waiting message per operation; a slow callback applies
+backpressure to the shared reader. Cancellation releases its blocked delivery.
+Late events for a finished request cannot reach another listener or tool call.
+Host cancellation sends the actual stdio request ID. A server's valid stdio
+cancellation returns `SubscriptionCancelledError` with its optional reason;
+invalid or already-finished cancellation messages are ignored. HTTP cancellation
+closes the request's response body instead of sending a notification.
+
+A graceful completion must include the same subscription ID. A connection ending
+without it returns an interruption error. `Listen` sends no automatic reconnect
+and retains no protocol session or resume cursor. The host decides whether to
+open a new listener with a fresh request ID. Callback failures also end the
+listener and are not retry signals.
+
+The shared HTTP producer uses `ServeSubscriptions` around a validated
+`subscriptions/listen` handler. The configured source first authenticates and
+selects the authorized subset, then calls `AcknowledgeSubscription(ctx, filter)`.
+`ReportToolsChanged`, `ReportPromptsChanged`, `ReportResourcesChanged` and
+`ReportResourceUpdated(ctx, uri)` send only acknowledged change kinds. These
+functions require the active listen context; ordinary service contexts return an
+error. The source owns whether an updated URI belongs to an accepted resource,
+including a sub-resource, and must handle every returned delivery error.
+
+The transport supplies the exact request ID, serializes concurrent sends and
+retains the first failed write. Acknowledgment narrows the requested filter once.
+The final generated response must be complete and contain only standard result
+fields; the transport adds its subscription ID while preserving other raw
+metadata. A source rejection before acknowledgment retains its JSON-RPC error
+and HTTP status. Cancellation ends delivery; retained contexts cannot send after
+the handler returns. Response headers written before acknowledgment remain on
+the stream. The producer neither authorizes a source nor advertises capability.
+
+Generated HTTP servers bind one typed source with
+[`SubscriptionSource()`](dsl.md#resource-update-subscriptions). The original
+configured Goa endpoint authenticates the request and receives native resource
+URIs and/or creator-named job selections. For a changed job, the adapter calls
+its configured observation endpoint and sends the same full snapshot as
+`tasks/get`, retaining its credentials, mapped URL fields, selected view and
+content. The source receives native IDs; each accepted MCP handle receives its
+own snapshot. The request retains only this selection mapping. Its source sends an acknowledgment/update union through the ordinary
+Goa streaming interface. Generated codecs validate each value; the shared
+transport owns IDs, ordering and framing. Only sources selecting resources
+advertise `resources.subscribe`. Task-only sources do not claim that capability. Unsupported catalog-change flags are omitted from its
+acknowledgment; dynamic catalog sources remain required work. Fixed generated catalogs do not emit pretend catalog changes, and
+private agent/session streams are not MCP subscription sources. See the
+[remaining implementation work](mcp_protocol_upgrade_plan.md#optional-features-and-security-boundaries)
+and the [released subscription contract](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/subscriptions).
+
+### Interrupted HTTP responses
+
+Retries belong to the application's HTTP caller, inside one worker activity.
+Configure `HTTPRetryPolicy` on `HTTPOptions.RetryPolicy` or pass it to the
+generated `NewCaller`:
+
+```go
+retryPolicy := mcp.HTTPRetryPolicy{
+    MaxAttempts: 2,
+    TrustToolAnnotations: true,
+}
+```
+
+`MaxAttempts` counts attempts governed by the interrupted-stream policy for one
+request round, including the first. Zero selects one attempt; negative values are
+rejected. An OAuth rejection can add one separately bounded resend after a fresh
+grant; it does not consume this stream allowance because the rejected attempt did
+not execute the tool. For example, two stream attempts plus one credential
+recovery can send three POSTs. A later host-input round gets its own allowance.
+This setting does not change run-wide tool budgets or enable worker retries. MCP activities still execute at most once after worker loss.
+
+Enable `TrustToolAnnotations` only for a server whose behavior declarations the
+application trusts. A trusted `readOnlyHint: true` or `idempotentHint: true`
+permits retrying an SSE response that ends before its final message. Missing
+hints and explicit false values do not permit it. `destructiveHint: false`
+alone does not authorize retry. Generated callers use design-time hints;
+imported callers read them in the current authorization context.
+
+Every retry keeps the exact arguments, host answers, and opaque request state,
+uses a fresh JSON-RPC ID, and sends a new POST. There is no GET resumption or
+`Last-Event-ID`. Cancellation, malformed messages, HTTP or JSON-RPC errors, and
+complete tool-error results do not trigger this retry path. Exhaustion retains
+`OutcomeUnknownError` and stops runtime recovery. A lost response is classified
+as unavailable; a real deadline expiry is classified as timeout.
+
+The annotations describe server behavior; they do not enforce it. An idempotent
+service must own preventing additional effects for identical arguments. Request
+IDs only correlate responses and do not supply business-operation identity.
+The released changelog's unconditional reissue wording remains a conformance
+question; this policy does not claim that maintainers have clarified it. See the
+[upgrade plan](mcp_protocol_upgrade_plan.md#interrupted-http-responses-and-operation-ownership).
+
+### Unfinished calls and host input
+
+An `input_required` result leaves the tool unfinished. `CallResponse.InputRequired`
+contains the server's exact input IDs, elicitation requests, and optional opaque
+request state. Configure `InputSupport{Form: true, URL: true}` only when the host
+can present those interactions and return trusted answers. A form uses the
+protocol's flat primitive schema. URL consent, decline, and cancel carry no form
+content. Server-assigned input keys are arbitrary strings, including an empty
+string. Keep each key unchanged in the answer object; whitespace, case and
+Unicode are significant. The runtime requires the exact requested keys.
+
+The caller uses `resultType` to select the result contract. MCP permits extra
+result fields; completed-content fields on an `input_required` response never
+become a final result, and continuation fields on a `complete` response never
+start another round. Null input requests or request state are invalid. Completed
+responses require non-null content; their structured content may be JSON null.
+
+`WithoutHostInput(ctx)` restricts one operation and its child contexts. Shared
+HTTP and stdio callers then omit form and URL capabilities, reject continuation
+data before any network request, and reject unfinished results, including
+state-only results. Other operations on that caller retain configured support.
+Generated executors derive this restriction from `ToolCall.TextOnly`; the model
+cannot choose it. Custom executor outcomes and restored checkpoints also cannot
+introduce MCP host input into a text-only run. These rejections do not dispatch a
+continuation, publish an input prompt or retry an accepted tool operation.
+
+Generated MCP and native `BindTo` executors return this unfinished outcome to
+the agent runtime. Generated registry providers send the same host requests
+through registry wire protocol 11; the consumer returns the existing unfinished
+execution outcome. Only the completed branch runs tool-result transforms,
+bounds and server-only data conversion.
+The runtime saves the original tool arguments and opaque state in a version-11
+run suspension, then publishes `await_mcp_input` to the trusted host. The host
+resumes the exact saved suspension with `PendingInputResponse.MCP`, containing
+the tool call ID and a response for each requested input ID. The runtime validates
+the answers and executes the next round of the same call. The model never authors
+transport IDs or server state. A state-only round has an empty request map; the
+host decides when to resume it with an empty response map. An empty request
+object with no state also resumes with an explicit empty answer object; both
+shared callers and generated clients preserve that continuation presence. No completed tool event
+or model-visible result is recorded until the remote call finishes.
+
+### Executable ownership and upgrade
+
+Compose one generated `NewMCPExecutor(caller)` per runtime binding, then pass it
+to the generated `RegisterUsedToolsets` executor option. Multiple agents can use
+that binding with different model-visible catalogs. Agent configuration supplies
+the planner; it no longer contains `MCPCallers` or `WithMCPCaller`. Generated MCP
+registrations allow one activity attempt, so workflow retries do not silently
+repeat an external side effect.
+
+This is a breaking upgrade. Remove the DSL `ProtocolVersion` option and
+regenerate all packages. Deploy clients and servers using the same current
+protocol. Drain version-9 suspended runs before installing the new runtime;
+version-9 checkpoints are rejected, with no legacy reader or conversion path.
+Rollback requires restoring the previous binaries and their matching generated
+contracts; version-11 suspensions cannot be resumed by the previous runtime.
+
+Registry wire protocol 13 carries a workflow-owned execution sequence and one
+typed operation separately from tool arguments. The original tool call uses
+sequence zero; every new input continuation or Task operation advances it.
+Duplicate delivery retains the sequence and returns its saved outcome. Required
+input completes one service invocation while the durable workflow keeps the
+logical tool call unfinished. Regenerate and deploy registry replicas, providers
+and consumers together. Drain accepted calls and old providers before cutover;
+mixed wire versions are rejected. Preserve catalog and retirement history.
+Rollback requires the previous binaries and their matching saved registry and
+workflow data. The separate catalog storage conversion described in the
+[registry storage upgrade](#registry-storage-upgrade) still applies when upgrading
+from combined catalog records.
+Regenerated schemas may have different descriptions or local definitions, so
+compare the generated `ToolSchemas()` records and declaration fingerprints before
+updating registry-backed providers or consumers. `DeclareServiceToolset` preserves
+an immutable declaration; it returns `admission_conflict` for a changed one. For
+service providers, use the existing `Register` contract with a new deployment
+admission revision and the generated fingerprint. For native Agent declarations,
+use `ReplaceAgentToolset` with the exact current registration token. Coordinate
+that declaration change with matching providers and consumers, and retain the
+selected old contracts for already accepted work. This upgrade does not rewrite
+catalog storage or retired-token history.
+
+Generated servers expose declared unary tools, fixed resource reads, and static
+or method-backed prompts, plus parameterized URI reads and prompt/resource suggestions when their
+`ResourceTemplate`, `PromptCompletion` or `ResourceCompletion` bindings exist. Generated clients call `completion/complete`
+with a typed reference, argument and optional prior context. Suggestions retain
+service order; malformed context fails before service dispatch, and oversized or
+invalid output returns an internal error. The 100-value bound belongs to each
+response array, while totals and later responses remain independent. See
+[the suggestion contract](dsl.md#mcp-prompt-argument-suggestions).
+URI templates guide discovery; one typed reader owns non-fixed URI lookup and
+current authorization. It receives the exact URI and returns ordered typed
+text/blob contents. No inferred variables or first-matching-template dispatch
+are exposed. RFC 6570 parsing and variable collection run during generation;
+resource reads do not use the parser. See
+[the resource contract](dsl.md#parameterized-mcp-resources).
+They do not advertise subscriptions, tasks, or
+server-originated elicitation. Host credential handling remains application-owned. The remaining
+feature and conformance work is tracked in the
+[MCP upgrade plan](mcp_protocol_upgrade_plan.md).
 
 ## Stream Profiles
 
@@ -7068,3 +7992,16 @@ output. UI server data from a completed text-only call fails before publication
 or persistence; it is not silently removed and the runtime does not repeat a
 completed side effect to repair the result. Questions use ordinary assistant
 responses instead of a structured wait.
+Generated MCP calls omit host input capabilities for these runs. Form, URL and
+state-only unfinished replies fail before suspension, while ordinary calls on
+the same caller retain their configured capabilities.
+
+A suspended predecessor admits one successor through `StartRootRun` or
+`StartChildRun`. The store writes `RunMeta.SuccessorRunID` with the successor's
+first records in the same atomic operation. A different successor receives
+`session.ErrRunConflict` before any run or parent link is written. Exact retries
+retain the admitted ID and records after either run has closed. Separate child
+calls still admit their own successors. This is a required store contract;
+update every durable implementation together with its generated clients.
+Suspended Task cancellation still requires the subsequent execution work and
+does not become available merely because admission is exclusive.

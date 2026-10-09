@@ -18,16 +18,6 @@ import (
 
 func TestGeneratedCodecInvalidFieldTypeBehavior(t *testing.T) {
 	root := writeGeneratedModule(t, testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", testscenarios.ArgsInlineObject()))
-	writeGeneratedPackageTest(t, root, "alpha/toolsets/math/http/validate_stub.go", `package http
-
-func ValidateAddPayloadTransport(v *AddPayloadTransport) error {
-	return nil
-}
-
-func ValidateAddResultTransport(v *AddResultTransport) error {
-	return nil
-}
-`)
 	writeGeneratedPackageTest(t, root, "alpha/toolsets/math/codecs_behavior_test.go", `package math
 
 import (
@@ -135,16 +125,6 @@ func TestUnmarshalInspectPayloadAcceptsArbitraryMapValues(t *testing.T) {
 
 func TestGeneratedCodecUnknownFieldBehavior(t *testing.T) {
 	root := writeGeneratedModule(t, testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", testscenarios.DeepNestedValidations()))
-	writeGeneratedPackageTest(t, root, "alpha/toolsets/deep/http/validate_stub.go", `package http
-
-func ValidateValidatePayloadTransport(v *ValidatePayloadTransport) error {
-	return nil
-}
-
-func ValidateValidateResultTransport(v *ValidateResultTransport) error {
-	return nil
-}
-`)
 	writeGeneratedPackageTest(t, root, "alpha/toolsets/deep/codecs_behavior_test.go", `package deep
 
 import (
@@ -292,12 +272,6 @@ func sameStrings(got, want []string) bool {
 func TestGeneratedCodecRequiredUserTypePrimitiveRoundTrip(t *testing.T) {
 	files := testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", testscenarios.ArgsUserType())
 	root := writeGeneratedModule(t, files)
-	writeGeneratedPackageTest(
-		t,
-		root,
-		"alpha/toolsets/docs/http/validate.go",
-		fileContent(t, files, "gen/alpha/toolsets/docs/http/validate.go"),
-	)
 	writeGeneratedPackageTest(t, root, "alpha/toolsets/docs/codecs_required_primitive_test.go", `package docs
 
 import (
@@ -353,32 +327,6 @@ func TestGeneratedCodecBoundedResultProjectionBehavior(t *testing.T) {
 	root := writeGeneratedModule(t, testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", testscenarios.ServiceToolsetBindSelfBoundedResult()))
 	removeGeneratedPackageFile(t, root, "alpha/toolsets/lookup/provider.go")
 	removeGeneratedPackageFile(t, root, "alpha/toolsets/lookup/transforms.go")
-	writeGeneratedPackageTest(t, root, "alpha/toolsets/lookup/http/validate_stub.go", `package http
-
-func ValidateSearchPayloadTransport(v *SearchPayloadTransport) error {
-	return nil
-}
-
-func ValidateSearchResultTransport(v *SearchResultTransport) error {
-	return nil
-}
-
-func ValidateSearchCopyPayloadTransport(v *SearchCopyPayloadTransport) error {
-	return nil
-}
-
-func ValidateSearchCopyResultTransport(v *SearchCopyResultTransport) error {
-	return nil
-}
-
-func ValidateSearchAllPayloadTransport(v *SearchAllPayloadTransport) error {
-	return nil
-}
-
-func ValidateSearchAllResultTransport(v *SearchAllResultTransport) error {
-	return nil
-}
-`)
 	writeGeneratedPackageTest(t, root, "alpha/toolsets/lookup/codecs_behavior_test.go", `package lookup
 
 import (
@@ -523,20 +471,6 @@ func TestGeneratedCodecArrayServerDataRoundTrip(t *testing.T) {
 	root := writeGeneratedModule(t, files)
 	removeGeneratedPackageFile(t, root, "alpha/toolsets/lookup/provider.go")
 	removeGeneratedPackageFile(t, root, "alpha/toolsets/lookup/transforms.go")
-	writeGeneratedPackageTest(t, root, "alpha/toolsets/lookup/http/validate_stub.go", `package http
-
-func ValidateByIDPayloadTransport(v *ByIDPayloadTransport) error {
-	return nil
-}
-
-func ValidateByIDResultTransport(v *ByIDResultTransport) error {
-	return nil
-}
-
-func ValidateByIDRecordsEvidenceServerDataTransport(v ByIDRecordsEvidenceServerDataTransport) error {
-	return nil
-}
-`)
 	writeGeneratedPackageTest(t, root, "alpha/toolsets/lookup/codecs_server_data_test.go", `package lookup
 
 import (
@@ -642,7 +576,6 @@ func TestGeneratedProviderMethodAritiesCompile(t *testing.T) {
 		name   string
 		design func()
 		stub   string
-		http   string
 	}{
 		{
 			name:   "no result",
@@ -658,12 +591,6 @@ type PurgePayload struct {
 type Service interface {
 	Purge(context.Context, *PurgePayload) error
 	Heartbeat(context.Context) error
-}
-`,
-			http: `package http
-
-func ValidatePurgePayloadTransport(*PurgePayloadTransport) error {
-	return nil
 }
 `,
 		},
@@ -685,9 +612,6 @@ type Service interface {
 			files := testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", test.design)
 			root := writeGeneratedModule(t, files)
 			writeGeneratedPackageTest(t, root, "tasks/service.go", test.stub)
-			if test.http != "" {
-				writeGeneratedPackageTest(t, root, "alpha/toolsets/ops/http/validate_stub.go", test.http)
-			}
 			if test.name == "no result" {
 				writeGeneratedPackageTest(t, root, "alpha/toolsets/ops/no_result_spec_test.go", `package ops
 
@@ -733,12 +657,6 @@ func TestNoResultToolsHaveNoResultContract(t *testing.T) {
 func TestGeneratedCodecUnionInvalidFieldTypeBehavior(t *testing.T) {
 	files := testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", testscenarios.ArgsUnionSumTypes())
 	root := writeGeneratedModule(t, files)
-	writeGeneratedPackageTest(
-		t,
-		root,
-		"alpha/toolsets/union/http/validate.go",
-		renderedFileContent(t, files, "gen/alpha/toolsets/union/http/validate.go"),
-	)
 	writeGeneratedPackageTest(t, root, "alpha/toolsets/union/codecs_behavior_test.go", `package union
 
 import (
@@ -750,6 +668,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
+	goa "goa.design/goa/v3/pkg"
 )
 
 func TestEchoSchemaMatchesClosedGeneratedDecoder(t *testing.T) {
@@ -863,7 +782,7 @@ func TestUnmarshalEchoPayloadUsesSelectedUnionBranchType(t *testing.T) {
 		t.Fatalf("expected one issue, got %d", len(issues))
 	}
 	issue := issues[0]
-	if issue.Field != "value" || issue.Constraint != "invalid_field_type" || issue.ExpectedJSONType != "integer" || issue.ActualJSONType != "string" {
+	if issue.Field != "value.value" || issue.Constraint != "invalid_field_type" || issue.ExpectedJSONType != "integer" || issue.ActualJSONType != "string" {
 		t.Fatalf("unexpected issue: %#v", issue)
 	}
 }
@@ -882,7 +801,7 @@ func TestUnmarshalEchoPayloadRejectsMissingUnionValue(t *testing.T) {
 		t.Fatalf("expected one issue, got %d", len(issues))
 	}
 	issue := issues[0]
-	if issue.Field != "value" || issue.Constraint != "missing_field" {
+	if issue.Field != "value.value" || issue.Constraint != "missing_field" {
 		t.Fatalf("unexpected issue: %#v", issue)
 	}
 }
@@ -916,25 +835,21 @@ func TestUnmarshalEchoPayloadRejectsNullUnionValue(t *testing.T) {
 		t.Fatalf("expected one issue, got %d", len(issues))
 	}
 	issue := issues[0]
-	if issue.Field != "value" || issue.Constraint != "invalid_field_type" || issue.ExpectedJSONType != "object" || issue.ActualJSONType != "null" {
+	if issue.Field != "value.value" || issue.Constraint != "invalid_field_type" || issue.ExpectedJSONType != "object" || issue.ActualJSONType != "null" {
 		t.Fatalf("unexpected issue: %#v", issue)
 	}
 }
 
 func TestValueValidateRejectsNilSelectedBranch(t *testing.T) {
-	value := NewValueStructured(nil)
-	err := value.Validate()
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	var validation *tools.ValidationError
-	if !errors.As(err, &validation) {
-		t.Fatalf("expected ValidationError, got %T: %v", err, err)
-	}
-	issues := validation.Issues()
-	if len(issues) != 1 || issues[0].Field != "value" || issues[0].Constraint != "missing_field" {
-		t.Fatalf("unexpected issues: %#v", issues)
-	}
+ value := NewValueStructured(nil)
+ err := value.Validate()
+ var validation *goa.ServiceError
+ if !errors.As(err, &validation) {
+  t.Fatalf("expected native Goa validation, got %T: %v",err,err)
+ }
+ if validation.Name!="missing_field" || validation.Field==nil || *validation.Field!="value" {
+  t.Fatalf("unexpected native union error: %#v",validation)
+ }
 }
 
 func TestMarshalEchoPayloadRejectsMissingRequiredUnion(t *testing.T) {
@@ -1019,16 +934,6 @@ func TestUnmarshalEchoPayloadRejectsUnknownUnionBranchFields(t *testing.T) {
 
 func TestGeneratedCodecModelJSONNamesBehavior(t *testing.T) {
 	root := writeGeneratedModule(t, testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", testscenarios.ModelJSONNames()))
-	writeGeneratedPackageTest(t, root, "alpha/toolsets/review/http/validate_stub.go", `package http
-
-func ValidateReviewRecordPayloadTransport(v *ReviewRecordPayloadTransport) error {
-	return nil
-}
-
-func ValidateReviewRecordResultTransport(v *ReviewRecordResultTransport) error {
-	return nil
-}
-`)
 	writeGeneratedPackageTest(t, root, "alpha/toolsets/review/codecs_behavior_test.go", `package review
 
 import (
@@ -1090,6 +995,9 @@ func TestMarshalReviewRecordPayloadEmitsSnakeCase(t *testing.T) {
 	runGeneratedReviewGoTest(t, root)
 }
 
+// writeGeneratedModule renders all emitted files, including validators, with
+// Goa's normal formatter and import handling. The temporary module ends in gen,
+// so dropping the directory prefix keeps generated imports pointed at those files.
 func writeGeneratedModule(t *testing.T, files []*gcodegen.File) string {
 	t.Helper()
 	root := t.TempDir()
@@ -1098,13 +1006,10 @@ func writeGeneratedModule(t *testing.T, files []*gcodegen.File) string {
 	goMod := "module generated.local/gen\n\ngo 1.24\n\nrequire goa.design/goa-ai v0.0.0\n\nreplace goa.design/goa-ai => " + filepath.ToSlash(repoRoot) + "\n"
 	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o600))
 	for _, file := range files {
-		rel := strings.TrimPrefix(filepath.ToSlash(file.Path), "gen/")
-		if strings.HasSuffix(rel, "/http/validate.go") {
-			continue
-		}
-		path := filepath.Join(root, filepath.FromSlash(rel))
-		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
-		require.NoError(t, os.WriteFile(path, []byte(fileContent(t, files, file.Path)), 0o600))
+		generated := *file
+		generated.Path = strings.TrimPrefix(filepath.ToSlash(file.Path), "gen/")
+		_, err := generated.Render(root)
+		require.NoErrorf(t, err, "render %s", file.Path)
 	}
 	return root
 }

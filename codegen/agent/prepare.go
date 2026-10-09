@@ -10,6 +10,7 @@ import (
 	goaexpr "goa.design/goa/v3/expr"
 
 	agentsExpr "goa.design/goa-ai/expr/agent"
+	"goa.design/goa-ai/internal/mcpinput"
 )
 
 type (
@@ -66,10 +67,18 @@ func Prepare(_ string, roots []eval.Root) error {
 			// Prepare the tool expression (inheritance from method)
 			if t.Method != nil {
 				if t.Args.Type == goaexpr.Empty {
-					t.Args = goaexpr.DupAtt(t.Method.Payload)
+					args, err := mcpinput.DomainArguments(t.Method)
+					if err != nil {
+						return err
+					}
+					t.Args = goaexpr.DupAtt(args)
 				}
 				if t.Return.Type == goaexpr.Empty {
-					t.Return = goaexpr.DupAtt(t.Method.Result)
+					result, err := mcpinput.CompleteResult(t.Method)
+					if err != nil {
+						return err
+					}
+					t.Return = goaexpr.DupAtt(result)
 				}
 			}
 

@@ -615,7 +615,7 @@ func TestInvalidPlannerActivityResultPublishesNoRecords(t *testing.T) {
 				runID:       "workflow-invalid-result",
 				hookRuntime: rt,
 				plannerRoutes: map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error){
-					//nolint:unparam // the route signature requires the error result.
+
 					"plan": func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error) {
 						return output, nil
 					},

@@ -166,7 +166,7 @@ func (r *Runtime) validateHistoricalContinuationOutput(output *planner.ToolOutpu
 	call := ToolCall{Name: output.Name, ToolCallID: output.ToolCallID, Registry: output.Registry}
 	var err error
 	if output.Failure != nil {
-		_, err = validatePersistedToolResult(nil, call, result.ResultJSON, output.ServerData, output.Bounds, output.Failure)
+		_, err = validatePersistedToolResult(nil, call, result.ResultJSON, output.ServerData, output.Blocks, output.Bounds, output.Failure)
 	} else {
 		var spec tools.ToolSpec
 		var ok bool

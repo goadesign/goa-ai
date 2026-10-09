@@ -8,9 +8,11 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	genpictures "goa.design/goa-ai/internal/testimage/gen/images/toolsets/pictures"
@@ -138,9 +140,16 @@ func TestChildContinuationKeepsIndependentCallsAcrossParentRuns(t *testing.T) {
 	require.Nil(t, last.Suspension)
 	require.Equal(t, "both original calls completed", last.Final.Text())
 	// Child completion and parent result publication have separate run IDs.
-	for _, completed := range []struct{ parent, call string }{{"parent-3", callA}, {"parent-2", callB}} {
-		childID := NestedRunIDForToolCall(completed.parent, tool.Name, completed.call)
-		childRun, err := rt.Store.LoadRun(ctx, childID)
+	for _, completed := range []struct {
+		parent string
+		source *api.RunSuspension
+	}{{"parent-3", thirdCheckpoint.Pending[0].Child.Suspension}, {"parent-2", secondCheckpoint.Pending[0].Child.Suspension}} {
+		source, err := decodeWorkflowCheckpointState(completed.source)
+		require.NoError(t, err)
+		previous, err := rt.Store.LoadRun(ctx, source.PreviousRunID)
+		require.NoError(t, err)
+		require.NotEmpty(t, previous.SuccessorRunID)
+		childRun, err := rt.Store.LoadRun(ctx, previous.SuccessorRunID)
 		require.NoError(t, err)
 		require.Equal(t, completed.parent, childRun.ParentRunID)
 		require.Equal(t, session.RunStatusCompleted, childRun.Status)
@@ -199,13 +208,15 @@ func TestChildContinuationKeepsIndependentCallsAcrossParentRuns(t *testing.T) {
 		childContext := <-childContexts
 		require.Equal(t, labels, childContext.Labels)
 		require.Equal(t, "session-1", childContext.SessionID)
-		require.Equal(t, NestedRunIDForToolCall(childContext.ParentRunID, tool.Name, childContext.ParentToolCallID), childContext.RunID)
 		meta, err := rt.Store.LoadRun(ctx, childContext.RunID)
 		require.NoError(t, err)
 		require.Equal(t, childContext.ParentRunID, meta.ParentRunID)
 		if childContext.ParentRunID != "parent-0" {
 			seed, err := rt.Store.LoadRunSeed(ctx, meta.RunID, meta.SeedEndID)
 			require.NoError(t, err)
+			previous, err := rt.Store.LoadRun(ctx, seed.Declaration.SourceRunID)
+			require.NoError(t, err)
+			require.Equal(t, meta.RunID, previous.SuccessorRunID)
 			start := session.RunStart{AgentID: meta.AgentID, RunID: meta.RunID, SessionID: meta.SessionID, ParentRunID: meta.ParentRunID, PredecessorRunID: seed.Declaration.SourceRunID, SeedEndID: meta.SeedEndID}
 			linked := hooks.NewChildRunLinkedEvent(meta.ParentRunID, parentAgentID, meta.SessionID, tool.Name, childContext.ParentToolCallID, meta.RunID, admissionChildAgentID)
 			require.NoError(t, rt.validateChildContinuationStart(ctx, start, linked, seed))
@@ -251,7 +262,7 @@ func TestChildContinuationStartRejectsAnotherParentsPendingCall(t *testing.T) {
 		require.NoError(t, storeSuspensionForTest(t.Context(), rt.Store, runID, session.RunSuspension{ID: suspension.ID, Data: data}))
 	}
 	active, writer, err := rt.buildStoredContinuationRunInput(t.Context(), parentDefinition, "session-1", "parent-0", "active-parent", "turn-active",
-		&api.PendingInputResponse{Clarification: &api.ClarificationAnswer{ID: "clarification-1"}}, "active-parent", "active-parent")
+		&api.RunContinuationInput{Response: &api.PendingInputResponse{Clarification: &api.ClarificationAnswer{ID: "clarification-1"}}}, "active-parent", "active-parent")
 	require.NoError(t, err)
 	compiled, err := json.Marshal(active)
 	require.NoError(t, err)
@@ -262,14 +273,14 @@ func TestChildContinuationStartRejectsAnotherParentsPendingCall(t *testing.T) {
 	for _, test := range []struct{ name, parent, predecessor, call, want string }{
 		{"unrelated", "unrelated-parent", "child-0", "child-call", "exact continuation seed"},
 		{"cross-chat", "foreign-parent", "child-0", "child-call", "execution parent owner mismatch"},
-		{"second-pending", "active-parent", "child-B", "call-B", "first pending child call"},
-		{"wrong-call", "active-parent", "child-0", "other-call", "first pending child call"},
+		{"second-pending", "active-parent", "child-B", "call-B", "selected by the parent's pending work"},
+		{"wrong-call", "active-parent", "child-0", "other-call", "selected by the parent's pending work"},
 		{"swapped-child", "active-parent", "child-B", "child-call", "selected predecessor suspension"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			parentID := test.parent
 			input, writer, err := rt.buildStoredContinuationRunInput(t.Context(), childDefinition, "session-1", test.predecessor, "candidate-"+test.name, "turn-new",
-				&api.PendingInputResponse{Clarification: &api.ClarificationAnswer{ID: "clarification-1"}}, "candidate-"+test.name, "candidate-"+test.name)
+				&api.RunContinuationInput{Response: &api.PendingInputResponse{Clarification: &api.ClarificationAnswer{ID: "clarification-1"}}}, "candidate-"+test.name, "candidate-"+test.name)
 			require.NoError(t, err)
 			input.ParentRunID = parentID
 			compiled, err := json.Marshal(input)
@@ -328,7 +339,7 @@ func TestChildContinuationPublicClientKeepsRunningParent(t *testing.T) {
 	_, err = rt.Store.StartChildRun(ctx, storage.ChildRunStart{RequestDigest: [32]byte{1}, Run: start,
 		ParentLinked: testHookRecord(t, hooks.NewChildRunLinkedEvent(start.ParentRunID, parentAgentID, start.SessionID, tool.Name, "original-call", start.RunID, admissionChildAgentID), "link", start.StartedAt),
 		Started:      testHookRecord(t, hooks.NewRunStartedEvent(start.RunID, admissionChildAgentID, start.SessionID, start.ParentRunID, "", nil), "start", start.StartedAt),
-		Canceled:     testHookRecord(t, hooks.NewRunCompletedEvent(start.RunID, admissionChildAgentID, start.SessionID, "canceled", run.PhaseCanceled, nil, context.Canceled, &run.Cancellation{Reason: run.CancellationReasonSessionEnded}), "stop", start.StartedAt),
+		Cancellation: testStartCancellationRecord(t, start),
 	})
 	require.NoError(t, err)
 	suspension := suspensionContractFixtureWithContext(t, lookup.Name, admissionChildAgentID, start.RunID, map[string]string{"actor": "original"}, map[string]any{"retained": "original metadata"})
@@ -362,10 +373,10 @@ func TestChildContinuationPublicClientKeepsRunningParent(t *testing.T) {
 	require.Equal(t, stored, unchanged.Data)
 }
 
-// The fixed schema-v9 bytes come from the predecessor layout, not this test's
-// encoder. They are a synthetic compatibility fixture, not deployed history.
+// The fixed current-version bytes preserve an earlier run's execution parent
+// while a successor supplies its own parent. No deployed data is used.
 func TestRetainedChildSuspensionKeepsHistoricalParentBytes(t *testing.T) {
-	data, err := os.ReadFile("testdata/retained_child_suspension_v9.json")
+	data, err := os.ReadFile("testdata/retained_child_suspension_v13.json")
 	require.NoError(t, err)
 	var envelope api.RunSuspension
 	require.NoError(t, json.Unmarshal(data, &envelope))
@@ -393,4 +404,223 @@ func TestRetainedChildSuspensionKeepsHistoricalParentBytes(t *testing.T) {
 	missing := &RunInput{AgentID: admissionChildAgentID, RunID: "child-2", SessionID: "session-1", TurnID: "turn-2", Continuation: input.Continuation}
 	_, err = prepareContinuation(missing, definition)
 	require.ErrorContains(t, err, "explicit execution parent")
+}
+
+// Earlier suspensions cannot be resumed after the execution-operation upgrade.
+func TestStoredSuspensionRejectsPreviousVersion(t *testing.T) {
+	data, err := os.ReadFile("testdata/retained_child_suspension_v12.json")
+	require.NoError(t, err)
+	var envelope api.RunSuspension
+	require.NoError(t, json.Unmarshal(data, &envelope))
+	_, err = validateStoredRunSuspension(session.RunSuspension{ID: envelope.ID, Data: data}, session.RunMeta{
+		AgentID: admissionChildAgentID, RunID: "child-0", SessionID: "session-1", ParentRunID: "parent-0", Status: session.RunStatusSuspended,
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "version")
+}
+
+// TestEndedSessionContinuationSettlesAllSavedChildren proves that cleanup keeps
+// its execution parent active while both independent saved calls are canceled.
+func TestEndedSessionContinuationSettlesAllSavedChildren(t *testing.T) {
+	testSavedChildrenCancellation(t, false, false)
+}
+
+func TestCancelRunSettlesSuspendedNativeChildren(t *testing.T) {
+	for _, child := range []bool{false, true} {
+		t.Run(map[bool]string{false: "ended root", true: "selected child"}[child], func(t *testing.T) {
+			testSavedChildrenCancellation(t, true, child)
+		})
+	}
+}
+
+func testSavedChildrenCancellation(t *testing.T, useJob, selectedChild bool) {
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	rt := New(newTestStore(), WithEngine(engineinmem.New()))
+	generated := genpictures.SpecView()
+	tool := tools.ToolSpec{
+		Name: "delegate.inspect", IsAgentTool: true, AgentID: admissionChildAgentID,
+		Payload: generated.Payload, Result: generated.Result,
+		ExecutionPayloadSchema: generated.ExecutionPayloadSchema,
+		ExecutionPayloadCodec:  generated.ExecutionPayloadCodec,
+	}
+	childDefinition := testAgentDefinition(admissionChildAgentID, "child.workflow", "child.queue", []tools.ToolSpec{tool}, nil)
+	parentDefinition := NewAgentDefinition(
+		AgentRoute{ID: parentAgentID, WorkflowName: "parent.workflow", DefaultTaskQueue: "parent.queue"},
+		[]tools.ToolSpec{tool}, nil, nil, []tools.Ident{tool.Name}, []AgentDefinition{childDefinition}, nil,
+	)
+	var childPlans, childResumes atomic.Int32
+	require.NoError(t, rt.RegisterAgent(ctx, AgentRegistration{
+		Definition: childDefinition, WorkflowHandler: rt.ExecuteWorkflow,
+		PlanActivityName: "child.plan", ResumeActivityName: "child.resume", ExecuteToolActivity: "child.execute",
+		Planner: &stubPlanner{
+			start: func(context.Context, *planner.PlanInput) (*planner.PlanResult, error) {
+				childPlans.Add(1)
+				return &planner.PlanResult{Await: planner.NewAwait(planner.AwaitClarificationItem(&planner.AwaitClarification{
+					ID: "question", Question: "Confirm the requested item",
+				}))}, nil
+			},
+			resume: func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error) {
+				childResumes.Add(1)
+				return finalPlannerResult("an ended session must not answer"), nil
+			},
+		},
+	}))
+	registration := NewAgentToolsetRegistration(AgentToolConfig{Definition: childDefinition, Name: "delegate"})
+	registration.Specs = []tools.ToolSpec{tool}
+	require.NoError(t, rt.RegisterToolset(registration))
+	payloadA, err := genpictures.MarshalViewPayload(&genpictures.ViewPayload{ID: "A"})
+	require.NoError(t, err)
+	payloadB, err := genpictures.MarshalViewPayload(&genpictures.ViewPayload{ID: "B"})
+	require.NoError(t, err)
+	require.NoError(t, rt.RegisterAgent(ctx, AgentRegistration{
+		Definition: parentDefinition, WorkflowHandler: rt.ExecuteWorkflow,
+		PlanActivityName: "parent.plan", ResumeActivityName: "parent.resume", ExecuteToolActivity: "parent.execute",
+		Planner: &stubPlanner{start: func(context.Context, *planner.PlanInput) (*planner.PlanResult, error) {
+			return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tool.Name, Payload: payloadA}, {Name: tool.Name, Payload: payloadB}}}, nil
+		}},
+	}))
+	_, err = createSessionForTest(ctx, rt.Store, "session-1")
+	require.NoError(t, err)
+	client := rt.MustClient(parentAgentID)
+	first, err := client.Run(ctx, "session-1", nil, WithRunID("parent-source"), WithTurnID("turn-source"))
+	require.NoError(t, err)
+	require.Len(t, first.Suspension.Pending, 2)
+	checkpoint, err := decodeWorkflowCheckpoint(first.Suspension, parentDefinition)
+	require.NoError(t, err)
+	cleanupRunID := "parent-cleanup"
+	selectedRunID := "parent-source"
+	if selectedChild {
+		saved, err := decodeWorkflowCheckpointState(checkpoint.Pending[0].Child.Suspension)
+		require.NoError(t, err)
+		selectedRunID = saved.PreviousRunID
+	} else {
+		_, err = rt.Store.(interface {
+			EndSession(context.Context, string, time.Time) (session.Session, error)
+		}).EndSession(ctx, "session-1", time.Now())
+		require.NoError(t, err)
+	}
+	if useJob {
+		reason := run.CancellationReasonSessionEnded
+		if selectedChild {
+			reason = run.CancellationReasonUserRequested
+		}
+		require.NoError(t, rt.CancelRun(ctx, CancelRequest{RunID: selectedRunID, Reason: reason}))
+		require.Eventually(t, func() bool {
+			previous, err := rt.Store.LoadRun(ctx, "parent-source")
+			if err != nil || previous.SuccessorRunID == "" {
+				return false
+			}
+			cleanup, err := rt.Store.LoadRun(ctx, previous.SuccessorRunID)
+			if err != nil || cleanup.Status != session.RunStatusCanceled {
+				return false
+			}
+			cleanupRunID = cleanup.RunID
+			return true
+		}, 5*time.Second, time.Millisecond)
+	} else {
+		_, err = client.Continue(ctx, "session-1", "parent-source", cleanupRunID, "turn-cleanup", &api.PendingInputResponse{
+			Clarification: &api.ClarificationAnswer{ID: "question", Answer: "Unused after session ending"},
+		}, WorkflowOptions{})
+		require.ErrorIs(t, err, context.Canceled)
+	}
+	require.EqualValues(t, 2, childPlans.Load())
+	require.Zero(t, childResumes.Load())
+	for _, item := range checkpoint.Pending {
+		saved, err := decodeWorkflowCheckpointState(item.Child.Suspension)
+		require.NoError(t, err)
+		previous, err := rt.Store.LoadRun(ctx, saved.PreviousRunID)
+		require.NoError(t, err)
+		require.NotEmpty(t, previous.SuccessorRunID)
+		child, err := rt.Store.LoadRun(ctx, previous.SuccessorRunID)
+		require.NoError(t, err)
+		require.Equal(t, cleanupRunID, child.ParentRunID)
+		require.Equal(t, session.RunStatusCanceled, child.Status)
+		reason := run.CancellationReasonSessionEnded
+		if selectedChild {
+			reason = run.CancellationReasonEngineCanceled
+			if saved.PreviousRunID == selectedRunID {
+				reason = run.CancellationReasonUserRequested
+			}
+		}
+		require.Equal(t, reason, child.CancellationReason)
+	}
+	parent, err := rt.Store.LoadRun(ctx, cleanupRunID)
+	require.NoError(t, err)
+	require.Equal(t, session.RunStatusCanceled, parent.Status)
+	page, err := rt.ListRunEvents(ctx, cleanupRunID, "", 20)
+	require.NoError(t, err)
+	require.Equal(t, 2, countRunEventsByType(page, hooks.ChildRunLinked))
+	require.Equal(t, 1, countRunEventsByType(page, hooks.RunCompleted))
+}
+
+func TestParentCancellationAfterChildResuspendsSettlesNewChild(t *testing.T) {
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	bus := &questionCancellationBus{Bus: hooks.NewBus(), runID: "parent-1", kind: hooks.AwaitClarification}
+	rt := New(newTestStore(), WithEngine(engineinmem.New()), WithHooks(bus))
+	bus.runtime = rt
+	generated := genpictures.SpecView()
+	tool := tools.ToolSpec{Name: "delegate.inspect", IsAgentTool: true, AgentID: admissionChildAgentID,
+		Payload: generated.Payload, Result: generated.Result,
+		ExecutionPayloadSchema: generated.ExecutionPayloadSchema, ExecutionPayloadCodec: generated.ExecutionPayloadCodec}
+	childDefinition := testAgentDefinition(admissionChildAgentID, "child.workflow", "child.queue", []tools.ToolSpec{tool}, nil)
+	parentDefinition := NewAgentDefinition(AgentRoute{ID: parentAgentID, WorkflowName: "parent.workflow", DefaultTaskQueue: "parent.queue"},
+		[]tools.ToolSpec{tool}, nil, nil, []tools.Ident{tool.Name}, []AgentDefinition{childDefinition}, nil)
+	var childResumes atomic.Int32
+	require.NoError(t, rt.RegisterAgent(ctx, AgentRegistration{
+		Definition: childDefinition, WorkflowHandler: rt.ExecuteWorkflow,
+		PlanActivityName: "child.plan", ResumeActivityName: "child.resume", ExecuteToolActivity: "child.execute",
+		Planner: &stubPlanner{
+			start: func(context.Context, *planner.PlanInput) (*planner.PlanResult, error) {
+				return &planner.PlanResult{Await: planner.NewAwait(planner.AwaitClarificationItem(&planner.AwaitClarification{ID: "first-question", Question: "Choose"}))}, nil
+			},
+			resume: func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error) {
+				childResumes.Add(1)
+				return &planner.PlanResult{Await: planner.NewAwait(planner.AwaitClarificationItem(&planner.AwaitClarification{ID: "second-question", Question: "Choose again"}))}, nil
+			},
+		},
+	}))
+	registration := NewAgentToolsetRegistration(AgentToolConfig{Definition: childDefinition, Name: "delegate"})
+	registration.Specs = []tools.ToolSpec{tool}
+	require.NoError(t, rt.RegisterToolset(registration))
+	payload, err := genpictures.MarshalViewPayload(&genpictures.ViewPayload{ID: "synthetic"})
+	require.NoError(t, err)
+	require.NoError(t, rt.RegisterAgent(ctx, AgentRegistration{
+		Definition: parentDefinition, WorkflowHandler: rt.ExecuteWorkflow,
+		PlanActivityName: "parent.plan", ResumeActivityName: "parent.resume", ExecuteToolActivity: "parent.execute",
+		Planner: &stubPlanner{start: func(context.Context, *planner.PlanInput) (*planner.PlanResult, error) {
+			return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: tool.Name, Payload: payload}}}, nil
+		}},
+	}))
+	_, err = createSessionForTest(ctx, rt.Store, "session")
+	require.NoError(t, err)
+	client := rt.MustClient(parentAgentID)
+	first, err := client.Run(ctx, "session", nil, WithRunID("parent-0"), WithTurnID("turn-0"))
+	require.NoError(t, err)
+	require.Len(t, first.Suspension.Pending, 1)
+	parentCheckpoint, err := decodeWorkflowCheckpoint(first.Suspension, parentDefinition)
+	require.NoError(t, err)
+	checkpoint, err := decodeWorkflowCheckpointState(parentCheckpoint.Pending[0].Child.Suspension)
+	require.NoError(t, err)
+	_, err = client.Continue(ctx, "session", "parent-0", "parent-1", "turn-1",
+		&api.PendingInputResponse{Clarification: &api.ClarificationAnswer{ID: "first-question", Answer: "chosen"}}, WorkflowOptions{})
+	require.ErrorIs(t, err, context.Canceled)
+	assert.EqualValues(t, 1, childResumes.Load())
+	original, err := rt.Store.LoadRun(ctx, checkpoint.PreviousRunID)
+	require.NoError(t, err)
+	require.NotEmpty(t, original.SuccessorRunID)
+	answered, err := rt.Store.LoadRun(ctx, original.SuccessorRunID)
+	require.NoError(t, err)
+	assert.Equal(t, session.RunStatusSuspended, answered.Status)
+	require.NotEmpty(t, answered.SuccessorRunID)
+	settled, err := rt.Store.LoadRun(ctx, answered.SuccessorRunID)
+	require.NoError(t, err)
+	assert.Equal(t, "parent-1", settled.ParentRunID)
+	assert.Equal(t, session.RunStatusCanceled, settled.Status)
+	assert.Equal(t, run.CancellationReasonEngineCanceled, settled.CancellationReason)
+	parent, err := rt.Store.LoadRun(ctx, "parent-1")
+	require.NoError(t, err)
+	assert.Equal(t, session.RunStatusCanceled, parent.Status)
+	assert.Equal(t, run.CancellationReasonUserRequested, parent.CancellationReason)
 }

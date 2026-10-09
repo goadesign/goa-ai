@@ -75,17 +75,21 @@ func TestCloneFieldMetadataCopiesNestedSlices(t *testing.T) {
 	original := []FieldMetadata{{
 		Path:                []FieldPathSegment{FixedField("choice"), FixedField("value")},
 		DiscriminatorValues: []string{"one"},
-		Branches: []UnionBranch{{
+		Branches: []UnionBranch{TaggedUnionBranch{
 			Discriminator: []FieldPathSegment{FixedField("choice"), FixedField("type")},
 			Value:         "one",
+		}, UntaggedUnionBranch{
+			Path: []FieldPathSegment{FixedField("choice")}, JSONKind: "object",
 		}},
 	}}
 	cloned := CloneFieldMetadata(original)
 	cloned[0].Path[0] = FixedField("changed")
 	cloned[0].DiscriminatorValues[0] = "changed"
-	cloned[0].Branches[0].Discriminator[0] = FixedField("changed")
+	cloned[0].Branches[0].(TaggedUnionBranch).Discriminator[0] = FixedField("changed")
+	cloned[0].Branches[1].(UntaggedUnionBranch).Path[0] = FixedField("changed")
 
 	require.Equal(t, FixedField("choice"), original[0].Path[0])
 	require.Equal(t, "one", original[0].DiscriminatorValues[0])
-	require.Equal(t, FixedField("choice"), original[0].Branches[0].Discriminator[0])
+	require.Equal(t, FixedField("choice"), original[0].Branches[0].(TaggedUnionBranch).Discriminator[0])
+	require.Equal(t, FixedField("choice"), original[0].Branches[1].(UntaggedUnionBranch).Path[0])
 }

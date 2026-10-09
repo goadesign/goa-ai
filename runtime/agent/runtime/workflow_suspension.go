@@ -11,20 +11,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"reflect"
 	"sort"
 	"time"
 
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
-	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
-	"goa.design/goa-ai/runtime/agent/storage"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -107,6 +104,8 @@ type (
 		Duration         time.Duration
 		Clarification    *ToolClarification
 		ChildSuspension  *api.RunSuspension
+		MCPPending       *api.PendingExecution
+		Task             *taskExecution
 		RequiresResume   bool
 	}
 
@@ -114,6 +113,7 @@ type (
 		Confirmation *checkpointConfirmation
 		Await        *planner.AwaitItem
 		Child        *checkpointChildContinuation
+		MCP          *api.PendingMCPInput
 		CallRunID    string
 	}
 
@@ -147,10 +147,13 @@ func (l *workflowLoop) suspendCheckpointRun(batch stepBatch, confirmations []con
 	if l.input.SessionID == "" {
 		return nil, errors.New("sessionless run cannot request external input")
 	}
+	l.unfinishedBatch = &batch
+	l.unfinishedPending = batch.pending
 	checkpoint, pending, requiredTools, err := l.buildWorkflowCheckpoint(batch, confirmations, items, restoredPending)
 	if err != nil {
 		return nil, err
 	}
+	l.unfinishedPending = checkpoint.Pending
 	if err := l.publishPendingInputPrompts(pending); err != nil {
 		return nil, err
 	}
@@ -187,6 +190,10 @@ func (l *workflowLoop) publishPendingInputPrompts(pending []*api.PendingInput) e
 	ctx := l.wfCtx.Context()
 	for i, input := range pending {
 		switch input.Kind {
+		case api.PendingInputKindMCP:
+			if err := l.r.publishHook(ctx, hooks.NewAwaitMCPInputEvent(l.input.RunID, l.input.AgentID, l.input.SessionID, *input.MCP), l.turnID); err != nil {
+				return err
+			}
 		case api.PendingInputKindConfirmation:
 			confirmation := input.Confirmation
 			if confirmation == nil {
@@ -248,7 +255,7 @@ func (l *workflowLoop) buildWorkflowCheckpoint(batch stepBatch, confirmations []
 			return nil, nil, nil, err
 		}
 		var encodedResult *api.ToolEvent
-		if record.childSuspension == nil {
+		if record.childSuspension == nil && record.mcpPending == nil {
 			encoded, err := encodeToolEvent(record.result, record.call, l.r.toolSpec)
 			if err != nil {
 				return nil, nil, nil, err
@@ -270,6 +277,8 @@ func (l *workflowLoop) buildWorkflowCheckpoint(batch stepBatch, confirmations []
 			Duration:         record.duration,
 			Clarification:    record.clarification,
 			ChildSuspension:  record.childSuspension,
+			MCPPending:       record.mcpPending,
+			Task:             cloneTaskExecution(record.task),
 			RequiresResume:   record.requiresResume,
 		})
 	}
@@ -495,6 +504,7 @@ func decodeCheckpointToolEvent(event *api.ToolEvent, call ToolCall, lookup toolS
 		call,
 		event.Result,
 		event.ServerData,
+		event.Blocks,
 		event.Bounds,
 		event.Failure,
 	)
@@ -504,6 +514,7 @@ func decodeCheckpointToolEvent(event *api.ToolEvent, call ToolCall, lookup toolS
 	result := &planner.ToolResult{
 		Name:          event.Name,
 		ServerData:    append(rawjson.Message(nil), event.ServerData...),
+		Blocks:        event.Blocks.Clone(),
 		Bounds:        event.Bounds,
 		Failure:       planner.CloneToolFailure(event.Failure),
 		Telemetry:     event.Telemetry,
@@ -517,9 +528,9 @@ func decodeCheckpointToolEvent(event *api.ToolEvent, call ToolCall, lookup toolS
 	return result, nil
 }
 
-// resumeSuspendedWorkflow consumes one exact pending response after
-// ExecuteWorkflow has restored and validated the checkpoint-owned input.
-func (r *Runtime) resumeSuspendedWorkflow(wfCtx *providerRecoveryWorkflowContext, reg AgentRegistration, input *RunInput, checkpoint *workflowCheckpoint, historyEndID string) (*RunOutput, error) {
+// restoreSuspendedWorkflow reconstructs the saved planner and tool state once.
+// Answering and cancellation then act on the same proved calls and pending work.
+func (r *Runtime) restoreSuspendedWorkflow(wfCtx *providerRecoveryWorkflowContext, reg AgentRegistration, input *RunInput, checkpoint *workflowCheckpoint, historyEndID string) (*workflowLoop, error) {
 	base := &workflowConversation{
 		HistoryEndID: historyEndID,
 		RunContext:   restoreCheckpointRunContext(checkpoint.Context, input),
@@ -561,25 +572,38 @@ func (r *Runtime) resumeSuspendedWorkflow(wfCtx *providerRecoveryWorkflowContext
 	loop := newWorkflowLoop(r, wfCtx, reg, input, base, state, input.TurnID, parentTracker, deadlines, resumeOpts, toolOpts)
 
 	pending := r.restorePendingInputs(checkpoint.Pending, input, &base.RunContext)
-	if err := loop.consumePendingInput(&batch, &pending, input.Continuation.Response); err != nil {
+	loop.unfinishedBatch = &batch
+	loop.unfinishedPending = pending
+	return loop, nil
+}
+
+// resumeRestoredWorkflow consumes one answer from the restored batch. Records
+// retain unstarted work until an activity or child takes responsibility for it.
+func (l *workflowLoop) resumeRestoredWorkflow() (*RunOutput, error) {
+	batch := l.unfinishedBatch
+	pending := l.unfinishedPending
+	if err := l.wfCtx.Context().Err(); err != nil {
+		return nil, err
+	}
+	if err := l.consumePendingInput(batch, &pending, l.input.Continuation.Response); err != nil {
 		return nil, err
 	}
 	if len(pending) > 0 {
-		return loop.suspendPendingRun(batch, pending)
+		return l.suspendPendingRun(*batch, pending)
 	}
 	if batch.resumePlannerAfterPending {
-		recovery, _ := toolRecovery(state.PendingRecovery)
-		out, err := loop.resumePlanner(recovery, false, nil, nil, true)
+		recovery, _ := toolRecovery(l.st.PendingRecovery)
+		out, err := l.resumePlanner(recovery, false, nil, nil, true)
 		if err != nil || out != nil {
 			return out, err
 		}
-		return loop.run()
+		return l.run()
 	}
-	out, err := loop.advanceStep(batch)
+	out, err := l.advanceStep(*batch)
 	if err != nil || out != nil {
 		return out, err
 	}
-	return loop.run()
+	return l.run()
 }
 
 func restoreContinuationRunInput(input *RunInput, checkpoint *workflowCheckpoint) error {
@@ -613,7 +637,10 @@ func validateContinuationIdentity(input *RunInput, checkpoint *workflowCheckpoin
 	if checkpoint.PreviousRunID == input.RunID {
 		return fmt.Errorf("run continuation requires a new run id distinct from %q", input.RunID)
 	}
-	if checkpoint.PreviousTurnID != "" && checkpoint.PreviousTurnID == input.TurnID {
+	// An answer starts a new conversation turn. Cancellation restores unfinished
+	// work without supplying an answer and may retain that work's existing turn.
+	answer := input.Continuation.Cancellation == nil
+	if answer && checkpoint.PreviousTurnID != "" && checkpoint.PreviousTurnID == input.TurnID {
 		return fmt.Errorf("run continuation requires a new turn id distinct from %q", input.TurnID)
 	}
 	return nil
@@ -718,13 +745,13 @@ func (r *Runtime) restoreCheckpointBatch(checkpoint checkpointStepBatch, input *
 	records := make([]stepToolRecord, 0, len(checkpoint.Records))
 	for _, record := range checkpoint.Records {
 		var decoded *planner.ToolResult
-		if record.ChildSuspension == nil {
+		if record.ChildSuspension == nil && record.MCPPending == nil {
 			var err error
 			decoded, err = decodeCheckpointToolEvent(record.Result, record.Call, r.toolSpec)
 			if err != nil {
 				return stepBatch{}, err
 			}
-		} else {
+		} else if record.ChildSuspension != nil {
 			decoded = &planner.ToolResult{Name: record.Call.Name, ToolCallID: record.Call.ToolCallID}
 		}
 		records = append(records, stepToolRecord{
@@ -742,6 +769,8 @@ func (r *Runtime) restoreCheckpointBatch(checkpoint checkpointStepBatch, input *
 			duration:         record.Duration,
 			clarification:    record.Clarification,
 			childSuspension:  record.ChildSuspension,
+			mcpPending:       record.MCPPending,
+			task:             cloneTaskExecution(record.Task),
 			requiresResume:   record.RequiresResume,
 		})
 	}
@@ -812,6 +841,9 @@ func publicPendingInputs(pending []checkpointPendingInput) ([]*api.PendingInput,
 		if item.Child != nil {
 			variants++
 		}
+		if item.MCP != nil {
+			variants++
+		}
 		if item.Confirmation != nil {
 			variants++
 		}
@@ -820,6 +852,14 @@ func publicPendingInputs(pending []checkpointPendingInput) ([]*api.PendingInput,
 		}
 		if variants != 1 {
 			return nil, fmt.Errorf("run suspension pending input %d has %d variants", i, variants)
+		}
+		if item.MCP != nil {
+			input := &api.PendingInput{Kind: api.PendingInputKindMCP, MCP: item.MCP}
+			if err := validatePendingInput(input); err != nil {
+				return nil, err
+			}
+			items = append(items, input)
+			continue
 		}
 		if item.Child != nil {
 			if item.Child.Suspension == nil || len(item.Child.Suspension.Pending) == 0 {
@@ -884,6 +924,9 @@ func (l *workflowLoop) consumePendingInput(batch *stepBatch, pending *[]checkpoi
 func (l *workflowLoop) consumeCheckpointInput(batch *stepBatch, pending checkpointPendingInput, response *api.PendingInputResponse) ([]checkpointPendingInput, error) {
 	if response == nil {
 		return nil, errors.New("run continuation response is required")
+	}
+	if pending.MCP != nil {
+		return l.applyExecutionContinuation(batch, pending.MCP, response.MCP)
 	}
 	if pending.Child != nil {
 		return l.applyChildContinuation(batch, pending.Child, response)
@@ -950,115 +993,4 @@ func (l *workflowLoop) applyAwaitResponse(item planner.AwaitItem, callRunID stri
 	default:
 		return nil, fmt.Errorf("unknown await item kind %q", item.Kind)
 	}
-}
-
-// applyChildContinuation starts the suspended agent tool on a new child
-// workflow. The parent tool call remains open until the child produces its
-// final result; another child suspension replaces the pending request exactly.
-func (l *workflowLoop) applyChildContinuation(batch *stepBatch, pending *checkpointChildContinuation, response *api.PendingInputResponse) ([]checkpointPendingInput, error) {
-	recordIndex := -1
-	for i := range batch.records {
-		if batch.records[i].call.ToolCallID == pending.ToolCallID {
-			if recordIndex >= 0 {
-				return nil, fmt.Errorf("child continuation has duplicate tool_call_id %s", pending.ToolCallID)
-			}
-			recordIndex = i
-		}
-	}
-	if recordIndex < 0 {
-		return nil, fmt.Errorf("child continuation references unknown tool_call_id %s", pending.ToolCallID)
-	}
-	record := &batch.records[recordIndex]
-	if record.childSuspension == nil || !reflect.DeepEqual(record.childSuspension, pending.Suspension) {
-		return nil, fmt.Errorf("child continuation does not match tool_call_id %s", pending.ToolCallID)
-	}
-
-	cfg, err := l.r.selectedAgentToolConfig(record.call)
-	if err != nil {
-		return nil, err
-	}
-
-	if err := validateCheckpointChild(record.call, pending.Suspension, l.reg.Definition); err != nil {
-		return nil, err
-	}
-
-	currentCall := retargetToolRequest(record.call, l.input, &l.base.RunContext)
-	nested := run.Context{
-		Tool:             currentCall.Name,
-		RunID:            NestedRunIDForToolCall(currentCall.RunID, currentCall.Name, currentCall.ToolCallID),
-		SessionID:        currentCall.SessionID,
-		TurnID:           currentCall.TurnID,
-		ParentToolCallID: currentCall.ToolCallID,
-		ParentRunID:      currentCall.RunID,
-		ParentAgentID:    currentCall.AgentID,
-		ToolArgs:         append(rawjson.Message(nil), currentCall.Payload...),
-		ToolRegistry:     currentCall.Registry.Clone(),
-		Labels:           cloneLabels(currentCall.Labels),
-	}
-	childInput := &RunInput{
-		AgentID: cfg.Definition.route.ID, ParentRunID: nested.ParentRunID,
-		RunID: nested.RunID, SessionID: nested.SessionID, TurnID: nested.TurnID,
-		Continuation: &api.RunContinuationInput{Suspension: pending.Suspension, Response: response},
-	}
-	checkpoint, err := prepareContinuation(childInput, cfg.Definition)
-	if err != nil {
-		return nil, err
-	}
-	seedStore := workflowSeedWriter{r: l.r}
-	seed, err := seedStore.BeginRunSeed(l.wfCtx.Context(), storage.SeedDeclaration{
-		AgentID: string(childInput.AgentID), RunID: childInput.RunID, SessionID: childInput.SessionID,
-		CommandID: childInput.RunID, AttemptID: childInput.RunID,
-		Kind: storage.SeedContinuation, SourceRunID: checkpoint.PreviousRunID, SourceEndID: checkpoint.HistoryEndID,
-	})
-	if err != nil {
-		return nil, err
-	}
-	writer := initialHistoryWriter{store: seedStore, runID: childInput.RunID, attemptID: childInput.RunID, endID: storage.EmptySeedEndID}
-	if err := writer.appendPrefix(l.wfCtx.Context(), seed.Source); err != nil {
-		return nil, err
-	}
-	childInput.SeedEndID = writer.endID
-	compiled, err := json.Marshal(childInput)
-	if err != nil {
-		return nil, err
-	}
-	if err := writer.publish(l.wfCtx.Context(), compiled); err != nil {
-		return nil, err
-	}
-
-	route := cfg.Definition.route
-	handle, err := l.wfCtx.StartChildWorkflow(l.wfCtx.Context(), engine.ChildWorkflowRequest{
-		ID:        childInput.RunID,
-		Workflow:  route.WorkflowName,
-		TaskQueue: route.DefaultTaskQueue,
-		Input:     childInput,
-	})
-	if err != nil {
-		return nil, err
-	}
-	out, err := awaitAgentChild(l.wfCtx, handle, l.wfCtx.Context())
-	if err != nil {
-		return nil, err
-	}
-	if out == nil {
-		return nil, errors.New("child continuation returned no output")
-	}
-	if err := validateWorkflowOutput(out, route.ID, childInput.RunID); err != nil {
-		return nil, err
-	}
-	if out.Suspension != nil {
-		record.childSuspension = out.Suspension
-		return []checkpointPendingInput{{Child: &checkpointChildContinuation{
-			ToolCallID: record.call.ToolCallID,
-			Suspension: out.Suspension,
-		}}}, nil
-	}
-	result, err := l.r.adaptAgentChildOutput(cfg, &currentCall, nested, out)
-	if err != nil {
-		return nil, err
-	}
-	record.result = result
-	record.childSuspension = nil
-	record.requiresResume = true
-	return nil, nil
 }

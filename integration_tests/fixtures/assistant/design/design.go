@@ -7,7 +7,7 @@ import (
 
 var _ = API("assistant", func() {
 	Title("AI Assistant API")
-	Description("Simple MCP example exposing unary tools, fixed resources, and static prompts")
+	Description("Synthetic MCP service exposing unary tools, fixed resources, typed prompts, and argument suggestions")
 	Version("1.0")
 	Server("orchestrator", func() {
 		Host("dev", func() {
@@ -20,7 +20,7 @@ var _ = API("assistant", func() {
 var _ = Service("assistant", func() {
 	Description("AI Assistant service for the supported MCP protocol surface")
 
-	MCP("assistant-mcp", "1.0.0", ProtocolVersion("2025-06-18"))
+	MCP("assistant-mcp", "1.0.0")
 
 	// Keep the design minimal; integration tests exercise MCP protocol handlers.
 	JSONRPC(func() {
@@ -44,12 +44,30 @@ var _ = Service("assistant", func() {
 		JSONRPC(func() {})
 	})
 
+	Method("binary_resource", func() {
+		Description("Read the synthetic binary resource used by independent MCP verification")
+		Result(Image)
+		Resource("binary", "test://static-binary", "image/png")
+		JSONRPC(func() {})
+	})
+
+	Method("empty_binary_resource", func() {
+		Description("Read an existing binary resource whose content is empty")
+		Result(Bytes)
+		Resource("empty_binary", "test://empty-binary", "application/octet-stream")
+		JSONRPC(func() {})
+	})
+
 	StaticPrompt(
 		"code_review",
 		"Simple code review prompt",
 		"user",
 		"Review the provided code and suggest improvements.",
 	)
+
+	refereePrompts()
+	refereeResourceTemplates()
+	refereeProgress()
 
 	// ---- Tools (for MCP tools/list and tools/call) ----
 
@@ -131,4 +149,10 @@ var _ = Service("assistant", func() {
 var Documents = Type("Documents", func() {
 	Attribute("items", ArrayOf(String), "Document entries")
 	Required("items")
+})
+
+// Image is a named byte result so generation verifies the resource's underlying
+// value while preserving the service's authored result name.
+var Image = Type("Image", Bytes, func() {
+	Description("Encoded image bytes")
 })

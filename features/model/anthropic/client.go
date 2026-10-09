@@ -736,7 +736,13 @@ func encodeToolResult(v model.ToolResultPart, providerToolUseID string) (sdk.Con
 		}
 		content = string(data)
 	}
-	return sdk.NewToolResultBlock(providerToolUseID, content, v.IsError), nil
+	result := sdk.NewToolResultBlock(providerToolUseID, content, v.IsError)
+	blocks, err := encodeToolContent(v.Blocks)
+	if err != nil {
+		return sdk.ContentBlockParamUnion{}, fmt.Errorf("anthropic: tool result %q: %w", v.ToolUseID, err)
+	}
+	result.OfToolResult.Content = append(result.OfToolResult.Content, blocks...)
+	return result, nil
 }
 
 func encodeTools(

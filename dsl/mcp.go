@@ -16,17 +16,20 @@ import (
 // MCP must appear in a Service expression. The service-level JSONRPC POST
 // route supplies the MCP path. The same service may also expose ordinary HTTP,
 // file, and gRPC endpoints.
+// Register the generated server with the same mux passed to its constructor,
+// or call Mount(mux), so Goa supplies route parameters to generated decoders.
 //
-// MCP takes two required arguments and an optional list of configuration
-// functions:
-//   - name: the MCP server name (used in MCP handshake)
+// MCP takes two required arguments and an optional design function. Security
+// inside that function declares bearer access and basic-access scopes for every
+// MCP request, including catalogs. The generated server then requires a runtime
+// ResourceServer; original method authentication still runs through Goa.
+//   - name: the server name returned in response metadata
 //   - version: the server version string
-//   - opts: optional configuration functions (e.g., ProtocolVersion)
 //
 // Example:
 //
 //	Service("calculator", func() {
-//	    MCP("calc", "1.0.0", ProtocolVersion("2025-06-18"))
+//	    MCP("calc", "1.0.0")
 //	    JSONRPC(func() {
 //	        POST("/mcp")
 //	    })
@@ -41,42 +44,30 @@ import (
 //	        Tool("add", "Add two numbers")
 //	    })
 //	})
-func MCP(name, version string, opts ...func(*exprmcp.MCPExpr)) {
+func MCP(name, version string, design ...func()) {
 	svc, ok := eval.Current().(*goaexpr.ServiceExpr)
 	if !ok {
 		eval.IncompatibleDSL()
 		return
 	}
 	m := &exprmcp.MCPExpr{Service: svc, Name: name, Version: version, Description: svc.Description}
-	for _, o := range opts {
-		if o != nil {
-			o(m)
-		}
+	if len(design) > 1 {
+		eval.TooManyArgError()
+		return
+	}
+	if len(design) == 1 && !eval.Execute(design[0], m) {
+		return
 	}
 	if r := exprmcp.Root; r != nil {
 		r.RegisterMCP(svc, m)
 	}
 }
 
-// ProtocolVersion configures the MCP protocol version supported by the server.
-// It returns a configuration function for use with MCP.
-//
-// ProtocolVersion takes a single argument which is the protocol version string.
-//
-// Example:
-//
-//	Service("calculator", func() {
-//	    MCP("calc", "1.0.0", ProtocolVersion("2025-06-18"))
-//	    JSONRPC(func() {
-//	        POST("/mcp")
-//	    })
-//	})
-func ProtocolVersion(version string) func(*exprmcp.MCPExpr) {
-	return func(m *exprmcp.MCPExpr) { m.ProtocolVersion = version }
-}
-
 // Resource marks the current method as an MCP resource provider. The method's
 // result becomes the resource content returned when clients read the resource.
+// Bytes become base64 blob content with the declared MIME type. A string with a
+// text MIME type becomes text unchanged; application/json results use the generated
+// JSON codec. The generator chooses the representation from the declared result.
 //
 // Resource must appear in a Method expression within a service that has MCP enabled.
 //
@@ -152,4 +143,29 @@ func StaticPrompt(name, description string, messages ...string) {
 		prompt.Messages = append(prompt.Messages, &exprmcp.MessageExpr{Role: messages[i], Content: messages[i+1]})
 	}
 	mcp.Prompts = append(mcp.Prompts, prompt)
+}
+
+// Prompt exposes the current Goa method through MCP prompts/get. Its payload
+// must be an object of named strings. Its result must contain a messages array;
+// each message has a role and a content OneOf whose branches are text, image,
+// audio, resource_link, or resource. Each branch declares its content fields.
+// Image and audio data, and embedded resource blobs, use Bytes. Generated code
+// validates the result and converts bytes to base64 for the MCP response.
+//
+// Prompt must appear in a Method expression within an MCP service. It does not
+// call a model: the service supplies messages when a client selects the prompt.
+func Prompt(name, description string) {
+	method, ok := eval.Current().(*goaexpr.MethodExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return
+	}
+	mcp := exprmcp.Root.GetMCP(method.Service)
+	if mcp == nil {
+		eval.IncompatibleDSL()
+		return
+	}
+	mcp.MethodPrompts = append(mcp.MethodPrompts, &exprmcp.MethodPromptExpr{
+		Name: name, Description: description, Method: method,
+	})
 }

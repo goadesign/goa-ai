@@ -12,6 +12,8 @@ import (
 )
 
 type toolProviderFileData struct {
+	// MCPPackage names the planned import used for typed host continuation.
+	MCPPackage     string
 	PackageName    string
 	ServiceTypeRef string
 	Tools          []*ToolData
@@ -88,15 +90,10 @@ func toolsetSpecsFiles(plan *toolSpecsPlan) []*codegen.File {
 			}
 			if len(specsData.TransportUnions) > 0 {
 				unionImports := packagePlan.fileImports.transportUnions.Imports()
-				unionSections := []*codegen.SectionTemplate{
+				unionSections := unionTypeSections(
 					codegen.Header(ts.Name+" tool transport union types", transportPkgName, unionImports),
-					{
-						Name:    "tool-transport-union-types",
-						Source:  agentsTemplates.Read(toolUnionTypesFileT),
-						Data:    toolUnionTypesFileData{Unions: specsData.TransportUnions},
-						FuncMap: templateFuncMap(),
-					},
-				}
+					"tool-transport-union-types", specsData.TransportUnions,
+				)
 				out = append(out, &codegen.File{Path: filepath.Join(ts.SpecsDir, transportDirName, "unions.go"), SectionTemplates: unionSections})
 			}
 		}
@@ -116,15 +113,10 @@ func toolsetSpecsFiles(plan *toolSpecsPlan) []*codegen.File {
 		// unions.go
 		if len(specsData.Unions) > 0 {
 			unionImports := packagePlan.fileImports.publicUnions.Imports()
-			unionSections := []*codegen.SectionTemplate{
+			unionSections := unionTypeSections(
 				codegen.Header(ts.Name+" tool union types", ts.SpecsPackageName, unionImports),
-				{
-					Name:    "tool-spec-union-types",
-					Source:  agentsTemplates.Read(toolUnionTypesFileT),
-					Data:    toolUnionTypesFileData{Unions: specsData.Unions},
-					FuncMap: templateFuncMap(),
-				},
-			}
+				"tool-spec-union-types", specsData.Unions,
+			)
 			out = append(out, &codegen.File{Path: filepath.Join(ts.SpecsDir, "unions.go"), SectionTemplates: unionSections})
 		}
 		if len(specsData.tools) > 0 {
@@ -253,6 +245,7 @@ func toolsetProviderFile(ts *ToolsetData) *codegen.File {
 			Name:   "tool-provider",
 			Source: agentsTemplates.Read(toolProviderFileT),
 			Data: toolProviderFileData{
+				MCPPackage:     ts.specs.mcpPackage,
 				PackageName:    ts.SpecsPackageName,
 				ServiceTypeRef: ts.specs.serviceTypeRef,
 				Tools:          ts.Tools,

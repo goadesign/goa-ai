@@ -201,7 +201,7 @@ different audiences and link child runs via run handles rather than flattening r
 
 ## Prompt Management in v1
 
-Goa-AI v1 does **not** define a mandatory prompt declaration DSL (`Prompt(...)`, `Prompts(...)`, etc.).
+Goa-AI v1 does **not** require an agent prompt declaration DSL. The MCP `Prompt` declaration below exposes service-owned messages to an MCP client; it does not configure the agent prompt registry.
 Prompt management is intentionally runtime-driven:
 
 - Register baseline prompt specs via `Runtime.PromptRegistry.Register(prompt.PromptSpec{...})`.
@@ -475,10 +475,11 @@ an estimate is not a context-window guarantee or a billing count.
 
 | Function                            | Context                            | Purpose                                        |
 | ----------------------------------- | ---------------------------------- | ---------------------------------------------- |
-| `MCP(name, version, opts...)`       | Inside `Service`                   | Enables MCP protocol for the service           |
-| `ProtocolVersion(version)`          | Option for `MCP`                   | Sets MCP protocol version (e.g., "2025-06-18") |
+| `MCP(name, version)`       | Inside `Service`                   | Enables MCP protocol for the service           |
 | `Tool(name, description)`           | Inside `Method` (with MCP enabled) | Marks method as MCP tool                       |
+| `ToolContent(field)` | Inside an MCP method's `Tool` block | Sends a typed result array as MCP content, excluding it from structured JSON |
 | `Resource(name, uri, mime)`         | Inside `Method`                    | Marks method as MCP resource provider          |
+| `Prompt(name, description)` | Inside `Method` (with MCP enabled) | Exposes typed, parameterized MCP messages |
 | `StaticPrompt(name, desc, msgs...)` | Inside `Service` (with MCP)        | Defines static MCP prompt template             |
 
 Every service that calls `MCP(...)` must also use Goa's service-level
@@ -1056,6 +1057,11 @@ Tool("search", "Search documents", func() {
 Templates are compiled with `missingkey=error`. Keep hints concise (≤140 characters recommended).
 Template variables use Go field names, not JSON keys.
 
+For a generated union, select a branch with `Kind` and read its typed value with
+`Value`, for example `{{if eq .Choice.Kind "complete"}}{{with .Choice.Value}}{{.Reference}}{{end}}{{end}}`.
+An invalid selection stops template execution. The typed `AsX` methods are for
+Go callers; their `(value, bool)` return shape cannot be called from Go templates.
+
 - Call templates receive the typed payload as the template root (for example,
 `.Query`, `.Limit`).
 - Result templates receive an explicit wrapper where payload fields live under
@@ -1410,7 +1416,7 @@ Enable MCP protocol for a service with `MCP`:
 
 ```go
 Service("calculator", func() {
-    MCP("calc", "1.0.0", ProtocolVersion("2025-06-18"))
+    MCP("calc", "1.0.0")
 
     JSONRPC(func() {
         POST("/mcp")
@@ -1433,10 +1439,952 @@ Service("calculator", func() {
     })
 
     StaticPrompt("greeting", "Friendly greeting",
-        "system", "You are a helpful assistant",
+        "assistant", "You are a helpful assistant",
         "user", "Hello!")
 })
 ```
+
+Tool, resource, prompt and completion bindings select their generated MCP
+operations. `SubscriptionSource()` selects one catalog, resource and task change stream;
+it does not create a model tool or executor. Other methods in the same
+service retain their ordinary HTTP or gRPC contract. For example, an HTTP-only
+`health` method can serve `/health` without becoming a model-callable tool.
+
+Construct the MCP adapter with the application's configured Goa endpoints:
+
+```go
+endpoints := genservice.NewEndpoints(service, interceptors)
+endpoints.Use(middleware)
+adapter := genmcp.NewMCPAdapter(endpoints, nil)
+```
+
+Omit the interceptor argument when the design declares none. The adapter calls
+these endpoints for tools, resource reads, method-backed prompts, completion and
+authored resource subscription streams.
+
+The generated MCP HTTP server accepts allowed origins as the final variadic
+string arguments to `New`. Pass the exact browser origins you allow, or omit them
+to reject every request that sends an Origin header. Configure HTTP middleware
+with `Server.Use`, then use `Mount(mux)` or serve the server directly. Both paths check MCP headers, metadata,
+HTTP methods and origins before running configured middleware. Origin settings
+belong to construction; `MountWithOrigins` and the public inner `Handler` field
+are removed in this breaking upgrade. Use `ServeHTTP` for direct serving.
+Regenerate the server and update its constructor callers together.
+When a generator plugin declares a required server dependency through Goa's
+construction plan, pass that typed value before the final origin arguments.
+Native example startup calls the matching application factory. Fill in that
+factory's application configuration before starting the example server.
+For routes with URL parameters, register `ServeHTTP` with the same mux passed
+to `New`, or use `Mount(mux)`. The mux supplies path values to generated decoders.
+
+The original endpoint owns authentication, method scopes, the authenticated
+context, interceptors and middleware. Static catalogs and prompts do not call
+an application endpoint. This replaces the constructor that accepted a bare
+service; regenerate and update application wiring together.
+
+The generated HTTP server's `Use` method applies HTTP middleware to direct and
+mounted MCP requests. It may be called before or after mounting, but before
+requests begin.
+Protocol checks run first; the middleware then receives the valid request and
+may change its context or return its own response before service dispatch.
+Regenerate the server with the pinned Goa dependency to enable this behavior.
+
+### URL values and mapped attributes
+
+Use Goa's native `Param("payload_field:url_name")` notation when a URL wildcard
+has a different name from its service payload field:
+
+```go
+JSONRPC(func() {
+    POST("/organizations/{organization}/mcp")
+    Param("organization_id:organization")
+})
+```
+
+API and parent service prefixes retain their authored paths and mappings. The
+URL supplies `organization_id`; tool and prompt arguments, examples, field
+metadata and argument codecs exclude it. An independent domain field named
+`organization` remains an argument. Each selected method keeps its own type,
+custom Go field name and validation, even when several tools share that URL.
+Invalid URL values stop before the configured endpoint runs. URL fields use
+scalar values or arrays of scalar values, following Goa's HTTP contract.
+Unsupported object collections fail generation with the method and field named.
+
+Generated protocol clients carry URL values in their typed request payload,
+separate from JSON-RPC parameters. A generated `NewCaller` accepts the URL values
+in route order after its retry policy and fixes them for that caller's lifetime.
+For this route, pass `"blue"` as its final argument. Tool calls then supply only
+domain arguments. The imported `NewHTTPCaller` instead receives a complete
+endpoint URL, such as `https://example.com/organizations/blue/mcp`.
+Regenerate clients, servers and agent contracts together when upgrading.
+
+### Secured MCP methods
+
+Declare credentials with Goa's security DSL, such as `Token`, `AccessToken`,
+`BearerToken`, `APIKey`, `Username` and `Password`. The generator excludes those
+annotated fields from tool schemas, examples, field metadata and argument codecs.
+It preserves ordinary domain fields, including a field named `token` that has no
+security annotation. A credential-only tool accepts omitted arguments or `{}`;
+a fixed resource may also use a payload containing only credentials.
+
+The generated HTTP binding supplies credentials separately from JSON-RPC
+parameters. It uses the method's authored JSON-RPC binding when present,
+otherwise its HTTP binding, or Goa's implicit `Authorization` header. The adapter
+fills the original typed service payload, validates it with Goa's generated
+validator and calls the same configured endpoint. Authentication callbacks,
+required method scopes and returned context retain their Goa behavior. This
+applies to tools, resource reads, method-backed prompts and completions.
+
+OAuth access tokens must use `Authorization: Bearer`. Basic and Bearer may be
+separate authentication alternatives when every inactive credential field is
+optional. They cannot both be required in one request because they share one
+`Authorization` header. Generation rejects body credentials, conflicting native
+bindings, and credentials bound to MCP's protocol headers instead of silently
+choosing another location. Goa also rejects defaults on security fields.
+
+Declare the resource's basic access policy with native Goa `Security` inside an
+MCP block:
+
+```go
+MCP("records", "1", func() {
+    Security(resourceOAuth, func() { Scope("catalog:read") })
+})
+```
+
+Each resource policy alternative uses one OAuth2, JWT or Bearer scheme, and all
+alternatives use the same authored scheme. Without an explicit MCP block policy,
+the generator uses a service-level bearer policy or the API policy. Unsupported
+inherited API policies fail generation instead of producing public catalogs.
+Basic and API-key method authentication retain their original behavior when no
+resource policy is selected.
+
+The generated server requires a `*mcp.ResourceServer` constructed by the host.
+It verifies resource access before HTTP middleware, including for catalogs,
+notifications and unsupported HTTP methods. Operation scopes from the same
+authored resource scheme combine with basic-access scopes; alternatives remain
+alternatives. Independent domain keys keep their separate native bindings.
+An independent credential cannot share the resource's `Authorization` header.
+Static catalogs never invoke a domain method as an authentication probe.
+
+Regenerate protected servers and supply the new required constructor dependency.
+Original endpoint security remains intact. See [runtime construction and
+identity](runtime.md#mcp-resource-servers). Complete OAuth and extension support
+remain required before this breaking upgrade is released.
+
+### Goa result views
+
+A method with one Goa result view, or an explicit `Result(type, func() {
+View("name") })`, returns exactly that view's fields through MCP. The tool's
+advertised output schema and generated agent result codec use those same fields
+and their required-field rules. A required field outside the selected view is
+omitted; it is never reconstructed as a zero value. Nested fields may select
+different views of the same result type, and each keeps its own field contract.
+
+Prompt, resource and completion views must retain the fields required by their
+MCP operation. Generation rejects a view that omits those fields. Regenerate
+servers and agent toolsets together when changing a view.
+
+When the service chooses among multiple views during execution, a tool or JSON
+resource returns Goa's tagged `OneOf` shape. For example, the `default` view
+returns `{"type":"default","value":{"visible":"shown"}}`, while a `detailed`
+view can retain additional fields inside `value`. The original endpoint supplies
+the view name; callers do not add a framework view argument. The advertised
+schema, generated agent decoder and stored result retain that name, even when
+two views contain identical fields. Each branch enforces its own required fields
+and rejects omitted fields. An empty viewed collection returns
+`{"type":"default","value":[]}`.
+
+Method-backed prompts, resource-template reads and completion still return their
+flat MCP protocol shape. Every selectable view must retain the fields required
+by that operation, and only the selected view is validated before conversion.
+Changing a fixed result to execution-selected views changes the result wire
+shape; regenerate servers and consumers and deploy them together.
+
+### MCP progress from unary methods
+
+Progress does not change a method's payload, result, or unary service interface.
+Its implementation calls `mcp.ReportProgress` through the ordinary request
+context and handles delivery errors. The generated transport owns the client
+token, ordered notifications and final response. HTTP and stdio consumers use
+`mcp.WithProgress`; agent activities forward typed updates to the selected host
+stream. See [request-scoped progress](runtime.md#request-scoped-mcp-progress)
+for callback, cancellation and retry behavior.
+
+### MCP resource content
+
+Resource methods have no payload and return the content for their declared URI.
+A `Bytes` result becomes base64 in the protocol's `blob` field, with the MIME
+type declared by `Resource`. Named byte types use the same representation.
+A string with a `text/` MIME type becomes `text` unchanged. Other result types
+with an `application/json` MIME type become `text` encoded by the generated
+result codec.
+
+```go
+Method("logo", func() {
+    Description("Read the service logo")
+    Result(Bytes)
+    Resource("logo", "asset://logo", "image/png")
+})
+```
+
+Empty byte results produce a present empty `blob`; empty strings produce a
+present empty `text`. The generated direct client rejects resource replies that
+contain both fields or neither field. The service returns ordinary typed data;
+it does not encode base64 itself or construct protocol content.
+
+### Parameterized MCP resources
+
+`ResourceTemplate(name, uriTemplate, mimeType)` advertises an RFC 6570 address
+on an ordinary unary Goa method. `ResourceReader()` selects that same reader
+without requiring a template declaration. All templates in one MCP service use
+the same reader method. Its payload contains only a required `uri: String`;
+the generated constructor preserves the client's exact URI, including percent encoding.
+
+Templates describe addresses clients can construct. They do not grant access,
+choose between competing handlers, or recover original variable values. For
+example, `{id:3}` may turn `abcdef` into `abc`, so the reader receives the URI
+containing `abc`. The reader owns interpretation, existence and current access.
+It may serve a valid URI that is not enumerated in a catalog. Fixed `Resource`
+bindings retain their exact dispatch before the parameterized reader.
+
+The result declares `contents: ArrayOfRequired(Item)`. Each item declares only
+one required `content` OneOf with `text` and/or `blob` object branches. Text
+requires `uri: String` with `Format(FormatURI)` and `text: String`; blob requires
+that URI and declares `blob: Bytes`. Both allow optional `mimeType` and raw
+`_meta` as in embedded prompt resources. The generator validates the typed result
+and copies every item in service order, converting bytes to base64. Renamed fields,
+named types and located declarations retain their Goa representation.
+
+Make `contents` optional when an existing resource can contain no items. Required
+contents must declare `MinLength(1)`. An empty successful resource returns the
+present wire array `[]`; an unknown resource must return `invalid_params`, never
+an empty success. Nil results, null items, unset variants and invalid content
+return `internal_error`. Ordinary Goa composition and the service own access
+checks; the framework never opens a filesystem path or fetches a supplied URI.
+
+Resource-capable services also expose `resources/templates/list`, returning
+an empty array when no templates are declared. Without a dynamic catalog
+binding, the generated fixed catalog has private zero-duration cache metadata
+and rejects cursors because it fits in one response.
+
+`ResourceCompletion(uriTemplate, variable)` binds a declared template variable
+to the same typed partial-value/prior-arguments/suggestions method contract as
+[PromptCompletion](#mcp-prompt-argument-suggestions). The client references the
+exact declared template. Variable names are derived during generation, including
+prefix and composite variables. Unknown templates, variables and prior names
+fail before dispatch; a declared variable without a provider returns `[]`.
+Completion does not expand a URI or read the resource.
+
+### Inherited MCP method contracts
+
+MCP methods can reuse Goa types with `Extend` and `Reference`. Inherited payload
+and result fields keep their required constraints, aliases and package locations,
+including fields inside arrays, maps and OneOf branches. The same rules apply to
+input exchanges, native job operations, catalogs, resource readers, prompts,
+completion suggestions and subscription events. Author these types normally;
+MCP bindings do not require you to repeat inherited fields in each method.
+
+### Native job tools
+
+`TaskExchange(read, answer, cancel)` binds a creator to three ordinary methods
+in the same Goa service. Use it when the application already owns durable jobs:
+
+```go
+Method("create_report", func() {
+    Description("Accept a durable report job and return its readable state")
+    Payload(CreateReportPayload)
+    Result(ReportObservation)
+    TaskExchange("read_report", "answer_report", "cancel_report")
+    Tool("create_report", "Create a report")
+})
+```
+
+`ReportObservation` is a named type with required `task` metadata and a required
+`outcome` OneOf. Declare all five branches: empty `working` and `cancelled`
+objects, `input_required` questions, the domain result in `complete`, and a
+JSON-RPC error in `failed`. Metadata requires string `taskId`, `createdAt` and
+`lastUpdatedAt` fields. Optional `statusMessage` is a string; optional `ttlMs` and
+`pollIntervalMs` are `Int64` milliseconds. Absent native `ttlMs` means unlimited
+retention; generated MCP replies always emit `ttlMs`, including explicit null.
+The service owns the meaning and lifetime of each observation's values.
+
+The read method returns that same named observation. Read and cancel require a
+string `taskId`. Answer requires `taskId` and a typed `responses` map. The
+`input_required` branch contains a required typed `requests` map. Their values
+contain matching `request` and `response` OneOf declarations, one branch per
+question kind. Form and URL question shapes follow
+[additional input](#additional-input-from-mcp-methods). Keys identify questions
+within a job and cannot be reused after an answer. Answer and cancel return no
+domain result. `failed` requires integer `code` and string `message`; optional
+`data` uses `Any` with the existing `rawjson.Message` field-type metadata to
+preserve exact JSON error details.
+
+The service must durably create the job and make it readable before returning
+its first observation. Each later method authorizes the native job ID. Generated
+MCP adapters call the configured endpoints, retaining security, interceptors,
+middleware, mapped HTTP fields, aliases and defaults. Later MCP requests supply
+only the saved job ID, typed answers, credentials and route fields. Generation
+rejects a required domain field those requests cannot supply. Derive such data
+from the job inside the service rather than saving creator arguments in an
+adapter-owned store.
+
+A declared `InputExchange` can precede creation. After creation, `tasks/get`
+reads the existing job, `tasks/update` submits answers, and `tasks/cancel` accepts
+cancellation intent. Update and cancel acknowledgments do not prove the job has
+already changed. The completed branch alone becomes the advertised tool result.
+`ToolContent` and read-selected Goa views use their ordinary output contracts;
+job metadata and presentation attachments stay out of structured domain output.
+Local `BindTo` executors and generated registry providers use the same typed
+question conversion and workflow-owned continuation operations.
+
+Generated servers with a Task binding advertise the Tasks extension. A client
+must declare support on each creating tool call; otherwise the adapter returns
+`-32021` before work starts. Ordinary tools retain ordinary replies. Applications
+must regenerate affected executors, providers, servers and clients together;
+there is no compatibility alias or older Task wire representation. See
+[Task client and workflow behavior](runtime.md#mcp-task-clients).
+
+### Authenticated tool and prompt catalogs
+
+`ToolCatalog()` and `PromptCatalog()` bind unary Goa methods to paginated
+`tools/list` and `prompts/list`. The method selects the declared names visible
+to this request and owns cursor validity, ordering and authorization. Generated
+code supplies each selected operation's existing schema and metadata.
+
+```go
+Method("list_tools", func() {
+    Payload(func() {
+        Attribute("cursor", String, "Opaque cursor from the preceding page")
+    })
+    Result(func() {
+        Attribute("tools", ArrayOf(String), "Visible names declared with Tool")
+        Attribute("nextCursor", String, "Opaque cursor for another page")
+    })
+    ToolCatalog()
+})
+```
+
+For `PromptCatalog`, return `prompts` instead of `tools`. Names select authored
+static or method-backed prompts. Both page inputs contain only an optional
+`cursor` string apart from native credentials and mapped URL values. Both page
+results contain the names array and an optional `nextCursor` string. String
+aliases, inherited inputs and results, custom Go selectors and Goa result views retain
+normal generated representations. Every selected view must include its names
+array. Make the array optional when an empty page is valid.
+
+An unknown or repeated returned name is a server contract error; generated
+adapters do not invent definitions or silently drop entries. Catalog membership
+is independent of invocation authorization. Each tool or prompt operation still
+runs its original configured endpoint. A name absent from one page does not
+become an invocation permission rule. Catalogs do not vary with connection state.
+Without a catalog binding, the generated fixed list keeps its existing behavior.
+
+The same `SubscriptionSource()` can select optional `toolsListChanged` and
+`promptsListChanged` boolean fields when the corresponding catalog is authored.
+Its `acknowledged` object contains those same fields. `tools_changed` and
+`prompts_changed` each contain an empty object. The service first acknowledges
+an authorized subset, then sends changes for accepted catalogs. Absence or
+false leaves a catalog unselected. Native aliases, credentials and mapped URL
+values follow the same generated constructor and endpoint path as resource and
+Task subscriptions. The shared transport rejects unrequested acceptance,
+changes before acknowledgment and duplicate acknowledgment, and attaches the
+originating request identity. Discovery advertises `listChanged` only for the
+catalogs that this source actually declares.
+
+A catalog method may exist without change notifications. Fixed catalogs cannot
+advertise a changing source.
+
+### Authenticated resource and template catalogs
+
+`ResourceCatalog()` and `ResourceTemplateCatalog()` bind unary Goa methods to
+`resources/list` and `resources/templates/list`. Both require the service's
+`ResourceReader`. The catalog method owns authorization, order and opaque cursor
+validity. Reading a URI still invokes its resource owner with current credentials.
+A listed descriptor grants no read permission, and the reader can serve URIs
+that are not listed.
+
+Declare descriptor types before the service:
+
+```go
+var ListedResource = Type("ListedResource", func() {
+    Field(1, "uri", String, "Exact resource address", func() { Format(FormatURI) })
+    Field(2, "name", String, "Resource identifier")
+    Field(3, "title", String, "Display name")
+    Required("uri", "name")
+})
+
+// Inside the MCP service:
+Method("list_resources", func() {
+    Description("List the resources visible to this caller")
+    Payload(func() { Attribute("cursor", String, "Cursor from the previous page") })
+    Result(func() {
+        Attribute("resources", ArrayOfRequired(ListedResource), "Visible resources")
+        Attribute("nextCursor", String, "Cursor for another page")
+    })
+    ResourceCatalog()
+})
+```
+
+For templates, return `resourceTemplates: ArrayOfRequired(Template)` and bind
+`ResourceTemplateCatalog()`. Each descriptor requires `uriTemplate: String` and
+`name: String`. Templates use RFC 6570 syntax; reading receives the expanded URI
+and does not infer the original variables. Both catalog payloads contain only
+optional `cursor`, apart from native credentials and mapped URL fields. Make the
+entries array optional when empty pages are valid. Each result view must retain
+the entries and their required descriptor fields.
+
+Both descriptor kinds allow `title`, `description`, `mimeType`, `icons`,
+`annotations` and raw JSON `_meta`. Resource descriptors also allow `size`, the
+nonnegative number of raw content bytes before base64 encoding. Icons require
+`src` with `FormatURI`; optional fields are `mimeType`, `sizes` (a string array)
+and `theme` (`light` or `dark`). Annotations allow `audience` (a `user`/`assistant`
+string array), `priority` (a number from zero through one, inclusive) and
+`lastModified` (a string). Declare these fields with the corresponding Goa
+validation. `_meta` uses the same raw JSON object declaration as rich content;
+numbers are retained exactly. Unknown fields, invalid metadata or templates,
+and duplicate addresses in one page are contract errors rather than silently
+removed entries. Generated clients also reject invalid descriptors from peers.
+
+The same `SubscriptionSource()` can select optional `resourcesListChanged`.
+Its acknowledgment contains that boolean and its `resources_changed` branch
+contains an empty object. This selection covers both resource catalog kinds.
+The service acknowledges an authorized subset first, then reports changes.
+It does not imply URI update subscriptions: discovery advertises `listChanged`
+and `subscribe` independently according to the source's declared selections.
+
+### Resource update subscriptions
+
+`SubscriptionSource()` binds one server-streaming Goa method per MCP service.
+The service must already declare a `Resource` or `ResourceReader` (including
+a reader selected by `ResourceTemplate`). Its input
+selects optional `resources`, an array of URI strings, apart from native
+annotated credentials and mapped URL fields. The same source may also select
+Tasks as described below. Each URI declares `Format(FormatURI)`. Empty selections
+are valid, so the array is optional.
+
+The stream result contains only a required `change` OneOf with two object
+branches. `acknowledged` contains only optional `resources` with the same URI
+constraints. `updated` contains only a required `uri` string with `FormatURI`.
+Declare types before the service, then bind its streaming method:
+
+```go
+var SubscriptionURI = Type("SubscriptionURI", String, func() {
+    Format(FormatURI)
+})
+var AcceptedResources = Type("AcceptedResources", func() {
+    Attribute("resources", ArrayOf(SubscriptionURI), "Authorized requested URIs")
+})
+var UpdatedResource = Type("UpdatedResource", func() {
+    Attribute("uri", SubscriptionURI, "The changed resource URI")
+    Required("uri")
+})
+var ResourceChange = Type("ResourceChange", func() {
+    OneOf("change", "One acknowledgment or resource update", func() {
+        Attribute("acknowledged", AcceptedResources, "Accepted URI subset")
+        Attribute("updated", UpdatedResource, "Changed resource or sub-resource")
+    })
+    Required("change")
+})
+
+// Add this method to a service with a fixed resource or URI reader.
+Method("watch_resources", func() {
+    Description("Authorize requested resources and report their changes")
+    Payload(func() {
+        Attribute("resources", ArrayOf(SubscriptionURI), "Requested resource URIs")
+    })
+    StreamingResult(ResourceChange)
+    SubscriptionSource()
+})
+```
+
+The implementation sends one `acknowledged` value with an authorized subset of
+requested URIs before sending updates. It can acknowledge an empty subset and
+return successfully. An update can identify a related sub-resource: the service
+owns that relationship and access checks. The transport does not infer access
+from URI prefixes, templates or filesystem paths. Check every `Send` or
+`SendWithContext` error and honor the method context's cancellation.
+
+Generated code calls the application's configured Goa endpoint, preserving
+security scopes, authenticated context, interceptors and middleware. It uses the
+generated input constructor and result validator, including renamed fields and
+located types. Results with missing fields, unset variants or invalid URIs fail
+before transmission. Acknowledgment outside the requested subset, repeated
+acknowledgment and updates before acknowledgment fail the source operation.
+Returning successfully without an acknowledgment returns `internal_error`.
+Normal return supplies the finished result; `Close`, when present on Goa's stream
+interface, prevents further authored sends.
+
+The generated HTTP mount owns each listen request's exact ID and event framing.
+Applications do not call raw protocol reporting functions or choose IDs. Closing
+the HTTP listener cancels its service context; no reconnect or replay occurs.
+Only services whose source selects resources advertise `resources.subscribe`. Fixed catalogs
+remain fixed, and unsupported catalog-change requests are omitted from the
+acknowledgment. See [client subscription behavior](runtime.md#mcp-change-subscriptions).
+
+### Task update subscriptions
+
+Use the same `SubscriptionSource()` when an application reports native job
+changes. Its optional `tasks` object contains optional arrays named after the
+service's Task creator methods. Each array holds native string job IDs, not MCP
+handles. A Task-only source needs no resource declaration. A combined source
+selects both `resources` and `tasks` in one method.
+
+```go
+var SelectedReports = Type("SelectedReports", func() {
+    Attribute("create_report", ArrayOf(String), "Native report job IDs")
+})
+var AcceptedReports = Type("AcceptedReports", func() {
+    Attribute("tasks", SelectedReports, "Authorized requested jobs")
+})
+var ChangedReports = Type("ChangedReports", func() {
+    Attribute("tasks", SelectedReports, "Native jobs whose state changed")
+    Required("tasks")
+})
+var ReportChanges = Type("ReportChanges", func() {
+    OneOf("change", "Accepted jobs or changed job IDs", func() {
+        Attribute("acknowledged", AcceptedReports, "Authorized job subset")
+        Attribute("tasks_updated", ChangedReports, "Changed native jobs")
+    })
+    Required("change")
+})
+Method("watch_reports", func() {
+    Description("Authorize requested report jobs and report their changes")
+    Payload(func() {
+        Attribute("tasks", SelectedReports, "Requested native jobs")
+    })
+    StreamingResult(ReportChanges)
+    SubscriptionSource()
+})
+```
+
+The acknowledgment must contain the same selection fields and creator names as
+the input. Send it once with the authorized subset, then send `tasks_updated`
+with changed native IDs. A combined source also declares the resource `updated`
+branch. Generation rejects unknown creators, ordinary methods, unexposed Task
+creators and mismatched selections. An unrequested acknowledgment or a job update
+outside the accepted subset fails before any observation read.
+
+For each changed job, generated code calls its existing configured read endpoint
+and sends the full snapshot using the same result codec as `tasks/get`. It fills
+that endpoint's native credentials and mapped URL fields from the listen request.
+The read-selected view and typed content remain intact. Multiple exposed tools
+for one native creator share one native selection, while each accepted MCP handle
+receives its corresponding snapshot. This mapping lasts only for the listen
+request; it stores no jobs or original tool arguments. The transport owns request
+IDs, ordering and closure. The source owns authorization and change detection.
+
+### Method-backed MCP prompts
+
+Declare `Prompt(name, description)` on an ordinary unary Goa method. Its payload
+contains named strings, and its result contains ordered messages. The client
+selects the prompt and supplies its arguments; the service produces the messages.
+The adapter does not call a model or change the agent prompt registry.
+
+```go
+var ReviewText = Type("ReviewText", func() {
+    Attribute("text", String, "Message text")
+    Required("text")
+})
+var ReviewMessage = Type("ReviewMessage", func() {
+    Attribute("role", String, "Message author", func() {
+        Enum("user", "assistant")
+    })
+    OneOf("content", "Selected message content", func() {
+        Attribute("text", ReviewText, "Text content")
+    })
+    Required("role", "content")
+})
+
+Service("reviews", func() {
+    MCP("reviews", "1.0")
+    JSONRPC(func() { POST("/reviews") })
+    Method("review", func() {
+        Payload(func() {
+            Attribute("code", String, "Source code to review", func() {
+                MinLength(1)
+            })
+            Required("code")
+        })
+        Result(func() {
+            Attribute("description", String, "Prompt purpose")
+            Attribute("messages", ArrayOfRequired(ReviewMessage), "Ordered messages")
+        })
+        Prompt("review", "Review source code")
+    })
+})
+```
+
+`prompts/list` describes argument names, descriptions and required fields without
+calling the service. `prompts/get` applies the payload's Goa defaults and
+validation, then calls the method once. Unknown argument names, null values and
+non-string values are invalid parameters. Empty strings remain strings; their
+validity comes from the authored payload validation.
+
+Messages use `ArrayOfRequired` to reject null entries. Their required role permits
+`user`, `assistant`, or a declared subset. Content uses `OneOf` with one or more
+of the following branch names. Each branch is an object with these fields:
+
+| Branch | Required fields | Optional fields |
+| --- | --- | --- |
+| `text` | `text: String` | `annotations`, `_meta` |
+| `image`, `audio` | `data: Bytes`, `mimeType: String` | `annotations`, `_meta` |
+| `resource_link` | `uri: String`, `name: String` | `title`, `description`, `mimeType`, `size`, `icons`, `annotations`, `_meta` |
+| `resource` | `resource: OneOf` | `annotations`, `_meta` |
+
+The embedded `resource` selects a `text` object with required `uri` and `text`,
+or a `blob` object with required `uri` and declared `blob: Bytes`. Both permit
+`mimeType` and `_meta`. A byte field may be nil or empty; both produce a present
+empty base64 string. Other required fields must use Goa `Required`.
+
+URI fields declare `Format(FormatURI)`. Annotation audience values permit only
+`user` and `assistant`; priority is a `Float64` between 0 and 1 inclusive for
+**each content item**, independent of other items. Resource-link `size` is a
+nonnegative `Float64` describing the resource's byte count. Both numbers must
+be finite; a service result containing `NaN` or infinity returns an internal
+error before response encoding. Icon objects declare
+required `src` with URI format and optional `mimeType`, string `sizes`, and
+`theme` restricted to `light` or `dark`; object arrays use `ArrayOfRequired`.
+Open `_meta` objects use `Any` with `Meta("struct:field:type", "json.RawMessage",
+"encoding/json")`, because each extension owns its fields. Other Go field type
+replacements are rejected; use ordinary Goa named or located types.
+
+Generation rejects unsupported fields or missing protocol constraints rather
+than losing data. The service returns generated Goa union values and raw bytes;
+the adapter produces MCP's flat content objects and base64. Invalid service
+results return a protocol internal error. Optional `messages` permits an empty
+message sequence; requiring a nonempty sequence remains an authored domain rule.
+A method may also be a tool when its tool contract is valid. Static prompts keep
+their fixed role/text pairs. Methods can request additional user input through
+[`InputExchange`](#additional-input-from-mcp-methods).
+
+### Additional input from MCP methods
+
+`InputExchange(continuationField, outcomeField)` lets a unary tool, resource
+reader or prompt return a question and finish after the host answers. The method
+keeps its ordinary Goa payload and result. Generation derives the form schema,
+answer decoding and result conversion from those same types.
+
+```go
+var EmptyAnswer = Type("EmptyAnswer", func() {})
+var LabelContent = Type("LabelContent", func() {
+    Field(1, "label", String, "Label selected by the user")
+    Required("label")
+})
+var LabelAccepted = Type("LabelAccepted", func() {
+    Field(1, "content", LabelContent, "Accepted label")
+    Required("content")
+})
+var LabelAnswer = Type("LabelAnswer", func() {
+    OneOf("answer", "User decision", func() {
+        Attribute("accept", LabelAccepted, "Accepted form")
+        Attribute("decline", EmptyAnswer, "Explicit refusal")
+        Attribute("cancel", EmptyAnswer, "Dismissed question")
+    })
+    Required("answer")
+})
+var LabelContinuation = Type("LabelContinuation", func() {
+    Field(1, "state", String, "Opaque state returned by this operation")
+    Field(2, "responses", "Answers returned for this input round", func() {
+        Field(1, "label", LabelAnswer, "Answer to the label question")
+    })
+})
+var LabelPending = Type("LabelPending", func() {
+    Field(1, "state", String, "Opaque state for the next round")
+    Field(2, "requests", "Questions selected for this input round", func() {
+        Field(1, "label", "Label question selected by the service", func() {
+            Field(1, "message", String, "Question shown to the user")
+            Required("message")
+        })
+    })
+})
+var LabelOutcome = Type("LabelOutcome", func() {
+    OneOf("outcome", "Completed label or requested input", func() {
+        Attribute("complete", String, "Completed label")
+        Attribute("input_required", LabelPending, "Question for the host")
+    })
+    Required("outcome")
+})
+
+// Inside an MCP-enabled service:
+Method("choose_label", func() {
+    Description("Collects a user-selected label before completing the operation.")
+    Payload(func() {
+        Field(1, "continuation", LabelContinuation, "Input supplied by the host")
+    })
+    Result(LabelOutcome)
+    InputExchange("continuation", "outcome")
+    Tool("choose_label", "Choose a label with user input")
+})
+```
+
+The continuation object is optional. Its `state` and `responses` fields are
+optional too. The result contains only the required outcome union, with
+`complete` and `input_required` branches. Pending `requests` and continuation
+`responses` declare the same optional question identifiers; the service chooses
+which questions to return in each round. Missing answers can produce another
+input round. Unknown response identifiers are ignored.
+
+A form question declares a required `message: String`. Its accepted answer
+contains only required `content`, a flat object of primitive fields or non-null
+string-selection arrays. Goa descriptions, defaults and supported constraints
+supply the form schema. Authored JSON tags select the same field names in the
+schema and answer decoder. Hidden fields and JSON tag options that change the
+value encoding are rejected. Unsupported form constraints fail generation. Equivalent
+integer spellings such as `3`, `3.0` and `3e0` decode to the same typed integer;
+fractional and out-of-range values fail before endpoint execution.
+
+A URL question declares required `message` and `url: String` with
+`Format(FormatURI)`. Its accept, decline and cancel branches are empty objects.
+The host must show the URL and obtain consent before opening it. Acceptance
+means consent, not proof that the external interaction has finished; the service
+checks completion on the next round. Forms must not request secrets or payment
+credentials. Sensitive interactions use URL consent.
+
+Each pending reply supplies requests, state, or both. An explicitly empty
+requests object and an explicitly empty state string are valid; neither means
+absence. The client echoes the state exactly. The service must authenticate the
+caller again and verify state integrity and ownership before trusting it.
+Original Goa security, method scopes, interceptors and endpoint middleware run
+on every round. State and host answers remain outside model arguments, and only
+the completed branch enters the tool's advertised result contract. Fixed and
+service-selected Goa views still govern completed fields.
+
+The server checks the capabilities on the current request before returning
+questions. Unsupported modes return JSON-RPC `-32021` with typed
+`requiredCapabilities` data. Invalid mode declarations return invalid params.
+The current protocol defines `elicitation: {}` as form-only support; URL support
+must be explicit. Generated servers always emit the selected `form` or `url`
+mode. See the [current elicitation contract](https://modelcontextprotocol.io/specification/2026-07-28/client/elicitation).
+
+Regenerate typed JSON-RPC consumers: tool, resource-read and prompt-read results
+now have native `Outcome` unions. Select `AsComplete()` or `AsInputRequired()`
+instead of reading completed fields directly. Framework MCP callers keep their
+existing `CallResponse` contract.
+
+The same `InputExchange` method can back an agent tool through `BindTo` or a
+generated registry provider. Inherited `Args` exclude the continuation; inherited
+`Return` selects the completed branch. `Inject` keeps filling ordinary runtime
+fields. The runtime owns host answers and the input-round number, suspends the
+unfinished call, and invokes the same method after validating the host response.
+Pending questions never enter completed tool history. `BoundedResult` and
+`FromMethodResultField` read completed fields. Registry output follows the tool's
+`Return`, independently of HTTP result views. Text-only calls reject continuation
+before invocation and reject unfinished output before suspension.
+
+Regenerate local executors and registry providers together with their callers.
+Custom result mappers receive the completed native branch for an `InputExchange`
+method; they never receive its pending outcome. Do not include the continuation
+field in explicit `Args`.
+
+### MCP prompt argument suggestions
+
+`PromptCompletion(promptName, argumentName)` marks a separate unary Goa method
+that returns suggestions while a client fills one declared prompt argument.
+It does not execute that prompt or call a model. The binding must select an
+argument declared by a method-backed `Prompt`; duplicate bindings fail evaluation.
+
+The payload declares required `value: String` and optional
+`arguments: MapOf(String, String)`. Both fields must exist in the design:
+`value` contains the current partial text, and `arguments` retains previously
+resolved values from the client. Unknown prompt, argument and context names
+return invalid-parameter errors before dispatch. Ordinary Goa types, renamed
+fields, defaults and validators remain available; opaque Go field replacements
+are rejected.
+
+The result declares `values: ArrayOf(String)` with `MaxLength(100)` or a stricter
+bound, and may declare `total: Int64` and `hasMore: Boolean`. Keep `values`
+optional when an empty list is a valid domain result. The generated response
+always contains an array, including `[]`. The service owns relevance order,
+access control and any fuzzy matching; the framework never sorts or truncates
+its suggestions. Invalid output returns an internal-error response.
+
+```go
+Method("suggest_review_style", func() {
+    Description("Suggest review styles while the client fills the review prompt.")
+    Payload(func() {
+        Attribute("value", String, "Partial review-style text")
+        Attribute("arguments", MapOf(String, String), "Previously resolved prompt arguments")
+        Required("value")
+    })
+    Result(func() {
+        Attribute("values", ArrayOf(String), "Suggestions in relevance order", func() {
+            MaxLength(100)
+        })
+        Attribute("total", Int64, "Total matches, including values not returned")
+        Attribute("hasMore", Boolean, "Whether further matches exist")
+    })
+    PromptCompletion("review", "style")
+})
+```
+
+The MCP protocol limits **one response array** to at most 100 values, inclusive.
+It does not limit `total` to 100 or share an allowance across subsequent requests.
+A valid declared argument without a completion binding returns empty suggestions.
+The server advertises `completions` only when it has a binding. Applications
+configure authentication, rate limiting and suggestion access through their
+normal Goa service and HTTP composition. URI-template variables use
+[ResourceCompletion](#parameterized-mcp-resources) with the same typed contract.
+
+### MCP tool behavior hints
+
+Declare standard MCP annotations inside the method's `Tool` block:
+
+```go
+Tool("add", "Add two numbers", func() {
+    ToolTitle("Add numbers")
+    ReadOnlyHint(true)
+    DestructiveHint(false)
+    IdempotentHint(true)
+    OpenWorldHint(false)
+})
+```
+
+The generated catalog preserves omitted hints and explicit false values.
+`ReadOnlyHint` says the tool leaves its environment unchanged. `IdempotentHint`
+says repeating identical arguments has no additional effects; its service
+implementation must enforce that promise. `DestructiveHint` describes removal
+or replacement of existing data. `OpenWorldHint` describes interaction with
+external entities. `ToolTitle` supplies a display name.
+
+These declarations apply only to MCP method tools. They do not grant trust or
+change agent activity retry policies. The application chooses trust and bounded
+HTTP retries when constructing its caller; see [MCP callers](runtime.md#mcp-callers).
+
+Generated tool and prompt clients can receive all five MCP content kinds,
+including media, links and embedded resources with annotations, icons and
+extension metadata. Their shared `ContentItem` retains absent versus empty
+content and rejects malformed selected variants. Method-backed prompts author
+these kinds through typed Goa results. Tool methods use `ToolContent` to return
+typed attachments beside structured domain fields.
+
+Author a content or resource catalog `_meta` field as an ordinary Goa object
+when its extension fields are known. The generated codec preserves JSON names,
+Go field mappings, required fields and validation before encoding the object.
+An omitted optional object remains absent on the wire. The same conversion
+applies to tool content, prompt messages, embedded resources, URI reads and
+resource descriptors, including selected result views. For extension data whose
+fields are determined externally, use `Any` with
+`Meta("struct:field:type", "json.RawMessage", "encoding/json")`; a present value
+must be a JSON object. Service implementations do not need to encode their
+own authored metadata.
+
+### MCP Apps declarations
+
+Use `ToolUI(uri)` to associate a tool with an HTML resource served by the same
+MCP service. The resource must use `text/html;profile=mcp-app`. A fixed `Resource`
+or the service's existing `ResourceReader` supplies its contents; ordinary typed
+resource `_meta.ui` fields supply its browser policy.
+
+```go
+Tool("show_record", "Show a record", func() {
+    ToolUI("ui://records/panel")
+    ToolMetadata("hostData")
+})
+Tool("refresh_panel", "Refresh the panel", func() {
+    ToolVisibility("app")
+})
+```
+
+`ToolVisibility` accepts `"model"`, `"app"`, or both. Omission permits both, as
+the Apps protocol requires. An app-only helper does not need its own HTML
+resource. Generation writes current nested `_meta.ui` metadata, excludes
+app-only tools from `FromMCP` model toolsets, and rejects their invocation through
+generated model callers. Remote HTTP and stdio model callers validate the
+current catalog's visibility before execution. The typed protocol client remains
+available to an app host, which must enforce app permissions itself.
+
+`ToolMetadata(field)` selects a typed object on the completed method result.
+Its fields become tool-result `_meta` for the host and app. They are excluded
+from structured output, output schemas, examples, field metadata and model
+codecs. Optional absent objects add no fields. Goa views select metadata just
+as they select content and domain fields; completed Tasks use the same result
+converter. The framework adds `io.modelcontextprotocol/serverInfo` and rejects
+authored JSON fields that would replace it, including renamed JSON fields.
+
+Regenerate servers and consumers after adding these declarations. Stdio model
+callers now read `tools/list` before execution and validate arguments and
+completed output against that catalog. These declarations do not themselves
+grant permission to render HTML or forward app requests. The
+[browser host example](../integration_tests/apps/README.md) composes the official
+SDK with generated endpoints and verifies app visibility, origin isolation,
+restrictive browser policy and request cancellation. The application host owns
+its authenticated connection and the permissions it grants to views.
+
+### MCP Skill discovery
+
+`SkillCatalog()` and `SkillLookup()` bind ordinary unary Goa methods to complete
+Skill discovery pages and direct URI lookup. Both require `ResourceReader()`
+for files. Native authentication, mapped URL fields and selected result views
+remain part of the same generated endpoint path. DSL evaluation checks method
+shapes. `ResourceDirectory()` optionally binds a method accepting required
+`uri` and optional `cursor`, with a resource descriptor page and optional
+`nextCursor`. Its direct-child result uses the ordinary resource metadata contract.
+Generated discovery advertises directory support only for this declaration.
+DSL evaluation checks the entry shape; generated adapters also verify frontmatter,
+directory membership
+and manifest completeness before publishing entries. Discovery never reads or
+activates a skill. See [serve Skills over MCP](mcp_skills.md) for declarations,
+errors and the remaining host-loading completion gate.
+
+### Authored MCP tool content
+
+Use `ToolContent(field)` inside a method's `Tool` block to select a top-level
+result array. Each element is an ordinary Goa object with one required
+`content` OneOf. The service returns typed values; generated code validates and
+converts each selected branch to MCP's flat content representation.
+
+```go
+var ReportText = Type("ReportText", func() {
+    Attribute("text", String, "Text shown to the recipient")
+    Required("text")
+})
+var ReportAttachment = Type("ReportAttachment", func() {
+    OneOf("content", "Selected report content", func() {
+        Attribute("text", ReportText, "Text content")
+    })
+    Required("content")
+})
+
+Service("reports", func() {
+    MCP("reports", "1.0")
+    JSONRPC(func() { POST("/reports") })
+    Method("read", func() {
+        Result(func() {
+            Attribute("summary", String, "Structured report summary")
+            Attribute("attachments", ArrayOfRequired(ReportAttachment), "Ordered content")
+            Required("summary")
+        })
+        Tool("read", "Read a report", func() {
+            ToolContent("attachments")
+        })
+    })
+})
+```
+
+This result advertises and returns `summary` as structured JSON. `attachments`
+becomes MCP `content`, retaining authored order and audience annotations. It is
+absent from the structured output schema, examples, field metadata and exact
+agent codecs. This separation also applies to user-only content, icons and
+extension metadata, which must not enter model requests as ordinary JSON.
+
+The supported union branches and their fields are the same as
+[method-backed prompt content](#method-backed-mcp-prompts): `text`, `image`,
+`audio`, `resource_link` and `resource`. Image/audio data and embedded resource
+blobs use `Bytes`; conversion writes base64 only at the protocol boundary.
+Extra fields with no MCP representation fail generation.
+
+An optional array can be empty. A required array must also declare
+`MinLength(1)`. `ArrayOfRequired` rejects null elements, and each item must select
+exactly one content branch. Goa result views select both domain fields and
+attachments. A view omitting the marked field returns no content. Fixed results
+with only that field return content without `structuredContent` or an output
+schema. Service-selected views retain the view name in the structured result,
+including views with no remaining domain fields.
+
+Regenerate servers and agent packages after adding the binding. The service
+method's typed result remains its Goa contract; generated MCP codecs use the
+separate structured result contract. There is no second result mode, untyped
+content field or compatibility decoder.
 
 ### MCP Capabilities
 
@@ -1445,7 +2393,15 @@ Service("calculator", func() {
 | ---------------------------- | ---------------------------------- |
 | `Tool(name, desc)` in Method | `tools/list`, `tools/call`         |
 | `Resource(name, uri, mime)`  | `resources/list`, `resources/read` |
+| `Prompt(name, desc)` in Method | `prompts/list`, `prompts/get` with typed arguments and messages |
 | `StaticPrompt(...)`          | `prompts/list`, `prompts/get`      |
+| `ResourceReader()` / `ResourceTemplate(name, template, mime)` in Method | One service-owned URI reader and optional authored templates |
+| `ResourceCatalog()` / `ResourceTemplateCatalog()` in Method | Authenticated pages of typed resource descriptors or URI templates |
+| `ToolCatalog()` / `PromptCatalog()` in Method | Authenticated pages of declared tools or prompts |
+| `SubscriptionSource()` in Method | `subscriptions/listen` for service-owned catalog, resource and Task updates over HTTP |
+| `TaskExchange(read, answer, cancel)` in Method | Task creation from `tools/call`, plus `tasks/get`, `tasks/update` and `tasks/cancel` |
+| `ResourceCompletion(template, variable)` in Method | `completion/complete` for declared template variables |
+| `PromptCompletion(prompt, argument)` in Method | `completion/complete` for declared prompt arguments |
 
 
 ---
@@ -1580,7 +2536,7 @@ For each service/agent combination, `goa gen` produces:
 - `agent.go` — registers workflows/activities/toolsets; exports `const AgentID agent.Ident`
 - `workflow.go` — implements the durable run loop
 - `activities.go` — thin wrappers calling runtime activities
-- `config.go` — runtime options bundle; includes `MCPCallers` map when MCP toolsets are used
+- `config.go` — runtime options bundle; supplies the planner; executable toolsets are composed separately
 
 ### Toolset Owner Packages (`gen/<svc>/toolsets/<toolset>/`)
 
@@ -1615,7 +2571,8 @@ Generated when an agent exports toolsets (agent-as-tool). Export packages provid
 ### MCP Packages
 
 When a service declares MCP (`MCP(...)`), `goa gen` emits JSON-RPC client/server code under
-`gen/jsonrpc/<service>/...` and runtime registration helpers in the service package.
+`gen/jsonrpc/mcp_<service>/...`. Canonical tool contracts and an MCP executor
+are generated under `gen/<service>/toolsets/<server-name>/`.
 
 MCP services must declare their service-level JSON-RPC `POST` route explicitly.
 For migration from the former MCP subscription, notification, dynamic-prompt,
@@ -1640,7 +2597,7 @@ if err := chat.RegisterChatAgent(ctx, rt, chat.ChatAgentConfig{
 }
 
 // MCP toolset wiring
-caller, err := mcp.NewHTTPCaller(ctx, mcp.HTTPOptions{
+caller, err := mcp.NewHTTPCaller(mcp.HTTPOptions{
     Endpoint: "https://assistant.example.com/mcp",
     ClientInfo: mcp.ClientInfo{
         Name:    "my-agent",
@@ -1650,7 +2607,7 @@ caller, err := mcp.NewHTTPCaller(ctx, mcp.HTTPOptions{
 if err != nil {
     log.Fatal(err)
 }
-if err := mcpassistant.RegisterAssistantToolset(ctx, rt, caller); err != nil {
+if err := chat.RegisterUsedToolsets(ctx, rt, chat.WithAssistantExecutor(genassistantmcp.NewMCPExecutor(caller))); err != nil {
     log.Fatal(err)
 }
 
@@ -1677,7 +2634,8 @@ expected time budgets and tool limits.
 **Use `BoundedResult()` for large views** — Mark tools that return potentially large lists,
 graphs, or windows as bounded. Services own trimming; the runtime propagates bounds metadata.
 
-**Let codegen manage MCP registration** — Avoid hand-written glue for consistent codecs.
+**Compose executable toolsets explicitly** — Use generated MCP executors and executor
+options to register each shared runtime binding once. See [MCP callers](runtime.md#mcp-callers).
 
 **Use display hint templates** — `CallHintTemplate` and `ResultHintTemplate` improve UI feedback
 during tool execution.

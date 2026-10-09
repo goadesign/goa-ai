@@ -10,11 +10,10 @@ package client
 import (
 	"bytes"
 	"context"
-	"errors"
-	"io"
 	"net/http"
 	"sync"
 
+	mcpruntime "goa.design/goa-ai/runtime/mcp"
 	goahttp "goa.design/goa/v3/http"
 	goa "goa.design/goa/v3/pkg"
 )
@@ -47,6 +46,8 @@ func NewClient(
 	dec func(*http.Response) goahttp.Decoder,
 	restoreBody bool,
 ) *Client {
+	doer = mcpruntime.NewHTTPTransport(doer, mcpruntime.ClientInfo{}, mcpHTTPBindings(), mcpruntime.InputSupport{}, mcpruntime.HTTPRetryPolicy{})
+
 	return &Client{
 		Doer:                doer,
 		RestoreResponseBody: restoreBody,
@@ -57,15 +58,15 @@ func NewClient(
 	}
 }
 
-// Initialize returns an endpoint that makes JSON-RPC requests to the
-// mcp_assistant service initialize method.
-func (c *Client) Initialize() goa.Endpoint {
+// ServerDiscover returns an endpoint that makes JSON-RPC requests to the
+// mcp_assistant service server/discover method.
+func (c *Client) ServerDiscover() goa.Endpoint {
 	var (
-		encodeRequest  = EncodeInitializeRequest(c.encoder)
-		decodeResponse = DecodeInitializeResponse(c.decoder, c.RestoreResponseBody)
+		encodeRequest  = EncodeServerDiscoverRequest(c.encoder)
+		decodeResponse = DecodeServerDiscoverResponse(c.decoder, c.RestoreResponseBody)
 	)
 	return func(ctx context.Context, v any) (any, error) {
-		req, err := c.BuildInitializeRequest(ctx, v)
+		req, err := c.BuildServerDiscoverRequest(ctx, v)
 		if err != nil {
 			return nil, err
 		}
@@ -75,64 +76,7 @@ func (c *Client) Initialize() goa.Endpoint {
 		}
 		resp, err := c.Doer.Do(req)
 		if err != nil {
-			return nil, goahttp.ErrRequestError("mcp_assistant", "initialize", err)
-		}
-		return decodeResponse(resp, requestID)
-	}
-}
-
-// NotificationsInitialized returns an endpoint that sends JSON-RPC
-// notifications to the mcp_assistant service notifications/initialized method.
-func (c *Client) NotificationsInitialized() goa.Endpoint {
-	var (
-		encodeRequest = EncodeNotificationsInitializedRequest(c.encoder)
-	)
-	return func(ctx context.Context, v any) (any, error) {
-		req, err := c.BuildNotificationsInitializedRequest(ctx, v)
-		if err != nil {
-			return nil, err
-		}
-		if err := encodeRequest(req, v); err != nil {
-			return nil, err
-		}
-		resp, err := c.Doer.Do(req)
-		if err != nil {
-			return nil, goahttp.ErrRequestError("mcp_assistant", "notifications/initialized", err)
-		}
-		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-			body, readErr := io.ReadAll(resp.Body)
-			closeErr := resp.Body.Close()
-			if err := errors.Join(readErr, closeErr); err != nil {
-				return nil, goahttp.ErrDecodingError("mcp_assistant", "notifications/initialized", err)
-			}
-			return nil, goahttp.ErrInvalidResponse("mcp_assistant", "notifications/initialized", resp.StatusCode, string(body))
-		}
-		if err := resp.Body.Close(); err != nil {
-			return nil, goahttp.ErrDecodingError("mcp_assistant", "notifications/initialized", err)
-		}
-		return nil, nil
-	}
-}
-
-// Ping returns an endpoint that makes JSON-RPC requests to the mcp_assistant
-// service ping method.
-func (c *Client) Ping() goa.Endpoint {
-	var (
-		encodeRequest  = EncodePingRequest(c.encoder)
-		decodeResponse = DecodePingResponse(c.decoder, c.RestoreResponseBody)
-	)
-	return func(ctx context.Context, v any) (any, error) {
-		req, err := c.BuildPingRequest(ctx, v)
-		if err != nil {
-			return nil, err
-		}
-		requestID, err := encodeRequest(req, v)
-		if err != nil {
-			return nil, err
-		}
-		resp, err := c.Doer.Do(req)
-		if err != nil {
-			return nil, goahttp.ErrRequestError("mcp_assistant", "ping", err)
+			return nil, goahttp.ErrRequestError("mcp_assistant", "server/discover", err)
 		}
 		return decodeResponse(resp, requestID)
 	}
@@ -234,6 +178,30 @@ func (c *Client) ResourcesRead() goa.Endpoint {
 	}
 }
 
+// ResourcesTemplatesList returns an endpoint that makes JSON-RPC requests to
+// the mcp_assistant service resources/templates/list method.
+func (c *Client) ResourcesTemplatesList() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeResourcesTemplatesListRequest(c.encoder)
+		decodeResponse = DecodeResourcesTemplatesListResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildResourcesTemplatesListRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		requestID, err := encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.Doer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("mcp_assistant", "resources/templates/list", err)
+		}
+		return decodeResponse(resp, requestID)
+	}
+}
+
 // PromptsList returns an endpoint that makes JSON-RPC requests to the
 // mcp_assistant service prompts/list method.
 func (c *Client) PromptsList() goa.Endpoint {
@@ -277,6 +245,30 @@ func (c *Client) PromptsGet() goa.Endpoint {
 		resp, err := c.Doer.Do(req)
 		if err != nil {
 			return nil, goahttp.ErrRequestError("mcp_assistant", "prompts/get", err)
+		}
+		return decodeResponse(resp, requestID)
+	}
+}
+
+// CompletionComplete returns an endpoint that makes JSON-RPC requests to the
+// mcp_assistant service completion/complete method.
+func (c *Client) CompletionComplete() goa.Endpoint {
+	var (
+		encodeRequest  = EncodeCompletionCompleteRequest(c.encoder)
+		decodeResponse = DecodeCompletionCompleteResponse(c.decoder, c.RestoreResponseBody)
+	)
+	return func(ctx context.Context, v any) (any, error) {
+		req, err := c.BuildCompletionCompleteRequest(ctx, v)
+		if err != nil {
+			return nil, err
+		}
+		requestID, err := encodeRequest(req, v)
+		if err != nil {
+			return nil, err
+		}
+		resp, err := c.Doer.Do(req)
+		if err != nil {
+			return nil, goahttp.ErrRequestError("mcp_assistant", "completion/complete", err)
 		}
 		return decodeResponse(resp, requestID)
 	}

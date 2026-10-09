@@ -7,18 +7,16 @@ import (
 	"goa.design/goa-ai/codegen/agent/tests/testscenarios"
 )
 
-// TestConfigTemplateSpecializesMCPCallerValidation ensures config validation
-// emits direct checks for known MCP bindings instead of rebuilding a static
-// list at runtime.
-func TestConfigTemplateSpecializesMCPCallerValidation(t *testing.T) {
+// MCP bindings use explicit executable registration; agent configuration owns its planner.
+func TestMCPRegistrationUsesExplicitExecutor(t *testing.T) {
 	files := buildAndGenerate(t, testscenarios.MCPUse())
 	config := fileContent(t, files, "gen/alpha/agents/scribe/config.go")
-
-	require.NotContains(t, config, "required := []string")
-	require.NotContains(t, config, "for _, id := range required")
-	require.Contains(t, config, "if c.MCPCallers == nil {")
-	require.Contains(t, config, "if c.MCPCallers[ScribeCalcServiceCoreSuiteToolsetID] == nil {")
-	require.Contains(t, config, `return fmt.Errorf("mcp caller for %s is required", ScribeCalcServiceCoreSuiteToolsetID)`)
+	registry := fileContent(t, files, "gen/alpha/agents/scribe/registry.go")
+	require.NotContains(t, config, "MCPCallers")
+	require.Contains(t, registry, "WithCoreExecutor(")
+	require.Contains(t, registry, "ActivityRetryPolicy:")
+	require.Contains(t, registry, "MaxAttempts: 1")
+	require.NotContains(t, registry, "NewMCPExecutor(")
 }
 
 // TestAgentToolsTemplateOmitsHintMapsWhenAbsent ensures exported toolset helpers

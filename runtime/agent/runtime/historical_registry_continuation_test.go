@@ -59,7 +59,7 @@ func TestHistoricalRegistryContinuationRetainsEachRegistration(t *testing.T) {
 		appendHistoricalHookEvent(t, store, newToolCallScheduledEvent("saved", definition.route.ID, "registry-history", call, "", "", 0), id, int64(index*2+1))
 		appendHistoricalHookEvent(t, store, hooks.NewToolResultReceivedEvent(
 			"saved", definition.route.ID, "registry-history", "saved", call.Name, id, "",
-			rawjson.Message(`{"value":1}`), nil, "Saved result", &agent.Bounds{Returned: 1, Truncated: true, NextCursor: pointer("same-cursor")}, 0, nil, nil,
+			rawjson.Message(`{"value":1}`), nil, nil, "Saved result", &agent.Bounds{Returned: 1, Truncated: true, NextCursor: pointer("same-cursor")}, 0, nil, nil,
 		), id+"-result", int64(index*2+2))
 		messages = append(messages,
 			&model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.ToolUsePart{

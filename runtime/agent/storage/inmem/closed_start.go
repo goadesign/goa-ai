@@ -48,7 +48,7 @@ func (s *Store) checkStartKindLocked(runID string, kind runStartKind) error {
 // closedStartLocked validates the original start and closing facts before
 // returning their committed IDs. The caller has validated the complete proposed
 // command and its request digest while holding the store lock.
-func (s *Store) closedStartLocked(meta session.RunMeta, proposed session.RunStart, parent, started, canceled *runlog.Event) (sessionRunStartResult, error) {
+func (s *Store) closedStartLocked(meta session.RunMeta, proposed session.RunStart, parent, started, cancellation *runlog.Event) (sessionRunStartResult, error) {
 	keys := s.lifecycle[meta.RunID]
 	if meta.StartOutcome != session.RunStartProceed && meta.StartOutcome != session.RunStartStop {
 		return sessionRunStartResult{}, errors.New("stored run has invalid start outcome")
@@ -115,11 +115,22 @@ func (s *Store) closedStartLocked(meta session.RunMeta, proposed session.RunStar
 		return sessionRunStartResult{}, fmt.Errorf("stored run closing record: %w", err)
 	}
 	if meta.StartOutcome == session.RunStartStop {
-		if canceled == nil || meta.SessionID == "" || meta.Status != session.RunStatusCanceled ||
-			!closing.Timestamp.Equal(meta.StartedAt) || !sameStartCandidate(closing, canceled) {
+		intent, err := s.selectedStartRecordLocked(meta.RunID, keys.cancellation)
+		if err != nil {
+			return sessionRunStartResult{}, err
+		}
+		if cancellation == nil || meta.SessionID == "" || (meta.Status != session.RunStatusCanceled && meta.Status != session.RunStatusFailed) {
 			return sessionRunStartResult{}, session.ErrRunConflict
 		}
-		result.canceled = s.existingRecordResultLocked(closing)
+		if err := lifecycle.ValidateRunCancellation(storage.RunCancellation{
+			RunID: meta.RunID, Reason: meta.CancellationReason, Record: intent,
+		}, meta); err != nil {
+			return sessionRunStartResult{}, fmt.Errorf("stored stopped-start intent: %w", err)
+		}
+		if !intent.Timestamp.Equal(meta.StartedAt) || !sameStartCandidate(intent, cancellation) {
+			return sessionRunStartResult{}, session.ErrRunConflict
+		}
+		result.cancellation = s.existingRecordResultLocked(intent)
 	}
 	return result, nil
 }

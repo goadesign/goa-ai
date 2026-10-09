@@ -100,20 +100,15 @@ func (s *testStore) AppendRunRecord(ctx context.Context, record *runlog.Event) (
 			return storage.AppendResult{}, startErr
 		}
 	} else {
-		canceled, canceledErr := encodeTestHookRecord(hooks.NewRunCompletedEvent(
-			record.RunID,
-			record.AgentID,
-			record.SessionID,
-			"canceled",
-			agentrun.PhaseCanceled,
-			nil,
-			context.Canceled,
-			&agentrun.Cancellation{Reason: agentrun.CancellationReasonSessionEnded},
-		), "test/stopped", startedAt)
-		if canceledErr != nil {
-			return storage.AppendResult{}, canceledErr
+		cancellationInput, cancellationErr := buildCancellationRecord(&RecordActivityInput{
+			RunID: record.RunID, AgentID: record.AgentID, SessionID: record.SessionID,
+			TimestampMS: startedAt.UnixMilli(),
+		}, agentrun.CancellationReasonSessionEnded)
+		if cancellationErr != nil {
+			return storage.AppendResult{}, cancellationErr
 		}
-		_, startErr := s.StartRootRun(ctx, storage.RootRunStart{RequestDigest: [32]byte{1}, Run: start, Started: started, Canceled: canceled})
+		canceled := runLogEvent(cancellationInput, cancellationInput.Payload, cancellationInput.TimestampMS)
+		_, startErr := s.StartRootRun(ctx, storage.RootRunStart{RequestDigest: [32]byte{1}, Run: start, Started: started, Cancellation: canceled})
 		if startErr != nil {
 			return storage.AppendResult{}, startErr
 		}
@@ -247,22 +242,13 @@ func admitRunWithPredecessorForTest(
 		predecessorRunID,
 		run.Labels,
 	), "start", run.StartedAt)
-	canceled := testHookRecord(t, hooks.NewRunCompletedEvent(
-		run.RunID,
-		agent.Ident(run.AgentID),
-		run.SessionID,
-		"canceled",
-		agentrun.PhaseCanceled,
-		run.Labels,
-		context.Canceled,
-		&agentrun.Cancellation{Reason: agentrun.CancellationReasonSessionEnded},
-	), terminalRunEventKey, run.StartedAt)
+	canceled := testStartCancellationRecord(t, start)
 	var err error
 	switch {
 	case run.SessionID == "":
 		_, err = store.StartOneShotRun(context.Background(), storage.OneShotRunStart{RequestDigest: [32]byte{1}, Run: start, Started: started})
 	case start.ParentRunID == "":
-		_, err = store.StartRootRun(context.Background(), storage.RootRunStart{RequestDigest: [32]byte{1}, Run: start, Started: started, Canceled: canceled})
+		_, err = store.StartRootRun(context.Background(), storage.RootRunStart{RequestDigest: [32]byte{1}, Run: start, Started: started, Cancellation: canceled})
 	default:
 		parent, loadErr := store.LoadRun(context.Background(), run.ParentRunID)
 		require.NoError(t, loadErr)
@@ -275,7 +261,7 @@ func admitRunWithPredecessorForTest(
 			run.RunID,
 			agent.Ident(run.AgentID),
 		), "child-link-"+run.RunID, run.StartedAt)
-		_, err = store.StartChildRun(context.Background(), storage.ChildRunStart{RequestDigest: [32]byte{1}, Run: start, ParentLinked: linked, Started: started, Canceled: canceled})
+		_, err = store.StartChildRun(context.Background(), storage.ChildRunStart{RequestDigest: [32]byte{1}, Run: start, ParentLinked: linked, Started: started, Cancellation: canceled})
 	}
 	require.NoError(t, err)
 	switch target {
@@ -1241,6 +1227,14 @@ type stubEngine struct {
 	sealErrors                       []error
 }
 
+func (s *stubEngine) RegisterCancellationWorkflow(context.Context, string, engine.ActivityOptions, func(context.Context, engine.CancellationRequest) (bool, error)) error {
+	return nil
+}
+
+func (s *stubEngine) StartCancellationWorkflow(context.Context, string, string, engine.CancellationRequest) error {
+	return errors.New("cancellation workflow start is not implemented by this test stub")
+}
+
 func (s *stubEngine) RegisterWorkflow(_ context.Context, definition engine.WorkflowDefinition) error {
 	s.registeredWorkflow = definition
 	return nil
@@ -1441,4 +1435,39 @@ func newAnyJSONSpec(name tools.Ident) tools.ToolSpec {
 // StartRequestDigest supplies the fixed accepted request for this workflow fixture.
 func (t *testWorkflowContext) StartRequestDigest() ([32]byte, error) {
 	return [32]byte{1}, nil
+}
+
+// testStartCancellationRecord uses the runtime encoder to build the intent that
+// an ended session selects instead of ordinary execution.
+func testStartCancellationRecord(t testing.TB, start session.RunStart) *runlog.Event {
+	t.Helper()
+	input, err := buildCancellationRecord(&RecordActivityInput{
+		RunID: start.RunID, AgentID: agent.Ident(start.AgentID), SessionID: start.SessionID,
+		TimestampMS: start.StartedAt.UnixMilli(),
+	}, agentrun.CancellationReasonSessionEnded)
+	require.NoError(t, err)
+	return runLogEvent(input, input.Payload, input.TimestampMS)
+}
+
+// runLoopWithState executes the same loop used by workflow admission. Tests
+// with already constructed state use it without creating another run record.
+func (r *Runtime) runLoopWithState(wfCtx engine.WorkflowContext, reg AgentRegistration, input *RunInput, base *workflowConversation, st *runLoopState, budgetDeadline, hardDeadline time.Time, turnID string, parentTracker *childTracker) (*RunOutput, error) {
+	loop, err := r.newRunLoopWithState(wfCtx, reg, input, base, st, budgetDeadline, hardDeadline, turnID, parentTracker)
+	if err != nil {
+		return nil, err
+	}
+	return loop.run()
+}
+
+// resumeSuspendedWorkflow consumes one exact pending response after
+// ExecuteWorkflow has restored and validated the checkpoint-owned input.
+func (r *Runtime) resumeSuspendedWorkflow(wfCtx *providerRecoveryWorkflowContext, reg AgentRegistration, input *RunInput, checkpoint *workflowCheckpoint, historyEndID string) (*RunOutput, error) {
+	loop, err := r.restoreSuspendedWorkflow(wfCtx, reg, input, checkpoint, historyEndID)
+	if err != nil {
+		return nil, err
+	}
+	if request := input.Continuation.Cancellation; request != nil {
+		return nil, errors.Join(context.Canceled, loop.cancelSavedWork(*request))
+	}
+	return loop.resumeRestoredWorkflow()
 }

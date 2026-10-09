@@ -1,7 +1,6 @@
-// This file connects to an MCP server over HTTP. It completes initialization,
-// sends the selected protocol version and session identifier on later requests,
-// and reads tool results returned as JSON or server-sent events.
-
+// Package mcp sends stateless MCP tool requests over HTTP. HTTP and stdio model
+// callers share catalog, visibility and schema validation for each invocation.
+// Explicit trust and behavior hints control HTTP retries after stream loss.
 package mcp
 
 import (
@@ -10,249 +9,255 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
-	"strings"
-	"sync"
-	"sync/atomic"
-	"time"
+
+	schema "github.com/santhosh-tekuri/jsonschema/v6"
+
+	"goa.design/goa-ai/internal/jsonschema"
+	"goa.design/goa-ai/internal/mcpprotocol"
+	goahttp "goa.design/goa/v3/http"
 )
 
 type (
-	// HTTPOptions configures the HTTP caller.
+	// HTTPOptions configures an HTTP caller with dependencies built by the host.
 	HTTPOptions struct {
-		// Endpoint is the HTTP URL that accepts MCP JSON-RPC requests.
+		// Endpoint is the URL that accepts MCP JSON-RPC POST requests.
 		Endpoint string
-		// Client sends the HTTP requests. A client with a 30-second timeout is used
-		// when Client is nil.
-		Client *http.Client
-		// ClientInfo identifies this application to the MCP server.
+		// Client sends HTTP requests, including through an already-built MCP
+		// transport. When omitted, http.DefaultClient is used.
+		Client goahttp.Doer
+		// ClientInfo identifies the application on each request.
 		ClientInfo ClientInfo
-		// InitTimeout limits the initialize request when it is greater than zero.
-		InitTimeout time.Duration
+		// InputSupport names the interactions the host can fulfill.
+		InputSupport InputSupport
+		// RetryPolicy controls retries after stream loss at this endpoint.
+		RetryPolicy HTTPRetryPolicy
 	}
-
-	// HTTPCaller implements Caller over JSON-RPC HTTP.
+	// remoteToolContract retains only the selected, credential-scoped catalog contract.
+	remoteToolContract struct {
+		binding ToolBinding
+		input   *schema.Schema
+		output  *schema.Schema
+	}
+	// remoteToolAnnotations preserves declared hints from a third-party catalog.
+	remoteToolAnnotations struct {
+		Title           *string `json:"title"`
+		ReadOnlyHint    *bool   `json:"readOnlyHint"`    //nolint:tagliatelle // MCP wire name.
+		DestructiveHint *bool   `json:"destructiveHint"` //nolint:tagliatelle // MCP wire name.
+		IdempotentHint  *bool   `json:"idempotentHint"`  //nolint:tagliatelle // MCP wire name.
+		OpenWorldHint   *bool   `json:"openWorldHint"`   //nolint:tagliatelle // MCP wire name.
+	}
+	// HTTPCaller invokes MCP tools over stateless HTTP requests.
 	HTTPCaller struct {
-		transport *httpTransport
-	}
-
-	// httpTransport sends JSON-RPC requests for HTTPCaller.
-	httpTransport struct {
-		endpoint        string
-		session         *HTTPSession
-		protocolVersion string
-		clientInfo      ClientInfo
-		initTimeout     time.Duration
-		initializeMu    sync.Mutex
-		id              uint64
-	}
-
-	httpStatusError struct {
-		status int
+		endpoint  string
+		transport *HTTPTransport
 	}
 )
 
-// DefaultProtocolVersion is the MCP protocol version implemented by the handwritten callers.
-const DefaultProtocolVersion = "2025-06-18"
+// ProtocolVersion is the only MCP revision implemented by this release.
+const ProtocolVersion = mcpprotocol.Version
 
-// NewHTTPCaller creates an HTTP caller and performs the MCP initialize handshake.
-func NewHTTPCaller(ctx context.Context, opts HTTPOptions) (*HTTPCaller, error) {
+// NewHTTPCaller checks the endpoint and identity without sending network requests.
+func NewHTTPCaller(opts HTTPOptions) (*HTTPCaller, error) {
+	if err := opts.RetryPolicy.Validate(); err != nil {
+		return nil, err
+	}
 	if err := opts.ClientInfo.Validate(); err != nil {
 		return nil, err
 	}
-	transport, err := newHTTPTransport(ctx, opts)
-	if err != nil {
-		return nil, err
-	}
-	return &HTTPCaller{transport: transport}, nil
-}
-
-// CallTool invokes tools/call over HTTP and normalizes the response.
-func (c *HTTPCaller) CallTool(ctx context.Context, req CallRequest) (CallResponse, error) {
-	if !c.transport.session.Initialized() {
-		if err := c.transport.startNewSession(ctx); err != nil {
-			return CallResponse{}, fmt.Errorf("start new MCP session: %w", err)
-		}
-	}
-	params := map[string]any{
-		"name":      req.Tool,
-		"arguments": req.Payload,
-	}
-	addTraceMeta(ctx, params)
-	var result toolsCallResult
-	if err := c.transport.call(ctx, "tools/call", params, &result); err != nil {
-		if !c.transport.session.Initialized() {
-			if initializeErr := c.transport.startNewSession(ctx); initializeErr != nil {
-				return CallResponse{}, errors.Join(err, fmt.Errorf("start new MCP session: %w", initializeErr))
-			}
-		}
-		return CallResponse{}, err
-	}
-	return normalizeToolResult(result)
-}
-
-// Error reports the HTTP status returned by the MCP endpoint.
-func (e *httpStatusError) Error() string {
-	return fmt.Sprintf("mcp rpc status %d", e.status)
-}
-
-// newHTTPTransport checks the endpoint, sends initialize, and returns the
-// connection state used for later tool calls.
-func newHTTPTransport(ctx context.Context, opts HTTPOptions) (*httpTransport, error) {
-	if opts.Endpoint == "" {
-		return nil, errors.New("mcp: HTTP endpoint is required")
-	}
-	parsed, parseErr := url.Parse(opts.Endpoint)
-	if parseErr != nil || parsed.Host == "" ||
-		!strings.EqualFold(parsed.Scheme, "http") && !strings.EqualFold(parsed.Scheme, "https") {
+	endpoint, err := url.Parse(opts.Endpoint)
+	if err != nil || endpoint.Host == "" || (endpoint.Scheme != "http" && endpoint.Scheme != httpsScheme) {
 		return nil, fmt.Errorf("mcp: invalid HTTP endpoint %q", opts.Endpoint)
 	}
-	endpoint := parsed.String()
-	httpClient := opts.Client
-	if httpClient == nil {
-		httpClient = &http.Client{Timeout: 30 * time.Second}
+	client := opts.Client
+	if client == nil {
+		client = http.DefaultClient
 	}
-	transport := &httpTransport{
-		endpoint:        endpoint,
-		protocolVersion: DefaultProtocolVersion,
-		clientInfo:      opts.ClientInfo,
-		initTimeout:     opts.InitTimeout,
-	}
-	transport.session = NewHTTPSession(httpClient, DefaultProtocolVersion)
-	if err := transport.initialize(ctx); err != nil {
-		return nil, err
-	}
-	return transport, nil
+	return &HTTPCaller{endpoint: endpoint.String(), transport: NewHTTPTransport(client, opts.ClientInfo, HTTPBindings{}, opts.InputSupport, opts.RetryPolicy)}, nil
 }
 
-// initialize serializes the initial handshake so no other handshake can
-// replace its session state before the initialized notification is accepted.
-func (t *httpTransport) initialize(ctx context.Context) error {
-	t.initializeMu.Lock()
-	defer t.initializeMu.Unlock()
-	return t.initializeLocked(ctx)
+// CallTool loads header annotations for this authorization context, sends the
+// tool arguments with the host's retry policy, and returns a result or request for input.
+func (c *HTTPCaller) CallTool(ctx context.Context, req CallRequest) (CallResponse, error) {
+	params, err := toolParams(ctx, req)
+	if err != nil {
+		return CallResponse{}, err
+	}
+	contract, err := readToolContract(ctx, req.Tool, c.catalogCall)
+	if err != nil {
+		return CallResponse{}, err
+	}
+	if err := contract.validateArguments(req.Payload); err != nil {
+		return CallResponse{}, err
+	}
+	transport := NewHTTPTransport(c.transport, c.transport.clientInfo, HTTPBindings{Tools: map[string]ToolBinding{req.Tool: contract.binding}}, c.transport.inputSupport, c.transport.retry)
+	var result toolsCallResult
+	if err := transport.call(ctx, c.endpoint, methodToolsCall, params, &result); err != nil {
+		return CallResponse{}, err
+	}
+	response, err := normalizeCallResult(ctx, result, transport.inputSupport)
+	if err != nil {
+		return CallResponse{}, err
+	}
+	if err := contract.validateResult(response); err != nil {
+		return CallResponse{}, err
+	}
+	return response, nil
 }
 
-// startNewSession starts a handshake only when the 404 response still left the
-// session inactive. Another rejected call may already have replaced it.
-func (t *httpTransport) startNewSession(ctx context.Context) error {
-	t.initializeMu.Lock()
-	defer t.initializeMu.Unlock()
-	if t.session.Initialized() {
-		return nil
+// readToolContract reads every catalog page through the selected transport without
+// sharing a cache across credentials.
+// A malformed annotation excludes only its tool; another valid tool remains usable.
+func readToolContract(ctx context.Context, name string, call func(context.Context, string, map[string]any, any) error) (*remoteToolContract, error) {
+	var cursor *string
+	seen := make(map[string]bool)
+	names := make(map[string]bool)
+	var selected *remoteToolContract
+	var selectedError error
+	for {
+		params := map[string]any{}
+		if cursor != nil {
+			params["cursor"] = *cursor
+		}
+		var catalog struct {
+			ResultType string `json:"resultType"` //nolint:tagliatelle // MCP defines this wire field name.
+			Tools      *[]struct {
+				Meta         json.RawMessage `json:"_meta"` //nolint:tagliatelle // MCP defines this wire field name.
+				Annotations  json.RawMessage `json:"annotations"`
+				Name         string          `json:"name"`
+				InputSchema  json.RawMessage `json:"inputSchema"`  //nolint:tagliatelle // MCP defines this wire field name.
+				OutputSchema json.RawMessage `json:"outputSchema"` //nolint:tagliatelle // MCP defines this wire field name.
+			} `json:"tools"`
+			NextCursor *string  `json:"nextCursor"` //nolint:tagliatelle // MCP defines this wire field name.
+			TTLMs      *float64 `json:"ttlMs"`      //nolint:tagliatelle // MCP defines this wire field name.
+			CacheScope string   `json:"cacheScope"` //nolint:tagliatelle // MCP defines this wire field name.
+		}
+		if err := call(ctx, "tools/list", params, &catalog); err != nil {
+			return nil, err
+		}
+		if catalog.ResultType != resultComplete || catalog.Tools == nil || catalog.TTLMs == nil || *catalog.TTLMs < 0 ||
+			(catalog.CacheScope != "public" && catalog.CacheScope != "private") {
+			return nil, NewMalformedResponseError(errors.New("invalid tools/list result"))
+		}
+		for _, tool := range *catalog.Tools {
+			if tool.Name == "" || names[tool.Name] {
+				return nil, NewMalformedResponseError(errors.New("catalog tool names must be nonempty and unique"))
+			}
+			names[tool.Name] = true
+			if tool.Name != name {
+				continue
+			}
+			allowed, err := toolModelVisibility(tool.Meta)
+			if err != nil {
+				selectedError = err
+				continue
+			}
+			if !allowed {
+				return nil, &Error{Code: JSONRPCInvalidParams, Message: "app-only tool cannot be called by a model"}
+			}
+			bindings, err := mcpprotocol.CompileHeaderBindings(tool.InputSchema)
+			if err != nil {
+				selectedError = fmt.Errorf("tool %q header annotations: %w", name, err)
+				continue
+			}
+			input, err := jsonschema.Compile(tool.InputSchema)
+			if err != nil {
+				selectedError = err
+				continue
+			}
+			var output *schema.Schema
+			if len(tool.OutputSchema) != 0 {
+				var schemaObject map[string]json.RawMessage
+				if json.Unmarshal(tool.OutputSchema, &schemaObject) != nil || schemaObject == nil {
+					selectedError = errors.New("outputSchema must be a JSON Schema object")
+					continue
+				}
+				output, err = jsonschema.Compile(tool.OutputSchema)
+				if err != nil {
+					selectedError = err
+					continue
+				}
+			}
+			binding := ToolBinding{Headers: bindings}
+			annotations, err := decodeToolAnnotations(tool.Annotations)
+			if err != nil {
+				return nil, NewMalformedResponseError(err)
+			}
+			if annotations != nil {
+				binding.ReadOnly = annotations.ReadOnlyHint != nil && *annotations.ReadOnlyHint
+				binding.Idempotent = annotations.IdempotentHint != nil && *annotations.IdempotentHint
+			}
+			selected = &remoteToolContract{binding: binding, input: input, output: output}
+		}
+		if catalog.NextCursor == nil {
+			if selectedError != nil {
+				return nil, NewMalformedResponseError(selectedError)
+			}
+			if selected != nil {
+				return selected, nil
+			}
+			return nil, &Error{Code: JSONRPCInvalidParams, Message: "tool not found"}
+		}
+		if seen[*catalog.NextCursor] {
+			return nil, NewMalformedResponseError(errors.New("repeated catalog cursor"))
+		}
+		seen[*catalog.NextCursor] = true
+		cursor = catalog.NextCursor
 	}
-	return t.initializeLocked(ctx)
 }
 
-// initializeLocked sends initialize without session headers, then sends the
-// initialized notification with the protocol and session selected by the server.
-func (t *httpTransport) initializeLocked(ctx context.Context) error {
-	initCtx := ctx
-	if t.initTimeout > 0 {
-		var cancel context.CancelFunc
-		initCtx, cancel = context.WithTimeout(ctx, t.initTimeout)
-		defer cancel()
+// catalogCall sends catalog requests to this HTTP caller's fixed server address
+// using the credentials attached to the current request context.
+func (c *HTTPCaller) catalogCall(ctx context.Context, method string, params map[string]any, result any) error {
+	return c.transport.call(ctx, c.endpoint, method, params, result)
+}
+
+// validateArguments checks model arguments against the selected remote schema
+// before either transport sends a request that could execute a tool.
+func (c *remoteToolContract) validateArguments(payload json.RawMessage) error {
+	if len(payload) == 0 {
+		payload = json.RawMessage("{}")
 	}
-	t.session.Reset()
-	payload := map[string]any{
-		"protocolVersion": t.protocolVersion,
-		"capabilities":    map[string]any{},
-		"clientInfo": map[string]any{
-			"name":    t.clientInfo.Name,
-			"version": t.clientInfo.Version,
-		},
-	}
-	var result initializeResult
-	if err := t.call(initCtx, "initialize", payload, &result); err != nil {
-		t.session.Reset()
-		return fmt.Errorf("mcp initialize failed: %w", err)
-	}
-	if err := validateInitializeResult(result); err != nil {
-		t.session.Reset()
-		return fmt.Errorf("mcp initialize failed: %w", err)
-	}
-	t.session.Begin()
-	if err := t.notify(initCtx, rpcMethodInitialized, map[string]any{}); err != nil {
-		t.session.Reset()
-		return fmt.Errorf("mcp initialize failed: %w", err)
+	if err := jsonschema.Validate(c.input, payload); err != nil {
+		return &Error{Code: JSONRPCInvalidParams, Message: fmt.Sprintf("MCP tool arguments: %v", err)}
 	}
 	return nil
 }
 
-// nextID returns the next JSON-RPC request number for this connection.
-func (t *httpTransport) nextID() uint64 {
-	return atomic.AddUint64(&t.id, 1)
-}
-
-// call sends one JSON-RPC request and decodes its result into result when the
-// caller expects a response body.
-func (t *httpTransport) call(ctx context.Context, method string, params any, result any) (err error) {
-	id := t.nextID()
-	reqBody := rpcRequest{JSONRPC: rpcVersion, Method: method, ID: id, Params: params}
-	resp, err := t.send(ctx, reqBody)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		err = errors.Join(err, resp.Body.Close())
-	}()
-	if resp.StatusCode != http.StatusOK {
-		return &httpStatusError{status: resp.StatusCode}
-	}
-	var rpcResp rpcResponse
-	if err := json.NewDecoder(resp.Body).Decode(&rpcResp); err != nil {
-		return NewMalformedResponseError(err)
-	}
-	if rpcResp.Error != nil {
-		return rpcResp.Error.callerError()
-	}
-	if result != nil && rpcResp.Result != nil {
-		if err := json.Unmarshal(rpcResp.Result, result); err != nil {
-			return NewMalformedResponseError(err)
+// validateResult checks completed structured output against the advertised
+// schema. Input requests and unfinished tasks have no completed output to check.
+func (c *remoteToolContract) validateResult(response CallResponse) error {
+	if response.InputRequired == nil && response.Task == nil && c.output != nil {
+		if err := jsonschema.Validate(c.output, response.StructuredContent); err != nil {
+			return NewMalformedResponseError(fmt.Errorf("MCP structured result: %w", err))
 		}
 	}
 	return nil
 }
 
-// notify sends one JSON-RPC notification and closes the HTTP response without
-// decoding a JSON-RPC response, because notifications never receive one.
-func (t *httpTransport) notify(ctx context.Context, method string, params any) (err error) {
-	message := rpcNotification{JSONRPC: rpcVersion, Method: method, Params: params}
-	resp, err := t.send(ctx, message)
-	if err != nil {
-		return err
+// decodeToolAnnotations validates optional hints from an external catalog before
+// the client uses them to authorize repeated execution. Null is not a boolean
+// declaration; unknown extension fields remain outside this client's decisions.
+func decodeToolAnnotations(raw json.RawMessage) (*remoteToolAnnotations, error) {
+	if len(raw) == 0 {
+		return nil, nil
 	}
-	defer func() {
-		err = errors.Join(err, resp.Body.Close())
-	}()
-	if resp.StatusCode != http.StatusAccepted {
-		return fmt.Errorf("mcp rpc status %d", resp.StatusCode)
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &fields); err != nil || fields == nil {
+		return nil, errors.New("tool annotations must be an object")
 	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return NewMalformedResponseError(err)
+	for name, value := range fields {
+		switch name {
+		case "title", "readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint":
+			if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+				return nil, fmt.Errorf("tool annotation %q must not be null", name)
+			}
+		}
 	}
-	if len(body) > 0 {
-		return errors.New("mcp: notification response must be empty")
+	var annotations remoteToolAnnotations
+	if err := json.Unmarshal(raw, &annotations); err != nil {
+		return nil, fmt.Errorf("tool annotations: %w", err)
 	}
-	return nil
-}
-
-// send writes one JSON-RPC message to the configured HTTP endpoint and
-// returns the HTTP response for the caller to handle according to the message.
-func (t *httpTransport) send(ctx context.Context, message any) (*http.Response, error) {
-	body, err := json.Marshal(message)
-	if err != nil {
-		return nil, NewInternalError(err)
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, t.endpoint, bytes.NewReader(body))
-	if err != nil {
-		return nil, NewInternalError(err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	injectTraceHeaders(ctx, req.Header)
-	// #nosec G704 -- MCP endpoint is provided by the caller; transport must perform the request.
-	return t.session.Do(req)
+	return &annotations, nil
 }

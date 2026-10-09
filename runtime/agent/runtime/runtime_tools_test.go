@@ -629,7 +629,7 @@ func TestServiceToolEventsUseChildExecutionContext(t *testing.T) {
 		Name:       tools.Ident("svc.tools.fetch_time_series"),
 		ToolCallID: "child-call",
 	}}
-	_, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "child.agent", parentCtx, testToolHistory(t, rt, "child.agent", *(parentCtx), nil), calls, 0, nil, time.Time{})
+	_, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "child.agent", parentCtx, testToolHistory(t, rt, "child.agent", *(parentCtx), nil), calls, 0, nil, time.Time{}, nil)
 	require.NoError(t, err)
 
 	var scheduled *hooks.ToolCallScheduledEvent
@@ -689,7 +689,7 @@ func TestServiceToolEventsPropagateServerData(t *testing.T) {
 		Name:       tools.Ident("svc.tools.example"),
 		ToolCallID: "child-call",
 	}}
-	_, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "child.agent", parentCtx, testToolHistory(t, rt, "child.agent", *(parentCtx), nil), calls, 0, nil, time.Time{})
+	_, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "child.agent", parentCtx, testToolHistory(t, rt, "child.agent", *(parentCtx), nil), calls, 0, nil, time.Time{}, nil)
 	require.NoError(t, err)
 
 	var resultEvt *hooks.ToolResultReceivedEvent
@@ -1041,7 +1041,7 @@ func TestServiceToolEventsPropagateBounds(t *testing.T) {
 		Name:       tools.Ident("svc.tools.example"),
 		ToolCallID: "child-call",
 	}}
-	results, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "child.agent", parentCtx, testToolHistory(t, rt, "child.agent", *(parentCtx), nil), calls, 0, nil, time.Time{})
+	results, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "child.agent", parentCtx, testToolHistory(t, rt, "child.agent", *(parentCtx), nil), calls, 0, nil, time.Time{}, nil)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	require.NotNil(t, results[0].ToolResult)

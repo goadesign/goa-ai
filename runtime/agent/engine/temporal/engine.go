@@ -184,7 +184,7 @@ type Engine struct {
 	registrationClosed bool
 	activationComplete bool
 	workers            map[string]*workerBundle
-	workflows          map[string]engine.WorkflowDefinition
+	workflows          map[string]struct{}
 	pendingWorkflows   map[string]struct{}
 	activityOptions    map[string]engine.ActivityOptions
 	pendingActivities  map[string]struct{}
@@ -257,7 +257,7 @@ func newEngine(opts Options, workerMode bool) (*Engine, error) {
 		workerFactory:           worker.New,
 		activationRetryInterval: defaultActivationRetryInterval,
 		workers:                 make(map[string]*workerBundle),
-		workflows:               make(map[string]engine.WorkflowDefinition),
+		workflows:               make(map[string]struct{}),
 		pendingWorkflows:        make(map[string]struct{}),
 		activityOptions:         make(map[string]engine.ActivityOptions),
 		pendingActivities:       make(map[string]struct{}),
@@ -305,7 +305,7 @@ func (e *Engine) RegisterWorkflow(_ context.Context, def engine.WorkflowDefiniti
 	bundle := e.workerForQueue(queue)
 
 	bundle.registerWorkflow(def.Name, e.temporalWorkflowHandler(def.Handler))
-	e.finishWorkflowRegistration(def)
+	e.finishWorkflowRegistration(def.Name)
 	registered = true
 	return nil
 }
@@ -351,14 +351,7 @@ func (e *Engine) RegisterStorageActivity(_ context.Context, name string, opts en
 		if errors.As(err, &conflict) {
 			return out, startConflictApplicationError(conflict)
 		}
-		if engine.IsActivityErrorNonRetryable(err) {
-			return out, temporal.NewNonRetryableApplicationError(
-				err.Error(),
-				"goa_ai_storage_contract",
-				err,
-			)
-		}
-		return out, temporalerrors.Wrap(err)
+		return out, temporalerrors.WrapActivity(err)
 	}
 	return e.registerActivityWithCtx(name, opts, wrapped)
 }
@@ -385,7 +378,7 @@ func (e *Engine) RegisterPlannerActivity(_ context.Context, name string, opts en
 	wrapped := func(ctx context.Context, in *api.PlanActivityInput) (*api.PlanActivityOutput, error) {
 		output, err := fn(e.injectWorkflowContextIntoActivity(ctx), in)
 		e.recordActivityError(ctx, err)
-		return output, temporalerrors.Wrap(err)
+		return output, temporalerrors.WrapActivity(err)
 	}
 	return e.registerActivityWithCtx(name, opts, wrapped)
 }
@@ -410,7 +403,7 @@ func (e *Engine) RegisterExecuteToolActivity(_ context.Context, name string, opt
 	wrapped := func(ctx context.Context, in *api.ToolInput) (*api.ToolOutput, error) {
 		output, err := fn(e.injectWorkflowContextIntoActivity(ctx), in)
 		e.recordActivityError(ctx, err)
-		return output, temporalerrors.Wrap(err)
+		return output, temporalerrors.WrapActivity(err)
 	}
 	return e.registerActivityWithCtx(name, opts, wrapped)
 }
@@ -425,14 +418,7 @@ func (e *Engine) RegisterAgentChildActivity(_ context.Context, name string, opts
 	wrapped := func(ctx context.Context, in *api.AgentChildActivityInput) (*api.AgentChildActivityOutput, error) {
 		output, err := fn(e.injectWorkflowContextIntoActivity(ctx), in)
 		e.recordActivityError(ctx, err)
-		if engine.IsActivityErrorNonRetryable(err) {
-			return output, temporal.NewNonRetryableApplicationError(
-				err.Error(),
-				"goa_ai_agent_child_contract",
-				err,
-			)
-		}
-		return output, temporalerrors.Wrap(err)
+		return output, temporalerrors.WrapActivity(err)
 	}
 	return e.registerActivityWithCtx(name, opts, wrapped)
 }
@@ -450,10 +436,7 @@ func (e *Engine) RegisterContinuationActivity(_ context.Context, name string, op
 	wrapped := func(ctx context.Context, input *api.ContinuationActivityInput) (bool, error) {
 		available, err := fn(e.injectWorkflowContextIntoActivity(ctx), input)
 		e.recordActivityError(ctx, err)
-		if engine.IsActivityErrorNonRetryable(err) {
-			return false, temporal.NewNonRetryableApplicationError(err.Error(), "goa_ai_continuation_contract", err)
-		}
-		return available, temporalerrors.Wrap(err)
+		return available, temporalerrors.WrapActivity(err)
 	}
 	return e.registerActivityWithCtx(name, opts, wrapped)
 }
@@ -503,33 +486,9 @@ func (e *Engine) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequ
 		opts.RetryPolicy = rp
 	}
 
-	run, err := e.client.ExecuteWorkflow(
-		ctx,
-		opts,
-		req.Workflow,
-		converter.NewRawValue(snapshot.InputPayload),
-	)
+	run, err := e.startWorkflowWithDigest(ctx, opts, req.Workflow, converter.NewRawValue(snapshot.InputPayload), fingerprint)
 	if err != nil {
-		var alreadyStarted *serviceerror.WorkflowExecutionAlreadyStarted
-		if !errors.As(err, &alreadyStarted) {
-			return nil, err
-		}
-		desc, describeErr := e.client.DescribeWorkflowExecution(ctx, req.ID, alreadyStarted.RunId)
-		if describeErr != nil {
-			return nil, describeErr
-		}
-		payload := desc.GetWorkflowExecutionInfo().GetMemo().GetFields()[workflowStartRecipeMemoKey]
-		if payload == nil {
-			return nil, &engine.WorkflowStartConflictError{ID: req.ID}
-		}
-		var storedFingerprint []byte
-		if decodeErr := NewAgentDataConverter().FromPayload(payload, &storedFingerprint); decodeErr != nil {
-			return nil, fmt.Errorf("decode workflow start recipe: %w", decodeErr)
-		}
-		if len(storedFingerprint) != sha256.Size || !bytes.Equal(storedFingerprint, fingerprint[:]) {
-			return nil, &engine.WorkflowStartConflictError{ID: req.ID}
-		}
-		run = e.client.GetWorkflow(ctx, req.ID, alreadyStarted.RunId)
+		return nil, err
 	}
 
 	return &workflowHandle{
@@ -701,14 +660,14 @@ func (e *Engine) beginWorkflowRegistration(name string) error {
 	return nil
 }
 
-// finishWorkflowRegistration commits a workflow definition after worker
+// finishWorkflowRegistration records a workflow name after worker
 // registration succeeds and clears the temporary reservation.
-func (e *Engine) finishWorkflowRegistration(def engine.WorkflowDefinition) {
+func (e *Engine) finishWorkflowRegistration(name string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	delete(e.pendingWorkflows, def.Name)
-	e.workflows[def.Name] = def
+	delete(e.pendingWorkflows, name)
+	e.workflows[name] = struct{}{}
 }
 
 // abortWorkflowRegistration releases a reserved workflow name after a failed
@@ -770,4 +729,39 @@ func (e *Engine) releaseWorkflowContext(runID string) {
 		return
 	}
 	e.workflowContexts.Delete(runID)
+}
+
+// startWorkflowWithDigest accepts a workflow or returns the exact existing
+// execution. A changed request cannot reuse the same queryable workflow ID.
+func (e *Engine) startWorkflowWithDigest(ctx context.Context, opts client.StartWorkflowOptions, name string, input converter.RawValue, fingerprint [32]byte) (client.WorkflowRun, error) {
+	run, err := e.client.ExecuteWorkflow(
+		ctx,
+		opts,
+		name,
+		input,
+	)
+	if err != nil {
+		var alreadyStarted *serviceerror.WorkflowExecutionAlreadyStarted
+		if !errors.As(err, &alreadyStarted) {
+			return nil, err
+		}
+		desc, describeErr := e.client.DescribeWorkflowExecution(ctx, opts.ID, alreadyStarted.RunId)
+		if describeErr != nil {
+			return nil, describeErr
+		}
+		payload := desc.GetWorkflowExecutionInfo().GetMemo().GetFields()[workflowStartRecipeMemoKey]
+		if payload == nil {
+			return nil, &engine.WorkflowStartConflictError{ID: opts.ID}
+		}
+		var storedFingerprint []byte
+		if decodeErr := NewAgentDataConverter().FromPayload(payload, &storedFingerprint); decodeErr != nil {
+			return nil, fmt.Errorf("decode workflow start recipe: %w", decodeErr)
+		}
+		if len(storedFingerprint) != sha256.Size || !bytes.Equal(storedFingerprint, fingerprint[:]) {
+			return nil, &engine.WorkflowStartConflictError{ID: opts.ID}
+		}
+		run = e.client.GetWorkflow(ctx, opts.ID, alreadyStarted.RunId)
+	}
+
+	return run, nil
 }

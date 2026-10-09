@@ -35,6 +35,8 @@ type (
 	shapeData struct {
 		Name, Kind, Expected, TypeKey, ValueKey string
 		SignedInteger, UnsignedInteger          bool
+		Flatten                                 bool
+		Untagged                                bool
 		IntegerBits                             int
 		Fields, Branches                        []*shapeFieldData
 		Element                                 *shapeCallData
@@ -42,8 +44,9 @@ type (
 
 	// shapeFieldData binds one exact JSON name to its generated child check.
 	shapeFieldData struct {
-		Name string
-		Call *shapeCallData
+		Name     string
+		JSONKind byte
+		Call     *shapeCallData
 	}
 
 	// shapeCallData retains tool-compatible error context without tool types.
@@ -185,8 +188,10 @@ func (v *Value) shapeData() []*shapeData {
 		}
 		if node.Union != nil {
 			shape.TypeKey, shape.ValueKey = node.Union.GetTypeKey(), node.Union.GetValueKey()
+			shape.Flatten = node.Union.Flatten
+			shape.Untagged = node.Union.Untagged
 			for _, branch := range node.Branches {
-				shape.Branches = append(shape.Branches, &shapeFieldData{Name: branch.Name,
+				shape.Branches = append(shape.Branches, &shapeFieldData{Name: branch.Name, JSONKind: expr.JSONKind(branch.Node.Attribute.Type),
 					Call: &shapeCallData{Name: v.standalone.names[branch.Node].Name(), Description: branch.Description}})
 			}
 		}

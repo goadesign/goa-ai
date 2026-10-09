@@ -81,11 +81,11 @@ func TestStartValidatesBothPossibleLifecycleRecords(t *testing.T) {
 	start := session.RunStart{AgentID: "agent", RunID: "run", SessionID: "session", StartedAt: now}
 	other := start
 	other.RunID = "other-run"
-	invalidCanceled := completedRecord(t, "terminal", other, "canceled", &run.Cancellation{Reason: run.CancellationReasonSessionEnded})
+	invalidCanceled := cancellationRecord(t, "terminal", other, run.CancellationReasonSessionEnded)
 	_, err = store.StartRootRun(ctx, storage.RootRunStart{RequestDigest: [32]byte{1},
-		Run:      start,
-		Started:  startedRecord(t, "started", start),
-		Canceled: invalidCanceled,
+		Run:          start,
+		Started:      startedRecord(t, "started", start),
+		Cancellation: invalidCanceled,
 	})
 	require.ErrorIs(t, err, storage.ErrRunRecordOwnerMismatch)
 	_, err = store.LoadRun(ctx, "run")
@@ -215,7 +215,7 @@ func TestChildContinuationChecksPredecessorBeforeParentLink(t *testing.T) {
 				RequestDigest: [32]byte{1}, Run: previousStart,
 				ParentLinked: childLinkRecord(t, "previous-link", parent, previousStart),
 				Started:      startedRecord(t, "previous-start", previousStart),
-				Canceled:     completedRecord(t, "previous-stop", previousStart, "canceled", &run.Cancellation{Reason: run.CancellationReasonSessionEnded}),
+				Cancellation: cancellationRecord(t, "previous-stop", previousStart, run.CancellationReasonSessionEnded),
 			})
 			require.NoError(t, err)
 			predecessor = store.runs[predecessor.RunID]
@@ -234,10 +234,8 @@ func TestChildContinuationChecksPredecessorBeforeParentLink(t *testing.T) {
 			store.runs[predecessor.RunID] = predecessor
 			command := storage.ChildRunStart{RequestDigest: [32]byte{1},
 				Run: child, ParentLinked: childLinkRecord(t, "child-link", parent, child),
-				Started: startedRecord(t, "child-start", child),
-				Canceled: completedRecord(t, "child-stop", child, "canceled", &run.Cancellation{
-					Reason: run.CancellationReasonSessionEnded,
-				}),
+				Started:      startedRecord(t, "child-start", child),
+				Cancellation: cancellationRecord(t, "child-stop", child, run.CancellationReasonSessionEnded),
 			}
 
 			result, err := store.StartChildRun(t.Context(), command)
@@ -395,7 +393,7 @@ func TestRecordListsRejectUnknownStateAndInvalidCursor(t *testing.T) {
 	require.ErrorIs(t, err, session.ErrSessionPurged)
 }
 
-func TestEndedSessionStartStoresTerminalCancellation(t *testing.T) {
+func TestEndedSessionStartStoresCancellationIntent(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	store := New()
@@ -418,22 +416,20 @@ func TestEndedSessionStartStoresTerminalCancellation(t *testing.T) {
 	require.Equal(t, session.RunStartStop, result.Outcome)
 	meta, err := store.LoadRun(ctx, "run")
 	require.NoError(t, err)
-	require.Equal(t, session.RunStatusCanceled, meta.Status)
+	require.Equal(t, session.RunStatusRunning, meta.Status)
 	require.Equal(t, session.RunStartStop, meta.StartOutcome)
 	require.NotEmpty(t, meta.CancellationReason)
 	require.Equal(t, command.Started.EventKey, store.lifecycle[start.RunID].start)
-	require.Equal(t, command.Canceled.EventKey, store.lifecycle[start.RunID].terminal)
+	require.Equal(t, command.Cancellation.EventKey, store.lifecycle[start.RunID].cancellation)
 	retry, err := store.StartRootRun(ctx, command)
 	require.NoError(t, err)
 	require.False(t, retry.Started.Inserted)
-	command.Canceled = completedRecord(t, "different-stopped", start, "canceled", &run.Cancellation{
-		Reason: run.CancellationReasonSessionEnded,
-	})
+	command.Cancellation = cancellationRecord(t, "different-stopped", start, run.CancellationReasonSessionEnded)
 	_, err = store.StartRootRun(ctx, command)
 	require.ErrorIs(t, err, session.ErrRunConflict)
 	page, err := store.ListRunRecords(ctx, "run", "", 10)
 	require.NoError(t, err)
-	require.Equal(t, []runlog.Type{hooks.RunStarted, hooks.RunCompleted}, []runlog.Type{
+	require.Equal(t, []runlog.Type{hooks.RunStarted, storage.CancellationRecordType}, []runlog.Type{
 		page.Events[0].Type,
 		page.Events[1].Type,
 	})
@@ -458,7 +454,7 @@ func TestChildStartStoresParentLinkAndChildStartTogether(t *testing.T) {
 		Run:          childStart,
 		ParentLinked: childLinkRecord(t, "child-link", parentStart, childStart),
 		Started:      startedRecord(t, "child-start", childStart),
-		Canceled:     completedRecord(t, "child-terminal", childStart, "canceled", &run.Cancellation{Reason: run.CancellationReasonSessionEnded}),
+		Cancellation: cancellationRecord(t, "child-terminal", childStart, run.CancellationReasonSessionEnded),
 	})
 	require.NoError(t, err)
 	require.Equal(t, session.RunStartProceed, result.Outcome)
@@ -576,11 +572,8 @@ func TestSessionChildStartRequiresRunningParent(t *testing.T) {
 		child = publishStartHistory(t, store, child)
 		return storage.ChildRunStart{RequestDigest: [32]byte{1},
 			Run: child, ParentLinked: childLinkRecord(t, "child-link", parent, child),
-			Started: startedRecord(t, "child-start", child),
-			Canceled: completedRecord(
-				t, "child-stop", child, "canceled",
-				&run.Cancellation{Reason: run.CancellationReasonSessionEnded},
-			),
+			Started:      startedRecord(t, "child-start", child),
+			Cancellation: cancellationRecord(t, "child-stop", child, run.CancellationReasonSessionEnded),
 		}
 	}
 
@@ -643,9 +636,7 @@ func TestChildStartAfterPurgeReportsPurgedSession(t *testing.T) {
 		Run:          child,
 		ParentLinked: childLinkRecord(t, "child-link", parent, child),
 		Started:      startedRecord(t, "child-start", child),
-		Canceled: completedRecord(t, "child-stop", child, "canceled", &run.Cancellation{
-			Reason: run.CancellationReasonSessionEnded,
-		}),
+		Cancellation: cancellationRecord(t, "child-stop", child, run.CancellationReasonSessionEnded),
 	})
 	require.ErrorIs(t, err, session.ErrSessionPurged)
 }
@@ -903,9 +894,7 @@ func TestLifecycleRetriesRequireOriginalRecordKeys(t *testing.T) {
 			Run:          child,
 			ParentLinked: childLinkRecord(t, "child-link", parent, child),
 			Started:      startedRecord(t, "child-start", child),
-			Canceled: completedRecord(t, "child-stop", child, "canceled", &run.Cancellation{
-				Reason: run.CancellationReasonSessionEnded,
-			}),
+			Cancellation: cancellationRecord(t, "child-stop", child, run.CancellationReasonSessionEnded),
 		}
 		_, err := store.StartChildRun(t.Context(), command)
 		require.NoError(t, err)
@@ -1046,9 +1035,9 @@ func publishStartHistory(t *testing.T, store *Store, start session.RunStart) ses
 func rootStartCommand(t *testing.T, start session.RunStart) storage.RootRunStart {
 	t.Helper()
 	return storage.RootRunStart{RequestDigest: [32]byte{1},
-		Run:      start,
-		Started:  startedRecord(t, "started", start),
-		Canceled: completedRecord(t, "stopped", start, "canceled", &run.Cancellation{Reason: run.CancellationReasonSessionEnded}),
+		Run:          start,
+		Started:      startedRecord(t, "started", start),
+		Cancellation: cancellationRecord(t, "stopped", start, run.CancellationReasonSessionEnded),
 	}
 }
 

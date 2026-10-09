@@ -235,7 +235,7 @@ func TestNewWorkflowContextSharesExecutionCancellation(t *testing.T) {
 	})
 	require.True(t, temporal.IsCanceledError(env.GetWorkflowError()))
 	require.NoError(t, updateError)
-	assert.Equal(t, request.Reason, updateResult)
+	assert.Equal(t, request, updateResult)
 	assert.True(t, handled)
 	assert.True(t, coroutineCanceled)
 	assert.True(t, cleanupCompleted)

@@ -166,6 +166,11 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		transportTypeName = planned.transportDeclaration.Name()
 		transportCtx := modelJSONTransportContext(transportScope, true, "")
 		transportDef = transportTypeName + " " + transportTypeDef(transportScope, transportAttr, transportCtx)
+		if goaexpr.AsUnion(transportAttr.Type) != nil {
+			// The transport name refers to the generated OneOf itself so its
+			// variant accessors remain available to validation and conversion.
+			transportDef = transportTypeName + " = " + transportScope.GoTypeName(transportAttr)
+		}
 		httpctx := modelJSONTransportContext(transportScope, !goaexpr.IsPrimitive(schemaAttr.Type), "")
 		transportValidation := validationCodeWithContext(schemaAttr, nil, httpctx, true, false, false, "body", owner, usage, "transport")
 		if strings.TrimSpace(transportValidation) != "" {

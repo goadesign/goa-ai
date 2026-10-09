@@ -310,14 +310,14 @@ func (r *Runtime) storeRunStart(ctx context.Context, kind storageCommandKind, re
 		records = []storage.AppendResult{result.ParentRecord, result.Started}
 		selectedEvents = []hooks.Event{linked, started}
 	case storageCommandRootStart, storageCommandChildStart:
-		canceledInput, canceledEvent, buildErr := canceledStartRecord(startedInput, started)
+		cancellationInput, buildErr := buildCancellationRecord(startedInput, run.CancellationReasonSessionEnded)
 		if buildErr != nil {
 			return nil, malformedStorageCommand(buildErr)
 		}
-		canceledRecord := runLogEvent(canceledInput, canceledInput.Payload, canceledEvent.Timestamp())
+		cancellationRecord := runLogEvent(cancellationInput, cancellationInput.Payload, cancellationInput.TimestampMS)
 		if kind == storageCommandRootStart {
 			result, startErr := r.Store.StartRootRun(ctx, storage.RootRunStart{RequestDigest: [32]byte(requestDigest),
-				Run: start, Started: startedRecord, Canceled: canceledRecord,
+				Run: start, Started: startedRecord, Cancellation: cancellationRecord,
 			})
 			err = startErr
 			outcome = result.Outcome
@@ -325,8 +325,7 @@ func (r *Runtime) storeRunStart(ctx context.Context, kind storageCommandKind, re
 			records = []storage.AppendResult{result.Started}
 			selectedEvents = []hooks.Event{started}
 			if outcome == session.RunStartStop {
-				records = append(records, result.Canceled)
-				selectedEvents = append(selectedEvents, canceledEvent)
+				records = append(records, result.Cancellation)
 			}
 		} else {
 			linkedEvent, decodeErr := hooks.DecodeFromRecordInput(linkedInput)
@@ -342,7 +341,7 @@ func (r *Runtime) storeRunStart(ctx context.Context, kind storageCommandKind, re
 			}
 			linkedRecord := runLogEvent(linkedInput, linkedInput.Payload, linked.Timestamp())
 			result, startErr := r.Store.StartChildRun(ctx, storage.ChildRunStart{RequestDigest: [32]byte(requestDigest),
-				Run: start, ParentLinked: linkedRecord, Started: startedRecord, Canceled: canceledRecord,
+				Run: start, ParentLinked: linkedRecord, Started: startedRecord, Cancellation: cancellationRecord,
 			})
 			err = startErr
 			outcome = result.Outcome
@@ -350,8 +349,7 @@ func (r *Runtime) storeRunStart(ctx context.Context, kind storageCommandKind, re
 			records = []storage.AppendResult{result.ParentRecord, result.Started}
 			selectedEvents = []hooks.Event{linked, started}
 			if outcome == session.RunStartStop {
-				records = append(records, result.Canceled)
-				selectedEvents = append(selectedEvents, canceledEvent)
+				records = append(records, result.Cancellation)
 			}
 		}
 	case storageCommandAppend, storageCommandCancellation, storageCommandSuspension, storageCommandTerminal,
@@ -555,29 +553,6 @@ func (r *Runtime) publishStoredHookStream(ctx context.Context, event hooks.Event
 	return nil
 }
 
-func canceledStartRecord(input *RecordActivityInput, started *hooks.RunStartedEvent) (*RecordActivityInput, *hooks.RunCompletedEvent, error) {
-	built := hooks.NewRunCompletedEvent(
-		started.RunID(), agent.Ident(started.AgentID()), started.SessionID(), runStatusCanceled,
-		run.PhaseCanceled, cloneLabels(started.Labels), context.Canceled,
-		&run.Cancellation{Reason: run.CancellationReasonSessionEnded},
-	)
-	record, err := hooks.EncodeToRecordInput(built, hooks.EncodeOptions{
-		TurnID: input.TurnID, EventKey: terminalRunEventKey, TimestampMS: input.TimestampMS,
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-	decoded, err := hooks.DecodeFromRecordInput(record)
-	if err != nil {
-		return nil, nil, err
-	}
-	event, ok := decoded.(*hooks.RunCompletedEvent)
-	if !ok {
-		return nil, nil, errors.New("runtime: encoded canceled start is not run_completed")
-	}
-	return record, event, nil
-}
-
 func runLogEvent(input *RecordActivityInput, payload []byte, timestampMS int64) *runlog.Event {
 	return &runlog.Event{
 		EventKey: input.EventKey, RunID: input.RunID, AgentID: input.AgentID,
@@ -691,8 +666,8 @@ func validateStorageResult(kind storageCommandKind, result *api.StorageActivityR
 			return errors.New("runtime: proceeding start result cannot have a cancellation reason")
 		}
 		if start.Outcome == session.RunStartStop &&
-			(start.RunStatus != session.RunStatusCanceled || start.CancellationReason != run.CancellationReasonSessionEnded) {
-			return errors.New("runtime: stopped start result requires canceled status and session_ended reason")
+			((start.RunStatus != session.RunStatusRunning && start.RunStatus != session.RunStatusCanceled && start.RunStatus != session.RunStatusFailed) || start.CancellationReason != run.CancellationReasonSessionEnded) {
+			return errors.New("runtime: stopped start result requires running, canceled, or failed status and session_ended reason")
 		}
 		if (kind == storageCommandOneShotStart || kind == storageCommandOneShotChildStart || kind == storageCommandSynchronousStart) && start.Outcome != session.RunStartProceed {
 			return errors.New("runtime: one-shot start result must proceed")
@@ -707,7 +682,7 @@ func validateStorageResult(kind storageCommandKind, result *api.StorageActivityR
 		if len(start.Records) != recordCount {
 			return fmt.Errorf("runtime: start result has %d records, want %d", len(start.Records), recordCount)
 		}
-		closedReplay := start.Outcome == session.RunStartProceed && session.IsTerminalRunStatus(start.RunStatus)
+		closedReplay := session.IsTerminalRunStatus(start.RunStatus)
 		for index, record := range start.Records {
 			if record.ID == "" {
 				return fmt.Errorf("runtime: start record %d has no committed id", index)
@@ -960,8 +935,19 @@ func (r *Runtime) validateChildContinuationStart(ctx context.Context, start sess
 		return malformedStorageCommand(errors.New("runtime: child continuation parent checkpoint does not match accepted seed"))
 	}
 	pending := checkpoint.Pending[0].Child
+	if parent.CancellationReason != "" {
+		// A durably accepted cancellation must settle every saved child. Ordinary
+		// answer continuations still select only the first pending request.
+		pending = nil
+		for _, item := range checkpoint.Pending {
+			if item.Child != nil && item.Child.ToolCallID == linked.ToolCallID {
+				pending = item.Child
+				break
+			}
+		}
+	}
 	if pending == nil || pending.ToolCallID != linked.ToolCallID {
-		return malformedStorageCommand(errors.New("runtime: child continuation is not the parent's first pending child call"))
+		return malformedStorageCommand(errors.New("runtime: child continuation is not selected by the parent's pending work"))
 	}
 	record, ok := checkpointRecordByCallID(checkpoint.Batch.Records, pending.ToolCallID)
 	if !ok || record.Call.Name != linked.ToolName || record.Call.AgentID != agent.Ident(parent.AgentID) {

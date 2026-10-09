@@ -12,6 +12,7 @@ import (
 
 	registrypb "goa.design/goa-ai/registry/gen/grpc/registry/pb"
 	registry "goa.design/goa-ai/registry/gen/registry"
+	tooloperations "goa.design/goa-ai/registry/gen/tooloperations"
 	goa "goa.design/goa/v3/pkg"
 )
 
@@ -852,22 +853,92 @@ func validateregistry_registry_ToolFieldPathSegment_At_elem(elem *registrypb.Too
 // validateregistry_registry_ToolUnionBranch_At_elem runs the validations
 // defined on ToolUnionBranch.
 func validateregistry_registry_ToolUnionBranch_At_elem(elem *registrypb.ToolUnionBranch) (err error) {
-	if elem.Value == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("value", "elem"))
+	if elem.Selection == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("selection", "elem"))
 	}
-	if len(elem.Discriminator) < 1 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("elem.discriminator", elem.Discriminator, len(elem.Discriminator), 1, true))
+	switch v := elem.Selection.(type) {
+	case *registrypb.ToolUnionBranch_Tagged:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("tagged", "elem.selection"))
+			break
+		}
+		if v.Tagged == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("tagged", "elem.selection"))
+			break
+		}
+		if v.Tagged != nil {
+			if err2 := validateregistry_registry_ToolTaggedUnionBranch_At_tagged(v.Tagged); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+
+	case *registrypb.ToolUnionBranch_Untagged:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("untagged", "elem.selection"))
+			break
+		}
+		if v.Untagged == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("untagged", "elem.selection"))
+			break
+		}
+		if v.Untagged != nil {
+			if err2 := validateregistry_registry_ToolUntaggedUnionBranch_At_untagged(v.Untagged); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
 	}
-	for _, e := range elem.Discriminator {
+
+	return
+}
+
+// validateregistry_registry_ToolTaggedUnionBranch_At_tagged runs the
+// validations defined on ToolTaggedUnionBranch.
+func validateregistry_registry_ToolTaggedUnionBranch_At_tagged(tagged *registrypb.ToolTaggedUnionBranch) (err error) {
+	if tagged.Value == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("value", "tagged"))
+	}
+	if len(tagged.Discriminator) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("tagged.discriminator", tagged.Discriminator, len(tagged.Discriminator), 1, true))
+	}
+	for _, e := range tagged.Discriminator {
 		if e != nil {
 			if err2 := validateregistry_registry_ToolFieldPathSegment_At_elem(e); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
 	}
-	if elem.Value != nil {
-		if utf8.RuneCountInString(*elem.Value) < 1 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("elem.value", *elem.Value, utf8.RuneCountInString(*elem.Value), 1, true))
+	if tagged.Value != nil {
+		if utf8.RuneCountInString(*tagged.Value) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("tagged.value", *tagged.Value, utf8.RuneCountInString(*tagged.Value), 1, true))
+		}
+	}
+	return
+}
+
+// validateregistry_registry_ToolUntaggedUnionBranch_At_untagged runs the
+// validations defined on ToolUntaggedUnionBranch.
+func validateregistry_registry_ToolUntaggedUnionBranch_At_untagged(untagged *registrypb.ToolUntaggedUnionBranch) (err error) {
+	if untagged.JsonKind == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("json_kind", "untagged"))
+	}
+	if untagged.Index == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("index", "untagged"))
+	}
+	for _, e := range untagged.Path {
+		if e != nil {
+			if err2 := validateregistry_registry_ToolFieldPathSegment_At_elem(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if untagged.JsonKind != nil {
+		if !(*untagged.JsonKind == "string" || *untagged.JsonKind == "number" || *untagged.JsonKind == "boolean" || *untagged.JsonKind == "array" || *untagged.JsonKind == "object") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("untagged.json_kind", *untagged.JsonKind, []any{"string", "number", "boolean", "array", "object"}))
+		}
+	}
+	if untagged.Index != nil {
+		if *untagged.Index < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("untagged.index", *untagged.Index, 0, true))
 		}
 	}
 	return
@@ -1236,8 +1307,8 @@ func ValidateAttachProviderRequest(message *registrypb.AttachProviderRequest) (e
 		err = goa.MergeErrors(err, goa.ValidateFormat("message.provider_incarnation_id", *message.ProviderIncarnationId, goa.FormatUUID))
 	}
 	if message.WireProtocolVersion != nil {
-		if !(*message.WireProtocolVersion == 10) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{10}))
+		if !(*message.WireProtocolVersion == 13) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{13}))
 		}
 	}
 	return
@@ -1331,8 +1402,8 @@ func ValidateRegisterRequest(message *registrypb.RegisterRequest) (err error) {
 		err = goa.MergeErrors(err, goa.ValidateFormat("message.provider_incarnation_id", *message.ProviderIncarnationId, goa.FormatUUID))
 	}
 	if message.WireProtocolVersion != nil {
-		if !(*message.WireProtocolVersion == 10) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{10}))
+		if !(*message.WireProtocolVersion == 13) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{13}))
 		}
 	}
 	if message.SchemaFingerprint != nil {
@@ -1915,8 +1986,8 @@ func ValidateCallToolRequest(message *registrypb.CallToolRequest) (err error) {
 		}
 	}
 	if message.WireProtocolVersion != nil {
-		if !(*message.WireProtocolVersion == 10) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{10}))
+		if !(*message.WireProtocolVersion == 13) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{13}))
 		}
 	}
 	return
@@ -1978,6 +2049,69 @@ func validateregistry_registry_ToolCallMeta_At_meta(meta *registrypb.ToolCallMet
 		if utf8.RuneCountInString(*meta.ParentToolCallId) > 256 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("meta.parent_tool_call_id", *meta.ParentToolCallId, utf8.RuneCountInString(*meta.ParentToolCallId), 256, false))
 		}
+	}
+	if meta.ExecutionContinuation != nil {
+		if err2 := validateregistry_registry_ToolOperationExecutionContinuation_Target_executionContinuation_Context_execution_5F_continuation(meta.ExecutionContinuation); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return
+}
+
+// validateregistry_registry_ToolOperationExecutionContinuation_Target_executionContinuation_Context_execution_5F_continuation
+// runs the validations defined on ToolOperationExecutionContinuation.
+func validateregistry_registry_ToolOperationExecutionContinuation_Target_executionContinuation_Context_execution_5F_continuation(executionContinuation *registrypb.ToolOperationExecutionContinuation) (err error) {
+	if executionContinuation.Operation == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("operation", "execution_continuation"))
+	}
+	switch v := executionContinuation.Operation.(type) {
+	case *registrypb.ToolOperationExecutionContinuation_Input:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("input", "execution_continuation.operation"))
+			break
+		}
+		if v.Input == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("input", "execution_continuation.operation"))
+			break
+		}
+
+	case *registrypb.ToolOperationExecutionContinuation_TaskGet:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("task_get", "execution_continuation.operation"))
+			break
+		}
+
+	case *registrypb.ToolOperationExecutionContinuation_TaskUpdate:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("task_update", "execution_continuation.operation"))
+			break
+		}
+		if v.TaskUpdate == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("task_update", "execution_continuation.operation"))
+			break
+		}
+		if v.TaskUpdate != nil {
+			if err2 := validateregistry_registry_ToolOperationTaskAnswers_Target_taskUpdate_Context_task_5F_update(v.TaskUpdate); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+
+	case *registrypb.ToolOperationExecutionContinuation_TaskCancel:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("task_cancel", "execution_continuation.operation"))
+			break
+		}
+
+	}
+
+	return
+}
+
+// validateregistry_registry_ToolOperationTaskAnswers_Target_taskUpdate_Context_task_5F_update
+// runs the validations defined on ToolOperationTaskAnswers.
+func validateregistry_registry_ToolOperationTaskAnswers_Target_taskUpdate_Context_task_5F_update(taskUpdate *registrypb.ToolOperationTaskAnswers) (err error) {
+	if taskUpdate.TaskId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("task_id", "task_update"))
 	}
 	return
 }
@@ -2067,8 +2201,8 @@ func ValidateCallResolvedToolRequest(message *registrypb.CallResolvedToolRequest
 		}
 	}
 	if message.WireProtocolVersion != nil {
-		if !(*message.WireProtocolVersion == 10) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{10}))
+		if !(*message.WireProtocolVersion == 13) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{13}))
 		}
 	}
 	return
@@ -2159,8 +2293,8 @@ func ValidateRetryToolRequest(message *registrypb.RetryToolRequest) (err error) 
 		}
 	}
 	if message.WireProtocolVersion != nil {
-		if !(*message.WireProtocolVersion == 10) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{10}))
+		if !(*message.WireProtocolVersion == 13) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{13}))
 		}
 	}
 	return
@@ -2676,13 +2810,51 @@ func transformToolCollectionElementToProtoToolCollectionElement(v *registry.Tool
 // transformToolUnionBranchToProtoToolUnionBranch builds a value of type
 // *registrypb.ToolUnionBranch from a value of type *registry.ToolUnionBranch.
 func transformToolUnionBranchToProtoToolUnionBranch(v *registry.ToolUnionBranch) *registrypb.ToolUnionBranch {
-	res := &registrypb.ToolUnionBranch{
+	res := &registrypb.ToolUnionBranch{}
+	if v.Selection.Kind() != "" {
+		switch string(v.Selection.Kind()) {
+		case "tagged":
+			actual, _ := v.Selection.AsTagged()
+			res.Selection = &registrypb.ToolUnionBranch_Tagged{Tagged: transformToolTaggedUnionBranchToProtoToolTaggedUnionBranch(actual)}
+		case "untagged":
+			actual, _ := v.Selection.AsUntagged()
+			res.Selection = &registrypb.ToolUnionBranch_Untagged{Untagged: transformToolUntaggedUnionBranchToProtoToolUntaggedUnionBranch(actual)}
+		}
+	}
+
+	return res
+}
+
+// transformToolTaggedUnionBranchToProtoToolTaggedUnionBranch builds a value of
+// type *registrypb.ToolTaggedUnionBranch from a value of type
+// *registry.ToolTaggedUnionBranch.
+func transformToolTaggedUnionBranchToProtoToolTaggedUnionBranch(v *registry.ToolTaggedUnionBranch) *registrypb.ToolTaggedUnionBranch {
+	res := &registrypb.ToolTaggedUnionBranch{
 		Value: &v.Value,
 	}
 	if v.Discriminator != nil {
 		res.Discriminator = make([]*registrypb.ToolFieldPathSegment, len(v.Discriminator))
 		for i, val := range v.Discriminator {
 			res.Discriminator[i] = transformToolFieldPathSegmentToProtoToolFieldPathSegment(val)
+		}
+	}
+
+	return res
+}
+
+// transformToolUntaggedUnionBranchToProtoToolUntaggedUnionBranch builds a
+// value of type *registrypb.ToolUntaggedUnionBranch from a value of type
+// *registry.ToolUntaggedUnionBranch.
+func transformToolUntaggedUnionBranchToProtoToolUntaggedUnionBranch(v *registry.ToolUntaggedUnionBranch) *registrypb.ToolUntaggedUnionBranch {
+	res := &registrypb.ToolUntaggedUnionBranch{
+		JsonKind: &v.JSONKind,
+	}
+	index := int32(v.Index)
+	res.Index = &index
+	if v.Path != nil {
+		res.Path = make([]*registrypb.ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			res.Path[i] = transformToolFieldPathSegmentToProtoToolFieldPathSegment(val)
 		}
 	}
 
@@ -2965,12 +3137,55 @@ func transformProtoToolCollectionElementToToolCollectionElement(v *registrypb.To
 // transformProtoToolUnionBranchToToolUnionBranch builds a value of type
 // *registry.ToolUnionBranch from a value of type *registrypb.ToolUnionBranch.
 func transformProtoToolUnionBranchToToolUnionBranch(v *registrypb.ToolUnionBranch) *registry.ToolUnionBranch {
-	res := &registry.ToolUnionBranch{
+	res := &registry.ToolUnionBranch{}
+	if v.Selection != nil {
+		switch val := v.Selection.(type) {
+		case *registrypb.ToolUnionBranch_Tagged:
+			{
+				u := res.Selection
+				u.SetTagged(transformProtoToolTaggedUnionBranchToToolTaggedUnionBranch(val.Tagged))
+				res.Selection = u
+			}
+		case *registrypb.ToolUnionBranch_Untagged:
+			{
+				u := res.Selection
+				u.SetUntagged(transformProtoToolUntaggedUnionBranchToToolUntaggedUnionBranch(val.Untagged))
+				res.Selection = u
+			}
+		}
+	}
+
+	return res
+}
+
+// transformProtoToolTaggedUnionBranchToToolTaggedUnionBranch builds a value of
+// type *registry.ToolTaggedUnionBranch from a value of type
+// *registrypb.ToolTaggedUnionBranch.
+func transformProtoToolTaggedUnionBranchToToolTaggedUnionBranch(v *registrypb.ToolTaggedUnionBranch) *registry.ToolTaggedUnionBranch {
+	res := &registry.ToolTaggedUnionBranch{
 		Value: *v.Value,
 	}
 	res.Discriminator = make([]*registry.ToolFieldPathSegment, len(v.Discriminator))
 	for i, val := range v.Discriminator {
 		res.Discriminator[i] = transformProtoToolFieldPathSegmentToToolFieldPathSegment(val)
+	}
+
+	return res
+}
+
+// transformProtoToolUntaggedUnionBranchToToolUntaggedUnionBranch builds a
+// value of type *registry.ToolUntaggedUnionBranch from a value of type
+// *registrypb.ToolUntaggedUnionBranch.
+func transformProtoToolUntaggedUnionBranchToToolUntaggedUnionBranch(v *registrypb.ToolUntaggedUnionBranch) *registry.ToolUntaggedUnionBranch {
+	res := &registry.ToolUntaggedUnionBranch{
+		JSONKind: *v.JsonKind,
+		Index:    int(*v.Index),
+	}
+	if v.Path != nil {
+		res.Path = make([]*registry.ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			res.Path[i] = transformProtoToolFieldPathSegmentToToolFieldPathSegment(val)
+		}
 	}
 
 	return res
@@ -3119,12 +3334,13 @@ func transformProtoToolsetInfoToToolsetInfo(v *registrypb.ToolsetInfo) *registry
 // *registrypb.ToolCallMeta from a value of type *registry.ToolCallMeta.
 func transformToolCallMetaToProtoToolCallMeta(v *registry.ToolCallMeta) *registrypb.ToolCallMeta {
 	res := &registrypb.ToolCallMeta{
-		RunId:            &v.RunID,
-		SessionId:        &v.SessionID,
-		TurnId:           v.TurnID,
-		ToolCallId:       &v.ToolCallID,
-		ParentToolCallId: v.ParentToolCallID,
-		TextOnly:         &v.TextOnly,
+		RunId:             &v.RunID,
+		SessionId:         &v.SessionID,
+		TurnId:            v.TurnID,
+		ToolCallId:        &v.ToolCallID,
+		ParentToolCallId:  v.ParentToolCallID,
+		TextOnly:          &v.TextOnly,
+		ExecutionSequence: &v.ExecutionSequence,
 	}
 	if v.Labels != nil {
 		res.Labels = make(map[string]string, len(v.Labels))
@@ -3132,6 +3348,72 @@ func transformToolCallMetaToProtoToolCallMeta(v *registry.ToolCallMeta) *registr
 			tk := key
 			tv := val
 			res.Labels[tk] = tv
+		}
+	}
+	if v.ExecutionContinuation != nil {
+		res.ExecutionContinuation = transformToolOperationExecutionContinuationToProtoToolOperationExecutionContinuation(v.ExecutionContinuation)
+	}
+
+	return res
+}
+
+// transformToolOperationExecutionContinuationToProtoToolOperationExecutionContinuation
+// builds a value of type *registrypb.ToolOperationExecutionContinuation from a
+// value of type *tooloperations.ToolOperationExecutionContinuation.
+func transformToolOperationExecutionContinuationToProtoToolOperationExecutionContinuation(v *tooloperations.ToolOperationExecutionContinuation) *registrypb.ToolOperationExecutionContinuation {
+	res := &registrypb.ToolOperationExecutionContinuation{}
+	if v.Operation.Kind() != "" {
+		switch string(v.Operation.Kind()) {
+		case "input":
+			actual, _ := v.Operation.AsInput()
+			res.Operation = &registrypb.ToolOperationExecutionContinuation_Input{Input: transformToolOperationInputContinuationToProtoToolOperationInputContinuation(actual)}
+		case "task_get":
+			actual, _ := v.Operation.AsTaskGet()
+			res.Operation = &registrypb.ToolOperationExecutionContinuation_TaskGet{TaskGet: string(actual)}
+		case "task_update":
+			actual, _ := v.Operation.AsTaskUpdate()
+			res.Operation = &registrypb.ToolOperationExecutionContinuation_TaskUpdate{TaskUpdate: transformToolOperationTaskAnswersToProtoToolOperationTaskAnswers(actual)}
+		case "task_cancel":
+			actual, _ := v.Operation.AsTaskCancel()
+			res.Operation = &registrypb.ToolOperationExecutionContinuation_TaskCancel{TaskCancel: string(actual)}
+		}
+	}
+
+	return res
+}
+
+// transformToolOperationInputContinuationToProtoToolOperationInputContinuation
+// builds a value of type *registrypb.ToolOperationInputContinuation from a
+// value of type *tooloperations.ToolOperationInputContinuation.
+func transformToolOperationInputContinuationToProtoToolOperationInputContinuation(v *tooloperations.ToolOperationInputContinuation) *registrypb.ToolOperationInputContinuation {
+	res := &registrypb.ToolOperationInputContinuation{
+		State: v.State,
+	}
+	if v.Responses != nil {
+		res.Responses = make(map[string][]byte, len(v.Responses))
+		for key, val := range v.Responses {
+			tk := key
+			tv := val
+			res.Responses[tk] = tv
+		}
+	}
+
+	return res
+}
+
+// transformToolOperationTaskAnswersToProtoToolOperationTaskAnswers builds a
+// value of type *registrypb.ToolOperationTaskAnswers from a value of type
+// *tooloperations.ToolOperationTaskAnswers.
+func transformToolOperationTaskAnswersToProtoToolOperationTaskAnswers(v *tooloperations.ToolOperationTaskAnswers) *registrypb.ToolOperationTaskAnswers {
+	res := &registrypb.ToolOperationTaskAnswers{
+		TaskId: &v.TaskID,
+	}
+	if v.Responses != nil {
+		res.Responses = make(map[string][]byte, len(v.Responses))
+		for key, val := range v.Responses {
+			tk := key
+			tv := val
+			res.Responses[tk] = tv
 		}
 	}
 
@@ -3151,6 +3433,9 @@ func transformProtoToolCallMetaToToolCallMeta(v *registrypb.ToolCallMeta) *regis
 	if v.TextOnly != nil {
 		res.TextOnly = *v.TextOnly
 	}
+	if v.ExecutionSequence != nil {
+		res.ExecutionSequence = *v.ExecutionSequence
+	}
 	if v.Labels != nil {
 		res.Labels = make(map[string]string, len(v.Labels))
 		for key, val := range v.Labels {
@@ -3161,6 +3446,85 @@ func transformProtoToolCallMetaToToolCallMeta(v *registrypb.ToolCallMeta) *regis
 	}
 	if v.TextOnly == nil {
 		res.TextOnly = false
+	}
+	if v.ExecutionSequence == nil {
+		res.ExecutionSequence = 0
+	}
+	if v.ExecutionContinuation != nil {
+		res.ExecutionContinuation = transformProtoToolOperationExecutionContinuationToToolOperationExecutionContinuation(v.ExecutionContinuation)
+	}
+
+	return res
+}
+
+// transformProtoToolOperationExecutionContinuationToToolOperationExecutionContinuation
+// builds a value of type *tooloperations.ToolOperationExecutionContinuation
+// from a value of type *registrypb.ToolOperationExecutionContinuation.
+func transformProtoToolOperationExecutionContinuationToToolOperationExecutionContinuation(v *registrypb.ToolOperationExecutionContinuation) *tooloperations.ToolOperationExecutionContinuation {
+	res := &tooloperations.ToolOperationExecutionContinuation{}
+	if v.Operation != nil {
+		switch val := v.Operation.(type) {
+		case *registrypb.ToolOperationExecutionContinuation_Input:
+			{
+				u := res.Operation
+				u.SetInput(transformProtoToolOperationInputContinuationToToolOperationInputContinuation(val.Input))
+				res.Operation = u
+			}
+		case *registrypb.ToolOperationExecutionContinuation_TaskGet:
+			{
+				u := res.Operation
+				u.SetTaskGet(tooloperations.OperationBranchTaskGet(val.TaskGet))
+				res.Operation = u
+			}
+		case *registrypb.ToolOperationExecutionContinuation_TaskUpdate:
+			{
+				u := res.Operation
+				u.SetTaskUpdate(transformProtoToolOperationTaskAnswersToToolOperationTaskAnswers(val.TaskUpdate))
+				res.Operation = u
+			}
+		case *registrypb.ToolOperationExecutionContinuation_TaskCancel:
+			{
+				u := res.Operation
+				u.SetTaskCancel(tooloperations.OperationBranchTaskCancel(val.TaskCancel))
+				res.Operation = u
+			}
+		}
+	}
+
+	return res
+}
+
+// transformProtoToolOperationInputContinuationToToolOperationInputContinuation
+// builds a value of type *tooloperations.ToolOperationInputContinuation from a
+// value of type *registrypb.ToolOperationInputContinuation.
+func transformProtoToolOperationInputContinuationToToolOperationInputContinuation(v *registrypb.ToolOperationInputContinuation) *tooloperations.ToolOperationInputContinuation {
+	res := &tooloperations.ToolOperationInputContinuation{
+		State: v.State,
+	}
+	if v.Responses != nil {
+		res.Responses = make(map[string][]byte, len(v.Responses))
+		for key, val := range v.Responses {
+			tk := key
+			tv := val
+			res.Responses[tk] = tv
+		}
+	}
+
+	return res
+}
+
+// transformProtoToolOperationTaskAnswersToToolOperationTaskAnswers builds a
+// value of type *tooloperations.ToolOperationTaskAnswers from a value of type
+// *registrypb.ToolOperationTaskAnswers.
+func transformProtoToolOperationTaskAnswersToToolOperationTaskAnswers(v *registrypb.ToolOperationTaskAnswers) *tooloperations.ToolOperationTaskAnswers {
+	res := &tooloperations.ToolOperationTaskAnswers{
+		TaskID: *v.TaskId,
+	}
+	res.Responses = make(map[string][]byte, len(v.Responses))
+	for key, val := range v.Responses {
+		tk := key
+		tv := val
+		res.Responses[tk] = tv
 	}
 
 	return res

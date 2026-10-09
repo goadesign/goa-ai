@@ -1,7 +1,5 @@
 scenarios:
   - name: prompts_list
-    pre:
-      auto_initialize: true
     steps:
       - name: list
         op: PromptsList
@@ -10,10 +8,12 @@ scenarios:
           result:
             prompts:
               - { name: "code_review", description: "Simple code review prompt" }
+              - { name: "test_prompt_with_arguments", description: "Synthetic parameterized instructions" }
+              - { name: "test_prompt_with_embedded_resource", description: "Synthetic resource instructions" }
+              - { name: "test_prompt_with_image", description: "Synthetic image instructions" }
+              - { name: "test_simple_prompt", description: "Synthetic text instructions" }
 
   - name: prompts_get_static
-    pre:
-      auto_initialize: true
     steps:
       - name: get
         op: PromptsGet
@@ -29,8 +29,6 @@ scenarios:
                   text: "Review the provided code and suggest improvements."
 
   - name: prompts_get_rejects_arguments
-    pre:
-      auto_initialize: true
     steps:
       - name: get
         op: PromptsGet
@@ -42,8 +40,6 @@ scenarios:
           error: { code: -32602 }
 
   - name: prompts_list_rejects_cursor
-    pre:
-      auto_initialize: true
     steps:
       - name: list
         op: PromptsList
@@ -53,8 +49,6 @@ scenarios:
           error: { code: -32602 }
 
   - name: prompts_get_unknown_name
-    pre:
-      auto_initialize: true
     steps:
       - name: get
         op: PromptsGet

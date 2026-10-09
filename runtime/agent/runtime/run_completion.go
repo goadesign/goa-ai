@@ -15,6 +15,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/internal/temporalerrors"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/runlog"
 	"goa.design/goa-ai/runtime/agent/session"
@@ -580,7 +581,7 @@ func terminalRunStatusForError(err error) string {
 		return runStatusSuccess
 	case isRunTimeoutError(err):
 		return runStatusFailed
-	case isRunCancellationError(err):
+	case temporalerrors.CancellationOnly(err):
 		return runStatusCanceled
 	default:
 		return runStatusFailed

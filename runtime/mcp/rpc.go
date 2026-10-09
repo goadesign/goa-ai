@@ -5,16 +5,20 @@ package mcp
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
+
+	toolcontent "goa.design/goa-ai/runtime/content"
 )
 
 type (
 	rpcRequest struct {
 		JSONRPC string `json:"jsonrpc"`
 		Method  string `json:"method"`
-		ID      uint64 `json:"id"`
+		ID      any    `json:"id"`
 		Params  any    `json:"params"`
 	}
 
@@ -34,73 +38,100 @@ type (
 	rpcMessage struct {
 		JSONRPC string          `json:"jsonrpc"`
 		Method  string          `json:"method"`
+		Params  json.RawMessage `json:"params"`
 		ID      json.RawMessage `json:"id"`
 		Result  json.RawMessage `json:"result"`
 		Error   json.RawMessage `json:"error"`
 	}
 
-	rpcReply struct {
-		JSONRPC string          `json:"jsonrpc"`
-		Result  json.RawMessage `json:"result,omitempty"`
-		Error   *rpcError       `json:"error,omitempty"`
-		ID      json.RawMessage `json:"id"`
-	}
-
 	rpcError struct {
-		Code    int    `json:"code"`
-		Message string `json:"message"`
-	}
-
-	initializeResult struct {
-		ProtocolVersion string              `json:"protocolVersion"` //nolint:tagliatelle // MCP protocol field.
-		ServerInfo      *serverInfo         `json:"serverInfo"`      //nolint:tagliatelle // MCP protocol field.
-		Capabilities    *serverCapabilities `json:"capabilities"`
-	}
-
-	serverInfo struct {
-		Name    string `json:"name"`
-		Version string `json:"version"`
-	}
-
-	serverCapabilities struct {
-		Tools *struct{} `json:"tools"`
+		Code    int             `json:"code"`
+		Message string          `json:"message"`
+		Data    json.RawMessage `json:"data,omitempty"`
 	}
 
 	toolsCallResult struct {
-		Content           *[]contentItem  `json:"content"`
-		StructuredContent json.RawMessage `json:"structuredContent,omitempty"` //nolint:tagliatelle // MCP protocol field.
-		IsError           bool            `json:"isError"`                     //nolint:tagliatelle // MCP protocol field.
-	}
-
-	contentItem struct {
-		Type        string          `json:"type"`
-		Text        *string         `json:"text"`
-		Data        *string         `json:"data"`
-		MIMEType    *string         `json:"mimeType"` //nolint:tagliatelle // MCP protocol field.
-		Name        *string         `json:"name"`
-		Title       *string         `json:"title"`
-		URI         *string         `json:"uri"`
-		Description *string         `json:"description"`
-		Size        *int64          `json:"size"`
-		Resource    json.RawMessage `json:"resource"`
-		Annotations *Annotations    `json:"annotations"`
-		Meta        json.RawMessage `json:"_meta,omitempty"` //nolint:tagliatelle // MCP protocol field.
-	}
-
-	resourceContents struct {
-		URI      *string         `json:"uri"`
-		MIMEType *string         `json:"mimeType"` //nolint:tagliatelle // MCP protocol field.
-		Text     *string         `json:"text"`
-		Blob     *string         `json:"blob"`
-		Meta     json.RawMessage `json:"_meta,omitempty"` //nolint:tagliatelle // MCP protocol field.
+		Task              *TaskInfo               `json:"-"`
+		ResultType        string                  `json:"resultType"`    //nolint:tagliatelle // MCP defines this wire field name.
+		InputRequests     map[string]InputRequest `json:"inputRequests"` //nolint:tagliatelle // MCP defines this wire field name.
+		RequestState      *string                 `json:"requestState"`  //nolint:tagliatelle // MCP defines this wire field name.
+		Meta              json.RawMessage         `json:"_meta"`         //nolint:tagliatelle // MCP defines this wire field name.
+		Content           *toolcontent.Blocks     `json:"content"`
+		StructuredContent json.RawMessage         `json:"structuredContent,omitempty"` //nolint:tagliatelle // MCP protocol field.
+		IsError           bool                    `json:"isError"`                     //nolint:tagliatelle // MCP protocol field.
 	}
 )
 
 const (
-	rpcVersion           = "2.0"
-	rpcMethodInitialize  = "initialize"
-	rpcMethodInitialized = "notifications/initialized"
+	rpcVersion               = "2.0"
+	methodToolsCall          = "tools/call"
+	methodPromptsGet         = "prompts/get"
+	methodCompletionComplete = "completion/complete"
+	resultComplete           = "complete"
+	resultInputRequired      = "input_required"
+	elicitationForm          = "form"
 )
+
+// UnmarshalJSON reads resultType before decoding its fields. MCP permits extra
+// result fields, so an input request never becomes completed content, and a
+// completed result never becomes a continuation. Null branch fields are invalid;
+// a completed structuredContent may intentionally contain JSON null.
+func (r *toolsCallResult) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil || fields == nil {
+		return errors.New("tool result must be an object")
+	}
+	decoded := toolsCallResult{Meta: fields["_meta"]}
+	if raw, ok := fields["resultType"]; ok {
+		if err := json.Unmarshal(raw, &decoded.ResultType); err != nil {
+			return err
+		}
+	}
+	var controls []string
+	switch decoded.ResultType {
+	case resultComplete:
+		controls = []string{"content", "isError"}
+	case resultInputRequired:
+		controls = []string{"inputRequests", "requestState"}
+	}
+	for _, name := range controls {
+		if bytes.Equal(bytes.TrimSpace(fields[name]), []byte("null")) {
+			return fmt.Errorf("tool result %s cannot be null", name)
+		}
+	}
+	switch decoded.ResultType {
+	case resultComplete:
+		var complete struct {
+			Content           *toolcontent.Blocks `json:"content"`
+			StructuredContent json.RawMessage     `json:"structuredContent"` //nolint:tagliatelle // MCP wire name.
+			IsError           bool                `json:"isError"`           //nolint:tagliatelle // MCP wire name.
+		}
+		if err := json.Unmarshal(data, &complete); err != nil {
+			return err
+		}
+		decoded.Content = complete.Content
+		decoded.StructuredContent = complete.StructuredContent
+		decoded.IsError = complete.IsError
+	case resultInputRequired:
+		var pending struct {
+			InputRequests map[string]InputRequest `json:"inputRequests"` //nolint:tagliatelle // MCP wire name.
+			RequestState  *string                 `json:"requestState"`  //nolint:tagliatelle // MCP wire name.
+		}
+		if err := json.Unmarshal(data, &pending); err != nil {
+			return err
+		}
+		decoded.InputRequests = pending.InputRequests
+		decoded.RequestState = pending.RequestState
+	case resultTask:
+		task, err := decodeTaskInfo(data)
+		if err != nil {
+			return err
+		}
+		decoded.Task = &task
+	}
+	*r = decoded
+	return nil
+}
 
 func (e *rpcError) Error() string {
 	if e == nil {
@@ -174,6 +205,7 @@ func (m rpcMessage) responseError() (*rpcError, error) {
 	var fields struct {
 		Code    json.RawMessage `json:"code"`
 		Message json.RawMessage `json:"message"`
+		Data    json.RawMessage `json:"data"`
 	}
 	if err := json.Unmarshal(m.Error, &fields); err != nil {
 		return nil, NewMalformedResponseError(errors.New("invalid JSON-RPC response error"))
@@ -192,156 +224,49 @@ func (m rpcMessage) responseError() (*rpcError, error) {
 	if bytes.Equal(bytes.TrimSpace(fields.Message), []byte("null")) || json.Unmarshal(fields.Message, &message) != nil {
 		return nil, NewMalformedResponseError(errors.New("JSON-RPC response error message must be a string"))
 	}
-	return &rpcError{Code: code, Message: message}, nil
+	return &rpcError{Code: code, Message: message, Data: cloneRaw(fields.Data)}, nil
 }
 
 func (e *rpcError) callerError() *Error {
 	if e == nil {
 		return nil
 	}
-	return &Error{Code: e.Code, Message: e.Message}
-}
-
-// validateInitializeResult checks the server identity and the tool support
-// required by both handwritten callers before they accept the MCP session.
-func validateInitializeResult(result initializeResult) error {
-	if result.ProtocolVersion == "" {
-		return errors.New("mcp: initialize response protocolVersion is required")
-	}
-	if result.ProtocolVersion != DefaultProtocolVersion {
-		return fmt.Errorf(
-			"mcp: server selected protocol version %q, client supports %q",
-			result.ProtocolVersion,
-			DefaultProtocolVersion,
-		)
-	}
-	if result.ServerInfo == nil {
-		return errors.New("mcp: initialize response serverInfo is required")
-	}
-	if result.ServerInfo.Name == "" {
-		return errors.New("mcp: initialize response serverInfo.name is required")
-	}
-	if result.ServerInfo.Version == "" {
-		return errors.New("mcp: initialize response serverInfo.version is required")
-	}
-	if result.Capabilities == nil {
-		return errors.New("mcp: initialize response capabilities are required")
-	}
-	if result.Capabilities.Tools == nil {
-		return errors.New("mcp: initialize response tools capability is required")
-	}
-	return nil
+	return &Error{Code: e.Code, Message: e.Message, Data: cloneRaw(e.Data)}
 }
 
 func normalizeToolResult(result toolsCallResult) (CallResponse, error) {
+	if err := validateMeta(result.Meta); err != nil {
+		return CallResponse{}, NewMalformedResponseError(err)
+	}
+	switch result.ResultType {
+	case resultTask:
+		return CallResponse{Task: result.Task}, nil
+	case resultInputRequired:
+		if result.InputRequests == nil && result.RequestState == nil {
+			return CallResponse{}, NewMalformedResponseError(errors.New("input_required needs inputRequests or requestState"))
+		}
+		for id, request := range result.InputRequests {
+			if id == "" || request.Method == "" || len(request.Params) == 0 {
+				return CallResponse{}, NewMalformedResponseError(errors.New("invalid input request"))
+			}
+		}
+		return CallResponse{InputRequired: &InputRequired{Requests: result.InputRequests, RequestState: result.RequestState}}, nil
+	case resultComplete:
+	default:
+		return CallResponse{}, NewMalformedResponseError(fmt.Errorf("unsupported resultType %q", result.ResultType))
+	}
 	if result.Content == nil {
 		return CallResponse{}, NewMalformedResponseError(errors.New("tool response is missing content"))
 	}
-	if len(result.StructuredContent) > 0 {
-		var object map[string]json.RawMessage
-		if err := json.Unmarshal(result.StructuredContent, &object); err != nil || object == nil {
-			return CallResponse{}, NewMalformedResponseError(errors.New("structuredContent must be a JSON object"))
-		}
-	}
-	content := make([]ContentBlock, len(*result.Content))
-	for i, raw := range *result.Content {
-		item, err := normalizeContentBlock(raw)
-		if err != nil {
-			return CallResponse{}, NewMalformedResponseError(fmt.Errorf("content[%d]: %w", i, err))
-		}
-		content[i] = item
-	}
+
 	response := CallResponse{
-		Content:           content,
+		Content:           *result.Content,
 		StructuredContent: append(json.RawMessage(nil), result.StructuredContent...),
 	}
 	if result.IsError {
 		return CallResponse{}, NewToolExecutionError(response)
 	}
 	return response, nil
-}
-
-// normalizeContentBlock decodes one MCP content union after the JSON-RPC
-// response has been accepted.
-func normalizeContentBlock(item contentItem) (ContentBlock, error) {
-	if err := validateContentMetadata(item.Annotations, item.Meta); err != nil {
-		return nil, err
-	}
-	switch item.Type {
-	case "text":
-		if item.Text == nil {
-			return nil, errors.New("text content is missing text")
-		}
-		return &TextContent{Text: *item.Text, Annotations: item.Annotations, Meta: cloneRaw(item.Meta)}, nil
-	case "image":
-		if item.Data == nil || item.MIMEType == nil {
-			return nil, errors.New("image content requires data and mimeType")
-		}
-		return &ImageContent{Data: *item.Data, MIMEType: *item.MIMEType, Annotations: item.Annotations, Meta: cloneRaw(item.Meta)}, nil
-	case "audio":
-		if item.Data == nil || item.MIMEType == nil {
-			return nil, errors.New("audio content requires data and mimeType")
-		}
-		return &AudioContent{Data: *item.Data, MIMEType: *item.MIMEType, Annotations: item.Annotations, Meta: cloneRaw(item.Meta)}, nil
-	case "resource_link":
-		if item.Name == nil || item.URI == nil {
-			return nil, errors.New("resource link requires name and uri")
-		}
-		if item.Size != nil && *item.Size < 0 {
-			return nil, errors.New("resource link size must not be negative")
-		}
-		return &ResourceLink{
-			Name: *item.Name, URI: *item.URI, Title: item.Title,
-			Description: item.Description, MIMEType: item.MIMEType, Size: item.Size,
-			Annotations: item.Annotations, Meta: cloneRaw(item.Meta),
-		}, nil
-	case "resource":
-		resource, err := normalizeResourceContents(item.Resource)
-		if err != nil {
-			return nil, err
-		}
-		return &EmbeddedResource{Resource: resource, Annotations: item.Annotations, Meta: cloneRaw(item.Meta)}, nil
-	default:
-		return nil, fmt.Errorf("unsupported MCP content type %q", item.Type)
-	}
-}
-
-// normalizeResourceContents decodes the text-or-blob union carried by an
-// embedded resource.
-func normalizeResourceContents(raw json.RawMessage) (ResourceContents, error) {
-	if len(raw) == 0 {
-		return nil, errors.New("embedded resource is missing resource")
-	}
-	var resource resourceContents
-	if err := json.Unmarshal(raw, &resource); err != nil || resource.URI == nil {
-		return nil, errors.New("embedded resource requires a resource object with uri")
-	}
-	if err := validateMeta(resource.Meta); err != nil {
-		return nil, err
-	}
-	if (resource.Text == nil) == (resource.Blob == nil) {
-		return nil, errors.New("embedded resource must contain exactly one of text or blob")
-	}
-	if resource.Text != nil {
-		return &TextResourceContents{URI: *resource.URI, MIMEType: resource.MIMEType, Text: *resource.Text, Meta: cloneRaw(resource.Meta)}, nil
-	}
-	return &BlobResourceContents{URI: *resource.URI, MIMEType: resource.MIMEType, Blob: *resource.Blob, Meta: cloneRaw(resource.Meta)}, nil
-}
-
-// validateContentMetadata checks the closed MCP annotation values and the
-// object shape required for extension metadata.
-func validateContentMetadata(annotations *Annotations, meta json.RawMessage) error {
-	if annotations != nil {
-		for _, role := range annotations.Audience {
-			if role != RoleUser && role != RoleAssistant {
-				return fmt.Errorf("unsupported annotation audience %q", role)
-			}
-		}
-		if annotations.Priority != nil && (*annotations.Priority < 0 || *annotations.Priority > 1) {
-			return errors.New("annotation priority must be between zero and one")
-		}
-	}
-	return validateMeta(meta)
 }
 
 // validateMeta requires MCP extension metadata to be a JSON object.
@@ -359,4 +284,34 @@ func validateMeta(meta json.RawMessage) error {
 // cloneRaw gives each returned content value ownership of its encoded metadata.
 func cloneRaw(raw json.RawMessage) json.RawMessage {
 	return append(json.RawMessage(nil), raw...)
+}
+
+// normalizeCallResult decodes one wire result and checks the operation's host
+// input restriction and configured capabilities before returning unfinished input.
+func normalizeCallResult(ctx context.Context, result toolsCallResult, support InputSupport) (CallResponse, error) {
+	response, err := normalizeToolResult(result)
+	if err != nil {
+		return CallResponse{}, err
+	}
+	if response.Task != nil && ctx.Value(taskSupportKey{}) == nil {
+		return CallResponse{}, NewMalformedResponseError(errors.New("task returned without advertised Tasks support"))
+	}
+	if response.InputRequired != nil {
+		if ctx.Value(hostInputDisabledKey{}) != nil {
+			return CallResponse{}, NewMalformedResponseError(errors.New("host input is disabled for this operation"))
+		}
+		if err := response.InputRequired.Validate(support); err != nil {
+			return CallResponse{}, NewMalformedResponseError(err)
+		}
+	}
+	return response, nil
+}
+
+// validateContentURI checks one resource or icon address without opening it.
+func validateContentURI(uri string) error {
+	parsed, err := url.Parse(uri)
+	if err != nil || parsed.Scheme == "" {
+		return fmt.Errorf("content URI %q must be an absolute URI", uri)
+	}
+	return nil
 }

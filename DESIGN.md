@@ -7,7 +7,7 @@ Build intelligent agents, MCP servers, and registry-integrated toolsets from you
 - **Agents**: Durable plan/execute loops with policy enforcement, memory, and streaming
 - **Typed Completions**: Service-owned structured assistant-output contracts with generated codecs and helpers
 - **Generated Evaluations**: Design-owned scenarios with typed application hooks, bounded execution, and trustworthy semantic judging
-- **MCP**: Unary tools, resources, and static prompts mapped from your Goa service over JSON-RPC HTTP
+- **MCP**: Tools, native asynchronous jobs, resources, static or method-backed prompts, typed argument suggestions, and authored change streams mapped from your Goa service over JSON-RPC HTTP
 - **Registries**: Centralized tool catalogs with federation, caching, and semantic search
 - **Unified Toolsets**: Single `Toolset` construct with providers (local, MCP, registry)
 
@@ -93,6 +93,13 @@ For each service annotated with agents or MCP, the plugin:
 
 We compose on top of Goa—no forks, minimal templates, and predictable output.
 
+The framework requires Go 1.27 or newer. OAuth metadata decoding can use Goa's
+existing response-decoder argument with the standard `encoding/json/v2` package.
+This preserves generated response validation while matching JSON names exactly
+and accepting metadata extensions. Closed tool codecs retain their stricter
+unknown-field rules. The [upgrade plan](docs/mcp_protocol_upgrade_plan.md#verified-metadata-decoding-and-toolchain-choice)
+records the compiled evidence and the remaining authorization work.
+
 ## Layout
 
 - Agent packages: `gen/<svc>/agents/<agent>/`
@@ -177,6 +184,11 @@ preview chunks, but its typed `Value` stays unavailable until the complete
 provider stream and final response pass validation.
 Providers that do not implement structured output fail explicitly with
 `model.ErrStructuredOutputUnsupported`.
+Each field's authored description remains on that field, including references
+to a shared type. Shared definitions retain their own descriptions and constraints,
+so reusing a type does not copy one caller's instructions to another. Validation
+continues to follow the evaluated Goa design.
+
 Generated schemas stay provider-neutral. Provider adapters may normalize that
 canonical schema to a provider-specific subset for constrained decoding, but
 they must fail explicitly instead of redefining the service contract.
@@ -1021,8 +1033,11 @@ completed, failed, or canceled returns `engine.ErrWorkflowCompleted` before
 planner work, prompt or transcript writes, or terminal replacement. The
 storage activity validates the complete result before publishing hooks and
 suppresses both parent-link and start publication for that closed replay.
-An original `stop` outcome still publishes its newly inserted canceled
-lifecycle and returns cancellation. Prompt references are derived from `PromptRendered`, the
+An original `stop` outcome stores a cancellation intent and keeps the admitted
+workflow running while it settles inherited Tasks and children. The workflow
+then writes canceled completion, or failed completion if cleanup is permanently
+rejected. An exact closed retry selects the original start and intent without
+replacing the terminal result. Prompt references are derived from `PromptRendered`, the
 continuation predecessor in `RunStarted`, and `ChildRunLinked` rather than
 duplicated in `RunMeta`. A child continuation's prompt references follow its
 exact accepted history source, not equality between its old and new execution
@@ -1165,7 +1180,7 @@ writers must not overlap. How the host reaches that state depends on its
 database and deployment environment.
 
 Continuation preparation accepts only the current suspension schema,
-`goa-ai.run-suspension.v9`, which references an exact saved history position.
+`goa-ai.run-suspension.v13`, which references an exact saved history position.
 Every accepted recovery plan that waits for input retains its actual advertised
 catalog, including authorized alternatives to a
 failed tool, preserving the catalog contract introduced in version eight.
@@ -1222,8 +1237,15 @@ that field unset.
 Applications that expose tool registration through their own Goa services reuse
 `registry/design/types`. That package declares the registry schemas without
 registering an API or service. `registry/design` references those schema objects
-directly; generated clients and wire contracts do not change. Designs importing
-the moved declarations use the `registry/design/types` path.
+directly. Shared unfinished-tool types have `ToolOperation` names to avoid
+reserving ordinary application type names in Goa's global design. Consuming APIs
+must regenerate after this breaking type-name change; operation fields, branch
+names and saved JSON remain unchanged. Designs importing the moved declarations
+use the `registry/design/types` path.
+The shared registry executor constructs generated admission payloads and checks
+returned identities and deadlines. Both static and discovered tools use this
+implementation; applications pass the generated client without a separate
+runtime-metadata adapter.
 See [tool contract reuse](docs/tool_search.md#publish-complete-provider-contracts).
 
 Declare centralized registry sources for dynamic tool discovery and agent publication:
@@ -1254,6 +1276,15 @@ var AnthropicRegistry = Registry("anthropic", func() {
 - **DSL registry source**: `Registry(...)` declares a remote catalog and `FromRegistry(...)` binds a toolset to it.
 - **Generated registry client**: `gen/<svc>/registry/<name>/` contains the agent-side client/helpers for one declared DSL registry source.
 - **Registry wire protocol**: `runtime/toolregistry/` defines the Pulse stream names, message envelopes, and output-delta context used by providers, executors, and the clustered gateway.
+  Registry protocol 13 carries workflow-owned operation sequences and host answers
+  outside model arguments. Each service round has its own admission identity;
+  duplicate delivery of that round reuses the saved outcome. Required input is
+  exclusive with completed result data, errors, retries, bounds and server data.
+  Its saved outcome finishes one service invocation while the durable workflow
+  keeps the logical tool call unfinished. The shared registry reader returns the
+  existing activity output; static and discovered consumers route required input
+  to runtime suspension before decoding any completed result.
+
 - **Clustered registry service**: `registry/` implements the standalone multi-node service that admits toolsets, tracks provider health, and routes tool calls over the wire protocol.
 
 Generated `registry.go` files in agent packages are local runtime registration helpers; they do not implement the clustered registry service.
@@ -1641,7 +1672,9 @@ invocation, catalog lookup, health checks, result-stream creation, call
 admission, or Pulse publication. Register validates the provider's supplied
 version at startup. Renewal sends no repeated wire version: the exact token and
 strictly validated current state bind the version already admitted. The storage
-split changes neither wire protocol 10 nor schema fingerprints or token derivation.
+split kept wire protocol 10 and preserved schema fingerprints and token derivation.
+The MCP input upgrade separately moves the coordinated message contract to
+protocol 11; old providers and consumers must be drained before that cutover.
 
 Loss of current registration or exact lease authority is terminal for an active
 provider. `RenewProvider` returns `provider_lease_lost` for a missing, expired,
@@ -1720,11 +1753,12 @@ run-scoped decision is retained, so the executor may safely replan. Generated
 decision record. Errors after request publication remain ambiguous and produce
 `outcome_unknown`, which forbids replacement execution because an effect may
 have occurred.
-The explicit decision record is wire protocol version 10. Registry replicas,
+The explicit decision record is wire protocol version 13. Registry replicas,
 providers, and consumers use that exact protocol. Records with another shape
 are rejected and never rewritten.
 The earlier protocol-8/9 transition changed message and call-record contracts;
-it is distinct from the current protocol-10 storage split. Do not apply a
+it is distinct from the catalog storage split, which kept protocol 10,
+and the MCP execution upgrade to protocol 13. Do not apply a
 historical catalog reset to current state or retirement history. See the
 [preview upgrade guide](docs/runtime.md#preview-upgrade-guide) for the separate
 source, storage, and historical wire-version requirements.
@@ -2034,7 +2068,7 @@ for details and the SDK source-compatibility change.
   error instead of fabricating success after the required side effect did not
   occur. `CompletionTool` and `LimitTerminalPlans` are mutually exclusive
   because they assign different outcomes to the same exhausted limits.
-  Completion-aware suspensions use `goa-ai.run-suspension.v9`. The saved policy
+  Completion-aware suspensions use `goa-ai.run-suspension.v13`. The saved policy
   is required, and a checkpoint with another version fails at that typed
   boundary.
 - **Provider reasoning stream contract**: when a caller enables thinking
@@ -2049,7 +2083,7 @@ Enable MCP protocol for a service with `MCP`:
 
 ```go
 Service("calculator", func() {
-    MCP("calc", "1.0.0", ProtocolVersion("2025-06-18"))
+    MCP("calc", "1.0.0")
     JSONRPC(func() {
         POST("/mcp")
     })
@@ -2061,34 +2095,252 @@ Service("calculator", func() {
 })
 ```
 
-### Protocol version
+### Protocol and ownership
 
-Set the MCP protocol version in your design using the DSL option on `MCP`:
+MCP uses the framework-owned `2026-07-28` revision. Every request carries its
+version and truthful client capabilities; `server/discover` reports capabilities
+without creating session state. The shared HTTP transport validates mirrored
+headers and exact response IDs for generated and imported clients.
 
-```go
-MCP("assistant-mcp", "1.0.0", ProtocolVersion("2025-06-18"))
-```
+Generated adapters call explicitly declared MCP methods through generated
+argument and result codecs. Ordinary methods in the same service retain their
+declared transports and do not enter MCP catalogs, codecs, or executors. Tool schemas and agent specs use the same generation-time JSON contract,
+including exact JSON field names, local recursive definitions, and union branches.
+Tools accept object arguments. Their structured results may be any declared JSON
+root kind; text is not a fallback decoder. Adapters emit OpenTelemetry spans and
+use the optional `ErrorMapper` to control disclosed error messages. The original
+endpoint error determines whether the response is a domain tool failure or an
+internal protocol error. Goa server-fault flags and each method's declared fault
+errors remain internal after redaction. Classification follows one wrapped error
+to its first named owner; independent joined errors cannot borrow a child's name
+or flag. Invalid returned fields and undeclared result views are server faults,
+not arguments the model should correct. These failures do not authorize replay.
 
-The generator emits a constant `DefaultProtocolVersion` in `gen/mcp_<service>/protocol_version.go`.
+The application composition root constructs HTTP dependencies and callers, then
+registers one generated MCP executor for each runtime binding. Agent registration
+owns agent definitions. It does not construct callers or register duplicate
+executables. The same binding can serve multiple agents and aliases.
 
-### Adapter options
+The result decoder selects `resultType` before validating branch fields. MCP
+permits extra result fields, so completed-content fields on an input request
+cannot become a final result, and continuation fields on a completed reply
+cannot reopen the invocation. Each selected branch retains its required fields
+and null checks. Independent HTTP peers from the official Go SDK test these
+contracts without adding an application dependency.
 
-The generated `MCPAdapterOptions` provides configuration hooks:
+Authored content and resource catalog extension metadata use the same private
+JSON codec plan as native service arguments and results. Known `_meta` fields
+remain typed Goa objects in service and view declarations; the adapter encodes
+only the extension object into MCP's open metadata field. Optional absent values
+stay absent. Externally defined metadata retains its raw JSON object boundary.
+`mcpcontract.WithoutField` preserves named declarations, locations, examples and
+required fields when excluding separately encoded fields from Goa transforms.
+Catalog projections use `MethodTypeLayout` for the selected result graph;
+content metadata uses the selected union's layout rather than unrelated result
+fields. There is no separate Apps resource converter or service serialization API.
 
-- Logger: `func(ctx context.Context, event string, details any)` to observe adapter lifecycle.
-- ErrorMapper: `func(error) error` replaces an authored-service error before
-  the adapter returns it as tool error content or a resource-read JSON-RPC
-  error.
+Skill discovery reuses the existing endpoint, result-view, codec and transform
+planning. `SkillCatalog` and `SkillLookup` select existing unary methods and
+require the existing resource reader. One private Goa expression defines the
+protocol entry for generation and consuming runtime codecs. Generated adapters
+validate the authored result, encode the complete entry with its native field
+layout, and use the runtime's shared cross-field verifier before publishing.
+`ResourceDirectory` selects another ordinary unary method for directory URI and
+cursor inputs. The shared discovery planner specializes each operation's inputs
+and preserves its resource metadata. A runtime validator checks direct-child
+membership without resolving URI authorities. Only declared directory methods
+advertise `directoryRead`; live pages never expand a held Skill manifest.
+Metadata callers distinguish pointer fields from standalone value references
+using Goa's retained layouts, including anonymous objects in catalogs, prompts
+and tool results. No discovery operation reads files or grants approval.
+`VerifySkillFile` consumes the complete retained entry and requested bytes through
+that same generated codec. It checks membership, size, digest and complete YAML
+before use. The reference host retains entries with ordinary model context and
+assigns server identity from application connections. It owns lazy reads, a
+private origin-and-digest cache and content-bound consent. Existing native tool
+confirmation suspends local execution until approval; neither discovery nor
+remote frontmatter supplies permissions. A changed manifest revokes consent.
+Restart-persistent context and approval remain application responsibilities.
 
-## Transport
+`ToolUI` associates a tool with an existing HTML resource, and `ToolVisibility`
+selects model callers, app callers, or both. Generation emits nested UI metadata
+and removes app-only tools from model toolsets. Generated model callers use
+their authored visibility; remote HTTP and stdio model callers share catalog,
+schema and visibility validation for the current credentials. The protocol
+client remains the app host's transport. The host must enforce app permissions.
 
-Generated MCP tools and resources are unary JSON-RPC methods. The HTTP caller
-accepts responses encoded as JSON or as an HTTP event stream. Goa-AI does not
-generate MCP subscriptions, notifications, or streaming resources.
+`ToolMetadata` selects a typed completed-result object for host-only result
+metadata. `mcpcontract.StructuredResult` removes both content and host metadata
+from the same model contract. One private result converter handles ordinary
+results, selected views and completed Tasks; existing codecs validate and encode
+the selected object. The framework's server identity is added at the protocol
+boundary without decoding or rewriting authored JSON numbers. Generation uses
+the shared JSON-name resolver to reject fields that would replace that identity.
+The maintained browser host in `integration_tests/apps` composes the official
+client and Apps SDK with generated endpoints. Its client is pinned to this
+protocol; its bridge uses checked handlers rather than automatic forwarding.
+One bound connection owns every resource read and app tool call. The current
+catalog controls app visibility, and the host controls credentials and browser
+permissions. A separate-origin proxy and opaque inner frame isolate the view;
+HTTP headers deny undeclared network and frame access. An origin-restricted
+transport prevents a navigated frame from receiving private results. Teardown
+aborts view requests, closes SDK listeners and removes the frame while the host
+retains its server connection. Chromium verifies the full path and the generated
+Goa method's cancellation. This introduces no framework browser API or second
+MCP serialization path.
 
-The preview removes the former MCP subscription and notification APIs. See
-[the preview upgrade guide](docs/runtime.md#preview-upgrade-guide) for the
-complete list and the replacement for each supported use case.
+`internal/mcpinput` reads inherited method contracts for early DSL validation.
+Goa validates every root before finalizing inherited fields, so this reader
+resolves a detached graph with Goa's `AttributeGraphCopier` and `Finalize`.
+It finalizes inherited sources before their consumers, including nested sources,
+and returns the original selected declarations to InputExchange and Task planners.
+Ordinary contracts retain their original attribute identity. Result validators,
+argument selection and native job roles use this shared reader; they do not
+implement their own field merges or change authored expressions before Goa's
+normal finalization phase.
+
+An authored `InputExchange` maps an optional native payload continuation and a
+required completed-or-input-required result union. Generation derives matching
+question identifiers, flat form schemas, native answer codecs and pending-result
+validation from the same Goa attributes. Tool arguments exclude continuation;
+tool results expose only completion. Resource and prompt methods use the same
+input filler and result planning. Exact empty state and empty request objects
+retain their protocol presence. The service owns state integrity and user
+binding; its configured endpoint runs authorization and middleware each round.
+Current request capabilities govern selected questions. The protocol's empty
+elicitation object means form-only support; malformed declarations fail before
+answer conversion. Shared runtime checks and generated answer decoders use exact
+JSON names, so extension fields cannot replace declared values. Native `BindTo`
+and registry providers reuse the same answer planning and conversion templates. Shared tool specs own native continuation and outcome
+functions; generated executors and providers call them. Host metadata stays
+outside tool arguments. Native method results select completion before ordinary
+result transforms, bounds and server-only data are applied. Registry output uses
+the authored tool result contract; HTTP view names do not change that contract.
+Local bound calls always use generated transforms instead of guessing Go type
+identity from equal DSL names. No separate input-result API or HTTP loop exists.
+
+MCP additional-input continuation retains presence independently of answer count.
+An explicit empty request object may require a later round without state or
+answers. Shared callers emit an empty `inputResponses` object for that round;
+generated payloads retain it and native input fillers construct the authored
+continuation object. An absent continuation remains an initial service call.
+
+Private JSON integer types accept exact whole-number decimal and exponent
+spellings before applying each native integer range. Named aliases, fields,
+collections and union branches share this decoding rule. Shape checks establish
+JSON number type; typed decoding owns integrality and range without floating-point
+rounding. Explicit custom Go types retain their own decoding contract.
+
+An unfinished remote call returns `input_required`. The runtime stores its
+original arguments and opaque state in a version-11 checkpoint, publishes typed
+host input requests, and validates the exact answers before the next activity.
+Server-assigned input keys are arbitrary strings, including an empty string;
+validation preserves their exact value and requires matching answer keys. Typed
+question names authored as Goa fields retain their separate design rules.
+Only a finished call enters completed tool history. MCP network rounds allow one
+activity attempt; an engine retry must not silently duplicate remote work.
+Inside that activity, explicit host trust and a per-round HTTP attempt allowance
+permit retrying a lost SSE response only for tools declared read-only or
+idempotent. Generated callers use precomputed design hints; imported callers
+read credential-scoped catalogs. A retry changes the network request ID and any requested progress token.
+The service owns preventing additional effects; missing hints, cancellation,
+malformed replies, and completed tool errors never authorize this retry path.
+
+Unary services report work through `mcp.ReportProgress` on the request context.
+The shared transport owns client tokens, strict per-request ordering, event
+framing and terminal response delivery. HTTP and stdio callers receive typed
+updates through a context-bound handler. Callbacks run in the operation's
+goroutine; stdio applies bounded per-call backpressure and releases blocked
+reads when that call ends. A callback or write failure is terminal, not a retry
+trigger. Generated decoders receive their original request ID only after the
+transport verifies a successful retry against its actual network ID.
+
+The activity owns host correlation and forwards progress through the existing
+session stream profile. These updates are not persisted results or model input.
+The final result and continuation paths retain completion ownership. See
+[the progress contract](docs/runtime.md#request-scoped-mcp-progress).
+
+An accepted text-only run also restricts each MCP operation's host input.
+Generated executors derive a one-way context restriction; shared callers omit
+form and URL capabilities, reject continuation data before dispatch, and reject
+unfinished results including state-only replies. Runtime activity, workflow and
+checkpoint boundaries reject custom executor input before host suspension.
+Ordinary operations retain their support; no caller-wide setting changes.
+
+HTTP and stdio callers can open a distinct `subscriptions/listen` request.
+The transport checks acknowledgment order, the accepted subset of the requested
+filter, and each message's exact originating request ID. Callbacks run in the
+owning operation; cancellation releases bounded stdio delivery. A graceful reply
+closes the listener, while connection loss returns an interruption without an
+implicit reconnect. The host chooses a new listen request. This consumer does
+not make fixed catalogs dynamic or turn private session streams into public
+change sources. `SubscriptionSource()` binds one authored Goa stream to generated HTTP catalog, resource and Task updates. Dynamic resource and template catalogs remain a release gate.
+The shared HTTP producer keeps source authorization and change selection in the
+configured handler, while its transport owns acknowledgment order, exact request
+IDs, serialized writes and graceful completion. Producer and receiver use one
+private filter-state implementation. Source errors before acknowledgment retain
+their original protocol response; delivery failures stop the request. This
+transport neither advertises nor authorizes a source. The binding generates a
+distinct `subscriptions/listen` endpoint. Resource selection advertises
+`resources.subscribe`; a job-only source does not. The original Goa stream receives
+requested URIs and creator-named native job arrays through a generated constructor,
+then sends a typed acknowledgment/update union. Its configured endpoint owns
+authentication, scopes, interceptors and middleware; its generated result codec
+validates every event before transmission. The source owns accepted selections,
+related sub-resources and change detection. Each changed job is read through its
+configured observation endpoint and encoded as a full Task snapshot. Multiple MCP
+names for one creator share a native selection, while each accepted MCP handle
+receives its own snapshot. An empty accepted subset may complete successfully.
+Ordinary method return closes the response; HTTP cancellation reaches the original
+service context. Fixed catalogs gain no list-change flags. No private session
+stream, adapter job store or global notification registry is involved.
+See [the subscription contract](docs/runtime.md#mcp-change-subscriptions).
+
+Generated servers advertise only their implemented tools, native Task bindings,
+fixed and parameterized resource reads, static or method-backed prompts, and
+prompt/resource argument suggestion methods, plus resource subscriptions when an
+authored resource source is bound.
+Resource representations are selected
+at generation time: byte results become base64 blobs, text results with a text MIME type remain
+text, and JSON results use the generated codec. Empty content preserves its field.
+Generated clients share one `ContentItem` type for tool and prompt replies. They
+preserve text, images, audio, resource links, embedded resources, annotations,
+icons and extension metadata. The generated decoder checks each selected kind's
+required fields, base64 data and embedded resource representation. Empty content
+remains present. MCP puts variant fields beside its discriminator; Goa's ordinary
+unions put the selected value in a separate field, so the MCP generator supplies
+these cross-field checks alongside Goa's existing field validators. Runtime
+callers apply the same content requirements and retain icons in tool errors.
+
+Method-backed prompts use ordinary string-valued Goa payloads and typed message
+results. The generator constructs and validates payloads without a JSON round
+trip, validates service results, and converts declared content unions to MCP's
+flat content objects. Binary content stays bytes until the protocol conversion.
+Goa owns aliases, field names and located declarations; the generator retains
+those layouts and specializes each declared branch. Null or non-string prompt
+arguments fail at the raw protocol boundary before Go map decoding.
+
+Parameterized resource discovery uses RFC 6570 declarations. One typed service
+method owns all non-fixed URI interpretation and returns ordered text/blob
+contents. The generator preserves the exact URI instead of guessing variables
+from lossy expansions or selecting the first overlapping template. The parser
+runs only during design evaluation to validate syntax and derive completion
+names. Prompt and resource suggestions share one generated constructor and typed
+result conversion path. Fixed-resource dispatch remains exact.
+
+Tools select one typed attachment array with `ToolContent(field)`. Each item
+contains one required `content` OneOf, using the same content conversion as
+prompts. The marked field is absent from the structured result contract,
+including result examples and every selected Goa view. The configured original
+endpoint still returns its full typed result; generated code validates that
+result and converts content separately. A fixed result containing only the
+marked field returns content without structured JSON. Service-selected views
+retain their declared name and exclude content when that view omits the field.
+Tasks use `TaskExchange` to bind existing application-owned job methods. `ToolCatalog` and `PromptCatalog` bind typed pages of declared names. `ResourceCatalog` and `ResourceTemplateCatalog` return typed runtime descriptors through the same catalog endpoint planner. `ResourceReader` owns URI reads independently of catalog declarations.
+Server-produced additional input now has its authored `InputExchange` binding;
+resource subscriptions use their existing typed stream binding.
+See [the MCP runtime contract](docs/runtime.md#mcp-callers) and
+[the upgrade plan](docs/mcp_protocol_upgrade_plan.md) for remaining proof and scope.
 
 ## Agent run lifecycle streaming contract
 
@@ -2349,9 +2601,14 @@ Each original package receives public encode/decode functions and private JSON
 helpers. Complete-original transport declarations are shared within that
 package, while field-occurrence rules remain attached to their actual fields.
 No codec subdirectory or public transport representation is introduced. Types
-containing `Any`, custom Go representations, or non-string map keys have their
+containing untyped `Any`, other custom Go representations, or non-string map keys have their
 complete codecs skipped; their original types remain valid and supported peers
 remain eligible. Runtime-owned builtin forms are excluded.
+
+An explicit `Any` field represented as `json.RawMessage` retains its open
+external contract. Complete-value codecs check raw syntax, text and duplicate
+members before encoding or typed decoding; future members and exact numbers
+remain intact. Other custom Go representations remain unsupported.
 
 Encoding checks the original typed value before conversion, including required
 nil fields, invalid text, and cycles. Decoding checks raw JSON names, types,
@@ -2361,12 +2618,37 @@ declarations, and constraints. Named union receivers use the underlying
 declaration that owns their methods. The same planned parameter type supplies
 each validator's signature and checks.
 
+Union mapping is an evaluated Goa fact. Flat object unions retain their
+selected discriminator and object fields through private codec transports,
+strict raw checks, catalog schemas, field metadata and authored examples.
+Generation selects the mapping before rendering; generated code does not walk
+a schema or guess a branch from field presence. Ordinary tagged unions retain
+their nested value. Neither mapping changes protobuf's native oneof.
+
+Complete-original, tool and completion codecs consume Goa's evaluated untagged union mapping.
+The outer JSON kind selects a branch whose raw value is encoded directly;
+typed decoding and the existing generated validators check its contents.
+The shared JSON shape checks and schema builder use the same mapping. The
+generator retains the authored branch kinds and emits their typed decoding;
+runtime code does not infer the mapping from JSON Schema.
+
+Tool and completion sum types render through Goa's `service.UnionTypeSource`
+with final planned declaration names and branch references. There is no separate
+tagged-only serializer. Goa owns constructors, branch storage and JSON mapping;
+the shared generated tool codec owns strict raw input checks and structured field
+errors at exact JSON paths. Direct union validation returns native Goa errors.
+
 The original-value, tool, and completion codecs share JSON shape checks while
 retaining their different contracts. Complete-original functions do not change
 model-visible field selection, completion-owned result representations, or
 existing JSON methods. Application request budgets and stored-data conversion
 remain application-owned. See [Standalone JSON codecs](docs/json_codecs.md) for
 automatic coverage, supported values, errors, and adoption.
+
+Application-owned schema artifacts use `codegen/jsonschema.Build` with the
+evaluated original Goa type. MCP catalogs and agent specifications use that
+same builder; MCP forms use its separate restricted `BuildForm` contract.
+See [standalone schema generation](docs/json_codecs.md#generate-a-standalone-schema).
 
 ## Tool Input Schema
 
@@ -2375,7 +2657,7 @@ an object-shaped user type; omitting `Args` on an
 unbound tool means `{}`, while omitting it on a tool with `BindTo` uses the
 bound method payload, which must follow the same object-shape rule. Primitive,
 array, map, and `OneOf` roots are rejected, while `Return` remains
-unrestricted. Generated objects and unions reject undeclared properties, maps
+unrestricted. Generated tool codecs reject undeclared object and union properties, while maps
 accept dynamic keys, and the validated model client applies the advertised
 schema before any attached input decoder. Only schema rejections and typed
 tool-input validation errors qualify for limited-size correction guidance that
@@ -2384,7 +2666,12 @@ objects, collections, and union branches. Callers that build `ToolSpec` values
 directly may supply the same field metadata. The model client uses that metadata
 to explain independently identified required, type, enum, or array-length
 violations. Sound instructions survive unrelated ambiguous failures. For unions,
-only the branch named by a valid string discriminator participates. Array indexes
+only the branch selected by its authored mapping participates. Tagged and flat
+unions use a string discriminator; untagged unions use distinct JSON kinds. Their
+generated metadata also records the schema branch position, so the existing
+correction engine selects the corresponding structured validator diagnostic.
+The registry carries this same tagged-or-untagged requirement as a generated
+union rather than a record with optional selectors. Array indexes
 and map keys appear as `*`; distinct instructions for the same displayed path
 are omitted. With no sound field instruction, guidance remains generic.
 A request-owned copy of the validated input example
@@ -2530,6 +2817,310 @@ The `goa example` phase generates application-owned scaffold under `internal/age
 - Registry authentication: use Goa security schemes (`APIKeySecurity`, `OAuth2Security`, etc.)
 - Logging: avoid logging sensitive payloads and results in production
 
+Generated MCP adapters invoke configured original Goa endpoints for every
+method-backed tool, resource, prompt and completion. They neither call the bare
+service nor build a second endpoint set. Goa owns declared authentication, method
+scopes, authenticated context, interceptors and endpoint middleware; the MCP
+adapter owns argument decoding and protocol results. A returned value outside an
+endpoint's declared Go type is an internal protocol error and bypasses application
+error mapping. Goa security annotations distinguish credentials from domain
+arguments during generation. Catalogs, examples, field metadata and exact argument
+codecs exclude those credentials; ordinary unannotated fields keep their meaning.
+Generated native HTTP bindings supply headers, query values and cookies outside
+JSON-RPC parameters. Private typed adapter code fills the original service payload
+and runs its complete generated validation before invoking the configured endpoint.
+Credential-only methods accept empty domain input, including fixed resources.
+
+MCP route generation retains the original Goa mapped attributes and complete
+API and service paths. Private protocol fields carry raw URL values outside the
+JSON-RPC body. For each selected method, the generator plans the native HTTP
+wire attribute, parser and service-field conversion before names freeze, then
+renders from retained layouts. It fills the original payload field without
+replacing the decoded domain payload. Optional fields retain their native
+pointers, named values retain their types, and complete Goa validation runs
+before dispatch. Protocol signatures and selectors come from the same generated
+layouts as the native HTTP transport; no wildcard rewrite or runtime field map
+implements a second binding system.
+
+MCP Task clients use the same HTTP and stdio request machinery as tool calls.
+The shared Caller contract includes tool invocation and Task get, update and
+cancel operations. Generated execution can therefore use the original caller
+without an optional interface assertion or a second transport. Function-only
+CallerFunc is removed; custom callers implement all four methods. Task operations
+never request or emit progress; their work observations are Task state. Ordinary
+tool requests retain their request-scoped progress contract.
+A request advertises the Tasks extension only when its host declares support;
+only `tools/call` may return a Task creation handle. Get, update and cancel are
+separate operations on the exact server-owned ID. State decoding selects the
+released Task status before reading its associated input, result or JSON-RPC
+error. Completed tool errors remain completed results with `IsError` retained.
+These operations perform no automatic tool replay or polling. Task notifications
+reuse the existing subscription receiver and the same detailed-state decoder as
+queries. Requested task IDs are copied, acknowledgments can narrow that list, and
+notifications must name an accepted ID. The callback receives a typed observation;
+form and URL input still require the host capability advertised on that request.
+
+Task retention has a required nullable wire member. A generated native HTTP
+fixture proves that Goa's required scalar rejects null and its optional scalar
+collapses null and absence. The external Task decoder therefore checks member
+presence before converting a nullable duration; the application job API can use
+an optional native duration for unlimited retention. The shared `rawjson`
+integer decoder owns exact decimal/exponent handling and native Go range checks
+for both Task durations and generated private codecs. No second numeric parser,
+untyped domain duration, or framework retention policy is introduced. Task
+metadata applies to one observation; retention and polling guidance can change.
+Generated Task production and workflow-owned consumption are implemented.
+`TaskExchange` retains the creator and read endpoint's distinct native layouts,
+including full creation values and read-selected Goa views. One observation
+planner emits their validation and metadata conversion. Creation returns only a
+readable durable handle; the read endpoint owns complete typed output and content.
+The adapter derives opaque MCP IDs from tool and native job identities without
+storing jobs or original arguments. Later requests supply native credentials,
+mapped route values, saved IDs and typed answers, applying native defaults before
+full payload validation. Impossible required inputs fail generation.
+
+The same `SubscriptionSource` selects native resource URIs and creator-named job
+arrays. It authorizes and acknowledges a subset before reporting changed IDs.
+Generated code reuses each job's configured read endpoint, result views and
+protocol codec to send full snapshots. Accepted MCP aliases fan out from one
+native selection; that mapping lives only for the listen request. Source updates
+before acknowledgment or for unaccepted jobs fail before reading. No global
+broadcaster, shared job store or second snapshot schema owns this path.
+
+The generated MCP server's `ServeHTTP` checks the HTTP protocol envelope
+before invoking its configured HTTP handler. Direct serving and `Mount` use this
+same entry point; rejected requests reach neither HTTP middleware nor endpoints.
+The constructor takes and copies the allowed browser origins, builds native Goa
+endpoint handlers from the saved transport plan, and installs one private guard.
+The inner HTTP handler is private; callers serve the checked server itself.
+`Server.Use` wraps the accepted-request handler, so middleware added after mounting
+still runs. Protocol request checks also own notification acceptance and response
+stream selection; the inner handler only decodes and dispatches a protocol method.
+There is no separate mount policy or a second direct-serving implementation.
+Required dependencies come from Goa's shared constructor plan. MCP's server
+sections consume its retained types, private names and ordering for fields and
+arguments before the final origin collection. Native imports, application
+factories and example startup use the same facts; MCP adds no construction path.
+With no declared dependency, the existing MCP constructor remains unchanged.
+
+OAuth credentials require `Authorization: Bearer`. Basic and Bearer schemes can
+be alternatives when their inactive payload fields allow absence; they cannot be
+combined in one authorization requirement. Unsupported body bindings, conflicting
+field bindings and protocol-owned headers fail generation. This does not add a
+second method authentication callback. An explicit MCP `Security` block, or an
+inherited service/API bearer policy, requires a concrete `ResourceServer` through
+Goa's constructor plan. The generator computes scope alternatives and reuses
+native request decoders to select the actual operation before middleware. The
+guard owns signature, issuer, audience, validity times and HTTP challenges;
+original endpoints retain their native security callbacks and domain decisions.
+Catalog metadata contains basic-access scopes rather than every method's scopes.
+
+The signed-token profile uses the JWT library for cryptography and a private Goa
+claims decoder for exact names, required fields and fractional timestamps. Its
+SDK audience field represents the standard string-or-array wire value; this is
+an existing external-contract value shared by signed-token and introspection
+paths. Goa now supports the same untagged wire shape; retaining this SDK value
+avoids a second audience representation and normalization path.
+JOSE's private resource RSA verifier extension calls Go's cryptographic
+primitives with the standard PSS salt length. The SDK's default verifier accepts
+other salt lengths; resource construction also enforces the standard RSA key
+minimum for each key. These are algorithm constraints, not framework budgets.
+Successful HTTP requests carry verified issuer, subject and client identity.
+Native OAuth, JWT and Bearer callbacks reuse a grant only for the same verifier,
+exact token hash and still-valid interval, then run Goa's own scope validator.
+Post-dispatch domain failures never become resource challenges.
+
+Opaque tokens use an explicitly configured HTTPS introspection endpoint and a
+separate resource-server client registration. Native Goa Basic authentication
+keeps the individually form-encoded credentials in the header; the generated
+form carries only the submitted token and access-token lookup hint. The same
+resource owner requires current activity and the exact audience, checks supplied
+issuer and whole-second validity limits, then applies the generated scopes.
+The hint does not prove token purpose: the trusted issuer must report active only
+for access tokens usable by this resource. Missing subject/client claims remain
+empty identity values. Every guard and native callback asks the issuer anew;
+there is no introspection cache or token-format fallback. Inactive tokens receive
+401; issuer transport, authentication or response-contract failures receive 503
+without an invalid-token challenge. Enterprise authorization, durable host
+credentials and complete extension conformance remain release gates.
+
+The shared MCP HTTP transport records whether any attempt reached its
+configured HTTP dependency. Preparation failures retain their local error;
+cancellation observed before delegation sends nothing. Once dispatch has occurred,
+later failures cannot erase the possibility of completed work. This evidence belongs
+to one complete invocation across its attempts, not just the final attempt.
+Generated and discovered clients use the same implementation and agent recovery.
+
+The shared MCP HTTP transport retains each failed attempt's response status
+and exact authorization challenge values in `HTTPResponseError`. The error wraps
+validated JSON-RPC errors so generated and imported clients can inspect both
+contracts. HTTP authorization rejections close their bodies without waiting for
+protocol messages. Explicit request rejections do not authorize interrupted-tool
+retries; the authorization client owns fresh credentials, challenge validation
+and consent. Challenge headers and HTTP bodies are excluded from error text.
+Complete OAuth clients and server resource authorization remain separate release
+gates. No HTTP authentication state enters workflow checkpoints or model inputs.
+
+The built-in client-secret profile runs in the shared HTTP transport after local
+request preparation and before MCP dispatch. A grant is constructed for one
+exact HTTPS resource, issuer and registered client. It uses native Goa HTTP
+clients generated from `internal/mcpauth/design` for resource metadata, issuer
+metadata and token responses. `FormRequest()` and fixed grant defaults in that
+design generate the token form codecs; there are no runtime field encoders.
+Private response decoders use standard Go JSON v2 with exact
+names and non-null declared values while allowing unknown extensions. No second
+DTO or schema walker owns these contracts. Metadata is checked for each attempt;
+token reuse ends at that token's returned lifetime in seconds, measured from
+before exchange. Missing lifetime means no reuse, not an invented expiry.
+Cancellation uses the active request context, including while waiting for another
+exchange. Each grant owns its token and does not share credentials with another
+resource, issuer or client. Native caller wrapping retains that grant.
+
+An immutable `ClientRegistration` chooses the exact issuer, client identity and
+public, Basic, POST-secret or signed authentication. It contains no user, scope
+or token. Native Goa expressions specialize each grant's required authentication
+fields; runtime selection follows the constructed registration. Machine grants
+require confidential authentication and explicit `client_credentials` support.
+The issuer must support the selected method. Native Goa metadata decoding applies
+RFC 8414’s Basic default only when the authentication-method list is omitted;
+explicit lists and null retain their separate meanings. No alternate method is
+tried. The independently scored Basic and signed machine fixtures pass with the
+HTTPS and issuer configuration described in the
+[conformance instructions](integration_tests/conformance/README.md). These selected
+passes do not prove complete extension conformance. No redirects,
+unchanged machine-credential retries or token-syntax guesses are made. Only HTTP
+404 advances well-known discovery; malformed documents and owner mismatches stop
+before dispatch. Validated metadata selects the exact token audience for grant forms and saved
+record identity. Endpoint metadata binds its configured request address; origin
+well-known metadata binds the exact origin. Advertised challenge metadata still
+binds the exact challenged request address. No prefix matching or sibling-endpoint
+permission follows from an origin audience. Each operation loads its audience's
+record into private operation state; concurrent operations cannot overwrite another
+audience's grant. A shared application registration does not merge user, issuer,
+audience or grant identities.
+
+Browser authorization uses the same private grant owner and native generated
+OAuth contracts. Registration constructors select preregistration or a client-hosted HTTPS
+metadata document; one browser grant composes all authentication methods. Client-metadata identity, redirect membership and the
+absence of shared-secret members are checked before consent. Native Goa query
+decoding uses `issuer:iss` mapping for callback transport names. The host owns
+browser interaction; state, PKCE verification, issuer binding and refresh-token
+rotation belong to the transport and never enter model or workflow input.
+Standard grant defaults are declared in the Goa design, rather than reconstructed
+by runtime code. The resource server owns scope hierarchies; clients record
+requested and returned scope tokens without interpreting those hierarchies.
+
+Before initial interactive authorization, the shared transport sends a credential-free
+`server/discover` request to obtain the resource's authorization challenge. It never
+executes a domain tool for this purpose. Challenge scopes take priority over basic
+resource metadata; absent both, the authorization request omits scope. A saved
+grant keeps its requested and granted permissions for reuse and refresh. Changes
+to advertised metadata do not start consent; an actual resource rejection owns
+later permission changes. Machine grants retain their explicitly configured policy.
+
+A browser operation may recover once from an explicit resource rejection after a
+successful fresh grant. An insufficient-scope challenge adds its scopes to prior
+requested and granted scopes before new consent. Challenge metadata is checked
+against the constructed resource and issuer; unrelated realms remain separate.
+The limit spans one HTTP request round, including stream retries. Concurrent
+rejections reuse a credential already changed by another call instead of rotating
+the same refresh token again. Definite authorization rejections remain distinct
+from lost tool results. A rejection after an earlier lost response retains the
+unknown outcome and the later HTTP status. Independent authorization conformance
+and complete caller cutover remain release gates.
+
+Enterprise authorization adds a user identity owner above the existing resource
+grant owner. Application registration remains immutable and user-independent.
+The host supplies a validated ID token, SAML assertion or IdP refresh credential.
+Native Goa expressions specialize the identity token-exchange and final JWT-grant
+forms for each constructed authentication profile. Identity grants require their
+exact issued purpose and token_type=N_A; only resource redemption returns the
+existing bearer result. Separate IdP and resource clients retain separate trust.
+A user identity serializes SAML bootstrap and retains its IdP refresh credential
+across resources; resource access tokens remain isolated. Pending or expired
+bootstrap requests a fresh host assertion rather than resending a consumed one.
+Renewal requests a fresh IdP grant rather than substituting browser refresh.
+An IdP scope restriction remains effective when the resource response omits scope.
+Optional profile advertisements do not replace explicit configuration; positive
+advertisements must satisfy the protocol's required grant relationships.
+Intermediate grants and SSO credentials never enter MCP arguments or checkpoints.
+
+Native query credentials remain distinct from OAuth resource identity. The
+MCP generator consumes the original evaluated Goa credential mappings and emits
+one private HTTP binding factory for both generated client constructors. Tool
+facts and protocol-method credential names enter the shared runtime through
+`HTTPBindings`, replacing the previous tools-only constructor argument. The
+transport copies those facts at construction. It excludes only the current
+method's declared credential query segments when comparing a request address;
+every other URL byte retains its configured meaning. The configured resource
+must contain no credential query name declared by any method, so an earlier
+catalog request cannot leak a domain key into discovery or a token grant.
+Unknown query names and malformed credential query values fail before network
+access. There is no model-controlled exception, URI normalization, schema walk,
+second credential owner or compatibility constructor.
+
+Signed client authentication is independent of the grant. Machine and browser
+grants share one private signer and credential owner. The host supplies a constructed
+`jose.Signer` and explicit registered client, assertion issuer, audience and
+validity. Goa generates the `private_key_jwt` metadata field and token form,
+including fixed grant and assertion types; no handwritten form mapping or
+second token cache exists. A native DSL loop specializes public and signed
+code/refresh forms; each generated request has fixed authentication fields.
+Separate metadata operations require `none` or `private_key_jwt`, rather than
+choosing authentication from optional field presence. Signed metadata requires
+exactly one HTTPS public-key URL or an inline set containing only valid public
+keys. The authorization server resolves URLs and verifies the registered key;
+the client does not add a second key-discovery path. The go-jose library owns JWT claims encoding and
+signatures. Signing algorithms must be asymmetric and advertised by the issuer;
+unknown algorithms and signatures made with a shared secret stop before token exchange.
+
+Each token acquisition creates fresh issued-at, expiration and random assertion
+identifier claims. The registered assertion lifetime uses positive whole seconds
+for one assertion, with exclusive expiration. It has no framework maximum and
+does not constrain the returned access token's independent lifetime. Cancellation
+and expiration during signing prevent exchange. Signer diagnostics and assertion
+bytes never enter errors or traces. A supplied signer owns its key-operation
+timeout; the transport checks request cancellation before and after signing.
+Machine grants do not request consent or repeat after resource rejection.
+
+Fixed MCP result views have one selected field contract shared by catalog
+schemas and agent specs. Server codecs consume the projected values already
+returned and validated by the original Goa endpoint. They do not convert a view
+back into a full authored result. Field selection retains Goa's declaration
+origins and actual pointer layouts. Different nested views receive separate
+private JSON types, even when they share one generated Goa view declaration;
+Goa's graph copier preserves those shapes and recursive references. Schema
+requirements apply per occurrence. A missing object result is rejected at the
+Goa endpoint before view conversion, while an empty collection remains valid.
+Execution-selected tool results and JSON resources use Goa's tagged OneOf
+contract: the endpoint's view name is the tag, and the selected fields are the
+value. Each branch owns its required-field checks. Agent decoders and stored
+results preserve the tag, including when two views have identical fields.
+Prompt, resource-template and completion conversions retain their flat protocol
+shape; generation checks the required operation fields in every selectable view.
+Private server codecs encode results; only consumer codecs decode results.
+
+`runtime/content` owns one closed, ordered value contract for text, images,
+audio, resource links and embedded resources. Its JSON codec validates every
+block at transport and saved-value boundaries, retaining annotations, icons and
+raw extension metadata. Copying retains nested values without opening resource
+addresses. The workflow codec admits this exact typed codec and still checks
+its complete payload byte budget; unrelated custom JSON encoders remain
+rejected. Model tool results expose that same value through `ToolResultPart.Blocks`;
+JSON replay, copying, character estimates and complete-request preflight include
+it. Provider translation honors the assistant audience and keeps extension
+metadata and display icons private. It returns explicit unsupported-media
+errors instead of changing media into text. Resource references never authorize
+a fetch. Native images and documents remain inside the originating tool result,
+including Gemini named media references. Generated MCP executors retain content
+beside the declared result, including tool failures. Activities, saved result
+events, planner outputs, child final results and host tool-end events all carry
+that same typed value. Model history reads the accepted saved result and keeps
+its original invocation identity. Checkpoint version eleven retains content and
+rejects disagreement between its saved event and batch result. Older checkpoints
+have no compatibility reader. Authored rich tool content still needs its typed
+DSL and generated server conversion before that producer capability is complete.
+
 ## Error code mapping
 
 When an authored Goa method exposed as an MCP tool fails, the adapter returns a
@@ -2552,6 +3143,129 @@ receive error responses.
 - Add registry concepts in `expr/agent/registry.go`
 - Keep new templates small and transport-agnostic; compose on Goa JSON-RPC outputs
 
+### Private OAuth credential storage
+
+The host owns one `AuthorizationStore` namespace per user or application. The
+store acquires the complete set of records for an operation through
+`WithCredentials`, so enterprise resource acquisition and identity bootstrap do
+not nest locks. Record saves commit independently before returning; callback
+failure cannot undo a completed pending marker. The framework's explicit memory
+store acquires overlapping keys in a fixed order and uses the same runtime path
+as durable host storage.
+
+The private OAuth design defines resource and identity records. Existing
+complete-value codecs validate their exact typed shape and binding. Registration,
+issuer, grant purpose, redirect and resource facts determine record keys once at
+construction; no user identity is inferred from a registration. The host selects
+its authenticated user's storage namespace and keeps records encrypted.
+
+Resource renewal records its pending state before using a refresh credential,
+then saves the issued token before MCP dispatch. A private issuance identifier
+survives reloads so stale concurrent rejections can reuse another operation's
+replacement. Requested and granted permissions survive uncertain exchanges.
+SAML bootstrap keeps a separate identity record shared by the same user's
+resources. A pending or expired bootstrap asks the host for a fresh assertion;
+assertions and intermediate identity grants are never saved.
+
+An uncertain store result is resolved only by the next load. A committed ready
+record can be reused; a pending record requires new host authorization. Invalid
+saved data and mismatched owners fail at the generated-code boundary. Records do
+not enter agent state and no other logical service accesses this host's private
+persistence. The current branch has no deployed durable format to migrate.
+
 ## Summary
 
 This plugin gives you agents, MCP, and registries with familiar Goa patterns, minimal surface area, and a directory layout that feels natural. It's accurate, easy to maintain, and designed to evolve alongside Goa.
+
+
+The draft Task consumer shares the ordinary workflow activity collector. Its
+unfinished output is one generated `PendingExecution` union: ordinary input,
+Task waiting or Task input. A workflow timer separates creation, each read and
+each acknowledged update. Exact Task identity and answered request keys survive
+host-input suspensions; original arguments, codecs and tool-call budget remain
+owned by the original invocation. Active cancellation sends a saved cancellation
+operation independently of the stopped run context. Temporary reads and
+cancellation delivery use workflow timers; permanent rejection remains an error.
+The shared activity serializer preserves rejection of one exact activity input
+without forbidding a fresh workflow attempt that chooses different input.
+Generated executors still do not advertise Tasks: final caller-store acceptance
+and the remaining capability checks must complete first.
+Public `CancelRun` accepts a durable cancellation job for a suspended run. The
+job obtains its route from the original accepted preparation, follows only
+storage-admitted successors, and publishes ordinary cancellation continuations.
+A racing answer can win admission; the job then follows that accepted execution.
+Saved children remain owned by their execution parent. Cancellation never starts
+a detached child as an unrelated root. A selected child's reason is retained;
+related work uses the established engine-cancellation reason. Temporal records
+pending observations and retries temporary delivery failures without a total
+cleanup deadline. Temporal's history rollover hint carries the same request into
+a fresh execution with the same observation delay. Contract conflicts fail
+instead of retrying indefinitely.
+The in-memory engine mirrors acceptance and retry rules without durability. Registry protocol 13 and suspension version 13 reject prior
+contracts; providers, consumers and workers must migrate together.
+
+A suspended run owns one admitted successor. The existing atomic start command
+sets `RunMeta.SuccessorRunID` with the new run and its first records. That
+identity never changes and exact retries select the same records. Another
+successor cannot publish a run or child link. The owning store exposes the
+current identity through `LoadRun`; consumers do not scan history to select
+recent work. Each separate child call retains its own continuation chain.
+
+Tool activities retain the original invocation's `ToolCall.RunID` across Task
+reads, updates, cancellation and host-input successors. Registry admission uses
+that same identity and the saved operation sequence; it cannot reinterpret a
+successor as a fresh invocation. The successor workflow owns later result records
+through the existing separate call and result run references.
+
+Before publishing host questions, the workflow loop retains unfinished Task and
+child records. Initial and resumed workflows use that same owner during
+finalization; successful suspension transfers ownership through the stored
+checkpoint. A cancellation accepted before suspension cannot discard those
+records. Cleanup failure remains a separate error cause, so the runtime and
+both engine adapters report failure rather than successful cancellation.
+
+A child continuation's execution ID includes the current parent call and exact
+source suspension. If answering produces another question, cancellation uses a
+distinct child execution even within the same parent turn. Answers require a new
+conversation turn; cleanup supplies no answer and may keep the existing turn.
+
+### Catalog ownership and generated definitions
+
+`ToolCatalog` and `PromptCatalog` invoke configured Goa endpoints that select
+names already declared in the DSL. The application owns authorization, order and
+opaque page cursors. Generation owns the associated definitions and emits exact
+name dispatch, schema literals and metadata. Unknown or repeated names are
+boundary failures, rather than a second source of tool definitions. Listing is
+not invocation authorization; operation endpoints retain that responsibility.
+
+The catalog source extends the existing `SubscriptionSource` selection and
+acknowledgment contract. Authored optional booleans select only implemented
+catalog owners. Empty typed change branches reuse the shared HTTP producer's
+filter checks, acknowledgment ordering, request correlation and cancellation.
+There is no catalog broadcaster or connection-owned permission state. Native
+inputs use the same private constructors, credential and route filling, result
+validation and endpoint composition as other MCP methods. Catalog definitions
+remain generated; page membership and notification acceptance remain dynamic.
+
+`ResourceCatalog` and `ResourceTemplateCatalog` use the same endpoint planner,
+private input constructor, native authorization and cursor conversion. Their
+methods return typed runtime descriptors rather than declared operation names.
+Goa transforms preserve custom field selectors, located types, result views and
+metadata. Every selected view retains the descriptor's required address and
+name. Generated validation rejects unsupported fields and malformed descriptors;
+raw extension metadata stays an object without numeric conversion. Duplicate
+addresses in one page are service contract failures. The shared subscription
+source reports both resource catalogs through `resourcesListChanged`.
+
+`ResourceReader` selects one URI-reading method even when no template or catalog
+is declared. Authored `ResourceTemplate` declarations select that same reader.
+Fixed resources retain exact dispatch first; every other URI reaches the owner
+with native credentials and mapped URL values. The method owns existence and
+current access, so catalog visibility is never a read authorization rule. No
+adapter infers template variables, retrieves addresses or stores permissions.
+
+Before Goa finalization, inherited argument fields are resolved on a detached
+copy using Goa's own attribute finalizer. Already resolved inputs retain their
+original field declarations. The shared argument reader then removes annotated
+credentials, URL inputs and typed continuation fields; authored method types
+remain untouched. This avoids interpreting `Extend` separately in each binding.

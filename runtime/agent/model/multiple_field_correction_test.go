@@ -67,7 +67,7 @@ func TestMultipleFieldCorrectionSelectedUnionWildcardAmbiguity(t *testing.T) {
 	for _, branch := range []string{"short", "long"} {
 		fields = append(fields, tools.FieldMetadata{
 			Path: []tools.FieldPathSegment{tools.FixedField("choices"), tools.DynamicField{}, tools.FixedField("value")}, JSONType: "array",
-			Branches: []tools.UnionBranch{{Discriminator: discriminator, Value: branch}},
+			Branches: []tools.UnionBranch{tools.TaggedUnionBranch{Discriminator: discriminator, Value: branch}},
 		})
 	}
 	for _, test := range []struct{ name, payload, want string }{

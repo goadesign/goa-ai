@@ -1,7 +1,5 @@
 scenarios:
   - name: tools_list
-    pre:
-      auto_initialize: true
     steps:
       - name: list
         op: ToolsList
@@ -10,15 +8,14 @@ scenarios:
           result:
             tools:
               - { name: "analyze_sentiment" }
-              - { name: "extract_keywords" }
-              - { name: "summarize_text" }
-              - { name: "search" }
               - { name: "execute_code" }
+              - { name: "extract_keywords" }
               - { name: "process_batch" }
+              - { name: "search" }
+              - { name: "summarize_text" }
+              - { name: "test_tool_with_progress" }
 
   - name: tools_list_schema
-    pre:
-      auto_initialize: true
     steps:
       - name: list
         op: ToolsList
@@ -35,15 +32,14 @@ scenarios:
                     text:
                       type: string
                       description: "Input text to analyze"
-              - { name: "extract_keywords" }
-              - { name: "summarize_text" }
-              - { name: "search" }
               - { name: "execute_code" }
+              - { name: "extract_keywords" }
               - { name: "process_batch" }
+              - { name: "search" }
+              - { name: "summarize_text" }
+              - { name: "test_tool_with_progress" }
 
   - name: tools_call_each_unary_method
-    pre:
-      auto_initialize: true
     steps:
       - name: analyze_sentiment
         op: ToolsCall
@@ -53,7 +49,7 @@ scenarios:
         expect:
           status: success
           result:
-            content: [ { type: text, text: '{"sentiment":"positive"}' } ]
+            content: []
             structuredContent: { sentiment: positive }
       - name: extract_keywords
         op: ToolsCall
@@ -63,7 +59,7 @@ scenarios:
         expect:
           status: success
           result:
-            content: [ { type: text, text: '{"keywords":["MCP","typed","tools"]}' } ]
+            content: []
             structuredContent: { keywords: [MCP, typed, tools] }
       - name: summarize_text
         op: ToolsCall
@@ -73,7 +69,7 @@ scenarios:
         expect:
           status: success
           result:
-            content: [ { type: text, text: '{"summary":"The fixture returns a stable generated response."}' } ]
+            content: []
             structuredContent: { summary: "The fixture returns a stable generated response." }
       - name: search
         op: ToolsCall
@@ -83,7 +79,7 @@ scenarios:
         expect:
           status: success
           result:
-            content: [ { type: text, text: '{"results":["MCP protocol reference","Generated tool guide"]}' } ]
+            content: []
             structuredContent: { results: ["MCP protocol reference", "Generated tool guide"] }
       - name: execute_code
         op: ToolsCall
@@ -93,7 +89,7 @@ scenarios:
         expect:
           status: success
           result:
-            content: [ { type: text, text: '{"output":"4"}' } ]
+            content: []
             structuredContent: { output: "4" }
       - name: process_batch
         op: ToolsCall
@@ -103,12 +99,19 @@ scenarios:
         expect:
           status: success
           result:
-            content: [ { type: text, text: '{"ok":true}' } ]
+            content: []
             structuredContent: { ok: true }
 
+      - name: progress_without_listener
+        op: ToolsCall
+        input: { name: "test_tool_with_progress", arguments: {} }
+        expect:
+          status: success
+          result:
+            content: []
+            structuredContent: "Work complete"
+
   - name: tools_list_rejects_cursor
-    pre:
-      auto_initialize: true
     steps:
       - name: list
         op: ToolsList
@@ -118,8 +121,6 @@ scenarios:
           error: { code: -32602 }
 
   - name: tools_call_rejects_unknown_name
-    pre:
-      auto_initialize: true
     steps:
       - name: call
         op: ToolsCall
@@ -129,19 +130,15 @@ scenarios:
           error: { code: -32602 }
 
   - name: tools_call_rejects_missing_required_field
-    pre:
-      auto_initialize: true
     steps:
       - name: call
         op: ToolsCall
         input: { name: "analyze_sentiment", arguments: {} }
         expect:
-          status: error
-          error: { code: -32602 }
+          status: success
+          result: { resultType: complete, isError: true }
 
   - name: tools_call_rejects_invalid_argument_type
-    pre:
-      auto_initialize: true
     steps:
       - name: call
         op: ToolsCall
@@ -149,12 +146,10 @@ scenarios:
           name: search
           arguments: { query: "MCP", limit: "five" }
         expect:
-          status: error
-          error: { code: -32602 }
+          status: success
+          result: { resultType: complete, isError: true }
 
   - name: tools_call_rejects_invalid_enum
-    pre:
-      auto_initialize: true
     steps:
       - name: call
         op: ToolsCall
@@ -162,5 +157,5 @@ scenarios:
           name: execute_code
           arguments: { language: ruby, code: "puts 4" }
         expect:
-          status: error
-          error: { code: -32602 }
+          status: success
+          result: { resultType: complete, isError: true }

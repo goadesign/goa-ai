@@ -9,160 +9,541 @@ package mcpassistant
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
 
 	assistant "example.com/assistant/gen/assistant"
 	mcpcodec "example.com/assistant/gen/mcp_assistant/internal/codec"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/codes"
+	mcpruntime "goa.design/goa-ai/runtime/mcp"
 	goa "goa.design/goa/v3/pkg"
 )
 
-// MCPAdapter core: types, options, constructor, helpers
-
+// MCPAdapter calls the configured Goa endpoints after the HTTP binding and
+// argument codecs accept the request. Endpoint authentication and middleware
+// retain their existing owner; results use only this release's MCP contract.
 type (
-	// MCPAdapter translates MCP protocol requests into calls to the authored
-	// Goa service.
+	// MCPAdapter translates protocol requests into authored service operations.
 	MCPAdapter struct {
-		service assistant.Service
-		opts    *MCPAdapterOptions
+		endpoints *assistant.Endpoints
+		opts      MCPAdapterOptions
 	}
-
-	// MCPAdapterOptions allows customizing adapter behavior.
+	// MCPAdapterOptions configures how application errors are exposed to clients.
 	MCPAdapterOptions struct {
-		// Logger is an optional hook called with internal adapter events.
-		Logger func(ctx context.Context, event string, details any)
-		// ErrorMapper replaces a service error before the MCP client sees it.
+		// ErrorMapper replaces a service error with an application-approved error.
+		// It controls the disclosed message, while the original error determines
+		// whether the failure is internal. It must return a non-nil error.
 		ErrorMapper func(error) error
+	}
+	// endpointFailure keeps the disclosed error and its original server-fault
+	// classification together. Redacting a message cannot change who caused it.
+	endpointFailure struct {
+		err      error
+		internal bool
 	}
 )
 
-// NewMCPAdapter returns an MCP service that calls the Goa service implementation.
-func NewMCPAdapter(service assistant.Service, opts *MCPAdapterOptions) *MCPAdapter {
-	return &MCPAdapter{
-		service: service,
-		opts:    opts,
+// NewMCPAdapter connects already-configured Goa endpoints to MCP methods.
+// Configure authentication, interceptors and middleware before constructing it.
+func NewMCPAdapter(endpoints *assistant.Endpoints, opts *MCPAdapterOptions) *MCPAdapter {
+	adapter := &MCPAdapter{endpoints: endpoints}
+	if opts != nil {
+		adapter.opts = *opts
 	}
+	return adapter
 }
 
-func (a *MCPAdapter) log(ctx context.Context, event string, details any) {
-	if a != nil && a.opts != nil && a.opts.Logger != nil {
-		a.opts.Logger(ctx, event, details)
+// validateNoArguments accepts omitted arguments or an empty JSON object for a
+// method with no payload. Any supplied property is an argument error.
+func validateNoArguments(arguments json.RawMessage) error {
+	if len(arguments) == 0 {
+		return nil
 	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(arguments, &fields); err != nil {
+		return fmt.Errorf("arguments must be an empty JSON object: %w", err)
+	}
+	if fields == nil || len(fields) > 0 {
+		return fmt.Errorf("arguments must be an empty JSON object")
+	}
+	return nil
 }
 
-// mapError lets the application replace a service error before it is returned.
-func (a *MCPAdapter) mapError(err error) error {
-	if a != nil && a.opts != nil && a.opts.ErrorMapper != nil && err != nil {
-		if m := a.opts.ErrorMapper(err); m != nil {
-			return m
+// mapError applies the host's disclosure policy after classifying the original
+// endpoint error. Internal failures remain protocol errors after redaction.
+func (a *MCPAdapter) mapError(err error, internal bool) endpointFailure {
+	if failure, ok := err.(*endpointResultError); ok {
+		return endpointFailure{err: goa.PermanentError("internal_error", "%s", failure.Error()), internal: true}
+	}
+	disclosed := err
+	if a.opts.ErrorMapper != nil {
+		disclosed = a.opts.ErrorMapper(err)
+	}
+	if internal {
+		disclosed = goa.NewServiceError(disclosed, "internal_error", false, false, true)
+	}
+	return endpointFailure{err: disclosed, internal: internal}
+}
+
+// endpointErrorOwner follows one wrapped failure to its first named Goa error.
+// A join of independent errors keeps its own meaning instead of borrowing one
+// child's fault flag or declared name.
+func endpointErrorOwner(err error) error {
+	for err != nil {
+		if _, named := err.(goa.GoaErrorNamer); named {
+			return err
+		}
+		if joined, ok := err.(interface{ Unwrap() []error }); ok {
+			causes := joined.Unwrap()
+			if len(causes) != 1 {
+				return err
+			}
+			err = causes[0]
+		} else {
+			cause := errors.Unwrap(err)
+			if cause == nil {
+				return err
+			}
+			err = cause
 		}
 	}
-	return err
+	return nil
 }
 
-func stringPtr(s string) *string {
-	return &s
+// isEndpointFault recognizes the owning Goa error's explicit server-fault flag.
+func isEndpointFault(err error) bool {
+	failure, ok := endpointErrorOwner(err).(*goa.ServiceError)
+	return ok && failure.Fault
+}
+
+func stringPtr(value string) *string {
+	return &value
 }
 func boolPtr(value bool) *bool {
 	return &value
 }
 
-// Initialize handles the MCP initialize request.
-func (a *MCPAdapter) Initialize(_ context.Context, _ *InitializePayload) (*InitializeResult, error) {
-	serverInfo := &ServerInfo{
-		Name:    "assistant-mcp",
-		Version: "1.0.0",
-	}
+// resultMeta identifies the server software on each independent response.
+func resultMeta() json.RawMessage {
+	return json.RawMessage("{\"io.modelcontextprotocol/serverInfo\":{\"name\":\"assistant-mcp\",\"version\":\"1.0.0\"}}")
+}
 
+// ServerDiscover describes declared capabilities without creating client state.
+func (a *MCPAdapter) ServerDiscover(ctx context.Context, _ *DiscoverPayload) (*DiscoverResult, error) {
+	_, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.server/discover")
+	defer span.End()
 	capabilities := &ServerCapabilities{}
 	capabilities.Tools = &ToolsCapability{}
 	capabilities.Resources = &ResourcesCapability{}
 	capabilities.Prompts = &PromptsCapability{}
-
-	return &InitializeResult{
-		ProtocolVersion: DefaultProtocolVersion,
-		ServerInfo:      serverInfo,
-		Capabilities:    capabilities,
+	capabilities.Completions = &CompletionsCapability{}
+	return &DiscoverResult{
+		ResultType:        "complete",
+		Meta:              resultMeta(),
+		SupportedVersions: []string{mcpruntime.ProtocolVersion},
+		Capabilities:      capabilities,
+		TTLMs:             0,
+		CacheScope:        "private",
 	}, nil
 }
 
-// NotificationsInitialized accepts the notification sent after initialization.
-// The HTTP transport tracks setup separately for each client session.
-func (a *MCPAdapter) NotificationsInitialized(_ context.Context) error {
-	return nil
+// invokeMCPMethod0 sends validated input to the configured ReportWork endpoint
+// and returns its declared result. An unexpected Go type is an internal error.
+func (a *MCPAdapter) invokeMCPMethod0(ctx context.Context) (string, error) {
+	// The original endpoint middleware observes its authored service and method.
+	ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
+	ctx = context.WithValue(ctx, goa.MethodKey, "report_work")
+	raw, err := a.endpoints.ReportWork(ctx, nil)
+	var zero string
+	if err != nil {
+		return zero, err
+	}
+	result, ok := raw.(string)
+	if !ok {
+		return zero, &endpointResultError{method: "ReportWork"}
+	}
+	return result, nil
 }
 
-// Ping handles the MCP ping request.
-func (a *MCPAdapter) Ping(ctx context.Context) (*PingResult, error) {
-	a.log(ctx, "request", map[string]any{"method": "ping"})
-	res := &PingResult{}
-	a.log(ctx, "response", map[string]any{"method": "ping"})
-	return res, nil
+// invokeMCPMethod1 sends validated input to the configured AnalyzeSentiment endpoint
+// and returns its declared result. An unexpected Go type is an internal error.
+func (a *MCPAdapter) invokeMCPMethod1(ctx context.Context, payload *assistant.AnalyzeSentimentPayload) (*assistant.AnalyzeSentimentResult, error) {
+	// The original endpoint middleware observes its authored service and method.
+	ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
+	ctx = context.WithValue(ctx, goa.MethodKey, "analyze_sentiment")
+	raw, err := a.endpoints.AnalyzeSentiment(ctx, payload)
+	var zero *assistant.AnalyzeSentimentResult
+	if err != nil {
+		return zero, err
+	}
+	result, ok := raw.(*assistant.AnalyzeSentimentResult)
+	if !ok {
+		return zero, &endpointResultError{method: "AnalyzeSentiment"}
+	}
+	return result, nil
 }
 
-// Tools handling
+// invokeMCPMethod2 sends validated input to the configured ExtractKeywords endpoint
+// and returns its declared result. An unexpected Go type is an internal error.
+func (a *MCPAdapter) invokeMCPMethod2(ctx context.Context, payload *assistant.ExtractKeywordsPayload) (*assistant.ExtractKeywordsResult, error) {
+	// The original endpoint middleware observes its authored service and method.
+	ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
+	ctx = context.WithValue(ctx, goa.MethodKey, "extract_keywords")
+	raw, err := a.endpoints.ExtractKeywords(ctx, payload)
+	var zero *assistant.ExtractKeywordsResult
+	if err != nil {
+		return zero, err
+	}
+	result, ok := raw.(*assistant.ExtractKeywordsResult)
+	if !ok {
+		return zero, &endpointResultError{method: "ExtractKeywords"}
+	}
+	return result, nil
+}
 
-// ToolsList returns the tools declared in the Goa design.
+// invokeMCPMethod3 sends validated input to the configured SummarizeText endpoint
+// and returns its declared result. An unexpected Go type is an internal error.
+func (a *MCPAdapter) invokeMCPMethod3(ctx context.Context, payload *assistant.SummarizeTextPayload) (*assistant.SummarizeTextResult, error) {
+	// The original endpoint middleware observes its authored service and method.
+	ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
+	ctx = context.WithValue(ctx, goa.MethodKey, "summarize_text")
+	raw, err := a.endpoints.SummarizeText(ctx, payload)
+	var zero *assistant.SummarizeTextResult
+	if err != nil {
+		return zero, err
+	}
+	result, ok := raw.(*assistant.SummarizeTextResult)
+	if !ok {
+		return zero, &endpointResultError{method: "SummarizeText"}
+	}
+	return result, nil
+}
+
+// invokeMCPMethod4 sends validated input to the configured Search endpoint
+// and returns its declared result. An unexpected Go type is an internal error.
+func (a *MCPAdapter) invokeMCPMethod4(ctx context.Context, payload *assistant.SearchPayload) (*assistant.SearchResult, error) {
+	// The original endpoint middleware observes its authored service and method.
+	ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
+	ctx = context.WithValue(ctx, goa.MethodKey, "search")
+	raw, err := a.endpoints.Search(ctx, payload)
+	var zero *assistant.SearchResult
+	if err != nil {
+		return zero, err
+	}
+	result, ok := raw.(*assistant.SearchResult)
+	if !ok {
+		return zero, &endpointResultError{method: "Search"}
+	}
+	return result, nil
+}
+
+// invokeMCPMethod5 sends validated input to the configured ExecuteCode endpoint
+// and returns its declared result. An unexpected Go type is an internal error.
+func (a *MCPAdapter) invokeMCPMethod5(ctx context.Context, payload *assistant.ExecuteCodePayload) (*assistant.ExecuteCodeResult, error) {
+	// The original endpoint middleware observes its authored service and method.
+	ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
+	ctx = context.WithValue(ctx, goa.MethodKey, "execute_code")
+	raw, err := a.endpoints.ExecuteCode(ctx, payload)
+	var zero *assistant.ExecuteCodeResult
+	if err != nil {
+		return zero, err
+	}
+	result, ok := raw.(*assistant.ExecuteCodeResult)
+	if !ok {
+		return zero, &endpointResultError{method: "ExecuteCode"}
+	}
+	return result, nil
+}
+
+// invokeMCPMethod6 sends validated input to the configured ProcessBatch endpoint
+// and returns its declared result. An unexpected Go type is an internal error.
+func (a *MCPAdapter) invokeMCPMethod6(ctx context.Context, payload *assistant.ProcessBatchPayload) (*assistant.ProcessBatchResult, error) {
+	// The original endpoint middleware observes its authored service and method.
+	ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
+	ctx = context.WithValue(ctx, goa.MethodKey, "process_batch")
+	raw, err := a.endpoints.ProcessBatch(ctx, payload)
+	var zero *assistant.ProcessBatchResult
+	if err != nil {
+		return zero, err
+	}
+	result, ok := raw.(*assistant.ProcessBatchResult)
+	if !ok {
+		return zero, &endpointResultError{method: "ProcessBatch"}
+	}
+	return result, nil
+}
+
+// invokeMCPMethod7 sends validated input to the configured ListDocuments endpoint
+// and returns its declared result. An unexpected Go type is an internal error.
+func (a *MCPAdapter) invokeMCPMethod7(ctx context.Context) (*assistant.Documents, error) {
+	// The original endpoint middleware observes its authored service and method.
+	ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
+	ctx = context.WithValue(ctx, goa.MethodKey, "list_documents")
+	raw, err := a.endpoints.ListDocuments(ctx, nil)
+	var zero *assistant.Documents
+	if err != nil {
+		return zero, err
+	}
+	result, ok := raw.(*assistant.Documents)
+	if !ok {
+		return zero, &endpointResultError{method: "ListDocuments"}
+	}
+	return result, nil
+}
+
+// invokeMCPMethod8 sends validated input to the configured SystemInfo endpoint
+// and returns its declared result. An unexpected Go type is an internal error.
+func (a *MCPAdapter) invokeMCPMethod8(ctx context.Context) (*assistant.SystemInfoResult, error) {
+	// The original endpoint middleware observes its authored service and method.
+	ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
+	ctx = context.WithValue(ctx, goa.MethodKey, "system_info")
+	raw, err := a.endpoints.SystemInfo(ctx, nil)
+	var zero *assistant.SystemInfoResult
+	if err != nil {
+		return zero, err
+	}
+	result, ok := raw.(*assistant.SystemInfoResult)
+	if !ok {
+		return zero, &endpointResultError{method: "SystemInfo"}
+	}
+	return result, nil
+}
+
+// invokeMCPMethod9 sends validated input to the configured BinaryResource endpoint
+// and returns its declared result. An unexpected Go type is an internal error.
+func (a *MCPAdapter) invokeMCPMethod9(ctx context.Context) (assistant.Image, error) {
+	// The original endpoint middleware observes its authored service and method.
+	ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
+	ctx = context.WithValue(ctx, goa.MethodKey, "binary_resource")
+	raw, err := a.endpoints.BinaryResource(ctx, nil)
+	var zero assistant.Image
+	if err != nil {
+		return zero, err
+	}
+	result, ok := raw.(assistant.Image)
+	if !ok {
+		return zero, &endpointResultError{method: "BinaryResource"}
+	}
+	return result, nil
+}
+
+// invokeMCPMethod10 sends validated input to the configured EmptyBinaryResource endpoint
+// and returns its declared result. An unexpected Go type is an internal error.
+func (a *MCPAdapter) invokeMCPMethod10(ctx context.Context) ([]byte, error) {
+	// The original endpoint middleware observes its authored service and method.
+	ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
+	ctx = context.WithValue(ctx, goa.MethodKey, "empty_binary_resource")
+	raw, err := a.endpoints.EmptyBinaryResource(ctx, nil)
+	var zero []byte
+	if err != nil {
+		return zero, err
+	}
+	result, ok := raw.([]byte)
+	if !ok {
+		return zero, &endpointResultError{method: "EmptyBinaryResource"}
+	}
+	return result, nil
+}
+
+// invokeMCPMethod11 sends validated input to the configured ReadResource endpoint
+// and returns its declared result. An unexpected Go type is an internal error.
+func (a *MCPAdapter) invokeMCPMethod11(ctx context.Context, payload *assistant.ReadResourcePayload) (*assistant.ReadResourceResult, error) {
+	// The original endpoint middleware observes its authored service and method.
+	ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
+	ctx = context.WithValue(ctx, goa.MethodKey, "read_resource")
+	raw, err := a.endpoints.ReadResource(ctx, payload)
+	var zero *assistant.ReadResourceResult
+	if err != nil {
+		return zero, err
+	}
+	result, ok := raw.(*assistant.ReadResourceResult)
+	if !ok {
+		return zero, &endpointResultError{method: "ReadResource"}
+	}
+	return result, nil
+}
+
+// invokeMCPMethod12 sends validated input to the configured SimplePrompt endpoint
+// and returns its declared result. An unexpected Go type is an internal error.
+func (a *MCPAdapter) invokeMCPMethod12(ctx context.Context) (*assistant.RefereePromptResult, error) {
+	// The original endpoint middleware observes its authored service and method.
+	ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
+	ctx = context.WithValue(ctx, goa.MethodKey, "simple_prompt")
+	raw, err := a.endpoints.SimplePrompt(ctx, nil)
+	var zero *assistant.RefereePromptResult
+	if err != nil {
+		return zero, err
+	}
+	result, ok := raw.(*assistant.RefereePromptResult)
+	if !ok {
+		return zero, &endpointResultError{method: "SimplePrompt"}
+	}
+	return result, nil
+}
+
+// invokeMCPMethod13 sends validated input to the configured ArgumentPrompt endpoint
+// and returns its declared result. An unexpected Go type is an internal error.
+func (a *MCPAdapter) invokeMCPMethod13(ctx context.Context, payload *assistant.ArgumentPromptPayload) (*assistant.RefereePromptResult, error) {
+	// The original endpoint middleware observes its authored service and method.
+	ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
+	ctx = context.WithValue(ctx, goa.MethodKey, "argument_prompt")
+	raw, err := a.endpoints.ArgumentPrompt(ctx, payload)
+	var zero *assistant.RefereePromptResult
+	if err != nil {
+		return zero, err
+	}
+	result, ok := raw.(*assistant.RefereePromptResult)
+	if !ok {
+		return zero, &endpointResultError{method: "ArgumentPrompt"}
+	}
+	return result, nil
+}
+
+// invokeMCPMethod14 sends validated input to the configured ResourcePrompt endpoint
+// and returns its declared result. An unexpected Go type is an internal error.
+func (a *MCPAdapter) invokeMCPMethod14(ctx context.Context, payload *assistant.ResourcePromptPayload) (*assistant.RefereePromptResult, error) {
+	// The original endpoint middleware observes its authored service and method.
+	ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
+	ctx = context.WithValue(ctx, goa.MethodKey, "resource_prompt")
+	raw, err := a.endpoints.ResourcePrompt(ctx, payload)
+	var zero *assistant.RefereePromptResult
+	if err != nil {
+		return zero, err
+	}
+	result, ok := raw.(*assistant.RefereePromptResult)
+	if !ok {
+		return zero, &endpointResultError{method: "ResourcePrompt"}
+	}
+	return result, nil
+}
+
+// invokeMCPMethod15 sends validated input to the configured ImagePrompt endpoint
+// and returns its declared result. An unexpected Go type is an internal error.
+func (a *MCPAdapter) invokeMCPMethod15(ctx context.Context) (*assistant.RefereePromptResult, error) {
+	// The original endpoint middleware observes its authored service and method.
+	ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
+	ctx = context.WithValue(ctx, goa.MethodKey, "image_prompt")
+	raw, err := a.endpoints.ImagePrompt(ctx, nil)
+	var zero *assistant.RefereePromptResult
+	if err != nil {
+		return zero, err
+	}
+	result, ok := raw.(*assistant.RefereePromptResult)
+	if !ok {
+		return zero, &endpointResultError{method: "ImagePrompt"}
+	}
+	return result, nil
+}
+
+// invokeMCPMethod16 sends validated input to the configured SuggestArgument endpoint
+// and returns its declared result. An unexpected Go type is an internal error.
+func (a *MCPAdapter) invokeMCPMethod16(ctx context.Context, payload *assistant.SuggestArgumentPayload) (*assistant.SuggestArgumentResult, error) {
+	// The original endpoint middleware observes its authored service and method.
+	ctx = context.WithValue(ctx, goa.ServiceKey, "assistant")
+	ctx = context.WithValue(ctx, goa.MethodKey, "suggest_argument")
+	raw, err := a.endpoints.SuggestArgument(ctx, payload)
+	var zero *assistant.SuggestArgumentResult
+	if err != nil {
+		return zero, err
+	}
+	result, ok := raw.(*assistant.SuggestArgumentResult)
+	if !ok {
+		return zero, &endpointResultError{method: "SuggestArgument"}
+	}
+	return result, nil
+}
+
+// endpointResultError identifies a configured endpoint that returned a value
+// outside its declared Go contract. Applications cannot remap this invariant error.
+type endpointResultError struct {
+	method string
+}
+
+// Error identifies the endpoint whose result failed the generated type check.
+func (e *endpointResultError) Error() string {
+	return fmt.Sprintf("endpoint %s returned an unexpected Go result type", e.method)
+}
+
+// ToolsList returns either the fixed catalog or an authenticated page of
+// declared tool names. The generated tool definitions keep their exact schemas.
 func (a *MCPAdapter) ToolsList(ctx context.Context, p *ToolsListPayload) (*ToolsListResult, error) {
-	a.log(ctx, "request", map[string]any{"method": "tools/list"})
-	if p.Params != nil && p.Params.Cursor != nil {
-		return nil, goa.PermanentError("invalid_params", "tools/list does not accept a cursor")
+	ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.tools/list")
+	defer span.End()
+	if p.Cursor != nil {
+		failure := goa.PermanentError("invalid_params", "tools/list does not accept a cursor")
+		span.RecordError(failure)
+		span.SetStatus(codes.Error, failure.Error())
+		return nil, failure
 	}
 	tools := []*ToolInfo{
 		{
 			Name:         "analyze_sentiment",
 			Description:  stringPtr("Analyze sentiment of text"),
-			InputSchema:  json.RawMessage("{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to analyze\"}},\"additionalProperties\":false}"),
-			OutputSchema: json.RawMessage("{\"type\":\"object\",\"properties\":{\"sentiment\":{\"type\":\"string\",\"description\":\"Detected sentiment\"}},\"additionalProperties\":false}"),
-		},
-		{
-			Name:         "extract_keywords",
-			Description:  stringPtr("Extract keywords from text"),
-			InputSchema:  json.RawMessage("{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text\"}},\"additionalProperties\":false}"),
-			OutputSchema: json.RawMessage("{\"type\":\"object\",\"properties\":{\"keywords\":{\"type\":\"array\",\"description\":\"Extracted keywords\",\"items\":{\"type\":\"string\"}}},\"additionalProperties\":false}"),
-		},
-		{
-			Name:         "summarize_text",
-			Description:  stringPtr("Summarize text"),
-			InputSchema:  json.RawMessage("{\"type\":\"object\",\"required\":[\"text\"],\"properties\":{\"text\":{\"type\":\"string\",\"description\":\"Input text to summarize\"}},\"additionalProperties\":false}"),
-			OutputSchema: json.RawMessage("{\"type\":\"object\",\"properties\":{\"summary\":{\"type\":\"string\",\"description\":\"Summary\"}},\"additionalProperties\":false}"),
-		},
-		{
-			Name:         "search",
-			Description:  stringPtr("Search knowledge base"),
-			InputSchema:  json.RawMessage("{\"type\":\"object\",\"required\":[\"query\"],\"properties\":{\"limit\":{\"type\":\"integer\",\"description\":\"Maximum number of results\"},\"query\":{\"type\":\"string\",\"description\":\"Search query\"}},\"additionalProperties\":false}"),
-			OutputSchema: json.RawMessage("{\"type\":\"object\",\"properties\":{\"results\":{\"type\":\"array\",\"description\":\"Search results\",\"items\":{\"type\":\"string\"}}},\"additionalProperties\":false}"),
+			InputSchema:  json.RawMessage("{\"$defs\":{\"AnalyzeSentimentPayload\":{\"properties\":{\"text\":{\"description\":\"Input text to analyze\",\"type\":\"string\"}},\"required\":[\"text\"],\"title\":\"AnalyzeSentimentPayload\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"text\":{\"description\":\"Input text to analyze\",\"type\":\"string\"}},\"required\":[\"text\"],\"title\":\"AnalyzeSentimentPayload\",\"type\":\"object\"}"),
+			OutputSchema: json.RawMessage("{\"$defs\":{\"AnalyzeSentimentResult\":{\"properties\":{\"sentiment\":{\"description\":\"Detected sentiment\",\"type\":\"string\"}},\"title\":\"AnalyzeSentimentResult\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"sentiment\":{\"description\":\"Detected sentiment\",\"type\":\"string\"}},\"title\":\"AnalyzeSentimentResult\",\"type\":\"object\"}"),
 		},
 		{
 			Name:         "execute_code",
 			Description:  stringPtr("Execute code"),
-			InputSchema:  json.RawMessage("{\"type\":\"object\",\"required\":[\"language\",\"code\"],\"properties\":{\"code\":{\"type\":\"string\",\"description\":\"Code to execute\"},\"language\":{\"type\":\"string\",\"description\":\"Language to execute\",\"enum\":[\"python\",\"javascript\"]}},\"additionalProperties\":false}"),
-			OutputSchema: json.RawMessage("{\"type\":\"object\",\"properties\":{\"output\":{\"type\":\"string\",\"description\":\"Execution output\"}},\"additionalProperties\":false}"),
+			InputSchema:  json.RawMessage("{\"$defs\":{\"ExecuteCodePayload\":{\"properties\":{\"code\":{\"description\":\"Code to execute\",\"type\":\"string\"},\"language\":{\"description\":\"Language to execute\",\"enum\":[\"python\",\"javascript\"],\"type\":\"string\"}},\"required\":[\"language\",\"code\"],\"title\":\"ExecuteCodePayload\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"code\":{\"description\":\"Code to execute\",\"type\":\"string\"},\"language\":{\"description\":\"Language to execute\",\"enum\":[\"python\",\"javascript\"],\"type\":\"string\"}},\"required\":[\"language\",\"code\"],\"title\":\"ExecuteCodePayload\",\"type\":\"object\"}"),
+			OutputSchema: json.RawMessage("{\"$defs\":{\"ExecuteCodeResult\":{\"properties\":{\"output\":{\"description\":\"Execution output\",\"type\":\"string\"}},\"title\":\"ExecuteCodeResult\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"output\":{\"description\":\"Execution output\",\"type\":\"string\"}},\"title\":\"ExecuteCodeResult\",\"type\":\"object\"}"),
+		},
+		{
+			Name:         "extract_keywords",
+			Description:  stringPtr("Extract keywords from text"),
+			InputSchema:  json.RawMessage("{\"$defs\":{\"ExtractKeywordsPayload\":{\"properties\":{\"text\":{\"description\":\"Input text\",\"type\":\"string\"}},\"required\":[\"text\"],\"title\":\"ExtractKeywordsPayload\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"text\":{\"description\":\"Input text\",\"type\":\"string\"}},\"required\":[\"text\"],\"title\":\"ExtractKeywordsPayload\",\"type\":\"object\"}"),
+			OutputSchema: json.RawMessage("{\"$defs\":{\"ExtractKeywordsResult\":{\"properties\":{\"keywords\":{\"description\":\"Extracted keywords\",\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"title\":\"ExtractKeywordsResult\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"keywords\":{\"description\":\"Extracted keywords\",\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"title\":\"ExtractKeywordsResult\",\"type\":\"object\"}"),
 		},
 		{
 			Name:         "process_batch",
 			Description:  stringPtr("Process a batch of items"),
-			InputSchema:  json.RawMessage("{\"type\":\"object\",\"required\":[\"items\"],\"properties\":{\"blob\":{\"type\":\"string\",\"description\":\"Base64 blob\"},\"format\":{\"type\":\"string\",\"description\":\"Output format\",\"enum\":[\"json\",\"text\",\"blob\",\"uri\"]},\"items\":{\"type\":\"array\",\"description\":\"Items to process\",\"items\":{\"type\":\"string\"}},\"mimeType\":{\"type\":\"string\",\"description\":\"MIME type\"},\"uri\":{\"type\":\"string\",\"description\":\"Resource URI\"}},\"additionalProperties\":false}"),
-			OutputSchema: json.RawMessage("{\"type\":\"object\",\"properties\":{\"ok\":{\"type\":\"boolean\",\"description\":\"Operation status\"}},\"additionalProperties\":false}"),
+			InputSchema:  json.RawMessage("{\"$defs\":{\"ProcessBatchPayload\":{\"properties\":{\"blob\":{\"description\":\"Base64 blob\",\"type\":\"string\"},\"format\":{\"description\":\"Output format\",\"enum\":[\"json\",\"text\",\"blob\",\"uri\"],\"type\":\"string\"},\"items\":{\"description\":\"Items to process\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"mimeType\":{\"description\":\"MIME type\",\"type\":\"string\"},\"uri\":{\"description\":\"Resource URI\",\"type\":\"string\"}},\"required\":[\"items\"],\"title\":\"ProcessBatchPayload\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"blob\":{\"description\":\"Base64 blob\",\"type\":\"string\"},\"format\":{\"description\":\"Output format\",\"enum\":[\"json\",\"text\",\"blob\",\"uri\"],\"type\":\"string\"},\"items\":{\"description\":\"Items to process\",\"items\":{\"type\":\"string\"},\"type\":\"array\"},\"mimeType\":{\"description\":\"MIME type\",\"type\":\"string\"},\"uri\":{\"description\":\"Resource URI\",\"type\":\"string\"}},\"required\":[\"items\"],\"title\":\"ProcessBatchPayload\",\"type\":\"object\"}"),
+			OutputSchema: json.RawMessage("{\"$defs\":{\"ProcessBatchResult\":{\"properties\":{\"ok\":{\"description\":\"Operation status\",\"type\":\"boolean\"}},\"title\":\"ProcessBatchResult\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"ok\":{\"description\":\"Operation status\",\"type\":\"boolean\"}},\"title\":\"ProcessBatchResult\",\"type\":\"object\"}"),
+		},
+		{
+			Name:         "search",
+			Description:  stringPtr("Search knowledge base"),
+			InputSchema:  json.RawMessage("{\"$defs\":{\"SearchPayload\":{\"properties\":{\"limit\":{\"description\":\"Maximum number of results\",\"format\":\"int64\",\"type\":\"integer\"},\"query\":{\"description\":\"Search query\",\"type\":\"string\"}},\"required\":[\"query\"],\"title\":\"SearchPayload\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"limit\":{\"description\":\"Maximum number of results\",\"format\":\"int64\",\"type\":\"integer\"},\"query\":{\"description\":\"Search query\",\"type\":\"string\"}},\"required\":[\"query\"],\"title\":\"SearchPayload\",\"type\":\"object\"}"),
+			OutputSchema: json.RawMessage("{\"$defs\":{\"SearchResult\":{\"properties\":{\"results\":{\"description\":\"Search results\",\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"title\":\"SearchResult\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"results\":{\"description\":\"Search results\",\"items\":{\"type\":\"string\"},\"type\":\"array\"}},\"title\":\"SearchResult\",\"type\":\"object\"}"),
+		},
+		{
+			Name:         "summarize_text",
+			Description:  stringPtr("Summarize text"),
+			InputSchema:  json.RawMessage("{\"$defs\":{\"SummarizeTextPayload\":{\"properties\":{\"text\":{\"description\":\"Input text to summarize\",\"type\":\"string\"}},\"required\":[\"text\"],\"title\":\"SummarizeTextPayload\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"text\":{\"description\":\"Input text to summarize\",\"type\":\"string\"}},\"required\":[\"text\"],\"title\":\"SummarizeTextPayload\",\"type\":\"object\"}"),
+			OutputSchema: json.RawMessage("{\"$defs\":{\"SummarizeTextResult\":{\"properties\":{\"summary\":{\"description\":\"Summary\",\"type\":\"string\"}},\"title\":\"SummarizeTextResult\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"summary\":{\"description\":\"Summary\",\"type\":\"string\"}},\"title\":\"SummarizeTextResult\",\"type\":\"object\"}"),
+		},
+		{
+			Name:         "test_tool_with_progress",
+			Description:  stringPtr("Perform synthetic work with progress updates"),
+			InputSchema:  json.RawMessage("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"object\",\"properties\":{},\"additionalProperties\":false}"),
+			OutputSchema: json.RawMessage("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"string\"}"),
 		},
 	}
-	res := &ToolsListResult{Tools: tools}
-	a.log(ctx, "response", map[string]any{"method": "tools/list"})
-	return res, nil
+	return &ToolsListResult{
+		ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private", Tools: tools,
+	}, nil
 }
 
-// toolCallError returns a service failure as an MCP tool result.
+// toolCallError lets the client correct a recognized tool's arguments or
+// observe an application failure without treating it as a protocol failure.
 func toolCallError(message string) *ToolsCallResult {
-	return &ToolsCallResult{
+	return &ToolsCallResult{Outcome: NewToolsCallOutcomeComplete(&ToolsCallCompleteResult{
+		Meta: resultMeta(),
 		Content: []*ContentItem{
-			{Type: "text", Text: message},
+			{Type: "text", Text: stringPtr(message)},
 		},
 		IsError: boolPtr(true),
-	}
+	})}
 }
 
-// ToolsCall validates the arguments and calls the Goa method for the named tool.
+// ToolsCall decodes the named tool's arguments through its generated codec,
+// calls its configured endpoint, and encodes one structured result through that contract.
 func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*ToolsCallResult, error) {
-	a.log(ctx, "request", map[string]any{"method": "tools/call", "name": p.Name})
+	ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.tools/call")
+	defer span.End()
 	switch p.Name {
 	case "analyze_sentiment":
 		arguments := p.Arguments
@@ -171,103 +552,29 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 		}
 		payload, err := mcpcodec.DecodeAnalyzeSentimentPayload(arguments)
 		if err != nil {
-			return nil, goa.PermanentError("invalid_params", "invalid arguments for tool %s: %s", p.Name, err.Error())
+			return toolCallError("invalid arguments: " + err.Error()), nil
 		}
-		result, err := a.service.AnalyzeSentiment(ctx, payload)
+		result, err := a.invokeMCPMethod1(ctx, payload)
 		if err != nil {
-			return toolCallError(a.mapError(err).Error()), nil
+			failure := a.mapError(err, isEndpointFault(err))
+			span.RecordError(failure.err)
+			span.SetStatus(codes.Error, failure.err.Error())
+			if failure.internal {
+				return nil, failure.err
+			}
+			return toolCallError(failure.err.Error()), nil
 		}
 		encoded, err := mcpcodec.EncodeAnalyzeSentimentResult(result)
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			return nil, goa.PermanentError("internal_error", "%s", err.Error())
 		}
-		text := string(encoded)
-		final := &ToolsCallResult{
-			Content: []*ContentItem{
-				{Type: "text", Text: text},
-			},
+		return &ToolsCallResult{Outcome: NewToolsCallOutcomeComplete(&ToolsCallCompleteResult{
+			Meta:              resultMeta(),
+			Content:           []*ContentItem{},
 			StructuredContent: json.RawMessage(encoded),
-		}
-		a.log(ctx, "response", map[string]any{"method": "tools/call", "name": p.Name})
-		return final, nil
-	case "extract_keywords":
-		arguments := p.Arguments
-		if len(arguments) == 0 {
-			arguments = json.RawMessage("{}")
-		}
-		payload, err := mcpcodec.DecodeExtractKeywordsPayload(arguments)
-		if err != nil {
-			return nil, goa.PermanentError("invalid_params", "invalid arguments for tool %s: %s", p.Name, err.Error())
-		}
-		result, err := a.service.ExtractKeywords(ctx, payload)
-		if err != nil {
-			return toolCallError(a.mapError(err).Error()), nil
-		}
-		encoded, err := mcpcodec.EncodeExtractKeywordsResult(result)
-		if err != nil {
-			return nil, goa.PermanentError("internal_error", "%s", err.Error())
-		}
-		text := string(encoded)
-		final := &ToolsCallResult{
-			Content: []*ContentItem{
-				{Type: "text", Text: text},
-			},
-			StructuredContent: json.RawMessage(encoded),
-		}
-		a.log(ctx, "response", map[string]any{"method": "tools/call", "name": p.Name})
-		return final, nil
-	case "summarize_text":
-		arguments := p.Arguments
-		if len(arguments) == 0 {
-			arguments = json.RawMessage("{}")
-		}
-		payload, err := mcpcodec.DecodeSummarizeTextPayload(arguments)
-		if err != nil {
-			return nil, goa.PermanentError("invalid_params", "invalid arguments for tool %s: %s", p.Name, err.Error())
-		}
-		result, err := a.service.SummarizeText(ctx, payload)
-		if err != nil {
-			return toolCallError(a.mapError(err).Error()), nil
-		}
-		encoded, err := mcpcodec.EncodeSummarizeTextResult(result)
-		if err != nil {
-			return nil, goa.PermanentError("internal_error", "%s", err.Error())
-		}
-		text := string(encoded)
-		final := &ToolsCallResult{
-			Content: []*ContentItem{
-				{Type: "text", Text: text},
-			},
-			StructuredContent: json.RawMessage(encoded),
-		}
-		a.log(ctx, "response", map[string]any{"method": "tools/call", "name": p.Name})
-		return final, nil
-	case "search":
-		arguments := p.Arguments
-		if len(arguments) == 0 {
-			arguments = json.RawMessage("{}")
-		}
-		payload, err := mcpcodec.DecodeSearchPayload(arguments)
-		if err != nil {
-			return nil, goa.PermanentError("invalid_params", "invalid arguments for tool %s: %s", p.Name, err.Error())
-		}
-		result, err := a.service.Search(ctx, payload)
-		if err != nil {
-			return toolCallError(a.mapError(err).Error()), nil
-		}
-		encoded, err := mcpcodec.EncodeSearchResult(result)
-		if err != nil {
-			return nil, goa.PermanentError("internal_error", "%s", err.Error())
-		}
-		text := string(encoded)
-		final := &ToolsCallResult{
-			Content: []*ContentItem{
-				{Type: "text", Text: text},
-			},
-			StructuredContent: json.RawMessage(encoded),
-		}
-		a.log(ctx, "response", map[string]any{"method": "tools/call", "name": p.Name})
-		return final, nil
+		})}, nil
 	case "execute_code":
 		arguments := p.Arguments
 		if len(arguments) == 0 {
@@ -275,25 +582,59 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 		}
 		payload, err := mcpcodec.DecodeExecuteCodePayload(arguments)
 		if err != nil {
-			return nil, goa.PermanentError("invalid_params", "invalid arguments for tool %s: %s", p.Name, err.Error())
+			return toolCallError("invalid arguments: " + err.Error()), nil
 		}
-		result, err := a.service.ExecuteCode(ctx, payload)
+		result, err := a.invokeMCPMethod5(ctx, payload)
 		if err != nil {
-			return toolCallError(a.mapError(err).Error()), nil
+			failure := a.mapError(err, isEndpointFault(err))
+			span.RecordError(failure.err)
+			span.SetStatus(codes.Error, failure.err.Error())
+			if failure.internal {
+				return nil, failure.err
+			}
+			return toolCallError(failure.err.Error()), nil
 		}
 		encoded, err := mcpcodec.EncodeExecuteCodeResult(result)
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			return nil, goa.PermanentError("internal_error", "%s", err.Error())
 		}
-		text := string(encoded)
-		final := &ToolsCallResult{
-			Content: []*ContentItem{
-				{Type: "text", Text: text},
-			},
+		return &ToolsCallResult{Outcome: NewToolsCallOutcomeComplete(&ToolsCallCompleteResult{
+			Meta:              resultMeta(),
+			Content:           []*ContentItem{},
 			StructuredContent: json.RawMessage(encoded),
+		})}, nil
+	case "extract_keywords":
+		arguments := p.Arguments
+		if len(arguments) == 0 {
+			arguments = json.RawMessage("{}")
 		}
-		a.log(ctx, "response", map[string]any{"method": "tools/call", "name": p.Name})
-		return final, nil
+		payload, err := mcpcodec.DecodeExtractKeywordsPayload(arguments)
+		if err != nil {
+			return toolCallError("invalid arguments: " + err.Error()), nil
+		}
+		result, err := a.invokeMCPMethod2(ctx, payload)
+		if err != nil {
+			failure := a.mapError(err, isEndpointFault(err))
+			span.RecordError(failure.err)
+			span.SetStatus(codes.Error, failure.err.Error())
+			if failure.internal {
+				return nil, failure.err
+			}
+			return toolCallError(failure.err.Error()), nil
+		}
+		encoded, err := mcpcodec.EncodeExtractKeywordsResult(result)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, goa.PermanentError("internal_error", "%s", err.Error())
+		}
+		return &ToolsCallResult{Outcome: NewToolsCallOutcomeComplete(&ToolsCallCompleteResult{
+			Meta:              resultMeta(),
+			Content:           []*ContentItem{},
+			StructuredContent: json.RawMessage(encoded),
+		})}, nil
 	case "process_batch":
 		arguments := p.Arguments
 		if len(arguments) == 0 {
@@ -301,25 +642,114 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 		}
 		payload, err := mcpcodec.DecodeProcessBatchPayload(arguments)
 		if err != nil {
-			return nil, goa.PermanentError("invalid_params", "invalid arguments for tool %s: %s", p.Name, err.Error())
+			return toolCallError("invalid arguments: " + err.Error()), nil
 		}
-		result, err := a.service.ProcessBatch(ctx, payload)
+		result, err := a.invokeMCPMethod6(ctx, payload)
 		if err != nil {
-			return toolCallError(a.mapError(err).Error()), nil
+			failure := a.mapError(err, isEndpointFault(err))
+			span.RecordError(failure.err)
+			span.SetStatus(codes.Error, failure.err.Error())
+			if failure.internal {
+				return nil, failure.err
+			}
+			return toolCallError(failure.err.Error()), nil
 		}
 		encoded, err := mcpcodec.EncodeProcessBatchResult(result)
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			return nil, goa.PermanentError("internal_error", "%s", err.Error())
 		}
-		text := string(encoded)
-		final := &ToolsCallResult{
-			Content: []*ContentItem{
-				{Type: "text", Text: text},
-			},
+		return &ToolsCallResult{Outcome: NewToolsCallOutcomeComplete(&ToolsCallCompleteResult{
+			Meta:              resultMeta(),
+			Content:           []*ContentItem{},
 			StructuredContent: json.RawMessage(encoded),
+		})}, nil
+	case "search":
+		arguments := p.Arguments
+		if len(arguments) == 0 {
+			arguments = json.RawMessage("{}")
 		}
-		a.log(ctx, "response", map[string]any{"method": "tools/call", "name": p.Name})
-		return final, nil
+		payload, err := mcpcodec.DecodeSearchPayload(arguments)
+		if err != nil {
+			return toolCallError("invalid arguments: " + err.Error()), nil
+		}
+		result, err := a.invokeMCPMethod4(ctx, payload)
+		if err != nil {
+			failure := a.mapError(err, isEndpointFault(err))
+			span.RecordError(failure.err)
+			span.SetStatus(codes.Error, failure.err.Error())
+			if failure.internal {
+				return nil, failure.err
+			}
+			return toolCallError(failure.err.Error()), nil
+		}
+		encoded, err := mcpcodec.EncodeSearchResult(result)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, goa.PermanentError("internal_error", "%s", err.Error())
+		}
+		return &ToolsCallResult{Outcome: NewToolsCallOutcomeComplete(&ToolsCallCompleteResult{
+			Meta:              resultMeta(),
+			Content:           []*ContentItem{},
+			StructuredContent: json.RawMessage(encoded),
+		})}, nil
+	case "summarize_text":
+		arguments := p.Arguments
+		if len(arguments) == 0 {
+			arguments = json.RawMessage("{}")
+		}
+		payload, err := mcpcodec.DecodeSummarizeTextPayload(arguments)
+		if err != nil {
+			return toolCallError("invalid arguments: " + err.Error()), nil
+		}
+		result, err := a.invokeMCPMethod3(ctx, payload)
+		if err != nil {
+			failure := a.mapError(err, isEndpointFault(err))
+			span.RecordError(failure.err)
+			span.SetStatus(codes.Error, failure.err.Error())
+			if failure.internal {
+				return nil, failure.err
+			}
+			return toolCallError(failure.err.Error()), nil
+		}
+		encoded, err := mcpcodec.EncodeSummarizeTextResult(result)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, goa.PermanentError("internal_error", "%s", err.Error())
+		}
+		return &ToolsCallResult{Outcome: NewToolsCallOutcomeComplete(&ToolsCallCompleteResult{
+			Meta:              resultMeta(),
+			Content:           []*ContentItem{},
+			StructuredContent: json.RawMessage(encoded),
+		})}, nil
+	case "test_tool_with_progress":
+		if err := validateNoArguments(p.Arguments); err != nil {
+			return toolCallError("invalid arguments: " + err.Error()), nil
+		}
+		result, err := a.invokeMCPMethod0(ctx)
+		if err != nil {
+			failure := a.mapError(err, isEndpointFault(err))
+			span.RecordError(failure.err)
+			span.SetStatus(codes.Error, failure.err.Error())
+			if failure.internal {
+				return nil, failure.err
+			}
+			return toolCallError(failure.err.Error()), nil
+		}
+		encoded, err := mcpcodec.EncodeReportWorkResult(result)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, goa.PermanentError("internal_error", "%s", err.Error())
+		}
+		return &ToolsCallResult{Outcome: NewToolsCallOutcomeComplete(&ToolsCallCompleteResult{
+			Meta:              resultMeta(),
+			Content:           []*ContentItem{},
+			StructuredContent: json.RawMessage(encoded),
+		})}, nil
 	default:
 		return nil, goa.PermanentError("invalid_params", "unknown tool: %s", p.Name)
 	}
@@ -327,107 +757,1138 @@ func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*Tools
 
 // Resources handling
 
-// ResourcesList returns the fixed resources declared in the Goa design.
+// ResourcesList returns the declared catalog or one authenticated resource page.
 func (a *MCPAdapter) ResourcesList(ctx context.Context, p *ResourcesListPayload) (*ResourcesListResult, error) {
-	a.log(ctx, "request", map[string]any{"method": "resources/list"})
-	if p.Params != nil && p.Params.Cursor != nil {
-		return nil, goa.PermanentError("invalid_params", "resources/list does not accept a cursor")
+	ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.resources/list")
+	defer span.End()
+
+	if p.Cursor != nil {
+		failure := goa.PermanentError("invalid_params", "resources/list does not accept a cursor")
+		span.RecordError(failure)
+		span.SetStatus(codes.Error, failure.Error())
+		return nil, failure
 	}
 	resources := []*ResourceInfo{
 		{URI: "doc://list", Name: "documents", Description: stringPtr("List available documents"), MimeType: stringPtr("application/json")},
 		{URI: "system://info", Name: "system_info", Description: stringPtr("Return system info"), MimeType: stringPtr("application/json")},
+		{URI: "test://empty-binary", Name: "empty_binary", Description: stringPtr("Read an existing binary resource whose content is empty"), MimeType: stringPtr("application/octet-stream")},
+		{URI: "test://static-binary", Name: "binary", Description: stringPtr("Read the synthetic binary resource used by independent MCP verification"), MimeType: stringPtr("image/png")},
 	}
-	res := &ResourcesListResult{Resources: resources}
-	a.log(ctx, "response", map[string]any{"method": "resources/list"})
-	return res, nil
+	return &ResourcesListResult{ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private", Resources: resources}, nil
 }
 
 // ResourcesRead calls the Goa method that owns the requested resource.
 func (a *MCPAdapter) ResourcesRead(ctx context.Context, p *ResourcesReadPayload) (*ResourcesReadResult, error) {
-	a.log(ctx, "request", map[string]any{"method": "resources/read", "uri": p.URI})
+	ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.resources/read")
+	defer span.End()
+
 	switch p.URI {
 	case "doc://list":
-		result, err := a.service.ListDocuments(ctx)
+		result, err := a.invokeMCPMethod7(ctx)
 		if err != nil {
-			return nil, a.mapError(err)
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, a.mapError(err, isEndpointFault(err)).err
 		}
 		encoded, err := mcpcodec.EncodeListDocumentsResult(result)
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			return nil, goa.PermanentError("internal_error", "%s", err.Error())
 		}
 		text := string(encoded)
-		res := &ResourcesReadResult{
+		res := &ResourcesReadCompleteResult{
+			Meta: resultMeta(), TTLMs: 0, CacheScope: "private",
 			Contents: []*ResourceContent{
-				{URI: p.URI, MimeType: stringPtr("application/json"), Text: text},
+				{URI: p.URI, MimeType: stringPtr("application/json"), Text: &text},
 			},
 		}
-		a.log(ctx, "response", map[string]any{"method": "resources/read", "uri": p.URI})
-		return res, nil
+
+		return &ResourcesReadResult{Outcome: NewResourcesReadOutcomeComplete(res)}, nil
 	case "system://info":
-		result, err := a.service.SystemInfo(ctx)
+		result, err := a.invokeMCPMethod8(ctx)
 		if err != nil {
-			return nil, a.mapError(err)
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, a.mapError(err, isEndpointFault(err)).err
 		}
 		encoded, err := mcpcodec.EncodeSystemInfoResult(result)
 		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
 			return nil, goa.PermanentError("internal_error", "%s", err.Error())
 		}
 		text := string(encoded)
-		res := &ResourcesReadResult{
+		res := &ResourcesReadCompleteResult{
+			Meta: resultMeta(), TTLMs: 0, CacheScope: "private",
 			Contents: []*ResourceContent{
-				{URI: p.URI, MimeType: stringPtr("application/json"), Text: text},
+				{URI: p.URI, MimeType: stringPtr("application/json"), Text: &text},
 			},
 		}
-		a.log(ctx, "response", map[string]any{"method": "resources/read", "uri": p.URI})
-		return res, nil
+
+		return &ResourcesReadResult{Outcome: NewResourcesReadOutcomeComplete(res)}, nil
+	case "test://empty-binary":
+		result, err := a.invokeMCPMethod10(ctx)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, a.mapError(err, isEndpointFault(err)).err
+		}
+		blob := base64.StdEncoding.EncodeToString(result)
+		res := &ResourcesReadCompleteResult{
+			Meta: resultMeta(), TTLMs: 0, CacheScope: "private",
+			Contents: []*ResourceContent{
+				{URI: p.URI, MimeType: stringPtr("application/octet-stream"), Blob: &blob},
+			},
+		}
+
+		return &ResourcesReadResult{Outcome: NewResourcesReadOutcomeComplete(res)}, nil
+	case "test://static-binary":
+		result, err := a.invokeMCPMethod9(ctx)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, a.mapError(err, isEndpointFault(err)).err
+		}
+		blob := base64.StdEncoding.EncodeToString(result)
+		res := &ResourcesReadCompleteResult{
+			Meta: resultMeta(), TTLMs: 0, CacheScope: "private",
+			Contents: []*ResourceContent{
+				{URI: p.URI, MimeType: stringPtr("image/png"), Blob: &blob},
+			},
+		}
+
+		return &ResourcesReadResult{Outcome: NewResourcesReadOutcomeComplete(res)}, nil
 	default:
-		return nil, goa.PermanentError("invalid_params", "Unknown resource: %s", p.URI)
+		body := &mcpcodec.ReadResourcePayloadTransport{}
+		uri := string(p.URI)
+		body.Address = &uri
+		payload, err := mcpcodec.NewReadResourcePayload(body)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, goa.PermanentError("invalid_params", "%s", err.Error())
+		}
+		result, err := a.invokeMCPMethod11(ctx, payload)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, a.mapError(err, isEndpointFault(err)).err
+		}
+		if err := mcpcodec.ValidateReadResourceResultValue(result); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, goa.PermanentError("internal_error", "%s", err.Error())
+		}
+		contents := make([]*ResourceContent, 0, len(result.Parts))
+		for _, item := range result.Parts {
+			content, err := convertResourceContent(item.Selected)
+			if err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, err.Error())
+				return nil, goa.PermanentError("internal_error", "%s", err.Error())
+			}
+			contents = append(contents, content)
+		}
+		return &ResourcesReadResult{Outcome: NewResourcesReadOutcomeComplete(&ResourcesReadCompleteResult{Meta: resultMeta(), TTLMs: 0, CacheScope: "private", Contents: contents})}, nil
 	}
+}
+
+// ResourcesTemplatesList returns the URI templates advertised by the service.
+// Templates guide discovery; the typed reader owns URI interpretation and access.
+func (a *MCPAdapter) ResourcesTemplatesList(ctx context.Context, p *ResourceTemplatesListPayload) (*ResourceTemplatesListResult, error) {
+	ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.resources/templates/list")
+	defer span.End()
+
+	if p.Cursor != nil {
+		failure := goa.PermanentError("invalid_params", "resources/templates/list does not accept a cursor")
+		span.RecordError(failure)
+		span.SetStatus(codes.Error, failure.Error())
+		return nil, failure
+	}
+	templates := []*ResourceTemplateInfo{
+		{URITemplate: "test://template/{id}/data", Name: "referee", Description: stringPtr("Read synthetic parameterized resources by their exact URI"), MimeType: stringPtr("text/plain")},
+		{URITemplate: "test://template/{id:3}/data", Name: "prefix", Description: stringPtr("Read synthetic parameterized resources by their exact URI"), MimeType: stringPtr("text/plain")},
+		{URITemplate: "test://binary/{id}", Name: "binary", Description: stringPtr("Read synthetic parameterized resources by their exact URI"), MimeType: stringPtr("application/octet-stream")},
+		{URITemplate: "test://reserved/{+path}{?fields*}", Name: "reserved", Description: stringPtr("Read synthetic parameterized resources by their exact URI"), MimeType: stringPtr("text/plain")},
+	}
+	return &ResourceTemplatesListResult{ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private", ResourceTemplates: templates}, nil
 }
 
 // Prompts handling
 
-// PromptsList returns the fixed prompts declared in the Goa design.
+// PromptsList returns either the fixed catalog or an authenticated page of
+// declared prompt names. Descriptions and argument contracts remain generated.
 func (a *MCPAdapter) PromptsList(ctx context.Context, p *PromptsListPayload) (*PromptsListResult, error) {
-	a.log(ctx, "request", map[string]any{"method": "prompts/list"})
-	if p.Params != nil && p.Params.Cursor != nil {
-		return nil, goa.PermanentError("invalid_params", "prompts/list does not accept a cursor")
+	ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.prompts/list")
+	defer span.End()
+	if p.Cursor != nil {
+		failure := goa.PermanentError("invalid_params", "prompts/list does not accept a cursor")
+		span.RecordError(failure)
+		span.SetStatus(codes.Error, failure.Error())
+		return nil, failure
 	}
 	prompts := []*PromptInfo{
 
 		{Name: "code_review", Description: stringPtr("Simple code review prompt")},
+
+		{Name: "test_prompt_with_arguments", Description: stringPtr("Synthetic parameterized instructions"), Arguments: []*PromptArgument{
+			{Name: "arg1", Description: stringPtr("First prompt argument"), Required: boolPtr(true)},
+			{Name: "arg2", Description: stringPtr("Second prompt argument"), Required: boolPtr(true)},
+		}},
+
+		{Name: "test_prompt_with_embedded_resource", Description: stringPtr("Synthetic resource instructions"), Arguments: []*PromptArgument{
+			{Name: "resourceUri", Description: stringPtr("Requested embedded resource identifier"), Required: boolPtr(true)},
+		}},
+
+		{Name: "test_prompt_with_image", Description: stringPtr("Synthetic image instructions"), Arguments: []*PromptArgument{}},
+
+		{Name: "test_simple_prompt", Description: stringPtr("Synthetic text instructions"), Arguments: []*PromptArgument{}},
 	}
-	res := &PromptsListResult{Prompts: prompts}
-	a.log(ctx, "response", map[string]any{"method": "prompts/list"})
-	return res, nil
+	return &PromptsListResult{
+		ResultType: "complete", Meta: resultMeta(), TTLMs: 0, CacheScope: "private", Prompts: prompts,
+	}, nil
 }
 
-// PromptsGet returns the fixed messages for the named prompt.
+// PromptsGet returns fixed messages or calls the service with validated arguments.
 func (a *MCPAdapter) PromptsGet(ctx context.Context, p *PromptsGetPayload) (*PromptsGetResult, error) {
-	a.log(ctx, "request", map[string]any{"method": "prompts/get", "name": p.Name})
+	ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.prompts/get")
+	defer span.End()
+
 	switch p.Name {
 
 	case "code_review":
 		if len(p.Arguments) > 0 {
-			return nil, goa.PermanentError("invalid_params", "prompt %q does not accept arguments", p.Name)
+			failure := goa.PermanentError("invalid_params", "prompt %q does not accept arguments", p.Name)
+			span.RecordError(failure)
+			span.SetStatus(codes.Error, failure.Error())
+			return nil, failure
 		}
 		msgs := make([]*PromptMessage, 0, 1)
 
 		msgs = append(msgs, &PromptMessage{
 			Role: "user",
-			Content: &MessageContent{
+			Content: &ContentItem{
 				Type: "text",
-				Text: "Review the provided code and suggest improvements.",
+				Text: stringPtr("Review the provided code and suggest improvements."),
 			},
 		})
 
-		res := &PromptsGetResult{
+		res := &PromptsGetCompleteResult{
+			Meta:        resultMeta(),
 			Description: stringPtr("Simple code review prompt"),
 			Messages:    msgs,
 		}
-		a.log(ctx, "response", map[string]any{"method": "prompts/get", "name": p.Name})
-		return res, nil
+
+		return &PromptsGetResult{Outcome: NewPromptsGetOutcomeComplete(res)}, nil
+
+	case "test_prompt_with_arguments":
+
+		for name := range p.Arguments {
+			switch name {
+
+			case "arg1":
+
+			case "arg2":
+
+			default:
+				failure := goa.PermanentError("invalid_params", "unknown argument %q for prompt %q", name, p.Name)
+				span.RecordError(failure)
+				span.SetStatus(codes.Error, failure.Error())
+				return nil, failure
+			}
+		}
+		body := &mcpcodec.ArgumentPromptPayloadTransport{}
+
+		if value, present := p.Arguments["arg1"]; present {
+			typed := string(value)
+			body.Arg1 = &typed
+		}
+
+		if value, present := p.Arguments["arg2"]; present {
+			typed := string(value)
+			body.Arg2 = &typed
+		}
+
+		payload, err := mcpcodec.NewArgumentPromptPayload(body)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, goa.PermanentError("invalid_params", "%s", err.Error())
+		}
+
+		result, err := a.invokeMCPMethod13(ctx, payload)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, a.mapError(err, isEndpointFault(err)).err
+		}
+		if err := mcpcodec.ValidateArgumentPromptResultValue(result); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, goa.PermanentError("internal_error", "%s", err.Error())
+		}
+		messages := make([]*PromptMessage, 0, len(result.Messages))
+		for _, message := range result.Messages {
+			content, err := convertPrompt0Content(message.Content)
+			if err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, err.Error())
+				return nil, goa.PermanentError("internal_error", "%s", err.Error())
+			}
+			messages = append(messages, &PromptMessage{Role: string(message.Role), Content: content})
+		}
+		response := &PromptsGetCompleteResult{Meta: resultMeta(), Messages: messages}
+
+		return &PromptsGetResult{Outcome: NewPromptsGetOutcomeComplete(response)}, nil
+
+	case "test_prompt_with_embedded_resource":
+
+		for name := range p.Arguments {
+			switch name {
+
+			case "resourceUri":
+
+			default:
+				failure := goa.PermanentError("invalid_params", "unknown argument %q for prompt %q", name, p.Name)
+				span.RecordError(failure)
+				span.SetStatus(codes.Error, failure.Error())
+				return nil, failure
+			}
+		}
+		body := &mcpcodec.ResourcePromptPayloadTransport{}
+
+		if value, present := p.Arguments["resourceUri"]; present {
+			typed := string(value)
+			body.ResourceURI = &typed
+		}
+
+		payload, err := mcpcodec.NewResourcePromptPayload(body)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, goa.PermanentError("invalid_params", "%s", err.Error())
+		}
+
+		result, err := a.invokeMCPMethod14(ctx, payload)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, a.mapError(err, isEndpointFault(err)).err
+		}
+		if err := mcpcodec.ValidateResourcePromptResultValue(result); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, goa.PermanentError("internal_error", "%s", err.Error())
+		}
+		messages := make([]*PromptMessage, 0, len(result.Messages))
+		for _, message := range result.Messages {
+			content, err := convertPrompt1Content(message.Content)
+			if err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, err.Error())
+				return nil, goa.PermanentError("internal_error", "%s", err.Error())
+			}
+			messages = append(messages, &PromptMessage{Role: string(message.Role), Content: content})
+		}
+		response := &PromptsGetCompleteResult{Meta: resultMeta(), Messages: messages}
+
+		return &PromptsGetResult{Outcome: NewPromptsGetOutcomeComplete(response)}, nil
+
+	case "test_prompt_with_image":
+
+		if len(p.Arguments) > 0 {
+			failure := goa.PermanentError("invalid_params", "prompt %q does not accept arguments", p.Name)
+			span.RecordError(failure)
+			span.SetStatus(codes.Error, failure.Error())
+			return nil, failure
+		}
+
+		result, err := a.invokeMCPMethod15(ctx)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, a.mapError(err, isEndpointFault(err)).err
+		}
+		if err := mcpcodec.ValidateImagePromptResultValue(result); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, goa.PermanentError("internal_error", "%s", err.Error())
+		}
+		messages := make([]*PromptMessage, 0, len(result.Messages))
+		for _, message := range result.Messages {
+			content, err := convertPrompt2Content(message.Content)
+			if err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, err.Error())
+				return nil, goa.PermanentError("internal_error", "%s", err.Error())
+			}
+			messages = append(messages, &PromptMessage{Role: string(message.Role), Content: content})
+		}
+		response := &PromptsGetCompleteResult{Meta: resultMeta(), Messages: messages}
+
+		return &PromptsGetResult{Outcome: NewPromptsGetOutcomeComplete(response)}, nil
+
+	case "test_simple_prompt":
+
+		if len(p.Arguments) > 0 {
+			failure := goa.PermanentError("invalid_params", "prompt %q does not accept arguments", p.Name)
+			span.RecordError(failure)
+			span.SetStatus(codes.Error, failure.Error())
+			return nil, failure
+		}
+
+		result, err := a.invokeMCPMethod12(ctx)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, a.mapError(err, isEndpointFault(err)).err
+		}
+		if err := mcpcodec.ValidateSimplePromptResultValue(result); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, goa.PermanentError("internal_error", "%s", err.Error())
+		}
+		messages := make([]*PromptMessage, 0, len(result.Messages))
+		for _, message := range result.Messages {
+			content, err := convertPrompt3Content(message.Content)
+			if err != nil {
+				span.RecordError(err)
+				span.SetStatus(codes.Error, err.Error())
+				return nil, goa.PermanentError("internal_error", "%s", err.Error())
+			}
+			messages = append(messages, &PromptMessage{Role: string(message.Role), Content: content})
+		}
+		response := &PromptsGetCompleteResult{Meta: resultMeta(), Messages: messages}
+
+		return &PromptsGetResult{Outcome: NewPromptsGetOutcomeComplete(response)}, nil
 
 	}
-	return nil, goa.PermanentError("invalid_params", "Unknown prompt: %s", p.Name)
+	failure := goa.PermanentError("invalid_params", "unknown prompt: %s", p.Name)
+	span.RecordError(failure)
+	span.SetStatus(codes.Error, failure.Error())
+	return nil, failure
+}
+
+// convertResourceContent checks the selected service content branch and converts its fields
+// to MCP. An unset branch or missing selected value returns a validation error.
+func convertResourceContent(value assistant.TemplateRepresentation) (*ResourceContent, error) {
+
+	if err := value.Validate(); err != nil {
+		return nil, err
+	}
+	switch value.Kind() {
+
+	case assistant.TemplateRepresentationKindText:
+		selected, _ := value.AsText()
+
+		out := &ResourceContent{
+			URI:      selected.URI,
+			MimeType: selected.MimeType,
+			Text:     &selected.Text,
+		}
+
+		return out, nil
+
+	case assistant.TemplateRepresentationKindBlob:
+		selected, _ := value.AsBlob()
+
+		out := &ResourceContent{
+			URI:      selected.URI,
+			MimeType: selected.MimeType,
+		}
+
+		encoded := base64.StdEncoding.EncodeToString(selected.Blob)
+		out.Blob = &encoded
+
+		return out, nil
+
+	default:
+		panic("content reached conversion without validation")
+	}
+}
+
+// convertPrompt0ContentResource2 checks the selected service content branch and converts its fields
+// to MCP. An unset branch or missing selected value returns a validation error.
+func convertPrompt0ContentResource2(value assistant.Resource) (*ResourceContent, error) {
+
+	if err := value.Validate(); err != nil {
+		return nil, err
+	}
+	switch value.Kind() {
+
+	case assistant.ResourceKindText:
+		selected, _ := value.AsText()
+
+		out := &ResourceContent{
+			URI:  selected.URI,
+			Text: &selected.Text,
+		}
+
+		return out, nil
+
+	default:
+		panic("content reached conversion without validation")
+	}
+}
+
+// convertPrompt0Content checks the selected service content branch and converts its fields
+// to MCP. An unset branch or missing selected value returns a validation error.
+func convertPrompt0Content(value assistant.Content) (*ContentItem, error) {
+
+	if err := value.Validate(); err != nil {
+		return nil, err
+	}
+	switch value.Kind() {
+
+	case assistant.ContentKindText:
+		selected, _ := value.AsText()
+
+		out := &ContentItem{
+			Text: &selected.Text,
+		}
+
+		out.Type = "text"
+
+		return out, nil
+
+	case assistant.ContentKindImage:
+		selected, _ := value.AsImage()
+
+		out := &ContentItem{
+			MimeType: &selected.MimeType,
+		}
+
+		out.Type = "image"
+
+		encoded := base64.StdEncoding.EncodeToString(selected.Data)
+		out.Data = &encoded
+
+		return out, nil
+
+	case assistant.ContentKindResource:
+		selected, _ := value.AsResource()
+
+		out := &ContentItem{}
+
+		out.Type = "resource"
+
+		resource, err := convertPrompt0ContentResource2(selected.Resource)
+		if err != nil {
+			return nil, err
+		}
+		out.Resource = resource
+
+		return out, nil
+
+	default:
+		panic("content reached conversion without validation")
+	}
+}
+
+// convertPrompt1ContentResource2 checks the selected service content branch and converts its fields
+// to MCP. An unset branch or missing selected value returns a validation error.
+func convertPrompt1ContentResource2(value assistant.Resource) (*ResourceContent, error) {
+
+	if err := value.Validate(); err != nil {
+		return nil, err
+	}
+	switch value.Kind() {
+
+	case assistant.ResourceKindText:
+		selected, _ := value.AsText()
+
+		out := &ResourceContent{
+			URI:  selected.URI,
+			Text: &selected.Text,
+		}
+
+		return out, nil
+
+	default:
+		panic("content reached conversion without validation")
+	}
+}
+
+// convertPrompt1Content checks the selected service content branch and converts its fields
+// to MCP. An unset branch or missing selected value returns a validation error.
+func convertPrompt1Content(value assistant.Content) (*ContentItem, error) {
+
+	if err := value.Validate(); err != nil {
+		return nil, err
+	}
+	switch value.Kind() {
+
+	case assistant.ContentKindText:
+		selected, _ := value.AsText()
+
+		out := &ContentItem{
+			Text: &selected.Text,
+		}
+
+		out.Type = "text"
+
+		return out, nil
+
+	case assistant.ContentKindImage:
+		selected, _ := value.AsImage()
+
+		out := &ContentItem{
+			MimeType: &selected.MimeType,
+		}
+
+		out.Type = "image"
+
+		encoded := base64.StdEncoding.EncodeToString(selected.Data)
+		out.Data = &encoded
+
+		return out, nil
+
+	case assistant.ContentKindResource:
+		selected, _ := value.AsResource()
+
+		out := &ContentItem{}
+
+		out.Type = "resource"
+
+		resource, err := convertPrompt1ContentResource2(selected.Resource)
+		if err != nil {
+			return nil, err
+		}
+		out.Resource = resource
+
+		return out, nil
+
+	default:
+		panic("content reached conversion without validation")
+	}
+}
+
+// convertPrompt2ContentResource2 checks the selected service content branch and converts its fields
+// to MCP. An unset branch or missing selected value returns a validation error.
+func convertPrompt2ContentResource2(value assistant.Resource) (*ResourceContent, error) {
+
+	if err := value.Validate(); err != nil {
+		return nil, err
+	}
+	switch value.Kind() {
+
+	case assistant.ResourceKindText:
+		selected, _ := value.AsText()
+
+		out := &ResourceContent{
+			URI:  selected.URI,
+			Text: &selected.Text,
+		}
+
+		return out, nil
+
+	default:
+		panic("content reached conversion without validation")
+	}
+}
+
+// convertPrompt2Content checks the selected service content branch and converts its fields
+// to MCP. An unset branch or missing selected value returns a validation error.
+func convertPrompt2Content(value assistant.Content) (*ContentItem, error) {
+
+	if err := value.Validate(); err != nil {
+		return nil, err
+	}
+	switch value.Kind() {
+
+	case assistant.ContentKindText:
+		selected, _ := value.AsText()
+
+		out := &ContentItem{
+			Text: &selected.Text,
+		}
+
+		out.Type = "text"
+
+		return out, nil
+
+	case assistant.ContentKindImage:
+		selected, _ := value.AsImage()
+
+		out := &ContentItem{
+			MimeType: &selected.MimeType,
+		}
+
+		out.Type = "image"
+
+		encoded := base64.StdEncoding.EncodeToString(selected.Data)
+		out.Data = &encoded
+
+		return out, nil
+
+	case assistant.ContentKindResource:
+		selected, _ := value.AsResource()
+
+		out := &ContentItem{}
+
+		out.Type = "resource"
+
+		resource, err := convertPrompt2ContentResource2(selected.Resource)
+		if err != nil {
+			return nil, err
+		}
+		out.Resource = resource
+
+		return out, nil
+
+	default:
+		panic("content reached conversion without validation")
+	}
+}
+
+// convertPrompt3ContentResource2 checks the selected service content branch and converts its fields
+// to MCP. An unset branch or missing selected value returns a validation error.
+func convertPrompt3ContentResource2(value assistant.Resource) (*ResourceContent, error) {
+
+	if err := value.Validate(); err != nil {
+		return nil, err
+	}
+	switch value.Kind() {
+
+	case assistant.ResourceKindText:
+		selected, _ := value.AsText()
+
+		out := &ResourceContent{
+			URI:  selected.URI,
+			Text: &selected.Text,
+		}
+
+		return out, nil
+
+	default:
+		panic("content reached conversion without validation")
+	}
+}
+
+// convertPrompt3Content checks the selected service content branch and converts its fields
+// to MCP. An unset branch or missing selected value returns a validation error.
+func convertPrompt3Content(value assistant.Content) (*ContentItem, error) {
+
+	if err := value.Validate(); err != nil {
+		return nil, err
+	}
+	switch value.Kind() {
+
+	case assistant.ContentKindText:
+		selected, _ := value.AsText()
+
+		out := &ContentItem{
+			Text: &selected.Text,
+		}
+
+		out.Type = "text"
+
+		return out, nil
+
+	case assistant.ContentKindImage:
+		selected, _ := value.AsImage()
+
+		out := &ContentItem{
+			MimeType: &selected.MimeType,
+		}
+
+		out.Type = "image"
+
+		encoded := base64.StdEncoding.EncodeToString(selected.Data)
+		out.Data = &encoded
+
+		return out, nil
+
+	case assistant.ContentKindResource:
+		selected, _ := value.AsResource()
+
+		out := &ContentItem{}
+
+		out.Type = "resource"
+
+		resource, err := convertPrompt3ContentResource2(selected.Resource)
+		if err != nil {
+			return nil, err
+		}
+		out.Resource = resource
+
+		return out, nil
+
+	default:
+		panic("content reached conversion without validation")
+	}
+}
+
+// CompletionComplete selects a declared prompt or resource argument and asks its service
+// method for suggestions. Missing bindings return an empty list for a valid
+// argument; unknown names fail before any service method runs.
+func (a *MCPAdapter) CompletionComplete(ctx context.Context, p *CompletionCompletePayload) (*CompletionCompleteResult, error) {
+	ctx, span := otel.Tracer("goa-ai/mcp").Start(ctx, "mcp.completion/complete")
+	defer span.End()
+	var reference string
+	switch {
+	case p.Ref.Type == "ref/prompt" && p.Ref.Name != nil:
+		reference = *p.Ref.Name
+	case p.Ref.Type == "ref/resource" && p.Ref.URI != nil:
+		reference = *p.Ref.URI
+	default:
+		failure := goa.PermanentError("invalid_params", "unknown completion reference")
+		span.RecordError(failure)
+		span.SetStatus(codes.Error, failure.Error())
+		return nil, failure
+	}
+	switch {
+
+	case p.Ref.Type == "ref/prompt" && reference == "test_simple_prompt":
+		switch p.Argument.Name {
+
+		default:
+			failure := goa.PermanentError("invalid_params", "unknown completion argument: %s", p.Argument.Name)
+			span.RecordError(failure)
+			span.SetStatus(codes.Error, failure.Error())
+			return nil, failure
+		}
+		if p.Context != nil {
+			for name := range p.Context.Arguments {
+				switch name {
+
+				default:
+					failure := goa.PermanentError("invalid_params", "unknown context argument: %s", name)
+					span.RecordError(failure)
+					span.SetStatus(codes.Error, failure.Error())
+					return nil, failure
+				}
+			}
+		}
+
+	case p.Ref.Type == "ref/prompt" && reference == "test_prompt_with_arguments":
+		switch p.Argument.Name {
+
+		case "arg1":
+
+		case "arg2":
+
+		default:
+			failure := goa.PermanentError("invalid_params", "unknown completion argument: %s", p.Argument.Name)
+			span.RecordError(failure)
+			span.SetStatus(codes.Error, failure.Error())
+			return nil, failure
+		}
+		if p.Context != nil {
+			for name := range p.Context.Arguments {
+				switch name {
+
+				case "arg1":
+
+				case "arg2":
+
+				default:
+					failure := goa.PermanentError("invalid_params", "unknown context argument: %s", name)
+					span.RecordError(failure)
+					span.SetStatus(codes.Error, failure.Error())
+					return nil, failure
+				}
+			}
+		}
+
+	case p.Ref.Type == "ref/prompt" && reference == "test_prompt_with_embedded_resource":
+		switch p.Argument.Name {
+
+		case "resourceUri":
+
+		default:
+			failure := goa.PermanentError("invalid_params", "unknown completion argument: %s", p.Argument.Name)
+			span.RecordError(failure)
+			span.SetStatus(codes.Error, failure.Error())
+			return nil, failure
+		}
+		if p.Context != nil {
+			for name := range p.Context.Arguments {
+				switch name {
+
+				case "resourceUri":
+
+				default:
+					failure := goa.PermanentError("invalid_params", "unknown context argument: %s", name)
+					span.RecordError(failure)
+					span.SetStatus(codes.Error, failure.Error())
+					return nil, failure
+				}
+			}
+		}
+
+	case p.Ref.Type == "ref/prompt" && reference == "test_prompt_with_image":
+		switch p.Argument.Name {
+
+		default:
+			failure := goa.PermanentError("invalid_params", "unknown completion argument: %s", p.Argument.Name)
+			span.RecordError(failure)
+			span.SetStatus(codes.Error, failure.Error())
+			return nil, failure
+		}
+		if p.Context != nil {
+			for name := range p.Context.Arguments {
+				switch name {
+
+				default:
+					failure := goa.PermanentError("invalid_params", "unknown context argument: %s", name)
+					span.RecordError(failure)
+					span.SetStatus(codes.Error, failure.Error())
+					return nil, failure
+				}
+			}
+		}
+
+	case p.Ref.Type == "ref/resource" && reference == "test://template/{id}/data":
+		switch p.Argument.Name {
+
+		case "id":
+
+		default:
+			failure := goa.PermanentError("invalid_params", "unknown completion argument: %s", p.Argument.Name)
+			span.RecordError(failure)
+			span.SetStatus(codes.Error, failure.Error())
+			return nil, failure
+		}
+		if p.Context != nil {
+			for name := range p.Context.Arguments {
+				switch name {
+
+				case "id":
+
+				default:
+					failure := goa.PermanentError("invalid_params", "unknown context argument: %s", name)
+					span.RecordError(failure)
+					span.SetStatus(codes.Error, failure.Error())
+					return nil, failure
+				}
+			}
+		}
+
+	case p.Ref.Type == "ref/resource" && reference == "test://template/{id:3}/data":
+		switch p.Argument.Name {
+
+		case "id":
+
+		default:
+			failure := goa.PermanentError("invalid_params", "unknown completion argument: %s", p.Argument.Name)
+			span.RecordError(failure)
+			span.SetStatus(codes.Error, failure.Error())
+			return nil, failure
+		}
+		if p.Context != nil {
+			for name := range p.Context.Arguments {
+				switch name {
+
+				case "id":
+
+				default:
+					failure := goa.PermanentError("invalid_params", "unknown context argument: %s", name)
+					span.RecordError(failure)
+					span.SetStatus(codes.Error, failure.Error())
+					return nil, failure
+				}
+			}
+		}
+
+	case p.Ref.Type == "ref/resource" && reference == "test://binary/{id}":
+		switch p.Argument.Name {
+
+		case "id":
+
+		default:
+			failure := goa.PermanentError("invalid_params", "unknown completion argument: %s", p.Argument.Name)
+			span.RecordError(failure)
+			span.SetStatus(codes.Error, failure.Error())
+			return nil, failure
+		}
+		if p.Context != nil {
+			for name := range p.Context.Arguments {
+				switch name {
+
+				case "id":
+
+				default:
+					failure := goa.PermanentError("invalid_params", "unknown context argument: %s", name)
+					span.RecordError(failure)
+					span.SetStatus(codes.Error, failure.Error())
+					return nil, failure
+				}
+			}
+		}
+
+	case p.Ref.Type == "ref/resource" && reference == "test://reserved/{+path}{?fields*}":
+		switch p.Argument.Name {
+
+		case "path":
+
+		case "fields":
+
+		default:
+			failure := goa.PermanentError("invalid_params", "unknown completion argument: %s", p.Argument.Name)
+			span.RecordError(failure)
+			span.SetStatus(codes.Error, failure.Error())
+			return nil, failure
+		}
+		if p.Context != nil {
+			for name := range p.Context.Arguments {
+				switch name {
+
+				case "path":
+
+				case "fields":
+
+				default:
+					failure := goa.PermanentError("invalid_params", "unknown context argument: %s", name)
+					span.RecordError(failure)
+					span.SetStatus(codes.Error, failure.Error())
+					return nil, failure
+				}
+			}
+		}
+
+	default:
+		failure := goa.PermanentError("invalid_params", "unknown completion reference: %s", reference)
+		span.RecordError(failure)
+		span.SetStatus(codes.Error, failure.Error())
+		return nil, failure
+	}
+
+	if p.Ref.Type == "ref/prompt" && reference == "test_prompt_with_arguments" && p.Argument.Name == "arg1" {
+		// The private constructor applies the method's defaults and validation
+		// to already-decoded protocol values before the service receives them.
+		body := &mcpcodec.SuggestArgumentPayloadTransport{}
+		value := string(p.Argument.Value)
+		body.Value = &value
+		if p.Context != nil && p.Context.Arguments != nil {
+			body.Arguments = make(map[string]string, len(p.Context.Arguments))
+			for name, value := range p.Context.Arguments {
+				body.Arguments[string(name)] = string(value)
+			}
+		}
+		payload, err := mcpcodec.NewSuggestArgumentPayload(body)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, goa.PermanentError("invalid_params", "%s", err.Error())
+		}
+		result, err := a.invokeMCPMethod16(ctx, payload)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, a.mapError(err, isEndpointFault(err)).err
+		}
+		if err := mcpcodec.ValidateSuggestArgumentResultValue(result); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, goa.PermanentError("internal_error", "%s", err.Error())
+		}
+		out := &CompletionSuggestion{
+			Total:   result.Total,
+			HasMore: result.HasMore,
+		}
+		if result.Values != nil {
+			out.Values = make([]string, len(result.Values))
+			for i, val := range result.Values {
+				out.Values[i] = val
+			}
+		}
+		if len(out.Values) == 0 {
+			out.Values = []string{}
+		}
+		return &CompletionCompleteResult{ResultType: "complete", Meta: resultMeta(), Completion: out}, nil
+	}
+
+	if p.Ref.Type == "ref/resource" && reference == "test://template/{id}/data" && p.Argument.Name == "id" {
+		// The private constructor applies the method's defaults and validation
+		// to already-decoded protocol values before the service receives them.
+		body := &mcpcodec.SuggestArgumentPayloadTransport{}
+		value := string(p.Argument.Value)
+		body.Value = &value
+		if p.Context != nil && p.Context.Arguments != nil {
+			body.Arguments = make(map[string]string, len(p.Context.Arguments))
+			for name, value := range p.Context.Arguments {
+				body.Arguments[string(name)] = string(value)
+			}
+		}
+		payload, err := mcpcodec.NewSuggestArgumentPayload(body)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, goa.PermanentError("invalid_params", "%s", err.Error())
+		}
+		result, err := a.invokeMCPMethod16(ctx, payload)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, a.mapError(err, isEndpointFault(err)).err
+		}
+		if err := mcpcodec.ValidateSuggestArgumentResultValue(result); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, goa.PermanentError("internal_error", "%s", err.Error())
+		}
+		out := &CompletionSuggestion{
+			Total:   result.Total,
+			HasMore: result.HasMore,
+		}
+		if result.Values != nil {
+			out.Values = make([]string, len(result.Values))
+			for i, val := range result.Values {
+				out.Values[i] = val
+			}
+		}
+		if len(out.Values) == 0 {
+			out.Values = []string{}
+		}
+		return &CompletionCompleteResult{ResultType: "complete", Meta: resultMeta(), Completion: out}, nil
+	}
+
+	if p.Ref.Type == "ref/resource" && reference == "test://reserved/{+path}{?fields*}" && p.Argument.Name == "path" {
+		// The private constructor applies the method's defaults and validation
+		// to already-decoded protocol values before the service receives them.
+		body := &mcpcodec.SuggestArgumentPayloadTransport{}
+		value := string(p.Argument.Value)
+		body.Value = &value
+		if p.Context != nil && p.Context.Arguments != nil {
+			body.Arguments = make(map[string]string, len(p.Context.Arguments))
+			for name, value := range p.Context.Arguments {
+				body.Arguments[string(name)] = string(value)
+			}
+		}
+		payload, err := mcpcodec.NewSuggestArgumentPayload(body)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, goa.PermanentError("invalid_params", "%s", err.Error())
+		}
+		result, err := a.invokeMCPMethod16(ctx, payload)
+		if err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, a.mapError(err, isEndpointFault(err)).err
+		}
+		if err := mcpcodec.ValidateSuggestArgumentResultValue(result); err != nil {
+			span.RecordError(err)
+			span.SetStatus(codes.Error, err.Error())
+			return nil, goa.PermanentError("internal_error", "%s", err.Error())
+		}
+		out := &CompletionSuggestion{
+			Total:   result.Total,
+			HasMore: result.HasMore,
+		}
+		if result.Values != nil {
+			out.Values = make([]string, len(result.Values))
+			for i, val := range result.Values {
+				out.Values[i] = val
+			}
+		}
+		if len(out.Values) == 0 {
+			out.Values = []string{}
+		}
+		return &CompletionCompleteResult{ResultType: "complete", Meta: resultMeta(), Completion: out}, nil
+	}
+
+	return &CompletionCompleteResult{ResultType: "complete", Meta: resultMeta(), Completion: &CompletionSuggestion{Values: []string{}}}, nil
 }

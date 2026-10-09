@@ -51,6 +51,8 @@ type (
 		adapterImports []*codegen.ImportSpec
 		// providerImports contains the final imports used by provider.go.
 		providerImports []*codegen.ImportSpec
+		// mcpPackage is the resolved import used by input-only native providers.
+		mcpPackage string
 		// serviceTypeRef is the final Goa service interface reference used by provider.go.
 		serviceTypeRef string
 	}
@@ -152,23 +154,7 @@ type (
 		Transform string
 	}
 
-	unionTypeData struct {
-		Name               string
-		KindName           string
-		DiscriminatorError string
-		Fields             []*unionFieldData
-	}
-
-	unionFieldData struct {
-		Name        string
-		KindConst   string
-		Constructor string
-		FieldName   string
-		FieldType   string
-		Nilable     bool
-		JSONType    string
-		TypeTag     string
-	}
+	unionTypeData = service.UnionTypeData
 
 	// jsonValidatorData describes one generated function that checks a known
 	// part of a tool's raw JSON value before Go decodes it into a typed value.
@@ -179,7 +165,12 @@ type (
 		SignedInteger   bool
 		UnsignedInteger bool
 		IntegerBits     int
+		TypeKey         string
+		ValueKey        string
+		Flatten         bool
+		Untagged        bool
 		Fields          []*jsonValidatorFieldData
+		Branches        []*jsonValidatorFieldData
 		Element         *jsonValidatorCallData
 	}
 
@@ -193,8 +184,9 @@ type (
 	// jsonValidatorFieldData describes one accepted field in a generated object
 	// validator. A nil call accepts the field without inspecting its value.
 	jsonValidatorFieldData struct {
-		Name string
-		Call *jsonValidatorCallData
+		Name     string
+		JSONKind byte
+		Call     *jsonValidatorCallData
 	}
 
 	// jsonValidatorCallData names the generated validator called for one child
@@ -386,9 +378,7 @@ type (
 		// publicPackage contains the union declarations for the public tool package.
 		publicPackage *codegen.GeneratedPackage
 		// transportPackage contains the union declarations for the HTTP package.
-		transportPackage     *codegen.GeneratedPackage
-		publicUnionErrors    map[codegen.UnionDeclarationID]*codegen.NameDeclaration
-		transportUnionErrors map[codegen.UnionDeclarationID]*codegen.NameDeclaration
+		transportPackage *codegen.GeneratedPackage
 		// planned contains the saved types, names, and copy functions for both packages.
 		planned *toolSpecsPackagePlan
 		// svcScope contains names used in service type references.

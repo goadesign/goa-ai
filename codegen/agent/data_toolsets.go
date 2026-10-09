@@ -12,6 +12,7 @@ import (
 	"goa.design/goa-ai/codegen/naming"
 	agentsExpr "goa.design/goa-ai/expr/agent"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
+	"goa.design/goa-ai/internal/mcpinput"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/codegen/service"
 	goaexpr "goa.design/goa/v3/expr"
@@ -128,7 +129,11 @@ func buildToolsetData(
 		}
 		switch ts.MCP.Source {
 		case agentsExpr.MCPSourceGoa:
-			if !populateMCPToolset(mcpRoot, ts) {
+			populated, err := populateMCPToolset(mcpRoot, ts)
+			if err != nil {
+				return nil, err
+			}
+			if !populated {
 				return nil, fmt.Errorf(
 					"toolset %q could not resolve Goa-defined MCP toolset %q on service %q",
 					expr.Name,
@@ -220,6 +225,14 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		title = expr.Title
 	}
 
+	var methodResult *goaexpr.AttributeExpr
+	if expr.Method != nil {
+		var err error
+		methodResult, err = mcpinput.CompleteResult(expr.Method)
+		if err != nil {
+			return nil, err
+		}
+	}
 	tool := &ToolData{
 		Name:               expr.Name,
 		ConstName:          codegen.Goify(expr.Name, true),
@@ -237,7 +250,7 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		CallHintTemplate:   expr.CallHintTemplate,
 		ResultHintTemplate: expr.ResultHintTemplate,
 		InjectedFields:     expr.InjectedFields,
-		Bounds:             boundsData(expr.Bounds, expr.Method),
+		Bounds:             boundsData(expr.Bounds, methodResult),
 		TerminalRun:        expr.TerminalRun,
 		Bookkeeping:        expr.Bookkeeping,
 		ReplanOnTimeout:    expr.ReplanOnTimeout,
@@ -285,6 +298,7 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 		tool.MethodGoName = md.VarName
 		tool.MethodPayloadTypeName = md.Payload
 		tool.MethodResultTypeName = md.Result
+		tool.MethodReturnsView = md.ViewedResult != nil && md.ViewedResult.ViewName == ""
 
 		me := expr.Method
 		if me != nil && me.Payload.Type != goaexpr.Empty {
@@ -292,7 +306,7 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 			tool.HasMethodPayload = true
 		}
 		if me != nil && me.Result.Type != goaexpr.Empty {
-			tool.MethodResultAttr = me.Result
+			tool.MethodResultAttr = methodResult
 			tool.HasMethodResult = true
 		}
 		// Capture user type locations when specified via struct:pkg:path.
@@ -310,13 +324,6 @@ func newToolData(ts *ToolsetData, expr *agentsExpr.ToolExpr, servicesData *servi
 	}
 	// A bound method may return a value even when the tool does not declare one.
 	tool.HasResult = tool.HasResult || (tool.MethodResultAttr != nil && tool.MethodResultAttr.Type != goaexpr.Empty)
-	// Compute aliasing flags for payload and result against method types when bound.
-	if tool.IsMethodBacked {
-		tool.PayloadAliasesMethod = ToolAttrAliasesMethod(tool.Args, tool.MethodPayloadAttr)
-		if tool.HasResult {
-			tool.ResultAliasesMethod = ToolAttrAliasesMethod(tool.Return, tool.MethodResultAttr)
-		}
-	}
 	return tool, nil
 }
 
@@ -433,24 +440,24 @@ func modelHiddenPayloadFields(tool *agentsExpr.ToolExpr) []string {
 
 // boundsData projects tool bounds metadata and, when a bound method is known,
 // captures the concrete result fields that implement those bounds.
-func boundsData(bounds *agentsExpr.ToolBoundsExpr, method *goaexpr.MethodExpr) *ToolBoundsData {
+func boundsData(bounds *agentsExpr.ToolBoundsExpr, result *goaexpr.AttributeExpr) *ToolBoundsData {
 	if bounds == nil {
 		return nil
 	}
 	data := &ToolBoundsData{
 		Paging: pagingData(bounds.Tool, bounds.Paging),
 	}
-	if method == nil {
+	if result == nil {
 		return data
 	}
 	data.Projection = &ToolBoundsProjectionData{
-		Returned:       boundsFieldData(method.Result, "returned"),
-		Total:          boundsFieldData(method.Result, "total"),
-		Truncated:      boundsFieldData(method.Result, "truncated"),
-		RefinementHint: boundsFieldData(method.Result, "refinement_hint"),
+		Returned:       boundsFieldData(result, "returned"),
+		Total:          boundsFieldData(result, "total"),
+		Truncated:      boundsFieldData(result, "truncated"),
+		RefinementHint: boundsFieldData(result, "refinement_hint"),
 	}
 	if bounds.Paging != nil && bounds.Paging.NextCursorField != "" {
-		data.Projection.NextCursor = boundsFieldData(method.Result, bounds.Paging.NextCursorField)
+		data.Projection.NextCursor = boundsFieldData(result, bounds.Paging.NextCursorField)
 	}
 	return data
 }

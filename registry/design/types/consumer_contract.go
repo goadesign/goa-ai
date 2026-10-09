@@ -100,7 +100,18 @@ var ToolCollectionElement = Type("ToolCollectionElement", func() {
 
 // ToolUnionBranch identifies the branch required for a field to apply.
 var ToolUnionBranch = Type("ToolUnionBranch", func() {
-	Description("One discriminator value that makes a generated field applicable.")
+	Description("One generated branch requirement. A tagged union selects by a string property; an untagged union selects by the JSON kind of its value.")
+	OneOf("selection", "Exactly one way the submitted value selects this branch.", func() {
+		TypeName("ToolUnionSelection")
+		Field(1, "tagged", ToolTaggedUnionBranch, "A declared string discriminator selects this branch.")
+		Field(2, "untagged", ToolUntaggedUnionBranch, "The JSON kind of the union value selects this branch.")
+	})
+	Required("selection")
+})
+
+// ToolTaggedUnionBranch identifies the string property that selects a branch.
+var ToolTaggedUnionBranch = Type("ToolTaggedUnionBranch", func() {
+	Description("One string discriminator value that makes a generated field applicable.")
 	Field(1, "discriminator", ArrayOf(ToolFieldPathSegment), "Path to the union's discriminator property.", func() {
 		MinLength(1)
 	})
@@ -108,6 +119,21 @@ var ToolUnionBranch = Type("ToolUnionBranch", func() {
 		MinLength(1)
 	})
 	Required("discriminator", "value")
+})
+
+// ToolUntaggedUnionBranch identifies the JSON kind that selects a branch.
+var ToolUntaggedUnionBranch = Type("ToolUntaggedUnionBranch", func() {
+	Description("The JSON kind of a union value that makes a generated field applicable. Distinct branch kinds are established during Goa DSL validation.")
+	Field(1, "path", ArrayOf(ToolFieldPathSegment), "Path to the union value. An omitted path identifies the root value.")
+	Field(2, "json_kind", String, "JSON kind that selects this branch; integer branches use number.", func() {
+		Enum("string", "number", "boolean", "array", "object")
+		Example("object")
+	})
+	Field(3, "index", Int, "Zero-based position of this branch in the advertised oneOf, used to select its structured validation diagnostic.", func() {
+		Minimum(0)
+		Example(0)
+	})
+	Required("json_kind", "index")
 })
 
 // ToolBounds declares result limits and the associated continuation contract.

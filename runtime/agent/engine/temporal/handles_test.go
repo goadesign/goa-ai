@@ -26,8 +26,8 @@ type (
 	}
 
 	cancellationUpdateHandle struct {
-		reason string
-		err    error
+		request engine.CancellationRequest
+		err     error
 	}
 )
 
@@ -57,22 +57,22 @@ func (h *cancellationUpdateHandle) Get(_ context.Context, value any) error {
 	if h.err != nil {
 		return h.err
 	}
-	reason, ok := value.(*string)
+	request, ok := value.(*engine.CancellationRequest)
 	if !ok {
-		return errors.New("cancellation update result must be a string pointer")
+		return errors.New("cancellation update result must be a request pointer")
 	}
-	*reason = h.reason
+	*request = h.request
 	return nil
 }
 
 func TestRequestCancellationCompletesFromWorkflowUpdate(t *testing.T) {
 	request := engine.CancellationRequest{RunID: "run", Reason: "user_requested"}
 	fakeClient := &cancellationClient{
-		updateHandle: &cancellationUpdateHandle{reason: request.Reason},
+		updateHandle: &cancellationUpdateHandle{request: request},
 	}
 	implementation := &Engine{client: fakeClient}
 
-	require.NoError(t, implementation.RequestCancellation(t.Context(), request))
+	require.NoError(t, implementation.RequestCancellation(t.Context(), request.RunID, request))
 	require.Equal(t, cancellationUpdateID, fakeClient.updateOptions.UpdateID)
 	require.Equal(t, request.RunID, fakeClient.updateOptions.WorkflowID)
 	require.Equal(t, cancellationUpdateName, fakeClient.updateOptions.UpdateName)
@@ -82,11 +82,11 @@ func TestRequestCancellationCompletesFromWorkflowUpdate(t *testing.T) {
 
 func TestRequestCancellationRejectsDifferentReasonFromExactUpdate(t *testing.T) {
 	fakeClient := &cancellationClient{
-		updateHandle: &cancellationUpdateHandle{reason: "user_requested"},
+		updateHandle: &cancellationUpdateHandle{request: engine.CancellationRequest{RunID: "run", Reason: "user_requested"}},
 	}
 	implementation := &Engine{client: fakeClient}
 
-	err := implementation.RequestCancellation(t.Context(), engine.CancellationRequest{
+	err := implementation.RequestCancellation(t.Context(), "run", engine.CancellationRequest{
 		RunID: "run", Reason: "session_ended",
 	})
 	var conflict *engine.CancellationConflictError
@@ -99,11 +99,11 @@ func TestRequestCancellationRetriesCompletedUpdate(t *testing.T) {
 	request := engine.CancellationRequest{RunID: "run", Reason: "user_requested"}
 	fakeClient := &cancellationClient{
 		updateErr:   serviceerror.NewFailedPrecondition("workflow completed"),
-		priorHandle: &cancellationUpdateHandle{reason: request.Reason},
+		priorHandle: &cancellationUpdateHandle{request: request},
 	}
 	implementation := &Engine{client: fakeClient}
 
-	require.NoError(t, implementation.RequestCancellation(t.Context(), request))
+	require.NoError(t, implementation.RequestCancellation(t.Context(), request.RunID, request))
 	require.Equal(t, request.RunID, fakeClient.priorHandleLookup.WorkflowID)
 	require.Equal(t, cancellationUpdateID, fakeClient.priorHandleLookup.UpdateID)
 }
@@ -118,7 +118,22 @@ func TestRequestCancellationRejectsCompletedWithoutPriorUpdate(t *testing.T) {
 	}
 	implementation := &Engine{client: fakeClient}
 
-	err := implementation.RequestCancellation(t.Context(), request)
+	err := implementation.RequestCancellation(t.Context(), request.RunID, request)
 	require.ErrorIs(t, err, engine.ErrWorkflowCompleted)
 	require.NotErrorIs(t, err, engine.ErrWorkflowNotFound)
+}
+
+func TestRequestCancellationAddressesOwningWorkflow(t *testing.T) {
+	request := engine.CancellationRequest{RunID: "saved-child", Reason: "user_requested"}
+	fakeClient := &cancellationClient{updateHandle: &cancellationUpdateHandle{request: request}}
+	implementation := &Engine{client: fakeClient}
+	require.NoError(t, implementation.RequestCancellation(t.Context(), "parent-workflow", request))
+	require.Equal(t, "parent-workflow", fakeClient.updateOptions.WorkflowID)
+	require.Equal(t, []any{request}, fakeClient.updateOptions.Args)
+	changed := request
+	changed.RunID = "another-child"
+	err := implementation.RequestCancellation(t.Context(), "parent-workflow", changed)
+	var conflict *engine.CancellationConflictError
+	require.ErrorAs(t, err, &conflict)
+	require.Equal(t, changed.RunID, conflict.RunID)
 }

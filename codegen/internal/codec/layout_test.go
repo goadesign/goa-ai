@@ -44,5 +44,6 @@ func addCodecTestValue(t *testing.T, plan *Plan, key, name string, attribute *ex
 		},
 	})
 	require.NoError(t, err)
+	require.NoError(t, generation.Freeze())
 	return plan.Add(key, name, attribute, layout, direction)
 }

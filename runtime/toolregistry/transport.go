@@ -33,16 +33,18 @@ const (
 	ToolUseIDPattern = `^[^\x00]{1,256}$`
 
 	// #nosec G101 -- this public identity domain is not a credential.
-	toolUseIDDomain = "goa-ai/tool-registry-use/v1\x00"
+	toolUseIDDomain = "goa-ai/tool-registry-use/v2\x00"
 )
 
 // DeriveToolUseID returns the deterministic global transport identity for one
-// model/provider call inside one run. Length delimiters prevent concatenation
-// ambiguity while the domain separator prevents cross-protocol reuse.
-func DeriveToolUseID(runID, toolCallID string) string {
+// operation inside one run and tool call. The sequence separates new operations
+// even when their arguments, state and answers are identical.
+// Length delimiters prevent ambiguous strings from producing the same identity.
+func DeriveToolUseID(runID, toolCallID string, sequence uint64) string {
 	body := []byte(toolUseIDDomain)
 	body = appendLengthDelimited(body, runID)
 	body = appendLengthDelimited(body, toolCallID)
+	body = binary.BigEndian.AppendUint64(body, sequence)
 	sum := sha256.Sum256(body)
 	return hex.EncodeToString(sum[:])
 }

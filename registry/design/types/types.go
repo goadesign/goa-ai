@@ -4,6 +4,7 @@
 package types
 
 import (
+	operationtypes "goa.design/goa-ai/internal/tooloperation/design/types"
 	"goa.design/goa-ai/runtime/toolregistry"
 	. "goa.design/goa/v3/dsl"
 )
@@ -52,6 +53,8 @@ var ToolCallMeta = Type("ToolCallMeta", func() {
 		Example(map[string]string{"site_id": "site-123"})
 	})
 	Field(7, "text_only", Boolean, "Accepted execution restriction prohibiting UI output or external interaction.", func() { Default(false) })
+	Field(8, "execution_sequence", UInt64, "Sequence of the runtime-selected operation on this tool invocation. Zero identifies the original tool call; each new continuation advances it, while repeated delivery retains the same sequence.", func() { Default(uint64(0)) })
+	Field(9, "execution_continuation", operationtypes.ExecutionContinuation, "The exact runtime-selected operation and its data; absent on the original tool call.")
 	Required("run_id", "session_id", "tool_call_id")
 })
 

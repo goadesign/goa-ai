@@ -1,80 +1,65 @@
-// Caller lets the runtime call tools through the generated MCP client.
+// Caller invokes typed tools through the generated stateless MCP client.
 type Caller struct {
-    client       *Client
-    clientInfo   mcpruntime.ClientInfo
-    session      *mcpruntime.HTTPSession
-    initializeMu sync.Mutex
+    client *Client
+    transport *mcpruntime.HTTPTransport
+    {{- range .Paths }}
+    {{ .Name }} string
+    {{- end }}
 }
 
-// NewCaller initializes the MCP session and returns a caller only when the
-// server accepts the generated protocol version and client information.
-func NewCaller(ctx context.Context, client *Client, clientInfo mcpruntime.ClientInfo) (mcpruntime.Caller, error) {
-    if err := InitializeSession(ctx, client, clientInfo); err != nil {
+// NewCaller checks application identity and fixes the authored URL values for
+// this caller. Each request keeps those values outside tool arguments; creating
+// the caller does not contact the server.
+func NewCaller(client *Client, info mcpruntime.ClientInfo, support mcpruntime.InputSupport, retry mcpruntime.HTTPRetryPolicy{{ range .Paths }}, {{ .Name }} string{{ end }}) (*Caller, error) {
+    if err := retry.Validate(); err != nil { return nil, err }
+    if err := info.Validate(); err != nil {
         return nil, err
     }
-    return &Caller{
-        client:     client,
-        clientInfo: clientInfo,
-        session:    client.Doer.(*mcpruntime.HTTPSession),
-    }, nil
+    transport := mcpruntime.NewHTTPTransport(client.Doer, info, mcpHTTPBindings(), support, retry)
+
+    return &Caller{client: client, transport: transport{{ range .Paths }}, {{ .Name }}: {{ .Name }}{{ end }}}, nil
 }
 
-// CallTool sends one tools/call request and returns its content to the runtime.
+// CallTool sends exact arguments and returns validated content beside domain JSON.
 func (c *Caller) CallTool(ctx context.Context, req mcpruntime.CallRequest) (mcpruntime.CallResponse, error) {
-    if err := c.ensureSession(ctx); err != nil {
-        return mcpruntime.CallResponse{}, err
-    }
-    payload := &{{ .MCPPackage }}.ToolsCallPayload{Name: req.Tool, Arguments: json.RawMessage(req.Payload)}
-    ires, err := c.client.ToolsCall()(ctx, payload)
-    if err != nil {
-        if initializeErr := c.ensureSession(ctx); initializeErr != nil {
-            return mcpruntime.CallResponse{}, errors.Join(
-                callerError(err),
-                fmt.Errorf("start new MCP session: %w", initializeErr),
-            )
-        }
-        return mcpruntime.CallResponse{}, callerError(err)
-    }
-    result := ires.(*{{ .MCPPackage }}.ToolsCallResult)
-    content := make([]mcpruntime.ContentBlock, len(result.Content))
-    for i, item := range result.Content {
-        content[i] = &mcpruntime.TextContent{Text: item.Text}
-    }
-    response := mcpruntime.CallResponse{Content: content}
-    if len(result.StructuredContent) > 0 {
-        var object map[string]json.RawMessage
-        if err := json.Unmarshal(result.StructuredContent, &object); err != nil || object == nil {
-            return mcpruntime.CallResponse{}, mcpruntime.NewMalformedResponseError(
-                errors.New("structuredContent must be a JSON object"),
-            )
-        }
-        response.StructuredContent = append(json.RawMessage(nil), result.StructuredContent...)
-    }
-    if result.IsError != nil && *result.IsError {
-        return mcpruntime.CallResponse{}, mcpruntime.NewToolExecutionError(response)
-    }
     {{- range .Tools }}
-    {{- if .HasStructuredResult }}
-    if req.Tool == {{ printf "%q" .Name }} && len(response.StructuredContent) == 0 {
-        return mcpruntime.CallResponse{}, mcpruntime.NewMalformedResponseError(
-            errors.New("MCP response is missing structured content"),
-        )
+    {{- if .AppOnly }}
+    if req.Tool == {{ quote .Name }} {
+        return mcpruntime.CallResponse{}, &mcpruntime.Error{Code: mcpruntime.JSONRPCInvalidParams, Message: "app-only tool cannot be called by a model"}
     }
     {{- end }}
     {{- end }}
-    return response, nil
+    payload := &{{ .PayloadRef }}{Name: req.Tool, Arguments: json.RawMessage(req.Payload){{ range .Paths }}, {{ .Selector }}: c.{{ .Name }}{{ end }}}
+    request, err := c.client.BuildToolsCallRequest(ctx, payload)
+    if err != nil { return mcpruntime.CallResponse{}, err }
+    return c.transport.CallTool(ctx, request.URL.String(), req)
 }
 
-// ensureSession starts one replacement handshake after the server expires the
-// current HTTP session. It never repeats the tool call that observed expiry.
-func (c *Caller) ensureSession(ctx context.Context) error {
-    if c.session.Initialized() {
-        return nil
-    }
-    c.initializeMu.Lock()
-    defer c.initializeMu.Unlock()
-    if c.session.Initialized() {
-        return nil
-    }
-    return InitializeSession(ctx, c.client, c.clientInfo)
+// GetTask reads the current state using this caller's authored endpoint values.
+func (c *Caller) GetTask(ctx context.Context, taskID string) (mcpruntime.Task, error) {
+    endpoint, err := c.taskEndpoint(ctx)
+    if err != nil { return mcpruntime.Task{}, err }
+    return c.transport.GetTask(ctx, endpoint, taskID)
+}
+
+// UpdateTask submits answers and returns the server's acknowledgement.
+func (c *Caller) UpdateTask(ctx context.Context, taskID string, responses map[string]json.RawMessage) error {
+    endpoint, err := c.taskEndpoint(ctx)
+    if err != nil { return err }
+    return c.transport.UpdateTask(ctx, endpoint, taskID, responses)
+}
+
+// CancelTask requests cancellation; a later GetTask reports the final state.
+func (c *Caller) CancelTask(ctx context.Context, taskID string) error {
+    endpoint, err := c.taskEndpoint(ctx)
+    if err != nil { return err }
+    return c.transport.CancelTask(ctx, endpoint, taskID)
+}
+
+// taskEndpoint asks the generated request builder for its fixed route. Only
+// authored URL values enter this builder; the shared transport encodes task data.
+func (c *Caller) taskEndpoint(ctx context.Context) (string, error) {
+    request, err := c.client.BuildToolsCallRequest(ctx, &{{ .PayloadRef }}{ {{ range .Paths }}{{ .Selector }}: c.{{ .Name }}, {{ end }} })
+    if err != nil { return "", err }
+    return request.URL.String(), nil
 }

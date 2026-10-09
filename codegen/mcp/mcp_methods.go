@@ -10,11 +10,7 @@ import (
 // buildMethods creates all MCP protocol methods
 func (b *mcpExprBuilder) buildMethods() []*expr.MethodExpr {
 	methods := make([]*expr.MethodExpr, 0, 10)
-	methods = append(methods,
-		b.buildInitializeMethod(),
-		b.buildInitializedMethod(),
-		b.buildPingMethod(),
-	)
+	methods = append(methods, b.buildDiscoverMethod())
 
 	// Add tool methods if tools are defined
 	if len(b.mcp.Tools) > 0 {
@@ -22,10 +18,11 @@ func (b *mcpExprBuilder) buildMethods() []*expr.MethodExpr {
 	}
 
 	// Add resource methods if resources are defined
-	if len(b.mcp.Resources) > 0 {
+	if len(b.mcp.Resources) > 0 || b.mcp.ResourceReader != nil {
 		methods = append(methods,
 			b.buildResourcesListMethod(),
 			b.buildResourcesReadMethod(),
+			b.buildResourceTemplatesListMethod(),
 		)
 	}
 
@@ -34,34 +31,32 @@ func (b *mcpExprBuilder) buildMethods() []*expr.MethodExpr {
 		methods = append(methods, b.buildPromptsListMethod(), b.buildPromptsGetMethod())
 	}
 
+	if len(b.mcp.PromptCompletions)+len(b.mcp.ResourceCompletions) > 0 {
+		methods = append(methods, b.buildCompletionMethod())
+	}
+	if b.mcp.SubscriptionSource != nil {
+		methods = append(methods, b.buildSubscriptionsListenMethod())
+	}
+	if len(b.tasks) > 0 {
+		methods = append(methods, b.buildTaskMethods()...)
+	}
+	if b.mcp.SkillCatalog != nil && b.mcp.SkillLookup != nil {
+		methods = append(methods, b.buildSkillsMethods()...)
+	}
+	if b.mcp.ResourceDirectory != nil {
+		methods = append(methods, b.buildResourceDirectoryMethod())
+	}
 	return methods
 }
 
-// buildInitializedMethod creates the notification that completes the MCP
-// handshake. MCP defines no parameters for this notification.
-func (b *mcpExprBuilder) buildInitializedMethod() *expr.MethodExpr {
+// buildDiscoverMethod exposes the release's capabilities and supported revision
+// without requiring a connection handshake or server-side client state.
+func (b *mcpExprBuilder) buildDiscoverMethod() *expr.MethodExpr {
 	return &expr.MethodExpr{
-		Name:        "notifications/initialized",
-		Description: "Mark an initialized MCP session ready for requests",
-	}
-}
-
-// buildInitializeMethod creates the initialize method
-func (b *mcpExprBuilder) buildInitializeMethod() *expr.MethodExpr {
-	return &expr.MethodExpr{
-		Name:        "initialize",
-		Description: "Initialize MCP session",
-		Payload:     b.userTypeAttr("InitializePayload", b.buildInitializePayloadType),
-		Result:      b.userTypeAttr("InitializeResult", b.buildInitializeResultType),
-	}
-}
-
-// buildPingMethod creates the ping method
-func (b *mcpExprBuilder) buildPingMethod() *expr.MethodExpr {
-	return &expr.MethodExpr{
-		Name:        "ping",
-		Description: "Ping the server",
-		Result:      b.userTypeAttr("PingResult", b.buildPingResultType),
+		Name:        "server/discover",
+		Description: "Describe this server's protocol revision and declared tools, resources, and prompts",
+		Payload:     b.userTypeAttr("DiscoverPayload", func() *expr.AttributeExpr { return &expr.AttributeExpr{Type: &expr.Object{}} }),
+		Result:      b.userTypeAttr("DiscoverResult", b.buildDiscoverResultType),
 	}
 }
 
@@ -82,8 +77,8 @@ func (b *mcpExprBuilder) buildToolsCallMethod() *expr.MethodExpr {
 		Name:        "tools/call",
 		Description: "Call a tool",
 		Payload:     b.userTypeAttr("ToolsCallPayload", b.buildToolsCallPayloadType),
-		Result:      b.userTypeAttr("ToolsCallResult", b.buildToolsCallResultType),
-		Errors:      buildMCPMethodErrors(mcpDispatchErrors[:]...),
+		Result:      b.inputResultAttr("ToolsCallResult", b.buildToolsCallResultType),
+		Errors:      b.buildInputMethodErrors(),
 	}
 }
 
@@ -104,8 +99,8 @@ func (b *mcpExprBuilder) buildResourcesReadMethod() *expr.MethodExpr {
 		Name:        "resources/read",
 		Description: "Read a resource",
 		Payload:     b.userTypeAttr("ResourcesReadPayload", b.buildResourcesReadPayloadType),
-		Result:      b.userTypeAttr("ResourcesReadResult", b.buildResourcesReadResultType),
-		Errors:      buildMCPMethodErrors(mcpDispatchErrors[:]...),
+		Result:      b.inputResultAttr("ResourcesReadResult", b.buildResourcesReadResultType),
+		Errors:      b.buildInputMethodErrors(),
 	}
 }
 
@@ -126,12 +121,12 @@ func (b *mcpExprBuilder) buildPromptsGetMethod() *expr.MethodExpr {
 		Name:        "prompts/get",
 		Description: "Get a prompt by name",
 		Payload:     b.userTypeAttr("PromptsGetPayload", b.buildPromptsGetPayloadType),
-		Result:      b.userTypeAttr("PromptsGetResult", b.buildPromptsGetResultType),
-		Errors:      buildMCPMethodErrors(mcpDispatchErrors[:]...),
+		Result:      b.inputResultAttr("PromptsGetResult", b.buildPromptsGetResultType),
+		Errors:      b.buildInputMethodErrors(),
 	}
 }
 
 // hasPrompts checks if there are any prompts defined
 func (b *mcpExprBuilder) hasPrompts() bool {
-	return len(b.mcp.Prompts) > 0
+	return len(b.mcp.Prompts)+len(b.mcp.MethodPrompts) > 0
 }

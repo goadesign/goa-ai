@@ -21,44 +21,47 @@ func TestGenerateMCPTransport_RendersUnaryToolsCall(t *testing.T) {
 			{Name: "add", Method: methods["add"]},
 		},
 	}
-	data, err := newAdapterGenerator(
+	data, err := newAdapterGenerator(testSchemaAPI(),
 		svc,
 		mcp,
 	).buildAdapterData()
 	require.NoError(t, err)
+	data.PayloadRefs = testProtocolPayloadRefs()
 	data.CodecImportPath = "example.com/calc/gen/mcp_calc/internal/codec"
 	data.CodecPackage = testCodecPackage
 	data.NeedsServerCodec = true
-	data.Tools[0].Codec = &MethodCodecData{ResultEncode: "EncodeAddResult"}
+	data.EndpointsName = "Endpoints"
+	data.Tools[0].Endpoint = &endpointMethodAdapter{CallName: "invokeMCPMethod0"}
+	data.Tools[0].Codec = &MethodCodecData{ResultEncode: testCodecPackage + ".EncodeAddResult"}
 
 	files := generateMCPTransport("example.com/calc/gen", svc, data)
 	require.NotEmpty(t, files)
 	rendered := renderGeneratedFile(t, files[0])
 
 	require.Contains(t, rendered, "func (a *MCPAdapter) ToolsCall(ctx context.Context, p *ToolsCallPayload) (*ToolsCallResult, error)")
-	require.Contains(t, rendered, "return final, nil")
-	require.Contains(t, rendered, "return toolCallError(a.mapError(err).Error()), nil")
+	require.Contains(t, rendered, `ResultType: "complete"`)
+	require.Contains(t, rendered, "return toolCallError(failure.err.Error()), nil")
 	require.NotContains(t, rendered, "ToolsCallServerStream")
 	require.NotContains(t, rendered, "StreamBridge")
 	require.NotContains(t, rendered, "SendAndClose")
 }
 
-func TestGenerateMCPTransport_RendersMCP202506ToolResults(t *testing.T) {
+func TestGenerateMCPTransport_RendersCurrentToolResults(t *testing.T) {
 	rendered := renderTemplateSection(t, "adapter_tools", &AdapterData{
+		PayloadRefs:  testProtocolPayloadRefs(),
 		CodecPackage: "codec",
 		Tools: []*ToolAdapter{
 			{
-				Name:                "summarize",
-				Description:         "Summarize one document",
-				ServiceMethodName:   "Summarize",
-				HasPayload:          true,
-				HasResult:           true,
-				InputSchema:         `{"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false}`,
-				OutputSchema:        `{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"],"additionalProperties":false}`,
-				HasStructuredResult: true,
+				Name:         "summarize",
+				Description:  "Summarize one document",
+				Endpoint:     &endpointMethodAdapter{CallName: "invokeMCPMethod0"},
+				HasPayload:   true,
+				HasResult:    true,
+				InputSchema:  `{"type":"object","properties":{"text":{"type":"string"}},"required":["text"],"additionalProperties":false}`,
+				OutputSchema: `{"type":"object","properties":{"summary":{"type":"string"}},"required":["summary"],"additionalProperties":false}`,
 				Codec: &MethodCodecData{
 					PayloadDecode: "DecodeSummarizePayload",
-					ResultEncode:  "EncodeSummarizeResult",
+					ResultEncode:  "codec.EncodeSummarizeResult",
 				},
 			},
 		},
@@ -69,9 +72,10 @@ func TestGenerateMCPTransport_RendersMCP202506ToolResults(t *testing.T) {
 
 func TestClientCaller_RendersUnaryToolsCall(t *testing.T) {
 	file := clientCallerFile(&AdapterData{
+		PayloadRefs: testProtocolPayloadRefs(),
 		mcpPathName: "mcp_calc",
 		ClientCaller: &ClientCallerData{
-			MCPPackage: "mcppkg",
+			PayloadRef: "mcppkg.ToolsCallPayload",
 			Tools:      []*ToolAdapter{{Name: "add"}},
 			imports: []*gcodegen.ImportSpec{
 				gcodegen.SimpleImport("context"),

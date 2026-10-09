@@ -18,28 +18,26 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
-
-	"syscall"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
+
+	"goa.design/goa-ai/internal/mcpprotocol"
 )
 
 const (
-	initializeMethod  = "initialize"
-	initializedMethod = "notifications/initialized"
-	statusError       = "error"
+	statusError = "error"
 )
 
 // Runner runs scenarios against the generated example server.
 type Runner struct {
-	server          *exec.Cmd
-	baseURL         *url.URL
-	client          *http.Client
-	protocolVersion string
+	server  *exec.Cmd
+	baseURL *url.URL
+	client  *http.Client
 
 	stdoutTail *ringBuffer
 	stderrTail *ringBuffer
@@ -52,7 +50,6 @@ type Runner struct {
 type Scenario struct {
 	Name     string    `yaml:"name"`
 	Defaults *Defaults `yaml:"defaults"`
-	Pre      *Pre      `yaml:"pre"`
 	Steps    []Step    `yaml:"steps"`
 }
 
@@ -61,18 +58,14 @@ type Defaults struct {
 	Headers map[string]string `yaml:"headers"`
 }
 
-// Pre controls scenario-level behavior (e.g., auto-initialize handshake).
-type Pre struct {
-	AutoInitialize *bool `yaml:"auto_initialize"` // default true
-}
-
 // Step defines a single operation invocation using a generated client.
 type Step struct {
-	Name    string            `yaml:"name"`
-	Op      string            `yaml:"op"`
-	Input   map[string]any    `yaml:"input"`
-	Headers map[string]string `yaml:"headers"`
-	Expect  *Expect           `yaml:"expect"`
+	Name         string            `yaml:"name"`
+	Notification bool              `yaml:"notification"`
+	Op           string            `yaml:"op"`
+	Input        map[string]any    `yaml:"input"`
+	Headers      map[string]string `yaml:"headers"`
+	Expect       *Expect           `yaml:"expect"`
 }
 
 // ExpectedError captures expected JSON-RPC error.
@@ -169,7 +162,7 @@ func (r *Runner) Run(t *testing.T, scenarios []Scenario) error {
 		scenario := sc
 		t.Run(scenario.Name, func(t *testing.T) {
 			t.Parallel()
-			r.runSteps(t, scenario.Steps, scenario.Defaults, scenario.Pre)
+			r.runSteps(t, scenario.Steps, scenario.Defaults)
 		})
 	}
 	return nil
@@ -279,12 +272,8 @@ func getFreePort() (string, error) {
 // methodFromOp maps operation names to JSON-RPC method names.
 func methodFromOp(op string) string {
 	switch op {
-	case "Initialize":
-		return initializeMethod
-	case "NotificationsInitialized":
-		return initializedMethod
-	case "Ping":
-		return "ping"
+	case "ServerDiscover":
+		return "server/discover"
 	case "ToolsList":
 		return "tools/list"
 	case "ToolsCall":
@@ -675,15 +664,8 @@ func (r *Runner) ping() error {
 }
 
 // runSteps executes test steps.
-func (r *Runner) runSteps(t *testing.T, steps []Step, defaults *Defaults, pre *Pre) {
+func (r *Runner) runSteps(t *testing.T, steps []Step, defaults *Defaults) {
 	t.Helper()
-	autoInit := false
-	if pre != nil && pre.AutoInitialize != nil {
-		autoInit = *pre.AutoInitialize
-	}
-	if autoInit {
-		require.NoError(t, r.ensureInitialized())
-	}
 
 	for _, st := range steps {
 		// Merge headers
@@ -701,8 +683,7 @@ func (r *Runner) runSteps(t *testing.T, steps []Step, defaults *Defaults, pre *P
 // runStep sends one JSON-RPC message over HTTP and validates its response.
 func (r *Runner) runStep(t *testing.T, st Step, headers map[string]string, method string) {
 	t.Helper()
-	notification := method == initializedMethod
-	result, err := r.executeJSONRPC(method, st.Input, headers, notification)
+	result, err := r.executeJSONRPC(method, st.Input, headers, st.Notification)
 	if st.Expect != nil && st.Expect.Status == statusError {
 		require.Error(t, err)
 		if st.Expect.Error != nil && st.Expect.Error.Code != 0 {
@@ -714,36 +695,9 @@ func (r *Runner) runStep(t *testing.T, st Step, headers map[string]string, metho
 		return
 	}
 	require.NoError(t, err)
-	if method == initializeMethod {
-		version, ok := result["protocolVersion"].(string)
-		require.True(t, ok, "initialize response omitted protocolVersion")
-		r.protocolVersion = version
-	}
 	if st.Expect != nil && st.Expect.Result != nil {
 		validateSubset(t, result, st.Expect.Result)
 	}
-}
-
-// ensureInitialized sends the request and notification that establish one MCP
-// session. The negotiated version is attached to the notification and every
-// later request.
-func (r *Runner) ensureInitialized() error {
-	payload := map[string]any{
-		"protocolVersion": "2025-06-18",
-		"capabilities":    map[string]any{},
-		"clientInfo":      map[string]any{"name": "runner", "version": "1.0.0"},
-	}
-	result, err := r.executeJSONRPC(initializeMethod, payload, nil, false)
-	if err != nil {
-		return err
-	}
-	version, ok := result["protocolVersion"].(string)
-	if !ok {
-		return errors.New("initialize response omitted protocolVersion")
-	}
-	r.protocolVersion = version
-	_, err = r.executeJSONRPC(initializedMethod, nil, nil, true)
-	return err
 }
 
 // executeJSONRPC sends one JSON-RPC message and returns its decoded result.
@@ -754,9 +708,18 @@ func (r *Runner) executeJSONRPC(
 	notification bool,
 ) (map[string]any, error) {
 	reqObj := map[string]any{"jsonrpc": "2.0", "method": method}
-	if input != nil {
-		reqObj["params"] = input
+	params := maps.Clone(input)
+	if params == nil {
+		params = make(map[string]any)
 	}
+	if _, supplied := params["_meta"]; !supplied {
+		params["_meta"] = map[string]any{
+			"io.modelcontextprotocol/protocolVersion":    mcpprotocol.Version,
+			"io.modelcontextprotocol/clientCapabilities": map[string]any{},
+			"io.modelcontextprotocol/clientInfo":         map[string]any{"name": "integration-runner", "version": "1.0.0"},
+		}
+	}
+	reqObj["params"] = params
 	if !notification {
 		reqObj["id"] = 1
 	}
@@ -773,27 +736,35 @@ func (r *Runner) executeJSONRPC(
 	if err != nil {
 		return nil, fmt.Errorf("build MCP request: %w", err)
 	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json, text/event-stream")
+	req.Header.Set("MCP-Protocol-Version", mcpprotocol.Version)
+	req.Header.Set("MCP-Method", method)
+	nameKey := ""
+	switch method {
+	case "tools/call", "prompts/get":
+		nameKey = "name"
+	case "resources/read":
+		nameKey = "uri"
+	}
+	if name, ok := params[nameKey].(string); nameKey != "" && ok {
+		req.Header.Set("MCP-Name", mcpprotocol.EncodeHeaderValue(name))
+	}
 	for k, v := range headers {
 		req.Header.Set(k, v)
-	}
-	if req.Header.Get("Content-Type") == "" {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	if req.Header.Get("Accept") == "" {
-		req.Header.Set("Accept", "application/json")
-	}
-	if r.protocolVersion != "" && method != initializeMethod {
-		req.Header.Set("MCP-Protocol-Version", r.protocolVersion)
 	}
 	// #nosec G704 -- test runner issues requests to localhost (or a validated TEST_SERVER_URL)
 	resp, err := r.client.Do(req)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(resp.Body)
+	closeErr := resp.Body.Close()
 	if err != nil {
 		return nil, fmt.Errorf("read MCP response: %w", err)
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("close MCP response: %w", closeErr)
 	}
 	if notification {
 		if resp.StatusCode != http.StatusAccepted {

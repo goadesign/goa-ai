@@ -8,28 +8,30 @@
 package client
 
 import (
+	"bytes"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 
 	mcpassistant "example.com/assistant/gen/mcp_assistant"
+	uritemplate "github.com/yosida95/uritemplate/v3"
 	goa "goa.design/goa/v3/pkg"
 )
 
-// InitializeRequestBody is the type of the "mcp_assistant" service
-// "initialize" endpoint HTTP request body.
-type InitializeRequestBody struct {
-	// MCP protocol version
-	ProtocolVersion string `form:"protocolVersion" json:"protocolVersion" xml:"protocolVersion"`
-	// Client information
-	ClientInfo *ClientInfoRequestBody `form:"clientInfo" json:"clientInfo" xml:"clientInfo"`
-	// Client capabilities
-	Capabilities *ClientCapabilitiesRequestBody `form:"capabilities" json:"capabilities" xml:"capabilities"`
+// ServerDiscoverRequestBody is the type of the "mcp_assistant" service
+// "server/discover" endpoint HTTP request body.
+type ServerDiscoverRequestBody struct {
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
 }
 
 // ToolsListRequestBody is the type of the "mcp_assistant" service "tools/list"
 // endpoint HTTP request body.
 type ToolsListRequestBody struct {
-	// Pagination cursor
+	// Opaque cursor from a prior catalog page
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty" xml:"cursor,omitempty"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
 }
 
 // ToolsCallRequestBody is the type of the "mcp_assistant" service "tools/call"
@@ -39,13 +41,22 @@ type ToolsCallRequestBody struct {
 	Name string `form:"name" json:"name" xml:"name"`
 	// Tool arguments
 	Arguments json.RawMessage `form:"arguments,omitempty" json:"arguments,omitempty" xml:"arguments,omitempty"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+	// Exact service-owned state from this operation's preceding input round
+	RequestState *string `form:"requestState,omitempty" json:"requestState,omitempty" xml:"requestState,omitempty"`
+	// Host answers indexed by this operation's request identifiers; an empty
+	// object still identifies a continuation
+	InputResponses map[string]json.RawMessage `json:"inputResponses,omitzero"`
 }
 
 // ResourcesListRequestBody is the type of the "mcp_assistant" service
 // "resources/list" endpoint HTTP request body.
 type ResourcesListRequestBody struct {
-	// Pagination cursor
+	// Opaque cursor from a prior catalog page
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty" xml:"cursor,omitempty"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
 }
 
 // ResourcesReadRequestBody is the type of the "mcp_assistant" service
@@ -53,13 +64,31 @@ type ResourcesListRequestBody struct {
 type ResourcesReadRequestBody struct {
 	// Resource URI
 	URI string `form:"uri" json:"uri" xml:"uri"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+	// Exact service-owned state from this operation's preceding input round
+	RequestState *string `form:"requestState,omitempty" json:"requestState,omitempty" xml:"requestState,omitempty"`
+	// Host answers indexed by this operation's request identifiers; an empty
+	// object still identifies a continuation
+	InputResponses map[string]json.RawMessage `json:"inputResponses,omitzero"`
+}
+
+// ResourcesTemplatesListRequestBody is the type of the "mcp_assistant" service
+// "resources/templates/list" endpoint HTTP request body.
+type ResourcesTemplatesListRequestBody struct {
+	// Opaque cursor from a prior catalog page
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty" xml:"cursor,omitempty"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
 }
 
 // PromptsListRequestBody is the type of the "mcp_assistant" service
 // "prompts/list" endpoint HTTP request body.
 type PromptsListRequestBody struct {
-	// Pagination cursor
+	// Opaque cursor from a prior catalog page
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty" xml:"cursor,omitempty"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
 }
 
 // PromptsGetRequestBody is the type of the "mcp_assistant" service
@@ -69,17 +98,43 @@ type PromptsGetRequestBody struct {
 	Name string `form:"name" json:"name" xml:"name"`
 	// Prompt arguments
 	Arguments map[string]string `form:"arguments,omitempty" json:"arguments,omitempty" xml:"arguments,omitempty"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+	// Exact service-owned state from this operation's preceding input round
+	RequestState *string `form:"requestState,omitempty" json:"requestState,omitempty" xml:"requestState,omitempty"`
+	// Host answers indexed by this operation's request identifiers; an empty
+	// object still identifies a continuation
+	InputResponses map[string]json.RawMessage `json:"inputResponses,omitzero"`
 }
 
-// InitializeResponseBody is the type of the "mcp_assistant" service
-// "initialize" endpoint HTTP response body.
-type InitializeResponseBody struct {
-	// MCP protocol version
-	ProtocolVersion *string `form:"protocolVersion,omitempty" json:"protocolVersion,omitempty" xml:"protocolVersion,omitempty"`
-	// Server capabilities
+// CompletionCompleteRequestBody is the type of the "mcp_assistant" service
+// "completion/complete" endpoint HTTP request body.
+type CompletionCompleteRequestBody struct {
+	// Prompt or resource whose argument is being completed
+	Ref *CompletionReferenceRequestBody `form:"ref" json:"ref" xml:"ref"`
+	// Argument name and partial text
+	Argument *CompletionArgumentRequestBody `form:"argument" json:"argument" xml:"argument"`
+	// Prior values used to refine suggestions
+	Context *CompletionContextRequestBody `form:"context,omitempty" json:"context,omitempty" xml:"context,omitempty"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+}
+
+// ServerDiscoverResponseBody is the type of the "mcp_assistant" service
+// "server/discover" endpoint HTTP response body.
+type ServerDiscoverResponseBody struct {
+	// Protocol revisions implemented by this release
+	SupportedVersions []string `form:"supportedVersions,omitempty" json:"supportedVersions,omitempty" xml:"supportedVersions,omitempty"`
+	// Operations declared by this service
 	Capabilities *ServerCapabilitiesResponseBody `form:"capabilities,omitempty" json:"capabilities,omitempty" xml:"capabilities,omitempty"`
-	// Server information
-	ServerInfo *ServerInfoResponseBody `form:"serverInfo,omitempty" json:"serverInfo,omitempty" xml:"serverInfo,omitempty"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+	// This response contains a finished result
+	ResultType *string `form:"resultType,omitempty" json:"resultType,omitempty" xml:"resultType,omitempty"`
+	// Milliseconds this one response may be cached
+	TTLMs *int64 `form:"ttlMs,omitempty" json:"ttlMs,omitempty" xml:"ttlMs,omitempty"`
+	// Whether this response may be reused across authorization contexts
+	CacheScope *string `form:"cacheScope,omitempty" json:"cacheScope,omitempty" xml:"cacheScope,omitempty"`
 }
 
 // ToolsListResponseBody is the type of the "mcp_assistant" service
@@ -89,17 +144,14 @@ type ToolsListResponseBody struct {
 	Tools []*ToolInfoResponseBody `form:"tools,omitempty" json:"tools,omitempty" xml:"tools,omitempty"`
 	// Cursor for the next page
 	NextCursor *string `form:"nextCursor,omitempty" json:"nextCursor,omitempty" xml:"nextCursor,omitempty"`
-}
-
-// ToolsCallResponseBody is the type of the "mcp_assistant" service
-// "tools/call" endpoint HTTP response body.
-type ToolsCallResponseBody struct {
-	// Tool execution results
-	Content []*ContentItemResponseBody `form:"content,omitempty" json:"content,omitempty" xml:"content,omitempty"`
-	// Whether the tool encountered an error
-	IsError *bool `form:"isError,omitempty" json:"isError,omitempty" xml:"isError,omitempty"`
-	// Structured tool result
-	StructuredContent json.RawMessage `form:"structuredContent,omitempty" json:"structuredContent,omitempty" xml:"structuredContent,omitempty"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+	// This response contains a finished result
+	ResultType *string `form:"resultType,omitempty" json:"resultType,omitempty" xml:"resultType,omitempty"`
+	// Milliseconds this one response may be cached
+	TTLMs *int64 `form:"ttlMs,omitempty" json:"ttlMs,omitempty" xml:"ttlMs,omitempty"`
+	// Whether this response may be reused across authorization contexts
+	CacheScope *string `form:"cacheScope,omitempty" json:"cacheScope,omitempty" xml:"cacheScope,omitempty"`
 }
 
 // ResourcesListResponseBody is the type of the "mcp_assistant" service
@@ -109,13 +161,31 @@ type ResourcesListResponseBody struct {
 	Resources []*ResourceInfoResponseBody `form:"resources,omitempty" json:"resources,omitempty" xml:"resources,omitempty"`
 	// Cursor for the next page
 	NextCursor *string `form:"nextCursor,omitempty" json:"nextCursor,omitempty" xml:"nextCursor,omitempty"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+	// This response contains a finished result
+	ResultType *string `form:"resultType,omitempty" json:"resultType,omitempty" xml:"resultType,omitempty"`
+	// Milliseconds this one response may be cached
+	TTLMs *int64 `form:"ttlMs,omitempty" json:"ttlMs,omitempty" xml:"ttlMs,omitempty"`
+	// Whether this response may be reused across authorization contexts
+	CacheScope *string `form:"cacheScope,omitempty" json:"cacheScope,omitempty" xml:"cacheScope,omitempty"`
 }
 
-// ResourcesReadResponseBody is the type of the "mcp_assistant" service
-// "resources/read" endpoint HTTP response body.
-type ResourcesReadResponseBody struct {
-	// Resource contents
-	Contents []*ResourceContentResponseBody `form:"contents,omitempty" json:"contents,omitempty" xml:"contents,omitempty"`
+// ResourcesTemplatesListResponseBody is the type of the "mcp_assistant"
+// service "resources/templates/list" endpoint HTTP response body.
+type ResourcesTemplatesListResponseBody struct {
+	// Parameterized addresses advertised by this service
+	ResourceTemplates []*ResourceTemplateInfoResponseBody `form:"resourceTemplates,omitempty" json:"resourceTemplates,omitempty" xml:"resourceTemplates,omitempty"`
+	// Cursor for another catalog page
+	NextCursor *string `form:"nextCursor,omitempty" json:"nextCursor,omitempty" xml:"nextCursor,omitempty"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+	// This response contains a finished result
+	ResultType *string `form:"resultType,omitempty" json:"resultType,omitempty" xml:"resultType,omitempty"`
+	// Milliseconds this one response may be cached
+	TTLMs *int64 `form:"ttlMs,omitempty" json:"ttlMs,omitempty" xml:"ttlMs,omitempty"`
+	// Whether this response may be reused across authorization contexts
+	CacheScope *string `form:"cacheScope,omitempty" json:"cacheScope,omitempty" xml:"cacheScope,omitempty"`
 }
 
 // PromptsListResponseBody is the type of the "mcp_assistant" service
@@ -125,15 +195,25 @@ type PromptsListResponseBody struct {
 	Prompts []*PromptInfoResponseBody `form:"prompts,omitempty" json:"prompts,omitempty" xml:"prompts,omitempty"`
 	// Cursor for the next page
 	NextCursor *string `form:"nextCursor,omitempty" json:"nextCursor,omitempty" xml:"nextCursor,omitempty"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+	// This response contains a finished result
+	ResultType *string `form:"resultType,omitempty" json:"resultType,omitempty" xml:"resultType,omitempty"`
+	// Milliseconds this one response may be cached
+	TTLMs *int64 `form:"ttlMs,omitempty" json:"ttlMs,omitempty" xml:"ttlMs,omitempty"`
+	// Whether this response may be reused across authorization contexts
+	CacheScope *string `form:"cacheScope,omitempty" json:"cacheScope,omitempty" xml:"cacheScope,omitempty"`
 }
 
-// PromptsGetResponseBody is the type of the "mcp_assistant" service
-// "prompts/get" endpoint HTTP response body.
-type PromptsGetResponseBody struct {
-	// Prompt description
-	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
-	// Prompt messages
-	Messages []*PromptMessageResponseBody `form:"messages,omitempty" json:"messages,omitempty" xml:"messages,omitempty"`
+// CompletionCompleteResponseBody is the type of the "mcp_assistant" service
+// "completion/complete" endpoint HTTP response body.
+type CompletionCompleteResponseBody struct {
+	// Ranked suggestions for this request
+	Completion *CompletionSuggestionResponseBody `form:"completion,omitempty" json:"completion,omitempty" xml:"completion,omitempty"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+	// This response contains a finished result
+	ResultType *string `form:"resultType,omitempty" json:"resultType,omitempty" xml:"resultType,omitempty"`
 }
 
 // ToolsListInvalidParamsResponseBody is the type of the "mcp_assistant"
@@ -193,6 +273,14 @@ type ToolsCallInternalErrorResponseBody struct {
 	Fault *bool `form:"fault,omitempty" json:"fault,omitempty" xml:"fault,omitempty"`
 }
 
+// ToolsCallMissingClientCapabilityResponseBody is the type of the
+// "mcp_assistant" service "tools/call" endpoint HTTP response body for the
+// "missing_client_capability" error.
+type ToolsCallMissingClientCapabilityResponseBody struct {
+	// Capabilities required to fulfill this operation's questions
+	RequiredCapabilities *RequiredClientCapabilitiesResponseBody `form:"requiredCapabilities,omitempty" json:"requiredCapabilities,omitempty" xml:"requiredCapabilities,omitempty"`
+}
+
 // ResourcesListInvalidParamsResponseBody is the type of the "mcp_assistant"
 // service "resources/list" endpoint HTTP response body for the
 // "invalid_params" error.
@@ -235,6 +323,33 @@ type ResourcesReadInvalidParamsResponseBody struct {
 // service "resources/read" endpoint HTTP response body for the
 // "internal_error" error.
 type ResourcesReadInternalErrorResponseBody struct {
+	// Name is the name of this class of errors.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// ID is a unique identifier for this particular occurrence of the problem.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Message is a human-readable explanation specific to this occurrence of the
+	// problem.
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Is the error temporary?
+	Temporary *bool `form:"temporary,omitempty" json:"temporary,omitempty" xml:"temporary,omitempty"`
+	// Is the error a timeout?
+	Timeout *bool `form:"timeout,omitempty" json:"timeout,omitempty" xml:"timeout,omitempty"`
+	// Is the error a server-side fault?
+	Fault *bool `form:"fault,omitempty" json:"fault,omitempty" xml:"fault,omitempty"`
+}
+
+// ResourcesReadMissingClientCapabilityResponseBody is the type of the
+// "mcp_assistant" service "resources/read" endpoint HTTP response body for the
+// "missing_client_capability" error.
+type ResourcesReadMissingClientCapabilityResponseBody struct {
+	// Capabilities required to fulfill this operation's questions
+	RequiredCapabilities *RequiredClientCapabilitiesResponseBody `form:"requiredCapabilities,omitempty" json:"requiredCapabilities,omitempty" xml:"requiredCapabilities,omitempty"`
+}
+
+// ResourcesTemplatesListInvalidParamsResponseBody is the type of the
+// "mcp_assistant" service "resources/templates/list" endpoint HTTP response
+// body for the "invalid_params" error.
+type ResourcesTemplatesListInvalidParamsResponseBody struct {
 	// Name is the name of this class of errors.
 	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
 	// ID is a unique identifier for this particular occurrence of the problem.
@@ -307,9 +422,59 @@ type PromptsGetInternalErrorResponseBody struct {
 	Fault *bool `form:"fault,omitempty" json:"fault,omitempty" xml:"fault,omitempty"`
 }
 
+// PromptsGetMissingClientCapabilityResponseBody is the type of the
+// "mcp_assistant" service "prompts/get" endpoint HTTP response body for the
+// "missing_client_capability" error.
+type PromptsGetMissingClientCapabilityResponseBody struct {
+	// Capabilities required to fulfill this operation's questions
+	RequiredCapabilities *RequiredClientCapabilitiesResponseBody `form:"requiredCapabilities,omitempty" json:"requiredCapabilities,omitempty" xml:"requiredCapabilities,omitempty"`
+}
+
+// CompletionCompleteInvalidParamsResponseBody is the type of the
+// "mcp_assistant" service "completion/complete" endpoint HTTP response body
+// for the "invalid_params" error.
+type CompletionCompleteInvalidParamsResponseBody struct {
+	// Name is the name of this class of errors.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// ID is a unique identifier for this particular occurrence of the problem.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Message is a human-readable explanation specific to this occurrence of the
+	// problem.
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Is the error temporary?
+	Temporary *bool `form:"temporary,omitempty" json:"temporary,omitempty" xml:"temporary,omitempty"`
+	// Is the error a timeout?
+	Timeout *bool `form:"timeout,omitempty" json:"timeout,omitempty" xml:"timeout,omitempty"`
+	// Is the error a server-side fault?
+	Fault *bool `form:"fault,omitempty" json:"fault,omitempty" xml:"fault,omitempty"`
+}
+
+// CompletionCompleteInternalErrorResponseBody is the type of the
+// "mcp_assistant" service "completion/complete" endpoint HTTP response body
+// for the "internal_error" error.
+type CompletionCompleteInternalErrorResponseBody struct {
+	// Name is the name of this class of errors.
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// ID is a unique identifier for this particular occurrence of the problem.
+	ID *string `form:"id,omitempty" json:"id,omitempty" xml:"id,omitempty"`
+	// Message is a human-readable explanation specific to this occurrence of the
+	// problem.
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Is the error temporary?
+	Temporary *bool `form:"temporary,omitempty" json:"temporary,omitempty" xml:"temporary,omitempty"`
+	// Is the error a timeout?
+	Timeout *bool `form:"timeout,omitempty" json:"timeout,omitempty" xml:"timeout,omitempty"`
+	// Is the error a server-side fault?
+	Fault *bool `form:"fault,omitempty" json:"fault,omitempty" xml:"fault,omitempty"`
+}
+
 // ServerCapabilitiesResponseBody is used to define fields on response body
 // types.
 type ServerCapabilitiesResponseBody struct {
+	// Declared extension identifiers and their open settings objects
+	Extensions json.RawMessage `form:"extensions,omitempty" json:"extensions,omitempty" xml:"extensions,omitempty"`
+	// Declared argument suggestion providers
+	Completions *CompletionsCapabilityResponseBody `form:"completions,omitempty" json:"completions,omitempty" xml:"completions,omitempty"`
 	// Tool capabilities
 	Tools *ToolsCapabilityResponseBody `form:"tools,omitempty" json:"tools,omitempty" xml:"tools,omitempty"`
 	// Resource capabilities
@@ -318,26 +483,31 @@ type ServerCapabilitiesResponseBody struct {
 	Prompts *PromptsCapabilityResponseBody `form:"prompts,omitempty" json:"prompts,omitempty" xml:"prompts,omitempty"`
 }
 
+// CompletionsCapabilityResponseBody is used to define fields on response body
+// types.
+type CompletionsCapabilityResponseBody struct {
+}
+
 // ToolsCapabilityResponseBody is used to define fields on response body types.
 type ToolsCapabilityResponseBody struct {
+	// Send authorized tool catalog changes through subscriptions/listen
+	ListChanged *bool `form:"listChanged,omitempty" json:"listChanged,omitempty" xml:"listChanged,omitempty"`
 }
 
 // ResourcesCapabilityResponseBody is used to define fields on response body
 // types.
 type ResourcesCapabilityResponseBody struct {
+	// Send authorized resource catalog changes through subscriptions/listen
+	ListChanged *bool `form:"listChanged,omitempty" json:"listChanged,omitempty" xml:"listChanged,omitempty"`
+	// Accept resource update subscriptions through subscriptions/listen
+	Subscribe *bool `form:"subscribe,omitempty" json:"subscribe,omitempty" xml:"subscribe,omitempty"`
 }
 
 // PromptsCapabilityResponseBody is used to define fields on response body
 // types.
 type PromptsCapabilityResponseBody struct {
-}
-
-// ServerInfoResponseBody is used to define fields on response body types.
-type ServerInfoResponseBody struct {
-	// Server name
-	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
-	// Server version
-	Version *string `form:"version,omitempty" json:"version,omitempty" xml:"version,omitempty"`
+	// Send authorized prompt catalog changes through subscriptions/listen
+	ListChanged *bool `form:"listChanged,omitempty" json:"listChanged,omitempty" xml:"listChanged,omitempty"`
 }
 
 // ToolInfoResponseBody is used to define fields on response body types.
@@ -346,40 +516,244 @@ type ToolInfoResponseBody struct {
 	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
 	// Tool description
 	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
+	// Namespaced extension metadata retained without interpreting its fields
+	Meta json.RawMessage `json:"_meta,omitempty"`
+	// Optional behavior hints; clients must trust the server before acting on them
+	Annotations *ToolAnnotationsResponseBody `form:"annotations,omitempty" json:"annotations,omitempty" xml:"annotations,omitempty"`
 	// JSON Schema for tool input
 	InputSchema json.RawMessage `form:"inputSchema,omitempty" json:"inputSchema,omitempty" xml:"inputSchema,omitempty"`
 	// JSON Schema for structured tool output
 	OutputSchema json.RawMessage `form:"outputSchema,omitempty" json:"outputSchema,omitempty" xml:"outputSchema,omitempty"`
 }
 
-// ContentItemResponseBody is used to define fields on response body types.
-type ContentItemResponseBody struct {
-	// Content type
+// ToolAnnotationsResponseBody is used to define fields on response body types.
+type ToolAnnotationsResponseBody struct {
+	// Human-readable tool display name
+	Title *string `form:"title,omitempty" json:"title,omitempty" xml:"title,omitempty"`
+	// Whether the tool leaves its environment unchanged; absent means false
+	ReadOnlyHint *bool `form:"readOnlyHint,omitempty" json:"readOnlyHint,omitempty" xml:"readOnlyHint,omitempty"`
+	// Whether the tool may remove or replace data; absent means true
+	DestructiveHint *bool `form:"destructiveHint,omitempty" json:"destructiveHint,omitempty" xml:"destructiveHint,omitempty"`
+	// Whether repeating arguments has no additional effects; absent means false
+	IdempotentHint *bool `form:"idempotentHint,omitempty" json:"idempotentHint,omitempty" xml:"idempotentHint,omitempty"`
+	// Whether the tool interacts with external entities; absent means true
+	OpenWorldHint *bool `form:"openWorldHint,omitempty" json:"openWorldHint,omitempty" xml:"openWorldHint,omitempty"`
+}
+
+// ToolsCallCompleteResultResponse is used to define fields on response body
+// types.
+type ToolsCallCompleteResultResponse struct {
+	// Tool execution results
+	Content []*ContentItemResponse `json:"content"`
+	// Whether the tool encountered an error
+	IsError *bool `form:"isError,omitempty" json:"isError,omitempty" xml:"isError,omitempty"`
+	// Structured tool result
+	StructuredContent json.RawMessage `form:"structuredContent,omitempty" json:"structuredContent,omitempty" xml:"structuredContent,omitempty"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+}
+
+// ContentItemResponse is used to define fields on response body types.
+type ContentItemResponse struct {
+	// Selects the required content fields
 	Type *string `form:"type,omitempty" json:"type,omitempty" xml:"type,omitempty"`
-	// Text content
+	// Text for the text variant, including an empty string
 	Text *string `form:"text,omitempty" json:"text,omitempty" xml:"text,omitempty"`
-}
-
-// ResourceInfoResponseBody is used to define fields on response body types.
-type ResourceInfoResponseBody struct {
-	// Resource URI
-	URI *string `form:"uri,omitempty" json:"uri,omitempty" xml:"uri,omitempty"`
-	// Resource name
-	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
-	// Resource description
-	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
-	// Resource MIME type
+	// Base64 bytes for image and audio variants
+	Data *string `form:"data,omitempty" json:"data,omitempty" xml:"data,omitempty"`
+	// Required format for image or audio; optional format for resource links
 	MimeType *string `form:"mimeType,omitempty" json:"mimeType,omitempty" xml:"mimeType,omitempty"`
+	// Required identifier for resource links
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// Required address for resource links
+	URI *string `form:"uri,omitempty" json:"uri,omitempty" xml:"uri,omitempty"`
+	// Optional resource link display name
+	Title *string `form:"title,omitempty" json:"title,omitempty" xml:"title,omitempty"`
+	// Optional resource link description
+	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
+	// Raw bytes in the linked resource before base64 encoding
+	Size *float64 `form:"size,omitempty" json:"size,omitempty" xml:"size,omitempty"`
+	// Optional resource link icons
+	Icons []*ContentIcon `form:"icons,omitempty" json:"icons,omitempty" xml:"icons,omitempty"`
+	// Required text or binary contents for embedded resources
+	Resource *ResourceContentResponse `form:"resource,omitempty" json:"resource,omitempty" xml:"resource,omitempty"`
+	// Optional audience and importance for this content
+	Annotations *ContentAnnotations `form:"annotations,omitempty" json:"annotations,omitempty" xml:"annotations,omitempty"`
+	// Namespaced extension metadata retained without interpreting its fields
+	Meta json.RawMessage `json:"_meta,omitempty"`
 }
 
-// ResourceContentResponseBody is used to define fields on response body types.
-type ResourceContentResponseBody struct {
+// ContentIcon is used to define fields on response body types.
+type ContentIcon struct {
+	// URI of the icon; decoding does not fetch it
+	Src *string `form:"src,omitempty" json:"src,omitempty" xml:"src,omitempty"`
+	// Optional image MIME type
+	MimeType *string `form:"mimeType,omitempty" json:"mimeType,omitempty" xml:"mimeType,omitempty"`
+	// Suggested dimensions or any for scalable icons
+	Sizes []string `form:"sizes,omitempty" json:"sizes,omitempty" xml:"sizes,omitempty"`
+	// Optional light or dark theme
+	Theme *string `form:"theme,omitempty" json:"theme,omitempty" xml:"theme,omitempty"`
+}
+
+// ResourceContentResponse is used to define fields on response body types.
+type ResourceContentResponse struct {
 	// Resource URI
 	URI *string `form:"uri,omitempty" json:"uri,omitempty" xml:"uri,omitempty"`
 	// Content MIME type
 	MimeType *string `form:"mimeType,omitempty" json:"mimeType,omitempty" xml:"mimeType,omitempty"`
-	// Text content
+	// Text content; present only when blob is absent
 	Text *string `form:"text,omitempty" json:"text,omitempty" xml:"text,omitempty"`
+	// Base64 binary content; present only when text is absent
+	Blob *string `form:"blob,omitempty" json:"blob,omitempty" xml:"blob,omitempty"`
+	// Namespaced extension metadata retained without interpreting its fields
+	Meta json.RawMessage `json:"_meta,omitempty"`
+}
+
+// ContentAnnotations is used to define fields on response body types.
+type ContentAnnotations struct {
+	// Roles that should see this content
+	Audience []string `form:"audience,omitempty" json:"audience,omitempty" xml:"audience,omitempty"`
+	// Importance from zero through one, inclusive, for this content item
+	Priority *float64 `form:"priority,omitempty" json:"priority,omitempty" xml:"priority,omitempty"`
+	// Time this content last changed
+	LastModified *string `form:"lastModified,omitempty" json:"lastModified,omitempty" xml:"lastModified,omitempty"`
+}
+
+// InputRequiredResultResponse is used to define fields on response body types.
+type InputRequiredResultResponse struct {
+	// Questions indexed by service-assigned identifiers within this input round
+	InputRequests map[string]*InputRequestResponse `json:"inputRequests,omitzero"`
+	// Opaque service-owned operation state echoed exactly on continuation
+	RequestState *string `form:"requestState,omitempty" json:"requestState,omitempty" xml:"requestState,omitempty"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `form:"_meta,omitempty" json:"_meta,omitempty" xml:"_meta,omitempty"`
+}
+
+// InputRequestResponse is used to define fields on response body types.
+type InputRequestResponse struct {
+	// Client operation requested to complete this input round
+	Method *string `form:"method,omitempty" json:"method,omitempty" xml:"method,omitempty"`
+	// A typed form request or URL-consent request
+	Params *ElicitationParamsResponseBody `form:"params,omitempty" json:"params,omitempty" xml:"params,omitempty"`
+}
+
+// ElicitationFormParamsResponse is used to define fields on response body
+// types.
+type ElicitationFormParamsResponse struct {
+	// Non-sensitive information requested from the user
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// The flat form schema generated from accepted answer content
+	RequestedSchema json.RawMessage `form:"requestedSchema,omitempty" json:"requestedSchema,omitempty" xml:"requestedSchema,omitempty"`
+}
+
+// ElicitationURLParamsResponse is used to define fields on response body types.
+type ElicitationURLParamsResponse struct {
+	// The external interaction the user is asked to approve
+	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	// Absolute URL opened by the consenting host
+	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
+}
+
+// TaskCreatedResponse is used to define fields on response body types.
+type TaskCreatedResponse struct {
+	// Opaque identifier used for later requests to this task
+	TaskID *string `form:"taskId,omitempty" json:"taskId,omitempty" xml:"taskId,omitempty"`
+	// Creation time reported by the service
+	CreatedAt *string `form:"createdAt,omitempty" json:"createdAt,omitempty" xml:"createdAt,omitempty"`
+	// Time of this task observation reported by the service
+	LastUpdatedAt *string `form:"lastUpdatedAt,omitempty" json:"lastUpdatedAt,omitempty" xml:"lastUpdatedAt,omitempty"`
+	// Optional explanation of this task state
+	StatusMessage *string `form:"statusMessage,omitempty" json:"statusMessage,omitempty" xml:"statusMessage,omitempty"`
+	// Retention from creation in integer milliseconds, or null for unlimited
+	// retention
+	TTLMs *int64 `json:"ttlMs"`
+	// Suggested interval before the next read in integer milliseconds
+	PollIntervalMs *int64 `form:"pollIntervalMs,omitempty" json:"pollIntervalMs,omitempty" xml:"pollIntervalMs,omitempty"`
+	// Current state derived from the service's observation
+	Status *string `form:"status,omitempty" json:"status,omitempty" xml:"status,omitempty"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `form:"_meta,omitempty" json:"_meta,omitempty" xml:"_meta,omitempty"`
+}
+
+// RequiredClientCapabilitiesResponseBody is used to define fields on response
+// body types.
+type RequiredClientCapabilitiesResponseBody struct {
+	// Required forms of user input
+	Elicitation *ElicitationCapabilitiesResponseBody `form:"elicitation,omitempty" json:"elicitation,omitempty" xml:"elicitation,omitempty"`
+	// Extensions required to fulfill the operation
+	Extensions map[string]*RequiredExtensionResponseBody `form:"extensions,omitempty" json:"extensions,omitempty" xml:"extensions,omitempty"`
+}
+
+// ElicitationCapabilitiesResponseBody is used to define fields on response
+// body types.
+type ElicitationCapabilitiesResponseBody struct {
+	// Support for non-sensitive form input
+	Form *struct {
+	} `form:"form,omitempty" json:"form,omitempty" xml:"form,omitempty"`
+	// Support for external URL consent
+	URL *struct {
+	} `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
+}
+
+// RequiredExtensionResponseBody is used to define fields on response body
+// types.
+type RequiredExtensionResponseBody struct {
+}
+
+// ResourceInfoResponseBody is used to define fields on response body types.
+type ResourceInfoResponseBody struct {
+	// Resource or template identifier
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// Optional display name
+	Title *string `form:"title,omitempty" json:"title,omitempty" xml:"title,omitempty"`
+	// Available resource contents
+	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
+	// Resource MIME type when known
+	MimeType *string `form:"mimeType,omitempty" json:"mimeType,omitempty" xml:"mimeType,omitempty"`
+	// Optional resource icons
+	Icons []*ContentIcon `form:"icons,omitempty" json:"icons,omitempty" xml:"icons,omitempty"`
+	// Optional audience, importance and modification time
+	Annotations *ContentAnnotations `form:"annotations,omitempty" json:"annotations,omitempty" xml:"annotations,omitempty"`
+	// Namespaced extension metadata retained without interpreting its fields
+	Meta json.RawMessage `json:"_meta,omitempty"`
+	// Exact resource address
+	URI *string `form:"uri,omitempty" json:"uri,omitempty" xml:"uri,omitempty"`
+	// Raw resource content size in bytes before base64 encoding
+	Size *float64 `form:"size,omitempty" json:"size,omitempty" xml:"size,omitempty"`
+}
+
+// ResourcesReadCompleteResultResponse is used to define fields on response
+// body types.
+type ResourcesReadCompleteResultResponse struct {
+	// Resource contents
+	Contents []*ResourceContentResponse `json:"contents"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+	// Milliseconds this one response may be cached
+	TTLMs *int64 `form:"ttlMs,omitempty" json:"ttlMs,omitempty" xml:"ttlMs,omitempty"`
+	// Whether this response may be reused across authorization contexts
+	CacheScope *string `form:"cacheScope,omitempty" json:"cacheScope,omitempty" xml:"cacheScope,omitempty"`
+}
+
+// ResourceTemplateInfoResponseBody is used to define fields on response body
+// types.
+type ResourceTemplateInfoResponseBody struct {
+	// Resource or template identifier
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// Optional display name
+	Title *string `form:"title,omitempty" json:"title,omitempty" xml:"title,omitempty"`
+	// Available resource contents
+	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
+	// Resource MIME type when known
+	MimeType *string `form:"mimeType,omitempty" json:"mimeType,omitempty" xml:"mimeType,omitempty"`
+	// Optional resource icons
+	Icons []*ContentIcon `form:"icons,omitempty" json:"icons,omitempty" xml:"icons,omitempty"`
+	// Optional audience, importance and modification time
+	Annotations *ContentAnnotations `form:"annotations,omitempty" json:"annotations,omitempty" xml:"annotations,omitempty"`
+	// Namespaced extension metadata retained without interpreting its fields
+	Meta json.RawMessage `json:"_meta,omitempty"`
+	// RFC 6570 template expanded by the client
+	URITemplate *string `form:"uriTemplate,omitempty" json:"uriTemplate,omitempty" xml:"uriTemplate,omitempty"`
 }
 
 // PromptInfoResponseBody is used to define fields on response body types.
@@ -402,45 +776,837 @@ type PromptArgumentResponseBody struct {
 	Required *bool `form:"required,omitempty" json:"required,omitempty" xml:"required,omitempty"`
 }
 
-// PromptMessageResponseBody is used to define fields on response body types.
-type PromptMessageResponseBody struct {
+// PromptsGetCompleteResultResponse is used to define fields on response body
+// types.
+type PromptsGetCompleteResultResponse struct {
+	// Prompt description
+	Description *string `form:"description,omitempty" json:"description,omitempty" xml:"description,omitempty"`
+	// Prompt messages
+	Messages []*PromptMessageResponse `json:"messages"`
+	// Namespaced protocol metadata and extension values
+	Meta json.RawMessage `json:"_meta,omitempty"`
+}
+
+// PromptMessageResponse is used to define fields on response body types.
+type PromptMessageResponse struct {
 	// Message role
 	Role *string `form:"role,omitempty" json:"role,omitempty" xml:"role,omitempty"`
 	// Message content
-	Content *MessageContentResponseBody `form:"content,omitempty" json:"content,omitempty" xml:"content,omitempty"`
+	Content *ContentItemResponse `form:"content,omitempty" json:"content,omitempty" xml:"content,omitempty"`
 }
 
-// MessageContentResponseBody is used to define fields on response body types.
-type MessageContentResponseBody struct {
-	// Content type
-	Type *string `form:"type,omitempty" json:"type,omitempty" xml:"type,omitempty"`
-	// Text content
-	Text *string `form:"text,omitempty" json:"text,omitempty" xml:"text,omitempty"`
+// CompletionSuggestionResponseBody is used to define fields on response body
+// types.
+type CompletionSuggestionResponseBody struct {
+	// Suggestions in service-selected relevance order
+	Values []*string `form:"values,omitempty" json:"values,omitempty" xml:"values,omitempty"`
+	// Total available matches, which can exceed the returned count
+	Total *int64 `form:"total,omitempty" json:"total,omitempty" xml:"total,omitempty"`
+	// Whether further matches exist
+	HasMore *bool `form:"hasMore,omitempty" json:"hasMore,omitempty" xml:"hasMore,omitempty"`
 }
 
-// ClientInfoRequestBody is used to define fields on request body types.
-type ClientInfoRequestBody struct {
-	// Client name
+// CompletionReferenceRequestBody is used to define fields on request body
+// types.
+type CompletionReferenceRequestBody struct {
+	// Whether the reference names a prompt or resource
+	Type string `form:"type" json:"type" xml:"type"`
+	// Prompt name when type is ref/prompt
+	Name *string `form:"name,omitempty" json:"name,omitempty" xml:"name,omitempty"`
+	// Optional display title for a prompt reference
+	Title *string `form:"title,omitempty" json:"title,omitempty" xml:"title,omitempty"`
+	// Resource URI or URI template when type is ref/resource
+	URI *string `form:"uri,omitempty" json:"uri,omitempty" xml:"uri,omitempty"`
+}
+
+// CompletionArgumentRequestBody is used to define fields on request body types.
+type CompletionArgumentRequestBody struct {
+	// Declared argument currently being entered
 	Name string `form:"name" json:"name" xml:"name"`
-	// Client version
-	Version string `form:"version" json:"version" xml:"version"`
+	// Partial text used by the service to find suggestions
+	Value string `form:"value" json:"value" xml:"value"`
 }
 
-// ClientCapabilitiesRequestBody is used to define fields on request body types.
-type ClientCapabilitiesRequestBody struct {
+// CompletionContextRequestBody is used to define fields on request body types.
+type CompletionContextRequestBody struct {
+	// Previously resolved argument values
+	Arguments map[string]string `form:"arguments,omitempty" json:"arguments,omitempty" xml:"arguments,omitempty"`
 }
 
-// NewInitializeRequestBody builds the HTTP request body from the payload of
-// the "initialize" endpoint of the "mcp_assistant" service.
-func NewInitializeRequestBody(p *mcpassistant.InitializePayload) *InitializeRequestBody {
-	body := &InitializeRequestBody{
-		ProtocolVersion: p.ProtocolVersion,
+// ElicitationParamsResponseBody holds exactly one of its branch values.
+type ElicitationParamsResponseBody struct {
+	kind ElicitationParamsResponseBodyKind
+	form *ElicitationFormParamsResponse
+	url_ *ElicitationURLParamsResponse
+}
+
+// ElicitationParamsResponseBodyKind records which ElicitationParamsResponseBody branch is selected.
+type ElicitationParamsResponseBodyKind string
+
+const (
+	// ElicitationParamsResponseBodyKindForm identifies the form branch.
+	ElicitationParamsResponseBodyKindForm ElicitationParamsResponseBodyKind = "form"
+	// ElicitationParamsResponseBodyKindURL identifies the url branch.
+	ElicitationParamsResponseBodyKindURL ElicitationParamsResponseBodyKind = "url"
+)
+
+// Kind returns the selected branch.
+func (u ElicitationParamsResponseBody) Kind() ElicitationParamsResponseBodyKind {
+	return u.kind
+}
+
+// NewElicitationParamsResponseBodyForm constructs ElicitationParamsResponseBody with the form branch set.
+func NewElicitationParamsResponseBodyForm(v *ElicitationFormParamsResponse) ElicitationParamsResponseBody {
+	return ElicitationParamsResponseBody{
+		kind: ElicitationParamsResponseBodyKindForm,
+		form: v,
 	}
-	if p.ClientInfo != nil {
-		body.ClientInfo = marshalMcpassistantClientInfoToClientInfoRequestBody(p.ClientInfo)
+}
+
+// AsForm returns the value when the form branch is selected.
+func (u ElicitationParamsResponseBody) AsForm() (_ *ElicitationFormParamsResponse, ok bool) {
+	if u.kind != ElicitationParamsResponseBodyKindForm {
+		return
 	}
-	if p.Capabilities != nil {
-		body.Capabilities = marshalMcpassistantClientCapabilitiesToClientCapabilitiesRequestBody(p.Capabilities)
+	return u.form, true
+}
+
+// SetForm selects the form branch and stores v.
+func (u *ElicitationParamsResponseBody) SetForm(v *ElicitationFormParamsResponse) {
+	*u = ElicitationParamsResponseBody{
+		kind: ElicitationParamsResponseBodyKindForm,
+		form: v,
+	}
+}
+
+// NewElicitationParamsResponseBodyURL constructs ElicitationParamsResponseBody with the url branch set.
+func NewElicitationParamsResponseBodyURL(v *ElicitationURLParamsResponse) ElicitationParamsResponseBody {
+	return ElicitationParamsResponseBody{
+		kind: ElicitationParamsResponseBodyKindURL,
+		url_: v,
+	}
+}
+
+// AsURL returns the value when the url branch is selected.
+func (u ElicitationParamsResponseBody) AsURL() (_ *ElicitationURLParamsResponse, ok bool) {
+	if u.kind != ElicitationParamsResponseBodyKindURL {
+		return
+	}
+	return u.url_, true
+}
+
+// SetURL selects the url branch and stores v.
+func (u *ElicitationParamsResponseBody) SetURL(v *ElicitationURLParamsResponse) {
+	*u = ElicitationParamsResponseBody{
+		kind: ElicitationParamsResponseBodyKindURL,
+		url_: v,
+	}
+}
+
+// Validate ensures exactly one valid branch is selected.
+func (u ElicitationParamsResponseBody) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u ElicitationParamsResponseBody) Value() (any, error) {
+	switch u.kind {
+	case "":
+		return nil, goa.InvalidEnumValueError("mode", "", []any{
+			string(ElicitationParamsResponseBodyKindForm),
+			string(ElicitationParamsResponseBodyKindURL),
+		})
+	case ElicitationParamsResponseBodyKindForm:
+		if u.form == nil {
+			return nil, goa.MissingFieldError("value", "ElicitationParamsResponseBody")
+		}
+		return u.form, nil
+	case ElicitationParamsResponseBodyKindURL:
+		if u.url_ == nil {
+			return nil, goa.MissingFieldError("value", "ElicitationParamsResponseBody")
+		}
+		return u.url_, nil
+	default:
+		return nil, goa.InvalidEnumValueError("mode", u.kind, []any{
+			string(ElicitationParamsResponseBodyKindForm),
+			string(ElicitationParamsResponseBodyKindURL),
+		})
+	}
+}
+
+// MarshalJSON writes the selected object branch beside its discriminator.
+func (u ElicitationParamsResponseBody) MarshalJSON() ([]byte, error) {
+	value, err := u.Value()
+	if err != nil {
+		return nil, err
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return nil, err
+	}
+	if fields == nil {
+		return nil, goa.InvalidFieldTypeError("mode", nil, "non-null JSON object")
+	}
+	if _, exists := fields["mode"]; exists {
+		return nil, fmt.Errorf("ElicitationParamsResponseBody branch already contains discriminator %q", "mode")
+	}
+	tag, err := json.Marshal(string(u.kind))
+	if err != nil {
+		return nil, err
+	}
+	fields["mode"] = tag
+	return json.Marshal(fields)
+}
+
+// UnmarshalJSON reads the discriminator and decodes its declared object branch.
+func (u *ElicitationParamsResponseBody) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	tag, exists := fields["mode"]
+	if !exists {
+		return goa.MissingFieldError("mode", "ElicitationParamsResponseBody")
+	}
+	if bytes.Equal(bytes.TrimSpace(tag), []byte("null")) {
+		return goa.InvalidFieldTypeError("mode", nil, "JSON string")
+	}
+	var raw struct {
+		Type  string
+		Value json.RawMessage
+	}
+	if err := json.Unmarshal(tag, &raw.Type); err != nil {
+		return err
+	}
+	delete(fields, "mode")
+	value, err := json.Marshal(fields)
+	if err != nil {
+		return err
+	}
+	raw.Value = value
+	switch raw.Type {
+	case string(ElicitationParamsResponseBodyKindForm):
+		var v *ElicitationFormParamsResponse
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetForm(v)
+	case string(ElicitationParamsResponseBodyKindURL):
+		var v *ElicitationURLParamsResponse
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetURL(v)
+	default:
+		if raw.Type == "" {
+			return goa.MissingFieldError("mode", "ElicitationParamsResponseBody")
+		}
+		return goa.InvalidEnumValueError("mode", raw.Type, []any{
+			string(ElicitationParamsResponseBodyKindForm),
+			string(ElicitationParamsResponseBodyKindURL),
+		})
+	}
+	return nil
+}
+
+// PromptsGetOutcomeResponseBody holds exactly one of its branch values.
+type PromptsGetOutcomeResponseBody struct {
+	kind          PromptsGetOutcomeResponseBodyKind
+	complete      *PromptsGetCompleteResultResponse
+	inputRequired *InputRequiredResultResponse
+}
+
+// PromptsGetOutcomeResponseBodyKind records which PromptsGetOutcomeResponseBody branch is selected.
+type PromptsGetOutcomeResponseBodyKind string
+
+const (
+	// PromptsGetOutcomeResponseBodyKindComplete identifies the complete branch.
+	PromptsGetOutcomeResponseBodyKindComplete PromptsGetOutcomeResponseBodyKind = "complete"
+	// PromptsGetOutcomeResponseBodyKindInputRequired identifies the input_required branch.
+	PromptsGetOutcomeResponseBodyKindInputRequired PromptsGetOutcomeResponseBodyKind = "input_required"
+)
+
+// Kind returns the selected branch.
+func (u PromptsGetOutcomeResponseBody) Kind() PromptsGetOutcomeResponseBodyKind {
+	return u.kind
+}
+
+// NewPromptsGetOutcomeResponseBodyComplete constructs PromptsGetOutcomeResponseBody with the complete branch set.
+func NewPromptsGetOutcomeResponseBodyComplete(v *PromptsGetCompleteResultResponse) PromptsGetOutcomeResponseBody {
+	return PromptsGetOutcomeResponseBody{
+		kind:     PromptsGetOutcomeResponseBodyKindComplete,
+		complete: v,
+	}
+}
+
+// AsComplete returns the value when the complete branch is selected.
+func (u PromptsGetOutcomeResponseBody) AsComplete() (_ *PromptsGetCompleteResultResponse, ok bool) {
+	if u.kind != PromptsGetOutcomeResponseBodyKindComplete {
+		return
+	}
+	return u.complete, true
+}
+
+// SetComplete selects the complete branch and stores v.
+func (u *PromptsGetOutcomeResponseBody) SetComplete(v *PromptsGetCompleteResultResponse) {
+	*u = PromptsGetOutcomeResponseBody{
+		kind:     PromptsGetOutcomeResponseBodyKindComplete,
+		complete: v,
+	}
+}
+
+// NewPromptsGetOutcomeResponseBodyInputRequired constructs PromptsGetOutcomeResponseBody with the input_required branch set.
+func NewPromptsGetOutcomeResponseBodyInputRequired(v *InputRequiredResultResponse) PromptsGetOutcomeResponseBody {
+	return PromptsGetOutcomeResponseBody{
+		kind:          PromptsGetOutcomeResponseBodyKindInputRequired,
+		inputRequired: v,
+	}
+}
+
+// AsInputRequired returns the value when the input_required branch is selected.
+func (u PromptsGetOutcomeResponseBody) AsInputRequired() (_ *InputRequiredResultResponse, ok bool) {
+	if u.kind != PromptsGetOutcomeResponseBodyKindInputRequired {
+		return
+	}
+	return u.inputRequired, true
+}
+
+// SetInputRequired selects the input_required branch and stores v.
+func (u *PromptsGetOutcomeResponseBody) SetInputRequired(v *InputRequiredResultResponse) {
+	*u = PromptsGetOutcomeResponseBody{
+		kind:          PromptsGetOutcomeResponseBodyKindInputRequired,
+		inputRequired: v,
+	}
+}
+
+// Validate ensures exactly one valid branch is selected.
+func (u PromptsGetOutcomeResponseBody) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u PromptsGetOutcomeResponseBody) Value() (any, error) {
+	switch u.kind {
+	case "":
+		return nil, goa.InvalidEnumValueError("resultType", "", []any{
+			string(PromptsGetOutcomeResponseBodyKindComplete),
+			string(PromptsGetOutcomeResponseBodyKindInputRequired),
+		})
+	case PromptsGetOutcomeResponseBodyKindComplete:
+		if u.complete == nil {
+			return nil, goa.MissingFieldError("value", "PromptsGetOutcomeResponseBody")
+		}
+		return u.complete, nil
+	case PromptsGetOutcomeResponseBodyKindInputRequired:
+		if u.inputRequired == nil {
+			return nil, goa.MissingFieldError("value", "PromptsGetOutcomeResponseBody")
+		}
+		return u.inputRequired, nil
+	default:
+		return nil, goa.InvalidEnumValueError("resultType", u.kind, []any{
+			string(PromptsGetOutcomeResponseBodyKindComplete),
+			string(PromptsGetOutcomeResponseBodyKindInputRequired),
+		})
+	}
+}
+
+// MarshalJSON writes the selected object branch beside its discriminator.
+func (u PromptsGetOutcomeResponseBody) MarshalJSON() ([]byte, error) {
+	value, err := u.Value()
+	if err != nil {
+		return nil, err
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return nil, err
+	}
+	if fields == nil {
+		return nil, goa.InvalidFieldTypeError("resultType", nil, "non-null JSON object")
+	}
+	if _, exists := fields["resultType"]; exists {
+		return nil, fmt.Errorf("PromptsGetOutcomeResponseBody branch already contains discriminator %q", "resultType")
+	}
+	tag, err := json.Marshal(string(u.kind))
+	if err != nil {
+		return nil, err
+	}
+	fields["resultType"] = tag
+	return json.Marshal(fields)
+}
+
+// UnmarshalJSON reads the discriminator and decodes its declared object branch.
+func (u *PromptsGetOutcomeResponseBody) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	tag, exists := fields["resultType"]
+	if !exists {
+		return goa.MissingFieldError("resultType", "PromptsGetOutcomeResponseBody")
+	}
+	if bytes.Equal(bytes.TrimSpace(tag), []byte("null")) {
+		return goa.InvalidFieldTypeError("resultType", nil, "JSON string")
+	}
+	var raw struct {
+		Type  string
+		Value json.RawMessage
+	}
+	if err := json.Unmarshal(tag, &raw.Type); err != nil {
+		return err
+	}
+	delete(fields, "resultType")
+	value, err := json.Marshal(fields)
+	if err != nil {
+		return err
+	}
+	raw.Value = value
+	switch raw.Type {
+	case string(PromptsGetOutcomeResponseBodyKindComplete):
+		var v *PromptsGetCompleteResultResponse
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetComplete(v)
+	case string(PromptsGetOutcomeResponseBodyKindInputRequired):
+		var v *InputRequiredResultResponse
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetInputRequired(v)
+	default:
+		if raw.Type == "" {
+			return goa.MissingFieldError("resultType", "PromptsGetOutcomeResponseBody")
+		}
+		return goa.InvalidEnumValueError("resultType", raw.Type, []any{
+			string(PromptsGetOutcomeResponseBodyKindComplete),
+			string(PromptsGetOutcomeResponseBodyKindInputRequired),
+		})
+	}
+	return nil
+}
+
+// ResourcesReadOutcomeResponseBody holds exactly one of its branch values.
+type ResourcesReadOutcomeResponseBody struct {
+	kind          ResourcesReadOutcomeResponseBodyKind
+	complete      *ResourcesReadCompleteResultResponse
+	inputRequired *InputRequiredResultResponse
+}
+
+// ResourcesReadOutcomeResponseBodyKind records which ResourcesReadOutcomeResponseBody branch is selected.
+type ResourcesReadOutcomeResponseBodyKind string
+
+const (
+	// ResourcesReadOutcomeResponseBodyKindComplete identifies the complete branch.
+	ResourcesReadOutcomeResponseBodyKindComplete ResourcesReadOutcomeResponseBodyKind = "complete"
+	// ResourcesReadOutcomeResponseBodyKindInputRequired identifies the input_required branch.
+	ResourcesReadOutcomeResponseBodyKindInputRequired ResourcesReadOutcomeResponseBodyKind = "input_required"
+)
+
+// Kind returns the selected branch.
+func (u ResourcesReadOutcomeResponseBody) Kind() ResourcesReadOutcomeResponseBodyKind {
+	return u.kind
+}
+
+// NewResourcesReadOutcomeResponseBodyComplete constructs ResourcesReadOutcomeResponseBody with the complete branch set.
+func NewResourcesReadOutcomeResponseBodyComplete(v *ResourcesReadCompleteResultResponse) ResourcesReadOutcomeResponseBody {
+	return ResourcesReadOutcomeResponseBody{
+		kind:     ResourcesReadOutcomeResponseBodyKindComplete,
+		complete: v,
+	}
+}
+
+// AsComplete returns the value when the complete branch is selected.
+func (u ResourcesReadOutcomeResponseBody) AsComplete() (_ *ResourcesReadCompleteResultResponse, ok bool) {
+	if u.kind != ResourcesReadOutcomeResponseBodyKindComplete {
+		return
+	}
+	return u.complete, true
+}
+
+// SetComplete selects the complete branch and stores v.
+func (u *ResourcesReadOutcomeResponseBody) SetComplete(v *ResourcesReadCompleteResultResponse) {
+	*u = ResourcesReadOutcomeResponseBody{
+		kind:     ResourcesReadOutcomeResponseBodyKindComplete,
+		complete: v,
+	}
+}
+
+// NewResourcesReadOutcomeResponseBodyInputRequired constructs ResourcesReadOutcomeResponseBody with the input_required branch set.
+func NewResourcesReadOutcomeResponseBodyInputRequired(v *InputRequiredResultResponse) ResourcesReadOutcomeResponseBody {
+	return ResourcesReadOutcomeResponseBody{
+		kind:          ResourcesReadOutcomeResponseBodyKindInputRequired,
+		inputRequired: v,
+	}
+}
+
+// AsInputRequired returns the value when the input_required branch is selected.
+func (u ResourcesReadOutcomeResponseBody) AsInputRequired() (_ *InputRequiredResultResponse, ok bool) {
+	if u.kind != ResourcesReadOutcomeResponseBodyKindInputRequired {
+		return
+	}
+	return u.inputRequired, true
+}
+
+// SetInputRequired selects the input_required branch and stores v.
+func (u *ResourcesReadOutcomeResponseBody) SetInputRequired(v *InputRequiredResultResponse) {
+	*u = ResourcesReadOutcomeResponseBody{
+		kind:          ResourcesReadOutcomeResponseBodyKindInputRequired,
+		inputRequired: v,
+	}
+}
+
+// Validate ensures exactly one valid branch is selected.
+func (u ResourcesReadOutcomeResponseBody) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u ResourcesReadOutcomeResponseBody) Value() (any, error) {
+	switch u.kind {
+	case "":
+		return nil, goa.InvalidEnumValueError("resultType", "", []any{
+			string(ResourcesReadOutcomeResponseBodyKindComplete),
+			string(ResourcesReadOutcomeResponseBodyKindInputRequired),
+		})
+	case ResourcesReadOutcomeResponseBodyKindComplete:
+		if u.complete == nil {
+			return nil, goa.MissingFieldError("value", "ResourcesReadOutcomeResponseBody")
+		}
+		return u.complete, nil
+	case ResourcesReadOutcomeResponseBodyKindInputRequired:
+		if u.inputRequired == nil {
+			return nil, goa.MissingFieldError("value", "ResourcesReadOutcomeResponseBody")
+		}
+		return u.inputRequired, nil
+	default:
+		return nil, goa.InvalidEnumValueError("resultType", u.kind, []any{
+			string(ResourcesReadOutcomeResponseBodyKindComplete),
+			string(ResourcesReadOutcomeResponseBodyKindInputRequired),
+		})
+	}
+}
+
+// MarshalJSON writes the selected object branch beside its discriminator.
+func (u ResourcesReadOutcomeResponseBody) MarshalJSON() ([]byte, error) {
+	value, err := u.Value()
+	if err != nil {
+		return nil, err
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return nil, err
+	}
+	if fields == nil {
+		return nil, goa.InvalidFieldTypeError("resultType", nil, "non-null JSON object")
+	}
+	if _, exists := fields["resultType"]; exists {
+		return nil, fmt.Errorf("ResourcesReadOutcomeResponseBody branch already contains discriminator %q", "resultType")
+	}
+	tag, err := json.Marshal(string(u.kind))
+	if err != nil {
+		return nil, err
+	}
+	fields["resultType"] = tag
+	return json.Marshal(fields)
+}
+
+// UnmarshalJSON reads the discriminator and decodes its declared object branch.
+func (u *ResourcesReadOutcomeResponseBody) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	tag, exists := fields["resultType"]
+	if !exists {
+		return goa.MissingFieldError("resultType", "ResourcesReadOutcomeResponseBody")
+	}
+	if bytes.Equal(bytes.TrimSpace(tag), []byte("null")) {
+		return goa.InvalidFieldTypeError("resultType", nil, "JSON string")
+	}
+	var raw struct {
+		Type  string
+		Value json.RawMessage
+	}
+	if err := json.Unmarshal(tag, &raw.Type); err != nil {
+		return err
+	}
+	delete(fields, "resultType")
+	value, err := json.Marshal(fields)
+	if err != nil {
+		return err
+	}
+	raw.Value = value
+	switch raw.Type {
+	case string(ResourcesReadOutcomeResponseBodyKindComplete):
+		var v *ResourcesReadCompleteResultResponse
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetComplete(v)
+	case string(ResourcesReadOutcomeResponseBodyKindInputRequired):
+		var v *InputRequiredResultResponse
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetInputRequired(v)
+	default:
+		if raw.Type == "" {
+			return goa.MissingFieldError("resultType", "ResourcesReadOutcomeResponseBody")
+		}
+		return goa.InvalidEnumValueError("resultType", raw.Type, []any{
+			string(ResourcesReadOutcomeResponseBodyKindComplete),
+			string(ResourcesReadOutcomeResponseBodyKindInputRequired),
+		})
+	}
+	return nil
+}
+
+// ToolsCallOutcomeResponseBody holds exactly one of its branch values.
+type ToolsCallOutcomeResponseBody struct {
+	kind          ToolsCallOutcomeResponseBodyKind
+	complete      *ToolsCallCompleteResultResponse
+	inputRequired *InputRequiredResultResponse
+	task          *TaskCreatedResponse
+}
+
+// ToolsCallOutcomeResponseBodyKind records which ToolsCallOutcomeResponseBody branch is selected.
+type ToolsCallOutcomeResponseBodyKind string
+
+const (
+	// ToolsCallOutcomeResponseBodyKindComplete identifies the complete branch.
+	ToolsCallOutcomeResponseBodyKindComplete ToolsCallOutcomeResponseBodyKind = "complete"
+	// ToolsCallOutcomeResponseBodyKindInputRequired identifies the input_required branch.
+	ToolsCallOutcomeResponseBodyKindInputRequired ToolsCallOutcomeResponseBodyKind = "input_required"
+	// ToolsCallOutcomeResponseBodyKindTask identifies the task branch.
+	ToolsCallOutcomeResponseBodyKindTask ToolsCallOutcomeResponseBodyKind = "task"
+)
+
+// Kind returns the selected branch.
+func (u ToolsCallOutcomeResponseBody) Kind() ToolsCallOutcomeResponseBodyKind {
+	return u.kind
+}
+
+// NewToolsCallOutcomeResponseBodyComplete constructs ToolsCallOutcomeResponseBody with the complete branch set.
+func NewToolsCallOutcomeResponseBodyComplete(v *ToolsCallCompleteResultResponse) ToolsCallOutcomeResponseBody {
+	return ToolsCallOutcomeResponseBody{
+		kind:     ToolsCallOutcomeResponseBodyKindComplete,
+		complete: v,
+	}
+}
+
+// AsComplete returns the value when the complete branch is selected.
+func (u ToolsCallOutcomeResponseBody) AsComplete() (_ *ToolsCallCompleteResultResponse, ok bool) {
+	if u.kind != ToolsCallOutcomeResponseBodyKindComplete {
+		return
+	}
+	return u.complete, true
+}
+
+// SetComplete selects the complete branch and stores v.
+func (u *ToolsCallOutcomeResponseBody) SetComplete(v *ToolsCallCompleteResultResponse) {
+	*u = ToolsCallOutcomeResponseBody{
+		kind:     ToolsCallOutcomeResponseBodyKindComplete,
+		complete: v,
+	}
+}
+
+// NewToolsCallOutcomeResponseBodyInputRequired constructs ToolsCallOutcomeResponseBody with the input_required branch set.
+func NewToolsCallOutcomeResponseBodyInputRequired(v *InputRequiredResultResponse) ToolsCallOutcomeResponseBody {
+	return ToolsCallOutcomeResponseBody{
+		kind:          ToolsCallOutcomeResponseBodyKindInputRequired,
+		inputRequired: v,
+	}
+}
+
+// AsInputRequired returns the value when the input_required branch is selected.
+func (u ToolsCallOutcomeResponseBody) AsInputRequired() (_ *InputRequiredResultResponse, ok bool) {
+	if u.kind != ToolsCallOutcomeResponseBodyKindInputRequired {
+		return
+	}
+	return u.inputRequired, true
+}
+
+// SetInputRequired selects the input_required branch and stores v.
+func (u *ToolsCallOutcomeResponseBody) SetInputRequired(v *InputRequiredResultResponse) {
+	*u = ToolsCallOutcomeResponseBody{
+		kind:          ToolsCallOutcomeResponseBodyKindInputRequired,
+		inputRequired: v,
+	}
+}
+
+// NewToolsCallOutcomeResponseBodyTask constructs ToolsCallOutcomeResponseBody with the task branch set.
+func NewToolsCallOutcomeResponseBodyTask(v *TaskCreatedResponse) ToolsCallOutcomeResponseBody {
+	return ToolsCallOutcomeResponseBody{
+		kind: ToolsCallOutcomeResponseBodyKindTask,
+		task: v,
+	}
+}
+
+// AsTask returns the value when the task branch is selected.
+func (u ToolsCallOutcomeResponseBody) AsTask() (_ *TaskCreatedResponse, ok bool) {
+	if u.kind != ToolsCallOutcomeResponseBodyKindTask {
+		return
+	}
+	return u.task, true
+}
+
+// SetTask selects the task branch and stores v.
+func (u *ToolsCallOutcomeResponseBody) SetTask(v *TaskCreatedResponse) {
+	*u = ToolsCallOutcomeResponseBody{
+		kind: ToolsCallOutcomeResponseBodyKindTask,
+		task: v,
+	}
+}
+
+// Validate ensures exactly one valid branch is selected.
+func (u ToolsCallOutcomeResponseBody) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u ToolsCallOutcomeResponseBody) Value() (any, error) {
+	switch u.kind {
+	case "":
+		return nil, goa.InvalidEnumValueError("resultType", "", []any{
+			string(ToolsCallOutcomeResponseBodyKindComplete),
+			string(ToolsCallOutcomeResponseBodyKindInputRequired),
+			string(ToolsCallOutcomeResponseBodyKindTask),
+		})
+	case ToolsCallOutcomeResponseBodyKindComplete:
+		if u.complete == nil {
+			return nil, goa.MissingFieldError("value", "ToolsCallOutcomeResponseBody")
+		}
+		return u.complete, nil
+	case ToolsCallOutcomeResponseBodyKindInputRequired:
+		if u.inputRequired == nil {
+			return nil, goa.MissingFieldError("value", "ToolsCallOutcomeResponseBody")
+		}
+		return u.inputRequired, nil
+	case ToolsCallOutcomeResponseBodyKindTask:
+		if u.task == nil {
+			return nil, goa.MissingFieldError("value", "ToolsCallOutcomeResponseBody")
+		}
+		return u.task, nil
+	default:
+		return nil, goa.InvalidEnumValueError("resultType", u.kind, []any{
+			string(ToolsCallOutcomeResponseBodyKindComplete),
+			string(ToolsCallOutcomeResponseBodyKindInputRequired),
+			string(ToolsCallOutcomeResponseBodyKindTask),
+		})
+	}
+}
+
+// MarshalJSON writes the selected object branch beside its discriminator.
+func (u ToolsCallOutcomeResponseBody) MarshalJSON() ([]byte, error) {
+	value, err := u.Value()
+	if err != nil {
+		return nil, err
+	}
+	data, err := json.Marshal(value)
+	if err != nil {
+		return nil, err
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return nil, err
+	}
+	if fields == nil {
+		return nil, goa.InvalidFieldTypeError("resultType", nil, "non-null JSON object")
+	}
+	if _, exists := fields["resultType"]; exists {
+		return nil, fmt.Errorf("ToolsCallOutcomeResponseBody branch already contains discriminator %q", "resultType")
+	}
+	tag, err := json.Marshal(string(u.kind))
+	if err != nil {
+		return nil, err
+	}
+	fields["resultType"] = tag
+	return json.Marshal(fields)
+}
+
+// UnmarshalJSON reads the discriminator and decodes its declared object branch.
+func (u *ToolsCallOutcomeResponseBody) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	tag, exists := fields["resultType"]
+	if !exists {
+		return goa.MissingFieldError("resultType", "ToolsCallOutcomeResponseBody")
+	}
+	if bytes.Equal(bytes.TrimSpace(tag), []byte("null")) {
+		return goa.InvalidFieldTypeError("resultType", nil, "JSON string")
+	}
+	var raw struct {
+		Type  string
+		Value json.RawMessage
+	}
+	if err := json.Unmarshal(tag, &raw.Type); err != nil {
+		return err
+	}
+	delete(fields, "resultType")
+	value, err := json.Marshal(fields)
+	if err != nil {
+		return err
+	}
+	raw.Value = value
+	switch raw.Type {
+	case string(ToolsCallOutcomeResponseBodyKindComplete):
+		var v *ToolsCallCompleteResultResponse
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetComplete(v)
+	case string(ToolsCallOutcomeResponseBodyKindInputRequired):
+		var v *InputRequiredResultResponse
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetInputRequired(v)
+	case string(ToolsCallOutcomeResponseBodyKindTask):
+		var v *TaskCreatedResponse
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetTask(v)
+	default:
+		if raw.Type == "" {
+			return goa.MissingFieldError("resultType", "ToolsCallOutcomeResponseBody")
+		}
+		return goa.InvalidEnumValueError("resultType", raw.Type, []any{
+			string(ToolsCallOutcomeResponseBodyKindComplete),
+			string(ToolsCallOutcomeResponseBodyKindInputRequired),
+			string(ToolsCallOutcomeResponseBodyKindTask),
+		})
+	}
+	return nil
+}
+
+// NewServerDiscoverRequestBody builds the HTTP request body from the payload
+// of the "server/discover" endpoint of the "mcp_assistant" service.
+func NewServerDiscoverRequestBody(p *mcpassistant.DiscoverPayload) *ServerDiscoverRequestBody {
+	body := &ServerDiscoverRequestBody{
+		Meta: p.Meta,
 	}
 	return body
 }
@@ -449,7 +1615,8 @@ func NewInitializeRequestBody(p *mcpassistant.InitializePayload) *InitializeRequ
 // "tools/list" endpoint of the "mcp_assistant" service.
 func NewToolsListRequestBody(p *mcpassistant.ToolsListPayload) *ToolsListRequestBody {
 	body := &ToolsListRequestBody{
-		Cursor: p.Params.Cursor,
+		Cursor: p.Cursor,
+		Meta:   p.Meta,
 	}
 	return body
 }
@@ -458,8 +1625,18 @@ func NewToolsListRequestBody(p *mcpassistant.ToolsListPayload) *ToolsListRequest
 // "tools/call" endpoint of the "mcp_assistant" service.
 func NewToolsCallRequestBody(p *mcpassistant.ToolsCallPayload) *ToolsCallRequestBody {
 	body := &ToolsCallRequestBody{
-		Name:      p.Name,
-		Arguments: p.Arguments,
+		Name:         p.Name,
+		Arguments:    p.Arguments,
+		Meta:         p.Meta,
+		RequestState: p.RequestState,
+	}
+	if p.InputResponses != nil {
+		body.InputResponses = make(map[string]json.RawMessage, len(p.InputResponses))
+		for key, val := range p.InputResponses {
+			tk := key
+			tv := val
+			body.InputResponses[tk] = tv
+		}
 	}
 	return body
 }
@@ -468,7 +1645,8 @@ func NewToolsCallRequestBody(p *mcpassistant.ToolsCallPayload) *ToolsCallRequest
 // the "resources/list" endpoint of the "mcp_assistant" service.
 func NewResourcesListRequestBody(p *mcpassistant.ResourcesListPayload) *ResourcesListRequestBody {
 	body := &ResourcesListRequestBody{
-		Cursor: p.Params.Cursor,
+		Cursor: p.Cursor,
+		Meta:   p.Meta,
 	}
 	return body
 }
@@ -477,7 +1655,28 @@ func NewResourcesListRequestBody(p *mcpassistant.ResourcesListPayload) *Resource
 // the "resources/read" endpoint of the "mcp_assistant" service.
 func NewResourcesReadRequestBody(p *mcpassistant.ResourcesReadPayload) *ResourcesReadRequestBody {
 	body := &ResourcesReadRequestBody{
-		URI: p.URI,
+		URI:          p.URI,
+		Meta:         p.Meta,
+		RequestState: p.RequestState,
+	}
+	if p.InputResponses != nil {
+		body.InputResponses = make(map[string]json.RawMessage, len(p.InputResponses))
+		for key, val := range p.InputResponses {
+			tk := key
+			tv := val
+			body.InputResponses[tk] = tv
+		}
+	}
+	return body
+}
+
+// NewResourcesTemplatesListRequestBody builds the HTTP request body from the
+// payload of the "resources/templates/list" endpoint of the "mcp_assistant"
+// service.
+func NewResourcesTemplatesListRequestBody(p *mcpassistant.ResourceTemplatesListPayload) *ResourcesTemplatesListRequestBody {
+	body := &ResourcesTemplatesListRequestBody{
+		Cursor: p.Cursor,
+		Meta:   p.Meta,
 	}
 	return body
 }
@@ -486,7 +1685,8 @@ func NewResourcesReadRequestBody(p *mcpassistant.ResourcesReadPayload) *Resource
 // the "prompts/list" endpoint of the "mcp_assistant" service.
 func NewPromptsListRequestBody(p *mcpassistant.PromptsListPayload) *PromptsListRequestBody {
 	body := &PromptsListRequestBody{
-		Cursor: p.Params.Cursor,
+		Cursor: p.Cursor,
+		Meta:   p.Meta,
 	}
 	return body
 }
@@ -495,7 +1695,9 @@ func NewPromptsListRequestBody(p *mcpassistant.PromptsListPayload) *PromptsListR
 // the "prompts/get" endpoint of the "mcp_assistant" service.
 func NewPromptsGetRequestBody(p *mcpassistant.PromptsGetPayload) *PromptsGetRequestBody {
 	body := &PromptsGetRequestBody{
-		Name: p.Name,
+		Name:         p.Name,
+		Meta:         p.Meta,
+		RequestState: p.RequestState,
 	}
 	if p.Arguments != nil {
 		body.Arguments = make(map[string]string, len(p.Arguments))
@@ -505,25 +1707,49 @@ func NewPromptsGetRequestBody(p *mcpassistant.PromptsGetPayload) *PromptsGetRequ
 			body.Arguments[tk] = tv
 		}
 	}
+	if p.InputResponses != nil {
+		body.InputResponses = make(map[string]json.RawMessage, len(p.InputResponses))
+		for key, val := range p.InputResponses {
+			tk := key
+			tv := val
+			body.InputResponses[tk] = tv
+		}
+	}
 	return body
 }
 
-// NewInitializeResultOK builds a "mcp_assistant" service "initialize" endpoint
-// result from a HTTP "OK" response.
-func NewInitializeResultOK(body *InitializeResponseBody) *mcpassistant.InitializeResult {
-	v := &mcpassistant.InitializeResult{
-		ProtocolVersion: *body.ProtocolVersion,
+// NewCompletionCompleteRequestBody builds the HTTP request body from the
+// payload of the "completion/complete" endpoint of the "mcp_assistant" service.
+func NewCompletionCompleteRequestBody(p *mcpassistant.CompletionCompletePayload) *CompletionCompleteRequestBody {
+	body := &CompletionCompleteRequestBody{
+		Meta: p.Meta,
 	}
-	v.Capabilities = unmarshalServerCapabilitiesResponseBodyToMcpassistantServerCapabilities(body.Capabilities)
-	v.ServerInfo = unmarshalServerInfoResponseBodyToMcpassistantServerInfo(body.ServerInfo)
-
-	return v
+	if p.Ref != nil {
+		body.Ref = marshalMcpassistantCompletionReferenceToCompletionReferenceRequestBody(p.Ref)
+	}
+	if p.Argument != nil {
+		body.Argument = marshalMcpassistantCompletionArgumentToCompletionArgumentRequestBody(p.Argument)
+	}
+	if p.Context != nil {
+		body.Context = marshalMcpassistantCompletionContextToCompletionContextRequestBody(p.Context)
+	}
+	return body
 }
 
-// NewPingResultOK builds a "mcp_assistant" service "ping" endpoint result from
-// a HTTP "OK" response.
-func NewPingResultOK() *mcpassistant.PingResult {
-	v := &mcpassistant.PingResult{}
+// NewServerDiscoverResultOK builds a "mcp_assistant" service "server/discover"
+// endpoint result from a HTTP "OK" response.
+func NewServerDiscoverResultOK(body *ServerDiscoverResponseBody) *mcpassistant.DiscoverResult {
+	v := &mcpassistant.DiscoverResult{
+		Meta:       body.Meta,
+		ResultType: *body.ResultType,
+		TTLMs:      *body.TTLMs,
+		CacheScope: *body.CacheScope,
+	}
+	v.SupportedVersions = make([]string, len(body.SupportedVersions))
+	for i, val := range body.SupportedVersions {
+		v.SupportedVersions[i] = val
+	}
+	v.Capabilities = unmarshalServerCapabilitiesResponseBodyToMcpassistantServerCapabilities(body.Capabilities)
 
 	return v
 }
@@ -533,6 +1759,10 @@ func NewPingResultOK() *mcpassistant.PingResult {
 func NewToolsListResultOK(body *ToolsListResponseBody) *mcpassistant.ToolsListResult {
 	v := &mcpassistant.ToolsListResult{
 		NextCursor: body.NextCursor,
+		Meta:       body.Meta,
+		ResultType: *body.ResultType,
+		TTLMs:      *body.TTLMs,
+		CacheScope: *body.CacheScope,
 	}
 	v.Tools = make([]*mcpassistant.ToolInfo, len(body.Tools))
 	for i, val := range body.Tools {
@@ -563,21 +1793,42 @@ func NewToolsListInvalidParams(body *ToolsListInvalidParamsResponseBody) *goa.Se
 
 // NewToolsCallResultOK builds a "mcp_assistant" service "tools/call" endpoint
 // result from a HTTP "OK" response.
-func NewToolsCallResultOK(body *ToolsCallResponseBody) *mcpassistant.ToolsCallResult {
-	v := &mcpassistant.ToolsCallResult{
-		IsError:           body.IsError,
-		StructuredContent: body.StructuredContent,
-	}
-	v.Content = make([]*mcpassistant.ContentItem, len(body.Content))
-	for i, val := range body.Content {
-		if val == nil {
-			v.Content[i] = nil
-			continue
+func NewToolsCallResultOK(body *ToolsCallOutcomeResponseBody) *mcpassistant.ToolsCallResult {
+	var v *mcpassistant.ToolsCallOutcome
+	switch string(body.Kind()) {
+	case "complete":
+		actual, _ := body.AsComplete()
+		var obj *mcpassistant.ToolsCallCompleteResult
+		if actual != nil {
+			obj = unmarshalToolsCallCompleteResultResponseToMcpassistantToolsCallCompleteResult(actual)
 		}
-		v.Content[i] = unmarshalContentItemResponseBodyToMcpassistantContentItem(val)
+		var u mcpassistant.ToolsCallOutcome
+		u.SetComplete((*mcpassistant.ToolsCallCompleteResult)(obj))
+		v = &u
+	case "input_required":
+		actual, _ := body.AsInputRequired()
+		var obj *mcpassistant.InputRequiredResult
+		if actual != nil {
+			obj = unmarshalInputRequiredResultResponseToMcpassistantInputRequiredResult(actual)
+		}
+		var u mcpassistant.ToolsCallOutcome
+		u.SetInputRequired((*mcpassistant.InputRequiredResult)(obj))
+		v = &u
+	case "task":
+		actual, _ := body.AsTask()
+		var obj *mcpassistant.TaskCreated
+		if actual != nil {
+			obj = unmarshalTaskCreatedResponseToMcpassistantTaskCreated(actual)
+		}
+		var u mcpassistant.ToolsCallOutcome
+		u.SetTask((*mcpassistant.TaskCreated)(obj))
+		v = &u
+	}
+	res := &mcpassistant.ToolsCallResult{
+		Outcome: *v,
 	}
 
-	return v
+	return res
 }
 
 // NewToolsCallInvalidParams builds a mcp_assistant service tools/call endpoint
@@ -610,11 +1861,24 @@ func NewToolsCallInternalError(body *ToolsCallInternalErrorResponseBody) *goa.Se
 	return v
 }
 
+// NewToolsCallMissingClientCapability builds a mcp_assistant service
+// tools/call endpoint missing_client_capability error.
+func NewToolsCallMissingClientCapability(body *ToolsCallMissingClientCapabilityResponseBody) *mcpassistant.MissingClientCapabilityError {
+	v := &mcpassistant.MissingClientCapabilityError{}
+	v.RequiredCapabilities = unmarshalRequiredClientCapabilitiesResponseBodyToMcpassistantRequiredClientCapabilities(body.RequiredCapabilities)
+
+	return v
+}
+
 // NewResourcesListResultOK builds a "mcp_assistant" service "resources/list"
 // endpoint result from a HTTP "OK" response.
 func NewResourcesListResultOK(body *ResourcesListResponseBody) *mcpassistant.ResourcesListResult {
 	v := &mcpassistant.ResourcesListResult{
 		NextCursor: body.NextCursor,
+		Meta:       body.Meta,
+		ResultType: *body.ResultType,
+		TTLMs:      *body.TTLMs,
+		CacheScope: *body.CacheScope,
 	}
 	v.Resources = make([]*mcpassistant.ResourceInfo, len(body.Resources))
 	for i, val := range body.Resources {
@@ -645,18 +1909,33 @@ func NewResourcesListInvalidParams(body *ResourcesListInvalidParamsResponseBody)
 
 // NewResourcesReadResultOK builds a "mcp_assistant" service "resources/read"
 // endpoint result from a HTTP "OK" response.
-func NewResourcesReadResultOK(body *ResourcesReadResponseBody) *mcpassistant.ResourcesReadResult {
-	v := &mcpassistant.ResourcesReadResult{}
-	v.Contents = make([]*mcpassistant.ResourceContent, len(body.Contents))
-	for i, val := range body.Contents {
-		if val == nil {
-			v.Contents[i] = nil
-			continue
+func NewResourcesReadResultOK(body *ResourcesReadOutcomeResponseBody) *mcpassistant.ResourcesReadResult {
+	var v *mcpassistant.ResourcesReadOutcome
+	switch string(body.Kind()) {
+	case "complete":
+		actual, _ := body.AsComplete()
+		var obj *mcpassistant.ResourcesReadCompleteResult
+		if actual != nil {
+			obj = unmarshalResourcesReadCompleteResultResponseToMcpassistantResourcesReadCompleteResult(actual)
 		}
-		v.Contents[i] = unmarshalResourceContentResponseBodyToMcpassistantResourceContent(val)
+		var u mcpassistant.ResourcesReadOutcome
+		u.SetComplete((*mcpassistant.ResourcesReadCompleteResult)(obj))
+		v = &u
+	case "input_required":
+		actual, _ := body.AsInputRequired()
+		var obj *mcpassistant.InputRequiredResult
+		if actual != nil {
+			obj = unmarshalInputRequiredResultResponseToMcpassistantInputRequiredResult(actual)
+		}
+		var u mcpassistant.ResourcesReadOutcome
+		u.SetInputRequired((*mcpassistant.InputRequiredResult)(obj))
+		v = &u
+	}
+	res := &mcpassistant.ResourcesReadResult{
+		Outcome: *v,
 	}
 
-	return v
+	return res
 }
 
 // NewResourcesReadInvalidParams builds a mcp_assistant service resources/read
@@ -689,11 +1968,62 @@ func NewResourcesReadInternalError(body *ResourcesReadInternalErrorResponseBody)
 	return v
 }
 
+// NewResourcesReadMissingClientCapability builds a mcp_assistant service
+// resources/read endpoint missing_client_capability error.
+func NewResourcesReadMissingClientCapability(body *ResourcesReadMissingClientCapabilityResponseBody) *mcpassistant.MissingClientCapabilityError {
+	v := &mcpassistant.MissingClientCapabilityError{}
+	v.RequiredCapabilities = unmarshalRequiredClientCapabilitiesResponseBodyToMcpassistantRequiredClientCapabilities(body.RequiredCapabilities)
+
+	return v
+}
+
+// NewResourcesTemplatesListResourceTemplatesListResultOK builds a
+// "mcp_assistant" service "resources/templates/list" endpoint result from a
+// HTTP "OK" response.
+func NewResourcesTemplatesListResourceTemplatesListResultOK(body *ResourcesTemplatesListResponseBody) *mcpassistant.ResourceTemplatesListResult {
+	v := &mcpassistant.ResourceTemplatesListResult{
+		NextCursor: body.NextCursor,
+		Meta:       body.Meta,
+		ResultType: *body.ResultType,
+		TTLMs:      *body.TTLMs,
+		CacheScope: *body.CacheScope,
+	}
+	v.ResourceTemplates = make([]*mcpassistant.ResourceTemplateInfo, len(body.ResourceTemplates))
+	for i, val := range body.ResourceTemplates {
+		if val == nil {
+			v.ResourceTemplates[i] = nil
+			continue
+		}
+		v.ResourceTemplates[i] = unmarshalResourceTemplateInfoResponseBodyToMcpassistantResourceTemplateInfo(val)
+	}
+
+	return v
+}
+
+// NewResourcesTemplatesListInvalidParams builds a mcp_assistant service
+// resources/templates/list endpoint invalid_params error.
+func NewResourcesTemplatesListInvalidParams(body *ResourcesTemplatesListInvalidParamsResponseBody) *goa.ServiceError {
+	v := &goa.ServiceError{
+		Name:      *body.Name,
+		ID:        *body.ID,
+		Message:   *body.Message,
+		Temporary: *body.Temporary,
+		Timeout:   *body.Timeout,
+		Fault:     *body.Fault,
+	}
+
+	return v
+}
+
 // NewPromptsListResultOK builds a "mcp_assistant" service "prompts/list"
 // endpoint result from a HTTP "OK" response.
 func NewPromptsListResultOK(body *PromptsListResponseBody) *mcpassistant.PromptsListResult {
 	v := &mcpassistant.PromptsListResult{
 		NextCursor: body.NextCursor,
+		Meta:       body.Meta,
+		ResultType: *body.ResultType,
+		TTLMs:      *body.TTLMs,
+		CacheScope: *body.CacheScope,
 	}
 	v.Prompts = make([]*mcpassistant.PromptInfo, len(body.Prompts))
 	for i, val := range body.Prompts {
@@ -724,20 +2054,33 @@ func NewPromptsListInvalidParams(body *PromptsListInvalidParamsResponseBody) *go
 
 // NewPromptsGetResultOK builds a "mcp_assistant" service "prompts/get"
 // endpoint result from a HTTP "OK" response.
-func NewPromptsGetResultOK(body *PromptsGetResponseBody) *mcpassistant.PromptsGetResult {
-	v := &mcpassistant.PromptsGetResult{
-		Description: body.Description,
-	}
-	v.Messages = make([]*mcpassistant.PromptMessage, len(body.Messages))
-	for i, val := range body.Messages {
-		if val == nil {
-			v.Messages[i] = nil
-			continue
+func NewPromptsGetResultOK(body *PromptsGetOutcomeResponseBody) *mcpassistant.PromptsGetResult {
+	var v *mcpassistant.PromptsGetOutcome
+	switch string(body.Kind()) {
+	case "complete":
+		actual, _ := body.AsComplete()
+		var obj *mcpassistant.PromptsGetCompleteResult
+		if actual != nil {
+			obj = unmarshalPromptsGetCompleteResultResponseToMcpassistantPromptsGetCompleteResult(actual)
 		}
-		v.Messages[i] = unmarshalPromptMessageResponseBodyToMcpassistantPromptMessage(val)
+		var u mcpassistant.PromptsGetOutcome
+		u.SetComplete((*mcpassistant.PromptsGetCompleteResult)(obj))
+		v = &u
+	case "input_required":
+		actual, _ := body.AsInputRequired()
+		var obj *mcpassistant.InputRequiredResult
+		if actual != nil {
+			obj = unmarshalInputRequiredResultResponseToMcpassistantInputRequiredResult(actual)
+		}
+		var u mcpassistant.PromptsGetOutcome
+		u.SetInputRequired((*mcpassistant.InputRequiredResult)(obj))
+		v = &u
+	}
+	res := &mcpassistant.PromptsGetResult{
+		Outcome: *v,
 	}
 
-	return v
+	return res
 }
 
 // NewPromptsGetInvalidParams builds a mcp_assistant service prompts/get
@@ -770,21 +2113,88 @@ func NewPromptsGetInternalError(body *PromptsGetInternalErrorResponseBody) *goa.
 	return v
 }
 
-// ValidateInitializeResponseBody runs the validations defined on
-// InitializeResponseBody
-func ValidateInitializeResponseBody(body *InitializeResponseBody) (err error) {
-	if body.ProtocolVersion == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("protocolVersion", "body"))
+// NewPromptsGetMissingClientCapability builds a mcp_assistant service
+// prompts/get endpoint missing_client_capability error.
+func NewPromptsGetMissingClientCapability(body *PromptsGetMissingClientCapabilityResponseBody) *mcpassistant.MissingClientCapabilityError {
+	v := &mcpassistant.MissingClientCapabilityError{}
+	v.RequiredCapabilities = unmarshalRequiredClientCapabilitiesResponseBodyToMcpassistantRequiredClientCapabilities(body.RequiredCapabilities)
+
+	return v
+}
+
+// NewCompletionCompleteResultOK builds a "mcp_assistant" service
+// "completion/complete" endpoint result from a HTTP "OK" response.
+func NewCompletionCompleteResultOK(body *CompletionCompleteResponseBody) *mcpassistant.CompletionCompleteResult {
+	v := &mcpassistant.CompletionCompleteResult{
+		Meta:       body.Meta,
+		ResultType: *body.ResultType,
+	}
+	v.Completion = unmarshalCompletionSuggestionResponseBodyToMcpassistantCompletionSuggestion(body.Completion)
+
+	return v
+}
+
+// NewCompletionCompleteInvalidParams builds a mcp_assistant service
+// completion/complete endpoint invalid_params error.
+func NewCompletionCompleteInvalidParams(body *CompletionCompleteInvalidParamsResponseBody) *goa.ServiceError {
+	v := &goa.ServiceError{
+		Name:      *body.Name,
+		ID:        *body.ID,
+		Message:   *body.Message,
+		Temporary: *body.Temporary,
+		Timeout:   *body.Timeout,
+		Fault:     *body.Fault,
+	}
+
+	return v
+}
+
+// NewCompletionCompleteInternalError builds a mcp_assistant service
+// completion/complete endpoint internal_error error.
+func NewCompletionCompleteInternalError(body *CompletionCompleteInternalErrorResponseBody) *goa.ServiceError {
+	v := &goa.ServiceError{
+		Name:      *body.Name,
+		ID:        *body.ID,
+		Message:   *body.Message,
+		Temporary: *body.Temporary,
+		Timeout:   *body.Timeout,
+		Fault:     *body.Fault,
+	}
+
+	return v
+}
+
+// ValidateServerDiscoverResponseBody runs the validations defined on
+// ServerDiscoverResponseBody
+func ValidateServerDiscoverResponseBody(body *ServerDiscoverResponseBody) (err error) {
+	if body.SupportedVersions == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("supportedVersions", "body"))
 	}
 	if body.Capabilities == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("capabilities", "body"))
 	}
-	if body.ServerInfo == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("serverInfo", "body"))
+	if body.ResultType == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("resultType", "body"))
 	}
-	if body.ServerInfo != nil {
-		if err2 := validateServerInfoResponseBody(body.ServerInfo, "body.serverInfo"); err2 != nil {
-			err = goa.MergeErrors(err, err2)
+	if body.TTLMs == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ttlMs", "body"))
+	}
+	if body.CacheScope == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cacheScope", "body"))
+	}
+	if body.ResultType != nil {
+		if !(*body.ResultType == "complete") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.resultType", *body.ResultType, []any{"complete"}))
+		}
+	}
+	if body.TTLMs != nil {
+		if *body.TTLMs < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.ttlMs", *body.TTLMs, 0, true))
+		}
+	}
+	if body.CacheScope != nil {
+		if !(*body.CacheScope == "public" || *body.CacheScope == "private") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.cacheScope", *body.CacheScope, []any{"public", "private"}))
 		}
 	}
 	return
@@ -796,6 +2206,15 @@ func ValidateToolsListResponseBody(body *ToolsListResponseBody) (err error) {
 	if body.Tools == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("tools", "body"))
 	}
+	if body.ResultType == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("resultType", "body"))
+	}
+	if body.TTLMs == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ttlMs", "body"))
+	}
+	if body.CacheScope == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cacheScope", "body"))
+	}
 	for _, e := range body.Tools {
 		if e == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("body.tools", "[*]"))
@@ -806,23 +2225,19 @@ func ValidateToolsListResponseBody(body *ToolsListResponseBody) (err error) {
 			}
 		}
 	}
-	return
-}
-
-// ValidateToolsCallResponseBody runs the validations defined on
-// ToolsCallResponseBody
-func ValidateToolsCallResponseBody(body *ToolsCallResponseBody) (err error) {
-	if body.Content == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("content", "body"))
-	}
-	for _, e := range body.Content {
-		if e == nil {
-			err = goa.MergeErrors(err, goa.MissingFieldError("body.content", "[*]"))
+	if body.ResultType != nil {
+		if !(*body.ResultType == "complete") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.resultType", *body.ResultType, []any{"complete"}))
 		}
-		if e != nil {
-			if err2 := validateContentItemResponseBody(e, "body.content[*]"); err2 != nil {
-				err = goa.MergeErrors(err, err2)
-			}
+	}
+	if body.TTLMs != nil {
+		if *body.TTLMs < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.ttlMs", *body.TTLMs, 0, true))
+		}
+	}
+	if body.CacheScope != nil {
+		if !(*body.CacheScope == "public" || *body.CacheScope == "private") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.cacheScope", *body.CacheScope, []any{"public", "private"}))
 		}
 	}
 	return
@@ -834,6 +2249,15 @@ func ValidateResourcesListResponseBody(body *ResourcesListResponseBody) (err err
 	if body.Resources == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("resources", "body"))
 	}
+	if body.ResultType == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("resultType", "body"))
+	}
+	if body.TTLMs == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ttlMs", "body"))
+	}
+	if body.CacheScope == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cacheScope", "body"))
+	}
 	for _, e := range body.Resources {
 		if e == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("body.resources", "[*]"))
@@ -844,23 +2268,62 @@ func ValidateResourcesListResponseBody(body *ResourcesListResponseBody) (err err
 			}
 		}
 	}
+	if body.ResultType != nil {
+		if !(*body.ResultType == "complete") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.resultType", *body.ResultType, []any{"complete"}))
+		}
+	}
+	if body.TTLMs != nil {
+		if *body.TTLMs < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.ttlMs", *body.TTLMs, 0, true))
+		}
+	}
+	if body.CacheScope != nil {
+		if !(*body.CacheScope == "public" || *body.CacheScope == "private") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.cacheScope", *body.CacheScope, []any{"public", "private"}))
+		}
+	}
 	return
 }
 
-// ValidateResourcesReadResponseBody runs the validations defined on
-// ResourcesReadResponseBody
-func ValidateResourcesReadResponseBody(body *ResourcesReadResponseBody) (err error) {
-	if body.Contents == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("contents", "body"))
+// ValidateResourcesTemplatesListResponseBody runs the validations defined on
+// ResourcesTemplatesListResponseBody
+func ValidateResourcesTemplatesListResponseBody(body *ResourcesTemplatesListResponseBody) (err error) {
+	if body.ResourceTemplates == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("resourceTemplates", "body"))
 	}
-	for _, e := range body.Contents {
+	if body.ResultType == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("resultType", "body"))
+	}
+	if body.TTLMs == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ttlMs", "body"))
+	}
+	if body.CacheScope == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cacheScope", "body"))
+	}
+	for _, e := range body.ResourceTemplates {
 		if e == nil {
-			err = goa.MergeErrors(err, goa.MissingFieldError("body.contents", "[*]"))
+			err = goa.MergeErrors(err, goa.MissingFieldError("body.resourceTemplates", "[*]"))
 		}
 		if e != nil {
-			if err2 := validateResourceContentResponseBody(e, "body.contents[*]"); err2 != nil {
+			if err2 := validateResourceTemplateInfoResponseBody(e, "body.resourceTemplates[*]"); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
+		}
+	}
+	if body.ResultType != nil {
+		if !(*body.ResultType == "complete") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.resultType", *body.ResultType, []any{"complete"}))
+		}
+	}
+	if body.TTLMs != nil {
+		if *body.TTLMs < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.ttlMs", *body.TTLMs, 0, true))
+		}
+	}
+	if body.CacheScope != nil {
+		if !(*body.CacheScope == "public" || *body.CacheScope == "private") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.cacheScope", *body.CacheScope, []any{"public", "private"}))
 		}
 	}
 	return
@@ -872,6 +2335,15 @@ func ValidatePromptsListResponseBody(body *PromptsListResponseBody) (err error) 
 	if body.Prompts == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("prompts", "body"))
 	}
+	if body.ResultType == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("resultType", "body"))
+	}
+	if body.TTLMs == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ttlMs", "body"))
+	}
+	if body.CacheScope == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cacheScope", "body"))
+	}
 	for _, e := range body.Prompts {
 		if e == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("body.prompts", "[*]"))
@@ -882,23 +2354,41 @@ func ValidatePromptsListResponseBody(body *PromptsListResponseBody) (err error) 
 			}
 		}
 	}
+	if body.ResultType != nil {
+		if !(*body.ResultType == "complete") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.resultType", *body.ResultType, []any{"complete"}))
+		}
+	}
+	if body.TTLMs != nil {
+		if *body.TTLMs < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.ttlMs", *body.TTLMs, 0, true))
+		}
+	}
+	if body.CacheScope != nil {
+		if !(*body.CacheScope == "public" || *body.CacheScope == "private") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.cacheScope", *body.CacheScope, []any{"public", "private"}))
+		}
+	}
 	return
 }
 
-// ValidatePromptsGetResponseBody runs the validations defined on
-// PromptsGetResponseBody
-func ValidatePromptsGetResponseBody(body *PromptsGetResponseBody) (err error) {
-	if body.Messages == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("messages", "body"))
+// ValidateCompletionCompleteResponseBody runs the validations defined on
+// CompletionCompleteResponseBody
+func ValidateCompletionCompleteResponseBody(body *CompletionCompleteResponseBody) (err error) {
+	if body.Completion == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("completion", "body"))
 	}
-	for _, e := range body.Messages {
-		if e == nil {
-			err = goa.MergeErrors(err, goa.MissingFieldError("body.messages", "[*]"))
+	if body.ResultType == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("resultType", "body"))
+	}
+	if body.Completion != nil {
+		if err2 := validateCompletionSuggestionResponseBody(body.Completion, "body.completion"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
 		}
-		if e != nil {
-			if err2 := validatePromptMessageResponseBody(e, "body.messages[*]"); err2 != nil {
-				err = goa.MergeErrors(err, err2)
-			}
+	}
+	if body.ResultType != nil {
+		if !(*body.ResultType == "complete") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.resultType", *body.ResultType, []any{"complete"}))
 		}
 	}
 	return
@@ -976,6 +2466,15 @@ func ValidateToolsCallInternalErrorResponseBody(body *ToolsCallInternalErrorResp
 	return
 }
 
+// ValidateToolsCallMissingClientCapabilityResponseBody runs the validations
+// defined on ToolsCallMissingClientCapabilityResponseBody
+func ValidateToolsCallMissingClientCapabilityResponseBody(body *ToolsCallMissingClientCapabilityResponseBody) (err error) {
+	if body.RequiredCapabilities == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("requiredCapabilities", "body"))
+	}
+	return
+}
+
 // ValidateResourcesListInvalidParamsResponseBody runs the validations defined
 // on ResourcesListInvalidParamsResponseBody
 func ValidateResourcesListInvalidParamsResponseBody(body *ResourcesListInvalidParamsResponseBody) (err error) {
@@ -1027,6 +2526,39 @@ func ValidateResourcesReadInvalidParamsResponseBody(body *ResourcesReadInvalidPa
 // ValidateResourcesReadInternalErrorResponseBody runs the validations defined
 // on ResourcesReadInternalErrorResponseBody
 func ValidateResourcesReadInternalErrorResponseBody(body *ResourcesReadInternalErrorResponseBody) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Temporary == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("temporary", "body"))
+	}
+	if body.Timeout == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("timeout", "body"))
+	}
+	if body.Fault == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("fault", "body"))
+	}
+	return
+}
+
+// ValidateResourcesReadMissingClientCapabilityResponseBody runs the
+// validations defined on ResourcesReadMissingClientCapabilityResponseBody
+func ValidateResourcesReadMissingClientCapabilityResponseBody(body *ResourcesReadMissingClientCapabilityResponseBody) (err error) {
+	if body.RequiredCapabilities == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("requiredCapabilities", "body"))
+	}
+	return
+}
+
+// ValidateResourcesTemplatesListInvalidParamsResponseBody runs the validations
+// defined on ResourcesTemplatesListInvalidParamsResponseBody
+func ValidateResourcesTemplatesListInvalidParamsResponseBody(body *ResourcesTemplatesListInvalidParamsResponseBody) (err error) {
 	if body.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
 	}
@@ -1120,25 +2652,59 @@ func ValidatePromptsGetInternalErrorResponseBody(body *PromptsGetInternalErrorRe
 	return
 }
 
-// ValidateServerInfoResponseBody runs the validations defined on ServerInfo
-func ValidateServerInfoResponseBody(body *ServerInfoResponseBody) (err error) {
-	if body.Name == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
-	}
-	if body.Version == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("version", "body"))
+// ValidatePromptsGetMissingClientCapabilityResponseBody runs the validations
+// defined on PromptsGetMissingClientCapabilityResponseBody
+func ValidatePromptsGetMissingClientCapabilityResponseBody(body *PromptsGetMissingClientCapabilityResponseBody) (err error) {
+	if body.RequiredCapabilities == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("requiredCapabilities", "body"))
 	}
 	return
 }
 
-// validateServerInfoResponseBody checks ServerInfo and reports errors using
-// the path supplied by its caller
-func validateServerInfoResponseBody(body *ServerInfoResponseBody, path string) (err error) {
+// ValidateCompletionCompleteInvalidParamsResponseBody runs the validations
+// defined on CompletionCompleteInvalidParamsResponseBody
+func ValidateCompletionCompleteInvalidParamsResponseBody(body *CompletionCompleteInvalidParamsResponseBody) (err error) {
 	if body.Name == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
 	}
-	if body.Version == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("version", path))
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Temporary == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("temporary", "body"))
+	}
+	if body.Timeout == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("timeout", "body"))
+	}
+	if body.Fault == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("fault", "body"))
+	}
+	return
+}
+
+// ValidateCompletionCompleteInternalErrorResponseBody runs the validations
+// defined on CompletionCompleteInternalErrorResponseBody
+func ValidateCompletionCompleteInternalErrorResponseBody(body *CompletionCompleteInternalErrorResponseBody) (err error) {
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if body.ID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "body"))
+	}
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.Temporary == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("temporary", "body"))
+	}
+	if body.Timeout == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("timeout", "body"))
+	}
+	if body.Fault == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("fault", "body"))
 	}
 	return
 }
@@ -1166,34 +2732,520 @@ func validateToolInfoResponseBody(body *ToolInfoResponseBody, path string) (err 
 	return
 }
 
-// ValidateContentItemResponseBody runs the validations defined on ContentItem
-func ValidateContentItemResponseBody(body *ContentItemResponseBody) (err error) {
-	if body.Type == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("type", "body"))
+// ValidateToolsCallCompleteResultResponse runs the validations defined on
+// ToolsCallCompleteResult
+func ValidateToolsCallCompleteResultResponse(body *ToolsCallCompleteResultResponse) (err error) {
+	if body.Content == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("content", "body"))
 	}
-	if body.Text == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("text", "body"))
-	}
-	if body.Type != nil {
-		if !(*body.Type == "text") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.type", *body.Type, []any{"text"}))
+	for _, e := range body.Content {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("body.content", "[*]"))
+		}
+		if e != nil {
+			if err2 := validateContentItemResponse(e, "body.content[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
 		}
 	}
 	return
 }
 
-// validateContentItemResponseBody checks ContentItem and reports errors using
-// the path supplied by its caller
-func validateContentItemResponseBody(body *ContentItemResponseBody, path string) (err error) {
+// validateToolsCallCompleteResultResponse checks ToolsCallCompleteResult and
+// reports errors using the path supplied by its caller
+func validateToolsCallCompleteResultResponse(body *ToolsCallCompleteResultResponse, path string) (err error) {
+	if body.Content == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("content", path))
+	}
+	for _, e := range body.Content {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError(path+".content", "[*]"))
+		}
+		if e != nil {
+			if err2 := validateContentItemResponse(e, path+".content[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateContentItemResponse runs the validations defined on ContentItem
+func ValidateContentItemResponse(body *ContentItemResponse) (err error) {
+	if body.Type == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("type", "body"))
+	}
+	if body.Type != nil {
+		if !(*body.Type == "text" || *body.Type == "image" || *body.Type == "audio" || *body.Type == "resource_link" || *body.Type == "resource") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.type", *body.Type, []any{"text", "image", "audio", "resource_link", "resource"}))
+		}
+	}
+	if body.URI != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.uri", *body.URI, goa.FormatURI))
+	}
+	if body.Size != nil {
+		if *body.Size < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.size", *body.Size, 0, true))
+		}
+	}
+	for _, e := range body.Icons {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("body.icons", "[*]"))
+		}
+		if e != nil {
+			if err2 := validateContentIcon(e, "body.icons[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.Resource != nil {
+		if err2 := validateResourceContentResponse(body.Resource, "body.resource"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.Annotations != nil {
+		if err2 := validateContentAnnotations(body.Annotations, "body.annotations"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	// The selected content kind determines which fields the peer must supply.
+	if body.Type != nil {
+		switch *body.Type {
+		case "text":
+			if body.Text == nil {
+				err = goa.MergeErrors(err, goa.MissingFieldError("body"+".text", "content"))
+			}
+		case "image", "audio":
+			if body.Data == nil {
+				err = goa.MergeErrors(err, goa.MissingFieldError("body"+".data", "content"))
+			} else if _, decodeErr := base64.StdEncoding.DecodeString(*body.Data); decodeErr != nil {
+				err = goa.MergeErrors(err, goa.PermanentError("invalid_content", "%s.data must contain base64 data", "body"))
+			}
+			if body.MimeType == nil {
+				err = goa.MergeErrors(err, goa.MissingFieldError("body"+".mimeType", "content"))
+			}
+		case "resource_link":
+			if body.Name == nil {
+				err = goa.MergeErrors(err, goa.MissingFieldError("body"+".name", "content"))
+			}
+			if body.URI == nil {
+				err = goa.MergeErrors(err, goa.MissingFieldError("body"+".uri", "content"))
+			}
+		case "resource":
+			if body.Resource == nil {
+				err = goa.MergeErrors(err, goa.MissingFieldError("body"+".resource", "content"))
+			}
+		}
+	}
+
+	if len(body.Meta) > 0 {
+		var metadata map[string]json.RawMessage
+		if metadataErr := json.Unmarshal(body.Meta, &metadata); metadataErr != nil || metadata == nil {
+			err = goa.MergeErrors(err, goa.InvalidFieldTypeError("body"+"._meta", string(body.Meta), "JSON object"))
+		}
+	}
+
+	return
+}
+
+// validateContentItemResponse checks ContentItem and reports errors using the
+// path supplied by its caller
+func validateContentItemResponse(body *ContentItemResponse, path string) (err error) {
 	if body.Type == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("type", path))
 	}
-	if body.Text == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("text", path))
-	}
 	if body.Type != nil {
-		if !(*body.Type == "text") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".type", *body.Type, []any{"text"}))
+		if !(*body.Type == "text" || *body.Type == "image" || *body.Type == "audio" || *body.Type == "resource_link" || *body.Type == "resource") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".type", *body.Type, []any{"text", "image", "audio", "resource_link", "resource"}))
+		}
+	}
+	if body.URI != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat(path+".uri", *body.URI, goa.FormatURI))
+	}
+	if body.Size != nil {
+		if *body.Size < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError(path+".size", *body.Size, 0, true))
+		}
+	}
+	for _, e := range body.Icons {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError(path+".icons", "[*]"))
+		}
+		if e != nil {
+			if err2 := validateContentIcon(e, path+".icons[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.Resource != nil {
+		if err2 := validateResourceContentResponse(body.Resource, path+".resource"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.Annotations != nil {
+		if err2 := validateContentAnnotations(body.Annotations, path+".annotations"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	// The selected content kind determines which fields the peer must supply.
+	if body.Type != nil {
+		switch *body.Type {
+		case "text":
+			if body.Text == nil {
+				err = goa.MergeErrors(err, goa.MissingFieldError(path+".text", "content"))
+			}
+		case "image", "audio":
+			if body.Data == nil {
+				err = goa.MergeErrors(err, goa.MissingFieldError(path+".data", "content"))
+			} else if _, decodeErr := base64.StdEncoding.DecodeString(*body.Data); decodeErr != nil {
+				err = goa.MergeErrors(err, goa.PermanentError("invalid_content", "%s.data must contain base64 data", path))
+			}
+			if body.MimeType == nil {
+				err = goa.MergeErrors(err, goa.MissingFieldError(path+".mimeType", "content"))
+			}
+		case "resource_link":
+			if body.Name == nil {
+				err = goa.MergeErrors(err, goa.MissingFieldError(path+".name", "content"))
+			}
+			if body.URI == nil {
+				err = goa.MergeErrors(err, goa.MissingFieldError(path+".uri", "content"))
+			}
+		case "resource":
+			if body.Resource == nil {
+				err = goa.MergeErrors(err, goa.MissingFieldError(path+".resource", "content"))
+			}
+		}
+	}
+
+	if len(body.Meta) > 0 {
+		var metadata map[string]json.RawMessage
+		if metadataErr := json.Unmarshal(body.Meta, &metadata); metadataErr != nil || metadata == nil {
+			err = goa.MergeErrors(err, goa.InvalidFieldTypeError(path+"._meta", string(body.Meta), "JSON object"))
+		}
+	}
+
+	return
+}
+
+// ValidateContentIcon runs the validations defined on ContentIcon
+func ValidateContentIcon(body *ContentIcon) (err error) {
+	if body.Src == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("src", "body"))
+	}
+	if body.Src != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.src", *body.Src, goa.FormatURI))
+	}
+	if body.Theme != nil {
+		if !(*body.Theme == "light" || *body.Theme == "dark") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.theme", *body.Theme, []any{"light", "dark"}))
+		}
+	}
+	return
+}
+
+// validateContentIcon checks ContentIcon and reports errors using the path
+// supplied by its caller
+func validateContentIcon(body *ContentIcon, path string) (err error) {
+	if body.Src == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("src", path))
+	}
+	if body.Src != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat(path+".src", *body.Src, goa.FormatURI))
+	}
+	if body.Theme != nil {
+		if !(*body.Theme == "light" || *body.Theme == "dark") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".theme", *body.Theme, []any{"light", "dark"}))
+		}
+	}
+	return
+}
+
+// ValidateResourceContentResponse runs the validations defined on
+// ResourceContent
+func ValidateResourceContentResponse(body *ResourceContentResponse) (err error) {
+	if body.URI == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("uri", "body"))
+	}
+	if body.URI != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.uri", *body.URI, goa.FormatURI))
+	}
+	// Resource contents choose exactly one representation, including empty content.
+	if (body.Text == nil) == (body.Blob == nil) {
+		err = goa.MergeErrors(err, goa.InvalidFieldTypeError("body"+".contents", "text/blob", "exactly one of text or blob"))
+	}
+	if body.Blob != nil {
+		if _, decodeErr := base64.StdEncoding.DecodeString(*body.Blob); decodeErr != nil {
+			err = goa.MergeErrors(err, goa.PermanentError("invalid_resource_content", "%s.blob must contain base64 data", "body"))
+		}
+	}
+
+	if len(body.Meta) > 0 {
+		var metadata map[string]json.RawMessage
+		if metadataErr := json.Unmarshal(body.Meta, &metadata); metadataErr != nil || metadata == nil {
+			err = goa.MergeErrors(err, goa.InvalidFieldTypeError("body"+"._meta", string(body.Meta), "JSON object"))
+		}
+	}
+
+	return
+}
+
+// validateResourceContentResponse checks ResourceContent and reports errors
+// using the path supplied by its caller
+func validateResourceContentResponse(body *ResourceContentResponse, path string) (err error) {
+	if body.URI == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("uri", path))
+	}
+	if body.URI != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat(path+".uri", *body.URI, goa.FormatURI))
+	}
+	// Resource contents choose exactly one representation, including empty content.
+	if (body.Text == nil) == (body.Blob == nil) {
+		err = goa.MergeErrors(err, goa.InvalidFieldTypeError(path+".contents", "text/blob", "exactly one of text or blob"))
+	}
+	if body.Blob != nil {
+		if _, decodeErr := base64.StdEncoding.DecodeString(*body.Blob); decodeErr != nil {
+			err = goa.MergeErrors(err, goa.PermanentError("invalid_resource_content", "%s.blob must contain base64 data", path))
+		}
+	}
+
+	if len(body.Meta) > 0 {
+		var metadata map[string]json.RawMessage
+		if metadataErr := json.Unmarshal(body.Meta, &metadata); metadataErr != nil || metadata == nil {
+			err = goa.MergeErrors(err, goa.InvalidFieldTypeError(path+"._meta", string(body.Meta), "JSON object"))
+		}
+	}
+
+	return
+}
+
+// ValidateContentAnnotations runs the validations defined on ContentAnnotations
+func ValidateContentAnnotations(body *ContentAnnotations) (err error) {
+	for _, e := range body.Audience {
+		if !(e == "user" || e == "assistant") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.audience[*]", e, []any{"user", "assistant"}))
+		}
+	}
+	if body.Priority != nil {
+		if *body.Priority < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.priority", *body.Priority, 0, true))
+		}
+		if *body.Priority > 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.priority", *body.Priority, 1, false))
+		}
+	}
+	return
+}
+
+// validateContentAnnotations checks ContentAnnotations and reports errors
+// using the path supplied by its caller
+func validateContentAnnotations(body *ContentAnnotations, path string) (err error) {
+	for _, e := range body.Audience {
+		if !(e == "user" || e == "assistant") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".audience[*]", e, []any{"user", "assistant"}))
+		}
+	}
+	if body.Priority != nil {
+		if *body.Priority < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError(path+".priority", *body.Priority, 0, true))
+		}
+		if *body.Priority > 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError(path+".priority", *body.Priority, 1, false))
+		}
+	}
+	return
+}
+
+// ValidateInputRequiredResultResponse runs the validations defined on
+// InputRequiredResult
+func ValidateInputRequiredResultResponse(body *InputRequiredResultResponse) (err error) {
+	for _, v := range body.InputRequests {
+		if v != nil {
+			if err2 := validateInputRequestResponse(v, "body.inputRequests[key]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// validateInputRequiredResultResponse checks InputRequiredResult and reports
+// errors using the path supplied by its caller
+func validateInputRequiredResultResponse(body *InputRequiredResultResponse, path string) (err error) {
+	for _, v := range body.InputRequests {
+		if v != nil {
+			if err2 := validateInputRequestResponse(v, path+".inputRequests[key]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateInputRequestResponse runs the validations defined on InputRequest
+func ValidateInputRequestResponse(body *InputRequestResponse) (err error) {
+	if body.Method == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("method", "body"))
+	}
+	if body.Params == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("params", "body"))
+	}
+	if body.Method != nil {
+		if !(*body.Method == "elicitation/create") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.method", *body.Method, []any{"elicitation/create"}))
+		}
+	}
+	if body.Params != nil {
+		switch string(body.Params.Kind()) {
+		case "form":
+			actual, _ := body.Params.AsForm()
+			if actual != nil {
+				if err2 := validateElicitationFormParamsResponse(actual, "body.params.value"); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		case "url":
+			actual, _ := body.Params.AsURL()
+			if actual != nil {
+				if err2 := validateElicitationURLParamsResponse(actual, "body.params.value"); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		}
+
+	}
+	return
+}
+
+// validateInputRequestResponse checks InputRequest and reports errors using
+// the path supplied by its caller
+func validateInputRequestResponse(body *InputRequestResponse, path string) (err error) {
+	if body.Method == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("method", path))
+	}
+	if body.Params == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("params", path))
+	}
+	if body.Method != nil {
+		if !(*body.Method == "elicitation/create") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".method", *body.Method, []any{"elicitation/create"}))
+		}
+	}
+	if body.Params != nil {
+		switch string(body.Params.Kind()) {
+		case "form":
+			actual, _ := body.Params.AsForm()
+			if actual != nil {
+				if err2 := validateElicitationFormParamsResponse(actual, path+".params.value"); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		case "url":
+			actual, _ := body.Params.AsURL()
+			if actual != nil {
+				if err2 := validateElicitationURLParamsResponse(actual, path+".params.value"); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		}
+
+	}
+	return
+}
+
+// ValidateElicitationFormParamsResponse runs the validations defined on
+// ElicitationFormParams
+func ValidateElicitationFormParamsResponse(body *ElicitationFormParamsResponse) (err error) {
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.RequestedSchema == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("requestedSchema", "body"))
+	}
+	return
+}
+
+// validateElicitationFormParamsResponse checks ElicitationFormParams and
+// reports errors using the path supplied by its caller
+func validateElicitationFormParamsResponse(body *ElicitationFormParamsResponse, path string) (err error) {
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", path))
+	}
+	if body.RequestedSchema == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("requestedSchema", path))
+	}
+	return
+}
+
+// ValidateElicitationURLParamsResponse runs the validations defined on
+// ElicitationURLParams
+func ValidateElicitationURLParamsResponse(body *ElicitationURLParamsResponse) (err error) {
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "body"))
+	}
+	if body.URL == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("url", "body"))
+	}
+	if body.URL != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.url", *body.URL, goa.FormatURI))
+	}
+	return
+}
+
+// validateElicitationURLParamsResponse checks ElicitationURLParams and reports
+// errors using the path supplied by its caller
+func validateElicitationURLParamsResponse(body *ElicitationURLParamsResponse, path string) (err error) {
+	if body.Message == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", path))
+	}
+	if body.URL == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("url", path))
+	}
+	if body.URL != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat(path+".url", *body.URL, goa.FormatURI))
+	}
+	return
+}
+
+// ValidateTaskCreatedResponse runs the validations defined on TaskCreated
+func ValidateTaskCreatedResponse(body *TaskCreatedResponse) (err error) {
+	if body.TaskID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("taskId", "body"))
+	}
+	if body.CreatedAt == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("createdAt", "body"))
+	}
+	if body.LastUpdatedAt == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("lastUpdatedAt", "body"))
+	}
+	if body.Status == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("status", "body"))
+	}
+	if body.Status != nil {
+		if !(*body.Status == "working" || *body.Status == "input_required" || *body.Status == "completed" || *body.Status == "failed" || *body.Status == "cancelled") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.status", *body.Status, []any{"working", "input_required", "completed", "failed", "cancelled"}))
+		}
+	}
+	return
+}
+
+// validateTaskCreatedResponse checks TaskCreated and reports errors using the
+// path supplied by its caller
+func validateTaskCreatedResponse(body *TaskCreatedResponse, path string) (err error) {
+	if body.TaskID == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("taskId", path))
+	}
+	if body.CreatedAt == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("createdAt", path))
+	}
+	if body.LastUpdatedAt == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("lastUpdatedAt", path))
+	}
+	if body.Status == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("status", path))
+	}
+	if body.Status != nil {
+		if !(*body.Status == "working" || *body.Status == "input_required" || *body.Status == "completed" || *body.Status == "failed" || *body.Status == "cancelled") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".status", *body.Status, []any{"working", "input_required", "completed", "failed", "cancelled"}))
 		}
 	}
 	return
@@ -1207,6 +3259,36 @@ func ValidateResourceInfoResponseBody(body *ResourceInfoResponseBody) (err error
 	if body.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
 	}
+	for _, e := range body.Icons {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("body.icons", "[*]"))
+		}
+		if e != nil {
+			if err2 := validateContentIcon(e, "body.icons[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.Annotations != nil {
+		if err2 := validateContentAnnotations(body.Annotations, "body.annotations"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.URI != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.uri", *body.URI, goa.FormatURI))
+	}
+	if body.Size != nil {
+		if *body.Size < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.size", *body.Size, 0, true))
+		}
+	}
+	if len(body.Meta) > 0 {
+		var metadata map[string]json.RawMessage
+		if metadataErr := json.Unmarshal(body.Meta, &metadata); metadataErr != nil || metadata == nil {
+			err = goa.MergeErrors(err, goa.InvalidFieldTypeError("body"+"._meta", string(body.Meta), "JSON object"))
+		}
+	}
+
 	return
 }
 
@@ -1219,30 +3301,187 @@ func validateResourceInfoResponseBody(body *ResourceInfoResponseBody, path strin
 	if body.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))
 	}
+	for _, e := range body.Icons {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError(path+".icons", "[*]"))
+		}
+		if e != nil {
+			if err2 := validateContentIcon(e, path+".icons[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.Annotations != nil {
+		if err2 := validateContentAnnotations(body.Annotations, path+".annotations"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.URI != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat(path+".uri", *body.URI, goa.FormatURI))
+	}
+	if body.Size != nil {
+		if *body.Size < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError(path+".size", *body.Size, 0, true))
+		}
+	}
+	if len(body.Meta) > 0 {
+		var metadata map[string]json.RawMessage
+		if metadataErr := json.Unmarshal(body.Meta, &metadata); metadataErr != nil || metadata == nil {
+			err = goa.MergeErrors(err, goa.InvalidFieldTypeError(path+"._meta", string(body.Meta), "JSON object"))
+		}
+	}
+
 	return
 }
 
-// ValidateResourceContentResponseBody runs the validations defined on
-// ResourceContent
-func ValidateResourceContentResponseBody(body *ResourceContentResponseBody) (err error) {
-	if body.URI == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("uri", "body"))
+// ValidateResourcesReadCompleteResultResponse runs the validations defined on
+// ResourcesReadCompleteResult
+func ValidateResourcesReadCompleteResultResponse(body *ResourcesReadCompleteResultResponse) (err error) {
+	if body.Contents == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("contents", "body"))
 	}
-	if body.Text == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("text", "body"))
+	if body.TTLMs == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ttlMs", "body"))
+	}
+	if body.CacheScope == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cacheScope", "body"))
+	}
+	for _, e := range body.Contents {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("body.contents", "[*]"))
+		}
+		if e != nil {
+			if err2 := validateResourceContentResponse(e, "body.contents[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.TTLMs != nil {
+		if *body.TTLMs < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.ttlMs", *body.TTLMs, 0, true))
+		}
+	}
+	if body.CacheScope != nil {
+		if !(*body.CacheScope == "public" || *body.CacheScope == "private") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.cacheScope", *body.CacheScope, []any{"public", "private"}))
+		}
 	}
 	return
 }
 
-// validateResourceContentResponseBody checks ResourceContent and reports
-// errors using the path supplied by its caller
-func validateResourceContentResponseBody(body *ResourceContentResponseBody, path string) (err error) {
-	if body.URI == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("uri", path))
+// validateResourcesReadCompleteResultResponse checks
+// ResourcesReadCompleteResult and reports errors using the path supplied by
+// its caller
+func validateResourcesReadCompleteResultResponse(body *ResourcesReadCompleteResultResponse, path string) (err error) {
+	if body.Contents == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("contents", path))
 	}
-	if body.Text == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("text", path))
+	if body.TTLMs == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("ttlMs", path))
 	}
+	if body.CacheScope == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cacheScope", path))
+	}
+	for _, e := range body.Contents {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError(path+".contents", "[*]"))
+		}
+		if e != nil {
+			if err2 := validateResourceContentResponse(e, path+".contents[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.TTLMs != nil {
+		if *body.TTLMs < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError(path+".ttlMs", *body.TTLMs, 0, true))
+		}
+	}
+	if body.CacheScope != nil {
+		if !(*body.CacheScope == "public" || *body.CacheScope == "private") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".cacheScope", *body.CacheScope, []any{"public", "private"}))
+		}
+	}
+	return
+}
+
+// ValidateResourceTemplateInfoResponseBody runs the validations defined on
+// ResourceTemplateInfo
+func ValidateResourceTemplateInfoResponseBody(body *ResourceTemplateInfoResponseBody) (err error) {
+	if body.URITemplate == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("uriTemplate", "body"))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	for _, e := range body.Icons {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("body.icons", "[*]"))
+		}
+		if e != nil {
+			if err2 := validateContentIcon(e, "body.icons[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.Annotations != nil {
+		if err2 := validateContentAnnotations(body.Annotations, "body.annotations"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.URITemplate != nil {
+		if _, templateErr := uritemplate.New(*body.URITemplate); templateErr != nil {
+			err = goa.MergeErrors(err, goa.PermanentError("invalid_resource_template", "%s.uriTemplate must be an RFC 6570 template", "body"))
+		}
+	}
+
+	if len(body.Meta) > 0 {
+		var metadata map[string]json.RawMessage
+		if metadataErr := json.Unmarshal(body.Meta, &metadata); metadataErr != nil || metadata == nil {
+			err = goa.MergeErrors(err, goa.InvalidFieldTypeError("body"+"._meta", string(body.Meta), "JSON object"))
+		}
+	}
+
+	return
+}
+
+// validateResourceTemplateInfoResponseBody checks ResourceTemplateInfo and
+// reports errors using the path supplied by its caller
+func validateResourceTemplateInfoResponseBody(body *ResourceTemplateInfoResponseBody, path string) (err error) {
+	if body.URITemplate == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("uriTemplate", path))
+	}
+	if body.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", path))
+	}
+	for _, e := range body.Icons {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError(path+".icons", "[*]"))
+		}
+		if e != nil {
+			if err2 := validateContentIcon(e, path+".icons[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if body.Annotations != nil {
+		if err2 := validateContentAnnotations(body.Annotations, path+".annotations"); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if body.URITemplate != nil {
+		if _, templateErr := uritemplate.New(*body.URITemplate); templateErr != nil {
+			err = goa.MergeErrors(err, goa.PermanentError("invalid_resource_template", "%s.uriTemplate must be an RFC 6570 template", path))
+		}
+	}
+
+	if len(body.Meta) > 0 {
+		var metadata map[string]json.RawMessage
+		if metadataErr := json.Unmarshal(body.Meta, &metadata); metadataErr != nil || metadata == nil {
+			err = goa.MergeErrors(err, goa.InvalidFieldTypeError(path+"._meta", string(body.Meta), "JSON object"))
+		}
+	}
+
 	return
 }
 
@@ -1301,9 +3540,46 @@ func validatePromptArgumentResponseBody(body *PromptArgumentResponseBody, path s
 	return
 }
 
-// ValidatePromptMessageResponseBody runs the validations defined on
-// PromptMessage
-func ValidatePromptMessageResponseBody(body *PromptMessageResponseBody) (err error) {
+// ValidatePromptsGetCompleteResultResponse runs the validations defined on
+// PromptsGetCompleteResult
+func ValidatePromptsGetCompleteResultResponse(body *PromptsGetCompleteResultResponse) (err error) {
+	if body.Messages == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("messages", "body"))
+	}
+	for _, e := range body.Messages {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("body.messages", "[*]"))
+		}
+		if e != nil {
+			if err2 := validatePromptMessageResponse(e, "body.messages[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// validatePromptsGetCompleteResultResponse checks PromptsGetCompleteResult and
+// reports errors using the path supplied by its caller
+func validatePromptsGetCompleteResultResponse(body *PromptsGetCompleteResultResponse, path string) (err error) {
+	if body.Messages == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("messages", path))
+	}
+	for _, e := range body.Messages {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError(path+".messages", "[*]"))
+		}
+		if e != nil {
+			if err2 := validatePromptMessageResponse(e, path+".messages[*]"); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidatePromptMessageResponse runs the validations defined on PromptMessage
+func ValidatePromptMessageResponse(body *PromptMessageResponse) (err error) {
 	if body.Role == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("role", "body"))
 	}
@@ -1316,16 +3592,16 @@ func ValidatePromptMessageResponseBody(body *PromptMessageResponseBody) (err err
 		}
 	}
 	if body.Content != nil {
-		if err2 := validateMessageContentResponseBody(body.Content, "body.content"); err2 != nil {
+		if err2 := validateContentItemResponse(body.Content, "body.content"); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
 	return
 }
 
-// validatePromptMessageResponseBody checks PromptMessage and reports errors
-// using the path supplied by its caller
-func validatePromptMessageResponseBody(body *PromptMessageResponseBody, path string) (err error) {
+// validatePromptMessageResponse checks PromptMessage and reports errors using
+// the path supplied by its caller
+func validatePromptMessageResponse(body *PromptMessageResponse, path string) (err error) {
 	if body.Role == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("role", path))
 	}
@@ -1338,43 +3614,61 @@ func validatePromptMessageResponseBody(body *PromptMessageResponseBody, path str
 		}
 	}
 	if body.Content != nil {
-		if err2 := validateMessageContentResponseBody(body.Content, path+".content"); err2 != nil {
+		if err2 := validateContentItemResponse(body.Content, path+".content"); err2 != nil {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
 	return
 }
 
-// ValidateMessageContentResponseBody runs the validations defined on
-// MessageContent
-func ValidateMessageContentResponseBody(body *MessageContentResponseBody) (err error) {
-	if body.Type == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("type", "body"))
+// ValidateCompletionSuggestionResponseBody runs the validations defined on
+// CompletionSuggestion
+func ValidateCompletionSuggestionResponseBody(body *CompletionSuggestionResponseBody) (err error) {
+	if body.Values == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("values", "body"))
 	}
-	if body.Text == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("text", "body"))
+	if len(body.Values) > 100 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.values", body.Values, len(body.Values), 100, false))
 	}
-	if body.Type != nil {
-		if !(*body.Type == "text") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.type", *body.Type, []any{"text"}))
+	for _, e := range body.Values {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("body.values", "[*]"))
 		}
 	}
 	return
 }
 
-// validateMessageContentResponseBody checks MessageContent and reports errors
-// using the path supplied by its caller
-func validateMessageContentResponseBody(body *MessageContentResponseBody, path string) (err error) {
-	if body.Type == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("type", path))
+// validateCompletionSuggestionResponseBody checks CompletionSuggestion and
+// reports errors using the path supplied by its caller
+func validateCompletionSuggestionResponseBody(body *CompletionSuggestionResponseBody, path string) (err error) {
+	if body.Values == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("values", path))
 	}
-	if body.Text == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("text", path))
+	if len(body.Values) > 100 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError(path+".values", body.Values, len(body.Values), 100, false))
 	}
-	if body.Type != nil {
-		if !(*body.Type == "text") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".type", *body.Type, []any{"text"}))
+	for _, e := range body.Values {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError(path+".values", "[*]"))
 		}
+	}
+	return
+}
+
+// ValidateCompletionReferenceRequestBody runs the validations defined on
+// CompletionReference
+func ValidateCompletionReferenceRequestBody(body *CompletionReferenceRequestBody) (err error) {
+	if !(body.Type == "ref/prompt" || body.Type == "ref/resource") {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.type", body.Type, []any{"ref/prompt", "ref/resource"}))
+	}
+	return
+}
+
+// validateCompletionReferenceRequestBody checks CompletionReference and
+// reports errors using the path supplied by its caller
+func validateCompletionReferenceRequestBody(body *CompletionReferenceRequestBody, path string) (err error) {
+	if !(body.Type == "ref/prompt" || body.Type == "ref/resource") {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError(path+".type", body.Type, []any{"ref/prompt", "ref/resource"}))
 	}
 	return
 }

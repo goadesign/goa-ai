@@ -132,7 +132,7 @@ func (r *Runtime) resolveConfirmationDecision(
 			it.call.ParentToolCallID,
 			resultJSON,
 			nil,
-			preview,
+			nil, preview,
 			nil,
 			0,
 			nil,
@@ -173,6 +173,7 @@ func (r *Runtime) resolveConfirmationDecision(
 		grouped,
 		timeouts,
 		toolOpts,
+		nil,
 	)
 	records, resultErr := stepToolRecordsAfterExecution(
 		[]ToolCall{call},
@@ -640,7 +641,7 @@ func (r *Runtime) consumeProvidedToolResultRecords(ctx context.Context, input *R
 			parentToolCallID(call, &base.RunContext),
 			record.resultJSON,
 			tr.ServerData,
-			preview,
+			tr.Blocks, preview,
 			tr.Bounds,
 			0,
 			nil,

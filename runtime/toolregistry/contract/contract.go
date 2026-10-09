@@ -211,13 +211,25 @@ func compileType(document []byte, metadata *genregistry.ToolTypeMetadata) (tools
 			details.Description = *field.Description
 		}
 		for _, branch := range field.Branches {
-			discriminator, err := fieldPath(branch.Discriminator)
-			if err != nil {
-				return tools.TypeSpec{}, err
+			if tagged, ok := branch.Selection.AsTagged(); ok {
+				path, err := fieldPath(tagged.Discriminator)
+				if err != nil {
+					return tools.TypeSpec{}, err
+				}
+				details.Branches = append(details.Branches, tools.TaggedUnionBranch{
+					Discriminator: path, Value: tagged.Value,
+				})
+			} else if untagged, ok := branch.Selection.AsUntagged(); ok {
+				path, err := fieldPath(untagged.Path)
+				if err != nil {
+					return tools.TypeSpec{}, err
+				}
+				details.Branches = append(details.Branches, tools.UntaggedUnionBranch{
+					Path: path, JSONKind: untagged.JSONKind, Index: untagged.Index,
+				})
+			} else {
+				return tools.TypeSpec{}, fmt.Errorf("tool field has an unselected union requirement")
 			}
-			details.Branches = append(details.Branches, tools.UnionBranch{
-				Discriminator: discriminator, Value: branch.Value,
-			})
 		}
 		result.Fields = append(result.Fields, details)
 	}

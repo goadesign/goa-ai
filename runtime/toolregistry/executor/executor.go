@@ -14,7 +14,8 @@ import (
 )
 
 type (
-	// Client admits registry calls and resumes registry-directed retries.
+	// Client accepts generated registry payloads and returns generated admissions.
+	// The executor constructs metadata and validates both admission deadlines.
 	Client = registrycall.Client
 
 	// SpecLookup supplies the exact contracts used to decode returned results.
@@ -72,5 +73,8 @@ func (e *Executor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call
 	if err != nil {
 		return nil, err
 	}
-	return runtime.Executed(result), nil
+	if result.PendingExecution != nil {
+		return runtime.Unfinished(result.PendingExecution)
+	}
+	return runtime.Executed(e.calls.DecodeCompletedResult(call, registryMeta, result)), nil
 }

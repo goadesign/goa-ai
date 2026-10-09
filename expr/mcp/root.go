@@ -4,6 +4,7 @@
 package mcp
 
 import (
+	"goa.design/goa-ai/internal/mcpinput"
 	"goa.design/goa/v3/eval"
 	"goa.design/goa/v3/expr"
 )
@@ -47,6 +48,18 @@ func (r *RootExpr) Packages() []string {
 	return []string{"goa.design/goa-ai/dsl"}
 }
 
+// Prepare records path fields after Goa has prepared each authored endpoint.
+// Subsequent MCP validation sees domain arguments without URL-owned values.
+func (r *RootExpr) Prepare() {
+	for _, service := range expr.Root.API.JSONRPC.Services {
+		mcp := r.GetMCP(service.ServiceExpr)
+		if mcp == nil {
+			continue
+		}
+		mcpinput.BindTransport(service)
+	}
+}
+
 // WalkSets exposes the nested expressions to the eval engine.
 func (r *RootExpr) WalkSets(walk eval.SetWalker) {
 	mcps := make(eval.ExpressionSet, 0, len(r.MCPServers))
@@ -69,11 +82,19 @@ func (r *RootExpr) WalkSets(walk eval.SetWalker) {
 			resources = append(resources, rsrc)
 		}
 	}
+	for _, server := range r.MCPServers {
+		for _, template := range server.ResourceTemplates {
+			resources = append(resources, template)
+		}
+	}
 	walk(resources)
 
 	var prompts eval.ExpressionSet
 	var messages eval.ExpressionSet
 	for _, m := range r.MCPServers {
+		for _, p := range m.MethodPrompts {
+			prompts = append(prompts, p)
+		}
 		for _, p := range m.Prompts {
 			prompts = append(prompts, p)
 			for _, msg := range p.Messages {
@@ -83,6 +104,25 @@ func (r *RootExpr) WalkSets(walk eval.SetWalker) {
 	}
 	walk(prompts)
 	walk(messages)
+	var completions eval.ExpressionSet
+	for _, server := range r.MCPServers {
+		for _, completion := range server.PromptCompletions {
+			completions = append(completions, completion)
+		}
+	}
+	for _, server := range r.MCPServers {
+		for _, completion := range server.ResourceCompletions {
+			completions = append(completions, completion)
+		}
+	}
+	walk(completions)
+	var subscriptions eval.ExpressionSet
+	for _, server := range r.MCPServers {
+		if server.SubscriptionSource != nil {
+			subscriptions = append(subscriptions, server.SubscriptionSource)
+		}
+	}
+	walk(subscriptions)
 }
 
 // RegisterMCP registers an MCP server configuration for a service
@@ -93,7 +133,11 @@ func (r *RootExpr) RegisterMCP(svc *expr.ServiceExpr, mcp *MCPExpr) {
 
 // GetMCP returns the MCP configuration for a service.
 func (r *RootExpr) GetMCP(svc *expr.ServiceExpr) *MCPExpr {
-	return r.MCPServers[svc.Name]
+	mcp := r.MCPServers[svc.Name]
+	if mcp == nil || mcp.Service != svc {
+		return nil
+	}
+	return mcp
 }
 
 // ServiceMCP returns the MCP configuration for a service name and optional
@@ -112,6 +156,5 @@ func (r *RootExpr) ServiceMCP(service, toolset string) *MCPExpr {
 
 // HasMCP returns true if the service has an MCP configuration.
 func (r *RootExpr) HasMCP(svc *expr.ServiceExpr) bool {
-	_, ok := r.MCPServers[svc.Name]
-	return ok
+	return r.GetMCP(svc) != nil
 }

@@ -51,10 +51,12 @@ func (e *correctingServiceFailureError) Issues() []*tools.FieldIssue {
 func TestDeriveToolUseIDIsStableAndCollisionScoped(t *testing.T) {
 	t.Parallel()
 
-	first := DeriveToolUseID("run-a", "call-1")
-	assert.Equal(t, first, DeriveToolUseID("run-a", "call-1"))
-	assert.NotEqual(t, first, DeriveToolUseID("run-b", "call-1"))
-	assert.NotEqual(t, DeriveToolUseID("ab", "c"), DeriveToolUseID("a", "bc"))
+	first := DeriveToolUseID("run-a", "call-1", 0)
+	assert.Equal(t, first, DeriveToolUseID("run-a", "call-1", 0))
+	assert.NotEqual(t, first, DeriveToolUseID("run-b", "call-1", 0))
+	assert.NotEqual(t, DeriveToolUseID("ab", "c", 0), DeriveToolUseID("a", "bc", 0))
+	assert.NotEqual(t, first, DeriveToolUseID("run-a", "call-1", 1))
+	assert.NotEqual(t, DeriveToolUseID("run-a", "call-1", 1), DeriveToolUseID("run-a", "call-1", 2))
 	require.NoError(t, ValidateRegistrationToken(first))
 }
 

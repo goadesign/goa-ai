@@ -30,8 +30,8 @@ func TestChildContinuationPreservesCallAcrossExecutionParents(t *testing.T) {
 			ParentLinked: hookRecord(t, "link-"+runID, start.StartedAt, hooks.NewChildRunLinkedEvent(
 				parent.RunID, agent.Ident(parent.AgentID), start.SessionID, "child", callID, runID, "child",
 			)),
-			Started:  startedRecord(t, "start", start),
-			Canceled: completedRecord(t, "stop", start, "canceled", &run.Cancellation{Reason: run.CancellationReasonSessionEnded}),
+			Started:      startedRecord(t, "start", start),
+			Cancellation: cancellationRecord(t, "stop", start, run.CancellationReasonSessionEnded),
 		}
 	}
 	suspend := func(start session.RunStart) {
@@ -56,6 +56,9 @@ func TestChildContinuationPreservesCallAcrossExecutionParents(t *testing.T) {
 	first, err := store.StartChildRun(ctx, a1)
 	require.NoError(t, err)
 	require.Equal(t, session.RunStartProceed, first.Outcome)
+	chosen, err := store.LoadRun(ctx, a0.Run.RunID)
+	require.NoError(t, err)
+	require.Equal(t, a1.Run.RunID, chosen.SuccessorRunID)
 	before, err := store.ListRunRecords(ctx, parent1.RunID, "", 100)
 	require.NoError(t, err)
 	wrong := command(parent1, "wrong-call", a0.Run.RunID, "call-B")
@@ -64,6 +67,14 @@ func TestChildContinuationPreservesCallAcrossExecutionParents(t *testing.T) {
 	_, err = store.LoadRun(ctx, wrong.Run.RunID)
 	require.ErrorIs(t, err, session.ErrRunNotFound)
 	after, err := store.ListRunRecords(ctx, parent1.RunID, "", 100)
+	require.NoError(t, err)
+	require.Equal(t, before, after)
+	competitor := command(parent1, "competing-child", a0.Run.RunID, "call-A")
+	_, err = store.StartChildRun(ctx, competitor)
+	require.ErrorIs(t, err, session.ErrRunConflict)
+	_, err = store.LoadRun(ctx, competitor.Run.RunID)
+	require.ErrorIs(t, err, session.ErrRunNotFound)
+	after, err = store.ListRunRecords(ctx, parent1.RunID, "", 100)
 	require.NoError(t, err)
 	require.Equal(t, before, after)
 

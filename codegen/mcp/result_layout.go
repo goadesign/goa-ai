@@ -1,0 +1,218 @@
+// Package codegen connects MCP result contracts to Goa's generated view types.
+// The server encodes the selected fields already returned by the endpoint;
+// the codec never rebuilds a full service result with omitted values.
+package codegen
+
+import (
+	"fmt"
+
+	"goa.design/goa-ai/codegen/internal/mcpcontract"
+	"goa.design/goa-ai/internal/mcpinput"
+	"goa.design/goa/v3/codegen"
+	goaservice "goa.design/goa/v3/codegen/service"
+	"goa.design/goa/v3/expr"
+)
+
+type (
+	// resultTypePair identifies one generated type under one selected view.
+	// Repeated fields share that selection; different views keep separate fields.
+	resultTypePair struct {
+		source, contract expr.DataType
+	}
+)
+
+// planMCPResult plans the completed value advertised by one MCP operation.
+// The endpoint's full native outcome is planned separately so additional input
+// does not change the type checked at the configured service endpoint.
+func planMCPResult(services *goaservice.Plan, method *expr.MethodExpr) (*expr.AttributeExpr, *codegen.GoTypePlan, error) {
+	owner := method
+	task, err := mcpinput.TaskExchange(method)
+	if err != nil {
+		return nil, nil, err
+	}
+	if task != nil {
+		owner = task.Read
+	}
+	if view, fixed := mcpcontract.FixedView(owner.Result); fixed {
+		return planMCPResultView(services, method, view)
+	}
+	source, layout, err := planEndpointResult(services, owner)
+	if err != nil {
+		return nil, nil, err
+	}
+	contract, err := mcpcontract.Result(method)
+	if err != nil {
+		return nil, nil, err
+	}
+	if _, viewed := owner.Result.Type.(*expr.ResultTypeExpr); viewed {
+		mapping, err := mcpinput.InputExchange(method)
+		if err != nil {
+			return nil, nil, err
+		}
+		if mapping != nil || task != nil {
+			return planMCPResultView(services, method, expr.DefaultView)
+		}
+		return source, layout, nil
+	}
+	return planCompletedResult(services, method, source, contract)
+}
+
+// planMCPResultView keeps the native view's pointers and declarations while
+// encoding only its completed branch and the fields selected in that branch.
+func planMCPResultView(services *goaservice.Plan, method *expr.MethodExpr, view string) (*expr.AttributeExpr, *codegen.GoTypePlan, error) {
+	owner := method
+	task, err := mcpinput.TaskExchange(method)
+	if err != nil {
+		return nil, nil, err
+	}
+	if task != nil {
+		owner = task.Read
+	}
+	source, _, err := planEndpointResult(services, owner)
+	if err != nil {
+		return nil, nil, err
+	}
+	contract, err := mcpcontract.ResultView(method, view)
+	if err != nil {
+		return nil, nil, err
+	}
+	return planCompletedResult(services, method, source, contract)
+}
+
+// planEndpointResult retains the full result returned by Goa's endpoint. Views
+// keep their generated pointers; ordinary results keep their authored layout.
+func planEndpointResult(services *goaservice.Plan, method *expr.MethodExpr) (*expr.AttributeExpr, *codegen.GoTypePlan, error) {
+	if _, viewed := method.Result.Type.(*expr.ResultTypeExpr); !viewed {
+		layout, err := services.MethodTypeLayout(method, method.Result)
+		return method.Result, layout, err
+	}
+	source, err := services.ProjectedResult(method)
+	if err != nil {
+		return nil, nil, err
+	}
+	layout, err := services.MethodTypeLayout(method, source)
+	return source, layout, err
+}
+
+// planCompletedResult retains the native declaration for the completed branch
+// and applies its advertised fields to a copy. Authored service types remain
+// intact, including private fields needed by the service's other transports.
+func planCompletedResult(services *goaservice.Plan, method *expr.MethodExpr, source, contract *expr.AttributeExpr) (*expr.AttributeExpr, *codegen.GoTypePlan, error) {
+	mapping, err := mcpinput.InputExchange(method)
+	if err != nil {
+		return nil, nil, err
+	}
+	task, err := mcpinput.TaskExchange(method)
+	if err != nil {
+		return nil, nil, err
+	}
+	if mapping != nil && task == nil {
+		outcome := expr.AsUnion(source.Find(mapping.OutcomeName).Type)
+		for _, branch := range outcome.Values {
+			if branch.Name != completeBranch {
+				continue
+			}
+			source = branch.Attribute
+			break
+		}
+	}
+	if task != nil {
+		method = task.Read
+		for _, branch := range expr.AsUnion(source.Find("outcome").Type).Values {
+			if branch.Name == completeBranch {
+				source = branch.Attribute
+				break
+			}
+		}
+	}
+	source = expr.DupAtt(source)
+	if err := selectResultFields(source, contract, make(map[resultTypePair]expr.DataType)); err != nil {
+		return nil, nil, fmt.Errorf("select completed MCP fields for method %q: %w", method.Name, err)
+	}
+	layout, err := services.MethodTypeLayout(method, source)
+	return source, layout, err
+}
+
+// selectResultFields retains the generated view declarations and copies only
+// fields and constraints from the selected contract. Each nested view receives
+// its own field selection, including when siblings share a generated Go type.
+// Omitted fields stay outside both JSON encoding and decoding.
+func selectResultFields(source, contract *expr.AttributeExpr, seen map[resultTypePair]expr.DataType) error {
+	source.Validation = nil
+	if validation := expr.EffectiveValidation(contract); validation != nil {
+		source.Validation = validation.Dup()
+	}
+	pair := resultTypePair{source.Type, contract.Type}
+	if selected, ok := seen[pair]; ok {
+		source.Type = selected
+		return nil
+	}
+	if named, ok := source.Type.(expr.UserType); ok {
+		attribute := *named.Attribute()
+		selected := named.Dup(&attribute)
+		seen[pair] = selected
+		source.Type = selected
+		target := contract
+		if namedTarget, ok := contract.Type.(expr.UserType); ok {
+			target = namedTarget.Attribute()
+		}
+		return selectResultFields(selected.Attribute(), target, seen)
+	}
+	switch actual := source.Type.(type) {
+	case *expr.Object:
+		target := expr.AsObject(contract.Type)
+		if target == nil {
+			return fmt.Errorf("view object has a non-object contract")
+		}
+		fields := make(expr.Object, 0, len(*target))
+		for _, field := range *target {
+			attribute := actual.Attribute(field.Name)
+			if attribute == nil {
+				return fmt.Errorf("view field %q is absent from Goa's generated view type", field.Name)
+			}
+			selected := *attribute
+			if err := selectResultFields(&selected, field.Attribute, seen); err != nil {
+				return err
+			}
+			fields = append(fields, &expr.NamedAttributeExpr{Name: field.Name, Attribute: &selected})
+		}
+		source.Type = &fields
+	case *expr.Array:
+		target := expr.AsArray(contract.Type)
+		if target == nil {
+			return fmt.Errorf("view array has a non-array contract")
+		}
+		selected, element := *actual, *actual.ElemType
+		selected.ElemType = &element
+		source.Type = &selected
+		return selectResultFields(selected.ElemType, target.ElemType, seen)
+	case *expr.Union:
+		target := expr.AsUnion(contract.Type)
+		if target == nil || len(target.Values) != len(actual.Values) {
+			return fmt.Errorf("view union does not match its selected contract")
+		}
+		selected := *actual
+		selected.Values = make([]*expr.NamedAttributeExpr, len(actual.Values))
+		source.Type = &selected
+		for index, branch := range actual.Values {
+			if branch.Name != target.Values[index].Name {
+				return fmt.Errorf("view union branch does not match its selected contract")
+			}
+			attribute := *branch.Attribute
+			selected.Values[index] = &expr.NamedAttributeExpr{Name: branch.Name, Attribute: &attribute}
+			if err := selectResultFields(&attribute, target.Values[index].Attribute, seen); err != nil {
+				return err
+			}
+		}
+	case *expr.Map:
+		target := expr.AsMap(contract.Type)
+		if target == nil {
+			return fmt.Errorf("view map has a non-map contract")
+		}
+		selected, element := *actual, *actual.ElemType
+		selected.ElemType = &element
+		source.Type = &selected
+		return selectResultFields(selected.ElemType, target.ElemType, seen)
+	}
+	return nil
+}

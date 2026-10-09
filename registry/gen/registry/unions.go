@@ -10,7 +10,6 @@ package registry
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 
 	goa "goa.design/goa/v3/pkg"
 )
@@ -87,21 +86,28 @@ func (u *ToolFieldSegment) SetElement(v *ToolCollectionElement) {
 
 // Validate ensures exactly one valid branch is selected.
 func (u ToolFieldSegment) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u ToolFieldSegment) Value() (any, error) {
 	switch u.kind {
 	case "":
-		return goa.InvalidEnumValueError("type", "", []any{
+		return nil, goa.InvalidEnumValueError("type", "", []any{
 			string(ToolFieldSegmentKindField),
 			string(ToolFieldSegmentKindElement),
 		})
 	case ToolFieldSegmentKindField:
-		return nil
+		return u.field, nil
 	case ToolFieldSegmentKindElement:
 		if u.element == nil {
-			return goa.MissingFieldError("value", "ToolFieldSegment")
+			return nil, goa.MissingFieldError("value", "ToolFieldSegment")
 		}
-		return nil
+		return u.element, nil
 	default:
-		return goa.InvalidEnumValueError("type", u.kind, []any{
+		return nil, goa.InvalidEnumValueError("type", u.kind, []any{
 			string(ToolFieldSegmentKindField),
 			string(ToolFieldSegmentKindElement),
 		})
@@ -110,19 +116,9 @@ func (u ToolFieldSegment) Validate() error {
 
 // MarshalJSON marshals the union into the canonical {type,value} JSON shape.
 func (u ToolFieldSegment) MarshalJSON() ([]byte, error) {
-	if err := u.Validate(); err != nil {
+	value, err := u.Value()
+	if err != nil {
 		return nil, err
-	}
-	var (
-		value any
-	)
-	switch u.kind {
-	case ToolFieldSegmentKindField:
-		value = u.field
-	case ToolFieldSegmentKindElement:
-		value = u.element
-	default:
-		return nil, fmt.Errorf("unexpected ToolFieldSegment kind %q", u.kind)
 	}
 	return json.Marshal(struct {
 		Type  string `json:"type"`
@@ -168,6 +164,164 @@ func (u *ToolFieldSegment) UnmarshalJSON(data []byte) error {
 		return goa.InvalidEnumValueError("type", raw.Type, []any{
 			string(ToolFieldSegmentKindField),
 			string(ToolFieldSegmentKindElement),
+		})
+	}
+	return nil
+}
+
+// ToolUnionSelection holds exactly one of its branch values.
+type ToolUnionSelection struct {
+	kind     ToolUnionSelectionKind
+	tagged   *ToolTaggedUnionBranch
+	untagged *ToolUntaggedUnionBranch
+}
+
+// ToolUnionSelectionKind records which ToolUnionSelection branch is selected.
+type ToolUnionSelectionKind string
+
+const (
+	// ToolUnionSelectionKindTagged identifies the tagged branch.
+	ToolUnionSelectionKindTagged ToolUnionSelectionKind = "tagged"
+	// ToolUnionSelectionKindUntagged identifies the untagged branch.
+	ToolUnionSelectionKindUntagged ToolUnionSelectionKind = "untagged"
+)
+
+// Kind returns the selected branch.
+func (u ToolUnionSelection) Kind() ToolUnionSelectionKind {
+	return u.kind
+}
+
+// NewToolUnionSelectionTagged constructs ToolUnionSelection with the tagged branch set.
+func NewToolUnionSelectionTagged(v *ToolTaggedUnionBranch) ToolUnionSelection {
+	return ToolUnionSelection{
+		kind:   ToolUnionSelectionKindTagged,
+		tagged: v,
+	}
+}
+
+// AsTagged returns the value when the tagged branch is selected.
+func (u ToolUnionSelection) AsTagged() (_ *ToolTaggedUnionBranch, ok bool) {
+	if u.kind != ToolUnionSelectionKindTagged {
+		return
+	}
+	return u.tagged, true
+}
+
+// SetTagged selects the tagged branch and stores v.
+func (u *ToolUnionSelection) SetTagged(v *ToolTaggedUnionBranch) {
+	*u = ToolUnionSelection{
+		kind:   ToolUnionSelectionKindTagged,
+		tagged: v,
+	}
+}
+
+// NewToolUnionSelectionUntagged constructs ToolUnionSelection with the untagged branch set.
+func NewToolUnionSelectionUntagged(v *ToolUntaggedUnionBranch) ToolUnionSelection {
+	return ToolUnionSelection{
+		kind:     ToolUnionSelectionKindUntagged,
+		untagged: v,
+	}
+}
+
+// AsUntagged returns the value when the untagged branch is selected.
+func (u ToolUnionSelection) AsUntagged() (_ *ToolUntaggedUnionBranch, ok bool) {
+	if u.kind != ToolUnionSelectionKindUntagged {
+		return
+	}
+	return u.untagged, true
+}
+
+// SetUntagged selects the untagged branch and stores v.
+func (u *ToolUnionSelection) SetUntagged(v *ToolUntaggedUnionBranch) {
+	*u = ToolUnionSelection{
+		kind:     ToolUnionSelectionKindUntagged,
+		untagged: v,
+	}
+}
+
+// Validate ensures exactly one valid branch is selected.
+func (u ToolUnionSelection) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u ToolUnionSelection) Value() (any, error) {
+	switch u.kind {
+	case "":
+		return nil, goa.InvalidEnumValueError("type", "", []any{
+			string(ToolUnionSelectionKindTagged),
+			string(ToolUnionSelectionKindUntagged),
+		})
+	case ToolUnionSelectionKindTagged:
+		if u.tagged == nil {
+			return nil, goa.MissingFieldError("value", "ToolUnionSelection")
+		}
+		return u.tagged, nil
+	case ToolUnionSelectionKindUntagged:
+		if u.untagged == nil {
+			return nil, goa.MissingFieldError("value", "ToolUnionSelection")
+		}
+		return u.untagged, nil
+	default:
+		return nil, goa.InvalidEnumValueError("type", u.kind, []any{
+			string(ToolUnionSelectionKindTagged),
+			string(ToolUnionSelectionKindUntagged),
+		})
+	}
+}
+
+// MarshalJSON marshals the union into the canonical {type,value} JSON shape.
+func (u ToolUnionSelection) MarshalJSON() ([]byte, error) {
+	value, err := u.Value()
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(struct {
+		Type  string `json:"type"`
+		Value any    `json:"value"`
+	}{
+		Type:  string(u.kind),
+		Value: value,
+	})
+}
+
+// UnmarshalJSON unmarshals the union from the canonical {type,value} JSON shape.
+func (u *ToolUnionSelection) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Type  string          `json:"type"`
+		Value json.RawMessage `json:"value"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if len(raw.Value) == 0 {
+		return goa.MissingFieldError("value", "ToolUnionSelection")
+	}
+	if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
+		return goa.InvalidFieldTypeError("value", nil, "non-null JSON value")
+	}
+	switch raw.Type {
+	case string(ToolUnionSelectionKindTagged):
+		var v *ToolTaggedUnionBranch
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetTagged(v)
+	case string(ToolUnionSelectionKindUntagged):
+		var v *ToolUntaggedUnionBranch
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetUntagged(v)
+	default:
+		if raw.Type == "" {
+			return goa.MissingFieldError("type", "ToolUnionSelection")
+		}
+		return goa.InvalidEnumValueError("type", raw.Type, []any{
+			string(ToolUnionSelectionKindTagged),
+			string(ToolUnionSelectionKindUntagged),
 		})
 	}
 	return nil

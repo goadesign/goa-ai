@@ -11,6 +11,11 @@ type (
         {{- range .Tools }}
         {{- if .IsMethodBacked }}
         {{ .CallerField }} func(context.Context, any) (any, error)
+        {{- if .Task }}
+        {{- range .Task.Roles }}
+        {{ .CallerField }} func(context.Context, any) (any, error)
+        {{- end }}
+        {{- end }}
         {{- end }}
         {{- end }}
         mapPayload func(tools.Ident, any, *runtime.ToolCallMeta) (any, error)
@@ -81,6 +86,18 @@ func {{ .Names.WithClient }}(client *{{ .ServiceClientRef }}) {{ .Names.OptionTy
             return nil, err
             {{- end }}
         }
+        {{- if .Task }}
+        {{- range $index, $role := .Task.Roles }}
+        c.{{ .CallerField }} = func(ctx context.Context, args any) (any, error) {
+            {{- if eq $index 0 }}
+            return client.{{ .MethodName }}(ctx, args.({{ .PayloadRef }}))
+            {{- else }}
+            err := client.{{ .MethodName }}(ctx, args.({{ .PayloadRef }}))
+            return nil, err
+            {{- end }}
+        }
+        {{- end }}
+        {{- end }}
         {{- end }}
         {{- end }}
     })
@@ -94,6 +111,14 @@ func {{ .HelperCallerOption }}(f func(context.Context, any) (any, error)) {{ $.N
         c.{{ .CallerField }} = f
     })
 }
+{{- if .Task }}
+{{- range .Task.Roles }}
+// {{ .CallerOption }} sets the caller for the existing job's {{ .MethodName }} method.
+func {{ .CallerOption }}(f func(context.Context, any) (any, error)) {{ $.Names.OptionType }} {
+    return {{ $.Names.OptionFuncType }}(func(c *{{ $.Names.ConfigType }}) { c.{{ .CallerField }} = f })
+}
+{{- end }}
+{{- end }}
 {{- end }}
 {{- end }}
 // {{ .Constructor }} returns an executor for the Goa methods used by this toolset.
@@ -110,6 +135,11 @@ func {{ .Constructor }}(opts ...{{ .Names.OptionType }}) runtime.ToolCallExecuto
     if cfg.{{ .CallerField }} == nil {
         panic(fmt.Errorf("service executor missing caller for tool %q", {{ printf "%q" .QualifiedName }}))
     }
+    {{- if .Task }}
+    {{- range .Task.Roles }}
+    if cfg.{{ .CallerField }} == nil { panic(fmt.Errorf("service executor missing caller for job method %q", {{ printf "%q" .MethodName }})) }
+    {{- end }}
+    {{- end }}
     {{- end }}
     {{- end }}
     return runtime.ToolCallExecutorFunc(func(ctx context.Context, meta *runtime.ToolCallMeta, call *runtime.ToolCall) (*runtime.ToolExecutionResult, error) {
@@ -130,6 +160,31 @@ func {{ .Constructor }}(opts ...{{ .Names.OptionType }}) runtime.ToolCallExecuto
             {{- end }}
             {{- $hasBoundsProjection := and .Bounds .Bounds.Projection .Bounds.Projection.Returned .Bounds.Projection.Truncated }}
         case tools.Ident({{ printf "%q" .QualifiedName }}):
+            {{- if or .FillInputContinuation .Task }}
+            if err := toolregistry.ValidateExecution(call.ExecutionSequence, call.ExecutionContinuation, call.TextOnly); err != nil {
+                return runtime.Executed({{ $.Names.InvalidToolCall }}(call, err)), nil
+            }
+            {{- if .FillInputContinuation }}
+            var inputContinuation *{{ $.MCPPackage }}.CallContinuation
+            if call.ExecutionContinuation != nil {
+                {{- if .Task }}
+                inputContinuation, _ = call.ExecutionContinuation.AsInput()
+                {{- else }}
+                var ok bool
+                inputContinuation, ok = call.ExecutionContinuation.AsInput()
+                {{- end }}
+                {{- if not .Task }}
+                if !ok {
+                    return runtime.Executed({{ $.Names.InvalidToolCall }}(call, errors.New("tool does not accept Task continuation"))), nil
+                }
+                {{- end }}
+            }
+            {{- end }}
+            {{- else }}
+            if call.ExecutionContinuation != nil || call.ExecutionSequence != 0 {
+                return runtime.Executed({{ $.Names.InvalidToolCall }}(call, errors.New("tool does not accept input continuation"))), nil
+            }
+            {{- end }}
             var toolArgs any
             {{- if .MethodPayloadTypeRef }}
             {
@@ -163,13 +218,12 @@ func {{ .Constructor }}(opts ...{{ .Names.OptionType }}) runtime.ToolCallExecuto
                 }
             } else {
                 {{- if .MethodPayloadTypeRef }}
-                    {{- if .PayloadAliasesMethod }}
-                methodIn = toolArgs
-                    {{- else }}
                 methodIn = {{ $.Toolset.SpecsPackageName }}.{{ .MethodPayloadTransform }}(toolArgs.({{ if .PayloadPointer }}*{{ end }}{{ $.Toolset.SpecsPackageName }}.{{ .PayloadTypeName }}))
-                    {{- end }}
                 {{- end }}
             }
+            {{- if .Task }}
+            if call.ExecutionContinuation == nil{{ if .FillInputContinuation }} || inputContinuation != nil{{ end }} {
+            {{- end }}
             for _, inj := range cfg.injectors {
                 if err := inj.Inject(ctx, methodIn, meta); err != nil {
                     return runtime.Executed({{ $.Names.FailedCallResult }}(
@@ -178,6 +232,21 @@ func {{ .Constructor }}(opts ...{{ .Names.OptionType }}) runtime.ToolCallExecuto
                     )), nil
                 }
             }
+            {{- if .Task }}
+            }
+            {{- end }}
+            {{- if .FillInputContinuation }}
+            nativePayload, ok := methodIn.({{ .MethodPayloadTypeRef }})
+            if !ok {
+                return runtime.Executed({{ $.Names.FailedCallResult }}(call, fmt.Errorf("unexpected method payload type: %T", methodIn))), nil
+            }
+            if err := {{ $.Toolset.SpecsPackageName }}.{{ .FillInputContinuation }}(nativePayload, inputContinuation); err != nil {
+                return runtime.Executed({{ $.Names.InvalidToolCall }}(call, err)), nil
+            }
+            {{- end }}
+            {{- if .Task }}
+            {{ nativeTaskDispatch .ToolData $.Toolset.SpecsPackageName $.Names.FailedToolResult .CallerField false }}
+            {{- else }}
             methodOut, err := cfg.{{ .CallerField }}(ctx, methodIn)
             if err != nil {
                 return runtime.Executed({{ $.Names.FailedCallResult }}(
@@ -185,6 +254,24 @@ func {{ .Constructor }}(opts ...{{ .Names.OptionType }}) runtime.ToolCallExecuto
                     err,
                 )), nil
             }
+            {{- if .ReadInputOutcome }}
+            nativeResult, ok := methodOut.({{ .NativeResultTypeRef }})
+            if !ok {
+                return runtime.Executed({{ $.Names.FailedCallResult }}(call, fmt.Errorf("unexpected method result type: %T", methodOut))), nil
+            }
+            completed, pending, err := {{ $.Toolset.SpecsPackageName }}.{{ .ReadInputOutcome }}(nativeResult)
+            if err != nil {
+                return runtime.Executed({{ $.Names.FailedCallResult }}(call, err)), nil
+            }
+            if pending != nil {
+                if call.TextOnly {
+                    return runtime.Executed({{ $.Names.FailedCallResult }}(call, errors.New("text-only tool returned required host input"))), nil
+                }
+                return runtime.AwaitMCPInput(pending)
+            }
+            methodOut = completed
+            {{- end }}
+            {{- end }}
             var result any
             if cfg.mapResult != nil {
                 var e error
@@ -197,11 +284,7 @@ func {{ .Constructor }}(opts ...{{ .Names.OptionType }}) runtime.ToolCallExecuto
                 }
             } else {
                 {{- if .HasResult }}
-                    {{- if .ResultAliasesMethod }}
-                result = methodOut
-                    {{- else }}
                 result = {{ $.Toolset.SpecsPackageName }}.{{ .ToolResultTransform }}(methodOut.({{ .MethodResultTypeRef }}))
-                    {{- end }}
                 {{- end }}
             }
             {{- if or $hasBoundsProjection $toolHasSource }}

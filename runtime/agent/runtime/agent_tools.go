@@ -592,9 +592,13 @@ func (r *Runtime) decodeAgentChildFinalToolResult(call *ToolCall, event *api.Too
 	if !ok {
 		return nil, fmt.Errorf("agent-tool final result references unregistered tool %q", call.Name)
 	}
+	if err := event.Blocks.Validate(); err != nil {
+		return nil, fmt.Errorf("agent-tool final content for %s: %w", call.Name, err)
+	}
 	result := &planner.ToolResult{
 		Name:       call.Name,
 		ServerData: append(rawjson.Message(nil), event.ServerData...),
+		Blocks:     event.Blocks.Clone(),
 		Bounds:     event.Bounds,
 		Failure:    event.Failure,
 		Telemetry:  event.Telemetry,

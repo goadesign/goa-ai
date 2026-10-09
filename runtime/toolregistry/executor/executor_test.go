@@ -16,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"goa.design/goa-ai/features/stream/pulse/clients/pulse"
+	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -142,7 +143,7 @@ func TestExecutorUsesOldestStartForResultStreamReader(t *testing.T) {
 		stream:   stream,
 	}
 
-	var dispatchedMeta toolregistry.ToolCallMeta
+	var dispatchedMeta genregistry.ToolCallMeta
 	var dispatchedToolset string
 	exec := newExecutor(t, fakeRegistryClient{
 		toolUseID: toolUseID,
@@ -151,6 +152,7 @@ func TestExecutorUsesOldestStartForResultStreamReader(t *testing.T) {
 	}, pc, "todos.todos", specs)
 
 	res, err := exec.Execute(context.Background(), &agentsruntime.ToolCallMeta{
+		TextOnly:  true,
 		RunID:     "run",
 		SessionID: "sess",
 		Labels:    map[string]string{"scope": "detached"},
@@ -165,6 +167,8 @@ func TestExecutorUsesOldestStartForResultStreamReader(t *testing.T) {
 	assert.Equal(t, tools.Ident("queue.update_items"), res.ToolResult.Name)
 	assert.Equal(t, "todos.todos", dispatchedToolset)
 	assert.Equal(t, map[string]string{"scope": "detached"}, dispatchedMeta.Labels)
+	assert.True(t, dispatchedMeta.TextOnly)
+	assert.Zero(t, dispatchedMeta.ExecutionSequence)
 	assert.False(t, stream.destroyed)
 }
 
@@ -1541,17 +1545,11 @@ type fakeRegistryClient struct {
 	callDeadline       *time.Time
 	calls              *atomic.Int64
 	retryExpectedToken *string
-	meta               *toolregistry.ToolCallMeta
+	meta               *genregistry.ToolCallMeta
 	toolset            *string
 }
 
-func (c fakeRegistryClient) CallTool(
-	ctx context.Context,
-	toolset string,
-	_ tools.Ident,
-	_ []byte,
-	meta toolregistry.ToolCallMeta,
-) (toolregistry.ToolCallRef, error) {
+func (c fakeRegistryClient) CallTool(ctx context.Context, payload *genregistry.CallToolPayload) (*genregistry.CallToolResult, error) {
 	if c.callDeadline != nil {
 		*c.callDeadline, _ = ctx.Deadline()
 	}
@@ -1559,13 +1557,13 @@ func (c fakeRegistryClient) CallTool(
 		c.calls.Add(1)
 	}
 	if c.meta != nil {
-		*c.meta = meta
+		*c.meta = *payload.Meta
 	}
 	if c.toolset != nil {
-		*c.toolset = toolset
+		*c.toolset = payload.Toolset
 	}
 	if c.err != nil {
-		return toolregistry.ToolCallRef{}, c.err
+		return nil, c.err
 	}
 	registrationToken := c.registrationToken
 	if registrationToken == "" {
@@ -1579,33 +1577,26 @@ func (c fakeRegistryClient) CallTool(
 	if resultStreamTTL == 0 {
 		resultStreamTTL = toolregistry.DefaultResultStreamTTL
 	}
-	return toolregistry.ToolCallRef{
+	return &genregistry.CallToolResult{
 		ToolUseID:             c.toolUseID,
 		RegistrationToken:     registrationToken,
-		ExecutionDeadline:     executionDeadline,
-		ResultStreamExpiresAt: testResultStreamExpiration(resultStreamTTL),
+		ExecutionDeadline:     executionDeadline.Format(time.RFC3339Nano),
+		ResultStreamExpiresAt: testResultStreamExpiration(resultStreamTTL).Format(time.RFC3339Nano),
 	}, nil
 }
 
-func (c fakeRegistryClient) RetryTool(
-	_ context.Context,
-	_ string,
-	_ tools.Ident,
-	_ []byte,
-	meta toolregistry.ToolCallMeta,
-	expectedRegistrationToken string,
-) (toolregistry.ToolCallRef, error) {
+func (c fakeRegistryClient) RetryTool(_ context.Context, payload *genregistry.RetryToolPayload) (*genregistry.CallToolResult, error) {
 	if c.calls != nil {
 		c.calls.Add(1)
 	}
 	if c.retryExpectedToken != nil {
-		*c.retryExpectedToken = expectedRegistrationToken
+		*c.retryExpectedToken = payload.ExpectedRegistrationToken
 	}
 	if c.meta != nil {
-		*c.meta = meta
+		*c.meta = *payload.Meta
 	}
 	if c.err != nil {
-		return toolregistry.ToolCallRef{}, c.err
+		return nil, c.err
 	}
 	resultStreamTTL := c.resultStreamTTL
 	if resultStreamTTL == 0 {
@@ -1615,11 +1606,11 @@ func (c fakeRegistryClient) RetryTool(
 	if executionDeadline.IsZero() {
 		executionDeadline = testResultStreamExpiration(toolregistry.MaxToolCallWait)
 	}
-	return toolregistry.ToolCallRef{
+	return &genregistry.CallToolResult{
 		ToolUseID:             c.toolUseID,
-		RegistrationToken:     expectedRegistrationToken,
-		ExecutionDeadline:     executionDeadline,
-		ResultStreamExpiresAt: testResultStreamExpiration(resultStreamTTL),
+		RegistrationToken:     payload.ExpectedRegistrationToken,
+		ExecutionDeadline:     executionDeadline.Format(time.RFC3339Nano),
+		ResultStreamExpiresAt: testResultStreamExpiration(resultStreamTTL).Format(time.RFC3339Nano),
 	}, nil
 }
 

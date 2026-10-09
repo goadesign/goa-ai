@@ -22,6 +22,7 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/internal/temporalerrors"
 )
 
 func TestContinuationActivityRecordedDecisionReplay(t *testing.T) {
@@ -100,6 +101,6 @@ func TestContinuationActivityRegistrationRetainsContractFailure(t *testing.T) {
 	var failure *temporal.ApplicationError
 	require.ErrorAs(t, err, &failure)
 	assert.True(t, failure.NonRetryable())
-	assert.Equal(t, "goa_ai_continuation_contract", failure.Type())
+	assert.False(t, temporalerrors.Retryable(err))
 	assert.Contains(t, failure.Message(), "selected history owner mismatch")
 }

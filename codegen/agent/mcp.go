@@ -5,34 +5,46 @@ import (
 	"fmt"
 	"sort"
 
+	"goa.design/goa-ai/codegen/internal/mcpcontract"
 	"goa.design/goa-ai/codegen/naming"
 	agentsExpr "goa.design/goa-ai/expr/agent"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
+	"goa.design/goa-ai/internal/mcpinput"
 	goaexpr "goa.design/goa/v3/expr"
 )
 
 // populateMCPToolset reads the named server from the MCP definitions supplied
 // to this generation and adds its tools to ts. It returns false when the toolset
-// or server is missing.
-func populateMCPToolset(mcpRoot *mcpexpr.RootExpr, ts *ToolsetData) bool {
+// or server is missing, and an error when a selected result view is invalid.
+func populateMCPToolset(mcpRoot *mcpexpr.RootExpr, ts *ToolsetData) (bool, error) {
 	if ts.Expr == nil || ts.Expr.Provider == nil || ts.Expr.Provider.Kind != agentsExpr.ProviderMCP {
-		return false
+		return false, nil
 	}
 	if mcpRoot == nil {
-		return false
+		return false, nil
 	}
 	mcp := mcpRoot.ServiceMCP(ts.Expr.Provider.MCPService, ts.Expr.Provider.MCPToolset)
 	if mcp == nil {
-		return false
+		return false, nil
 	}
 	if ts.Description == "" {
 		ts.Description = mcp.Description
 	}
 	for _, tool := range mcp.Tools {
+		if tool.Visibility == mcpexpr.AppVisibility {
+			continue
+		}
 		var payload, result *goaexpr.AttributeExpr
 		if tool.Method != nil {
-			payload = tool.Method.Payload
-			result = tool.Method.Result
+			var err error
+			payload, err = mcpinput.Arguments(tool.Method)
+			if err != nil {
+				return false, err
+			}
+			result, err = mcpcontract.ToolResult(tool)
+			if err != nil {
+				return false, err
+			}
 		}
 		td := &ToolData{
 			Name:        tool.Name,
@@ -49,5 +61,5 @@ func populateMCPToolset(mcpRoot *mcpexpr.RootExpr, ts *ToolsetData) bool {
 	sort.Slice(ts.Tools, func(i, j int) bool {
 		return ts.Tools[i].Name < ts.Tools[j].Name
 	})
-	return true
+	return true, nil
 }

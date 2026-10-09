@@ -1,0 +1,196 @@
+// Package codegen connects validated MCP arguments to the application's configured Goa
+// endpoints. Each authored method has one generated call that preserves endpoint
+// authentication and middleware and checks the returned Go type before conversion.
+package codegen
+
+import (
+	"fmt"
+
+	"goa.design/goa-ai/codegen/internal/mcpcontract"
+	"goa.design/goa/v3/codegen"
+	goaservice "goa.design/goa/v3/codegen/service"
+	"goa.design/goa/v3/expr"
+)
+
+type (
+	// endpointMethodAdapter retains the service types used by one endpoint call.
+	endpointMethodAdapter struct {
+		// CallName names the private typed endpoint invocation.
+		CallName string
+		// MethodName selects the original configured Goa endpoint.
+		MethodName string
+		// DesignMethodName is the authored method identity observed by middleware.
+		DesignMethodName string
+		// Streaming keeps this source out of ordinary endpoint result assertions.
+		Streaming bool
+		// PayloadRef is the original service input type; empty means no input.
+		PayloadRef string
+		// PayloadValueRef names the original payload without its object pointer.
+		PayloadValueRef string
+		// ResultRef is the original service output type; empty means no output.
+		ResultRef string
+		// EndpointResultRef is the Go value returned by the endpoint.
+		EndpointResultRef string
+		// ExecutionView retains the view chosen by the original endpoint.
+		ExecutionView bool
+		// FaultNames lists authored error names declared as server faults.
+		FaultNames []string
+		// Credentials supplies native HTTP input before endpoint invocation.
+		Credentials []*credentialInput
+		// Paths supplies URL values before endpoint invocation.
+		Paths []*methodRouteInput
+		// RouteHelpers contains named conversions used for URL collections.
+		RouteHelpers []*codegen.TransformFunctionData
+		// InputValidate checks the complete payload after native inputs are filled.
+		InputValidate string
+		// Codec encodes or validates the result under that view.
+		Codec *MethodCodecData
+		// ResultValue is the selected value used by typed content conversions.
+		ResultValue string
+		// ProjectedResult selects the view fields already returned by the endpoint.
+		ProjectedResult bool
+		// InputExchange fills typed host answers and selects pending outcomes.
+		InputExchange *inputExchangeAdapter
+		// TaskRole requires full payload validation for a native job operation.
+		TaskRole bool
+		// TaskCreator returns job metadata instead of a completed model result.
+		TaskCreator bool
+
+		method          *expr.MethodExpr
+		payloadLayout   *codegen.GoTypePlan
+		resultLayout    *codegen.GoTypePlan
+		resultAttribute *expr.AttributeExpr
+	}
+)
+
+// planEndpointAdapters records original payload and result imports before Goa
+// chooses package names. Protocol requests never call an unwrapped service.
+func planEndpointAdapters(generation *codegen.Generation, services *goaservice.Plan, prepared *preparedMCPService, data *AdapterData) error {
+	pkg := generation.Package(data.mcpImportPath)
+	imports := codegen.NewGeneratedImportPlan(pkg)
+	for index, method := range mappedMCPMethods(prepared) {
+		_, views, err := services.MethodPackageImports(method)
+		if err != nil {
+			return err
+		}
+		if views != nil {
+			if err := imports.AddGenerated(views); err != nil {
+				return err
+			}
+		}
+		call := &endpointMethodAdapter{
+			method: method, CallName: fmt.Sprintf("invokeMCPMethod%d", index),
+			DesignMethodName: method.Name, ResultValue: "result",
+			Credentials: prepared.credentials[method.Name],
+		}
+		for _, failure := range method.Errors {
+			if _, fault := failure.Meta["goa:error:fault"]; fault {
+				call.FaultNames = append(call.FaultNames, failure.Name)
+			}
+		}
+		for _, side := range []struct {
+			attribute *expr.AttributeExpr
+			layout    **codegen.GoTypePlan
+		}{
+			{method.Payload, &call.payloadLayout},
+			{method.Result, &call.resultLayout},
+		} {
+			if !hasMCPValue(side.attribute) {
+				continue
+			}
+			var layout *codegen.GoTypePlan
+			var err error
+			if side.attribute == method.Result {
+				call.resultAttribute, layout, err = planEndpointResult(services, method)
+			} else {
+				layout, err = services.MethodTypeLayout(method, side.attribute)
+			}
+			if err != nil {
+				return err
+			}
+			if err := imports.AddCompleteType(layout); err != nil {
+				return err
+			}
+			*side.layout = layout
+		}
+		if source := data.SubscriptionSource; source != nil && source.method == method {
+			call.Streaming = true
+			source.Endpoint = call
+		}
+		data.NeedsEndpointResultCheck = data.NeedsEndpointResultCheck || (call.resultLayout != nil && !call.Streaming)
+		data.EndpointMethods = append(data.EndpointMethods, call)
+		for _, tool := range data.Tools {
+			if tool.userMethodName == method.Name {
+				tool.Endpoint = call
+			}
+		}
+		for _, resource := range data.Resources {
+			if resource.userMethodName == method.Name {
+				resource.Endpoint = call
+			}
+		}
+		for _, prompt := range data.MethodPrompts {
+			if prompt.prompt.Method == method {
+				prompt.Endpoint = call
+			}
+		}
+		if reader := data.ResourceReader; reader != nil && reader.method == method {
+			reader.Endpoint = call
+		}
+		for _, completion := range data.Completions {
+			if completion.method == method {
+				completion.Endpoint = call
+			}
+		}
+	}
+	for _, importPath := range imports.Paths() {
+		if importPath != data.mcpImportPath {
+			data.serverImportPaths = append(data.serverImportPaths, importPath)
+		}
+	}
+	return nil
+}
+
+// bindEndpointAdapters uses Goa's saved declarations for selectors and type
+// references. Viewed results keep their selected fields and the endpoint's view name.
+func bindEndpointAdapters(service *goaservice.Data, data *AdapterData) error {
+	data.EndpointsName = service.EndpointsDeclaration.Name()
+	for _, call := range data.EndpointMethods {
+		method := service.Method(call.method.Name)
+		call.MethodName = method.VarName
+		if call.payloadLayout != nil {
+			call.PayloadRef = call.payloadLayout.Link(data.mcpImportPath, data.mcpPackage.ImportName).Ref()
+			call.PayloadValueRef = call.payloadLayout.Link(data.mcpImportPath, data.mcpPackage.ImportName).RefWithPointer(false)
+		}
+		if call.resultLayout == nil {
+			continue
+		}
+		call.ResultRef = call.resultLayout.Link(data.mcpImportPath, data.mcpPackage.ImportName).Ref()
+		call.EndpointResultRef = call.ResultRef
+		if view := method.ViewedResult; view != nil {
+			layout, err := codegen.PlanGoType(&expr.AttributeExpr{Type: view.Type}, codegen.GoTypePlanOptions{
+				Owner: view.Declaration.PackagePath(),
+				Bind: func(request codegen.GoTypeBindingRequest) (codegen.GoTypeBinding, error) {
+					if request.Kind != codegen.GoNamed || request.Attribute.Type != view.Type {
+						return codegen.GoTypeBinding{}, fmt.Errorf("viewed endpoint result has an unexpected type")
+					}
+					return codegen.GoTypeBinding{Owner: view.Declaration.PackagePath(), Type: view.Declaration}, nil
+				},
+			})
+			if err != nil {
+				return fmt.Errorf("bind MCP endpoint view for %q: %w", call.method.Name, err)
+			}
+			// Goa returns collection wrappers by value and object wrappers by
+			// pointer. Keep that endpoint contract for the generated type check.
+			call.EndpointResultRef = layout.Link(data.mcpImportPath, data.mcpPackage.ImportName).RefWithPointer(!view.IsCollection)
+			if _, fixed := mcpcontract.FixedView(call.method.Result); fixed {
+				call.ProjectedResult = true
+			} else {
+				call.ExecutionView = true
+				call.ResultRef = call.EndpointResultRef
+				call.ResultValue = "result.Projected"
+			}
+		}
+	}
+	return nil
+}

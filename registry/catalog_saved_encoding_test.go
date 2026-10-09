@@ -235,3 +235,36 @@ func savedFixtureFingerprint(toolset *genregistry.Toolset, contract []byte) stri
 		}},
 	})
 }
+
+// A fresh registry must reload selected-branch metadata without changing the
+// provider's accepted definition, fingerprint, or registration token.
+func TestCatalogSavedUnionSelectionsKeepRegistration(t *testing.T) {
+	for _, selection := range []genregistry.ToolUnionSelection{
+		genregistry.NewToolUnionSelectionTagged(&genregistry.ToolTaggedUnionBranch{
+			Discriminator: []*genregistry.ToolFieldPathSegment{{Segment: genregistry.NewToolFieldSegmentField("type")}},
+			Value:         "lookup",
+		}),
+		genregistry.NewToolUnionSelectionUntagged(&genregistry.ToolUntaggedUnionBranch{JSONKind: "object", Index: 0}),
+	} {
+		t.Run(string(selection.Kind()), func(t *testing.T) {
+			toolset := testDefinitionToolset()
+			toolset.Tools[0].ConsumerContract.Payload.Fields[0].Branches = []*genregistry.ToolUnionBranch{{Selection: selection}}
+			definition := testCatalogDefinition(t, toolset)
+			clock := newTestTimeSource(time.Unix(1_700_000_000, 0))
+			store := newTestCatalogMap(clock)
+			writer := newToolsetCatalog(store, clock)
+			state, err := writer.Register(t.Context(), definition, testAdmissionRevisionA, "provider", testIncarnationA, time.Minute)
+			require.NoError(t, err)
+			cold := newToolsetCatalog(store, clock)
+			require.NoError(t, cold.validatePersistedEntries(t.Context()))
+			loaded, err := cold.ActiveRegistration(t.Context(), toolset.Name)
+			require.NoError(t, err)
+			assert.Equal(t, state.RegistrationToken, loaded.RegistrationToken)
+			assert.Equal(t, definition.fingerprint, loaded.SchemaFingerprint)
+			assert.Equal(t, definition.raw, loaded.Toolset.raw)
+			decoded, err := loaded.Toolset.decode("")
+			require.NoError(t, err)
+			assert.Equal(t, toolset, decoded)
+		})
+	}
+}

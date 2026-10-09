@@ -58,11 +58,11 @@ func ValidateRootRunStart(command storage.RootRunStart) error {
 	if err := validateRunStartedRecord(command.Started, command.Run); err != nil {
 		return fmt.Errorf("started record: %w", err)
 	}
-	if err := validateStoppedRecord(command.Canceled, command.Run); err != nil {
-		return fmt.Errorf("canceled record: %w", err)
+	if err := validateStartCancellation(command.Cancellation, command.Run); err != nil {
+		return fmt.Errorf("cancellation record: %w", err)
 	}
-	if command.Started.EventKey == command.Canceled.EventKey {
-		return errors.New("started and canceled records require different event keys")
+	if command.Started.EventKey == command.Cancellation.EventKey {
+		return errors.New("started and cancellation records require different event keys")
 	}
 	return nil
 }
@@ -82,11 +82,11 @@ func ValidateChildRunStart(command storage.ChildRunStart) error {
 	if err := validateRunStartedRecord(command.Started, command.Run); err != nil {
 		return fmt.Errorf("started record: %w", err)
 	}
-	if err := validateStoppedRecord(command.Canceled, command.Run); err != nil {
-		return fmt.Errorf("canceled record: %w", err)
+	if err := validateStartCancellation(command.Cancellation, command.Run); err != nil {
+		return fmt.Errorf("cancellation record: %w", err)
 	}
-	if command.Started.EventKey == command.Canceled.EventKey {
-		return errors.New("started and canceled records require different event keys")
+	if command.Started.EventKey == command.Cancellation.EventKey {
+		return errors.New("started and cancellation records require different event keys")
 	}
 	return nil
 }
@@ -161,6 +161,9 @@ func ValidateRunSuspension(command storage.RunSuspension, meta session.RunMeta) 
 	if command.RunID != meta.RunID {
 		return errors.New("suspension command does not match stored run")
 	}
+	if meta.StartOutcome == session.RunStartStop {
+		return errors.New("ended-session start cannot suspend instead of settling cancellation")
+	}
 	event, err := decodeHookRecord(command.Record, hooks.RunSuspended)
 	if err != nil {
 		return fmt.Errorf("suspension record: %w", err)
@@ -183,6 +186,9 @@ func ValidateRunTerminal(command storage.RunTerminal, meta session.RunMeta) erro
 	}
 	if command.RunID != meta.RunID {
 		return errors.New("terminal command does not match stored run")
+	}
+	if meta.StartOutcome == session.RunStartStop && command.Status == session.RunStatusCompleted {
+		return errors.New("ended-session start cannot complete successfully")
 	}
 	event, err := decodeHookRecord(command.Record, hooks.RunCompleted)
 	if err != nil {
@@ -320,30 +326,20 @@ func validateRunStartedEvent(record *runlog.Event, event hooks.Event, start sess
 	return nil
 }
 
-// validateStoppedRecord decodes the record selected when an ended session
-// prevents an accepted workflow from doing work.
-func validateStoppedRecord(record *runlog.Event, start session.RunStart) error {
-	event, err := decodeHookRecord(record, hooks.RunCompleted)
-	if err != nil {
-		return err
+// validateStartCancellation checks the intent stored when an ended session stops
+// ordinary work. The accepted workflow remains responsible for its final record.
+func validateStartCancellation(record *runlog.Event, start session.RunStart) error {
+	if record == nil {
+		return errors.New("cancellation record is required")
 	}
-	if err := validateEventOwner(event, start.RunID, start.AgentID, start.SessionID); err != nil {
-		return err
-	}
-	completed := event.(*hooks.RunCompletedEvent)
 	if !record.Timestamp.Equal(start.StartedAt) {
 		return errors.New("timestamp does not match run start")
 	}
-	if completed.Status != "canceled" || completed.Phase != run.PhaseCanceled {
-		return errors.New("ended-session record must cancel the run")
-	}
-	if completed.Cancellation.Reason != run.CancellationReasonSessionEnded {
-		return errors.New("ended-session record has wrong cancellation reason")
-	}
-	if !maps.Equal(completed.Labels, start.Labels) {
-		return errors.New("labels do not match run")
-	}
-	return nil
+	return ValidateRunCancellation(storage.RunCancellation{
+		RunID:  start.RunID,
+		Reason: run.CancellationReasonSessionEnded,
+		Record: record,
+	}, session.RunMeta{RunID: start.RunID, AgentID: start.AgentID, SessionID: start.SessionID})
 }
 
 // validateChildLinkRecord checks the child identity stored on its parent run.

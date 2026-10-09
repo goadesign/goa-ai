@@ -25,6 +25,7 @@ import (
 
 const (
 	advertisedToolInputCorrection    = "The previous tool call did not match its advertised input schema."
+	jsonArrayType                    = "array"
 	malformedToolArgumentsCorrection = "The previous tool call arguments were not valid JSON. Tool arguments must be one JSON object matching the advertised input schema."
 )
 
@@ -97,15 +98,21 @@ func collectToolCorrectionCandidates(
 	return toolCorrectionCandidatesForError(err, input, fields)
 }
 
-// unionToolCorrectionCandidates follows only a recognized discriminator's
-// branch. Otherwise it describes that discriminator's advertised string choices
-// without guessing a branch from the rejected value or unrelated fields.
+// unionToolCorrectionCandidates follows the branch selected by a declared string
+// discriminator or untagged JSON kind. Missing or unknown string discriminators
+// receive their advertised choices; unrelated field values never select a branch.
 func unionToolCorrectionCandidates(
 	err *jsonschema.ValidationError,
 	input any,
 	fields []tools.FieldMetadata,
 ) []toolCorrectionCandidate {
 	unsupported := []toolCorrectionCandidate{{unsupported: true}}
+	if index, selected := untaggedUnionBranchIndex(err.InstanceLocation, input, fields); selected {
+		if index < 0 || index >= len(err.Causes) {
+			return unsupported
+		}
+		return collectToolCorrectionCandidates(err.Causes[index], input, fields)
+	}
 	var selected fieldPathMatch
 	found := false
 	for _, field := range fields {
@@ -163,6 +170,31 @@ func unionToolCorrectionCandidates(
 	}, {unsupported: true}}
 }
 
+// untaggedUnionBranchIndex uses generated branch requirements at this exact JSON
+// path. Enclosing union requirements and bound collection indexes must match
+// before a branch can select its position in the validator's diagnostic list.
+func untaggedUnionBranchIndex(path []string, input any, fields []tools.FieldMetadata) (int, bool) {
+	selected := -1
+	for _, field := range fields {
+		for index, requirement := range field.Branches {
+			branch, untagged := requirement.(tools.UntaggedUnionBranch)
+			if !untagged || len(branch.Path) != len(path) {
+				continue
+			}
+			candidate := tools.FieldMetadata{Path: branch.Path, Branches: field.Branches[:index+1]}
+			match, found := matchFieldPath(candidate, path)
+			if !found || !unionBranchesMatch(match, input) {
+				continue
+			}
+			if selected >= 0 && selected != branch.Index {
+				return -1, false
+			}
+			selected = branch.Index
+		}
+	}
+	return selected, selected >= 0
+}
+
 // toolCorrectionCandidatesForError converts one validator leaf into a safe
 // instruction or an unsupported marker that participates in ambiguity checks.
 func toolCorrectionCandidatesForError(
@@ -198,7 +230,7 @@ func toolCorrectionCandidatesForError(
 		return []toolCorrectionCandidate{candidate}
 	case *kind.MinItems:
 		candidate := toolCorrectionCandidateForPath(err.InstanceLocation, "", input, fields)
-		if candidate.unsupported || candidate.field.JSONType != "array" {
+		if candidate.unsupported || candidate.field.JSONType != jsonArrayType {
 			candidate.unsupported = true
 			return []toolCorrectionCandidate{candidate}
 		}
@@ -206,7 +238,7 @@ func toolCorrectionCandidatesForError(
 		return []toolCorrectionCandidate{candidate}
 	case *kind.MaxItems:
 		candidate := toolCorrectionCandidateForPath(err.InstanceLocation, "", input, fields)
-		if candidate.unsupported || candidate.field.JSONType != "array" {
+		if candidate.unsupported || candidate.field.JSONType != jsonArrayType {
 			candidate.unsupported = true
 			return []toolCorrectionCandidate{candidate}
 		}
@@ -324,12 +356,22 @@ func matchFieldPath(field tools.FieldMetadata, actual []string) (fieldPathMatch,
 	return match, true
 }
 
-// unionBranchesMatch resolves each generated discriminator path with the
-// dynamic indexes or keys bound while matching the invalid field.
+// unionBranchesMatch resolves the union paths using the array indexes or map
+// keys bound for the invalid field. Only the selected string or JSON-kind branch
+// supplies correction guidance; fields from other branches remain excluded.
 func unionBranchesMatch(match fieldPathMatch, input any) bool {
 	for _, branch := range match.field.Branches {
-		path := make([]string, len(branch.Discriminator))
-		for index, segment := range branch.Discriminator {
+		var selectionPath []tools.FieldPathSegment
+		switch branch := branch.(type) {
+		case tools.TaggedUnionBranch:
+			selectionPath = branch.Discriminator
+		case tools.UntaggedUnionBranch:
+			selectionPath = branch.Path
+		default:
+			panic(fmt.Sprintf("unknown generated union requirement %T", branch))
+		}
+		path := make([]string, len(selectionPath))
+		for index, segment := range selectionPath {
 			switch value := segment.(type) {
 			case tools.FixedField:
 				path[index] = string(value)
@@ -344,8 +386,31 @@ func unionBranchesMatch(match fieldPathMatch, input any) bool {
 			}
 		}
 		value, ok := jsonValueAt(input, path)
-		if !ok || value != branch.Value {
+		if !ok {
 			return false
+		}
+		switch branch := branch.(type) {
+		case tools.TaggedUnionBranch:
+			if value != branch.Value {
+				return false
+			}
+		case tools.UntaggedUnionBranch:
+			var kind string
+			switch value.(type) {
+			case string:
+				kind = "string"
+			case json.Number:
+				kind = "number"
+			case bool:
+				kind = "boolean"
+			case []any:
+				kind = jsonArrayType
+			case map[string]any:
+				kind = "object"
+			}
+			if kind != branch.JSONKind {
+				return false
+			}
 		}
 	}
 	return true

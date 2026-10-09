@@ -43,6 +43,11 @@ func (b *toolSpecBuilder) buildTypeDefinition(typeName string, att *goaexpr.Attr
 
 	switch dt := att.Type.(type) {
 	case goaexpr.UserType:
+		if goaexpr.AsUnion(dt.Attribute().Type) != nil {
+			// A top-level OneOf keeps the generated union's accessors and JSON
+			// methods. A second named struct would lose those methods.
+			return dt.Attribute(), typeName + " = " + scope.GoTypeName(dt.Attribute()), typeName
+		}
 		// Ignore the source type's package setting when defining the new local
 		// type. Nested types keep their package settings, so a type such as
 		// types.TaskDefinition keeps the types prefix.
@@ -127,21 +132,19 @@ func newToolSpecBuilder(svc *service.Data, planned *toolSpecsPackagePlan, api *g
 	publicScope := planned.public.Scope().Fork()
 	transportScope := planned.transport.Scope().Fork()
 	return &toolSpecBuilder{
-		service:              svc,
-		api:                  api,
-		publicScope:          publicScope,
-		transportScope:       transportScope,
-		publicPackage:        planned.public,
-		transportPackage:     planned.transport,
-		publicUnionErrors:    planned.publicUnionErrors,
-		transportUnionErrors: planned.transportUnionErrors,
-		planned:              planned,
-		svcScope:             publicScope,
-		contractTypes:        make(map[specTypeKey]*typeData),
-		types:                make(map[string]*typeData),
-		helperScope:          publicScope,
-		unions:               make(map[codegen.UnionDeclarationID]*unionTypeData),
-		transportUnions:      make(map[codegen.UnionDeclarationID]*unionTypeData),
+		service:          svc,
+		api:              api,
+		publicScope:      publicScope,
+		transportScope:   transportScope,
+		publicPackage:    planned.public,
+		transportPackage: planned.transport,
+		planned:          planned,
+		svcScope:         publicScope,
+		contractTypes:    make(map[specTypeKey]*typeData),
+		types:            make(map[string]*typeData),
+		helperScope:      publicScope,
+		unions:           make(map[codegen.UnionDeclarationID]*unionTypeData),
+		transportUnions:  make(map[codegen.UnionDeclarationID]*unionTypeData),
 	}
 }
 
