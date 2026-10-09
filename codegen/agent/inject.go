@@ -5,7 +5,7 @@
 // each injected name to its concrete source once, at generation time, so the
 // generated per-toolset inject.go never has to interpret names at runtime:
 //
-//   - Names that Goify to a runtime.ToolCallMeta field (SessionID, RunID,
+//   - Names that Goify to a tools.ToolCallMeta field (SessionID, RunID,
 //     TurnID, ToolCallID, ParentToolCallID) compile to a direct meta read.
 //   - Every other name compiles to a run-label lookup, with a compiled
 //     missing-label error and the field's own Goa validation applied to the
@@ -55,9 +55,9 @@ type (
 		// payload type (e.g., "SessionID" for design name "session_id").
 		GoFieldName string
 		// IsMetaBacked is true when the field is populated directly from
-		// runtime.ToolCallMeta rather than from a run label.
+		// tools.ToolCallMeta rather than from a run label.
 		IsMetaBacked bool
-		// MetaField is the runtime.ToolCallMeta field name to copy from. Set
+		// MetaField is the tools.ToolCallMeta field name to copy from. Set
 		// only when IsMetaBacked is true.
 		MetaField string
 		// TargetType is the generated Go type used to convert the String value.
@@ -144,14 +144,10 @@ func toolsNeedInject(tools []*ToolData) bool {
 	return false
 }
 
-// methodToolsNeedInject reports whether any METHOD-BACKED tool declares at
-// least one Inject() field. The generated registry provider.go only emits
-// dispatch cases for method-backed tools, so its runtime.ToolCallMeta
-// construction (and the runtime package import) must be gated on this
-// narrower predicate: gating on toolsNeedInject would emit a
-// declared-and-unused meta variable -- a generated-code compile failure --
-// for toolsets mixing a non-injecting bound tool with an injecting unbound
-// tool.
+// methodToolsNeedInject checks whether a method-bound tool needs injection.
+// A provider calls only method-bound tools, so it constructs shared metadata
+// only when one of those tools injects fields. An injecting unbound tool in
+// the same toolset does not make the provider declare unused metadata.
 func methodToolsNeedInject(tools []*ToolData) bool {
 	for _, t := range tools {
 		if t != nil && t.IsMethodBacked && len(t.Injected) > 0 {
@@ -162,7 +158,7 @@ func methodToolsNeedInject(tools []*ToolData) bool {
 }
 
 // injectedFieldSource classifies name's compiled source: it is meta-backed
-// when Goifying it matches a runtime.ToolCallMeta field, regardless of
+// when Goifying it matches a tools.ToolCallMeta field, regardless of
 // whether the design used snake_case ("session_id") or lowerCamel
 // ("sessionId") -- both Goify to "SessionID". Every other name is
 // label-backed.

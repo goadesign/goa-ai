@@ -87,13 +87,18 @@ func InjectImportCollisionExample() func() {
 			Pattern("^tenant-")
 			Meta("struct:pkg:path", "fmt")
 		})
+		accountID := Type("AccountID", String, func() {
+			Pattern("^account-")
+			Meta("struct:pkg:path", "tools")
+		})
 		lookupPayload := Type("LookupPayload", func() {
 			Attribute("session_id", runtimeSessionID, "Server-injected session identifier.")
 			Attribute("run_id", runID, "Server-injected run identifier.")
 			Attribute("tenant_id", tenantID, "Server-injected tenant identifier.", func() {
 				Meta("struct:field:name", "OrganizationID")
 			})
-			Required("session_id", "run_id", "tenant_id")
+			Attribute("account_id", accountID, "Server-injected account identifier.")
+			Required("session_id", "run_id", "tenant_id", "account_id")
 		})
 		Service("catalog", func() {
 			Method("lookup", func() {
@@ -104,7 +109,7 @@ func InjectImportCollisionExample() func() {
 				Use("helpers", func() {
 					Tool("lookup", "Lookup", func() {
 						BindTo("lookup")
-						Inject("session_id", "run_id", "tenant_id")
+						Inject("session_id", "run_id", "tenant_id", "account_id")
 					})
 				})
 			})
@@ -190,14 +195,9 @@ func InjectMultiToolsetLabelsExample() func() {
 	}
 }
 
-// InjectMixedBoundUnboundExample defines a single toolset mixing a
-// method-backed (BindTo) tool that declares NO Inject() fields with an
-// unbound tool that injects a label-backed field. The generated registry
-// provider.go only emits dispatch cases for method-backed tools, so its
-// runtime.ToolCallMeta construction must be gated on injecting
-// METHOD-BACKED tools -- gating on "any tool injects" emits a
-// declared-and-unused meta variable and the generated package fails to
-// compile (the exact regression this scenario locks).
+// InjectMixedBoundUnboundExample puts a bound tool without injected fields
+// beside an unbound tool with an injected label. The provider calls only the
+// bound tool, so it must compile without declaring unused call metadata.
 func InjectMixedBoundUnboundExample() func() {
 	return func() {
 		API("catalog", func() {})

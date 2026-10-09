@@ -11,7 +11,8 @@ func TestGeneratedAgentUsesPlannedNames(t *testing.T) {
 	files := buildAndGenerate(t, testscenarios.PlanOwnedNames())
 
 	provider := renderedFileContent(t, files, "gen/runtime/toolsets/lookup/provider.go")
-	require.Contains(t, provider, "runtime2.Service")
+	require.Contains(t, provider, "runtime.Service")
+	require.NotContains(t, provider, `"goa.design/goa-ai/runtime/agent/runtime"`)
 	require.Contains(t, provider, "mr.ReturnedCount")
 	require.Contains(t, provider, "mr.WasTruncated")
 	require.Contains(t, provider, "mr.FollowingCursor")

@@ -53,7 +53,7 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
         return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_call", err.Error()), nil
     }
 {{- if .NeedsInject }}
-	meta := runtime.ToolCallMeta{
+	meta := tools.ToolCallMeta{
 		TextOnly: msg.Meta.TextOnly,
 		RunID:            msg.Meta.RunID,
 		SessionID:        msg.Meta.SessionID,

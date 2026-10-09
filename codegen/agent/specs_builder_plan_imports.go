@@ -109,7 +109,7 @@ func (p *toolSpecsPackagePlan) planToolFileImports(tools []*agent.ToolExpr) erro
 	}
 	if hasInject {
 		injectImports := []*goacodegen.ImportSpec{
-			goacodegen.SimpleImport("goa.design/goa-ai/runtime/agent/runtime"),
+			goacodegen.SimpleImport("goa.design/goa-ai/runtime/agent/tools"),
 		}
 		hasLabelInject := false
 		hasInjectValidation := false

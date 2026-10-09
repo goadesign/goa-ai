@@ -12,9 +12,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/codegen/agent/tests/testscenarios"
 	"goa.design/goa-ai/codegen/testhelpers"
@@ -144,17 +146,10 @@ func (c *Client) Find(ctx context.Context, p *FindPayload) (*FindResult, error) 
 		"./gen/alpha/toolsets/lookup", "./gen/alpha/agents/scribe/lookup"))
 }
 
-// TestGeneratedBoundMetaInjectPackagesCompile is the bound half of the
-// compile matrix: a BindTo tool injecting a meta-backed field (session_id),
-// whose provider.go DOES declare the runtime.ToolCallMeta and call
-// Inject<Tool>, and whose transforms copy the injected field into the required
-// method payload field. Locks the metadata emission, assignment in inject.go,
-// and the tool-payload to method-payload transform
-// as a compilable whole -- and, via the provider_exec_test.go file written
-// into the generated module, EXECUTES the full generated chain
-// (PayloadCodec.FromJSON -> InjectGetData -> InitGetDataMethodPayload ->
-// service call) with `go test`, asserting the bound method
-// payload actually receives session metadata and immutable labels end to end.
+// TestGeneratedBoundMetaInjectPackagesCompile generates a provider that injects
+// the session ID and a run label into a bound service method. It checks that the
+// provider's dependencies exclude the agent engine and model clients, then runs
+// the generated provider and local executor tests against the same tool input.
 func TestGeneratedBoundMetaInjectPackagesCompile(t *testing.T) {
 	files := buildWithPrepareAndPkg(t, testscenarios.InjectBoundMetaExample())
 	root := writeGeneratedModuleKeepingGen(t, files)
@@ -324,6 +319,25 @@ func TestInjectGetDataValidatesEverySource(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
+	// A product that imports only the generated provider must not build the
+	// agent engine or model clients, even when its tools use Inject.
+	deps := exec.CommandContext(ctx, "go", "list", "-mod=mod", "-deps", "./gen/catalog/toolsets/helpers")
+	deps.Dir = root
+	deps.Env = append(os.Environ(), "GOWORK=off")
+	output, err := deps.CombinedOutput()
+	require.NoError(t, err, "list generated provider dependencies: %s", output)
+	for _, dependency := range strings.Fields(string(output)) {
+		for _, forbidden := range []string{
+			"goa.design/goa-ai/runtime/agent/runtime",
+			"goa.design/goa-ai/features/model/",
+			"github.com/openai/openai-go/",
+			"github.com/anthropics/anthropic-sdk-go",
+			"github.com/aws/aws-sdk-go-v2/service/bedrockruntime",
+		} {
+			assert.Falsef(t, strings.HasPrefix(dependency, forbidden),
+				"generated provider imports %s", dependency)
+		}
+	}
 	// `go test` both compiles every listed package and runs the executing
 	// provider-path test written above (the executor package has no test
 	// files and is compile-checked only).
@@ -420,6 +434,10 @@ type RunID string
 
 type TenantID string
 `)
+	writeGeneratedPackageTest(t, root, "gen/tools/account_id.go", `package tools
+
+type AccountID string
+`)
 	writeGeneratedPackageTest(t, root, "gen/catalog/service_stub.go", `package catalog
 
 import (
@@ -427,6 +445,7 @@ import (
 
 	genfmt "generated.local/gen/fmt"
 	gengoa "generated.local/gen/goa"
+	gentools "generated.local/gen/tools"
 	genutf8 "generated.local/gen/utf8"
 )
 
@@ -434,6 +453,7 @@ type LookupPayload struct {
 	SessionID      genutf8.RuntimeSessionID
 	RunID          gengoa.RunID
 	OrganizationID genfmt.TenantID
+	AccountID      gentools.AccountID
 }
 
 type Service interface {
@@ -459,13 +479,13 @@ func TestInjectLookupUsesCollidingPackages(t *testing.T) {
 	err := InjectLookup(
 		payload,
 		runtime.ToolCallMeta{SessionID: "session-42", RunID: "run-42"},
-		map[string]string{"tenant_id": "tenant-7"},
+		map[string]string{"tenant_id": "tenant-7", "account_id": "account-7"},
 	)
 	if err != nil {
 		t.Fatalf("InjectLookup returned error for valid values: %v", err)
 	}
-	if payload.SessionID != "session-42" || payload.RunID != "run-42" || payload.OrganizationID != "tenant-7" {
-		t.Fatalf("injected payload = %+v, want session-42, run-42, and tenant-7", payload)
+	if payload.SessionID != "session-42" || payload.RunID != "run-42" || payload.OrganizationID != "tenant-7" || payload.AccountID != "account-7" {
+		t.Fatalf("injected payload = %+v, want session-42, run-42, tenant-7, and account-7", payload)
 	}
 }
 `)
@@ -475,6 +495,8 @@ func TestInjectLookupUsesCollidingPackages(t *testing.T) {
 		`"generated.local/gen/fmt"`,
 		`"generated.local/gen/goa"`,
 		`"generated.local/gen/utf8"`,
+		`"generated.local/gen/tools"`,
+		`"goa.design/goa-ai/runtime/agent/tools"`,
 		`"goa.design/goa/v3/pkg"`,
 		`"unicode/utf8"`,
 	} {

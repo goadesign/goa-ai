@@ -2688,8 +2688,10 @@ Fields marked with `Inject` are absent from the model-visible input and filled
 from call metadata or run labels before the tool executes. They must be Goa
 `String` fields or named Goa `String` types; custom Go field replacements are
 rejected. The generated injection function applies the field's Goa validation
-to either source before assigning the value. The complete contract lives in
-[Injected Fields](docs/runtime.md#injected-fields-inject).
+to either source before assigning the value. Generated injection uses shared
+`tools.ToolCallMeta`, without importing the agent engine or model adapters.
+`runtime.ToolCallMeta` remains an alias for existing executors. The complete
+contract lives in [Injected Fields](docs/runtime.md#injected-fields-inject).
 
 ### Pagination Ownership
 
