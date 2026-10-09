@@ -837,6 +837,14 @@ type ToolServerData struct {
 	NativeImage bool `json:"NativeImage,omitempty"`
 }
 
+// One string discriminator value that makes a generated field applicable.
+type ToolTaggedUnionBranch struct {
+	// Path to the union's discriminator property.
+	Discriminator []*ToolFieldPathSegment
+	// Branch name required at the discriminator.
+	Value string
+}
+
 // Precomputed schema variants, examples, and field details for one tool value.
 type ToolTypeMetadata struct {
 	// Generated type name used in diagnostics.
@@ -851,12 +859,23 @@ type ToolTypeMetadata struct {
 	Fields []*ToolFieldMetadata
 }
 
-// One discriminator value that makes a generated field applicable.
+// One generated branch requirement. A tagged union selects by a string
+// property; an untagged union selects by the JSON kind of its value.
 type ToolUnionBranch struct {
-	// Path to the union's discriminator property.
-	Discriminator []*ToolFieldPathSegment
-	// Branch name required at the discriminator.
-	Value string
+	// Exactly one way the submitted value selects this branch.
+	Selection ToolUnionSelection
+}
+
+// The JSON kind of a union value that makes a generated field applicable.
+// Distinct branch kinds are established during Goa DSL validation.
+type ToolUntaggedUnionBranch struct {
+	// Path to the union value. An omitted path identifies the root value.
+	Path []*ToolFieldPathSegment
+	// JSON kind that selects this branch; integer branches use number.
+	JSONKind string
+	// Zero-based position of this branch in the advertised oneOf, used to select
+	// its structured validation diagnostic.
+	Index int
 }
 
 // Toolset is the result type of the registry service GetToolset method.
@@ -3247,6 +3266,43 @@ func validatejsonToolServerDataTransport(value *jsonToolServerDataTransport) (er
 	return err
 }
 
+// jsonToolTaggedUnionBranchTransport stores JSON fields until they have been validated.
+type jsonToolTaggedUnionBranchTransport struct {
+	// Path to the union's discriminator property.
+	Discriminator []*jsonToolFieldPathSegmentTransport `json:"discriminator"`
+	// Branch name required at the discriminator.
+	Value *string `json:"value"`
+}
+
+// validatejsonToolTaggedUnionBranchTransport checks decoded JSON before it becomes a service value.
+func validatejsonToolTaggedUnionBranchTransport(value *jsonToolTaggedUnionBranchTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Discriminator == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("discriminator", "body"))
+	}
+	if value.Value == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("value", "body"))
+	}
+	if len(value.Discriminator) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.discriminator", value.Discriminator, len(value.Discriminator), 1, true))
+	}
+	for _, e := range value.Discriminator {
+		if e != nil {
+			if err2 := validatejsonToolFieldPathSegmentTransport(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if value.Value != nil {
+		if utf8.RuneCountInString(*value.Value) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.value", *value.Value, utf8.RuneCountInString(*value.Value), 1, true))
+		}
+	}
+	return err
+}
+
 // jsonToolTypeMetadataTransport stores JSON fields until they have been validated.
 type jsonToolTypeMetadataTransport struct {
 	// Generated type name used in diagnostics.
@@ -3286,10 +3342,8 @@ func validatejsonToolTypeMetadataTransport(value *jsonToolTypeMetadataTransport)
 
 // jsonToolUnionBranchTransport stores JSON fields until they have been validated.
 type jsonToolUnionBranchTransport struct {
-	// Path to the union's discriminator property.
-	Discriminator []*jsonToolFieldPathSegmentTransport `json:"discriminator"`
-	// Branch name required at the discriminator.
-	Value *string `json:"value"`
+	// Exactly one way the submitted value selects this branch.
+	Selection *jsonToolUnionSelectionTransport `json:"selection"`
 }
 
 // validatejsonToolUnionBranchTransport checks decoded JSON before it becomes a service value.
@@ -3297,25 +3351,68 @@ func validatejsonToolUnionBranchTransport(value *jsonToolUnionBranchTransport) (
 	if value == nil {
 		return goa.MissingFieldError("body", "JSON value")
 	}
-	if value.Discriminator == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("discriminator", "body"))
+	if value.Selection == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("selection", "body"))
 	}
-	if value.Value == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("value", "body"))
+	if value.Selection != nil {
+		switch string(value.Selection.Kind()) {
+		case "tagged":
+			actual, _ := value.Selection.AsTagged()
+			if actual != nil {
+				if err2 := validatejsonToolTaggedUnionBranchTransport(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		case "untagged":
+			actual, _ := value.Selection.AsUntagged()
+			if actual != nil {
+				if err2 := validatejsonToolUntaggedUnionBranchTransport(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		}
+
 	}
-	if len(value.Discriminator) < 1 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("body.discriminator", value.Discriminator, len(value.Discriminator), 1, true))
+	return err
+}
+
+// jsonToolUntaggedUnionBranchTransport stores JSON fields until they have been validated.
+type jsonToolUntaggedUnionBranchTransport struct {
+	// Path to the union value. An omitted path identifies the root value.
+	Path []*jsonToolFieldPathSegmentTransport `json:"path,omitempty"`
+	// JSON kind that selects this branch; integer branches use number.
+	JSONKind *string `json:"json_kind"`
+	// Zero-based position of this branch in the advertised oneOf, used to select
+	// its structured validation diagnostic.
+	Index *agentToolsetDeclarationIntTransport `json:"index"`
+}
+
+// validatejsonToolUntaggedUnionBranchTransport checks decoded JSON before it becomes a service value.
+func validatejsonToolUntaggedUnionBranchTransport(value *jsonToolUntaggedUnionBranchTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
 	}
-	for _, e := range value.Discriminator {
+	if value.JSONKind == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("json_kind", "body"))
+	}
+	if value.Index == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("index", "body"))
+	}
+	for _, e := range value.Path {
 		if e != nil {
 			if err2 := validatejsonToolFieldPathSegmentTransport(e); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
 	}
-	if value.Value != nil {
-		if utf8.RuneCountInString(*value.Value) < 1 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("body.value", *value.Value, utf8.RuneCountInString(*value.Value), 1, true))
+	if value.JSONKind != nil {
+		if !(*value.JSONKind == "string" || *value.JSONKind == "number" || *value.JSONKind == "boolean" || *value.JSONKind == "array" || *value.JSONKind == "object") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.json_kind", *value.JSONKind, []any{"string", "number", "boolean", "array", "object"}))
+		}
+	}
+	if value.Index != nil {
+		if int(*value.Index) < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.index", int(*value.Index), 0, true))
 		}
 	}
 	return err
@@ -3757,6 +3854,31 @@ func validateToolFieldPathSegmentOriginal(value *ToolFieldPathSegment) (err erro
 
 // validateToolUnionBranchOriginal checks the original typed value before JSON conversion.
 func validateToolUnionBranchOriginal(value *ToolUnionBranch) (err error) {
+	if value.Selection.Kind() == "" {
+		err = goa.MergeErrors(err, goa.MissingFieldError("selection", "value"))
+	}
+	switch string(value.Selection.Kind()) {
+	case "tagged":
+		actual, _ := value.Selection.AsTagged()
+		if actual != nil {
+			if err2 := validateToolTaggedUnionBranchOriginal(actual); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	case "untagged":
+		actual, _ := value.Selection.AsUntagged()
+		if actual != nil {
+			if err2 := validateToolUntaggedUnionBranchOriginal(actual); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+
+	return err
+}
+
+// validateToolTaggedUnionBranchOriginal checks the original typed value before JSON conversion.
+func validateToolTaggedUnionBranchOriginal(value *ToolTaggedUnionBranch) (err error) {
 	if value.Discriminator == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("discriminator", "value"))
 	}
@@ -3772,6 +3894,24 @@ func validateToolUnionBranchOriginal(value *ToolUnionBranch) (err error) {
 	}
 	if utf8.RuneCountInString(value.Value) < 1 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("value.value", value.Value, utf8.RuneCountInString(value.Value), 1, true))
+	}
+	return err
+}
+
+// validateToolUntaggedUnionBranchOriginal checks the original typed value before JSON conversion.
+func validateToolUntaggedUnionBranchOriginal(value *ToolUntaggedUnionBranch) (err error) {
+	for _, e := range value.Path {
+		if e != nil {
+			if err2 := validateToolFieldPathSegmentOriginal(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if !(value.JSONKind == "string" || value.JSONKind == "number" || value.JSONKind == "boolean" || value.JSONKind == "array" || value.JSONKind == "object") {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.json_kind", value.JSONKind, []any{"string", "number", "boolean", "array", "object"}))
+	}
+	if value.Index < 0 {
+		err = goa.MergeErrors(err, goa.InvalidRangeError("value.index", value.Index, 0, true))
 	}
 	return err
 }
@@ -4336,6 +4476,31 @@ func validateToolFieldPathSegmentOriginal2(value *ToolFieldPathSegment) (err err
 
 // validateToolUnionBranchOriginal2 checks the original typed value before JSON conversion.
 func validateToolUnionBranchOriginal2(value *ToolUnionBranch) (err error) {
+	if value.Selection.Kind() == "" {
+		err = goa.MergeErrors(err, goa.MissingFieldError("selection", "value"))
+	}
+	switch string(value.Selection.Kind()) {
+	case "tagged":
+		actual, _ := value.Selection.AsTagged()
+		if actual != nil {
+			if err2 := validateToolTaggedUnionBranchOriginal2(actual); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	case "untagged":
+		actual, _ := value.Selection.AsUntagged()
+		if actual != nil {
+			if err2 := validateToolUntaggedUnionBranchOriginal2(actual); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+
+	return err
+}
+
+// validateToolTaggedUnionBranchOriginal2 checks the original typed value before JSON conversion.
+func validateToolTaggedUnionBranchOriginal2(value *ToolTaggedUnionBranch) (err error) {
 	if value.Discriminator == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("discriminator", "value"))
 	}
@@ -4351,6 +4516,24 @@ func validateToolUnionBranchOriginal2(value *ToolUnionBranch) (err error) {
 	}
 	if utf8.RuneCountInString(value.Value) < 1 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("value.value", value.Value, utf8.RuneCountInString(value.Value), 1, true))
+	}
+	return err
+}
+
+// validateToolUntaggedUnionBranchOriginal2 checks the original typed value before JSON conversion.
+func validateToolUntaggedUnionBranchOriginal2(value *ToolUntaggedUnionBranch) (err error) {
+	for _, e := range value.Path {
+		if e != nil {
+			if err2 := validateToolFieldPathSegmentOriginal2(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if !(value.JSONKind == "string" || value.JSONKind == "number" || value.JSONKind == "boolean" || value.JSONKind == "array" || value.JSONKind == "object") {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.json_kind", value.JSONKind, []any{"string", "number", "boolean", "array", "object"}))
+	}
+	if value.Index < 0 {
+		err = goa.MergeErrors(err, goa.InvalidRangeError("value.index", value.Index, 0, true))
 	}
 	return err
 }
@@ -4810,6 +4993,31 @@ func validateToolFieldPathSegmentOriginal3(value *ToolFieldPathSegment) (err err
 
 // validateToolUnionBranchOriginal3 checks the original typed value before JSON conversion.
 func validateToolUnionBranchOriginal3(value *ToolUnionBranch) (err error) {
+	if value.Selection.Kind() == "" {
+		err = goa.MergeErrors(err, goa.MissingFieldError("selection", "value"))
+	}
+	switch string(value.Selection.Kind()) {
+	case "tagged":
+		actual, _ := value.Selection.AsTagged()
+		if actual != nil {
+			if err2 := validateToolTaggedUnionBranchOriginal3(actual); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	case "untagged":
+		actual, _ := value.Selection.AsUntagged()
+		if actual != nil {
+			if err2 := validateToolUntaggedUnionBranchOriginal3(actual); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+
+	return err
+}
+
+// validateToolTaggedUnionBranchOriginal3 checks the original typed value before JSON conversion.
+func validateToolTaggedUnionBranchOriginal3(value *ToolTaggedUnionBranch) (err error) {
 	if value.Discriminator == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("discriminator", "value"))
 	}
@@ -4825,6 +5033,24 @@ func validateToolUnionBranchOriginal3(value *ToolUnionBranch) (err error) {
 	}
 	if utf8.RuneCountInString(value.Value) < 1 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("value.value", value.Value, utf8.RuneCountInString(value.Value), 1, true))
+	}
+	return err
+}
+
+// validateToolUntaggedUnionBranchOriginal3 checks the original typed value before JSON conversion.
+func validateToolUntaggedUnionBranchOriginal3(value *ToolUntaggedUnionBranch) (err error) {
+	for _, e := range value.Path {
+		if e != nil {
+			if err2 := validateToolFieldPathSegmentOriginal3(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if !(value.JSONKind == "string" || value.JSONKind == "number" || value.JSONKind == "boolean" || value.JSONKind == "array" || value.JSONKind == "object") {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.json_kind", value.JSONKind, []any{"string", "number", "boolean", "array", "object"}))
+	}
+	if value.Index < 0 {
+		err = goa.MergeErrors(err, goa.InvalidRangeError("value.index", value.Index, 0, true))
 	}
 	return err
 }
@@ -5197,6 +5423,31 @@ func validateToolFieldPathSegmentOriginal4(value *ToolFieldPathSegment) (err err
 
 // validateToolUnionBranchOriginal4 checks the original typed value before JSON conversion.
 func validateToolUnionBranchOriginal4(value *ToolUnionBranch) (err error) {
+	if value.Selection.Kind() == "" {
+		err = goa.MergeErrors(err, goa.MissingFieldError("selection", "value"))
+	}
+	switch string(value.Selection.Kind()) {
+	case "tagged":
+		actual, _ := value.Selection.AsTagged()
+		if actual != nil {
+			if err2 := validateToolTaggedUnionBranchOriginal4(actual); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	case "untagged":
+		actual, _ := value.Selection.AsUntagged()
+		if actual != nil {
+			if err2 := validateToolUntaggedUnionBranchOriginal4(actual); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+
+	return err
+}
+
+// validateToolTaggedUnionBranchOriginal4 checks the original typed value before JSON conversion.
+func validateToolTaggedUnionBranchOriginal4(value *ToolTaggedUnionBranch) (err error) {
 	if value.Discriminator == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("discriminator", "value"))
 	}
@@ -5212,6 +5463,24 @@ func validateToolUnionBranchOriginal4(value *ToolUnionBranch) (err error) {
 	}
 	if utf8.RuneCountInString(value.Value) < 1 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("value.value", value.Value, utf8.RuneCountInString(value.Value), 1, true))
+	}
+	return err
+}
+
+// validateToolUntaggedUnionBranchOriginal4 checks the original typed value before JSON conversion.
+func validateToolUntaggedUnionBranchOriginal4(value *ToolUntaggedUnionBranch) (err error) {
+	for _, e := range value.Path {
+		if e != nil {
+			if err2 := validateToolFieldPathSegmentOriginal4(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if !(value.JSONKind == "string" || value.JSONKind == "number" || value.JSONKind == "boolean" || value.JSONKind == "array" || value.JSONKind == "object") {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.json_kind", value.JSONKind, []any{"string", "number", "boolean", "array", "object"}))
+	}
+	if value.Index < 0 {
+		err = goa.MergeErrors(err, goa.InvalidRangeError("value.index", value.Index, 0, true))
 	}
 	return err
 }
@@ -5670,6 +5939,31 @@ func validateToolFieldPathSegmentOriginal5(value *ToolFieldPathSegment) (err err
 
 // validateToolUnionBranchOriginal5 checks the original typed value before JSON conversion.
 func validateToolUnionBranchOriginal5(value *ToolUnionBranch) (err error) {
+	if value.Selection.Kind() == "" {
+		err = goa.MergeErrors(err, goa.MissingFieldError("selection", "value"))
+	}
+	switch string(value.Selection.Kind()) {
+	case "tagged":
+		actual, _ := value.Selection.AsTagged()
+		if actual != nil {
+			if err2 := validateToolTaggedUnionBranchOriginal5(actual); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	case "untagged":
+		actual, _ := value.Selection.AsUntagged()
+		if actual != nil {
+			if err2 := validateToolUntaggedUnionBranchOriginal5(actual); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+
+	return err
+}
+
+// validateToolTaggedUnionBranchOriginal5 checks the original typed value before JSON conversion.
+func validateToolTaggedUnionBranchOriginal5(value *ToolTaggedUnionBranch) (err error) {
 	if value.Discriminator == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("discriminator", "value"))
 	}
@@ -5685,6 +5979,24 @@ func validateToolUnionBranchOriginal5(value *ToolUnionBranch) (err error) {
 	}
 	if utf8.RuneCountInString(value.Value) < 1 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("value.value", value.Value, utf8.RuneCountInString(value.Value), 1, true))
+	}
+	return err
+}
+
+// validateToolUntaggedUnionBranchOriginal5 checks the original typed value before JSON conversion.
+func validateToolUntaggedUnionBranchOriginal5(value *ToolUntaggedUnionBranch) (err error) {
+	for _, e := range value.Path {
+		if e != nil {
+			if err2 := validateToolFieldPathSegmentOriginal5(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if !(value.JSONKind == "string" || value.JSONKind == "number" || value.JSONKind == "boolean" || value.JSONKind == "array" || value.JSONKind == "object") {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.json_kind", value.JSONKind, []any{"string", "number", "boolean", "array", "object"}))
+	}
+	if value.Index < 0 {
+		err = goa.MergeErrors(err, goa.InvalidRangeError("value.index", value.Index, 0, true))
 	}
 	return err
 }
@@ -5894,6 +6206,31 @@ func validateToolFieldPathSegmentOriginal6(value *ToolFieldPathSegment) (err err
 
 // validateToolUnionBranchOriginal6 checks the original typed value before JSON conversion.
 func validateToolUnionBranchOriginal6(value *ToolUnionBranch) (err error) {
+	if value.Selection.Kind() == "" {
+		err = goa.MergeErrors(err, goa.MissingFieldError("selection", "value"))
+	}
+	switch string(value.Selection.Kind()) {
+	case "tagged":
+		actual, _ := value.Selection.AsTagged()
+		if actual != nil {
+			if err2 := validateToolTaggedUnionBranchOriginal6(actual); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	case "untagged":
+		actual, _ := value.Selection.AsUntagged()
+		if actual != nil {
+			if err2 := validateToolUntaggedUnionBranchOriginal6(actual); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+
+	return err
+}
+
+// validateToolTaggedUnionBranchOriginal6 checks the original typed value before JSON conversion.
+func validateToolTaggedUnionBranchOriginal6(value *ToolTaggedUnionBranch) (err error) {
 	if value.Discriminator == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("discriminator", "value"))
 	}
@@ -5909,6 +6246,24 @@ func validateToolUnionBranchOriginal6(value *ToolUnionBranch) (err error) {
 	}
 	if utf8.RuneCountInString(value.Value) < 1 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("value.value", value.Value, utf8.RuneCountInString(value.Value), 1, true))
+	}
+	return err
+}
+
+// validateToolUntaggedUnionBranchOriginal6 checks the original typed value before JSON conversion.
+func validateToolUntaggedUnionBranchOriginal6(value *ToolUntaggedUnionBranch) (err error) {
+	for _, e := range value.Path {
+		if e != nil {
+			if err2 := validateToolFieldPathSegmentOriginal6(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if !(value.JSONKind == "string" || value.JSONKind == "number" || value.JSONKind == "boolean" || value.JSONKind == "array" || value.JSONKind == "object") {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.json_kind", value.JSONKind, []any{"string", "number", "boolean", "array", "object"}))
+	}
+	if value.Index < 0 {
+		err = goa.MergeErrors(err, goa.InvalidRangeError("value.index", value.Index, 0, true))
 	}
 	return err
 }
@@ -6054,6 +6409,31 @@ func validateToolFieldPathSegmentOriginal7(value *ToolFieldPathSegment) (err err
 
 // validateToolUnionBranchOriginal7 checks the original typed value before JSON conversion.
 func validateToolUnionBranchOriginal7(value *ToolUnionBranch) (err error) {
+	if value.Selection.Kind() == "" {
+		err = goa.MergeErrors(err, goa.MissingFieldError("selection", "value"))
+	}
+	switch string(value.Selection.Kind()) {
+	case "tagged":
+		actual, _ := value.Selection.AsTagged()
+		if actual != nil {
+			if err2 := validateToolTaggedUnionBranchOriginal7(actual); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	case "untagged":
+		actual, _ := value.Selection.AsUntagged()
+		if actual != nil {
+			if err2 := validateToolUntaggedUnionBranchOriginal7(actual); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+
+	return err
+}
+
+// validateToolTaggedUnionBranchOriginal7 checks the original typed value before JSON conversion.
+func validateToolTaggedUnionBranchOriginal7(value *ToolTaggedUnionBranch) (err error) {
 	if value.Discriminator == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("discriminator", "value"))
 	}
@@ -6069,6 +6449,24 @@ func validateToolUnionBranchOriginal7(value *ToolUnionBranch) (err error) {
 	}
 	if utf8.RuneCountInString(value.Value) < 1 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("value.value", value.Value, utf8.RuneCountInString(value.Value), 1, true))
+	}
+	return err
+}
+
+// validateToolUntaggedUnionBranchOriginal7 checks the original typed value before JSON conversion.
+func validateToolUntaggedUnionBranchOriginal7(value *ToolUntaggedUnionBranch) (err error) {
+	for _, e := range value.Path {
+		if e != nil {
+			if err2 := validateToolFieldPathSegmentOriginal7(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if !(value.JSONKind == "string" || value.JSONKind == "number" || value.JSONKind == "boolean" || value.JSONKind == "array" || value.JSONKind == "object") {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.json_kind", value.JSONKind, []any{"string", "number", "boolean", "array", "object"}))
+	}
+	if value.Index < 0 {
+		err = goa.MergeErrors(err, goa.InvalidRangeError("value.index", value.Index, 0, true))
 	}
 	return err
 }
@@ -6256,6 +6654,31 @@ func validateToolFieldPathSegmentOriginal9(value *ToolFieldPathSegment) (err err
 
 // validateToolUnionBranchOriginal8 checks the original typed value before JSON conversion.
 func validateToolUnionBranchOriginal8(value *ToolUnionBranch) (err error) {
+	if value.Selection.Kind() == "" {
+		err = goa.MergeErrors(err, goa.MissingFieldError("selection", "value"))
+	}
+	switch string(value.Selection.Kind()) {
+	case "tagged":
+		actual, _ := value.Selection.AsTagged()
+		if actual != nil {
+			if err2 := validateToolTaggedUnionBranchOriginal8(actual); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	case "untagged":
+		actual, _ := value.Selection.AsUntagged()
+		if actual != nil {
+			if err2 := validateToolUntaggedUnionBranchOriginal8(actual); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+
+	return err
+}
+
+// validateToolTaggedUnionBranchOriginal8 checks the original typed value before JSON conversion.
+func validateToolTaggedUnionBranchOriginal8(value *ToolTaggedUnionBranch) (err error) {
 	if value.Discriminator == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("discriminator", "value"))
 	}
@@ -6271,6 +6694,24 @@ func validateToolUnionBranchOriginal8(value *ToolUnionBranch) (err error) {
 	}
 	if utf8.RuneCountInString(value.Value) < 1 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("value.value", value.Value, utf8.RuneCountInString(value.Value), 1, true))
+	}
+	return err
+}
+
+// validateToolUntaggedUnionBranchOriginal8 checks the original typed value before JSON conversion.
+func validateToolUntaggedUnionBranchOriginal8(value *ToolUntaggedUnionBranch) (err error) {
+	for _, e := range value.Path {
+		if e != nil {
+			if err2 := validateToolFieldPathSegmentOriginal9(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if !(value.JSONKind == "string" || value.JSONKind == "number" || value.JSONKind == "boolean" || value.JSONKind == "array" || value.JSONKind == "object") {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.json_kind", value.JSONKind, []any{"string", "number", "boolean", "array", "object"}))
+	}
+	if value.Index < 0 {
+		err = goa.MergeErrors(err, goa.InvalidRangeError("value.index", value.Index, 0, true))
 	}
 	return err
 }
@@ -6472,6 +6913,31 @@ func validateToolFieldPathSegmentOriginal10(value *ToolFieldPathSegment) (err er
 
 // validateToolUnionBranchOriginal9 checks the original typed value before JSON conversion.
 func validateToolUnionBranchOriginal9(value *ToolUnionBranch) (err error) {
+	if value.Selection.Kind() == "" {
+		err = goa.MergeErrors(err, goa.MissingFieldError("selection", "value"))
+	}
+	switch string(value.Selection.Kind()) {
+	case "tagged":
+		actual, _ := value.Selection.AsTagged()
+		if actual != nil {
+			if err2 := validateToolTaggedUnionBranchOriginal9(actual); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	case "untagged":
+		actual, _ := value.Selection.AsUntagged()
+		if actual != nil {
+			if err2 := validateToolUntaggedUnionBranchOriginal9(actual); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+
+	return err
+}
+
+// validateToolTaggedUnionBranchOriginal9 checks the original typed value before JSON conversion.
+func validateToolTaggedUnionBranchOriginal9(value *ToolTaggedUnionBranch) (err error) {
 	if value.Discriminator == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("discriminator", "value"))
 	}
@@ -6487,6 +6953,53 @@ func validateToolUnionBranchOriginal9(value *ToolUnionBranch) (err error) {
 	}
 	if utf8.RuneCountInString(value.Value) < 1 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("value.value", value.Value, utf8.RuneCountInString(value.Value), 1, true))
+	}
+	return err
+}
+
+// validateToolUntaggedUnionBranchOriginal9 checks the original typed value before JSON conversion.
+func validateToolUntaggedUnionBranchOriginal9(value *ToolUntaggedUnionBranch) (err error) {
+	for _, e := range value.Path {
+		if e != nil {
+			if err2 := validateToolFieldPathSegmentOriginal10(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if !(value.JSONKind == "string" || value.JSONKind == "number" || value.JSONKind == "boolean" || value.JSONKind == "array" || value.JSONKind == "object") {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.json_kind", value.JSONKind, []any{"string", "number", "boolean", "array", "object"}))
+	}
+	if value.Index < 0 {
+		err = goa.MergeErrors(err, goa.InvalidRangeError("value.index", value.Index, 0, true))
+	}
+	return err
+}
+
+// validateToolTaggedUnionBranchOriginal10 checks the original typed value before JSON conversion.
+func validateToolTaggedUnionBranchOriginal10(value *ToolTaggedUnionBranch) (err error) {
+	if value.Discriminator == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("discriminator", "value"))
+	}
+	if len(value.Discriminator) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("value.discriminator", value.Discriminator, len(value.Discriminator), 1, true))
+	}
+	for _, e := range value.Discriminator {
+		if e != nil {
+			if err2 := validateToolFieldPathSegmentOriginal11(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if utf8.RuneCountInString(value.Value) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("value.value", value.Value, utf8.RuneCountInString(value.Value), 1, true))
+	}
+	return err
+}
+
+// validateToolFieldPathSegmentOriginal11 checks the original typed value before JSON conversion.
+func validateToolFieldPathSegmentOriginal11(value *ToolFieldPathSegment) (err error) {
+	if value.Segment.Kind() == "" {
+		err = goa.MergeErrors(err, goa.MissingFieldError("segment", "value"))
 	}
 	return err
 }
@@ -6513,7 +7026,7 @@ func validateToolTypeMetadataOriginal9(value *ToolTypeMetadata) (err error) {
 func validateToolFieldMetadataOriginal10(value *ToolFieldMetadata) (err error) {
 	for _, e := range value.Path {
 		if e != nil {
-			if err2 := validateToolFieldPathSegmentOriginal11(e); err2 != nil {
+			if err2 := validateToolFieldPathSegmentOriginal12(e); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -6533,8 +7046,8 @@ func validateToolFieldMetadataOriginal10(value *ToolFieldMetadata) (err error) {
 	return err
 }
 
-// validateToolFieldPathSegmentOriginal11 checks the original typed value before JSON conversion.
-func validateToolFieldPathSegmentOriginal11(value *ToolFieldPathSegment) (err error) {
+// validateToolFieldPathSegmentOriginal12 checks the original typed value before JSON conversion.
+func validateToolFieldPathSegmentOriginal12(value *ToolFieldPathSegment) (err error) {
 	if value.Segment.Kind() == "" {
 		err = goa.MergeErrors(err, goa.MissingFieldError("segment", "value"))
 	}
@@ -6543,27 +7056,31 @@ func validateToolFieldPathSegmentOriginal11(value *ToolFieldPathSegment) (err er
 
 // validateToolUnionBranchOriginal10 checks the original typed value before JSON conversion.
 func validateToolUnionBranchOriginal10(value *ToolUnionBranch) (err error) {
-	if value.Discriminator == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("discriminator", "value"))
+	if value.Selection.Kind() == "" {
+		err = goa.MergeErrors(err, goa.MissingFieldError("selection", "value"))
 	}
-	if len(value.Discriminator) < 1 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("value.discriminator", value.Discriminator, len(value.Discriminator), 1, true))
-	}
-	for _, e := range value.Discriminator {
-		if e != nil {
-			if err2 := validateToolFieldPathSegmentOriginal11(e); err2 != nil {
+	switch string(value.Selection.Kind()) {
+	case "tagged":
+		actual, _ := value.Selection.AsTagged()
+		if actual != nil {
+			if err2 := validateToolTaggedUnionBranchOriginal11(actual); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	case "untagged":
+		actual, _ := value.Selection.AsUntagged()
+		if actual != nil {
+			if err2 := validateToolUntaggedUnionBranchOriginal10(actual); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
 	}
-	if utf8.RuneCountInString(value.Value) < 1 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("value.value", value.Value, utf8.RuneCountInString(value.Value), 1, true))
-	}
+
 	return err
 }
 
-// validateToolUnionBranchOriginal11 checks the original typed value before JSON conversion.
-func validateToolUnionBranchOriginal11(value *ToolUnionBranch) (err error) {
+// validateToolTaggedUnionBranchOriginal11 checks the original typed value before JSON conversion.
+func validateToolTaggedUnionBranchOriginal11(value *ToolTaggedUnionBranch) (err error) {
 	if value.Discriminator == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("discriminator", "value"))
 	}
@@ -6583,8 +7100,116 @@ func validateToolUnionBranchOriginal11(value *ToolUnionBranch) (err error) {
 	return err
 }
 
-// validateToolFieldPathSegmentOriginal12 checks the original typed value before JSON conversion.
-func validateToolFieldPathSegmentOriginal12(value *ToolFieldPathSegment) (err error) {
+// validateToolUntaggedUnionBranchOriginal10 checks the original typed value before JSON conversion.
+func validateToolUntaggedUnionBranchOriginal10(value *ToolUntaggedUnionBranch) (err error) {
+	for _, e := range value.Path {
+		if e != nil {
+			if err2 := validateToolFieldPathSegmentOriginal12(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if !(value.JSONKind == "string" || value.JSONKind == "number" || value.JSONKind == "boolean" || value.JSONKind == "array" || value.JSONKind == "object") {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.json_kind", value.JSONKind, []any{"string", "number", "boolean", "array", "object"}))
+	}
+	if value.Index < 0 {
+		err = goa.MergeErrors(err, goa.InvalidRangeError("value.index", value.Index, 0, true))
+	}
+	return err
+}
+
+// validateToolUnionBranchOriginal11 checks the original typed value before JSON conversion.
+func validateToolUnionBranchOriginal11(value *ToolUnionBranch) (err error) {
+	if value.Selection.Kind() == "" {
+		err = goa.MergeErrors(err, goa.MissingFieldError("selection", "value"))
+	}
+	switch string(value.Selection.Kind()) {
+	case "tagged":
+		actual, _ := value.Selection.AsTagged()
+		if actual != nil {
+			if err2 := validateToolTaggedUnionBranchOriginal12(actual); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	case "untagged":
+		actual, _ := value.Selection.AsUntagged()
+		if actual != nil {
+			if err2 := validateToolUntaggedUnionBranchOriginal11(actual); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+
+	return err
+}
+
+// validateToolTaggedUnionBranchOriginal12 checks the original typed value before JSON conversion.
+func validateToolTaggedUnionBranchOriginal12(value *ToolTaggedUnionBranch) (err error) {
+	if value.Discriminator == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("discriminator", "value"))
+	}
+	if len(value.Discriminator) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("value.discriminator", value.Discriminator, len(value.Discriminator), 1, true))
+	}
+	for _, e := range value.Discriminator {
+		if e != nil {
+			if err2 := validateToolFieldPathSegmentOriginal13(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if utf8.RuneCountInString(value.Value) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("value.value", value.Value, utf8.RuneCountInString(value.Value), 1, true))
+	}
+	return err
+}
+
+// validateToolFieldPathSegmentOriginal13 checks the original typed value before JSON conversion.
+func validateToolFieldPathSegmentOriginal13(value *ToolFieldPathSegment) (err error) {
+	if value.Segment.Kind() == "" {
+		err = goa.MergeErrors(err, goa.MissingFieldError("segment", "value"))
+	}
+	return err
+}
+
+// validateToolUntaggedUnionBranchOriginal11 checks the original typed value before JSON conversion.
+func validateToolUntaggedUnionBranchOriginal11(value *ToolUntaggedUnionBranch) (err error) {
+	for _, e := range value.Path {
+		if e != nil {
+			if err2 := validateToolFieldPathSegmentOriginal13(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if !(value.JSONKind == "string" || value.JSONKind == "number" || value.JSONKind == "boolean" || value.JSONKind == "array" || value.JSONKind == "object") {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.json_kind", value.JSONKind, []any{"string", "number", "boolean", "array", "object"}))
+	}
+	if value.Index < 0 {
+		err = goa.MergeErrors(err, goa.InvalidRangeError("value.index", value.Index, 0, true))
+	}
+	return err
+}
+
+// validateToolUntaggedUnionBranchOriginal12 checks the original typed value before JSON conversion.
+func validateToolUntaggedUnionBranchOriginal12(value *ToolUntaggedUnionBranch) (err error) {
+	for _, e := range value.Path {
+		if e != nil {
+			if err2 := validateToolFieldPathSegmentOriginal14(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if !(value.JSONKind == "string" || value.JSONKind == "number" || value.JSONKind == "boolean" || value.JSONKind == "array" || value.JSONKind == "object") {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.json_kind", value.JSONKind, []any{"string", "number", "boolean", "array", "object"}))
+	}
+	if value.Index < 0 {
+		err = goa.MergeErrors(err, goa.InvalidRangeError("value.index", value.Index, 0, true))
+	}
+	return err
+}
+
+// validateToolFieldPathSegmentOriginal14 checks the original typed value before JSON conversion.
+func validateToolFieldPathSegmentOriginal14(value *ToolFieldPathSegment) (err error) {
 	if value.Segment.Kind() == "" {
 		err = goa.MergeErrors(err, goa.MissingFieldError("segment", "value"))
 	}
@@ -6750,7 +7375,7 @@ func validateToolTypeMetadataOriginal10(value *ToolTypeMetadata) (err error) {
 func validateToolFieldMetadataOriginal11(value *ToolFieldMetadata) (err error) {
 	for _, e := range value.Path {
 		if e != nil {
-			if err2 := validateToolFieldPathSegmentOriginal13(e); err2 != nil {
+			if err2 := validateToolFieldPathSegmentOriginal15(e); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -6770,8 +7395,8 @@ func validateToolFieldMetadataOriginal11(value *ToolFieldMetadata) (err error) {
 	return err
 }
 
-// validateToolFieldPathSegmentOriginal13 checks the original typed value before JSON conversion.
-func validateToolFieldPathSegmentOriginal13(value *ToolFieldPathSegment) (err error) {
+// validateToolFieldPathSegmentOriginal15 checks the original typed value before JSON conversion.
+func validateToolFieldPathSegmentOriginal15(value *ToolFieldPathSegment) (err error) {
 	if value.Segment.Kind() == "" {
 		err = goa.MergeErrors(err, goa.MissingFieldError("segment", "value"))
 	}
@@ -6780,6 +7405,31 @@ func validateToolFieldPathSegmentOriginal13(value *ToolFieldPathSegment) (err er
 
 // validateToolUnionBranchOriginal12 checks the original typed value before JSON conversion.
 func validateToolUnionBranchOriginal12(value *ToolUnionBranch) (err error) {
+	if value.Selection.Kind() == "" {
+		err = goa.MergeErrors(err, goa.MissingFieldError("selection", "value"))
+	}
+	switch string(value.Selection.Kind()) {
+	case "tagged":
+		actual, _ := value.Selection.AsTagged()
+		if actual != nil {
+			if err2 := validateToolTaggedUnionBranchOriginal13(actual); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	case "untagged":
+		actual, _ := value.Selection.AsUntagged()
+		if actual != nil {
+			if err2 := validateToolUntaggedUnionBranchOriginal13(actual); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+
+	return err
+}
+
+// validateToolTaggedUnionBranchOriginal13 checks the original typed value before JSON conversion.
+func validateToolTaggedUnionBranchOriginal13(value *ToolTaggedUnionBranch) (err error) {
 	if value.Discriminator == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("discriminator", "value"))
 	}
@@ -6788,13 +7438,31 @@ func validateToolUnionBranchOriginal12(value *ToolUnionBranch) (err error) {
 	}
 	for _, e := range value.Discriminator {
 		if e != nil {
-			if err2 := validateToolFieldPathSegmentOriginal13(e); err2 != nil {
+			if err2 := validateToolFieldPathSegmentOriginal15(e); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
 	}
 	if utf8.RuneCountInString(value.Value) < 1 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("value.value", value.Value, utf8.RuneCountInString(value.Value), 1, true))
+	}
+	return err
+}
+
+// validateToolUntaggedUnionBranchOriginal13 checks the original typed value before JSON conversion.
+func validateToolUntaggedUnionBranchOriginal13(value *ToolUntaggedUnionBranch) (err error) {
+	for _, e := range value.Path {
+		if e != nil {
+			if err2 := validateToolFieldPathSegmentOriginal15(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if !(value.JSONKind == "string" || value.JSONKind == "number" || value.JSONKind == "boolean" || value.JSONKind == "array" || value.JSONKind == "object") {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.json_kind", value.JSONKind, []any{"string", "number", "boolean", "array", "object"}))
+	}
+	if value.Index < 0 {
+		err = goa.MergeErrors(err, goa.InvalidRangeError("value.index", value.Index, 0, true))
 	}
 	return err
 }
@@ -7286,6 +7954,155 @@ func (u *jsonToolFieldSegmentTransport) UnmarshalJSON(data []byte) error {
 		u.Element = value
 	default:
 		return goa.InvalidEnumValueError("type", raw.Type, []any{string(jsonToolFieldSegmentTransportKindField), string(jsonToolFieldSegmentTransportKindElement)})
+	}
+	return u.Validate()
+}
+
+// jsonToolUnionSelectionTransport stores exactly one selected Goa OneOf branch.
+type jsonToolUnionSelectionTransport struct {
+	kind     jsonToolUnionSelectionTransportKind
+	Tagged   *jsonToolTaggedUnionBranchTransport
+	Untagged *jsonToolUntaggedUnionBranchTransport
+}
+
+// jsonToolUnionSelectionTransportKind identifies the selected branch of jsonToolUnionSelectionTransport.
+type jsonToolUnionSelectionTransportKind string
+
+const (
+	jsonToolUnionSelectionTransportKindTagged   jsonToolUnionSelectionTransportKind = "tagged"
+	jsonToolUnionSelectionTransportKindUntagged jsonToolUnionSelectionTransportKind = "untagged"
+)
+
+// Kind returns the selected branch.
+func (u jsonToolUnionSelectionTransport) Kind() jsonToolUnionSelectionTransportKind {
+	return u.kind
+}
+
+// newjsonToolUnionSelectionTransportTagged creates jsonToolUnionSelectionTransport with its tagged branch selected.
+func newjsonToolUnionSelectionTransportTagged(value *jsonToolTaggedUnionBranchTransport) jsonToolUnionSelectionTransport {
+	return jsonToolUnionSelectionTransport{kind: jsonToolUnionSelectionTransportKindTagged, Tagged: value}
+}
+
+// AsTagged returns the tagged branch when it is selected.
+func (u jsonToolUnionSelectionTransport) AsTagged() (_ *jsonToolTaggedUnionBranchTransport, ok bool) {
+	if u.kind != jsonToolUnionSelectionTransportKindTagged {
+		return
+	}
+	return u.Tagged, true
+}
+
+// SetTagged selects the tagged branch.
+func (u *jsonToolUnionSelectionTransport) SetTagged(value *jsonToolTaggedUnionBranchTransport) {
+	u.kind = jsonToolUnionSelectionTransportKindTagged
+	u.Tagged = value
+}
+
+// newjsonToolUnionSelectionTransportUntagged creates jsonToolUnionSelectionTransport with its untagged branch selected.
+func newjsonToolUnionSelectionTransportUntagged(value *jsonToolUntaggedUnionBranchTransport) jsonToolUnionSelectionTransport {
+	return jsonToolUnionSelectionTransport{kind: jsonToolUnionSelectionTransportKindUntagged, Untagged: value}
+}
+
+// AsUntagged returns the untagged branch when it is selected.
+func (u jsonToolUnionSelectionTransport) AsUntagged() (_ *jsonToolUntaggedUnionBranchTransport, ok bool) {
+	if u.kind != jsonToolUnionSelectionTransportKindUntagged {
+		return
+	}
+	return u.Untagged, true
+}
+
+// SetUntagged selects the untagged branch.
+func (u *jsonToolUnionSelectionTransport) SetUntagged(value *jsonToolUntaggedUnionBranchTransport) {
+	u.kind = jsonToolUnionSelectionTransportKindUntagged
+	u.Untagged = value
+}
+
+// Validate checks that one complete branch is selected.
+func (u jsonToolUnionSelectionTransport) Validate() error {
+	switch u.kind {
+	case jsonToolUnionSelectionTransportKindTagged:
+		if u.Tagged == nil {
+			return goa.MissingFieldError("value", "jsonToolUnionSelectionTransport")
+		}
+		return nil
+	case jsonToolUnionSelectionTransportKindUntagged:
+		if u.Untagged == nil {
+			return goa.MissingFieldError("value", "jsonToolUnionSelectionTransport")
+		}
+		return nil
+	case "":
+		return goa.MissingFieldError("type", "jsonToolUnionSelectionTransport")
+	default:
+		return goa.InvalidEnumValueError("type", u.kind, []any{string(jsonToolUnionSelectionTransportKindTagged), string(jsonToolUnionSelectionTransportKindUntagged)})
+	}
+}
+
+// MarshalJSON writes the selected branch name and value.
+func (u jsonToolUnionSelectionTransport) MarshalJSON() ([]byte, error) {
+	if err := u.Validate(); err != nil {
+		return nil, err
+	}
+	var value any
+	switch u.kind {
+	case jsonToolUnionSelectionTransportKindTagged:
+		value = u.Tagged
+	case jsonToolUnionSelectionTransportKindUntagged:
+		value = u.Untagged
+	default:
+		return nil, fmt.Errorf("unexpected jsonToolUnionSelectionTransport branch %q", u.kind)
+	}
+	return json.Marshal(struct {
+		Type  string `json:"type"`
+		Value any    `json:"value"`
+	}{Type: string(u.kind), Value: value})
+}
+
+// UnmarshalJSON reads one complete branch name and value.
+func (u *jsonToolUnionSelectionTransport) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Type  string          `json:"type"`
+		Value json.RawMessage `json:"value"`
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&raw); err != nil {
+		return err
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("decode jsonToolUnionSelectionTransport JSON: multiple JSON values")
+		}
+		return err
+	}
+	if raw.Type == "" {
+		return goa.MissingFieldError("type", "jsonToolUnionSelectionTransport")
+	}
+	if len(raw.Value) == 0 {
+		return goa.MissingFieldError("value", "jsonToolUnionSelectionTransport")
+	}
+	if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
+		return goa.InvalidFieldTypeError("value", nil, "non-null JSON value")
+	}
+	switch raw.Type {
+	case string(jsonToolUnionSelectionTransportKindTagged):
+		var value *jsonToolTaggedUnionBranchTransport
+		decoder := json.NewDecoder(bytes.NewReader(raw.Value))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&value); err != nil {
+			return err
+		}
+		u.kind = jsonToolUnionSelectionTransportKindTagged
+		u.Tagged = value
+	case string(jsonToolUnionSelectionTransportKindUntagged):
+		var value *jsonToolUntaggedUnionBranchTransport
+		decoder := json.NewDecoder(bytes.NewReader(raw.Value))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&value); err != nil {
+			return err
+		}
+		u.kind = jsonToolUnionSelectionTransportKindUntagged
+		u.Untagged = value
+	default:
+		return goa.InvalidEnumValueError("type", raw.Type, []any{string(jsonToolUnionSelectionTransportKindTagged), string(jsonToolUnionSelectionTransportKindUntagged)})
 	}
 	return u.Validate()
 }
@@ -9780,7 +10597,7 @@ func EncodeToolFieldMetadata(in *ToolFieldMetadata) ([]byte, error) {
 					body.Path[i] = nil
 					continue
 				}
-				body.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport43(val)
+				body.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport64(val)
 			}
 		}
 		if in.Branches != nil {
@@ -9846,7 +10663,7 @@ func DecodeToolFieldMetadata(data []byte) (out *ToolFieldMetadata, err error) {
 					out.Path[i] = nil
 					continue
 				}
-				out.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment43(val)
+				out.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment64(val)
 			}
 		}
 		if body.Branches != nil {
@@ -9893,7 +10710,7 @@ func EncodeToolFieldPathSegment(in *ToolFieldPathSegment) ([]byte, error) {
 			actual, _ := in.Segment.AsElement()
 			var obj *jsonToolCollectionElementTransport
 			if actual != nil {
-				obj = encodeToolCollectionElementToToolCollectionElementTransport45(actual)
+				obj = encodeToolCollectionElementToToolCollectionElementTransport67(actual)
 			}
 			u := segmentValue
 			u.SetElement((*jsonToolCollectionElementTransport)(obj))
@@ -9949,7 +10766,7 @@ func DecodeToolFieldPathSegment(data []byte) (out *ToolFieldPathSegment, err err
 			actual, _ := body.Segment.AsElement()
 			var obj *ToolCollectionElement
 			if actual != nil {
-				obj = decodeToolCollectionElementTransportToToolCollectionElement45(actual)
+				obj = decodeToolCollectionElementTransportToToolCollectionElement67(actual)
 			}
 			u := out.Segment
 			u.SetElement((*ToolCollectionElement)(obj))
@@ -10246,6 +11063,78 @@ func DecodeToolServerData(data []byte) (out *ToolServerData, err error) {
 	return out, nil
 }
 
+// EncodeToolTaggedUnionBranch turns a service value into JSON using the field names in the Goa design.
+func EncodeToolTaggedUnionBranch(in *ToolTaggedUnionBranch) ([]byte, error) {
+	if err := checkToolTaggedUnionBranchValue(in); err != nil {
+		return nil, fmt.Errorf("encode ToolTaggedUnionBranch JSON: %w", err)
+	}
+	if err := validateToolTaggedUnionBranchOriginal10(in); err != nil {
+		return nil, fmt.Errorf("validate ToolTaggedUnionBranch value: %w", err)
+	}
+	var body *jsonToolTaggedUnionBranchTransport
+	{
+		body = &jsonToolTaggedUnionBranchTransport{
+			Value: &in.Value,
+		}
+		body.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(in.Discriminator))
+		for i, val := range in.Discriminator {
+			if val == nil {
+				body.Discriminator[i] = nil
+				continue
+			}
+			body.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport82(val)
+		}
+	}
+	if err := validatejsonToolTaggedUnionBranchTransport(body); err != nil {
+		return nil, fmt.Errorf("validate ToolTaggedUnionBranch JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode ToolTaggedUnionBranch JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeToolTaggedUnionBranch checks JSON field names from the Goa design and returns a service value.
+func DecodeToolTaggedUnionBranch(data []byte) (out *ToolTaggedUnionBranch, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode ToolTaggedUnionBranch JSON: %w", err)
+	}
+	if err := validateToolTaggedUnionBranchJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode ToolTaggedUnionBranch JSON: %w", err)
+	}
+	var body *jsonToolTaggedUnionBranchTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode ToolTaggedUnionBranch JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode ToolTaggedUnionBranch JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode ToolTaggedUnionBranch JSON after first value: %w", err)
+	}
+	if err := validatejsonToolTaggedUnionBranchTransport(body); err != nil {
+		return out, fmt.Errorf("validate ToolTaggedUnionBranch JSON: %w", err)
+	}
+	{
+		out = &ToolTaggedUnionBranch{
+			Value: *body.Value,
+		}
+		out.Discriminator = make([]*ToolFieldPathSegment, len(body.Discriminator))
+		for i, val := range body.Discriminator {
+			if val == nil {
+				out.Discriminator[i] = nil
+				continue
+			}
+			out.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment82(val)
+		}
+	}
+	return out, nil
+}
+
 // EncodeToolTypeMetadata turns a service value into JSON using the field names in the Goa design.
 func EncodeToolTypeMetadata(in *ToolTypeMetadata) ([]byte, error) {
 	if err := checkToolTypeMetadataValue(in); err != nil {
@@ -10336,17 +11225,29 @@ func EncodeToolUnionBranch(in *ToolUnionBranch) ([]byte, error) {
 	}
 	var body *jsonToolUnionBranchTransport
 	{
-		body = &jsonToolUnionBranchTransport{
-			Value: &in.Value,
-		}
-		body.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(in.Discriminator))
-		for i, val := range in.Discriminator {
-			if val == nil {
-				body.Discriminator[i] = nil
-				continue
+		body = &jsonToolUnionBranchTransport{}
+		var selectionValue jsonToolUnionSelectionTransport
+		switch string(in.Selection.Kind()) {
+		case "tagged":
+			actual, _ := in.Selection.AsTagged()
+			var obj *jsonToolTaggedUnionBranchTransport
+			if actual != nil {
+				obj = encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport29(actual)
 			}
-			body.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport57(val)
+			u := selectionValue
+			u.SetTagged((*jsonToolTaggedUnionBranchTransport)(obj))
+			selectionValue = u
+		case "untagged":
+			actual, _ := in.Selection.AsUntagged()
+			var obj *jsonToolUntaggedUnionBranchTransport
+			if actual != nil {
+				obj = encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport29(actual)
+			}
+			u := selectionValue
+			u.SetUntagged((*jsonToolUntaggedUnionBranchTransport)(obj))
+			selectionValue = u
 		}
+		body.Selection = &selectionValue
 	}
 	if err := validatejsonToolUnionBranchTransport(body); err != nil {
 		return nil, fmt.Errorf("validate ToolUnionBranch JSON: %w", err)
@@ -10383,16 +11284,105 @@ func DecodeToolUnionBranch(data []byte) (out *ToolUnionBranch, err error) {
 		return out, fmt.Errorf("validate ToolUnionBranch JSON: %w", err)
 	}
 	{
-		out = &ToolUnionBranch{
-			Value: *body.Value,
-		}
-		out.Discriminator = make([]*ToolFieldPathSegment, len(body.Discriminator))
-		for i, val := range body.Discriminator {
-			if val == nil {
-				out.Discriminator[i] = nil
-				continue
+		out = &ToolUnionBranch{}
+		switch string(body.Selection.Kind()) {
+		case "tagged":
+			actual, _ := body.Selection.AsTagged()
+			var obj *ToolTaggedUnionBranch
+			if actual != nil {
+				obj = decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch29(actual)
 			}
-			out.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment57(val)
+			u := out.Selection
+			u.SetTagged((*ToolTaggedUnionBranch)(obj))
+			out.Selection = u
+		case "untagged":
+			actual, _ := body.Selection.AsUntagged()
+			var obj *ToolUntaggedUnionBranch
+			if actual != nil {
+				obj = decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch29(actual)
+			}
+			u := out.Selection
+			u.SetUntagged((*ToolUntaggedUnionBranch)(obj))
+			out.Selection = u
+		}
+	}
+	return out, nil
+}
+
+// EncodeToolUntaggedUnionBranch turns a service value into JSON using the field names in the Goa design.
+func EncodeToolUntaggedUnionBranch(in *ToolUntaggedUnionBranch) ([]byte, error) {
+	if err := checkToolUntaggedUnionBranchValue(in); err != nil {
+		return nil, fmt.Errorf("encode ToolUntaggedUnionBranch JSON: %w", err)
+	}
+	if err := validateToolUntaggedUnionBranchOriginal12(in); err != nil {
+		return nil, fmt.Errorf("validate ToolUntaggedUnionBranch value: %w", err)
+	}
+	var body *jsonToolUntaggedUnionBranchTransport
+	{
+		body = &jsonToolUntaggedUnionBranchTransport{
+			JSONKind: &in.JSONKind,
+		}
+		index := agentToolsetDeclarationIntTransport(in.Index)
+		body.Index = &index
+		if in.Path != nil {
+			body.Path = make([]*jsonToolFieldPathSegmentTransport, len(in.Path))
+			for i, val := range in.Path {
+				if val == nil {
+					body.Path[i] = nil
+					continue
+				}
+				body.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport88(val)
+			}
+		}
+	}
+	if err := validatejsonToolUntaggedUnionBranchTransport(body); err != nil {
+		return nil, fmt.Errorf("validate ToolUntaggedUnionBranch JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode ToolUntaggedUnionBranch JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeToolUntaggedUnionBranch checks JSON field names from the Goa design and returns a service value.
+func DecodeToolUntaggedUnionBranch(data []byte) (out *ToolUntaggedUnionBranch, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode ToolUntaggedUnionBranch JSON: %w", err)
+	}
+	if err := validateToolUntaggedUnionBranchJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode ToolUntaggedUnionBranch JSON: %w", err)
+	}
+	var body *jsonToolUntaggedUnionBranchTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode ToolUntaggedUnionBranch JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode ToolUntaggedUnionBranch JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode ToolUntaggedUnionBranch JSON after first value: %w", err)
+	}
+	if err := validatejsonToolUntaggedUnionBranchTransport(body); err != nil {
+		return out, fmt.Errorf("validate ToolUntaggedUnionBranch JSON: %w", err)
+	}
+	{
+		out = &ToolUntaggedUnionBranch{
+			JSONKind: *body.JSONKind,
+			Index:    int(*body.Index),
+		}
+		if body.Path != nil {
+			out.Path = make([]*ToolFieldPathSegment, len(body.Path))
+			for i, val := range body.Path {
+				if val == nil {
+					out.Path[i] = nil
+					continue
+				}
+				out.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment88(val)
+			}
 		}
 	}
 	return out, nil
@@ -11353,6 +12343,18 @@ func decodeToolCollectionElementTransportToToolCollectionElement10(v *jsonToolCo
 	return res
 }
 
+func decodeToolCollectionElementTransportToToolCollectionElement100(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
+	res := &ToolCollectionElement{}
+
+	return res
+}
+
+func decodeToolCollectionElementTransportToToolCollectionElement101(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
+	res := &ToolCollectionElement{}
+
+	return res
+}
+
 func decodeToolCollectionElementTransportToToolCollectionElement11(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
 	res := &ToolCollectionElement{}
 
@@ -11719,7 +12721,85 @@ func decodeToolCollectionElementTransportToToolCollectionElement66(v *jsonToolCo
 	return res
 }
 
+func decodeToolCollectionElementTransportToToolCollectionElement67(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
+	res := &ToolCollectionElement{}
+
+	return res
+}
+
+func decodeToolCollectionElementTransportToToolCollectionElement68(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
+	res := &ToolCollectionElement{}
+
+	return res
+}
+
+func decodeToolCollectionElementTransportToToolCollectionElement69(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
+	res := &ToolCollectionElement{}
+
+	return res
+}
+
 func decodeToolCollectionElementTransportToToolCollectionElement7(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
+	res := &ToolCollectionElement{}
+
+	return res
+}
+
+func decodeToolCollectionElementTransportToToolCollectionElement70(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
+	res := &ToolCollectionElement{}
+
+	return res
+}
+
+func decodeToolCollectionElementTransportToToolCollectionElement71(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
+	res := &ToolCollectionElement{}
+
+	return res
+}
+
+func decodeToolCollectionElementTransportToToolCollectionElement72(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
+	res := &ToolCollectionElement{}
+
+	return res
+}
+
+func decodeToolCollectionElementTransportToToolCollectionElement73(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
+	res := &ToolCollectionElement{}
+
+	return res
+}
+
+func decodeToolCollectionElementTransportToToolCollectionElement74(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
+	res := &ToolCollectionElement{}
+
+	return res
+}
+
+func decodeToolCollectionElementTransportToToolCollectionElement75(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
+	res := &ToolCollectionElement{}
+
+	return res
+}
+
+func decodeToolCollectionElementTransportToToolCollectionElement76(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
+	res := &ToolCollectionElement{}
+
+	return res
+}
+
+func decodeToolCollectionElementTransportToToolCollectionElement77(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
+	res := &ToolCollectionElement{}
+
+	return res
+}
+
+func decodeToolCollectionElementTransportToToolCollectionElement78(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
+	res := &ToolCollectionElement{}
+
+	return res
+}
+
+func decodeToolCollectionElementTransportToToolCollectionElement79(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
 	res := &ToolCollectionElement{}
 
 	return res
@@ -11731,7 +12811,127 @@ func decodeToolCollectionElementTransportToToolCollectionElement8(v *jsonToolCol
 	return res
 }
 
+func decodeToolCollectionElementTransportToToolCollectionElement80(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
+	res := &ToolCollectionElement{}
+
+	return res
+}
+
+func decodeToolCollectionElementTransportToToolCollectionElement81(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
+	res := &ToolCollectionElement{}
+
+	return res
+}
+
+func decodeToolCollectionElementTransportToToolCollectionElement82(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
+	res := &ToolCollectionElement{}
+
+	return res
+}
+
+func decodeToolCollectionElementTransportToToolCollectionElement83(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
+	res := &ToolCollectionElement{}
+
+	return res
+}
+
+func decodeToolCollectionElementTransportToToolCollectionElement84(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
+	res := &ToolCollectionElement{}
+
+	return res
+}
+
+func decodeToolCollectionElementTransportToToolCollectionElement85(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
+	res := &ToolCollectionElement{}
+
+	return res
+}
+
+func decodeToolCollectionElementTransportToToolCollectionElement86(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
+	res := &ToolCollectionElement{}
+
+	return res
+}
+
+func decodeToolCollectionElementTransportToToolCollectionElement87(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
+	res := &ToolCollectionElement{}
+
+	return res
+}
+
+func decodeToolCollectionElementTransportToToolCollectionElement88(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
+	res := &ToolCollectionElement{}
+
+	return res
+}
+
+func decodeToolCollectionElementTransportToToolCollectionElement89(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
+	res := &ToolCollectionElement{}
+
+	return res
+}
+
 func decodeToolCollectionElementTransportToToolCollectionElement9(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
+	res := &ToolCollectionElement{}
+
+	return res
+}
+
+func decodeToolCollectionElementTransportToToolCollectionElement90(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
+	res := &ToolCollectionElement{}
+
+	return res
+}
+
+func decodeToolCollectionElementTransportToToolCollectionElement91(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
+	res := &ToolCollectionElement{}
+
+	return res
+}
+
+func decodeToolCollectionElementTransportToToolCollectionElement92(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
+	res := &ToolCollectionElement{}
+
+	return res
+}
+
+func decodeToolCollectionElementTransportToToolCollectionElement93(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
+	res := &ToolCollectionElement{}
+
+	return res
+}
+
+func decodeToolCollectionElementTransportToToolCollectionElement94(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
+	res := &ToolCollectionElement{}
+
+	return res
+}
+
+func decodeToolCollectionElementTransportToToolCollectionElement95(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
+	res := &ToolCollectionElement{}
+
+	return res
+}
+
+func decodeToolCollectionElementTransportToToolCollectionElement96(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
+	res := &ToolCollectionElement{}
+
+	return res
+}
+
+func decodeToolCollectionElementTransportToToolCollectionElement97(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
+	res := &ToolCollectionElement{}
+
+	return res
+}
+
+func decodeToolCollectionElementTransportToToolCollectionElement98(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
+	res := &ToolCollectionElement{}
+
+	return res
+}
+
+func decodeToolCollectionElementTransportToToolCollectionElement99(v *jsonToolCollectionElementTransport) *ToolCollectionElement {
 	res := &ToolCollectionElement{}
 
 	return res
@@ -11854,7 +13054,7 @@ func decodeToolFieldMetadataTransportToToolFieldMetadata10(v *jsonToolFieldMetad
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment19(val)
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment28(val)
 		}
 	}
 	if v.Branches != nil {
@@ -11889,7 +13089,7 @@ func decodeToolFieldMetadataTransportToToolFieldMetadata11(v *jsonToolFieldMetad
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment21(val)
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment31(val)
 		}
 	}
 	if v.Branches != nil {
@@ -11924,7 +13124,7 @@ func decodeToolFieldMetadataTransportToToolFieldMetadata12(v *jsonToolFieldMetad
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment23(val)
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment34(val)
 		}
 	}
 	if v.Branches != nil {
@@ -11959,7 +13159,7 @@ func decodeToolFieldMetadataTransportToToolFieldMetadata13(v *jsonToolFieldMetad
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment25(val)
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment37(val)
 		}
 	}
 	if v.Branches != nil {
@@ -11994,7 +13194,7 @@ func decodeToolFieldMetadataTransportToToolFieldMetadata14(v *jsonToolFieldMetad
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment27(val)
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment40(val)
 		}
 	}
 	if v.Branches != nil {
@@ -12029,7 +13229,7 @@ func decodeToolFieldMetadataTransportToToolFieldMetadata15(v *jsonToolFieldMetad
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment29(val)
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment43(val)
 		}
 	}
 	if v.Branches != nil {
@@ -12064,7 +13264,7 @@ func decodeToolFieldMetadataTransportToToolFieldMetadata16(v *jsonToolFieldMetad
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment31(val)
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment46(val)
 		}
 	}
 	if v.Branches != nil {
@@ -12099,7 +13299,7 @@ func decodeToolFieldMetadataTransportToToolFieldMetadata17(v *jsonToolFieldMetad
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment33(val)
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment49(val)
 		}
 	}
 	if v.Branches != nil {
@@ -12134,7 +13334,7 @@ func decodeToolFieldMetadataTransportToToolFieldMetadata18(v *jsonToolFieldMetad
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment35(val)
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment52(val)
 		}
 	}
 	if v.Branches != nil {
@@ -12169,7 +13369,7 @@ func decodeToolFieldMetadataTransportToToolFieldMetadata19(v *jsonToolFieldMetad
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment37(val)
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment55(val)
 		}
 	}
 	if v.Branches != nil {
@@ -12204,7 +13404,7 @@ func decodeToolFieldMetadataTransportToToolFieldMetadata2(v *jsonToolFieldMetada
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment3(val)
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment4(val)
 		}
 	}
 	if v.Branches != nil {
@@ -12239,7 +13439,7 @@ func decodeToolFieldMetadataTransportToToolFieldMetadata20(v *jsonToolFieldMetad
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment39(val)
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment58(val)
 		}
 	}
 	if v.Branches != nil {
@@ -12274,7 +13474,7 @@ func decodeToolFieldMetadataTransportToToolFieldMetadata21(v *jsonToolFieldMetad
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment41(val)
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment61(val)
 		}
 	}
 	if v.Branches != nil {
@@ -12309,7 +13509,7 @@ func decodeToolFieldMetadataTransportToToolFieldMetadata22(v *jsonToolFieldMetad
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment45(val)
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment67(val)
 		}
 	}
 	if v.Branches != nil {
@@ -12344,7 +13544,7 @@ func decodeToolFieldMetadataTransportToToolFieldMetadata23(v *jsonToolFieldMetad
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment47(val)
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment70(val)
 		}
 	}
 	if v.Branches != nil {
@@ -12379,7 +13579,7 @@ func decodeToolFieldMetadataTransportToToolFieldMetadata24(v *jsonToolFieldMetad
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment49(val)
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment73(val)
 		}
 	}
 	if v.Branches != nil {
@@ -12414,7 +13614,7 @@ func decodeToolFieldMetadataTransportToToolFieldMetadata25(v *jsonToolFieldMetad
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment51(val)
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment76(val)
 		}
 	}
 	if v.Branches != nil {
@@ -12449,7 +13649,7 @@ func decodeToolFieldMetadataTransportToToolFieldMetadata26(v *jsonToolFieldMetad
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment53(val)
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment79(val)
 		}
 	}
 	if v.Branches != nil {
@@ -12484,7 +13684,7 @@ func decodeToolFieldMetadataTransportToToolFieldMetadata27(v *jsonToolFieldMetad
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment55(val)
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment83(val)
 		}
 	}
 	if v.Branches != nil {
@@ -12519,7 +13719,7 @@ func decodeToolFieldMetadataTransportToToolFieldMetadata28(v *jsonToolFieldMetad
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment58(val)
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment89(val)
 		}
 	}
 	if v.Branches != nil {
@@ -12554,7 +13754,7 @@ func decodeToolFieldMetadataTransportToToolFieldMetadata29(v *jsonToolFieldMetad
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment60(val)
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment92(val)
 		}
 	}
 	if v.Branches != nil {
@@ -12589,7 +13789,7 @@ func decodeToolFieldMetadataTransportToToolFieldMetadata3(v *jsonToolFieldMetada
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment5(val)
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment7(val)
 		}
 	}
 	if v.Branches != nil {
@@ -12624,7 +13824,7 @@ func decodeToolFieldMetadataTransportToToolFieldMetadata30(v *jsonToolFieldMetad
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment62(val)
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment95(val)
 		}
 	}
 	if v.Branches != nil {
@@ -12659,7 +13859,7 @@ func decodeToolFieldMetadataTransportToToolFieldMetadata31(v *jsonToolFieldMetad
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment64(val)
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment98(val)
 		}
 	}
 	if v.Branches != nil {
@@ -12694,7 +13894,7 @@ func decodeToolFieldMetadataTransportToToolFieldMetadata4(v *jsonToolFieldMetada
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment7(val)
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment10(val)
 		}
 	}
 	if v.Branches != nil {
@@ -12729,7 +13929,7 @@ func decodeToolFieldMetadataTransportToToolFieldMetadata5(v *jsonToolFieldMetada
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment9(val)
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment13(val)
 		}
 	}
 	if v.Branches != nil {
@@ -12764,7 +13964,7 @@ func decodeToolFieldMetadataTransportToToolFieldMetadata6(v *jsonToolFieldMetada
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment11(val)
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment16(val)
 		}
 	}
 	if v.Branches != nil {
@@ -12799,7 +13999,7 @@ func decodeToolFieldMetadataTransportToToolFieldMetadata7(v *jsonToolFieldMetada
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment13(val)
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment19(val)
 		}
 	}
 	if v.Branches != nil {
@@ -12834,7 +14034,7 @@ func decodeToolFieldMetadataTransportToToolFieldMetadata8(v *jsonToolFieldMetada
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment15(val)
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment22(val)
 		}
 	}
 	if v.Branches != nil {
@@ -12869,7 +14069,7 @@ func decodeToolFieldMetadataTransportToToolFieldMetadata9(v *jsonToolFieldMetada
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment17(val)
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment25(val)
 		}
 	}
 	if v.Branches != nil {
@@ -12931,6 +14131,30 @@ func decodeToolFieldPathSegmentTransportToToolFieldPathSegment10(v *jsonToolFiel
 		var obj *ToolCollectionElement
 		if actual != nil {
 			obj = decodeToolCollectionElementTransportToToolCollectionElement10(actual)
+		}
+		u := res.Segment
+		u.SetElement((*ToolCollectionElement)(obj))
+		res.Segment = u
+	}
+
+	return res
+}
+
+func decodeToolFieldPathSegmentTransportToToolFieldPathSegment100(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
+	res := &ToolFieldPathSegment{}
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := ToolFieldSegmentBranchField(actual)
+
+		u := res.Segment
+		u.SetField((ToolFieldSegmentBranchField)(obj))
+		res.Segment = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *ToolCollectionElement
+		if actual != nil {
+			obj = decodeToolCollectionElementTransportToToolCollectionElement101(actual)
 		}
 		u := res.Segment
 		u.SetElement((*ToolCollectionElement)(obj))
@@ -13842,7 +15066,7 @@ func decodeToolFieldPathSegmentTransportToToolFieldPathSegment45(v *jsonToolFiel
 		actual, _ := v.Segment.AsElement()
 		var obj *ToolCollectionElement
 		if actual != nil {
-			obj = decodeToolCollectionElementTransportToToolCollectionElement46(actual)
+			obj = decodeToolCollectionElementTransportToToolCollectionElement45(actual)
 		}
 		u := res.Segment
 		u.SetElement((*ToolCollectionElement)(obj))
@@ -13866,7 +15090,7 @@ func decodeToolFieldPathSegmentTransportToToolFieldPathSegment46(v *jsonToolFiel
 		actual, _ := v.Segment.AsElement()
 		var obj *ToolCollectionElement
 		if actual != nil {
-			obj = decodeToolCollectionElementTransportToToolCollectionElement47(actual)
+			obj = decodeToolCollectionElementTransportToToolCollectionElement46(actual)
 		}
 		u := res.Segment
 		u.SetElement((*ToolCollectionElement)(obj))
@@ -13890,7 +15114,7 @@ func decodeToolFieldPathSegmentTransportToToolFieldPathSegment47(v *jsonToolFiel
 		actual, _ := v.Segment.AsElement()
 		var obj *ToolCollectionElement
 		if actual != nil {
-			obj = decodeToolCollectionElementTransportToToolCollectionElement48(actual)
+			obj = decodeToolCollectionElementTransportToToolCollectionElement47(actual)
 		}
 		u := res.Segment
 		u.SetElement((*ToolCollectionElement)(obj))
@@ -13914,7 +15138,7 @@ func decodeToolFieldPathSegmentTransportToToolFieldPathSegment48(v *jsonToolFiel
 		actual, _ := v.Segment.AsElement()
 		var obj *ToolCollectionElement
 		if actual != nil {
-			obj = decodeToolCollectionElementTransportToToolCollectionElement49(actual)
+			obj = decodeToolCollectionElementTransportToToolCollectionElement48(actual)
 		}
 		u := res.Segment
 		u.SetElement((*ToolCollectionElement)(obj))
@@ -13938,7 +15162,7 @@ func decodeToolFieldPathSegmentTransportToToolFieldPathSegment49(v *jsonToolFiel
 		actual, _ := v.Segment.AsElement()
 		var obj *ToolCollectionElement
 		if actual != nil {
-			obj = decodeToolCollectionElementTransportToToolCollectionElement50(actual)
+			obj = decodeToolCollectionElementTransportToToolCollectionElement49(actual)
 		}
 		u := res.Segment
 		u.SetElement((*ToolCollectionElement)(obj))
@@ -13986,7 +15210,7 @@ func decodeToolFieldPathSegmentTransportToToolFieldPathSegment50(v *jsonToolFiel
 		actual, _ := v.Segment.AsElement()
 		var obj *ToolCollectionElement
 		if actual != nil {
-			obj = decodeToolCollectionElementTransportToToolCollectionElement51(actual)
+			obj = decodeToolCollectionElementTransportToToolCollectionElement50(actual)
 		}
 		u := res.Segment
 		u.SetElement((*ToolCollectionElement)(obj))
@@ -14010,7 +15234,7 @@ func decodeToolFieldPathSegmentTransportToToolFieldPathSegment51(v *jsonToolFiel
 		actual, _ := v.Segment.AsElement()
 		var obj *ToolCollectionElement
 		if actual != nil {
-			obj = decodeToolCollectionElementTransportToToolCollectionElement52(actual)
+			obj = decodeToolCollectionElementTransportToToolCollectionElement51(actual)
 		}
 		u := res.Segment
 		u.SetElement((*ToolCollectionElement)(obj))
@@ -14034,7 +15258,7 @@ func decodeToolFieldPathSegmentTransportToToolFieldPathSegment52(v *jsonToolFiel
 		actual, _ := v.Segment.AsElement()
 		var obj *ToolCollectionElement
 		if actual != nil {
-			obj = decodeToolCollectionElementTransportToToolCollectionElement53(actual)
+			obj = decodeToolCollectionElementTransportToToolCollectionElement52(actual)
 		}
 		u := res.Segment
 		u.SetElement((*ToolCollectionElement)(obj))
@@ -14058,7 +15282,7 @@ func decodeToolFieldPathSegmentTransportToToolFieldPathSegment53(v *jsonToolFiel
 		actual, _ := v.Segment.AsElement()
 		var obj *ToolCollectionElement
 		if actual != nil {
-			obj = decodeToolCollectionElementTransportToToolCollectionElement54(actual)
+			obj = decodeToolCollectionElementTransportToToolCollectionElement53(actual)
 		}
 		u := res.Segment
 		u.SetElement((*ToolCollectionElement)(obj))
@@ -14082,7 +15306,7 @@ func decodeToolFieldPathSegmentTransportToToolFieldPathSegment54(v *jsonToolFiel
 		actual, _ := v.Segment.AsElement()
 		var obj *ToolCollectionElement
 		if actual != nil {
-			obj = decodeToolCollectionElementTransportToToolCollectionElement55(actual)
+			obj = decodeToolCollectionElementTransportToToolCollectionElement54(actual)
 		}
 		u := res.Segment
 		u.SetElement((*ToolCollectionElement)(obj))
@@ -14106,7 +15330,7 @@ func decodeToolFieldPathSegmentTransportToToolFieldPathSegment55(v *jsonToolFiel
 		actual, _ := v.Segment.AsElement()
 		var obj *ToolCollectionElement
 		if actual != nil {
-			obj = decodeToolCollectionElementTransportToToolCollectionElement56(actual)
+			obj = decodeToolCollectionElementTransportToToolCollectionElement55(actual)
 		}
 		u := res.Segment
 		u.SetElement((*ToolCollectionElement)(obj))
@@ -14130,7 +15354,7 @@ func decodeToolFieldPathSegmentTransportToToolFieldPathSegment56(v *jsonToolFiel
 		actual, _ := v.Segment.AsElement()
 		var obj *ToolCollectionElement
 		if actual != nil {
-			obj = decodeToolCollectionElementTransportToToolCollectionElement57(actual)
+			obj = decodeToolCollectionElementTransportToToolCollectionElement56(actual)
 		}
 		u := res.Segment
 		u.SetElement((*ToolCollectionElement)(obj))
@@ -14154,7 +15378,7 @@ func decodeToolFieldPathSegmentTransportToToolFieldPathSegment57(v *jsonToolFiel
 		actual, _ := v.Segment.AsElement()
 		var obj *ToolCollectionElement
 		if actual != nil {
-			obj = decodeToolCollectionElementTransportToToolCollectionElement58(actual)
+			obj = decodeToolCollectionElementTransportToToolCollectionElement57(actual)
 		}
 		u := res.Segment
 		u.SetElement((*ToolCollectionElement)(obj))
@@ -14178,7 +15402,7 @@ func decodeToolFieldPathSegmentTransportToToolFieldPathSegment58(v *jsonToolFiel
 		actual, _ := v.Segment.AsElement()
 		var obj *ToolCollectionElement
 		if actual != nil {
-			obj = decodeToolCollectionElementTransportToToolCollectionElement59(actual)
+			obj = decodeToolCollectionElementTransportToToolCollectionElement58(actual)
 		}
 		u := res.Segment
 		u.SetElement((*ToolCollectionElement)(obj))
@@ -14202,7 +15426,7 @@ func decodeToolFieldPathSegmentTransportToToolFieldPathSegment59(v *jsonToolFiel
 		actual, _ := v.Segment.AsElement()
 		var obj *ToolCollectionElement
 		if actual != nil {
-			obj = decodeToolCollectionElementTransportToToolCollectionElement60(actual)
+			obj = decodeToolCollectionElementTransportToToolCollectionElement59(actual)
 		}
 		u := res.Segment
 		u.SetElement((*ToolCollectionElement)(obj))
@@ -14250,7 +15474,7 @@ func decodeToolFieldPathSegmentTransportToToolFieldPathSegment60(v *jsonToolFiel
 		actual, _ := v.Segment.AsElement()
 		var obj *ToolCollectionElement
 		if actual != nil {
-			obj = decodeToolCollectionElementTransportToToolCollectionElement61(actual)
+			obj = decodeToolCollectionElementTransportToToolCollectionElement60(actual)
 		}
 		u := res.Segment
 		u.SetElement((*ToolCollectionElement)(obj))
@@ -14274,7 +15498,7 @@ func decodeToolFieldPathSegmentTransportToToolFieldPathSegment61(v *jsonToolFiel
 		actual, _ := v.Segment.AsElement()
 		var obj *ToolCollectionElement
 		if actual != nil {
-			obj = decodeToolCollectionElementTransportToToolCollectionElement62(actual)
+			obj = decodeToolCollectionElementTransportToToolCollectionElement61(actual)
 		}
 		u := res.Segment
 		u.SetElement((*ToolCollectionElement)(obj))
@@ -14298,7 +15522,7 @@ func decodeToolFieldPathSegmentTransportToToolFieldPathSegment62(v *jsonToolFiel
 		actual, _ := v.Segment.AsElement()
 		var obj *ToolCollectionElement
 		if actual != nil {
-			obj = decodeToolCollectionElementTransportToToolCollectionElement63(actual)
+			obj = decodeToolCollectionElementTransportToToolCollectionElement62(actual)
 		}
 		u := res.Segment
 		u.SetElement((*ToolCollectionElement)(obj))
@@ -14322,7 +15546,7 @@ func decodeToolFieldPathSegmentTransportToToolFieldPathSegment63(v *jsonToolFiel
 		actual, _ := v.Segment.AsElement()
 		var obj *ToolCollectionElement
 		if actual != nil {
-			obj = decodeToolCollectionElementTransportToToolCollectionElement64(actual)
+			obj = decodeToolCollectionElementTransportToToolCollectionElement63(actual)
 		}
 		u := res.Segment
 		u.SetElement((*ToolCollectionElement)(obj))
@@ -14346,7 +15570,7 @@ func decodeToolFieldPathSegmentTransportToToolFieldPathSegment64(v *jsonToolFiel
 		actual, _ := v.Segment.AsElement()
 		var obj *ToolCollectionElement
 		if actual != nil {
-			obj = decodeToolCollectionElementTransportToToolCollectionElement65(actual)
+			obj = decodeToolCollectionElementTransportToToolCollectionElement64(actual)
 		}
 		u := res.Segment
 		u.SetElement((*ToolCollectionElement)(obj))
@@ -14370,7 +15594,103 @@ func decodeToolFieldPathSegmentTransportToToolFieldPathSegment65(v *jsonToolFiel
 		actual, _ := v.Segment.AsElement()
 		var obj *ToolCollectionElement
 		if actual != nil {
+			obj = decodeToolCollectionElementTransportToToolCollectionElement65(actual)
+		}
+		u := res.Segment
+		u.SetElement((*ToolCollectionElement)(obj))
+		res.Segment = u
+	}
+
+	return res
+}
+
+func decodeToolFieldPathSegmentTransportToToolFieldPathSegment66(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
+	res := &ToolFieldPathSegment{}
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := ToolFieldSegmentBranchField(actual)
+
+		u := res.Segment
+		u.SetField((ToolFieldSegmentBranchField)(obj))
+		res.Segment = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *ToolCollectionElement
+		if actual != nil {
 			obj = decodeToolCollectionElementTransportToToolCollectionElement66(actual)
+		}
+		u := res.Segment
+		u.SetElement((*ToolCollectionElement)(obj))
+		res.Segment = u
+	}
+
+	return res
+}
+
+func decodeToolFieldPathSegmentTransportToToolFieldPathSegment67(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
+	res := &ToolFieldPathSegment{}
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := ToolFieldSegmentBranchField(actual)
+
+		u := res.Segment
+		u.SetField((ToolFieldSegmentBranchField)(obj))
+		res.Segment = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *ToolCollectionElement
+		if actual != nil {
+			obj = decodeToolCollectionElementTransportToToolCollectionElement68(actual)
+		}
+		u := res.Segment
+		u.SetElement((*ToolCollectionElement)(obj))
+		res.Segment = u
+	}
+
+	return res
+}
+
+func decodeToolFieldPathSegmentTransportToToolFieldPathSegment68(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
+	res := &ToolFieldPathSegment{}
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := ToolFieldSegmentBranchField(actual)
+
+		u := res.Segment
+		u.SetField((ToolFieldSegmentBranchField)(obj))
+		res.Segment = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *ToolCollectionElement
+		if actual != nil {
+			obj = decodeToolCollectionElementTransportToToolCollectionElement69(actual)
+		}
+		u := res.Segment
+		u.SetElement((*ToolCollectionElement)(obj))
+		res.Segment = u
+	}
+
+	return res
+}
+
+func decodeToolFieldPathSegmentTransportToToolFieldPathSegment69(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
+	res := &ToolFieldPathSegment{}
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := ToolFieldSegmentBranchField(actual)
+
+		u := res.Segment
+		u.SetField((ToolFieldSegmentBranchField)(obj))
+		res.Segment = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *ToolCollectionElement
+		if actual != nil {
+			obj = decodeToolCollectionElementTransportToToolCollectionElement70(actual)
 		}
 		u := res.Segment
 		u.SetElement((*ToolCollectionElement)(obj))
@@ -14404,6 +15724,246 @@ func decodeToolFieldPathSegmentTransportToToolFieldPathSegment7(v *jsonToolField
 	return res
 }
 
+func decodeToolFieldPathSegmentTransportToToolFieldPathSegment70(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
+	res := &ToolFieldPathSegment{}
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := ToolFieldSegmentBranchField(actual)
+
+		u := res.Segment
+		u.SetField((ToolFieldSegmentBranchField)(obj))
+		res.Segment = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *ToolCollectionElement
+		if actual != nil {
+			obj = decodeToolCollectionElementTransportToToolCollectionElement71(actual)
+		}
+		u := res.Segment
+		u.SetElement((*ToolCollectionElement)(obj))
+		res.Segment = u
+	}
+
+	return res
+}
+
+func decodeToolFieldPathSegmentTransportToToolFieldPathSegment71(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
+	res := &ToolFieldPathSegment{}
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := ToolFieldSegmentBranchField(actual)
+
+		u := res.Segment
+		u.SetField((ToolFieldSegmentBranchField)(obj))
+		res.Segment = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *ToolCollectionElement
+		if actual != nil {
+			obj = decodeToolCollectionElementTransportToToolCollectionElement72(actual)
+		}
+		u := res.Segment
+		u.SetElement((*ToolCollectionElement)(obj))
+		res.Segment = u
+	}
+
+	return res
+}
+
+func decodeToolFieldPathSegmentTransportToToolFieldPathSegment72(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
+	res := &ToolFieldPathSegment{}
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := ToolFieldSegmentBranchField(actual)
+
+		u := res.Segment
+		u.SetField((ToolFieldSegmentBranchField)(obj))
+		res.Segment = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *ToolCollectionElement
+		if actual != nil {
+			obj = decodeToolCollectionElementTransportToToolCollectionElement73(actual)
+		}
+		u := res.Segment
+		u.SetElement((*ToolCollectionElement)(obj))
+		res.Segment = u
+	}
+
+	return res
+}
+
+func decodeToolFieldPathSegmentTransportToToolFieldPathSegment73(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
+	res := &ToolFieldPathSegment{}
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := ToolFieldSegmentBranchField(actual)
+
+		u := res.Segment
+		u.SetField((ToolFieldSegmentBranchField)(obj))
+		res.Segment = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *ToolCollectionElement
+		if actual != nil {
+			obj = decodeToolCollectionElementTransportToToolCollectionElement74(actual)
+		}
+		u := res.Segment
+		u.SetElement((*ToolCollectionElement)(obj))
+		res.Segment = u
+	}
+
+	return res
+}
+
+func decodeToolFieldPathSegmentTransportToToolFieldPathSegment74(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
+	res := &ToolFieldPathSegment{}
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := ToolFieldSegmentBranchField(actual)
+
+		u := res.Segment
+		u.SetField((ToolFieldSegmentBranchField)(obj))
+		res.Segment = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *ToolCollectionElement
+		if actual != nil {
+			obj = decodeToolCollectionElementTransportToToolCollectionElement75(actual)
+		}
+		u := res.Segment
+		u.SetElement((*ToolCollectionElement)(obj))
+		res.Segment = u
+	}
+
+	return res
+}
+
+func decodeToolFieldPathSegmentTransportToToolFieldPathSegment75(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
+	res := &ToolFieldPathSegment{}
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := ToolFieldSegmentBranchField(actual)
+
+		u := res.Segment
+		u.SetField((ToolFieldSegmentBranchField)(obj))
+		res.Segment = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *ToolCollectionElement
+		if actual != nil {
+			obj = decodeToolCollectionElementTransportToToolCollectionElement76(actual)
+		}
+		u := res.Segment
+		u.SetElement((*ToolCollectionElement)(obj))
+		res.Segment = u
+	}
+
+	return res
+}
+
+func decodeToolFieldPathSegmentTransportToToolFieldPathSegment76(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
+	res := &ToolFieldPathSegment{}
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := ToolFieldSegmentBranchField(actual)
+
+		u := res.Segment
+		u.SetField((ToolFieldSegmentBranchField)(obj))
+		res.Segment = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *ToolCollectionElement
+		if actual != nil {
+			obj = decodeToolCollectionElementTransportToToolCollectionElement77(actual)
+		}
+		u := res.Segment
+		u.SetElement((*ToolCollectionElement)(obj))
+		res.Segment = u
+	}
+
+	return res
+}
+
+func decodeToolFieldPathSegmentTransportToToolFieldPathSegment77(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
+	res := &ToolFieldPathSegment{}
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := ToolFieldSegmentBranchField(actual)
+
+		u := res.Segment
+		u.SetField((ToolFieldSegmentBranchField)(obj))
+		res.Segment = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *ToolCollectionElement
+		if actual != nil {
+			obj = decodeToolCollectionElementTransportToToolCollectionElement78(actual)
+		}
+		u := res.Segment
+		u.SetElement((*ToolCollectionElement)(obj))
+		res.Segment = u
+	}
+
+	return res
+}
+
+func decodeToolFieldPathSegmentTransportToToolFieldPathSegment78(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
+	res := &ToolFieldPathSegment{}
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := ToolFieldSegmentBranchField(actual)
+
+		u := res.Segment
+		u.SetField((ToolFieldSegmentBranchField)(obj))
+		res.Segment = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *ToolCollectionElement
+		if actual != nil {
+			obj = decodeToolCollectionElementTransportToToolCollectionElement79(actual)
+		}
+		u := res.Segment
+		u.SetElement((*ToolCollectionElement)(obj))
+		res.Segment = u
+	}
+
+	return res
+}
+
+func decodeToolFieldPathSegmentTransportToToolFieldPathSegment79(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
+	res := &ToolFieldPathSegment{}
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := ToolFieldSegmentBranchField(actual)
+
+		u := res.Segment
+		u.SetField((ToolFieldSegmentBranchField)(obj))
+		res.Segment = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *ToolCollectionElement
+		if actual != nil {
+			obj = decodeToolCollectionElementTransportToToolCollectionElement80(actual)
+		}
+		u := res.Segment
+		u.SetElement((*ToolCollectionElement)(obj))
+		res.Segment = u
+	}
+
+	return res
+}
+
 func decodeToolFieldPathSegmentTransportToToolFieldPathSegment8(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
 	res := &ToolFieldPathSegment{}
 	switch string(v.Segment.Kind()) {
@@ -14428,6 +15988,246 @@ func decodeToolFieldPathSegmentTransportToToolFieldPathSegment8(v *jsonToolField
 	return res
 }
 
+func decodeToolFieldPathSegmentTransportToToolFieldPathSegment80(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
+	res := &ToolFieldPathSegment{}
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := ToolFieldSegmentBranchField(actual)
+
+		u := res.Segment
+		u.SetField((ToolFieldSegmentBranchField)(obj))
+		res.Segment = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *ToolCollectionElement
+		if actual != nil {
+			obj = decodeToolCollectionElementTransportToToolCollectionElement81(actual)
+		}
+		u := res.Segment
+		u.SetElement((*ToolCollectionElement)(obj))
+		res.Segment = u
+	}
+
+	return res
+}
+
+func decodeToolFieldPathSegmentTransportToToolFieldPathSegment81(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
+	res := &ToolFieldPathSegment{}
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := ToolFieldSegmentBranchField(actual)
+
+		u := res.Segment
+		u.SetField((ToolFieldSegmentBranchField)(obj))
+		res.Segment = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *ToolCollectionElement
+		if actual != nil {
+			obj = decodeToolCollectionElementTransportToToolCollectionElement82(actual)
+		}
+		u := res.Segment
+		u.SetElement((*ToolCollectionElement)(obj))
+		res.Segment = u
+	}
+
+	return res
+}
+
+func decodeToolFieldPathSegmentTransportToToolFieldPathSegment82(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
+	res := &ToolFieldPathSegment{}
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := ToolFieldSegmentBranchField(actual)
+
+		u := res.Segment
+		u.SetField((ToolFieldSegmentBranchField)(obj))
+		res.Segment = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *ToolCollectionElement
+		if actual != nil {
+			obj = decodeToolCollectionElementTransportToToolCollectionElement83(actual)
+		}
+		u := res.Segment
+		u.SetElement((*ToolCollectionElement)(obj))
+		res.Segment = u
+	}
+
+	return res
+}
+
+func decodeToolFieldPathSegmentTransportToToolFieldPathSegment83(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
+	res := &ToolFieldPathSegment{}
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := ToolFieldSegmentBranchField(actual)
+
+		u := res.Segment
+		u.SetField((ToolFieldSegmentBranchField)(obj))
+		res.Segment = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *ToolCollectionElement
+		if actual != nil {
+			obj = decodeToolCollectionElementTransportToToolCollectionElement84(actual)
+		}
+		u := res.Segment
+		u.SetElement((*ToolCollectionElement)(obj))
+		res.Segment = u
+	}
+
+	return res
+}
+
+func decodeToolFieldPathSegmentTransportToToolFieldPathSegment84(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
+	res := &ToolFieldPathSegment{}
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := ToolFieldSegmentBranchField(actual)
+
+		u := res.Segment
+		u.SetField((ToolFieldSegmentBranchField)(obj))
+		res.Segment = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *ToolCollectionElement
+		if actual != nil {
+			obj = decodeToolCollectionElementTransportToToolCollectionElement85(actual)
+		}
+		u := res.Segment
+		u.SetElement((*ToolCollectionElement)(obj))
+		res.Segment = u
+	}
+
+	return res
+}
+
+func decodeToolFieldPathSegmentTransportToToolFieldPathSegment85(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
+	res := &ToolFieldPathSegment{}
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := ToolFieldSegmentBranchField(actual)
+
+		u := res.Segment
+		u.SetField((ToolFieldSegmentBranchField)(obj))
+		res.Segment = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *ToolCollectionElement
+		if actual != nil {
+			obj = decodeToolCollectionElementTransportToToolCollectionElement86(actual)
+		}
+		u := res.Segment
+		u.SetElement((*ToolCollectionElement)(obj))
+		res.Segment = u
+	}
+
+	return res
+}
+
+func decodeToolFieldPathSegmentTransportToToolFieldPathSegment86(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
+	res := &ToolFieldPathSegment{}
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := ToolFieldSegmentBranchField(actual)
+
+		u := res.Segment
+		u.SetField((ToolFieldSegmentBranchField)(obj))
+		res.Segment = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *ToolCollectionElement
+		if actual != nil {
+			obj = decodeToolCollectionElementTransportToToolCollectionElement87(actual)
+		}
+		u := res.Segment
+		u.SetElement((*ToolCollectionElement)(obj))
+		res.Segment = u
+	}
+
+	return res
+}
+
+func decodeToolFieldPathSegmentTransportToToolFieldPathSegment87(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
+	res := &ToolFieldPathSegment{}
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := ToolFieldSegmentBranchField(actual)
+
+		u := res.Segment
+		u.SetField((ToolFieldSegmentBranchField)(obj))
+		res.Segment = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *ToolCollectionElement
+		if actual != nil {
+			obj = decodeToolCollectionElementTransportToToolCollectionElement88(actual)
+		}
+		u := res.Segment
+		u.SetElement((*ToolCollectionElement)(obj))
+		res.Segment = u
+	}
+
+	return res
+}
+
+func decodeToolFieldPathSegmentTransportToToolFieldPathSegment88(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
+	res := &ToolFieldPathSegment{}
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := ToolFieldSegmentBranchField(actual)
+
+		u := res.Segment
+		u.SetField((ToolFieldSegmentBranchField)(obj))
+		res.Segment = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *ToolCollectionElement
+		if actual != nil {
+			obj = decodeToolCollectionElementTransportToToolCollectionElement89(actual)
+		}
+		u := res.Segment
+		u.SetElement((*ToolCollectionElement)(obj))
+		res.Segment = u
+	}
+
+	return res
+}
+
+func decodeToolFieldPathSegmentTransportToToolFieldPathSegment89(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
+	res := &ToolFieldPathSegment{}
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := ToolFieldSegmentBranchField(actual)
+
+		u := res.Segment
+		u.SetField((ToolFieldSegmentBranchField)(obj))
+		res.Segment = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *ToolCollectionElement
+		if actual != nil {
+			obj = decodeToolCollectionElementTransportToToolCollectionElement90(actual)
+		}
+		u := res.Segment
+		u.SetElement((*ToolCollectionElement)(obj))
+		res.Segment = u
+	}
+
+	return res
+}
+
 func decodeToolFieldPathSegmentTransportToToolFieldPathSegment9(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
 	res := &ToolFieldPathSegment{}
 	switch string(v.Segment.Kind()) {
@@ -14443,6 +16243,246 @@ func decodeToolFieldPathSegmentTransportToToolFieldPathSegment9(v *jsonToolField
 		var obj *ToolCollectionElement
 		if actual != nil {
 			obj = decodeToolCollectionElementTransportToToolCollectionElement9(actual)
+		}
+		u := res.Segment
+		u.SetElement((*ToolCollectionElement)(obj))
+		res.Segment = u
+	}
+
+	return res
+}
+
+func decodeToolFieldPathSegmentTransportToToolFieldPathSegment90(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
+	res := &ToolFieldPathSegment{}
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := ToolFieldSegmentBranchField(actual)
+
+		u := res.Segment
+		u.SetField((ToolFieldSegmentBranchField)(obj))
+		res.Segment = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *ToolCollectionElement
+		if actual != nil {
+			obj = decodeToolCollectionElementTransportToToolCollectionElement91(actual)
+		}
+		u := res.Segment
+		u.SetElement((*ToolCollectionElement)(obj))
+		res.Segment = u
+	}
+
+	return res
+}
+
+func decodeToolFieldPathSegmentTransportToToolFieldPathSegment91(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
+	res := &ToolFieldPathSegment{}
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := ToolFieldSegmentBranchField(actual)
+
+		u := res.Segment
+		u.SetField((ToolFieldSegmentBranchField)(obj))
+		res.Segment = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *ToolCollectionElement
+		if actual != nil {
+			obj = decodeToolCollectionElementTransportToToolCollectionElement92(actual)
+		}
+		u := res.Segment
+		u.SetElement((*ToolCollectionElement)(obj))
+		res.Segment = u
+	}
+
+	return res
+}
+
+func decodeToolFieldPathSegmentTransportToToolFieldPathSegment92(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
+	res := &ToolFieldPathSegment{}
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := ToolFieldSegmentBranchField(actual)
+
+		u := res.Segment
+		u.SetField((ToolFieldSegmentBranchField)(obj))
+		res.Segment = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *ToolCollectionElement
+		if actual != nil {
+			obj = decodeToolCollectionElementTransportToToolCollectionElement93(actual)
+		}
+		u := res.Segment
+		u.SetElement((*ToolCollectionElement)(obj))
+		res.Segment = u
+	}
+
+	return res
+}
+
+func decodeToolFieldPathSegmentTransportToToolFieldPathSegment93(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
+	res := &ToolFieldPathSegment{}
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := ToolFieldSegmentBranchField(actual)
+
+		u := res.Segment
+		u.SetField((ToolFieldSegmentBranchField)(obj))
+		res.Segment = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *ToolCollectionElement
+		if actual != nil {
+			obj = decodeToolCollectionElementTransportToToolCollectionElement94(actual)
+		}
+		u := res.Segment
+		u.SetElement((*ToolCollectionElement)(obj))
+		res.Segment = u
+	}
+
+	return res
+}
+
+func decodeToolFieldPathSegmentTransportToToolFieldPathSegment94(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
+	res := &ToolFieldPathSegment{}
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := ToolFieldSegmentBranchField(actual)
+
+		u := res.Segment
+		u.SetField((ToolFieldSegmentBranchField)(obj))
+		res.Segment = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *ToolCollectionElement
+		if actual != nil {
+			obj = decodeToolCollectionElementTransportToToolCollectionElement95(actual)
+		}
+		u := res.Segment
+		u.SetElement((*ToolCollectionElement)(obj))
+		res.Segment = u
+	}
+
+	return res
+}
+
+func decodeToolFieldPathSegmentTransportToToolFieldPathSegment95(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
+	res := &ToolFieldPathSegment{}
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := ToolFieldSegmentBranchField(actual)
+
+		u := res.Segment
+		u.SetField((ToolFieldSegmentBranchField)(obj))
+		res.Segment = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *ToolCollectionElement
+		if actual != nil {
+			obj = decodeToolCollectionElementTransportToToolCollectionElement96(actual)
+		}
+		u := res.Segment
+		u.SetElement((*ToolCollectionElement)(obj))
+		res.Segment = u
+	}
+
+	return res
+}
+
+func decodeToolFieldPathSegmentTransportToToolFieldPathSegment96(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
+	res := &ToolFieldPathSegment{}
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := ToolFieldSegmentBranchField(actual)
+
+		u := res.Segment
+		u.SetField((ToolFieldSegmentBranchField)(obj))
+		res.Segment = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *ToolCollectionElement
+		if actual != nil {
+			obj = decodeToolCollectionElementTransportToToolCollectionElement97(actual)
+		}
+		u := res.Segment
+		u.SetElement((*ToolCollectionElement)(obj))
+		res.Segment = u
+	}
+
+	return res
+}
+
+func decodeToolFieldPathSegmentTransportToToolFieldPathSegment97(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
+	res := &ToolFieldPathSegment{}
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := ToolFieldSegmentBranchField(actual)
+
+		u := res.Segment
+		u.SetField((ToolFieldSegmentBranchField)(obj))
+		res.Segment = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *ToolCollectionElement
+		if actual != nil {
+			obj = decodeToolCollectionElementTransportToToolCollectionElement98(actual)
+		}
+		u := res.Segment
+		u.SetElement((*ToolCollectionElement)(obj))
+		res.Segment = u
+	}
+
+	return res
+}
+
+func decodeToolFieldPathSegmentTransportToToolFieldPathSegment98(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
+	res := &ToolFieldPathSegment{}
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := ToolFieldSegmentBranchField(actual)
+
+		u := res.Segment
+		u.SetField((ToolFieldSegmentBranchField)(obj))
+		res.Segment = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *ToolCollectionElement
+		if actual != nil {
+			obj = decodeToolCollectionElementTransportToToolCollectionElement99(actual)
+		}
+		u := res.Segment
+		u.SetElement((*ToolCollectionElement)(obj))
+		res.Segment = u
+	}
+
+	return res
+}
+
+func decodeToolFieldPathSegmentTransportToToolFieldPathSegment99(v *jsonToolFieldPathSegmentTransport) *ToolFieldPathSegment {
+	res := &ToolFieldPathSegment{}
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := ToolFieldSegmentBranchField(actual)
+
+		u := res.Segment
+		u.SetField((ToolFieldSegmentBranchField)(obj))
+		res.Segment = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *ToolCollectionElement
+		if actual != nil {
+			obj = decodeToolCollectionElementTransportToToolCollectionElement100(actual)
 		}
 		u := res.Segment
 		u.SetElement((*ToolCollectionElement)(obj))
@@ -15274,6 +17314,534 @@ func decodeToolServerDataTransportToToolServerData7(v *jsonToolServerDataTranspo
 	return res
 }
 
+func decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch(v *jsonToolTaggedUnionBranchTransport) *ToolTaggedUnionBranch {
+	res := &ToolTaggedUnionBranch{
+		Value: *v.Value,
+	}
+	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment2(val)
+	}
+
+	return res
+}
+
+func decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch10(v *jsonToolTaggedUnionBranchTransport) *ToolTaggedUnionBranch {
+	res := &ToolTaggedUnionBranch{
+		Value: *v.Value,
+	}
+	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment29(val)
+	}
+
+	return res
+}
+
+func decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch11(v *jsonToolTaggedUnionBranchTransport) *ToolTaggedUnionBranch {
+	res := &ToolTaggedUnionBranch{
+		Value: *v.Value,
+	}
+	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment32(val)
+	}
+
+	return res
+}
+
+func decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch12(v *jsonToolTaggedUnionBranchTransport) *ToolTaggedUnionBranch {
+	res := &ToolTaggedUnionBranch{
+		Value: *v.Value,
+	}
+	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment35(val)
+	}
+
+	return res
+}
+
+func decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch13(v *jsonToolTaggedUnionBranchTransport) *ToolTaggedUnionBranch {
+	res := &ToolTaggedUnionBranch{
+		Value: *v.Value,
+	}
+	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment38(val)
+	}
+
+	return res
+}
+
+func decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch14(v *jsonToolTaggedUnionBranchTransport) *ToolTaggedUnionBranch {
+	res := &ToolTaggedUnionBranch{
+		Value: *v.Value,
+	}
+	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment41(val)
+	}
+
+	return res
+}
+
+func decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch15(v *jsonToolTaggedUnionBranchTransport) *ToolTaggedUnionBranch {
+	res := &ToolTaggedUnionBranch{
+		Value: *v.Value,
+	}
+	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment44(val)
+	}
+
+	return res
+}
+
+func decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch16(v *jsonToolTaggedUnionBranchTransport) *ToolTaggedUnionBranch {
+	res := &ToolTaggedUnionBranch{
+		Value: *v.Value,
+	}
+	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment47(val)
+	}
+
+	return res
+}
+
+func decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch17(v *jsonToolTaggedUnionBranchTransport) *ToolTaggedUnionBranch {
+	res := &ToolTaggedUnionBranch{
+		Value: *v.Value,
+	}
+	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment50(val)
+	}
+
+	return res
+}
+
+func decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch18(v *jsonToolTaggedUnionBranchTransport) *ToolTaggedUnionBranch {
+	res := &ToolTaggedUnionBranch{
+		Value: *v.Value,
+	}
+	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment53(val)
+	}
+
+	return res
+}
+
+func decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch19(v *jsonToolTaggedUnionBranchTransport) *ToolTaggedUnionBranch {
+	res := &ToolTaggedUnionBranch{
+		Value: *v.Value,
+	}
+	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment56(val)
+	}
+
+	return res
+}
+
+func decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch2(v *jsonToolTaggedUnionBranchTransport) *ToolTaggedUnionBranch {
+	res := &ToolTaggedUnionBranch{
+		Value: *v.Value,
+	}
+	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment5(val)
+	}
+
+	return res
+}
+
+func decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch20(v *jsonToolTaggedUnionBranchTransport) *ToolTaggedUnionBranch {
+	res := &ToolTaggedUnionBranch{
+		Value: *v.Value,
+	}
+	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment59(val)
+	}
+
+	return res
+}
+
+func decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch21(v *jsonToolTaggedUnionBranchTransport) *ToolTaggedUnionBranch {
+	res := &ToolTaggedUnionBranch{
+		Value: *v.Value,
+	}
+	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment62(val)
+	}
+
+	return res
+}
+
+func decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch22(v *jsonToolTaggedUnionBranchTransport) *ToolTaggedUnionBranch {
+	res := &ToolTaggedUnionBranch{
+		Value: *v.Value,
+	}
+	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment65(val)
+	}
+
+	return res
+}
+
+func decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch23(v *jsonToolTaggedUnionBranchTransport) *ToolTaggedUnionBranch {
+	res := &ToolTaggedUnionBranch{
+		Value: *v.Value,
+	}
+	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment68(val)
+	}
+
+	return res
+}
+
+func decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch24(v *jsonToolTaggedUnionBranchTransport) *ToolTaggedUnionBranch {
+	res := &ToolTaggedUnionBranch{
+		Value: *v.Value,
+	}
+	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment71(val)
+	}
+
+	return res
+}
+
+func decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch25(v *jsonToolTaggedUnionBranchTransport) *ToolTaggedUnionBranch {
+	res := &ToolTaggedUnionBranch{
+		Value: *v.Value,
+	}
+	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment74(val)
+	}
+
+	return res
+}
+
+func decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch26(v *jsonToolTaggedUnionBranchTransport) *ToolTaggedUnionBranch {
+	res := &ToolTaggedUnionBranch{
+		Value: *v.Value,
+	}
+	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment77(val)
+	}
+
+	return res
+}
+
+func decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch27(v *jsonToolTaggedUnionBranchTransport) *ToolTaggedUnionBranch {
+	res := &ToolTaggedUnionBranch{
+		Value: *v.Value,
+	}
+	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment80(val)
+	}
+
+	return res
+}
+
+func decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch28(v *jsonToolTaggedUnionBranchTransport) *ToolTaggedUnionBranch {
+	res := &ToolTaggedUnionBranch{
+		Value: *v.Value,
+	}
+	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment84(val)
+	}
+
+	return res
+}
+
+func decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch29(v *jsonToolTaggedUnionBranchTransport) *ToolTaggedUnionBranch {
+	res := &ToolTaggedUnionBranch{
+		Value: *v.Value,
+	}
+	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment86(val)
+	}
+
+	return res
+}
+
+func decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch3(v *jsonToolTaggedUnionBranchTransport) *ToolTaggedUnionBranch {
+	res := &ToolTaggedUnionBranch{
+		Value: *v.Value,
+	}
+	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment8(val)
+	}
+
+	return res
+}
+
+func decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch30(v *jsonToolTaggedUnionBranchTransport) *ToolTaggedUnionBranch {
+	res := &ToolTaggedUnionBranch{
+		Value: *v.Value,
+	}
+	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment90(val)
+	}
+
+	return res
+}
+
+func decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch31(v *jsonToolTaggedUnionBranchTransport) *ToolTaggedUnionBranch {
+	res := &ToolTaggedUnionBranch{
+		Value: *v.Value,
+	}
+	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment93(val)
+	}
+
+	return res
+}
+
+func decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch32(v *jsonToolTaggedUnionBranchTransport) *ToolTaggedUnionBranch {
+	res := &ToolTaggedUnionBranch{
+		Value: *v.Value,
+	}
+	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment96(val)
+	}
+
+	return res
+}
+
+func decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch33(v *jsonToolTaggedUnionBranchTransport) *ToolTaggedUnionBranch {
+	res := &ToolTaggedUnionBranch{
+		Value: *v.Value,
+	}
+	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment99(val)
+	}
+
+	return res
+}
+
+func decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch4(v *jsonToolTaggedUnionBranchTransport) *ToolTaggedUnionBranch {
+	res := &ToolTaggedUnionBranch{
+		Value: *v.Value,
+	}
+	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment11(val)
+	}
+
+	return res
+}
+
+func decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch5(v *jsonToolTaggedUnionBranchTransport) *ToolTaggedUnionBranch {
+	res := &ToolTaggedUnionBranch{
+		Value: *v.Value,
+	}
+	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment14(val)
+	}
+
+	return res
+}
+
+func decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch6(v *jsonToolTaggedUnionBranchTransport) *ToolTaggedUnionBranch {
+	res := &ToolTaggedUnionBranch{
+		Value: *v.Value,
+	}
+	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment17(val)
+	}
+
+	return res
+}
+
+func decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch7(v *jsonToolTaggedUnionBranchTransport) *ToolTaggedUnionBranch {
+	res := &ToolTaggedUnionBranch{
+		Value: *v.Value,
+	}
+	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment20(val)
+	}
+
+	return res
+}
+
+func decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch8(v *jsonToolTaggedUnionBranchTransport) *ToolTaggedUnionBranch {
+	res := &ToolTaggedUnionBranch{
+		Value: *v.Value,
+	}
+	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment23(val)
+	}
+
+	return res
+}
+
+func decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch9(v *jsonToolTaggedUnionBranchTransport) *ToolTaggedUnionBranch {
+	res := &ToolTaggedUnionBranch{
+		Value: *v.Value,
+	}
+	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment26(val)
+	}
+
+	return res
+}
+
 func decodeToolTypeMetadataTransportToToolTypeMetadata(v *jsonToolTypeMetadataTransport) *ToolTypeMetadata {
 	res := &ToolTypeMetadata{
 		Name:                     v.Name,
@@ -15875,512 +18443,1459 @@ func decodeToolTypeMetadataTransportToToolTypeMetadata9(v *jsonToolTypeMetadataT
 }
 
 func decodeToolUnionBranchTransportToToolUnionBranch(v *jsonToolUnionBranchTransport) *ToolUnionBranch {
-	res := &ToolUnionBranch{
-		Value: *v.Value,
-	}
-	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &ToolUnionBranch{}
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *ToolTaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch(actual)
 		}
-		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment2(val)
+		u := res.Selection
+		u.SetTagged((*ToolTaggedUnionBranch)(obj))
+		res.Selection = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *ToolUntaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch(actual)
+		}
+		u := res.Selection
+		u.SetUntagged((*ToolUntaggedUnionBranch)(obj))
+		res.Selection = u
 	}
 
 	return res
 }
 
 func decodeToolUnionBranchTransportToToolUnionBranch10(v *jsonToolUnionBranchTransport) *ToolUnionBranch {
-	res := &ToolUnionBranch{
-		Value: *v.Value,
-	}
-	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &ToolUnionBranch{}
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *ToolTaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch10(actual)
 		}
-		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment20(val)
+		u := res.Selection
+		u.SetTagged((*ToolTaggedUnionBranch)(obj))
+		res.Selection = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *ToolUntaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch10(actual)
+		}
+		u := res.Selection
+		u.SetUntagged((*ToolUntaggedUnionBranch)(obj))
+		res.Selection = u
 	}
 
 	return res
 }
 
 func decodeToolUnionBranchTransportToToolUnionBranch11(v *jsonToolUnionBranchTransport) *ToolUnionBranch {
-	res := &ToolUnionBranch{
-		Value: *v.Value,
-	}
-	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &ToolUnionBranch{}
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *ToolTaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch11(actual)
 		}
-		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment22(val)
+		u := res.Selection
+		u.SetTagged((*ToolTaggedUnionBranch)(obj))
+		res.Selection = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *ToolUntaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch11(actual)
+		}
+		u := res.Selection
+		u.SetUntagged((*ToolUntaggedUnionBranch)(obj))
+		res.Selection = u
 	}
 
 	return res
 }
 
 func decodeToolUnionBranchTransportToToolUnionBranch12(v *jsonToolUnionBranchTransport) *ToolUnionBranch {
-	res := &ToolUnionBranch{
-		Value: *v.Value,
-	}
-	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &ToolUnionBranch{}
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *ToolTaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch12(actual)
 		}
-		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment24(val)
+		u := res.Selection
+		u.SetTagged((*ToolTaggedUnionBranch)(obj))
+		res.Selection = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *ToolUntaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch12(actual)
+		}
+		u := res.Selection
+		u.SetUntagged((*ToolUntaggedUnionBranch)(obj))
+		res.Selection = u
 	}
 
 	return res
 }
 
 func decodeToolUnionBranchTransportToToolUnionBranch13(v *jsonToolUnionBranchTransport) *ToolUnionBranch {
-	res := &ToolUnionBranch{
-		Value: *v.Value,
-	}
-	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &ToolUnionBranch{}
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *ToolTaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch13(actual)
 		}
-		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment26(val)
+		u := res.Selection
+		u.SetTagged((*ToolTaggedUnionBranch)(obj))
+		res.Selection = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *ToolUntaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch13(actual)
+		}
+		u := res.Selection
+		u.SetUntagged((*ToolUntaggedUnionBranch)(obj))
+		res.Selection = u
 	}
 
 	return res
 }
 
 func decodeToolUnionBranchTransportToToolUnionBranch14(v *jsonToolUnionBranchTransport) *ToolUnionBranch {
-	res := &ToolUnionBranch{
-		Value: *v.Value,
-	}
-	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &ToolUnionBranch{}
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *ToolTaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch14(actual)
 		}
-		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment28(val)
+		u := res.Selection
+		u.SetTagged((*ToolTaggedUnionBranch)(obj))
+		res.Selection = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *ToolUntaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch14(actual)
+		}
+		u := res.Selection
+		u.SetUntagged((*ToolUntaggedUnionBranch)(obj))
+		res.Selection = u
 	}
 
 	return res
 }
 
 func decodeToolUnionBranchTransportToToolUnionBranch15(v *jsonToolUnionBranchTransport) *ToolUnionBranch {
-	res := &ToolUnionBranch{
-		Value: *v.Value,
-	}
-	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &ToolUnionBranch{}
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *ToolTaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch15(actual)
 		}
-		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment30(val)
+		u := res.Selection
+		u.SetTagged((*ToolTaggedUnionBranch)(obj))
+		res.Selection = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *ToolUntaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch15(actual)
+		}
+		u := res.Selection
+		u.SetUntagged((*ToolUntaggedUnionBranch)(obj))
+		res.Selection = u
 	}
 
 	return res
 }
 
 func decodeToolUnionBranchTransportToToolUnionBranch16(v *jsonToolUnionBranchTransport) *ToolUnionBranch {
-	res := &ToolUnionBranch{
-		Value: *v.Value,
-	}
-	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &ToolUnionBranch{}
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *ToolTaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch16(actual)
 		}
-		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment32(val)
+		u := res.Selection
+		u.SetTagged((*ToolTaggedUnionBranch)(obj))
+		res.Selection = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *ToolUntaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch16(actual)
+		}
+		u := res.Selection
+		u.SetUntagged((*ToolUntaggedUnionBranch)(obj))
+		res.Selection = u
 	}
 
 	return res
 }
 
 func decodeToolUnionBranchTransportToToolUnionBranch17(v *jsonToolUnionBranchTransport) *ToolUnionBranch {
-	res := &ToolUnionBranch{
-		Value: *v.Value,
-	}
-	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &ToolUnionBranch{}
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *ToolTaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch17(actual)
 		}
-		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment34(val)
+		u := res.Selection
+		u.SetTagged((*ToolTaggedUnionBranch)(obj))
+		res.Selection = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *ToolUntaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch17(actual)
+		}
+		u := res.Selection
+		u.SetUntagged((*ToolUntaggedUnionBranch)(obj))
+		res.Selection = u
 	}
 
 	return res
 }
 
 func decodeToolUnionBranchTransportToToolUnionBranch18(v *jsonToolUnionBranchTransport) *ToolUnionBranch {
-	res := &ToolUnionBranch{
-		Value: *v.Value,
-	}
-	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &ToolUnionBranch{}
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *ToolTaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch18(actual)
 		}
-		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment36(val)
+		u := res.Selection
+		u.SetTagged((*ToolTaggedUnionBranch)(obj))
+		res.Selection = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *ToolUntaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch18(actual)
+		}
+		u := res.Selection
+		u.SetUntagged((*ToolUntaggedUnionBranch)(obj))
+		res.Selection = u
 	}
 
 	return res
 }
 
 func decodeToolUnionBranchTransportToToolUnionBranch19(v *jsonToolUnionBranchTransport) *ToolUnionBranch {
-	res := &ToolUnionBranch{
-		Value: *v.Value,
-	}
-	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &ToolUnionBranch{}
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *ToolTaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch19(actual)
 		}
-		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment38(val)
+		u := res.Selection
+		u.SetTagged((*ToolTaggedUnionBranch)(obj))
+		res.Selection = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *ToolUntaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch19(actual)
+		}
+		u := res.Selection
+		u.SetUntagged((*ToolUntaggedUnionBranch)(obj))
+		res.Selection = u
 	}
 
 	return res
 }
 
 func decodeToolUnionBranchTransportToToolUnionBranch2(v *jsonToolUnionBranchTransport) *ToolUnionBranch {
-	res := &ToolUnionBranch{
-		Value: *v.Value,
-	}
-	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &ToolUnionBranch{}
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *ToolTaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch2(actual)
 		}
-		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment4(val)
+		u := res.Selection
+		u.SetTagged((*ToolTaggedUnionBranch)(obj))
+		res.Selection = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *ToolUntaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch2(actual)
+		}
+		u := res.Selection
+		u.SetUntagged((*ToolUntaggedUnionBranch)(obj))
+		res.Selection = u
 	}
 
 	return res
 }
 
 func decodeToolUnionBranchTransportToToolUnionBranch20(v *jsonToolUnionBranchTransport) *ToolUnionBranch {
-	res := &ToolUnionBranch{
-		Value: *v.Value,
-	}
-	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &ToolUnionBranch{}
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *ToolTaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch20(actual)
 		}
-		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment40(val)
+		u := res.Selection
+		u.SetTagged((*ToolTaggedUnionBranch)(obj))
+		res.Selection = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *ToolUntaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch20(actual)
+		}
+		u := res.Selection
+		u.SetUntagged((*ToolUntaggedUnionBranch)(obj))
+		res.Selection = u
 	}
 
 	return res
 }
 
 func decodeToolUnionBranchTransportToToolUnionBranch21(v *jsonToolUnionBranchTransport) *ToolUnionBranch {
-	res := &ToolUnionBranch{
-		Value: *v.Value,
-	}
-	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &ToolUnionBranch{}
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *ToolTaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch21(actual)
 		}
-		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment42(val)
+		u := res.Selection
+		u.SetTagged((*ToolTaggedUnionBranch)(obj))
+		res.Selection = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *ToolUntaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch21(actual)
+		}
+		u := res.Selection
+		u.SetUntagged((*ToolUntaggedUnionBranch)(obj))
+		res.Selection = u
 	}
 
 	return res
 }
 
 func decodeToolUnionBranchTransportToToolUnionBranch22(v *jsonToolUnionBranchTransport) *ToolUnionBranch {
-	res := &ToolUnionBranch{
-		Value: *v.Value,
-	}
-	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &ToolUnionBranch{}
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *ToolTaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch22(actual)
 		}
-		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment44(val)
+		u := res.Selection
+		u.SetTagged((*ToolTaggedUnionBranch)(obj))
+		res.Selection = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *ToolUntaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch22(actual)
+		}
+		u := res.Selection
+		u.SetUntagged((*ToolUntaggedUnionBranch)(obj))
+		res.Selection = u
 	}
 
 	return res
 }
 
 func decodeToolUnionBranchTransportToToolUnionBranch23(v *jsonToolUnionBranchTransport) *ToolUnionBranch {
-	res := &ToolUnionBranch{
-		Value: *v.Value,
-	}
-	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &ToolUnionBranch{}
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *ToolTaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch23(actual)
 		}
-		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment46(val)
+		u := res.Selection
+		u.SetTagged((*ToolTaggedUnionBranch)(obj))
+		res.Selection = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *ToolUntaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch23(actual)
+		}
+		u := res.Selection
+		u.SetUntagged((*ToolUntaggedUnionBranch)(obj))
+		res.Selection = u
 	}
 
 	return res
 }
 
 func decodeToolUnionBranchTransportToToolUnionBranch24(v *jsonToolUnionBranchTransport) *ToolUnionBranch {
-	res := &ToolUnionBranch{
-		Value: *v.Value,
-	}
-	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &ToolUnionBranch{}
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *ToolTaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch24(actual)
 		}
-		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment48(val)
+		u := res.Selection
+		u.SetTagged((*ToolTaggedUnionBranch)(obj))
+		res.Selection = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *ToolUntaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch24(actual)
+		}
+		u := res.Selection
+		u.SetUntagged((*ToolUntaggedUnionBranch)(obj))
+		res.Selection = u
 	}
 
 	return res
 }
 
 func decodeToolUnionBranchTransportToToolUnionBranch25(v *jsonToolUnionBranchTransport) *ToolUnionBranch {
-	res := &ToolUnionBranch{
-		Value: *v.Value,
-	}
-	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &ToolUnionBranch{}
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *ToolTaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch25(actual)
 		}
-		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment50(val)
+		u := res.Selection
+		u.SetTagged((*ToolTaggedUnionBranch)(obj))
+		res.Selection = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *ToolUntaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch25(actual)
+		}
+		u := res.Selection
+		u.SetUntagged((*ToolUntaggedUnionBranch)(obj))
+		res.Selection = u
 	}
 
 	return res
 }
 
 func decodeToolUnionBranchTransportToToolUnionBranch26(v *jsonToolUnionBranchTransport) *ToolUnionBranch {
-	res := &ToolUnionBranch{
-		Value: *v.Value,
-	}
-	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &ToolUnionBranch{}
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *ToolTaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch26(actual)
 		}
-		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment52(val)
+		u := res.Selection
+		u.SetTagged((*ToolTaggedUnionBranch)(obj))
+		res.Selection = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *ToolUntaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch26(actual)
+		}
+		u := res.Selection
+		u.SetUntagged((*ToolUntaggedUnionBranch)(obj))
+		res.Selection = u
 	}
 
 	return res
 }
 
 func decodeToolUnionBranchTransportToToolUnionBranch27(v *jsonToolUnionBranchTransport) *ToolUnionBranch {
-	res := &ToolUnionBranch{
-		Value: *v.Value,
-	}
-	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &ToolUnionBranch{}
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *ToolTaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch27(actual)
 		}
-		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment54(val)
+		u := res.Selection
+		u.SetTagged((*ToolTaggedUnionBranch)(obj))
+		res.Selection = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *ToolUntaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch27(actual)
+		}
+		u := res.Selection
+		u.SetUntagged((*ToolUntaggedUnionBranch)(obj))
+		res.Selection = u
 	}
 
 	return res
 }
 
 func decodeToolUnionBranchTransportToToolUnionBranch28(v *jsonToolUnionBranchTransport) *ToolUnionBranch {
-	res := &ToolUnionBranch{
-		Value: *v.Value,
-	}
-	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &ToolUnionBranch{}
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *ToolTaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch28(actual)
 		}
-		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment56(val)
+		u := res.Selection
+		u.SetTagged((*ToolTaggedUnionBranch)(obj))
+		res.Selection = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *ToolUntaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch28(actual)
+		}
+		u := res.Selection
+		u.SetUntagged((*ToolUntaggedUnionBranch)(obj))
+		res.Selection = u
 	}
 
 	return res
 }
 
 func decodeToolUnionBranchTransportToToolUnionBranch29(v *jsonToolUnionBranchTransport) *ToolUnionBranch {
-	res := &ToolUnionBranch{
-		Value: *v.Value,
-	}
-	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &ToolUnionBranch{}
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *ToolTaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch30(actual)
 		}
-		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment59(val)
+		u := res.Selection
+		u.SetTagged((*ToolTaggedUnionBranch)(obj))
+		res.Selection = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *ToolUntaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch30(actual)
+		}
+		u := res.Selection
+		u.SetUntagged((*ToolUntaggedUnionBranch)(obj))
+		res.Selection = u
 	}
 
 	return res
 }
 
 func decodeToolUnionBranchTransportToToolUnionBranch3(v *jsonToolUnionBranchTransport) *ToolUnionBranch {
-	res := &ToolUnionBranch{
-		Value: *v.Value,
-	}
-	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &ToolUnionBranch{}
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *ToolTaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch3(actual)
 		}
-		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment6(val)
+		u := res.Selection
+		u.SetTagged((*ToolTaggedUnionBranch)(obj))
+		res.Selection = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *ToolUntaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch3(actual)
+		}
+		u := res.Selection
+		u.SetUntagged((*ToolUntaggedUnionBranch)(obj))
+		res.Selection = u
 	}
 
 	return res
 }
 
 func decodeToolUnionBranchTransportToToolUnionBranch30(v *jsonToolUnionBranchTransport) *ToolUnionBranch {
-	res := &ToolUnionBranch{
-		Value: *v.Value,
-	}
-	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &ToolUnionBranch{}
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *ToolTaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch31(actual)
 		}
-		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment61(val)
+		u := res.Selection
+		u.SetTagged((*ToolTaggedUnionBranch)(obj))
+		res.Selection = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *ToolUntaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch31(actual)
+		}
+		u := res.Selection
+		u.SetUntagged((*ToolUntaggedUnionBranch)(obj))
+		res.Selection = u
 	}
 
 	return res
 }
 
 func decodeToolUnionBranchTransportToToolUnionBranch31(v *jsonToolUnionBranchTransport) *ToolUnionBranch {
-	res := &ToolUnionBranch{
-		Value: *v.Value,
-	}
-	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &ToolUnionBranch{}
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *ToolTaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch32(actual)
 		}
-		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment63(val)
+		u := res.Selection
+		u.SetTagged((*ToolTaggedUnionBranch)(obj))
+		res.Selection = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *ToolUntaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch32(actual)
+		}
+		u := res.Selection
+		u.SetUntagged((*ToolUntaggedUnionBranch)(obj))
+		res.Selection = u
 	}
 
 	return res
 }
 
 func decodeToolUnionBranchTransportToToolUnionBranch32(v *jsonToolUnionBranchTransport) *ToolUnionBranch {
-	res := &ToolUnionBranch{
-		Value: *v.Value,
-	}
-	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &ToolUnionBranch{}
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *ToolTaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch33(actual)
 		}
-		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment65(val)
+		u := res.Selection
+		u.SetTagged((*ToolTaggedUnionBranch)(obj))
+		res.Selection = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *ToolUntaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch33(actual)
+		}
+		u := res.Selection
+		u.SetUntagged((*ToolUntaggedUnionBranch)(obj))
+		res.Selection = u
 	}
 
 	return res
 }
 
 func decodeToolUnionBranchTransportToToolUnionBranch4(v *jsonToolUnionBranchTransport) *ToolUnionBranch {
-	res := &ToolUnionBranch{
-		Value: *v.Value,
-	}
-	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &ToolUnionBranch{}
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *ToolTaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch4(actual)
 		}
-		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment8(val)
+		u := res.Selection
+		u.SetTagged((*ToolTaggedUnionBranch)(obj))
+		res.Selection = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *ToolUntaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch4(actual)
+		}
+		u := res.Selection
+		u.SetUntagged((*ToolUntaggedUnionBranch)(obj))
+		res.Selection = u
 	}
 
 	return res
 }
 
 func decodeToolUnionBranchTransportToToolUnionBranch5(v *jsonToolUnionBranchTransport) *ToolUnionBranch {
-	res := &ToolUnionBranch{
-		Value: *v.Value,
-	}
-	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &ToolUnionBranch{}
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *ToolTaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch5(actual)
 		}
-		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment10(val)
+		u := res.Selection
+		u.SetTagged((*ToolTaggedUnionBranch)(obj))
+		res.Selection = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *ToolUntaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch5(actual)
+		}
+		u := res.Selection
+		u.SetUntagged((*ToolUntaggedUnionBranch)(obj))
+		res.Selection = u
 	}
 
 	return res
 }
 
 func decodeToolUnionBranchTransportToToolUnionBranch6(v *jsonToolUnionBranchTransport) *ToolUnionBranch {
-	res := &ToolUnionBranch{
-		Value: *v.Value,
-	}
-	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &ToolUnionBranch{}
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *ToolTaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch6(actual)
 		}
-		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment12(val)
+		u := res.Selection
+		u.SetTagged((*ToolTaggedUnionBranch)(obj))
+		res.Selection = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *ToolUntaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch6(actual)
+		}
+		u := res.Selection
+		u.SetUntagged((*ToolUntaggedUnionBranch)(obj))
+		res.Selection = u
 	}
 
 	return res
 }
 
 func decodeToolUnionBranchTransportToToolUnionBranch7(v *jsonToolUnionBranchTransport) *ToolUnionBranch {
-	res := &ToolUnionBranch{
-		Value: *v.Value,
-	}
-	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &ToolUnionBranch{}
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *ToolTaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch7(actual)
 		}
-		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment14(val)
+		u := res.Selection
+		u.SetTagged((*ToolTaggedUnionBranch)(obj))
+		res.Selection = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *ToolUntaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch7(actual)
+		}
+		u := res.Selection
+		u.SetUntagged((*ToolUntaggedUnionBranch)(obj))
+		res.Selection = u
 	}
 
 	return res
 }
 
 func decodeToolUnionBranchTransportToToolUnionBranch8(v *jsonToolUnionBranchTransport) *ToolUnionBranch {
-	res := &ToolUnionBranch{
-		Value: *v.Value,
-	}
-	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &ToolUnionBranch{}
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *ToolTaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch8(actual)
 		}
-		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment16(val)
+		u := res.Selection
+		u.SetTagged((*ToolTaggedUnionBranch)(obj))
+		res.Selection = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *ToolUntaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch8(actual)
+		}
+		u := res.Selection
+		u.SetUntagged((*ToolUntaggedUnionBranch)(obj))
+		res.Selection = u
 	}
 
 	return res
 }
 
 func decodeToolUnionBranchTransportToToolUnionBranch9(v *jsonToolUnionBranchTransport) *ToolUnionBranch {
-	res := &ToolUnionBranch{
-		Value: *v.Value,
-	}
-	res.Discriminator = make([]*ToolFieldPathSegment, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &ToolUnionBranch{}
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *ToolTaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolTaggedUnionBranchTransportToToolTaggedUnionBranch9(actual)
 		}
-		res.Discriminator[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment18(val)
+		u := res.Selection
+		u.SetTagged((*ToolTaggedUnionBranch)(obj))
+		res.Selection = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *ToolUntaggedUnionBranch
+		if actual != nil {
+			obj = decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch9(actual)
+		}
+		u := res.Selection
+		u.SetUntagged((*ToolUntaggedUnionBranch)(obj))
+		res.Selection = u
+	}
+
+	return res
+}
+
+func decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch(v *jsonToolUntaggedUnionBranchTransport) *ToolUntaggedUnionBranch {
+	res := &ToolUntaggedUnionBranch{
+		JSONKind: *v.JSONKind,
+		Index:    int(*v.Index),
+	}
+	if v.Path != nil {
+		res.Path = make([]*ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment3(val)
+		}
+	}
+
+	return res
+}
+
+func decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch10(v *jsonToolUntaggedUnionBranchTransport) *ToolUntaggedUnionBranch {
+	res := &ToolUntaggedUnionBranch{
+		JSONKind: *v.JSONKind,
+		Index:    int(*v.Index),
+	}
+	if v.Path != nil {
+		res.Path = make([]*ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment30(val)
+		}
+	}
+
+	return res
+}
+
+func decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch11(v *jsonToolUntaggedUnionBranchTransport) *ToolUntaggedUnionBranch {
+	res := &ToolUntaggedUnionBranch{
+		JSONKind: *v.JSONKind,
+		Index:    int(*v.Index),
+	}
+	if v.Path != nil {
+		res.Path = make([]*ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment33(val)
+		}
+	}
+
+	return res
+}
+
+func decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch12(v *jsonToolUntaggedUnionBranchTransport) *ToolUntaggedUnionBranch {
+	res := &ToolUntaggedUnionBranch{
+		JSONKind: *v.JSONKind,
+		Index:    int(*v.Index),
+	}
+	if v.Path != nil {
+		res.Path = make([]*ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment36(val)
+		}
+	}
+
+	return res
+}
+
+func decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch13(v *jsonToolUntaggedUnionBranchTransport) *ToolUntaggedUnionBranch {
+	res := &ToolUntaggedUnionBranch{
+		JSONKind: *v.JSONKind,
+		Index:    int(*v.Index),
+	}
+	if v.Path != nil {
+		res.Path = make([]*ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment39(val)
+		}
+	}
+
+	return res
+}
+
+func decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch14(v *jsonToolUntaggedUnionBranchTransport) *ToolUntaggedUnionBranch {
+	res := &ToolUntaggedUnionBranch{
+		JSONKind: *v.JSONKind,
+		Index:    int(*v.Index),
+	}
+	if v.Path != nil {
+		res.Path = make([]*ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment42(val)
+		}
+	}
+
+	return res
+}
+
+func decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch15(v *jsonToolUntaggedUnionBranchTransport) *ToolUntaggedUnionBranch {
+	res := &ToolUntaggedUnionBranch{
+		JSONKind: *v.JSONKind,
+		Index:    int(*v.Index),
+	}
+	if v.Path != nil {
+		res.Path = make([]*ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment45(val)
+		}
+	}
+
+	return res
+}
+
+func decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch16(v *jsonToolUntaggedUnionBranchTransport) *ToolUntaggedUnionBranch {
+	res := &ToolUntaggedUnionBranch{
+		JSONKind: *v.JSONKind,
+		Index:    int(*v.Index),
+	}
+	if v.Path != nil {
+		res.Path = make([]*ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment48(val)
+		}
+	}
+
+	return res
+}
+
+func decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch17(v *jsonToolUntaggedUnionBranchTransport) *ToolUntaggedUnionBranch {
+	res := &ToolUntaggedUnionBranch{
+		JSONKind: *v.JSONKind,
+		Index:    int(*v.Index),
+	}
+	if v.Path != nil {
+		res.Path = make([]*ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment51(val)
+		}
+	}
+
+	return res
+}
+
+func decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch18(v *jsonToolUntaggedUnionBranchTransport) *ToolUntaggedUnionBranch {
+	res := &ToolUntaggedUnionBranch{
+		JSONKind: *v.JSONKind,
+		Index:    int(*v.Index),
+	}
+	if v.Path != nil {
+		res.Path = make([]*ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment54(val)
+		}
+	}
+
+	return res
+}
+
+func decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch19(v *jsonToolUntaggedUnionBranchTransport) *ToolUntaggedUnionBranch {
+	res := &ToolUntaggedUnionBranch{
+		JSONKind: *v.JSONKind,
+		Index:    int(*v.Index),
+	}
+	if v.Path != nil {
+		res.Path = make([]*ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment57(val)
+		}
+	}
+
+	return res
+}
+
+func decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch2(v *jsonToolUntaggedUnionBranchTransport) *ToolUntaggedUnionBranch {
+	res := &ToolUntaggedUnionBranch{
+		JSONKind: *v.JSONKind,
+		Index:    int(*v.Index),
+	}
+	if v.Path != nil {
+		res.Path = make([]*ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment6(val)
+		}
+	}
+
+	return res
+}
+
+func decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch20(v *jsonToolUntaggedUnionBranchTransport) *ToolUntaggedUnionBranch {
+	res := &ToolUntaggedUnionBranch{
+		JSONKind: *v.JSONKind,
+		Index:    int(*v.Index),
+	}
+	if v.Path != nil {
+		res.Path = make([]*ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment60(val)
+		}
+	}
+
+	return res
+}
+
+func decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch21(v *jsonToolUntaggedUnionBranchTransport) *ToolUntaggedUnionBranch {
+	res := &ToolUntaggedUnionBranch{
+		JSONKind: *v.JSONKind,
+		Index:    int(*v.Index),
+	}
+	if v.Path != nil {
+		res.Path = make([]*ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment63(val)
+		}
+	}
+
+	return res
+}
+
+func decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch22(v *jsonToolUntaggedUnionBranchTransport) *ToolUntaggedUnionBranch {
+	res := &ToolUntaggedUnionBranch{
+		JSONKind: *v.JSONKind,
+		Index:    int(*v.Index),
+	}
+	if v.Path != nil {
+		res.Path = make([]*ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment66(val)
+		}
+	}
+
+	return res
+}
+
+func decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch23(v *jsonToolUntaggedUnionBranchTransport) *ToolUntaggedUnionBranch {
+	res := &ToolUntaggedUnionBranch{
+		JSONKind: *v.JSONKind,
+		Index:    int(*v.Index),
+	}
+	if v.Path != nil {
+		res.Path = make([]*ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment69(val)
+		}
+	}
+
+	return res
+}
+
+func decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch24(v *jsonToolUntaggedUnionBranchTransport) *ToolUntaggedUnionBranch {
+	res := &ToolUntaggedUnionBranch{
+		JSONKind: *v.JSONKind,
+		Index:    int(*v.Index),
+	}
+	if v.Path != nil {
+		res.Path = make([]*ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment72(val)
+		}
+	}
+
+	return res
+}
+
+func decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch25(v *jsonToolUntaggedUnionBranchTransport) *ToolUntaggedUnionBranch {
+	res := &ToolUntaggedUnionBranch{
+		JSONKind: *v.JSONKind,
+		Index:    int(*v.Index),
+	}
+	if v.Path != nil {
+		res.Path = make([]*ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment75(val)
+		}
+	}
+
+	return res
+}
+
+func decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch26(v *jsonToolUntaggedUnionBranchTransport) *ToolUntaggedUnionBranch {
+	res := &ToolUntaggedUnionBranch{
+		JSONKind: *v.JSONKind,
+		Index:    int(*v.Index),
+	}
+	if v.Path != nil {
+		res.Path = make([]*ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment78(val)
+		}
+	}
+
+	return res
+}
+
+func decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch27(v *jsonToolUntaggedUnionBranchTransport) *ToolUntaggedUnionBranch {
+	res := &ToolUntaggedUnionBranch{
+		JSONKind: *v.JSONKind,
+		Index:    int(*v.Index),
+	}
+	if v.Path != nil {
+		res.Path = make([]*ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment81(val)
+		}
+	}
+
+	return res
+}
+
+func decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch28(v *jsonToolUntaggedUnionBranchTransport) *ToolUntaggedUnionBranch {
+	res := &ToolUntaggedUnionBranch{
+		JSONKind: *v.JSONKind,
+		Index:    int(*v.Index),
+	}
+	if v.Path != nil {
+		res.Path = make([]*ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment85(val)
+		}
+	}
+
+	return res
+}
+
+func decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch29(v *jsonToolUntaggedUnionBranchTransport) *ToolUntaggedUnionBranch {
+	res := &ToolUntaggedUnionBranch{
+		JSONKind: *v.JSONKind,
+		Index:    int(*v.Index),
+	}
+	if v.Path != nil {
+		res.Path = make([]*ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment87(val)
+		}
+	}
+
+	return res
+}
+
+func decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch3(v *jsonToolUntaggedUnionBranchTransport) *ToolUntaggedUnionBranch {
+	res := &ToolUntaggedUnionBranch{
+		JSONKind: *v.JSONKind,
+		Index:    int(*v.Index),
+	}
+	if v.Path != nil {
+		res.Path = make([]*ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment9(val)
+		}
+	}
+
+	return res
+}
+
+func decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch30(v *jsonToolUntaggedUnionBranchTransport) *ToolUntaggedUnionBranch {
+	res := &ToolUntaggedUnionBranch{
+		JSONKind: *v.JSONKind,
+		Index:    int(*v.Index),
+	}
+	if v.Path != nil {
+		res.Path = make([]*ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment91(val)
+		}
+	}
+
+	return res
+}
+
+func decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch31(v *jsonToolUntaggedUnionBranchTransport) *ToolUntaggedUnionBranch {
+	res := &ToolUntaggedUnionBranch{
+		JSONKind: *v.JSONKind,
+		Index:    int(*v.Index),
+	}
+	if v.Path != nil {
+		res.Path = make([]*ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment94(val)
+		}
+	}
+
+	return res
+}
+
+func decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch32(v *jsonToolUntaggedUnionBranchTransport) *ToolUntaggedUnionBranch {
+	res := &ToolUntaggedUnionBranch{
+		JSONKind: *v.JSONKind,
+		Index:    int(*v.Index),
+	}
+	if v.Path != nil {
+		res.Path = make([]*ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment97(val)
+		}
+	}
+
+	return res
+}
+
+func decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch33(v *jsonToolUntaggedUnionBranchTransport) *ToolUntaggedUnionBranch {
+	res := &ToolUntaggedUnionBranch{
+		JSONKind: *v.JSONKind,
+		Index:    int(*v.Index),
+	}
+	if v.Path != nil {
+		res.Path = make([]*ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment100(val)
+		}
+	}
+
+	return res
+}
+
+func decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch4(v *jsonToolUntaggedUnionBranchTransport) *ToolUntaggedUnionBranch {
+	res := &ToolUntaggedUnionBranch{
+		JSONKind: *v.JSONKind,
+		Index:    int(*v.Index),
+	}
+	if v.Path != nil {
+		res.Path = make([]*ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment12(val)
+		}
+	}
+
+	return res
+}
+
+func decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch5(v *jsonToolUntaggedUnionBranchTransport) *ToolUntaggedUnionBranch {
+	res := &ToolUntaggedUnionBranch{
+		JSONKind: *v.JSONKind,
+		Index:    int(*v.Index),
+	}
+	if v.Path != nil {
+		res.Path = make([]*ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment15(val)
+		}
+	}
+
+	return res
+}
+
+func decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch6(v *jsonToolUntaggedUnionBranchTransport) *ToolUntaggedUnionBranch {
+	res := &ToolUntaggedUnionBranch{
+		JSONKind: *v.JSONKind,
+		Index:    int(*v.Index),
+	}
+	if v.Path != nil {
+		res.Path = make([]*ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment18(val)
+		}
+	}
+
+	return res
+}
+
+func decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch7(v *jsonToolUntaggedUnionBranchTransport) *ToolUntaggedUnionBranch {
+	res := &ToolUntaggedUnionBranch{
+		JSONKind: *v.JSONKind,
+		Index:    int(*v.Index),
+	}
+	if v.Path != nil {
+		res.Path = make([]*ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment21(val)
+		}
+	}
+
+	return res
+}
+
+func decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch8(v *jsonToolUntaggedUnionBranchTransport) *ToolUntaggedUnionBranch {
+	res := &ToolUntaggedUnionBranch{
+		JSONKind: *v.JSONKind,
+		Index:    int(*v.Index),
+	}
+	if v.Path != nil {
+		res.Path = make([]*ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment24(val)
+		}
+	}
+
+	return res
+}
+
+func decodeToolUntaggedUnionBranchTransportToToolUntaggedUnionBranch9(v *jsonToolUntaggedUnionBranchTransport) *ToolUntaggedUnionBranch {
+	res := &ToolUntaggedUnionBranch{
+		JSONKind: *v.JSONKind,
+		Index:    int(*v.Index),
+	}
+	if v.Path != nil {
+		res.Path = make([]*ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = decodeToolFieldPathSegmentTransportToToolFieldPathSegment27(val)
+		}
 	}
 
 	return res
@@ -17117,6 +20632,18 @@ func encodeToolCollectionElementToToolCollectionElementTransport10(v *ToolCollec
 	return res
 }
 
+func encodeToolCollectionElementToToolCollectionElementTransport100(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
+	res := &jsonToolCollectionElementTransport{}
+
+	return res
+}
+
+func encodeToolCollectionElementToToolCollectionElementTransport101(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
+	res := &jsonToolCollectionElementTransport{}
+
+	return res
+}
+
 func encodeToolCollectionElementToToolCollectionElementTransport11(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
 	res := &jsonToolCollectionElementTransport{}
 
@@ -17483,7 +21010,85 @@ func encodeToolCollectionElementToToolCollectionElementTransport66(v *ToolCollec
 	return res
 }
 
+func encodeToolCollectionElementToToolCollectionElementTransport67(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
+	res := &jsonToolCollectionElementTransport{}
+
+	return res
+}
+
+func encodeToolCollectionElementToToolCollectionElementTransport68(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
+	res := &jsonToolCollectionElementTransport{}
+
+	return res
+}
+
+func encodeToolCollectionElementToToolCollectionElementTransport69(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
+	res := &jsonToolCollectionElementTransport{}
+
+	return res
+}
+
 func encodeToolCollectionElementToToolCollectionElementTransport7(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
+	res := &jsonToolCollectionElementTransport{}
+
+	return res
+}
+
+func encodeToolCollectionElementToToolCollectionElementTransport70(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
+	res := &jsonToolCollectionElementTransport{}
+
+	return res
+}
+
+func encodeToolCollectionElementToToolCollectionElementTransport71(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
+	res := &jsonToolCollectionElementTransport{}
+
+	return res
+}
+
+func encodeToolCollectionElementToToolCollectionElementTransport72(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
+	res := &jsonToolCollectionElementTransport{}
+
+	return res
+}
+
+func encodeToolCollectionElementToToolCollectionElementTransport73(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
+	res := &jsonToolCollectionElementTransport{}
+
+	return res
+}
+
+func encodeToolCollectionElementToToolCollectionElementTransport74(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
+	res := &jsonToolCollectionElementTransport{}
+
+	return res
+}
+
+func encodeToolCollectionElementToToolCollectionElementTransport75(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
+	res := &jsonToolCollectionElementTransport{}
+
+	return res
+}
+
+func encodeToolCollectionElementToToolCollectionElementTransport76(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
+	res := &jsonToolCollectionElementTransport{}
+
+	return res
+}
+
+func encodeToolCollectionElementToToolCollectionElementTransport77(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
+	res := &jsonToolCollectionElementTransport{}
+
+	return res
+}
+
+func encodeToolCollectionElementToToolCollectionElementTransport78(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
+	res := &jsonToolCollectionElementTransport{}
+
+	return res
+}
+
+func encodeToolCollectionElementToToolCollectionElementTransport79(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
 	res := &jsonToolCollectionElementTransport{}
 
 	return res
@@ -17495,7 +21100,127 @@ func encodeToolCollectionElementToToolCollectionElementTransport8(v *ToolCollect
 	return res
 }
 
+func encodeToolCollectionElementToToolCollectionElementTransport80(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
+	res := &jsonToolCollectionElementTransport{}
+
+	return res
+}
+
+func encodeToolCollectionElementToToolCollectionElementTransport81(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
+	res := &jsonToolCollectionElementTransport{}
+
+	return res
+}
+
+func encodeToolCollectionElementToToolCollectionElementTransport82(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
+	res := &jsonToolCollectionElementTransport{}
+
+	return res
+}
+
+func encodeToolCollectionElementToToolCollectionElementTransport83(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
+	res := &jsonToolCollectionElementTransport{}
+
+	return res
+}
+
+func encodeToolCollectionElementToToolCollectionElementTransport84(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
+	res := &jsonToolCollectionElementTransport{}
+
+	return res
+}
+
+func encodeToolCollectionElementToToolCollectionElementTransport85(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
+	res := &jsonToolCollectionElementTransport{}
+
+	return res
+}
+
+func encodeToolCollectionElementToToolCollectionElementTransport86(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
+	res := &jsonToolCollectionElementTransport{}
+
+	return res
+}
+
+func encodeToolCollectionElementToToolCollectionElementTransport87(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
+	res := &jsonToolCollectionElementTransport{}
+
+	return res
+}
+
+func encodeToolCollectionElementToToolCollectionElementTransport88(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
+	res := &jsonToolCollectionElementTransport{}
+
+	return res
+}
+
+func encodeToolCollectionElementToToolCollectionElementTransport89(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
+	res := &jsonToolCollectionElementTransport{}
+
+	return res
+}
+
 func encodeToolCollectionElementToToolCollectionElementTransport9(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
+	res := &jsonToolCollectionElementTransport{}
+
+	return res
+}
+
+func encodeToolCollectionElementToToolCollectionElementTransport90(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
+	res := &jsonToolCollectionElementTransport{}
+
+	return res
+}
+
+func encodeToolCollectionElementToToolCollectionElementTransport91(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
+	res := &jsonToolCollectionElementTransport{}
+
+	return res
+}
+
+func encodeToolCollectionElementToToolCollectionElementTransport92(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
+	res := &jsonToolCollectionElementTransport{}
+
+	return res
+}
+
+func encodeToolCollectionElementToToolCollectionElementTransport93(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
+	res := &jsonToolCollectionElementTransport{}
+
+	return res
+}
+
+func encodeToolCollectionElementToToolCollectionElementTransport94(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
+	res := &jsonToolCollectionElementTransport{}
+
+	return res
+}
+
+func encodeToolCollectionElementToToolCollectionElementTransport95(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
+	res := &jsonToolCollectionElementTransport{}
+
+	return res
+}
+
+func encodeToolCollectionElementToToolCollectionElementTransport96(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
+	res := &jsonToolCollectionElementTransport{}
+
+	return res
+}
+
+func encodeToolCollectionElementToToolCollectionElementTransport97(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
+	res := &jsonToolCollectionElementTransport{}
+
+	return res
+}
+
+func encodeToolCollectionElementToToolCollectionElementTransport98(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
+	res := &jsonToolCollectionElementTransport{}
+
+	return res
+}
+
+func encodeToolCollectionElementToToolCollectionElementTransport99(v *ToolCollectionElement) *jsonToolCollectionElementTransport {
 	res := &jsonToolCollectionElementTransport{}
 
 	return res
@@ -17618,7 +21343,7 @@ func encodeToolFieldMetadataToToolFieldMetadataTransport10(v *ToolFieldMetadata)
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport19(val)
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport28(val)
 		}
 	}
 	if v.Branches != nil {
@@ -17653,7 +21378,7 @@ func encodeToolFieldMetadataToToolFieldMetadataTransport11(v *ToolFieldMetadata)
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport21(val)
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport31(val)
 		}
 	}
 	if v.Branches != nil {
@@ -17688,7 +21413,7 @@ func encodeToolFieldMetadataToToolFieldMetadataTransport12(v *ToolFieldMetadata)
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport23(val)
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport34(val)
 		}
 	}
 	if v.Branches != nil {
@@ -17723,7 +21448,7 @@ func encodeToolFieldMetadataToToolFieldMetadataTransport13(v *ToolFieldMetadata)
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport25(val)
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport37(val)
 		}
 	}
 	if v.Branches != nil {
@@ -17758,7 +21483,7 @@ func encodeToolFieldMetadataToToolFieldMetadataTransport14(v *ToolFieldMetadata)
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport27(val)
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport40(val)
 		}
 	}
 	if v.Branches != nil {
@@ -17793,7 +21518,7 @@ func encodeToolFieldMetadataToToolFieldMetadataTransport15(v *ToolFieldMetadata)
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport29(val)
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport43(val)
 		}
 	}
 	if v.Branches != nil {
@@ -17828,7 +21553,7 @@ func encodeToolFieldMetadataToToolFieldMetadataTransport16(v *ToolFieldMetadata)
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport31(val)
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport46(val)
 		}
 	}
 	if v.Branches != nil {
@@ -17863,7 +21588,7 @@ func encodeToolFieldMetadataToToolFieldMetadataTransport17(v *ToolFieldMetadata)
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport33(val)
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport49(val)
 		}
 	}
 	if v.Branches != nil {
@@ -17898,7 +21623,7 @@ func encodeToolFieldMetadataToToolFieldMetadataTransport18(v *ToolFieldMetadata)
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport35(val)
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport52(val)
 		}
 	}
 	if v.Branches != nil {
@@ -17933,7 +21658,7 @@ func encodeToolFieldMetadataToToolFieldMetadataTransport19(v *ToolFieldMetadata)
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport37(val)
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport55(val)
 		}
 	}
 	if v.Branches != nil {
@@ -17968,7 +21693,7 @@ func encodeToolFieldMetadataToToolFieldMetadataTransport2(v *ToolFieldMetadata) 
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport3(val)
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport4(val)
 		}
 	}
 	if v.Branches != nil {
@@ -18003,7 +21728,7 @@ func encodeToolFieldMetadataToToolFieldMetadataTransport20(v *ToolFieldMetadata)
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport39(val)
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport58(val)
 		}
 	}
 	if v.Branches != nil {
@@ -18038,7 +21763,7 @@ func encodeToolFieldMetadataToToolFieldMetadataTransport21(v *ToolFieldMetadata)
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport41(val)
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport61(val)
 		}
 	}
 	if v.Branches != nil {
@@ -18073,7 +21798,7 @@ func encodeToolFieldMetadataToToolFieldMetadataTransport22(v *ToolFieldMetadata)
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport45(val)
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport67(val)
 		}
 	}
 	if v.Branches != nil {
@@ -18108,7 +21833,7 @@ func encodeToolFieldMetadataToToolFieldMetadataTransport23(v *ToolFieldMetadata)
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport47(val)
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport70(val)
 		}
 	}
 	if v.Branches != nil {
@@ -18143,7 +21868,7 @@ func encodeToolFieldMetadataToToolFieldMetadataTransport24(v *ToolFieldMetadata)
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport49(val)
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport73(val)
 		}
 	}
 	if v.Branches != nil {
@@ -18178,7 +21903,7 @@ func encodeToolFieldMetadataToToolFieldMetadataTransport25(v *ToolFieldMetadata)
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport51(val)
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport76(val)
 		}
 	}
 	if v.Branches != nil {
@@ -18213,7 +21938,7 @@ func encodeToolFieldMetadataToToolFieldMetadataTransport26(v *ToolFieldMetadata)
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport53(val)
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport79(val)
 		}
 	}
 	if v.Branches != nil {
@@ -18248,7 +21973,7 @@ func encodeToolFieldMetadataToToolFieldMetadataTransport27(v *ToolFieldMetadata)
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport55(val)
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport83(val)
 		}
 	}
 	if v.Branches != nil {
@@ -18283,7 +22008,7 @@ func encodeToolFieldMetadataToToolFieldMetadataTransport28(v *ToolFieldMetadata)
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport58(val)
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport89(val)
 		}
 	}
 	if v.Branches != nil {
@@ -18318,7 +22043,7 @@ func encodeToolFieldMetadataToToolFieldMetadataTransport29(v *ToolFieldMetadata)
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport60(val)
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport92(val)
 		}
 	}
 	if v.Branches != nil {
@@ -18353,7 +22078,7 @@ func encodeToolFieldMetadataToToolFieldMetadataTransport3(v *ToolFieldMetadata) 
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport5(val)
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport7(val)
 		}
 	}
 	if v.Branches != nil {
@@ -18388,7 +22113,7 @@ func encodeToolFieldMetadataToToolFieldMetadataTransport30(v *ToolFieldMetadata)
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport62(val)
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport95(val)
 		}
 	}
 	if v.Branches != nil {
@@ -18423,7 +22148,7 @@ func encodeToolFieldMetadataToToolFieldMetadataTransport31(v *ToolFieldMetadata)
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport64(val)
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport98(val)
 		}
 	}
 	if v.Branches != nil {
@@ -18458,7 +22183,7 @@ func encodeToolFieldMetadataToToolFieldMetadataTransport4(v *ToolFieldMetadata) 
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport7(val)
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport10(val)
 		}
 	}
 	if v.Branches != nil {
@@ -18493,7 +22218,7 @@ func encodeToolFieldMetadataToToolFieldMetadataTransport5(v *ToolFieldMetadata) 
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport9(val)
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport13(val)
 		}
 	}
 	if v.Branches != nil {
@@ -18528,7 +22253,7 @@ func encodeToolFieldMetadataToToolFieldMetadataTransport6(v *ToolFieldMetadata) 
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport11(val)
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport16(val)
 		}
 	}
 	if v.Branches != nil {
@@ -18563,7 +22288,7 @@ func encodeToolFieldMetadataToToolFieldMetadataTransport7(v *ToolFieldMetadata) 
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport13(val)
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport19(val)
 		}
 	}
 	if v.Branches != nil {
@@ -18598,7 +22323,7 @@ func encodeToolFieldMetadataToToolFieldMetadataTransport8(v *ToolFieldMetadata) 
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport15(val)
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport22(val)
 		}
 	}
 	if v.Branches != nil {
@@ -18633,7 +22358,7 @@ func encodeToolFieldMetadataToToolFieldMetadataTransport9(v *ToolFieldMetadata) 
 				res.Path[i] = nil
 				continue
 			}
-			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport17(val)
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport25(val)
 		}
 	}
 	if v.Branches != nil {
@@ -18698,6 +22423,32 @@ func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport10(v *ToolFieldPat
 		var obj *jsonToolCollectionElementTransport
 		if actual != nil {
 			obj = encodeToolCollectionElementToToolCollectionElementTransport10(actual)
+		}
+		u := segmentValue
+		u.SetElement((*jsonToolCollectionElementTransport)(obj))
+		segmentValue = u
+	}
+	res.Segment = &segmentValue
+
+	return res
+}
+
+func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport100(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
+	res := &jsonToolFieldPathSegmentTransport{}
+	var segmentValue jsonToolFieldSegmentTransport
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+		u := segmentValue
+		u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+		segmentValue = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *jsonToolCollectionElementTransport
+		if actual != nil {
+			obj = encodeToolCollectionElementToToolCollectionElementTransport101(actual)
 		}
 		u := segmentValue
 		u.SetElement((*jsonToolCollectionElementTransport)(obj))
@@ -19685,7 +23436,7 @@ func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport45(v *ToolFieldPat
 		actual, _ := v.Segment.AsElement()
 		var obj *jsonToolCollectionElementTransport
 		if actual != nil {
-			obj = encodeToolCollectionElementToToolCollectionElementTransport46(actual)
+			obj = encodeToolCollectionElementToToolCollectionElementTransport45(actual)
 		}
 		u := segmentValue
 		u.SetElement((*jsonToolCollectionElementTransport)(obj))
@@ -19711,7 +23462,7 @@ func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport46(v *ToolFieldPat
 		actual, _ := v.Segment.AsElement()
 		var obj *jsonToolCollectionElementTransport
 		if actual != nil {
-			obj = encodeToolCollectionElementToToolCollectionElementTransport47(actual)
+			obj = encodeToolCollectionElementToToolCollectionElementTransport46(actual)
 		}
 		u := segmentValue
 		u.SetElement((*jsonToolCollectionElementTransport)(obj))
@@ -19737,7 +23488,7 @@ func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport47(v *ToolFieldPat
 		actual, _ := v.Segment.AsElement()
 		var obj *jsonToolCollectionElementTransport
 		if actual != nil {
-			obj = encodeToolCollectionElementToToolCollectionElementTransport48(actual)
+			obj = encodeToolCollectionElementToToolCollectionElementTransport47(actual)
 		}
 		u := segmentValue
 		u.SetElement((*jsonToolCollectionElementTransport)(obj))
@@ -19763,7 +23514,7 @@ func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport48(v *ToolFieldPat
 		actual, _ := v.Segment.AsElement()
 		var obj *jsonToolCollectionElementTransport
 		if actual != nil {
-			obj = encodeToolCollectionElementToToolCollectionElementTransport49(actual)
+			obj = encodeToolCollectionElementToToolCollectionElementTransport48(actual)
 		}
 		u := segmentValue
 		u.SetElement((*jsonToolCollectionElementTransport)(obj))
@@ -19789,7 +23540,7 @@ func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport49(v *ToolFieldPat
 		actual, _ := v.Segment.AsElement()
 		var obj *jsonToolCollectionElementTransport
 		if actual != nil {
-			obj = encodeToolCollectionElementToToolCollectionElementTransport50(actual)
+			obj = encodeToolCollectionElementToToolCollectionElementTransport49(actual)
 		}
 		u := segmentValue
 		u.SetElement((*jsonToolCollectionElementTransport)(obj))
@@ -19841,7 +23592,7 @@ func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport50(v *ToolFieldPat
 		actual, _ := v.Segment.AsElement()
 		var obj *jsonToolCollectionElementTransport
 		if actual != nil {
-			obj = encodeToolCollectionElementToToolCollectionElementTransport51(actual)
+			obj = encodeToolCollectionElementToToolCollectionElementTransport50(actual)
 		}
 		u := segmentValue
 		u.SetElement((*jsonToolCollectionElementTransport)(obj))
@@ -19867,7 +23618,7 @@ func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport51(v *ToolFieldPat
 		actual, _ := v.Segment.AsElement()
 		var obj *jsonToolCollectionElementTransport
 		if actual != nil {
-			obj = encodeToolCollectionElementToToolCollectionElementTransport52(actual)
+			obj = encodeToolCollectionElementToToolCollectionElementTransport51(actual)
 		}
 		u := segmentValue
 		u.SetElement((*jsonToolCollectionElementTransport)(obj))
@@ -19893,7 +23644,7 @@ func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport52(v *ToolFieldPat
 		actual, _ := v.Segment.AsElement()
 		var obj *jsonToolCollectionElementTransport
 		if actual != nil {
-			obj = encodeToolCollectionElementToToolCollectionElementTransport53(actual)
+			obj = encodeToolCollectionElementToToolCollectionElementTransport52(actual)
 		}
 		u := segmentValue
 		u.SetElement((*jsonToolCollectionElementTransport)(obj))
@@ -19919,7 +23670,7 @@ func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport53(v *ToolFieldPat
 		actual, _ := v.Segment.AsElement()
 		var obj *jsonToolCollectionElementTransport
 		if actual != nil {
-			obj = encodeToolCollectionElementToToolCollectionElementTransport54(actual)
+			obj = encodeToolCollectionElementToToolCollectionElementTransport53(actual)
 		}
 		u := segmentValue
 		u.SetElement((*jsonToolCollectionElementTransport)(obj))
@@ -19945,7 +23696,7 @@ func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport54(v *ToolFieldPat
 		actual, _ := v.Segment.AsElement()
 		var obj *jsonToolCollectionElementTransport
 		if actual != nil {
-			obj = encodeToolCollectionElementToToolCollectionElementTransport55(actual)
+			obj = encodeToolCollectionElementToToolCollectionElementTransport54(actual)
 		}
 		u := segmentValue
 		u.SetElement((*jsonToolCollectionElementTransport)(obj))
@@ -19971,7 +23722,7 @@ func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport55(v *ToolFieldPat
 		actual, _ := v.Segment.AsElement()
 		var obj *jsonToolCollectionElementTransport
 		if actual != nil {
-			obj = encodeToolCollectionElementToToolCollectionElementTransport56(actual)
+			obj = encodeToolCollectionElementToToolCollectionElementTransport55(actual)
 		}
 		u := segmentValue
 		u.SetElement((*jsonToolCollectionElementTransport)(obj))
@@ -19997,7 +23748,7 @@ func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport56(v *ToolFieldPat
 		actual, _ := v.Segment.AsElement()
 		var obj *jsonToolCollectionElementTransport
 		if actual != nil {
-			obj = encodeToolCollectionElementToToolCollectionElementTransport57(actual)
+			obj = encodeToolCollectionElementToToolCollectionElementTransport56(actual)
 		}
 		u := segmentValue
 		u.SetElement((*jsonToolCollectionElementTransport)(obj))
@@ -20023,7 +23774,7 @@ func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport57(v *ToolFieldPat
 		actual, _ := v.Segment.AsElement()
 		var obj *jsonToolCollectionElementTransport
 		if actual != nil {
-			obj = encodeToolCollectionElementToToolCollectionElementTransport58(actual)
+			obj = encodeToolCollectionElementToToolCollectionElementTransport57(actual)
 		}
 		u := segmentValue
 		u.SetElement((*jsonToolCollectionElementTransport)(obj))
@@ -20049,7 +23800,7 @@ func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport58(v *ToolFieldPat
 		actual, _ := v.Segment.AsElement()
 		var obj *jsonToolCollectionElementTransport
 		if actual != nil {
-			obj = encodeToolCollectionElementToToolCollectionElementTransport59(actual)
+			obj = encodeToolCollectionElementToToolCollectionElementTransport58(actual)
 		}
 		u := segmentValue
 		u.SetElement((*jsonToolCollectionElementTransport)(obj))
@@ -20075,7 +23826,7 @@ func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport59(v *ToolFieldPat
 		actual, _ := v.Segment.AsElement()
 		var obj *jsonToolCollectionElementTransport
 		if actual != nil {
-			obj = encodeToolCollectionElementToToolCollectionElementTransport60(actual)
+			obj = encodeToolCollectionElementToToolCollectionElementTransport59(actual)
 		}
 		u := segmentValue
 		u.SetElement((*jsonToolCollectionElementTransport)(obj))
@@ -20127,7 +23878,7 @@ func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport60(v *ToolFieldPat
 		actual, _ := v.Segment.AsElement()
 		var obj *jsonToolCollectionElementTransport
 		if actual != nil {
-			obj = encodeToolCollectionElementToToolCollectionElementTransport61(actual)
+			obj = encodeToolCollectionElementToToolCollectionElementTransport60(actual)
 		}
 		u := segmentValue
 		u.SetElement((*jsonToolCollectionElementTransport)(obj))
@@ -20153,7 +23904,7 @@ func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport61(v *ToolFieldPat
 		actual, _ := v.Segment.AsElement()
 		var obj *jsonToolCollectionElementTransport
 		if actual != nil {
-			obj = encodeToolCollectionElementToToolCollectionElementTransport62(actual)
+			obj = encodeToolCollectionElementToToolCollectionElementTransport61(actual)
 		}
 		u := segmentValue
 		u.SetElement((*jsonToolCollectionElementTransport)(obj))
@@ -20179,7 +23930,7 @@ func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport62(v *ToolFieldPat
 		actual, _ := v.Segment.AsElement()
 		var obj *jsonToolCollectionElementTransport
 		if actual != nil {
-			obj = encodeToolCollectionElementToToolCollectionElementTransport63(actual)
+			obj = encodeToolCollectionElementToToolCollectionElementTransport62(actual)
 		}
 		u := segmentValue
 		u.SetElement((*jsonToolCollectionElementTransport)(obj))
@@ -20205,7 +23956,7 @@ func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport63(v *ToolFieldPat
 		actual, _ := v.Segment.AsElement()
 		var obj *jsonToolCollectionElementTransport
 		if actual != nil {
-			obj = encodeToolCollectionElementToToolCollectionElementTransport64(actual)
+			obj = encodeToolCollectionElementToToolCollectionElementTransport63(actual)
 		}
 		u := segmentValue
 		u.SetElement((*jsonToolCollectionElementTransport)(obj))
@@ -20231,7 +23982,7 @@ func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport64(v *ToolFieldPat
 		actual, _ := v.Segment.AsElement()
 		var obj *jsonToolCollectionElementTransport
 		if actual != nil {
-			obj = encodeToolCollectionElementToToolCollectionElementTransport65(actual)
+			obj = encodeToolCollectionElementToToolCollectionElementTransport64(actual)
 		}
 		u := segmentValue
 		u.SetElement((*jsonToolCollectionElementTransport)(obj))
@@ -20257,7 +24008,111 @@ func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport65(v *ToolFieldPat
 		actual, _ := v.Segment.AsElement()
 		var obj *jsonToolCollectionElementTransport
 		if actual != nil {
+			obj = encodeToolCollectionElementToToolCollectionElementTransport65(actual)
+		}
+		u := segmentValue
+		u.SetElement((*jsonToolCollectionElementTransport)(obj))
+		segmentValue = u
+	}
+	res.Segment = &segmentValue
+
+	return res
+}
+
+func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport66(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
+	res := &jsonToolFieldPathSegmentTransport{}
+	var segmentValue jsonToolFieldSegmentTransport
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+		u := segmentValue
+		u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+		segmentValue = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *jsonToolCollectionElementTransport
+		if actual != nil {
 			obj = encodeToolCollectionElementToToolCollectionElementTransport66(actual)
+		}
+		u := segmentValue
+		u.SetElement((*jsonToolCollectionElementTransport)(obj))
+		segmentValue = u
+	}
+	res.Segment = &segmentValue
+
+	return res
+}
+
+func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport67(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
+	res := &jsonToolFieldPathSegmentTransport{}
+	var segmentValue jsonToolFieldSegmentTransport
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+		u := segmentValue
+		u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+		segmentValue = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *jsonToolCollectionElementTransport
+		if actual != nil {
+			obj = encodeToolCollectionElementToToolCollectionElementTransport68(actual)
+		}
+		u := segmentValue
+		u.SetElement((*jsonToolCollectionElementTransport)(obj))
+		segmentValue = u
+	}
+	res.Segment = &segmentValue
+
+	return res
+}
+
+func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport68(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
+	res := &jsonToolFieldPathSegmentTransport{}
+	var segmentValue jsonToolFieldSegmentTransport
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+		u := segmentValue
+		u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+		segmentValue = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *jsonToolCollectionElementTransport
+		if actual != nil {
+			obj = encodeToolCollectionElementToToolCollectionElementTransport69(actual)
+		}
+		u := segmentValue
+		u.SetElement((*jsonToolCollectionElementTransport)(obj))
+		segmentValue = u
+	}
+	res.Segment = &segmentValue
+
+	return res
+}
+
+func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport69(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
+	res := &jsonToolFieldPathSegmentTransport{}
+	var segmentValue jsonToolFieldSegmentTransport
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+		u := segmentValue
+		u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+		segmentValue = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *jsonToolCollectionElementTransport
+		if actual != nil {
+			obj = encodeToolCollectionElementToToolCollectionElementTransport70(actual)
 		}
 		u := segmentValue
 		u.SetElement((*jsonToolCollectionElementTransport)(obj))
@@ -20294,6 +24149,266 @@ func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport7(v *ToolFieldPath
 	return res
 }
 
+func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport70(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
+	res := &jsonToolFieldPathSegmentTransport{}
+	var segmentValue jsonToolFieldSegmentTransport
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+		u := segmentValue
+		u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+		segmentValue = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *jsonToolCollectionElementTransport
+		if actual != nil {
+			obj = encodeToolCollectionElementToToolCollectionElementTransport71(actual)
+		}
+		u := segmentValue
+		u.SetElement((*jsonToolCollectionElementTransport)(obj))
+		segmentValue = u
+	}
+	res.Segment = &segmentValue
+
+	return res
+}
+
+func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport71(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
+	res := &jsonToolFieldPathSegmentTransport{}
+	var segmentValue jsonToolFieldSegmentTransport
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+		u := segmentValue
+		u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+		segmentValue = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *jsonToolCollectionElementTransport
+		if actual != nil {
+			obj = encodeToolCollectionElementToToolCollectionElementTransport72(actual)
+		}
+		u := segmentValue
+		u.SetElement((*jsonToolCollectionElementTransport)(obj))
+		segmentValue = u
+	}
+	res.Segment = &segmentValue
+
+	return res
+}
+
+func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport72(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
+	res := &jsonToolFieldPathSegmentTransport{}
+	var segmentValue jsonToolFieldSegmentTransport
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+		u := segmentValue
+		u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+		segmentValue = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *jsonToolCollectionElementTransport
+		if actual != nil {
+			obj = encodeToolCollectionElementToToolCollectionElementTransport73(actual)
+		}
+		u := segmentValue
+		u.SetElement((*jsonToolCollectionElementTransport)(obj))
+		segmentValue = u
+	}
+	res.Segment = &segmentValue
+
+	return res
+}
+
+func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport73(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
+	res := &jsonToolFieldPathSegmentTransport{}
+	var segmentValue jsonToolFieldSegmentTransport
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+		u := segmentValue
+		u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+		segmentValue = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *jsonToolCollectionElementTransport
+		if actual != nil {
+			obj = encodeToolCollectionElementToToolCollectionElementTransport74(actual)
+		}
+		u := segmentValue
+		u.SetElement((*jsonToolCollectionElementTransport)(obj))
+		segmentValue = u
+	}
+	res.Segment = &segmentValue
+
+	return res
+}
+
+func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport74(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
+	res := &jsonToolFieldPathSegmentTransport{}
+	var segmentValue jsonToolFieldSegmentTransport
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+		u := segmentValue
+		u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+		segmentValue = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *jsonToolCollectionElementTransport
+		if actual != nil {
+			obj = encodeToolCollectionElementToToolCollectionElementTransport75(actual)
+		}
+		u := segmentValue
+		u.SetElement((*jsonToolCollectionElementTransport)(obj))
+		segmentValue = u
+	}
+	res.Segment = &segmentValue
+
+	return res
+}
+
+func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport75(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
+	res := &jsonToolFieldPathSegmentTransport{}
+	var segmentValue jsonToolFieldSegmentTransport
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+		u := segmentValue
+		u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+		segmentValue = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *jsonToolCollectionElementTransport
+		if actual != nil {
+			obj = encodeToolCollectionElementToToolCollectionElementTransport76(actual)
+		}
+		u := segmentValue
+		u.SetElement((*jsonToolCollectionElementTransport)(obj))
+		segmentValue = u
+	}
+	res.Segment = &segmentValue
+
+	return res
+}
+
+func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport76(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
+	res := &jsonToolFieldPathSegmentTransport{}
+	var segmentValue jsonToolFieldSegmentTransport
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+		u := segmentValue
+		u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+		segmentValue = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *jsonToolCollectionElementTransport
+		if actual != nil {
+			obj = encodeToolCollectionElementToToolCollectionElementTransport77(actual)
+		}
+		u := segmentValue
+		u.SetElement((*jsonToolCollectionElementTransport)(obj))
+		segmentValue = u
+	}
+	res.Segment = &segmentValue
+
+	return res
+}
+
+func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport77(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
+	res := &jsonToolFieldPathSegmentTransport{}
+	var segmentValue jsonToolFieldSegmentTransport
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+		u := segmentValue
+		u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+		segmentValue = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *jsonToolCollectionElementTransport
+		if actual != nil {
+			obj = encodeToolCollectionElementToToolCollectionElementTransport78(actual)
+		}
+		u := segmentValue
+		u.SetElement((*jsonToolCollectionElementTransport)(obj))
+		segmentValue = u
+	}
+	res.Segment = &segmentValue
+
+	return res
+}
+
+func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport78(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
+	res := &jsonToolFieldPathSegmentTransport{}
+	var segmentValue jsonToolFieldSegmentTransport
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+		u := segmentValue
+		u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+		segmentValue = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *jsonToolCollectionElementTransport
+		if actual != nil {
+			obj = encodeToolCollectionElementToToolCollectionElementTransport79(actual)
+		}
+		u := segmentValue
+		u.SetElement((*jsonToolCollectionElementTransport)(obj))
+		segmentValue = u
+	}
+	res.Segment = &segmentValue
+
+	return res
+}
+
+func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport79(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
+	res := &jsonToolFieldPathSegmentTransport{}
+	var segmentValue jsonToolFieldSegmentTransport
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+		u := segmentValue
+		u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+		segmentValue = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *jsonToolCollectionElementTransport
+		if actual != nil {
+			obj = encodeToolCollectionElementToToolCollectionElementTransport80(actual)
+		}
+		u := segmentValue
+		u.SetElement((*jsonToolCollectionElementTransport)(obj))
+		segmentValue = u
+	}
+	res.Segment = &segmentValue
+
+	return res
+}
+
 func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport8(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
 	res := &jsonToolFieldPathSegmentTransport{}
 	var segmentValue jsonToolFieldSegmentTransport
@@ -20320,6 +24435,266 @@ func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport8(v *ToolFieldPath
 	return res
 }
 
+func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport80(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
+	res := &jsonToolFieldPathSegmentTransport{}
+	var segmentValue jsonToolFieldSegmentTransport
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+		u := segmentValue
+		u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+		segmentValue = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *jsonToolCollectionElementTransport
+		if actual != nil {
+			obj = encodeToolCollectionElementToToolCollectionElementTransport81(actual)
+		}
+		u := segmentValue
+		u.SetElement((*jsonToolCollectionElementTransport)(obj))
+		segmentValue = u
+	}
+	res.Segment = &segmentValue
+
+	return res
+}
+
+func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport81(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
+	res := &jsonToolFieldPathSegmentTransport{}
+	var segmentValue jsonToolFieldSegmentTransport
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+		u := segmentValue
+		u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+		segmentValue = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *jsonToolCollectionElementTransport
+		if actual != nil {
+			obj = encodeToolCollectionElementToToolCollectionElementTransport82(actual)
+		}
+		u := segmentValue
+		u.SetElement((*jsonToolCollectionElementTransport)(obj))
+		segmentValue = u
+	}
+	res.Segment = &segmentValue
+
+	return res
+}
+
+func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport82(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
+	res := &jsonToolFieldPathSegmentTransport{}
+	var segmentValue jsonToolFieldSegmentTransport
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+		u := segmentValue
+		u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+		segmentValue = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *jsonToolCollectionElementTransport
+		if actual != nil {
+			obj = encodeToolCollectionElementToToolCollectionElementTransport83(actual)
+		}
+		u := segmentValue
+		u.SetElement((*jsonToolCollectionElementTransport)(obj))
+		segmentValue = u
+	}
+	res.Segment = &segmentValue
+
+	return res
+}
+
+func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport83(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
+	res := &jsonToolFieldPathSegmentTransport{}
+	var segmentValue jsonToolFieldSegmentTransport
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+		u := segmentValue
+		u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+		segmentValue = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *jsonToolCollectionElementTransport
+		if actual != nil {
+			obj = encodeToolCollectionElementToToolCollectionElementTransport84(actual)
+		}
+		u := segmentValue
+		u.SetElement((*jsonToolCollectionElementTransport)(obj))
+		segmentValue = u
+	}
+	res.Segment = &segmentValue
+
+	return res
+}
+
+func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport84(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
+	res := &jsonToolFieldPathSegmentTransport{}
+	var segmentValue jsonToolFieldSegmentTransport
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+		u := segmentValue
+		u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+		segmentValue = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *jsonToolCollectionElementTransport
+		if actual != nil {
+			obj = encodeToolCollectionElementToToolCollectionElementTransport85(actual)
+		}
+		u := segmentValue
+		u.SetElement((*jsonToolCollectionElementTransport)(obj))
+		segmentValue = u
+	}
+	res.Segment = &segmentValue
+
+	return res
+}
+
+func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport85(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
+	res := &jsonToolFieldPathSegmentTransport{}
+	var segmentValue jsonToolFieldSegmentTransport
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+		u := segmentValue
+		u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+		segmentValue = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *jsonToolCollectionElementTransport
+		if actual != nil {
+			obj = encodeToolCollectionElementToToolCollectionElementTransport86(actual)
+		}
+		u := segmentValue
+		u.SetElement((*jsonToolCollectionElementTransport)(obj))
+		segmentValue = u
+	}
+	res.Segment = &segmentValue
+
+	return res
+}
+
+func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport86(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
+	res := &jsonToolFieldPathSegmentTransport{}
+	var segmentValue jsonToolFieldSegmentTransport
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+		u := segmentValue
+		u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+		segmentValue = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *jsonToolCollectionElementTransport
+		if actual != nil {
+			obj = encodeToolCollectionElementToToolCollectionElementTransport87(actual)
+		}
+		u := segmentValue
+		u.SetElement((*jsonToolCollectionElementTransport)(obj))
+		segmentValue = u
+	}
+	res.Segment = &segmentValue
+
+	return res
+}
+
+func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport87(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
+	res := &jsonToolFieldPathSegmentTransport{}
+	var segmentValue jsonToolFieldSegmentTransport
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+		u := segmentValue
+		u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+		segmentValue = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *jsonToolCollectionElementTransport
+		if actual != nil {
+			obj = encodeToolCollectionElementToToolCollectionElementTransport88(actual)
+		}
+		u := segmentValue
+		u.SetElement((*jsonToolCollectionElementTransport)(obj))
+		segmentValue = u
+	}
+	res.Segment = &segmentValue
+
+	return res
+}
+
+func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport88(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
+	res := &jsonToolFieldPathSegmentTransport{}
+	var segmentValue jsonToolFieldSegmentTransport
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+		u := segmentValue
+		u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+		segmentValue = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *jsonToolCollectionElementTransport
+		if actual != nil {
+			obj = encodeToolCollectionElementToToolCollectionElementTransport89(actual)
+		}
+		u := segmentValue
+		u.SetElement((*jsonToolCollectionElementTransport)(obj))
+		segmentValue = u
+	}
+	res.Segment = &segmentValue
+
+	return res
+}
+
+func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport89(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
+	res := &jsonToolFieldPathSegmentTransport{}
+	var segmentValue jsonToolFieldSegmentTransport
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+		u := segmentValue
+		u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+		segmentValue = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *jsonToolCollectionElementTransport
+		if actual != nil {
+			obj = encodeToolCollectionElementToToolCollectionElementTransport90(actual)
+		}
+		u := segmentValue
+		u.SetElement((*jsonToolCollectionElementTransport)(obj))
+		segmentValue = u
+	}
+	res.Segment = &segmentValue
+
+	return res
+}
+
 func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport9(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
 	res := &jsonToolFieldPathSegmentTransport{}
 	var segmentValue jsonToolFieldSegmentTransport
@@ -20336,6 +24711,266 @@ func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport9(v *ToolFieldPath
 		var obj *jsonToolCollectionElementTransport
 		if actual != nil {
 			obj = encodeToolCollectionElementToToolCollectionElementTransport9(actual)
+		}
+		u := segmentValue
+		u.SetElement((*jsonToolCollectionElementTransport)(obj))
+		segmentValue = u
+	}
+	res.Segment = &segmentValue
+
+	return res
+}
+
+func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport90(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
+	res := &jsonToolFieldPathSegmentTransport{}
+	var segmentValue jsonToolFieldSegmentTransport
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+		u := segmentValue
+		u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+		segmentValue = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *jsonToolCollectionElementTransport
+		if actual != nil {
+			obj = encodeToolCollectionElementToToolCollectionElementTransport91(actual)
+		}
+		u := segmentValue
+		u.SetElement((*jsonToolCollectionElementTransport)(obj))
+		segmentValue = u
+	}
+	res.Segment = &segmentValue
+
+	return res
+}
+
+func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport91(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
+	res := &jsonToolFieldPathSegmentTransport{}
+	var segmentValue jsonToolFieldSegmentTransport
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+		u := segmentValue
+		u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+		segmentValue = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *jsonToolCollectionElementTransport
+		if actual != nil {
+			obj = encodeToolCollectionElementToToolCollectionElementTransport92(actual)
+		}
+		u := segmentValue
+		u.SetElement((*jsonToolCollectionElementTransport)(obj))
+		segmentValue = u
+	}
+	res.Segment = &segmentValue
+
+	return res
+}
+
+func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport92(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
+	res := &jsonToolFieldPathSegmentTransport{}
+	var segmentValue jsonToolFieldSegmentTransport
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+		u := segmentValue
+		u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+		segmentValue = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *jsonToolCollectionElementTransport
+		if actual != nil {
+			obj = encodeToolCollectionElementToToolCollectionElementTransport93(actual)
+		}
+		u := segmentValue
+		u.SetElement((*jsonToolCollectionElementTransport)(obj))
+		segmentValue = u
+	}
+	res.Segment = &segmentValue
+
+	return res
+}
+
+func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport93(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
+	res := &jsonToolFieldPathSegmentTransport{}
+	var segmentValue jsonToolFieldSegmentTransport
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+		u := segmentValue
+		u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+		segmentValue = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *jsonToolCollectionElementTransport
+		if actual != nil {
+			obj = encodeToolCollectionElementToToolCollectionElementTransport94(actual)
+		}
+		u := segmentValue
+		u.SetElement((*jsonToolCollectionElementTransport)(obj))
+		segmentValue = u
+	}
+	res.Segment = &segmentValue
+
+	return res
+}
+
+func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport94(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
+	res := &jsonToolFieldPathSegmentTransport{}
+	var segmentValue jsonToolFieldSegmentTransport
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+		u := segmentValue
+		u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+		segmentValue = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *jsonToolCollectionElementTransport
+		if actual != nil {
+			obj = encodeToolCollectionElementToToolCollectionElementTransport95(actual)
+		}
+		u := segmentValue
+		u.SetElement((*jsonToolCollectionElementTransport)(obj))
+		segmentValue = u
+	}
+	res.Segment = &segmentValue
+
+	return res
+}
+
+func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport95(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
+	res := &jsonToolFieldPathSegmentTransport{}
+	var segmentValue jsonToolFieldSegmentTransport
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+		u := segmentValue
+		u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+		segmentValue = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *jsonToolCollectionElementTransport
+		if actual != nil {
+			obj = encodeToolCollectionElementToToolCollectionElementTransport96(actual)
+		}
+		u := segmentValue
+		u.SetElement((*jsonToolCollectionElementTransport)(obj))
+		segmentValue = u
+	}
+	res.Segment = &segmentValue
+
+	return res
+}
+
+func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport96(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
+	res := &jsonToolFieldPathSegmentTransport{}
+	var segmentValue jsonToolFieldSegmentTransport
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+		u := segmentValue
+		u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+		segmentValue = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *jsonToolCollectionElementTransport
+		if actual != nil {
+			obj = encodeToolCollectionElementToToolCollectionElementTransport97(actual)
+		}
+		u := segmentValue
+		u.SetElement((*jsonToolCollectionElementTransport)(obj))
+		segmentValue = u
+	}
+	res.Segment = &segmentValue
+
+	return res
+}
+
+func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport97(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
+	res := &jsonToolFieldPathSegmentTransport{}
+	var segmentValue jsonToolFieldSegmentTransport
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+		u := segmentValue
+		u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+		segmentValue = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *jsonToolCollectionElementTransport
+		if actual != nil {
+			obj = encodeToolCollectionElementToToolCollectionElementTransport98(actual)
+		}
+		u := segmentValue
+		u.SetElement((*jsonToolCollectionElementTransport)(obj))
+		segmentValue = u
+	}
+	res.Segment = &segmentValue
+
+	return res
+}
+
+func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport98(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
+	res := &jsonToolFieldPathSegmentTransport{}
+	var segmentValue jsonToolFieldSegmentTransport
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+		u := segmentValue
+		u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+		segmentValue = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *jsonToolCollectionElementTransport
+		if actual != nil {
+			obj = encodeToolCollectionElementToToolCollectionElementTransport99(actual)
+		}
+		u := segmentValue
+		u.SetElement((*jsonToolCollectionElementTransport)(obj))
+		segmentValue = u
+	}
+	res.Segment = &segmentValue
+
+	return res
+}
+
+func encodeToolFieldPathSegmentToToolFieldPathSegmentTransport99(v *ToolFieldPathSegment) *jsonToolFieldPathSegmentTransport {
+	res := &jsonToolFieldPathSegmentTransport{}
+	var segmentValue jsonToolFieldSegmentTransport
+	switch string(v.Segment.Kind()) {
+	case "field":
+		actual, _ := v.Segment.AsField()
+		obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+		u := segmentValue
+		u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+		segmentValue = u
+	case "element":
+		actual, _ := v.Segment.AsElement()
+		var obj *jsonToolCollectionElementTransport
+		if actual != nil {
+			obj = encodeToolCollectionElementToToolCollectionElementTransport100(actual)
 		}
 		u := segmentValue
 		u.SetElement((*jsonToolCollectionElementTransport)(obj))
@@ -21141,6 +25776,534 @@ func encodeToolServerDataToToolServerDataTransport7(v *ToolServerData) *jsonTool
 	return res
 }
 
+func encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport(v *ToolTaggedUnionBranch) *jsonToolTaggedUnionBranchTransport {
+	res := &jsonToolTaggedUnionBranchTransport{
+		Value: &v.Value,
+	}
+	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport2(val)
+	}
+
+	return res
+}
+
+func encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport10(v *ToolTaggedUnionBranch) *jsonToolTaggedUnionBranchTransport {
+	res := &jsonToolTaggedUnionBranchTransport{
+		Value: &v.Value,
+	}
+	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport29(val)
+	}
+
+	return res
+}
+
+func encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport11(v *ToolTaggedUnionBranch) *jsonToolTaggedUnionBranchTransport {
+	res := &jsonToolTaggedUnionBranchTransport{
+		Value: &v.Value,
+	}
+	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport32(val)
+	}
+
+	return res
+}
+
+func encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport12(v *ToolTaggedUnionBranch) *jsonToolTaggedUnionBranchTransport {
+	res := &jsonToolTaggedUnionBranchTransport{
+		Value: &v.Value,
+	}
+	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport35(val)
+	}
+
+	return res
+}
+
+func encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport13(v *ToolTaggedUnionBranch) *jsonToolTaggedUnionBranchTransport {
+	res := &jsonToolTaggedUnionBranchTransport{
+		Value: &v.Value,
+	}
+	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport38(val)
+	}
+
+	return res
+}
+
+func encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport14(v *ToolTaggedUnionBranch) *jsonToolTaggedUnionBranchTransport {
+	res := &jsonToolTaggedUnionBranchTransport{
+		Value: &v.Value,
+	}
+	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport41(val)
+	}
+
+	return res
+}
+
+func encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport15(v *ToolTaggedUnionBranch) *jsonToolTaggedUnionBranchTransport {
+	res := &jsonToolTaggedUnionBranchTransport{
+		Value: &v.Value,
+	}
+	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport44(val)
+	}
+
+	return res
+}
+
+func encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport16(v *ToolTaggedUnionBranch) *jsonToolTaggedUnionBranchTransport {
+	res := &jsonToolTaggedUnionBranchTransport{
+		Value: &v.Value,
+	}
+	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport47(val)
+	}
+
+	return res
+}
+
+func encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport17(v *ToolTaggedUnionBranch) *jsonToolTaggedUnionBranchTransport {
+	res := &jsonToolTaggedUnionBranchTransport{
+		Value: &v.Value,
+	}
+	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport50(val)
+	}
+
+	return res
+}
+
+func encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport18(v *ToolTaggedUnionBranch) *jsonToolTaggedUnionBranchTransport {
+	res := &jsonToolTaggedUnionBranchTransport{
+		Value: &v.Value,
+	}
+	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport53(val)
+	}
+
+	return res
+}
+
+func encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport19(v *ToolTaggedUnionBranch) *jsonToolTaggedUnionBranchTransport {
+	res := &jsonToolTaggedUnionBranchTransport{
+		Value: &v.Value,
+	}
+	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport56(val)
+	}
+
+	return res
+}
+
+func encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport2(v *ToolTaggedUnionBranch) *jsonToolTaggedUnionBranchTransport {
+	res := &jsonToolTaggedUnionBranchTransport{
+		Value: &v.Value,
+	}
+	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport5(val)
+	}
+
+	return res
+}
+
+func encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport20(v *ToolTaggedUnionBranch) *jsonToolTaggedUnionBranchTransport {
+	res := &jsonToolTaggedUnionBranchTransport{
+		Value: &v.Value,
+	}
+	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport59(val)
+	}
+
+	return res
+}
+
+func encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport21(v *ToolTaggedUnionBranch) *jsonToolTaggedUnionBranchTransport {
+	res := &jsonToolTaggedUnionBranchTransport{
+		Value: &v.Value,
+	}
+	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport62(val)
+	}
+
+	return res
+}
+
+func encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport22(v *ToolTaggedUnionBranch) *jsonToolTaggedUnionBranchTransport {
+	res := &jsonToolTaggedUnionBranchTransport{
+		Value: &v.Value,
+	}
+	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport65(val)
+	}
+
+	return res
+}
+
+func encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport23(v *ToolTaggedUnionBranch) *jsonToolTaggedUnionBranchTransport {
+	res := &jsonToolTaggedUnionBranchTransport{
+		Value: &v.Value,
+	}
+	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport68(val)
+	}
+
+	return res
+}
+
+func encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport24(v *ToolTaggedUnionBranch) *jsonToolTaggedUnionBranchTransport {
+	res := &jsonToolTaggedUnionBranchTransport{
+		Value: &v.Value,
+	}
+	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport71(val)
+	}
+
+	return res
+}
+
+func encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport25(v *ToolTaggedUnionBranch) *jsonToolTaggedUnionBranchTransport {
+	res := &jsonToolTaggedUnionBranchTransport{
+		Value: &v.Value,
+	}
+	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport74(val)
+	}
+
+	return res
+}
+
+func encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport26(v *ToolTaggedUnionBranch) *jsonToolTaggedUnionBranchTransport {
+	res := &jsonToolTaggedUnionBranchTransport{
+		Value: &v.Value,
+	}
+	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport77(val)
+	}
+
+	return res
+}
+
+func encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport27(v *ToolTaggedUnionBranch) *jsonToolTaggedUnionBranchTransport {
+	res := &jsonToolTaggedUnionBranchTransport{
+		Value: &v.Value,
+	}
+	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport80(val)
+	}
+
+	return res
+}
+
+func encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport28(v *ToolTaggedUnionBranch) *jsonToolTaggedUnionBranchTransport {
+	res := &jsonToolTaggedUnionBranchTransport{
+		Value: &v.Value,
+	}
+	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport84(val)
+	}
+
+	return res
+}
+
+func encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport29(v *ToolTaggedUnionBranch) *jsonToolTaggedUnionBranchTransport {
+	res := &jsonToolTaggedUnionBranchTransport{
+		Value: &v.Value,
+	}
+	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport86(val)
+	}
+
+	return res
+}
+
+func encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport3(v *ToolTaggedUnionBranch) *jsonToolTaggedUnionBranchTransport {
+	res := &jsonToolTaggedUnionBranchTransport{
+		Value: &v.Value,
+	}
+	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport8(val)
+	}
+
+	return res
+}
+
+func encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport30(v *ToolTaggedUnionBranch) *jsonToolTaggedUnionBranchTransport {
+	res := &jsonToolTaggedUnionBranchTransport{
+		Value: &v.Value,
+	}
+	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport90(val)
+	}
+
+	return res
+}
+
+func encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport31(v *ToolTaggedUnionBranch) *jsonToolTaggedUnionBranchTransport {
+	res := &jsonToolTaggedUnionBranchTransport{
+		Value: &v.Value,
+	}
+	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport93(val)
+	}
+
+	return res
+}
+
+func encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport32(v *ToolTaggedUnionBranch) *jsonToolTaggedUnionBranchTransport {
+	res := &jsonToolTaggedUnionBranchTransport{
+		Value: &v.Value,
+	}
+	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport96(val)
+	}
+
+	return res
+}
+
+func encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport33(v *ToolTaggedUnionBranch) *jsonToolTaggedUnionBranchTransport {
+	res := &jsonToolTaggedUnionBranchTransport{
+		Value: &v.Value,
+	}
+	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport99(val)
+	}
+
+	return res
+}
+
+func encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport4(v *ToolTaggedUnionBranch) *jsonToolTaggedUnionBranchTransport {
+	res := &jsonToolTaggedUnionBranchTransport{
+		Value: &v.Value,
+	}
+	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport11(val)
+	}
+
+	return res
+}
+
+func encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport5(v *ToolTaggedUnionBranch) *jsonToolTaggedUnionBranchTransport {
+	res := &jsonToolTaggedUnionBranchTransport{
+		Value: &v.Value,
+	}
+	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport14(val)
+	}
+
+	return res
+}
+
+func encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport6(v *ToolTaggedUnionBranch) *jsonToolTaggedUnionBranchTransport {
+	res := &jsonToolTaggedUnionBranchTransport{
+		Value: &v.Value,
+	}
+	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport17(val)
+	}
+
+	return res
+}
+
+func encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport7(v *ToolTaggedUnionBranch) *jsonToolTaggedUnionBranchTransport {
+	res := &jsonToolTaggedUnionBranchTransport{
+		Value: &v.Value,
+	}
+	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport20(val)
+	}
+
+	return res
+}
+
+func encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport8(v *ToolTaggedUnionBranch) *jsonToolTaggedUnionBranchTransport {
+	res := &jsonToolTaggedUnionBranchTransport{
+		Value: &v.Value,
+	}
+	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport23(val)
+	}
+
+	return res
+}
+
+func encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport9(v *ToolTaggedUnionBranch) *jsonToolTaggedUnionBranchTransport {
+	res := &jsonToolTaggedUnionBranchTransport{
+		Value: &v.Value,
+	}
+	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
+	for i, val := range v.Discriminator {
+		if val == nil {
+			res.Discriminator[i] = nil
+			continue
+		}
+		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport26(val)
+	}
+
+	return res
+}
+
 func encodeToolTypeMetadataToToolTypeMetadataTransport(v *ToolTypeMetadata) *jsonToolTypeMetadataTransport {
 	res := &jsonToolTypeMetadataTransport{
 		Name:                     v.Name,
@@ -21742,512 +26905,1556 @@ func encodeToolTypeMetadataToToolTypeMetadataTransport9(v *ToolTypeMetadata) *js
 }
 
 func encodeToolUnionBranchToToolUnionBranchTransport(v *ToolUnionBranch) *jsonToolUnionBranchTransport {
-	res := &jsonToolUnionBranchTransport{
-		Value: &v.Value,
-	}
-	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &jsonToolUnionBranchTransport{}
+	var selectionValue jsonToolUnionSelectionTransport
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *jsonToolTaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport(actual)
 		}
-		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport2(val)
+		u := selectionValue
+		u.SetTagged((*jsonToolTaggedUnionBranchTransport)(obj))
+		selectionValue = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *jsonToolUntaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport(actual)
+		}
+		u := selectionValue
+		u.SetUntagged((*jsonToolUntaggedUnionBranchTransport)(obj))
+		selectionValue = u
 	}
+	res.Selection = &selectionValue
 
 	return res
 }
 
 func encodeToolUnionBranchToToolUnionBranchTransport10(v *ToolUnionBranch) *jsonToolUnionBranchTransport {
-	res := &jsonToolUnionBranchTransport{
-		Value: &v.Value,
-	}
-	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &jsonToolUnionBranchTransport{}
+	var selectionValue jsonToolUnionSelectionTransport
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *jsonToolTaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport10(actual)
 		}
-		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport20(val)
+		u := selectionValue
+		u.SetTagged((*jsonToolTaggedUnionBranchTransport)(obj))
+		selectionValue = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *jsonToolUntaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport10(actual)
+		}
+		u := selectionValue
+		u.SetUntagged((*jsonToolUntaggedUnionBranchTransport)(obj))
+		selectionValue = u
 	}
+	res.Selection = &selectionValue
 
 	return res
 }
 
 func encodeToolUnionBranchToToolUnionBranchTransport11(v *ToolUnionBranch) *jsonToolUnionBranchTransport {
-	res := &jsonToolUnionBranchTransport{
-		Value: &v.Value,
-	}
-	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &jsonToolUnionBranchTransport{}
+	var selectionValue jsonToolUnionSelectionTransport
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *jsonToolTaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport11(actual)
 		}
-		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport22(val)
+		u := selectionValue
+		u.SetTagged((*jsonToolTaggedUnionBranchTransport)(obj))
+		selectionValue = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *jsonToolUntaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport11(actual)
+		}
+		u := selectionValue
+		u.SetUntagged((*jsonToolUntaggedUnionBranchTransport)(obj))
+		selectionValue = u
 	}
+	res.Selection = &selectionValue
 
 	return res
 }
 
 func encodeToolUnionBranchToToolUnionBranchTransport12(v *ToolUnionBranch) *jsonToolUnionBranchTransport {
-	res := &jsonToolUnionBranchTransport{
-		Value: &v.Value,
-	}
-	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &jsonToolUnionBranchTransport{}
+	var selectionValue jsonToolUnionSelectionTransport
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *jsonToolTaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport12(actual)
 		}
-		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport24(val)
+		u := selectionValue
+		u.SetTagged((*jsonToolTaggedUnionBranchTransport)(obj))
+		selectionValue = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *jsonToolUntaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport12(actual)
+		}
+		u := selectionValue
+		u.SetUntagged((*jsonToolUntaggedUnionBranchTransport)(obj))
+		selectionValue = u
 	}
+	res.Selection = &selectionValue
 
 	return res
 }
 
 func encodeToolUnionBranchToToolUnionBranchTransport13(v *ToolUnionBranch) *jsonToolUnionBranchTransport {
-	res := &jsonToolUnionBranchTransport{
-		Value: &v.Value,
-	}
-	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &jsonToolUnionBranchTransport{}
+	var selectionValue jsonToolUnionSelectionTransport
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *jsonToolTaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport13(actual)
 		}
-		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport26(val)
+		u := selectionValue
+		u.SetTagged((*jsonToolTaggedUnionBranchTransport)(obj))
+		selectionValue = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *jsonToolUntaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport13(actual)
+		}
+		u := selectionValue
+		u.SetUntagged((*jsonToolUntaggedUnionBranchTransport)(obj))
+		selectionValue = u
 	}
+	res.Selection = &selectionValue
 
 	return res
 }
 
 func encodeToolUnionBranchToToolUnionBranchTransport14(v *ToolUnionBranch) *jsonToolUnionBranchTransport {
-	res := &jsonToolUnionBranchTransport{
-		Value: &v.Value,
-	}
-	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &jsonToolUnionBranchTransport{}
+	var selectionValue jsonToolUnionSelectionTransport
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *jsonToolTaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport14(actual)
 		}
-		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport28(val)
+		u := selectionValue
+		u.SetTagged((*jsonToolTaggedUnionBranchTransport)(obj))
+		selectionValue = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *jsonToolUntaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport14(actual)
+		}
+		u := selectionValue
+		u.SetUntagged((*jsonToolUntaggedUnionBranchTransport)(obj))
+		selectionValue = u
 	}
+	res.Selection = &selectionValue
 
 	return res
 }
 
 func encodeToolUnionBranchToToolUnionBranchTransport15(v *ToolUnionBranch) *jsonToolUnionBranchTransport {
-	res := &jsonToolUnionBranchTransport{
-		Value: &v.Value,
-	}
-	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &jsonToolUnionBranchTransport{}
+	var selectionValue jsonToolUnionSelectionTransport
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *jsonToolTaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport15(actual)
 		}
-		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport30(val)
+		u := selectionValue
+		u.SetTagged((*jsonToolTaggedUnionBranchTransport)(obj))
+		selectionValue = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *jsonToolUntaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport15(actual)
+		}
+		u := selectionValue
+		u.SetUntagged((*jsonToolUntaggedUnionBranchTransport)(obj))
+		selectionValue = u
 	}
+	res.Selection = &selectionValue
 
 	return res
 }
 
 func encodeToolUnionBranchToToolUnionBranchTransport16(v *ToolUnionBranch) *jsonToolUnionBranchTransport {
-	res := &jsonToolUnionBranchTransport{
-		Value: &v.Value,
-	}
-	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &jsonToolUnionBranchTransport{}
+	var selectionValue jsonToolUnionSelectionTransport
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *jsonToolTaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport16(actual)
 		}
-		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport32(val)
+		u := selectionValue
+		u.SetTagged((*jsonToolTaggedUnionBranchTransport)(obj))
+		selectionValue = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *jsonToolUntaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport16(actual)
+		}
+		u := selectionValue
+		u.SetUntagged((*jsonToolUntaggedUnionBranchTransport)(obj))
+		selectionValue = u
 	}
+	res.Selection = &selectionValue
 
 	return res
 }
 
 func encodeToolUnionBranchToToolUnionBranchTransport17(v *ToolUnionBranch) *jsonToolUnionBranchTransport {
-	res := &jsonToolUnionBranchTransport{
-		Value: &v.Value,
-	}
-	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &jsonToolUnionBranchTransport{}
+	var selectionValue jsonToolUnionSelectionTransport
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *jsonToolTaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport17(actual)
 		}
-		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport34(val)
+		u := selectionValue
+		u.SetTagged((*jsonToolTaggedUnionBranchTransport)(obj))
+		selectionValue = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *jsonToolUntaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport17(actual)
+		}
+		u := selectionValue
+		u.SetUntagged((*jsonToolUntaggedUnionBranchTransport)(obj))
+		selectionValue = u
 	}
+	res.Selection = &selectionValue
 
 	return res
 }
 
 func encodeToolUnionBranchToToolUnionBranchTransport18(v *ToolUnionBranch) *jsonToolUnionBranchTransport {
-	res := &jsonToolUnionBranchTransport{
-		Value: &v.Value,
-	}
-	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &jsonToolUnionBranchTransport{}
+	var selectionValue jsonToolUnionSelectionTransport
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *jsonToolTaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport18(actual)
 		}
-		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport36(val)
+		u := selectionValue
+		u.SetTagged((*jsonToolTaggedUnionBranchTransport)(obj))
+		selectionValue = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *jsonToolUntaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport18(actual)
+		}
+		u := selectionValue
+		u.SetUntagged((*jsonToolUntaggedUnionBranchTransport)(obj))
+		selectionValue = u
 	}
+	res.Selection = &selectionValue
 
 	return res
 }
 
 func encodeToolUnionBranchToToolUnionBranchTransport19(v *ToolUnionBranch) *jsonToolUnionBranchTransport {
-	res := &jsonToolUnionBranchTransport{
-		Value: &v.Value,
-	}
-	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &jsonToolUnionBranchTransport{}
+	var selectionValue jsonToolUnionSelectionTransport
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *jsonToolTaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport19(actual)
 		}
-		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport38(val)
+		u := selectionValue
+		u.SetTagged((*jsonToolTaggedUnionBranchTransport)(obj))
+		selectionValue = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *jsonToolUntaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport19(actual)
+		}
+		u := selectionValue
+		u.SetUntagged((*jsonToolUntaggedUnionBranchTransport)(obj))
+		selectionValue = u
 	}
+	res.Selection = &selectionValue
 
 	return res
 }
 
 func encodeToolUnionBranchToToolUnionBranchTransport2(v *ToolUnionBranch) *jsonToolUnionBranchTransport {
-	res := &jsonToolUnionBranchTransport{
-		Value: &v.Value,
-	}
-	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &jsonToolUnionBranchTransport{}
+	var selectionValue jsonToolUnionSelectionTransport
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *jsonToolTaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport2(actual)
 		}
-		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport4(val)
+		u := selectionValue
+		u.SetTagged((*jsonToolTaggedUnionBranchTransport)(obj))
+		selectionValue = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *jsonToolUntaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport2(actual)
+		}
+		u := selectionValue
+		u.SetUntagged((*jsonToolUntaggedUnionBranchTransport)(obj))
+		selectionValue = u
 	}
+	res.Selection = &selectionValue
 
 	return res
 }
 
 func encodeToolUnionBranchToToolUnionBranchTransport20(v *ToolUnionBranch) *jsonToolUnionBranchTransport {
-	res := &jsonToolUnionBranchTransport{
-		Value: &v.Value,
-	}
-	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &jsonToolUnionBranchTransport{}
+	var selectionValue jsonToolUnionSelectionTransport
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *jsonToolTaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport20(actual)
 		}
-		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport40(val)
+		u := selectionValue
+		u.SetTagged((*jsonToolTaggedUnionBranchTransport)(obj))
+		selectionValue = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *jsonToolUntaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport20(actual)
+		}
+		u := selectionValue
+		u.SetUntagged((*jsonToolUntaggedUnionBranchTransport)(obj))
+		selectionValue = u
 	}
+	res.Selection = &selectionValue
 
 	return res
 }
 
 func encodeToolUnionBranchToToolUnionBranchTransport21(v *ToolUnionBranch) *jsonToolUnionBranchTransport {
-	res := &jsonToolUnionBranchTransport{
-		Value: &v.Value,
-	}
-	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &jsonToolUnionBranchTransport{}
+	var selectionValue jsonToolUnionSelectionTransport
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *jsonToolTaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport21(actual)
 		}
-		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport42(val)
+		u := selectionValue
+		u.SetTagged((*jsonToolTaggedUnionBranchTransport)(obj))
+		selectionValue = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *jsonToolUntaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport21(actual)
+		}
+		u := selectionValue
+		u.SetUntagged((*jsonToolUntaggedUnionBranchTransport)(obj))
+		selectionValue = u
 	}
+	res.Selection = &selectionValue
 
 	return res
 }
 
 func encodeToolUnionBranchToToolUnionBranchTransport22(v *ToolUnionBranch) *jsonToolUnionBranchTransport {
-	res := &jsonToolUnionBranchTransport{
-		Value: &v.Value,
-	}
-	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &jsonToolUnionBranchTransport{}
+	var selectionValue jsonToolUnionSelectionTransport
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *jsonToolTaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport22(actual)
 		}
-		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport44(val)
+		u := selectionValue
+		u.SetTagged((*jsonToolTaggedUnionBranchTransport)(obj))
+		selectionValue = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *jsonToolUntaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport22(actual)
+		}
+		u := selectionValue
+		u.SetUntagged((*jsonToolUntaggedUnionBranchTransport)(obj))
+		selectionValue = u
 	}
+	res.Selection = &selectionValue
 
 	return res
 }
 
 func encodeToolUnionBranchToToolUnionBranchTransport23(v *ToolUnionBranch) *jsonToolUnionBranchTransport {
-	res := &jsonToolUnionBranchTransport{
-		Value: &v.Value,
-	}
-	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &jsonToolUnionBranchTransport{}
+	var selectionValue jsonToolUnionSelectionTransport
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *jsonToolTaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport23(actual)
 		}
-		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport46(val)
+		u := selectionValue
+		u.SetTagged((*jsonToolTaggedUnionBranchTransport)(obj))
+		selectionValue = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *jsonToolUntaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport23(actual)
+		}
+		u := selectionValue
+		u.SetUntagged((*jsonToolUntaggedUnionBranchTransport)(obj))
+		selectionValue = u
 	}
+	res.Selection = &selectionValue
 
 	return res
 }
 
 func encodeToolUnionBranchToToolUnionBranchTransport24(v *ToolUnionBranch) *jsonToolUnionBranchTransport {
-	res := &jsonToolUnionBranchTransport{
-		Value: &v.Value,
-	}
-	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &jsonToolUnionBranchTransport{}
+	var selectionValue jsonToolUnionSelectionTransport
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *jsonToolTaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport24(actual)
 		}
-		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport48(val)
+		u := selectionValue
+		u.SetTagged((*jsonToolTaggedUnionBranchTransport)(obj))
+		selectionValue = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *jsonToolUntaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport24(actual)
+		}
+		u := selectionValue
+		u.SetUntagged((*jsonToolUntaggedUnionBranchTransport)(obj))
+		selectionValue = u
 	}
+	res.Selection = &selectionValue
 
 	return res
 }
 
 func encodeToolUnionBranchToToolUnionBranchTransport25(v *ToolUnionBranch) *jsonToolUnionBranchTransport {
-	res := &jsonToolUnionBranchTransport{
-		Value: &v.Value,
-	}
-	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &jsonToolUnionBranchTransport{}
+	var selectionValue jsonToolUnionSelectionTransport
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *jsonToolTaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport25(actual)
 		}
-		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport50(val)
+		u := selectionValue
+		u.SetTagged((*jsonToolTaggedUnionBranchTransport)(obj))
+		selectionValue = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *jsonToolUntaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport25(actual)
+		}
+		u := selectionValue
+		u.SetUntagged((*jsonToolUntaggedUnionBranchTransport)(obj))
+		selectionValue = u
 	}
+	res.Selection = &selectionValue
 
 	return res
 }
 
 func encodeToolUnionBranchToToolUnionBranchTransport26(v *ToolUnionBranch) *jsonToolUnionBranchTransport {
-	res := &jsonToolUnionBranchTransport{
-		Value: &v.Value,
-	}
-	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &jsonToolUnionBranchTransport{}
+	var selectionValue jsonToolUnionSelectionTransport
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *jsonToolTaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport26(actual)
 		}
-		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport52(val)
+		u := selectionValue
+		u.SetTagged((*jsonToolTaggedUnionBranchTransport)(obj))
+		selectionValue = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *jsonToolUntaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport26(actual)
+		}
+		u := selectionValue
+		u.SetUntagged((*jsonToolUntaggedUnionBranchTransport)(obj))
+		selectionValue = u
 	}
+	res.Selection = &selectionValue
 
 	return res
 }
 
 func encodeToolUnionBranchToToolUnionBranchTransport27(v *ToolUnionBranch) *jsonToolUnionBranchTransport {
-	res := &jsonToolUnionBranchTransport{
-		Value: &v.Value,
-	}
-	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &jsonToolUnionBranchTransport{}
+	var selectionValue jsonToolUnionSelectionTransport
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *jsonToolTaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport27(actual)
 		}
-		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport54(val)
+		u := selectionValue
+		u.SetTagged((*jsonToolTaggedUnionBranchTransport)(obj))
+		selectionValue = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *jsonToolUntaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport27(actual)
+		}
+		u := selectionValue
+		u.SetUntagged((*jsonToolUntaggedUnionBranchTransport)(obj))
+		selectionValue = u
 	}
+	res.Selection = &selectionValue
 
 	return res
 }
 
 func encodeToolUnionBranchToToolUnionBranchTransport28(v *ToolUnionBranch) *jsonToolUnionBranchTransport {
-	res := &jsonToolUnionBranchTransport{
-		Value: &v.Value,
-	}
-	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &jsonToolUnionBranchTransport{}
+	var selectionValue jsonToolUnionSelectionTransport
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *jsonToolTaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport28(actual)
 		}
-		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport56(val)
+		u := selectionValue
+		u.SetTagged((*jsonToolTaggedUnionBranchTransport)(obj))
+		selectionValue = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *jsonToolUntaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport28(actual)
+		}
+		u := selectionValue
+		u.SetUntagged((*jsonToolUntaggedUnionBranchTransport)(obj))
+		selectionValue = u
 	}
+	res.Selection = &selectionValue
 
 	return res
 }
 
 func encodeToolUnionBranchToToolUnionBranchTransport29(v *ToolUnionBranch) *jsonToolUnionBranchTransport {
-	res := &jsonToolUnionBranchTransport{
-		Value: &v.Value,
-	}
-	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &jsonToolUnionBranchTransport{}
+	var selectionValue jsonToolUnionSelectionTransport
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *jsonToolTaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport30(actual)
 		}
-		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport59(val)
+		u := selectionValue
+		u.SetTagged((*jsonToolTaggedUnionBranchTransport)(obj))
+		selectionValue = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *jsonToolUntaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport30(actual)
+		}
+		u := selectionValue
+		u.SetUntagged((*jsonToolUntaggedUnionBranchTransport)(obj))
+		selectionValue = u
 	}
+	res.Selection = &selectionValue
 
 	return res
 }
 
 func encodeToolUnionBranchToToolUnionBranchTransport3(v *ToolUnionBranch) *jsonToolUnionBranchTransport {
-	res := &jsonToolUnionBranchTransport{
-		Value: &v.Value,
-	}
-	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &jsonToolUnionBranchTransport{}
+	var selectionValue jsonToolUnionSelectionTransport
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *jsonToolTaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport3(actual)
 		}
-		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport6(val)
+		u := selectionValue
+		u.SetTagged((*jsonToolTaggedUnionBranchTransport)(obj))
+		selectionValue = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *jsonToolUntaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport3(actual)
+		}
+		u := selectionValue
+		u.SetUntagged((*jsonToolUntaggedUnionBranchTransport)(obj))
+		selectionValue = u
 	}
+	res.Selection = &selectionValue
 
 	return res
 }
 
 func encodeToolUnionBranchToToolUnionBranchTransport30(v *ToolUnionBranch) *jsonToolUnionBranchTransport {
-	res := &jsonToolUnionBranchTransport{
-		Value: &v.Value,
-	}
-	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &jsonToolUnionBranchTransport{}
+	var selectionValue jsonToolUnionSelectionTransport
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *jsonToolTaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport31(actual)
 		}
-		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport61(val)
+		u := selectionValue
+		u.SetTagged((*jsonToolTaggedUnionBranchTransport)(obj))
+		selectionValue = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *jsonToolUntaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport31(actual)
+		}
+		u := selectionValue
+		u.SetUntagged((*jsonToolUntaggedUnionBranchTransport)(obj))
+		selectionValue = u
 	}
+	res.Selection = &selectionValue
 
 	return res
 }
 
 func encodeToolUnionBranchToToolUnionBranchTransport31(v *ToolUnionBranch) *jsonToolUnionBranchTransport {
-	res := &jsonToolUnionBranchTransport{
-		Value: &v.Value,
-	}
-	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &jsonToolUnionBranchTransport{}
+	var selectionValue jsonToolUnionSelectionTransport
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *jsonToolTaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport32(actual)
 		}
-		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport63(val)
+		u := selectionValue
+		u.SetTagged((*jsonToolTaggedUnionBranchTransport)(obj))
+		selectionValue = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *jsonToolUntaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport32(actual)
+		}
+		u := selectionValue
+		u.SetUntagged((*jsonToolUntaggedUnionBranchTransport)(obj))
+		selectionValue = u
 	}
+	res.Selection = &selectionValue
 
 	return res
 }
 
 func encodeToolUnionBranchToToolUnionBranchTransport32(v *ToolUnionBranch) *jsonToolUnionBranchTransport {
-	res := &jsonToolUnionBranchTransport{
-		Value: &v.Value,
-	}
-	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &jsonToolUnionBranchTransport{}
+	var selectionValue jsonToolUnionSelectionTransport
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *jsonToolTaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport33(actual)
 		}
-		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport65(val)
+		u := selectionValue
+		u.SetTagged((*jsonToolTaggedUnionBranchTransport)(obj))
+		selectionValue = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *jsonToolUntaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport33(actual)
+		}
+		u := selectionValue
+		u.SetUntagged((*jsonToolUntaggedUnionBranchTransport)(obj))
+		selectionValue = u
 	}
+	res.Selection = &selectionValue
 
 	return res
 }
 
 func encodeToolUnionBranchToToolUnionBranchTransport4(v *ToolUnionBranch) *jsonToolUnionBranchTransport {
-	res := &jsonToolUnionBranchTransport{
-		Value: &v.Value,
-	}
-	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &jsonToolUnionBranchTransport{}
+	var selectionValue jsonToolUnionSelectionTransport
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *jsonToolTaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport4(actual)
 		}
-		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport8(val)
+		u := selectionValue
+		u.SetTagged((*jsonToolTaggedUnionBranchTransport)(obj))
+		selectionValue = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *jsonToolUntaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport4(actual)
+		}
+		u := selectionValue
+		u.SetUntagged((*jsonToolUntaggedUnionBranchTransport)(obj))
+		selectionValue = u
 	}
+	res.Selection = &selectionValue
 
 	return res
 }
 
 func encodeToolUnionBranchToToolUnionBranchTransport5(v *ToolUnionBranch) *jsonToolUnionBranchTransport {
-	res := &jsonToolUnionBranchTransport{
-		Value: &v.Value,
-	}
-	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &jsonToolUnionBranchTransport{}
+	var selectionValue jsonToolUnionSelectionTransport
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *jsonToolTaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport5(actual)
 		}
-		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport10(val)
+		u := selectionValue
+		u.SetTagged((*jsonToolTaggedUnionBranchTransport)(obj))
+		selectionValue = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *jsonToolUntaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport5(actual)
+		}
+		u := selectionValue
+		u.SetUntagged((*jsonToolUntaggedUnionBranchTransport)(obj))
+		selectionValue = u
 	}
+	res.Selection = &selectionValue
 
 	return res
 }
 
 func encodeToolUnionBranchToToolUnionBranchTransport6(v *ToolUnionBranch) *jsonToolUnionBranchTransport {
-	res := &jsonToolUnionBranchTransport{
-		Value: &v.Value,
-	}
-	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &jsonToolUnionBranchTransport{}
+	var selectionValue jsonToolUnionSelectionTransport
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *jsonToolTaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport6(actual)
 		}
-		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport12(val)
+		u := selectionValue
+		u.SetTagged((*jsonToolTaggedUnionBranchTransport)(obj))
+		selectionValue = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *jsonToolUntaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport6(actual)
+		}
+		u := selectionValue
+		u.SetUntagged((*jsonToolUntaggedUnionBranchTransport)(obj))
+		selectionValue = u
 	}
+	res.Selection = &selectionValue
 
 	return res
 }
 
 func encodeToolUnionBranchToToolUnionBranchTransport7(v *ToolUnionBranch) *jsonToolUnionBranchTransport {
-	res := &jsonToolUnionBranchTransport{
-		Value: &v.Value,
-	}
-	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &jsonToolUnionBranchTransport{}
+	var selectionValue jsonToolUnionSelectionTransport
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *jsonToolTaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport7(actual)
 		}
-		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport14(val)
+		u := selectionValue
+		u.SetTagged((*jsonToolTaggedUnionBranchTransport)(obj))
+		selectionValue = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *jsonToolUntaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport7(actual)
+		}
+		u := selectionValue
+		u.SetUntagged((*jsonToolUntaggedUnionBranchTransport)(obj))
+		selectionValue = u
 	}
+	res.Selection = &selectionValue
 
 	return res
 }
 
 func encodeToolUnionBranchToToolUnionBranchTransport8(v *ToolUnionBranch) *jsonToolUnionBranchTransport {
-	res := &jsonToolUnionBranchTransport{
-		Value: &v.Value,
-	}
-	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &jsonToolUnionBranchTransport{}
+	var selectionValue jsonToolUnionSelectionTransport
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *jsonToolTaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport8(actual)
 		}
-		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport16(val)
+		u := selectionValue
+		u.SetTagged((*jsonToolTaggedUnionBranchTransport)(obj))
+		selectionValue = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *jsonToolUntaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport8(actual)
+		}
+		u := selectionValue
+		u.SetUntagged((*jsonToolUntaggedUnionBranchTransport)(obj))
+		selectionValue = u
 	}
+	res.Selection = &selectionValue
 
 	return res
 }
 
 func encodeToolUnionBranchToToolUnionBranchTransport9(v *ToolUnionBranch) *jsonToolUnionBranchTransport {
-	res := &jsonToolUnionBranchTransport{
-		Value: &v.Value,
-	}
-	res.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(v.Discriminator))
-	for i, val := range v.Discriminator {
-		if val == nil {
-			res.Discriminator[i] = nil
-			continue
+	res := &jsonToolUnionBranchTransport{}
+	var selectionValue jsonToolUnionSelectionTransport
+	switch string(v.Selection.Kind()) {
+	case "tagged":
+		actual, _ := v.Selection.AsTagged()
+		var obj *jsonToolTaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport9(actual)
 		}
-		res.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport18(val)
+		u := selectionValue
+		u.SetTagged((*jsonToolTaggedUnionBranchTransport)(obj))
+		selectionValue = u
+	case "untagged":
+		actual, _ := v.Selection.AsUntagged()
+		var obj *jsonToolUntaggedUnionBranchTransport
+		if actual != nil {
+			obj = encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport9(actual)
+		}
+		u := selectionValue
+		u.SetUntagged((*jsonToolUntaggedUnionBranchTransport)(obj))
+		selectionValue = u
+	}
+	res.Selection = &selectionValue
+
+	return res
+}
+
+func encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport(v *ToolUntaggedUnionBranch) *jsonToolUntaggedUnionBranchTransport {
+	res := &jsonToolUntaggedUnionBranchTransport{
+		JSONKind: &v.JSONKind,
+	}
+	index := agentToolsetDeclarationIntTransport(v.Index)
+	res.Index = &index
+	if v.Path != nil {
+		res.Path = make([]*jsonToolFieldPathSegmentTransport, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport3(val)
+		}
+	}
+
+	return res
+}
+
+func encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport10(v *ToolUntaggedUnionBranch) *jsonToolUntaggedUnionBranchTransport {
+	res := &jsonToolUntaggedUnionBranchTransport{
+		JSONKind: &v.JSONKind,
+	}
+	index := agentToolsetDeclarationIntTransport(v.Index)
+	res.Index = &index
+	if v.Path != nil {
+		res.Path = make([]*jsonToolFieldPathSegmentTransport, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport30(val)
+		}
+	}
+
+	return res
+}
+
+func encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport11(v *ToolUntaggedUnionBranch) *jsonToolUntaggedUnionBranchTransport {
+	res := &jsonToolUntaggedUnionBranchTransport{
+		JSONKind: &v.JSONKind,
+	}
+	index := agentToolsetDeclarationIntTransport(v.Index)
+	res.Index = &index
+	if v.Path != nil {
+		res.Path = make([]*jsonToolFieldPathSegmentTransport, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport33(val)
+		}
+	}
+
+	return res
+}
+
+func encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport12(v *ToolUntaggedUnionBranch) *jsonToolUntaggedUnionBranchTransport {
+	res := &jsonToolUntaggedUnionBranchTransport{
+		JSONKind: &v.JSONKind,
+	}
+	index := agentToolsetDeclarationIntTransport(v.Index)
+	res.Index = &index
+	if v.Path != nil {
+		res.Path = make([]*jsonToolFieldPathSegmentTransport, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport36(val)
+		}
+	}
+
+	return res
+}
+
+func encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport13(v *ToolUntaggedUnionBranch) *jsonToolUntaggedUnionBranchTransport {
+	res := &jsonToolUntaggedUnionBranchTransport{
+		JSONKind: &v.JSONKind,
+	}
+	index := agentToolsetDeclarationIntTransport(v.Index)
+	res.Index = &index
+	if v.Path != nil {
+		res.Path = make([]*jsonToolFieldPathSegmentTransport, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport39(val)
+		}
+	}
+
+	return res
+}
+
+func encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport14(v *ToolUntaggedUnionBranch) *jsonToolUntaggedUnionBranchTransport {
+	res := &jsonToolUntaggedUnionBranchTransport{
+		JSONKind: &v.JSONKind,
+	}
+	index := agentToolsetDeclarationIntTransport(v.Index)
+	res.Index = &index
+	if v.Path != nil {
+		res.Path = make([]*jsonToolFieldPathSegmentTransport, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport42(val)
+		}
+	}
+
+	return res
+}
+
+func encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport15(v *ToolUntaggedUnionBranch) *jsonToolUntaggedUnionBranchTransport {
+	res := &jsonToolUntaggedUnionBranchTransport{
+		JSONKind: &v.JSONKind,
+	}
+	index := agentToolsetDeclarationIntTransport(v.Index)
+	res.Index = &index
+	if v.Path != nil {
+		res.Path = make([]*jsonToolFieldPathSegmentTransport, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport45(val)
+		}
+	}
+
+	return res
+}
+
+func encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport16(v *ToolUntaggedUnionBranch) *jsonToolUntaggedUnionBranchTransport {
+	res := &jsonToolUntaggedUnionBranchTransport{
+		JSONKind: &v.JSONKind,
+	}
+	index := agentToolsetDeclarationIntTransport(v.Index)
+	res.Index = &index
+	if v.Path != nil {
+		res.Path = make([]*jsonToolFieldPathSegmentTransport, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport48(val)
+		}
+	}
+
+	return res
+}
+
+func encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport17(v *ToolUntaggedUnionBranch) *jsonToolUntaggedUnionBranchTransport {
+	res := &jsonToolUntaggedUnionBranchTransport{
+		JSONKind: &v.JSONKind,
+	}
+	index := agentToolsetDeclarationIntTransport(v.Index)
+	res.Index = &index
+	if v.Path != nil {
+		res.Path = make([]*jsonToolFieldPathSegmentTransport, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport51(val)
+		}
+	}
+
+	return res
+}
+
+func encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport18(v *ToolUntaggedUnionBranch) *jsonToolUntaggedUnionBranchTransport {
+	res := &jsonToolUntaggedUnionBranchTransport{
+		JSONKind: &v.JSONKind,
+	}
+	index := agentToolsetDeclarationIntTransport(v.Index)
+	res.Index = &index
+	if v.Path != nil {
+		res.Path = make([]*jsonToolFieldPathSegmentTransport, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport54(val)
+		}
+	}
+
+	return res
+}
+
+func encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport19(v *ToolUntaggedUnionBranch) *jsonToolUntaggedUnionBranchTransport {
+	res := &jsonToolUntaggedUnionBranchTransport{
+		JSONKind: &v.JSONKind,
+	}
+	index := agentToolsetDeclarationIntTransport(v.Index)
+	res.Index = &index
+	if v.Path != nil {
+		res.Path = make([]*jsonToolFieldPathSegmentTransport, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport57(val)
+		}
+	}
+
+	return res
+}
+
+func encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport2(v *ToolUntaggedUnionBranch) *jsonToolUntaggedUnionBranchTransport {
+	res := &jsonToolUntaggedUnionBranchTransport{
+		JSONKind: &v.JSONKind,
+	}
+	index := agentToolsetDeclarationIntTransport(v.Index)
+	res.Index = &index
+	if v.Path != nil {
+		res.Path = make([]*jsonToolFieldPathSegmentTransport, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport6(val)
+		}
+	}
+
+	return res
+}
+
+func encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport20(v *ToolUntaggedUnionBranch) *jsonToolUntaggedUnionBranchTransport {
+	res := &jsonToolUntaggedUnionBranchTransport{
+		JSONKind: &v.JSONKind,
+	}
+	index := agentToolsetDeclarationIntTransport(v.Index)
+	res.Index = &index
+	if v.Path != nil {
+		res.Path = make([]*jsonToolFieldPathSegmentTransport, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport60(val)
+		}
+	}
+
+	return res
+}
+
+func encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport21(v *ToolUntaggedUnionBranch) *jsonToolUntaggedUnionBranchTransport {
+	res := &jsonToolUntaggedUnionBranchTransport{
+		JSONKind: &v.JSONKind,
+	}
+	index := agentToolsetDeclarationIntTransport(v.Index)
+	res.Index = &index
+	if v.Path != nil {
+		res.Path = make([]*jsonToolFieldPathSegmentTransport, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport63(val)
+		}
+	}
+
+	return res
+}
+
+func encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport22(v *ToolUntaggedUnionBranch) *jsonToolUntaggedUnionBranchTransport {
+	res := &jsonToolUntaggedUnionBranchTransport{
+		JSONKind: &v.JSONKind,
+	}
+	index := agentToolsetDeclarationIntTransport(v.Index)
+	res.Index = &index
+	if v.Path != nil {
+		res.Path = make([]*jsonToolFieldPathSegmentTransport, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport66(val)
+		}
+	}
+
+	return res
+}
+
+func encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport23(v *ToolUntaggedUnionBranch) *jsonToolUntaggedUnionBranchTransport {
+	res := &jsonToolUntaggedUnionBranchTransport{
+		JSONKind: &v.JSONKind,
+	}
+	index := agentToolsetDeclarationIntTransport(v.Index)
+	res.Index = &index
+	if v.Path != nil {
+		res.Path = make([]*jsonToolFieldPathSegmentTransport, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport69(val)
+		}
+	}
+
+	return res
+}
+
+func encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport24(v *ToolUntaggedUnionBranch) *jsonToolUntaggedUnionBranchTransport {
+	res := &jsonToolUntaggedUnionBranchTransport{
+		JSONKind: &v.JSONKind,
+	}
+	index := agentToolsetDeclarationIntTransport(v.Index)
+	res.Index = &index
+	if v.Path != nil {
+		res.Path = make([]*jsonToolFieldPathSegmentTransport, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport72(val)
+		}
+	}
+
+	return res
+}
+
+func encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport25(v *ToolUntaggedUnionBranch) *jsonToolUntaggedUnionBranchTransport {
+	res := &jsonToolUntaggedUnionBranchTransport{
+		JSONKind: &v.JSONKind,
+	}
+	index := agentToolsetDeclarationIntTransport(v.Index)
+	res.Index = &index
+	if v.Path != nil {
+		res.Path = make([]*jsonToolFieldPathSegmentTransport, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport75(val)
+		}
+	}
+
+	return res
+}
+
+func encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport26(v *ToolUntaggedUnionBranch) *jsonToolUntaggedUnionBranchTransport {
+	res := &jsonToolUntaggedUnionBranchTransport{
+		JSONKind: &v.JSONKind,
+	}
+	index := agentToolsetDeclarationIntTransport(v.Index)
+	res.Index = &index
+	if v.Path != nil {
+		res.Path = make([]*jsonToolFieldPathSegmentTransport, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport78(val)
+		}
+	}
+
+	return res
+}
+
+func encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport27(v *ToolUntaggedUnionBranch) *jsonToolUntaggedUnionBranchTransport {
+	res := &jsonToolUntaggedUnionBranchTransport{
+		JSONKind: &v.JSONKind,
+	}
+	index := agentToolsetDeclarationIntTransport(v.Index)
+	res.Index = &index
+	if v.Path != nil {
+		res.Path = make([]*jsonToolFieldPathSegmentTransport, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport81(val)
+		}
+	}
+
+	return res
+}
+
+func encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport28(v *ToolUntaggedUnionBranch) *jsonToolUntaggedUnionBranchTransport {
+	res := &jsonToolUntaggedUnionBranchTransport{
+		JSONKind: &v.JSONKind,
+	}
+	index := agentToolsetDeclarationIntTransport(v.Index)
+	res.Index = &index
+	if v.Path != nil {
+		res.Path = make([]*jsonToolFieldPathSegmentTransport, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport85(val)
+		}
+	}
+
+	return res
+}
+
+func encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport29(v *ToolUntaggedUnionBranch) *jsonToolUntaggedUnionBranchTransport {
+	res := &jsonToolUntaggedUnionBranchTransport{
+		JSONKind: &v.JSONKind,
+	}
+	index := agentToolsetDeclarationIntTransport(v.Index)
+	res.Index = &index
+	if v.Path != nil {
+		res.Path = make([]*jsonToolFieldPathSegmentTransport, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport87(val)
+		}
+	}
+
+	return res
+}
+
+func encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport3(v *ToolUntaggedUnionBranch) *jsonToolUntaggedUnionBranchTransport {
+	res := &jsonToolUntaggedUnionBranchTransport{
+		JSONKind: &v.JSONKind,
+	}
+	index := agentToolsetDeclarationIntTransport(v.Index)
+	res.Index = &index
+	if v.Path != nil {
+		res.Path = make([]*jsonToolFieldPathSegmentTransport, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport9(val)
+		}
+	}
+
+	return res
+}
+
+func encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport30(v *ToolUntaggedUnionBranch) *jsonToolUntaggedUnionBranchTransport {
+	res := &jsonToolUntaggedUnionBranchTransport{
+		JSONKind: &v.JSONKind,
+	}
+	index := agentToolsetDeclarationIntTransport(v.Index)
+	res.Index = &index
+	if v.Path != nil {
+		res.Path = make([]*jsonToolFieldPathSegmentTransport, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport91(val)
+		}
+	}
+
+	return res
+}
+
+func encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport31(v *ToolUntaggedUnionBranch) *jsonToolUntaggedUnionBranchTransport {
+	res := &jsonToolUntaggedUnionBranchTransport{
+		JSONKind: &v.JSONKind,
+	}
+	index := agentToolsetDeclarationIntTransport(v.Index)
+	res.Index = &index
+	if v.Path != nil {
+		res.Path = make([]*jsonToolFieldPathSegmentTransport, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport94(val)
+		}
+	}
+
+	return res
+}
+
+func encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport32(v *ToolUntaggedUnionBranch) *jsonToolUntaggedUnionBranchTransport {
+	res := &jsonToolUntaggedUnionBranchTransport{
+		JSONKind: &v.JSONKind,
+	}
+	index := agentToolsetDeclarationIntTransport(v.Index)
+	res.Index = &index
+	if v.Path != nil {
+		res.Path = make([]*jsonToolFieldPathSegmentTransport, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport97(val)
+		}
+	}
+
+	return res
+}
+
+func encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport33(v *ToolUntaggedUnionBranch) *jsonToolUntaggedUnionBranchTransport {
+	res := &jsonToolUntaggedUnionBranchTransport{
+		JSONKind: &v.JSONKind,
+	}
+	index := agentToolsetDeclarationIntTransport(v.Index)
+	res.Index = &index
+	if v.Path != nil {
+		res.Path = make([]*jsonToolFieldPathSegmentTransport, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport100(val)
+		}
+	}
+
+	return res
+}
+
+func encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport4(v *ToolUntaggedUnionBranch) *jsonToolUntaggedUnionBranchTransport {
+	res := &jsonToolUntaggedUnionBranchTransport{
+		JSONKind: &v.JSONKind,
+	}
+	index := agentToolsetDeclarationIntTransport(v.Index)
+	res.Index = &index
+	if v.Path != nil {
+		res.Path = make([]*jsonToolFieldPathSegmentTransport, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport12(val)
+		}
+	}
+
+	return res
+}
+
+func encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport5(v *ToolUntaggedUnionBranch) *jsonToolUntaggedUnionBranchTransport {
+	res := &jsonToolUntaggedUnionBranchTransport{
+		JSONKind: &v.JSONKind,
+	}
+	index := agentToolsetDeclarationIntTransport(v.Index)
+	res.Index = &index
+	if v.Path != nil {
+		res.Path = make([]*jsonToolFieldPathSegmentTransport, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport15(val)
+		}
+	}
+
+	return res
+}
+
+func encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport6(v *ToolUntaggedUnionBranch) *jsonToolUntaggedUnionBranchTransport {
+	res := &jsonToolUntaggedUnionBranchTransport{
+		JSONKind: &v.JSONKind,
+	}
+	index := agentToolsetDeclarationIntTransport(v.Index)
+	res.Index = &index
+	if v.Path != nil {
+		res.Path = make([]*jsonToolFieldPathSegmentTransport, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport18(val)
+		}
+	}
+
+	return res
+}
+
+func encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport7(v *ToolUntaggedUnionBranch) *jsonToolUntaggedUnionBranchTransport {
+	res := &jsonToolUntaggedUnionBranchTransport{
+		JSONKind: &v.JSONKind,
+	}
+	index := agentToolsetDeclarationIntTransport(v.Index)
+	res.Index = &index
+	if v.Path != nil {
+		res.Path = make([]*jsonToolFieldPathSegmentTransport, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport21(val)
+		}
+	}
+
+	return res
+}
+
+func encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport8(v *ToolUntaggedUnionBranch) *jsonToolUntaggedUnionBranchTransport {
+	res := &jsonToolUntaggedUnionBranchTransport{
+		JSONKind: &v.JSONKind,
+	}
+	index := agentToolsetDeclarationIntTransport(v.Index)
+	res.Index = &index
+	if v.Path != nil {
+		res.Path = make([]*jsonToolFieldPathSegmentTransport, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport24(val)
+		}
+	}
+
+	return res
+}
+
+func encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport9(v *ToolUntaggedUnionBranch) *jsonToolUntaggedUnionBranchTransport {
+	res := &jsonToolUntaggedUnionBranchTransport{
+		JSONKind: &v.JSONKind,
+	}
+	index := agentToolsetDeclarationIntTransport(v.Index)
+	res.Index = &index
+	if v.Path != nil {
+		res.Path = make([]*jsonToolFieldPathSegmentTransport, len(v.Path))
+		for i, val := range v.Path {
+			if val == nil {
+				res.Path[i] = nil
+				continue
+			}
+			res.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport27(val)
+		}
 	}
 
 	return res
@@ -22502,7 +28709,7 @@ func validateAgentToolsetDeclarationJSONValue(path string, value any, descriptio
 				return err
 			}
 		case "version":
-			if err := validateAgentToolsetDeclarationJSONValue73(
+			if err := validateAgentToolsetDeclarationJSONValue80(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Semantic version used by discovery filters.",
 			); err != nil {
@@ -22648,49 +28855,49 @@ func validateAgentToolsetDeclarationJSONValue57(path string, value any, descript
 				return err
 			}
 		case "description":
-			if err := validateAgentToolsetDeclarationJSONValue64(
+			if err := validateAgentToolsetDeclarationJSONValue71(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Human-readable description of what the tool does.",
 			); err != nil {
 				return err
 			}
 		case "execution_payload_schema":
-			if err := validateAgentToolsetDeclarationJSONValue65(
+			if err := validateAgentToolsetDeclarationJSONValue72(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the payload sent to the provider. It includes fields supplied by continuation handling and excludes fields injected inside the provider.",
 			); err != nil {
 				return err
 			}
 		case "name":
-			if err := validateAgentToolsetDeclarationJSONValue66(
+			if err := validateAgentToolsetDeclarationJSONValue73(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Globally unique tool identifier of the form \"toolset.tool\".",
 			); err != nil {
 				return err
 			}
 		case "payload_schema":
-			if err := validateAgentToolsetDeclarationJSONValue67(
+			if err := validateAgentToolsetDeclarationJSONValue74(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for arguments accepted from the model.",
 			); err != nil {
 				return err
 			}
 		case "result_schema":
-			if err := validateAgentToolsetDeclarationJSONValue69(
+			if err := validateAgentToolsetDeclarationJSONValue75(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the tool result.",
 			); err != nil {
 				return err
 			}
 		case "sidecar_schema":
-			if err := validateAgentToolsetDeclarationJSONValue70(
+			if err := validateAgentToolsetDeclarationJSONValue76(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the tool sidecar (UI-only), when present.",
 			); err != nil {
 				return err
 			}
 		case "tags":
-			if err := validateAgentToolsetDeclarationJSONValue71(
+			if err := validateAgentToolsetDeclarationJSONValue77(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Optional tags used for policy, routing, or UI filtering.",
 			); err != nil {
@@ -22733,7 +28940,7 @@ func validateAgentToolsetDeclarationJSONValue68(path string, value any, descript
 	for _, key := range keys {
 		switch key {
 		case "Agent":
-			if err := validateAgentToolsetDeclarationJSONValue74(
+			if err := validateAgentToolsetDeclarationJSONValue79(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Worker and immutable application configuration used by a dynamically registered Agent tool.",
 			); err != nil {
@@ -22775,14 +28982,14 @@ func validateAgentToolsetDeclarationJSONValue68(path string, value any, descript
 				return err
 			}
 		case "required_labels":
-			if err := validateAgentToolsetDeclarationJSONValue41(
+			if err := validateAgentToolsetDeclarationJSONValue48(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Run labels required by provider-side injection for this tool.",
 			); err != nil {
 				return err
 			}
 		case "requires_ui":
-			if err := validateAgentToolsetDeclarationJSONValue43(
+			if err := validateAgentToolsetDeclarationJSONValue50(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Whether executing this tool requires rendering or an interactive client protocol.",
 			); err != nil {
@@ -22796,35 +29003,35 @@ func validateAgentToolsetDeclarationJSONValue68(path string, value any, descript
 				return err
 			}
 		case "result_reminder":
-			if err := validateAgentToolsetDeclarationJSONValue44(
+			if err := validateAgentToolsetDeclarationJSONValue51(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Model guidance emitted after this tool's result.",
 			); err != nil {
 				return err
 			}
 		case "search":
-			if err := validateAgentToolsetDeclarationJSONValue45(
+			if err := validateAgentToolsetDeclarationJSONValue52(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Word counts generated from the tool's name, title, and description.",
 			); err != nil {
 				return err
 			}
 		case "server_data":
-			if err := validateAgentToolsetDeclarationJSONValue50(
+			if err := validateAgentToolsetDeclarationJSONValue56(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Closed set of server-only result payloads emitted by this tool.",
 			); err != nil {
 				return err
 			}
 		case "text_only":
-			if err := validateAgentToolsetDeclarationJSONValue58(
+			if err := validateAgentToolsetDeclarationJSONValue64(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated model contract for execution using ordinary messages only.",
 			); err != nil {
 				return err
 			}
 		case "title":
-			if err := validateAgentToolsetDeclarationJSONValue63(
+			if err := validateAgentToolsetDeclarationJSONValue70(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Human-readable title declared for the tool.",
 			); err != nil {
@@ -22852,8 +29059,8 @@ func validateAgentToolsetDeclarationJSONValue68(path string, value any, descript
 	return nil
 }
 
-// validateAgentToolsetDeclarationJSONValue74 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentToolsetDeclarationJSONValue74(path string, value any, description string) error {
+// validateAgentToolsetDeclarationJSONValue79 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue79(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -22873,7 +29080,7 @@ func validateAgentToolsetDeclarationJSONValue74(path string, value any, descript
 	for _, key := range keys {
 		switch key {
 		case "configuration":
-			if err := validateAgentToolsetDeclarationJSONValue75(
+			if err := validateAgentToolsetDeclarationJSONValue81(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Immutable application configuration reference retained with each accepted tool call.",
 			); err != nil {
@@ -22896,8 +29103,8 @@ func validateAgentToolsetDeclarationJSONValue74(path string, value any, descript
 	return nil
 }
 
-// validateAgentToolsetDeclarationJSONValue75 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentToolsetDeclarationJSONValue75(path string, value any, description string) error {
+// validateAgentToolsetDeclarationJSONValue81 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue81(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -23335,14 +29542,14 @@ func validateAgentToolsetDeclarationJSONValue20(path string, value any, descript
 				return err
 			}
 		case "name":
-			if err := validateAgentToolsetDeclarationJSONValue39(
+			if err := validateAgentToolsetDeclarationJSONValue45(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated type name used in diagnostics.",
 			); err != nil {
 				return err
 			}
 		case "schema_without_root_example":
-			if err := validateAgentToolsetDeclarationJSONValue40(
+			if err := validateAgentToolsetDeclarationJSONValue47(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical schema with its root example omitted for model providers that carry examples separately.",
 			); err != nil {
@@ -23431,28 +29638,28 @@ func validateAgentToolsetDeclarationJSONValue23(path string, value any, descript
 				return err
 			}
 		case "description":
-			if err := validateAgentToolsetDeclarationJSONValue33(
+			if err := validateAgentToolsetDeclarationJSONValue40(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Description already present in the tool schema.",
 			); err != nil {
 				return err
 			}
 		case "discriminator_values":
-			if err := validateAgentToolsetDeclarationJSONValue34(
+			if err := validateAgentToolsetDeclarationJSONValue41(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Allowed branch names when this field selects a union branch.",
 			); err != nil {
 				return err
 			}
 		case "json_type":
-			if err := validateAgentToolsetDeclarationJSONValue37(
+			if err := validateAgentToolsetDeclarationJSONValue43(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Single JSON type accepted by this field, when known.",
 			); err != nil {
 				return err
 			}
 		case "path":
-			if err := validateAgentToolsetDeclarationJSONValue38(
+			if err := validateAgentToolsetDeclarationJSONValue44(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Path to this field. An omitted path identifies the root value.",
 			); err != nil {
@@ -23518,24 +29725,16 @@ func validateAgentToolsetDeclarationJSONValue26(path string, value any, descript
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
-		case "discriminator":
+		case "selection":
 			if err := validateAgentToolsetDeclarationJSONValue27(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Path to the union's discriminator property.",
-			); err != nil {
-				return err
-			}
-		case "value":
-			if err := validateAgentToolsetDeclarationJSONValue32(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Branch name required at the discriminator.",
+				typed[key], "Exactly one way the submitted value selects this branch.",
 			); err != nil {
 				return err
 			}
 		default:
 			return unknownJSONFieldError(path, key, []string{
-				"discriminator",
-				"value",
+				"selection",
 			})
 		}
 	}
@@ -23549,24 +29748,33 @@ func validateAgentToolsetDeclarationJSONValue27(path string, value any, descript
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	typed, ok := value.([]any)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
 	}
-	for index, item := range typed {
-		if item == nil {
-			continue
-		}
-		if err := validateAgentToolsetDeclarationJSONValue28(
-			generatedJSONChildPath(path, strconv.Itoa(index), true),
-			item, description,
-		); err != nil {
-			return err
+	for key := range typed {
+		if key != "type" && key != "value" {
+			return unknownJSONFieldError(path, key, []string{"type", "value"})
 		}
 	}
-	return nil
+	discriminator, ok := typed["type"].(string)
+	if !ok {
+		return fmt.Errorf("%s: missing or invalid union discriminator", field)
+	}
+	branch, exists := typed["value"]
+	if !exists || branch == nil {
+		return fmt.Errorf("%s: missing union value", field)
+	}
+	switch discriminator {
+	case "tagged":
+		return validateAgentToolsetDeclarationJSONValue28(generatedJSONChildPath(path, "value", false), branch, "A declared string discriminator selects this branch.")
+	case "untagged":
+		return validateAgentToolsetDeclarationJSONValue36(generatedJSONChildPath(path, "value", false), branch, "The JSON kind of the union value selects this branch.")
+	default:
+		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
+	}
 }
 
 // validateAgentToolsetDeclarationJSONValue28 checks one value whose JSON shape is fixed by the generated Goa type.
@@ -23589,8 +29797,79 @@ func validateAgentToolsetDeclarationJSONValue28(path string, value any, descript
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
-		case "segment":
+		case "discriminator":
 			if err := validateAgentToolsetDeclarationJSONValue29(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Path to the union's discriminator property.",
+			); err != nil {
+				return err
+			}
+		case "value":
+			if err := validateAgentToolsetDeclarationJSONValue34(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Branch name required at the discriminator.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"discriminator",
+				"value",
+			})
+		}
+	}
+	return nil
+}
+
+// validateAgentToolsetDeclarationJSONValue29 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue29(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if item == nil {
+			continue
+		}
+		if err := validateAgentToolsetDeclarationJSONValue30(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateAgentToolsetDeclarationJSONValue30 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue30(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "segment":
+			if err := validateAgentToolsetDeclarationJSONValue31(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Exactly one path segment kind.",
 			); err != nil {
@@ -23605,8 +29884,8 @@ func validateAgentToolsetDeclarationJSONValue28(path string, value any, descript
 	return nil
 }
 
-// validateAgentToolsetDeclarationJSONValue29 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentToolsetDeclarationJSONValue29(path string, value any, description string) error {
+// validateAgentToolsetDeclarationJSONValue31 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue31(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -23633,55 +29912,12 @@ func validateAgentToolsetDeclarationJSONValue29(path string, value any, descript
 	}
 	switch discriminator {
 	case "field":
-		return validateAgentToolsetDeclarationJSONValue30(generatedJSONChildPath(path, "value", false), branch, "Exact JSON property name, including empty or punctuation-containing names.")
+		return validateAgentToolsetDeclarationJSONValue32(generatedJSONChildPath(path, "value", false), branch, "Exact JSON property name, including empty or punctuation-containing names.")
 	case "element":
-		return validateAgentToolsetDeclarationJSONValue31(generatedJSONChildPath(path, "value", false), branch, "One caller-selected array index or map key.")
+		return validateAgentToolsetDeclarationJSONValue33(generatedJSONChildPath(path, "value", false), branch, "One caller-selected array index or map key.")
 	default:
 		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
 	}
-}
-
-// validateAgentToolsetDeclarationJSONValue30 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentToolsetDeclarationJSONValue30(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateAgentToolsetDeclarationJSONValue31 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentToolsetDeclarationJSONValue31(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		default:
-			return unknownJSONFieldError(path, key, []string{})
-		}
-	}
-	return nil
 }
 
 // validateAgentToolsetDeclarationJSONValue32 checks one value whose JSON shape is fixed by the generated Goa type.
@@ -23707,11 +29943,22 @@ func validateAgentToolsetDeclarationJSONValue33(path string, value any, descript
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	_, ok := value.(string)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		default:
+			return unknownJSONFieldError(path, key, []string{})
+		}
 	}
 	return nil
 }
@@ -23723,19 +29970,11 @@ func validateAgentToolsetDeclarationJSONValue34(path string, value any, descript
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
 	}
-	typed, ok := value.([]any)
+	_, ok := value.(string)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
-	}
-	for index, item := range typed {
-		if err := validateAgentToolsetDeclarationJSONValue36(
-			generatedJSONChildPath(path, strconv.Itoa(index), true),
-			item, description,
-		); err != nil {
-			return err
-		}
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -23747,17 +29986,69 @@ func validateAgentToolsetDeclarationJSONValue36(path string, value any, descript
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	_, ok := value.(string)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "index":
+			if err := validateAgentToolsetDeclarationJSONValue37(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Zero-based position of this branch in the advertised oneOf, used to select its structured validation diagnostic.",
+			); err != nil {
+				return err
+			}
+		case "json_kind":
+			if err := validateAgentToolsetDeclarationJSONValue38(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "JSON kind that selects this branch; integer branches use number.",
+			); err != nil {
+				return err
+			}
+		case "path":
+			if err := validateAgentToolsetDeclarationJSONValue39(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Path to the union value. An omitted path identifies the root value.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"index",
+				"json_kind",
+				"path",
+			})
+		}
 	}
 	return nil
 }
 
 // validateAgentToolsetDeclarationJSONValue37 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateAgentToolsetDeclarationJSONValue37(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
+	}
+	_, ok := value.(json.Number)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateAgentToolsetDeclarationJSONValue38 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue38(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -23772,8 +30063,8 @@ func validateAgentToolsetDeclarationJSONValue37(path string, value any, descript
 	return nil
 }
 
-// validateAgentToolsetDeclarationJSONValue38 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentToolsetDeclarationJSONValue38(path string, value any, description string) error {
+// validateAgentToolsetDeclarationJSONValue39 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue39(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -23789,28 +30080,12 @@ func validateAgentToolsetDeclarationJSONValue38(path string, value any, descript
 		if item == nil {
 			continue
 		}
-		if err := validateAgentToolsetDeclarationJSONValue28(
+		if err := validateAgentToolsetDeclarationJSONValue30(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-// validateAgentToolsetDeclarationJSONValue39 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentToolsetDeclarationJSONValue39(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -23878,17 +30153,44 @@ func validateAgentToolsetDeclarationJSONValue43(path string, value any, descript
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
 	}
-	_, ok := value.(bool)
+	_, ok := value.(string)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
 
 // validateAgentToolsetDeclarationJSONValue44 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateAgentToolsetDeclarationJSONValue44(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if item == nil {
+			continue
+		}
+		if err := validateAgentToolsetDeclarationJSONValue30(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateAgentToolsetDeclarationJSONValue45 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue45(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -23903,8 +30205,96 @@ func validateAgentToolsetDeclarationJSONValue44(path string, value any, descript
 	return nil
 }
 
-// validateAgentToolsetDeclarationJSONValue45 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentToolsetDeclarationJSONValue45(path string, value any, description string) error {
+// validateAgentToolsetDeclarationJSONValue47 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue47(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateAgentToolsetDeclarationJSONValue48 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue48(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if err := validateAgentToolsetDeclarationJSONValue49(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateAgentToolsetDeclarationJSONValue49 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue49(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateAgentToolsetDeclarationJSONValue50 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue50(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
+	}
+	_, ok := value.(bool)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateAgentToolsetDeclarationJSONValue51 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue51(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateAgentToolsetDeclarationJSONValue52 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue52(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -23924,14 +30314,14 @@ func validateAgentToolsetDeclarationJSONValue45(path string, value any, descript
 	for _, key := range keys {
 		switch key {
 		case "length":
-			if err := validateAgentToolsetDeclarationJSONValue47(
+			if err := validateAgentToolsetDeclarationJSONValue53(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Total number of words in this document, including repeats.",
 			); err != nil {
 				return err
 			}
 		case "terms":
-			if err := validateAgentToolsetDeclarationJSONValue48(
+			if err := validateAgentToolsetDeclarationJSONValue54(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Lowercase words and their positive occurrence counts.",
 			); err != nil {
@@ -23947,8 +30337,8 @@ func validateAgentToolsetDeclarationJSONValue45(path string, value any, descript
 	return nil
 }
 
-// validateAgentToolsetDeclarationJSONValue47 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentToolsetDeclarationJSONValue47(path string, value any, description string) error {
+// validateAgentToolsetDeclarationJSONValue53 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue53(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -23963,8 +30353,8 @@ func validateAgentToolsetDeclarationJSONValue47(path string, value any, descript
 	return nil
 }
 
-// validateAgentToolsetDeclarationJSONValue48 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentToolsetDeclarationJSONValue48(path string, value any, description string) error {
+// validateAgentToolsetDeclarationJSONValue54 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue54(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -23982,7 +30372,7 @@ func validateAgentToolsetDeclarationJSONValue48(path string, value any, descript
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		if err := validateAgentToolsetDeclarationJSONValue49(
+		if err := validateAgentToolsetDeclarationJSONValue55(
 			generatedJSONChildPath(path, key, true),
 			typed[key], description,
 		); err != nil {
@@ -23992,8 +30382,8 @@ func validateAgentToolsetDeclarationJSONValue48(path string, value any, descript
 	return nil
 }
 
-// validateAgentToolsetDeclarationJSONValue49 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentToolsetDeclarationJSONValue49(path string, value any, description string) error {
+// validateAgentToolsetDeclarationJSONValue55 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue55(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -24008,8 +30398,8 @@ func validateAgentToolsetDeclarationJSONValue49(path string, value any, descript
 	return nil
 }
 
-// validateAgentToolsetDeclarationJSONValue50 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentToolsetDeclarationJSONValue50(path string, value any, description string) error {
+// validateAgentToolsetDeclarationJSONValue56 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue56(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -24025,168 +30415,12 @@ func validateAgentToolsetDeclarationJSONValue50(path string, value any, descript
 		if item == nil {
 			continue
 		}
-		if err := validateAgentToolsetDeclarationJSONValue51(
+		if err := validateAgentToolsetDeclarationJSONValue58(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-// validateAgentToolsetDeclarationJSONValue51 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentToolsetDeclarationJSONValue51(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "audience":
-			if err := validateAgentToolsetDeclarationJSONValue52(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Consumers allowed to receive this payload.",
-			); err != nil {
-				return err
-			}
-		case "description":
-			if err := validateAgentToolsetDeclarationJSONValue53(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Description of the data carried by this kind.",
-			); err != nil {
-				return err
-			}
-		case "kind":
-			if err := validateAgentToolsetDeclarationJSONValue54(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Unique kind emitted by this tool.",
-			); err != nil {
-				return err
-			}
-		case "NativeImage":
-			if err := validateAgentToolsetDeclarationJSONValue55(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Whether this evidence kind declares a typed image source requiring an explicitly admitted host reader.",
-			); err != nil {
-				return err
-			}
-		case "schema":
-			if err := validateAgentToolsetDeclarationJSONValue56(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Canonical JSON schema for the item data.",
-			); err != nil {
-				return err
-			}
-		case "type":
-			if err := validateAgentToolsetDeclarationJSONValue20(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Generated examples and field details for the item data.",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"audience",
-				"description",
-				"kind",
-				"NativeImage",
-				"schema",
-				"type",
-			})
-		}
-	}
-	return nil
-}
-
-// validateAgentToolsetDeclarationJSONValue52 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentToolsetDeclarationJSONValue52(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateAgentToolsetDeclarationJSONValue53 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentToolsetDeclarationJSONValue53(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateAgentToolsetDeclarationJSONValue54 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentToolsetDeclarationJSONValue54(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateAgentToolsetDeclarationJSONValue55 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentToolsetDeclarationJSONValue55(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
-	}
-	_, ok := value.(bool)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateAgentToolsetDeclarationJSONValue56 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentToolsetDeclarationJSONValue56(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -24211,56 +30445,56 @@ func validateAgentToolsetDeclarationJSONValue58(path string, value any, descript
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
-		case "description":
+		case "audience":
 			if err := validateAgentToolsetDeclarationJSONValue59(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Domain instructions without optional UI guidance.",
+				typed[key], "Consumers allowed to receive this payload.",
 			); err != nil {
 				return err
 			}
-		case "execution_schema":
+		case "description":
 			if err := validateAgentToolsetDeclarationJSONValue60(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Complete input schema requiring disabled rendering controls.",
+				typed[key], "Description of the data carried by this kind.",
 			); err != nil {
 				return err
 			}
-		case "payload":
-			if err := validateAgentToolsetDeclarationJSONValue20(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Generated examples and field descriptions matching this schema.",
-			); err != nil {
-				return err
-			}
-		case "payload_schema":
+		case "kind":
 			if err := validateAgentToolsetDeclarationJSONValue61(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Exact model argument schema without UI-only controls.",
+				typed[key], "Unique kind emitted by this tool.",
 			); err != nil {
 				return err
 			}
-		case "result_reminder":
+		case "NativeImage":
 			if err := validateAgentToolsetDeclarationJSONValue62(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Domain result guidance without claiming UI output.",
+				typed[key], "Whether this evidence kind declares a typed image source requiring an explicitly admitted host reader.",
 			); err != nil {
 				return err
 			}
-		case "search":
-			if err := validateAgentToolsetDeclarationJSONValue45(
+		case "schema":
+			if err := validateAgentToolsetDeclarationJSONValue63(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Generated word counts for these domain instructions.",
+				typed[key], "Canonical JSON schema for the item data.",
+			); err != nil {
+				return err
+			}
+		case "type":
+			if err := validateAgentToolsetDeclarationJSONValue20(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Generated examples and field details for the item data.",
 			); err != nil {
 				return err
 			}
 		default:
 			return unknownJSONFieldError(path, key, []string{
+				"audience",
 				"description",
-				"execution_schema",
-				"payload",
-				"payload_schema",
-				"result_reminder",
-				"search",
+				"kind",
+				"NativeImage",
+				"schema",
+				"type",
 			})
 		}
 	}
@@ -24322,11 +30556,11 @@ func validateAgentToolsetDeclarationJSONValue62(path string, value any, descript
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
 	}
-	_, ok := value.(string)
+	_, ok := value.(bool)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -24354,11 +30588,71 @@ func validateAgentToolsetDeclarationJSONValue64(path string, value any, descript
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	_, ok := value.(string)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "description":
+			if err := validateAgentToolsetDeclarationJSONValue65(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Domain instructions without optional UI guidance.",
+			); err != nil {
+				return err
+			}
+		case "execution_schema":
+			if err := validateAgentToolsetDeclarationJSONValue66(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Complete input schema requiring disabled rendering controls.",
+			); err != nil {
+				return err
+			}
+		case "payload":
+			if err := validateAgentToolsetDeclarationJSONValue20(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Generated examples and field descriptions matching this schema.",
+			); err != nil {
+				return err
+			}
+		case "payload_schema":
+			if err := validateAgentToolsetDeclarationJSONValue67(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Exact model argument schema without UI-only controls.",
+			); err != nil {
+				return err
+			}
+		case "result_reminder":
+			if err := validateAgentToolsetDeclarationJSONValue69(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Domain result guidance without claiming UI output.",
+			); err != nil {
+				return err
+			}
+		case "search":
+			if err := validateAgentToolsetDeclarationJSONValue52(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Generated word counts for these domain instructions.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"description",
+				"execution_schema",
+				"payload",
+				"payload_schema",
+				"result_reminder",
+				"search",
+			})
+		}
 	}
 	return nil
 }
@@ -24450,19 +30744,11 @@ func validateAgentToolsetDeclarationJSONValue71(path string, value any, descript
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
 	}
-	typed, ok := value.([]any)
+	_, ok := value.(string)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
-	}
-	for index, item := range typed {
-		if err := validateAgentToolsetDeclarationJSONValue72(
-			generatedJSONChildPath(path, strconv.Itoa(index), true),
-			item, description,
-		); err != nil {
-			return err
-		}
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -24485,6 +30771,110 @@ func validateAgentToolsetDeclarationJSONValue72(path string, value any, descript
 
 // validateAgentToolsetDeclarationJSONValue73 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateAgentToolsetDeclarationJSONValue73(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateAgentToolsetDeclarationJSONValue74 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue74(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateAgentToolsetDeclarationJSONValue75 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue75(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateAgentToolsetDeclarationJSONValue76 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue76(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateAgentToolsetDeclarationJSONValue77 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue77(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if err := validateAgentToolsetDeclarationJSONValue78(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateAgentToolsetDeclarationJSONValue78 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue78(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateAgentToolsetDeclarationJSONValue80 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue80(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -26904,14 +33294,14 @@ func validateConsumerContractJSONValue(path string, value any, description strin
 				return err
 			}
 		case "required_labels":
-			if err := validateConsumerContractJSONValue33(
+			if err := validateConsumerContractJSONValue40(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Run labels required by provider-side injection for this tool.",
 			); err != nil {
 				return err
 			}
 		case "requires_ui":
-			if err := validateConsumerContractJSONValue36(
+			if err := validateConsumerContractJSONValue42(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Whether executing this tool requires rendering or an interactive client protocol.",
 			); err != nil {
@@ -26925,35 +33315,35 @@ func validateConsumerContractJSONValue(path string, value any, description strin
 				return err
 			}
 		case "result_reminder":
-			if err := validateConsumerContractJSONValue37(
+			if err := validateConsumerContractJSONValue43(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Model guidance emitted after this tool's result.",
 			); err != nil {
 				return err
 			}
 		case "search":
-			if err := validateConsumerContractJSONValue38(
+			if err := validateConsumerContractJSONValue44(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Word counts generated from the tool's name, title, and description.",
 			); err != nil {
 				return err
 			}
 		case "server_data":
-			if err := validateConsumerContractJSONValue42(
+			if err := validateConsumerContractJSONValue49(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Closed set of server-only result payloads emitted by this tool.",
 			); err != nil {
 				return err
 			}
 		case "text_only":
-			if err := validateConsumerContractJSONValue50(
+			if err := validateConsumerContractJSONValue56(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated model contract for execution using ordinary messages only.",
 			); err != nil {
 				return err
 			}
 		case "title":
-			if err := validateConsumerContractJSONValue55(
+			if err := validateConsumerContractJSONValue62(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Human-readable title declared for the tool.",
 			); err != nil {
@@ -27114,28 +33504,28 @@ func validateConsumerContractJSONValue46(path string, value any, description str
 	for _, key := range keys {
 		switch key {
 		case "continue_tool":
-			if err := validateConsumerContractJSONValue56(
+			if err := validateConsumerContractJSONValue57(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Qualified tool that advances this result; omitted when the tool advances itself.",
 			); err != nil {
 				return err
 			}
 		case "cursor_field":
-			if err := validateConsumerContractJSONValue57(
+			if err := validateConsumerContractJSONValue63(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "JSON argument name containing the continuation cursor.",
 			); err != nil {
 				return err
 			}
 		case "next_cursor_field":
-			if err := validateConsumerContractJSONValue58(
+			if err := validateConsumerContractJSONValue64(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "JSON result name containing the next cursor.",
 			); err != nil {
 				return err
 			}
 		case "replay_payload":
-			if err := validateConsumerContractJSONValue59(
+			if err := validateConsumerContractJSONValue65(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Whether the runtime retains the source query's arguments and replaces only its cursor.",
 			); err != nil {
@@ -27161,22 +33551,6 @@ func validateConsumerContractJSONValue46(path string, value any, description str
 	return nil
 }
 
-// validateConsumerContractJSONValue56 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue56(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
 // validateConsumerContractJSONValue57 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateConsumerContractJSONValue57(path string, value any, description string) error {
 	field := path
@@ -27193,8 +33567,8 @@ func validateConsumerContractJSONValue57(path string, value any, description str
 	return nil
 }
 
-// validateConsumerContractJSONValue58 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue58(path string, value any, description string) error {
+// validateConsumerContractJSONValue63 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue63(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -27209,8 +33583,24 @@ func validateConsumerContractJSONValue58(path string, value any, description str
 	return nil
 }
 
-// validateConsumerContractJSONValue59 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue59(path string, value any, description string) error {
+// validateConsumerContractJSONValue64 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue64(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateConsumerContractJSONValue65 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue65(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -27464,14 +33854,14 @@ func validateConsumerContractJSONValue12(path string, value any, description str
 				return err
 			}
 		case "name":
-			if err := validateConsumerContractJSONValue31(
+			if err := validateConsumerContractJSONValue38(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated type name used in diagnostics.",
 			); err != nil {
 				return err
 			}
 		case "schema_without_root_example":
-			if err := validateConsumerContractJSONValue32(
+			if err := validateConsumerContractJSONValue39(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical schema with its root example omitted for model providers that carry examples separately.",
 			); err != nil {
@@ -27560,28 +33950,28 @@ func validateConsumerContractJSONValue16(path string, value any, description str
 				return err
 			}
 		case "description":
-			if err := validateConsumerContractJSONValue26(
+			if err := validateConsumerContractJSONValue32(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Description already present in the tool schema.",
 			); err != nil {
 				return err
 			}
 		case "discriminator_values":
-			if err := validateConsumerContractJSONValue27(
+			if err := validateConsumerContractJSONValue33(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Allowed branch names when this field selects a union branch.",
 			); err != nil {
 				return err
 			}
 		case "json_type":
-			if err := validateConsumerContractJSONValue29(
+			if err := validateConsumerContractJSONValue36(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Single JSON type accepted by this field, when known.",
 			); err != nil {
 				return err
 			}
 		case "path":
-			if err := validateConsumerContractJSONValue30(
+			if err := validateConsumerContractJSONValue37(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Path to this field. An omitted path identifies the root value.",
 			); err != nil {
@@ -27647,24 +34037,16 @@ func validateConsumerContractJSONValue18(path string, value any, description str
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
-		case "discriminator":
+		case "selection":
 			if err := validateConsumerContractJSONValue19(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Path to the union's discriminator property.",
-			); err != nil {
-				return err
-			}
-		case "value":
-			if err := validateConsumerContractJSONValue25(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Branch name required at the discriminator.",
+				typed[key], "Exactly one way the submitted value selects this branch.",
 			); err != nil {
 				return err
 			}
 		default:
 			return unknownJSONFieldError(path, key, []string{
-				"discriminator",
-				"value",
+				"selection",
 			})
 		}
 	}
@@ -27678,24 +34060,33 @@ func validateConsumerContractJSONValue19(path string, value any, description str
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	typed, ok := value.([]any)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
 	}
-	for index, item := range typed {
-		if item == nil {
-			continue
-		}
-		if err := validateConsumerContractJSONValue20(
-			generatedJSONChildPath(path, strconv.Itoa(index), true),
-			item, description,
-		); err != nil {
-			return err
+	for key := range typed {
+		if key != "type" && key != "value" {
+			return unknownJSONFieldError(path, key, []string{"type", "value"})
 		}
 	}
-	return nil
+	discriminator, ok := typed["type"].(string)
+	if !ok {
+		return fmt.Errorf("%s: missing or invalid union discriminator", field)
+	}
+	branch, exists := typed["value"]
+	if !exists || branch == nil {
+		return fmt.Errorf("%s: missing union value", field)
+	}
+	switch discriminator {
+	case "tagged":
+		return validateConsumerContractJSONValue20(generatedJSONChildPath(path, "value", false), branch, "A declared string discriminator selects this branch.")
+	case "untagged":
+		return validateConsumerContractJSONValue28(generatedJSONChildPath(path, "value", false), branch, "The JSON kind of the union value selects this branch.")
+	default:
+		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
+	}
 }
 
 // validateConsumerContractJSONValue20 checks one value whose JSON shape is fixed by the generated Goa type.
@@ -27718,8 +34109,79 @@ func validateConsumerContractJSONValue20(path string, value any, description str
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
-		case "segment":
+		case "discriminator":
 			if err := validateConsumerContractJSONValue21(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Path to the union's discriminator property.",
+			); err != nil {
+				return err
+			}
+		case "value":
+			if err := validateConsumerContractJSONValue27(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Branch name required at the discriminator.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"discriminator",
+				"value",
+			})
+		}
+	}
+	return nil
+}
+
+// validateConsumerContractJSONValue21 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue21(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if item == nil {
+			continue
+		}
+		if err := validateConsumerContractJSONValue22(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateConsumerContractJSONValue22 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue22(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "segment":
+			if err := validateConsumerContractJSONValue23(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Exactly one path segment kind.",
 			); err != nil {
@@ -27734,8 +34196,8 @@ func validateConsumerContractJSONValue20(path string, value any, description str
 	return nil
 }
 
-// validateConsumerContractJSONValue21 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue21(path string, value any, description string) error {
+// validateConsumerContractJSONValue23 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue23(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -27762,55 +34224,12 @@ func validateConsumerContractJSONValue21(path string, value any, description str
 	}
 	switch discriminator {
 	case "field":
-		return validateConsumerContractJSONValue22(generatedJSONChildPath(path, "value", false), branch, "Exact JSON property name, including empty or punctuation-containing names.")
+		return validateConsumerContractJSONValue25(generatedJSONChildPath(path, "value", false), branch, "Exact JSON property name, including empty or punctuation-containing names.")
 	case "element":
-		return validateConsumerContractJSONValue23(generatedJSONChildPath(path, "value", false), branch, "One caller-selected array index or map key.")
+		return validateConsumerContractJSONValue26(generatedJSONChildPath(path, "value", false), branch, "One caller-selected array index or map key.")
 	default:
 		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
 	}
-}
-
-// validateConsumerContractJSONValue22 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue22(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateConsumerContractJSONValue23 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue23(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		default:
-			return unknownJSONFieldError(path, key, []string{})
-		}
-	}
-	return nil
 }
 
 // validateConsumerContractJSONValue25 checks one value whose JSON shape is fixed by the generated Goa type.
@@ -27836,11 +34255,22 @@ func validateConsumerContractJSONValue26(path string, value any, description str
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	_, ok := value.(string)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		default:
+			return unknownJSONFieldError(path, key, []string{})
+		}
 	}
 	return nil
 }
@@ -27852,19 +34282,11 @@ func validateConsumerContractJSONValue27(path string, value any, description str
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
 	}
-	typed, ok := value.([]any)
+	_, ok := value.(string)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
-	}
-	for index, item := range typed {
-		if err := validateConsumerContractJSONValue28(
-			generatedJSONChildPath(path, strconv.Itoa(index), true),
-			item, description,
-		); err != nil {
-			return err
-		}
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -27876,17 +34298,69 @@ func validateConsumerContractJSONValue28(path string, value any, description str
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	_, ok := value.(string)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "index":
+			if err := validateConsumerContractJSONValue29(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Zero-based position of this branch in the advertised oneOf, used to select its structured validation diagnostic.",
+			); err != nil {
+				return err
+			}
+		case "json_kind":
+			if err := validateConsumerContractJSONValue30(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "JSON kind that selects this branch; integer branches use number.",
+			); err != nil {
+				return err
+			}
+		case "path":
+			if err := validateConsumerContractJSONValue31(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Path to the union value. An omitted path identifies the root value.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"index",
+				"json_kind",
+				"path",
+			})
+		}
 	}
 	return nil
 }
 
 // validateConsumerContractJSONValue29 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateConsumerContractJSONValue29(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
+	}
+	_, ok := value.(json.Number)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateConsumerContractJSONValue30 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue30(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -27901,8 +34375,8 @@ func validateConsumerContractJSONValue29(path string, value any, description str
 	return nil
 }
 
-// validateConsumerContractJSONValue30 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue30(path string, value any, description string) error {
+// validateConsumerContractJSONValue31 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue31(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -27918,28 +34392,12 @@ func validateConsumerContractJSONValue30(path string, value any, description str
 		if item == nil {
 			continue
 		}
-		if err := validateConsumerContractJSONValue20(
+		if err := validateConsumerContractJSONValue22(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-// validateConsumerContractJSONValue31 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue31(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -28007,17 +34465,44 @@ func validateConsumerContractJSONValue36(path string, value any, description str
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
 	}
-	_, ok := value.(bool)
+	_, ok := value.(string)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
 
 // validateConsumerContractJSONValue37 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateConsumerContractJSONValue37(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if item == nil {
+			continue
+		}
+		if err := validateConsumerContractJSONValue22(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateConsumerContractJSONValue38 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue38(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -28032,8 +34517,96 @@ func validateConsumerContractJSONValue37(path string, value any, description str
 	return nil
 }
 
-// validateConsumerContractJSONValue38 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue38(path string, value any, description string) error {
+// validateConsumerContractJSONValue39 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue39(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateConsumerContractJSONValue40 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue40(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if err := validateConsumerContractJSONValue41(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateConsumerContractJSONValue41 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue41(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateConsumerContractJSONValue42 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue42(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
+	}
+	_, ok := value.(bool)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateConsumerContractJSONValue43 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue43(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateConsumerContractJSONValue44 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue44(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -28053,14 +34626,14 @@ func validateConsumerContractJSONValue38(path string, value any, description str
 	for _, key := range keys {
 		switch key {
 		case "length":
-			if err := validateConsumerContractJSONValue39(
+			if err := validateConsumerContractJSONValue45(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Total number of words in this document, including repeats.",
 			); err != nil {
 				return err
 			}
 		case "terms":
-			if err := validateConsumerContractJSONValue40(
+			if err := validateConsumerContractJSONValue47(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Lowercase words and their positive occurrence counts.",
 			); err != nil {
@@ -28076,8 +34649,8 @@ func validateConsumerContractJSONValue38(path string, value any, description str
 	return nil
 }
 
-// validateConsumerContractJSONValue39 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue39(path string, value any, description string) error {
+// validateConsumerContractJSONValue45 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue45(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -28092,8 +34665,8 @@ func validateConsumerContractJSONValue39(path string, value any, description str
 	return nil
 }
 
-// validateConsumerContractJSONValue40 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue40(path string, value any, description string) error {
+// validateConsumerContractJSONValue47 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue47(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -28111,7 +34684,7 @@ func validateConsumerContractJSONValue40(path string, value any, description str
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		if err := validateConsumerContractJSONValue41(
+		if err := validateConsumerContractJSONValue48(
 			generatedJSONChildPath(path, key, true),
 			typed[key], description,
 		); err != nil {
@@ -28121,8 +34694,8 @@ func validateConsumerContractJSONValue40(path string, value any, description str
 	return nil
 }
 
-// validateConsumerContractJSONValue41 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue41(path string, value any, description string) error {
+// validateConsumerContractJSONValue48 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue48(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -28137,8 +34710,8 @@ func validateConsumerContractJSONValue41(path string, value any, description str
 	return nil
 }
 
-// validateConsumerContractJSONValue42 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue42(path string, value any, description string) error {
+// validateConsumerContractJSONValue49 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue49(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -28154,168 +34727,12 @@ func validateConsumerContractJSONValue42(path string, value any, description str
 		if item == nil {
 			continue
 		}
-		if err := validateConsumerContractJSONValue43(
+		if err := validateConsumerContractJSONValue50(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-// validateConsumerContractJSONValue43 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue43(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "audience":
-			if err := validateConsumerContractJSONValue44(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Consumers allowed to receive this payload.",
-			); err != nil {
-				return err
-			}
-		case "description":
-			if err := validateConsumerContractJSONValue45(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Description of the data carried by this kind.",
-			); err != nil {
-				return err
-			}
-		case "kind":
-			if err := validateConsumerContractJSONValue47(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Unique kind emitted by this tool.",
-			); err != nil {
-				return err
-			}
-		case "NativeImage":
-			if err := validateConsumerContractJSONValue48(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Whether this evidence kind declares a typed image source requiring an explicitly admitted host reader.",
-			); err != nil {
-				return err
-			}
-		case "schema":
-			if err := validateConsumerContractJSONValue49(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Canonical JSON schema for the item data.",
-			); err != nil {
-				return err
-			}
-		case "type":
-			if err := validateConsumerContractJSONValue12(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Generated examples and field details for the item data.",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"audience",
-				"description",
-				"kind",
-				"NativeImage",
-				"schema",
-				"type",
-			})
-		}
-	}
-	return nil
-}
-
-// validateConsumerContractJSONValue44 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue44(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateConsumerContractJSONValue45 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue45(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateConsumerContractJSONValue47 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue47(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateConsumerContractJSONValue48 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue48(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
-	}
-	_, ok := value.(bool)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateConsumerContractJSONValue49 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue49(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -28340,56 +34757,56 @@ func validateConsumerContractJSONValue50(path string, value any, description str
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
-		case "description":
+		case "audience":
 			if err := validateConsumerContractJSONValue51(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Domain instructions without optional UI guidance.",
+				typed[key], "Consumers allowed to receive this payload.",
 			); err != nil {
 				return err
 			}
-		case "execution_schema":
+		case "description":
 			if err := validateConsumerContractJSONValue52(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Complete input schema requiring disabled rendering controls.",
+				typed[key], "Description of the data carried by this kind.",
 			); err != nil {
 				return err
 			}
-		case "payload":
-			if err := validateConsumerContractJSONValue12(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Generated examples and field descriptions matching this schema.",
-			); err != nil {
-				return err
-			}
-		case "payload_schema":
+		case "kind":
 			if err := validateConsumerContractJSONValue53(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Exact model argument schema without UI-only controls.",
+				typed[key], "Unique kind emitted by this tool.",
 			); err != nil {
 				return err
 			}
-		case "result_reminder":
+		case "NativeImage":
 			if err := validateConsumerContractJSONValue54(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Domain result guidance without claiming UI output.",
+				typed[key], "Whether this evidence kind declares a typed image source requiring an explicitly admitted host reader.",
 			); err != nil {
 				return err
 			}
-		case "search":
-			if err := validateConsumerContractJSONValue38(
+		case "schema":
+			if err := validateConsumerContractJSONValue55(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Generated word counts for these domain instructions.",
+				typed[key], "Canonical JSON schema for the item data.",
+			); err != nil {
+				return err
+			}
+		case "type":
+			if err := validateConsumerContractJSONValue12(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Generated examples and field details for the item data.",
 			); err != nil {
 				return err
 			}
 		default:
 			return unknownJSONFieldError(path, key, []string{
+				"audience",
 				"description",
-				"execution_schema",
-				"payload",
-				"payload_schema",
-				"result_reminder",
-				"search",
+				"kind",
+				"NativeImage",
+				"schema",
+				"type",
 			})
 		}
 	}
@@ -28451,6 +34868,22 @@ func validateConsumerContractJSONValue54(path string, value any, description str
 		field = "$payload"
 	}
 	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
+	}
+	_, ok := value.(bool)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateConsumerContractJSONValue55 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue55(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "string", "null", description)
 	}
 	_, ok := value.(string)
@@ -28460,8 +34893,148 @@ func validateConsumerContractJSONValue54(path string, value any, description str
 	return nil
 }
 
-// validateConsumerContractJSONValue55 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue55(path string, value any, description string) error {
+// validateConsumerContractJSONValue56 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue56(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "description":
+			if err := validateConsumerContractJSONValue58(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Domain instructions without optional UI guidance.",
+			); err != nil {
+				return err
+			}
+		case "execution_schema":
+			if err := validateConsumerContractJSONValue59(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Complete input schema requiring disabled rendering controls.",
+			); err != nil {
+				return err
+			}
+		case "payload":
+			if err := validateConsumerContractJSONValue12(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Generated examples and field descriptions matching this schema.",
+			); err != nil {
+				return err
+			}
+		case "payload_schema":
+			if err := validateConsumerContractJSONValue60(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Exact model argument schema without UI-only controls.",
+			); err != nil {
+				return err
+			}
+		case "result_reminder":
+			if err := validateConsumerContractJSONValue61(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Domain result guidance without claiming UI output.",
+			); err != nil {
+				return err
+			}
+		case "search":
+			if err := validateConsumerContractJSONValue44(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Generated word counts for these domain instructions.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"description",
+				"execution_schema",
+				"payload",
+				"payload_schema",
+				"result_reminder",
+				"search",
+			})
+		}
+	}
+	return nil
+}
+
+// validateConsumerContractJSONValue58 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue58(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateConsumerContractJSONValue59 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue59(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateConsumerContractJSONValue60 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue60(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateConsumerContractJSONValue61 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue61(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateConsumerContractJSONValue62 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue62(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -29645,21 +36218,21 @@ func validateRegisterPayloadJSONValue(path string, value any, description string
 				return err
 			}
 		case "tools":
-			if err := validateRegisterPayloadJSONValue80(
+			if err := validateRegisterPayloadJSONValue86(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Tool definitions with their schemas",
 			); err != nil {
 				return err
 			}
 		case "version":
-			if err := validateRegisterPayloadJSONValue77(
+			if err := validateRegisterPayloadJSONValue84(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Semantic version of the toolset.",
 			); err != nil {
 				return err
 			}
 		case "wire_protocol_version":
-			if err := validateRegisterPayloadJSONValue78(
+			if err := validateRegisterPayloadJSONValue85(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Required runtime-owned version of the provider message envelope. The registry admits only its exact canonical version.",
 			); err != nil {
@@ -29819,8 +36392,8 @@ func validateRegisterPayloadJSONValue79(path string, value any, description stri
 	return nil
 }
 
-// validateRegisterPayloadJSONValue80 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisterPayloadJSONValue80(path string, value any, description string) error {
+// validateRegisterPayloadJSONValue86 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue86(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -29874,49 +36447,49 @@ func validateRegisterPayloadJSONValue3(path string, value any, description strin
 				return err
 			}
 		case "description":
-			if err := validateRegisterPayloadJSONValue69(
+			if err := validateRegisterPayloadJSONValue75(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Human-readable description of what the tool does.",
 			); err != nil {
 				return err
 			}
 		case "execution_payload_schema":
-			if err := validateRegisterPayloadJSONValue70(
+			if err := validateRegisterPayloadJSONValue76(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the payload sent to the provider. It includes fields supplied by continuation handling and excludes fields injected inside the provider.",
 			); err != nil {
 				return err
 			}
 		case "name":
-			if err := validateRegisterPayloadJSONValue71(
+			if err := validateRegisterPayloadJSONValue77(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Globally unique tool identifier of the form \"toolset.tool\".",
 			); err != nil {
 				return err
 			}
 		case "payload_schema":
-			if err := validateRegisterPayloadJSONValue72(
+			if err := validateRegisterPayloadJSONValue78(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for arguments accepted from the model.",
 			); err != nil {
 				return err
 			}
 		case "result_schema":
-			if err := validateRegisterPayloadJSONValue73(
+			if err := validateRegisterPayloadJSONValue80(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the tool result.",
 			); err != nil {
 				return err
 			}
 		case "sidecar_schema":
-			if err := validateRegisterPayloadJSONValue74(
+			if err := validateRegisterPayloadJSONValue81(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the tool sidecar (UI-only), when present.",
 			); err != nil {
 				return err
 			}
 		case "tags":
-			if err := validateRegisterPayloadJSONValue75(
+			if err := validateRegisterPayloadJSONValue82(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Optional tags used for policy, routing, or UI filtering.",
 			); err != nil {
@@ -30001,14 +36574,14 @@ func validateRegisterPayloadJSONValue4(path string, value any, description strin
 				return err
 			}
 		case "required_labels":
-			if err := validateRegisterPayloadJSONValue45(
+			if err := validateRegisterPayloadJSONValue52(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Run labels required by provider-side injection for this tool.",
 			); err != nil {
 				return err
 			}
 		case "requires_ui":
-			if err := validateRegisterPayloadJSONValue48(
+			if err := validateRegisterPayloadJSONValue54(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Whether executing this tool requires rendering or an interactive client protocol.",
 			); err != nil {
@@ -30022,35 +36595,35 @@ func validateRegisterPayloadJSONValue4(path string, value any, description strin
 				return err
 			}
 		case "result_reminder":
-			if err := validateRegisterPayloadJSONValue49(
+			if err := validateRegisterPayloadJSONValue55(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Model guidance emitted after this tool's result.",
 			); err != nil {
 				return err
 			}
 		case "search":
-			if err := validateRegisterPayloadJSONValue50(
+			if err := validateRegisterPayloadJSONValue56(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Word counts generated from the tool's name, title, and description.",
 			); err != nil {
 				return err
 			}
 		case "server_data":
-			if err := validateRegisterPayloadJSONValue54(
+			if err := validateRegisterPayloadJSONValue61(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Closed set of server-only result payloads emitted by this tool.",
 			); err != nil {
 				return err
 			}
 		case "text_only":
-			if err := validateRegisterPayloadJSONValue62(
+			if err := validateRegisterPayloadJSONValue69(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated model contract for execution using ordinary messages only.",
 			); err != nil {
 				return err
 			}
 		case "title":
-			if err := validateRegisterPayloadJSONValue67(
+			if err := validateRegisterPayloadJSONValue74(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Human-readable title declared for the tool.",
 			); err != nil {
@@ -30561,14 +37134,14 @@ func validateRegisterPayloadJSONValue25(path string, value any, description stri
 				return err
 			}
 		case "name":
-			if err := validateRegisterPayloadJSONValue43(
+			if err := validateRegisterPayloadJSONValue50(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated type name used in diagnostics.",
 			); err != nil {
 				return err
 			}
 		case "schema_without_root_example":
-			if err := validateRegisterPayloadJSONValue44(
+			if err := validateRegisterPayloadJSONValue51(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical schema with its root example omitted for model providers that carry examples separately.",
 			); err != nil {
@@ -30657,28 +37230,28 @@ func validateRegisterPayloadJSONValue28(path string, value any, description stri
 				return err
 			}
 		case "description":
-			if err := validateRegisterPayloadJSONValue38(
+			if err := validateRegisterPayloadJSONValue44(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Description already present in the tool schema.",
 			); err != nil {
 				return err
 			}
 		case "discriminator_values":
-			if err := validateRegisterPayloadJSONValue39(
+			if err := validateRegisterPayloadJSONValue45(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Allowed branch names when this field selects a union branch.",
 			); err != nil {
 				return err
 			}
 		case "json_type":
-			if err := validateRegisterPayloadJSONValue41(
+			if err := validateRegisterPayloadJSONValue48(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Single JSON type accepted by this field, when known.",
 			); err != nil {
 				return err
 			}
 		case "path":
-			if err := validateRegisterPayloadJSONValue42(
+			if err := validateRegisterPayloadJSONValue49(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Path to this field. An omitted path identifies the root value.",
 			); err != nil {
@@ -30744,24 +37317,16 @@ func validateRegisterPayloadJSONValue30(path string, value any, description stri
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
-		case "discriminator":
+		case "selection":
 			if err := validateRegisterPayloadJSONValue31(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Path to the union's discriminator property.",
-			); err != nil {
-				return err
-			}
-		case "value":
-			if err := validateRegisterPayloadJSONValue37(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Branch name required at the discriminator.",
+				typed[key], "Exactly one way the submitted value selects this branch.",
 			); err != nil {
 				return err
 			}
 		default:
 			return unknownJSONFieldError(path, key, []string{
-				"discriminator",
-				"value",
+				"selection",
 			})
 		}
 	}
@@ -30775,24 +37340,33 @@ func validateRegisterPayloadJSONValue31(path string, value any, description stri
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	typed, ok := value.([]any)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
 	}
-	for index, item := range typed {
-		if item == nil {
-			continue
-		}
-		if err := validateRegisterPayloadJSONValue32(
-			generatedJSONChildPath(path, strconv.Itoa(index), true),
-			item, description,
-		); err != nil {
-			return err
+	for key := range typed {
+		if key != "type" && key != "value" {
+			return unknownJSONFieldError(path, key, []string{"type", "value"})
 		}
 	}
-	return nil
+	discriminator, ok := typed["type"].(string)
+	if !ok {
+		return fmt.Errorf("%s: missing or invalid union discriminator", field)
+	}
+	branch, exists := typed["value"]
+	if !exists || branch == nil {
+		return fmt.Errorf("%s: missing union value", field)
+	}
+	switch discriminator {
+	case "tagged":
+		return validateRegisterPayloadJSONValue32(generatedJSONChildPath(path, "value", false), branch, "A declared string discriminator selects this branch.")
+	case "untagged":
+		return validateRegisterPayloadJSONValue40(generatedJSONChildPath(path, "value", false), branch, "The JSON kind of the union value selects this branch.")
+	default:
+		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
+	}
 }
 
 // validateRegisterPayloadJSONValue32 checks one value whose JSON shape is fixed by the generated Goa type.
@@ -30815,8 +37389,79 @@ func validateRegisterPayloadJSONValue32(path string, value any, description stri
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
-		case "segment":
+		case "discriminator":
 			if err := validateRegisterPayloadJSONValue33(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Path to the union's discriminator property.",
+			); err != nil {
+				return err
+			}
+		case "value":
+			if err := validateRegisterPayloadJSONValue39(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Branch name required at the discriminator.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"discriminator",
+				"value",
+			})
+		}
+	}
+	return nil
+}
+
+// validateRegisterPayloadJSONValue33 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue33(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if item == nil {
+			continue
+		}
+		if err := validateRegisterPayloadJSONValue34(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateRegisterPayloadJSONValue34 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue34(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "segment":
+			if err := validateRegisterPayloadJSONValue36(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Exactly one path segment kind.",
 			); err != nil {
@@ -30831,8 +37476,8 @@ func validateRegisterPayloadJSONValue32(path string, value any, description stri
 	return nil
 }
 
-// validateRegisterPayloadJSONValue33 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisterPayloadJSONValue33(path string, value any, description string) error {
+// validateRegisterPayloadJSONValue36 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue36(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -30859,55 +37504,12 @@ func validateRegisterPayloadJSONValue33(path string, value any, description stri
 	}
 	switch discriminator {
 	case "field":
-		return validateRegisterPayloadJSONValue34(generatedJSONChildPath(path, "value", false), branch, "Exact JSON property name, including empty or punctuation-containing names.")
+		return validateRegisterPayloadJSONValue37(generatedJSONChildPath(path, "value", false), branch, "Exact JSON property name, including empty or punctuation-containing names.")
 	case "element":
-		return validateRegisterPayloadJSONValue36(generatedJSONChildPath(path, "value", false), branch, "One caller-selected array index or map key.")
+		return validateRegisterPayloadJSONValue38(generatedJSONChildPath(path, "value", false), branch, "One caller-selected array index or map key.")
 	default:
 		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
 	}
-}
-
-// validateRegisterPayloadJSONValue34 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisterPayloadJSONValue34(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateRegisterPayloadJSONValue36 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisterPayloadJSONValue36(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		default:
-			return unknownJSONFieldError(path, key, []string{})
-		}
-	}
-	return nil
 }
 
 // validateRegisterPayloadJSONValue37 checks one value whose JSON shape is fixed by the generated Goa type.
@@ -30933,11 +37535,22 @@ func validateRegisterPayloadJSONValue38(path string, value any, description stri
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	_, ok := value.(string)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		default:
+			return unknownJSONFieldError(path, key, []string{})
+		}
 	}
 	return nil
 }
@@ -30949,19 +37562,11 @@ func validateRegisterPayloadJSONValue39(path string, value any, description stri
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
 	}
-	typed, ok := value.([]any)
+	_, ok := value.(string)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
-	}
-	for index, item := range typed {
-		if err := validateRegisterPayloadJSONValue40(
-			generatedJSONChildPath(path, strconv.Itoa(index), true),
-			item, description,
-		); err != nil {
-			return err
-		}
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -30973,17 +37578,69 @@ func validateRegisterPayloadJSONValue40(path string, value any, description stri
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	_, ok := value.(string)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "index":
+			if err := validateRegisterPayloadJSONValue41(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Zero-based position of this branch in the advertised oneOf, used to select its structured validation diagnostic.",
+			); err != nil {
+				return err
+			}
+		case "json_kind":
+			if err := validateRegisterPayloadJSONValue42(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "JSON kind that selects this branch; integer branches use number.",
+			); err != nil {
+				return err
+			}
+		case "path":
+			if err := validateRegisterPayloadJSONValue43(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Path to the union value. An omitted path identifies the root value.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"index",
+				"json_kind",
+				"path",
+			})
+		}
 	}
 	return nil
 }
 
 // validateRegisterPayloadJSONValue41 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateRegisterPayloadJSONValue41(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
+	}
+	_, ok := value.(json.Number)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateRegisterPayloadJSONValue42 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue42(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -30998,8 +37655,8 @@ func validateRegisterPayloadJSONValue41(path string, value any, description stri
 	return nil
 }
 
-// validateRegisterPayloadJSONValue42 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisterPayloadJSONValue42(path string, value any, description string) error {
+// validateRegisterPayloadJSONValue43 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue43(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -31015,28 +37672,12 @@ func validateRegisterPayloadJSONValue42(path string, value any, description stri
 		if item == nil {
 			continue
 		}
-		if err := validateRegisterPayloadJSONValue32(
+		if err := validateRegisterPayloadJSONValue34(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-// validateRegisterPayloadJSONValue43 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisterPayloadJSONValue43(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -31104,17 +37745,44 @@ func validateRegisterPayloadJSONValue48(path string, value any, description stri
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
 	}
-	_, ok := value.(bool)
+	_, ok := value.(string)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
 
 // validateRegisterPayloadJSONValue49 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateRegisterPayloadJSONValue49(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if item == nil {
+			continue
+		}
+		if err := validateRegisterPayloadJSONValue34(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateRegisterPayloadJSONValue50 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue50(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -31129,8 +37797,96 @@ func validateRegisterPayloadJSONValue49(path string, value any, description stri
 	return nil
 }
 
-// validateRegisterPayloadJSONValue50 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisterPayloadJSONValue50(path string, value any, description string) error {
+// validateRegisterPayloadJSONValue51 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue51(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateRegisterPayloadJSONValue52 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue52(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if err := validateRegisterPayloadJSONValue53(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateRegisterPayloadJSONValue53 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue53(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateRegisterPayloadJSONValue54 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue54(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
+	}
+	_, ok := value.(bool)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateRegisterPayloadJSONValue55 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue55(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateRegisterPayloadJSONValue56 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue56(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -31150,14 +37906,14 @@ func validateRegisterPayloadJSONValue50(path string, value any, description stri
 	for _, key := range keys {
 		switch key {
 		case "length":
-			if err := validateRegisterPayloadJSONValue51(
+			if err := validateRegisterPayloadJSONValue58(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Total number of words in this document, including repeats.",
 			); err != nil {
 				return err
 			}
 		case "terms":
-			if err := validateRegisterPayloadJSONValue52(
+			if err := validateRegisterPayloadJSONValue59(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Lowercase words and their positive occurrence counts.",
 			); err != nil {
@@ -31173,8 +37929,8 @@ func validateRegisterPayloadJSONValue50(path string, value any, description stri
 	return nil
 }
 
-// validateRegisterPayloadJSONValue51 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisterPayloadJSONValue51(path string, value any, description string) error {
+// validateRegisterPayloadJSONValue58 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue58(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -31189,8 +37945,8 @@ func validateRegisterPayloadJSONValue51(path string, value any, description stri
 	return nil
 }
 
-// validateRegisterPayloadJSONValue52 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisterPayloadJSONValue52(path string, value any, description string) error {
+// validateRegisterPayloadJSONValue59 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue59(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -31208,7 +37964,7 @@ func validateRegisterPayloadJSONValue52(path string, value any, description stri
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		if err := validateRegisterPayloadJSONValue53(
+		if err := validateRegisterPayloadJSONValue60(
 			generatedJSONChildPath(path, key, true),
 			typed[key], description,
 		); err != nil {
@@ -31218,8 +37974,8 @@ func validateRegisterPayloadJSONValue52(path string, value any, description stri
 	return nil
 }
 
-// validateRegisterPayloadJSONValue53 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisterPayloadJSONValue53(path string, value any, description string) error {
+// validateRegisterPayloadJSONValue60 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue60(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -31234,8 +37990,8 @@ func validateRegisterPayloadJSONValue53(path string, value any, description stri
 	return nil
 }
 
-// validateRegisterPayloadJSONValue54 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisterPayloadJSONValue54(path string, value any, description string) error {
+// validateRegisterPayloadJSONValue61 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue61(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -31251,168 +38007,12 @@ func validateRegisterPayloadJSONValue54(path string, value any, description stri
 		if item == nil {
 			continue
 		}
-		if err := validateRegisterPayloadJSONValue55(
+		if err := validateRegisterPayloadJSONValue62(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-// validateRegisterPayloadJSONValue55 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisterPayloadJSONValue55(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "audience":
-			if err := validateRegisterPayloadJSONValue56(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Consumers allowed to receive this payload.",
-			); err != nil {
-				return err
-			}
-		case "description":
-			if err := validateRegisterPayloadJSONValue58(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Description of the data carried by this kind.",
-			); err != nil {
-				return err
-			}
-		case "kind":
-			if err := validateRegisterPayloadJSONValue59(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Unique kind emitted by this tool.",
-			); err != nil {
-				return err
-			}
-		case "NativeImage":
-			if err := validateRegisterPayloadJSONValue60(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Whether this evidence kind declares a typed image source requiring an explicitly admitted host reader.",
-			); err != nil {
-				return err
-			}
-		case "schema":
-			if err := validateRegisterPayloadJSONValue61(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Canonical JSON schema for the item data.",
-			); err != nil {
-				return err
-			}
-		case "type":
-			if err := validateRegisterPayloadJSONValue25(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Generated examples and field details for the item data.",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"audience",
-				"description",
-				"kind",
-				"NativeImage",
-				"schema",
-				"type",
-			})
-		}
-	}
-	return nil
-}
-
-// validateRegisterPayloadJSONValue56 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisterPayloadJSONValue56(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateRegisterPayloadJSONValue58 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisterPayloadJSONValue58(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateRegisterPayloadJSONValue59 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisterPayloadJSONValue59(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateRegisterPayloadJSONValue60 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisterPayloadJSONValue60(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
-	}
-	_, ok := value.(bool)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateRegisterPayloadJSONValue61 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisterPayloadJSONValue61(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -31437,56 +38037,56 @@ func validateRegisterPayloadJSONValue62(path string, value any, description stri
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
-		case "description":
+		case "audience":
 			if err := validateRegisterPayloadJSONValue63(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Domain instructions without optional UI guidance.",
+				typed[key], "Consumers allowed to receive this payload.",
 			); err != nil {
 				return err
 			}
-		case "execution_schema":
+		case "description":
 			if err := validateRegisterPayloadJSONValue64(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Complete input schema requiring disabled rendering controls.",
+				typed[key], "Description of the data carried by this kind.",
 			); err != nil {
 				return err
 			}
-		case "payload":
-			if err := validateRegisterPayloadJSONValue25(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Generated examples and field descriptions matching this schema.",
-			); err != nil {
-				return err
-			}
-		case "payload_schema":
+		case "kind":
 			if err := validateRegisterPayloadJSONValue65(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Exact model argument schema without UI-only controls.",
+				typed[key], "Unique kind emitted by this tool.",
 			); err != nil {
 				return err
 			}
-		case "result_reminder":
+		case "NativeImage":
 			if err := validateRegisterPayloadJSONValue66(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Domain result guidance without claiming UI output.",
+				typed[key], "Whether this evidence kind declares a typed image source requiring an explicitly admitted host reader.",
 			); err != nil {
 				return err
 			}
-		case "search":
-			if err := validateRegisterPayloadJSONValue50(
+		case "schema":
+			if err := validateRegisterPayloadJSONValue67(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Generated word counts for these domain instructions.",
+				typed[key], "Canonical JSON schema for the item data.",
+			); err != nil {
+				return err
+			}
+		case "type":
+			if err := validateRegisterPayloadJSONValue25(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Generated examples and field details for the item data.",
 			); err != nil {
 				return err
 			}
 		default:
 			return unknownJSONFieldError(path, key, []string{
+				"audience",
 				"description",
-				"execution_schema",
-				"payload",
-				"payload_schema",
-				"result_reminder",
-				"search",
+				"kind",
+				"NativeImage",
+				"schema",
+				"type",
 			})
 		}
 	}
@@ -31548,11 +38148,11 @@ func validateRegisterPayloadJSONValue66(path string, value any, description stri
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
 	}
-	_, ok := value.(string)
+	_, ok := value.(bool)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -31580,11 +38180,71 @@ func validateRegisterPayloadJSONValue69(path string, value any, description stri
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	_, ok := value.(string)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "description":
+			if err := validateRegisterPayloadJSONValue70(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Domain instructions without optional UI guidance.",
+			); err != nil {
+				return err
+			}
+		case "execution_schema":
+			if err := validateRegisterPayloadJSONValue71(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Complete input schema requiring disabled rendering controls.",
+			); err != nil {
+				return err
+			}
+		case "payload":
+			if err := validateRegisterPayloadJSONValue25(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Generated examples and field descriptions matching this schema.",
+			); err != nil {
+				return err
+			}
+		case "payload_schema":
+			if err := validateRegisterPayloadJSONValue72(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Exact model argument schema without UI-only controls.",
+			); err != nil {
+				return err
+			}
+		case "result_reminder":
+			if err := validateRegisterPayloadJSONValue73(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Domain result guidance without claiming UI output.",
+			); err != nil {
+				return err
+			}
+		case "search":
+			if err := validateRegisterPayloadJSONValue56(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Generated word counts for these domain instructions.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"description",
+				"execution_schema",
+				"payload",
+				"payload_schema",
+				"result_reminder",
+				"search",
+			})
+		}
 	}
 	return nil
 }
@@ -31676,19 +38336,11 @@ func validateRegisterPayloadJSONValue75(path string, value any, description stri
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
 	}
-	typed, ok := value.([]any)
+	_, ok := value.(string)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
-	}
-	for index, item := range typed {
-		if err := validateRegisterPayloadJSONValue76(
-			generatedJSONChildPath(path, strconv.Itoa(index), true),
-			item, description,
-		); err != nil {
-			return err
-		}
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -31727,6 +38379,110 @@ func validateRegisterPayloadJSONValue77(path string, value any, description stri
 
 // validateRegisterPayloadJSONValue78 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateRegisterPayloadJSONValue78(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateRegisterPayloadJSONValue80 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue80(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateRegisterPayloadJSONValue81 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue81(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateRegisterPayloadJSONValue82 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue82(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if err := validateRegisterPayloadJSONValue83(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateRegisterPayloadJSONValue83 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue83(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateRegisterPayloadJSONValue84 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue84(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateRegisterPayloadJSONValue85 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue85(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -32250,14 +39006,14 @@ func validateResolvedToolsetJSONValue13(path string, value any, description stri
 				return err
 			}
 		case "tools":
-			if err := validateResolvedToolsetJSONValue77(
+			if err := validateResolvedToolsetJSONValue79(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Tool schemas included in the toolset.",
 			); err != nil {
 				return err
 			}
 		case "version":
-			if err := validateResolvedToolsetJSONValue76(
+			if err := validateResolvedToolsetJSONValue83(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Semantic version of the toolset.",
 			); err != nil {
@@ -32365,8 +39121,8 @@ func validateResolvedToolsetJSONValue68(path string, value any, description stri
 	return nil
 }
 
-// validateResolvedToolsetJSONValue77 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResolvedToolsetJSONValue77(path string, value any, description string) error {
+// validateResolvedToolsetJSONValue79 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue79(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -32382,7 +39138,7 @@ func validateResolvedToolsetJSONValue77(path string, value any, description stri
 		if item == nil {
 			continue
 		}
-		if err := validateResolvedToolsetJSONValue78(
+		if err := validateResolvedToolsetJSONValue84(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -32392,8 +39148,8 @@ func validateResolvedToolsetJSONValue77(path string, value any, description stri
 	return nil
 }
 
-// validateResolvedToolsetJSONValue78 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResolvedToolsetJSONValue78(path string, value any, description string) error {
+// validateResolvedToolsetJSONValue84 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue84(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -32420,49 +39176,49 @@ func validateResolvedToolsetJSONValue78(path string, value any, description stri
 				return err
 			}
 		case "description":
-			if err := validateResolvedToolsetJSONValue67(
+			if err := validateResolvedToolsetJSONValue74(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Human-readable description of what the tool does.",
 			); err != nil {
 				return err
 			}
 		case "execution_payload_schema":
-			if err := validateResolvedToolsetJSONValue69(
+			if err := validateResolvedToolsetJSONValue75(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the payload sent to the provider. It includes fields supplied by continuation handling and excludes fields injected inside the provider.",
 			); err != nil {
 				return err
 			}
 		case "name":
-			if err := validateResolvedToolsetJSONValue70(
+			if err := validateResolvedToolsetJSONValue76(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Globally unique tool identifier of the form \"toolset.tool\".",
 			); err != nil {
 				return err
 			}
 		case "payload_schema":
-			if err := validateResolvedToolsetJSONValue71(
+			if err := validateResolvedToolsetJSONValue77(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for arguments accepted from the model.",
 			); err != nil {
 				return err
 			}
 		case "result_schema":
-			if err := validateResolvedToolsetJSONValue72(
+			if err := validateResolvedToolsetJSONValue78(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the tool result.",
 			); err != nil {
 				return err
 			}
 		case "sidecar_schema":
-			if err := validateResolvedToolsetJSONValue73(
+			if err := validateResolvedToolsetJSONValue80(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the tool sidecar (UI-only), when present.",
 			); err != nil {
 				return err
 			}
 		case "tags":
-			if err := validateResolvedToolsetJSONValue74(
+			if err := validateResolvedToolsetJSONValue81(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Optional tags used for policy, routing, or UI filtering.",
 			); err != nil {
@@ -32547,14 +39303,14 @@ func validateResolvedToolsetJSONValue3(path string, value any, description strin
 				return err
 			}
 		case "required_labels":
-			if err := validateResolvedToolsetJSONValue44(
+			if err := validateResolvedToolsetJSONValue51(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Run labels required by provider-side injection for this tool.",
 			); err != nil {
 				return err
 			}
 		case "requires_ui":
-			if err := validateResolvedToolsetJSONValue47(
+			if err := validateResolvedToolsetJSONValue53(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Whether executing this tool requires rendering or an interactive client protocol.",
 			); err != nil {
@@ -32568,35 +39324,35 @@ func validateResolvedToolsetJSONValue3(path string, value any, description strin
 				return err
 			}
 		case "result_reminder":
-			if err := validateResolvedToolsetJSONValue48(
+			if err := validateResolvedToolsetJSONValue54(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Model guidance emitted after this tool's result.",
 			); err != nil {
 				return err
 			}
 		case "search":
-			if err := validateResolvedToolsetJSONValue49(
+			if err := validateResolvedToolsetJSONValue55(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Word counts generated from the tool's name, title, and description.",
 			); err != nil {
 				return err
 			}
 		case "server_data":
-			if err := validateResolvedToolsetJSONValue53(
+			if err := validateResolvedToolsetJSONValue60(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Closed set of server-only result payloads emitted by this tool.",
 			); err != nil {
 				return err
 			}
 		case "text_only":
-			if err := validateResolvedToolsetJSONValue61(
+			if err := validateResolvedToolsetJSONValue67(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated model contract for execution using ordinary messages only.",
 			); err != nil {
 				return err
 			}
 		case "title":
-			if err := validateResolvedToolsetJSONValue66(
+			if err := validateResolvedToolsetJSONValue73(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Human-readable title declared for the tool.",
 			); err != nil {
@@ -33107,14 +39863,14 @@ func validateResolvedToolsetJSONValue23(path string, value any, description stri
 				return err
 			}
 		case "name":
-			if err := validateResolvedToolsetJSONValue42(
+			if err := validateResolvedToolsetJSONValue49(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated type name used in diagnostics.",
 			); err != nil {
 				return err
 			}
 		case "schema_without_root_example":
-			if err := validateResolvedToolsetJSONValue43(
+			if err := validateResolvedToolsetJSONValue50(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical schema with its root example omitted for model providers that carry examples separately.",
 			); err != nil {
@@ -33203,28 +39959,28 @@ func validateResolvedToolsetJSONValue27(path string, value any, description stri
 				return err
 			}
 		case "description":
-			if err := validateResolvedToolsetJSONValue37(
+			if err := validateResolvedToolsetJSONValue43(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Description already present in the tool schema.",
 			); err != nil {
 				return err
 			}
 		case "discriminator_values":
-			if err := validateResolvedToolsetJSONValue38(
+			if err := validateResolvedToolsetJSONValue44(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Allowed branch names when this field selects a union branch.",
 			); err != nil {
 				return err
 			}
 		case "json_type":
-			if err := validateResolvedToolsetJSONValue40(
+			if err := validateResolvedToolsetJSONValue47(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Single JSON type accepted by this field, when known.",
 			); err != nil {
 				return err
 			}
 		case "path":
-			if err := validateResolvedToolsetJSONValue41(
+			if err := validateResolvedToolsetJSONValue48(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Path to this field. An omitted path identifies the root value.",
 			); err != nil {
@@ -33290,24 +40046,16 @@ func validateResolvedToolsetJSONValue29(path string, value any, description stri
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
-		case "discriminator":
+		case "selection":
 			if err := validateResolvedToolsetJSONValue30(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Path to the union's discriminator property.",
-			); err != nil {
-				return err
-			}
-		case "value":
-			if err := validateResolvedToolsetJSONValue36(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Branch name required at the discriminator.",
+				typed[key], "Exactly one way the submitted value selects this branch.",
 			); err != nil {
 				return err
 			}
 		default:
 			return unknownJSONFieldError(path, key, []string{
-				"discriminator",
-				"value",
+				"selection",
 			})
 		}
 	}
@@ -33321,24 +40069,33 @@ func validateResolvedToolsetJSONValue30(path string, value any, description stri
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	typed, ok := value.([]any)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
 	}
-	for index, item := range typed {
-		if item == nil {
-			continue
-		}
-		if err := validateResolvedToolsetJSONValue31(
-			generatedJSONChildPath(path, strconv.Itoa(index), true),
-			item, description,
-		); err != nil {
-			return err
+	for key := range typed {
+		if key != "type" && key != "value" {
+			return unknownJSONFieldError(path, key, []string{"type", "value"})
 		}
 	}
-	return nil
+	discriminator, ok := typed["type"].(string)
+	if !ok {
+		return fmt.Errorf("%s: missing or invalid union discriminator", field)
+	}
+	branch, exists := typed["value"]
+	if !exists || branch == nil {
+		return fmt.Errorf("%s: missing union value", field)
+	}
+	switch discriminator {
+	case "tagged":
+		return validateResolvedToolsetJSONValue31(generatedJSONChildPath(path, "value", false), branch, "A declared string discriminator selects this branch.")
+	case "untagged":
+		return validateResolvedToolsetJSONValue39(generatedJSONChildPath(path, "value", false), branch, "The JSON kind of the union value selects this branch.")
+	default:
+		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
+	}
 }
 
 // validateResolvedToolsetJSONValue31 checks one value whose JSON shape is fixed by the generated Goa type.
@@ -33361,8 +40118,79 @@ func validateResolvedToolsetJSONValue31(path string, value any, description stri
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
-		case "segment":
+		case "discriminator":
 			if err := validateResolvedToolsetJSONValue32(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Path to the union's discriminator property.",
+			); err != nil {
+				return err
+			}
+		case "value":
+			if err := validateResolvedToolsetJSONValue38(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Branch name required at the discriminator.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"discriminator",
+				"value",
+			})
+		}
+	}
+	return nil
+}
+
+// validateResolvedToolsetJSONValue32 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue32(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if item == nil {
+			continue
+		}
+		if err := validateResolvedToolsetJSONValue33(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateResolvedToolsetJSONValue33 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue33(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "segment":
+			if err := validateResolvedToolsetJSONValue34(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Exactly one path segment kind.",
 			); err != nil {
@@ -33377,8 +40205,8 @@ func validateResolvedToolsetJSONValue31(path string, value any, description stri
 	return nil
 }
 
-// validateResolvedToolsetJSONValue32 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResolvedToolsetJSONValue32(path string, value any, description string) error {
+// validateResolvedToolsetJSONValue34 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue34(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -33405,55 +40233,12 @@ func validateResolvedToolsetJSONValue32(path string, value any, description stri
 	}
 	switch discriminator {
 	case "field":
-		return validateResolvedToolsetJSONValue33(generatedJSONChildPath(path, "value", false), branch, "Exact JSON property name, including empty or punctuation-containing names.")
+		return validateResolvedToolsetJSONValue36(generatedJSONChildPath(path, "value", false), branch, "Exact JSON property name, including empty or punctuation-containing names.")
 	case "element":
-		return validateResolvedToolsetJSONValue34(generatedJSONChildPath(path, "value", false), branch, "One caller-selected array index or map key.")
+		return validateResolvedToolsetJSONValue37(generatedJSONChildPath(path, "value", false), branch, "One caller-selected array index or map key.")
 	default:
 		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
 	}
-}
-
-// validateResolvedToolsetJSONValue33 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResolvedToolsetJSONValue33(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateResolvedToolsetJSONValue34 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResolvedToolsetJSONValue34(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		default:
-			return unknownJSONFieldError(path, key, []string{})
-		}
-	}
-	return nil
 }
 
 // validateResolvedToolsetJSONValue36 checks one value whose JSON shape is fixed by the generated Goa type.
@@ -33479,11 +40264,22 @@ func validateResolvedToolsetJSONValue37(path string, value any, description stri
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	_, ok := value.(string)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		default:
+			return unknownJSONFieldError(path, key, []string{})
+		}
 	}
 	return nil
 }
@@ -33495,19 +40291,11 @@ func validateResolvedToolsetJSONValue38(path string, value any, description stri
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
 	}
-	typed, ok := value.([]any)
+	_, ok := value.(string)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
-	}
-	for index, item := range typed {
-		if err := validateResolvedToolsetJSONValue39(
-			generatedJSONChildPath(path, strconv.Itoa(index), true),
-			item, description,
-		); err != nil {
-			return err
-		}
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -33519,17 +40307,69 @@ func validateResolvedToolsetJSONValue39(path string, value any, description stri
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	_, ok := value.(string)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "index":
+			if err := validateResolvedToolsetJSONValue40(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Zero-based position of this branch in the advertised oneOf, used to select its structured validation diagnostic.",
+			); err != nil {
+				return err
+			}
+		case "json_kind":
+			if err := validateResolvedToolsetJSONValue41(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "JSON kind that selects this branch; integer branches use number.",
+			); err != nil {
+				return err
+			}
+		case "path":
+			if err := validateResolvedToolsetJSONValue42(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Path to the union value. An omitted path identifies the root value.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"index",
+				"json_kind",
+				"path",
+			})
+		}
 	}
 	return nil
 }
 
 // validateResolvedToolsetJSONValue40 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateResolvedToolsetJSONValue40(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
+	}
+	_, ok := value.(json.Number)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateResolvedToolsetJSONValue41 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue41(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -33544,8 +40384,8 @@ func validateResolvedToolsetJSONValue40(path string, value any, description stri
 	return nil
 }
 
-// validateResolvedToolsetJSONValue41 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResolvedToolsetJSONValue41(path string, value any, description string) error {
+// validateResolvedToolsetJSONValue42 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue42(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -33561,28 +40401,12 @@ func validateResolvedToolsetJSONValue41(path string, value any, description stri
 		if item == nil {
 			continue
 		}
-		if err := validateResolvedToolsetJSONValue31(
+		if err := validateResolvedToolsetJSONValue33(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-// validateResolvedToolsetJSONValue42 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResolvedToolsetJSONValue42(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -33650,17 +40474,44 @@ func validateResolvedToolsetJSONValue47(path string, value any, description stri
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
 	}
-	_, ok := value.(bool)
+	_, ok := value.(string)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
 
 // validateResolvedToolsetJSONValue48 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateResolvedToolsetJSONValue48(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if item == nil {
+			continue
+		}
+		if err := validateResolvedToolsetJSONValue33(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateResolvedToolsetJSONValue49 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue49(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -33675,8 +40526,96 @@ func validateResolvedToolsetJSONValue48(path string, value any, description stri
 	return nil
 }
 
-// validateResolvedToolsetJSONValue49 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResolvedToolsetJSONValue49(path string, value any, description string) error {
+// validateResolvedToolsetJSONValue50 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue50(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateResolvedToolsetJSONValue51 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue51(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if err := validateResolvedToolsetJSONValue52(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateResolvedToolsetJSONValue52 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue52(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateResolvedToolsetJSONValue53 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue53(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
+	}
+	_, ok := value.(bool)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateResolvedToolsetJSONValue54 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue54(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateResolvedToolsetJSONValue55 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue55(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -33696,14 +40635,14 @@ func validateResolvedToolsetJSONValue49(path string, value any, description stri
 	for _, key := range keys {
 		switch key {
 		case "length":
-			if err := validateResolvedToolsetJSONValue50(
+			if err := validateResolvedToolsetJSONValue56(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Total number of words in this document, including repeats.",
 			); err != nil {
 				return err
 			}
 		case "terms":
-			if err := validateResolvedToolsetJSONValue51(
+			if err := validateResolvedToolsetJSONValue58(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Lowercase words and their positive occurrence counts.",
 			); err != nil {
@@ -33719,8 +40658,8 @@ func validateResolvedToolsetJSONValue49(path string, value any, description stri
 	return nil
 }
 
-// validateResolvedToolsetJSONValue50 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResolvedToolsetJSONValue50(path string, value any, description string) error {
+// validateResolvedToolsetJSONValue56 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue56(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -33735,8 +40674,8 @@ func validateResolvedToolsetJSONValue50(path string, value any, description stri
 	return nil
 }
 
-// validateResolvedToolsetJSONValue51 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResolvedToolsetJSONValue51(path string, value any, description string) error {
+// validateResolvedToolsetJSONValue58 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue58(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -33754,7 +40693,7 @@ func validateResolvedToolsetJSONValue51(path string, value any, description stri
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		if err := validateResolvedToolsetJSONValue52(
+		if err := validateResolvedToolsetJSONValue59(
 			generatedJSONChildPath(path, key, true),
 			typed[key], description,
 		); err != nil {
@@ -33764,8 +40703,8 @@ func validateResolvedToolsetJSONValue51(path string, value any, description stri
 	return nil
 }
 
-// validateResolvedToolsetJSONValue52 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResolvedToolsetJSONValue52(path string, value any, description string) error {
+// validateResolvedToolsetJSONValue59 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue59(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -33780,8 +40719,8 @@ func validateResolvedToolsetJSONValue52(path string, value any, description stri
 	return nil
 }
 
-// validateResolvedToolsetJSONValue53 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResolvedToolsetJSONValue53(path string, value any, description string) error {
+// validateResolvedToolsetJSONValue60 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue60(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -33797,168 +40736,12 @@ func validateResolvedToolsetJSONValue53(path string, value any, description stri
 		if item == nil {
 			continue
 		}
-		if err := validateResolvedToolsetJSONValue54(
+		if err := validateResolvedToolsetJSONValue61(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-// validateResolvedToolsetJSONValue54 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResolvedToolsetJSONValue54(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "audience":
-			if err := validateResolvedToolsetJSONValue55(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Consumers allowed to receive this payload.",
-			); err != nil {
-				return err
-			}
-		case "description":
-			if err := validateResolvedToolsetJSONValue56(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Description of the data carried by this kind.",
-			); err != nil {
-				return err
-			}
-		case "kind":
-			if err := validateResolvedToolsetJSONValue58(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Unique kind emitted by this tool.",
-			); err != nil {
-				return err
-			}
-		case "NativeImage":
-			if err := validateResolvedToolsetJSONValue59(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Whether this evidence kind declares a typed image source requiring an explicitly admitted host reader.",
-			); err != nil {
-				return err
-			}
-		case "schema":
-			if err := validateResolvedToolsetJSONValue60(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Canonical JSON schema for the item data.",
-			); err != nil {
-				return err
-			}
-		case "type":
-			if err := validateResolvedToolsetJSONValue23(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Generated examples and field details for the item data.",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"audience",
-				"description",
-				"kind",
-				"NativeImage",
-				"schema",
-				"type",
-			})
-		}
-	}
-	return nil
-}
-
-// validateResolvedToolsetJSONValue55 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResolvedToolsetJSONValue55(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateResolvedToolsetJSONValue56 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResolvedToolsetJSONValue56(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateResolvedToolsetJSONValue58 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResolvedToolsetJSONValue58(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateResolvedToolsetJSONValue59 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResolvedToolsetJSONValue59(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
-	}
-	_, ok := value.(bool)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateResolvedToolsetJSONValue60 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResolvedToolsetJSONValue60(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -33983,56 +40766,56 @@ func validateResolvedToolsetJSONValue61(path string, value any, description stri
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
-		case "description":
+		case "audience":
 			if err := validateResolvedToolsetJSONValue62(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Domain instructions without optional UI guidance.",
+				typed[key], "Consumers allowed to receive this payload.",
 			); err != nil {
 				return err
 			}
-		case "execution_schema":
+		case "description":
 			if err := validateResolvedToolsetJSONValue63(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Complete input schema requiring disabled rendering controls.",
+				typed[key], "Description of the data carried by this kind.",
 			); err != nil {
 				return err
 			}
-		case "payload":
-			if err := validateResolvedToolsetJSONValue23(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Generated examples and field descriptions matching this schema.",
-			); err != nil {
-				return err
-			}
-		case "payload_schema":
+		case "kind":
 			if err := validateResolvedToolsetJSONValue64(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Exact model argument schema without UI-only controls.",
+				typed[key], "Unique kind emitted by this tool.",
 			); err != nil {
 				return err
 			}
-		case "result_reminder":
+		case "NativeImage":
 			if err := validateResolvedToolsetJSONValue65(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Domain result guidance without claiming UI output.",
+				typed[key], "Whether this evidence kind declares a typed image source requiring an explicitly admitted host reader.",
 			); err != nil {
 				return err
 			}
-		case "search":
-			if err := validateResolvedToolsetJSONValue49(
+		case "schema":
+			if err := validateResolvedToolsetJSONValue66(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Generated word counts for these domain instructions.",
+				typed[key], "Canonical JSON schema for the item data.",
+			); err != nil {
+				return err
+			}
+		case "type":
+			if err := validateResolvedToolsetJSONValue23(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Generated examples and field details for the item data.",
 			); err != nil {
 				return err
 			}
 		default:
 			return unknownJSONFieldError(path, key, []string{
+				"audience",
 				"description",
-				"execution_schema",
-				"payload",
-				"payload_schema",
-				"result_reminder",
-				"search",
+				"kind",
+				"NativeImage",
+				"schema",
+				"type",
 			})
 		}
 	}
@@ -34094,11 +40877,11 @@ func validateResolvedToolsetJSONValue65(path string, value any, description stri
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
 	}
-	_, ok := value.(string)
+	_, ok := value.(bool)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -34126,11 +40909,71 @@ func validateResolvedToolsetJSONValue67(path string, value any, description stri
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	_, ok := value.(string)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "description":
+			if err := validateResolvedToolsetJSONValue69(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Domain instructions without optional UI guidance.",
+			); err != nil {
+				return err
+			}
+		case "execution_schema":
+			if err := validateResolvedToolsetJSONValue70(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Complete input schema requiring disabled rendering controls.",
+			); err != nil {
+				return err
+			}
+		case "payload":
+			if err := validateResolvedToolsetJSONValue23(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Generated examples and field descriptions matching this schema.",
+			); err != nil {
+				return err
+			}
+		case "payload_schema":
+			if err := validateResolvedToolsetJSONValue71(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Exact model argument schema without UI-only controls.",
+			); err != nil {
+				return err
+			}
+		case "result_reminder":
+			if err := validateResolvedToolsetJSONValue72(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Domain result guidance without claiming UI output.",
+			); err != nil {
+				return err
+			}
+		case "search":
+			if err := validateResolvedToolsetJSONValue55(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Generated word counts for these domain instructions.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"description",
+				"execution_schema",
+				"payload",
+				"payload_schema",
+				"result_reminder",
+				"search",
+			})
+		}
 	}
 	return nil
 }
@@ -34222,19 +41065,11 @@ func validateResolvedToolsetJSONValue74(path string, value any, description stri
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
 	}
-	typed, ok := value.([]any)
+	_, ok := value.(string)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
-	}
-	for index, item := range typed {
-		if err := validateResolvedToolsetJSONValue75(
-			generatedJSONChildPath(path, strconv.Itoa(index), true),
-			item, description,
-		); err != nil {
-			return err
-		}
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -34257,6 +41092,110 @@ func validateResolvedToolsetJSONValue75(path string, value any, description stri
 
 // validateResolvedToolsetJSONValue76 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateResolvedToolsetJSONValue76(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateResolvedToolsetJSONValue77 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue77(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateResolvedToolsetJSONValue78 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue78(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateResolvedToolsetJSONValue80 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue80(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateResolvedToolsetJSONValue81 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue81(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if err := validateResolvedToolsetJSONValue82(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateResolvedToolsetJSONValue82 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue82(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateResolvedToolsetJSONValue83 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue83(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -35384,7 +42323,7 @@ func validateServiceToolsetDeclarationJSONValue(path string, value any, descript
 				return err
 			}
 		case "version":
-			if err := validateServiceToolsetDeclarationJSONValue73(
+			if err := validateServiceToolsetDeclarationJSONValue80(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Semantic version of the toolset.",
 			); err != nil {
@@ -35530,49 +42469,49 @@ func validateServiceToolsetDeclarationJSONValue57(path string, value any, descri
 				return err
 			}
 		case "description":
-			if err := validateServiceToolsetDeclarationJSONValue64(
+			if err := validateServiceToolsetDeclarationJSONValue71(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Human-readable description of what the tool does.",
 			); err != nil {
 				return err
 			}
 		case "execution_payload_schema":
-			if err := validateServiceToolsetDeclarationJSONValue65(
+			if err := validateServiceToolsetDeclarationJSONValue72(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the payload sent to the provider. It includes fields supplied by continuation handling and excludes fields injected inside the provider.",
 			); err != nil {
 				return err
 			}
 		case "name":
-			if err := validateServiceToolsetDeclarationJSONValue66(
+			if err := validateServiceToolsetDeclarationJSONValue73(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Globally unique tool identifier of the form \"toolset.tool\".",
 			); err != nil {
 				return err
 			}
 		case "payload_schema":
-			if err := validateServiceToolsetDeclarationJSONValue67(
+			if err := validateServiceToolsetDeclarationJSONValue74(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for arguments accepted from the model.",
 			); err != nil {
 				return err
 			}
 		case "result_schema":
-			if err := validateServiceToolsetDeclarationJSONValue69(
+			if err := validateServiceToolsetDeclarationJSONValue75(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the tool result.",
 			); err != nil {
 				return err
 			}
 		case "sidecar_schema":
-			if err := validateServiceToolsetDeclarationJSONValue70(
+			if err := validateServiceToolsetDeclarationJSONValue76(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the tool sidecar (UI-only), when present.",
 			); err != nil {
 				return err
 			}
 		case "tags":
-			if err := validateServiceToolsetDeclarationJSONValue71(
+			if err := validateServiceToolsetDeclarationJSONValue77(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Optional tags used for policy, routing, or UI filtering.",
 			); err != nil {
@@ -35615,7 +42554,7 @@ func validateServiceToolsetDeclarationJSONValue68(path string, value any, descri
 	for _, key := range keys {
 		switch key {
 		case "Agent":
-			if err := validateServiceToolsetDeclarationJSONValue74(
+			if err := validateServiceToolsetDeclarationJSONValue79(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Worker and immutable application configuration used by a dynamically registered Agent tool.",
 			); err != nil {
@@ -35657,14 +42596,14 @@ func validateServiceToolsetDeclarationJSONValue68(path string, value any, descri
 				return err
 			}
 		case "required_labels":
-			if err := validateServiceToolsetDeclarationJSONValue41(
+			if err := validateServiceToolsetDeclarationJSONValue48(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Run labels required by provider-side injection for this tool.",
 			); err != nil {
 				return err
 			}
 		case "requires_ui":
-			if err := validateServiceToolsetDeclarationJSONValue43(
+			if err := validateServiceToolsetDeclarationJSONValue50(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Whether executing this tool requires rendering or an interactive client protocol.",
 			); err != nil {
@@ -35678,35 +42617,35 @@ func validateServiceToolsetDeclarationJSONValue68(path string, value any, descri
 				return err
 			}
 		case "result_reminder":
-			if err := validateServiceToolsetDeclarationJSONValue44(
+			if err := validateServiceToolsetDeclarationJSONValue51(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Model guidance emitted after this tool's result.",
 			); err != nil {
 				return err
 			}
 		case "search":
-			if err := validateServiceToolsetDeclarationJSONValue45(
+			if err := validateServiceToolsetDeclarationJSONValue52(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Word counts generated from the tool's name, title, and description.",
 			); err != nil {
 				return err
 			}
 		case "server_data":
-			if err := validateServiceToolsetDeclarationJSONValue50(
+			if err := validateServiceToolsetDeclarationJSONValue56(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Closed set of server-only result payloads emitted by this tool.",
 			); err != nil {
 				return err
 			}
 		case "text_only":
-			if err := validateServiceToolsetDeclarationJSONValue58(
+			if err := validateServiceToolsetDeclarationJSONValue64(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated model contract for execution using ordinary messages only.",
 			); err != nil {
 				return err
 			}
 		case "title":
-			if err := validateServiceToolsetDeclarationJSONValue63(
+			if err := validateServiceToolsetDeclarationJSONValue70(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Human-readable title declared for the tool.",
 			); err != nil {
@@ -35734,8 +42673,8 @@ func validateServiceToolsetDeclarationJSONValue68(path string, value any, descri
 	return nil
 }
 
-// validateServiceToolsetDeclarationJSONValue74 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolsetDeclarationJSONValue74(path string, value any, description string) error {
+// validateServiceToolsetDeclarationJSONValue79 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue79(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -35755,7 +42694,7 @@ func validateServiceToolsetDeclarationJSONValue74(path string, value any, descri
 	for _, key := range keys {
 		switch key {
 		case "configuration":
-			if err := validateServiceToolsetDeclarationJSONValue75(
+			if err := validateServiceToolsetDeclarationJSONValue81(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Immutable application configuration reference retained with each accepted tool call.",
 			); err != nil {
@@ -35778,8 +42717,8 @@ func validateServiceToolsetDeclarationJSONValue74(path string, value any, descri
 	return nil
 }
 
-// validateServiceToolsetDeclarationJSONValue75 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolsetDeclarationJSONValue75(path string, value any, description string) error {
+// validateServiceToolsetDeclarationJSONValue81 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue81(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -36217,14 +43156,14 @@ func validateServiceToolsetDeclarationJSONValue20(path string, value any, descri
 				return err
 			}
 		case "name":
-			if err := validateServiceToolsetDeclarationJSONValue39(
+			if err := validateServiceToolsetDeclarationJSONValue45(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated type name used in diagnostics.",
 			); err != nil {
 				return err
 			}
 		case "schema_without_root_example":
-			if err := validateServiceToolsetDeclarationJSONValue40(
+			if err := validateServiceToolsetDeclarationJSONValue47(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical schema with its root example omitted for model providers that carry examples separately.",
 			); err != nil {
@@ -36313,28 +43252,28 @@ func validateServiceToolsetDeclarationJSONValue23(path string, value any, descri
 				return err
 			}
 		case "description":
-			if err := validateServiceToolsetDeclarationJSONValue33(
+			if err := validateServiceToolsetDeclarationJSONValue40(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Description already present in the tool schema.",
 			); err != nil {
 				return err
 			}
 		case "discriminator_values":
-			if err := validateServiceToolsetDeclarationJSONValue34(
+			if err := validateServiceToolsetDeclarationJSONValue41(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Allowed branch names when this field selects a union branch.",
 			); err != nil {
 				return err
 			}
 		case "json_type":
-			if err := validateServiceToolsetDeclarationJSONValue37(
+			if err := validateServiceToolsetDeclarationJSONValue43(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Single JSON type accepted by this field, when known.",
 			); err != nil {
 				return err
 			}
 		case "path":
-			if err := validateServiceToolsetDeclarationJSONValue38(
+			if err := validateServiceToolsetDeclarationJSONValue44(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Path to this field. An omitted path identifies the root value.",
 			); err != nil {
@@ -36400,24 +43339,16 @@ func validateServiceToolsetDeclarationJSONValue26(path string, value any, descri
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
-		case "discriminator":
+		case "selection":
 			if err := validateServiceToolsetDeclarationJSONValue27(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Path to the union's discriminator property.",
-			); err != nil {
-				return err
-			}
-		case "value":
-			if err := validateServiceToolsetDeclarationJSONValue32(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Branch name required at the discriminator.",
+				typed[key], "Exactly one way the submitted value selects this branch.",
 			); err != nil {
 				return err
 			}
 		default:
 			return unknownJSONFieldError(path, key, []string{
-				"discriminator",
-				"value",
+				"selection",
 			})
 		}
 	}
@@ -36431,24 +43362,33 @@ func validateServiceToolsetDeclarationJSONValue27(path string, value any, descri
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	typed, ok := value.([]any)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
 	}
-	for index, item := range typed {
-		if item == nil {
-			continue
-		}
-		if err := validateServiceToolsetDeclarationJSONValue28(
-			generatedJSONChildPath(path, strconv.Itoa(index), true),
-			item, description,
-		); err != nil {
-			return err
+	for key := range typed {
+		if key != "type" && key != "value" {
+			return unknownJSONFieldError(path, key, []string{"type", "value"})
 		}
 	}
-	return nil
+	discriminator, ok := typed["type"].(string)
+	if !ok {
+		return fmt.Errorf("%s: missing or invalid union discriminator", field)
+	}
+	branch, exists := typed["value"]
+	if !exists || branch == nil {
+		return fmt.Errorf("%s: missing union value", field)
+	}
+	switch discriminator {
+	case "tagged":
+		return validateServiceToolsetDeclarationJSONValue28(generatedJSONChildPath(path, "value", false), branch, "A declared string discriminator selects this branch.")
+	case "untagged":
+		return validateServiceToolsetDeclarationJSONValue36(generatedJSONChildPath(path, "value", false), branch, "The JSON kind of the union value selects this branch.")
+	default:
+		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
+	}
 }
 
 // validateServiceToolsetDeclarationJSONValue28 checks one value whose JSON shape is fixed by the generated Goa type.
@@ -36471,8 +43411,79 @@ func validateServiceToolsetDeclarationJSONValue28(path string, value any, descri
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
-		case "segment":
+		case "discriminator":
 			if err := validateServiceToolsetDeclarationJSONValue29(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Path to the union's discriminator property.",
+			); err != nil {
+				return err
+			}
+		case "value":
+			if err := validateServiceToolsetDeclarationJSONValue34(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Branch name required at the discriminator.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"discriminator",
+				"value",
+			})
+		}
+	}
+	return nil
+}
+
+// validateServiceToolsetDeclarationJSONValue29 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue29(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if item == nil {
+			continue
+		}
+		if err := validateServiceToolsetDeclarationJSONValue30(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateServiceToolsetDeclarationJSONValue30 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue30(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "segment":
+			if err := validateServiceToolsetDeclarationJSONValue31(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Exactly one path segment kind.",
 			); err != nil {
@@ -36487,8 +43498,8 @@ func validateServiceToolsetDeclarationJSONValue28(path string, value any, descri
 	return nil
 }
 
-// validateServiceToolsetDeclarationJSONValue29 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolsetDeclarationJSONValue29(path string, value any, description string) error {
+// validateServiceToolsetDeclarationJSONValue31 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue31(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -36515,55 +43526,12 @@ func validateServiceToolsetDeclarationJSONValue29(path string, value any, descri
 	}
 	switch discriminator {
 	case "field":
-		return validateServiceToolsetDeclarationJSONValue30(generatedJSONChildPath(path, "value", false), branch, "Exact JSON property name, including empty or punctuation-containing names.")
+		return validateServiceToolsetDeclarationJSONValue32(generatedJSONChildPath(path, "value", false), branch, "Exact JSON property name, including empty or punctuation-containing names.")
 	case "element":
-		return validateServiceToolsetDeclarationJSONValue31(generatedJSONChildPath(path, "value", false), branch, "One caller-selected array index or map key.")
+		return validateServiceToolsetDeclarationJSONValue33(generatedJSONChildPath(path, "value", false), branch, "One caller-selected array index or map key.")
 	default:
 		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
 	}
-}
-
-// validateServiceToolsetDeclarationJSONValue30 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolsetDeclarationJSONValue30(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateServiceToolsetDeclarationJSONValue31 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolsetDeclarationJSONValue31(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		default:
-			return unknownJSONFieldError(path, key, []string{})
-		}
-	}
-	return nil
 }
 
 // validateServiceToolsetDeclarationJSONValue32 checks one value whose JSON shape is fixed by the generated Goa type.
@@ -36589,11 +43557,22 @@ func validateServiceToolsetDeclarationJSONValue33(path string, value any, descri
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	_, ok := value.(string)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		default:
+			return unknownJSONFieldError(path, key, []string{})
+		}
 	}
 	return nil
 }
@@ -36605,19 +43584,11 @@ func validateServiceToolsetDeclarationJSONValue34(path string, value any, descri
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
 	}
-	typed, ok := value.([]any)
+	_, ok := value.(string)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
-	}
-	for index, item := range typed {
-		if err := validateServiceToolsetDeclarationJSONValue36(
-			generatedJSONChildPath(path, strconv.Itoa(index), true),
-			item, description,
-		); err != nil {
-			return err
-		}
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -36629,17 +43600,69 @@ func validateServiceToolsetDeclarationJSONValue36(path string, value any, descri
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	_, ok := value.(string)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "index":
+			if err := validateServiceToolsetDeclarationJSONValue37(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Zero-based position of this branch in the advertised oneOf, used to select its structured validation diagnostic.",
+			); err != nil {
+				return err
+			}
+		case "json_kind":
+			if err := validateServiceToolsetDeclarationJSONValue38(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "JSON kind that selects this branch; integer branches use number.",
+			); err != nil {
+				return err
+			}
+		case "path":
+			if err := validateServiceToolsetDeclarationJSONValue39(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Path to the union value. An omitted path identifies the root value.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"index",
+				"json_kind",
+				"path",
+			})
+		}
 	}
 	return nil
 }
 
 // validateServiceToolsetDeclarationJSONValue37 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateServiceToolsetDeclarationJSONValue37(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
+	}
+	_, ok := value.(json.Number)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateServiceToolsetDeclarationJSONValue38 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue38(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -36654,8 +43677,8 @@ func validateServiceToolsetDeclarationJSONValue37(path string, value any, descri
 	return nil
 }
 
-// validateServiceToolsetDeclarationJSONValue38 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolsetDeclarationJSONValue38(path string, value any, description string) error {
+// validateServiceToolsetDeclarationJSONValue39 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue39(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -36671,28 +43694,12 @@ func validateServiceToolsetDeclarationJSONValue38(path string, value any, descri
 		if item == nil {
 			continue
 		}
-		if err := validateServiceToolsetDeclarationJSONValue28(
+		if err := validateServiceToolsetDeclarationJSONValue30(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-// validateServiceToolsetDeclarationJSONValue39 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolsetDeclarationJSONValue39(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -36760,17 +43767,44 @@ func validateServiceToolsetDeclarationJSONValue43(path string, value any, descri
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
 	}
-	_, ok := value.(bool)
+	_, ok := value.(string)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
 
 // validateServiceToolsetDeclarationJSONValue44 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateServiceToolsetDeclarationJSONValue44(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if item == nil {
+			continue
+		}
+		if err := validateServiceToolsetDeclarationJSONValue30(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateServiceToolsetDeclarationJSONValue45 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue45(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -36785,8 +43819,96 @@ func validateServiceToolsetDeclarationJSONValue44(path string, value any, descri
 	return nil
 }
 
-// validateServiceToolsetDeclarationJSONValue45 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolsetDeclarationJSONValue45(path string, value any, description string) error {
+// validateServiceToolsetDeclarationJSONValue47 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue47(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateServiceToolsetDeclarationJSONValue48 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue48(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if err := validateServiceToolsetDeclarationJSONValue49(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateServiceToolsetDeclarationJSONValue49 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue49(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateServiceToolsetDeclarationJSONValue50 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue50(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
+	}
+	_, ok := value.(bool)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateServiceToolsetDeclarationJSONValue51 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue51(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateServiceToolsetDeclarationJSONValue52 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue52(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -36806,14 +43928,14 @@ func validateServiceToolsetDeclarationJSONValue45(path string, value any, descri
 	for _, key := range keys {
 		switch key {
 		case "length":
-			if err := validateServiceToolsetDeclarationJSONValue47(
+			if err := validateServiceToolsetDeclarationJSONValue53(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Total number of words in this document, including repeats.",
 			); err != nil {
 				return err
 			}
 		case "terms":
-			if err := validateServiceToolsetDeclarationJSONValue48(
+			if err := validateServiceToolsetDeclarationJSONValue54(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Lowercase words and their positive occurrence counts.",
 			); err != nil {
@@ -36829,8 +43951,8 @@ func validateServiceToolsetDeclarationJSONValue45(path string, value any, descri
 	return nil
 }
 
-// validateServiceToolsetDeclarationJSONValue47 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolsetDeclarationJSONValue47(path string, value any, description string) error {
+// validateServiceToolsetDeclarationJSONValue53 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue53(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -36845,8 +43967,8 @@ func validateServiceToolsetDeclarationJSONValue47(path string, value any, descri
 	return nil
 }
 
-// validateServiceToolsetDeclarationJSONValue48 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolsetDeclarationJSONValue48(path string, value any, description string) error {
+// validateServiceToolsetDeclarationJSONValue54 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue54(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -36864,7 +43986,7 @@ func validateServiceToolsetDeclarationJSONValue48(path string, value any, descri
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		if err := validateServiceToolsetDeclarationJSONValue49(
+		if err := validateServiceToolsetDeclarationJSONValue55(
 			generatedJSONChildPath(path, key, true),
 			typed[key], description,
 		); err != nil {
@@ -36874,8 +43996,8 @@ func validateServiceToolsetDeclarationJSONValue48(path string, value any, descri
 	return nil
 }
 
-// validateServiceToolsetDeclarationJSONValue49 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolsetDeclarationJSONValue49(path string, value any, description string) error {
+// validateServiceToolsetDeclarationJSONValue55 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue55(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -36890,8 +44012,8 @@ func validateServiceToolsetDeclarationJSONValue49(path string, value any, descri
 	return nil
 }
 
-// validateServiceToolsetDeclarationJSONValue50 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolsetDeclarationJSONValue50(path string, value any, description string) error {
+// validateServiceToolsetDeclarationJSONValue56 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue56(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -36907,168 +44029,12 @@ func validateServiceToolsetDeclarationJSONValue50(path string, value any, descri
 		if item == nil {
 			continue
 		}
-		if err := validateServiceToolsetDeclarationJSONValue51(
+		if err := validateServiceToolsetDeclarationJSONValue58(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-// validateServiceToolsetDeclarationJSONValue51 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolsetDeclarationJSONValue51(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "audience":
-			if err := validateServiceToolsetDeclarationJSONValue52(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Consumers allowed to receive this payload.",
-			); err != nil {
-				return err
-			}
-		case "description":
-			if err := validateServiceToolsetDeclarationJSONValue53(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Description of the data carried by this kind.",
-			); err != nil {
-				return err
-			}
-		case "kind":
-			if err := validateServiceToolsetDeclarationJSONValue54(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Unique kind emitted by this tool.",
-			); err != nil {
-				return err
-			}
-		case "NativeImage":
-			if err := validateServiceToolsetDeclarationJSONValue55(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Whether this evidence kind declares a typed image source requiring an explicitly admitted host reader.",
-			); err != nil {
-				return err
-			}
-		case "schema":
-			if err := validateServiceToolsetDeclarationJSONValue56(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Canonical JSON schema for the item data.",
-			); err != nil {
-				return err
-			}
-		case "type":
-			if err := validateServiceToolsetDeclarationJSONValue20(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Generated examples and field details for the item data.",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"audience",
-				"description",
-				"kind",
-				"NativeImage",
-				"schema",
-				"type",
-			})
-		}
-	}
-	return nil
-}
-
-// validateServiceToolsetDeclarationJSONValue52 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolsetDeclarationJSONValue52(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateServiceToolsetDeclarationJSONValue53 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolsetDeclarationJSONValue53(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateServiceToolsetDeclarationJSONValue54 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolsetDeclarationJSONValue54(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateServiceToolsetDeclarationJSONValue55 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolsetDeclarationJSONValue55(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
-	}
-	_, ok := value.(bool)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateServiceToolsetDeclarationJSONValue56 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolsetDeclarationJSONValue56(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -37093,56 +44059,56 @@ func validateServiceToolsetDeclarationJSONValue58(path string, value any, descri
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
-		case "description":
+		case "audience":
 			if err := validateServiceToolsetDeclarationJSONValue59(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Domain instructions without optional UI guidance.",
+				typed[key], "Consumers allowed to receive this payload.",
 			); err != nil {
 				return err
 			}
-		case "execution_schema":
+		case "description":
 			if err := validateServiceToolsetDeclarationJSONValue60(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Complete input schema requiring disabled rendering controls.",
+				typed[key], "Description of the data carried by this kind.",
 			); err != nil {
 				return err
 			}
-		case "payload":
-			if err := validateServiceToolsetDeclarationJSONValue20(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Generated examples and field descriptions matching this schema.",
-			); err != nil {
-				return err
-			}
-		case "payload_schema":
+		case "kind":
 			if err := validateServiceToolsetDeclarationJSONValue61(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Exact model argument schema without UI-only controls.",
+				typed[key], "Unique kind emitted by this tool.",
 			); err != nil {
 				return err
 			}
-		case "result_reminder":
+		case "NativeImage":
 			if err := validateServiceToolsetDeclarationJSONValue62(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Domain result guidance without claiming UI output.",
+				typed[key], "Whether this evidence kind declares a typed image source requiring an explicitly admitted host reader.",
 			); err != nil {
 				return err
 			}
-		case "search":
-			if err := validateServiceToolsetDeclarationJSONValue45(
+		case "schema":
+			if err := validateServiceToolsetDeclarationJSONValue63(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Generated word counts for these domain instructions.",
+				typed[key], "Canonical JSON schema for the item data.",
+			); err != nil {
+				return err
+			}
+		case "type":
+			if err := validateServiceToolsetDeclarationJSONValue20(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Generated examples and field details for the item data.",
 			); err != nil {
 				return err
 			}
 		default:
 			return unknownJSONFieldError(path, key, []string{
+				"audience",
 				"description",
-				"execution_schema",
-				"payload",
-				"payload_schema",
-				"result_reminder",
-				"search",
+				"kind",
+				"NativeImage",
+				"schema",
+				"type",
 			})
 		}
 	}
@@ -37204,11 +44170,11 @@ func validateServiceToolsetDeclarationJSONValue62(path string, value any, descri
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
 	}
-	_, ok := value.(string)
+	_, ok := value.(bool)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -37236,11 +44202,71 @@ func validateServiceToolsetDeclarationJSONValue64(path string, value any, descri
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	_, ok := value.(string)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "description":
+			if err := validateServiceToolsetDeclarationJSONValue65(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Domain instructions without optional UI guidance.",
+			); err != nil {
+				return err
+			}
+		case "execution_schema":
+			if err := validateServiceToolsetDeclarationJSONValue66(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Complete input schema requiring disabled rendering controls.",
+			); err != nil {
+				return err
+			}
+		case "payload":
+			if err := validateServiceToolsetDeclarationJSONValue20(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Generated examples and field descriptions matching this schema.",
+			); err != nil {
+				return err
+			}
+		case "payload_schema":
+			if err := validateServiceToolsetDeclarationJSONValue67(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Exact model argument schema without UI-only controls.",
+			); err != nil {
+				return err
+			}
+		case "result_reminder":
+			if err := validateServiceToolsetDeclarationJSONValue69(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Domain result guidance without claiming UI output.",
+			); err != nil {
+				return err
+			}
+		case "search":
+			if err := validateServiceToolsetDeclarationJSONValue52(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Generated word counts for these domain instructions.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"description",
+				"execution_schema",
+				"payload",
+				"payload_schema",
+				"result_reminder",
+				"search",
+			})
+		}
 	}
 	return nil
 }
@@ -37332,19 +44358,11 @@ func validateServiceToolsetDeclarationJSONValue71(path string, value any, descri
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
 	}
-	typed, ok := value.([]any)
+	_, ok := value.(string)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
-	}
-	for index, item := range typed {
-		if err := validateServiceToolsetDeclarationJSONValue72(
-			generatedJSONChildPath(path, strconv.Itoa(index), true),
-			item, description,
-		); err != nil {
-			return err
-		}
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -37367,6 +44385,110 @@ func validateServiceToolsetDeclarationJSONValue72(path string, value any, descri
 
 // validateServiceToolsetDeclarationJSONValue73 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateServiceToolsetDeclarationJSONValue73(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateServiceToolsetDeclarationJSONValue74 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue74(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateServiceToolsetDeclarationJSONValue75 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue75(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateServiceToolsetDeclarationJSONValue76 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue76(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateServiceToolsetDeclarationJSONValue77 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue77(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if err := validateServiceToolsetDeclarationJSONValue78(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateServiceToolsetDeclarationJSONValue78 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue78(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateServiceToolsetDeclarationJSONValue80 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue80(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -37416,28 +44538,28 @@ func validateTextOnlyToolContractJSONValue(path string, value any, description s
 				return err
 			}
 		case "payload":
-			if err := validateTextOnlyToolContractJSONValue22(
+			if err := validateTextOnlyToolContractJSONValue24(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated examples and field descriptions matching this schema.",
 			); err != nil {
 				return err
 			}
 		case "payload_schema":
-			if err := validateTextOnlyToolContractJSONValue16(
+			if err := validateTextOnlyToolContractJSONValue22(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Exact model argument schema without UI-only controls.",
 			); err != nil {
 				return err
 			}
 		case "result_reminder":
-			if err := validateTextOnlyToolContractJSONValue17(
+			if err := validateTextOnlyToolContractJSONValue23(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Domain result guidance without claiming UI output.",
 			); err != nil {
 				return err
 			}
 		case "search":
-			if err := validateTextOnlyToolContractJSONValue18(
+			if err := validateTextOnlyToolContractJSONValue25(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated word counts for these domain instructions.",
 			); err != nil {
@@ -37489,8 +44611,8 @@ func validateTextOnlyToolContractJSONValue13(path string, value any, description
 	return nil
 }
 
-// validateTextOnlyToolContractJSONValue22 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateTextOnlyToolContractJSONValue22(path string, value any, description string) error {
+// validateTextOnlyToolContractJSONValue24 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTextOnlyToolContractJSONValue24(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -37510,28 +44632,28 @@ func validateTextOnlyToolContractJSONValue22(path string, value any, description
 	for _, key := range keys {
 		switch key {
 		case "example_json":
-			if err := validateTextOnlyToolContractJSONValue23(
+			if err := validateTextOnlyToolContractJSONValue29(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical example JSON when the design supplies one.",
 			); err != nil {
 				return err
 			}
 		case "fields":
-			if err := validateTextOnlyToolContractJSONValue24(
+			if err := validateTextOnlyToolContractJSONValue30(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Field paths, descriptions, and union requirements prepared by code generation.",
 			); err != nil {
 				return err
 			}
 		case "name":
-			if err := validateTextOnlyToolContractJSONValue14(
+			if err := validateTextOnlyToolContractJSONValue20(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated type name used in diagnostics.",
 			); err != nil {
 				return err
 			}
 		case "schema_without_root_example":
-			if err := validateTextOnlyToolContractJSONValue15(
+			if err := validateTextOnlyToolContractJSONValue21(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical schema with its root example omitted for model providers that carry examples separately.",
 			); err != nil {
@@ -37549,8 +44671,8 @@ func validateTextOnlyToolContractJSONValue22(path string, value any, description
 	return nil
 }
 
-// validateTextOnlyToolContractJSONValue23 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateTextOnlyToolContractJSONValue23(path string, value any, description string) error {
+// validateTextOnlyToolContractJSONValue29 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTextOnlyToolContractJSONValue29(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -37565,8 +44687,8 @@ func validateTextOnlyToolContractJSONValue23(path string, value any, description
 	return nil
 }
 
-// validateTextOnlyToolContractJSONValue24 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateTextOnlyToolContractJSONValue24(path string, value any, description string) error {
+// validateTextOnlyToolContractJSONValue30 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTextOnlyToolContractJSONValue30(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -37582,7 +44704,7 @@ func validateTextOnlyToolContractJSONValue24(path string, value any, description
 		if item == nil {
 			continue
 		}
-		if err := validateTextOnlyToolContractJSONValue25(
+		if err := validateTextOnlyToolContractJSONValue31(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -37592,8 +44714,8 @@ func validateTextOnlyToolContractJSONValue24(path string, value any, description
 	return nil
 }
 
-// validateTextOnlyToolContractJSONValue25 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateTextOnlyToolContractJSONValue25(path string, value any, description string) error {
+// validateTextOnlyToolContractJSONValue31 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTextOnlyToolContractJSONValue31(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -37613,35 +44735,35 @@ func validateTextOnlyToolContractJSONValue25(path string, value any, description
 	for _, key := range keys {
 		switch key {
 		case "branches":
-			if err := validateTextOnlyToolContractJSONValue26(
+			if err := validateTextOnlyToolContractJSONValue32(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "All branch selections required for this field to apply.",
 			); err != nil {
 				return err
 			}
 		case "description":
-			if err := validateTextOnlyToolContractJSONValue8(
+			if err := validateTextOnlyToolContractJSONValue15(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Description already present in the tool schema.",
 			); err != nil {
 				return err
 			}
 		case "discriminator_values":
-			if err := validateTextOnlyToolContractJSONValue9(
+			if err := validateTextOnlyToolContractJSONValue16(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Allowed branch names when this field selects a union branch.",
 			); err != nil {
 				return err
 			}
 		case "json_type":
-			if err := validateTextOnlyToolContractJSONValue11(
+			if err := validateTextOnlyToolContractJSONValue18(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Single JSON type accepted by this field, when known.",
 			); err != nil {
 				return err
 			}
 		case "path":
-			if err := validateTextOnlyToolContractJSONValue12(
+			if err := validateTextOnlyToolContractJSONValue19(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Path to this field. An omitted path identifies the root value.",
 			); err != nil {
@@ -37660,8 +44782,8 @@ func validateTextOnlyToolContractJSONValue25(path string, value any, description
 	return nil
 }
 
-// validateTextOnlyToolContractJSONValue26 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateTextOnlyToolContractJSONValue26(path string, value any, description string) error {
+// validateTextOnlyToolContractJSONValue32 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTextOnlyToolContractJSONValue32(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -37677,7 +44799,7 @@ func validateTextOnlyToolContractJSONValue26(path string, value any, description
 		if item == nil {
 			continue
 		}
-		if err := validateTextOnlyToolContractJSONValue27(
+		if err := validateTextOnlyToolContractJSONValue33(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -37687,8 +44809,8 @@ func validateTextOnlyToolContractJSONValue26(path string, value any, description
 	return nil
 }
 
-// validateTextOnlyToolContractJSONValue27 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateTextOnlyToolContractJSONValue27(path string, value any, description string) error {
+// validateTextOnlyToolContractJSONValue33 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTextOnlyToolContractJSONValue33(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -37707,55 +44829,56 @@ func validateTextOnlyToolContractJSONValue27(path string, value any, description
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
-		case "discriminator":
-			if err := validateTextOnlyToolContractJSONValue28(
+		case "selection":
+			if err := validateTextOnlyToolContractJSONValue34(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Path to the union's discriminator property.",
-			); err != nil {
-				return err
-			}
-		case "value":
-			if err := validateTextOnlyToolContractJSONValue7(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Branch name required at the discriminator.",
+				typed[key], "Exactly one way the submitted value selects this branch.",
 			); err != nil {
 				return err
 			}
 		default:
 			return unknownJSONFieldError(path, key, []string{
-				"discriminator",
-				"value",
+				"selection",
 			})
 		}
 	}
 	return nil
 }
 
-// validateTextOnlyToolContractJSONValue28 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateTextOnlyToolContractJSONValue28(path string, value any, description string) error {
+// validateTextOnlyToolContractJSONValue34 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTextOnlyToolContractJSONValue34(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	typed, ok := value.([]any)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
 	}
-	for index, item := range typed {
-		if item == nil {
-			continue
-		}
-		if err := validateTextOnlyToolContractJSONValue3(
-			generatedJSONChildPath(path, strconv.Itoa(index), true),
-			item, description,
-		); err != nil {
-			return err
+	for key := range typed {
+		if key != "type" && key != "value" {
+			return unknownJSONFieldError(path, key, []string{"type", "value"})
 		}
 	}
-	return nil
+	discriminator, ok := typed["type"].(string)
+	if !ok {
+		return fmt.Errorf("%s: missing or invalid union discriminator", field)
+	}
+	branch, exists := typed["value"]
+	if !exists || branch == nil {
+		return fmt.Errorf("%s: missing union value", field)
+	}
+	switch discriminator {
+	case "tagged":
+		return validateTextOnlyToolContractJSONValue3(generatedJSONChildPath(path, "value", false), branch, "A declared string discriminator selects this branch.")
+	case "untagged":
+		return validateTextOnlyToolContractJSONValue10(generatedJSONChildPath(path, "value", false), branch, "The JSON kind of the union value selects this branch.")
+	default:
+		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
+	}
 }
 
 // validateTextOnlyToolContractJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
@@ -37778,8 +44901,79 @@ func validateTextOnlyToolContractJSONValue3(path string, value any, description 
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
-		case "segment":
+		case "discriminator":
 			if err := validateTextOnlyToolContractJSONValue4(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Path to the union's discriminator property.",
+			); err != nil {
+				return err
+			}
+		case "value":
+			if err := validateTextOnlyToolContractJSONValue9(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Branch name required at the discriminator.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"discriminator",
+				"value",
+			})
+		}
+	}
+	return nil
+}
+
+// validateTextOnlyToolContractJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTextOnlyToolContractJSONValue4(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if item == nil {
+			continue
+		}
+		if err := validateTextOnlyToolContractJSONValue5(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateTextOnlyToolContractJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTextOnlyToolContractJSONValue5(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "segment":
+			if err := validateTextOnlyToolContractJSONValue6(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Exactly one path segment kind.",
 			); err != nil {
@@ -37794,8 +44988,8 @@ func validateTextOnlyToolContractJSONValue3(path string, value any, description 
 	return nil
 }
 
-// validateTextOnlyToolContractJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateTextOnlyToolContractJSONValue4(path string, value any, description string) error {
+// validateTextOnlyToolContractJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTextOnlyToolContractJSONValue6(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -37822,55 +45016,12 @@ func validateTextOnlyToolContractJSONValue4(path string, value any, description 
 	}
 	switch discriminator {
 	case "field":
-		return validateTextOnlyToolContractJSONValue5(generatedJSONChildPath(path, "value", false), branch, "Exact JSON property name, including empty or punctuation-containing names.")
+		return validateTextOnlyToolContractJSONValue7(generatedJSONChildPath(path, "value", false), branch, "Exact JSON property name, including empty or punctuation-containing names.")
 	case "element":
-		return validateTextOnlyToolContractJSONValue6(generatedJSONChildPath(path, "value", false), branch, "One caller-selected array index or map key.")
+		return validateTextOnlyToolContractJSONValue8(generatedJSONChildPath(path, "value", false), branch, "One caller-selected array index or map key.")
 	default:
 		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
 	}
-}
-
-// validateTextOnlyToolContractJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateTextOnlyToolContractJSONValue5(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateTextOnlyToolContractJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateTextOnlyToolContractJSONValue6(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		default:
-			return unknownJSONFieldError(path, key, []string{})
-		}
-	}
-	return nil
 }
 
 // validateTextOnlyToolContractJSONValue7 checks one value whose JSON shape is fixed by the generated Goa type.
@@ -37896,11 +45047,22 @@ func validateTextOnlyToolContractJSONValue8(path string, value any, description 
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	_, ok := value.(string)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		default:
+			return unknownJSONFieldError(path, key, []string{})
+		}
 	}
 	return nil
 }
@@ -37912,19 +45074,11 @@ func validateTextOnlyToolContractJSONValue9(path string, value any, description 
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
 	}
-	typed, ok := value.([]any)
+	_, ok := value.(string)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
-	}
-	for index, item := range typed {
-		if err := validateTextOnlyToolContractJSONValue10(
-			generatedJSONChildPath(path, strconv.Itoa(index), true),
-			item, description,
-		); err != nil {
-			return err
-		}
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -37936,17 +45090,69 @@ func validateTextOnlyToolContractJSONValue10(path string, value any, description
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	_, ok := value.(string)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "index":
+			if err := validateTextOnlyToolContractJSONValue11(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Zero-based position of this branch in the advertised oneOf, used to select its structured validation diagnostic.",
+			); err != nil {
+				return err
+			}
+		case "json_kind":
+			if err := validateTextOnlyToolContractJSONValue12(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "JSON kind that selects this branch; integer branches use number.",
+			); err != nil {
+				return err
+			}
+		case "path":
+			if err := validateTextOnlyToolContractJSONValue14(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Path to the union value. An omitted path identifies the root value.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"index",
+				"json_kind",
+				"path",
+			})
+		}
 	}
 	return nil
 }
 
 // validateTextOnlyToolContractJSONValue11 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateTextOnlyToolContractJSONValue11(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
+	}
+	_, ok := value.(json.Number)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateTextOnlyToolContractJSONValue12 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTextOnlyToolContractJSONValue12(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -37961,8 +45167,8 @@ func validateTextOnlyToolContractJSONValue11(path string, value any, description
 	return nil
 }
 
-// validateTextOnlyToolContractJSONValue12 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateTextOnlyToolContractJSONValue12(path string, value any, description string) error {
+// validateTextOnlyToolContractJSONValue14 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTextOnlyToolContractJSONValue14(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -37978,28 +45184,12 @@ func validateTextOnlyToolContractJSONValue12(path string, value any, description
 		if item == nil {
 			continue
 		}
-		if err := validateTextOnlyToolContractJSONValue3(
+		if err := validateTextOnlyToolContractJSONValue5(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-// validateTextOnlyToolContractJSONValue14 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateTextOnlyToolContractJSONValue14(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -38027,11 +45217,19 @@ func validateTextOnlyToolContractJSONValue16(path string, value any, description
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
 	}
-	_, ok := value.(string)
+	typed, ok := value.([]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if err := validateTextOnlyToolContractJSONValue17(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -38059,6 +45257,113 @@ func validateTextOnlyToolContractJSONValue18(path string, value any, description
 		field = "$payload"
 	}
 	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateTextOnlyToolContractJSONValue19 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTextOnlyToolContractJSONValue19(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if item == nil {
+			continue
+		}
+		if err := validateTextOnlyToolContractJSONValue5(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateTextOnlyToolContractJSONValue20 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTextOnlyToolContractJSONValue20(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateTextOnlyToolContractJSONValue21 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTextOnlyToolContractJSONValue21(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateTextOnlyToolContractJSONValue22 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTextOnlyToolContractJSONValue22(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateTextOnlyToolContractJSONValue23 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTextOnlyToolContractJSONValue23(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateTextOnlyToolContractJSONValue25 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTextOnlyToolContractJSONValue25(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
 	typed, ok := value.(map[string]any)
@@ -38073,14 +45378,14 @@ func validateTextOnlyToolContractJSONValue18(path string, value any, description
 	for _, key := range keys {
 		switch key {
 		case "length":
-			if err := validateTextOnlyToolContractJSONValue19(
+			if err := validateTextOnlyToolContractJSONValue26(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Total number of words in this document, including repeats.",
 			); err != nil {
 				return err
 			}
 		case "terms":
-			if err := validateTextOnlyToolContractJSONValue20(
+			if err := validateTextOnlyToolContractJSONValue27(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Lowercase words and their positive occurrence counts.",
 			); err != nil {
@@ -38096,8 +45401,8 @@ func validateTextOnlyToolContractJSONValue18(path string, value any, description
 	return nil
 }
 
-// validateTextOnlyToolContractJSONValue19 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateTextOnlyToolContractJSONValue19(path string, value any, description string) error {
+// validateTextOnlyToolContractJSONValue26 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTextOnlyToolContractJSONValue26(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -38112,8 +45417,8 @@ func validateTextOnlyToolContractJSONValue19(path string, value any, description
 	return nil
 }
 
-// validateTextOnlyToolContractJSONValue20 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateTextOnlyToolContractJSONValue20(path string, value any, description string) error {
+// validateTextOnlyToolContractJSONValue27 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTextOnlyToolContractJSONValue27(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -38131,7 +45436,7 @@ func validateTextOnlyToolContractJSONValue20(path string, value any, description
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		if err := validateTextOnlyToolContractJSONValue21(
+		if err := validateTextOnlyToolContractJSONValue28(
 			generatedJSONChildPath(path, key, true),
 			typed[key], description,
 		); err != nil {
@@ -38141,8 +45446,8 @@ func validateTextOnlyToolContractJSONValue20(path string, value any, description
 	return nil
 }
 
-// validateTextOnlyToolContractJSONValue21 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateTextOnlyToolContractJSONValue21(path string, value any, description string) error {
+// validateTextOnlyToolContractJSONValue28 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateTextOnlyToolContractJSONValue28(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -39077,28 +46382,28 @@ func validateToolFieldMetadataJSONValue(path string, value any, description stri
 				return err
 			}
 		case "description":
-			if err := validateToolFieldMetadataJSONValue14(
+			if err := validateToolFieldMetadataJSONValue8(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Description already present in the tool schema.",
 			); err != nil {
 				return err
 			}
 		case "discriminator_values":
-			if err := validateToolFieldMetadataJSONValue3(
+			if err := validateToolFieldMetadataJSONValue9(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Allowed branch names when this field selects a union branch.",
 			); err != nil {
 				return err
 			}
 		case "json_type":
-			if err := validateToolFieldMetadataJSONValue5(
+			if err := validateToolFieldMetadataJSONValue11(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Single JSON type accepted by this field, when known.",
 			); err != nil {
 				return err
 			}
 		case "path":
-			if err := validateToolFieldMetadataJSONValue6(
+			if err := validateToolFieldMetadataJSONValue12(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Path to this field. An omitted path identifies the root value.",
 			); err != nil {
@@ -39134,7 +46439,7 @@ func validateToolFieldMetadataJSONValue2(path string, value any, description str
 		if item == nil {
 			continue
 		}
-		if err := validateToolFieldMetadataJSONValue7(
+		if err := validateToolFieldMetadataJSONValue13(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -39144,8 +46449,80 @@ func validateToolFieldMetadataJSONValue2(path string, value any, description str
 	return nil
 }
 
-// validateToolFieldMetadataJSONValue7 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolFieldMetadataJSONValue7(path string, value any, description string) error {
+// validateToolFieldMetadataJSONValue13 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolFieldMetadataJSONValue13(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "selection":
+			if err := validateToolFieldMetadataJSONValue14(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Exactly one way the submitted value selects this branch.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"selection",
+			})
+		}
+	}
+	return nil
+}
+
+// validateToolFieldMetadataJSONValue14 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolFieldMetadataJSONValue14(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	for key := range typed {
+		if key != "type" && key != "value" {
+			return unknownJSONFieldError(path, key, []string{"type", "value"})
+		}
+	}
+	discriminator, ok := typed["type"].(string)
+	if !ok {
+		return fmt.Errorf("%s: missing or invalid union discriminator", field)
+	}
+	branch, exists := typed["value"]
+	if !exists || branch == nil {
+		return fmt.Errorf("%s: missing union value", field)
+	}
+	switch discriminator {
+	case "tagged":
+		return validateToolFieldMetadataJSONValue15(generatedJSONChildPath(path, "value", false), branch, "A declared string discriminator selects this branch.")
+	case "untagged":
+		return validateToolFieldMetadataJSONValue4(generatedJSONChildPath(path, "value", false), branch, "The JSON kind of the union value selects this branch.")
+	default:
+		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
+	}
+}
+
+// validateToolFieldMetadataJSONValue15 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolFieldMetadataJSONValue15(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -39165,14 +46542,14 @@ func validateToolFieldMetadataJSONValue7(path string, value any, description str
 	for _, key := range keys {
 		switch key {
 		case "discriminator":
-			if err := validateToolFieldMetadataJSONValue8(
+			if err := validateToolFieldMetadataJSONValue16(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Path to the union's discriminator property.",
 			); err != nil {
 				return err
 			}
 		case "value":
-			if err := validateToolFieldMetadataJSONValue13(
+			if err := validateToolFieldMetadataJSONValue3(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Branch name required at the discriminator.",
 			); err != nil {
@@ -39188,8 +46565,8 @@ func validateToolFieldMetadataJSONValue7(path string, value any, description str
 	return nil
 }
 
-// validateToolFieldMetadataJSONValue8 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolFieldMetadataJSONValue8(path string, value any, description string) error {
+// validateToolFieldMetadataJSONValue16 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolFieldMetadataJSONValue16(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -39205,7 +46582,7 @@ func validateToolFieldMetadataJSONValue8(path string, value any, description str
 		if item == nil {
 			continue
 		}
-		if err := validateToolFieldMetadataJSONValue9(
+		if err := validateToolFieldMetadataJSONValue17(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -39215,8 +46592,8 @@ func validateToolFieldMetadataJSONValue8(path string, value any, description str
 	return nil
 }
 
-// validateToolFieldMetadataJSONValue9 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolFieldMetadataJSONValue9(path string, value any, description string) error {
+// validateToolFieldMetadataJSONValue17 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolFieldMetadataJSONValue17(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -39236,7 +46613,7 @@ func validateToolFieldMetadataJSONValue9(path string, value any, description str
 	for _, key := range keys {
 		switch key {
 		case "segment":
-			if err := validateToolFieldMetadataJSONValue10(
+			if err := validateToolFieldMetadataJSONValue18(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Exactly one path segment kind.",
 			); err != nil {
@@ -39251,8 +46628,8 @@ func validateToolFieldMetadataJSONValue9(path string, value any, description str
 	return nil
 }
 
-// validateToolFieldMetadataJSONValue10 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolFieldMetadataJSONValue10(path string, value any, description string) error {
+// validateToolFieldMetadataJSONValue18 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolFieldMetadataJSONValue18(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -39279,16 +46656,16 @@ func validateToolFieldMetadataJSONValue10(path string, value any, description st
 	}
 	switch discriminator {
 	case "field":
-		return validateToolFieldMetadataJSONValue11(generatedJSONChildPath(path, "value", false), branch, "Exact JSON property name, including empty or punctuation-containing names.")
+		return validateToolFieldMetadataJSONValue19(generatedJSONChildPath(path, "value", false), branch, "Exact JSON property name, including empty or punctuation-containing names.")
 	case "element":
-		return validateToolFieldMetadataJSONValue12(generatedJSONChildPath(path, "value", false), branch, "One caller-selected array index or map key.")
+		return validateToolFieldMetadataJSONValue20(generatedJSONChildPath(path, "value", false), branch, "One caller-selected array index or map key.")
 	default:
 		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
 	}
 }
 
-// validateToolFieldMetadataJSONValue11 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolFieldMetadataJSONValue11(path string, value any, description string) error {
+// validateToolFieldMetadataJSONValue19 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolFieldMetadataJSONValue19(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -39303,8 +46680,8 @@ func validateToolFieldMetadataJSONValue11(path string, value any, description st
 	return nil
 }
 
-// validateToolFieldMetadataJSONValue12 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolFieldMetadataJSONValue12(path string, value any, description string) error {
+// validateToolFieldMetadataJSONValue20 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolFieldMetadataJSONValue20(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -39330,38 +46707,6 @@ func validateToolFieldMetadataJSONValue12(path string, value any, description st
 	return nil
 }
 
-// validateToolFieldMetadataJSONValue13 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolFieldMetadataJSONValue13(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolFieldMetadataJSONValue14 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolFieldMetadataJSONValue14(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
 // validateToolFieldMetadataJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateToolFieldMetadataJSONValue3(path string, value any, description string) error {
 	field := path
@@ -39369,19 +46714,11 @@ func validateToolFieldMetadataJSONValue3(path string, value any, description str
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
 	}
-	typed, ok := value.([]any)
+	_, ok := value.(string)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
-	}
-	for index, item := range typed {
-		if err := validateToolFieldMetadataJSONValue4(
-			generatedJSONChildPath(path, strconv.Itoa(index), true),
-			item, description,
-		); err != nil {
-			return err
-		}
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -39393,17 +46730,69 @@ func validateToolFieldMetadataJSONValue4(path string, value any, description str
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	_, ok := value.(string)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "index":
+			if err := validateToolFieldMetadataJSONValue5(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Zero-based position of this branch in the advertised oneOf, used to select its structured validation diagnostic.",
+			); err != nil {
+				return err
+			}
+		case "json_kind":
+			if err := validateToolFieldMetadataJSONValue6(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "JSON kind that selects this branch; integer branches use number.",
+			); err != nil {
+				return err
+			}
+		case "path":
+			if err := validateToolFieldMetadataJSONValue7(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Path to the union value. An omitted path identifies the root value.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"index",
+				"json_kind",
+				"path",
+			})
+		}
 	}
 	return nil
 }
 
 // validateToolFieldMetadataJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateToolFieldMetadataJSONValue5(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
+	}
+	_, ok := value.(json.Number)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolFieldMetadataJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolFieldMetadataJSONValue6(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -39418,8 +46807,8 @@ func validateToolFieldMetadataJSONValue5(path string, value any, description str
 	return nil
 }
 
-// validateToolFieldMetadataJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolFieldMetadataJSONValue6(path string, value any, description string) error {
+// validateToolFieldMetadataJSONValue7 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolFieldMetadataJSONValue7(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -39435,7 +46824,106 @@ func validateToolFieldMetadataJSONValue6(path string, value any, description str
 		if item == nil {
 			continue
 		}
-		if err := validateToolFieldMetadataJSONValue9(
+		if err := validateToolFieldMetadataJSONValue17(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateToolFieldMetadataJSONValue8 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolFieldMetadataJSONValue8(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolFieldMetadataJSONValue9 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolFieldMetadataJSONValue9(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if err := validateToolFieldMetadataJSONValue10(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateToolFieldMetadataJSONValue10 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolFieldMetadataJSONValue10(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolFieldMetadataJSONValue11 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolFieldMetadataJSONValue11(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolFieldMetadataJSONValue12 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolFieldMetadataJSONValue12(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if item == nil {
+			continue
+		}
+		if err := validateToolFieldMetadataJSONValue17(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -39736,49 +47224,49 @@ func validateToolSchemaJSONValue(path string, value any, description string) err
 				return err
 			}
 		case "description":
-			if err := validateToolSchemaJSONValue58(
+			if err := validateToolSchemaJSONValue64(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Human-readable description of what the tool does.",
 			); err != nil {
 				return err
 			}
 		case "execution_payload_schema":
-			if err := validateToolSchemaJSONValue59(
+			if err := validateToolSchemaJSONValue65(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the payload sent to the provider. It includes fields supplied by continuation handling and excludes fields injected inside the provider.",
 			); err != nil {
 				return err
 			}
 		case "name":
-			if err := validateToolSchemaJSONValue60(
+			if err := validateToolSchemaJSONValue66(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Globally unique tool identifier of the form \"toolset.tool\".",
 			); err != nil {
 				return err
 			}
 		case "payload_schema":
-			if err := validateToolSchemaJSONValue61(
+			if err := validateToolSchemaJSONValue67(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for arguments accepted from the model.",
 			); err != nil {
 				return err
 			}
 		case "result_schema":
-			if err := validateToolSchemaJSONValue62(
+			if err := validateToolSchemaJSONValue69(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the tool result.",
 			); err != nil {
 				return err
 			}
 		case "sidecar_schema":
-			if err := validateToolSchemaJSONValue63(
+			if err := validateToolSchemaJSONValue70(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the tool sidecar (UI-only), when present.",
 			); err != nil {
 				return err
 			}
 		case "tags":
-			if err := validateToolSchemaJSONValue64(
+			if err := validateToolSchemaJSONValue71(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Optional tags used for policy, routing, or UI filtering.",
 			); err != nil {
@@ -39863,14 +47351,14 @@ func validateToolSchemaJSONValue2(path string, value any, description string) er
 				return err
 			}
 		case "required_labels":
-			if err := validateToolSchemaJSONValue34(
+			if err := validateToolSchemaJSONValue41(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Run labels required by provider-side injection for this tool.",
 			); err != nil {
 				return err
 			}
 		case "requires_ui":
-			if err := validateToolSchemaJSONValue37(
+			if err := validateToolSchemaJSONValue43(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Whether executing this tool requires rendering or an interactive client protocol.",
 			); err != nil {
@@ -39884,35 +47372,35 @@ func validateToolSchemaJSONValue2(path string, value any, description string) er
 				return err
 			}
 		case "result_reminder":
-			if err := validateToolSchemaJSONValue38(
+			if err := validateToolSchemaJSONValue44(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Model guidance emitted after this tool's result.",
 			); err != nil {
 				return err
 			}
 		case "search":
-			if err := validateToolSchemaJSONValue39(
+			if err := validateToolSchemaJSONValue45(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Word counts generated from the tool's name, title, and description.",
 			); err != nil {
 				return err
 			}
 		case "server_data":
-			if err := validateToolSchemaJSONValue43(
+			if err := validateToolSchemaJSONValue50(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Closed set of server-only result payloads emitted by this tool.",
 			); err != nil {
 				return err
 			}
 		case "text_only":
-			if err := validateToolSchemaJSONValue51(
+			if err := validateToolSchemaJSONValue58(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated model contract for execution using ordinary messages only.",
 			); err != nil {
 				return err
 			}
 		case "title":
-			if err := validateToolSchemaJSONValue56(
+			if err := validateToolSchemaJSONValue63(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Human-readable title declared for the tool.",
 			); err != nil {
@@ -40073,21 +47561,21 @@ func validateToolSchemaJSONValue57(path string, value any, description string) e
 	for _, key := range keys {
 		switch key {
 		case "continue_tool":
-			if err := validateToolSchemaJSONValue66(
+			if err := validateToolSchemaJSONValue68(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Qualified tool that advances this result; omitted when the tool advances itself.",
 			); err != nil {
 				return err
 			}
 		case "cursor_field":
-			if err := validateToolSchemaJSONValue67(
+			if err := validateToolSchemaJSONValue73(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "JSON argument name containing the continuation cursor.",
 			); err != nil {
 				return err
 			}
 		case "next_cursor_field":
-			if err := validateToolSchemaJSONValue68(
+			if err := validateToolSchemaJSONValue74(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "JSON result name containing the next cursor.",
 			); err != nil {
@@ -40120,40 +47608,40 @@ func validateToolSchemaJSONValue57(path string, value any, description string) e
 	return nil
 }
 
-// validateToolSchemaJSONValue66 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolSchemaJSONValue66(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolSchemaJSONValue67 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolSchemaJSONValue67(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
 // validateToolSchemaJSONValue68 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateToolSchemaJSONValue68(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolSchemaJSONValue73 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue73(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolSchemaJSONValue74 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue74(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -40423,14 +47911,14 @@ func validateToolSchemaJSONValue14(path string, value any, description string) e
 				return err
 			}
 		case "name":
-			if err := validateToolSchemaJSONValue32(
+			if err := validateToolSchemaJSONValue39(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated type name used in diagnostics.",
 			); err != nil {
 				return err
 			}
 		case "schema_without_root_example":
-			if err := validateToolSchemaJSONValue33(
+			if err := validateToolSchemaJSONValue40(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical schema with its root example omitted for model providers that carry examples separately.",
 			); err != nil {
@@ -40519,28 +48007,28 @@ func validateToolSchemaJSONValue17(path string, value any, description string) e
 				return err
 			}
 		case "description":
-			if err := validateToolSchemaJSONValue27(
+			if err := validateToolSchemaJSONValue33(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Description already present in the tool schema.",
 			); err != nil {
 				return err
 			}
 		case "discriminator_values":
-			if err := validateToolSchemaJSONValue28(
+			if err := validateToolSchemaJSONValue34(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Allowed branch names when this field selects a union branch.",
 			); err != nil {
 				return err
 			}
 		case "json_type":
-			if err := validateToolSchemaJSONValue30(
+			if err := validateToolSchemaJSONValue37(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Single JSON type accepted by this field, when known.",
 			); err != nil {
 				return err
 			}
 		case "path":
-			if err := validateToolSchemaJSONValue31(
+			if err := validateToolSchemaJSONValue38(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Path to this field. An omitted path identifies the root value.",
 			); err != nil {
@@ -40606,24 +48094,16 @@ func validateToolSchemaJSONValue19(path string, value any, description string) e
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
-		case "discriminator":
+		case "selection":
 			if err := validateToolSchemaJSONValue20(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Path to the union's discriminator property.",
-			); err != nil {
-				return err
-			}
-		case "value":
-			if err := validateToolSchemaJSONValue26(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Branch name required at the discriminator.",
+				typed[key], "Exactly one way the submitted value selects this branch.",
 			); err != nil {
 				return err
 			}
 		default:
 			return unknownJSONFieldError(path, key, []string{
-				"discriminator",
-				"value",
+				"selection",
 			})
 		}
 	}
@@ -40637,24 +48117,33 @@ func validateToolSchemaJSONValue20(path string, value any, description string) e
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	typed, ok := value.([]any)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
 	}
-	for index, item := range typed {
-		if item == nil {
-			continue
-		}
-		if err := validateToolSchemaJSONValue21(
-			generatedJSONChildPath(path, strconv.Itoa(index), true),
-			item, description,
-		); err != nil {
-			return err
+	for key := range typed {
+		if key != "type" && key != "value" {
+			return unknownJSONFieldError(path, key, []string{"type", "value"})
 		}
 	}
-	return nil
+	discriminator, ok := typed["type"].(string)
+	if !ok {
+		return fmt.Errorf("%s: missing or invalid union discriminator", field)
+	}
+	branch, exists := typed["value"]
+	if !exists || branch == nil {
+		return fmt.Errorf("%s: missing union value", field)
+	}
+	switch discriminator {
+	case "tagged":
+		return validateToolSchemaJSONValue21(generatedJSONChildPath(path, "value", false), branch, "A declared string discriminator selects this branch.")
+	case "untagged":
+		return validateToolSchemaJSONValue29(generatedJSONChildPath(path, "value", false), branch, "The JSON kind of the union value selects this branch.")
+	default:
+		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
+	}
 }
 
 // validateToolSchemaJSONValue21 checks one value whose JSON shape is fixed by the generated Goa type.
@@ -40677,8 +48166,79 @@ func validateToolSchemaJSONValue21(path string, value any, description string) e
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
-		case "segment":
+		case "discriminator":
 			if err := validateToolSchemaJSONValue22(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Path to the union's discriminator property.",
+			); err != nil {
+				return err
+			}
+		case "value":
+			if err := validateToolSchemaJSONValue28(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Branch name required at the discriminator.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"discriminator",
+				"value",
+			})
+		}
+	}
+	return nil
+}
+
+// validateToolSchemaJSONValue22 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue22(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if item == nil {
+			continue
+		}
+		if err := validateToolSchemaJSONValue23(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateToolSchemaJSONValue23 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue23(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "segment":
+			if err := validateToolSchemaJSONValue25(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Exactly one path segment kind.",
 			); err != nil {
@@ -40693,8 +48253,8 @@ func validateToolSchemaJSONValue21(path string, value any, description string) e
 	return nil
 }
 
-// validateToolSchemaJSONValue22 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolSchemaJSONValue22(path string, value any, description string) error {
+// validateToolSchemaJSONValue25 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue25(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -40721,55 +48281,12 @@ func validateToolSchemaJSONValue22(path string, value any, description string) e
 	}
 	switch discriminator {
 	case "field":
-		return validateToolSchemaJSONValue23(generatedJSONChildPath(path, "value", false), branch, "Exact JSON property name, including empty or punctuation-containing names.")
+		return validateToolSchemaJSONValue26(generatedJSONChildPath(path, "value", false), branch, "Exact JSON property name, including empty or punctuation-containing names.")
 	case "element":
-		return validateToolSchemaJSONValue25(generatedJSONChildPath(path, "value", false), branch, "One caller-selected array index or map key.")
+		return validateToolSchemaJSONValue27(generatedJSONChildPath(path, "value", false), branch, "One caller-selected array index or map key.")
 	default:
 		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
 	}
-}
-
-// validateToolSchemaJSONValue23 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolSchemaJSONValue23(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolSchemaJSONValue25 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolSchemaJSONValue25(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		default:
-			return unknownJSONFieldError(path, key, []string{})
-		}
-	}
-	return nil
 }
 
 // validateToolSchemaJSONValue26 checks one value whose JSON shape is fixed by the generated Goa type.
@@ -40795,11 +48312,22 @@ func validateToolSchemaJSONValue27(path string, value any, description string) e
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	_, ok := value.(string)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		default:
+			return unknownJSONFieldError(path, key, []string{})
+		}
 	}
 	return nil
 }
@@ -40811,19 +48339,11 @@ func validateToolSchemaJSONValue28(path string, value any, description string) e
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
 	}
-	typed, ok := value.([]any)
+	_, ok := value.(string)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
-	}
-	for index, item := range typed {
-		if err := validateToolSchemaJSONValue29(
-			generatedJSONChildPath(path, strconv.Itoa(index), true),
-			item, description,
-		); err != nil {
-			return err
-		}
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -40835,17 +48355,69 @@ func validateToolSchemaJSONValue29(path string, value any, description string) e
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	_, ok := value.(string)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "index":
+			if err := validateToolSchemaJSONValue30(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Zero-based position of this branch in the advertised oneOf, used to select its structured validation diagnostic.",
+			); err != nil {
+				return err
+			}
+		case "json_kind":
+			if err := validateToolSchemaJSONValue31(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "JSON kind that selects this branch; integer branches use number.",
+			); err != nil {
+				return err
+			}
+		case "path":
+			if err := validateToolSchemaJSONValue32(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Path to the union value. An omitted path identifies the root value.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"index",
+				"json_kind",
+				"path",
+			})
+		}
 	}
 	return nil
 }
 
 // validateToolSchemaJSONValue30 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateToolSchemaJSONValue30(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
+	}
+	_, ok := value.(json.Number)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolSchemaJSONValue31 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue31(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -40860,8 +48432,8 @@ func validateToolSchemaJSONValue30(path string, value any, description string) e
 	return nil
 }
 
-// validateToolSchemaJSONValue31 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolSchemaJSONValue31(path string, value any, description string) error {
+// validateToolSchemaJSONValue32 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue32(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -40877,28 +48449,12 @@ func validateToolSchemaJSONValue31(path string, value any, description string) e
 		if item == nil {
 			continue
 		}
-		if err := validateToolSchemaJSONValue21(
+		if err := validateToolSchemaJSONValue23(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-// validateToolSchemaJSONValue32 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolSchemaJSONValue32(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -40966,17 +48522,44 @@ func validateToolSchemaJSONValue37(path string, value any, description string) e
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
 	}
-	_, ok := value.(bool)
+	_, ok := value.(string)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
 
 // validateToolSchemaJSONValue38 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateToolSchemaJSONValue38(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if item == nil {
+			continue
+		}
+		if err := validateToolSchemaJSONValue23(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateToolSchemaJSONValue39 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue39(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -40991,8 +48574,96 @@ func validateToolSchemaJSONValue38(path string, value any, description string) e
 	return nil
 }
 
-// validateToolSchemaJSONValue39 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolSchemaJSONValue39(path string, value any, description string) error {
+// validateToolSchemaJSONValue40 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue40(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolSchemaJSONValue41 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue41(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if err := validateToolSchemaJSONValue42(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateToolSchemaJSONValue42 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue42(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolSchemaJSONValue43 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue43(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
+	}
+	_, ok := value.(bool)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolSchemaJSONValue44 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue44(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolSchemaJSONValue45 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue45(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -41012,14 +48683,14 @@ func validateToolSchemaJSONValue39(path string, value any, description string) e
 	for _, key := range keys {
 		switch key {
 		case "length":
-			if err := validateToolSchemaJSONValue40(
+			if err := validateToolSchemaJSONValue47(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Total number of words in this document, including repeats.",
 			); err != nil {
 				return err
 			}
 		case "terms":
-			if err := validateToolSchemaJSONValue41(
+			if err := validateToolSchemaJSONValue48(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Lowercase words and their positive occurrence counts.",
 			); err != nil {
@@ -41035,8 +48706,8 @@ func validateToolSchemaJSONValue39(path string, value any, description string) e
 	return nil
 }
 
-// validateToolSchemaJSONValue40 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolSchemaJSONValue40(path string, value any, description string) error {
+// validateToolSchemaJSONValue47 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue47(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -41051,8 +48722,8 @@ func validateToolSchemaJSONValue40(path string, value any, description string) e
 	return nil
 }
 
-// validateToolSchemaJSONValue41 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolSchemaJSONValue41(path string, value any, description string) error {
+// validateToolSchemaJSONValue48 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue48(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -41070,7 +48741,7 @@ func validateToolSchemaJSONValue41(path string, value any, description string) e
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		if err := validateToolSchemaJSONValue42(
+		if err := validateToolSchemaJSONValue49(
 			generatedJSONChildPath(path, key, true),
 			typed[key], description,
 		); err != nil {
@@ -41080,8 +48751,8 @@ func validateToolSchemaJSONValue41(path string, value any, description string) e
 	return nil
 }
 
-// validateToolSchemaJSONValue42 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolSchemaJSONValue42(path string, value any, description string) error {
+// validateToolSchemaJSONValue49 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue49(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -41096,8 +48767,8 @@ func validateToolSchemaJSONValue42(path string, value any, description string) e
 	return nil
 }
 
-// validateToolSchemaJSONValue43 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolSchemaJSONValue43(path string, value any, description string) error {
+// validateToolSchemaJSONValue50 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue50(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -41113,168 +48784,12 @@ func validateToolSchemaJSONValue43(path string, value any, description string) e
 		if item == nil {
 			continue
 		}
-		if err := validateToolSchemaJSONValue44(
+		if err := validateToolSchemaJSONValue51(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-// validateToolSchemaJSONValue44 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolSchemaJSONValue44(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "audience":
-			if err := validateToolSchemaJSONValue45(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Consumers allowed to receive this payload.",
-			); err != nil {
-				return err
-			}
-		case "description":
-			if err := validateToolSchemaJSONValue47(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Description of the data carried by this kind.",
-			); err != nil {
-				return err
-			}
-		case "kind":
-			if err := validateToolSchemaJSONValue48(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Unique kind emitted by this tool.",
-			); err != nil {
-				return err
-			}
-		case "NativeImage":
-			if err := validateToolSchemaJSONValue49(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Whether this evidence kind declares a typed image source requiring an explicitly admitted host reader.",
-			); err != nil {
-				return err
-			}
-		case "schema":
-			if err := validateToolSchemaJSONValue50(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Canonical JSON schema for the item data.",
-			); err != nil {
-				return err
-			}
-		case "type":
-			if err := validateToolSchemaJSONValue14(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Generated examples and field details for the item data.",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"audience",
-				"description",
-				"kind",
-				"NativeImage",
-				"schema",
-				"type",
-			})
-		}
-	}
-	return nil
-}
-
-// validateToolSchemaJSONValue45 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolSchemaJSONValue45(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolSchemaJSONValue47 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolSchemaJSONValue47(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolSchemaJSONValue48 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolSchemaJSONValue48(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolSchemaJSONValue49 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolSchemaJSONValue49(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
-	}
-	_, ok := value.(bool)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolSchemaJSONValue50 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolSchemaJSONValue50(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -41299,56 +48814,56 @@ func validateToolSchemaJSONValue51(path string, value any, description string) e
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
-		case "description":
+		case "audience":
 			if err := validateToolSchemaJSONValue52(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Domain instructions without optional UI guidance.",
+				typed[key], "Consumers allowed to receive this payload.",
 			); err != nil {
 				return err
 			}
-		case "execution_schema":
+		case "description":
 			if err := validateToolSchemaJSONValue53(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Complete input schema requiring disabled rendering controls.",
+				typed[key], "Description of the data carried by this kind.",
 			); err != nil {
 				return err
 			}
-		case "payload":
-			if err := validateToolSchemaJSONValue14(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Generated examples and field descriptions matching this schema.",
-			); err != nil {
-				return err
-			}
-		case "payload_schema":
+		case "kind":
 			if err := validateToolSchemaJSONValue54(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Exact model argument schema without UI-only controls.",
+				typed[key], "Unique kind emitted by this tool.",
 			); err != nil {
 				return err
 			}
-		case "result_reminder":
+		case "NativeImage":
 			if err := validateToolSchemaJSONValue55(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Domain result guidance without claiming UI output.",
+				typed[key], "Whether this evidence kind declares a typed image source requiring an explicitly admitted host reader.",
 			); err != nil {
 				return err
 			}
-		case "search":
-			if err := validateToolSchemaJSONValue39(
+		case "schema":
+			if err := validateToolSchemaJSONValue56(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Generated word counts for these domain instructions.",
+				typed[key], "Canonical JSON schema for the item data.",
+			); err != nil {
+				return err
+			}
+		case "type":
+			if err := validateToolSchemaJSONValue14(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Generated examples and field details for the item data.",
 			); err != nil {
 				return err
 			}
 		default:
 			return unknownJSONFieldError(path, key, []string{
+				"audience",
 				"description",
-				"execution_schema",
-				"payload",
-				"payload_schema",
-				"result_reminder",
-				"search",
+				"kind",
+				"NativeImage",
+				"schema",
+				"type",
 			})
 		}
 	}
@@ -41410,11 +48925,11 @@ func validateToolSchemaJSONValue55(path string, value any, description string) e
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
 	}
-	_, ok := value.(string)
+	_, ok := value.(bool)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -41442,11 +48957,71 @@ func validateToolSchemaJSONValue58(path string, value any, description string) e
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	_, ok := value.(string)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "description":
+			if err := validateToolSchemaJSONValue59(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Domain instructions without optional UI guidance.",
+			); err != nil {
+				return err
+			}
+		case "execution_schema":
+			if err := validateToolSchemaJSONValue60(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Complete input schema requiring disabled rendering controls.",
+			); err != nil {
+				return err
+			}
+		case "payload":
+			if err := validateToolSchemaJSONValue14(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Generated examples and field descriptions matching this schema.",
+			); err != nil {
+				return err
+			}
+		case "payload_schema":
+			if err := validateToolSchemaJSONValue61(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Exact model argument schema without UI-only controls.",
+			); err != nil {
+				return err
+			}
+		case "result_reminder":
+			if err := validateToolSchemaJSONValue62(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Domain result guidance without claiming UI output.",
+			); err != nil {
+				return err
+			}
+		case "search":
+			if err := validateToolSchemaJSONValue45(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Generated word counts for these domain instructions.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"description",
+				"execution_schema",
+				"payload",
+				"payload_schema",
+				"result_reminder",
+				"search",
+			})
+		}
 	}
 	return nil
 }
@@ -41538,6 +49113,102 @@ func validateToolSchemaJSONValue64(path string, value any, description string) e
 		field = "$payload"
 	}
 	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolSchemaJSONValue65 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue65(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolSchemaJSONValue66 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue66(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolSchemaJSONValue67 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue67(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolSchemaJSONValue69 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue69(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolSchemaJSONValue70 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue70(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolSchemaJSONValue71 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue71(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "array", "null", description)
 	}
 	typed, ok := value.([]any)
@@ -41545,7 +49216,7 @@ func validateToolSchemaJSONValue64(path string, value any, description string) e
 		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
 	}
 	for index, item := range typed {
-		if err := validateToolSchemaJSONValue65(
+		if err := validateToolSchemaJSONValue72(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -41555,8 +49226,8 @@ func validateToolSchemaJSONValue64(path string, value any, description string) e
 	return nil
 }
 
-// validateToolSchemaJSONValue65 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolSchemaJSONValue65(path string, value any, description string) error {
+// validateToolSchemaJSONValue72 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue72(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -41711,28 +49382,28 @@ func validateToolServerDataJSONValue(path string, value any, description string)
 				return err
 			}
 		case "kind":
-			if err := validateToolServerDataJSONValue19(
+			if err := validateToolServerDataJSONValue24(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Unique kind emitted by this tool.",
 			); err != nil {
 				return err
 			}
 		case "NativeImage":
-			if err := validateToolServerDataJSONValue20(
+			if err := validateToolServerDataJSONValue26(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Whether this evidence kind declares a typed image source requiring an explicitly admitted host reader.",
 			); err != nil {
 				return err
 			}
 		case "schema":
-			if err := validateToolServerDataJSONValue21(
+			if err := validateToolServerDataJSONValue27(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the item data.",
 			); err != nil {
 				return err
 			}
 		case "type":
-			if err := validateToolServerDataJSONValue22(
+			if err := validateToolServerDataJSONValue28(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated examples and field details for the item data.",
 			); err != nil {
@@ -41784,8 +49455,8 @@ func validateToolServerDataJSONValue13(path string, value any, description strin
 	return nil
 }
 
-// validateToolServerDataJSONValue19 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolServerDataJSONValue19(path string, value any, description string) error {
+// validateToolServerDataJSONValue24 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolServerDataJSONValue24(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -41800,8 +49471,8 @@ func validateToolServerDataJSONValue19(path string, value any, description strin
 	return nil
 }
 
-// validateToolServerDataJSONValue20 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolServerDataJSONValue20(path string, value any, description string) error {
+// validateToolServerDataJSONValue26 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolServerDataJSONValue26(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -41816,8 +49487,8 @@ func validateToolServerDataJSONValue20(path string, value any, description strin
 	return nil
 }
 
-// validateToolServerDataJSONValue21 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolServerDataJSONValue21(path string, value any, description string) error {
+// validateToolServerDataJSONValue27 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolServerDataJSONValue27(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -41832,8 +49503,8 @@ func validateToolServerDataJSONValue21(path string, value any, description strin
 	return nil
 }
 
-// validateToolServerDataJSONValue22 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolServerDataJSONValue22(path string, value any, description string) error {
+// validateToolServerDataJSONValue28 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolServerDataJSONValue28(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -41853,28 +49524,28 @@ func validateToolServerDataJSONValue22(path string, value any, description strin
 	for _, key := range keys {
 		switch key {
 		case "example_json":
-			if err := validateToolServerDataJSONValue23(
+			if err := validateToolServerDataJSONValue29(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical example JSON when the design supplies one.",
 			); err != nil {
 				return err
 			}
 		case "fields":
-			if err := validateToolServerDataJSONValue24(
+			if err := validateToolServerDataJSONValue30(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Field paths, descriptions, and union requirements prepared by code generation.",
 			); err != nil {
 				return err
 			}
 		case "name":
-			if err := validateToolServerDataJSONValue17(
+			if err := validateToolServerDataJSONValue23(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated type name used in diagnostics.",
 			); err != nil {
 				return err
 			}
 		case "schema_without_root_example":
-			if err := validateToolServerDataJSONValue18(
+			if err := validateToolServerDataJSONValue25(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical schema with its root example omitted for model providers that carry examples separately.",
 			); err != nil {
@@ -41892,8 +49563,8 @@ func validateToolServerDataJSONValue22(path string, value any, description strin
 	return nil
 }
 
-// validateToolServerDataJSONValue23 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolServerDataJSONValue23(path string, value any, description string) error {
+// validateToolServerDataJSONValue29 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolServerDataJSONValue29(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -41908,8 +49579,8 @@ func validateToolServerDataJSONValue23(path string, value any, description strin
 	return nil
 }
 
-// validateToolServerDataJSONValue24 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolServerDataJSONValue24(path string, value any, description string) error {
+// validateToolServerDataJSONValue30 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolServerDataJSONValue30(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -41925,7 +49596,7 @@ func validateToolServerDataJSONValue24(path string, value any, description strin
 		if item == nil {
 			continue
 		}
-		if err := validateToolServerDataJSONValue25(
+		if err := validateToolServerDataJSONValue31(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -41935,8 +49606,8 @@ func validateToolServerDataJSONValue24(path string, value any, description strin
 	return nil
 }
 
-// validateToolServerDataJSONValue25 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolServerDataJSONValue25(path string, value any, description string) error {
+// validateToolServerDataJSONValue31 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolServerDataJSONValue31(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -41963,28 +49634,28 @@ func validateToolServerDataJSONValue25(path string, value any, description strin
 				return err
 			}
 		case "description":
-			if err := validateToolServerDataJSONValue11(
+			if err := validateToolServerDataJSONValue18(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Description already present in the tool schema.",
 			); err != nil {
 				return err
 			}
 		case "discriminator_values":
-			if err := validateToolServerDataJSONValue12(
+			if err := validateToolServerDataJSONValue19(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Allowed branch names when this field selects a union branch.",
 			); err != nil {
 				return err
 			}
 		case "json_type":
-			if err := validateToolServerDataJSONValue15(
+			if err := validateToolServerDataJSONValue21(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Single JSON type accepted by this field, when known.",
 			); err != nil {
 				return err
 			}
 		case "path":
-			if err := validateToolServerDataJSONValue16(
+			if err := validateToolServerDataJSONValue22(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Path to this field. An omitted path identifies the root value.",
 			); err != nil {
@@ -42050,24 +49721,16 @@ func validateToolServerDataJSONValue4(path string, value any, description string
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
-		case "discriminator":
+		case "selection":
 			if err := validateToolServerDataJSONValue5(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Path to the union's discriminator property.",
-			); err != nil {
-				return err
-			}
-		case "value":
-			if err := validateToolServerDataJSONValue10(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Branch name required at the discriminator.",
+				typed[key], "Exactly one way the submitted value selects this branch.",
 			); err != nil {
 				return err
 			}
 		default:
 			return unknownJSONFieldError(path, key, []string{
-				"discriminator",
-				"value",
+				"selection",
 			})
 		}
 	}
@@ -42081,24 +49744,33 @@ func validateToolServerDataJSONValue5(path string, value any, description string
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	typed, ok := value.([]any)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
 	}
-	for index, item := range typed {
-		if item == nil {
-			continue
-		}
-		if err := validateToolServerDataJSONValue6(
-			generatedJSONChildPath(path, strconv.Itoa(index), true),
-			item, description,
-		); err != nil {
-			return err
+	for key := range typed {
+		if key != "type" && key != "value" {
+			return unknownJSONFieldError(path, key, []string{"type", "value"})
 		}
 	}
-	return nil
+	discriminator, ok := typed["type"].(string)
+	if !ok {
+		return fmt.Errorf("%s: missing or invalid union discriminator", field)
+	}
+	branch, exists := typed["value"]
+	if !exists || branch == nil {
+		return fmt.Errorf("%s: missing union value", field)
+	}
+	switch discriminator {
+	case "tagged":
+		return validateToolServerDataJSONValue6(generatedJSONChildPath(path, "value", false), branch, "A declared string discriminator selects this branch.")
+	case "untagged":
+		return validateToolServerDataJSONValue14(generatedJSONChildPath(path, "value", false), branch, "The JSON kind of the union value selects this branch.")
+	default:
+		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
+	}
 }
 
 // validateToolServerDataJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
@@ -42121,8 +49793,79 @@ func validateToolServerDataJSONValue6(path string, value any, description string
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
-		case "segment":
+		case "discriminator":
 			if err := validateToolServerDataJSONValue7(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Path to the union's discriminator property.",
+			); err != nil {
+				return err
+			}
+		case "value":
+			if err := validateToolServerDataJSONValue12(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Branch name required at the discriminator.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"discriminator",
+				"value",
+			})
+		}
+	}
+	return nil
+}
+
+// validateToolServerDataJSONValue7 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolServerDataJSONValue7(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if item == nil {
+			continue
+		}
+		if err := validateToolServerDataJSONValue8(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateToolServerDataJSONValue8 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolServerDataJSONValue8(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "segment":
+			if err := validateToolServerDataJSONValue9(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Exactly one path segment kind.",
 			); err != nil {
@@ -42137,8 +49880,8 @@ func validateToolServerDataJSONValue6(path string, value any, description string
 	return nil
 }
 
-// validateToolServerDataJSONValue7 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolServerDataJSONValue7(path string, value any, description string) error {
+// validateToolServerDataJSONValue9 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolServerDataJSONValue9(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -42165,55 +49908,12 @@ func validateToolServerDataJSONValue7(path string, value any, description string
 	}
 	switch discriminator {
 	case "field":
-		return validateToolServerDataJSONValue8(generatedJSONChildPath(path, "value", false), branch, "Exact JSON property name, including empty or punctuation-containing names.")
+		return validateToolServerDataJSONValue10(generatedJSONChildPath(path, "value", false), branch, "Exact JSON property name, including empty or punctuation-containing names.")
 	case "element":
-		return validateToolServerDataJSONValue9(generatedJSONChildPath(path, "value", false), branch, "One caller-selected array index or map key.")
+		return validateToolServerDataJSONValue11(generatedJSONChildPath(path, "value", false), branch, "One caller-selected array index or map key.")
 	default:
 		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
 	}
-}
-
-// validateToolServerDataJSONValue8 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolServerDataJSONValue8(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolServerDataJSONValue9 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolServerDataJSONValue9(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		default:
-			return unknownJSONFieldError(path, key, []string{})
-		}
-	}
-	return nil
 }
 
 // validateToolServerDataJSONValue10 checks one value whose JSON shape is fixed by the generated Goa type.
@@ -42239,11 +49939,22 @@ func validateToolServerDataJSONValue11(path string, value any, description strin
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	_, ok := value.(string)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		default:
+			return unknownJSONFieldError(path, key, []string{})
+		}
 	}
 	return nil
 }
@@ -42255,19 +49966,11 @@ func validateToolServerDataJSONValue12(path string, value any, description strin
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
 	}
-	typed, ok := value.([]any)
+	_, ok := value.(string)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
-	}
-	for index, item := range typed {
-		if err := validateToolServerDataJSONValue14(
-			generatedJSONChildPath(path, strconv.Itoa(index), true),
-			item, description,
-		); err != nil {
-			return err
-		}
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -42279,17 +49982,69 @@ func validateToolServerDataJSONValue14(path string, value any, description strin
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	_, ok := value.(string)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "index":
+			if err := validateToolServerDataJSONValue15(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Zero-based position of this branch in the advertised oneOf, used to select its structured validation diagnostic.",
+			); err != nil {
+				return err
+			}
+		case "json_kind":
+			if err := validateToolServerDataJSONValue16(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "JSON kind that selects this branch; integer branches use number.",
+			); err != nil {
+				return err
+			}
+		case "path":
+			if err := validateToolServerDataJSONValue17(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Path to the union value. An omitted path identifies the root value.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"index",
+				"json_kind",
+				"path",
+			})
+		}
 	}
 	return nil
 }
 
 // validateToolServerDataJSONValue15 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateToolServerDataJSONValue15(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
+	}
+	_, ok := value.(json.Number)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolServerDataJSONValue16 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolServerDataJSONValue16(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -42304,8 +50059,8 @@ func validateToolServerDataJSONValue15(path string, value any, description strin
 	return nil
 }
 
-// validateToolServerDataJSONValue16 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolServerDataJSONValue16(path string, value any, description string) error {
+// validateToolServerDataJSONValue17 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolServerDataJSONValue17(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -42321,7 +50076,7 @@ func validateToolServerDataJSONValue16(path string, value any, description strin
 		if item == nil {
 			continue
 		}
-		if err := validateToolServerDataJSONValue6(
+		if err := validateToolServerDataJSONValue8(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -42331,8 +50086,8 @@ func validateToolServerDataJSONValue16(path string, value any, description strin
 	return nil
 }
 
-// validateToolServerDataJSONValue17 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolServerDataJSONValue17(path string, value any, description string) error {
+// validateToolServerDataJSONValue18 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolServerDataJSONValue18(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -42347,8 +50102,309 @@ func validateToolServerDataJSONValue17(path string, value any, description strin
 	return nil
 }
 
-// validateToolServerDataJSONValue18 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolServerDataJSONValue18(path string, value any, description string) error {
+// validateToolServerDataJSONValue19 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolServerDataJSONValue19(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if err := validateToolServerDataJSONValue20(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateToolServerDataJSONValue20 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolServerDataJSONValue20(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolServerDataJSONValue21 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolServerDataJSONValue21(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolServerDataJSONValue22 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolServerDataJSONValue22(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if item == nil {
+			continue
+		}
+		if err := validateToolServerDataJSONValue8(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateToolServerDataJSONValue23 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolServerDataJSONValue23(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolServerDataJSONValue25 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolServerDataJSONValue25(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolTaggedUnionBranchJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolTaggedUnionBranchJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "discriminator":
+			if err := validateToolTaggedUnionBranchJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Path to the union's discriminator property.",
+			); err != nil {
+				return err
+			}
+		case "value":
+			if err := validateToolTaggedUnionBranchJSONValue7(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Branch name required at the discriminator.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"discriminator",
+				"value",
+			})
+		}
+	}
+	return nil
+}
+
+// validateToolTaggedUnionBranchJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolTaggedUnionBranchJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if item == nil {
+			continue
+		}
+		if err := validateToolTaggedUnionBranchJSONValue3(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateToolTaggedUnionBranchJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolTaggedUnionBranchJSONValue3(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "segment":
+			if err := validateToolTaggedUnionBranchJSONValue4(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Exactly one path segment kind.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"segment",
+			})
+		}
+	}
+	return nil
+}
+
+// validateToolTaggedUnionBranchJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolTaggedUnionBranchJSONValue4(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	for key := range typed {
+		if key != "type" && key != "value" {
+			return unknownJSONFieldError(path, key, []string{"type", "value"})
+		}
+	}
+	discriminator, ok := typed["type"].(string)
+	if !ok {
+		return fmt.Errorf("%s: missing or invalid union discriminator", field)
+	}
+	branch, exists := typed["value"]
+	if !exists || branch == nil {
+		return fmt.Errorf("%s: missing union value", field)
+	}
+	switch discriminator {
+	case "field":
+		return validateToolTaggedUnionBranchJSONValue5(generatedJSONChildPath(path, "value", false), branch, "Exact JSON property name, including empty or punctuation-containing names.")
+	case "element":
+		return validateToolTaggedUnionBranchJSONValue6(generatedJSONChildPath(path, "value", false), branch, "One caller-selected array index or map key.")
+	default:
+		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
+	}
+}
+
+// validateToolTaggedUnionBranchJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolTaggedUnionBranchJSONValue5(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolTaggedUnionBranchJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolTaggedUnionBranchJSONValue6(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		default:
+			return unknownJSONFieldError(path, key, []string{})
+		}
+	}
+	return nil
+}
+
+// validateToolTaggedUnionBranchJSONValue7 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolTaggedUnionBranchJSONValue7(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -42391,21 +50447,21 @@ func validateToolTypeMetadataJSONValue(path string, value any, description strin
 				return err
 			}
 		case "fields":
-			if err := validateToolTypeMetadataJSONValue12(
+			if err := validateToolTypeMetadataJSONValue13(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Field paths, descriptions, and union requirements prepared by code generation.",
 			); err != nil {
 				return err
 			}
 		case "name":
-			if err := validateToolTypeMetadataJSONValue10(
+			if err := validateToolTypeMetadataJSONValue17(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated type name used in diagnostics.",
 			); err != nil {
 				return err
 			}
 		case "schema_without_root_example":
-			if err := validateToolTypeMetadataJSONValue11(
+			if err := validateToolTypeMetadataJSONValue18(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical schema with its root example omitted for model providers that carry examples separately.",
 			); err != nil {
@@ -42439,8 +50495,8 @@ func validateToolTypeMetadataJSONValue2(path string, value any, description stri
 	return nil
 }
 
-// validateToolTypeMetadataJSONValue12 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolTypeMetadataJSONValue12(path string, value any, description string) error {
+// validateToolTypeMetadataJSONValue13 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolTypeMetadataJSONValue13(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -42456,7 +50512,7 @@ func validateToolTypeMetadataJSONValue12(path string, value any, description str
 		if item == nil {
 			continue
 		}
-		if err := validateToolTypeMetadataJSONValue13(
+		if err := validateToolTypeMetadataJSONValue19(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -42466,8 +50522,8 @@ func validateToolTypeMetadataJSONValue12(path string, value any, description str
 	return nil
 }
 
-// validateToolTypeMetadataJSONValue13 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolTypeMetadataJSONValue13(path string, value any, description string) error {
+// validateToolTypeMetadataJSONValue19 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolTypeMetadataJSONValue19(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -42487,35 +50543,35 @@ func validateToolTypeMetadataJSONValue13(path string, value any, description str
 	for _, key := range keys {
 		switch key {
 		case "branches":
-			if err := validateToolTypeMetadataJSONValue14(
+			if err := validateToolTypeMetadataJSONValue20(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "All branch selections required for this field to apply.",
 			); err != nil {
 				return err
 			}
 		case "description":
-			if err := validateToolTypeMetadataJSONValue5(
+			if err := validateToolTypeMetadataJSONValue11(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Description already present in the tool schema.",
 			); err != nil {
 				return err
 			}
 		case "discriminator_values":
-			if err := validateToolTypeMetadataJSONValue6(
+			if err := validateToolTypeMetadataJSONValue12(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Allowed branch names when this field selects a union branch.",
 			); err != nil {
 				return err
 			}
 		case "json_type":
-			if err := validateToolTypeMetadataJSONValue8(
+			if err := validateToolTypeMetadataJSONValue15(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Single JSON type accepted by this field, when known.",
 			); err != nil {
 				return err
 			}
 		case "path":
-			if err := validateToolTypeMetadataJSONValue9(
+			if err := validateToolTypeMetadataJSONValue16(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Path to this field. An omitted path identifies the root value.",
 			); err != nil {
@@ -42534,8 +50590,8 @@ func validateToolTypeMetadataJSONValue13(path string, value any, description str
 	return nil
 }
 
-// validateToolTypeMetadataJSONValue14 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolTypeMetadataJSONValue14(path string, value any, description string) error {
+// validateToolTypeMetadataJSONValue20 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolTypeMetadataJSONValue20(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -42551,7 +50607,7 @@ func validateToolTypeMetadataJSONValue14(path string, value any, description str
 		if item == nil {
 			continue
 		}
-		if err := validateToolTypeMetadataJSONValue15(
+		if err := validateToolTypeMetadataJSONValue21(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -42561,8 +50617,80 @@ func validateToolTypeMetadataJSONValue14(path string, value any, description str
 	return nil
 }
 
-// validateToolTypeMetadataJSONValue15 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolTypeMetadataJSONValue15(path string, value any, description string) error {
+// validateToolTypeMetadataJSONValue21 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolTypeMetadataJSONValue21(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "selection":
+			if err := validateToolTypeMetadataJSONValue22(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Exactly one way the submitted value selects this branch.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"selection",
+			})
+		}
+	}
+	return nil
+}
+
+// validateToolTypeMetadataJSONValue22 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolTypeMetadataJSONValue22(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	for key := range typed {
+		if key != "type" && key != "value" {
+			return unknownJSONFieldError(path, key, []string{"type", "value"})
+		}
+	}
+	discriminator, ok := typed["type"].(string)
+	if !ok {
+		return fmt.Errorf("%s: missing or invalid union discriminator", field)
+	}
+	branch, exists := typed["value"]
+	if !exists || branch == nil {
+		return fmt.Errorf("%s: missing union value", field)
+	}
+	switch discriminator {
+	case "tagged":
+		return validateToolTypeMetadataJSONValue23(generatedJSONChildPath(path, "value", false), branch, "A declared string discriminator selects this branch.")
+	case "untagged":
+		return validateToolTypeMetadataJSONValue7(generatedJSONChildPath(path, "value", false), branch, "The JSON kind of the union value selects this branch.")
+	default:
+		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
+	}
+}
+
+// validateToolTypeMetadataJSONValue23 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolTypeMetadataJSONValue23(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -42582,14 +50710,14 @@ func validateToolTypeMetadataJSONValue15(path string, value any, description str
 	for _, key := range keys {
 		switch key {
 		case "discriminator":
-			if err := validateToolTypeMetadataJSONValue16(
+			if err := validateToolTypeMetadataJSONValue24(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Path to the union's discriminator property.",
 			); err != nil {
 				return err
 			}
 		case "value":
-			if err := validateToolTypeMetadataJSONValue4(
+			if err := validateToolTypeMetadataJSONValue6(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Branch name required at the discriminator.",
 			); err != nil {
@@ -42605,8 +50733,8 @@ func validateToolTypeMetadataJSONValue15(path string, value any, description str
 	return nil
 }
 
-// validateToolTypeMetadataJSONValue16 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolTypeMetadataJSONValue16(path string, value any, description string) error {
+// validateToolTypeMetadataJSONValue24 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolTypeMetadataJSONValue24(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -42622,7 +50750,7 @@ func validateToolTypeMetadataJSONValue16(path string, value any, description str
 		if item == nil {
 			continue
 		}
-		if err := validateToolTypeMetadataJSONValue17(
+		if err := validateToolTypeMetadataJSONValue25(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -42632,8 +50760,8 @@ func validateToolTypeMetadataJSONValue16(path string, value any, description str
 	return nil
 }
 
-// validateToolTypeMetadataJSONValue17 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolTypeMetadataJSONValue17(path string, value any, description string) error {
+// validateToolTypeMetadataJSONValue25 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolTypeMetadataJSONValue25(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -42653,7 +50781,7 @@ func validateToolTypeMetadataJSONValue17(path string, value any, description str
 	for _, key := range keys {
 		switch key {
 		case "segment":
-			if err := validateToolTypeMetadataJSONValue18(
+			if err := validateToolTypeMetadataJSONValue3(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Exactly one path segment kind.",
 			); err != nil {
@@ -42668,8 +50796,8 @@ func validateToolTypeMetadataJSONValue17(path string, value any, description str
 	return nil
 }
 
-// validateToolTypeMetadataJSONValue18 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolTypeMetadataJSONValue18(path string, value any, description string) error {
+// validateToolTypeMetadataJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolTypeMetadataJSONValue3(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -42696,55 +50824,12 @@ func validateToolTypeMetadataJSONValue18(path string, value any, description str
 	}
 	switch discriminator {
 	case "field":
-		return validateToolTypeMetadataJSONValue19(generatedJSONChildPath(path, "value", false), branch, "Exact JSON property name, including empty or punctuation-containing names.")
+		return validateToolTypeMetadataJSONValue4(generatedJSONChildPath(path, "value", false), branch, "Exact JSON property name, including empty or punctuation-containing names.")
 	case "element":
-		return validateToolTypeMetadataJSONValue3(generatedJSONChildPath(path, "value", false), branch, "One caller-selected array index or map key.")
+		return validateToolTypeMetadataJSONValue5(generatedJSONChildPath(path, "value", false), branch, "One caller-selected array index or map key.")
 	default:
 		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
 	}
-}
-
-// validateToolTypeMetadataJSONValue19 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolTypeMetadataJSONValue19(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolTypeMetadataJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolTypeMetadataJSONValue3(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		default:
-			return unknownJSONFieldError(path, key, []string{})
-		}
-	}
-	return nil
 }
 
 // validateToolTypeMetadataJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
@@ -42770,11 +50855,22 @@ func validateToolTypeMetadataJSONValue5(path string, value any, description stri
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	_, ok := value.(string)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		default:
+			return unknownJSONFieldError(path, key, []string{})
+		}
 	}
 	return nil
 }
@@ -42786,19 +50882,11 @@ func validateToolTypeMetadataJSONValue6(path string, value any, description stri
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
 	}
-	typed, ok := value.([]any)
+	_, ok := value.(string)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
-	}
-	for index, item := range typed {
-		if err := validateToolTypeMetadataJSONValue7(
-			generatedJSONChildPath(path, strconv.Itoa(index), true),
-			item, description,
-		); err != nil {
-			return err
-		}
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -42810,17 +50898,69 @@ func validateToolTypeMetadataJSONValue7(path string, value any, description stri
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	_, ok := value.(string)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "index":
+			if err := validateToolTypeMetadataJSONValue8(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Zero-based position of this branch in the advertised oneOf, used to select its structured validation diagnostic.",
+			); err != nil {
+				return err
+			}
+		case "json_kind":
+			if err := validateToolTypeMetadataJSONValue9(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "JSON kind that selects this branch; integer branches use number.",
+			); err != nil {
+				return err
+			}
+		case "path":
+			if err := validateToolTypeMetadataJSONValue10(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Path to the union value. An omitted path identifies the root value.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"index",
+				"json_kind",
+				"path",
+			})
+		}
 	}
 	return nil
 }
 
 // validateToolTypeMetadataJSONValue8 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateToolTypeMetadataJSONValue8(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
+	}
+	_, ok := value.(json.Number)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolTypeMetadataJSONValue9 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolTypeMetadataJSONValue9(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -42835,8 +50975,8 @@ func validateToolTypeMetadataJSONValue8(path string, value any, description stri
 	return nil
 }
 
-// validateToolTypeMetadataJSONValue9 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolTypeMetadataJSONValue9(path string, value any, description string) error {
+// validateToolTypeMetadataJSONValue10 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolTypeMetadataJSONValue10(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -42852,7 +50992,7 @@ func validateToolTypeMetadataJSONValue9(path string, value any, description stri
 		if item == nil {
 			continue
 		}
-		if err := validateToolTypeMetadataJSONValue17(
+		if err := validateToolTypeMetadataJSONValue25(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -42862,8 +51002,8 @@ func validateToolTypeMetadataJSONValue9(path string, value any, description stri
 	return nil
 }
 
-// validateToolTypeMetadataJSONValue10 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolTypeMetadataJSONValue10(path string, value any, description string) error {
+// validateToolTypeMetadataJSONValue11 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolTypeMetadataJSONValue11(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -42878,8 +51018,107 @@ func validateToolTypeMetadataJSONValue10(path string, value any, description str
 	return nil
 }
 
-// validateToolTypeMetadataJSONValue11 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolTypeMetadataJSONValue11(path string, value any, description string) error {
+// validateToolTypeMetadataJSONValue12 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolTypeMetadataJSONValue12(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if err := validateToolTypeMetadataJSONValue14(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateToolTypeMetadataJSONValue14 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolTypeMetadataJSONValue14(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolTypeMetadataJSONValue15 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolTypeMetadataJSONValue15(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolTypeMetadataJSONValue16 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolTypeMetadataJSONValue16(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if item == nil {
+			continue
+		}
+		if err := validateToolTypeMetadataJSONValue25(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateToolTypeMetadataJSONValue17 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolTypeMetadataJSONValue17(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolTypeMetadataJSONValue18 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolTypeMetadataJSONValue18(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -42914,15 +51153,87 @@ func validateToolUnionBranchJSONValue(path string, value any, description string
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
-		case "discriminator":
+		case "selection":
 			if err := validateToolUnionBranchJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Exactly one way the submitted value selects this branch.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"selection",
+			})
+		}
+	}
+	return nil
+}
+
+// validateToolUnionBranchJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolUnionBranchJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	for key := range typed {
+		if key != "type" && key != "value" {
+			return unknownJSONFieldError(path, key, []string{"type", "value"})
+		}
+	}
+	discriminator, ok := typed["type"].(string)
+	if !ok {
+		return fmt.Errorf("%s: missing or invalid union discriminator", field)
+	}
+	branch, exists := typed["value"]
+	if !exists || branch == nil {
+		return fmt.Errorf("%s: missing union value", field)
+	}
+	switch discriminator {
+	case "tagged":
+		return validateToolUnionBranchJSONValue6(generatedJSONChildPath(path, "value", false), branch, "A declared string discriminator selects this branch.")
+	case "untagged":
+		return validateToolUnionBranchJSONValue13(generatedJSONChildPath(path, "value", false), branch, "The JSON kind of the union value selects this branch.")
+	default:
+		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
+	}
+}
+
+// validateToolUnionBranchJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolUnionBranchJSONValue6(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "discriminator":
+			if err := validateToolUnionBranchJSONValue7(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Path to the union's discriminator property.",
 			); err != nil {
 				return err
 			}
 		case "value":
-			if err := validateToolUnionBranchJSONValue7(
+			if err := validateToolUnionBranchJSONValue12(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Branch name required at the discriminator.",
 			); err != nil {
@@ -42938,8 +51249,8 @@ func validateToolUnionBranchJSONValue(path string, value any, description string
 	return nil
 }
 
-// validateToolUnionBranchJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolUnionBranchJSONValue2(path string, value any, description string) error {
+// validateToolUnionBranchJSONValue7 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolUnionBranchJSONValue7(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -42955,7 +51266,7 @@ func validateToolUnionBranchJSONValue2(path string, value any, description strin
 		if item == nil {
 			continue
 		}
-		if err := validateToolUnionBranchJSONValue3(
+		if err := validateToolUnionBranchJSONValue8(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -42965,8 +51276,8 @@ func validateToolUnionBranchJSONValue2(path string, value any, description strin
 	return nil
 }
 
-// validateToolUnionBranchJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolUnionBranchJSONValue3(path string, value any, description string) error {
+// validateToolUnionBranchJSONValue8 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolUnionBranchJSONValue8(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -42986,7 +51297,7 @@ func validateToolUnionBranchJSONValue3(path string, value any, description strin
 	for _, key := range keys {
 		switch key {
 		case "segment":
-			if err := validateToolUnionBranchJSONValue4(
+			if err := validateToolUnionBranchJSONValue9(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Exactly one path segment kind.",
 			); err != nil {
@@ -43001,8 +51312,8 @@ func validateToolUnionBranchJSONValue3(path string, value any, description strin
 	return nil
 }
 
-// validateToolUnionBranchJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolUnionBranchJSONValue4(path string, value any, description string) error {
+// validateToolUnionBranchJSONValue9 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolUnionBranchJSONValue9(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -43029,16 +51340,16 @@ func validateToolUnionBranchJSONValue4(path string, value any, description strin
 	}
 	switch discriminator {
 	case "field":
-		return validateToolUnionBranchJSONValue5(generatedJSONChildPath(path, "value", false), branch, "Exact JSON property name, including empty or punctuation-containing names.")
+		return validateToolUnionBranchJSONValue10(generatedJSONChildPath(path, "value", false), branch, "Exact JSON property name, including empty or punctuation-containing names.")
 	case "element":
-		return validateToolUnionBranchJSONValue6(generatedJSONChildPath(path, "value", false), branch, "One caller-selected array index or map key.")
+		return validateToolUnionBranchJSONValue11(generatedJSONChildPath(path, "value", false), branch, "One caller-selected array index or map key.")
 	default:
 		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
 	}
 }
 
-// validateToolUnionBranchJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolUnionBranchJSONValue5(path string, value any, description string) error {
+// validateToolUnionBranchJSONValue10 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolUnionBranchJSONValue10(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -43053,8 +51364,8 @@ func validateToolUnionBranchJSONValue5(path string, value any, description strin
 	return nil
 }
 
-// validateToolUnionBranchJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolUnionBranchJSONValue6(path string, value any, description string) error {
+// validateToolUnionBranchJSONValue11 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolUnionBranchJSONValue11(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -43080,8 +51391,8 @@ func validateToolUnionBranchJSONValue6(path string, value any, description strin
 	return nil
 }
 
-// validateToolUnionBranchJSONValue7 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolUnionBranchJSONValue7(path string, value any, description string) error {
+// validateToolUnionBranchJSONValue12 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolUnionBranchJSONValue12(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -43092,6 +51403,343 @@ func validateToolUnionBranchJSONValue7(path string, value any, description strin
 	_, ok := value.(string)
 	if !ok {
 		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolUnionBranchJSONValue13 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolUnionBranchJSONValue13(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "index":
+			if err := validateToolUnionBranchJSONValue3(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Zero-based position of this branch in the advertised oneOf, used to select its structured validation diagnostic.",
+			); err != nil {
+				return err
+			}
+		case "json_kind":
+			if err := validateToolUnionBranchJSONValue4(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "JSON kind that selects this branch; integer branches use number.",
+			); err != nil {
+				return err
+			}
+		case "path":
+			if err := validateToolUnionBranchJSONValue5(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Path to the union value. An omitted path identifies the root value.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"index",
+				"json_kind",
+				"path",
+			})
+		}
+	}
+	return nil
+}
+
+// validateToolUnionBranchJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolUnionBranchJSONValue3(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
+	}
+	_, ok := value.(json.Number)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolUnionBranchJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolUnionBranchJSONValue4(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolUnionBranchJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolUnionBranchJSONValue5(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if item == nil {
+			continue
+		}
+		if err := validateToolUnionBranchJSONValue8(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateToolUntaggedUnionBranchJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolUntaggedUnionBranchJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "index":
+			if err := validateToolUntaggedUnionBranchJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Zero-based position of this branch in the advertised oneOf, used to select its structured validation diagnostic.",
+			); err != nil {
+				return err
+			}
+		case "json_kind":
+			if err := validateToolUntaggedUnionBranchJSONValue3(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "JSON kind that selects this branch; integer branches use number.",
+			); err != nil {
+				return err
+			}
+		case "path":
+			if err := validateToolUntaggedUnionBranchJSONValue4(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Path to the union value. An omitted path identifies the root value.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"index",
+				"json_kind",
+				"path",
+			})
+		}
+	}
+	return nil
+}
+
+// validateToolUntaggedUnionBranchJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolUntaggedUnionBranchJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
+	}
+	_, ok := value.(json.Number)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolUntaggedUnionBranchJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolUntaggedUnionBranchJSONValue3(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolUntaggedUnionBranchJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolUntaggedUnionBranchJSONValue4(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if item == nil {
+			continue
+		}
+		if err := validateToolUntaggedUnionBranchJSONValue5(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateToolUntaggedUnionBranchJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolUntaggedUnionBranchJSONValue5(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "segment":
+			if err := validateToolUntaggedUnionBranchJSONValue6(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Exactly one path segment kind.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"segment",
+			})
+		}
+	}
+	return nil
+}
+
+// validateToolUntaggedUnionBranchJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolUntaggedUnionBranchJSONValue6(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	for key := range typed {
+		if key != "type" && key != "value" {
+			return unknownJSONFieldError(path, key, []string{"type", "value"})
+		}
+	}
+	discriminator, ok := typed["type"].(string)
+	if !ok {
+		return fmt.Errorf("%s: missing or invalid union discriminator", field)
+	}
+	branch, exists := typed["value"]
+	if !exists || branch == nil {
+		return fmt.Errorf("%s: missing union value", field)
+	}
+	switch discriminator {
+	case "field":
+		return validateToolUntaggedUnionBranchJSONValue7(generatedJSONChildPath(path, "value", false), branch, "Exact JSON property name, including empty or punctuation-containing names.")
+	case "element":
+		return validateToolUntaggedUnionBranchJSONValue8(generatedJSONChildPath(path, "value", false), branch, "One caller-selected array index or map key.")
+	default:
+		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
+	}
+}
+
+// validateToolUntaggedUnionBranchJSONValue7 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolUntaggedUnionBranchJSONValue7(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolUntaggedUnionBranchJSONValue8 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolUntaggedUnionBranchJSONValue8(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		default:
+			return unknownJSONFieldError(path, key, []string{})
+		}
 	}
 	return nil
 }
@@ -43152,7 +51800,7 @@ func validateToolsetJSONValue(path string, value any, description string) error 
 				return err
 			}
 		case "version":
-			if err := validateToolsetJSONValue74(
+			if err := validateToolsetJSONValue81(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Semantic version of the toolset.",
 			); err != nil {
@@ -43308,56 +51956,56 @@ func validateToolsetJSONValue68(path string, value any, description string) erro
 	for _, key := range keys {
 		switch key {
 		case "consumer_contract":
-			if err := validateToolsetJSONValue75(
+			if err := validateToolsetJSONValue79(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated contract needed to consume this tool without a compiled Go dependency. Schema-only declarations remain usable by static consumers; dynamic consumers require this complete contract.",
 			); err != nil {
 				return err
 			}
 		case "description":
-			if err := validateToolsetJSONValue65(
+			if err := validateToolsetJSONValue72(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Human-readable description of what the tool does.",
 			); err != nil {
 				return err
 			}
 		case "execution_payload_schema":
-			if err := validateToolsetJSONValue66(
+			if err := validateToolsetJSONValue73(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the payload sent to the provider. It includes fields supplied by continuation handling and excludes fields injected inside the provider.",
 			); err != nil {
 				return err
 			}
 		case "name":
-			if err := validateToolsetJSONValue67(
+			if err := validateToolsetJSONValue74(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Globally unique tool identifier of the form \"toolset.tool\".",
 			); err != nil {
 				return err
 			}
 		case "payload_schema":
-			if err := validateToolsetJSONValue69(
+			if err := validateToolsetJSONValue75(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for arguments accepted from the model.",
 			); err != nil {
 				return err
 			}
 		case "result_schema":
-			if err := validateToolsetJSONValue70(
+			if err := validateToolsetJSONValue76(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the tool result.",
 			); err != nil {
 				return err
 			}
 		case "sidecar_schema":
-			if err := validateToolsetJSONValue71(
+			if err := validateToolsetJSONValue77(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the tool sidecar (UI-only), when present.",
 			); err != nil {
 				return err
 			}
 		case "tags":
-			if err := validateToolsetJSONValue72(
+			if err := validateToolsetJSONValue78(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Optional tags used for policy, routing, or UI filtering.",
 			); err != nil {
@@ -43379,8 +52027,8 @@ func validateToolsetJSONValue68(path string, value any, description string) erro
 	return nil
 }
 
-// validateToolsetJSONValue75 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolsetJSONValue75(path string, value any, description string) error {
+// validateToolsetJSONValue79 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue79(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -43400,7 +52048,7 @@ func validateToolsetJSONValue75(path string, value any, description string) erro
 	for _, key := range keys {
 		switch key {
 		case "Agent":
-			if err := validateToolsetJSONValue76(
+			if err := validateToolsetJSONValue82(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Worker and immutable application configuration used by a dynamically registered Agent tool.",
 			); err != nil {
@@ -43442,14 +52090,14 @@ func validateToolsetJSONValue75(path string, value any, description string) erro
 				return err
 			}
 		case "required_labels":
-			if err := validateToolsetJSONValue42(
+			if err := validateToolsetJSONValue49(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Run labels required by provider-side injection for this tool.",
 			); err != nil {
 				return err
 			}
 		case "requires_ui":
-			if err := validateToolsetJSONValue44(
+			if err := validateToolsetJSONValue51(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Whether executing this tool requires rendering or an interactive client protocol.",
 			); err != nil {
@@ -43463,35 +52111,35 @@ func validateToolsetJSONValue75(path string, value any, description string) erro
 				return err
 			}
 		case "result_reminder":
-			if err := validateToolsetJSONValue45(
+			if err := validateToolsetJSONValue52(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Model guidance emitted after this tool's result.",
 			); err != nil {
 				return err
 			}
 		case "search":
-			if err := validateToolsetJSONValue47(
+			if err := validateToolsetJSONValue53(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Word counts generated from the tool's name, title, and description.",
 			); err != nil {
 				return err
 			}
 		case "server_data":
-			if err := validateToolsetJSONValue51(
+			if err := validateToolsetJSONValue58(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Closed set of server-only result payloads emitted by this tool.",
 			); err != nil {
 				return err
 			}
 		case "text_only":
-			if err := validateToolsetJSONValue59(
+			if err := validateToolsetJSONValue65(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated model contract for execution using ordinary messages only.",
 			); err != nil {
 				return err
 			}
 		case "title":
-			if err := validateToolsetJSONValue64(
+			if err := validateToolsetJSONValue71(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Human-readable title declared for the tool.",
 			); err != nil {
@@ -43519,8 +52167,8 @@ func validateToolsetJSONValue75(path string, value any, description string) erro
 	return nil
 }
 
-// validateToolsetJSONValue76 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolsetJSONValue76(path string, value any, description string) error {
+// validateToolsetJSONValue82 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue82(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -44002,14 +52650,14 @@ func validateToolsetJSONValue21(path string, value any, description string) erro
 				return err
 			}
 		case "name":
-			if err := validateToolsetJSONValue40(
+			if err := validateToolsetJSONValue47(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated type name used in diagnostics.",
 			); err != nil {
 				return err
 			}
 		case "schema_without_root_example":
-			if err := validateToolsetJSONValue41(
+			if err := validateToolsetJSONValue48(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical schema with its root example omitted for model providers that carry examples separately.",
 			); err != nil {
@@ -44098,28 +52746,28 @@ func validateToolsetJSONValue25(path string, value any, description string) erro
 				return err
 			}
 		case "description":
-			if err := validateToolsetJSONValue34(
+			if err := validateToolsetJSONValue41(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Description already present in the tool schema.",
 			); err != nil {
 				return err
 			}
 		case "discriminator_values":
-			if err := validateToolsetJSONValue36(
+			if err := validateToolsetJSONValue42(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Allowed branch names when this field selects a union branch.",
 			); err != nil {
 				return err
 			}
 		case "json_type":
-			if err := validateToolsetJSONValue38(
+			if err := validateToolsetJSONValue44(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Single JSON type accepted by this field, when known.",
 			); err != nil {
 				return err
 			}
 		case "path":
-			if err := validateToolsetJSONValue39(
+			if err := validateToolsetJSONValue45(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Path to this field. An omitted path identifies the root value.",
 			); err != nil {
@@ -44185,24 +52833,16 @@ func validateToolsetJSONValue27(path string, value any, description string) erro
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
-		case "discriminator":
+		case "selection":
 			if err := validateToolsetJSONValue28(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Path to the union's discriminator property.",
-			); err != nil {
-				return err
-			}
-		case "value":
-			if err := validateToolsetJSONValue33(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Branch name required at the discriminator.",
+				typed[key], "Exactly one way the submitted value selects this branch.",
 			); err != nil {
 				return err
 			}
 		default:
 			return unknownJSONFieldError(path, key, []string{
-				"discriminator",
-				"value",
+				"selection",
 			})
 		}
 	}
@@ -44216,24 +52856,33 @@ func validateToolsetJSONValue28(path string, value any, description string) erro
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	typed, ok := value.([]any)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
 	}
-	for index, item := range typed {
-		if item == nil {
-			continue
-		}
-		if err := validateToolsetJSONValue29(
-			generatedJSONChildPath(path, strconv.Itoa(index), true),
-			item, description,
-		); err != nil {
-			return err
+	for key := range typed {
+		if key != "type" && key != "value" {
+			return unknownJSONFieldError(path, key, []string{"type", "value"})
 		}
 	}
-	return nil
+	discriminator, ok := typed["type"].(string)
+	if !ok {
+		return fmt.Errorf("%s: missing or invalid union discriminator", field)
+	}
+	branch, exists := typed["value"]
+	if !exists || branch == nil {
+		return fmt.Errorf("%s: missing union value", field)
+	}
+	switch discriminator {
+	case "tagged":
+		return validateToolsetJSONValue29(generatedJSONChildPath(path, "value", false), branch, "A declared string discriminator selects this branch.")
+	case "untagged":
+		return validateToolsetJSONValue37(generatedJSONChildPath(path, "value", false), branch, "The JSON kind of the union value selects this branch.")
+	default:
+		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
+	}
 }
 
 // validateToolsetJSONValue29 checks one value whose JSON shape is fixed by the generated Goa type.
@@ -44256,8 +52905,79 @@ func validateToolsetJSONValue29(path string, value any, description string) erro
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
-		case "segment":
+		case "discriminator":
 			if err := validateToolsetJSONValue30(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Path to the union's discriminator property.",
+			); err != nil {
+				return err
+			}
+		case "value":
+			if err := validateToolsetJSONValue36(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Branch name required at the discriminator.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"discriminator",
+				"value",
+			})
+		}
+	}
+	return nil
+}
+
+// validateToolsetJSONValue30 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue30(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if item == nil {
+			continue
+		}
+		if err := validateToolsetJSONValue31(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateToolsetJSONValue31 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue31(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "segment":
+			if err := validateToolsetJSONValue32(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Exactly one path segment kind.",
 			); err != nil {
@@ -44272,8 +52992,8 @@ func validateToolsetJSONValue29(path string, value any, description string) erro
 	return nil
 }
 
-// validateToolsetJSONValue30 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolsetJSONValue30(path string, value any, description string) error {
+// validateToolsetJSONValue32 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue32(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -44300,55 +53020,12 @@ func validateToolsetJSONValue30(path string, value any, description string) erro
 	}
 	switch discriminator {
 	case "field":
-		return validateToolsetJSONValue31(generatedJSONChildPath(path, "value", false), branch, "Exact JSON property name, including empty or punctuation-containing names.")
+		return validateToolsetJSONValue33(generatedJSONChildPath(path, "value", false), branch, "Exact JSON property name, including empty or punctuation-containing names.")
 	case "element":
-		return validateToolsetJSONValue32(generatedJSONChildPath(path, "value", false), branch, "One caller-selected array index or map key.")
+		return validateToolsetJSONValue34(generatedJSONChildPath(path, "value", false), branch, "One caller-selected array index or map key.")
 	default:
 		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
 	}
-}
-
-// validateToolsetJSONValue31 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolsetJSONValue31(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolsetJSONValue32 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolsetJSONValue32(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		default:
-			return unknownJSONFieldError(path, key, []string{})
-		}
-	}
-	return nil
 }
 
 // validateToolsetJSONValue33 checks one value whose JSON shape is fixed by the generated Goa type.
@@ -44374,11 +53051,22 @@ func validateToolsetJSONValue34(path string, value any, description string) erro
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	_, ok := value.(string)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		default:
+			return unknownJSONFieldError(path, key, []string{})
+		}
 	}
 	return nil
 }
@@ -44390,19 +53078,11 @@ func validateToolsetJSONValue36(path string, value any, description string) erro
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
 	}
-	typed, ok := value.([]any)
+	_, ok := value.(string)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
-	}
-	for index, item := range typed {
-		if err := validateToolsetJSONValue37(
-			generatedJSONChildPath(path, strconv.Itoa(index), true),
-			item, description,
-		); err != nil {
-			return err
-		}
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -44414,17 +53094,69 @@ func validateToolsetJSONValue37(path string, value any, description string) erro
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	_, ok := value.(string)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "index":
+			if err := validateToolsetJSONValue38(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Zero-based position of this branch in the advertised oneOf, used to select its structured validation diagnostic.",
+			); err != nil {
+				return err
+			}
+		case "json_kind":
+			if err := validateToolsetJSONValue39(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "JSON kind that selects this branch; integer branches use number.",
+			); err != nil {
+				return err
+			}
+		case "path":
+			if err := validateToolsetJSONValue40(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Path to the union value. An omitted path identifies the root value.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"index",
+				"json_kind",
+				"path",
+			})
+		}
 	}
 	return nil
 }
 
 // validateToolsetJSONValue38 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateToolsetJSONValue38(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
+	}
+	_, ok := value.(json.Number)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolsetJSONValue39 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue39(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -44439,8 +53171,8 @@ func validateToolsetJSONValue38(path string, value any, description string) erro
 	return nil
 }
 
-// validateToolsetJSONValue39 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolsetJSONValue39(path string, value any, description string) error {
+// validateToolsetJSONValue40 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue40(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -44456,28 +53188,12 @@ func validateToolsetJSONValue39(path string, value any, description string) erro
 		if item == nil {
 			continue
 		}
-		if err := validateToolsetJSONValue29(
+		if err := validateToolsetJSONValue31(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-// validateToolsetJSONValue40 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolsetJSONValue40(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -44545,17 +53261,44 @@ func validateToolsetJSONValue44(path string, value any, description string) erro
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
 	}
-	_, ok := value.(bool)
+	_, ok := value.(string)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
 
 // validateToolsetJSONValue45 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateToolsetJSONValue45(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if item == nil {
+			continue
+		}
+		if err := validateToolsetJSONValue31(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateToolsetJSONValue47 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue47(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -44570,8 +53313,96 @@ func validateToolsetJSONValue45(path string, value any, description string) erro
 	return nil
 }
 
-// validateToolsetJSONValue47 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolsetJSONValue47(path string, value any, description string) error {
+// validateToolsetJSONValue48 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue48(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolsetJSONValue49 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue49(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if err := validateToolsetJSONValue50(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateToolsetJSONValue50 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue50(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolsetJSONValue51 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue51(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
+	}
+	_, ok := value.(bool)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolsetJSONValue52 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue52(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolsetJSONValue53 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue53(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -44591,14 +53422,14 @@ func validateToolsetJSONValue47(path string, value any, description string) erro
 	for _, key := range keys {
 		switch key {
 		case "length":
-			if err := validateToolsetJSONValue48(
+			if err := validateToolsetJSONValue54(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Total number of words in this document, including repeats.",
 			); err != nil {
 				return err
 			}
 		case "terms":
-			if err := validateToolsetJSONValue49(
+			if err := validateToolsetJSONValue55(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Lowercase words and their positive occurrence counts.",
 			); err != nil {
@@ -44614,8 +53445,8 @@ func validateToolsetJSONValue47(path string, value any, description string) erro
 	return nil
 }
 
-// validateToolsetJSONValue48 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolsetJSONValue48(path string, value any, description string) error {
+// validateToolsetJSONValue54 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue54(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -44630,8 +53461,8 @@ func validateToolsetJSONValue48(path string, value any, description string) erro
 	return nil
 }
 
-// validateToolsetJSONValue49 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolsetJSONValue49(path string, value any, description string) error {
+// validateToolsetJSONValue55 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue55(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -44649,7 +53480,7 @@ func validateToolsetJSONValue49(path string, value any, description string) erro
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		if err := validateToolsetJSONValue50(
+		if err := validateToolsetJSONValue56(
 			generatedJSONChildPath(path, key, true),
 			typed[key], description,
 		); err != nil {
@@ -44659,8 +53490,8 @@ func validateToolsetJSONValue49(path string, value any, description string) erro
 	return nil
 }
 
-// validateToolsetJSONValue50 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolsetJSONValue50(path string, value any, description string) error {
+// validateToolsetJSONValue56 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue56(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -44675,8 +53506,8 @@ func validateToolsetJSONValue50(path string, value any, description string) erro
 	return nil
 }
 
-// validateToolsetJSONValue51 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolsetJSONValue51(path string, value any, description string) error {
+// validateToolsetJSONValue58 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue58(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -44692,168 +53523,12 @@ func validateToolsetJSONValue51(path string, value any, description string) erro
 		if item == nil {
 			continue
 		}
-		if err := validateToolsetJSONValue52(
+		if err := validateToolsetJSONValue59(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-// validateToolsetJSONValue52 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolsetJSONValue52(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "audience":
-			if err := validateToolsetJSONValue53(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Consumers allowed to receive this payload.",
-			); err != nil {
-				return err
-			}
-		case "description":
-			if err := validateToolsetJSONValue54(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Description of the data carried by this kind.",
-			); err != nil {
-				return err
-			}
-		case "kind":
-			if err := validateToolsetJSONValue55(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Unique kind emitted by this tool.",
-			); err != nil {
-				return err
-			}
-		case "NativeImage":
-			if err := validateToolsetJSONValue56(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Whether this evidence kind declares a typed image source requiring an explicitly admitted host reader.",
-			); err != nil {
-				return err
-			}
-		case "schema":
-			if err := validateToolsetJSONValue58(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Canonical JSON schema for the item data.",
-			); err != nil {
-				return err
-			}
-		case "type":
-			if err := validateToolsetJSONValue21(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Generated examples and field details for the item data.",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"audience",
-				"description",
-				"kind",
-				"NativeImage",
-				"schema",
-				"type",
-			})
-		}
-	}
-	return nil
-}
-
-// validateToolsetJSONValue53 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolsetJSONValue53(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolsetJSONValue54 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolsetJSONValue54(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolsetJSONValue55 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolsetJSONValue55(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolsetJSONValue56 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolsetJSONValue56(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
-	}
-	_, ok := value.(bool)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolsetJSONValue58 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolsetJSONValue58(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -44878,56 +53553,56 @@ func validateToolsetJSONValue59(path string, value any, description string) erro
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
-		case "description":
+		case "audience":
 			if err := validateToolsetJSONValue60(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Domain instructions without optional UI guidance.",
+				typed[key], "Consumers allowed to receive this payload.",
 			); err != nil {
 				return err
 			}
-		case "execution_schema":
+		case "description":
 			if err := validateToolsetJSONValue61(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Complete input schema requiring disabled rendering controls.",
+				typed[key], "Description of the data carried by this kind.",
 			); err != nil {
 				return err
 			}
-		case "payload":
-			if err := validateToolsetJSONValue21(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Generated examples and field descriptions matching this schema.",
-			); err != nil {
-				return err
-			}
-		case "payload_schema":
+		case "kind":
 			if err := validateToolsetJSONValue62(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Exact model argument schema without UI-only controls.",
+				typed[key], "Unique kind emitted by this tool.",
 			); err != nil {
 				return err
 			}
-		case "result_reminder":
+		case "NativeImage":
 			if err := validateToolsetJSONValue63(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Domain result guidance without claiming UI output.",
+				typed[key], "Whether this evidence kind declares a typed image source requiring an explicitly admitted host reader.",
 			); err != nil {
 				return err
 			}
-		case "search":
-			if err := validateToolsetJSONValue47(
+		case "schema":
+			if err := validateToolsetJSONValue64(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Generated word counts for these domain instructions.",
+				typed[key], "Canonical JSON schema for the item data.",
+			); err != nil {
+				return err
+			}
+		case "type":
+			if err := validateToolsetJSONValue21(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Generated examples and field details for the item data.",
 			); err != nil {
 				return err
 			}
 		default:
 			return unknownJSONFieldError(path, key, []string{
+				"audience",
 				"description",
-				"execution_schema",
-				"payload",
-				"payload_schema",
-				"result_reminder",
-				"search",
+				"kind",
+				"NativeImage",
+				"schema",
+				"type",
 			})
 		}
 	}
@@ -44989,11 +53664,11 @@ func validateToolsetJSONValue63(path string, value any, description string) erro
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
 	}
-	_, ok := value.(string)
+	_, ok := value.(bool)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -45021,11 +53696,71 @@ func validateToolsetJSONValue65(path string, value any, description string) erro
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	_, ok := value.(string)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "description":
+			if err := validateToolsetJSONValue66(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Domain instructions without optional UI guidance.",
+			); err != nil {
+				return err
+			}
+		case "execution_schema":
+			if err := validateToolsetJSONValue67(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Complete input schema requiring disabled rendering controls.",
+			); err != nil {
+				return err
+			}
+		case "payload":
+			if err := validateToolsetJSONValue21(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Generated examples and field descriptions matching this schema.",
+			); err != nil {
+				return err
+			}
+		case "payload_schema":
+			if err := validateToolsetJSONValue69(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Exact model argument schema without UI-only controls.",
+			); err != nil {
+				return err
+			}
+		case "result_reminder":
+			if err := validateToolsetJSONValue70(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Domain result guidance without claiming UI output.",
+			); err != nil {
+				return err
+			}
+		case "search":
+			if err := validateToolsetJSONValue53(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Generated word counts for these domain instructions.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"description",
+				"execution_schema",
+				"payload",
+				"payload_schema",
+				"result_reminder",
+				"search",
+			})
+		}
 	}
 	return nil
 }
@@ -45117,19 +53852,11 @@ func validateToolsetJSONValue72(path string, value any, description string) erro
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
 	}
-	typed, ok := value.([]any)
+	_, ok := value.(string)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
-	}
-	for index, item := range typed {
-		if err := validateToolsetJSONValue73(
-			generatedJSONChildPath(path, strconv.Itoa(index), true),
-			item, description,
-		); err != nil {
-			return err
-		}
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -45152,6 +53879,110 @@ func validateToolsetJSONValue73(path string, value any, description string) erro
 
 // validateToolsetJSONValue74 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateToolsetJSONValue74(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolsetJSONValue75 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue75(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolsetJSONValue76 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue76(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolsetJSONValue77 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue77(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolsetJSONValue78 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue78(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if err := validateToolsetJSONValue80(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateToolsetJSONValue80 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue80(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolsetJSONValue81 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue81(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -45969,6 +54800,33 @@ func checkAgentToolsetDeclarationToolUnionBranchValue(in *ToolUnionBranch, field
 	active[in] = true
 	defer delete(active, in)
 	if in != nil {
+		if branch1, ok := in.Selection.AsTagged(); ok {
+			_ = branch1
+			if err := checkAgentToolsetDeclarationToolTaggedUnionBranchValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "selection", false), "value", false), active); err != nil {
+				return err
+			}
+		}
+		if branch1, ok := in.Selection.AsUntagged(); ok {
+			_ = branch1
+			if err := checkAgentToolsetDeclarationToolUntaggedUnionBranchValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "selection", false), "value", false), active); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// checkAgentToolsetDeclarationToolTaggedUnionBranchValue checks one generated value on the active path.
+func checkAgentToolsetDeclarationToolTaggedUnionBranchValue(in *ToolTaggedUnionBranch, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
 		for index1, item1 := range in.Discriminator {
 			_ = index1
 			_ = item1
@@ -45978,6 +54836,31 @@ func checkAgentToolsetDeclarationToolUnionBranchValue(in *ToolUnionBranch, field
 		}
 		if !utf8.ValidString(string(in.Value)) {
 			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "value", false))
+		}
+	}
+	return nil
+}
+
+// checkAgentToolsetDeclarationToolUntaggedUnionBranchValue checks one generated value on the active path.
+func checkAgentToolsetDeclarationToolUntaggedUnionBranchValue(in *ToolUntaggedUnionBranch, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		for index1, item1 := range in.Path {
+			_ = index1
+			_ = item1
+			if err := checkAgentToolsetDeclarationToolFieldPathSegmentValue(item1, generatedJSONChildPath(generatedJSONChildPath(field, "path", false), strconv.Itoa(index1), true), active); err != nil {
+				return err
+			}
+		}
+		if !utf8.ValidString(string(in.JSONKind)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "json_kind", false))
 		}
 	}
 	return nil
@@ -47022,6 +55905,33 @@ func checkConsumerContractToolUnionBranchValue(in *ToolUnionBranch, field string
 	active[in] = true
 	defer delete(active, in)
 	if in != nil {
+		if branch1, ok := in.Selection.AsTagged(); ok {
+			_ = branch1
+			if err := checkConsumerContractToolTaggedUnionBranchValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "selection", false), "value", false), active); err != nil {
+				return err
+			}
+		}
+		if branch1, ok := in.Selection.AsUntagged(); ok {
+			_ = branch1
+			if err := checkConsumerContractToolUntaggedUnionBranchValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "selection", false), "value", false), active); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// checkConsumerContractToolTaggedUnionBranchValue checks one generated value on the active path.
+func checkConsumerContractToolTaggedUnionBranchValue(in *ToolTaggedUnionBranch, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
 		for index1, item1 := range in.Discriminator {
 			_ = index1
 			_ = item1
@@ -47031,6 +55941,31 @@ func checkConsumerContractToolUnionBranchValue(in *ToolUnionBranch, field string
 		}
 		if !utf8.ValidString(string(in.Value)) {
 			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "value", false))
+		}
+	}
+	return nil
+}
+
+// checkConsumerContractToolUntaggedUnionBranchValue checks one generated value on the active path.
+func checkConsumerContractToolUntaggedUnionBranchValue(in *ToolUntaggedUnionBranch, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		for index1, item1 := range in.Path {
+			_ = index1
+			_ = item1
+			if err := checkConsumerContractToolFieldPathSegmentValue(item1, generatedJSONChildPath(generatedJSONChildPath(field, "path", false), strconv.Itoa(index1), true), active); err != nil {
+				return err
+			}
+		}
+		if !utf8.ValidString(string(in.JSONKind)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "json_kind", false))
 		}
 	}
 	return nil
@@ -47850,6 +56785,33 @@ func checkRegisterPayloadToolUnionBranchValue(in *ToolUnionBranch, field string,
 	active[in] = true
 	defer delete(active, in)
 	if in != nil {
+		if branch1, ok := in.Selection.AsTagged(); ok {
+			_ = branch1
+			if err := checkRegisterPayloadToolTaggedUnionBranchValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "selection", false), "value", false), active); err != nil {
+				return err
+			}
+		}
+		if branch1, ok := in.Selection.AsUntagged(); ok {
+			_ = branch1
+			if err := checkRegisterPayloadToolUntaggedUnionBranchValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "selection", false), "value", false), active); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// checkRegisterPayloadToolTaggedUnionBranchValue checks one generated value on the active path.
+func checkRegisterPayloadToolTaggedUnionBranchValue(in *ToolTaggedUnionBranch, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
 		for index1, item1 := range in.Discriminator {
 			_ = index1
 			_ = item1
@@ -47859,6 +56821,31 @@ func checkRegisterPayloadToolUnionBranchValue(in *ToolUnionBranch, field string,
 		}
 		if !utf8.ValidString(string(in.Value)) {
 			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "value", false))
+		}
+	}
+	return nil
+}
+
+// checkRegisterPayloadToolUntaggedUnionBranchValue checks one generated value on the active path.
+func checkRegisterPayloadToolUntaggedUnionBranchValue(in *ToolUntaggedUnionBranch, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		for index1, item1 := range in.Path {
+			_ = index1
+			_ = item1
+			if err := checkRegisterPayloadToolFieldPathSegmentValue(item1, generatedJSONChildPath(generatedJSONChildPath(field, "path", false), strconv.Itoa(index1), true), active); err != nil {
+				return err
+			}
+		}
+		if !utf8.ValidString(string(in.JSONKind)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "json_kind", false))
 		}
 	}
 	return nil
@@ -48504,6 +57491,33 @@ func checkResolvedToolsetToolUnionBranchValue(in *ToolUnionBranch, field string,
 	active[in] = true
 	defer delete(active, in)
 	if in != nil {
+		if branch1, ok := in.Selection.AsTagged(); ok {
+			_ = branch1
+			if err := checkResolvedToolsetToolTaggedUnionBranchValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "selection", false), "value", false), active); err != nil {
+				return err
+			}
+		}
+		if branch1, ok := in.Selection.AsUntagged(); ok {
+			_ = branch1
+			if err := checkResolvedToolsetToolUntaggedUnionBranchValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "selection", false), "value", false), active); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// checkResolvedToolsetToolTaggedUnionBranchValue checks one generated value on the active path.
+func checkResolvedToolsetToolTaggedUnionBranchValue(in *ToolTaggedUnionBranch, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
 		for index1, item1 := range in.Discriminator {
 			_ = index1
 			_ = item1
@@ -48513,6 +57527,31 @@ func checkResolvedToolsetToolUnionBranchValue(in *ToolUnionBranch, field string,
 		}
 		if !utf8.ValidString(string(in.Value)) {
 			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "value", false))
+		}
+	}
+	return nil
+}
+
+// checkResolvedToolsetToolUntaggedUnionBranchValue checks one generated value on the active path.
+func checkResolvedToolsetToolUntaggedUnionBranchValue(in *ToolUntaggedUnionBranch, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		for index1, item1 := range in.Path {
+			_ = index1
+			_ = item1
+			if err := checkResolvedToolsetToolFieldPathSegmentValue(item1, generatedJSONChildPath(generatedJSONChildPath(field, "path", false), strconv.Itoa(index1), true), active); err != nil {
+				return err
+			}
+		}
+		if !utf8.ValidString(string(in.JSONKind)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "json_kind", false))
 		}
 	}
 	return nil
@@ -49313,6 +58352,33 @@ func checkServiceToolsetDeclarationToolUnionBranchValue(in *ToolUnionBranch, fie
 	active[in] = true
 	defer delete(active, in)
 	if in != nil {
+		if branch1, ok := in.Selection.AsTagged(); ok {
+			_ = branch1
+			if err := checkServiceToolsetDeclarationToolTaggedUnionBranchValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "selection", false), "value", false), active); err != nil {
+				return err
+			}
+		}
+		if branch1, ok := in.Selection.AsUntagged(); ok {
+			_ = branch1
+			if err := checkServiceToolsetDeclarationToolUntaggedUnionBranchValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "selection", false), "value", false), active); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// checkServiceToolsetDeclarationToolTaggedUnionBranchValue checks one generated value on the active path.
+func checkServiceToolsetDeclarationToolTaggedUnionBranchValue(in *ToolTaggedUnionBranch, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
 		for index1, item1 := range in.Discriminator {
 			_ = index1
 			_ = item1
@@ -49322,6 +58388,31 @@ func checkServiceToolsetDeclarationToolUnionBranchValue(in *ToolUnionBranch, fie
 		}
 		if !utf8.ValidString(string(in.Value)) {
 			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "value", false))
+		}
+	}
+	return nil
+}
+
+// checkServiceToolsetDeclarationToolUntaggedUnionBranchValue checks one generated value on the active path.
+func checkServiceToolsetDeclarationToolUntaggedUnionBranchValue(in *ToolUntaggedUnionBranch, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		for index1, item1 := range in.Path {
+			_ = index1
+			_ = item1
+			if err := checkServiceToolsetDeclarationToolFieldPathSegmentValue(item1, generatedJSONChildPath(generatedJSONChildPath(field, "path", false), strconv.Itoa(index1), true), active); err != nil {
+				return err
+			}
+		}
+		if !utf8.ValidString(string(in.JSONKind)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "json_kind", false))
 		}
 	}
 	return nil
@@ -49677,6 +58768,33 @@ func checkTextOnlyToolContractToolUnionBranchValue(in *ToolUnionBranch, field st
 	active[in] = true
 	defer delete(active, in)
 	if in != nil {
+		if branch1, ok := in.Selection.AsTagged(); ok {
+			_ = branch1
+			if err := checkTextOnlyToolContractToolTaggedUnionBranchValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "selection", false), "value", false), active); err != nil {
+				return err
+			}
+		}
+		if branch1, ok := in.Selection.AsUntagged(); ok {
+			_ = branch1
+			if err := checkTextOnlyToolContractToolUntaggedUnionBranchValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "selection", false), "value", false), active); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// checkTextOnlyToolContractToolTaggedUnionBranchValue checks one generated value on the active path.
+func checkTextOnlyToolContractToolTaggedUnionBranchValue(in *ToolTaggedUnionBranch, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
 		for index1, item1 := range in.Discriminator {
 			_ = index1
 			_ = item1
@@ -49686,6 +58804,31 @@ func checkTextOnlyToolContractToolUnionBranchValue(in *ToolUnionBranch, field st
 		}
 		if !utf8.ValidString(string(in.Value)) {
 			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "value", false))
+		}
+	}
+	return nil
+}
+
+// checkTextOnlyToolContractToolUntaggedUnionBranchValue checks one generated value on the active path.
+func checkTextOnlyToolContractToolUntaggedUnionBranchValue(in *ToolUntaggedUnionBranch, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		for index1, item1 := range in.Path {
+			_ = index1
+			_ = item1
+			if err := checkTextOnlyToolContractToolFieldPathSegmentValue(item1, generatedJSONChildPath(generatedJSONChildPath(field, "path", false), strconv.Itoa(index1), true), active); err != nil {
+				return err
+			}
+		}
+		if !utf8.ValidString(string(in.JSONKind)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "json_kind", false))
 		}
 	}
 	return nil
@@ -50099,6 +59242,33 @@ func checkToolFieldMetadataToolUnionBranchValue(in *ToolUnionBranch, field strin
 	active[in] = true
 	defer delete(active, in)
 	if in != nil {
+		if branch1, ok := in.Selection.AsTagged(); ok {
+			_ = branch1
+			if err := checkToolFieldMetadataToolTaggedUnionBranchValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "selection", false), "value", false), active); err != nil {
+				return err
+			}
+		}
+		if branch1, ok := in.Selection.AsUntagged(); ok {
+			_ = branch1
+			if err := checkToolFieldMetadataToolUntaggedUnionBranchValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "selection", false), "value", false), active); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// checkToolFieldMetadataToolTaggedUnionBranchValue checks one generated value on the active path.
+func checkToolFieldMetadataToolTaggedUnionBranchValue(in *ToolTaggedUnionBranch, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
 		for index1, item1 := range in.Discriminator {
 			_ = index1
 			_ = item1
@@ -50108,6 +59278,31 @@ func checkToolFieldMetadataToolUnionBranchValue(in *ToolUnionBranch, field strin
 		}
 		if !utf8.ValidString(string(in.Value)) {
 			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "value", false))
+		}
+	}
+	return nil
+}
+
+// checkToolFieldMetadataToolUntaggedUnionBranchValue checks one generated value on the active path.
+func checkToolFieldMetadataToolUntaggedUnionBranchValue(in *ToolUntaggedUnionBranch, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		for index1, item1 := range in.Path {
+			_ = index1
+			_ = item1
+			if err := checkToolFieldMetadataToolFieldPathSegmentValue(item1, generatedJSONChildPath(generatedJSONChildPath(field, "path", false), strconv.Itoa(index1), true), active); err != nil {
+				return err
+			}
+		}
+		if !utf8.ValidString(string(in.JSONKind)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "json_kind", false))
 		}
 	}
 	return nil
@@ -50492,6 +59687,33 @@ func checkToolSchemaToolUnionBranchValue(in *ToolUnionBranch, field string, acti
 	active[in] = true
 	defer delete(active, in)
 	if in != nil {
+		if branch1, ok := in.Selection.AsTagged(); ok {
+			_ = branch1
+			if err := checkToolSchemaToolTaggedUnionBranchValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "selection", false), "value", false), active); err != nil {
+				return err
+			}
+		}
+		if branch1, ok := in.Selection.AsUntagged(); ok {
+			_ = branch1
+			if err := checkToolSchemaToolUntaggedUnionBranchValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "selection", false), "value", false), active); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// checkToolSchemaToolTaggedUnionBranchValue checks one generated value on the active path.
+func checkToolSchemaToolTaggedUnionBranchValue(in *ToolTaggedUnionBranch, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
 		for index1, item1 := range in.Discriminator {
 			_ = index1
 			_ = item1
@@ -50501,6 +59723,31 @@ func checkToolSchemaToolUnionBranchValue(in *ToolUnionBranch, field string, acti
 		}
 		if !utf8.ValidString(string(in.Value)) {
 			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "value", false))
+		}
+	}
+	return nil
+}
+
+// checkToolSchemaToolUntaggedUnionBranchValue checks one generated value on the active path.
+func checkToolSchemaToolUntaggedUnionBranchValue(in *ToolUntaggedUnionBranch, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		for index1, item1 := range in.Path {
+			_ = index1
+			_ = item1
+			if err := checkToolSchemaToolFieldPathSegmentValue(item1, generatedJSONChildPath(generatedJSONChildPath(field, "path", false), strconv.Itoa(index1), true), active); err != nil {
+				return err
+			}
+		}
+		if !utf8.ValidString(string(in.JSONKind)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "json_kind", false))
 		}
 	}
 	return nil
@@ -50868,6 +60115,33 @@ func checkToolServerDataToolUnionBranchValue(in *ToolUnionBranch, field string, 
 	active[in] = true
 	defer delete(active, in)
 	if in != nil {
+		if branch1, ok := in.Selection.AsTagged(); ok {
+			_ = branch1
+			if err := checkToolServerDataToolTaggedUnionBranchValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "selection", false), "value", false), active); err != nil {
+				return err
+			}
+		}
+		if branch1, ok := in.Selection.AsUntagged(); ok {
+			_ = branch1
+			if err := checkToolServerDataToolUntaggedUnionBranchValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "selection", false), "value", false), active); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// checkToolServerDataToolTaggedUnionBranchValue checks one generated value on the active path.
+func checkToolServerDataToolTaggedUnionBranchValue(in *ToolTaggedUnionBranch, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
 		for index1, item1 := range in.Discriminator {
 			_ = index1
 			_ = item1
@@ -50878,6 +60152,118 @@ func checkToolServerDataToolUnionBranchValue(in *ToolUnionBranch, field string, 
 		if !utf8.ValidString(string(in.Value)) {
 			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "value", false))
 		}
+	}
+	return nil
+}
+
+// checkToolServerDataToolUntaggedUnionBranchValue checks one generated value on the active path.
+func checkToolServerDataToolUntaggedUnionBranchValue(in *ToolUntaggedUnionBranch, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		for index1, item1 := range in.Path {
+			_ = index1
+			_ = item1
+			if err := checkToolServerDataToolFieldPathSegmentValue(item1, generatedJSONChildPath(generatedJSONChildPath(field, "path", false), strconv.Itoa(index1), true), active); err != nil {
+				return err
+			}
+		}
+		if !utf8.ValidString(string(in.JSONKind)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "json_kind", false))
+		}
+	}
+	return nil
+}
+
+// checkToolTaggedUnionBranchValue checks text and cycles before conversion.
+func checkToolTaggedUnionBranchValue(in *ToolTaggedUnionBranch) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkToolTaggedUnionBranchToolTaggedUnionBranchValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkToolTaggedUnionBranchToolTaggedUnionBranchValue checks one generated value on the active path.
+func checkToolTaggedUnionBranchToolTaggedUnionBranchValue(in *ToolTaggedUnionBranch, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		for index1, item1 := range in.Discriminator {
+			_ = index1
+			_ = item1
+			if err := checkToolTaggedUnionBranchToolFieldPathSegmentValue(item1, generatedJSONChildPath(generatedJSONChildPath(field, "discriminator", false), strconv.Itoa(index1), true), active); err != nil {
+				return err
+			}
+		}
+		if !utf8.ValidString(string(in.Value)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "value", false))
+		}
+	}
+	return nil
+}
+
+// checkToolTaggedUnionBranchToolFieldPathSegmentValue checks one generated value on the active path.
+func checkToolTaggedUnionBranchToolFieldPathSegmentValue(in *ToolFieldPathSegment, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if branch1, ok := in.Segment.AsField(); ok {
+			_ = branch1
+			if err := checkToolTaggedUnionBranchToolFieldSegmentFieldValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "segment", false), "value", false), active); err != nil {
+				return err
+			}
+		}
+		if branch1, ok := in.Segment.AsElement(); ok {
+			_ = branch1
+			if err := checkToolTaggedUnionBranchToolCollectionElementValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "segment", false), "value", false), active); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// checkToolTaggedUnionBranchToolFieldSegmentFieldValue checks one generated value on the active path.
+func checkToolTaggedUnionBranchToolFieldSegmentFieldValue(in ToolFieldSegmentBranchField, field string, active map[any]bool) error {
+	if !utf8.ValidString(string(in)) {
+		return fmt.Errorf("%s: invalid UTF-8", field)
+	}
+	return nil
+}
+
+// checkToolTaggedUnionBranchToolCollectionElementValue checks one generated value on the active path.
+func checkToolTaggedUnionBranchToolCollectionElementValue(in *ToolCollectionElement, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
 	}
 	return nil
 }
@@ -51028,6 +60414,33 @@ func checkToolTypeMetadataToolUnionBranchValue(in *ToolUnionBranch, field string
 	active[in] = true
 	defer delete(active, in)
 	if in != nil {
+		if branch1, ok := in.Selection.AsTagged(); ok {
+			_ = branch1
+			if err := checkToolTypeMetadataToolTaggedUnionBranchValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "selection", false), "value", false), active); err != nil {
+				return err
+			}
+		}
+		if branch1, ok := in.Selection.AsUntagged(); ok {
+			_ = branch1
+			if err := checkToolTypeMetadataToolUntaggedUnionBranchValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "selection", false), "value", false), active); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// checkToolTypeMetadataToolTaggedUnionBranchValue checks one generated value on the active path.
+func checkToolTypeMetadataToolTaggedUnionBranchValue(in *ToolTaggedUnionBranch, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
 		for index1, item1 := range in.Discriminator {
 			_ = index1
 			_ = item1
@@ -51037,6 +60450,31 @@ func checkToolTypeMetadataToolUnionBranchValue(in *ToolUnionBranch, field string
 		}
 		if !utf8.ValidString(string(in.Value)) {
 			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "value", false))
+		}
+	}
+	return nil
+}
+
+// checkToolTypeMetadataToolUntaggedUnionBranchValue checks one generated value on the active path.
+func checkToolTypeMetadataToolUntaggedUnionBranchValue(in *ToolUntaggedUnionBranch, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		for index1, item1 := range in.Path {
+			_ = index1
+			_ = item1
+			if err := checkToolTypeMetadataToolFieldPathSegmentValue(item1, generatedJSONChildPath(generatedJSONChildPath(field, "path", false), strconv.Itoa(index1), true), active); err != nil {
+				return err
+			}
+		}
+		if !utf8.ValidString(string(in.JSONKind)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "json_kind", false))
 		}
 	}
 	return nil
@@ -51056,6 +60494,33 @@ func checkToolUnionBranchValue(in *ToolUnionBranch) error {
 
 // checkToolUnionBranchToolUnionBranchValue checks one generated value on the active path.
 func checkToolUnionBranchToolUnionBranchValue(in *ToolUnionBranch, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if branch1, ok := in.Selection.AsTagged(); ok {
+			_ = branch1
+			if err := checkToolUnionBranchToolTaggedUnionBranchValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "selection", false), "value", false), active); err != nil {
+				return err
+			}
+		}
+		if branch1, ok := in.Selection.AsUntagged(); ok {
+			_ = branch1
+			if err := checkToolUnionBranchToolUntaggedUnionBranchValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "selection", false), "value", false), active); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// checkToolUnionBranchToolTaggedUnionBranchValue checks one generated value on the active path.
+func checkToolUnionBranchToolTaggedUnionBranchValue(in *ToolTaggedUnionBranch, field string, active map[any]bool) error {
 	if in == nil {
 		return nil
 	}
@@ -51116,6 +60581,118 @@ func checkToolUnionBranchToolFieldSegmentFieldValue(in ToolFieldSegmentBranchFie
 
 // checkToolUnionBranchToolCollectionElementValue checks one generated value on the active path.
 func checkToolUnionBranchToolCollectionElementValue(in *ToolCollectionElement, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+	}
+	return nil
+}
+
+// checkToolUnionBranchToolUntaggedUnionBranchValue checks one generated value on the active path.
+func checkToolUnionBranchToolUntaggedUnionBranchValue(in *ToolUntaggedUnionBranch, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		for index1, item1 := range in.Path {
+			_ = index1
+			_ = item1
+			if err := checkToolUnionBranchToolFieldPathSegmentValue(item1, generatedJSONChildPath(generatedJSONChildPath(field, "path", false), strconv.Itoa(index1), true), active); err != nil {
+				return err
+			}
+		}
+		if !utf8.ValidString(string(in.JSONKind)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "json_kind", false))
+		}
+	}
+	return nil
+}
+
+// checkToolUntaggedUnionBranchValue checks text and cycles before conversion.
+func checkToolUntaggedUnionBranchValue(in *ToolUntaggedUnionBranch) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkToolUntaggedUnionBranchToolUntaggedUnionBranchValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkToolUntaggedUnionBranchToolUntaggedUnionBranchValue checks one generated value on the active path.
+func checkToolUntaggedUnionBranchToolUntaggedUnionBranchValue(in *ToolUntaggedUnionBranch, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		for index1, item1 := range in.Path {
+			_ = index1
+			_ = item1
+			if err := checkToolUntaggedUnionBranchToolFieldPathSegmentValue(item1, generatedJSONChildPath(generatedJSONChildPath(field, "path", false), strconv.Itoa(index1), true), active); err != nil {
+				return err
+			}
+		}
+		if !utf8.ValidString(string(in.JSONKind)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "json_kind", false))
+		}
+	}
+	return nil
+}
+
+// checkToolUntaggedUnionBranchToolFieldPathSegmentValue checks one generated value on the active path.
+func checkToolUntaggedUnionBranchToolFieldPathSegmentValue(in *ToolFieldPathSegment, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if branch1, ok := in.Segment.AsField(); ok {
+			_ = branch1
+			if err := checkToolUntaggedUnionBranchToolFieldSegmentFieldValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "segment", false), "value", false), active); err != nil {
+				return err
+			}
+		}
+		if branch1, ok := in.Segment.AsElement(); ok {
+			_ = branch1
+			if err := checkToolUntaggedUnionBranchToolCollectionElementValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "segment", false), "value", false), active); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// checkToolUntaggedUnionBranchToolFieldSegmentFieldValue checks one generated value on the active path.
+func checkToolUntaggedUnionBranchToolFieldSegmentFieldValue(in ToolFieldSegmentBranchField, field string, active map[any]bool) error {
+	if !utf8.ValidString(string(in)) {
+		return fmt.Errorf("%s: invalid UTF-8", field)
+	}
+	return nil
+}
+
+// checkToolUntaggedUnionBranchToolCollectionElementValue checks one generated value on the active path.
+func checkToolUntaggedUnionBranchToolCollectionElementValue(in *ToolCollectionElement, field string, active map[any]bool) error {
 	if in == nil {
 		return nil
 	}
@@ -51456,6 +61033,33 @@ func checkToolsetToolUnionBranchValue(in *ToolUnionBranch, field string, active 
 	active[in] = true
 	defer delete(active, in)
 	if in != nil {
+		if branch1, ok := in.Selection.AsTagged(); ok {
+			_ = branch1
+			if err := checkToolsetToolTaggedUnionBranchValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "selection", false), "value", false), active); err != nil {
+				return err
+			}
+		}
+		if branch1, ok := in.Selection.AsUntagged(); ok {
+			_ = branch1
+			if err := checkToolsetToolUntaggedUnionBranchValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "selection", false), "value", false), active); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// checkToolsetToolTaggedUnionBranchValue checks one generated value on the active path.
+func checkToolsetToolTaggedUnionBranchValue(in *ToolTaggedUnionBranch, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
 		for index1, item1 := range in.Discriminator {
 			_ = index1
 			_ = item1
@@ -51465,6 +61069,31 @@ func checkToolsetToolUnionBranchValue(in *ToolUnionBranch, field string, active 
 		}
 		if !utf8.ValidString(string(in.Value)) {
 			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "value", false))
+		}
+	}
+	return nil
+}
+
+// checkToolsetToolUntaggedUnionBranchValue checks one generated value on the active path.
+func checkToolsetToolUntaggedUnionBranchValue(in *ToolUntaggedUnionBranch, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		for index1, item1 := range in.Path {
+			_ = index1
+			_ = item1
+			if err := checkToolsetToolFieldPathSegmentValue(item1, generatedJSONChildPath(generatedJSONChildPath(field, "path", false), strconv.Itoa(index1), true), active); err != nil {
+				return err
+			}
+		}
+		if !utf8.ValidString(string(in.JSONKind)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "json_kind", false))
 		}
 	}
 	return nil

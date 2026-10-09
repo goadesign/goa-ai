@@ -431,7 +431,7 @@ func (p *toolSpecsPackagePlan) declareType(owner *contractTypeOwner, attribute *
 		}
 		publicDeclaration = publicTypeDeclaration.Declaration()
 		p.publicTypeUses[publicType] = publicDeclaration
-		if err := declareAttributeUnions(p.public, p.publicFixed, p.publicUnionErrors, public); err != nil {
+		if err := declareAttributeUnions(p.public, p.publicUnionDeclarations, public); err != nil {
 			return err
 		}
 		publicLayout, err = p.planDeclaredTypeLayout(publicAttribute, p.public, goacodegen.GoLayoutPolicy{UseDefault: true, SumType: true})
@@ -467,7 +467,7 @@ func (p *toolSpecsPackagePlan) declareType(owner *contractTypeOwner, attribute *
 		}
 		transportDeclaration = transportTypeDeclaration.Declaration()
 		p.transportTypeUses[transportType] = transportDeclaration
-		if err := declareAttributeUnions(p.transport, p.transportFixed, p.transportUnionErrors, shapes.transport); err != nil {
+		if err := declareAttributeUnions(p.transport, p.transportUnionDeclarations, shapes.transport); err != nil {
 			return err
 		}
 		transportLayout, err = p.planDeclaredTypeLayout(
@@ -835,7 +835,7 @@ func (p *toolSpecsPackagePlan) recordTransform(key string, source, target *goaex
 }
 
 // declareAttributeUnions records every union reachable from attribute once.
-func declareAttributeUnions(pkg *goacodegen.GeneratedPackage, fixed map[string]*goacodegen.NameDeclaration, helpers map[goacodegen.UnionDeclarationID]*goacodegen.NameDeclaration, attribute *goaexpr.AttributeExpr) error {
+func declareAttributeUnions(pkg *goacodegen.GeneratedPackage, declarations map[goacodegen.UnionDeclarationID]*goacodegen.UnionDeclaration, attribute *goaexpr.AttributeExpr) error {
 	seenTypes := make(map[goaexpr.UserType]struct{})
 	seenUnions := make(map[goacodegen.UnionDeclarationID]struct{})
 	var visit func(*goaexpr.AttributeExpr) error
@@ -868,11 +868,6 @@ func declareAttributeUnions(pkg *goacodegen.GeneratedPackage, fixed map[string]*
 			}
 			return visit(actual.ElemType)
 		case *goaexpr.Union:
-			if err := declareExactNames(pkg, fixed, map[goacodegen.PackageNameKind][]string{
-				goacodegen.NameFunction: {"decodeUnionStrictJSON", "missingUnionValueError", "nullUnionValueError"},
-			}); err != nil {
-				return err
-			}
 			identity := goacodegen.NewUnionDeclarationID(current)
 			if _, ok := seenUnions[identity]; ok {
 				return nil
@@ -882,19 +877,7 @@ func declareAttributeUnions(pkg *goacodegen.GeneratedPackage, fixed map[string]*
 			if err != nil {
 				return err
 			}
-			if helpers[identity] == nil {
-				helper, err := pkg.DeclareDependentName(
-					goacodegen.NameFunction,
-					declaration.Declaration(),
-					"new",
-					"DiscriminatorError",
-					unionErrorNameOrder{packagePath: pkg.ImportPath(), unionName: actual.Name()},
-				)
-				if err != nil {
-					return err
-				}
-				helpers[identity] = helper
-			}
+			declarations[identity] = declaration
 			for _, branch := range actual.Values {
 				if err := visit(branch.Attribute); err != nil {
 					return err

@@ -805,7 +805,7 @@ func TestToolSchemaCorrectionUsesSelectedUnionBranchInsideArray(t *testing.T) {
 			},
 			JSONType:    "string",
 			Description: "Email address",
-			Branches: []tools.UnionBranch{{
+			Branches: []tools.UnionBranch{tools.TaggedUnionBranch{
 				Discriminator: []tools.FieldPathSegment{
 					tools.FixedField("items"),
 					tools.DynamicField{},
@@ -823,7 +823,7 @@ func TestToolSchemaCorrectionUsesSelectedUnionBranchInsideArray(t *testing.T) {
 			},
 			JSONType:    "integer",
 			Description: "Private count branch",
-			Branches: []tools.UnionBranch{{
+			Branches: []tools.UnionBranch{tools.TaggedUnionBranch{
 				Discriminator: []tools.FieldPathSegment{
 					tools.FixedField("items"),
 					tools.DynamicField{},

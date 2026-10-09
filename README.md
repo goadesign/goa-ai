@@ -364,6 +364,16 @@ providers now share typed input-exchange generation with MCP endpoints. The
 [implementation plan](docs/mcp_protocol_upgrade_plan.md) tracks the remaining
 release gates.
 
+Generated tool and completion types now use Goa's native tagged, flat and
+untagged union mappings. Their codecs check the selected branch strictly and
+report its exact JSON field path. Regenerate these packages and registry
+contracts together. For manually authored field metadata, replace
+`tools.UnionBranch{...}` with `tools.TaggedUnionBranch{...}`; untagged branches use
+`tools.UntaggedUnionBranch` with the declared JSON kind and zero-based schema
+branch position. Generated specifications supply these facts automatically.
+Direct union helpers return Goa's native validation errors; tool codecs return
+`*tools.ValidationError`. The old tagged-only discriminator error helper is removed.
+
 MCP tools can [declare an Apps UI and caller visibility](docs/dsl.md#mcp-apps-declarations)
 through `ToolUI` and `ToolVisibility`. App-only helpers stay out of model
 toolsets and model callers reject their execution. `ToolMetadata` sends a typed

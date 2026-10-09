@@ -8,6 +8,9 @@ import _ "embed"
 type Names struct {
 	// InvalidFieldType, UnknownField, DecodedType and ChildPath name the adapters.
 	InvalidFieldType, UnknownField, DecodedType, ChildPath string
+	// UnionDiscriminator and MissingField name optional owner-specific error
+	// adapters. When absent, standalone codecs report their existing plain errors.
+	UnionDiscriminator, MissingField string
 	// IntegerRangeInShape checks native integer widths before ordinary JSON decoding.
 	// Private codecs leave this false because their typed integer decoder owns it.
 	IntegerRangeInShape bool

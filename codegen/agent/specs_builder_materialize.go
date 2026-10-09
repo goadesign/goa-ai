@@ -132,21 +132,19 @@ func newToolSpecBuilder(svc *service.Data, planned *toolSpecsPackagePlan, api *g
 	publicScope := planned.public.Scope().Fork()
 	transportScope := planned.transport.Scope().Fork()
 	return &toolSpecBuilder{
-		service:              svc,
-		api:                  api,
-		publicScope:          publicScope,
-		transportScope:       transportScope,
-		publicPackage:        planned.public,
-		transportPackage:     planned.transport,
-		publicUnionErrors:    planned.publicUnionErrors,
-		transportUnionErrors: planned.transportUnionErrors,
-		planned:              planned,
-		svcScope:             publicScope,
-		contractTypes:        make(map[specTypeKey]*typeData),
-		types:                make(map[string]*typeData),
-		helperScope:          publicScope,
-		unions:               make(map[codegen.UnionDeclarationID]*unionTypeData),
-		transportUnions:      make(map[codegen.UnionDeclarationID]*unionTypeData),
+		service:          svc,
+		api:              api,
+		publicScope:      publicScope,
+		transportScope:   transportScope,
+		publicPackage:    planned.public,
+		transportPackage: planned.transport,
+		planned:          planned,
+		svcScope:         publicScope,
+		contractTypes:    make(map[specTypeKey]*typeData),
+		types:            make(map[string]*typeData),
+		helperScope:      publicScope,
+		unions:           make(map[codegen.UnionDeclarationID]*unionTypeData),
+		transportUnions:  make(map[codegen.UnionDeclarationID]*unionTypeData),
 	}
 }
 

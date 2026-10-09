@@ -4,6 +4,7 @@
 package tools
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 )
@@ -22,14 +23,32 @@ type (
 	// DynamicField is one array index or map key supplied in the JSON value.
 	DynamicField struct{}
 
-	// UnionBranch identifies the selected branch required for one field. The
-	// discriminator path may contain DynamicField segments when each item in an
-	// array or map owns a separate union value.
-	UnionBranch struct {
+	// UnionBranch identifies how a submitted JSON value selects a field's branch.
+	// TaggedUnionBranch uses a declared string property; UntaggedUnionBranch uses
+	// the value's JSON kind. Paths retain each array index or map key separately.
+	UnionBranch interface {
+		unionBranch()
+	}
+
+	// TaggedUnionBranch selects a branch through its declared discriminator.
+	TaggedUnionBranch struct {
 		// Discriminator is the path to the union's branch-name property.
 		Discriminator []FieldPathSegment
 		// Value is the branch name that makes the field applicable.
 		Value string
+	}
+
+	// UntaggedUnionBranch selects a branch by the submitted value's JSON kind.
+	UntaggedUnionBranch struct {
+		// Path locates the union value. An empty path identifies the root value.
+		Path []FieldPathSegment
+		// JSONKind is string, number, boolean, array or object. Integer branches
+		// use number because the discriminator is the JSON kind, not its range.
+		JSONKind string
+		// Index is this branch's zero-based position in the advertised oneOf.
+		// It selects the matching structured validator diagnostic after the JSON
+		// kind determines which branch applies.
+		Index int
 	}
 
 	// FieldMetadata describes one field advertised in a JSON schema.
@@ -62,15 +81,24 @@ func CloneFieldMetadata(fields []FieldMetadata) []FieldMetadata {
 		cloned[index].DiscriminatorValues = append([]string(nil), field.DiscriminatorValues...)
 		cloned[index].Branches = make([]UnionBranch, len(field.Branches))
 		for branchIndex, branch := range field.Branches {
-			cloned[index].Branches[branchIndex] = branch
-			cloned[index].Branches[branchIndex].Discriminator = append(
-				[]FieldPathSegment(nil),
-				branch.Discriminator...,
-			)
+			switch branch := branch.(type) {
+			case TaggedUnionBranch:
+				branch.Discriminator = append([]FieldPathSegment(nil), branch.Discriminator...)
+				cloned[index].Branches[branchIndex] = branch
+			case UntaggedUnionBranch:
+				branch.Path = append([]FieldPathSegment(nil), branch.Path...)
+				cloned[index].Branches[branchIndex] = branch
+			default:
+				panic(fmt.Sprintf("unknown generated union requirement %T", branch))
+			}
 		}
 	}
 	return cloned
 }
+
+func (TaggedUnionBranch) unionBranch() {}
+
+func (UntaggedUnionBranch) unionBranch() {}
 
 // LookupFieldMetadata returns the one field that matches a dotted field path or
 // a slash-separated JSON Pointer. DynamicField matches exactly one array index

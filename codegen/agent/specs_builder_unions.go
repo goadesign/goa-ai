@@ -6,6 +6,7 @@ import (
 	"sort"
 
 	"goa.design/goa/v3/codegen"
+	"goa.design/goa/v3/codegen/service"
 	goaexpr "goa.design/goa/v3/expr"
 )
 
@@ -19,7 +20,7 @@ func (b *toolSpecBuilder) collectUnionSumTypes(scope *codegen.NameScope, att *go
 		b.unions = make(map[codegen.UnionDeclarationID]*unionTypeData)
 	}
 	seen := make(map[goaexpr.UserType]struct{})
-	collectUnionSumTypes(att, scope, b.publicPackage, b.publicUnionErrors, b.unions, seen)
+	collectUnionSumTypes(att, scope, b.publicPackage, b.unions, seen)
 }
 
 // collectTransportUnionSumTypes saves every union used by the HTTP decoding
@@ -32,7 +33,7 @@ func (b *toolSpecBuilder) collectTransportUnionSumTypes(scope *codegen.NameScope
 		b.transportUnions = make(map[codegen.UnionDeclarationID]*unionTypeData)
 	}
 	seen := make(map[goaexpr.UserType]struct{})
-	collectUnionSumTypes(att, scope, b.transportPackage, b.transportUnionErrors, b.transportUnions, seen)
+	collectUnionSumTypes(att, scope, b.transportPackage, b.transportUnions, seen)
 }
 
 // unionTypes returns the public unions in name order.
@@ -45,7 +46,7 @@ func (b *toolSpecBuilder) unionTypes() []*unionTypeData {
 		out = append(out, u)
 	}
 	sort.Slice(out, func(i, j int) bool {
-		return out[i].Name < out[j].Name
+		return out[i].TypeDeclaration.Name() < out[j].TypeDeclaration.Name()
 	})
 	return out
 }
@@ -60,7 +61,7 @@ func (b *toolSpecBuilder) transportUnionTypes() []*unionTypeData {
 		out = append(out, u)
 	}
 	sort.Slice(out, func(i, j int) bool {
-		return out[i].Name < out[j].Name
+		return out[i].TypeDeclaration.Name() < out[j].TypeDeclaration.Name()
 	})
 	return out
 }
@@ -69,7 +70,6 @@ func collectUnionSumTypes(
 	att *goaexpr.AttributeExpr,
 	scope *codegen.NameScope,
 	pkg *codegen.GeneratedPackage,
-	helpers map[codegen.UnionDeclarationID]*codegen.NameDeclaration,
 	unions map[codegen.UnionDeclarationID]*unionTypeData,
 	seen map[goaexpr.UserType]struct{},
 ) {
@@ -89,44 +89,44 @@ func collectUnionSumTypes(
 			return
 		}
 		seen[origin] = struct{}{}
-		collectUnionSumTypes(dt.Attribute(), scope, pkg, helpers, unions, seen)
+		collectUnionSumTypes(dt.Attribute(), scope, pkg, unions, seen)
 	case *goaexpr.Object:
 		for _, nat := range *dt {
 			if nat == nil {
 				continue
 			}
-			collectUnionSumTypes(nat.Attribute, scope, pkg, helpers, unions, seen)
+			collectUnionSumTypes(nat.Attribute, scope, pkg, unions, seen)
 		}
 	case *goaexpr.Array:
-		collectUnionSumTypes(dt.ElemType, scope, pkg, helpers, unions, seen)
+		collectUnionSumTypes(dt.ElemType, scope, pkg, unions, seen)
 	case *goaexpr.Map:
-		collectUnionSumTypes(dt.KeyType, scope, pkg, helpers, unions, seen)
-		collectUnionSumTypes(dt.ElemType, scope, pkg, helpers, unions, seen)
+		collectUnionSumTypes(dt.KeyType, scope, pkg, unions, seen)
+		collectUnionSumTypes(dt.ElemType, scope, pkg, unions, seen)
 	case *goaexpr.Union:
 		identity := codegen.NewUnionDeclarationID(att)
 		if _, ok := unions[identity]; !ok {
-			unions[identity] = buildUnionTypeData(att, scope, pkg, helpers[identity])
+			unions[identity] = buildUnionTypeData(att, scope, pkg)
 		}
 		for _, nat := range dt.Values {
 			if nat == nil {
 				continue
 			}
-			collectUnionSumTypes(nat.Attribute, scope, pkg, helpers, unions, seen)
+			collectUnionSumTypes(nat.Attribute, scope, pkg, unions, seen)
 		}
 	}
 }
 
-func buildUnionTypeData(attribute *goaexpr.AttributeExpr, scope *codegen.NameScope, pkg *codegen.GeneratedPackage, helper *codegen.NameDeclaration) *unionTypeData {
+func buildUnionTypeData(attribute *goaexpr.AttributeExpr, scope *codegen.NameScope, pkg *codegen.GeneratedPackage) *unionTypeData {
 	union := attribute.Type.(*goaexpr.Union)
 	declaration, err := pkg.Union(attribute)
 	if err != nil {
 		panic(err)
 	}
-	name := declaration.Declaration().Name()
-	kindName := declaration.KindDeclaration().Name()
 	context := codegen.NewAttributeContext(false, false, true, "", scope)
+	storageNames := codegen.NewNameScope()
+	storageNames.Unique("kind")
 
-	fields := make([]*unionFieldData, 0, len(union.Values))
+	fields := make([]*service.UnionFieldData, 0, len(union.Values))
 	for _, nat := range union.Values {
 		if nat == nil || nat.Attribute == nil {
 			continue
@@ -137,32 +137,40 @@ func buildUnionTypeData(attribute *goaexpr.AttributeExpr, scope *codegen.NameSco
 		if err != nil {
 			panic(err)
 		}
-		fields = append(fields, &unionFieldData{
-			Name:        nat.Name,
-			KindConst:   branch.KindConst(),
-			Constructor: branch.Constructor(),
-			FieldName:   fieldName,
-			FieldType:   fieldType,
-			Nilable:     generatedTypeNilable(nat.Attribute.Type),
-			JSONType:    generatedJSONType(nat.Attribute.Type),
-			TypeTag:     nat.Name,
+		fields = append(fields, &service.UnionFieldData{
+			Name:                   nat.Name,
+			KindDeclaration:        branch.KindDeclaration(),
+			ConstructorDeclaration: branch.ConstructorDeclaration(),
+			FieldName:              fieldName,
+			StorageName:            storageNames.Unique(codegen.Goify(nat.Name, false)),
+			FieldType:              fieldType,
+			Nilable:                codegen.IsNilable(nat.Attribute.Type),
+			TypeTag:                nat.Name,
+			JSONKind:               goaexpr.JSONKind(nat.Attribute.Type),
 		})
 	}
 
 	return &unionTypeData{
-		Name:               name,
-		KindName:           kindName,
-		DiscriminatorError: helper.Name(),
-		Fields:             fields,
+		TypeDeclaration: declaration.Declaration(),
+		KindDeclaration: declaration.KindDeclaration(),
+		Fields:          fields,
+		TypeKey:         union.GetTypeKey(),
+		ValueKey:        union.GetValueKey(),
+		Flatten:         union.Flatten,
+		Untagged:        union.Untagged,
 	}
 }
 
-// generatedTypeNilable reports whether the generated Go representation can be
-// nil even though a tagged union branch always requires a value.
-func generatedTypeNilable(dt goaexpr.DataType) bool {
-	return goaexpr.IsObject(dt) ||
-		goaexpr.IsArray(dt) ||
-		goaexpr.IsMap(dt) ||
-		dt.Kind() == goaexpr.BytesKind ||
-		dt.Kind() == goaexpr.AnyKind
+// unionTypeSections renders each planned union with Goa's shared template. Tool
+// and completion packages therefore use the same constructors and JSON mapping
+// as the native service types they convert to and from.
+func unionTypeSections(header *codegen.SectionTemplate, name string, unions []*unionTypeData) []*codegen.SectionTemplate {
+	sections := make([]*codegen.SectionTemplate, 1, len(unions)+1)
+	sections[0] = header
+	for _, union := range unions {
+		sections = append(sections, &codegen.SectionTemplate{
+			Name: name, Source: service.UnionTypeSource, Data: union,
+		})
+	}
+	return sections
 }

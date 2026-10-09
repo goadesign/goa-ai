@@ -100,8 +100,8 @@ func TestUnionDiscriminatorCorrectionOuterBranchCorrelation(t *testing.T) {
 	inner := []tools.FieldPathSegment{tools.FixedField("items"), tools.DynamicField{}, tools.FixedField("value")}
 	fields := make([]tools.FieldMetadata, 0, 6)
 	fields = append(fields, tools.FieldMetadata{Path: outer, JSONType: "string", DiscriminatorValues: []string{"nested", "flat"}})
-	fields = append(fields, correctionChoiceFields(inner, []tools.UnionBranch{{Discriminator: outer, Value: "nested"}})...)
-	fields = append(fields, tools.FieldMetadata{Path: inner, JSONType: "integer", Branches: []tools.UnionBranch{{Discriminator: outer, Value: "flat"}}})
+	fields = append(fields, correctionChoiceFields(inner, []tools.UnionBranch{tools.TaggedUnionBranch{Discriminator: outer, Value: "nested"}})...)
+	fields = append(fields, tools.FieldMetadata{Path: inner, JSONType: "integer", Branches: []tools.UnionBranch{tools.TaggedUnionBranch{Discriminator: outer, Value: "flat"}}})
 	definition := arrayCorrectionDefinition(schema, fields)
 	for _, test := range []struct{ name, payload, want string }{
 		{"selected outer branch", `{"items":[{"mode":"flat","value":7},{"mode":"nested","value":{}}]}`, `Field "items.*.value.kind" is required and must be one of these JSON strings: ["text","count"]. Other schema errors are not detailed here.`},
@@ -129,7 +129,7 @@ func TestUnionDiscriminatorCorrectionMetadataAndCompetingErrors(t *testing.T) {
 		{"identical metadata", baseSchema, `{"choice":{}}`, advertisedToolInputCorrection, append(slices.Clone(baseFields), baseFields[1])},
 		{"conflicting choices", baseSchema, `{"choice":{}}`, advertisedToolInputCorrection, append(slices.Clone(baseFields), tools.FieldMetadata{Path: baseFields[1].Path, JSONType: "string", DiscriminatorValues: []string{"other"}})},
 		{"conflicting type", baseSchema, `{"choice":{}}`, advertisedToolInputCorrection, append(slices.Clone(baseFields), tools.FieldMetadata{Path: baseFields[1].Path, JSONType: "integer", DiscriminatorValues: []string{"text", "count"}})},
-		{"unmatched enclosing branch", baseSchema, `{"choice":{}}`, advertisedToolInputCorrection, correctionChoiceFields(choice, []tools.UnionBranch{{Discriminator: []tools.FieldPathSegment{tools.FixedField("mode")}, Value: "nested"}})},
+		{"unmatched enclosing branch", baseSchema, `{"choice":{}}`, advertisedToolInputCorrection, correctionChoiceFields(choice, []tools.UnionBranch{tools.TaggedUnionBranch{Discriminator: []tools.FieldPathSegment{tools.FixedField("mode")}, Value: "nested"}})},
 		{
 			"two union failures", fmt.Sprintf(`{"type":"object","properties":{"choice":%s,"other":%s}}`, correctionChoiceSchema, correctionChoiceSchema),
 			`{"choice":{},"other":{}}`, "Field \"choice.kind\" is required and must be one of these JSON strings: [\"text\",\"count\"].\nField \"other.kind\" is required and must be one of these JSON strings: [\"text\",\"count\"]. Other schema errors are not detailed here.",
@@ -180,7 +180,7 @@ func correctionChoiceFields(path []tools.FieldPathSegment, branches []tools.Unio
 	for index, name := range []string{"text", "count"} {
 		fields = append(fields, tools.FieldMetadata{
 			Path: append(slices.Clone(path), tools.FixedField("value")), JSONType: []string{"string", "integer"}[index],
-			Branches: append(slices.Clone(branches), tools.UnionBranch{Discriminator: discriminator, Value: name}),
+			Branches: append(slices.Clone(branches), tools.TaggedUnionBranch{Discriminator: discriminator, Value: name}),
 		})
 	}
 	return fields

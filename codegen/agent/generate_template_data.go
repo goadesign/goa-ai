@@ -29,10 +29,6 @@ type (
 		Types []*typeData
 	}
 
-	toolUnionTypesFileData struct {
-		Unions []*unionTypeData
-	}
-
 	toolTransportTypesFileData struct {
 		Types []*typeData
 	}
@@ -263,6 +259,17 @@ type (
 	}
 )
 
+// HasTaggedUnionValidators reports whether this generated file checks any union
+// with a string discriminator. Only those files need discriminator error helpers.
+func (d toolCodecsFileData) HasTaggedUnionValidators() bool {
+	for _, validator := range d.JSONValidators {
+		if validator.Kind == "union" && !validator.Untagged {
+			return true
+		}
+	}
+	return false
+}
+
 // JSONNames binds the existing tool/completion adapters to the shared shape
 // template. Their generated names and error semantics remain unchanged.
 func (toolCodecsFileData) JSONNames() jsonshape.Names {
@@ -272,6 +279,8 @@ func (toolCodecsFileData) JSONNames() jsonshape.Names {
 		UnknownField:        "unknownJSONFieldError",
 		DecodedType:         "decodedJSONType",
 		ChildPath:           "generatedJSONChildPath",
+		UnionDiscriminator:  "invalidJSONUnionDiscriminator",
+		MissingField:        "missingJSONField",
 		JSON:                "json",
 		Fmt:                 "fmt",
 		Sort:                "sort",

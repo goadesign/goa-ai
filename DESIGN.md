@@ -2615,12 +2615,18 @@ Generation selects the mapping before rendering; generated code does not walk
 a schema or guess a branch from field presence. Ordinary tagged unions retain
 their nested value. Neither mapping changes protobuf's native oneof.
 
-Complete-original codecs also consume Goa's evaluated untagged union mapping.
+Complete-original, tool and completion codecs consume Goa's evaluated untagged union mapping.
 The outer JSON kind selects a branch whose raw value is encoded directly;
 typed decoding and the existing generated validators check its contents.
 The shared JSON shape checks and schema builder use the same mapping. The
 generator retains the authored branch kinds and emits their typed decoding;
 runtime code does not infer the mapping from JSON Schema.
+
+Tool and completion sum types render through Goa's `service.UnionTypeSource`
+with final planned declaration names and branch references. There is no separate
+tagged-only serializer. Goa owns constructors, branch storage and JSON mapping;
+the shared generated tool codec owns strict raw input checks and structured field
+errors at exact JSON paths. Direct union validation returns native Goa errors.
 
 The original-value, tool, and completion codecs share JSON shape checks while
 retaining their different contracts. Complete-original functions do not change
@@ -2641,7 +2647,7 @@ an object-shaped user type; omitting `Args` on an
 unbound tool means `{}`, while omitting it on a tool with `BindTo` uses the
 bound method payload, which must follow the same object-shape rule. Primitive,
 array, map, and `OneOf` roots are rejected, while `Return` remains
-unrestricted. Generated objects and unions reject undeclared properties, maps
+unrestricted. Generated tool codecs reject undeclared object and union properties, while maps
 accept dynamic keys, and the validated model client applies the advertised
 schema before any attached input decoder. Only schema rejections and typed
 tool-input validation errors qualify for limited-size correction guidance that
@@ -2650,7 +2656,12 @@ objects, collections, and union branches. Callers that build `ToolSpec` values
 directly may supply the same field metadata. The model client uses that metadata
 to explain independently identified required, type, enum, or array-length
 violations. Sound instructions survive unrelated ambiguous failures. For unions,
-only the branch named by a valid string discriminator participates. Array indexes
+only the branch selected by its authored mapping participates. Tagged and flat
+unions use a string discriminator; untagged unions use distinct JSON kinds. Their
+generated metadata also records the schema branch position, so the existing
+correction engine selects the corresponding structured validator diagnostic.
+The registry carries this same tagged-or-untagged requirement as a generated
+union rather than a record with optional selectors. Array indexes
 and map keys appear as `*`; distinct instructions for the same displayed path
 are omitted. With no sound field instruction, guidance remains generic.
 A request-owned copy of the validated input example
@@ -2895,7 +2906,9 @@ Catalog metadata contains basic-access scopes rather than every method's scopes.
 The signed-token profile uses the JWT library for cryptography and a private Goa
 claims decoder for exact names, required fields and fractional timestamps. Its
 SDK audience field represents the standard string-or-array wire value; this is
-a documented private custom-type exception because Goa unions are tagged.
+an existing external-contract value shared by signed-token and introspection
+paths. Goa now supports the same untagged wire shape; retaining this SDK value
+avoids a second audience representation and normalization path.
 JOSE's private resource RSA verifier extension calls Go's cryptographic
 primitives with the standard PSS salt length. The SDK's default verifier accepts
 other salt lengths; resource construction also enforces the standard RSA key

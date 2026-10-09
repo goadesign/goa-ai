@@ -16,6 +16,7 @@ import (
 	goa "goa.design/goa/v3/pkg"
 	"io"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -90,7 +91,7 @@ var echoPayloadFields = []tools.FieldMetadata{
 		JSONType:    "integer",
 		Description: "Numeric value",
 		Branches: []tools.UnionBranch{
-			{
+			tools.TaggedUnionBranch{
 				Discriminator: []tools.FieldPathSegment{tools.FixedField("value"), tools.FixedField("type")},
 				Value:         "number",
 			},
@@ -101,7 +102,7 @@ var echoPayloadFields = []tools.FieldMetadata{
 		JSONType:    "string",
 		Description: "Text value",
 		Branches: []tools.UnionBranch{
-			{
+			tools.TaggedUnionBranch{
 				Discriminator: []tools.FieldPathSegment{tools.FixedField("value"), tools.FixedField("type")},
 				Value:         "text",
 			},
@@ -112,7 +113,7 @@ var echoPayloadFields = []tools.FieldMetadata{
 		JSONType:    "object",
 		Description: "Structured value",
 		Branches: []tools.UnionBranch{
-			{
+			tools.TaggedUnionBranch{
 				Discriminator: []tools.FieldPathSegment{tools.FixedField("value"), tools.FixedField("type")},
 				Value:         "structured",
 			},
@@ -123,7 +124,7 @@ var echoPayloadFields = []tools.FieldMetadata{
 		JSONType:    "string",
 		Description: "Structured value label",
 		Branches: []tools.UnionBranch{
-			{
+			tools.TaggedUnionBranch{
 				Discriminator: []tools.FieldPathSegment{tools.FixedField("value"), tools.FixedField("type")},
 				Value:         "structured",
 			},
@@ -146,7 +147,7 @@ var echoPayloadFields = []tools.FieldMetadata{
 		JSONType:    "integer",
 		Description: "Optional numeric value",
 		Branches: []tools.UnionBranch{
-			{
+			tools.TaggedUnionBranch{
 				Discriminator: []tools.FieldPathSegment{tools.FixedField("optional_value"), tools.FixedField("type")},
 				Value:         "number",
 			},
@@ -157,7 +158,7 @@ var echoPayloadFields = []tools.FieldMetadata{
 		JSONType:    "string",
 		Description: "Optional text value",
 		Branches: []tools.UnionBranch{
-			{
+			tools.TaggedUnionBranch{
 				Discriminator: []tools.FieldPathSegment{tools.FixedField("optional_value"), tools.FixedField("type")},
 				Value:         "text",
 			},
@@ -191,7 +192,7 @@ var echoResultFields = []tools.FieldMetadata{
 		JSONType:    "integer",
 		Description: "Numeric value",
 		Branches: []tools.UnionBranch{
-			{
+			tools.TaggedUnionBranch{
 				Discriminator: []tools.FieldPathSegment{tools.FixedField("value"), tools.FixedField("type")},
 				Value:         "number",
 			},
@@ -202,7 +203,7 @@ var echoResultFields = []tools.FieldMetadata{
 		JSONType:    "string",
 		Description: "Text value",
 		Branches: []tools.UnionBranch{
-			{
+			tools.TaggedUnionBranch{
 				Discriminator: []tools.FieldPathSegment{tools.FixedField("value"), tools.FixedField("type")},
 				Value:         "text",
 			},
@@ -213,7 +214,7 @@ var echoResultFields = []tools.FieldMetadata{
 		JSONType:    "object",
 		Description: "Structured value",
 		Branches: []tools.UnionBranch{
-			{
+			tools.TaggedUnionBranch{
 				Discriminator: []tools.FieldPathSegment{tools.FixedField("value"), tools.FixedField("type")},
 				Value:         "structured",
 			},
@@ -224,7 +225,7 @@ var echoResultFields = []tools.FieldMetadata{
 		JSONType:    "string",
 		Description: "Structured value label",
 		Branches: []tools.UnionBranch{
-			{
+			tools.TaggedUnionBranch{
 				Discriminator: []tools.FieldPathSegment{tools.FixedField("value"), tools.FixedField("type")},
 				Value:         "structured",
 			},
@@ -247,7 +248,7 @@ var echoResultFields = []tools.FieldMetadata{
 		JSONType:    "integer",
 		Description: "Optional numeric value",
 		Branches: []tools.UnionBranch{
-			{
+			tools.TaggedUnionBranch{
 				Discriminator: []tools.FieldPathSegment{tools.FixedField("optional_value"), tools.FixedField("type")},
 				Value:         "number",
 			},
@@ -258,7 +259,7 @@ var echoResultFields = []tools.FieldMetadata{
 		JSONType:    "string",
 		Description: "Optional text value",
 		Branches: []tools.UnionBranch{
-			{
+			tools.TaggedUnionBranch{
 				Discriminator: []tools.FieldPathSegment{tools.FixedField("optional_value"), tools.FixedField("type")},
 				Value:         "text",
 			},
@@ -697,14 +698,14 @@ func validateEchoPayloadJSONValue(path string, value any, description string) er
 				return err
 			}
 		case "optional_value":
-			if err := validateObjectJSONValue(
+			if err := validateEchoPayloadRootOptionalValueJSONValue(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "",
 			); err != nil {
 				return err
 			}
 		case "value":
-			if err := validateObjectJSONValue(
+			if err := validateEchoPayloadRootValueJSONValue(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "",
 			); err != nil {
@@ -737,8 +738,8 @@ func validateStringJSONValue(path string, value any, description string) error {
 	return nil
 }
 
-// validateObjectJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
-func validateObjectJSONValue(path string, value any, description string) error {
+// validateEchoPayloadRootOptionalValueJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateEchoPayloadRootOptionalValueJSONValue(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -746,9 +747,124 @@ func validateObjectJSONValue(path string, value any, description string) error {
 	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	_, ok := value.(map[string]any)
+	typed, ok := value.(map[string]any)
 	if !ok {
 		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	for key := range typed {
+		if key != "type" && key != "value" {
+			return unknownJSONFieldError(path, key, []string{"type", "value"})
+		}
+	}
+	rawDiscriminator, discriminatorPresent := typed["type"]
+	discriminator, ok := rawDiscriminator.(string)
+	if !ok {
+		return invalidJSONUnionDiscriminator(generatedJSONChildPath(path, "type", false), rawDiscriminator, discriminatorPresent, []string{"number", "text"})
+	}
+	branch, exists := typed["value"]
+	if !exists {
+		return missingJSONField(generatedJSONChildPath(path, "value", false))
+	}
+	switch discriminator {
+	case "number":
+		return validateInt32JSONValue(generatedJSONChildPath(path, "value", false), branch, "Optional numeric value")
+	case "text":
+		return validateStringJSONValue(generatedJSONChildPath(path, "value", false), branch, "Optional text value")
+	default:
+		return invalidJSONUnionDiscriminator(generatedJSONChildPath(path, "type", false), discriminator, true, []string{"number", "text"})
+	}
+}
+
+// validateInt32JSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateInt32JSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
+	}
+	typed, ok := value.(json.Number)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
+	}
+	if _, err := strconv.ParseInt(typed.String(), 10, 32); err != nil {
+		return invalidGeneratedFieldTypeError(field, "integer", "number", description)
+	}
+	return nil
+}
+
+// validateEchoPayloadRootValueJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateEchoPayloadRootValueJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	for key := range typed {
+		if key != "type" && key != "value" {
+			return unknownJSONFieldError(path, key, []string{"type", "value"})
+		}
+	}
+	rawDiscriminator, discriminatorPresent := typed["type"]
+	discriminator, ok := rawDiscriminator.(string)
+	if !ok {
+		return invalidJSONUnionDiscriminator(generatedJSONChildPath(path, "type", false), rawDiscriminator, discriminatorPresent, []string{"number", "text", "structured"})
+	}
+	branch, exists := typed["value"]
+	if !exists {
+		return missingJSONField(generatedJSONChildPath(path, "value", false))
+	}
+	switch discriminator {
+	case "number":
+		return validateInt32JSONValue(generatedJSONChildPath(path, "value", false), branch, "Numeric value")
+	case "text":
+		return validateStringJSONValue(generatedJSONChildPath(path, "value", false), branch, "Text value")
+	case "structured":
+		return validateEchoPayloadStructuredValueTransportJSONValue(generatedJSONChildPath(path, "value", false), branch, "Structured value")
+	default:
+		return invalidJSONUnionDiscriminator(generatedJSONChildPath(path, "type", false), discriminator, true, []string{"number", "text", "structured"})
+	}
+}
+
+// validateEchoPayloadStructuredValueTransportJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateEchoPayloadStructuredValueTransportJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "label":
+			if err := validateStringJSONValue(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Structured value label",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"label",
+			})
+		}
 	}
 	return nil
 }
@@ -837,6 +953,36 @@ func invalidGeneratedFieldTypeError(field, expected, actual, description string)
 			},
 		},
 		descriptions,
+	)
+}
+
+// invalidJSONUnionDiscriminator reports an absent, non-string or undeclared
+// branch selector at its actual JSON path, so callers can correct that field.
+func invalidJSONUnionDiscriminator(field string, got any, present bool, allowed []string) error {
+	constraint := "invalid_enum_value"
+	if !present {
+		constraint = "missing_field"
+	} else if _, ok := got.(string); !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(got), "")
+	}
+	return tools.NewValidationError(
+		fmt.Sprintf("field %q must select a declared union branch", field),
+		[]*tools.FieldIssue{
+			{Field: field, Constraint: constraint, Allowed: allowed},
+		},
+		nil,
+	)
+}
+
+// missingJSONField reports an absent required JSON property at its generated
+// path, so callers receive the same field contract for every union mapping.
+func missingJSONField(field string) error {
+	return tools.NewValidationError(
+		fmt.Sprintf("field %q is required", field),
+		[]*tools.FieldIssue{
+			{Field: field, Constraint: "missing_field"},
+		},
+		nil,
 	)
 }
 

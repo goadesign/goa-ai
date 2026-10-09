@@ -245,11 +245,10 @@ func TestUnionWalksKeepEqualNamedTypeOriginsDistinct(t *testing.T) {
 	require.NoError(t, err)
 	pkg, err := generation.ClaimPackage("generated.local/gen/union-walk")
 	require.NoError(t, err)
-	helpers := make(map[goacodegen.UnionDeclarationID]*goacodegen.NameDeclaration)
+	declarations := make(map[goacodegen.UnionDeclarationID]*goacodegen.UnionDeclaration)
 	require.NoError(t, declareAttributeUnions(
 		pkg,
-		make(map[string]*goacodegen.NameDeclaration),
-		helpers,
+		declarations,
 		attribute,
 	))
 	require.NoError(t, generation.Freeze())
@@ -259,7 +258,6 @@ func TestUnionWalksKeepEqualNamedTypeOriginsDistinct(t *testing.T) {
 		attribute,
 		pkg.Scope(),
 		pkg,
-		helpers,
 		unions,
 		make(map[goaexpr.UserType]struct{}),
 	)

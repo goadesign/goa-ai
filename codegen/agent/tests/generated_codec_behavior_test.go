@@ -750,6 +750,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
+	goa "goa.design/goa/v3/pkg"
 )
 
 func TestEchoSchemaMatchesClosedGeneratedDecoder(t *testing.T) {
@@ -863,7 +864,7 @@ func TestUnmarshalEchoPayloadUsesSelectedUnionBranchType(t *testing.T) {
 		t.Fatalf("expected one issue, got %d", len(issues))
 	}
 	issue := issues[0]
-	if issue.Field != "value" || issue.Constraint != "invalid_field_type" || issue.ExpectedJSONType != "integer" || issue.ActualJSONType != "string" {
+	if issue.Field != "value.value" || issue.Constraint != "invalid_field_type" || issue.ExpectedJSONType != "integer" || issue.ActualJSONType != "string" {
 		t.Fatalf("unexpected issue: %#v", issue)
 	}
 }
@@ -882,7 +883,7 @@ func TestUnmarshalEchoPayloadRejectsMissingUnionValue(t *testing.T) {
 		t.Fatalf("expected one issue, got %d", len(issues))
 	}
 	issue := issues[0]
-	if issue.Field != "value" || issue.Constraint != "missing_field" {
+	if issue.Field != "value.value" || issue.Constraint != "missing_field" {
 		t.Fatalf("unexpected issue: %#v", issue)
 	}
 }
@@ -916,25 +917,21 @@ func TestUnmarshalEchoPayloadRejectsNullUnionValue(t *testing.T) {
 		t.Fatalf("expected one issue, got %d", len(issues))
 	}
 	issue := issues[0]
-	if issue.Field != "value" || issue.Constraint != "invalid_field_type" || issue.ExpectedJSONType != "object" || issue.ActualJSONType != "null" {
+	if issue.Field != "value.value" || issue.Constraint != "invalid_field_type" || issue.ExpectedJSONType != "object" || issue.ActualJSONType != "null" {
 		t.Fatalf("unexpected issue: %#v", issue)
 	}
 }
 
 func TestValueValidateRejectsNilSelectedBranch(t *testing.T) {
-	value := NewValueStructured(nil)
-	err := value.Validate()
-	if err == nil {
-		t.Fatal("expected error")
-	}
-	var validation *tools.ValidationError
-	if !errors.As(err, &validation) {
-		t.Fatalf("expected ValidationError, got %T: %v", err, err)
-	}
-	issues := validation.Issues()
-	if len(issues) != 1 || issues[0].Field != "value" || issues[0].Constraint != "missing_field" {
-		t.Fatalf("unexpected issues: %#v", issues)
-	}
+ value := NewValueStructured(nil)
+ err := value.Validate()
+ var validation *goa.ServiceError
+ if !errors.As(err, &validation) {
+  t.Fatalf("expected native Goa validation, got %T: %v",err,err)
+ }
+ if validation.Name!="missing_field" || validation.Field==nil || *validation.Field!="value" {
+  t.Fatalf("unexpected native union error: %#v",validation)
+ }
 }
 
 func TestMarshalEchoPayloadRejectsMissingRequiredUnion(t *testing.T) {

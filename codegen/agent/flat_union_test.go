@@ -56,3 +56,34 @@ func TestFlatUnionExampleRequiresDiscriminator(t *testing.T) {
 		specJSONModel.canonicalizeUnionExamples(&goaexpr.AttributeExpr{Type: union}, map[string]any{"reference": "done"})
 	})
 }
+
+func TestUntaggedUnionMetadataAndExamples(t *testing.T) {
+	union := &goaexpr.Union{TypeName: "Choice", Untagged: true,
+		Values: []*goaexpr.NamedAttributeExpr{
+			{Name: "record", Attribute: &goaexpr.AttributeExpr{Type: &goaexpr.Object{
+				{Name: "recordKey", Attribute: &goaexpr.AttributeExpr{Type: goaexpr.String}},
+			}}},
+			{Name: "text", Attribute: &goaexpr.AttributeExpr{Type: goaexpr.String}},
+			{Name: "count", Attribute: &goaexpr.AttributeExpr{Type: goaexpr.Int64}},
+		},
+	}
+	attribute := &goaexpr.AttributeExpr{Type: union}
+	fields := buildFieldMetadata(attribute)
+	for _, field := range fields {
+		assert.Empty(t, field.DiscriminatorValues)
+		for _, branch := range field.Branches {
+			assert.Empty(t, branch.Discriminator)
+			assert.Empty(t, branch.Value)
+			assert.Empty(t, branch.Path)
+			assert.Contains(t, []string{"object", "string", "number"}, branch.JSONKind)
+		}
+	}
+	for _, test := range []struct{ input, expected any }{
+		{map[string]any{"recordKey": "selected"}, map[string]any{"record_key": "selected"}},
+		{"selected", "selected"},
+		{int64(7), int64(7)},
+	} {
+		canonical := specJSONModel.canonicalizeUnionExamples(attribute, test.input)
+		assert.Equal(t, test.expected, specJSONModel.projectExampleFieldNames(attribute, canonical))
+	}
+}

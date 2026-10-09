@@ -36,41 +36,41 @@ type (
 	// toolSpecsPackagePlan stores the public specs package and the HTTP helper
 	// package written for one toolset.
 	toolSpecsPackagePlan struct {
-		generation             *goacodegen.Generation
-		definition             *ir.Toolset
-		genpkg                 string
-		public                 *goacodegen.GeneratedPackage
-		transport              *goacodegen.GeneratedPackage
-		types                  map[specTypeKey]*plannedSpecType
-		publicTypes            map[localizedTypeKey]*goacodegen.TypeDeclaration
-		transportTypes         map[localizedTypeKey]*goacodegen.TypeDeclaration
-		publicTypeUses         map[goaexpr.UserType]*goacodegen.NameDeclaration
-		transportTypeUses      map[goaexpr.UserType]*goacodegen.NameDeclaration
-		transportValidators    map[*goacodegen.TypeDeclaration]*goacodegen.NameDeclaration
-		publicFixed            map[string]*goacodegen.NameDeclaration
-		transportFixed         map[string]*goacodegen.NameDeclaration
-		publicUnionErrors      map[goacodegen.UnionDeclarationID]*goacodegen.NameDeclaration
-		transportUnionErrors   map[goacodegen.UnionDeclarationID]*goacodegen.NameDeclaration
-		jsonValidatorGraphs    []*plannedJSONValidatorGraph
-		jsonDocumentValidators []*plannedJSONValidatorGraph
-		jsonValidators         []*plannedJSONValidator
-		tools                  map[string]*plannedToolNames
-		completionNames        map[string]*plannedCompletionNames
-		transformPlans         []*plannedPackageTransform
-		adapterTransformPlans  []*plannedPackageTransform
-		specs                  *toolSpecsData
-		completion             *completionSpecsData
-		fileImports            *toolSpecsFileImports
-		providerImportPaths    []string
-		transformImportPaths   []string
-		serviceImportPath      string
-		registrationRoutes     []string
-		render                 *ToolsetData
-		inputCodecs            *jsoncodec.Plan
-		inputCodecPackage      *goacodegen.GeneratedPackage
-		inputMethods           map[*goaexpr.MethodExpr]*nativeInputPlan
-		taskMethods            map[*goaexpr.MethodExpr]*nativeTaskPlan
-		inputImportPaths       []string
+		generation                 *goacodegen.Generation
+		definition                 *ir.Toolset
+		genpkg                     string
+		public                     *goacodegen.GeneratedPackage
+		transport                  *goacodegen.GeneratedPackage
+		types                      map[specTypeKey]*plannedSpecType
+		publicTypes                map[localizedTypeKey]*goacodegen.TypeDeclaration
+		transportTypes             map[localizedTypeKey]*goacodegen.TypeDeclaration
+		publicTypeUses             map[goaexpr.UserType]*goacodegen.NameDeclaration
+		transportTypeUses          map[goaexpr.UserType]*goacodegen.NameDeclaration
+		transportValidators        map[*goacodegen.TypeDeclaration]*goacodegen.NameDeclaration
+		publicFixed                map[string]*goacodegen.NameDeclaration
+		transportFixed             map[string]*goacodegen.NameDeclaration
+		publicUnionDeclarations    map[goacodegen.UnionDeclarationID]*goacodegen.UnionDeclaration
+		transportUnionDeclarations map[goacodegen.UnionDeclarationID]*goacodegen.UnionDeclaration
+		jsonValidatorGraphs        []*plannedJSONValidatorGraph
+		jsonDocumentValidators     []*plannedJSONValidatorGraph
+		jsonValidators             []*plannedJSONValidator
+		tools                      map[string]*plannedToolNames
+		completionNames            map[string]*plannedCompletionNames
+		transformPlans             []*plannedPackageTransform
+		adapterTransformPlans      []*plannedPackageTransform
+		specs                      *toolSpecsData
+		completion                 *completionSpecsData
+		fileImports                *toolSpecsFileImports
+		providerImportPaths        []string
+		transformImportPaths       []string
+		serviceImportPath          string
+		registrationRoutes         []string
+		render                     *ToolsetData
+		inputCodecs                *jsoncodec.Plan
+		inputCodecPackage          *goacodegen.GeneratedPackage
+		inputMethods               map[*goaexpr.MethodExpr]*nativeInputPlan
+		taskMethods                map[*goaexpr.MethodExpr]*nativeTaskPlan
+		inputImportPaths           []string
 	}
 
 	// toolSpecsFileImports keeps the imports used by each generated file. Goa
@@ -137,15 +137,21 @@ type (
 		signedInteger   bool
 		unsignedInteger bool
 		integerBits     int
+		typeKey         string
+		valueKey        string
+		flatten         bool
+		untagged        bool
 		fields          []*plannedJSONValidatorField
+		branches        []*plannedJSONValidatorField
 		element         *plannedJSONValidatorCall
 	}
 
 	// plannedJSONValidatorField stores one accepted object field and the check
 	// applied to its value. A nil check accepts the value unchanged.
 	plannedJSONValidatorField struct {
-		name string
-		call *plannedJSONValidatorCall
+		name     string
+		jsonKind byte
+		call     *plannedJSONValidatorCall
 	}
 
 	// plannedJSONValidatorCall links a child value to its generated validator.
@@ -234,13 +240,6 @@ type (
 		packagePath string
 		key         string
 		location    goacodegen.TransformHelperDefinitionLocation
-	}
-
-	// unionErrorNameOrder stores the package and exact union name that own one
-	// function for reporting an unknown OneOf branch.
-	unionErrorNameOrder struct {
-		packagePath string
-		unionName   string
 	}
 
 	// localizedTypeNameOrder stores the stable Goa type details used to order

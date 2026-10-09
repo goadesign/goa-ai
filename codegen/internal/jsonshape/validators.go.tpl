@@ -60,8 +60,18 @@ func {{ .Name }}(path string, value any, description string) error {
         }
     }
     {{- end }}
+    {{- if $names.UnionDiscriminator }}
+    rawDiscriminator, discriminatorPresent := typed[{{printf "%q" .TypeKey}}]
+    discriminator, ok := rawDiscriminator.(string)
+    if !ok {
+        return {{ $names.UnionDiscriminator }}({{ $names.ChildPath }}(path, {{printf "%q" .TypeKey}}, false), rawDiscriminator, discriminatorPresent, []string{
+            {{- range .Branches }}{{printf "%q" .Name}},{{- end }}
+        })
+    }
+    {{- else }}
     discriminator, ok := typed[{{printf "%q" .TypeKey}}].(string)
     if !ok { return {{ $names.Fmt }}.Errorf("%s: missing or invalid union discriminator", field) }
+    {{- end }}
     {{- if .Flatten }}
     branch := make(map[string]any, len(typed)-1)
     for key, item := range typed {
@@ -71,7 +81,11 @@ func {{ .Name }}(path string, value any, description string) error {
     }
     {{- else }}
     branch, exists := typed[{{printf "%q" .ValueKey}}]
+    {{- if $names.MissingField }}
+    if !exists { return {{ $names.MissingField }}({{ $names.ChildPath }}(path, {{printf "%q" .ValueKey}}, false)) }
+    {{- else }}
     if !exists || branch == nil { return {{ $names.Fmt }}.Errorf("%s: missing union value", field) }
+    {{- end }}
     {{- end }}
     switch discriminator {
     {{- $union := . }}
@@ -80,7 +94,13 @@ func {{ .Name }}(path string, value any, description string) error {
         return {{.Call.Name}}({{ if $union.Flatten }}path{{ else }}{{ $names.ChildPath }}(path, {{printf "%q" $union.ValueKey}}, false){{ end }}, branch, {{printf "%q" .Call.Description}})
     {{- end }}
     default:
+        {{- if $names.UnionDiscriminator }}
+        return {{ $names.UnionDiscriminator }}({{ $names.ChildPath }}(path, {{printf "%q" .TypeKey}}, false), discriminator, true, []string{
+            {{- range .Branches }}{{printf "%q" .Name}},{{- end }}
+        })
+        {{- else }}
         return {{ $names.Fmt }}.Errorf("%s: unknown union discriminator %q", field, discriminator)
+        {{- end }}
     }
     {{- else if eq .Kind "object" }}
     keys := make([]string, 0, len(typed))

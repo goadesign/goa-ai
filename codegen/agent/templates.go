@@ -35,7 +35,6 @@ const (
 	toolTransportTypesFileT    = "tool_transport_types"
 	toolTransportValidateFileT = "tool_transport_validate"
 	toolTypesFileT             = "tool_types"
-	toolUnionTypesFileT        = "tool_union_types"
 	serviceToolsetExportsT     = "toolset_exports"
 	usedToolsFileT             = "used_tools"
 )

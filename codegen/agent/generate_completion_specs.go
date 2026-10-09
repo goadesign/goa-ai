@@ -98,15 +98,10 @@ func completionSpecsFiles(data *GeneratorData, planned *toolSpecsPlan) ([]*codeg
 			}
 			if len(specsData.TransportUnions) > 0 {
 				unionImports := packagePlan.fileImports.transportUnions.Imports()
-				unionSections := []*codegen.SectionTemplate{
+				unionSections := unionTypeSections(
 					codegen.Header(svc.Service.Name+" completion transport union types", transportPkgName, unionImports),
-					{
-						Name:    "completion-transport-union-types",
-						Source:  agentsTemplates.Read(toolUnionTypesFileT),
-						Data:    toolUnionTypesFileData{Unions: specsData.TransportUnions},
-						FuncMap: templateFuncMap(),
-					},
-				}
+					"completion-transport-union-types", specsData.TransportUnions,
+				)
 				out = append(out, &codegen.File{
 					Path:             filepath.Join(dir, transportDirName, "unions.go"),
 					SectionTemplates: unionSections,
@@ -131,15 +126,10 @@ func completionSpecsFiles(data *GeneratorData, planned *toolSpecsPlan) ([]*codeg
 		}
 		if len(specsData.Unions) > 0 {
 			unionImports := packagePlan.fileImports.publicUnions.Imports()
-			unionSections := []*codegen.SectionTemplate{
+			unionSections := unionTypeSections(
 				codegen.Header(svc.Service.Name+" completion union types", packageName, unionImports),
-				{
-					Name:    "completion-spec-union-types",
-					Source:  agentsTemplates.Read(toolUnionTypesFileT),
-					Data:    toolUnionTypesFileData{Unions: specsData.Unions},
-					FuncMap: templateFuncMap(),
-				},
-			}
+				"completion-spec-union-types", specsData.Unions,
+			)
 			out = append(out, &codegen.File{
 				Path:             filepath.Join(dir, "unions.go"),
 				SectionTemplates: unionSections,

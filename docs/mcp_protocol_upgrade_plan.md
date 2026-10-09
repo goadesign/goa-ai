@@ -16,8 +16,8 @@ and verification evidence and do not supersede unfinished gates.
 | Dynamic catalogs | Implemented through authenticated native methods for tools, prompts, resources and URI templates, with one shared subscription source. Final-head integration and review remain required. |
 | OAuth | Built-in authorization paths and the agreed metadata/profile assessment are implemented. Selected independent checks and explicit legacy-fixture mismatches are recorded. Final-head verification, review and caller acceptance remain required. |
 | MCP Apps | Implemented through authored app resources and tools, generated peers, and the official browser SDK. Final-head browser, build and integration CI passed. Final review remains required. |
-| MCP Skills | In progress. Native `SkillCatalog`/`SkillLookup` discovery and optional `ResourceDirectory` pages preserve mapped HTTP inputs, authentication and ordinary resource reads. Selected discovery views are verified. One shared generated entry codec and cross-field verifier reject invalid frontmatter, duplicate or incomplete manifests and directory escapes before publication. Directory pages reject recursive or unrelated children and advertise support only when declared. Unknown skills/files/directories return `-32602`; invalid server entries/pages return `-32603`. Host file-byte/YAML verification, approval, origin identity and context retention remain open. Model-facing raw union mappings still require acceptance. |
-| Dependencies, documentation and website | Root and all four maintained nested modules pin merged Goa `bde76c5dfcbf`. CI identified the old quickstart pin after framework tests passed; nested modules are now updated and tidied. Finish external caller migration, authoritative docs, translations and the MCP home-page section after capability acceptance. |
+| MCP Skills | In progress. Native `SkillCatalog`/`SkillLookup` discovery and optional `ResourceDirectory` pages preserve mapped HTTP inputs, authentication and ordinary resource reads. Selected discovery views are verified. One shared generated entry codec and cross-field verifier reject invalid frontmatter, duplicate or incomplete manifests and directory escapes before publication. Directory pages reject recursive or unrelated children and advertise support only when declared. Unknown skills/files/directories return `-32602`; invalid server entries/pages return `-32603`. Private file-byte/YAML checks and model-facing union mappings pass focused acceptance. Complete host loading, approval, origin identity and context retention remain open. |
+| Dependencies, documentation and website | Root and all four maintained nested modules pin merged Goa `ee33017cd4aa`, which exposes the native union renderer for plugin reuse. Finish external caller migration, authoritative docs, translations and the MCP home-page section after capability acceptance. |
 | Generated stdio servers | Explicitly deferred. Existing stdio consumers remain supported. |
 
 Directory discovery uses the same discovery planner as catalogs and direct Skill
@@ -35,7 +35,48 @@ timeout had run for only two seconds; this does not establish a hung test. The
 generated MCP package now runs in four CI processes without raising its timeout
 or removing checks. The current inventory assigns all 104 tests exactly once,
 26 per process. `make test` still runs every root, generated MCP and quickstart
-check and combines coverage. Final-head CI must verify the new scheduling.
+check and combines coverage. CI at `dd9f7de5` passed all seven jobs. The slowest
+job took 7 minutes 48 seconds; all checks were retained. Later changes still
+require final-head CI.
+
+The OAuth audience review retains the existing JOSE `jwt.Audience` value in the
+private generated contracts. Its decoder accepts a string or an array containing
+only strings and rejects other shapes, including null elements. Both signed-token
+and introspection paths consume that one list for exact resource membership.
+Goa can now express this wire union; retaining the existing external-contract
+type avoids introducing two generated branch representations and another
+conversion. This is a library reuse decision, not a remaining Goa capability gap.
+
+Private host verification now checks exact held-manifest membership, raw byte
+length and SHA-256 before parsing Skill instructions. Complete YAML comparison
+retains future fields and exact numbers, supports ordinary aliases and merged
+mappings, and rejects cycles, duplicate fields and values without an equivalent
+JSON type. CRLF files retain their original hashed bytes. Supporting reads of a
+nested `SKILL.md` do not activate it. Focused race checks passed in 4.69 seconds.
+These helpers are not yet connected to a complete host-loading flow; approval,
+origin identity, context retention and lazy caching still gate completion.
+
+Compiled agent-tool acceptance exposed a wider union mapping gap. Ordinary tagged
+unions pass, but both flat and untagged values pass their advertised schema and
+then fail the generated typed decoder with an unknown branch field. The separate
+agent union template still assumes a tagged value envelope. Fix the shared
+mapping owner across schema checks, typed codecs, examples, field metadata,
+correction guidance and registry transport. Metadata-only flat-union checks are
+not complete tool acceptance. The focused reproduction took 6.13 seconds.
+Goa PR 4038 now exposes its existing renderer without changing native generated
+output; all four Go/OS jobs, CodeQL and dependency review passed before merge.
+Tool and completion packages reuse it and remove the duplicate serializer.
+Strict checks inspect the authored branch, including custom discriminator/value
+keys and all five untagged JSON kinds. Field metadata and registry transport
+represent tagged and untagged requirements separately. Untagged requirements
+retain the zero-based schema branch position for structured correction guidance.
+Independent array selections, metadata copying, root and nested registry
+requirements, and ordinary tagged guidance passed in 6.05 seconds. The complete
+focused checkpoint across generated codecs, golden output, metadata, correction
+and registry consumers passed in 32.16 seconds. Generated declarations also
+preserved their union selections through protobuf and JSON round trips in
+8.40 seconds. Scoped lint reported zero issues in 2.76 seconds. Host loading is
+still unfinished; these checks do not finish Skills support or authorize release.
 
 Early MCP validation now resolves inherited arguments and results through one
 shared reader. A detached Goa attribute graph retains concrete type identity and

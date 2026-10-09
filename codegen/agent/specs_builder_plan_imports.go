@@ -17,23 +17,23 @@ import (
 // package and its HTTP decoding package.
 func newToolSpecsPackagePlan(generation *goacodegen.Generation, genpkg string, public, transport *goacodegen.GeneratedPackage) *toolSpecsPackagePlan {
 	return &toolSpecsPackagePlan{
-		generation:           generation,
-		genpkg:               genpkg,
-		public:               public,
-		transport:            transport,
-		types:                make(map[specTypeKey]*plannedSpecType),
-		publicTypes:          make(map[localizedTypeKey]*goacodegen.TypeDeclaration),
-		transportTypes:       make(map[localizedTypeKey]*goacodegen.TypeDeclaration),
-		publicTypeUses:       make(map[goaexpr.UserType]*goacodegen.NameDeclaration),
-		transportTypeUses:    make(map[goaexpr.UserType]*goacodegen.NameDeclaration),
-		transportValidators:  make(map[*goacodegen.TypeDeclaration]*goacodegen.NameDeclaration),
-		publicFixed:          make(map[string]*goacodegen.NameDeclaration),
-		transportFixed:       make(map[string]*goacodegen.NameDeclaration),
-		publicUnionErrors:    make(map[goacodegen.UnionDeclarationID]*goacodegen.NameDeclaration),
-		transportUnionErrors: make(map[goacodegen.UnionDeclarationID]*goacodegen.NameDeclaration),
-		tools:                make(map[string]*plannedToolNames),
-		completionNames:      make(map[string]*plannedCompletionNames),
-		fileImports:          newToolSpecsFileImports(public, transport),
+		generation:                 generation,
+		genpkg:                     genpkg,
+		public:                     public,
+		transport:                  transport,
+		types:                      make(map[specTypeKey]*plannedSpecType),
+		publicTypes:                make(map[localizedTypeKey]*goacodegen.TypeDeclaration),
+		transportTypes:             make(map[localizedTypeKey]*goacodegen.TypeDeclaration),
+		publicTypeUses:             make(map[goaexpr.UserType]*goacodegen.NameDeclaration),
+		transportTypeUses:          make(map[goaexpr.UserType]*goacodegen.NameDeclaration),
+		transportValidators:        make(map[*goacodegen.TypeDeclaration]*goacodegen.NameDeclaration),
+		publicFixed:                make(map[string]*goacodegen.NameDeclaration),
+		transportFixed:             make(map[string]*goacodegen.NameDeclaration),
+		publicUnionDeclarations:    make(map[goacodegen.UnionDeclarationID]*goacodegen.UnionDeclaration),
+		transportUnionDeclarations: make(map[goacodegen.UnionDeclarationID]*goacodegen.UnionDeclaration),
+		tools:                      make(map[string]*plannedToolNames),
+		completionNames:            make(map[string]*plannedCompletionNames),
+		fileImports:                newToolSpecsFileImports(public, transport),
 	}
 }
 
@@ -158,6 +158,17 @@ func (p *toolSpecsPackagePlan) planCompletionFileImports() error {
 // HTTP validation files. Optional imports are recorded only when that package
 // emits the matching source branch.
 func (p *toolSpecsPackagePlan) planSharedFileImports() error {
+	for _, validator := range p.jsonValidators {
+		if validator.kind != "union" || validator.untagged {
+			continue
+		}
+		if err := declareExactNames(p.public, p.publicFixed, map[goacodegen.PackageNameKind][]string{
+			goacodegen.NameFunction: {"invalidJSONUnionDiscriminator", "missingJSONField"},
+		}); err != nil {
+			return err
+		}
+		break
+	}
 	codecImports := []*goacodegen.ImportSpec{
 		goacodegen.SimpleImport("bytes"),
 		goacodegen.SimpleImport("encoding/json"),
@@ -219,17 +230,15 @@ func (p *toolSpecsPackagePlan) planSharedFileImports() error {
 	unionImports := []*goacodegen.ImportSpec{
 		goacodegen.SimpleImport("bytes"),
 		goacodegen.SimpleImport("encoding/json"),
-		goacodegen.SimpleImport("errors"),
 		goacodegen.SimpleImport("fmt"),
-		goacodegen.SimpleImport("io"),
-		goacodegen.SimpleImport("goa.design/goa-ai/runtime/agent/tools"),
+		goacodegen.GoaImport(""),
 	}
-	if len(p.publicUnionErrors) > 0 {
+	if len(p.publicUnionDeclarations) > 0 {
 		if err := p.fileImports.publicUnions.Require(unionImports...); err != nil {
 			return err
 		}
 	}
-	if len(p.transportUnionErrors) > 0 {
+	if len(p.transportUnionDeclarations) > 0 {
 		if err := p.fileImports.transportUnions.Require(unionImports...); err != nil {
 			return err
 		}

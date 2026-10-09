@@ -9,74 +9,28 @@ package union
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"goa.design/goa-ai/runtime/agent/tools"
-	"io"
+	goa "goa.design/goa/v3/pkg"
 )
 
-// decodeUnionStrictJSON decodes one union JSON document and rejects fields that
-// are not present in the generated union envelope or selected branch contract.
-func decodeUnionStrictJSON(data []byte, v any) error {
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(v); err != nil {
-		return err
-	}
-	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		return fmt.Errorf("multiple JSON documents")
-	}
-	return nil
-}
-
-// missingUnionValueError reports an omitted value in a tagged union envelope.
-func missingUnionValueError() error {
-	return tools.NewValidationError(
-		"missing required union field \"value\"",
-		[]*tools.FieldIssue{
-			{
-				Field:      "value",
-				Constraint: "missing_field",
-			},
-		},
-		nil,
-	)
-}
-
-// nullUnionValueError reports a null value in a tagged union envelope.
-func nullUnionValueError(expected string) error {
-	return tools.NewValidationError(
-		fmt.Sprintf("union field \"value\" must be a %s, not null", expected),
-		[]*tools.FieldIssue{
-			{
-				Field:            "value",
-				Constraint:       "invalid_field_type",
-				ExpectedJSONType: expected,
-				ActualJSONType:   "null",
-			},
-		},
-		nil,
-	)
-}
-
-// OptionalValue is a sum-type union.
+// OptionalValue holds exactly one of its branch values.
 type OptionalValue struct {
 	kind   OptionalValueKind
-	Number OptionalValueNumber
-	Text   OptionalValueText
+	number OptionalValueNumber
+	text   OptionalValueText
 }
 
-// OptionalValueKind enumerates the union variants for OptionalValue.
+// OptionalValueKind records which OptionalValue branch is selected.
 type OptionalValueKind string
 
 const (
-	// OptionalValueKindNumber identifies the number branch of the union.
+	// OptionalValueKindNumber identifies the number branch.
 	OptionalValueKindNumber OptionalValueKind = "number"
-	// OptionalValueKindText identifies the text branch of the union.
+	// OptionalValueKindText identifies the text branch.
 	OptionalValueKindText OptionalValueKind = "text"
 )
 
-// Kind returns the discriminator value of the union.
+// Kind returns the selected branch.
 func (u OptionalValue) Kind() OptionalValueKind {
 	return u.kind
 }
@@ -85,58 +39,67 @@ func (u OptionalValue) Kind() OptionalValueKind {
 func NewOptionalValueNumber(v OptionalValueNumber) OptionalValue {
 	return OptionalValue{
 		kind:   OptionalValueKindNumber,
-		Number: v,
+		number: v,
 	}
 }
 
-// AsNumber returns the value of the number branch if set.
+// AsNumber returns the value when the number branch is selected.
 func (u OptionalValue) AsNumber() (_ OptionalValueNumber, ok bool) {
 	if u.kind != OptionalValueKindNumber {
 		return
 	}
-	return u.Number, true
+	return u.number, true
 }
 
-// SetNumber sets the number branch of the union.
+// SetNumber selects the number branch and stores v.
 func (u *OptionalValue) SetNumber(v OptionalValueNumber) {
-	u.kind = OptionalValueKindNumber
-	u.Number = v
+	*u = OptionalValue{
+		kind:   OptionalValueKindNumber,
+		number: v,
+	}
 }
 
 // NewOptionalValueText constructs OptionalValue with the text branch set.
 func NewOptionalValueText(v OptionalValueText) OptionalValue {
 	return OptionalValue{
 		kind: OptionalValueKindText,
-		Text: v,
+		text: v,
 	}
 }
 
-// AsText returns the value of the text branch if set.
+// AsText returns the value when the text branch is selected.
 func (u OptionalValue) AsText() (_ OptionalValueText, ok bool) {
 	if u.kind != OptionalValueKindText {
 		return
 	}
-	return u.Text, true
+	return u.text, true
 }
 
-// SetText sets the text branch of the union.
+// SetText selects the text branch and stores v.
 func (u *OptionalValue) SetText(v OptionalValueText) {
-	u.kind = OptionalValueKindText
-	u.Text = v
+	*u = OptionalValue{
+		kind: OptionalValueKindText,
+		text: v,
+	}
 }
 
-// Validate ensures the union discriminant is valid.
+// Validate ensures exactly one valid branch is selected.
 func (u OptionalValue) Validate() error {
 	switch u.kind {
 	case "":
-		return newOptionalValueDiscriminatorError("", false)
+		return goa.InvalidEnumValueError("type", "", []any{
+			string(OptionalValueKindNumber),
+			string(OptionalValueKindText),
+		})
 	case OptionalValueKindNumber:
 		return nil
 	case OptionalValueKindText:
 		return nil
 	default:
-		got := string(u.kind)
-		return newOptionalValueDiscriminatorError(got, true)
+		return goa.InvalidEnumValueError("type", u.kind, []any{
+			string(OptionalValueKindNumber),
+			string(OptionalValueKindText),
+		})
 	}
 }
 
@@ -150,12 +113,11 @@ func (u OptionalValue) MarshalJSON() ([]byte, error) {
 	)
 	switch u.kind {
 	case OptionalValueKindNumber:
-		value = u.Number
+		value = u.number
 	case OptionalValueKindText:
-		value = u.Text
+		value = u.text
 	default:
-		got := string(u.kind)
-		return nil, newOptionalValueDiscriminatorError(got, true)
+		return nil, fmt.Errorf("unexpected OptionalValue kind %q", u.kind)
 	}
 	return json.Marshal(struct {
 		Type  string `json:"type"`
@@ -169,103 +131,64 @@ func (u OptionalValue) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON unmarshals the union from the canonical {type,value} JSON shape.
 func (u *OptionalValue) UnmarshalJSON(data []byte) error {
 	var raw struct {
-		Type  *string         `json:"type"`
+		Type  string          `json:"type"`
 		Value json.RawMessage `json:"value"`
 	}
-	if err := decodeUnionStrictJSON(data, &raw); err != nil {
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	if raw.Type == nil {
-		return newOptionalValueDiscriminatorError("", false)
-	}
 	if len(raw.Value) == 0 {
-		return missingUnionValueError()
+		return goa.MissingFieldError("value", "OptionalValue")
 	}
-	switch *raw.Type {
+	if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
+		return goa.InvalidFieldTypeError("value", nil, "non-null JSON value")
+	}
+	switch raw.Type {
 	case string(OptionalValueKindNumber):
-		if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
-			return nullUnionValueError("integer")
-		}
 		var v OptionalValueNumber
-		if err := decodeUnionStrictJSON(raw.Value, &v); err != nil {
-			var typeErr *json.UnmarshalTypeError
-			if errors.As(err, &typeErr) && typeErr.Value != "" {
-				return tools.NewValidationError(
-					err.Error(),
-					[]*tools.FieldIssue{
-						{
-							Field:            "value",
-							Constraint:       "invalid_field_type",
-							ExpectedJSONType: "integer",
-							ActualJSONType:   typeErr.Value,
-						},
-					},
-					nil,
-				)
-			}
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
 			return err
 		}
-		u.kind = OptionalValueKindNumber
-		u.Number = v
+		u.SetNumber(v)
 	case string(OptionalValueKindText):
-		if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
-			return nullUnionValueError("string")
-		}
 		var v OptionalValueText
-		if err := decodeUnionStrictJSON(raw.Value, &v); err != nil {
-			var typeErr *json.UnmarshalTypeError
-			if errors.As(err, &typeErr) && typeErr.Value != "" {
-				return tools.NewValidationError(
-					err.Error(),
-					[]*tools.FieldIssue{
-						{
-							Field:            "value",
-							Constraint:       "invalid_field_type",
-							ExpectedJSONType: "string",
-							ActualJSONType:   typeErr.Value,
-						},
-					},
-					nil,
-				)
-			}
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
 			return err
 		}
-		u.kind = OptionalValueKindText
-		u.Text = v
+		u.SetText(v)
 	default:
-		return newOptionalValueDiscriminatorError(*raw.Type, true)
+		if raw.Type == "" {
+			return goa.MissingFieldError("type", "OptionalValue")
+		}
+		return goa.InvalidEnumValueError("type", raw.Type, []any{
+			string(OptionalValueKindNumber),
+			string(OptionalValueKindText),
+		})
 	}
 	return nil
 }
 
-func newOptionalValueDiscriminatorError(got string, typePresent bool) error {
-	return tools.NewUnionDiscriminatorError("OptionalValue", got, typePresent, []string{
-		string(OptionalValueKindNumber),
-		string(OptionalValueKindText),
-	})
-}
-
-// Value is a sum-type union.
+// Value holds exactly one of its branch values.
 type Value struct {
 	kind       ValueKind
-	Number     ValueNumber
-	Text       ValueText
-	Structured *StructuredValue
+	number     ValueNumber
+	text       ValueText
+	structured *StructuredValue
 }
 
-// ValueKind enumerates the union variants for Value.
+// ValueKind records which Value branch is selected.
 type ValueKind string
 
 const (
-	// ValueKindNumber identifies the number branch of the union.
+	// ValueKindNumber identifies the number branch.
 	ValueKindNumber ValueKind = "number"
-	// ValueKindText identifies the text branch of the union.
+	// ValueKindText identifies the text branch.
 	ValueKindText ValueKind = "text"
-	// ValueKindStructured identifies the structured branch of the union.
+	// ValueKindStructured identifies the structured branch.
 	ValueKindStructured ValueKind = "structured"
 )
 
-// Kind returns the discriminator value of the union.
+// Kind returns the selected branch.
 func (u Value) Kind() ValueKind {
 	return u.kind
 }
@@ -274,85 +197,98 @@ func (u Value) Kind() ValueKind {
 func NewValueNumber(v ValueNumber) Value {
 	return Value{
 		kind:   ValueKindNumber,
-		Number: v,
+		number: v,
 	}
 }
 
-// AsNumber returns the value of the number branch if set.
+// AsNumber returns the value when the number branch is selected.
 func (u Value) AsNumber() (_ ValueNumber, ok bool) {
 	if u.kind != ValueKindNumber {
 		return
 	}
-	return u.Number, true
+	return u.number, true
 }
 
-// SetNumber sets the number branch of the union.
+// SetNumber selects the number branch and stores v.
 func (u *Value) SetNumber(v ValueNumber) {
-	u.kind = ValueKindNumber
-	u.Number = v
+	*u = Value{
+		kind:   ValueKindNumber,
+		number: v,
+	}
 }
 
 // NewValueText constructs Value with the text branch set.
 func NewValueText(v ValueText) Value {
 	return Value{
 		kind: ValueKindText,
-		Text: v,
+		text: v,
 	}
 }
 
-// AsText returns the value of the text branch if set.
+// AsText returns the value when the text branch is selected.
 func (u Value) AsText() (_ ValueText, ok bool) {
 	if u.kind != ValueKindText {
 		return
 	}
-	return u.Text, true
+	return u.text, true
 }
 
-// SetText sets the text branch of the union.
+// SetText selects the text branch and stores v.
 func (u *Value) SetText(v ValueText) {
-	u.kind = ValueKindText
-	u.Text = v
+	*u = Value{
+		kind: ValueKindText,
+		text: v,
+	}
 }
 
 // NewValueStructured constructs Value with the structured branch set.
 func NewValueStructured(v *StructuredValue) Value {
 	return Value{
 		kind:       ValueKindStructured,
-		Structured: v,
+		structured: v,
 	}
 }
 
-// AsStructured returns the value of the structured branch if set.
+// AsStructured returns the value when the structured branch is selected.
 func (u Value) AsStructured() (_ *StructuredValue, ok bool) {
 	if u.kind != ValueKindStructured {
 		return
 	}
-	return u.Structured, true
+	return u.structured, true
 }
 
-// SetStructured sets the structured branch of the union.
+// SetStructured selects the structured branch and stores v.
 func (u *Value) SetStructured(v *StructuredValue) {
-	u.kind = ValueKindStructured
-	u.Structured = v
+	*u = Value{
+		kind:       ValueKindStructured,
+		structured: v,
+	}
 }
 
-// Validate ensures the union discriminant is valid.
+// Validate ensures exactly one valid branch is selected.
 func (u Value) Validate() error {
 	switch u.kind {
 	case "":
-		return newValueDiscriminatorError("", false)
+		return goa.InvalidEnumValueError("type", "", []any{
+			string(ValueKindNumber),
+			string(ValueKindText),
+			string(ValueKindStructured),
+		})
 	case ValueKindNumber:
 		return nil
 	case ValueKindText:
 		return nil
 	case ValueKindStructured:
-		if u.Structured == nil {
-			return missingUnionValueError()
+		if u.structured == nil {
+			return goa.MissingFieldError("value", "Value")
 		}
 		return nil
 	default:
-		got := string(u.kind)
-		return newValueDiscriminatorError(got, true)
+		return goa.InvalidEnumValueError("type", u.kind, []any{
+			string(ValueKindNumber),
+			string(ValueKindText),
+			string(ValueKindStructured),
+		})
 	}
 }
 
@@ -366,14 +302,13 @@ func (u Value) MarshalJSON() ([]byte, error) {
 	)
 	switch u.kind {
 	case ValueKindNumber:
-		value = u.Number
+		value = u.number
 	case ValueKindText:
-		value = u.Text
+		value = u.text
 	case ValueKindStructured:
-		value = u.Structured
+		value = u.structured
 	default:
-		got := string(u.kind)
-		return nil, newValueDiscriminatorError(got, true)
+		return nil, fmt.Errorf("unexpected Value kind %q", u.kind)
 	}
 	return json.Marshal(struct {
 		Type  string `json:"type"`
@@ -387,104 +322,46 @@ func (u Value) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON unmarshals the union from the canonical {type,value} JSON shape.
 func (u *Value) UnmarshalJSON(data []byte) error {
 	var raw struct {
-		Type  *string         `json:"type"`
+		Type  string          `json:"type"`
 		Value json.RawMessage `json:"value"`
 	}
-	if err := decodeUnionStrictJSON(data, &raw); err != nil {
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	if raw.Type == nil {
-		return newValueDiscriminatorError("", false)
-	}
 	if len(raw.Value) == 0 {
-		return missingUnionValueError()
+		return goa.MissingFieldError("value", "Value")
 	}
-	switch *raw.Type {
+	if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
+		return goa.InvalidFieldTypeError("value", nil, "non-null JSON value")
+	}
+	switch raw.Type {
 	case string(ValueKindNumber):
-		if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
-			return nullUnionValueError("integer")
-		}
 		var v ValueNumber
-		if err := decodeUnionStrictJSON(raw.Value, &v); err != nil {
-			var typeErr *json.UnmarshalTypeError
-			if errors.As(err, &typeErr) && typeErr.Value != "" {
-				return tools.NewValidationError(
-					err.Error(),
-					[]*tools.FieldIssue{
-						{
-							Field:            "value",
-							Constraint:       "invalid_field_type",
-							ExpectedJSONType: "integer",
-							ActualJSONType:   typeErr.Value,
-						},
-					},
-					nil,
-				)
-			}
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
 			return err
 		}
-		u.kind = ValueKindNumber
-		u.Number = v
+		u.SetNumber(v)
 	case string(ValueKindText):
-		if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
-			return nullUnionValueError("string")
-		}
 		var v ValueText
-		if err := decodeUnionStrictJSON(raw.Value, &v); err != nil {
-			var typeErr *json.UnmarshalTypeError
-			if errors.As(err, &typeErr) && typeErr.Value != "" {
-				return tools.NewValidationError(
-					err.Error(),
-					[]*tools.FieldIssue{
-						{
-							Field:            "value",
-							Constraint:       "invalid_field_type",
-							ExpectedJSONType: "string",
-							ActualJSONType:   typeErr.Value,
-						},
-					},
-					nil,
-				)
-			}
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
 			return err
 		}
-		u.kind = ValueKindText
-		u.Text = v
+		u.SetText(v)
 	case string(ValueKindStructured):
-		if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
-			return nullUnionValueError("object")
-		}
 		var v *StructuredValue
-		if err := decodeUnionStrictJSON(raw.Value, &v); err != nil {
-			var typeErr *json.UnmarshalTypeError
-			if errors.As(err, &typeErr) && typeErr.Value != "" {
-				return tools.NewValidationError(
-					err.Error(),
-					[]*tools.FieldIssue{
-						{
-							Field:            "value",
-							Constraint:       "invalid_field_type",
-							ExpectedJSONType: "object",
-							ActualJSONType:   typeErr.Value,
-						},
-					},
-					nil,
-				)
-			}
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
 			return err
 		}
-		u.kind = ValueKindStructured
-		u.Structured = v
+		u.SetStructured(v)
 	default:
-		return newValueDiscriminatorError(*raw.Type, true)
+		if raw.Type == "" {
+			return goa.MissingFieldError("type", "Value")
+		}
+		return goa.InvalidEnumValueError("type", raw.Type, []any{
+			string(ValueKindNumber),
+			string(ValueKindText),
+			string(ValueKindStructured),
+		})
 	}
 	return nil
-}
-
-func newValueDiscriminatorError(got string, typePresent bool) error {
-	return tools.NewUnionDiscriminatorError("Value", got, typePresent, []string{
-		string(ValueKindNumber),
-		string(ValueKindText),
-		string(ValueKindStructured),
-	})
 }

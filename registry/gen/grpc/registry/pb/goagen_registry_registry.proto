@@ -298,12 +298,33 @@ message ToolFieldPathSegment {
 // Marks one array index or map key without prescribing its value.
 message ToolCollectionElement {
 }
-// One discriminator value that makes a generated field applicable.
+// One generated branch requirement. A tagged union selects by a string
+// property; an untagged union selects by the JSON kind of its value.
 message ToolUnionBranch {
+	oneof selection {
+		// A declared string discriminator selects this branch.
+	ToolTaggedUnionBranch tagged = 1;
+		// The JSON kind of the union value selects this branch.
+	ToolUntaggedUnionBranch untagged = 2;
+	}
+}
+// One string discriminator value that makes a generated field applicable.
+message ToolTaggedUnionBranch {
 	// Path to the union's discriminator property.
 	repeated ToolFieldPathSegment discriminator = 1;
 	// Branch name required at the discriminator.
 	optional string value = 2;
+}
+// The JSON kind of a union value that makes a generated field applicable.
+// Distinct branch kinds are established during Goa DSL validation.
+message ToolUntaggedUnionBranch {
+	// Path to the union value. An omitted path identifies the root value.
+	repeated ToolFieldPathSegment path = 1;
+	// JSON kind that selects this branch; integer branches use number.
+	optional string json_kind = 2;
+	// Zero-based position of this branch in the advertised oneOf, used to select
+// its structured validation diagnostic.
+	optional sint32 index = 3;
 }
 
 message ArrayOfString {

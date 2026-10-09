@@ -33,7 +33,7 @@ func TestGoldenCodecImportNameCollisions(t *testing.T) {
 	require.Contains(t, customTransport, `goa2 "generated.local/custom/goa"`)
 	require.Contains(t, customTransport, "*goa2.Token")
 	require.Contains(t, customValidation, `goa "goa.design/goa/v3/pkg"`)
-	require.Contains(t, union, `"errors"`)
+	require.NotContains(t, union, `"errors"`)
 	require.Contains(t, union, `errors_ "generated.local/gen/errors"`)
 	require.Contains(t, union, "*errors_.RelocatedBranch")
 	require.Contains(t, sharedTypes, `alpha "generated.local/custom/shared"`)

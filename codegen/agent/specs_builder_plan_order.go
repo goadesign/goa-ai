@@ -33,16 +33,6 @@ func (o transformHelperNameOrder) ComparePackageName(other goacodegen.PackageNam
 	return o.location.Compare(right.location)
 }
 
-// ComparePackageName orders unknown-branch error functions by package and the
-// exact union name that owns each function.
-func (o unionErrorNameOrder) ComparePackageName(other goacodegen.PackageNameOrder) int {
-	right := other.(unionErrorNameOrder)
-	if compared := strings.Compare(o.packagePath, right.packagePath); compared != 0 {
-		return compared
-	}
-	return strings.Compare(o.unionName, right.unionName)
-}
-
 // ComparePackageName preserves ordinary names, then orders nested types by
 // their source package, name, and ID.
 func (o localizedTypeNameOrder) ComparePackageName(other goacodegen.PackageNameOrder) int {

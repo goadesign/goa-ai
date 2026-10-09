@@ -1926,9 +1926,22 @@ metadata; callers that construct a `ToolSpec` directly may include it too.
 The runtime gathers independently required constraints, including `allOf`, but
 does not treat alternative `anyOf` branches, array `contains` candidates, or
 property-name checks as instructions to change every corresponding value.
-For a union, only the branch named by a valid string discriminator participates.
+For a tagged or flat union, only the branch named by a valid string discriminator participates.
 A missing, non-string, or unknown discriminator receives no branch-specific
 instruction; sound instructions for unrelated fields remain available.
+For an untagged union, the submitted JSON kind selects the branch. Generated
+metadata retains that branch's position in the advertised schema, so correction
+guidance follows its own validator diagnostic. Each array item or map value
+selects independently. Supporting a union mapping does not require reading
+JSON Schema again at runtime.
+
+Generated tool and completion codecs use the same union constructors and JSON
+methods as Goa service types. Use their generated codecs for strict input
+decoding; direct union `Validate` calls return Goa's native errors. If you author
+field metadata manually, `tools.TaggedUnionBranch` carries a discriminator path
+and string value. `tools.UntaggedUnionBranch` carries the union value's path,
+JSON kind and zero-based schema branch position. Regenerate registry contracts,
+providers and consumers together when adopting this metadata contract.
 
 Instructions are sorted and deduplicated. Different instructions for the same
 displayed path are omitted; the runtime does not try to combine their

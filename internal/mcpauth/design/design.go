@@ -16,8 +16,8 @@ var _ = Service("access_token_claims", func() {
 		Payload(func() {
 			Field(1, "iss", String, "Exact authorization server identifier", func() { MinLength(1) })
 			Field(2, "sub", String, "Subject identified by the authorization server", func() { MinLength(1) })
-			// JWT audiences use an untagged string-or-array value. Goa's tagged
-			// unions cannot represent it; the private SDK type rejects other shapes.
+			// A signed audience may be a string or an array of strings. The JOSE
+			// type checks either shape and supplies one list for membership checks.
 			Field(3, "aud", Any, "Resource identifiers decoded by the JWT library", func() {
 				Meta("struct:field:type", "jwt.Audience", "github.com/go-jose/go-jose/v4/jwt", "jwt")
 			})
@@ -59,8 +59,8 @@ var _ = Service("token_introspection", func() {
 		})
 		Result(func() {
 			Field(1, "active", Boolean, "Whether this token is currently usable by the authenticated resource")
-			// Introspection uses the same untagged audience value as signed tokens.
-			// The concrete SDK type rejects numbers and mixed arrays privately.
+			// An issuer audience uses the same string-or-array contract as signed
+			// tokens. The JOSE type supplies the same checked list to both callers.
 			Field(2, "aud", Any, "Intended resource identifiers decoded by the JWT library", func() {
 				Meta("struct:field:type", "jwt.Audience", "github.com/go-jose/go-jose/v4/jwt", "jwt")
 			})

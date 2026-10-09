@@ -38,6 +38,9 @@ type (
 	unionBranchData struct {
 		Discriminator []fieldPathSegmentData
 		Value         string
+		Path          []fieldPathSegmentData
+		JSONKind      string
+		Index         int
 	}
 
 	// fieldMetadataData contains all static schema facts emitted for one field.
@@ -134,13 +137,15 @@ func buildFieldMetadata(att *goaexpr.AttributeExpr) []*fieldMetadataData {
 			for index, nat := range dt.Values {
 				values[index] = nat.Name
 			}
-			add(&fieldMetadataData{
-				Path:                discriminator,
-				JSONType:            "string",
-				Branches:            cloneUnionBranches(branches),
-				DiscriminatorValues: values,
-			})
-			for _, nat := range dt.Values {
+			if !dt.Untagged {
+				add(&fieldMetadataData{
+					Path:                discriminator,
+					JSONType:            "string",
+					Branches:            cloneUnionBranches(branches),
+					DiscriminatorValues: values,
+				})
+			}
+			for index, nat := range dt.Values {
 				branch := unionBranchData{
 					Discriminator: cloneFieldPath(discriminator),
 					Value:         nat.Name,
@@ -148,6 +153,14 @@ func buildFieldMetadata(att *goaexpr.AttributeExpr) []*fieldMetadataData {
 				branchPath := appendFixedField(path, valueKey)
 				if dt.Flatten {
 					branchPath = path
+				}
+				if dt.Untagged {
+					branchPath = path
+					kind := generatedJSONType(nat.Attribute.Type)
+					if kind == "integer" {
+						kind = "number"
+					}
+					branch = unionBranchData{Path: cloneFieldPath(path), JSONKind: kind, Index: index}
 				}
 				walk(
 					branchPath,
@@ -182,6 +195,7 @@ func cloneUnionBranches(branches []unionBranchData) []unionBranchData {
 	for index, branch := range branches {
 		cloned[index] = branch
 		cloned[index].Discriminator = cloneFieldPath(branch.Discriminator)
+		cloned[index].Path = cloneFieldPath(branch.Path)
 	}
 	return cloned
 }
@@ -200,6 +214,11 @@ func generatedFieldMetadataKey(path []fieldPathSegmentData, branches []unionBran
 	writePath(path)
 	for _, branch := range branches {
 		key.WriteByte('|')
+		if branch.JSONKind != "" {
+			writePath(branch.Path)
+			fmt.Fprintf(&key, "kind=%s:%d", branch.JSONKind, branch.Index)
+			continue
+		}
 		writePath(branch.Discriminator)
 		fmt.Fprintf(&key, "=%d:%s", len(branch.Value), branch.Value)
 	}
@@ -459,9 +478,16 @@ func (contract specJSONContract) projectExampleFieldNames(att *goaexpr.Attribute
 	}
 }
 
-// projectUnionExampleFieldNames reads the declared discriminator, renames the
-// selected branch fields and returns the authored flat or tagged JSON shape.
+// projectUnionExampleFieldNames selects the authored branch by its discriminator
+// or JSON kind, renames its fields and returns the declared JSON shape.
 func (contract specJSONContract) projectUnionExampleFieldNames(u *goaexpr.Union, example any) any {
+	if u.Untagged {
+		branch := u.UntaggedBranch(example)
+		if branch == nil {
+			panic(fmt.Sprintf("agent/specs_builder: untagged union example for %q has no declared JSON kind", u.TypeName))
+		}
+		return contract.projectExampleFieldNames(branch.Attribute, example)
+	}
 	m, ok := example.(map[string]any)
 	if !ok {
 		return example
@@ -575,6 +601,13 @@ func (contract specJSONContract) canonicalizeUnionExampleValue(att *goaexpr.Attr
 	case *goaexpr.Union:
 		if example == nil || len(dt.Values) == 0 {
 			return example, true
+		}
+		if dt.Untagged {
+			branch := dt.UntaggedBranch(example)
+			if branch == nil {
+				panic(fmt.Sprintf("agent/specs_builder: untagged union example for %q has no declared JSON kind", dt.TypeName))
+			}
+			return contract.canonicalizeUnionExampleValue(branch.Attribute, example)
 		}
 
 		typeKey := dt.GetTypeKey()

@@ -10,76 +10,30 @@ package union
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
 
 	errors_ "generated.local/gen/errors"
-	"goa.design/goa-ai/runtime/agent/tools"
+	goa "goa.design/goa/v3/pkg"
 )
 
-// decodeUnionStrictJSON decodes one union JSON document and rejects fields that
-// are not present in the generated union envelope or selected branch contract.
-func decodeUnionStrictJSON(data []byte, v any) error {
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(v); err != nil {
-		return err
-	}
-	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		return fmt.Errorf("multiple JSON documents")
-	}
-	return nil
-}
-
-// missingUnionValueError reports an omitted value in a tagged union envelope.
-func missingUnionValueError() error {
-	return tools.NewValidationError(
-		"missing required union field \"value\"",
-		[]*tools.FieldIssue{
-			{
-				Field:      "value",
-				Constraint: "missing_field",
-			},
-		},
-		nil,
-	)
-}
-
-// nullUnionValueError reports a null value in a tagged union envelope.
-func nullUnionValueError(expected string) error {
-	return tools.NewValidationError(
-		fmt.Sprintf("union field \"value\" must be a %s, not null", expected),
-		[]*tools.FieldIssue{
-			{
-				Field:            "value",
-				Constraint:       "invalid_field_type",
-				ExpectedJSONType: expected,
-				ActualJSONType:   "null",
-			},
-		},
-		nil,
-	)
-}
-
-// Choice is a sum-type union.
+// Choice holds exactly one of its branch values.
 type Choice struct {
 	kind      ChoiceKind
-	Relocated *errors_.RelocatedBranch
-	Text      ChoiceText
+	relocated *errors_.RelocatedBranch
+	text      ChoiceText
 }
 
-// ChoiceKind enumerates the union variants for Choice.
+// ChoiceKind records which Choice branch is selected.
 type ChoiceKind string
 
 const (
-	// ChoiceKindRelocated identifies the relocated branch of the union.
+	// ChoiceKindRelocated identifies the relocated branch.
 	ChoiceKindRelocated ChoiceKind = "relocated"
-	// ChoiceKindText identifies the text branch of the union.
+	// ChoiceKindText identifies the text branch.
 	ChoiceKindText ChoiceKind = "text"
 )
 
-// Kind returns the discriminator value of the union.
+// Kind returns the selected branch.
 func (u Choice) Kind() ChoiceKind {
 	return u.kind
 }
@@ -88,61 +42,70 @@ func (u Choice) Kind() ChoiceKind {
 func NewChoiceRelocated(v *errors_.RelocatedBranch) Choice {
 	return Choice{
 		kind:      ChoiceKindRelocated,
-		Relocated: v,
+		relocated: v,
 	}
 }
 
-// AsRelocated returns the value of the relocated branch if set.
+// AsRelocated returns the value when the relocated branch is selected.
 func (u Choice) AsRelocated() (_ *errors_.RelocatedBranch, ok bool) {
 	if u.kind != ChoiceKindRelocated {
 		return
 	}
-	return u.Relocated, true
+	return u.relocated, true
 }
 
-// SetRelocated sets the relocated branch of the union.
+// SetRelocated selects the relocated branch and stores v.
 func (u *Choice) SetRelocated(v *errors_.RelocatedBranch) {
-	u.kind = ChoiceKindRelocated
-	u.Relocated = v
+	*u = Choice{
+		kind:      ChoiceKindRelocated,
+		relocated: v,
+	}
 }
 
 // NewChoiceText constructs Choice with the text branch set.
 func NewChoiceText(v ChoiceText) Choice {
 	return Choice{
 		kind: ChoiceKindText,
-		Text: v,
+		text: v,
 	}
 }
 
-// AsText returns the value of the text branch if set.
+// AsText returns the value when the text branch is selected.
 func (u Choice) AsText() (_ ChoiceText, ok bool) {
 	if u.kind != ChoiceKindText {
 		return
 	}
-	return u.Text, true
+	return u.text, true
 }
 
-// SetText sets the text branch of the union.
+// SetText selects the text branch and stores v.
 func (u *Choice) SetText(v ChoiceText) {
-	u.kind = ChoiceKindText
-	u.Text = v
+	*u = Choice{
+		kind: ChoiceKindText,
+		text: v,
+	}
 }
 
-// Validate ensures the union discriminant is valid.
+// Validate ensures exactly one valid branch is selected.
 func (u Choice) Validate() error {
 	switch u.kind {
 	case "":
-		return newChoiceDiscriminatorError("", false)
+		return goa.InvalidEnumValueError("type", "", []any{
+			string(ChoiceKindRelocated),
+			string(ChoiceKindText),
+		})
 	case ChoiceKindRelocated:
-		if u.Relocated == nil {
-			return missingUnionValueError()
+		if u.relocated == nil {
+			return goa.MissingFieldError("value", "Choice")
 		}
 		return nil
 	case ChoiceKindText:
 		return nil
 	default:
-		got := string(u.kind)
-		return newChoiceDiscriminatorError(got, true)
+		return goa.InvalidEnumValueError("type", u.kind, []any{
+			string(ChoiceKindRelocated),
+			string(ChoiceKindText),
+		})
 	}
 }
 
@@ -156,12 +119,11 @@ func (u Choice) MarshalJSON() ([]byte, error) {
 	)
 	switch u.kind {
 	case ChoiceKindRelocated:
-		value = u.Relocated
+		value = u.relocated
 	case ChoiceKindText:
-		value = u.Text
+		value = u.text
 	default:
-		got := string(u.kind)
-		return nil, newChoiceDiscriminatorError(got, true)
+		return nil, fmt.Errorf("unexpected Choice kind %q", u.kind)
 	}
 	return json.Marshal(struct {
 		Type  string `json:"type"`
@@ -175,78 +137,39 @@ func (u Choice) MarshalJSON() ([]byte, error) {
 // UnmarshalJSON unmarshals the union from the canonical {type,value} JSON shape.
 func (u *Choice) UnmarshalJSON(data []byte) error {
 	var raw struct {
-		Type  *string         `json:"type"`
+		Type  string          `json:"type"`
 		Value json.RawMessage `json:"value"`
 	}
-	if err := decodeUnionStrictJSON(data, &raw); err != nil {
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	if raw.Type == nil {
-		return newChoiceDiscriminatorError("", false)
-	}
 	if len(raw.Value) == 0 {
-		return missingUnionValueError()
+		return goa.MissingFieldError("value", "Choice")
 	}
-	switch *raw.Type {
+	if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
+		return goa.InvalidFieldTypeError("value", nil, "non-null JSON value")
+	}
+	switch raw.Type {
 	case string(ChoiceKindRelocated):
-		if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
-			return nullUnionValueError("object")
-		}
 		var v *errors_.RelocatedBranch
-		if err := decodeUnionStrictJSON(raw.Value, &v); err != nil {
-			var typeErr *json.UnmarshalTypeError
-			if errors.As(err, &typeErr) && typeErr.Value != "" {
-				return tools.NewValidationError(
-					err.Error(),
-					[]*tools.FieldIssue{
-						{
-							Field:            "value",
-							Constraint:       "invalid_field_type",
-							ExpectedJSONType: "object",
-							ActualJSONType:   typeErr.Value,
-						},
-					},
-					nil,
-				)
-			}
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
 			return err
 		}
-		u.kind = ChoiceKindRelocated
-		u.Relocated = v
+		u.SetRelocated(v)
 	case string(ChoiceKindText):
-		if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
-			return nullUnionValueError("string")
-		}
 		var v ChoiceText
-		if err := decodeUnionStrictJSON(raw.Value, &v); err != nil {
-			var typeErr *json.UnmarshalTypeError
-			if errors.As(err, &typeErr) && typeErr.Value != "" {
-				return tools.NewValidationError(
-					err.Error(),
-					[]*tools.FieldIssue{
-						{
-							Field:            "value",
-							Constraint:       "invalid_field_type",
-							ExpectedJSONType: "string",
-							ActualJSONType:   typeErr.Value,
-						},
-					},
-					nil,
-				)
-			}
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
 			return err
 		}
-		u.kind = ChoiceKindText
-		u.Text = v
+		u.SetText(v)
 	default:
-		return newChoiceDiscriminatorError(*raw.Type, true)
+		if raw.Type == "" {
+			return goa.MissingFieldError("type", "Choice")
+		}
+		return goa.InvalidEnumValueError("type", raw.Type, []any{
+			string(ChoiceKindRelocated),
+			string(ChoiceKindText),
+		})
 	}
 	return nil
-}
-
-func newChoiceDiscriminatorError(got string, typePresent bool) error {
-	return tools.NewUnionDiscriminatorError("Choice", got, typePresent, []string{
-		string(ChoiceKindRelocated),
-		string(ChoiceKindText),
-	})
 }

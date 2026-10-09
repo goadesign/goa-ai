@@ -23,11 +23,13 @@ func testDeclaration() *genregistry.ToolSchema {
 						{Segment: genregistry.NewToolFieldSegmentField("*")},
 					},
 					Branches: []*genregistry.ToolUnionBranch{{
-						Discriminator: []*genregistry.ToolFieldPathSegment{
-							{Segment: genregistry.NewToolFieldSegmentField("choice")},
-							{Segment: genregistry.NewToolFieldSegmentField("type")},
-						},
-						Value: "text",
+						Selection: genregistry.NewToolUnionSelectionTagged(&genregistry.ToolTaggedUnionBranch{
+							Discriminator: []*genregistry.ToolFieldPathSegment{
+								{Segment: genregistry.NewToolFieldSegmentField("choice")},
+								{Segment: genregistry.NewToolFieldSegmentField("type")},
+							},
+							Value: "text",
+						}),
 					}},
 				}},
 			},

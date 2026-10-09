@@ -97,7 +97,7 @@ func TestArrayLengthCorrectionSelectedUnionAndSize(t *testing.T) {
 	fields := make([]tools.FieldMetadata, 1, 3)
 	fields[0] = tools.FieldMetadata{Path: discriminator, JSONType: "string", DiscriminatorValues: []string{"small", "large"}}
 	for _, branch := range []string{"small", "large"} {
-		fields = append(fields, tools.FieldMetadata{Path: []tools.FieldPathSegment{tools.FixedField("choice"), tools.FixedField("value")}, JSONType: "array", Branches: []tools.UnionBranch{{Discriminator: discriminator, Value: branch}}})
+		fields = append(fields, tools.FieldMetadata{Path: []tools.FieldPathSegment{tools.FixedField("choice"), tools.FixedField("value")}, JSONType: "array", Branches: []tools.UnionBranch{tools.TaggedUnionBranch{Discriminator: discriminator, Value: branch}}})
 	}
 	for _, test := range []struct{ name, payload, want string }{
 		{"selected small", `{"choice":{"type":"small","value":[1,2]}}`, `Field "choice.value" must contain at most 1 items.`},

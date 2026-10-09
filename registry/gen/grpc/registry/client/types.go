@@ -853,22 +853,92 @@ func validateregistry_registry_ToolFieldPathSegment_At_elem(elem *registrypb.Too
 // validateregistry_registry_ToolUnionBranch_At_elem runs the validations
 // defined on ToolUnionBranch.
 func validateregistry_registry_ToolUnionBranch_At_elem(elem *registrypb.ToolUnionBranch) (err error) {
-	if elem.Value == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("value", "elem"))
+	if elem.Selection == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("selection", "elem"))
 	}
-	if len(elem.Discriminator) < 1 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("elem.discriminator", elem.Discriminator, len(elem.Discriminator), 1, true))
+	switch v := elem.Selection.(type) {
+	case *registrypb.ToolUnionBranch_Tagged:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("tagged", "elem.selection"))
+			break
+		}
+		if v.Tagged == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("tagged", "elem.selection"))
+			break
+		}
+		if v.Tagged != nil {
+			if err2 := validateregistry_registry_ToolTaggedUnionBranch_At_tagged(v.Tagged); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+
+	case *registrypb.ToolUnionBranch_Untagged:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("untagged", "elem.selection"))
+			break
+		}
+		if v.Untagged == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("untagged", "elem.selection"))
+			break
+		}
+		if v.Untagged != nil {
+			if err2 := validateregistry_registry_ToolUntaggedUnionBranch_At_untagged(v.Untagged); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
 	}
-	for _, e := range elem.Discriminator {
+
+	return
+}
+
+// validateregistry_registry_ToolTaggedUnionBranch_At_tagged runs the
+// validations defined on ToolTaggedUnionBranch.
+func validateregistry_registry_ToolTaggedUnionBranch_At_tagged(tagged *registrypb.ToolTaggedUnionBranch) (err error) {
+	if tagged.Value == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("value", "tagged"))
+	}
+	if len(tagged.Discriminator) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("tagged.discriminator", tagged.Discriminator, len(tagged.Discriminator), 1, true))
+	}
+	for _, e := range tagged.Discriminator {
 		if e != nil {
 			if err2 := validateregistry_registry_ToolFieldPathSegment_At_elem(e); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
 	}
-	if elem.Value != nil {
-		if utf8.RuneCountInString(*elem.Value) < 1 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("elem.value", *elem.Value, utf8.RuneCountInString(*elem.Value), 1, true))
+	if tagged.Value != nil {
+		if utf8.RuneCountInString(*tagged.Value) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("tagged.value", *tagged.Value, utf8.RuneCountInString(*tagged.Value), 1, true))
+		}
+	}
+	return
+}
+
+// validateregistry_registry_ToolUntaggedUnionBranch_At_untagged runs the
+// validations defined on ToolUntaggedUnionBranch.
+func validateregistry_registry_ToolUntaggedUnionBranch_At_untagged(untagged *registrypb.ToolUntaggedUnionBranch) (err error) {
+	if untagged.JsonKind == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("json_kind", "untagged"))
+	}
+	if untagged.Index == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("index", "untagged"))
+	}
+	for _, e := range untagged.Path {
+		if e != nil {
+			if err2 := validateregistry_registry_ToolFieldPathSegment_At_elem(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	if untagged.JsonKind != nil {
+		if !(*untagged.JsonKind == "string" || *untagged.JsonKind == "number" || *untagged.JsonKind == "boolean" || *untagged.JsonKind == "array" || *untagged.JsonKind == "object") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("untagged.json_kind", *untagged.JsonKind, []any{"string", "number", "boolean", "array", "object"}))
+		}
+	}
+	if untagged.Index != nil {
+		if *untagged.Index < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("untagged.index", *untagged.Index, 0, true))
 		}
 	}
 	return
@@ -2740,13 +2810,51 @@ func transformToolCollectionElementToProtoToolCollectionElement(v *registry.Tool
 // transformToolUnionBranchToProtoToolUnionBranch builds a value of type
 // *registrypb.ToolUnionBranch from a value of type *registry.ToolUnionBranch.
 func transformToolUnionBranchToProtoToolUnionBranch(v *registry.ToolUnionBranch) *registrypb.ToolUnionBranch {
-	res := &registrypb.ToolUnionBranch{
+	res := &registrypb.ToolUnionBranch{}
+	if v.Selection.Kind() != "" {
+		switch string(v.Selection.Kind()) {
+		case "tagged":
+			actual, _ := v.Selection.AsTagged()
+			res.Selection = &registrypb.ToolUnionBranch_Tagged{Tagged: transformToolTaggedUnionBranchToProtoToolTaggedUnionBranch(actual)}
+		case "untagged":
+			actual, _ := v.Selection.AsUntagged()
+			res.Selection = &registrypb.ToolUnionBranch_Untagged{Untagged: transformToolUntaggedUnionBranchToProtoToolUntaggedUnionBranch(actual)}
+		}
+	}
+
+	return res
+}
+
+// transformToolTaggedUnionBranchToProtoToolTaggedUnionBranch builds a value of
+// type *registrypb.ToolTaggedUnionBranch from a value of type
+// *registry.ToolTaggedUnionBranch.
+func transformToolTaggedUnionBranchToProtoToolTaggedUnionBranch(v *registry.ToolTaggedUnionBranch) *registrypb.ToolTaggedUnionBranch {
+	res := &registrypb.ToolTaggedUnionBranch{
 		Value: &v.Value,
 	}
 	if v.Discriminator != nil {
 		res.Discriminator = make([]*registrypb.ToolFieldPathSegment, len(v.Discriminator))
 		for i, val := range v.Discriminator {
 			res.Discriminator[i] = transformToolFieldPathSegmentToProtoToolFieldPathSegment(val)
+		}
+	}
+
+	return res
+}
+
+// transformToolUntaggedUnionBranchToProtoToolUntaggedUnionBranch builds a
+// value of type *registrypb.ToolUntaggedUnionBranch from a value of type
+// *registry.ToolUntaggedUnionBranch.
+func transformToolUntaggedUnionBranchToProtoToolUntaggedUnionBranch(v *registry.ToolUntaggedUnionBranch) *registrypb.ToolUntaggedUnionBranch {
+	res := &registrypb.ToolUntaggedUnionBranch{
+		JsonKind: &v.JSONKind,
+	}
+	index := int32(v.Index)
+	res.Index = &index
+	if v.Path != nil {
+		res.Path = make([]*registrypb.ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			res.Path[i] = transformToolFieldPathSegmentToProtoToolFieldPathSegment(val)
 		}
 	}
 
@@ -3029,12 +3137,55 @@ func transformProtoToolCollectionElementToToolCollectionElement(v *registrypb.To
 // transformProtoToolUnionBranchToToolUnionBranch builds a value of type
 // *registry.ToolUnionBranch from a value of type *registrypb.ToolUnionBranch.
 func transformProtoToolUnionBranchToToolUnionBranch(v *registrypb.ToolUnionBranch) *registry.ToolUnionBranch {
-	res := &registry.ToolUnionBranch{
+	res := &registry.ToolUnionBranch{}
+	if v.Selection != nil {
+		switch val := v.Selection.(type) {
+		case *registrypb.ToolUnionBranch_Tagged:
+			{
+				u := res.Selection
+				u.SetTagged(transformProtoToolTaggedUnionBranchToToolTaggedUnionBranch(val.Tagged))
+				res.Selection = u
+			}
+		case *registrypb.ToolUnionBranch_Untagged:
+			{
+				u := res.Selection
+				u.SetUntagged(transformProtoToolUntaggedUnionBranchToToolUntaggedUnionBranch(val.Untagged))
+				res.Selection = u
+			}
+		}
+	}
+
+	return res
+}
+
+// transformProtoToolTaggedUnionBranchToToolTaggedUnionBranch builds a value of
+// type *registry.ToolTaggedUnionBranch from a value of type
+// *registrypb.ToolTaggedUnionBranch.
+func transformProtoToolTaggedUnionBranchToToolTaggedUnionBranch(v *registrypb.ToolTaggedUnionBranch) *registry.ToolTaggedUnionBranch {
+	res := &registry.ToolTaggedUnionBranch{
 		Value: *v.Value,
 	}
 	res.Discriminator = make([]*registry.ToolFieldPathSegment, len(v.Discriminator))
 	for i, val := range v.Discriminator {
 		res.Discriminator[i] = transformProtoToolFieldPathSegmentToToolFieldPathSegment(val)
+	}
+
+	return res
+}
+
+// transformProtoToolUntaggedUnionBranchToToolUntaggedUnionBranch builds a
+// value of type *registry.ToolUntaggedUnionBranch from a value of type
+// *registrypb.ToolUntaggedUnionBranch.
+func transformProtoToolUntaggedUnionBranchToToolUntaggedUnionBranch(v *registrypb.ToolUntaggedUnionBranch) *registry.ToolUntaggedUnionBranch {
+	res := &registry.ToolUntaggedUnionBranch{
+		JSONKind: *v.JsonKind,
+		Index:    int(*v.Index),
+	}
+	if v.Path != nil {
+		res.Path = make([]*registry.ToolFieldPathSegment, len(v.Path))
+		for i, val := range v.Path {
+			res.Path[i] = transformProtoToolFieldPathSegmentToToolFieldPathSegment(val)
+		}
 	}
 
 	return res

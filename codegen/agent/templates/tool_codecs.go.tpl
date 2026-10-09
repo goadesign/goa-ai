@@ -61,7 +61,18 @@ var {{ .FieldsVar }} = []tools.FieldMetadata{
         {{- if .Branches }}
         Branches: []tools.UnionBranch{
             {{- range .Branches }}
-            {
+            {{- if .JSONKind }}
+            tools.UntaggedUnionBranch{
+                Path: []tools.FieldPathSegment{
+                    {{- range .Path }}
+                    {{- if .Dynamic }}tools.DynamicField{},{{ else }}tools.FixedField({{ printf "%q" .Name }}),{{ end }}
+                    {{- end }}
+                },
+                JSONKind: {{ printf "%q" .JSONKind }},
+                Index: {{ .Index }},
+            },
+            {{- else }}
+            tools.TaggedUnionBranch{
                 Discriminator: []tools.FieldPathSegment{
                     {{- range .Discriminator }}
                     {{- if .Dynamic }}tools.DynamicField{},{{ else }}tools.FixedField({{ printf "%q" .Name }}),{{ end }}
@@ -69,6 +80,7 @@ var {{ .FieldsVar }} = []tools.FieldMetadata{
                 },
                 Value: {{ printf "%q" .Value }},
             },
+            {{- end }}
             {{- end }}
         },
         {{- end }}
@@ -419,6 +431,39 @@ func invalidGeneratedFieldTypeError(field, expected, actual, description string)
         descriptions,
     )
 }
+
+{{- if .HasTaggedUnionValidators }}
+// invalidJSONUnionDiscriminator reports an absent, non-string or undeclared
+// branch selector at its actual JSON path, so callers can correct that field.
+func invalidJSONUnionDiscriminator(field string, got any, present bool, allowed []string) error {
+    constraint := "invalid_enum_value"
+    if !present {
+        constraint = "missing_field"
+    } else if _, ok := got.(string); !ok {
+        return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(got), "")
+    }
+    return tools.NewValidationError(
+        fmt.Sprintf("field %q must select a declared union branch", field),
+        []*tools.FieldIssue{
+            {Field: field, Constraint: constraint, Allowed: allowed},
+        },
+        nil,
+    )
+}
+
+// missingJSONField reports an absent required JSON property at its generated
+// path, so callers receive the same field contract for every union mapping.
+func missingJSONField(field string) error {
+    return tools.NewValidationError(
+        fmt.Sprintf("field %q is required", field),
+        []*tools.FieldIssue{
+            {Field: field, Constraint: "missing_field"},
+        },
+        nil,
+    )
+}
+
+{{- end }}
 
 func unknownJSONFieldError(path, field string, allowed []string) error {
     issueField := generatedJSONChildPath(path, field, false)
