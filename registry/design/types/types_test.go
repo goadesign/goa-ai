@@ -8,6 +8,8 @@ import (
 	"goa.design/goa/v3/dsl"
 	"goa.design/goa/v3/eval"
 	"goa.design/goa/v3/expr"
+	"goa.design/goa/v3/http/codegen/openapi"
+	openapiv3 "goa.design/goa/v3/http/codegen/openapi/v3"
 
 	registrytypes "goa.design/goa-ai/registry/design/types"
 )
@@ -31,6 +33,9 @@ func TestTypesComposeWithoutRegisteringService(t *testing.T) {
 			dsl.Method("domain_"+domainType.Name(), func() {
 				dsl.Payload(domainType)
 				dsl.GRPC(func() {})
+				dsl.HTTP(func() {
+					dsl.POST("/" + domainType.Name())
+				})
 			})
 		}
 		dsl.Method("register", func() {
@@ -50,4 +55,15 @@ func TestTypesComposeWithoutRegisteringService(t *testing.T) {
 	require.Len(t, expr.Root.Services, 1)
 	assert.Equal(t, "catalog", expr.Root.Services[0].Name)
 	assert.Equal(t, "catalog", expr.Root.API.Name)
+
+	// Importing registry types must keep saved workflow values out of the HTTP
+	// document while still publishing the application's actual endpoints.
+	for _, version := range []openapi.Version{openapi.Version30, openapi.Version32} {
+		spec := openapiv3.New(expr.Root, version)
+		require.NotNil(t, spec)
+		assert.NotEmpty(t, spec.Paths)
+		for _, name := range []string{"ToolOperationPendingExecution", "ToolOperationPendingInput", "ToolOperationHostRequest", "ToolOperationTaskWait", "ToolOperationTaskInput"} {
+			assert.NotContains(t, spec.Components.Schemas, name)
+		}
+	}
 }

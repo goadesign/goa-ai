@@ -79,6 +79,7 @@ var TaskInput = Type("ToolOperationTaskInput", func() {
 var PendingExecution = Type("ToolOperationPendingExecution", func() {
 	Meta("struct:pkg:path", "tooloperations")
 	Meta("type:generate:force")
+	Meta("openapi:generate", "false")
 	Description("Exactly one unfinished execution branch. Ordinary input continues the tool call; Task waiting reads an existing Task; Task input submits host answers to that Task.")
 	OneOf("outcome", func() {
 		Field(1, "input", PendingInput, "Ask the host to continue the original non-Task tool call.")

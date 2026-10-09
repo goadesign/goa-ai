@@ -47,8 +47,21 @@ runner now prepares the shared race-instrumented agent runtime before fixture
 deadlines begin. No checks were removed or timeout raised. This preparation took
 0.39 seconds on the local warm cache; the new Skill host plus all three failed
 fixtures passed in 46.49 seconds. A new cold-cache CI run must verify the repair.
+CI at `f4a41720` subsequently passed all seven jobs: build and lint, full unit
+checks, HTTP integration, browser Apps and all four generated MCP shards. The
+unit step took 4 minutes 40 seconds; the fixture steps took between 2 minutes
+37 seconds and 4 minutes 1 second. This verifies the shard preparation repair
+on CI without removing checks or extending timeouts.
 The current inventory includes the new Skill host test and is distributed by the
 existing shard rule rather than a fixed per-shard count.
+
+Importing registry definitions exposed an unused saved-operation schema in
+application OpenAPI documents. The private checkpoint type now uses the existing
+`openapi:generate=false` metadata beside forced code generation. Generated saved
+codecs remain unchanged. A composed application design verifies real HTTP
+endpoints remain published and private checkpoint schemas are absent in both
+OpenAPI versions. These focused checks passed in 2.47 seconds; owning registry
+regeneration completed in 6.57 seconds without generated changes.
 
 The OAuth audience review retains the existing JOSE `jwt.Audience` value in the
 private generated contracts. Its decoder accepts a string or an array containing
