@@ -16,7 +16,14 @@ import (
 )
 
 type (
-	// savedDeclarationReader checks each saved JSON value once and records slices
+	// savedUnion uses the selected value returned by a generated Goa union.
+	// Its JSON decoder chooses the branch before saved member names are checked.
+	savedUnion interface {
+		json.Unmarshaler
+		Value() (any, error)
+	}
+
+	// savedDeclarationReader checks saved JSON values and records slices
 	// of the input for consumer contracts in the order of their tool declarations.
 	savedDeclarationReader struct {
 		raw       []byte
@@ -68,19 +75,6 @@ func savedMemberType(target reflect.Type, name string) (reflect.Type, error) {
 	if target == nil {
 		return nil, nil
 	}
-	if target == reflect.TypeFor[genregistry.ToolFieldSegment]() {
-		switch name {
-		case "type":
-			return reflect.TypeFor[string](), nil
-		case "value":
-			// The generated union accepts a string for field or an empty object
-			// for element. Check object members even when value precedes type;
-			// the generated decoder checks the branch and scalar value later.
-			return reflect.TypeFor[genregistry.ToolCollectionElement](), nil
-		default:
-			return nil, fmt.Errorf("unknown field %q in tool field segment", name)
-		}
-	}
 	if target.Kind() == reflect.Struct {
 		for i := range target.NumField() {
 			field := target.Field(i)
@@ -113,10 +107,20 @@ func (r *savedDeclarationReader) readValue(target reflect.Type, contract *json.R
 	for target != nil && target.Kind() == reflect.Pointer {
 		target = target.Elem()
 	}
+	if target != nil && reflect.PointerTo(target).Implements(reflect.TypeFor[savedUnion]()) {
+		union := reflect.New(target).Interface().(savedUnion)
+		return r.readUnion(target, union, contract)
+	}
 	token, err := r.decoder.Token()
 	if err != nil {
 		return err
 	}
+	return r.readTokenValue(target, contract, token)
+}
+
+// readTokenValue checks the value whose opening token has already been read.
+// Object offsets begin at that token, excluding surrounding colons and commas.
+func (r *savedDeclarationReader) readTokenValue(target reflect.Type, contract *json.RawMessage, token json.Token) error {
 	delimiter, ok := token.(json.Delim)
 	if !ok {
 		return nil
@@ -173,6 +177,42 @@ func (r *savedDeclarationReader) readValue(target reflect.Type, contract *json.R
 	}
 	if delimiter == '{' && target == reflect.TypeFor[genregistry.ConsumerContract]() {
 		*contract = r.raw[start:r.decoder.InputOffset()]
+	}
+	return nil
+}
+
+// readUnion checks duplicate keys, asks Goa to decode the selected branch, and
+// then checks exact saved member names against that branch's generated type.
+// Both reads use slices of the original input, preserving registration identity.
+func (r *savedDeclarationReader) readUnion(target reflect.Type, union savedUnion, contract *json.RawMessage) error {
+	token, err := r.decoder.Token()
+	if err != nil {
+		return err
+	}
+	start := r.decoder.InputOffset() - 1
+	if token != json.Delim('{') {
+		return fmt.Errorf("saved %s must be a union object", target.Name())
+	}
+	if err := r.readTokenValue(nil, contract, token); err != nil {
+		return err
+	}
+	raw := r.raw[start:r.decoder.InputOffset()]
+	if err := union.UnmarshalJSON(raw); err != nil {
+		return err
+	}
+	value, err := union.Value()
+	if err != nil {
+		return err
+	}
+	// Goa unions save two envelope members. The value's generated Go type
+	// supplies the exact names inside its selected branch, including nested unions.
+	envelope := reflect.StructOf([]reflect.StructField{
+		{Name: "Type", Type: reflect.TypeFor[string](), Tag: `json:"type"`},
+		{Name: "Value", Type: reflect.TypeOf(value), Tag: `json:"value"`},
+	})
+	reader := savedDeclarationReader{raw: raw, decoder: json.NewDecoder(bytes.NewReader(raw))}
+	if err := reader.readValue(envelope, contract); err != nil {
+		return fmt.Errorf("decode saved %s: %w", target.Name(), err)
 	}
 	return nil
 }

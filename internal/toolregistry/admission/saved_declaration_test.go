@@ -220,3 +220,47 @@ func TestCurrentDeclarationFingerprintRetainsGeneratedEncoding(t *testing.T) {
 		assert.NotEqual(t, original, fingerprint)
 	}
 }
+
+// Selected branch metadata must survive the same save-and-read path used by
+// registrations, including nested path segments and original contract bytes.
+func TestSavedDeclarationPreservesUnionSelections(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		selection genregistry.ToolUnionSelection
+	}{
+		{name: "tagged", selection: genregistry.NewToolUnionSelectionTagged(&genregistry.ToolTaggedUnionBranch{
+			Discriminator: []*genregistry.ToolFieldPathSegment{{Segment: genregistry.NewToolFieldSegmentField("type")}},
+			Value:         "record",
+		})},
+		{name: "untagged", selection: genregistry.NewToolUnionSelectionUntagged(&genregistry.ToolUntaggedUnionBranch{
+			Path:     []*genregistry.ToolFieldPathSegment{{Segment: genregistry.NewToolFieldSegmentElement(&genregistry.ToolCollectionElement{})}},
+			JSONKind: "object", Index: 0,
+		})},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			toolset := &genregistry.Toolset{Name: "records", Tools: []*genregistry.ToolSchema{{
+				Name: "records.read", ConsumerContract: &genregistry.ConsumerContract{
+					Kind: "service", Payload: &genregistry.ToolTypeMetadata{Fields: []*genregistry.ToolFieldMetadata{{
+						Branches: []*genregistry.ToolUnionBranch{{Selection: test.selection}},
+					}}},
+				},
+			}}}
+			raw, err := json.Marshal(toolset)
+			require.NoError(t, err)
+			want, err := ToolsetFingerprint(toolset)
+			require.NoError(t, err)
+			decoded, got, err := SavedToolsetFingerprint(raw)
+			require.NoError(t, err)
+			assert.Equal(t, want, got)
+			assert.Equal(t, toolset, decoded)
+			for _, invalid := range []string{
+				strings.Replace(string(raw), `"type":`, `"Type":`, 1),
+				strings.Replace(string(raw), `"value":`, `"value":{},"value":`, 1),
+				strings.Replace(string(raw), `"value":{`, `"value":{"unknown":true,`, 1),
+			} {
+				_, _, err := SavedToolsetFingerprint([]byte(invalid))
+				assert.Error(t, err)
+			}
+		})
+	}
+}
