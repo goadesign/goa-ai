@@ -213,6 +213,12 @@ func rewriteUnionSchema(union *goaexpr.Union, schema map[string]any, defs map[st
 			return fmt.Errorf("union %q has nil variant %d", union.TypeName, i)
 		}
 		branch, _ := branches[i].(map[string]any)
+		if union.Untagged {
+			if err := alignSchemaNodeWithGeneratedDecoder(nat.Attribute, branch, defs, seen, closeObjects); err != nil {
+				return err
+			}
+			continue
+		}
 		properties, _ := branch["properties"].(map[string]any)
 		typeSchema, _ := properties[typeKey].(map[string]any)
 		valueSchema, ok := properties[valueKey].(map[string]any)
@@ -247,7 +253,11 @@ func rewriteUnionSchema(union *goaexpr.Union, schema map[string]any, defs map[st
 	delete(schema, "anyOf")
 	delete(schema, "properties")
 	delete(schema, "required")
-	schema["type"] = jsonSchemaTypeObject
+	if union.Untagged {
+		delete(schema, "type")
+	} else {
+		schema["type"] = jsonSchemaTypeObject
+	}
 	schema["oneOf"] = branches
 	return nil
 }

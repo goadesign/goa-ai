@@ -49,6 +49,7 @@ type (
 		TypeKey  string
 		ValueKey string
 		Flatten  bool
+		Untagged bool
 		Encode   bool
 		Decode   bool
 		Open     bool
@@ -63,6 +64,7 @@ type (
 		Kind        string
 		Constructor string
 		Nilable     bool
+		JSONKind    byte
 	}
 
 	// valueData contains the generated functions for one service value.
@@ -189,12 +191,13 @@ func (p *Plan) link() (*fileData, []*goacodegen.ImportSpec, error) {
 				TypeKey:  expression.GetTypeKey(),
 				ValueKey: expression.GetValueKey(),
 				Flatten:  expression.Flatten,
+				Untagged: expression.Untagged,
 				Encode:   value.direction.encodes(),
 				Decode:   value.direction.decodes(),
 				Open:     value.elicitation != nil,
 			}
 			unionKeys[planned.name] = union
-			for _, branch := range planned.branches {
+			for index, branch := range planned.branches {
 				fieldType := branch.layout.Link(p.pkg.ImportPath(), p.pkg.ImportName).Ref()
 				union.Branches = append(union.Branches, &unionBranchData{
 					Name:        branch.name,
@@ -202,6 +205,7 @@ func (p *Plan) link() (*fileData, []*goacodegen.ImportSpec, error) {
 					FieldType:   fieldType,
 					Kind:        branch.kind.Name(),
 					Constructor: branch.constructor.Name(),
+					JSONKind:    goaexpr.JSONKind(expression.Values[index].Attribute.Type),
 					Nilable: strings.HasPrefix(fieldType, "*") ||
 						strings.HasPrefix(fieldType, "[]") || strings.HasPrefix(fieldType, "map["),
 				})
@@ -454,7 +458,11 @@ func (u {{ .Name }}) Validate() error {
 }
 
 {{ if .Encode }}
+{{- if .Untagged }}
+// MarshalJSON writes the selected branch value without an envelope.
+{{- else }}
 // MarshalJSON writes the selected branch name and value.
+{{- end }}
 func (u {{ .Name }}) MarshalJSON() ([]byte, error) {
 	if err := u.Validate(); err != nil {
 		return nil, err
@@ -468,7 +476,9 @@ func (u {{ .Name }}) MarshalJSON() ([]byte, error) {
 	default:
 		return nil, {{ $.Imports.Fmt }}.Errorf("unexpected {{ .Name }} branch %q", u.kind)
 	}
-	{{- if .Flatten }}
+	{{- if .Untagged }}
+	return {{ $.Imports.JSON }}.Marshal(value)
+	{{- else if .Flatten }}
 	data, err := {{ $.Imports.JSON }}.Marshal(value)
 	if err != nil { return nil, err }
 	var fields map[string]{{ $.Imports.JSON }}.RawMessage
@@ -491,9 +501,44 @@ func (u {{ .Name }}) MarshalJSON() ([]byte, error) {
 {{ end }}
 
 {{ if .Decode }}
+{{- if .Untagged }}
+// UnmarshalJSON selects a typed branch by JSON kind and rejects unknown fields.
+{{- else }}
 // UnmarshalJSON reads one complete branch name and value.
+{{- end }}
 func (u *{{ .Name }}) UnmarshalJSON(data []byte) error {
 	{{- $union := . }}
+	{{- if .Untagged }}
+	data = {{ $.Imports.Bytes }}.Trim(data, " \t\r\n")
+	if len(data) == 0 {
+		return {{ $.Imports.Fmt }}.Errorf("{{ .Name }} requires a non-null JSON value")
+	}
+	switch data[0] {
+	{{- range .Branches }}
+	{{- if eq .JSONKind 48 }}
+	case '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
+	{{- else if eq .JSONKind 116 }}
+	case 't', 'f':
+	{{- else }}
+	case {{ printf "%q" .JSONKind }}:
+	{{- end }}
+		var value {{ .FieldType }}
+		decoder := {{ $.Imports.JSON }}.NewDecoder({{ $.Imports.Bytes }}.NewReader(data))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&value); err != nil { return err }
+		if err := decoder.Decode(&struct{}{}); err != {{ $.Imports.IO }}.EOF {
+			if err == nil { return {{ $.Imports.Fmt }}.Errorf("decode {{ $union.Name }} JSON: multiple JSON values") }
+			return err
+		}
+		selected := {{ .Constructor }}(value)
+		if err := selected.Validate(); err != nil { return err }
+		*u = selected
+		return nil
+	{{- end }}
+	default:
+		return {{ $.Imports.Fmt }}.Errorf("{{ .Name }} has no branch for this JSON value")
+	}
+	{{- else }}
 	{{- if .Flatten }}
 	var fields map[string]{{ $.Imports.JSON }}.RawMessage
 	if err := {{ $.Imports.JSON }}.Unmarshal(data, &fields); err != nil { return err }
@@ -561,6 +606,7 @@ func (u *{{ .Name }}) UnmarshalJSON(data []byte) error {
 		})
 	}
 	return u.Validate()
+	{{- end }}
 }
 {{ end }}
 {{ end }}

@@ -157,7 +157,7 @@ func (v *Value) writeValueCheck(out *strings.Builder, writer codegen.Attributor,
 			item := fmt.Sprintf("branch%d", depth)
 			fmt.Fprintf(out, "if %s, ok := %s.As%s(); ok {\n_ = %s\n", item, target, name, item)
 			childField := fmt.Sprintf("%s(%s, %q, false)", childPath, field, actual.GetValueKey())
-			if actual.Flatten {
+			if actual.Flatten || actual.Untagged {
 				childField = field
 			}
 			if err := v.writeValueCheck(out, writer.Enter(attribute), branch.Attribute, item, childField,

@@ -79,8 +79,9 @@ case-sensitive. Maps retain their declared dynamic string keys.
 Required fields and length constraints remain distinct. A required collection
 cannot be nil, but an empty collection is valid unless its Goa constraints
 forbid it. Collection element nullability follows the declared element contract.
-For a union, the discriminator selects the branch whose fields and constraints
-are checked. Named types retain the constraints of their underlying definitions.
+For a tagged union, the discriminator selects the branch whose fields and
+constraints are checked. Named types retain the constraints of their underlying
+definitions.
 
 A `OneOf` with `Meta("oneof:json:flatten")` encodes its selected object's fields
 beside the discriminator. For example, a `complete` branch can write
@@ -90,6 +91,15 @@ including its required fields, and reject unknown fields. Unions without this
 metadata keep the nested `value` property. Regenerate both JSON peers together
 when selecting a different mapping, and migrate any stored documents before
 adopting it. The protobuf representation is unchanged.
+
+Use `Meta("oneof:json:untagged")` when each branch has a distinct JSON kind.
+An array branch writes an array directly; a string branch writes a string.
+The codec selects that kind, then validates the complete typed branch. Empty
+collections remain valid when the design permits them, and integers retain
+their exact values. Goa rejects ambiguous branch kinds during DSL evaluation.
+The standalone schema describes the same raw values. Regenerate and update
+both JSON peers together, and migrate stored values before changing their
+mapping. This mapping does not change protobuf's representation.
 
 The supported values are closed generated Go representations: primitives,
 objects, arrays, maps with string or named-string keys, unions, and their named

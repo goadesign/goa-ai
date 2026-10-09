@@ -2592,6 +2592,13 @@ Generation selects the mapping before rendering; generated code does not walk
 a schema or guess a branch from field presence. Ordinary tagged unions retain
 their nested value. Neither mapping changes protobuf's native oneof.
 
+Complete-original codecs also consume Goa's evaluated untagged union mapping.
+The outer JSON kind selects a branch whose raw value is encoded directly;
+typed decoding and the existing generated validators check its contents.
+The shared JSON shape checks and schema builder use the same mapping. The
+generator retains the authored branch kinds and emits their typed decoding;
+runtime code does not infer the mapping from JSON Schema.
+
 The original-value, tool, and completion codecs share JSON shape checks while
 retaining their different contracts. Complete-original functions do not change
 model-visible field selection, completion-owned result representations, or

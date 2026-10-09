@@ -12,6 +12,26 @@ func {{ .Name }}(path string, value any, description string) error {
     if value == nil {
         return {{ $names.InvalidFieldType }}(field, {{ printf "%q" .Expected }}, "null", description)
     }
+    {{- if and (eq .Kind "union") .Untagged }}
+    switch value.(type) {
+    {{- range .Branches }}
+    {{- if eq .JSONKind 34 }}
+    case string:
+    {{- else if eq .JSONKind 48 }}
+    case {{ $names.JSON }}.Number:
+    {{- else if eq .JSONKind 116 }}
+    case bool:
+    {{- else if eq .JSONKind 91 }}
+    case []any:
+    {{- else if eq .JSONKind 123 }}
+    case map[string]any:
+    {{- end }}
+        return {{ .Call.Name }}(path, value, {{ printf "%q" .Call.Description }})
+    {{- end }}
+    default:
+        return {{ $names.InvalidFieldType }}(field, "a declared union branch", {{ $names.DecodedType }}(value), description)
+    }
+    {{- else }}
     {{- $usesTyped := or (eq .Kind "object") (eq .Kind "array") (eq .Kind "map") (eq .Kind "union") (and $names.IntegerRangeInShape (or .SignedInteger .UnsignedInteger)) }}
     {{- if or (eq .Expected "integer") (eq .Expected "number") }}
     {{ if $usesTyped }}typed{{ else }}_{{ end }}, ok := value.({{ $names.JSON }}.Number)
@@ -128,6 +148,7 @@ func {{ .Name }}(path string, value any, description string) error {
     {{- end }}
     {{- if ne .Kind "union" }}
     return nil
+    {{- end }}
     {{- end }}
     {{- end }}
 }

@@ -34,7 +34,7 @@ type (
 		Element *Node
 		// ElementDescription retains a map element occurrence's description.
 		ElementDescription string
-		// Union is the authored discriminator/value contract.
+		// Union records the authored branch selection and JSON mapping.
 		Union *expr.Union
 		// Branches are the union alternatives in declaration order.
 		Branches []*Field
@@ -199,6 +199,9 @@ func Category(dt expr.DataType) string {
 	case expr.UserType:
 		return Category(actual.Attribute().Type)
 	case *expr.Object, *expr.Map, *expr.Union:
+		if union, ok := actual.(*expr.Union); ok && union.Untagged {
+			return ""
+		}
 		return "object"
 	case *expr.Array:
 		return "array"

@@ -15,7 +15,8 @@ and verification evidence and do not supersede unfinished gates.
 | Task production and notifications | Implemented through existing typed job methods and one shared resource/Task subscription source. Generated HTTP lifecycle, native executor/provider paths, discovery, full snapshots and selected views are verified. Final-head integration and caller acceptance remain required. |
 | Dynamic catalogs | Implemented through authenticated native methods for tools, prompts, resources and URI templates, with one shared subscription source. Final-head integration and review remain required. |
 | OAuth | Built-in authorization paths and the agreed metadata/profile assessment are implemented. Selected independent checks and explicit legacy-fixture mismatches are recorded. Final-head verification, review and caller acceptance remain required. |
-| MCP Apps and Skills | Required. Complete their authored, generated and consuming paths and verify extension contracts. |
+| MCP Apps | Implemented through authored app resources and tools, generated peers, and the official browser SDK. Final-head browser, build and integration CI passed. Final review remains required. |
+| MCP Skills | In progress. Official discovery/content, verification, approval, origin identity and context-retention contracts remain required. The shared Goa support for raw array/string unions is merged in Goa PR #4037 and pinned at `bde76c5dfcbf`; the Goa AI complete-value codec/schema path passes its focused checks. Model-facing mappings, producer and consuming host acceptance remain open. |
 | Dependencies, documentation and website | Dependency updates are underway. Finish caller migration, authoritative docs, translations and the MCP home-page section after capability acceptance. |
 | Generated stdio servers | Explicitly deferred. Existing stdio consumers remain supported. |
 
