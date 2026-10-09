@@ -17,6 +17,7 @@ import (
 	strconv "strconv"
 	"unicode/utf8"
 
+	rawjson "goa.design/goa-ai/runtime/agent/rawjson"
 	goa "goa.design/goa/v3/pkg"
 	"goa.design/goa/v3/security"
 )
@@ -292,6 +293,46 @@ type SignedSamlPayload struct {
 // The preceding assertion may have been consumed
 type StateBranchPending string
 
+// identityCredentialReadyInt64Transport stores JSON fields until they have been validated.
+type identityCredentialReadyInt64Transport int64
+
+// UnmarshalJSON reads an exact whole JSON number and stores it within this type's
+// declared range. Decimal and exponent spellings do not change its value.
+func (value *identityCredentialReadyInt64Transport) UnmarshalJSON(data []byte) error {
+	number, err := rawjson.DecodeInteger[int64](data)
+	if err != nil {
+		return fmt.Errorf("decode identityCredentialReadyInt64Transport integer: %w", err)
+	}
+	*value = identityCredentialReadyInt64Transport(number)
+	return nil
+}
+
+// ValidateidentityCredentialReadyInt64Transport checks decoded JSON before it becomes a service value.
+func ValidateidentityCredentialReadyInt64Transport(value identityCredentialReadyInt64Transport) (err error) {
+
+	return err
+}
+
+// identityGrantInt64Transport stores JSON fields until they have been validated.
+type identityGrantInt64Transport int64
+
+// UnmarshalJSON reads an exact whole JSON number and stores it within this type's
+// declared range. Decimal and exponent spellings do not change its value.
+func (value *identityGrantInt64Transport) UnmarshalJSON(data []byte) error {
+	number, err := rawjson.DecodeInteger[int64](data)
+	if err != nil {
+		return fmt.Errorf("decode identityGrantInt64Transport integer: %w", err)
+	}
+	*value = identityGrantInt64Transport(number)
+	return nil
+}
+
+// ValidateidentityGrantInt64Transport checks decoded JSON before it becomes a service value.
+func ValidateidentityGrantInt64Transport(value identityGrantInt64Transport) (err error) {
+
+	return err
+}
+
 // jsonIdentityCredentialReadyTransport stores JSON fields until they have been validated.
 type jsonIdentityCredentialReadyTransport struct {
 	// Validated identity refresh credential, never sent to MCP
@@ -379,7 +420,7 @@ type jsonIdentityGrantTransport struct {
 	// Permissions allowed by the identity provider for the requested MCP resource
 	Scope *string `json:"scope,omitempty"`
 	// Exclusive grant lifetime in seconds from its token exchange
-	ExpiresIn *int64 `json:"expires_in,omitempty"`
+	ExpiresIn *identityGrantInt64Transport `json:"expires_in,omitempty"`
 	// Optional issuer credential that this identity-grant response does not retain
 	RefreshToken *string `json:"refresh_token,omitempty"`
 }
@@ -415,8 +456,8 @@ func validatejsonIdentityGrantTransport(value *jsonIdentityGrantTransport) (err 
 		err = goa.MergeErrors(err, goa.ValidatePattern("body.scope", *value.Scope, "^[\\x21\\x23-\\x5b\\x5d-\\x7e]+( [\\x21\\x23-\\x5b\\x5d-\\x7e]+)*$"))
 	}
 	if value.ExpiresIn != nil {
-		if *value.ExpiresIn < 0 {
-			err = goa.MergeErrors(err, goa.InvalidRangeError("body.expires_in", *value.ExpiresIn, 0, true))
+		if int64(*value.ExpiresIn) < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.expires_in", int64(*value.ExpiresIn), 0, true))
 		}
 	}
 	if value.RefreshToken != nil {
@@ -440,7 +481,7 @@ type jsonIdentityRefreshTransport struct {
 	// SSO permissions issued for identity refresh, separate from MCP permissions
 	Scope *string `json:"scope,omitempty"`
 	// Exclusive identity refresh lifetime in seconds when the issuer reports it
-	ExpiresIn *int64 `json:"expires_in,omitempty"`
+	ExpiresIn *identityCredentialReadyInt64Transport `json:"expires_in,omitempty"`
 }
 
 // validatejsonIdentityRefreshTransport checks decoded JSON before it becomes a service value.
@@ -477,8 +518,8 @@ func validatejsonIdentityRefreshTransport(value *jsonIdentityRefreshTransport) (
 		err = goa.MergeErrors(err, goa.ValidatePattern("body.scope", *value.Scope, "^[\\x21\\x23-\\x5b\\x5d-\\x7e]+( [\\x21\\x23-\\x5b\\x5d-\\x7e]+)*$"))
 	}
 	if value.ExpiresIn != nil {
-		if *value.ExpiresIn < 0 {
-			err = goa.MergeErrors(err, goa.InvalidRangeError("body.expires_in", *value.ExpiresIn, 0, true))
+		if int64(*value.ExpiresIn) < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.expires_in", int64(*value.ExpiresIn), 0, true))
 		}
 	}
 	return err
@@ -969,8 +1010,11 @@ func EncodeIdentityGrant(in *IdentityGrant) ([]byte, error) {
 			AccessToken:     &in.AccessToken,
 			TokenType:       &in.TokenType,
 			Scope:           in.Scope,
-			ExpiresIn:       in.ExpiresIn,
 			RefreshToken:    in.RefreshToken,
+		}
+		if in.ExpiresIn != nil {
+			expiresIn := identityGrantInt64Transport(*in.ExpiresIn)
+			body.ExpiresIn = &expiresIn
 		}
 	}
 	if err := validatejsonIdentityGrantTransport(body); err != nil {
@@ -1013,8 +1057,11 @@ func DecodeIdentityGrant(data []byte) (out *IdentityGrant, err error) {
 			AccessToken:     *body.AccessToken,
 			TokenType:       *body.TokenType,
 			Scope:           body.Scope,
-			ExpiresIn:       body.ExpiresIn,
 			RefreshToken:    body.RefreshToken,
+		}
+		if body.ExpiresIn != nil {
+			expiresIn := int64(*body.ExpiresIn)
+			out.ExpiresIn = &expiresIn
 		}
 	}
 	return out, nil
@@ -1035,7 +1082,10 @@ func EncodeIdentityRefresh(in *IdentityRefresh) ([]byte, error) {
 			AccessToken:     &in.AccessToken,
 			TokenType:       &in.TokenType,
 			Scope:           in.Scope,
-			ExpiresIn:       in.ExpiresIn,
+		}
+		if in.ExpiresIn != nil {
+			expiresIn := identityCredentialReadyInt64Transport(*in.ExpiresIn)
+			body.ExpiresIn = &expiresIn
 		}
 	}
 	if err := validatejsonIdentityRefreshTransport(body); err != nil {
@@ -1078,7 +1128,10 @@ func DecodeIdentityRefresh(data []byte) (out *IdentityRefresh, err error) {
 			AccessToken:     *body.AccessToken,
 			TokenType:       *body.TokenType,
 			Scope:           body.Scope,
-			ExpiresIn:       body.ExpiresIn,
+		}
+		if body.ExpiresIn != nil {
+			expiresIn := int64(*body.ExpiresIn)
+			out.ExpiresIn = &expiresIn
 		}
 	}
 	return out, nil
@@ -1099,7 +1152,10 @@ func decodeIdentityRefreshTransportToIdentityRefresh(v *jsonIdentityRefreshTrans
 		AccessToken:     *v.AccessToken,
 		TokenType:       *v.TokenType,
 		Scope:           v.Scope,
-		ExpiresIn:       v.ExpiresIn,
+	}
+	if v.ExpiresIn != nil {
+		expiresIn := int64(*v.ExpiresIn)
+		res.ExpiresIn = &expiresIn
 	}
 
 	return res
@@ -1111,7 +1167,10 @@ func decodeIdentityRefreshTransportToIdentityRefresh2(v *jsonIdentityRefreshTran
 		AccessToken:     *v.AccessToken,
 		TokenType:       *v.TokenType,
 		Scope:           v.Scope,
-		ExpiresIn:       v.ExpiresIn,
+	}
+	if v.ExpiresIn != nil {
+		expiresIn := int64(*v.ExpiresIn)
+		res.ExpiresIn = &expiresIn
 	}
 
 	return res
@@ -1132,7 +1191,10 @@ func encodeIdentityRefreshToIdentityRefreshTransport(v *IdentityRefresh) *jsonId
 		AccessToken:     &v.AccessToken,
 		TokenType:       &v.TokenType,
 		Scope:           v.Scope,
-		ExpiresIn:       v.ExpiresIn,
+	}
+	if v.ExpiresIn != nil {
+		expiresIn := identityCredentialReadyInt64Transport(*v.ExpiresIn)
+		res.ExpiresIn = &expiresIn
 	}
 
 	return res
@@ -1144,7 +1206,10 @@ func encodeIdentityRefreshToIdentityRefreshTransport2(v *IdentityRefresh) *jsonI
 		AccessToken:     &v.AccessToken,
 		TokenType:       &v.TokenType,
 		Scope:           v.Scope,
-		ExpiresIn:       v.ExpiresIn,
+	}
+	if v.ExpiresIn != nil {
+		expiresIn := identityCredentialReadyInt64Transport(*v.ExpiresIn)
+		res.ExpiresIn = &expiresIn
 	}
 
 	return res
@@ -1287,12 +1352,9 @@ func validateIdentityCredentialReadyJSONValue4(path string, value any, descripti
 	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
 	}
-	typed, ok := value.(json.Number)
+	_, ok := value.(json.Number)
 	if !ok {
 		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
-	}
-	if _, err := strconv.ParseInt(typed.String(), 10, 64); err != nil {
-		return invalidGeneratedFieldTypeError(field, "integer", "number", description)
 	}
 	return nil
 }
@@ -1618,12 +1680,9 @@ func validateIdentityCredentialStateJSONValue11(path string, value any, descript
 	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
 	}
-	typed, ok := value.(json.Number)
+	_, ok := value.(json.Number)
 	if !ok {
 		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
-	}
-	if _, err := strconv.ParseInt(typed.String(), 10, 64); err != nil {
-		return invalidGeneratedFieldTypeError(field, "integer", "number", description)
 	}
 	return nil
 }
@@ -1809,12 +1868,9 @@ func validateIdentityGrantJSONValue3(path string, value any, description string)
 	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
 	}
-	typed, ok := value.(json.Number)
+	_, ok := value.(json.Number)
 	if !ok {
 		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
-	}
-	if _, err := strconv.ParseInt(typed.String(), 10, 64); err != nil {
-		return invalidGeneratedFieldTypeError(field, "integer", "number", description)
 	}
 	return nil
 }
@@ -1976,12 +2032,9 @@ func validateIdentityRefreshJSONValue3(path string, value any, description strin
 	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
 	}
-	typed, ok := value.(json.Number)
+	_, ok := value.(json.Number)
 	if !ok {
 		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
-	}
-	if _, err := strconv.ParseInt(typed.String(), 10, 64); err != nil {
-		return invalidGeneratedFieldTypeError(field, "integer", "number", description)
 	}
 	return nil
 }

@@ -17,6 +17,7 @@ import (
 	strconv "strconv"
 	"unicode/utf8"
 
+	rawjson "goa.design/goa-ai/runtime/agent/rawjson"
 	goa "goa.design/goa/v3/pkg"
 	"goa.design/goa/v3/security"
 )
@@ -373,6 +374,26 @@ type SignedRefreshPayload struct {
 // An exchange may have consumed the preceding credential
 type StateBranchPending string
 
+// bearerTokenInt64Transport stores JSON fields until they have been validated.
+type bearerTokenInt64Transport int64
+
+// UnmarshalJSON reads an exact whole JSON number and stores it within this type's
+// declared range. Decimal and exponent spellings do not change its value.
+func (value *bearerTokenInt64Transport) UnmarshalJSON(data []byte) error {
+	number, err := rawjson.DecodeInteger[int64](data)
+	if err != nil {
+		return fmt.Errorf("decode bearerTokenInt64Transport integer: %w", err)
+	}
+	*value = bearerTokenInt64Transport(number)
+	return nil
+}
+
+// ValidatebearerTokenInt64Transport checks decoded JSON before it becomes a service value.
+func ValidatebearerTokenInt64Transport(value bearerTokenInt64Transport) (err error) {
+
+	return err
+}
+
 // jsonBearerTokenTransport stores JSON fields until they have been validated.
 type jsonBearerTokenTransport struct {
 	// Opaque bearer token returned by the issuer
@@ -380,7 +401,7 @@ type jsonBearerTokenTransport struct {
 	// Bearer token type, compared without case sensitivity
 	TokenType *string `json:"token_type"`
 	// Access token lifetime in seconds from the token response
-	ExpiresIn *int64 `json:"expires_in,omitempty"`
+	ExpiresIn *bearerTokenInt64Transport `json:"expires_in,omitempty"`
 	// Space-separated permissions granted by the issuer
 	Scope *string `json:"scope,omitempty"`
 	// Private refresh credential; never sent to a resource server
@@ -408,8 +429,8 @@ func validatejsonBearerTokenTransport(value *jsonBearerTokenTransport) (err erro
 		err = goa.MergeErrors(err, goa.ValidatePattern("body.token_type", *value.TokenType, "^[Bb][Ee][Aa][Rr][Ee][Rr]$"))
 	}
 	if value.ExpiresIn != nil {
-		if *value.ExpiresIn < 0 {
-			err = goa.MergeErrors(err, goa.InvalidRangeError("body.expires_in", *value.ExpiresIn, 0, true))
+		if int64(*value.ExpiresIn) < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("body.expires_in", int64(*value.ExpiresIn), 0, true))
 		}
 	}
 	if value.Scope != nil {
@@ -836,9 +857,12 @@ func EncodeBearerToken(in *BearerToken) ([]byte, error) {
 		body = &jsonBearerTokenTransport{
 			AccessToken:  &in.AccessToken,
 			TokenType:    &in.TokenType,
-			ExpiresIn:    in.ExpiresIn,
 			Scope:        in.Scope,
 			RefreshToken: in.RefreshToken,
+		}
+		if in.ExpiresIn != nil {
+			expiresIn := bearerTokenInt64Transport(*in.ExpiresIn)
+			body.ExpiresIn = &expiresIn
 		}
 	}
 	if err := validatejsonBearerTokenTransport(body); err != nil {
@@ -879,9 +903,12 @@ func DecodeBearerToken(data []byte) (out *BearerToken, err error) {
 		out = &BearerToken{
 			AccessToken:  *body.AccessToken,
 			TokenType:    *body.TokenType,
-			ExpiresIn:    body.ExpiresIn,
 			Scope:        body.Scope,
 			RefreshToken: body.RefreshToken,
+		}
+		if body.ExpiresIn != nil {
+			expiresIn := int64(*body.ExpiresIn)
+			out.ExpiresIn = &expiresIn
 		}
 	}
 	return out, nil
@@ -1073,9 +1100,12 @@ func decodeBearerTokenTransportToBearerToken(v *jsonBearerTokenTransport) *Beare
 	res := &BearerToken{
 		AccessToken:  *v.AccessToken,
 		TokenType:    *v.TokenType,
-		ExpiresIn:    v.ExpiresIn,
 		Scope:        v.Scope,
 		RefreshToken: v.RefreshToken,
+	}
+	if v.ExpiresIn != nil {
+		expiresIn := int64(*v.ExpiresIn)
+		res.ExpiresIn = &expiresIn
 	}
 
 	return res
@@ -1085,9 +1115,12 @@ func decodeBearerTokenTransportToBearerToken2(v *jsonBearerTokenTransport) *Bear
 	res := &BearerToken{
 		AccessToken:  *v.AccessToken,
 		TokenType:    *v.TokenType,
-		ExpiresIn:    v.ExpiresIn,
 		Scope:        v.Scope,
 		RefreshToken: v.RefreshToken,
+	}
+	if v.ExpiresIn != nil {
+		expiresIn := int64(*v.ExpiresIn)
+		res.ExpiresIn = &expiresIn
 	}
 
 	return res
@@ -1107,9 +1140,12 @@ func encodeBearerTokenToBearerTokenTransport(v *BearerToken) *jsonBearerTokenTra
 	res := &jsonBearerTokenTransport{
 		AccessToken:  &v.AccessToken,
 		TokenType:    &v.TokenType,
-		ExpiresIn:    v.ExpiresIn,
 		Scope:        v.Scope,
 		RefreshToken: v.RefreshToken,
+	}
+	if v.ExpiresIn != nil {
+		expiresIn := bearerTokenInt64Transport(*v.ExpiresIn)
+		res.ExpiresIn = &expiresIn
 	}
 
 	return res
@@ -1119,9 +1155,12 @@ func encodeBearerTokenToBearerTokenTransport2(v *BearerToken) *jsonBearerTokenTr
 	res := &jsonBearerTokenTransport{
 		AccessToken:  &v.AccessToken,
 		TokenType:    &v.TokenType,
-		ExpiresIn:    v.ExpiresIn,
 		Scope:        v.Scope,
 		RefreshToken: v.RefreshToken,
+	}
+	if v.ExpiresIn != nil {
+		expiresIn := bearerTokenInt64Transport(*v.ExpiresIn)
+		res.ExpiresIn = &expiresIn
 	}
 
 	return res
@@ -1230,12 +1269,9 @@ func validateBearerTokenJSONValue3(path string, value any, description string) e
 	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
 	}
-	typed, ok := value.(json.Number)
+	_, ok := value.(json.Number)
 	if !ok {
 		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
-	}
-	if _, err := strconv.ParseInt(typed.String(), 10, 64); err != nil {
-		return invalidGeneratedFieldTypeError(field, "integer", "number", description)
 	}
 	return nil
 }
@@ -1465,12 +1501,9 @@ func validateResourceCredentialReadyJSONValue6(path string, value any, descripti
 	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
 	}
-	typed, ok := value.(json.Number)
+	_, ok := value.(json.Number)
 	if !ok {
 		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
-	}
-	if _, err := strconv.ParseInt(typed.String(), 10, 64); err != nil {
-		return invalidGeneratedFieldTypeError(field, "integer", "number", description)
 	}
 	return nil
 }
@@ -1916,12 +1949,9 @@ func validateResourceCredentialStateJSONValue6(path string, value any, descripti
 	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
 	}
-	typed, ok := value.(json.Number)
+	_, ok := value.(json.Number)
 	if !ok {
 		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
-	}
-	if _, err := strconv.ParseInt(typed.String(), 10, 64); err != nil {
-		return invalidGeneratedFieldTypeError(field, "integer", "number", description)
 	}
 	return nil
 }
