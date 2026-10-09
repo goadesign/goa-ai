@@ -12,6 +12,12 @@ if [[ $# -gt 1 || ( "$MCP_REQUESTED_SHARD" != all && ! "$MCP_REQUESTED_SHARD" =~
     exit 2
 fi
 
+# Generated tool packages import the shared agent runtime and registry. Build
+# their race-instrumented dependencies once before individual fixture deadlines
+# begin; every fixture still compiles and checks all of its generated packages.
+printf 'Preparing shared generated runtime dependencies\n'
+time "$MCP_GO" build -race ./runtime/agent/runtime
+
 MCP_TEST_NAMES=$("$MCP_GO" test -list '^(Test|Example|Fuzz)' ./codegen/mcp)
 mkdir -p .cache
 for ((MCP_SHARD=0; MCP_SHARD<MCP_SHARD_COUNT; MCP_SHARD++)); do
