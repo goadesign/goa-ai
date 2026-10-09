@@ -12,6 +12,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/internal/tooloperation"
+	genregistryclient "goa.design/goa-ai/registry/gen/grpc/registry/client"
+	genregistrysrv "goa.design/goa-ai/registry/gen/grpc/registry/server"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	gentooloperations "goa.design/goa-ai/registry/gen/tooloperations"
 	"goa.design/goa-ai/runtime/agent/api"
@@ -97,6 +99,75 @@ func TestExecutorGeneratedClientPreservesExecutionOperations(t *testing.T) {
 			assert.Equal(t, admitted.Tool, retried.Tool)
 			assert.Equal(t, admitted.PayloadJSON, retried.PayloadJSON)
 			assert.Equal(t, admitted.WireProtocolVersion, retried.WireProtocolVersion)
+		})
+	}
+}
+
+// Calls without a conversation turn or parent must pass the same generated
+// request validation as calls with both identifiers, including overload recovery.
+func TestExecutorGeneratedClientPreservesOptionalIdentifiers(t *testing.T) {
+	for _, test := range []struct {
+		name, turn, parent string
+	}{
+		{name: "both absent"},
+		{name: "turn only", turn: "turn"},
+		{name: "parent only", parent: "parent"},
+		{name: "both present", turn: "turn", parent: "parent"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			const toolUseID = "optional-identifiers-call"
+			result := &genregistry.CallToolResult{
+				ToolUseID: toolUseID, RegistrationToken: testRegistrationTokenA,
+				ExecutionDeadline:     testResultStreamExpiration(toolregistry.MaxToolCallWait).Format(time.RFC3339Nano),
+				ResultStreamExpiresAt: testResultStreamExpiration(toolregistry.DefaultResultStreamTTL).Format(time.RFC3339Nano),
+			}
+			var admitted *genregistry.CallToolPayload
+			var retried *genregistry.RetryToolPayload
+			client := &genregistry.Client{
+				CallToolEndpoint: func(_ context.Context, value any) (any, error) {
+					admitted = value.(*genregistry.CallToolPayload)
+					if err := genregistrysrv.ValidateCallToolRequest(genregistryclient.NewProtoCallToolRequest(admitted)); err != nil {
+						return nil, err
+					}
+					return result, nil
+				},
+				RetryToolEndpoint: func(_ context.Context, value any) (any, error) {
+					retried = value.(*genregistry.RetryToolPayload)
+					if err := genregistrysrv.ValidateRetryToolRequest(genregistryclient.NewProtoRetryToolRequest(retried)); err != nil {
+						return nil, err
+					}
+					return result, nil
+				},
+			}
+			stream := &fakeStream{t: t, requiredStart: "0", events: []*streaming.Event{
+				{ID: "1-0", EventName: toolregistry.ResultEventKey, Payload: mustJSON(t, toolregistry.NewToolResultRetryMessage(testRegistrationTokenA, toolUseID, toolregistry.ToolRetryReasonProviderOverloaded, toolregistry.ProviderOverloadRetryAfter))},
+				{ID: "2-0", EventName: toolregistry.ResultEventKey, Payload: mustJSON(t, toolregistry.NewToolResultMessage(testRegistrationTokenA, toolUseID, json.RawMessage(`{}`)))},
+			}}
+			exec := newExecutor(t, client, fakePulseClient{streamID: toolregistry.ResultStreamID(toolUseID), stream: stream}, "records", fakeSpecs{spec: &tools.ToolSpec{Name: "records.read"}})
+			out, err := exec.Execute(t.Context(), &agentsruntime.ToolCallMeta{
+				RunID: "run", SessionID: "session", ToolCallID: "call", TurnID: test.turn, ParentToolCallID: test.parent,
+			}, &agentsruntime.ToolCall{Name: "records.read", Payload: []byte(`{}`)})
+			require.NoError(t, err)
+			require.NotNil(t, out.ToolResult)
+			assert.Nil(t, out.ToolResult.Failure)
+			require.NotNil(t, admitted)
+			require.NotNil(t, retried)
+			if test.turn == "" {
+				assert.Nil(t, admitted.Meta.TurnID)
+			} else {
+				require.NotNil(t, admitted.Meta.TurnID)
+				assert.Equal(t, test.turn, *admitted.Meta.TurnID)
+			}
+			if test.parent == "" {
+				assert.Nil(t, admitted.Meta.ParentToolCallID)
+			} else {
+				require.NotNil(t, admitted.Meta.ParentToolCallID)
+				assert.Equal(t, test.parent, *admitted.Meta.ParentToolCallID)
+			}
+			assert.Equal(t, admitted.Meta, retried.Meta)
+			empty := ""
+			admitted.Meta.TurnID = &empty
+			assert.Error(t, genregistrysrv.ValidateCallToolRequest(genregistryclient.NewProtoCallToolRequest(admitted)))
 		})
 	}
 }

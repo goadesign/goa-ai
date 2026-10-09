@@ -224,11 +224,17 @@ func (e *Executor) Execute(ctx context.Context, meta *toolregistry.ToolCallMeta,
 			ExecutionContinuation: tooloperation.Value(tmeta.ExecutionContinuation),
 			RunID:                 tmeta.RunID,
 			SessionID:             tmeta.SessionID,
-			TurnID:                &tmeta.TurnID,
 			ToolCallID:            tmeta.ToolCallID,
-			ParentToolCallID:      &tmeta.ParentToolCallID,
 			Labels:                tmeta.Labels,
 		},
+	}
+	// Empty optional identifiers mean this call has no turn or parent. Omit
+	// them from the generated request; present identifiers keep Goa validation.
+	if tmeta.TurnID != "" {
+		payload.Meta.TurnID = &tmeta.TurnID
+	}
+	if tmeta.ParentToolCallID != "" {
+		payload.Meta.ParentToolCallID = &tmeta.ParentToolCallID
 	}
 	admitted, err := e.client.CallTool(admissionCtx, payload)
 	cancelAdmission()
