@@ -63,7 +63,7 @@ func TestGeneratedOAuthCaller(t *testing.T){
   signingKey,err=rsa.GenerateKey(rand.Reader,2048);if err!=nil {t.Fatal(err)}
   signer,err=jose.NewSigner(jose.SigningKey{Algorithm:jose.RS256,Key:signingKey},nil);if err!=nil {t.Fatal(err)}
  }
- var tokens, calls atomic.Int32
+ var tokens, calls, discoveries atomic.Int32
  server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
   w.Header().Set("Content-Type","application/json")
   var body string
@@ -100,16 +100,23 @@ func TestGeneratedOAuthCaller(t *testing.T){
    }
    body="{\"access_token\":\"opaque-token\",\"token_type\":\"Bearer\",\"expires_in\":3600}"
   case "/mcp":
-   calls.Add(1)
-   if r.Header.Get("Authorization")!="Bearer opaque-token" {t.Error("bearer credential missing")}
    encoded,err:=io.ReadAll(r.Body);if err!=nil {t.Error(err);return}
    if strings.Contains(string(encoded),"registered-secret") || strings.Contains(string(encoded),"opaque-token") {t.Error("credentials entered MCP body")}
    if signedAssertion!="" && strings.Contains(string(encoded),signedAssertion) {t.Error("assertion entered MCP body")}
    // The shared transport restores the caller's request ID before decoding.
-   var envelope struct { ID string }
+   var envelope struct { ID string; Method string }
    decoder:=json.NewDecoder(strings.NewReader(string(encoded)))
    if err:=decoder.Decode(&envelope);err!=nil {t.Error(err);return}
-   body=fmt.Sprintf("{\"jsonrpc\":\"2.0\",\"id\":%q,\"result\":{\"resultType\":\"complete\",\"content\":[],\"structuredContent\":\"record\"}}",envelope.ID)
+   if envelope.Method=="server/discover" {
+    discoveries.Add(1)
+    if r.Header.Get("Authorization")!="" {t.Error("initial discovery sent a credential")}
+    body=fmt.Sprintf("{\"jsonrpc\":\"2.0\",\"id\":%q,\"result\":{\"resultType\":\"complete\",\"supportedVersions\":[\"2026-07-28\"],\"capabilities\":{\"tools\":{}},\"ttlMs\":0,\"cacheScope\":\"private\"}}",envelope.ID)
+   } else {
+    calls.Add(1)
+    if envelope.Method!="tools/call" {t.Error("unexpected domain operation")}
+    if r.Header.Get("Authorization")!="Bearer opaque-token" {t.Error("bearer credential missing")}
+    body=fmt.Sprintf("{\"jsonrpc\":\"2.0\",\"id\":%q,\"result\":{\"resultType\":\"complete\",\"content\":[],\"structuredContent\":\"record\"}}",envelope.ID)
+   }
   default:
    w.WriteHeader(http.StatusNotFound)
   }
@@ -157,6 +164,8 @@ func TestGeneratedOAuthCaller(t *testing.T){
   if string(result.StructuredContent)!="\"record\"" {t.Fatalf("wrong result: %s",result.StructuredContent)}
  }
  if calls.Load()!=2 || tokens.Load()!=1 {t.Fatalf("calls=%d tokens=%d",calls.Load(),tokens.Load())}
+ expectedDiscoveries:=int32(0);if profile=="browser"||profile=="enterprise"{expectedDiscoveries=1}
+ if discoveries.Load()!=expectedDiscoveries{t.Fatalf("discoveries=%d expected=%d",discoveries.Load(),expectedDiscoveries)}
  })}
 }
 `

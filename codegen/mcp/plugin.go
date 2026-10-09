@@ -120,6 +120,11 @@ func (p *mcpPlugin) plan(plan *goagenerator.Plan) error {
 		if err := planTaskAdapters(plan.Generation(), servicePlan, prepared, adapter); err != nil {
 			return err
 		}
+		// Resolve the source's native job selections before codec planning, so
+		// the source and tasks/get share one encoded observation contract.
+		if err := planSubscriptionSource(plan.Generation(), adapter); err != nil {
+			return err
+		}
 		adapter.ExtensionMetadata, err = serverExtensionMetadata(adapter)
 		if err != nil {
 			return err
@@ -138,9 +143,6 @@ func (p *mcpPlugin) plan(plan *goagenerator.Plan) error {
 			return err
 		}
 		if err := planCompletionConversions(plan.Generation(), servicePlan, prepared, adapter); err != nil {
-			return err
-		}
-		if err := planSubscriptionSource(plan.Generation(), adapter); err != nil {
 			return err
 		}
 		if err := declareMCPNames(plan.Generation(), adapter); err != nil {
