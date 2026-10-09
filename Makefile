@@ -16,7 +16,7 @@ PROTOC_GEN_GO_GRPC_TARGET := $(shell grep '^google.golang.org/grpc/cmd/protoc-ge
 PROTOC_GEN_GO_VERSION := $(word 2,$(subst @, ,$(PROTOC_GEN_GO_TARGET)))
 PROTOC_GEN_GO_GRPC_VERSION := $(word 2,$(subst @, ,$(PROTOC_GEN_GO_GRPC_TARGET)))
 
-.PHONY: all setup build lint test itest ci tools ensure-golangci ensure-protoc-plugins protoc-check run-example gen-example gen-registry gen-mcp-auth gen-mcp-skills
+.PHONY: all setup build lint test test-unit test-mcp itest ci tools ensure-golangci ensure-protoc-plugins protoc-check run-example gen-example gen-registry gen-mcp-auth gen-mcp-skills
 
 all: build lint test
 
@@ -31,9 +31,19 @@ lint: tools
 
 # Generator tests compile other repository packages in separate modules. Go's
 # test cache cannot track those subprocess inputs, so acceptance runs uncached.
-test: tools
-	$(GO) test -count=1 -race -covermode=atomic -coverprofile=cover.out `$(GO) list ./... | grep -v '/integration_tests'`
+test: test-unit test-mcp
+	awk 'FNR == 1 && NR != 1 { next } { print }' cover.out .cache/cover-mcp.out > .cache/cover-all.out
+	cp .cache/cover-all.out cover.out
+
+# MCP generator peers have their own processes and CI shards. All other root
+# packages and the maintained quickstart remain in this acceptance target.
+test-unit: tools
+	$(GO) test -count=1 -race -covermode=atomic -coverprofile=cover.out `$(GO) list ./... | grep -v '/integration_tests' | grep -v '^goa.design/goa-ai/codegen/mcp$$'`
 	cd quickstart && $(GO) test -count=1 ./...
+
+# Without a shard argument the script runs every MCP test and merges coverage.
+test-mcp: tools
+	GO="$(GO)" bash ./scripts/test-mcp
 
 # Run integration tests: end-to-end scenarios under integration_tests/ and
 # Docker-backed tests guarded by the `integration` build tag (registry health

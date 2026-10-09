@@ -40,7 +40,30 @@ jobs:
 
       - name: Run unit tests
         run: |
-          make test
+          make test-unit
+
+  mcp-generated:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@v7.0.0
+        with:
+          go-version: '1.27.1'
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Install developer tools
+        run: ./scripts/setup
+
+      - name: Verify assigned MCP tests
+        run: bash ./scripts/test-mcp ${{ matrix.shard }}
 
   mcp-apps:
     runs-on: ubuntu-latest

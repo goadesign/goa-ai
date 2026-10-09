@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Run all MCP tests, or one CI shard, without extending Go's package timeout.
+# Every test name belongs to exactly one shard. Each process has separate Goa
+# DSL state, so generated peers can compile without overlapping global designs.
+set -euo pipefail
+
+MCP_SHARD_COUNT=4
+MCP_GO=${GO:-go}
+MCP_REQUESTED_SHARD=${1:-all}
+if [[ $# -gt 1 || ( "$MCP_REQUESTED_SHARD" != all && ! "$MCP_REQUESTED_SHARD" =~ ^[0-3]$ ) ]]; then
+    printf 'Usage: %s [0-3]\n' "$0" >&2
+    exit 2
+fi
+
+MCP_TEST_NAMES=$("$MCP_GO" test -list '^(Test|Example|Fuzz)' ./codegen/mcp)
+mkdir -p .cache
+for ((MCP_SHARD=0; MCP_SHARD<MCP_SHARD_COUNT; MCP_SHARD++)); do
+    if [[ "$MCP_REQUESTED_SHARD" != all && "$MCP_REQUESTED_SHARD" != "$MCP_SHARD" ]]; then
+        continue
+    fi
+    MCP_PATTERN=$(printf '%s\n' "$MCP_TEST_NAMES" | awk -v shard="$MCP_SHARD" -v count="$MCP_SHARD_COUNT" '
+        /^(Test|Example|Fuzz)/ {
+            if (test_index++ % count == shard) {
+                printf "%s%s", separator, $0
+                separator = "|"
+            }
+        }')
+    if [[ -z "$MCP_PATTERN" ]]; then
+        printf 'MCP test shard %s has no tests\n' "$MCP_SHARD" >&2
+        exit 1
+    fi
+    printf 'Running MCP test shard %s of %s\n' "$((MCP_SHARD+1))" "$MCP_SHARD_COUNT"
+    time "$MCP_GO" test -count=1 -race -covermode=atomic \
+        -coverprofile=".cache/cover-mcp-${MCP_SHARD}.out" \
+        -run "^(${MCP_PATTERN})$" ./codegen/mcp
+done
+
+if [[ "$MCP_REQUESTED_SHARD" == all ]]; then
+    awk 'FNR == 1 && NR != 1 { next } { print }' \
+        .cache/cover-mcp-0.out .cache/cover-mcp-1.out \
+        .cache/cover-mcp-2.out .cache/cover-mcp-3.out > .cache/cover-mcp.out
+fi
