@@ -22,14 +22,25 @@ const (
 )
 
 // IsLegacyHTTPRequest selects the explicitly named older revision or an
-// initialize handshake. Malformed messages still go through envelope validation;
-// selection does not authenticate a request or accept mixed protocol metadata.
+// initialize handshake without modern per-request metadata. Explicit modern
+// metadata keeps unknown methods on the modern path. Selection does not
+// authenticate requests; the chosen decoder still validates the whole message.
 func IsLegacyHTTPRequest(request *http.Request, body []byte) bool {
 	if request.Header.Get("MCP-Protocol-Version") == LegacyProtocolVersion {
 		return true
 	}
 	var envelope jsonrpc.RawRequest
-	return envelope.UnmarshalJSON(body) == nil && envelope.Method == methodInitialize
+	if envelope.UnmarshalJSON(body) != nil || envelope.Method != methodInitialize {
+		return false
+	}
+	var params struct {
+		Meta map[string]json.RawMessage `json:"_meta"`
+	}
+	if err := json.Unmarshal(envelope.Params, &params); err != nil {
+		return true
+	}
+	_, modern := params.Meta[protocolVersionKey]
+	return !modern
 }
 
 // DecodeLegacyHTTPRequest validates one basic older-protocol request and returns

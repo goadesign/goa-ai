@@ -82,6 +82,9 @@ func TestLegacyHTTPRequestSelection(t *testing.T) {
 		{"handshake", `{"jsonrpc":"2.0","id":1,"method":"initialize"}`, "", true},
 		{"older header", `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`, LegacyProtocolVersion, true},
 		{"modern header", `{"jsonrpc":"2.0","id":1,"method":"server/discover"}`, ProtocolVersion, false},
+		{"modern initialize", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}`, ProtocolVersion, false},
+		{"unsupported modern initialize", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2099-01-01"}}}`, "2099-01-01", false},
+		{"older header with modern metadata", `{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"_meta":{"io.modelcontextprotocol/protocolVersion":"2026-07-28"}}}`, LegacyProtocolVersion, true},
 		{"malformed body", `{`, "", false},
 	} {
 		t.Run(test.name, func(t *testing.T) {

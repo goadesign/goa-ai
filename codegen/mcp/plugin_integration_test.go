@@ -117,7 +117,7 @@ func TestGeneratedStatelessProtocol(t *testing.T) {
  for _,test:=range []struct{method string;version string;status,code int}{
   {"tools/call",mcpruntime.ProtocolVersion,200,0},
   {"server/discover","2025-06-18",400,mcpruntime.UnsupportedProtocolVersion},
-  {"initialize",mcpruntime.ProtocolVersion,400,mcpruntime.JSONRPCInvalidParams},
+  {"initialize",mcpruntime.ProtocolVersion,404,mcpruntime.JSONRPCMethodNotFound},
  }{
   body:=[]byte("{\"jsonrpc\":\"2.0\",\"id\":9007199254740993,\"method\":\""+test.method+"\",\"params\":{\"name\":\"echo\",\"arguments\":{},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\""+test.version+"\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}")
   request,err:=http.NewRequest("POST",endpoint.URL+"/fmt",bytes.NewReader(body));if err!=nil{t.Fatal(err)}

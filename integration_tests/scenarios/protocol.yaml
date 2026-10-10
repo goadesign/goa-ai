@@ -44,10 +44,10 @@ scenarios:
     steps:
       - op: unknown/method
         expect: { status: error, error: { code: -32601 } }
-  - name: initialize_rejects_modern_metadata
+  - name: initialize_is_unavailable_to_modern_client
     steps:
       - op: initialize
-        expect: { status: error, error: { code: -32602 } }
+        expect: { status: error, error: { code: -32601 } }
   - name: basic_older_client
     defaults:
       headers: { MCP-Protocol-Version: "2025-11-25" }
