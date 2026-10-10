@@ -182,7 +182,7 @@ func (b *mcpExprBuilder) buildHTTPService(mcpService *expr.ServiceExpr, routePat
 	}
 	for _, endpoint := range httpService.HTTPEndpoints {
 		switch endpoint.MethodExpr.Name {
-		case "tools/call", "resources/read", "prompts/get", "tasks/get":
+		case methodToolsCall, methodResourcesRead, methodPromptsGet, "tasks/get":
 			body := expr.DupAtt(endpoint.MethodExpr.Result.Find("outcome"))
 			body.AddMeta("origin:attribute", "outcome")
 			body.AddMeta("http:body")

@@ -23,7 +23,7 @@ func planContentConversions(generation *codegen.Generation, services *goaservice
 	pkg := generation.Package(data.mcpImportPath)
 	var content *expr.AttributeExpr
 	for _, method := range prepared.mcpService.Methods {
-		if method.Name != "prompts/get" {
+		if method.Name != methodPromptsGet {
 			continue
 		}
 		messages := expr.AsArray(expr.AsObject(protocolCompletedResult(method.Result).Type).Attribute("messages").Type)

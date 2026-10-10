@@ -7,6 +7,12 @@ import (
 	"goa.design/goa/v3/expr"
 )
 
+const (
+	methodToolsCall     = "tools/call"
+	methodPromptsGet    = "prompts/get"
+	methodResourcesRead = "resources/read"
+)
+
 // buildMethods creates all MCP protocol methods
 func (b *mcpExprBuilder) buildMethods() []*expr.MethodExpr {
 	methods := make([]*expr.MethodExpr, 0, 10)

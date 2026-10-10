@@ -171,7 +171,9 @@ service wiring, and connecting a model. For MCP, follow the
 - **MCP 2026-07-28 over HTTP.** Generate stateless servers and typed clients with
   discovery, tools, structured results, and ordered text, image, audio, resource
   links, and embedded resources. Consumers also support stdio; generated stdio
-  servers are deferred.
+  servers are deferred. Generated HTTP servers also accept basic `2025-11-25`
+  clients on the same URL, using the same configured Goa endpoints. See the
+  [older-client contract](docs/runtime.md#older-http-clients).
 - **Resources and prompts.** Serve fixed or parameterized text/binary resources,
   typed prompts, argument completion, and authenticated paginated catalogs.
 - **Progress and subscriptions.** Report progress from ordinary service methods;

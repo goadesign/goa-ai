@@ -41,23 +41,54 @@ func withMCPTransport(h *Server, origins []string, next http.HandlerFunc) http.H
 			h.errhandler(r.Context(), w, fmt.Errorf("read MCP request body: %w", err))
 			return
 		}
-		r.Body = io.NopCloser(bytes.NewReader(body))
-		if failure := mcpruntime.ValidateHTTPRequest(r, body, bindings); failure != nil {
+		legacy := mcpruntime.IsLegacyHTTPRequest(r, body)
+		var request jsonrpc.RawRequest
+		var failure *mcpruntime.Error
+		if legacy {
+			decoded, invalid := mcpruntime.DecodeLegacyHTTPRequest(r, body)
+			failure = invalid
+			if invalid == nil {
+				request = *decoded
+			}
+		} else {
+			failure = mcpruntime.ValidateHTTPRequest(r, body, bindings)
+			if failure == nil {
+				if err := request.UnmarshalJSON(body); err != nil {
+					h.errhandler(r.Context(), w, err)
+					return
+				}
+			}
+		}
+		if failure != nil {
 			if err := mcpruntime.WriteProtocolError(w, body, failure); err != nil {
 				h.errhandler(r.Context(), w, err)
 			}
 			return
 		}
-		var request jsonrpc.RawRequest
-		if err := request.UnmarshalJSON(body); err != nil {
-			h.errhandler(r.Context(), w, err)
-			return
+		if legacy && request.HasID {
+			mode := mcpLegacyMode{}
+			r = r.WithContext(context.WithValue(r.Context(), mcpLegacyModeKey{}, mode))
+			encoded, err := json.Marshal(jsonrpc.Request{JSONRPC: request.JSONRPC, Method: request.Method, Params: request.Params, ID: request.ID})
+			if err != nil {
+				h.errhandler(r.Context(), w, err)
+				return
+			}
+			body = encoded
 		}
+		r.Body = io.NopCloser(bytes.NewReader(body))
 		if !request.HasID {
 			w.WriteHeader(http.StatusAccepted)
 			return
 		}
 		switch request.Method {
+		case "initialize", "ping":
+			if !legacy {
+				failure := &mcpruntime.Error{Code: mcpruntime.JSONRPCMethodNotFound, Message: "Method not found"}
+				if err := mcpruntime.WriteProtocolError(w, body, failure); err != nil {
+					h.errhandler(r.Context(), w, err)
+				}
+				return
+			}
 		case "":
 		default:
 			failure := &mcpruntime.Error{Code: mcpruntime.JSONRPCMethodNotFound, Message: "Method not found"}

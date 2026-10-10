@@ -7,6 +7,19 @@ func (s *{{ .ServerStructDeclaration.Name }}) handleHTTP(w http.ResponseWriter, 
         return
     }
     switch request.Method {
+    case "initialize":
+        request.Method = "server/discover"
+        {{- range .Endpoints }}
+        {{- if eq .Method.Name "server/discover" }}
+        if err := s.{{ .Method.VarName }}(r.Context(), r, &request, w); err != nil {
+            s.errhandler(r.Context(), w, fmt.Errorf("MCP initialize: %w", err))
+        }
+        {{- end }}
+        {{- end }}
+    case "ping":
+        if err := s.encoder(r.Context(), w).Encode(jsonrpc.MakeSuccessResponse(request.ID, struct{}{})); err != nil {
+            s.errhandler(r.Context(), w, fmt.Errorf("MCP ping: %w", err))
+        }
     {{- range .Endpoints }}
     case {{ printf "%q" .Method.Name }}:
         if err := s.{{ .Method.VarName }}(r.Context(), r, &request, w); err != nil {

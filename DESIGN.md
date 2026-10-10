@@ -2105,6 +2105,16 @@ version and truthful client capabilities; `server/discover` reports capabilities
 without creating session state. The shared HTTP transport validates mirrored
 headers and exact response IDs for generated and imported clients.
 
+Generated HTTP servers also accept basic `2025-11-25` clients at the same URL.
+An `initialize` request receives that implemented revision even when the client
+requests another older revision. Later calls name `2025-11-25` in the HTTP
+header. This wire adapter reuses the configured endpoints, argument codecs and
+response body types; it creates no protocol session or second application
+service. Object results retain their shape; scalar and array results use a
+required `value` field with a matching generated schema. See the
+[older HTTP client contract](docs/runtime.md#older-http-clients) for supported
+methods and limits.
+
 Generated adapters call explicitly declared MCP methods through generated
 argument and result codecs. Ordinary methods in the same service retain their
 declared transports and do not enter MCP catalogs, codecs, or executors. Tool schemas and agent specs use the same generation-time JSON contract,
