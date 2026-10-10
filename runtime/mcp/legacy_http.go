@@ -34,7 +34,7 @@ func IsLegacyHTTPRequest(request *http.Request, body []byte) bool {
 		return false
 	}
 	var params struct {
-		Meta map[string]json.RawMessage `json:"_meta"`
+		Meta map[string]json.RawMessage `json:"_meta"` //nolint:tagliatelle // MCP defines this field name.
 	}
 	if err := json.Unmarshal(envelope.Params, &params); err != nil {
 		return true
