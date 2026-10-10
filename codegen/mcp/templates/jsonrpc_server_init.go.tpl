@@ -13,6 +13,7 @@ func {{ $t.ServerInitDeclaration.Name }}(
     {{- end }}
     origins ...string,
 ) *{{ $t.ServerStructDeclaration.Name }} {
+    encoder = mcpLegacyResponseEncoder(encoder)
     s := &{{ $t.ServerStructDeclaration.Name }}{
         {{- range $t.ConstructorDependencies }}
         {{ .Name }}: {{ .Name }},

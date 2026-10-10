@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"goa.design/goa/v3/codegen"
+	goagenerator "goa.design/goa/v3/codegen/generator"
 	"goa.design/goa/v3/expr"
 )
 
@@ -17,6 +18,7 @@ type (
 		Tools              []*ToolAdapter
 		SubscriptionSource *subscriptionAdapter
 		ResourcePolicy     *resourcePolicy
+		Legacy             *legacyTransportData
 	}
 )
 
@@ -25,7 +27,7 @@ const exampleMCPStubSection = "example-mcp-stub"
 
 // applyMCPHTTPRules installs the current MCP request checks in the generated
 // server and client sections. Both server entry points use one checked handler.
-func applyMCPHTTPRules(files []*codegen.File, services []*plannedMCPService) error {
+func applyMCPHTTPRules(plan *goagenerator.Plan, files []*codegen.File, services []*plannedMCPService) error {
 	paths := make(map[string]*plannedMCPService, len(services))
 	for _, service := range services {
 		paths[filepath.ToSlash(filepath.Join(
@@ -68,6 +70,25 @@ func applyMCPHTTPRules(files []*codegen.File, services []*plannedMCPService) err
 			return fmt.Errorf("JSON-RPC server %q has no source header", f.Path)
 		}
 		codegen.AddImport(header, service.adapterData.jsonrpcServerImports.Imports()...)
+		httpService, err := mcpHTTPService(service.prepared)
+		if err != nil {
+			return err
+		}
+		rpcPlan, ok := plan.JSONRPC(service.prepared.root)
+		if !ok {
+			return fmt.Errorf("MCP service %q has no JSON-RPC plan", httpService.Name())
+		}
+		transport, ok := rpcPlan.Service(httpService)
+		if !ok {
+			return fmt.Errorf("MCP service %q has no planned JSON-RPC transport", httpService.Name())
+		}
+		legacy, err := buildLegacyTransportData(files, service, transport)
+		if err != nil {
+			return err
+		}
+		f.SectionTemplates = append(f.SectionTemplates, &codegen.SectionTemplate{
+			Name: "mcp-legacy-http", Source: mcpTemplates.Read("jsonrpc_server_legacy"), Data: legacy,
+		})
 		found := false
 		for _, s := range f.SectionTemplates {
 			if s == nil {
@@ -81,6 +102,7 @@ func applyMCPHTTPRules(files []*codegen.File, services []*plannedMCPService) err
 					Tools:              service.adapterData.Tools,
 					SubscriptionSource: service.adapterData.SubscriptionSource,
 					ResourcePolicy:     service.adapterData.ResourcePolicy,
+					Legacy:             legacy,
 				}
 				found = true
 			case "jsonrpc-server-init":

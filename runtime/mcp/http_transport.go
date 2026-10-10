@@ -367,7 +367,7 @@ func (t *HTTPTransport) send(outgoing *http.Request, hasID bool, envelope map[st
 	if result.ResultType == resultTask && (outgoing.Header.Get("Mcp-Method") != methodToolsCall || outgoing.Context().Value(taskSupportKey{}) == nil) {
 		return nil, NewMalformedResponseError(errors.New("task is not permitted for this method or host"))
 	}
-	if result.ResultType == resultInputRequired && outgoing.Header.Get("Mcp-Method") != methodToolsCall && outgoing.Header.Get("Mcp-Method") != "resources/read" && outgoing.Header.Get("Mcp-Method") != methodPromptsGet {
+	if result.ResultType == resultInputRequired && outgoing.Header.Get("Mcp-Method") != methodToolsCall && outgoing.Header.Get("Mcp-Method") != methodResourcesRead && outgoing.Header.Get("Mcp-Method") != methodPromptsGet {
 		return nil, NewMalformedResponseError(errors.New("input_required is not permitted for this method"))
 	}
 	// Task replies pass through the same state decoder before a generated

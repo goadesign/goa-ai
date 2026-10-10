@@ -62,8 +62,25 @@ func withMCPTransport(h *{{ .Transport.ServerStructDeclaration.Name }}, {{ if an
 			h.errhandler(r.Context(), w, fmt.Errorf("read MCP request body: %w", err))
 			return
 		}
-		r.Body = io.NopCloser(bytes.NewReader(body))
-        if failure := mcpruntime.ValidateHTTPRequest(r, body, bindings); failure != nil {
+        legacy := mcpruntime.IsLegacyHTTPRequest(r, body)
+        var request jsonrpc.RawRequest
+        var failure *mcpruntime.Error
+        if legacy {
+            decoded, invalid := mcpruntime.DecodeLegacyHTTPRequest(r, body)
+            failure = invalid
+            if invalid == nil {
+                request = *decoded
+            }
+        } else {
+            failure = mcpruntime.ValidateHTTPRequest(r, body, bindings)
+            if failure == nil {
+                if err := request.UnmarshalJSON(body); err != nil {
+                    h.errhandler(r.Context(), w, err)
+                    return
+                }
+            }
+        }
+        if failure != nil {
             {{- with .ResourcePolicy }}
             r = h.resourceServer.AuthorizeHTTP(w, r, [][]string{ {{ range .BasicScopes }}{ {{ range . }}{{ printf "%q" . }}, {{ end }} }, {{ end }} })
             if r == nil {
@@ -75,11 +92,34 @@ func withMCPTransport(h *{{ .Transport.ServerStructDeclaration.Name }}, {{ if an
             }
             return
         }
-        var request jsonrpc.RawRequest
-        if err := request.UnmarshalJSON(body); err != nil {
-            h.errhandler(r.Context(), w, err)
-            return
+        if legacy && request.HasID {
+            mode := mcpLegacyMode{}
+            {{- if .Legacy }}
+            {{- if .Legacy.OutputSchemas }}
+            if request.Method == "tools/call" {
+                var params struct { Name string `json:"name"` }
+                if err := json.Unmarshal(request.Params, &params); err != nil {
+                    h.errhandler(r.Context(), w, err)
+                    return
+                }
+                switch params.Name {
+                {{- range $name, $schema := .Legacy.OutputSchemas }}
+                case {{ printf "%q" $name }}:
+                    mode.wrapOutput = true
+                {{- end }}
+                }
+            }
+            {{- end }}
+            {{- end }}
+            r = r.WithContext(context.WithValue(r.Context(), mcpLegacyModeKey{}, mode))
+            encoded, err := json.Marshal(jsonrpc.Request{JSONRPC: request.JSONRPC, Method: request.Method, Params: request.Params, ID: request.ID})
+            if err != nil {
+                h.errhandler(r.Context(), w, err)
+                return
+            }
+            body = encoded
         }
+        r.Body = io.NopCloser(bytes.NewReader(body))
         {{- with .ResourcePolicy }}
         scopes := [][]string{ {{ range .BasicScopes }}{ {{ range . }}{{ printf "%q" . }}, {{ end }} }, {{ end }} }
         {{- if .Operations }}
@@ -124,6 +164,14 @@ func withMCPTransport(h *{{ .Transport.ServerStructDeclaration.Name }}, {{ if an
             return
         }
         switch request.Method {
+        case "initialize", "ping":
+            if !legacy {
+                failure := &mcpruntime.Error{Code: mcpruntime.JSONRPCMethodNotFound, Message: "Method not found"}
+                if err := mcpruntime.WriteProtocolError(w, body, failure); err != nil {
+                    h.errhandler(r.Context(), w, err)
+                }
+                return
+            }
         {{- range .Transport.Endpoints }}
         case {{ printf "%q" .Method.Name }}:
         {{- end }}

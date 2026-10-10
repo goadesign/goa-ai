@@ -134,7 +134,7 @@ func planToolResults(generation *codegen.Generation, services *goaservice.Plan, 
 	imports := codegen.NewGeneratedImportPlan(pkg)
 	var target *expr.AttributeExpr
 	for _, method := range prepared.mcpService.Methods {
-		if method.Name != "tools/call" {
+		if method.Name != methodToolsCall {
 			continue
 		}
 		target = expr.AsArray(expr.AsObject(protocolCompletedResult(method.Result).Type).Attribute("content").Type).ElemType

@@ -165,6 +165,7 @@ var _=Service("secured",func(){
 
 const endpointContractTest = `package endpointcontract_test
 import (
+ "strings"
  "context"
  "encoding/json"
  "errors"
@@ -224,6 +225,49 @@ func(s *service)Nested(context.Context)(*genservice.NestedRecord,error){
 }
 type interceptors struct {calls atomic.Int64}
 func(i *interceptors)Observe(ctx context.Context,info genservice.ObserveInfo,next goa.Endpoint)(any,error){i.calls.Add(1);return next(ctx,info.RawPayload())}
+// Older tool calls keep the original credential check, method scope, middleware,
+// selected result view, and argument decoder before returning older wire fields.
+func TestLegacyConfiguredEndpoints(t *testing.T) {
+ s:=&service{}
+ i:=&interceptors{}
+ endpoints:=genservice.NewEndpoints(s,i)
+ var middlewareCalls atomic.Int64
+ endpoints.Use(func(next goa.Endpoint)goa.Endpoint{return func(ctx context.Context,input any)(any,error){middlewareCalls.Add(1);return next(context.WithValue(ctx,middlewareKey{},"configured"),input)}})
+ mux:=goahttp.NewMuxer()
+ server:=genserver.New(genmcp.NewEndpoints(genmcp.NewMCPAdapter(endpoints,nil)),mux,goahttp.RequestDecoder,goahttp.ResponseEncoder,nil)
+ genserver.Mount(mux,server)
+ peer:=httptest.NewServer(mux);defer peer.Close()
+ for _,test:=range []struct{name,args,token,want string; failure bool}{
+  {"read","{\"key\":\"record\"}","rejected","",true},
+  {"read","{\"key\":\"record\"}","authorized","{\"value\":\"record\"}",false},
+  {"read","{}","authorized","",true},
+  {"read","{\"access_token\":\"spoofed\",\"key\":\"record\"}","authorized","",true},
+  {"viewed","{}","authorized","{\"visible\":\"shown\"}",false},
+  {"records","{}","authorized","{\"type\":\"default\",\"value\":[]}",false},
+ } {
+  body:="{\"jsonrpc\":\"2.0\",\"id\":0,\"method\":\"tools/call\",\"params\":{\"name\":\""+test.name+"\",\"arguments\":"+test.args+"}}"
+  request,err:=http.NewRequestWithContext(t.Context(),"POST",peer.URL+"/mcp",strings.NewReader(body))
+  if err!=nil {t.Fatal(err)}
+  request.Header.Set("Content-Type","application/json")
+  request.Header.Set("MCP-Protocol-Version",mcp.LegacyProtocolVersion)
+  request.Header.Set("Authorization","Bearer "+test.token)
+  response,err:=peer.Client().Do(request)
+  if err!=nil {t.Fatal(err)}
+  var reply struct { ID json.RawMessage; Error json.RawMessage; Result struct { IsError bool; StructuredContent json.RawMessage; ResultType string } }
+  err=json.NewDecoder(response.Body).Decode(&reply)
+  closeErr:=response.Body.Close()
+  if err!=nil||closeErr!=nil {t.Fatalf("decode=%v close=%v",err,closeErr)}
+  assert.Equal(t,"0",string(reply.ID))
+  assert.Equal(t,test.failure,reply.Result.IsError||len(reply.Error)>0)
+  assert.Empty(t,reply.Result.ResultType)
+  if !test.failure {assert.JSONEq(t,test.want,string(reply.Result.StructuredContent))}
+ }
+ assert.EqualValues(t,2,s.checks.Load())
+ assert.EqualValues(t,1,s.reads.Load())
+ assert.EqualValues(t,4,i.calls.Load())
+ assert.EqualValues(t,4,middlewareCalls.Load())
+}
+
 func TestConfiguredEndpoints(t *testing.T){
  s:=&service{}
  i:=&interceptors{}

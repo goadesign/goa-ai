@@ -13,6 +13,23 @@ func TestMCPJWTResourceServerUsesNativeOperations(t *testing.T) {
 	runNativeCredentialPaths(t, design, runtime)
 }
 
+func TestMCPJWTResourceServerUsesLegacyOperations(t *testing.T) {
+	design, runtime := jwtResourceFixture()
+	before, calls, found := strings.Cut(runtime, " send:=func(method,name,token string)")
+	if !found {
+		t.Fatal("resource fixture lacks the raw HTTP requests")
+	}
+	bodyStart := strings.Index(calls, "  body:=")
+	bodyEnd := strings.Index(calls, "  request:=")
+	if bodyStart < 0 || bodyEnd < bodyStart {
+		t.Fatal("resource fixture lacks the HTTP envelope")
+	}
+	calls = calls[:bodyStart] + `  body:=fmt.Sprintf("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":%q,\"params\":{%s\"arguments\":{}}}",method,fields)
+` + calls[bodyEnd:]
+	calls = strings.ReplaceAll(calls, "mcp.ProtocolVersion", "mcp.LegacyProtocolVersion")
+	runNativeCredentialPaths(t, design, before+" send:=func(method,name,token string)"+calls)
+}
+
 func TestMCPJWTResourceServerPreservesAPISecurity(t *testing.T) {
 	design, runtime := jwtResourceFixture()
 	design = strings.Replace(design, `MCP("records","1",func(){Security(resourceOAuth,func(){Scope("catalog:read")})})`, `MCP("records","1")`, 1)

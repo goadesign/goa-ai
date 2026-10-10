@@ -174,7 +174,7 @@ func (a *MCPAdapter) ServerDiscover(ctx context.Context, _ {{ index .PayloadRefs
     return &DiscoverResult{
         ResultType: "complete",
         Meta: resultMeta(),
-        SupportedVersions: []string{mcpruntime.ProtocolVersion},
+        SupportedVersions: []string{mcpruntime.ProtocolVersion, mcpruntime.LegacyProtocolVersion},
         Capabilities: capabilities,
         TTLMs: 0,
         CacheScope: "private",

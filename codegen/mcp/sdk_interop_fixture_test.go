@@ -21,6 +21,11 @@ var _ = Service("records", func() {
 		Result(String)
 		Tool("read", "Read a synthetic record", func() { ReadOnlyHint(true) })
 	})
+	Method("names", func() {
+		Description("Returns a synthetic list of record names.")
+		Result(ArrayOf(String))
+		Tool("names", "List synthetic record names", func() { ReadOnlyHint(true) })
+	})
 	Method("document", func() {
 		Description("Reads the synthetic reference document.")
 		Result(String)
@@ -65,9 +70,16 @@ func (s *recordService) Read(_ context.Context, p *genrecords.ReadPayload) (stri
 	}
 	return p.Name, nil
 }
+func (s *recordService) Names(context.Context) ([]string, error) { return []string{"record-one"}, nil }
 func (s *recordService) Document(context.Context) (string, error) { return "reference", nil }
 
 func TestSDKClientReadsGeneratedServer(t *testing.T) {
+	for _, version := range []string{mcpruntime.ProtocolVersion, mcpruntime.LegacyProtocolVersion} {
+		t.Run(version, func(t *testing.T) { testSDKClientReadsGeneratedServer(t, version) })
+	}
+}
+
+func testSDKClientReadsGeneratedServer(t *testing.T, version string) {
 	service := &recordService{}
 	endpoints := genrecords.NewEndpoints(service)
 	var middleware atomic.Int64
@@ -83,18 +95,42 @@ func TestSDKClientReadsGeneratedServer(t *testing.T) {
 	client := sdk.NewClient(&sdk.Implementation{Name: "independent-peer", Version: "1"}, &sdk.ClientOptions{
 		Capabilities: &sdk.ClientCapabilities{}, MultiRoundTrip: &sdk.MultiRoundTripOptions{Disabled: true},
 	})
-	session, err := client.Connect(t.Context(), &sdk.StreamableClientTransport{Endpoint: peer.URL + "/mcp", HTTPClient: peer.Client(), MaxRetries: -1}, &sdk.ClientSessionOptions{ProtocolVersion: mcpruntime.ProtocolVersion})
+	session, err := client.Connect(t.Context(), &sdk.StreamableClientTransport{Endpoint: peer.URL + "/mcp", HTTPClient: peer.Client(), MaxRetries: -1}, &sdk.ClientSessionOptions{ProtocolVersion: version})
 	require.NoError(t, err)
 	defer func() { assert.NoError(t, session.Close()) }()
-	assert.Equal(t, mcpruntime.ProtocolVersion, session.InitializeResult().ProtocolVersion)
+	assert.Equal(t, version, session.InitializeResult().ProtocolVersion)
 	catalog, err := session.ListTools(t.Context(), nil)
 	require.NoError(t, err)
-	require.Len(t, catalog.Tools, 1)
-	assert.Equal(t, "read", catalog.Tools[0].Name)
-	assert.Equal(t, "private", catalog.CacheScope)
+	require.Len(t, catalog.Tools, 2)
+	var read *sdk.Tool
+	for _, tool := range catalog.Tools {
+		if tool.Name == "read" {
+			read = tool
+		}
+	}
+	require.NotNil(t, read)
+	if version == mcpruntime.ProtocolVersion {
+		assert.Equal(t, "private", catalog.CacheScope)
+	} else {
+		assert.Empty(t, catalog.CacheScope)
+		var schema struct { Type string; Required []string }
+		raw, err := json.Marshal(read.OutputSchema)
+		require.NoError(t, err)
+		require.NoError(t, json.Unmarshal(raw, &schema))
+		assert.Equal(t, "object", schema.Type)
+		assert.Equal(t, []string{"value"}, schema.Required)
+	}
 	result, err := session.CallTool(t.Context(), &sdk.CallToolParams{Name: "read", Arguments: json.RawMessage("{\"name\":\"record-one\"}")})
 	require.NoError(t, err)
-	assert.Equal(t, "record-one", result.StructuredContent)
+	if version == mcpruntime.ProtocolVersion {
+		assert.Equal(t, "record-one", result.StructuredContent)
+	} else {
+		assert.Equal(t, map[string]any{"value": "record-one"}, result.StructuredContent)
+		require.Len(t, result.Content, 1)
+		text, ok := result.Content[0].(*sdk.TextContent)
+		require.True(t, ok)
+		assert.JSONEq(t, "{\"value\":\"record-one\"}", text.Text)
+	}
 	assert.False(t, result.IsError)
 	assert.EqualValues(t, 1, service.calls.Load())
 	assert.EqualValues(t, 1, middleware.Load())
@@ -107,6 +143,13 @@ func TestSDKClientReadsGeneratedServer(t *testing.T) {
 	assert.True(t, denied.IsError)
 	_, err = session.CallTool(t.Context(), &sdk.CallToolParams{Name: "absent", Arguments: json.RawMessage("{}")})
 	assert.Error(t, err)
+	names, err := session.CallTool(t.Context(), &sdk.CallToolParams{Name: "names"})
+	require.NoError(t, err)
+	if version == mcpruntime.ProtocolVersion {
+		assert.Equal(t, []any{"record-one"}, names.StructuredContent)
+	} else {
+		assert.Equal(t, map[string]any{"value": []any{"record-one"}}, names.StructuredContent)
+	}
 	document, err := session.ReadResource(t.Context(), &sdk.ReadResourceParams{URI: "record://reference"})
 	require.NoError(t, err)
 	require.Len(t, document.Contents, 1)
@@ -120,6 +163,37 @@ func TestSDKClientReadsGeneratedServer(t *testing.T) {
 	text, ok := prompt.Messages[0].Content.(*sdk.TextContent)
 	require.True(t, ok)
 	assert.Equal(t, "Read the reference.", text.Text)
+}
+
+// Requests to one URL choose their own reply shape; an earlier older connection
+// cannot change the schemas or structured results seen by a modern connection.
+func TestBothRevisionsShareOneEndpoint(t *testing.T) {
+	endpoints := genrecords.NewEndpoints(&recordService{})
+	mux := goahttp.NewMuxer()
+	server := genserver.New(genmcp.NewEndpoints(genmcp.NewMCPAdapter(endpoints, nil)), mux, goahttp.RequestDecoder, goahttp.ResponseEncoder, nil)
+	genserver.Mount(mux, server)
+	peer := httptest.NewServer(mux)
+	defer peer.Close()
+	for _, version := range []string{mcpruntime.LegacyProtocolVersion, mcpruntime.ProtocolVersion, mcpruntime.LegacyProtocolVersion} {
+		client := sdk.NewClient(&sdk.Implementation{Name: "independent-peer", Version: "1"}, &sdk.ClientOptions{
+			Capabilities: &sdk.ClientCapabilities{}, MultiRoundTrip: &sdk.MultiRoundTripOptions{Disabled: true},
+		})
+		session, err := client.Connect(t.Context(), &sdk.StreamableClientTransport{Endpoint: peer.URL + "/mcp", HTTPClient: peer.Client(), MaxRetries: -1}, &sdk.ClientSessionOptions{ProtocolVersion: version})
+		require.NoError(t, err)
+		catalog, err := session.ListTools(t.Context(), nil)
+		require.NoError(t, err)
+		require.Len(t, catalog.Tools, 2)
+		result, err := session.CallTool(t.Context(), &sdk.CallToolParams{Name: "names"})
+		require.NoError(t, err)
+		if version == mcpruntime.ProtocolVersion {
+			assert.Equal(t, []any{"record-one"}, result.StructuredContent)
+			assert.Equal(t, "private", catalog.CacheScope)
+		} else {
+			assert.Equal(t, map[string]any{"value": []any{"record-one"}}, result.StructuredContent)
+			assert.Empty(t, catalog.CacheScope)
+		}
+		assert.NoError(t, session.Close())
+	}
 }
 
 func TestFrameworkCallerCompletesSDKInputRound(t *testing.T) {

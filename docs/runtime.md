@@ -6663,6 +6663,43 @@ protocol version and actual client capabilities in `params._meta`. There is no
 initialization handshake, negotiated version, or session ID. Generated servers
 implement `server/discover`; clients can call tools without discovery first.
 
+### Older HTTP clients
+
+Generated HTTP servers additionally accept basic MCP `2025-11-25` clients on
+that same POST URL. Regenerate the server to enable this support; application
+constructors and service interfaces stay the same. Built-in HTTP and stdio
+callers continue to send `2026-07-28`.
+
+The older `initialize` request must include `protocolVersion`, a capabilities
+object, and `clientInfo` with a name and version. The reply names `2025-11-25`,
+including when the requested revision differs; the client decides whether it
+can continue with that revision. The server handles `notifications/initialized`
+and `ping` without saving a session. Subsequent calls must carry
+`MCP-Protocol-Version: 2025-11-25`; no session ID or modern mirrored method/name
+headers are required. Calls without a preceding handshake are also accepted
+when they explicitly name this revision.
+
+This path serves tools, resource catalogs and reads, prompt catalogs and reads,
+resource templates, and argument completion. It keeps the same token checks,
+operation scopes, interceptors, middleware, typed argument validation, selected
+result views, domain errors and dynamic catalog endpoints as the modern path.
+The older wire replies omit modern `resultType`, `ttlMs` and `cacheScope` fields.
+Object results, including tagged unions, keep their existing shape. Scalar,
+array and untagged-union results use `{"value": ...}` with a corresponding
+object output schema. Structured results are also included as text content for
+hosts that consume only content items; authored content items are retained.
+
+Tasks, change subscriptions and server-to-client input exchanges are unavailable
+on the older path and are not advertised during initialization. Modern task or
+input-continuation parameters and methods are rejected before endpoint
+dispatch. A native method that asks for additional input returns a capability
+error rather than an unfinished result. GET streams, protocol sessions, logging,
+sampling and roots are not implemented. Modern requests retain their existing
+metadata, header and result validation; older metadata cannot select modern
+execution behavior.
+
+### Current protocol callers
+
 HTTP callers accept JSON or a request-scoped event stream. They preserve exact
 response IDs and protocol error codes and data, including HTTP 400 and 404
 responses. Without an explicitly trusted safe tool declaration and a retry

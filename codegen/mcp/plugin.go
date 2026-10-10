@@ -234,7 +234,7 @@ func (p *mcpPlugin) generate(plan *goagenerator.Plan, files []*goacodegen.File) 
 			planned.adapterData,
 		)...)
 	}
-	if err := applyMCPHTTPRules(files, p.planned); err != nil {
+	if err := applyMCPHTTPRules(plan, files, p.planned); err != nil {
 		return nil, err
 	}
 	if err := applyMCPContentValidation(files, p.planned); err != nil {

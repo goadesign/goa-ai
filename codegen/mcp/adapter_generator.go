@@ -186,6 +186,8 @@ type (
 		// OutputSchema describes the structured fields, including scalar and array roots.
 		// It is empty when the tool returns only content or no result.
 		OutputSchema string
+		// legacyOutputSchema wraps non-object results in the object required by the older protocol.
+		legacyOutputSchema string
 		// Codec names the functions for the original method payload and result.
 		Codec *MethodCodecData
 		// ExampleArguments contains a minimal valid JSON value for tool arguments.
@@ -427,6 +429,18 @@ func (g *adapterGenerator) buildToolAdapters() ([]*ToolAdapter, error) {
 			}
 			adapter.ResultSchema = string(schema)
 			adapter.OutputSchema = string(schema)
+			union := expr.AsUnion(result.Type)
+			if expr.AsObject(result.Type) == nil && expr.AsMap(result.Type) == nil && (union == nil || union.Untagged) {
+				legacyResult := &expr.AttributeExpr{
+					Type:       &expr.Object{{Name: "value", Attribute: expr.DupAtt(result)}},
+					Validation: &expr.ValidationExpr{Required: []string{"value"}},
+				}
+				legacySchema, err := jsonschema.Build(g.api, legacyResult, expr.MethodResultExampleIdentity(tool.Method))
+				if err != nil {
+					return nil, fmt.Errorf("build older output schema for tool %q: %w", tool.Name, err)
+				}
+				adapter.legacyOutputSchema = string(legacySchema)
+			}
 		}
 
 		adapters = append(adapters, adapter)
