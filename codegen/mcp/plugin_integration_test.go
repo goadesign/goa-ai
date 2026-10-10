@@ -74,7 +74,7 @@ func TestGeneratedStatelessProtocol(t *testing.T) {
  discovered,err:=client.ServerDiscover()(context.Background(),&genmcpfmt.DiscoverPayload{});if err!=nil{t.Fatal(err)}
  discovery:=discovered.(*genmcpfmt.DiscoverResult)
  if len(discovery.Capabilities.Extensions)!=0{t.Fatalf("ordinary service advertised extensions: %s",discovery.Capabilities.Extensions)}
- if discovery.ResultType!="complete"||len(discovery.SupportedVersions)!=1||discovery.SupportedVersions[0]!=mcpruntime.ProtocolVersion{t.Fatalf("discovery=%+v",discovery)}
+ if discovery.ResultType!="complete"||len(discovery.SupportedVersions)!=2||discovery.SupportedVersions[0]!=mcpruntime.ProtocolVersion||discovery.SupportedVersions[1]!=mcpruntime.LegacyProtocolVersion{t.Fatalf("discovery=%+v",discovery)}
  catalog,err:=client.ToolsList()(context.Background(),&genmcpfmt.ToolsListPayload{});if err!=nil{t.Fatal(err)}
  if len(catalog.(*genmcpfmt.ToolsListResult).Tools)!=1||catalog.(*genmcpfmt.ToolsListResult).Tools[0].Name!="echo"{t.Fatal("ordinary HTTP method entered MCP catalog")}
  _,unknownErr:=caller.CallTool(t.Context(),mcpruntime.CallRequest{Tool:"health",Payload:json.RawMessage("{}")})

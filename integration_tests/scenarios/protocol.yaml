@@ -12,7 +12,7 @@ scenarios:
           status: success
           result:
             resultType: complete
-            supportedVersions: ["2026-07-28"]
+            supportedVersions: ["2026-07-28", "2025-11-25"]
             capabilities: { tools: {}, resources: {}, prompts: {} }
             ttlMs: 0
             cacheScope: private
@@ -44,7 +44,28 @@ scenarios:
     steps:
       - op: unknown/method
         expect: { status: error, error: { code: -32601 } }
-  - name: removed_initialize
+  - name: initialize_rejects_modern_metadata
     steps:
       - op: initialize
-        expect: { status: error, error: { code: -32601 } }
+        expect: { status: error, error: { code: -32602 } }
+  - name: basic_older_client
+    defaults:
+      headers: { MCP-Protocol-Version: "2025-11-25" }
+    steps:
+      - op: initialize
+        input:
+          _meta: {}
+          protocolVersion: "2025-11-25"
+          capabilities: {}
+          clientInfo: { name: "integration-runner", version: "1.0.0" }
+        expect:
+          status: success
+          result:
+            protocolVersion: "2025-11-25"
+            capabilities: { tools: {}, resources: {}, prompts: {} }
+      - op: ToolsList
+        input: { _meta: {} }
+        expect: { status: success }
+      - op: ping
+        input: { _meta: {} }
+        expect: { status: success, result: {} }
