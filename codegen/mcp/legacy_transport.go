@@ -16,16 +16,23 @@ type (
 	// legacyTransportData contains only older-wire choices that are already known
 	// from the authored methods and Goa's finalized HTTP body declarations.
 	legacyTransportData struct {
-		Bodies        []legacyBody
-		ContentType   *codegen.NameDeclaration
+		// Bodies names the native HTTP replies selected by each basic method.
+		Bodies []legacyBody
+		// ContentType names the native content item used to include structured JSON as text.
+		ContentType *codegen.NameDeclaration
+		// OutputSchemas contains the older object schemas for non-object tool results.
 		OutputSchemas map[string]string
 	}
 	// legacyBody retains the existing response name and, for an operation union,
 	// the existing completed branch name. No application value type is copied.
 	legacyBody struct {
-		Method       string
-		Type         *codegen.NameDeclaration
-		Ref          string
+		// Method selects the generated protocol operation that owns this reply.
+		Method string
+		// Type names the native HTTP body reused by the older encoder.
+		Type *codegen.NameDeclaration
+		// Ref keeps Goa's planned pointer or value reference for the type switch.
+		Ref string
+		// CompleteType names the completed branch when the native reply is a union.
 		CompleteType *codegen.NameDeclaration
 	}
 )

@@ -1,5 +1,5 @@
-// mcpLegacyMode keeps the older response choice on this one authenticated
-// request. Another request to the same URL can use the current protocol.
+// mcpLegacyMode keeps the older response choice on this one validated request.
+// Authorization still runs before dispatch; another request can use the current protocol.
 type (
     mcpLegacyModeKey struct{}
     mcpLegacyMode struct {
