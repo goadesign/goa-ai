@@ -2419,6 +2419,9 @@ raw schema bytes, ignoring tool and tag order. Repeating an equal active
 declaration returns the original winner's definition order, token, and Redis
 time. A changed declaration or native Agent occupancy returns
 `admission_conflict`; retired service occupancy returns `admission_retired`.
+A declaration with identity whose tool name another active record in its scope
+provides returns `tool_name_conflict` (see
+[Registry storage and definition reuse](#registry-storage-and-definition-reuse)).
 The registry allocates a UUID admission revision internally. No provider lease,
 stream, or ping is created by this operation, and it does not require a health
 tracker. The existing catalog scheduler may acquire its sampling lease and
@@ -2765,6 +2768,29 @@ same catalog commit. Declaration JSON, fingerprints, admission tokens and
 provider messages retain their existing encoding. Ordinary identity-free
 framework registration remains supported. Existing records cannot acquire,
 lose or change identity through a registration retry.
+
+Active records that share a scope never provide the same tool name, because a
+consumer that discovers a scope loads all of its toolsets into one tool list.
+Every write that makes a declaration current (declare, replace, `Register`
+with a new declaration, and native Agent register or replace) claims all of
+its tool names in the same atomic commit. If another active record in the
+scope already provides one of them, the write saves nothing and returns
+`tool_name_conflict`, naming the tool and the other record's identity name.
+A record keeps its own names across a replacement, retirement releases all of
+its names, and reactivation claims them again. Lease, health and drain writes
+change no names. Records without identity, and records in different scopes,
+never conflict.
+
+Before serving, each registry rebuilds the claims from the saved records: every
+active record with identity claims the tool names of its saved declaration, and
+every retired one releases its names. This protects records saved before the
+upgrade, or by an older registry after a rollback. If two saved active records
+in one scope provide the same tool name, startup fails with an error naming the
+tool and both records; the registry does not choose which one keeps the name.
+Retire or replace one of them through a replica still running the older
+version, then start this version again. An older replica still saves
+declarations without claiming names, so upgrade every replica sharing the
+catalog before relying on the rule.
 
 Upgrade all registry replicas sharing the catalog before creating records with
 identity: older readers reject that new state field. Identity-free records need

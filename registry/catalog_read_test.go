@@ -144,4 +144,38 @@ func (m *testCatalogMap) indexWrite(key string, next catalogWrite) {
 	} else {
 		delete(routes, route)
 	}
+	if next.Indexed && !next.ClaimToolNames {
+		return
+	}
+	owners := m.scopeToolOwners[next.Scope]
+	if owners == nil {
+		owners = make(map[string]string)
+		m.scopeToolOwners[next.Scope] = owners
+	}
+	for tool, owner := range owners {
+		if owner == route {
+			delete(owners, tool)
+		}
+	}
+	if next.Indexed {
+		for _, tool := range next.ToolNames {
+			owners[tool] = route
+		}
+	}
+}
+
+// checkToolNames mirrors the Redis commit script: a scoped active commit that
+// claims names fails with *toolNameTakenError, before any write, when another
+// route in the scope holds one of them.
+func (m *testCatalogMap) checkToolNames(key string, next catalogWrite) error {
+	if next.Scope == "" || !next.Indexed || !next.ClaimToolNames {
+		return nil
+	}
+	route := strings.TrimPrefix(key, toolsetCatalogKeyPrefix)
+	for _, tool := range next.ToolNames {
+		if owner, held := m.scopeToolOwners[next.Scope][tool]; held && owner != route {
+			return &toolNameTakenError{Tool: tool, OwnerRoute: owner}
+		}
+	}
+	return nil
 }
