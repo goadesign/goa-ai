@@ -160,7 +160,9 @@ service wiring, and connecting a model. For MCP, follow the
   linked progress and cancellation. Cancellation preserves completed results
   and waits for required cleanup before closing the run; cleanup failures remain errors.
 - **Human input and approvals.** Save a pending question or confirmation and
-  continue from the host's answer. Text-only runs exclude interactive tools.
+  continue from the host's answer. Canceling a root question with no saved
+  child or remote work closes its continuation while preserving the original
+  suspended result. Text-only runs exclude interactive tools.
 - **Large results and images.** Bound model-visible results, continue paginated
   queries, retain native image evidence, and keep rich host data outside model
   requests.

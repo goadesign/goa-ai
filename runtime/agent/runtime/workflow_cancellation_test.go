@@ -248,10 +248,10 @@ func testContinuationCancellationAfterWorkerReplacement(t *testing.T, ended, use
 		require.NoError(t, rt.CancelRun(t.Context(), CancelRequest{RunID: "source", Reason: reason}))
 		require.Eventually(t, func() bool {
 			previous, loadErr := store.LoadRun(t.Context(), "source")
-			if loadErr != nil || previous.SuccessorRunID == "" {
+			if loadErr != nil || previous.SuspensionResolution == nil {
 				return false
 			}
-			meta, loadErr := store.LoadRun(t.Context(), previous.SuccessorRunID)
+			meta, loadErr := store.LoadRun(t.Context(), previous.SuspensionResolution.(session.ContinuedSuspension).RunID)
 			if loadErr != nil || meta.Status != session.RunStatusCanceled {
 				return false
 			}
@@ -288,7 +288,7 @@ func testContinuationCancellationAfterWorkerReplacement(t *testing.T, ended, use
 	assert.Equal(t, reason, meta.CancellationReason)
 	previous, err := store.LoadRun(t.Context(), "source")
 	require.NoError(t, err)
-	assert.Equal(t, cleanupRunID, previous.SuccessorRunID)
+	assert.Equal(t, cleanupRunID, previous.SuspensionResolution.(session.ContinuedSuspension).RunID)
 	page, err := rt.ListRunEvents(t.Context(), cleanupRunID, "", 20)
 	require.NoError(t, err)
 	assert.Equal(t, 1, countRunEventsByType(page, hooks.RunCompleted))

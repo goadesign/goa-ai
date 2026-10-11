@@ -3212,7 +3212,15 @@ without forbidding a fresh workflow attempt that chooses different input.
 Generated executors retain Task handles and use the same generated read, answer
 and cancel operations. The server requires Task capability before its creator
 can run. Applications must adopt the current store ownership contract before deployment.
-Public `CancelRun` accepts a durable cancellation job for a suspended run. The
+Public `CancelRun` first inspects the saved suspension resolution. A relinquished
+root already needs no further work, including when later Session deletion uses a
+different reason. For an unresolved root, the current strict checkpoint decoder
+proves the exact owner, content identity and saved runtime state. If it contains
+no child or remote operation, `Store.RelinquishRunSuspension` permanently closes
+continuation without starting a workflow. It preserves the original suspended
+result, checkpoint and records. An unknown checkpoint is rejected before closure.
+
+A suspension with saved work still receives a durable cancellation job. The
 job obtains its route from the original accepted preparation, follows only
 storage-admitted successors, and publishes ordinary cancellation continuations.
 A racing answer can win admission; the job then follows that accepted execution.
@@ -3226,12 +3234,28 @@ instead of retrying indefinitely.
 The in-memory engine mirrors acceptance and retry rules without durability. Registry protocol 13 and suspension version 13 reject prior
 contracts; providers, consumers and workers must migrate together.
 
-A suspended run owns one admitted successor. The existing atomic start command
-sets `RunMeta.SuccessorRunID` with the new run and its first records. That
-identity never changes and exact retries select the same records. Another
-successor cannot publish a run or child link. The owning store exposes the
-current identity through `LoadRun`; consumers do not scan history to select
-recent work. Each separate child call retains its own continuation chain.
+A suspended run has one exclusive `RunMeta.SuspensionResolution`: nil while
+unresolved, `session.ContinuedSuspension` naming a real admitted successor, or
+`session.RelinquishedSuspension` carrying the first cancellation reason and the
+storage owner's resolution time. Admission and relinquishment use the same
+atomic decision. A closure loses to an admitted successor and returns that
+successor; the runtime's durable cancellation then follows it. A later start
+loses to relinquishment before any run, start record or child link is written.
+Exact storage retries preserve the selected value; another relinquishment reason
+conflicts. Runtime cancellation of an already relinquished run succeeds without
+changing that value. Child calls keep independent continuation chains and their
+parent remains responsible for cleanup.
+
+Store implementations must adopt the typed resolution and the new mutation
+together with their generated clients. Historical metadata and checkpoint reads
+do not require original execution preparation; admission and actual execution
+retain their strict proof requirements. Session deletion must reject every
+running run and every unresolved suspension, including after Session ending.
+This is an API and persisted-owner-shape change; hosts must migrate existing real
+successor IDs to the continued variant without altering history. Mixed old and
+new writers cannot safely arbitrate closure; deploy the owner and its clients as
+one coordinated contract change. Rollback must not discard stored relinquishment
+or allow an old writer to admit a successor after it.
 
 Tool activities retain the original invocation's `ToolCall.RunID` across Task
 reads, updates, cancellation and host-input successors. Registry admission uses

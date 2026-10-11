@@ -63,7 +63,7 @@ func TestContinuationAdmissionSelectsOneSuccessor(t *testing.T) {
 	require.NotNil(t, winner)
 	meta, err := store.LoadRun(t.Context(), predecessor.RunID)
 	require.NoError(t, err)
-	assert.Equal(t, winner.Run.RunID, meta.SuccessorRunID)
+	assert.Equal(t, winner.Run.RunID, meta.SuspensionResolution.(session.ContinuedSuspension).RunID)
 	assert.Equal(t, session.RunStatusSuspended, meta.Status)
 	before, err := store.ListSessionRunRecords(t.Context(), predecessor.SessionID, "", 100)
 	require.NoError(t, err)

@@ -88,7 +88,7 @@ func (r *Runtime) EnsureRunCompletion(ctx context.Context, runID string) error {
 		if err != nil {
 			return fmt.Errorf("build engine completion suspension command: %w", err)
 		}
-		if _, err := validateStoredRunSuspension(command.Suspension, meta); err != nil {
+		if _, _, err := validateStoredRunSuspension(command.Suspension, meta); err != nil {
 			return corruptStoredRunLifecycle(meta.RunID, err)
 		}
 		result, err := r.repairRunSuspensionUntilApplied(ctx, command)

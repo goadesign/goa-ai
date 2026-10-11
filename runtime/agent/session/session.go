@@ -43,9 +43,9 @@ type (
 		// ParentRunID identifies the parent for an agent-as-tool child run.
 		// Root runs leave it empty.
 		ParentRunID string
-		// SuccessorRunID is the one workflow admitted to continue this suspended
-		// run. It is empty until admission and never changes afterward.
-		SuccessorRunID string
+		// SuspensionResolution is nil while a suspended run still owns its saved
+		// continuation. Admission or relinquishment sets exactly one permanent value.
+		SuspensionResolution SuspensionResolution
 		// Status indicates the current lifecycle state.
 		Status RunStatus
 		// StartOutcome records whether the accepted workflow was allowed to
@@ -143,7 +143,7 @@ var (
 	// ErrSessionActive indicates an active session cannot be purged.
 	ErrSessionActive = errors.New("session is active")
 	// ErrSessionHasActiveRuns indicates an ended session still owns work that
-	// has not reached a terminal status.
+	// remains running or suspended without a permanent resolution.
 	ErrSessionHasActiveRuns = errors.New("session has active runs")
 	// ErrRunNotFound indicates run metadata does not exist in the store.
 	ErrRunNotFound = errors.New("run not found")

@@ -3825,8 +3825,10 @@ Task producer bindings and notifications remain release gates.
 ### Atomic continuation admission — 2026-10-07
 
 The shared `Store.StartRootRun` and `StartChildRun` contract now requires one
-successor per suspended predecessor. `RunMeta.SuccessorRunID` is empty before
-admission, written with the successor and first records, and immutable afterward.
+successor per suspended predecessor. The continued variant of
+`RunMeta.SuspensionResolution` is written with the successor and first records
+and remains immutable afterward. Unresolved roots may instead be permanently
+relinquished under the [current cancellation contract](runtime.md).
 The store owns this fact; neither callers nor cancellation infer a recent run
 from event order. Different successor IDs return `session.ErrRunConflict`
 without run records or child links. Exact retries preserve the selected ID

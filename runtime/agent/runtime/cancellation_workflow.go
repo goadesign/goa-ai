@@ -24,6 +24,10 @@ import (
 // startSuspendedCancellation derives the worker route from the owner's accepted
 // preparation. Client-only runtimes need no local agent definition or queue option.
 func (r *Runtime) startSuspendedCancellation(ctx context.Context, request CancelRequest, target session.RunMeta) error {
+	settled, err := r.relinquishEmptyRootSuspension(ctx, request, &target)
+	if err != nil || settled {
+		return err
+	}
 	owner, err := r.cancellationRoot(ctx, target)
 	if err != nil {
 		return err
@@ -66,6 +70,15 @@ func (r *Runtime) cancellationActivity(ctx context.Context, request engine.Cance
 	target, err = r.selectedCancellationRun(ctx, target)
 	if err != nil {
 		return false, err
+	}
+	if target.Status == session.RunStatusSuspended {
+		settled, err := r.relinquishEmptyRootSuspension(ctx, request, &target)
+		if err != nil || settled {
+			return settled, err
+		}
+		if _, continued := target.SuspensionResolution.(session.ContinuedSuspension); continued {
+			return false, nil
+		}
 	}
 	if target.Status != session.RunStatusSuspended && session.IsTerminalRunStatus(target.Status) {
 		if target.CancellationReason != "" && target.CancellationReason != request.Reason {
@@ -120,14 +133,15 @@ func (r *Runtime) selectedCancellationRun(ctx context.Context, current session.R
 			return session.RunMeta{}, storage.NewContractError(errors.New("cycle in admitted run successors"))
 		}
 		seen[current.RunID] = struct{}{}
-		if current.SuccessorRunID == "" {
+		resolution, continued := current.SuspensionResolution.(session.ContinuedSuspension)
+		if !continued {
 			return current, nil
 		}
-		next, err := r.Store.LoadRun(ctx, current.SuccessorRunID)
+		next, err := r.Store.LoadRun(ctx, resolution.RunID)
 		if err != nil {
 			return session.RunMeta{}, err
 		}
-		if current.Status != session.RunStatusSuspended || next.RunID != current.SuccessorRunID || next.AgentID != current.AgentID || next.SessionID != current.SessionID {
+		if current.Status != session.RunStatusSuspended || next.RunID != resolution.RunID || next.AgentID != current.AgentID || next.SessionID != current.SessionID {
 			return session.RunMeta{}, storage.NewContractError(errors.New("admitted successor does not match its predecessor"))
 		}
 		current = next
@@ -248,7 +262,7 @@ func (r *Runtime) startCancellationContinuation(ctx context.Context, owner sessi
 		if err != nil {
 			return err
 		}
-		if current.SuccessorRunID == "" {
+		if current.SuspensionResolution == nil {
 			return engine.MarkActivityErrorNonRetryable(fmt.Errorf("cancellation continuation failed before admission: %w", completion.WorkflowError))
 		}
 	}
@@ -286,7 +300,7 @@ func (r *Runtime) observeClosedCancellationOwner(ctx context.Context, owner sess
 	if err != nil {
 		return err
 	}
-	if current.Status != session.RunStatusRunning || current.SuccessorRunID != "" {
+	if current.Status != session.RunStatusRunning || current.SuspensionResolution != nil {
 		return nil
 	}
 	switch completion.Status {
