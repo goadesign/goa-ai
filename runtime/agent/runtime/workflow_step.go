@@ -20,6 +20,7 @@ import (
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/internal/temporalerrors"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -763,12 +764,15 @@ func (l *workflowLoop) executeStepProgram(program stepProgram) (stepBatch, error
 	return batch, nil
 }
 
-// failCommittedStep closes every provider-correlated call in a committed step
-// before returning the error that interrupted execution.
+// failCommittedStep retains unfinished Tasks and children for workflow cleanup,
+// records completed tool results, and returns the error that stopped the step.
 func (l *workflowLoop) failCommittedStep(batch *stepBatch, stepErr error) error {
 	recorded := make(map[string]struct{}, len(batch.records))
 	for _, record := range batch.records {
 		recorded[record.call.ToolCallID] = struct{}{}
+		if record.task != nil || record.childSuspension != nil {
+			l.unfinishedBatch = batch
+		}
 	}
 	allCalls := append([]ToolCall(nil), batch.program.calls...)
 	awaitCalls := awaitToolRequests(batch.program.awaitItems)
@@ -1311,10 +1315,9 @@ func stepToolRecordsFromExecutions(calls []ToolCall, outcomes []*ToolExecutionRe
 	return records, nil
 }
 
-// stepToolRecordsAfterExecution closes every committed tool call even when the
-// execution layer returns only a partial set of concrete outcomes. Concrete
-// results are preserved; unresolved calls receive an explicit infrastructure
-// failure before the original execution error is returned.
+// stepToolRecordsAfterExecution preserves received tool outcomes and closes
+// missing calls with failures when execution failed. Pure cancellation leaves
+// unfinished calls without invented results; the canceled run closes that work.
 func stepToolRecordsAfterExecution(
 	calls []ToolCall,
 	outcomes []*ToolExecutionResult,
@@ -1384,6 +1387,9 @@ func stepToolRecordsAfterExecution(
 	for _, call := range calls {
 		if record, ok := recordsByID[call.ToolCallID]; ok {
 			records = append(records, record)
+			continue
+		}
+		if temporalerrors.CancellationOnly(boundaryErr) {
 			continue
 		}
 		records = append(records, stepToolRecord{

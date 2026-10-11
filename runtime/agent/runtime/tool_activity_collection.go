@@ -39,7 +39,7 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 			if errors.Is(err, engine.ErrPlannerActivityDeadlineExceeded) {
 				return activityByID, pending, true, executionErr
 			}
-			return activityByID, pending, false, err
+			return activityByID, pending, false, errors.Join(executionErr, err)
 		}
 
 		i := 0
@@ -52,7 +52,7 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 				}
 				if info.pollTimer.IsReady() {
 					if err := e.continueTaskPoll(wfCtx, &info); err != nil {
-						return activityByID, pending, false, err
+						return activityByID, pending, false, errors.Join(executionErr, err)
 					}
 					pending[i] = info
 					e.ownedTasks[info.call.ToolCallID] = info
@@ -70,19 +70,19 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 			out, err := info.future.Get(ctx)
 			if err != nil {
 				if isRunCancellationError(err) || temporalerrors.IsRequestValidation(err) {
-					return activityByID, pending, false, err
+					return activityByID, pending, false, errors.Join(executionErr, err)
 				}
 				if info.task != nil {
 					if _, reading := info.call.ExecutionContinuation.AsTaskGet(); reading && temporalerrors.Retryable(err) {
 						if err := startTaskObservationTimer(wfCtx, &info); err != nil {
-							return activityByID, pending, false, err
+							return activityByID, pending, false, errors.Join(executionErr, err)
 						}
 						pending = append(pending, info)
 						e.ownedTasks[info.call.ToolCallID] = info
 						continue
 					}
 					if cancelErr := e.cancelAcceptedTask(wfCtx, info); cancelErr != nil {
-						return activityByID, pending, false, errors.Join(err, cancelErr)
+						return activityByID, pending, false, errors.Join(executionErr, err, cancelErr)
 					}
 				}
 				duration := wfCtx.Now().Sub(info.startTime)
@@ -114,7 +114,7 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 			if execResult.mcpPending != nil {
 				accepted, waiting, err := acceptTaskPending(&info, execResult.mcpPending)
 				if err != nil {
-					return activityByID, pending, false, err
+					return activityByID, pending, false, errors.Join(executionErr, err)
 				}
 				execResult.mcpPending = accepted
 				execResult.task = cloneTaskExecution(info.task)
@@ -123,16 +123,16 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 				}
 				if waiting {
 					if err := startTaskObservationTimer(wfCtx, &info); err != nil {
-						return activityByID, pending, false, err
+						return activityByID, pending, false, errors.Join(executionErr, err)
 					}
 					pending = append(pending, info)
 					continue
 				}
 			}
-			if execResult.mcpPending == nil {
-				delete(e.ownedTasks, info.call.ToolCallID)
-			}
+			// A returned input request transfers its Task to the workflow record.
+			// Waiting Tasks stayed above for polling; completed Tasks need no cleanup.
 			activityByID[info.call.ToolCallID] = execResult
+			delete(e.ownedTasks, info.call.ToolCallID)
 		}
 		if finalizeTimer != nil && finalizeTimer.IsReady() && len(pending) > 0 {
 			return activityByID, pending, true, executionErr
