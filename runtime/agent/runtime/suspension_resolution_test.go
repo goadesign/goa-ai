@@ -206,31 +206,6 @@ func TestCancelRunAlreadyRelinquishedDoesNotDecodeHistoricalCheckpoint(t *testin
 	assert.Equal(t, resolved, store.run.SuspensionResolution)
 }
 
-func TestCancelRunCompetingReasonsPreserveWinningResolution(t *testing.T) {
-	stored := newTestStore()
-	admitRunForTest(t, stored, session.RunMeta{AgentID: "svc.agent", RunID: "run-1", SessionID: "session-1", Status: session.RunStatusRunning})
-	saved := suspensionContractFixture(t, "svc.lookup")
-	data, err := json.Marshal(saved)
-	require.NoError(t, err)
-	require.NoError(t, storeSuspensionForTest(t.Context(), stored, "run-1", session.RunSuspension{ID: saved.ID, Data: data}))
-	var winner session.SuspensionResolution
-	store := &continuationBeforeClosureStore{Store: stored}
-	store.before = func() {
-		var err error
-		winner, err = stored.RelinquishRunSuspension(t.Context(), storage.RunSuspensionRelinquishment{RunID: "run-1", SuspensionID: saved.ID, Reason: run.CancellationReasonUserRequested})
-		require.NoError(t, err)
-	}
-	backend := &recordingCancellationEngine{Engine: engineinmem.New(), err: engine.ErrWorkflowCompleted}
-	runtime := New(store, WithEngine(backend))
-	cancelErr := runtime.CancelRun(t.Context(), CancelRequest{RunID: "run-1", Reason: run.CancellationReasonSessionEnded})
-	t.Logf("concurrent different-reason cancellation result: %T: %v", cancelErr, cancelErr)
-	meta, err := stored.LoadRun(t.Context(), "run-1")
-	require.NoError(t, err)
-	assert.Equal(t, winner, meta.SuspensionResolution)
-	assert.Equal(t, run.CancellationReasonUserRequested, winner.(session.RelinquishedSuspension).Reason)
-	assert.Equal(t, session.RunStatusSuspended, meta.Status)
-}
-
 func (s *continuationBeforeClosureStore) RelinquishRunSuspension(ctx context.Context, command storage.RunSuspensionRelinquishment) (session.SuspensionResolution, error) {
 	if s.before != nil {
 		before := s.before

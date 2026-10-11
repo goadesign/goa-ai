@@ -67,7 +67,27 @@ func (r *Runtime) relinquishEmptyRootSuspension(ctx context.Context, request Can
 		RunID: target.RunID, SuspensionID: stored.ID, Reason: request.Reason,
 	})
 	if errors.Is(err, session.ErrRunCancellationConflict) {
-		return false, &CancellationReasonConflictError{RunID: request.RunID, Reason: request.Reason}
+		// Another reason may have closed this root after its checkpoint read.
+		// Read the owner once: cancellation intent alone is not proof of closure.
+		current, readErr := r.Store.LoadRun(ctx, target.RunID)
+		if readErr != nil {
+			return false, readErr
+		}
+		if current.RunID != target.RunID || current.AgentID != target.AgentID ||
+			current.SessionID != target.SessionID || current.ParentRunID != "" ||
+			current.Status != session.RunStatusSuspended {
+			return false, storage.NewContractError(errors.New("suspension resolution read does not match the suspended root owner"))
+		}
+		switch resolved := current.SuspensionResolution.(type) {
+		case session.RelinquishedSuspension:
+			target.SuspensionResolution = resolved
+			span.AddEvent("competing cancellation permanently relinquished continuation")
+			return true, nil
+		case nil, session.ContinuedSuspension:
+			return false, &CancellationReasonConflictError{RunID: request.RunID, Reason: request.Reason}
+		default:
+			return false, storage.NewContractError(errors.New("stored suspension has an invalid resolution"))
+		}
 	}
 	if err != nil {
 		return false, err
