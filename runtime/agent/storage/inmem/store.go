@@ -189,7 +189,8 @@ func (s *Store) PurgeSession(_ context.Context, sessionID string) error {
 		return session.ErrSessionActive
 	}
 	for _, meta := range s.runs {
-		if meta.SessionID == sessionID && !session.IsTerminalRunStatus(meta.Status) {
+		if meta.SessionID == sessionID && (!session.IsTerminalRunStatus(meta.Status) ||
+			(meta.Status == session.RunStatusSuspended && meta.SuspensionResolution == nil)) {
 			return session.ErrSessionHasActiveRuns
 		}
 	}
@@ -732,7 +733,7 @@ func (s *Store) startSessionRun(requestDigest [32]byte, start session.RunStart, 
 		return sessionRunStartResult{}, err
 	}
 	if existing, ok := s.runs[start.RunID]; ok {
-		if start.PredecessorRunID != "" && s.runs[start.PredecessorRunID].SuccessorRunID != start.RunID {
+		if start.PredecessorRunID != "" && s.runs[start.PredecessorRunID].SuspensionResolution != (session.ContinuedSuspension{RunID: start.RunID}) {
 			return sessionRunStartResult{}, session.ErrRunConflict
 		}
 		if err := s.checkStartDigestLocked(start.RunID, requestDigest); err != nil {
@@ -795,10 +796,10 @@ func (s *Store) startSessionRun(requestDigest [32]byte, start session.RunStart, 
 	// under the same lock that writes its first run and parent-link records.
 	if start.PredecessorRunID != "" {
 		predecessor := s.runs[start.PredecessorRunID]
-		if predecessor.SuccessorRunID != "" {
+		if predecessor.SuspensionResolution != nil {
 			return sessionRunStartResult{}, session.ErrRunConflict
 		}
-		predecessor.SuccessorRunID = start.RunID
+		predecessor.SuspensionResolution = session.ContinuedSuspension{RunID: start.RunID}
 		predecessor.UpdatedAt = time.Now().UTC()
 		s.runs[start.PredecessorRunID] = predecessor
 	}

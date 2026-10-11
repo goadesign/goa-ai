@@ -6812,12 +6812,16 @@ Uncertain answer delivery never repeats answers or the creating tool. Applicatio
 stores must implement the retained-work contract before enabling durable execution.
 
 `Runtime.CancelRun` accepts cancellation of suspended work without asking the
-caller to reconstruct or answer its checkpoint. Temporal owns a cancellation job
-on the route saved by the original accepted preparation. The job follows the
-successor selected by storage, including a competing answer, and restores saved
-work through the ordinary continuation path. It also follows saved child work to
+caller to reconstruct or answer its checkpoint. An empty root with a supported
+checkpoint closes directly; later cancellation succeeds without changing its
+first reason or closure time. For saved work that still needs cleanup, Temporal
+owns a cancellation job on the route saved by the original accepted preparation.
+The job follows the successor selected by storage, including a competing answer,
+and restores saved work through the ordinary continuation path. It also follows saved child work to
 its execution parent rather than starting an unrelated root. Duplicate requests
-retain the first accepted reason. A different request is rejected. Acceptance
+retain the current owner's first accepted reason; a competing reason for that
+owner is rejected. An admitted successor owns its own reason acceptance, so its
+predecessor's old reason does not prevent delivery to it. Job acceptance
 does not mean cleanup has finished; replacement workers continue without another
 client call. Temporal may roll the job into a fresh execution to keep recorded
 history manageable; the same request and observation delay continue. Temporary
@@ -8046,12 +8050,34 @@ Generated MCP calls omit host input capabilities for these runs. Form, URL and
 state-only unfinished replies fail before suspension, while ordinary calls on
 the same caller retain their configured capabilities.
 
-A suspended predecessor admits one successor through `StartRootRun` or
-`StartChildRun`. The store writes `RunMeta.SuccessorRunID` with the successor's
-first records in the same atomic operation. A different successor receives
-`session.ErrRunConflict` before any run or parent link is written. Exact retries
-retain the admitted ID and records after either run has closed. Separate child
-calls still admit their own successors. This is a required store contract;
-update every durable implementation together with its generated clients.
-Suspended Task cancellation still requires the subsequent execution work and
-does not become available merely because admission is exclusive.
+A suspended predecessor has one exclusive `RunMeta.SuspensionResolution`.
+A nil value means unresolved; `session.ContinuedSuspension` names the real
+successor admitted by `StartRootRun` or `StartChildRun` in the same atomic write
+as its first records. `session.RelinquishedSuspension` closes an empty root's
+continuation and retains the cancellation reason and storage-owned time. Neither
+variant changes the original suspended result or checkpoint.
+
+`Runtime.CancelRun` decodes the exact current checkpoint before asking storage
+to relinquish an unresolved root. A saved Task, child or remote input stays on
+the existing durable cleanup path. Unknown checkpoints cannot be closed through
+this path. Already relinquished history needs no decoding or execution
+preparation; later cancellation, including Session deletion, succeeds without
+changing its original resolution.
+
+`Store.RelinquishRunSuspension` competes atomically with continuation admission.
+It returns the selected successor when an answer wins, and the runtime follows
+that successor through durable cancellation. When closure wins, a later start
+receives `session.ErrRunConflict` before any run or parent link is written.
+A selected successor is returned regardless of its predecessor's old cancellation
+reason. Unresolved cancellation intent and direct relinquishment reject a
+different reason; exact closure retries preserve the same reason and time.
+Separate children retain their own successor chains and parent-owned cleanup.
+Ending a Session does not discard unresolved suspensions: they block deletion.
+
+All durable stores and their generated clients must adopt this contract together.
+Replace old successor metadata with the continued variant, preserving its real
+ID and all historical bytes. Existing unresolved suspensions remain unresolved.
+Old writers cannot safely run alongside a writer that permits relinquishment,
+and rollback must preserve every permanent closure. Historical metadata reads
+may load runs without original execution preparation; that does not authorize
+those runs to execute. See [the runtime ownership contract](../DESIGN.md).

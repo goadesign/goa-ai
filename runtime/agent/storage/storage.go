@@ -46,8 +46,9 @@ type (
 	// tool call, tool name and parent agent from the predecessor's stored link.
 	// The execution parent may change only after the runtime has proved the
 	// first pending child in that parent's accepted continuation checkpoint.
-	// The first valid start also sets the predecessor's SuccessorRunID in the
-	// same atomic write. A different successor is rejected with ErrRunConflict
+	// The first valid start also sets the predecessor's ContinuedSuspension
+	// resolution in the same atomic write. Relinquishment also permanently excludes a successor.
+	// A different successor is rejected with ErrRunConflict
 	// before any run or record is written. Exact retries keep the chosen ID.
 	// A fresh child still requires its execution parent to be running; exact
 	// closed-start retries select the original records. A failed check writes
@@ -111,12 +112,24 @@ type (
 		// active. Its result distinguishes an exact retry from another terminal
 		// record that already owns the run.
 		RepairRunTerminal(context.Context, RunTerminal) (RunRepairResult, error)
-		// LoadRun returns durable lifecycle facts for one run.
+		// RelinquishRunSuspension closes a root suspension after the runtime has
+		// decoded its exact checkpoint and proved it owns no unfinished work.
+		// The store compares the suspension ID and atomically chooses between
+		// relinquishment and continuation admission. It returns the permanent
+		// resolution, including a successor that won the race regardless of the
+		// predecessor's reason. Unresolved cancellation intent and relinquishment
+		// reject a different reason; exact closure retries preserve the first time.
+		// This does not append or replace a historical record or require execution proof.
+		RelinquishRunSuspension(context.Context, RunSuspensionRelinquishment) (session.SuspensionResolution, error)
+		// LoadRun returns durable lifecycle facts for one run. Reading historical
+		// identity and resolution does not require accepted execution proof.
 		LoadRun(context.Context, string) (session.RunMeta, error)
 		// LoadSessionStatus returns whether the Session currently accepts event
 		// delivery. Sessionless runs return ErrSessionNotFound.
 		LoadSessionStatus(context.Context, string) (session.SessionStatus, error)
-		// LoadRunSuspension returns the exact checkpoint stored for one run.
+		// LoadRunSuspension returns the exact checkpoint stored for one run,
+		// including historical runs without accepted execution proof. It does not
+		// certify that the checkpoint can execute.
 		LoadRunSuspension(context.Context, string) (session.RunSuspension, error)
 		// ListRunRecords returns one ordered page for a run.
 		ListRunRecords(context.Context, string, string, int) (runlog.Page, error)
@@ -214,6 +227,17 @@ type (
 		Suspension session.RunSuspension
 		// Record is the terminal suspended record.
 		Record *runlog.Event
+	}
+
+	// RunSuspensionRelinquishment identifies the immutable root checkpoint the
+	// runtime has validated before canceling without executing saved work.
+	RunSuspensionRelinquishment struct {
+		// RunID identifies the suspended root run.
+		RunID string
+		// SuspensionID identifies the exact checkpoint inspected by the runtime.
+		SuspensionID string
+		// Reason is the requested cancellation reason.
+		Reason string
 	}
 
 	// RunTerminal stores one final status and its matching record.
