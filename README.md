@@ -157,7 +157,8 @@ service wiring, and connecting a model. For MCP, follow the
   values receive specific feedback and authored examples. The runtime can ask
   the model for a replacement within your recovery budget, before execution.
 - **Specialist agents.** Expose agents as tools and compose real child runs with
-  linked progress and cancellation.
+  linked progress and cancellation. Cancellation preserves completed results
+  and waits for required cleanup before closing the run; cleanup failures remain errors.
 - **Human input and approvals.** Save a pending question or confirmation and
   continue from the host's answer. Text-only runs exclude interactive tools.
 - **Large results and images.** Bound model-visible results, continue paginated

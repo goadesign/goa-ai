@@ -22,7 +22,6 @@ var errWorkCleanupFailure = errors.New("failed to cancel unfinished work")
 // caller's reason; related cancellation uses the existing engine reason.
 func (l *workflowLoop) cancelSavedWork(request api.CancellationRequest) error {
 	batch := l.unfinishedBatch
-	pending := l.unfinishedPending
 	cleanup := *l
 	cleanup.wfCtx = l.wfCtx.Detached()
 	execution := &toolBatchExec{
@@ -40,20 +39,11 @@ func (l *workflowLoop) cancelSavedWork(request api.CancellationRequest) error {
 		}
 	}
 	cleanupErr := execution.cancelAcceptedTasks(cleanup.wfCtx)
-	children := make([]agentChildFutureInfo, 0, len(pending))
-	for _, item := range pending {
-		if item.Child == nil {
-			continue
-		}
-		// A child already started by this continuation has its own joined
-		// cancellation. Restore only children still owned by a saved record.
-		var saved *stepToolRecord
-		for i := range batch.records {
-			if batch.records[i].call.ToolCallID == item.Child.ToolCallID {
-				saved = &batch.records[i]
-				break
-			}
-		}
+	children := make([]agentChildFutureInfo, 0, len(batch.records))
+	for i := range batch.records {
+		// Starting a child continuation clears its saved suspension. Only
+		// records that still hold one need a new workflow for cancellation.
+		saved := &batch.records[i]
 		if saved.childSuspension == nil {
 			continue
 		}

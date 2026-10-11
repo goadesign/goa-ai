@@ -632,7 +632,7 @@ func (e *toolBatchExec) collectAgentChildResults(wfCtx engine.WorkflowContext, c
 			if errors.Is(err, engine.ErrPlannerActivityDeadlineExceeded) {
 				return out, pending, true, executionErr
 			}
-			return out, pending, false, err
+			return out, pending, false, errors.Join(executionErr, err)
 		}
 
 		i := 0
@@ -648,10 +648,10 @@ func (e *toolBatchExec) collectAgentChildResults(wfCtx engine.WorkflowContext, c
 			outPtr, err := info.handle.Get(wfCtx.Context())
 			if err != nil {
 				if isRunCancellationError(err) || temporalerrors.IsOutputContract(err) || temporalerrors.IsRequestValidation(err) {
-					return out, pending, false, err
+					return out, pending, false, errors.Join(executionErr, err)
 				}
 				if _, ok := temporalerrors.Provider(err); ok {
-					return out, pending, false, err
+					return out, pending, false, errors.Join(executionErr, err)
 				}
 				duration := wfCtx.Now().Sub(info.startTime)
 				result, synthErr := e.synthesizeToolError(ctx, info.call, err, "agent tool execution failed", duration)
@@ -790,8 +790,11 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 			exec.ownedTasks[call.ToolCallID] = futureInfo{call: exec.normalizeToolCall(call), task: cloneTaskExecution(task)}
 		}
 	}
+	var batch *toolCallBatch
+	// Before dispatch there is no batch finalization. Saved Tasks still need
+	// cancellation if the deadline or timer setup stops this call.
 	defer func() {
-		if resultErr != nil || timedOutResult {
+		if batch == nil && (resultErr != nil || timedOutResult) {
 			resultErr = errors.Join(resultErr, exec.cancelAcceptedTasks(wfCtx))
 		}
 	}()
@@ -860,45 +863,41 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 	if err := exec.maybePublishChildTrackerUpdate(ctx, batch.discoveredIDs); err != nil {
 		executionErr = errors.Join(executionErr, err)
 	}
+
+	activityByID := make(map[string]*ToolExecutionResult)
+	var pendingActs []futureInfo
+	pendingChildren := batch.childFutures
+	var timedOut bool
+	if !isRunCancellationError(executionErr) {
+		var err error
+		activityByID, pendingActs, timedOut, err = exec.collectActivityResultsAsComplete(wfCtx, batch.futures, finalizeTimer)
+		executionErr = errors.Join(executionErr, err)
+	}
+	if !isRunCancellationError(executionErr) {
+		childByID, remainingChildren, childrenTimedOut, err := exec.collectAgentChildResults(wfCtx, batch.childFutures, finalizeTimer)
+		pendingChildren = remainingChildren
+		timedOut = timedOut || childrenTimedOut
+		executionErr = errors.Join(executionErr, err)
+		// A later child can cancel after an earlier child has returned a result.
+		// Retain those completed results before closing the remaining work.
+		for id, result := range childByID {
+			batch.inlineByID[id] = result
+		}
+	}
 	if isRunCancellationError(executionErr) {
-		cancelExecOnce()
-		executionErr = errors.Join(
-			executionErr,
-			exec.cancelAndWaitForAgentChildren(wfCtx, batch.childFutures),
-		)
-		return availableToolExecutionsInCallOrder(batch.calls, nil, batch.inlineByID), false, executionErr
+		timedOut = false
 	}
 
-	activityByID, pendingActs, timedOutActs, err := exec.collectActivityResultsAsComplete(wfCtx, batch.futures, finalizeTimer)
-	if isRunCancellationError(err) {
-		cancelExecOnce()
-		err = errors.Join(err, exec.cancelAndWaitForAgentChildren(wfCtx, batch.childFutures))
-		return availableToolExecutionsInCallOrder(batch.calls, activityByID, batch.inlineByID), false, err
-	}
-	if err != nil {
-		executionErr = errors.Join(executionErr, err)
-	}
-
-	childByID, pendingChildren, timedOutChildren, err := exec.collectAgentChildResults(wfCtx, batch.childFutures, finalizeTimer)
-	if isRunCancellationError(err) {
-		cancelExecOnce()
-		err = errors.Join(err, exec.cancelAndWaitForAgentChildren(wfCtx, pendingChildren))
-		return availableToolExecutionsInCallOrder(batch.calls, activityByID, batch.inlineByID), false, err
-	}
-	if err != nil {
-		executionErr = errors.Join(executionErr, err)
-	}
-	timedOut := timedOutActs || timedOutChildren
+	// Every dispatched batch settles its live children and polling Tasks before
+	// returning. Input requests retain their Tasks for workflow cleanup, and
+	// cleanup errors remain part of the returned failure.
 	if executionErr != nil || timedOut {
 		cancelExecOnce()
 		executionErr = errors.Join(
 			executionErr,
 			exec.cancelAndWaitForAgentChildren(wfCtx, pendingChildren),
+			exec.cancelAcceptedTasks(wfCtx),
 		)
-	}
-
-	for id, tr := range childByID {
-		batch.inlineByID[id] = tr
 	}
 
 	if timedOut {
@@ -972,8 +971,9 @@ func (e *toolBatchExec) cancelAndWaitForAgentChildren(wfCtx engine.WorkflowConte
 	return waitErr
 }
 
-// completeToolScheduleState attaches the canonical schedule envelope to every
-// outcome and materializes failures for calls that dispatch could not start.
+// completeToolScheduleState attaches saved schedule details to received outcomes.
+// Missing outcomes become failures only for substantive errors; cancellation
+// closes the run without inventing failed tool results.
 func completeToolScheduleState(
 	batch *toolCallBatch,
 	activityByID map[string]*ToolExecutionResult,
@@ -984,7 +984,7 @@ func completeToolScheduleState(
 		if result == nil {
 			result = batch.inlineByID[call.ToolCallID]
 		}
-		if result == nil && executionErr != nil {
+		if result == nil && executionErr != nil && !temporalerrors.CancellationOnly(executionErr) {
 			result = Executed(&planner.ToolResult{
 				Name:       call.Name,
 				ToolCallID: call.ToolCallID,

@@ -122,13 +122,22 @@ func (l *workflowLoop) executeToolStep(program stepProgram, batch *stepBatch) ([
 	return program.confirmations, items, nil
 }
 
-// recordToolResultsBeforeError preserves the committed tool-use/result
-// handshake when an output-dependent contract rejects further processing.
+// recordToolResultsBeforeError records completed outcomes before returning a
+// step error. Input requests and suspended children stay available for cleanup;
+// they have no completed result to publish.
 func (l *workflowLoop) recordToolResultsBeforeError(batch *stepBatch, contractErr error) error {
 	if batch == nil || batch.recorded == len(batch.records) {
 		return contractErr
 	}
-	if err := l.recordUnrecordedStepToolResults(batch); err != nil {
+	completed := *batch
+	completed.records = make([]stepToolRecord, 0, len(batch.records)-batch.recorded)
+	completed.recorded = 0
+	for _, record := range batch.records[batch.recorded:] {
+		if record.mcpPending == nil && record.childSuspension == nil {
+			completed.records = append(completed.records, record)
+		}
+	}
+	if err := l.recordUnrecordedStepToolResults(&completed); err != nil {
 		return errors.Join(contractErr, err)
 	}
 	return contractErr

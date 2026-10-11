@@ -2376,6 +2376,10 @@ its own public completion event for an end-user interface.
   - Consumers should treat cancellation as a terminal, non-error end state.
   - Cancellation from a service activity, inline tool, or agent child cancels
     the owning run and does not synthesize a failed `ToolResult`.
+    Results received before cancellation retain their saved scheduling and result
+    records; unfinished calls are closed by the run's terminal event. A prior
+    execution error or a cleanup failure remains a failure even when cancellation
+    also occurs.
   - Engine adapters normalize backend cancellation to `context.Canceled` while
     runtime hooks are recorded, then restore the backend's cancellation type at
     the workflow boundary. Temporal therefore records the execution as canceled
@@ -3235,12 +3239,23 @@ that same identity and the saved operation sequence; it cannot reinterpret a
 successor as a fresh invocation. The successor workflow owns later result records
 through the existing separate call and result run references.
 
-Before publishing host questions, the workflow loop retains unfinished Task and
-child records. Initial and resumed workflows use that same owner during
-finalization; successful suspension transfers ownership through the stored
-checkpoint. A cancellation accepted before suspension cannot discard those
-records. Cleanup failure remains a separate error cause, so the runtime and
-both engine adapters report failure rather than successful cancellation.
+The activity batch owns Tasks while polling them. Returning a validated request
+for input transfers its Task to the workflow's unfinished record, even when a
+sibling call or a later execution group fails. Initial and resumed workflows
+retain returned ownership before propagating execution errors. Suspended child
+records likewise remain owned by the parent until a child continuation starts.
+Only completed outcomes enter the result transcript; requests for input and
+child suspensions never become completed tool results.
+
+Successful suspension transfers unfinished records through the stored checkpoint.
+Cancellation before suspension cannot discard those records. Cleanup failure
+remains a separate error cause, so the runtime and both engine adapters report
+failure rather than successful cancellation.
+
+Changes to workflow cancellation command ordering require the deployment's
+existing worker and workflow versioning procedure for Temporal histories.
+Unchanged API and stored-data shapes do not guarantee that an older execution's
+recorded history can replay on a worker with different workflow commands.
 
 A child continuation's execution ID includes the current parent call and exact
 source suspension. If answering produces another question, cancellation uses a
