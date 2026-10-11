@@ -142,56 +142,75 @@ func TestEmptyRootProofLeavesSavedWorkOnCleanupPath(t *testing.T) {
 }
 
 func TestCancelRunFollowsAnswerThatWinsClosureRace(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
-	defer cancel()
-	stored := newTestStore()
-	store := &continuationBeforeClosureStore{Store: stored}
-	runtime := New(store, WithEngine(engineinmem.New()))
-	var resumed atomic.Int32
-	question := func() *planner.PlanResult {
-		return &planner.PlanResult{Await: planner.NewAwait(planner.AwaitClarificationItem(&planner.AwaitClarification{ID: "question", Question: "Choose a region"}))}
+	for _, order := range []string{"before cancellation", "during closure"} {
+		t.Run(order, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			stored := newTestStore()
+			store := &continuationBeforeClosureStore{Store: stored}
+			runtime := New(store, WithEngine(engineinmem.New()))
+			var resumed atomic.Int32
+			question := func() *planner.PlanResult {
+				return &planner.PlanResult{Await: planner.NewAwait(planner.AwaitClarificationItem(&planner.AwaitClarification{ID: "question", Question: "Choose a region"}))}
+			}
+			definition := testAgentDefinition("race.agent", "race.workflow", "race.queue", nil, nil)
+			require.NoError(t, runtime.RegisterAgent(ctx, AgentRegistration{
+				Definition: definition, WorkflowHandler: runtime.ExecuteWorkflow,
+				PlanActivityName: "race.plan", ResumeActivityName: "race.resume", ExecuteToolActivity: "race.execute",
+				Planner: &stubPlanner{
+					start: func(ctx context.Context, _ *planner.PlanInput) (*planner.PlanResult, error) {
+						// This accepted Store state exercises historical cancellation intent;
+						// it does not simulate the current workflow's cancellation handler.
+						input, err := buildCancellationRecord(&RecordActivityInput{AgentID: "race.agent", RunID: "race-original", SessionID: "race-session", TimestampMS: time.Now().UnixMilli()}, run.CancellationReasonUserRequested)
+						if err != nil {
+							return nil, err
+						}
+						_, err = stored.RecordRunCancellation(ctx, storage.RunCancellation{RunID: "race-original", Reason: run.CancellationReasonUserRequested, Record: runLogEvent(input, input.Payload, input.TimestampMS)})
+						return question(), err
+					},
+					resume: func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error) {
+						resumed.Add(1)
+						return question(), nil
+					},
+				},
+			}))
+			_, err := stored.CreateSession(ctx, "race-session", time.Now().UTC())
+			require.NoError(t, err)
+			client := runtime.MustClient("race.agent")
+			first, err := client.Run(ctx, "race-session", nil, WithRunID("race-original"))
+			require.NoError(t, err)
+			require.NotNil(t, first.Suspension)
+			store.before = func() {
+				answered, err := client.Continue(ctx, "race-session", "race-original", "race-answer", "race-turn",
+					&api.PendingInputResponse{Clarification: &api.ClarificationAnswer{ID: "question", Answer: "west"}}, WorkflowOptions{})
+				require.NoError(t, err)
+				require.NotNil(t, answered.Suspension)
+			}
+			if order == "before cancellation" {
+				before := store.before
+				store.before = nil
+				before()
+			}
+			require.NoError(t, runtime.CancelRun(ctx, CancelRequest{RunID: "race-original", Reason: run.CancellationReasonSessionEnded}))
+			require.Eventually(t, func() bool {
+				meta, err := stored.LoadRun(ctx, "race-answer")
+				if err != nil {
+					return false
+				}
+				_, closed := meta.SuspensionResolution.(session.RelinquishedSuspension)
+				return closed
+			}, 5*time.Second, 10*time.Millisecond)
+			original, err := stored.LoadRun(ctx, "race-original")
+			require.NoError(t, err)
+			assert.Equal(t, session.ContinuedSuspension{RunID: "race-answer"}, original.SuspensionResolution)
+			answer, err := stored.LoadRun(ctx, "race-answer")
+			require.NoError(t, err)
+			assert.Equal(t, run.CancellationReasonUserRequested, original.CancellationReason)
+			assert.Equal(t, run.CancellationReasonSessionEnded, answer.SuspensionResolution.(session.RelinquishedSuspension).Reason)
+			assert.Equal(t, session.RunStatusSuspended, answer.Status)
+			assert.EqualValues(t, 1, resumed.Load())
+		})
 	}
-	definition := testAgentDefinition("race.agent", "race.workflow", "race.queue", nil, nil)
-	require.NoError(t, runtime.RegisterAgent(ctx, AgentRegistration{
-		Definition: definition, WorkflowHandler: runtime.ExecuteWorkflow,
-		PlanActivityName: "race.plan", ResumeActivityName: "race.resume", ExecuteToolActivity: "race.execute",
-		Planner: &stubPlanner{
-			start: func(context.Context, *planner.PlanInput) (*planner.PlanResult, error) { return question(), nil },
-			resume: func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error) {
-				resumed.Add(1)
-				return question(), nil
-			},
-		},
-	}))
-	_, err := stored.CreateSession(ctx, "race-session", time.Now().UTC())
-	require.NoError(t, err)
-	client := runtime.MustClient("race.agent")
-	first, err := client.Run(ctx, "race-session", nil, WithRunID("race-original"))
-	require.NoError(t, err)
-	require.NotNil(t, first.Suspension)
-	store.before = func() {
-		answered, err := client.Continue(ctx, "race-session", "race-original", "race-answer", "race-turn",
-			&api.PendingInputResponse{Clarification: &api.ClarificationAnswer{ID: "question", Answer: "west"}}, WorkflowOptions{})
-		require.NoError(t, err)
-		require.NotNil(t, answered.Suspension)
-	}
-	require.NoError(t, runtime.CancelRun(ctx, CancelRequest{RunID: "race-original", Reason: run.CancellationReasonUserRequested}))
-	require.Eventually(t, func() bool {
-		meta, err := stored.LoadRun(ctx, "race-answer")
-		if err != nil {
-			return false
-		}
-		_, closed := meta.SuspensionResolution.(session.RelinquishedSuspension)
-		return closed
-	}, 5*time.Second, 10*time.Millisecond)
-	original, err := stored.LoadRun(ctx, "race-original")
-	require.NoError(t, err)
-	assert.Equal(t, session.ContinuedSuspension{RunID: "race-answer"}, original.SuspensionResolution)
-	answer, err := stored.LoadRun(ctx, "race-answer")
-	require.NoError(t, err)
-	assert.Equal(t, run.CancellationReasonUserRequested, answer.SuspensionResolution.(session.RelinquishedSuspension).Reason)
-	assert.Equal(t, session.RunStatusSuspended, answer.Status)
-	assert.EqualValues(t, 1, resumed.Load())
 }
 
 func TestCancelRunAlreadyRelinquishedDoesNotDecodeHistoricalCheckpoint(t *testing.T) {

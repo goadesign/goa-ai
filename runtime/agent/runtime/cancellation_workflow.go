@@ -277,8 +277,9 @@ func classifyCancellationActivityError(err error) error {
 		return err
 	}
 	var cancellationConflict *engine.CancellationConflictError
+	var reasonConflict *CancellationReasonConflictError
 	var startConflict *engine.WorkflowStartConflictError
-	if errors.As(err, &cancellationConflict) || errors.As(err, &startConflict) ||
+	if errors.As(err, &cancellationConflict) || errors.As(err, &reasonConflict) || errors.As(err, &startConflict) ||
 		errors.Is(err, session.ErrRunNotFound) || errors.Is(err, session.ErrSessionPurged) {
 		return engine.MarkActivityErrorNonRetryable(err)
 	}

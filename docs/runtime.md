@@ -6812,12 +6812,16 @@ Uncertain answer delivery never repeats answers or the creating tool. Applicatio
 stores must implement the retained-work contract before enabling durable execution.
 
 `Runtime.CancelRun` accepts cancellation of suspended work without asking the
-caller to reconstruct or answer its checkpoint. Temporal owns a cancellation job
-on the route saved by the original accepted preparation. The job follows the
-successor selected by storage, including a competing answer, and restores saved
-work through the ordinary continuation path. It also follows saved child work to
+caller to reconstruct or answer its checkpoint. An empty root with a supported
+checkpoint closes directly; later cancellation succeeds without changing its
+first reason or closure time. For saved work that still needs cleanup, Temporal
+owns a cancellation job on the route saved by the original accepted preparation.
+The job follows the successor selected by storage, including a competing answer,
+and restores saved work through the ordinary continuation path. It also follows saved child work to
 its execution parent rather than starting an unrelated root. Duplicate requests
-retain the first accepted reason. A different request is rejected. Acceptance
+retain the current owner's first accepted reason; a competing reason for that
+owner is rejected. An admitted successor owns its own reason acceptance, so its
+predecessor's old reason does not prevent delivery to it. Job acceptance
 does not mean cleanup has finished; replacement workers continue without another
 client call. Temporal may roll the job into a fresh execution to keep recorded
 history manageable; the same request and observation delay continue. Temporary
@@ -8064,7 +8068,9 @@ changing its original resolution.
 It returns the selected successor when an answer wins, and the runtime follows
 that successor through durable cancellation. When closure wins, a later start
 receives `session.ErrRunConflict` before any run or parent link is written.
-Storage retries preserve the same reason and time; a different reason conflicts.
+A selected successor is returned regardless of its predecessor's old cancellation
+reason. Unresolved cancellation intent and direct relinquishment reject a
+different reason; exact closure retries preserve the same reason and time.
 Separate children retain their own successor chains and parent-owned cleanup.
 Ending a Session does not discard unresolved suspensions: they block deletion.
 

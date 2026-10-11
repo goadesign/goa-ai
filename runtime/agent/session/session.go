@@ -115,7 +115,8 @@ const (
 
 	// RunStatusRunning indicates the run is actively executing.
 	RunStatusRunning RunStatus = "running"
-	// RunStatusSuspended indicates the workflow ended and can continue in a new run.
+	// RunStatusSuspended indicates the workflow ended with saved external input.
+	// SuspensionResolution determines whether a new run can continue that work.
 	RunStatusSuspended RunStatus = "suspended"
 	// RunStatusCompleted indicates the run finished successfully.
 	RunStatusCompleted RunStatus = "completed"

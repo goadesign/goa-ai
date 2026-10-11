@@ -174,8 +174,9 @@ func (r *Runtime) LoadRunSuspension(ctx context.Context, runID string) (*api.Run
 	return suspension, nil
 }
 
-// validateStoredRunSuspension checks the exact public suspension, its private
-// checkpoint, and the run identity before any caller reads or redelivers it.
+// validateStoredRunSuspension checks the saved suspension, its current private
+// checkpoint and run identity before execution or proof of no saved work.
+// Historical result reads use validateHistoricalSuspension instead.
 func validateStoredRunSuspension(stored session.RunSuspension, run session.RunMeta) (*api.RunSuspension, *workflowCheckpoint, error) {
 	var suspension api.RunSuspension
 	if err := decodeStoredRunSuspension(stored.Data, &suspension); err != nil {

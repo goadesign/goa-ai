@@ -116,9 +116,10 @@ type (
 		// decoded its exact checkpoint and proved it owns no unfinished work.
 		// The store compares the suspension ID and atomically chooses between
 		// relinquishment and continuation admission. It returns the permanent
-		// resolution, including a successor that won the race. Same-reason
-		// retries preserve the first time; different reasons conflict. This does
-		// not append or replace a historical record or require execution proof.
+		// resolution, including a successor that won the race regardless of the
+		// predecessor's reason. Unresolved cancellation intent and relinquishment
+		// reject a different reason; exact closure retries preserve the first time.
+		// This does not append or replace a historical record or require execution proof.
 		RelinquishRunSuspension(context.Context, RunSuspensionRelinquishment) (session.SuspensionResolution, error)
 		// LoadRun returns durable lifecycle facts for one run. Reading historical
 		// identity and resolution does not require accepted execution proof.

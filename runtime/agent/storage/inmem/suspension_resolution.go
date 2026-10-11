@@ -42,12 +42,15 @@ func (s *Store) relinquishRunSuspension(command storage.RunSuspensionRelinquishm
 	if saved.ID != command.SuspensionID {
 		return nil, session.ErrRunSuspensionConflict
 	}
+	// An admitted successor owns the remaining work and its cancellation reason.
+	// Return it before comparing the predecessor's historical reason.
+	if continued, ok := meta.SuspensionResolution.(session.ContinuedSuspension); ok {
+		return continued, nil
+	}
 	if meta.CancellationReason != "" && meta.CancellationReason != command.Reason {
 		return nil, session.ErrRunCancellationConflict
 	}
 	switch resolved := meta.SuspensionResolution.(type) {
-	case session.ContinuedSuspension:
-		return resolved, nil
 	case session.RelinquishedSuspension:
 		if resolved.Reason != command.Reason {
 			return nil, session.ErrRunCancellationConflict

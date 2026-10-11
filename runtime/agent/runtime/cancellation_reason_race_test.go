@@ -86,32 +86,121 @@ func TestCancelRunCompetingReasonsPreserveWinningResolution(t *testing.T) {
 }
 
 func TestCancelRunReasonConflictDoesNotTreatIntentAsClosure(t *testing.T) {
-	for _, continued := range []bool{false, true} {
-		t.Run(map[bool]string{false: "unresolved", true: "continued"}[continued], func(t *testing.T) {
-			stored, _ := cancellationRaceFixture(t, run.CancellationReasonUserRequested)
+	stored, _ := cancellationRaceFixture(t, run.CancellationReasonUserRequested)
+	store := &closureObservationStore{Store: stored}
+	backend := &closureObservationEngine{recordingCancellationEngine: recordingCancellationEngine{Engine: engineinmem.New(), err: engine.ErrWorkflowCompleted}}
+	runtime := New(store, WithEngine(backend))
+	var conflict *CancellationReasonConflictError
+	require.ErrorAs(t, runtime.CancelRun(t.Context(), CancelRequest{RunID: "run-1", Reason: run.CancellationReasonSessionEnded}), &conflict)
+	assert.Equal(t, []string{"run-1", "run-1"}, store.runReads)
+	assert.Equal(t, 1, store.checkpointReads)
+	assert.Equal(t, 1, store.mutations)
+	assert.Zero(t, store.preparationReads)
+	assert.Zero(t, backend.jobs)
+	meta, err := stored.LoadRun(t.Context(), "run-1")
+	require.NoError(t, err)
+	assert.Equal(t, run.CancellationReasonUserRequested, meta.CancellationReason)
+	assert.Nil(t, meta.SuspensionResolution)
+}
+
+func TestCancellationWorkflowUnresolvedReasonConflictIsPermanent(t *testing.T) {
+	unavailable := errors.New("owner read temporarily unavailable")
+	for _, failRead := range []bool{false, true} {
+		t.Run(map[bool]string{false: "permanent conflict", true: "temporary owner read"}[failRead], func(t *testing.T) {
+			stored, checkpoint := cancellationRaceFixture(t, run.CancellationReasonUserRequested)
+			before, err := stored.LoadRun(t.Context(), "run-1")
+			require.NoError(t, err)
+			records, err := stored.ListRunRecords(t.Context(), "run-1", "", 100)
+			require.NoError(t, err)
 			store := &closureObservationStore{Store: stored}
-			if continued {
-				store.before = func() {
-					admitContinuedRunForTest(t, stored, session.RunMeta{AgentID: "svc.agent", RunID: "successor", SessionID: "session-1", Status: session.RunStatusRunning}, "run-1")
+			if failRead {
+				store.reread = func(session.RunMeta) (session.RunMeta, error) {
+					return session.RunMeta{}, unavailable
 				}
 			}
-			backend := &closureObservationEngine{recordingCancellationEngine: recordingCancellationEngine{Engine: engineinmem.New(), err: engine.ErrWorkflowCompleted}}
-			runtime := New(store, WithEngine(backend))
-			var conflict *CancellationReasonConflictError
-			require.ErrorAs(t, runtime.CancelRun(t.Context(), CancelRequest{RunID: "run-1", Reason: run.CancellationReasonSessionEnded}), &conflict)
+			runtime := New(store)
+			settled, err := runtime.cancellationActivity(t.Context(), engine.CancellationRequest{RunID: "run-1", Reason: run.CancellationReasonSessionEnded})
+			assert.False(t, settled)
+			if failRead {
+				require.ErrorIs(t, err, unavailable)
+				assert.False(t, engine.IsActivityErrorNonRetryable(err))
+			} else {
+				var conflict *CancellationReasonConflictError
+				require.ErrorAs(t, err, &conflict)
+				assert.Equal(t, "run-1", conflict.RunID)
+				assert.Equal(t, run.CancellationReasonSessionEnded, conflict.Reason)
+				assert.True(t, engine.IsActivityErrorNonRetryable(err))
+			}
 			assert.Equal(t, []string{"run-1", "run-1"}, store.runReads)
 			assert.Equal(t, 1, store.checkpointReads)
 			assert.Equal(t, 1, store.mutations)
 			assert.Zero(t, store.preparationReads)
-			assert.Zero(t, backend.jobs)
+			after, err := stored.LoadRun(t.Context(), "run-1")
+			require.NoError(t, err)
+			assert.Equal(t, before, after)
+			retained, err := stored.ListRunRecords(t.Context(), "run-1", "", 100)
+			require.NoError(t, err)
+			assert.Equal(t, records, retained)
+			saved, err := stored.LoadRunSuspension(t.Context(), "run-1")
+			require.NoError(t, err)
+			assert.Equal(t, sha256.Sum256(checkpoint.Data), sha256.Sum256(saved.Data))
+		})
+	}
+}
+
+func TestCancelRunReasonConflictReadFollowsSuccessor(t *testing.T) {
+	stored, _ := cancellationRaceFixture(t, run.CancellationReasonUserRequested)
+	store := &closureObservationStore{Store: stored, mutationErr: storage.NewContractError(session.ErrRunCancellationConflict)}
+	store.before = func() {
+		admitContinuedRunForTest(t, stored, session.RunMeta{AgentID: "svc.agent", RunID: "successor", SessionID: "session-1", Status: session.RunStatusRunning}, "run-1")
+	}
+	runtime := New(store)
+	target, err := store.LoadRun(t.Context(), "run-1")
+	require.NoError(t, err)
+	settled, err := runtime.relinquishEmptyRootSuspension(t.Context(), CancelRequest{RunID: "run-1", Reason: run.CancellationReasonSessionEnded}, &target)
+	require.NoError(t, err)
+	assert.False(t, settled)
+	assert.Equal(t, session.ContinuedSuspension{RunID: "successor"}, target.SuspensionResolution)
+	assert.Equal(t, []string{"run-1", "run-1"}, store.runReads)
+	assert.Equal(t, 1, store.checkpointReads)
+	assert.Equal(t, 1, store.mutations)
+	assert.Zero(t, store.preparationReads)
+	owner, err := runtime.cancellationRoot(t.Context(), target)
+	require.NoError(t, err)
+	assert.Equal(t, "successor", owner.RunID)
+}
+
+func TestCancellationSuccessorOwnsReasonAcceptance(t *testing.T) {
+	for _, successorReason := range []string{"", run.CancellationReasonUserRequested} {
+		t.Run("successor reason="+successorReason, func(t *testing.T) {
+			stored, _ := cancellationRaceFixture(t, run.CancellationReasonUserRequested)
+			admitContinuedRunForTest(t, stored, session.RunMeta{AgentID: "svc.agent", RunID: "successor", SessionID: "session-1", Status: session.RunStatusRunning}, "run-1")
+			backend := &recordingCancellationEngine{Engine: engineinmem.New()}
+			if successorReason != "" {
+				input, err := buildCancellationRecord(&RecordActivityInput{AgentID: "svc.agent", RunID: "successor", SessionID: "session-1", TimestampMS: time.Now().UnixMilli()}, successorReason)
+				require.NoError(t, err)
+				_, err = stored.RecordRunCancellation(t.Context(), storage.RunCancellation{RunID: "successor", Reason: successorReason, Record: runLogEvent(input, input.Payload, input.TimestampMS)})
+				require.NoError(t, err)
+				backend.err = &engine.CancellationConflictError{RunID: "successor", Reason: run.CancellationReasonSessionEnded}
+			}
+			runtime := New(stored, WithEngine(backend))
+			settled, err := runtime.cancellationActivity(t.Context(), engine.CancellationRequest{RunID: "run-1", Reason: run.CancellationReasonSessionEnded})
+			assert.False(t, settled)
+			if successorReason == "" {
+				require.NoError(t, err)
+			} else {
+				var conflict *engine.CancellationConflictError
+				require.ErrorAs(t, err, &conflict)
+				assert.Equal(t, "successor", conflict.RunID)
+				assert.True(t, engine.IsActivityErrorNonRetryable(err))
+			}
+			assert.Equal(t, []engine.CancellationRequest{{RunID: "successor", Reason: run.CancellationReasonSessionEnded}}, backend.requests)
 			meta, err := stored.LoadRun(t.Context(), "run-1")
 			require.NoError(t, err)
 			assert.Equal(t, run.CancellationReasonUserRequested, meta.CancellationReason)
-			if continued {
-				assert.Equal(t, session.ContinuedSuspension{RunID: "successor"}, meta.SuspensionResolution)
-			} else {
-				assert.Nil(t, meta.SuspensionResolution)
-			}
+			successor, err := stored.LoadRun(t.Context(), "successor")
+			require.NoError(t, err)
+			assert.Equal(t, successorReason, successor.CancellationReason)
 		})
 	}
 }

@@ -112,6 +112,39 @@ func TestRelinquishSuspensionCompetesWithContinuation(t *testing.T) {
 	}
 }
 
+func TestRelinquishSuspensionReturnsSuccessorWithDifferentPredecessorReason(t *testing.T) {
+	store, root := runningRootStore(t)
+	_, err := store.RecordRunCancellation(t.Context(), storage.RunCancellation{
+		RunID: root.RunID, Reason: "user_requested",
+		Record: cancellationRecord(t, "original-cancellation", root, "user_requested"),
+	})
+	require.NoError(t, err)
+	_, err = store.RecordRunSuspension(t.Context(), storage.RunSuspension{RunID: root.RunID, Suspension: session.RunSuspension{ID: "checkpoint", Data: []byte(`{}`)}, Record: suspendedRecord(t, "suspended", root, "checkpoint")})
+	require.NoError(t, err)
+	command := storage.RunSuspensionRelinquishment{RunID: root.RunID, SuspensionID: "checkpoint", Reason: "session_ended"}
+	_, err = store.RelinquishRunSuspension(t.Context(), command)
+	require.ErrorIs(t, err, session.ErrRunCancellationConflict)
+	successor := publishStartHistory(t, store, session.RunStart{AgentID: root.AgentID, RunID: "successor", SessionID: root.SessionID, PredecessorRunID: root.RunID, StartedAt: root.StartedAt})
+	_, err = store.StartRootRun(t.Context(), rootStartCommand(t, successor))
+	require.NoError(t, err)
+	before, err := store.LoadRun(t.Context(), root.RunID)
+	require.NoError(t, err)
+	records, err := store.ListRunRecords(t.Context(), root.RunID, "", 100)
+	require.NoError(t, err)
+	resolution, err := store.RelinquishRunSuspension(t.Context(), command)
+	require.NoError(t, err)
+	assert.Equal(t, session.ContinuedSuspension{RunID: successor.RunID}, resolution)
+	after, err := store.LoadRun(t.Context(), root.RunID)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+	retained, err := store.ListRunRecords(t.Context(), root.RunID, "", 100)
+	require.NoError(t, err)
+	assert.Equal(t, records, retained)
+	command.SuspensionID = "wrong-checkpoint"
+	_, err = store.RelinquishRunSuspension(t.Context(), command)
+	require.ErrorIs(t, err, session.ErrRunSuspensionConflict)
+}
+
 func TestRelinquishSuspensionRejectsWrongOwnerOrCheckpoint(t *testing.T) {
 	for _, variation := range []string{"running", "wrong checkpoint", "child", "empty reason"} {
 		t.Run(variation, func(t *testing.T) {
