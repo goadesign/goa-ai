@@ -307,9 +307,27 @@ func TestContextWindowRecoveryRequiresHistoryPolicy(t *testing.T) {
 	provider := &contextWindowTestProvider{}
 	h, _, _ := contextWindowHarness(t, provider, false)
 	h.registration.Policy.History = nil
+	resume := h.workflow.plannerRoutes["resume"]
+	resumeCalls := 0
+	var rejected *PlanActivityOutput
+	h.workflow.plannerRoutes["resume"] = func(ctx context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
+		resumeCalls++
+		output, err := resume(ctx, input)
+		rejected = output
+		return output, err
+	}
 	h.runtime.agents[h.input.AgentID] = h.registration
 	h.base.HistoryEndID = testToolHistory(t, h.runtime, h.input.AgentID, h.base.RunContext, []*model.Message{userMsg("question")})
 	_, err := h.run(contextWindowKickoff(), initialCaps(RunPolicy{MaxToolCalls: 4, MaxRecoveryTurns: 1}))
 	require.ErrorContains(t, err, "requires a history policy")
+	var contract *planner.OutputContractError
+	require.ErrorAs(t, err, &contract)
+	assert.Equal(t, 1, resumeCalls, "missing history support must not schedule replacement planning")
+	require.NotNil(t, rejected)
+	assert.Nil(t, rejected.ModelInvocationRecovery)
+	require.NotNil(t, rejected.OutputContractFailure)
+	assert.Equal(t, planner.OutputContractOriginModel, rejected.OutputContractFailure.Origin)
+	assert.True(t, rejected.OutputContractFailure.ModelResponsePresent)
+	assert.NotEmpty(t, rejected.OutputContractFailure.ModelResponseSHA256)
 	assert.Len(t, provider.requests, 1)
 }

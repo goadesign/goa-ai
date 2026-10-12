@@ -570,7 +570,6 @@ func (j *modelInvocationJournal) exportModelInvocation(
 		return nil, errors.New("planner result selected a probe after using PlannerModelClient")
 	}
 	if selected.response.StopReason == contextWindowStopReason {
-		j.selected = selectedID
 		return nil, j.rejectContextWindowResponse(selectedID)
 	}
 	if selected.response.OutputLimited && len(selected.response.ToolCalls()) > 0 {

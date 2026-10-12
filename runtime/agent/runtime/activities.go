@@ -799,6 +799,16 @@ func (a *plannerActivityInvocation) outputContractFailure(
 	}
 	usage := a.invocations.exportUsage()
 	invocationRecovery, recoveryErr := a.invocations.recoverableModelInvocationRecovery(err)
+	// A context-stopped response can retry only when this agent has a history
+	// policy. Otherwise return its typed rejection without scheduling work that
+	// cannot shorten the request; callers keep the original error category.
+	if invocationRecovery != nil && invocationRecovery.ContextWindow && a.reg.Policy.History == nil {
+		invocationRecovery = nil
+		outputErr = outputcontract.NewWithOrigin(
+			fmt.Errorf("context-window recovery requires a history policy: %w", outputContractFailureReason(outputErr)),
+			planner.OutputContractOriginModel,
+		)
+	}
 	var failure *OutputContractFailure
 	if recoveryErr != nil {
 		failure = terminalPlannerOutputContractFailure(recoveryErr)

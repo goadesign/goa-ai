@@ -92,6 +92,7 @@ func (j *modelInvocationJournal) rejectContextWindowResponse(id modelInvocationI
 	candidate.rejectedOutputErr = err
 	evidence := candidate.responseEvidence
 	candidate.rejectedResponseEvidence = &evidence
+	j.selected = id
 	j.recovery = id
 	j.outputErr = err
 	return err
