@@ -202,7 +202,9 @@ service wiring, and connecting a model. For MCP, follow the
   selected compiled tools, through supported OpenAI and Claude integrations.
 - **Durable execution.** Use Temporal and an application-owned durable store to
   retain accepted work, host continuations, remote Task identity, and cancellation
-  across worker restarts. The in-memory engine supports local development.
+  across worker restarts. New turns preserve saved results completed by a later
+  run, including conversations stored as literal history. The in-memory engine
+  supports local development.
 - **Policies and context.** Control permitted tools, call and recovery budgets,
   timing, history compression, prompt caching, and prompt overrides.
 - **Evaluation and observability.** Generate typed evaluation suites; observe

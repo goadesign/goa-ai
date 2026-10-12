@@ -683,7 +683,11 @@ recovery turn may end with an input suspension; its evidence remains available
 when a new workflow continues after the answer.
 
 Saved pagination uses the exact `RunSeed.Source` ancestry and completed
-execution records through each selected end. A continuation checkpoint also
+execution records through each selected end. A selected result can name a call
+scheduled in another run, including a run represented by literal history. The
+reader loads only that exact schedule and checks the call, tool, agent, and
+session identities before using the result. This does not select other results
+from the scheduling run or extend any selected end. A continuation checkpoint also
 selects its retained completed output references: a completed sibling's event
 can follow the predecessor's transcript end without being published again by
 the successor. Provider IDs remain transcript identities and can repeat across
