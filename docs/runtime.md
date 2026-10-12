@@ -525,10 +525,17 @@ next input. It requires exactly one outcome:
   budget cannot.
 - `UnadvertisedToolName` retains the existing exact unknown-name outcome,
   without its arguments or a copied catalog.
+- `ContextWindow` records a selected completed response's explicit context
+  stop when the agent has a registered history policy. It carries no tool
+  arguments or model-selected recovery control. The [context-window recovery
+  contract](#context-window-recovery) requires compaction before another call.
+  Without a history policy, the response remains an immediate typed output
+  rejection; the runtime does not schedule a replacement activity.
 
-The invocation journal selects the exact eligible, finalized model operation
-by start order before copying its data. Generated correction remains free of
-submitted values. One runtime renderer JSON-encodes the calls with argument text
+For validation failures, the invocation journal selects the exact eligible,
+finalized model operation by start order before copying its data. Context stops
+belong to the exact response selected for planning. Generated correction remains
+free of submitted values. One runtime renderer JSON-encodes the calls with argument text
 as quoted strings and HTML escaping, explicitly labeling them untrusted,
 unexecuted data. This prevents argument text from closing the reminder's
 structure; it does not guarantee the model will interpret it correctly.

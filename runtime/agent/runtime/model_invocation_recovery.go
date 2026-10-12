@@ -365,10 +365,10 @@ func (j *modelInvocationJournal) rejectedModelResponseEvidence() model.ResponseE
 	return model.ResponseEvidence{}
 }
 
-// recoverableModelInvocationRecovery returns the one bounded recovery fact
-// from the exact earliest-started invocation selected as this activity's
-// rejection. A later completion cannot supply a name or correction for an
-// earlier failure. Missing or contradictory facts remain terminal.
+// recoverableModelInvocationRecovery returns one recovery fact from the selected
+// completed response or the earliest eligible validation failure. Another model
+// call cannot supply its context-stop fact, name or correction. Missing or
+// contradictory facts remain terminal.
 func (j *modelInvocationJournal) recoverableModelInvocationRecovery(plannerErr error) (*api.ModelInvocationRecovery, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
