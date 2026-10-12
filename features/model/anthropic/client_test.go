@@ -28,6 +28,7 @@ func TestAnthropicOutputLimited(t *testing.T) {
 		want   bool
 	}{
 		{name: "maximum output tokens", reason: sdk.StopReasonMaxTokens, want: true},
+		{name: "context window", reason: sdk.StopReasonModelContextWindowExceeded, want: true},
 		{name: "natural end", reason: sdk.StopReasonEndTurn},
 		{name: "tool use", reason: sdk.StopReasonToolUse},
 		{name: "refusal", reason: sdk.StopReasonRefusal},

@@ -280,6 +280,8 @@ func Compress(client model.Client, policyCfg HistoryCompressionConfig, opts ...C
 		"history-summary-v2\n%q\n%q\n%q", historySummaryInstruction, runtimeCfg.summaryPrompt, runtimeCfg.summaryRole,
 	))))
 	return func(ctx context.Context, request *model.Request, counter model.TokenCounter, prior *HistorySummary) (HistoryResult, error) {
+		cfg := policyCfg
+		forced := ctx.Value(requiredHistoryCompactionKey{}) != nil
 		msgs := request.Messages
 		original := HistoryResult{Messages: msgs}
 		if client == nil {
@@ -291,8 +293,11 @@ func Compress(client model.Client, policyCfg HistoryCompressionConfig, opts ...C
 		if len(msgs) == 0 {
 			return original, nil
 		}
-		if err := validateHistoryCompressionConfig(policyCfg); err != nil {
+		if err := validateHistoryCompressionConfig(cfg); err != nil {
 			return original, err
+		}
+		if forced {
+			cfg.KeepMaxTurns = 1
 		}
 
 		systemEnd := systemPrefixEnd(msgs)
@@ -328,15 +333,18 @@ func Compress(client model.Client, policyCfg HistoryCompressionConfig, opts ...C
 		if prior != nil {
 			candidateTurns = parseTurns(candidate.Messages[systemPrefixEnd(candidate.Messages):])
 		}
-		triggered, err := shouldCompress(ctx, policyCfg, counter, candidate, len(candidateTurns))
+		triggered, err := shouldCompress(ctx, cfg, counter, candidate, len(candidateTurns))
 		if err != nil {
 			return original, err
 		}
-		if !triggered {
+		if !triggered && !forced {
 			return HistoryResult{Messages: candidate.Messages, Summary: prior}, nil
 		}
 
-		keepStart, err := exactTailStart(ctx, policyCfg, counter, request, msgs[:systemEnd], turns)
+		if forced && (len(turns) < 2 || (prior != nil && prior.ReplacedMessages >= historyConversationCount(turns[:len(turns)-1]))) {
+			return original, errors.New("context-window recovery cannot compact history further while preserving the newest complete turn")
+		}
+		keepStart, err := exactTailStart(ctx, cfg, counter, request, msgs[:systemEnd], turns)
 		if err != nil {
 			return original, err
 		}
@@ -344,7 +352,7 @@ func Compress(client model.Client, policyCfg HistoryCompressionConfig, opts ...C
 			return original, nil
 		}
 		if prior != nil {
-			result, fits, err := fitHistorySummary(ctx, policyCfg, counter, request, turns, keepStart, prior)
+			result, fits, err := fitHistorySummary(ctx, cfg, counter, request, turns, keepStart, prior)
 			if err != nil {
 				return original, err
 			}
@@ -354,7 +362,7 @@ func Compress(client model.Client, policyCfg HistoryCompressionConfig, opts ...C
 		}
 
 		toCompress := turns[:keepStart]
-		if policyCfg.CompressAtMaxInputTokens > 0 {
+		if cfg.CompressAtMaxInputTokens > 0 {
 			// Any optional older turn may need removal after the summary is
 			// counted. Supply all of them before making the one summary call.
 			toCompress = turns[:len(turns)-1]
@@ -406,7 +414,7 @@ func Compress(client model.Client, policyCfg HistoryCompressionConfig, opts ...C
 			PolicyFingerprint: sourceFingerprint,
 		}
 
-		result, _, err := fitHistorySummary(ctx, policyCfg, counter, request, turns, keepStart, summary)
+		result, _, err := fitHistorySummary(ctx, cfg, counter, request, turns, keepStart, summary)
 		if err != nil {
 			return original, err
 		}

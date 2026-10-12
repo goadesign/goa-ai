@@ -5663,6 +5663,49 @@ This correction changes no public API, generated code, stored transcript, or
 workflow command. Applications adopt it through their framework dependency;
 there is no data migration, and older binaries retain their previous behavior.
 
+### Context-window recovery
+
+A selected provider response with `model_context_window_exceeded` means
+generation stopped at the context window, even though the transport completed
+successfully. Anthropic Messages and Bedrock Converse adapters mark this as
+limited output. The designated planner model client requests workflow recovery
+before passing that response to custom planner code. Raw runtime model clients
+keep the canonical provider response available; the runtime applies the same
+rejection when the planner selects it. Direct model clients outside the runtime
+still expose partial responses normally.
+
+The workflow accounts for the completed call's reported usage and preserves
+text already delivered as a plain assistant message. None of that response's
+tool calls execute. A replacement activity carries only the context-stop fact;
+original messages and model/tool choices remain owned by their existing layers.
+The next request uses the registered history policy with mandatory compaction.
+`Compress` summarizes all older turns while preserving every System message
+and the newest complete turn. It does this even when a local estimate was
+below the ordinary trigger. A reused summary must replace additional original
+messages, and the destination counter must report a strictly smaller input
+count before another inference can start. Estimates remain estimates and do
+not guarantee provider fit. Missing summary support, failed counting, a larger
+summary, or already-maximal compaction stops explicitly without another request.
+Custom policies must return a valid summary with those same progress properties.
+
+Each replacement consumes the existing `MaxRecoveryTurns` budget; it does not
+reset tool-call or time budgets, repeat accepted tools, or create another retry
+setting. Cleanup failures and independent planner failures remain terminal. A
+`max_tokens` stop alone retains its existing behavior. Generic HTTP 400
+validation errors are not reclassified as context stops: they can represent
+other invalid requests. Cached input still occupies context; Anthropic usage
+reports uncached input, cache reads, and cache writes separately. Recovery
+retains those reported values without treating an estimate as billing data.
+
+There is no stored-transcript migration or model configuration change.
+`ModelInvocationRecovery.ContextWindow` is an additional runtime-owned activity
+variant, validated as mutually exclusive with other recovery variants. Keep
+existing workflow executions on their original code and deploy matching updated
+activity and workflow workers together, using the engine's workflow versioning
+contract. Old workers cannot interpret this new recovery variant. Rollback
+restores the earlier behavior for newly started executions; executions already
+using the new variant must retain their updated workers until completion.
+
 ### Preparing conversation messages
 
 `PlanInput.Messages` and `PlanResumeInput.Messages` contain saved conversation

@@ -1062,10 +1062,10 @@ func translateResponse(msg *sdk.Message, nameMap map[string]string) (*model.Resp
 	return resp, nil
 }
 
-// anthropicOutputLimited identifies the Anthropic stop reason emitted when a
-// message consumes its configured generated-token budget.
+// anthropicOutputLimited reports when generation consumes its output budget
+// or the remaining context window, so callers can identify incomplete output.
 func anthropicOutputLimited(reason string) bool {
-	return reason == string(sdk.StopReasonMaxTokens)
+	return reason == string(sdk.StopReasonMaxTokens) || reason == string(sdk.StopReasonModelContextWindowExceeded)
 }
 
 // translateAnthropicUsage extracts provider usage and resolved model identity

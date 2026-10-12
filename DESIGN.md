@@ -479,6 +479,18 @@ Generated agent definitions populate the executable catalog. Code that builds
 an `AgentDefinition` directly must list every tool the agent may execute; an
 empty list means the agent has no executable tools.
 
+The selected model response owns context-stop recovery. A
+`model_context_window_exceeded` response cannot complete planning or execute
+tools. Its reported usage and already-delivered text retain their existing
+accounting and transcript paths. The next workflow activity requests mandatory
+compaction through the registered history policy and consumes the existing
+recovery-turn budget. Only a summary replacing additional original messages and
+a strictly smaller destination input count permits another inference. The
+newest whole turn and every System instruction remain intact; the runtime
+stops when no additional history can be summarized. Direct provider clients
+continue exposing partial responses, and ordinary output limits and validation
+errors retain their prior meaning.
+
 The validated model client applies each tool's advertised schema before its
 attached input decoder and before a response becomes canonical. A schema
 rejection or non-nil `*tools.ValidationError` can produce limited-size

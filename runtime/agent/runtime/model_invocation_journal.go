@@ -569,6 +569,10 @@ func (j *modelInvocationJournal) exportModelInvocation(
 	if !j.designated.IsZero() && selectedID != j.designated {
 		return nil, errors.New("planner result selected a probe after using PlannerModelClient")
 	}
+	if selected.response.StopReason == contextWindowStopReason {
+		j.selected = selectedID
+		return nil, j.rejectContextWindowResponse(selectedID)
+	}
 	if selected.response.OutputLimited && len(selected.response.ToolCalls()) > 0 {
 		err := outputcontract.NewWithOrigin(
 			errors.New("model response reached its generated-output limit before completing the tool-call batch"),
