@@ -144,6 +144,7 @@ func validateModelInvocationRecovery(recovery *ModelInvocationRecovery) error {
 	}
 	var variants int
 	for _, present := range []bool{
+		recovery.ContextWindow,
 		recovery.ToolInput != nil,
 		recovery.NoCallBodyCorrection != "",
 		recovery.UnadvertisedToolName != "",
@@ -158,7 +159,7 @@ func validateModelInvocationRecovery(recovery *ModelInvocationRecovery) error {
 	if !utf8.ValidString(recovery.UnadvertisedToolName) {
 		return errors.New("model-invocation recovery name requires valid UTF-8")
 	}
-	if recovery.UnadvertisedToolName != "" {
+	if recovery.ContextWindow || recovery.UnadvertisedToolName != "" {
 		return nil
 	}
 	correction := recovery.NoCallBodyCorrection

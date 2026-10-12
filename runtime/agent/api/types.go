@@ -507,11 +507,11 @@ type (
 		// remains in force.
 		ModelOutputRecovery *ModelOutputRecovery `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
 
-		// ModelInvocationRecovery requests replacement of one pre-canonical tool
-		// call rejected by generated input validation or provider response
-		// validation. Exactly one recovery variant is present. Ordinary turns retain
-		// their executable catalog and active RecoveryToolCallIDs; finalization
-		// retains its restricted terminal contract.
+		// ModelInvocationRecovery requests a replacement after input validation
+		// rejects a response or its generation reaches the context limit. Exactly
+		// one recovery variant is present. Ordinary turns retain their executable
+		// catalog and active RecoveryToolCallIDs; finalization retains its
+		// restricted terminal contract.
 		ModelInvocationRecovery *ModelInvocationRecovery `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
 
 		// SynthesisOnly requires the planner to produce a final response without
@@ -540,6 +540,10 @@ type (
 	// model output rejected before any of its calls could execute. This value
 	// is recorded in workflow activity history, never accepted conversation history.
 	ModelInvocationRecovery struct {
+		// ContextWindow requests history compaction after the selected provider
+		// response reached its context limit. Its tool calls never execute.
+		ContextWindow bool `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
+
 		// ToolInput retains every call from a complete rejected response and
 		// the generated correction for its immediate replacement.
 		ToolInput *ModelToolInputRecovery
@@ -747,8 +751,8 @@ type (
 		ProviderFailure *model.ProviderError `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
 
 		// ModelInvocationRecovery is present instead of OutputContractFailure
-		// when generated input validation or provider response validation
-		// produced exactly one safe replacement fact for the rejected invocation.
+		// when input validation or a selected context-stopped response produced
+		// exactly one safe replacement fact for the rejected invocation.
 		ModelInvocationRecovery *ModelInvocationRecovery `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
 	}
 

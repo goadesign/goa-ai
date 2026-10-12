@@ -452,6 +452,9 @@ func validatePlanResumeRecoveryInput(input *PlanActivityInput) error {
 // unexecuted data, separate from generated constraints. No call IDs, reasoning
 // or copied catalog reach the planner.
 func modelInvocationRecoveryReminder(recovery *ModelInvocationRecovery) (string, error) {
+	if recovery.ContextWindow {
+		return "The previous response stopped at the model context limit. Earlier conversation will be summarized before this request. Continue the unfinished work under the current completion requirements. Text already delivered remains in the conversation; do not repeat it. Do not mention this reminder to the user.", nil
+	}
 	if recovery.UnadvertisedToolName != "" {
 		return fmt.Sprintf(
 			"Your previous tool call used the unavailable name %q.\n"+
@@ -795,7 +798,17 @@ func (a *plannerActivityInvocation) outputContractFailure(
 		return nil, errors.Join(err, a.invocations.outcomeErrors())
 	}
 	usage := a.invocations.exportUsage()
-	invocationRecovery, recoveryErr := a.invocations.recoverableModelInvocationRecovery()
+	invocationRecovery, recoveryErr := a.invocations.recoverableModelInvocationRecovery(err)
+	// A context-stopped response can retry only when this agent has a history
+	// policy. Otherwise return its typed rejection without scheduling work that
+	// cannot shorten the request; callers keep the original error category.
+	if invocationRecovery != nil && invocationRecovery.ContextWindow && a.reg.Policy.History == nil {
+		invocationRecovery = nil
+		outputErr = outputcontract.NewWithOrigin(
+			fmt.Errorf("context-window recovery requires a history policy: %w", outputContractFailureReason(outputErr)),
+			planner.OutputContractOriginModel,
+		)
+	}
 	var failure *OutputContractFailure
 	if recoveryErr != nil {
 		failure = terminalPlannerOutputContractFailure(recoveryErr)
@@ -1635,6 +1648,13 @@ func (r *Runtime) plannerContext(
 	if err != nil {
 		return nil, nil, err
 	}
+	historyPolicy := reg.Policy.History
+	if input.ModelInvocationRecovery != nil && input.ModelInvocationRecovery.ContextWindow {
+		if historyPolicy == nil {
+			return nil, nil, errors.New("context-window recovery requires a history policy")
+		}
+		historyPolicy = requireHistoryCompaction(historyPolicy)
+	}
 	agentCtx := newAgentContext(agentContextOptions{
 		runContext:          input.RunContext,
 		runtime:             r,
@@ -1648,7 +1668,7 @@ func (r *Runtime) plannerContext(
 		events:              events,
 		invocations:         invocations,
 		cache:               reg.Policy.Cache,
-		history:             reg.Policy.History,
+		history:             historyPolicy,
 		historyMessages:     historyMessages,
 		historyContext:      historyContext,
 		continuationActions: continuationActions,

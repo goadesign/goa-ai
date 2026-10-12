@@ -1046,3 +1046,39 @@ func mustJSON(v any) []byte {
 	}
 	return data
 }
+
+func TestAnthropicStreamerContextWindowStop(t *testing.T) {
+	events := []ssestream.Event{
+		{Type: "message_start", Data: []byte(`{"type":"message_start","message":{"id":"msg_context","type":"message","role":"assistant","model":"claude-test","content":[],"stop_reason":null,"stop_sequence":null,"usage":{"input_tokens":10,"output_tokens":0,"cache_read_input_tokens":20,"cache_creation_input_tokens":30}}}`)},
+		{Type: "content_block_start", Data: []byte(`{"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}`)},
+		{Type: "content_block_delta", Data: []byte(`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial answer"}}`)},
+		{Type: "content_block_stop", Data: []byte(`{"type":"content_block_stop","index":0}`)},
+		{Type: "message_delta", Data: []byte(`{"type":"message_delta","delta":{"stop_reason":"model_context_window_exceeded","stop_sequence":null},"usage":{"output_tokens":2}}`)},
+		{Type: "message_stop", Data: []byte(`{"type":"message_stop"}`)},
+	}
+	st := newAnthropicStreamer(t.Context(), ssestream.NewStream[sdk.MessageStreamEventUnion](&testDecoder{events: events}, nil), &encodedRequest{model: "claude-test", search: &claudeSearch{}}, model.ModelClassDefault, nil, anthropicTestContract(t))
+	var stopped bool
+	for {
+		chunk, err := st.Recv()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		require.NoError(t, err)
+		if stop, ok := chunk.(model.StopChunk); ok {
+			stopped = true
+			assert.Equal(t, "model_context_window_exceeded", stop.Reason)
+			assert.True(t, stop.OutputLimited)
+		}
+	}
+	require.NoError(t, st.Close())
+	assert.True(t, stopped)
+	response := st.Response()
+	require.NotNil(t, response)
+	assert.Equal(t, "model_context_window_exceeded", response.StopReason)
+	assert.True(t, response.OutputLimited)
+	assert.Equal(t, "partial answer", response.Content[0].Text())
+	assert.Equal(t, 10, response.Usage.InputTokens)
+	assert.Equal(t, 2, response.Usage.OutputTokens)
+	assert.Equal(t, 20, response.Usage.CacheReadTokens)
+	assert.Equal(t, 30, response.Usage.CacheWriteTokens)
+}

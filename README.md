@@ -194,6 +194,13 @@ service wiring, and connecting a model. For MCP, follow the
 
 [MCP declarations](docs/dsl.md#mcp-server-definition) · [Clients and authorization](docs/runtime.md#mcp-callers) · [Apps example](integration_tests/apps/README.md) · [Skills guide](docs/mcp_skills.md)
 
+Context-limit responses are recovered by the workflow rather than accepted as
+completed answers or executable tool batches. The runtime uses its existing
+history policy to summarize older turns before a replacement request, preserves
+live text and usage, and stops if compaction cannot shorten the input. This
+uses the existing recovery-turn budget. See
+[context-window recovery](docs/runtime.md#context-window-recovery).
+
 ### Registries, search, and production execution
 
 - **Distributed tool registries.** Publish typed toolsets, discover changing

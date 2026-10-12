@@ -253,6 +253,7 @@ func TestPlannerModelClientClosesStreamReturnedWithError(t *testing.T) {
 	raw := &chunkStreamer{closeErr: closeErr}
 	client := newPlannerModelClient(
 		mustTestModelClient(streamResultClient{stream: raw, err: callErr}),
+		nil,
 	)
 
 	summary, err := client.Stream(t.Context(), &model.Request{})
@@ -981,7 +982,7 @@ func TestPlannerModelClientIsSingleUseAndSelectsCanonicalResponse(t *testing.T) 
 				Parts: []model.Part{model.TextPart{Text: "selected"}},
 			}}), nil
 		},
-	}, invocations))
+	}, invocations), invocations)
 
 	response, err := client.Complete(context.Background(), &model.Request{})
 	require.NoError(t, err)
@@ -1316,7 +1317,7 @@ func TestPlannerModelClientScopesCompleteResponseTranscript(t *testing.T) {
 				},
 			), nil
 		},
-	}, invocations))
+	}, invocations), invocations)
 
 	_, err := client.Complete(context.Background(), testModelRequest("svc.lookup"))
 	require.NoError(t, err)
@@ -1843,7 +1844,7 @@ func TestPlannerAndCacheClientsDropResponsesReturnedWithErrors(t *testing.T) {
 		},
 	})
 
-	plannerClient := newPlannerModelClient(inner)
+	plannerClient := newPlannerModelClient(inner, nil)
 	response, err := plannerClient.Complete(t.Context(), &model.Request{})
 	require.Nil(t, response)
 	require.ErrorIs(t, err, providerErr)
@@ -1871,7 +1872,11 @@ func rejectedResponseEvidence(journal *modelInvocationJournal) (model.ResponseEv
 // testInvocationRecovery checks construction before tests inspect an outcome.
 func testInvocationRecovery(t *testing.T, journal *modelInvocationJournal) *ModelInvocationRecovery {
 	t.Helper()
-	recovery, err := journal.recoverableModelInvocationRecovery()
+	recovery, err := journal.recoverableModelInvocationRecovery(nil)
 	require.NoError(t, err)
 	return recovery
+}
+
+func (*fakeModelInvocationSink) contextWindowFailure() error {
+	return nil
 }
