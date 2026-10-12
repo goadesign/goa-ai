@@ -36,6 +36,7 @@ type testCatalogMap struct {
 	definitions            map[string]string
 	retiredTokens          map[string]struct{}
 	scopeRoutes            map[string]map[string]struct{}
+	scopeToolOwners        map[string]map[string]string
 	clock                  registryTimeSource
 	readErr                error
 	snapshotErr            error
@@ -727,11 +728,12 @@ func newTestCatalogMap(clocks ...registryTimeSource) *testCatalogMap {
 		clock = clocks[0]
 	}
 	return &testCatalogMap{
-		content:       make(map[string]string),
-		definitions:   make(map[string]string),
-		retiredTokens: make(map[string]struct{}),
-		scopeRoutes:   make(map[string]map[string]struct{}),
-		clock:         clock,
+		content:         make(map[string]string),
+		definitions:     make(map[string]string),
+		retiredTokens:   make(map[string]struct{}),
+		scopeRoutes:     make(map[string]map[string]struct{}),
+		scopeToolOwners: make(map[string]map[string]string),
+		clock:           clock,
 	}
 }
 
@@ -919,6 +921,9 @@ func (m *testCatalogMap) Commit(ctx context.Context, key, previous string, next 
 		if now.UnixMilli() >= next.RoutableUntilUnixMilli {
 			return false, nil
 		}
+	}
+	if err := m.checkToolNames(key, next); err != nil {
+		return false, err
 	}
 	if next.Definition != "" {
 		m.definitions[key] = next.Definition

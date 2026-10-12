@@ -675,14 +675,16 @@ func jitterRegistrationDelay(base, maximum time.Duration) time.Duration {
 }
 
 // isPermanentRegistrationError identifies invalid selection, lost lease
-// authority, retirement, and validation failures that cannot succeed on retry.
+// authority, retirement, validation failures, and tool names already provided
+// by another toolset in the same catalog scope. None of them can succeed when
+// the provider retries the same declaration.
 func isPermanentRegistrationError(err error) bool {
 	var serviceErr *goa.ServiceError
 	if !errors.As(err, &serviceErr) {
 		return false
 	}
 	switch serviceErr.Name {
-	case "provider_lease_lost", "admission_retired", "admission_conflict", "validation_error":
+	case "provider_lease_lost", "admission_retired", "admission_conflict", "validation_error", "tool_name_conflict":
 		return true
 	default:
 		return false

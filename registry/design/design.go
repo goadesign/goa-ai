@@ -31,6 +31,7 @@ var _ = API("registry", func() {
 	Error("admission_retired", ErrorResult, "The requested admission was intentionally retired")
 	Error("admission_conflict", ErrorResult, "The expected admission token does not match the catalog record")
 	Error("provider_lease_lost", ErrorResult, "The exact provider incarnation no longer holds the admitted lease and must stop serving")
+	Error("tool_name_conflict", ErrorResult, "Another active toolset with the same catalog identity scope already provides one of the declared tool names. Nothing was saved; change the declaration's tool names or retire the other toolset")
 
 	// gRPC transport configuration
 	GRPC(func() {
@@ -42,6 +43,7 @@ var _ = API("registry", func() {
 		Response("admission_retired", CodeFailedPrecondition)
 		Response("admission_conflict", CodeFailedPrecondition)
 		Response("provider_lease_lost", CodeFailedPrecondition)
+		Response("tool_name_conflict", CodeFailedPrecondition)
 	})
 })
 
@@ -57,18 +59,19 @@ var _ = Service("registry", func() {
 	// ---- Provider Operations ----
 
 	Method("DeclareServiceToolset", func() {
-		Description("Create a complete immutable service toolset before any provider connects. The registry assigns its admission revision and registration time. An identical active declaration returns the original saved definition, token, and time; a different declaration or native Agent occupancy returns admission_conflict. A retired service declaration returns admission_retired. Declaration does not create a provider lease or establish health.")
+		Description("Create a complete immutable service toolset before any provider connects. The registry assigns its admission revision and registration time. An identical active declaration returns the original saved definition, token, and time; a different declaration or native Agent occupancy returns admission_conflict. A retired service declaration returns admission_retired. Declaration does not create a provider lease or establish health. When the declaration has a catalog identity scope, every tool name must be unused by other active toolsets in that scope; otherwise tool_name_conflict names the tool and the toolset that already provides it, and nothing is saved.")
 		Payload(ServiceToolsetDeclaration)
 		Result(ResolvedToolset)
 		Error("admission_conflict")
 		Error("admission_retired")
+		Error("tool_name_conflict")
 		Error("validation_error")
 		Error("service_unavailable")
 		GRPC(func() {})
 	})
 
 	Method("ReplaceServiceToolset", func() {
-		Description("Replace or reactivate the expected service declaration after every old provider lease has released or expired. The replacement ID identifies this update of the expected registration; reuse it with the same complete declaration after an uncertain reply. An already-current matching replacement returns its saved definition, token, and time. A stale expected token, native Agent occupancy, or changed replacement intent conflicts. Live leases, including draining leases, return admission_blocked without replacing the declaration. Replacement permanently retires the previous service token, creates no provider lease, and requires new providers to attach and establish health.")
+		Description("Replace or reactivate the expected service declaration after every old provider lease has released or expired. The replacement ID identifies this update of the expected registration; reuse it with the same complete declaration after an uncertain reply. An already-current matching replacement returns its saved definition, token, and time. A stale expected token, native Agent occupancy, or changed replacement intent conflicts. Live leases, including draining leases, return admission_blocked without replacing the declaration. Replacement permanently retires the previous service token, creates no provider lease, and requires new providers to attach and establish health. When the declaration has a catalog identity scope, every tool name must be unused by other active toolsets in that scope; otherwise tool_name_conflict names the tool and the toolset that already provides it, and nothing is saved.")
 		Payload(func() {
 			Extend(ServiceToolsetDeclaration)
 			Field(100, "expected_registration_token", String, "Exact service registration this update may replace.", func() {
@@ -83,6 +86,7 @@ var _ = Service("registry", func() {
 		Error("admission_blocked")
 		Error("admission_conflict")
 		Error("admission_retired")
+		Error("tool_name_conflict")
 		Error("validation_error")
 		Error("service_unavailable")
 		GRPC(func() {})
@@ -101,12 +105,13 @@ var _ = Service("registry", func() {
 	})
 
 	Method("Register", func() {
-		Description("Reject providers whose required runtime-owned wire protocol version differs from the registry, then atomically admit one provider-incarnation lease in the catalog admission record. The same wire version, schema, and admission revision add or renew replicas under one token. A different token replaces the admission after Redis-time pruning proves every old lease expired and atomically tombstones the prior token; otherwise admission_blocked asks the provider to retry. Any candidate in the permanent retired-token set returns admission_retired and cannot resurrect. An already-draining incarnation returns provider_lease_lost; full registration cannot reopen it. Active providers use RenewProvider without resending definitions.")
+		Description("Reject providers whose required runtime-owned wire protocol version differs from the registry, then atomically admit one provider-incarnation lease in the catalog admission record. The same wire version, schema, and admission revision add or renew replicas under one token. A different token replaces the admission after Redis-time pruning proves every old lease expired and atomically tombstones the prior token; otherwise admission_blocked asks the provider to retry. Any candidate in the permanent retired-token set returns admission_retired and cannot resurrect. An already-draining incarnation returns provider_lease_lost; full registration cannot reopen it. Active providers use RenewProvider without resending definitions. When the declaration has a catalog identity scope, every tool name must be unused by other active toolsets in that scope; otherwise tool_name_conflict names the tool and the toolset that already provides it, and nothing is saved.")
 		Payload(RegisterPayload)
 		Result(RegisterResult)
 		Error("admission_blocked")
 		Error("admission_retired")
 		Error("provider_lease_lost")
+		Error("tool_name_conflict")
 		Error("validation_error")
 		Error("service_unavailable")
 		GRPC(func() {})
@@ -150,17 +155,18 @@ var _ = Service("registry", func() {
 	})
 
 	Method("RegisterAgentToolset", func() {
-		Description("Create a native Agent toolset without a Pulse provider lease. Repeating the same active declaration succeeds. A different existing declaration returns admission_conflict; use ReplaceAgentToolset with its current token.")
+		Description("Create a native Agent toolset without a Pulse provider lease. Repeating the same active declaration succeeds. A different existing declaration returns admission_conflict; use ReplaceAgentToolset with its current token. When the declaration has a catalog identity scope, every tool name must be unused by other active toolsets in that scope; otherwise tool_name_conflict names the tool and the toolset that already provides it, and nothing is saved.")
 		Payload(registrytypes.AgentToolsetDeclaration)
 		Result(ResolvedToolset)
 		Error("admission_conflict")
+		Error("tool_name_conflict")
 		Error("validation_error")
 		Error("service_unavailable")
 		GRPC(func() {})
 	})
 
 	Method("ReplaceAgentToolset", func() {
-		Description("Replace or reactivate a native Agent toolset only when the current registration matches expected_registration_token. Already accepted child calls retain their original declarations. New discovery returns the replacement.")
+		Description("Replace or reactivate a native Agent toolset only when the current registration matches expected_registration_token. Already accepted child calls retain their original declarations. New discovery returns the replacement. When the declaration has a catalog identity scope, every tool name must be unused by other active toolsets in that scope; otherwise tool_name_conflict names the tool and the toolset that already provides it, and nothing is saved.")
 		Payload(func() {
 			Extend(registrytypes.AgentToolsetDeclaration)
 			Field(100, "expected_registration_token", String, "Current native Agent registration being replaced.", func() {
@@ -170,6 +176,7 @@ var _ = Service("registry", func() {
 		})
 		Result(ResolvedToolset)
 		Error("admission_conflict")
+		Error("tool_name_conflict")
 		Error("validation_error")
 		Error("service_unavailable")
 		GRPC(func() {})

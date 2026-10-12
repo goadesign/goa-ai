@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"reflect"
 	"slices"
 	"strings"
@@ -83,6 +84,13 @@ func compileCatalogToolset(toolset *genregistry.Toolset, raw string, fingerprint
 			executionSchemas: schemas, textOnlySchemas: textOnlySchemas,
 		},
 	}, nil
+}
+
+// toolNames returns every tool name in this declaration, sorted. The catalog
+// claims these names for the toolset when a commit makes the declaration
+// current, so no other active toolset in the same scope can provide them.
+func (d *catalogDefinition) toolNames() []string {
+	return slices.Sorted(maps.Keys(d.executionSchemas))
 }
 
 // toolsetToInfo retains only the fields needed for discovery and health.

@@ -125,6 +125,9 @@ func (s *Service) registerAgentToolset(ctx context.Context, toolset *genregistry
 		if errors.Is(err, errAdmissionConflict) {
 			return nil, genregistry.MakeAdmissionConflict(err)
 		}
+		if errors.As(err, new(*toolNameConflictError)) {
+			return nil, genregistry.MakeToolNameConflict(err)
+		}
 		return nil, genregistry.MakeServiceUnavailable(err)
 	}
 	return resolvedToolsetRegistration(definition, state)
@@ -199,7 +202,9 @@ func (c *toolsetCatalog) RegisterAgent(ctx context.Context, definition *catalogT
 			RegistrationToken: token, RegisteredAt: now.Format(time.RFC3339Nano),
 		}
 		state.Info.RegisteredAt = state.RegisteredAt
-		updated, err := c.commit(ctx, key, raw, state, catalogWrite{Definition: definition.raw})
+		updated, err := c.commit(ctx, key, raw, state, catalogWrite{
+			Definition: definition.raw, ClaimToolNames: true, ToolNames: definition.toolNames(),
+		})
 		if err != nil {
 			return catalogState{}, err
 		}

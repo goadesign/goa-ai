@@ -65,7 +65,10 @@ type RegistryClient interface {
 	// identical active declaration returns the original saved definition, token,
 	// and time; a different declaration or native Agent occupancy returns
 	// admission_conflict. A retired service declaration returns admission_retired.
-	// Declaration does not create a provider lease or establish health.
+	// Declaration does not create a provider lease or establish health. When the
+	// declaration has a catalog identity scope, every tool name must be unused by
+	// other active toolsets in that scope; otherwise tool_name_conflict names the
+	// tool and the toolset that already provides it, and nothing is saved.
 	DeclareServiceToolset(ctx context.Context, in *DeclareServiceToolsetRequest, opts ...grpc.CallOption) (*DeclareServiceToolsetResponse, error)
 	// Replace or reactivate the expected service declaration after every old
 	// provider lease has released or expired. The replacement ID identifies this
@@ -76,7 +79,10 @@ type RegistryClient interface {
 	// leases, including draining leases, return admission_blocked without
 	// replacing the declaration. Replacement permanently retires the previous
 	// service token, creates no provider lease, and requires new providers to
-	// attach and establish health.
+	// attach and establish health. When the declaration has a catalog identity
+	// scope, every tool name must be unused by other active toolsets in that
+	// scope; otherwise tool_name_conflict names the tool and the toolset that
+	// already provides it, and nothing is saved.
 	ReplaceServiceToolset(ctx context.Context, in *ReplaceServiceToolsetRequest, opts ...grpc.CallOption) (*ReplaceServiceToolsetResponse, error)
 	// Attach one provider incarnation to the exact existing service registration
 	// without sending or changing its definition. The expected token and current
@@ -96,7 +102,10 @@ type RegistryClient interface {
 	// provider to retry. Any candidate in the permanent retired-token set returns
 	// admission_retired and cannot resurrect. An already-draining incarnation
 	// returns provider_lease_lost; full registration cannot reopen it. Active
-	// providers use RenewProvider without resending definitions.
+	// providers use RenewProvider without resending definitions. When the
+	// declaration has a catalog identity scope, every tool name must be unused by
+	// other active toolsets in that scope; otherwise tool_name_conflict names the
+	// tool and the toolset that already provides it, and nothing is saved.
 	Register(ctx context.Context, in *RegisterRequest, opts ...grpc.CallOption) (*RegisterResponse, error)
 	// Extend only the exact current unexpired provider-incarnation lease without
 	// reading or writing tool definitions. Preserve its registration token,
@@ -131,12 +140,18 @@ type RegistryClient interface {
 	Pong(ctx context.Context, in *PongRequest, opts ...grpc.CallOption) (*PongResponse, error)
 	// Create a native Agent toolset without a Pulse provider lease. Repeating the
 	// same active declaration succeeds. A different existing declaration returns
-	// admission_conflict; use ReplaceAgentToolset with its current token.
+	// admission_conflict; use ReplaceAgentToolset with its current token. When the
+	// declaration has a catalog identity scope, every tool name must be unused by
+	// other active toolsets in that scope; otherwise tool_name_conflict names the
+	// tool and the toolset that already provides it, and nothing is saved.
 	RegisterAgentToolset(ctx context.Context, in *RegisterAgentToolsetRequest, opts ...grpc.CallOption) (*RegisterAgentToolsetResponse, error)
 	// Replace or reactivate a native Agent toolset only when the current
 	// registration matches expected_registration_token. Already accepted child
 	// calls retain their original declarations. New discovery returns the
-	// replacement.
+	// replacement. When the declaration has a catalog identity scope, every tool
+	// name must be unused by other active toolsets in that scope; otherwise
+	// tool_name_conflict names the tool and the toolset that already provides it,
+	// and nothing is saved.
 	ReplaceAgentToolset(ctx context.Context, in *ReplaceAgentToolsetRequest, opts ...grpc.CallOption) (*ReplaceAgentToolsetResponse, error)
 	// List all registered toolsets with optional tag filtering
 	ListToolsets(ctx context.Context, in *ListToolsetsRequest, opts ...grpc.CallOption) (*ListToolsetsResponse, error)
@@ -472,7 +487,10 @@ type RegistryServer interface {
 	// identical active declaration returns the original saved definition, token,
 	// and time; a different declaration or native Agent occupancy returns
 	// admission_conflict. A retired service declaration returns admission_retired.
-	// Declaration does not create a provider lease or establish health.
+	// Declaration does not create a provider lease or establish health. When the
+	// declaration has a catalog identity scope, every tool name must be unused by
+	// other active toolsets in that scope; otherwise tool_name_conflict names the
+	// tool and the toolset that already provides it, and nothing is saved.
 	DeclareServiceToolset(context.Context, *DeclareServiceToolsetRequest) (*DeclareServiceToolsetResponse, error)
 	// Replace or reactivate the expected service declaration after every old
 	// provider lease has released or expired. The replacement ID identifies this
@@ -483,7 +501,10 @@ type RegistryServer interface {
 	// leases, including draining leases, return admission_blocked without
 	// replacing the declaration. Replacement permanently retires the previous
 	// service token, creates no provider lease, and requires new providers to
-	// attach and establish health.
+	// attach and establish health. When the declaration has a catalog identity
+	// scope, every tool name must be unused by other active toolsets in that
+	// scope; otherwise tool_name_conflict names the tool and the toolset that
+	// already provides it, and nothing is saved.
 	ReplaceServiceToolset(context.Context, *ReplaceServiceToolsetRequest) (*ReplaceServiceToolsetResponse, error)
 	// Attach one provider incarnation to the exact existing service registration
 	// without sending or changing its definition. The expected token and current
@@ -503,7 +524,10 @@ type RegistryServer interface {
 	// provider to retry. Any candidate in the permanent retired-token set returns
 	// admission_retired and cannot resurrect. An already-draining incarnation
 	// returns provider_lease_lost; full registration cannot reopen it. Active
-	// providers use RenewProvider without resending definitions.
+	// providers use RenewProvider without resending definitions. When the
+	// declaration has a catalog identity scope, every tool name must be unused by
+	// other active toolsets in that scope; otherwise tool_name_conflict names the
+	// tool and the toolset that already provides it, and nothing is saved.
 	Register(context.Context, *RegisterRequest) (*RegisterResponse, error)
 	// Extend only the exact current unexpired provider-incarnation lease without
 	// reading or writing tool definitions. Preserve its registration token,
@@ -538,12 +562,18 @@ type RegistryServer interface {
 	Pong(context.Context, *PongRequest) (*PongResponse, error)
 	// Create a native Agent toolset without a Pulse provider lease. Repeating the
 	// same active declaration succeeds. A different existing declaration returns
-	// admission_conflict; use ReplaceAgentToolset with its current token.
+	// admission_conflict; use ReplaceAgentToolset with its current token. When the
+	// declaration has a catalog identity scope, every tool name must be unused by
+	// other active toolsets in that scope; otherwise tool_name_conflict names the
+	// tool and the toolset that already provides it, and nothing is saved.
 	RegisterAgentToolset(context.Context, *RegisterAgentToolsetRequest) (*RegisterAgentToolsetResponse, error)
 	// Replace or reactivate a native Agent toolset only when the current
 	// registration matches expected_registration_token. Already accepted child
 	// calls retain their original declarations. New discovery returns the
-	// replacement.
+	// replacement. When the declaration has a catalog identity scope, every tool
+	// name must be unused by other active toolsets in that scope; otherwise
+	// tool_name_conflict names the tool and the toolset that already provides it,
+	// and nothing is saved.
 	ReplaceAgentToolset(context.Context, *ReplaceAgentToolsetRequest) (*ReplaceAgentToolsetResponse, error)
 	// List all registered toolsets with optional tag filtering
 	ListToolsets(context.Context, *ListToolsetsRequest) (*ListToolsetsResponse, error)
