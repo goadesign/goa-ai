@@ -769,8 +769,13 @@ func (run *providerRun) serve(
 		if msg.ToolUseID == "" {
 			return ackImmediate(ev, "tool call missing tool_use_id")
 		}
+		// Decoded calls keep their arguments in msg. Copy the event without its
+		// encoded bytes so waiting work retains only the acknowledgment metadata;
+		// observers of the delivered event still receive its original payload.
+		queuedEvent := *ev
+		queuedEvent.Payload = nil
 		select {
-		case work <- workItem{ev: ev, msg: msg}:
+		case work <- workItem{ev: &queuedEvent, msg: msg}:
 			return nil
 		default:
 			logger.Error(

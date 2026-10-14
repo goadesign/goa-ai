@@ -416,7 +416,10 @@ func TestServeAcknowledgesRegistrySettledStaleQueuedCall(t *testing.T) {
 	assert.Empty(t, results)
 	select {
 	case got := <-acked:
-		assert.Same(t, event, got)
+		expected := *event
+		expected.Payload = nil
+		assert.Equal(t, expected, *got)
+		assert.Equal(t, payload, event.Payload)
 	case <-time.After(time.Second):
 		t.Fatal("provider did not acknowledge stale queued call")
 	}
