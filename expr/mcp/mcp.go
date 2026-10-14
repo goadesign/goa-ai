@@ -34,6 +34,8 @@ type (
 		// Tools is the collection of tool expressions exposed by this
 		// server.
 		Tools []*ToolExpr
+		// DynamicTools requires the application to implement the generated tool list and call methods.
+		DynamicTools bool
 		// Resources is the collection of resource expressions exposed
 		// by this server.
 		Resources []*ResourceExpr
@@ -208,6 +210,9 @@ func (m *MCPExpr) Validate() error {
 		verr.Add(m, jsonRPCRouteMessage, m.Service.Name)
 	case route.Method != http.MethodPost:
 		verr.Add(m, jsonRPCRouteMessage+`; found %s %q`, m.Service.Name, route.Method, route.Path)
+	}
+	if m.DynamicTools && (len(m.Tools) > 0 || m.ToolCatalog != nil) {
+		verr.Add(m, "DynamicTools cannot be combined with Tool or ToolCatalog; the application owns the complete tool catalog and dispatch")
 	}
 	toolNames := make(map[string]struct{}, len(m.Tools))
 	for _, t := range m.Tools {

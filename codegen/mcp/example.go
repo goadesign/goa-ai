@@ -153,11 +153,13 @@ func firstRootWithJSONRPC(roots []eval.Root) (*expr.RootExpr, bool) {
 	return nil, false
 }
 
-// collectMCPServices returns services that have MCP configured in DSL.
+// collectMCPServices selects services whose complete implementation can be built
+// from authored endpoints. Dynamic tool services retain Goa's application stubs
+// so their constructors return an implementation of every generated method.
 func collectMCPServices(r *expr.RootExpr, mcpRoot *mcpexpr.RootExpr) []exampleMCPService {
 	var services []exampleMCPService
 	for _, sv := range r.Services {
-		if mcpRoot.GetMCP(sv) == nil {
+		if mcp := mcpRoot.GetMCP(sv); mcp == nil || mcp.DynamicTools {
 			continue
 		}
 		services = append(services, exampleMCPService{service: sv})

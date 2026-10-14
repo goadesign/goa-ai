@@ -63,6 +63,24 @@ func MCP(name, version string, design ...func()) {
 	}
 }
 
+// DynamicTools generates tools/list and tools/call for tools whose definitions
+// are supplied at runtime. The application implements these methods on the
+// generated MCP service interface, using its generated payload and result types.
+// Embed the generated MCPAdapter to retain discovery and other declared methods.
+// The application owns tool visibility, pagination, argument validation and
+// invocation authorization. Security declared in MCP still protects every request.
+//
+// DynamicTools must appear inside MCP's design function. It cannot be combined
+// with Tool or ToolCatalog: the application owns the complete list and dispatch.
+func DynamicTools() {
+	server, ok := eval.Current().(*exprmcp.MCPExpr)
+	if !ok {
+		eval.IncompatibleDSL()
+		return
+	}
+	server.DynamicTools = true
+}
+
 // Resource marks the current method as an MCP resource provider. The method's
 // result becomes the resource content returned when clients read the resource.
 // Bytes become base64 blob content with the declared MIME type. A string with a
