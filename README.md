@@ -183,6 +183,8 @@ service wiring, and connecting a model. For MCP, follow the
   [older-client contract](docs/runtime.md#older-http-clients).
 - **Runtime-defined tools.** Declare `DynamicTools()` to implement tool listing
   and invocation through generated protocol types without authored static tools.
+  Older clients receive dynamic structured results in a matching `value` object;
+  modern clients receive the original JSON value.
   See [runtime-defined tools](docs/dsl.md#runtime-defined-tools).
 - **Resources and prompts.** Serve fixed or parameterized text/binary resources,
   typed prompts, argument completion, and authenticated paginated catalogs.

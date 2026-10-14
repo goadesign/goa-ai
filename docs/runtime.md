@@ -7032,10 +7032,13 @@ resource templates, and argument completion. It keeps the same token checks,
 operation scopes, interceptors, middleware, typed argument validation, selected
 result views, domain errors and dynamic catalog endpoints as the modern path.
 The older wire replies omit modern `resultType`, `ttlMs` and `cacheScope` fields.
-Object results, including tagged unions, keep their existing shape. Scalar,
-array and untagged-union results use `{"value": ...}` with a corresponding
-object output schema. Structured results are also included as text content for
-hosts that consume only content items; authored content items are retained.
+For statically authored tools, object results, including tagged unions, keep
+their existing shape. Scalar, array and untagged-union results use `{"value": ...}`
+with a corresponding object output schema. Runtime-defined tools use that
+wrapper for every present structured result, including objects and JSON null;
+see the [runtime-defined tool contract](dsl.md#runtime-defined-tools) for schema
+references and regeneration requirements. Structured results are also included
+as text content for hosts that consume only content items; authored content items are retained.
 
 Tasks, change subscriptions and server-to-client input exchanges are unavailable
 on the older path and are not advertised during initialization. Modern task or

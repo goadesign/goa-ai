@@ -381,6 +381,9 @@ func planMCPJSONRPCServerImports(generation *goacodegen.Generation, data *Adapte
 		goacodegen.NewImport("goahttp", "goa.design/goa/v3/http"),
 		goacodegen.NewImport("mcpruntime", "goa.design/goa-ai/runtime/mcp"),
 	}
+	if data.DynamicTools {
+		fixed = append(fixed, goacodegen.SimpleImport("crypto/sha256"))
+	}
 	if err := data.jsonrpcServerImports.Require(fixed...); err != nil {
 		return fmt.Errorf("plan MCP JSON-RPC server imports: %w", err)
 	}

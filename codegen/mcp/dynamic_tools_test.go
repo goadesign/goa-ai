@@ -49,6 +49,7 @@ var _=Service("catalog",func(){
 
 const dynamicToolsRuntime = `package dynamictools
 import (
+ "bytes"
  "context"
  "crypto/ed25519"
  "crypto/rand"
@@ -64,6 +65,7 @@ import (
 
  "github.com/go-jose/go-jose/v4"
  "github.com/go-jose/go-jose/v4/jwt"
+ jsonschema "github.com/santhosh-tekuri/jsonschema/v6"
  "github.com/stretchr/testify/assert"
  "github.com/stretchr/testify/require"
  genmcp "dynamic-tools.local/gen/mcp_catalog"
@@ -77,16 +79,16 @@ import (
 type service struct {
  *genmcp.MCPAdapter
  calls atomic.Int32
- scalar atomic.Bool
+ output atomic.Value
  name atomic.Value
 }
+type outputFixture struct { schema, result string }
 var _ genmcp.Service=(*service)(nil)
 
 func(s *service)ToolsList(ctx context.Context,p *genmcp.ToolsListPayload)(*genmcp.ToolsListResult,error){
  if _,ok:=mcpruntime.ResourcePrincipalFromContext(ctx);!ok{return nil,fmt.Errorf("verified principal missing")}
  if p.Cursor!=nil{return nil,goa.PermanentError("invalid_params","unknown cursor")}
- outputSchema:=json.RawMessage("{\"type\":\"object\"}")
- if s.scalar.Load(){outputSchema=json.RawMessage("{\"type\":\"number\"}")}
+ outputSchema:=json.RawMessage(s.output.Load().(outputFixture).schema)
  return &genmcp.ToolsListResult{ResultType:"complete",TTLMs:0,CacheScope:"private",Tools:[]*genmcp.ToolInfo{
   {Name:s.name.Load().(string),InputSchema:json.RawMessage("{\"type\":\"object\"}"),OutputSchema:outputSchema},
  }},nil
@@ -96,8 +98,7 @@ func(s *service)ToolsCall(ctx context.Context,p *genmcp.ToolsCallPayload)(*genmc
  if p.Name!=s.name.Load().(string){return nil,goa.PermanentError("invalid_params","unknown tool")}
  s.calls.Add(1)
  text:="runtime result"
- structured:=json.RawMessage("{\"value\":42}")
- if s.scalar.Load(){structured=json.RawMessage("42")}
+ structured:=json.RawMessage(s.output.Load().(outputFixture).result)
  return &genmcp.ToolsCallResult{Outcome:genmcp.NewToolsCallOutcomeComplete(&genmcp.ToolsCallCompleteResult{
   Content:[]*genmcp.ContentItem{{Type:"text",Text:&text}},StructuredContent:structured,
  })},nil
@@ -116,7 +117,7 @@ func TestDynamicTools(t *testing.T){
  signer,err:=jose.NewSigner(jose.SigningKey{Algorithm:jose.EdDSA,Key:private},(&jose.SignerOptions{}).WithType("at+jwt"));require.NoError(t,err)
  token,err:=jwt.Signed(signer).Claims(jwt.Claims{Issuer:peer.URL,Subject:"reader",Audience:jwt.Audience{peer.URL+"/mcp"},Expiry:jwt.NewNumericDate(time.Now().Add(time.Hour)),IssuedAt:jwt.NewNumericDate(time.Now()),ID:"test"}).Claims(map[string]any{"client_id":"client","scope":"tools:use"}).Serialize();require.NoError(t,err)
  owner,err:=mcpruntime.NewJWTResourceServer(mcpruntime.JWTResource{Issuer:peer.URL,Resource:peer.URL+"/mcp",Keys:jose.JSONWebKeySet{Keys:[]jose.JSONWebKey{{Key:public}}},Algorithms:[]jose.SignatureAlgorithm{jose.EdDSA}});require.NoError(t,err)
- s:=&service{MCPAdapter:genmcp.NewMCPAdapter(nil,nil)};s.name.Store("first")
+ s:=&service{MCPAdapter:genmcp.NewMCPAdapter(nil,nil)};s.name.Store("first");s.output.Store(outputFixture{"{\"type\":\"object\"}","{\"value\":42}"})
  server:=genserver.New(genmcp.NewEndpoints(s),mux,goahttp.RequestDecoder,goahttp.ResponseEncoder,nil,owner)
  server.Mount(mux)
  location,err:=url.Parse(peer.URL);require.NoError(t,err)
@@ -124,6 +125,7 @@ func TestDynamicTools(t *testing.T){
  discovered,err:=client.ServerDiscover()(t.Context(),&genmcp.DiscoverPayload{});require.NoError(t,err)
  assert.NotNil(t,discovered.(*genmcp.DiscoverResult).Capabilities.Tools)
  caller,err:=genclient.NewCaller(client,mcpruntime.ClientInfo{Name:"test",Version:"1"},mcpruntime.InputSupport{},mcpruntime.HTTPRetryPolicy{});require.NoError(t,err)
+ validatingCaller,err:=mcpruntime.NewHTTPCaller(mcpruntime.HTTPOptions{Endpoint:peer.URL+"/mcp",Client:authenticatedDoer{peer.Client(),token},ClientInfo:mcpruntime.ClientInfo{Name:"validator",Version:"1"}});require.NoError(t,err)
  for _,name:=range []string{"first","second"}{
   s.name.Store(name)
   listed,err:=client.ToolsList()(t.Context(),&genmcp.ToolsListPayload{});require.NoError(t,err)
@@ -132,15 +134,111 @@ func TestDynamicTools(t *testing.T){
   result,err:=caller.CallTool(t.Context(),mcpruntime.CallRequest{Tool:name,Payload:json.RawMessage("{}")});require.NoError(t,err)
   assert.JSONEq(t,"{\"value\":42}",string(result.StructuredContent))
  }
+ _,err=caller.CallTool(t.Context(),mcpruntime.CallRequest{Tool:"second",Payload:json.RawMessage("{")});require.Error(t,err)
+ assert.EqualValues(t,2,s.calls.Load())
  _,err=caller.CallTool(t.Context(),mcpruntime.CallRequest{Tool:"first",Payload:json.RawMessage("{}")});require.Error(t,err)
  assert.EqualValues(t,2,s.calls.Load())
  // A modern client receives a scalar exactly as returned by the implementation.
- s.scalar.Store(true)
+ s.output.Store(outputFixture{"{\"type\":\"number\"}","42"})
  listed,err:=client.ToolsList()(t.Context(),&genmcp.ToolsListPayload{});require.NoError(t,err)
  assert.JSONEq(t,"{\"type\":\"number\"}",string(listed.(*genmcp.ToolsListResult).Tools[0].OutputSchema))
  scalar,err:=caller.CallTool(t.Context(),mcpruntime.CallRequest{Tool:"second",Payload:json.RawMessage("{}")});require.NoError(t,err)
  assert.Equal(t,"42",string(scalar.StructuredContent))
- s.scalar.Store(false)
+ s.output.Store(outputFixture{"{\"type\":\"object\"}","{\"value\":42}"})
+
+ for _,test:=range []struct{name,schema,result string}{
+  {"scalar","{\"type\":\"number\"}","42"},
+  {"array","{\"type\":\"array\",\"items\":{\"type\":\"number\"}}","[1,2]"},
+  {"object","{\"type\":\"object\"}","{\"value\":42}"},
+  {"null","{\"type\":\"null\"}","null"},
+  {"union","{\"anyOf\":[{\"type\":\"object\"},{\"type\":\"number\"}]}","42"},
+  {"recursive","{\"type\":\"object\",\"properties\":{\"next\":{\"$ref\":\"#\"}},\"additionalProperties\":false}","{\"next\":{}}"},
+  {"definitions","{\"$ref\":\"#/$defs/result\",\"$defs\":{\"result\":{\"type\":\"number\"}}}","42"},
+  {"named","{\"$id\":\"https://schemas.example/result\",\"$ref\":\"#/$defs/result\",\"$defs\":{\"result\":{\"type\":\"number\"}}}","42"},
+  {"anchor","{\"$anchor\":\"result\",\"type\":\"object\",\"properties\":{\"next\":{\"$ref\":\"#result\"}},\"additionalProperties\":false}","{\"next\":{}}"},
+  {"nested identifier","{\"type\":\"object\",\"properties\":{\"item\":{\"$ref\":\"child\"}},\"$defs\":{\"child\":{\"$id\":\"child\",\"type\":\"number\"}}}","{\"item\":42}"},
+  {"empty identifier","{\"$id\":\"\",\"type\":\"object\",\"properties\":{\"next\":{\"$ref\":\"#\"}},\"additionalProperties\":false}","{\"next\":{}}"},
+  {"fragment identifier","{\"$id\":\"#\",\"type\":\"object\",\"properties\":{\"next\":{\"$ref\":\"#\"}},\"additionalProperties\":false}","{\"next\":{}}"},
+  {"retrieval identifier","{\"$id\":\"https://schemas.example/transport\",\"type\":\"object\",\"properties\":{\"next\":{\"$ref\":\"#\"}},\"additionalProperties\":false}","{\"next\":{}}"},
+  {"explicit dialect","{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"type\":\"number\"}","42"},
+  {"nested boolean","{\"type\":\"object\",\"properties\":{\"value\":true,\"forbidden\":false}}","{\"value\":42}"},
+  {"relative identifier","{\"$id\":\"legacy\",\"type\":\"object\",\"properties\":{\"next\":{\"$ref\":\"#\"}},\"additionalProperties\":false}","{\"next\":{}}"},
+  {"relative path identifier","{\"$id\":\"./legacy\",\"type\":\"object\",\"properties\":{\"next\":{\"$ref\":\"#\"}},\"additionalProperties\":false}","{\"next\":{}}"},
+  {"compiler identifier","{\"$id\":\"schema://goa-ai/contract.json\",\"type\":\"object\",\"properties\":{\"next\":{\"$ref\":\"#\"}},\"additionalProperties\":false}","{\"next\":{}}"},
+  {"no schema","","42"},
+  {"absent","",""},
+ }{
+  t.Run(test.name,func(t *testing.T){
+   s.output.Store(outputFixture{test.schema,test.result})
+   listed,err:=client.ToolsList()(t.Context(),&genmcp.ToolsListPayload{});require.NoError(t,err)
+   assert.Equal(t,test.schema,string(listed.(*genmcp.ToolsListResult).Tools[0].OutputSchema))
+   modern,err:=caller.CallTool(t.Context(),mcpruntime.CallRequest{Tool:"second",Payload:json.RawMessage("{}")});require.NoError(t,err)
+   assert.Equal(t,test.result,string(modern.StructuredContent))
+   var legacySchema json.RawMessage
+   for _,method:=range []string{"tools/list","tools/call"}{
+    params:="{}";if method=="tools/call"{params="{\"name\":\"second\",\"arguments\":{}}"}
+    body:=fmt.Sprintf("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":%q,\"params\":%s}",method,params)
+    request:=httptest.NewRequest(http.MethodPost,peer.URL+"/mcp",strings.NewReader(body))
+    request.Header.Set("Content-Type","application/json");request.Header.Set("Accept","application/json, text/event-stream")
+    request.Header.Set("MCP-Protocol-Version",mcpruntime.LegacyProtocolVersion);request.Header.Set("Authorization","Bearer "+token)
+    response:=httptest.NewRecorder();server.ServeHTTP(response,request)
+    require.Equal(t,http.StatusOK,response.Code,response.Body.String())
+    var reply struct{Result struct{Tools []struct{OutputSchema json.RawMessage};StructuredContent json.RawMessage;Content []struct{Text string}};Error json.RawMessage}
+    require.NoError(t,json.Unmarshal(response.Body.Bytes(),&reply));require.Empty(t,reply.Error)
+    if method=="tools/list"{
+     require.Len(t,reply.Result.Tools,1);legacySchema=reply.Result.Tools[0].OutputSchema
+     if test.schema==""{assert.Empty(t,legacySchema)}else{require.NotEmpty(t,legacySchema)}
+     continue
+    }
+    if test.result==""{assert.Empty(t,reply.Result.StructuredContent);assert.Len(t,reply.Result.Content,1);continue}
+    expected:="{\"value\":"+test.result+"}"
+    assert.JSONEq(t,expected,string(reply.Result.StructuredContent))
+    require.Len(t,reply.Result.Content,2);assert.JSONEq(t,expected,reply.Result.Content[1].Text)
+    if len(legacySchema)!=0{
+     schema,err:=jsonschema.UnmarshalJSON(bytes.NewReader(legacySchema));require.NoError(t,err)
+     identity:=schema.(map[string]any)["$id"].(string)
+     compiler:=jsonschema.NewCompiler();require.NoError(t,compiler.AddResource(identity,schema))
+     compiled,err:=compiler.Compile(identity);require.NoError(t,err)
+     value,err:=jsonschema.UnmarshalJSON(bytes.NewReader(reply.Result.StructuredContent));require.NoError(t,err)
+     assert.NoError(t,compiled.Validate(value))
+     // The HTTP caller receives the emitted object schema and result through
+     // the current transport, then performs its ordinary catalog validation.
+     s.output.Store(outputFixture{string(legacySchema),expected})
+     validated,err:=validatingCaller.CallTool(t.Context(),mcpruntime.CallRequest{Tool:"second",Payload:json.RawMessage("{}")});require.NoError(t,err)
+     assert.JSONEq(t,expected,string(validated.StructuredContent))
+
+     original,err:=jsonschema.UnmarshalJSON(strings.NewReader(test.schema));require.NoError(t,err)
+     originalCompiler:=jsonschema.NewCompiler();require.NoError(t,originalCompiler.AddResource("https://schemas.example/original",original))
+     originalValidator,err:=originalCompiler.Compile("https://schemas.example/original");require.NoError(t,err)
+     for _,candidate:=range []string{"null","42","\"text\"","[]","{}","{\"next\":{}}","{\"next\":{\"unexpected\":true}}","{\"item\":\"wrong\"}","{\"forbidden\":true}"}{
+      originalValue,err:=jsonschema.UnmarshalJSON(strings.NewReader(candidate));require.NoError(t,err)
+      wrappedValue,err:=jsonschema.UnmarshalJSON(strings.NewReader("{\"value\":"+candidate+"}"));require.NoError(t,err)
+      assert.Equal(t,originalValidator.Validate(originalValue)==nil,compiled.Validate(wrappedValue)==nil,candidate)
+     }
+
+    }
+   }
+  })
+ }
+ s.output.Store(outputFixture{"{\"type\":\"object\"}","{\"value\":42}"})
+
+ for _,dialect:=range []string{"http://json-schema.org/draft-04/schema#","http://json-schema.org/draft-07/schema#"}{
+  schema:=fmt.Sprintf("{\"$schema\":%q,\"type\":\"object\"}",dialect)
+  s.output.Store(outputFixture{schema,"{}"})
+  listed,err:=client.ToolsList()(t.Context(),&genmcp.ToolsListPayload{});require.NoError(t,err)
+  assert.JSONEq(t,schema,string(listed.(*genmcp.ToolsListResult).Tools[0].OutputSchema))
+  before:=s.calls.Load()
+  request:=httptest.NewRequest(http.MethodPost,peer.URL+"/mcp",strings.NewReader("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{}}"))
+  request.Header.Set("Content-Type","application/json");request.Header.Set("Accept","application/json, text/event-stream")
+  request.Header.Set("MCP-Protocol-Version",mcpruntime.LegacyProtocolVersion);request.Header.Set("Authorization","Bearer "+token)
+  response:=httptest.NewRecorder();server.ServeHTTP(response,request)
+  var reply struct{Error struct{Code int;Message string}}
+  require.NoError(t,json.Unmarshal(response.Body.Bytes(),&reply))
+  assert.Equal(t,mcpruntime.JSONRPCInternalError,reply.Error.Code)
+  assert.Contains(t,reply.Error.Message,"unsupported dialect")
+  assert.Equal(t,before,s.calls.Load())
+ }
+ s.output.Store(outputFixture{"{\"type\":\"object\"}","{\"value\":42}"})
  for _,version:=range []string{mcpruntime.ProtocolVersion,mcpruntime.LegacyProtocolVersion}{
   for _,method:=range []string{"tools/list","tools/call"}{
    params:="{}"
