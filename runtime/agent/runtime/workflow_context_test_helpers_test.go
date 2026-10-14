@@ -230,6 +230,13 @@ func (r *routeWorkflowContext) ExecuteToolActivityAsync(
 	return future, nil
 }
 
+func (r *routeWorkflowContext) ExecuteAgentOperationActivity(call engine.AgentOperationActivityCall) (*api.AgentOperationActivityResult, error) {
+	if r.childRuntime == nil {
+		return nil, errors.New("agent operation activity runtime is required")
+	}
+	return r.childRuntime.prepareAgentOperationActivity(r.Context(), call.Input)
+}
+
 func (r *routeWorkflowContext) ExecuteAgentChildActivity(call engine.AgentChildActivityCall) (*api.AgentChildActivityOutput, error) {
 	if r.childRuntime == nil {
 		return nil, errors.New("agent child activity runtime is required")
@@ -252,3 +259,6 @@ func (r *routeWorkflowContext) ExecuteContinuationActivity(call engine.Continuat
 func (r *routeWorkflowContext) StartRequestDigest() ([32]byte, error) {
 	return [32]byte{1}, nil
 }
+
+// RequireSingleAttempt accepts this fixture, which represents one workflow attempt.
+func (*routeWorkflowContext) RequireSingleAttempt() error { return nil }

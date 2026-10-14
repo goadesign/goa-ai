@@ -109,8 +109,8 @@ var DynamicOriginal = Type("DynamicOriginal", func() {
 var CustomOriginal = Type("CustomOriginal", func() {
 	Meta("struct:pkg:path", "unsupported")
 	Meta("type:generate:force")
-	Attribute("customValue", Bytes, func() {
-		Meta("struct:field:type", "json.RawMessage", "encoding/json")
+	Attribute("customValue", String, func() {
+		Meta("struct:field:type", "json.Number", "encoding/json")
 	})
 	Attribute("child", Detail)
 })

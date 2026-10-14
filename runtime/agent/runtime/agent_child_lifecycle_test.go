@@ -10,6 +10,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	genregistry "goa.design/goa-ai/registry/gen/registry"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/storage"
 )
@@ -22,8 +24,9 @@ func TestExecuteAgentChildWaitsAfterParentCancellation(t *testing.T) {
 	_, err := createSessionForTest(t.Context(), runtime.Store, "session-1")
 	require.NoError(t, err)
 	seedEndID, err := publishLiteralHistory(ctx, runtime.Store, storage.SeedDeclaration{
-		AgentID: "child.agent", RunID: "child-run", SessionID: "session-1",
-		Kind: storage.SeedLiteral,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("child.agent"))}, RunID: "child-run", SessionID: "session-1",
+		Kind:   storage.SeedLiteral,
+		Origin: genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: "parent-run", ToolCallID: "call-1"})},
 	}, nil)
 	require.NoError(t, err)
 	childHandles := make(chan *controlledChildHandle, 1)

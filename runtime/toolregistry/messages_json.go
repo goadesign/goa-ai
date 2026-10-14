@@ -9,6 +9,22 @@ import (
 	"io"
 )
 
+// EncodeToolResultMessage validates a completed or unfinished provider outcome
+// and writes the existing JSON message. Raw JSON remains JSON, preserving number
+// text and content. As in the existing provider transport, encoding compacts
+// whitespace and escapes HTML characters; it does not preserve those spellings.
+// Tool-specific codecs still own result, bounds, and server-data validation.
+func EncodeToolResultMessage(message ToolResultMessage) ([]byte, error) {
+	if err := ValidateToolResultMessage(message); err != nil {
+		return nil, fmt.Errorf("encode tool result message: %w", err)
+	}
+	data, err := json.Marshal(message)
+	if err != nil {
+		return nil, fmt.Errorf("encode tool result message: %w", err)
+	}
+	return data, nil
+}
+
 // DecodeToolResultMessage decodes one non-null JSON object into the existing wire
 // message. It rejects unknown fields in fixed records and trailing documents,
 // returning a zero message on every error. Result, server-data payloads, and

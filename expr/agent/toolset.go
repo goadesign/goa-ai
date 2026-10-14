@@ -37,6 +37,10 @@ type (
 		// Code generation resolves the names after collecting all compiled tools.
 		DeferredTools []string
 
+		// InputBindings lists required provider fields supplied by this consumer.
+		// Generation resolves them without changing the provider's declaration.
+		InputBindings []*InputBindingExpr
+
 		// Meta carries arbitrary design-time metadata attached to the toolset via DSL.
 		// Keys map to one or more values, matching Goa's Meta conventions.
 		Meta goaexpr.MetaExpr
@@ -61,6 +65,12 @@ type (
 		// is a reference/alias (e.g., consumed under Uses or via AgentToolset).
 		// When nil, this toolset is the defining origin.
 		Origin *ToolsetExpr
+	}
+	// InputBindingExpr identifies the required fields that one consumer supplies
+	// for a known provider tool. Generation uses it to build typed input assembly.
+	InputBindingExpr struct {
+		Tool   string
+		Fields []string
 	}
 )
 

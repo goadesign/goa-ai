@@ -1247,7 +1247,7 @@ func assertStoredCallDecision(
 	decision, err := testRedisClient.HGet(ctx, key, "decision").Result()
 	require.NoError(t, err)
 	if admitted {
-		assert.Equal(t, "admitted", decision)
+		assert.Equal(t, "prepared", decision)
 		return
 	}
 	assert.Equal(t, "rejected", decision)

@@ -1,5 +1,5 @@
-// Package tests verifies that each generated codec file reserves only the
-// fixed package names used by that file.
+// Package tests verifies that generated codecs and authored value types use
+// compatible import names when their preferred package names match.
 package tests
 
 import (
@@ -16,6 +16,7 @@ func TestGoldenCodecImportNameCollisions(t *testing.T) {
 	files := buildCompleteGeneratedFiles(t, testscenarios.CodecImportNameCollisions())
 	indexed := renderedFileContent(t, files, "gen/alpha/toolsets/indexed/codecs.go")
 	scalar := renderedFileContent(t, files, "gen/alpha/toolsets/scalar/types.go")
+	scalarCodecs := renderedFileContent(t, files, "gen/alpha/toolsets/scalar/codecs.go")
 	customTransport := renderedFileContent(t, files, "gen/alpha/toolsets/custom/http/types.go")
 	customValidation := renderedFileContent(t, files, "gen/alpha/toolsets/custom/http/validate.go")
 	union := renderedFileContent(t, files, "gen/alpha/toolsets/union/unions.go")
@@ -27,8 +28,10 @@ func TestGoldenCodecImportNameCollisions(t *testing.T) {
 	require.Contains(t, indexed, `strconv2 "generated.local/gen/strconv"`)
 	require.Contains(t, indexed, "strconv.Itoa(index)")
 	require.Contains(t, indexed, "strconv2.Token")
-	require.Contains(t, scalar, `strconv "generated.local/gen/strconv"`)
-	require.NotContains(t, scalar, `strconv2`)
+	require.Contains(t, scalar, `strconv2 "generated.local/gen/strconv"`)
+	require.Contains(t, scalar, "strconv2.Token")
+	require.Contains(t, scalarCodecs, `"strconv"`)
+	require.Contains(t, scalarCodecs, "strconv.ParseUint")
 	require.NotContains(t, scalar, "\n\t\"strconv\"")
 	require.Contains(t, customTransport, `goa2 "generated.local/custom/goa"`)
 	require.Contains(t, customTransport, "*goa2.Token")

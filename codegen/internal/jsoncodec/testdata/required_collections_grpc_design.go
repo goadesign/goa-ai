@@ -47,8 +47,8 @@ var (
 
 	CustomSibling = Type("CustomSibling", func() {
 		Meta("type:generate:force", "collections")
-		Attribute("value", Bytes, "An unsupported custom Go value.", func() {
-			Meta("struct:field:type", "json.RawMessage", "encoding/json")
+		Attribute("value", String, "An unsupported custom Go value.", func() {
+			Meta("struct:field:type", "json.Number", "encoding/json")
 		})
 	})
 )

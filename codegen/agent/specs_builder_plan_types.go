@@ -78,6 +78,11 @@ func (p *toolSpecsPlan) link(data *GeneratorData) error {
 		planned.render = owner
 	}
 
+	for _, binding := range p.consumerInputs {
+		if err := binding.link(p.api); err != nil {
+			return err
+		}
+	}
 	for _, service := range data.Services {
 		for _, agent := range service.Agents {
 			for _, toolset := range agent.AllToolsets {
@@ -398,7 +403,13 @@ func (p *toolSpecsPackagePlan) declareType(owner *contractTypeOwner, attribute *
 	shapes := localizedSpecShapes(owner, attribute, usage, contract)
 	public := shapes.public
 	publicTypes := shapes.publicTypes
-	if err := p.declareLocalTypes(p.public, p.publicTypes, p.publicTypeUses, publicTypes); err != nil {
+	modelInput := usage == usageModelPayload || usage == usageTextOnlyPayload || usage == usageTextOnlyExecution
+	if modelInput {
+		// A reduced JSON input decodes into the provider's existing Go payload.
+		// Keep its nested types instead of declaring another public representation.
+		public = p.types[stableTypeKey(owner, usagePayload, "")].publicShape
+		publicTypes = nil
+	} else if err := p.declareLocalTypes(p.public, p.publicTypes, p.publicTypeUses, publicTypes); err != nil {
 		return err
 	}
 	publicType := &goaexpr.UserTypeExpr{

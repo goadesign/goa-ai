@@ -10,7 +10,7 @@ import (
 	"fmt"
 	"time"
 
-	"goa.design/goa-ai/runtime/agent"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 )
 
@@ -57,8 +57,8 @@ type (
 		// RunID identifies the run that owns this record.
 		RunID string
 
-		// AgentID identifies the agent that owns this record.
-		AgentID agent.Ident
+		// Subject identifies the Agent or service tool that owns this record.
+		Subject genrunidentity.RunSubject
 
 		// SessionID identifies the logical session that owns this record.
 		SessionID string
@@ -93,8 +93,8 @@ type (
 		EventKey string
 		// RunID is the identifier of the run this event belongs to.
 		RunID string
-		// AgentID is the identifier of the agent that emitted the event.
-		AgentID agent.Ident
+		// Subject identifies the Agent or service tool that emitted the event.
+		Subject genrunidentity.RunSubject
 		// SessionID groups related runs into a conversation thread.
 		SessionID string
 		// TurnID identifies the conversational turn within the session.

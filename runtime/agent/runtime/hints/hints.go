@@ -107,7 +107,8 @@ func CompileHintTemplates(raw map[tools.Ident]string, extra template.FuncMap) (m
 			return 0
 		},
 		// humanTime renders a timestamp for user-facing hints at minute precision.
-		// It accepts RFC3339 timestamp strings and time.Time values.
+		// It accepts RFC3339 strings, including named strings and their pointers,
+		// and time.Time values.
 		//
 		// When parsing fails, it returns fmt.Sprint(v) so hint rendering can
 		// continue while still surfacing the original value.
@@ -122,8 +123,8 @@ func CompileHintTemplates(raw map[tools.Ident]string, extra template.FuncMap) (m
 		// to - from.
 		//
 		// It accepts RFC3339 timestamp strings (including timezone offsets) and
-		// time.Time values. When parsing fails, it returns 0 so hint rendering
-		// can continue.
+		// named strings and their pointers, and time.Time values. When parsing
+		// fails, it returns 0 so hint rendering can continue.
 		"since": func(from, to any) int64 {
 			a, ok := parseTimestamp(from)
 			if !ok {
@@ -208,7 +209,10 @@ func number(v any) (float64, error) {
 	}
 }
 
+// parseTimestamp reads time values or RFC3339 text, including generated named
+// strings and their optional pointers, and returns the parsed time when valid.
 func parseTimestamp(v any) (time.Time, bool) {
+	var s string
 	switch t := v.(type) {
 	case time.Time:
 		return t, true
@@ -218,23 +222,30 @@ func parseTimestamp(v any) (time.Time, bool) {
 		}
 		return *t, true
 	case string:
-		if t == "" {
-			return time.Time{}, false
-		}
-		ts, err := time.Parse(time.RFC3339, t)
-		if err != nil {
-			return time.Time{}, false
-		}
-		return ts, true
+		s = t
 	default:
-		s := fmt.Sprint(v)
-		if s == "" {
-			return time.Time{}, false
+		s = fmt.Sprint(v)
+		// Values with a String method supply their own timestamp text. Other
+		// string pointers supply the stored string instead of a memory address.
+		if _, ok := v.(fmt.Stringer); !ok {
+			rv := reflect.ValueOf(v)
+			for rv.Kind() == reflect.Pointer {
+				if rv.IsNil() {
+					return time.Time{}, false
+				}
+				rv = rv.Elem()
+			}
+			if rv.Kind() == reflect.String {
+				s = rv.String()
+			}
 		}
-		ts, err := time.Parse(time.RFC3339, s)
-		if err != nil {
-			return time.Time{}, false
-		}
-		return ts, true
 	}
+	if s == "" {
+		return time.Time{}, false
+	}
+	ts, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return time.Time{}, false
+	}
+	return ts, true
 }

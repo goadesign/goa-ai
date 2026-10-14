@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/hooks"
@@ -124,7 +125,7 @@ func TestPlannerToolOutputFromCanonicalEventsRequiresMatchingIdentity(t *testing
 			}
 			callEvents := &canonicalToolEvents{scheduled: hooks.NewToolCallScheduledEvent(
 				callRunID,
-				"svc.agent",
+				genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))},
 				"session",
 				toolName,
 				scheduledCallID,
@@ -135,7 +136,7 @@ func TestPlannerToolOutputFromCanonicalEventsRequiresMatchingIdentity(t *testing
 			)}
 			resultEvents := &canonicalToolEvents{result: hooks.NewToolResultReceivedEvent(
 				resultRunID,
-				"svc.agent",
+				genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))},
 				"session",
 				test.eventCallRunID,
 				toolName,
@@ -179,7 +180,7 @@ func TestLoadCanonicalToolEventsValidatesToolResultPlacement(t *testing.T) {
 	schedule := func(runID string) hooks.Event {
 		return hooks.NewToolCallScheduledEvent(
 			runID,
-			"svc.agent",
+			genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))},
 			"session-1",
 			toolName,
 			"call-1",
@@ -192,7 +193,7 @@ func TestLoadCanonicalToolEventsValidatesToolResultPlacement(t *testing.T) {
 	result := func(resultRunID, callRunID string) hooks.Event {
 		return hooks.NewToolResultReceivedEvent(
 			resultRunID,
-			"svc.agent",
+			genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))},
 			"session-1",
 			callRunID,
 			toolName,
@@ -274,7 +275,7 @@ func TestLoadCanonicalToolEventsRetainsOnlyWantedCalls(t *testing.T) {
 	for index, callID := range []string{"unrelated-1", "wanted", "unrelated-2"} {
 		appendHistoricalHookEvent(t, store, hooks.NewToolCallScheduledEvent(
 			"run-1",
-			"svc.agent",
+			genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))},
 			"session-1",
 			toolName,
 			callID,
@@ -285,7 +286,7 @@ func TestLoadCanonicalToolEventsRetainsOnlyWantedCalls(t *testing.T) {
 		), fmt.Sprintf("schedule-%d", index), int64(index*2+1))
 		appendHistoricalHookEvent(t, store, hooks.NewToolResultReceivedEvent(
 			"run-1",
-			"svc.agent",
+			genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))},
 			"session-1",
 			"run-1",
 			toolName,
@@ -319,13 +320,16 @@ func TestLoadCanonicalToolEventsDecodesUnrelatedCalls(t *testing.T) {
 
 	store := newTestStore()
 	admitRunForTest(t, store, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run-1", SessionID: "session-1",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))}, RunID: "run-1", SessionID: "session-1",
 		Status: session.RunStatusRunning,
 	})
 	_, err := store.AppendRunRecord(context.Background(), &runlog.Event{
-		EventKey:  "malformed-unrelated",
-		RunID:     "run-1",
-		AgentID:   "svc.agent",
+		EventKey: "malformed-unrelated",
+		RunID:    "run-1",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))},
+
 		SessionID: "session-1",
 		Type:      hooks.ToolCallScheduled,
 		Payload:   []byte(`{`),
@@ -350,7 +354,7 @@ func TestLoadPlannerToolOutputsAcceptsCrossRunContinuationResult(t *testing.T) {
 	toolName := tools.Ident("svc.tools.lookup")
 	appendHistoricalHookEvent(t, store, hooks.NewToolCallScheduledEvent(
 		"call-run",
-		"svc.agent",
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))},
 		"session-1",
 		toolName,
 		"call-1",
@@ -361,7 +365,7 @@ func TestLoadPlannerToolOutputsAcceptsCrossRunContinuationResult(t *testing.T) {
 	), "schedule", 1)
 	appendHistoricalHookEvent(t, store, hooks.NewToolResultReceivedEvent(
 		"result-run",
-		"svc.agent",
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))},
 		"session-1",
 		"call-run",
 		toolName,
@@ -419,7 +423,7 @@ func TestLoadPlannerToolOutputsRequiresRegisteredSpecOnlyForSuccess(t *testing.T
 			store := newTestStore()
 			appendHistoricalHookEvent(t, store, hooks.NewToolCallScheduledEvent(
 				"run-1",
-				"svc.agent",
+				genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))},
 				"session-1",
 				toolName,
 				"call-1",
@@ -430,7 +434,7 @@ func TestLoadPlannerToolOutputsRequiresRegisteredSpecOnlyForSuccess(t *testing.T
 			), "schedule", 1)
 			appendHistoricalHookEvent(t, store, hooks.NewToolResultReceivedEvent(
 				"run-1",
-				"svc.agent",
+				genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))},
 				"session-1",
 				"run-1",
 				toolName,
@@ -472,7 +476,7 @@ func TestPlannerToolOutputFromCanonicalEventsValidatesResultContract(t *testing.
 	toolName := tools.Ident("svc.tools.lookup")
 	callEvents := &canonicalToolEvents{scheduled: hooks.NewToolCallScheduledEvent(
 		"run-1",
-		"svc.agent",
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))},
 		"session",
 		toolName,
 		"call-1",
@@ -641,7 +645,7 @@ func TestPlannerToolOutputFromCanonicalEventsValidatesResultContract(t *testing.
 
 			resultEvent := hooks.NewToolResultReceivedEvent(
 				"run-1",
-				"svc.agent",
+				genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))},
 				"session",
 				"run-1",
 				test.result.ToolName,

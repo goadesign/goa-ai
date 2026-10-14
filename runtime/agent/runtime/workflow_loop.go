@@ -27,6 +27,7 @@ type (
 		HistoryContext   *api.HistoryContext
 		providerRecovery *providerRecoveryBudget
 		providerControl  *providerRecoveryActor
+		finalization     *workflowFinalizationState
 	}
 
 	workflowLoop struct {
@@ -45,8 +46,10 @@ type (
 		resumeOpts    engine.ActivityOptions
 		toolOpts      engine.ActivityOptions
 
-		// Unfinished records remain owned here until execution accepts them or
-		// suspension storage transfers them to the next workflow.
+		// Active batches are attached before dispatch. Their results move into
+		// unfinishedBatch before collection releases them; saved suspension
+		// storage then transfers unfinished work to the next workflow.
+		activeToolBatches []*toolBatchExec
 		unfinishedBatch   *stepBatch
 		unfinishedPending []checkpointPendingInput
 	}
@@ -131,7 +134,7 @@ func (l *workflowLoop) run() (*RunOutput, error) {
 		if err := l.r.validateCompletionToolPlanResult(l.st.Result, completionTool(l.input)); err != nil {
 			return nil, err
 		}
-		program, err := l.r.normalizePlanResultContract(l.st.Result, l.base.RunContext, l.input.AgentID)
+		program, err := l.r.normalizePlanResultContract(l.st.Result, l.base.RunContext, l.reg.Definition.route.ID)
 		if err != nil {
 			return nil, err
 		}

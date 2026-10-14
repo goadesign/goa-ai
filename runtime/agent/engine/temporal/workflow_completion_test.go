@@ -19,6 +19,7 @@ import (
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 )
@@ -53,7 +54,7 @@ func TestClosedWorkflowStopsRetries(t *testing.T) {
 						MaximumAttempts: attempts, InitialInterval: time.Millisecond,
 					},
 				})
-				return workflow.ExecuteChildWorkflow(ctx, "closed", &api.RunInput{RunID: "run"}).Get(ctx, nil)
+				return workflow.ExecuteChildWorkflow(ctx, "closed", &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run"}).Get(ctx, nil)
 			})
 			err := env.GetWorkflowError()
 			require.Error(t, err)
@@ -127,7 +128,7 @@ func TestActivityRejectionAllowsFreshWorkflowAttempt(t *testing.T) {
 					}
 					_, err = wfCtx.ExecuteStorageActivity(engine.StorageActivityCall{
 						Name: "apply", Command: &api.StorageActivityCommand{Append: &api.AppendRecordsCommand{
-							Records: []*api.RecordActivityInput{{EventKey: id}},
+							Records: []*api.RecordActivityInput{{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, EventKey: id}},
 						}},
 						Options: engine.ActivityOptions{
 							StartToCloseTimeout: time.Second, RetryPolicy: engine.RetryPolicy{UnlimitedAttempts: true},
@@ -136,7 +137,7 @@ func TestActivityRejectionAllowsFreshWorkflowAttempt(t *testing.T) {
 					if err != nil {
 						return nil, err
 					}
-					return &api.RunOutput{RunID: input.RunID}, nil
+					return &api.RunOutput{Subject: input.Subject, RunID: input.RunID}, nil
 				},
 			}))
 			env.ExecuteWorkflow(func(ctx workflow.Context) (*api.RunOutput, error) {
@@ -149,7 +150,7 @@ func TestActivityRejectionAllowsFreshWorkflowAttempt(t *testing.T) {
 					RetryPolicy:              policy,
 				})
 				var output *api.RunOutput
-				err := workflow.ExecuteChildWorkflow(ctx, "retry", &api.RunInput{RunID: "run"}).Get(ctx, &output)
+				err := workflow.ExecuteChildWorkflow(ctx, "retry", &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run"}).Get(ctx, &output)
 				return output, err
 			})
 			require.NoError(t, env.GetWorkflowError())

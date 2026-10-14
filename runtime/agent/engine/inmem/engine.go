@@ -27,6 +27,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/internal/startrecipe"
 	"goa.design/goa-ai/runtime/agent/internal/temporalerrors"
 	"goa.design/goa-ai/runtime/agent/internal/workflowcodec"
+	"goa.design/goa-ai/runtime/agent/model"
 )
 
 type (
@@ -38,20 +39,29 @@ type (
 		cancellationWorkflows map[string]cancellationWorkflow
 		cancellationJobs      map[string]*cancellationJob
 
-		storageActivities      map[string]storageActivityDef
-		plannerActivities      map[string]plannerActivityDef
-		toolActivities         map[string]toolActivityDef
-		agentChildActivities   map[string]agentChildActivityDef
-		continuationActivities map[string]continuationActivityDef
+		storageActivities        map[string]storageActivityDef
+		plannerActivities        map[string]plannerActivityDef
+		toolActivities           map[string]toolActivityDef
+		agentOperationActivities map[string]agentOperationActivityDef
+		agentChildActivities     map[string]agentChildActivityDef
+		continuationActivities   map[string]continuationActivityDef
 
 		// statuses tracks workflow status by run ID (inmem uses workflow ID as run ID).
 		statuses map[string]engine.RunStatus
 		// handles retain terminal results so runtime repair can recover the exact
 		// workflow output by ID after its original caller detaches.
 		handles map[string]*handle
-		// recipes bind each queryable workflow ID to the fixed-size digest of
-		// the immutable start request accepted by this engine instance.
-		recipes map[string][sha256.Size]byte
+		// recipes retain each accepted request digest and route for the same
+		// lifetime as its handle, including child workflows.
+		recipes map[string]acceptedWorkflowRecipe
+	}
+
+	// acceptedWorkflowRecipe binds an admitted workflow ID to its request and
+	// worker route, so active cancellation does not need caller-supplied routing.
+	acceptedWorkflowRecipe struct {
+		digest   [sha256.Size]byte
+		workflow string
+		queue    string
 	}
 
 	// wfCtx adapts context.Context into engine.WorkflowContext.
@@ -60,6 +70,7 @@ type (
 		id              string
 		runID           string
 		requestDigest   [32]byte
+		retryPolicy     engine.RetryPolicy
 		eng             *eng
 		seq             *sequenceCounter
 		cancellations   *cancellationState
@@ -108,6 +119,11 @@ type (
 
 	toolActivityDef struct {
 		handler func(context.Context, *api.ToolInput) (*api.ToolOutput, error)
+		opts    engine.ActivityOptions
+	}
+
+	agentOperationActivityDef struct {
+		handler func(context.Context, *api.RunInput) (*api.AgentOperationActivityResult, error)
 		opts    engine.ActivityOptions
 	}
 
@@ -162,7 +178,7 @@ func New() engine.Engine {
 	return &eng{
 		statuses: make(map[string]engine.RunStatus),
 		handles:  make(map[string]*handle),
-		recipes:  make(map[string][sha256.Size]byte),
+		recipes:  make(map[string]acceptedWorkflowRecipe),
 	}
 }
 
@@ -255,6 +271,23 @@ func (e *eng) RegisterExecuteToolActivity(_ context.Context, name string, opts e
 	return nil
 }
 
+// RegisterAgentOperationActivity installs direct operation preparation outside workflow code.
+func (e *eng) RegisterAgentOperationActivity(_ context.Context, name string, opts engine.ActivityOptions, fn func(context.Context, *api.RunInput) (*api.AgentOperationActivityResult, error)) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if name == "" || fn == nil {
+		return errors.New("agent operation activity name and handler are required")
+	}
+	if e.agentOperationActivities == nil {
+		e.agentOperationActivities = make(map[string]agentOperationActivityDef)
+	}
+	if _, exists := e.agentOperationActivities[name]; exists {
+		return fmt.Errorf("activity %q already registered", name)
+	}
+	e.agentOperationActivities[name] = agentOperationActivityDef{handler: fn, opts: opts}
+	return nil
+}
+
 // RegisterAgentChildActivity registers the activity that prepares one child
 // run outside workflow code.
 func (e *eng) RegisterAgentChildActivity(_ context.Context, name string, opts engine.ActivityOptions, fn func(context.Context, *api.AgentChildActivityInput) (*api.AgentChildActivityOutput, error)) error {
@@ -320,7 +353,7 @@ func (e *eng) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequest
 
 	e.mu.Lock()
 	if existingRecipe, exists := e.recipes[req.ID]; exists {
-		if existingRecipe != snapshot.Digest {
+		if existingRecipe.digest != snapshot.Digest {
 			e.mu.Unlock()
 			return nil, &engine.WorkflowStartConflictError{ID: req.ID}
 		}
@@ -333,7 +366,7 @@ func (e *eng) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequest
 		return nil, &engine.WorkflowStartConflictError{ID: req.ID}
 	}
 	h, executionCtx := e.reserveWorkflowLocked(context.WithoutCancel(ctx), req.ID)
-	e.recipes[req.ID] = snapshot.Digest
+	e.recipes[req.ID] = acceptedWorkflowRecipe{digest: snapshot.Digest, workflow: req.Workflow, queue: req.TaskQueue}
 	e.mu.Unlock()
 
 	e.executeWorkflow(executionCtx, req.ID, req.RunTimeout, req.RetryPolicy, def, snapshot.InputPayload, snapshot.Digest, h)
@@ -436,6 +469,7 @@ func (e *eng) runWorkflow(
 			// In-memory assigns workflow ID as run ID.
 			runID:           id,
 			requestDigest:   requestDigest,
+			retryPolicy:     retryPolicy,
 			eng:             e,
 			seq:             &sequenceCounter{},
 			cancellations:   cancellations,
@@ -493,12 +527,16 @@ func (e *eng) QueryRunCompletion(ctx context.Context, workflowID string) (engine
 	e.mu.RLock()
 	h, ok := e.handles[workflowID]
 	status := e.statuses[workflowID]
+	recipe, recipeOK := e.recipes[workflowID]
 	e.mu.RUnlock()
 	if !ok {
 		return engine.RunCompletion{}, engine.ErrWorkflowNotFound
 	}
+	if !recipeOK || recipe.digest == ([32]byte{}) {
+		return engine.RunCompletion{}, errors.New("workflow accepted request digest is missing")
+	}
 	if !isTerminalRunStatus(status) {
-		return engine.RunCompletion{Status: status}, nil
+		return engine.RunCompletion{Status: status, StartRequestDigest: recipe.digest}, nil
 	}
 	select {
 	case <-ctx.Done():
@@ -519,7 +557,7 @@ func (e *eng) QueryRunCompletion(ctx context.Context, workflowID string) (engine
 		}
 	}
 	return engine.RunCompletion{
-		Status: status, CompletedAt: completedAt, Output: output, WorkflowError: workflowErr,
+		Status: status, StartRequestDigest: recipe.digest, CompletedAt: completedAt, Output: output, WorkflowError: workflowErr,
 	}, nil
 }
 
@@ -567,7 +605,18 @@ func (e *eng) RequestCancellation(ctx context.Context, workflowID string, reques
 	if !ok {
 		return engine.ErrWorkflowNotFound
 	}
-	return handle.cancellations.request(ctx, request)
+	err := handle.cancellations.request(ctx, request)
+	if errors.Is(err, engine.ErrWorkflowCompleted) {
+		// The callback cannot wait for its own workflow goroutine to finish.
+		// Wait here so the caller observes closure after terminal storage.
+		select {
+		case <-handle.done:
+			return err
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return err
 }
 
 func (h *handle) Wait(ctx context.Context) (*api.RunOutput, error) {
@@ -652,6 +701,14 @@ func (w *wfCtx) StartRequestDigest() ([32]byte, error) {
 	return w.requestDigest, nil
 }
 
+// RequireSingleAttempt checks the accepted policy before the handler writes a final outcome.
+func (w *wfCtx) RequireSingleAttempt() error {
+	if workflowRetryAllowed(w.retryPolicy, 1) {
+		return temporalerrors.Wrap(model.NewRequestValidationError(errors.New("workflow must permit only one attempt")))
+	}
+	return nil
+}
+
 func (w *wfCtx) StartChildWorkflow(_ context.Context, req engine.ChildWorkflowRequest) (engine.ChildWorkflowHandle, error) {
 	if err := engine.ValidateChildWorkflowRequest(req); err != nil {
 		return nil, err
@@ -679,6 +736,7 @@ func (w *wfCtx) StartChildWorkflow(_ context.Context, req engine.ChildWorkflowRe
 		return nil, &engine.ChildWorkflowIDReuseError{ID: req.ID}
 	}
 	h, executionCtx := w.eng.reserveWorkflowLocked(w.ctx, req.ID)
+	w.eng.recipes[req.ID] = acceptedWorkflowRecipe{digest: snapshot.Digest, workflow: req.Workflow, queue: req.TaskQueue}
 	w.eng.mu.Unlock()
 
 	control := w.executionControl()
@@ -820,6 +878,14 @@ func (w *wfCtx) ExecuteToolActivityAsync(call engine.ToolActivityCall) (engine.F
 		}
 	}()
 	return fut, nil
+}
+
+// ExecuteAgentOperationActivity copies the accepted input and prepared result through the activity codec.
+func (w *wfCtx) ExecuteAgentOperationActivity(call engine.AgentOperationActivityCall) (*api.AgentOperationActivityResult, error) {
+	return executeRegisteredRecordedActivity(w, call.Name, call.Input, call.Options, func() (engine.ActivityOptions, func(context.Context, *api.RunInput) (*api.AgentOperationActivityResult, error), bool) {
+		def, ok := w.eng.agentOperationActivities[call.Name]
+		return def.opts, def.handler, ok
+	})
 }
 
 // ExecuteAgentChildActivity runs child preparation outside the workflow

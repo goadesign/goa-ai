@@ -13,7 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"goa.design/goa-ai/runtime/agent"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/runlog"
 	"goa.design/goa-ai/runtime/agent/session"
@@ -95,8 +95,8 @@ func TestTranscriptPageRejectsAnUnsupportedSingleRecord(t *testing.T) {
 func transcriptPageFixture(t *testing.T, sizes ...int) (*Store, []string, []*model.Message) {
 	t.Helper()
 	store := New()
-	start := session.RunStart{AgentID: "agent", RunID: "run", StartedAt: time.Now().UTC().Truncate(time.Millisecond)}
-	start = publishStartHistory(t, store, start)
+	start := session.RunStart{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, RunID: "run", StartedAt: time.Now().UTC().Truncate(time.Millisecond)}
+	start = publishStartHistory(t, store, start, "")
 	_, err := store.StartOneShotRun(t.Context(), storage.OneShotRunStart{RequestDigest: [32]byte{1},
 		Run: start, Started: startedRecord(t, "started", start),
 	})
@@ -113,7 +113,7 @@ func transcriptPageFixture(t *testing.T, sizes ...int) (*Store, []string, []*mod
 		require.NoError(t, err)
 		require.Len(t, payload, size)
 		record, err := store.AppendRunRecord(t.Context(), &runlog.Event{
-			RunID: start.RunID, AgentID: agent.Ident(start.AgentID),
+			RunID: start.RunID, Subject: start.Subject,
 			EventKey: fmt.Sprintf("message-%d", i), Timestamp: start.StartedAt,
 			Type: transcript.RunLogMessagesAppended, Payload: payload,
 		})

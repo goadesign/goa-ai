@@ -106,7 +106,7 @@ func (l *workflowLoop) commitSelectedModelResponse(result *PlanResult) error {
 	}
 	if err := l.r.appendSelectedModelResponse(
 		l.wfCtx.Context(),
-		l.input.AgentID,
+		l.reg.Definition.route.ID,
 		l.base,
 		l.turnID,
 		l.st.ResponseID,
@@ -126,9 +126,10 @@ func plannerAuthoredResponseMessages(result *PlanResult) ([]*model.Message, erro
 		return nil, nil
 	}
 	var messages []*model.Message
-	if result.FinalResponse != nil && result.FinalResponse.Message != nil {
+	response := terminalResponse(result.FinalResponse, result.FinalToolResult)
+	if response != nil {
 		var err error
-		messages, err = model.CloneMessages([]*model.Message{result.FinalResponse.Message})
+		messages, err = model.CloneMessages([]*model.Message{response.Message})
 		if err != nil {
 			return nil, err
 		}

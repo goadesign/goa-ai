@@ -287,3 +287,22 @@ func (toolCodecsFileData) JSONNames() jsonshape.Names {
 		Strconv:             "strconv",
 	}
 }
+
+// StrictJSONReader supplies private function names and import aliases to the shared
+// reader template, so tool JSON is checked before any decoder can change its text.
+func (toolCodecsFileData) StrictJSONReader() struct {
+	ReadStrictJSON, ReadJSONValue, ValidateJSONText string
+	Imports                                         struct{ JSON, Bytes, Fmt, UTF8, Strconv string }
+} {
+	return struct {
+		ReadStrictJSON, ReadJSONValue, ValidateJSONText string
+		Imports                                         struct{ JSON, Bytes, Fmt, UTF8, Strconv string }
+	}{
+		ReadStrictJSON:   "readStrictToolJSON",
+		ReadJSONValue:    "readToolJSONValue",
+		ValidateJSONText: "validateToolJSONText",
+		Imports: struct{ JSON, Bytes, Fmt, UTF8, Strconv string }{
+			JSON: "json", Bytes: "bytes", Fmt: "fmt", UTF8: "utf8", Strconv: "strconv",
+		},
+	}
+}

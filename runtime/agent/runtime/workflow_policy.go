@@ -16,6 +16,8 @@ import (
 	"errors"
 	"fmt"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
+
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -107,12 +109,13 @@ func (r *Runtime) applyRuntimePolicy(
 			return nil, caps, err
 		}
 	}
+	executor, _ := input.Subject.Executor.AsAgent()
 	caps = mergeCaps(caps, decision.Caps)
 	if err := r.publishHook(
 		ctx,
 		hooks.NewPolicyDecisionEvent(
 			base.RunContext.RunID,
-			input.AgentID,
+			agent.Ident(executor),
 			base.RunContext.SessionID,
 			decision.AllowedTools,
 			caps,
@@ -198,9 +201,7 @@ func (r *Runtime) prepareAllowedCallsMetadata(agentID agent.Ident, base *workflo
 		if allowed[i].RunID == "" {
 			allowed[i].RunID = base.RunContext.RunID
 		}
-		if allowed[i].AgentID == "" {
-			allowed[i].AgentID = agentID
-		}
+		allowed[i].Subject = genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))}
 		if allowed[i].SessionID == "" {
 			allowed[i].SessionID = base.RunContext.SessionID
 		}

@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/engine"
 	engineinmem "goa.design/goa-ai/runtime/agent/engine/inmem"
 	"goa.design/goa-ai/runtime/agent/run"
@@ -41,7 +42,8 @@ func TestCancellationWorkflowRejectsClosedEngineWithRunningStorage(t *testing.T)
 	for _, outcome := range []engine.RunStatus{engine.RunStatusCompleted, engine.RunStatusFailed, engine.RunStatusCanceled, engine.RunStatusTimedOut, engine.RunStatusRunning} {
 		t.Run(string(outcome), func(t *testing.T) {
 			store := newTestStore()
-			admitRunForTest(t, store, session.RunMeta{AgentID: "agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning})
+			admitRunForTest(t, store, session.RunMeta{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+				RunExecutorBranchAgent("agent"))}, RunID: "run", SessionID: "session", Status: session.RunStatusRunning})
 			backend := &closedCancellationEngine{Engine: engineinmem.New(), completion: engine.RunCompletion{Status: outcome, WorkflowError: errors.New("execution stopped")}}
 			runtime := New(store, WithEngine(backend))
 			settled, err := runtime.cancellationActivity(t.Context(), engine.CancellationRequest{RunID: "run", Reason: run.CancellationReasonUserRequested})

@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -124,7 +125,8 @@ func TestExecuteWorkflowRejectsInvalidLimitPlansBeforePlanning(t *testing.T) {
 	reg := AgentRegistration{Definition: testRegistrationDefinition("service.agent", engine.WorkflowDefinition{}, []tools.ToolSpec{terminal}), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{}}
 	rt.agents[reg.Definition.route.ID] = reg
 	input := &RunInput{
-		AgentID:   reg.Definition.route.ID,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(reg.Definition.route.ID))},
+
 		RunID:     "run-1",
 		SeedEndID: "0",
 		Policy: &PolicyOverrides{
@@ -223,7 +225,8 @@ func TestRestoreContinuationRunInputCopiesLimitTerminalPlans(t *testing.T) {
 		},
 	}
 	input := &RunInput{
-		AgentID:   "service.agent",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("service.agent"))},
+
 		RunID:     "run-2",
 		SessionID: "session-1",
 		Continuation: &api.RunContinuationInput{
@@ -245,7 +248,8 @@ func TestContinuationRejectsLimitTerminalPlanOverride(t *testing.T) {
 
 	rt := New(newTestStore(), WithEngine(&stubEngine{}))
 	input := &RunInput{
-		AgentID: "service.agent",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("service.agent"))},
+
 		Policy: &PolicyOverrides{
 			LimitTerminalPlans: testLimitTerminalPlans("service.tools.complete"),
 		},
@@ -265,7 +269,8 @@ func TestToolFailureUsesPlannerWhenLimitPlansExist(t *testing.T) {
 
 	rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
 	input := &RunInput{
-		AgentID:   "service.agent",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("service.agent"))},
+
 		RunID:     "run-1",
 		SessionID: "session-1",
 		TurnID:    "turn-1",
@@ -274,7 +279,7 @@ func TestToolFailureUsesPlannerWhenLimitPlansExist(t *testing.T) {
 		},
 	}
 	seedRunMeta(t, rt, input)
-	reg := AgentRegistration{Definition: testRegistrationDefinition(input.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, ResumeActivityName: "resume"}
+	reg := AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, input.Subject), engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, ResumeActivityName: "resume"}
 	wfCtx := &routeWorkflowContext{
 		ctx:         context.Background(),
 		runID:       input.RunID,
@@ -302,6 +307,7 @@ func TestToolFailureUsesPlannerWhenLimitPlansExist(t *testing.T) {
 		},
 	}
 	base := &workflowConversation{
+		finalization: &workflowFinalizationState{},
 		Messages: []*model.Message{{
 			Role:  model.ConversationRoleUser,
 			Parts: []model.Part{model.TextPart{Text: "Run the tool."}},
@@ -462,7 +468,8 @@ func executeWorkflowLimitTerminalPlan(
 	}
 	rt.agents[reg.Definition.route.ID] = reg
 	input := &RunInput{
-		AgentID:   reg.Definition.route.ID,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(reg.Definition.route.ID))},
+
 		RunID:     "run-1",
 		SessionID: "session-1",
 		TurnID:    "turn-1",

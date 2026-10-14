@@ -1,6 +1,6 @@
 // Package registry makes each routed tool-use identity choose exactly one
 // request or rejection across all registry replicas. Before publication, the
-// admitted request may move to the current healthy provider. Publication makes
+// prepared transport may move to the current healthy provider. Publication makes
 // that assignment permanent; exact retries then observe it until it expires.
 package registry
 
@@ -98,7 +98,7 @@ local function stream_id_at_or_before(left, right)
   end
   return decimal_at_or_before(left_seq, right_seq)
 end
-local function admitted_state_error(key, expected_tool_use_id, expected_catalog_field)
+local function prepared_state_error(key, expected_tool_use_id, expected_catalog_field)
   local required_fields = {
     "tool_use_id",
     "registration_token",
@@ -122,7 +122,7 @@ local function admitted_state_error(key, expected_tool_use_id, expected_catalog_
   }
   for _, field in ipairs(required_fields) do
     if redis.call("HEXISTS", key, field) == 0 then
-      return "CALLDECISIONINVALID missing admitted field " .. field
+      return "CALLDECISIONINVALID missing prepared field " .. field
     end
   end
   if redis.call("HGET", key, "tool_use_id") ~= expected_tool_use_id then
@@ -259,10 +259,10 @@ if decision == "rejected" then
     redis.call("HGET", KEYS[1], "message") or ""
   }
 end
-if decision ~= "admitted" then
+if decision ~= "prepared" then
   return redis.error_reply("CALLDECISIONINVALID")
 end
-local state_error = admitted_state_error(KEYS[1], ARGV[2], ARGV[3])
+local state_error = prepared_state_error(KEYS[1], ARGV[2], ARGV[3])
 if state_error then
   return redis.error_reply(state_error)
 end
@@ -283,7 +283,10 @@ return {
   redis.call("HGET", KEYS[1], "terminal_cause")
 }
 `)
-	ensureCallAdmissionScript = redis.NewScript(`
+	ensureCallAdmissionScript = redis.NewScript(prepareCallAdmissionLua)
+)
+
+const prepareCallAdmissionLua = `
 if redis.call("EXISTS", KEYS[1]) == 0 then
   local now = redis.call("TIME")
   local now_millis = (tonumber(now[1]) * 1000) + math.floor(tonumber(now[2]) / 1000)
@@ -291,7 +294,7 @@ if redis.call("EXISTS", KEYS[1]) == 0 then
   local expires = now_millis + tonumber(ARGV[5])
   redis.call(
     "HSET", KEYS[1],
-    "decision", "admitted",
+    "decision", "prepared",
     "digest", ARGV[1],
     "tool_use_id", ARGV[2],
     "registration_token", ARGV[3],
@@ -330,7 +333,7 @@ if decision == "rejected" then
     redis.call("HGET", KEYS[1], "message") or ""
   }
 end
-if decision ~= "admitted" then
+if decision ~= "prepared" then
   return redis.error_reply("CALLDECISIONINVALID")
 end
 if redis.call("HGET", KEYS[1], "published") == "0"
@@ -342,8 +345,13 @@ and redis.call("HGET", KEYS[1], "terminal") == "0" then
   )
 end
 return {0, digest}
-`)
-	rejectCallAdmissionScript = redis.NewScript(`
+`
+
+var (
+	rejectCallAdmissionScript = redis.NewScript(rejectCallAdmissionLua)
+)
+
+const rejectCallAdmissionLua = `
 if redis.call("EXISTS", KEYS[1]) == 1 then
   local digest = redis.call("HGET", KEYS[1], "digest")
   if digest ~= ARGV[1] then
@@ -358,7 +366,7 @@ if redis.call("EXISTS", KEYS[1]) == 1 then
       redis.call("HGET", KEYS[1], "message") or ""
     }
   end
-  if decision ~= "admitted" then
+  if decision ~= "prepared" then
     return redis.error_reply("CALLDECISIONINVALID")
   end
   if redis.call("HGET", KEYS[1], "published") == "0"
@@ -380,8 +388,7 @@ redis.call(
 )
 redis.call("PEXPIREAT", KEYS[1], expires)
 return {1, ARGV[1], ARGV[2], ARGV[3]}
-`)
-)
+`
 
 // Error describes the durable rejection without exposing Redis state.
 func (e *callRejectedError) Error() string {
@@ -504,10 +511,9 @@ func (s *callAdmissionStore) Ensure(
 	return admission, true, nil
 }
 
-// Reject atomically fences a tool-use identity from provider execution. An
-// admitted but unpublished decision is still safe to reject because Redis
-// proves no provider received it. Published decisions win the race and replay
-// until the normal call-retention deadline.
+// Reject saves a definite rejection only before the request is published.
+// If another caller already published the exact request, it returns that
+// request history until its existing retention deadline.
 func (s *callAdmissionStore) Reject(
 	ctx context.Context,
 	toolset, toolUseID, digest string,
@@ -555,7 +561,7 @@ func (s *callAdmissionStore) Reject(
 	return s.Attach(ctx, toolset, toolUseID, digest)
 }
 
-// parseResult decodes the admitted state returned by Ensure and Attach.
+// parseResult decodes the prepared transport state returned by Ensure and Attach.
 func (s *callAdmissionStore) parseResult(
 	toolset, key, digest, toolUseID string,
 	value []any,

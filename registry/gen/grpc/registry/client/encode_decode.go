@@ -17,6 +17,154 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
+// BuildCheckCatalogResourceFunc builds the remote method to invoke for
+// "registry" service "CheckCatalogResource" endpoint.
+func BuildCheckCatalogResourceFunc(grpccli registrypb.RegistryClient, cliopts ...grpc.CallOption) goagrpc.RemoteFunc {
+	return func(ctx context.Context, reqpb any, opts ...grpc.CallOption) (any, error) {
+		for _, opt := range cliopts {
+			opts = append(opts, opt)
+		}
+		if reqpb != nil {
+			return grpccli.CheckCatalogResource(ctx, reqpb.(*registrypb.CheckCatalogResourceRequest), opts...)
+		}
+		return grpccli.CheckCatalogResource(ctx, &registrypb.CheckCatalogResourceRequest{}, opts...)
+	}
+}
+
+// EncodeCheckCatalogResourceRequest encodes requests sent to registry
+// CheckCatalogResource endpoint.
+func EncodeCheckCatalogResourceRequest(ctx context.Context, v any, md *metadata.MD) (any, error) {
+	payload, ok := v.(*registry.CatalogResource)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "CheckCatalogResource", "*registry.CatalogResource", v)
+	}
+	return NewProtoCheckCatalogResourceRequest(payload), nil
+}
+
+// BuildListCatalogResourcesFunc builds the remote method to invoke for
+// "registry" service "ListCatalogResources" endpoint.
+func BuildListCatalogResourcesFunc(grpccli registrypb.RegistryClient, cliopts ...grpc.CallOption) goagrpc.RemoteFunc {
+	return func(ctx context.Context, reqpb any, opts ...grpc.CallOption) (any, error) {
+		for _, opt := range cliopts {
+			opts = append(opts, opt)
+		}
+		if reqpb != nil {
+			return grpccli.ListCatalogResources(ctx, reqpb.(*registrypb.ListCatalogResourcesRequest), opts...)
+		}
+		return grpccli.ListCatalogResources(ctx, &registrypb.ListCatalogResourcesRequest{}, opts...)
+	}
+}
+
+// EncodeListCatalogResourcesRequest encodes requests sent to registry
+// ListCatalogResources endpoint.
+func EncodeListCatalogResourcesRequest(ctx context.Context, v any, md *metadata.MD) (any, error) {
+	payload, ok := v.(*registry.CatalogResourcesQuery)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "ListCatalogResources", "*registry.CatalogResourcesQuery", v)
+	}
+	return NewProtoListCatalogResourcesRequest(payload), nil
+}
+
+// DecodeListCatalogResourcesResponse decodes responses from the registry
+// ListCatalogResources endpoint.
+func DecodeListCatalogResourcesResponse(ctx context.Context, v any, hdr, trlr metadata.MD) (any, error) {
+	message, ok := v.(*registrypb.ListCatalogResourcesResponse)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "ListCatalogResources", "*registrypb.ListCatalogResourcesResponse", v)
+	}
+	if err := ValidateListCatalogResourcesResponse(message); err != nil {
+		return nil, err
+	}
+	res := NewListCatalogResourcesResult(message)
+	return res, nil
+}
+
+// BuildRegisterAgentExportsFunc builds the remote method to invoke for
+// "registry" service "RegisterAgentExports" endpoint.
+func BuildRegisterAgentExportsFunc(grpccli registrypb.RegistryClient, cliopts ...grpc.CallOption) goagrpc.RemoteFunc {
+	return func(ctx context.Context, reqpb any, opts ...grpc.CallOption) (any, error) {
+		for _, opt := range cliopts {
+			opts = append(opts, opt)
+		}
+		if reqpb != nil {
+			return grpccli.RegisterAgentExports(ctx, reqpb.(*registrypb.RegisterAgentExportsRequest), opts...)
+		}
+		return grpccli.RegisterAgentExports(ctx, &registrypb.RegisterAgentExportsRequest{}, opts...)
+	}
+}
+
+// EncodeRegisterAgentExportsRequest encodes requests sent to registry
+// RegisterAgentExports endpoint.
+func EncodeRegisterAgentExportsRequest(ctx context.Context, v any, md *metadata.MD) (any, error) {
+	payload, ok := v.(*registry.AgentExportsDeclaration)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "RegisterAgentExports", "*registry.AgentExportsDeclaration", v)
+	}
+	return NewProtoRegisterAgentExportsRequest(payload), nil
+}
+
+// DecodeRegisterAgentExportsResponse decodes responses from the registry
+// RegisterAgentExports endpoint.
+func DecodeRegisterAgentExportsResponse(ctx context.Context, v any, hdr, trlr metadata.MD) (any, error) {
+	message, ok := v.(*registrypb.RegisterAgentExportsResponse)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "RegisterAgentExports", "*registrypb.RegisterAgentExportsResponse", v)
+	}
+	if err := ValidateRegisterAgentExportsResponse(message); err != nil {
+		return nil, err
+	}
+	res := NewRegisterAgentExportsResult(message)
+	return res, nil
+}
+
+// BuildValidateAgentExportsFunc builds the remote method to invoke for
+// "registry" service "ValidateAgentExports" endpoint.
+func BuildValidateAgentExportsFunc(grpccli registrypb.RegistryClient, cliopts ...grpc.CallOption) goagrpc.RemoteFunc {
+	return func(ctx context.Context, reqpb any, opts ...grpc.CallOption) (any, error) {
+		for _, opt := range cliopts {
+			opts = append(opts, opt)
+		}
+		if reqpb != nil {
+			return grpccli.ValidateAgentExports(ctx, reqpb.(*registrypb.ValidateAgentExportsRequest), opts...)
+		}
+		return grpccli.ValidateAgentExports(ctx, &registrypb.ValidateAgentExportsRequest{}, opts...)
+	}
+}
+
+// EncodeValidateAgentExportsRequest encodes requests sent to registry
+// ValidateAgentExports endpoint.
+func EncodeValidateAgentExportsRequest(ctx context.Context, v any, md *metadata.MD) (any, error) {
+	payload, ok := v.(*registry.AgentExportsValidation)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "ValidateAgentExports", "*registry.AgentExportsValidation", v)
+	}
+	return NewProtoValidateAgentExportsRequest(payload), nil
+}
+
+// BuildRetireAgentResourceFunc builds the remote method to invoke for
+// "registry" service "RetireAgentResource" endpoint.
+func BuildRetireAgentResourceFunc(grpccli registrypb.RegistryClient, cliopts ...grpc.CallOption) goagrpc.RemoteFunc {
+	return func(ctx context.Context, reqpb any, opts ...grpc.CallOption) (any, error) {
+		for _, opt := range cliopts {
+			opts = append(opts, opt)
+		}
+		if reqpb != nil {
+			return grpccli.RetireAgentResource(ctx, reqpb.(*registrypb.RetireAgentResourceRequest), opts...)
+		}
+		return grpccli.RetireAgentResource(ctx, &registrypb.RetireAgentResourceRequest{}, opts...)
+	}
+}
+
+// EncodeRetireAgentResourceRequest encodes requests sent to registry
+// RetireAgentResource endpoint.
+func EncodeRetireAgentResourceRequest(ctx context.Context, v any, md *metadata.MD) (any, error) {
+	payload, ok := v.(*registry.CatalogResource)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "RetireAgentResource", "*registry.CatalogResource", v)
+	}
+	return NewProtoRetireAgentResourceRequest(payload), nil
+}
+
 // BuildDeclareServiceToolsetFunc builds the remote method to invoke for
 // "registry" service "DeclareServiceToolset" endpoint.
 func BuildDeclareServiceToolsetFunc(grpccli registrypb.RegistryClient, cliopts ...grpc.CallOption) goagrpc.RemoteFunc {

@@ -16,6 +16,7 @@ import (
 
 	"goa.design/goa-ai/internal/registrycontract"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -24,7 +25,7 @@ import (
 func TestRegistryParentResultCompletesWorkflowAfterLiveReplacement(t *testing.T) {
 	rt := New(newTestStore())
 	child := testAgentDefinition("generic.agent", "generic.workflow", "generic.queue", nil, nil)
-	parent := testRegistryAgentDefinition(testRegistrySources{}).WithAgentExecutors(&child)
+	parent := testRegistryAgentDefinition(testRegistrySources{})
 	current := testNativeRegistryResolution("revision/1")
 	reads := 0
 	client := &genregistry.Client{ResolveToolsetEndpoint: func(context.Context, any) (any, error) {
@@ -39,7 +40,7 @@ func TestRegistryParentResultCompletesWorkflowAfterLiveReplacement(t *testing.T)
 	binding, err := selection.resolution.Select(selection.registry, "records.find")
 	require.NoError(t, err)
 	call := ToolCall{
-		Name: "records.find", AgentID: parent.route.ID, RunID: "parent-run",
+		Name: "records.find", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(parent.route.ID))}, RunID: "parent-run",
 		SessionID: "session-1", TurnID: "turn-1", ToolCallID: "selected-call",
 		Payload: rawjson.Message(`{"value":1}`), Registry: binding,
 	}
@@ -84,13 +85,13 @@ func TestRegistryParentResultCompletesWorkflowAfterLiveReplacement(t *testing.T)
 		AgentID: child.route.ID, RunID: nested.RunID, RunContext: nested,
 	}, nil)
 	wf := &testWorkflowContext{ctx: t.Context(), runtime: rt, hookRuntime: rt}
-	base := &workflowConversation{RunContext: nested, HistoryEndID: input.HistoryEndID}
+	base := &workflowConversation{finalization: &workflowFinalizationState{}, RunContext: nested, HistoryEndID: input.HistoryEndID}
 	activity, err := rt.runPlanActivity(wf, "plan", engine.ActivityOptions{}, *input, base, time.Time{})
 	require.NoError(t, err)
 	require.NotNil(t, activity.Result)
 	require.Nil(t, activity.OutputContractFailure)
 	output, err := rt.runLoopWithState(wf, registration, &RunInput{
-		AgentID: child.route.ID, RunID: nested.RunID, SessionID: nested.SessionID,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(child.route.ID))}, RunID: nested.RunID, SessionID: nested.SessionID,
 	}, base, &runLoopState{
 		Result: activity.Result, ResponseID: activity.PublicationBatchID,
 		Transcript: activity.Transcript, Caps: initialCaps(RunPolicy{}),
@@ -124,13 +125,13 @@ func TestWorkflowParentResultPreservesContractRejections(t *testing.T) {
 	result.FinalToolResult.Result = rawjson.Message(`{"value":1}`)
 	_, err = rt.normalizePlanResultContract(result, nested, "wrong.agent")
 	require.ErrorAs(t, err, &rejected)
-	require.ErrorContains(t, rejected.Unwrap(), "does not target Agent executor")
+	require.ErrorContains(t, rejected.Unwrap(), `does not target Agent "wrong.agent"`)
 
 	wrongName := nested
 	wrongName.Tool = "records.other"
 	_, err = rt.normalizePlanResultContract(result, wrongName, "generic.agent")
 	require.ErrorAs(t, err, &rejected)
-	require.ErrorContains(t, rejected.Unwrap(), `saved registry contract contains no tool "records.other"`)
+	require.ErrorContains(t, rejected.Unwrap(), `registry selection contains no declaration for "records.other"`)
 
 	corruptCall := cloneToolCall(call)
 	corruptCall.Registry.Resolution[0] = '!'

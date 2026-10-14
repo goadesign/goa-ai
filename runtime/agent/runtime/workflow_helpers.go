@@ -89,6 +89,7 @@ func (r *Runtime) groupToolCallsByTimeout(allowed []ToolCall, input *RunInput, d
 // executeGroupedToolCalls runs groups of tool calls with their respective
 // timeouts and returns all results in the original group order.
 func (r *Runtime) executeGroupedToolCalls(
+	owner *workflowLoop,
 	wfCtx engine.WorkflowContext,
 	reg AgentRegistration,
 	agentID agent.Ident,
@@ -117,7 +118,7 @@ func (r *Runtime) executeGroupedToolCalls(
 		if base.providerControl != nil && !finishBy.IsZero() {
 			groupDeadline = finishBy.Add(base.providerControl.elapsed - recoveryElapsed)
 		}
-		sub, timedOut, err := r.executeToolCalls(wfCtx, reg.ExecuteToolActivity, opt, agentID, &base.RunContext, base.HistoryEndID, grouped[i], expectedChildren, parentTracker, groupDeadline, taskStates)
+		sub, timedOut, err := r.executeToolCalls(owner, wfCtx, reg.ExecuteToolActivity, opt, agentID, &base.RunContext, base.HistoryEndID, grouped[i], expectedChildren, parentTracker, groupDeadline, taskStates)
 		out = append(out, sub...)
 		if timedOut {
 			timedOutAny = true

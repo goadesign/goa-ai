@@ -3,7 +3,10 @@
 // loading call the same check, so both reject mismatched stored events.
 package hooks
 
-import "fmt"
+import (
+	"fmt"
+	"reflect"
+)
 
 // ValidateToolResultPlacement verifies whether result may use localSchedule in
 // resultRunID. A result recorded by its scheduling run requires that run's
@@ -83,11 +86,9 @@ func ValidateToolResultCorrelation(
 			scheduled.ToolCallID,
 		)
 	}
-	if result.AgentID() != scheduled.AgentID() {
+	if !reflect.DeepEqual(result.Subject(), scheduled.Subject()) {
 		return fmt.Errorf(
-			"tool result agent %q does not match scheduled agent %q for call %q",
-			result.AgentID(),
-			scheduled.AgentID(),
+			"tool result subject does not match scheduled subject for call %q",
 			scheduled.ToolCallID,
 		)
 	}

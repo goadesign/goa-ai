@@ -20,20 +20,20 @@ func registryCallMetadata(call ToolCall) (policy.ToolMetadata, error) {
 	if err != nil {
 		return policy.ToolMetadata{}, err
 	}
-	for _, declaration := range resolved.Registered.Toolset.Tools {
-		if declaration.Name != call.Name.String() {
-			continue
-		}
-		spec := resolved.Specs[call.Name]
-		return policy.ToolMetadata{
-			RequiresUI:       spec.RequiresUI || spec.Confirmation != nil,
-			TextOnlyContract: spec.TextOnly != nil,
-			ID:               call.Name, Title: declaration.ConsumerContract.Title,
-			Description: spec.Description, Tags: spec.Tags,
-			BudgetClass: policy.ToolBudgetClassBudgeted,
-		}, nil
+	declaration, err := resolved.Declaration(call.Name)
+	if err != nil {
+		return policy.ToolMetadata{}, err
 	}
-	return policy.ToolMetadata{}, fmt.Errorf("saved registry contract contains no tool %q", call.Name)
+	spec := resolved.Specs[call.Name]
+	title := declaration.ConsumerContract.Title
+
+	return policy.ToolMetadata{
+		RequiresUI:       spec.RequiresUI || spec.Confirmation != nil,
+		TextOnlyContract: spec.TextOnly != nil,
+		ID:               call.Name, Title: title,
+		Description: spec.Description, Tags: spec.Tags,
+		BudgetClass: policy.ToolBudgetClassBudgeted,
+	}, nil
 }
 
 // lookupCallSpec resolves the contract owned by this call. Static calls keep
@@ -67,14 +67,13 @@ func (r *Runtime) resolveRegistryExecution(agentID agent.Ident, call ToolCall) (
 	if err != nil {
 		return nil, err
 	}
-	for _, declaration := range resolved.Registered.Toolset.Tools {
-		if declaration.Name != call.Name.String() {
-			continue
-		}
-		for _, label := range declaration.ConsumerContract.RequiredLabels {
-			if call.Labels[label] == "" {
-				return nil, fmt.Errorf("registry tool %q requires run label %q", call.Name, label)
-			}
+	declaration, err := resolved.Declaration(call.Name)
+	if err != nil {
+		return nil, err
+	}
+	for _, label := range declaration.ConsumerContract.RequiredLabels {
+		if call.Labels[label] == "" {
+			return nil, fmt.Errorf("registry tool %q requires run label %q", call.Name, label)
 		}
 	}
 	return resolved, nil

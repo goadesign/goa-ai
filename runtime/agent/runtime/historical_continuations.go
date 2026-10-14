@@ -69,7 +69,11 @@ func (r *Runtime) loadLiteralContinuationOutputs(
 			return nil, fmt.Errorf("runtime: list session run log for historical continuations: %w", err)
 		}
 		for _, event := range page.Events {
-			if event == nil || event.AgentID != input.AgentID {
+			if event == nil {
+				continue
+			}
+			executor, isAgent := event.Subject.Executor.AsAgent()
+			if !isAgent || string(executor) != string(input.AgentID) {
 				continue
 			}
 			switch event.Type {

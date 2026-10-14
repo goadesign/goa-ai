@@ -59,7 +59,7 @@ func TestExecuteToolCalls_AgentToolPreChildValidatorReturnsToolError(t *testing.
 		Payload:         rawjson.Message([]byte(`{"sources":["x"],"execution_only":"derived"}`)),
 		ModelPayload:    modelPayload,
 	}
-	results, _, err := rt.executeToolCalls(
+	results, _, err := rt.executeToolCalls(nil,
 		wfCtx,
 		"execute",
 		engine.ActivityOptions{},

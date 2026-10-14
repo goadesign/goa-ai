@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -108,9 +109,9 @@ func TestRunLoopRecordsPartialInlineResultsBeforeExecutionError(t *testing.T) {
 		Specs: []tools.ToolSpec{first, second, third},
 	}))
 	wfCtx := &testWorkflowContext{ctx: context.Background(), runtime: rt}
-	input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
+	input := &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent-1"))}, RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
 	seedRunMeta(t, rt, input)
-	base := &workflowConversation{RunContext: run.Context{
+	base := &workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{
 		RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID, Attempt: 1,
 	}}
 	initial := &PlanResult{ToolCalls: []ToolCall{
@@ -121,7 +122,7 @@ func TestRunLoopRecordsPartialInlineResultsBeforeExecutionError(t *testing.T) {
 
 	out, err := rt.runLoop(
 		wfCtx,
-		AgentRegistration{ExecuteToolActivity: "execute"},
+		AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, input.Subject), engine.WorkflowDefinition{}, nil), ExecuteToolActivity: "execute"},
 		input,
 		base,
 		initial,
@@ -174,9 +175,9 @@ func TestRunLoopPreservesConcreteResultAndContinuesBookkeepingAfterHookError(t *
 			failType: "tool_result_received",
 		},
 	}
-	input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
+	input := &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent-1"))}, RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
 	seedRunMeta(t, rt, input)
-	base := &workflowConversation{RunContext: run.Context{
+	base := &workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{
 		RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID, Attempt: 1,
 	}}
 	initial := &PlanResult{ToolCalls: []ToolCall{
@@ -186,7 +187,7 @@ func TestRunLoopPreservesConcreteResultAndContinuesBookkeepingAfterHookError(t *
 
 	out, err := rt.runLoop(
 		wfCtx,
-		AgentRegistration{ExecuteToolActivity: "execute"},
+		AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, input.Subject), engine.WorkflowDefinition{}, nil), ExecuteToolActivity: "execute"},
 		input,
 		base,
 		initial,
@@ -230,9 +231,9 @@ func TestRunLoopRecordsCompleteCapDenialBeforePublicationError(t *testing.T) {
 			failAt: 2,
 		},
 	}
-	input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
+	input := &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent-1"))}, RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
 	seedRunMeta(t, rt, input)
-	base := &workflowConversation{RunContext: run.Context{
+	base := &workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{
 		RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID, Attempt: 1,
 	}}
 	initial := &PlanResult{ToolCalls: []ToolCall{
@@ -244,7 +245,7 @@ func TestRunLoopRecordsCompleteCapDenialBeforePublicationError(t *testing.T) {
 
 	out, err := rt.runLoop(
 		wfCtx,
-		AgentRegistration{ExecuteToolActivity: "execute"},
+		AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, input.Subject), engine.WorkflowDefinition{}, nil), ExecuteToolActivity: "execute"},
 		input,
 		base,
 		initial,

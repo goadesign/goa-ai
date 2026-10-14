@@ -26,6 +26,7 @@ import (
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -336,7 +337,7 @@ func syntheticAcceptedProductionHistory(
 ) *historypb.History {
 	t.Helper()
 	runInput := &api.RunInput{
-		AgentID:   productionReplayAgentID,
+		Subject:   genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(productionReplayAgentID))},
 		RunID:     productionReplayRunID,
 		SessionID: productionReplaySessionID,
 		SeedEndID: "published",
@@ -601,7 +602,7 @@ func plannerPublicationInput(
 			EventKey: productionReplayRunID + "/planner-publication/00000000-0000-4000-8000-000000000001/" +
 				strconv.Itoa(index) + "/" + string(event.Type),
 			RunID:     productionReplayRunID,
-			AgentID:   productionReplayAgentID,
+			Subject:   genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(productionReplayAgentID))},
 			SessionID: productionReplaySessionID,
 			TurnID:    productionReplayTurnID,
 			Payload:   event.Payload,

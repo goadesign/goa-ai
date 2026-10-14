@@ -333,7 +333,7 @@ func TestBoundedResultGeneratesReplayContinuation(t *testing.T) {
 	}
 	require.NotEmpty(t, specs, "expected generated specs.go at %s", expectedPath)
 	require.Contains(t, specs, `SourceTool: tools.Ident("tools.search")`)
-	require.Contains(t, specs, `ReplayPayload: true`)
+	require.Contains(t, specs, `RetainedFields: []string{ "query",  }`)
 	require.Contains(t, specs, `ExecutionPayloadSchema:tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"query\":{\"type\":\"string\"}},\"required\":[\"query\"],\"type\":\"object\"}")`)
 	require.Contains(t, specs, `ExecutionPayloadSchema:tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"cursor\":{\"type\":\"string\"},\"query\":{\"type\":\"string\"}},\"required\":[\"query\",\"cursor\"],\"type\":\"object\"}")`)
 	require.Contains(t, specs, `Schema:tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"type\":\"object\"}")`)

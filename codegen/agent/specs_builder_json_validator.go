@@ -72,7 +72,10 @@ func (p *jsonValidatorPlanner) build(attribute *goaexpr.AttributeExpr, suffix st
 
 // adapt retains tool-specific names and error descriptions around the shared shape graph.
 func (p *jsonValidatorPlanner) adapt(node *jsonshape.Node, suffix string, root bool) *plannedJSONValidator {
-	if node.Kind == jsonValidatorPrimitive || node.Kind == jsonValidatorAny {
+	if node.Kind == jsonValidatorAny {
+		return p.primitiveValidator(goaexpr.Any)
+	}
+	if node.Kind == jsonValidatorPrimitive {
 		return p.primitiveValidator(node.Primitive)
 	}
 	if existing := p.named[node]; existing != nil {

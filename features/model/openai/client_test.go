@@ -15,7 +15,8 @@ import (
 
 	"goa.design/goa-ai/features/model/internal/outputvalidation"
 	"goa.design/goa-ai/features/model/toolname"
-	"goa.design/goa-ai/runtime/agent"
+	genregistry "goa.design/goa-ai/registry/gen/registry"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -1874,7 +1875,7 @@ func appendReplayTranscriptDelta(t *testing.T, ctx context.Context, store storag
 	_, err = store.AppendRunRecord(ctx, &runlog.Event{
 		EventKey:  time.Now().UTC().Format(time.RFC3339Nano),
 		RunID:     "run-1",
-		AgentID:   agent.Ident("agent-1"),
+		Subject:   genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("agent-1")},
 		SessionID: "session-1",
 		TurnID:    "turn-1",
 		Type:      transcript.RunLogMessagesAppended,
@@ -1891,8 +1892,17 @@ func newReplayTranscriptStore(t *testing.T, ctx context.Context) *storageinmem.S
 	now := time.Now().UTC().Truncate(time.Millisecond)
 	_, err := store.CreateSession(ctx, "session-1", now)
 	require.NoError(t, err)
+	origin := genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: "run-1"})}
+	decision, err := store.BeginRunPreparationOperation(ctx, storage.RunPreparationBegin{
+		Operation: storage.PreparationOperation{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("agent-1")}, RunID: "run-1", SessionID: "session-1", CommandID: "run-1"},
+		Origin:    origin,
+	})
+	require.NoError(t, err)
+	_, proceed := decision.State.AsProceed()
+	require.True(t, proceed)
 	_, err = store.BeginRunSeed(ctx, storage.SeedDeclaration{
-		AgentID: "agent-1", RunID: "run-1", SessionID: "session-1", CommandID: "run-1", AttemptID: "run-1", Kind: storage.SeedLiteral,
+		Origin:  origin,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("agent-1")}, RunID: "run-1", SessionID: "session-1", CommandID: "run-1", AttemptID: "run-1", Kind: storage.SeedLiteral,
 	})
 	require.NoError(t, err)
 	prepared := []byte(`{}`)
@@ -1905,15 +1915,10 @@ func newReplayTranscriptStore(t *testing.T, ctx context.Context) *storageinmem.S
 		RunID: "run-1", AttemptID: "run-1", SeedEndID: storage.EmptySeedEndID,
 		EndID: end, PreparedBytes: int64(len(prepared)),
 	}))
-	started := replayLifecycleRecord(t, hooks.NewRunStartedEvent("run-1", "agent-1", "session-1", "", "", nil), "run-started", now)
-	cancellation := &runlog.Event{
-		RunID: "run-1", AgentID: "agent-1", SessionID: "session-1", Timestamp: now,
-		Type: storage.CancellationRecordType, EventKey: "cancellation-intent",
-		Payload: []byte(`{"reason":"session_ended"}`),
-	}
+	started := replayLifecycleRecord(t, hooks.NewRunStartedEvent("run-1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("agent-1")}, "session-1", "", "", nil), "run-started", now)
 	_, err = store.StartRootRun(ctx, storage.RootRunStart{RequestDigest: [32]byte{1},
-		Run:     session.RunStart{AgentID: "agent-1", RunID: "run-1", SessionID: "session-1", StartedAt: now, SeedEndID: storage.EmptySeedEndID},
-		Started: started, Cancellation: cancellation,
+		Run:     session.RunStart{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("agent-1")}, RunID: "run-1", SessionID: "session-1", StartedAt: now, SeedEndID: storage.EmptySeedEndID},
+		Started: started,
 	})
 	require.NoError(t, err)
 	return store
@@ -1928,7 +1933,7 @@ func replayLifecycleRecord(t *testing.T, event hooks.Event, key string, at time.
 	return &runlog.Event{
 		EventKey:  input.EventKey,
 		RunID:     input.RunID,
-		AgentID:   input.AgentID,
+		Subject:   input.Subject,
 		SessionID: input.SessionID,
 		TurnID:    input.TurnID,
 		Type:      input.Type,

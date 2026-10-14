@@ -2,6 +2,11 @@
 type {{ .ConfigType }} struct {
     // Planner provides the concrete planner implementation used by the agent.
     Planner {{ .PlannerAlias }}.Planner
+{{- if .RequiresInputPreparation }}
+    // PrepareInputs loads the application's accepted context and installs each
+    // declared binding with its generated typed helper before model planning.
+    PrepareInputs func({{ .ContextAlias }}.Context, *{{ .RuntimeAlias }}.RegistryCatalog) error
+{{- end }}
 {{- if .RunPolicy.History }}
     {{- if eq .RunPolicy.History.Mode "compress" }}
     // HistoryModel writes summaries of older messages. The destination client
@@ -23,6 +28,11 @@ func (c {{ .ConfigType }}) Validate() error {
     if c.Planner == nil {
         return {{ .ErrorsAlias }}.New("planner is required")
     }
+{{- if .RequiresInputPreparation }}
+    if c.PrepareInputs == nil {
+        return {{ .ErrorsAlias }}.New("input preparation is required for declared bindings")
+    }
+{{- end }}
 {{- if .RunPolicy.History }}
     {{- if eq .RunPolicy.History.Mode "compress" }}
     if c.HistoryModel == nil {

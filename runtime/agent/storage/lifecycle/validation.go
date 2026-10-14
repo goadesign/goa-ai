@@ -11,8 +11,11 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"reflect"
 	"time"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
+	genrunoutput "goa.design/goa-ai/registry/gen/runoutput"
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/run"
@@ -46,8 +49,8 @@ func ValidateOrdinaryRunRecord(record *runlog.Event) error {
 	}
 }
 
-// ValidateRootRunStart checks that both possible root-run records describe the
-// immutable run identity and the outcome each record would store.
+// ValidateRootRunStart checks that the root start record describes the
+// immutable identity accepted by the engine.
 func ValidateRootRunStart(command storage.RootRunStart) error {
 	if command.RequestDigest == ([32]byte{}) {
 		return errors.New("accepted request digest is required")
@@ -58,17 +61,11 @@ func ValidateRootRunStart(command storage.RootRunStart) error {
 	if err := validateRunStartedRecord(command.Started, command.Run); err != nil {
 		return fmt.Errorf("started record: %w", err)
 	}
-	if err := validateStartCancellation(command.Cancellation, command.Run); err != nil {
-		return fmt.Errorf("cancellation record: %w", err)
-	}
-	if command.Started.EventKey == command.Cancellation.EventKey {
-		return errors.New("started and cancellation records require different event keys")
-	}
 	return nil
 }
 
-// ValidateChildRunStart checks that the parent link and both possible child
-// records describe the same child identity.
+// ValidateChildRunStart checks that the parent link and child start
+// record describe the same child identity.
 func ValidateChildRunStart(command storage.ChildRunStart) error {
 	if command.RequestDigest == ([32]byte{}) {
 		return errors.New("accepted request digest is required")
@@ -81,12 +78,6 @@ func ValidateChildRunStart(command storage.ChildRunStart) error {
 	}
 	if err := validateRunStartedRecord(command.Started, command.Run); err != nil {
 		return fmt.Errorf("started record: %w", err)
-	}
-	if err := validateStartCancellation(command.Cancellation, command.Run); err != nil {
-		return fmt.Errorf("cancellation record: %w", err)
-	}
-	if command.Started.EventKey == command.Cancellation.EventKey {
-		return errors.New("started and cancellation records require different event keys")
 	}
 	return nil
 }
@@ -103,6 +94,9 @@ func ValidateOneShotRunStart(command storage.OneShotRunStart) error {
 // ValidateSynchronousRunStart checks the immutable sessionless identity and
 // complete first record. A callback has no engine-accepted request digest.
 func ValidateSynchronousRunStart(command storage.SynchronousRunStart) error {
+	if command.Run.PredecessorRunID != "" {
+		return errors.New("synchronous run cannot continue a predecessor")
+	}
 	return validateSessionlessRootStart(command.Run, command.Started)
 }
 
@@ -136,7 +130,7 @@ func ValidateRunCancellation(command storage.RunCancellation, meta session.RunMe
 	if command.RunID != meta.RunID {
 		return errors.New("cancellation command does not match stored run")
 	}
-	if err := validateRecordOwner(command.Record, meta.RunID, meta.AgentID, meta.SessionID); err != nil {
+	if err := validateRecordOwner(command.Record, meta.RunID, meta.Subject, meta.SessionID); err != nil {
 		return fmt.Errorf("cancellation record: %w", err)
 	}
 	if command.Record.Type != storage.CancellationRecordType {
@@ -162,13 +156,13 @@ func ValidateRunSuspension(command storage.RunSuspension, meta session.RunMeta) 
 		return errors.New("suspension command does not match stored run")
 	}
 	if meta.StartOutcome == session.RunStartStop {
-		return errors.New("ended-session start cannot suspend instead of settling cancellation")
+		return errors.New("stopped start cannot suspend instead of settling cancellation")
 	}
 	event, err := decodeHookRecord(command.Record, hooks.RunSuspended)
 	if err != nil {
 		return fmt.Errorf("suspension record: %w", err)
 	}
-	if err := validateEventOwner(event, meta.RunID, meta.AgentID, meta.SessionID); err != nil {
+	if err := validateEventOwner(event, meta.RunID, meta.Subject, meta.SessionID); err != nil {
 		return fmt.Errorf("suspension record: %w", err)
 	}
 	suspended := event.(*hooks.RunSuspendedEvent)
@@ -181,6 +175,11 @@ func ValidateRunSuspension(command storage.RunSuspension, meta session.RunMeta) 
 // ValidateRunTerminal checks that a final record carries the requested state,
 // the run's immutable labels, and the stored cancellation reason when present.
 func ValidateRunTerminal(command storage.RunTerminal, meta session.RunMeta) error {
+	if command.OperationResult != nil {
+		if _, err := genrunoutput.EncodeOperationResult(command.OperationResult); err != nil {
+			return fmt.Errorf("terminal operation result: %w", err)
+		}
+	}
 	if command.RunID == "" || !session.IsTerminalRunStatus(command.Status) || command.Status == session.RunStatusSuspended {
 		return errors.New("run terminal requires completed, failed, or canceled status")
 	}
@@ -188,13 +187,13 @@ func ValidateRunTerminal(command storage.RunTerminal, meta session.RunMeta) erro
 		return errors.New("terminal command does not match stored run")
 	}
 	if meta.StartOutcome == session.RunStartStop && command.Status == session.RunStatusCompleted {
-		return errors.New("ended-session start cannot complete successfully")
+		return errors.New("stopped start cannot complete successfully")
 	}
 	event, err := decodeHookRecord(command.Record, hooks.RunCompleted)
 	if err != nil {
 		return fmt.Errorf("terminal record: %w", err)
 	}
-	if err := validateEventOwner(event, meta.RunID, meta.AgentID, meta.SessionID); err != nil {
+	if err := validateEventOwner(event, meta.RunID, meta.Subject, meta.SessionID); err != nil {
 		return fmt.Errorf("terminal record: %w", err)
 	}
 	completed := event.(*hooks.RunCompletedEvent)
@@ -227,7 +226,7 @@ func ValidateStoredRunStart(record *runlog.Event, meta session.RunMeta) error {
 	}
 	started := event.(*hooks.RunStartedEvent)
 	start := session.RunStart{
-		AgentID:          meta.AgentID,
+		Subject:          meta.Subject,
 		RunID:            meta.RunID,
 		SessionID:        meta.SessionID,
 		ParentRunID:      meta.ParentRunID,
@@ -259,15 +258,15 @@ func ValidateStoredChildLink(record *runlog.Event, parent, child session.RunMeta
 		return err
 	}
 	if err := validateChildLinkEvent(event, session.RunStart{
-		AgentID:     child.AgentID,
+		Subject:     child.Subject,
 		RunID:       child.RunID,
 		SessionID:   child.SessionID,
 		ParentRunID: child.ParentRunID,
 	}); err != nil {
 		return err
 	}
-	if event.AgentID() != parent.AgentID {
-		return errors.New("parent agent does not match stored run")
+	if !reflect.DeepEqual(event.Subject(), parent.Subject) {
+		return errors.New("parent subject does not match stored run")
 	}
 	return nil
 }
@@ -287,7 +286,7 @@ func ValidateChildContinuationLinks(previous, current *runlog.Event) error {
 	old := previousEvent.(*hooks.ChildRunLinkedEvent)
 	next := currentEvent.(*hooks.ChildRunLinkedEvent)
 	if old.ToolCallID != next.ToolCallID || old.ToolName != next.ToolName ||
-		old.AgentID() != next.AgentID() || old.SessionID() != next.SessionID() ||
+		!reflect.DeepEqual(old.Subject(), next.Subject()) || old.SessionID() != next.SessionID() ||
 		old.ChildAgentID != next.ChildAgentID {
 		return errors.New("child continuation does not match predecessor parent tool call")
 	}
@@ -297,6 +296,9 @@ func ValidateChildContinuationLinks(previous, current *runlog.Event) error {
 // validateRunStartedRecord decodes one run-started hook and compares every
 // immutable fact supplied when the run was created.
 func validateRunStartedRecord(record *runlog.Event, start session.RunStart) error {
+	if record != nil && record.EventKey == cancellationEventKey {
+		return errors.New("started record uses the reserved cancellation event key")
+	}
 	event, err := decodeHookRecord(record, hooks.RunStarted)
 	if err != nil {
 		return err
@@ -307,7 +309,7 @@ func validateRunStartedRecord(record *runlog.Event, start session.RunStart) erro
 // validateRunStartedEvent compares a decoded event with the run start that the
 // same storage operation writes.
 func validateRunStartedEvent(record *runlog.Event, event hooks.Event, start session.RunStart) error {
-	if err := validateEventOwner(event, start.RunID, start.AgentID, start.SessionID); err != nil {
+	if err := validateEventOwner(event, start.RunID, start.Subject, start.SessionID); err != nil {
 		return err
 	}
 	started := event.(*hooks.RunStartedEvent)
@@ -326,22 +328,6 @@ func validateRunStartedEvent(record *runlog.Event, event hooks.Event, start sess
 	return nil
 }
 
-// validateStartCancellation checks the intent stored when an ended session stops
-// ordinary work. The accepted workflow remains responsible for its final record.
-func validateStartCancellation(record *runlog.Event, start session.RunStart) error {
-	if record == nil {
-		return errors.New("cancellation record is required")
-	}
-	if !record.Timestamp.Equal(start.StartedAt) {
-		return errors.New("timestamp does not match run start")
-	}
-	return ValidateRunCancellation(storage.RunCancellation{
-		RunID:  start.RunID,
-		Reason: run.CancellationReasonSessionEnded,
-		Record: record,
-	}, session.RunMeta{RunID: start.RunID, AgentID: start.AgentID, SessionID: start.SessionID})
-}
-
 // validateChildLinkRecord checks the child identity stored on its parent run.
 func validateChildLinkRecord(record *runlog.Event, start session.RunStart) error {
 	event, err := decodeHookRecord(record, hooks.ChildRunLinked)
@@ -358,7 +344,8 @@ func validateChildLinkEvent(event hooks.Event, start session.RunStart) error {
 	if linked.RunID() != start.ParentRunID || linked.SessionID() != start.SessionID {
 		return errors.New("parent identity does not match child run")
 	}
-	if linked.ChildRunID != start.RunID || linked.ChildAgentID != agent.Ident(start.AgentID) {
+	childAgent, ok := start.Subject.Executor.AsAgent()
+	if !ok || linked.ChildRunID != start.RunID || linked.ChildAgentID != agent.Ident(childAgent) {
 		return errors.New("child identity does not match run")
 	}
 	if linked.ToolName == "" || linked.ToolCallID == "" {
@@ -380,7 +367,7 @@ func decodeHookRecord(record *runlog.Event, expected hooks.EventType) (hooks.Eve
 		Type:        record.Type,
 		EventKey:    record.EventKey,
 		RunID:       record.RunID,
-		AgentID:     record.AgentID,
+		Subject:     record.Subject,
 		SessionID:   record.SessionID,
 		TurnID:      record.TurnID,
 		TimestampMS: record.Timestamp.UnixMilli(),
@@ -393,11 +380,11 @@ func decodeHookRecord(record *runlog.Event, expected hooks.EventType) (hooks.Eve
 }
 
 // validateRecordOwner compares a non-hook record with stored run ownership.
-func validateRecordOwner(record *runlog.Event, runID, agentID, sessionID string) error {
+func validateRecordOwner(record *runlog.Event, runID string, subject genrunidentity.RunSubject, sessionID string) error {
 	if err := storage.ValidateRunRecord(record); err != nil {
 		return err
 	}
-	if record.RunID != runID || string(record.AgentID) != agentID || record.SessionID != sessionID {
+	if record.RunID != runID || !reflect.DeepEqual(record.Subject, subject) || record.SessionID != sessionID {
 		return storage.ErrRunRecordOwnerMismatch
 	}
 	return nil
@@ -405,8 +392,8 @@ func validateRecordOwner(record *runlog.Event, runID, agentID, sessionID string)
 
 // validateEventOwner compares the typed hook envelope with stored run
 // ownership.
-func validateEventOwner(event hooks.Event, runID, agentID, sessionID string) error {
-	if event.RunID() != runID || event.AgentID() != agentID || event.SessionID() != sessionID {
+func validateEventOwner(event hooks.Event, runID string, subject genrunidentity.RunSubject, sessionID string) error {
+	if event.RunID() != runID || !reflect.DeepEqual(event.Subject(), subject) || event.SessionID() != sessionID {
 		return storage.ErrRunRecordOwnerMismatch
 	}
 	return nil
@@ -441,19 +428,23 @@ func validateSessionlessRootStart(start session.RunStart, record *runlog.Event) 
 // validateOneShotStart checks the immutable fields shared by sessionless
 // commands and by saved sessionless start records.
 func validateOneShotStart(start session.RunStart, child bool) error {
+	if _, err := genrunidentity.EncodeRunSubject(&start.Subject); err != nil {
+		return fmt.Errorf("run subject: %w", err)
+	}
+	if _, ok := start.Subject.Executor.AsAgent(); child && !ok {
+		return session.ErrChildAgentIDRequired
+	}
 	switch {
 	case start.RunID == "":
 		return errors.New("run id is required")
-	case start.AgentID == "":
-		return errors.New("agent id is required")
 	case start.SessionID != "":
 		return errors.New("one-shot run cannot have session id")
 	case child && start.ParentRunID == "":
 		return session.ErrParentRunIDRequired
 	case !child && start.ParentRunID != "":
 		return errors.New("one-shot run cannot have parent run id")
-	case start.PredecessorRunID != "":
-		return errors.New("one-shot run cannot have predecessor run id")
+	case start.PredecessorRunID == start.RunID:
+		return errors.New("one-shot continuation cannot name itself")
 	case start.StartedAt.IsZero():
 		return errors.New("started_at is required")
 	case !start.StartedAt.Equal(start.StartedAt.Truncate(time.Millisecond)):

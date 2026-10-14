@@ -16,13 +16,35 @@ option go_package = "/goa_ai_registrypb";
 // renew leases for the one active schema and admission revision; consumers
 // discover and invoke only healthy admitted providers.
 service Registry {
+	// Check whether a permanent resource has an active catalog registration
+// without selecting a revision. This read returns catalog existence and
+// retirement only; the host owns caller authorization.
+	rpc CheckCatalogResource (.goa_ai_registry.CheckCatalogResourceRequest) returns (.goa_ai_registry.CheckCatalogResourceResponse);
+	// Read a bounded page of stable resources registered under one owning scope.
+// Registry returns identities only; the resource owner supplies its current
+// configuration. Each request examines at most limit indexed candidates and
+// may return an empty page with more work remaining.
+	rpc ListCatalogResources (.goa_ai_registry.ListCatalogResourcesRequest) returns (.goa_ai_registry.ListCatalogResourcesResponse);
+	// Retain an accepted immutable native revision and its generated operation
+// declarations in one write. Repetition preserves the original registration;
+// changed content or retired exact registration conflicts. An unseen revision
+// cannot reopen a permanently retired resource.
+	rpc RegisterAgentExports (.goa_ai_registry.RegisterAgentExportsRequest) returns (.goa_ai_registry.RegisterAgentExportsResponse);
+	// Validate generated native operation declarations and check that the
+// permanent resource is not retired. The host validates dependencies before
+// delivering the accepted revision.
+	rpc ValidateAgentExports (.goa_ai_registry.ValidateAgentExportsRequest) returns (.goa_ai_registry.ValidateAgentExportsResponse);
+	// Permanently disable new native revisions and catalog discovery for one
+// resource while retaining saved declarations. Exact repetition succeeds and
+// never reopens the resource; hosts authorize the management request.
+	rpc RetireAgentResource (.goa_ai_registry.RetireAgentResourceRequest) returns (.goa_ai_registry.RetireAgentResourceResponse);
 	// Create a complete immutable service toolset before any provider connects.
 // The registry assigns its admission revision and registration time. An
 // identical active declaration returns the original saved definition, token,
 // and time; a different declaration or native Agent occupancy returns
 // admission_conflict. A retired service declaration returns admission_retired.
 // Declaration does not create a provider lease or establish health.
-	rpc DeclareServiceToolset (DeclareServiceToolsetRequest) returns (DeclareServiceToolsetResponse);
+	rpc DeclareServiceToolset (.goa_ai_registry.DeclareServiceToolsetRequest) returns (.goa_ai_registry.DeclareServiceToolsetResponse);
 	// Replace or reactivate the expected service declaration after every old
 // provider lease has released or expired. The replacement ID identifies this
 // update of the expected registration; reuse it with the same complete
@@ -33,7 +55,7 @@ service Registry {
 // replacing the declaration. Replacement permanently retires the previous
 // service token, creates no provider lease, and requires new providers to
 // attach and establish health.
-	rpc ReplaceServiceToolset (ReplaceServiceToolsetRequest) returns (ReplaceServiceToolsetResponse);
+	rpc ReplaceServiceToolset (.goa_ai_registry.ReplaceServiceToolsetRequest) returns (.goa_ai_registry.ReplaceServiceToolsetResponse);
 	// Attach one provider incarnation to the exact existing service registration
 // without sending or changing its definition. The expected token and current
 // wire protocol are required. Missing, different, or native Agent
@@ -42,7 +64,7 @@ service Registry {
 // time and any longer lease deadline. An already-draining incarnation returns
 // provider_lease_lost. After startup, use RenewProvider; attachment is not a
 // renewal recovery operation.
-	rpc AttachProvider (AttachProviderRequest) returns (AttachProviderResponse);
+	rpc AttachProvider (.goa_ai_registry.AttachProviderRequest) returns (.goa_ai_registry.AttachProviderResponse);
 	// Reject providers whose required runtime-owned wire protocol version differs
 // from the registry, then atomically admit one provider-incarnation lease in
 // the catalog admission record. The same wire version, schema, and admission
@@ -53,26 +75,26 @@ service Registry {
 // admission_retired and cannot resurrect. An already-draining incarnation
 // returns provider_lease_lost; full registration cannot reopen it. Active
 // providers use RenewProvider without resending definitions.
-	rpc Register (RegisterRequest) returns (RegisterResponse);
+	rpc Register (.goa_ai_registry.RegisterRequest) returns (.goa_ai_registry.RegisterResponse);
 	// Extend only the exact current unexpired provider-incarnation lease without
 // reading or writing tool definitions. Preserve its registration token,
 // health, draining status, and any longer settlement deadline. A missing,
 // expired, replaced, or retired lease returns provider_lease_lost; renewal
 // never creates admission authority. Infrastructure failures are retryable
 // only within the provider's existing lease cutoff.
-	rpc RenewProvider (RenewProviderRequest) returns (RenewProviderResponse);
+	rpc RenewProvider (.goa_ai_registry.RenewProviderRequest) returns (.goa_ai_registry.RenewProviderResponse);
 	// Release one exact provider-incarnation lease from the admission token after
 // that Serve lifecycle has stopped claiming work and settled in-flight calls.
 // Missing incarnations and stale tokens succeed without mutation;
 // infrastructure failures are retryable.
-	rpc ReleaseProvider (ReleaseProviderRequest) returns (ReleaseProviderResponse);
+	rpc ReleaseProvider (.goa_ai_registry.ReleaseProviderRequest) returns (.goa_ai_registry.ReleaseProviderResponse);
 	// Atomically mark one exact provider-incarnation lease non-routable before its
 // Serve lifecycle closes the shared request sink. The provider supplies its
 // configured settlement duration; Redis time extends the draining lease
 // through that full lifecycle so already-claimed work can publish terminal
 // results, while new calls route only when another non-draining provider
 // remains.
-	rpc DrainProvider (DrainProviderRequest) returns (DrainProviderResponse);
+	rpc DrainProvider (.goa_ai_registry.DrainProviderRequest) returns (.goa_ai_registry.DrainProviderResponse);
 	// Retire the exact current registration and remove it from discovery.
 // Repeating the same-token retirement succeeds; a stale token returns
 // admission_conflict. For service tools, preserve provider leases until
@@ -80,29 +102,29 @@ service Registry {
 // registering again. Native Agent declarations have no provider leases and can
 // be reactivated through ReplaceAgentToolset; already accepted child calls
 // retain their selected declaration.
-	rpc Unregister (UnregisterRequest) returns (UnregisterResponse);
+	rpc Unregister (.goa_ai_registry.UnregisterRequest) returns (.goa_ai_registry.UnregisterResponse);
 	// Atomically record shared consumer-group liveness for a
 // token-and-membership-epoch health ping. The responding provider incarnation
 // must hold an unexpired lease in that same catalog record.
-	rpc Pong (PongRequest) returns (PongResponse);
+	rpc Pong (.goa_ai_registry.PongRequest) returns (.goa_ai_registry.PongResponse);
 	// Create a native Agent toolset without a Pulse provider lease. Repeating the
 // same active declaration succeeds. A different existing declaration returns
 // admission_conflict; use ReplaceAgentToolset with its current token.
-	rpc RegisterAgentToolset (RegisterAgentToolsetRequest) returns (RegisterAgentToolsetResponse);
+	rpc RegisterAgentToolset (.goa_ai_registry.RegisterAgentToolsetRequest) returns (.goa_ai_registry.RegisterAgentToolsetResponse);
 	// Replace or reactivate a native Agent toolset only when the current
 // registration matches expected_registration_token. Already accepted child
 // calls retain their original declarations. New discovery returns the
 // replacement.
-	rpc ReplaceAgentToolset (ReplaceAgentToolsetRequest) returns (ReplaceAgentToolsetResponse);
+	rpc ReplaceAgentToolset (.goa_ai_registry.ReplaceAgentToolsetRequest) returns (.goa_ai_registry.ReplaceAgentToolsetResponse);
 	// List all registered toolsets with optional tag filtering
-	rpc ListToolsets (ListToolsetsRequest) returns (ListToolsetsResponse);
+	rpc ListToolsets (.goa_ai_registry.ListToolsetsRequest) returns (.goa_ai_registry.ListToolsetsResponse);
 	// Get a specific toolset by name including all tool schemas
-	rpc GetToolset (GetToolsetRequest) returns (GetToolsetResponse);
+	rpc GetToolset (.goa_ai_registry.GetToolsetRequest) returns (.goa_ai_registry.GetToolsetResponse);
 	// Return a toolset definition and its exact registration token from one active
 // catalog read. Consumers retain the token with accepted calls so a later
 // provider replacement cannot change the contract selected by the model.
 // Resolution describes registered tools; it does not guarantee provider health.
-	rpc ResolveToolset (ResolveToolsetRequest) returns (ResolveToolsetResponse);
+	rpc ResolveToolset (.goa_ai_registry.ResolveToolsetRequest) returns (.goa_ai_registry.ResolveToolsetResponse);
 	// Report whether the exact registration token derived from a deployed
 // provider's generated tool schemas is active and currently has an unexpired,
 // non-draining provider lease plus a fresh authenticated pong. Release
@@ -110,9 +132,9 @@ service Registry {
 // intended pods are running while the registry proves their exact tool
 // contract is routable. A missing or different active admission returns
 // ready=false rather than an error.
-	rpc CheckAdmission (CheckAdmissionRequest) returns (CheckAdmissionResponse);
+	rpc CheckAdmission (.goa_ai_registry.CheckAdmissionRequest) returns (.goa_ai_registry.CheckAdmissionResponse);
 	// Search toolsets by keyword matching name, description, or tags
-	rpc Search (SearchRequest) returns (SearchResponse);
+	rpc Search (.goa_ai_registry.SearchRequest) returns (.goa_ai_registry.SearchResponse);
 	// Reject consumers whose required runtime-owned wire protocol version differs
 // from the registry, then attach or create one run-scoped tool-call record. A
 // valid unpublished call waits for a healthy provider within its original
@@ -127,21 +149,21 @@ service Registry {
 // result-stream history was trimmed. Before returning a published admission,
 // the registry establishes the result stream so the caller can create a reader
 // immediately.
-	rpc CallTool (CallToolRequest) returns (CallToolResponse);
+	rpc CallTool (.goa_ai_registry.CallToolRequest) returns (.goa_ai_registry.CallToolResponse);
 	// Admit a tool call only against the exact registration returned by
 // ResolveToolset. The token is part of the immutable call identity. A
 // replacement before publication commits call_not_admitted; published calls
 // keep their original assignment and result. Repeating this operation attaches
 // to the same call, or resumes its authoritative provider-overload event
 // against the same registration and original deadline.
-	rpc CallResolvedTool (CallResolvedToolRequest) returns (CallResolvedToolResponse);
+	rpc CallResolvedTool (.goa_ai_registry.CallResolvedToolRequest) returns (.goa_ai_registry.CallResolvedToolResponse);
 	// Republish one previously admitted call after provider overload recorded in
 // the authoritative call record. The runtime supplies the exact original
 // registration token; the registry rejects a changed active admission before
 // publishing and never rebinds claimed execution to a replacement provider.
 // Before returning either a republished or terminal call, the registry
 // establishes the result stream so the caller can create a reader immediately.
-	rpc RetryTool (RetryToolRequest) returns (RetryToolResponse);
+	rpc RetryTool (.goa_ai_registry.RetryToolRequest) returns (.goa_ai_registry.RetryToolResponse);
 	// Submit one canonical terminal result for an admitted call. The registry
 // verifies the exact provider incarnation still owns an unexpired lease and
 // claimed request event, then atomically stores the full terminal in the
@@ -151,17 +173,17 @@ service Registry {
 // outcome_unknown instead. If that exact dispatch lease disappears first,
 // registry-owned settlement commits outcome_unknown because the effect may
 // have occurred; execution ownership never transfers.
-	rpc CompleteToolCall (CompleteToolCallRequest) returns (CompleteToolCallResponse);
+	rpc CompleteToolCall (.goa_ai_registry.CompleteToolCallRequest) returns (.goa_ai_registry.CompleteToolCallResponse);
 	// Publish one best-effort output fragment for a claimed live call. The
 // registry verifies the exact provider lease and request-event claim, then
 // atomically appends the delta only while the authoritative call record
 // remains nonterminal.
-	rpc PublishToolOutputDelta (PublishToolOutputDeltaRequest) returns (PublishToolOutputDeltaResponse);
+	rpc PublishToolOutputDelta (.goa_ai_registry.PublishToolOutputDeltaRequest) returns (.goa_ai_registry.PublishToolOutputDeltaResponse);
 	// Report that an exact provider claim could not enter its bounded worker
 // queue. The registry verifies the provider lease and request-event claim,
 // then atomically appends retry control only while the authoritative call
 // record remains nonterminal.
-	rpc ReportToolCallOverload (ReportToolCallOverloadRequest) returns (ReportToolCallOverloadResponse);
+	rpc ReportToolCallOverload (.goa_ai_registry.ReportToolCallOverloadRequest) returns (.goa_ai_registry.ReportToolCallOverloadResponse);
 	// Atomically decide whether one queued request may enter handler execution. An
 // active provider gains immutable ownership, and an exact replay of the same
 // claim operation returns the same execute decision so an uncertain transport
@@ -173,23 +195,79 @@ service Registry {
 // receives the canonical stale-generation terminal. Only the exact granted
 // provider incarnation and request event may publish deltas or complete the
 // call; ownership never transfers after a crash.
-	rpc ClaimToolCall (ClaimToolCallRequest) returns (ClaimToolCallResponse) {
+	rpc ClaimToolCall (.goa_ai_registry.ClaimToolCallRequest) returns (.goa_ai_registry.ClaimToolCallResponse) {
 		option idempotency_level = IDEMPOTENT;
 	}
 }
 
-message DeclareServiceToolsetRequest {
-	// Unique toolset route name.
-	optional string name = 1;
-	// Human-readable description of the toolset.
-	optional string description = 2;
-	// Semantic version of the toolset.
-	optional string version = 3;
-	// Categories used by discovery filters.
-	repeated string tags = 4;
-	// Complete portable service tool declarations, including consumer contracts
-// and matching pagination partners.
-	repeated ToolSchema tools = 5;
+message CheckCatalogResourceRequest {
+	// Resource kind; equal names across kinds differ.
+	optional string kind = 1;
+	// Owning scope authenticated by the host.
+	optional string scope = 2;
+	// Permanent resource name within its owning scope.
+	optional string name = 3;
+}
+
+message CheckCatalogResourceResponse {
+}
+
+message ListCatalogResourcesRequest {
+	// Owning scope whose registered resources are selected.
+	optional string scope = 1;
+	// Selected resource kind.
+	optional string kind = 2;
+	// Registry continuation from the same owning scope, kind and name filter.
+	optional string after = 4;
+	// Maximum indexed candidates examined in this request; returned resources may
+// be fewer.
+	optional sint32 limit = 5;
+	// Optional exact stable resource name filter.
+	optional string name = 6;
+}
+
+message ListCatalogResourcesResponse {
+	// Active resources registered under the requested owner; an empty resumable
+// page is valid.
+	repeated CatalogResource resources = 1;
+	oneof continuation {
+		ResourcePageDone done = 2;
+		ResourcePageMore more = 3;
+	}
+}
+
+message CatalogResource {
+	// Resource kind; equal names across kinds differ.
+	optional string kind = 1;
+	// Owning scope authenticated by the host.
+	optional string scope = 2;
+	// Permanent resource name within its owning scope.
+	optional string name = 3;
+}
+// No indexed candidates remain at this read.
+message ResourcePageDone {
+}
+
+message ResourcePageMore {
+	// Continue this same selection after the last examined candidate.
+	optional string after = 1;
+}
+
+message RegisterAgentExportsRequest {
+	// Owning scope.
+	optional string scope = 1;
+	// Permanent native resource name.
+	optional string resource_name = 2;
+	// Immutable revision route, separate from the resource name.
+	optional string name = 3;
+	// Description of the revision.
+	optional string description = 4;
+	// Provider declaration version.
+	optional string version = 5;
+	// Discovery tags; tags never grant permission.
+	repeated string tags = 6;
+	// Complete generated native operation declarations.
+	repeated ToolSchema exports = 7;
 }
 // Tool schema declaration for registration with the tool registry gateway.
 message ToolSchema {
@@ -338,15 +416,17 @@ message ToolBounds {
 }
 // Generated relationship between a query tool and its continuation.
 message ToolPaging {
+	reserved 3;
+	reserved "replay_payload";
 	// Qualified tool that advances this result; omitted when the tool advances
 // itself.
 	optional string continue_tool = 1;
 	// Qualified query tool whose retained arguments a dedicated continuation
 // advances.
 	optional string source_tool = 2;
-	// Whether the runtime retains the source query's arguments and replaces only
-// its cursor.
-	optional bool replay_payload = 3;
+	// Execution JSON field names copied from the exact preceding call before
+// adding its continuation cursor.
+	repeated string retained_fields = 6;
 	// JSON argument name containing the continuation cursor.
 	optional string cursor_field = 4;
 	// JSON result name containing the next cursor.
@@ -379,14 +459,20 @@ message ToolServerData {
 // explicitly admitted host reader.
 	optional bool native_image = 6;
 }
-// A native child Agent invocation. The worker is authorized at startup; the
-// application owns the immutable configuration reference.
+// An owner-admitted Agent operation. The registry supplies the worker route
+// and immutable configuration; model arguments cannot choose either. The
+// provider prepares the input and executes the child run on its own worker.
 message AgentToolTarget {
-	// Identifier of the preconfigured Agent worker that accepts this configuration.
+	// Identifier of the admitted Agent worker that owns this operation.
 	optional string executor = 1;
 	// Immutable application configuration reference retained with each accepted
 // tool call.
 	optional string configuration = 2;
+	// Registered workflow that executes this Agent on its provider worker.
+	optional string workflow = 3;
+	// Provider task queue that receives preparation and execution for this
+// operation.
+	optional string queue = 4;
 }
 
 message TextOnlyToolContract {
@@ -404,7 +490,7 @@ message TextOnlyToolContract {
 	optional bytes execution_schema = 6;
 }
 
-message DeclareServiceToolsetResponse {
+message RegisterAgentExportsResponse {
 	// Complete toolset definition read from the active registration.
 	Toolset toolset = 1;
 	// Exact registration required when executing a call selected from this
@@ -425,6 +511,52 @@ message Toolset {
 	repeated ToolSchema tools = 5;
 	// ISO 8601 registration timestamp
 	optional string registered_at = 6;
+}
+
+message ValidateAgentExportsRequest {
+	// Owning scope.
+	optional string scope = 1;
+	// Permanent native resource name.
+	optional string resource_name = 2;
+	// Proposed generated native operation declarations.
+	repeated ToolSchema exports = 3;
+}
+
+message ValidateAgentExportsResponse {
+}
+
+message RetireAgentResourceRequest {
+	// Resource kind; equal names across kinds differ.
+	optional string kind = 1;
+	// Owning scope authenticated by the host.
+	optional string scope = 2;
+	// Permanent resource name within its owning scope.
+	optional string name = 3;
+}
+
+message RetireAgentResourceResponse {
+}
+
+message DeclareServiceToolsetRequest {
+	// Unique toolset route name.
+	optional string name = 1;
+	// Human-readable description of the toolset.
+	optional string description = 2;
+	// Semantic version of the toolset.
+	optional string version = 3;
+	// Categories used by discovery filters.
+	repeated string tags = 4;
+	// Complete portable service tool declarations, including consumer contracts
+// and matching pagination partners.
+	repeated ToolSchema tools = 5;
+}
+
+message DeclareServiceToolsetResponse {
+	// Complete toolset definition read from the active registration.
+	Toolset toolset = 1;
+	// Exact registration required when executing a call selected from this
+// definition.
+	optional string registration_token = 2;
 }
 
 message ReplaceServiceToolsetRequest {

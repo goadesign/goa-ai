@@ -22,6 +22,7 @@ import (
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -37,7 +38,7 @@ func TestTemporalServerProviderRecoveryRelayAndReplay(t *testing.T) {
 		}
 		child, err := w.StartChildWorkflow(w.Context(), engine.ChildWorkflowRequest{
 			ID: input.RunID + "-leaf", Workflow: "recovery-leaf", TaskQueue: queue,
-			Input: &api.RunInput{RunID: input.RunID + "-leaf"},
+			Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: input.RunID + "-leaf"},
 		})
 		if err != nil {
 			return nil, err
@@ -49,7 +50,7 @@ func TestTemporalServerProviderRecoveryRelayAndReplay(t *testing.T) {
 		if len(control.pauses) != 1 {
 			return nil, fmt.Errorf("wrapper retained %d child pauses", len(control.pauses))
 		}
-		return &api.RunOutput{RunID: input.RunID}, nil
+		return &api.RunOutput{Subject: input.Subject, RunID: input.RunID}, nil
 	}
 	root := eng.temporalWorkflowHandler(func(w engine.WorkflowContext, input *api.RunInput) (*api.RunOutput, error) {
 		var accepted, transitions, pauses int
@@ -85,7 +86,7 @@ func TestTemporalServerProviderRecoveryRelayAndReplay(t *testing.T) {
 		}
 		child, err := w.StartChildWorkflow(w.Context(), engine.ChildWorkflowRequest{
 			ID: input.RunID + "-wrapper", Workflow: "recovery-wrapper", TaskQueue: queue,
-			Input: &api.RunInput{RunID: input.RunID + "-wrapper"},
+			Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: input.RunID + "-wrapper"},
 		})
 		if err != nil {
 			return nil, err
@@ -96,7 +97,7 @@ func TestTemporalServerProviderRecoveryRelayAndReplay(t *testing.T) {
 		if accepted != 1 || transitions != 2 || pauses != 0 {
 			return nil, fmt.Errorf("root accepted=%d transitions=%d descendant pauses=%d", accepted, transitions, pauses)
 		}
-		return &api.RunOutput{RunID: input.RunID}, nil
+		return &api.RunOutput{Subject: input.Subject, RunID: input.RunID}, nil
 	})
 	bundle := eng.workerForQueue(queue)
 	bundle.registerWorkflow("recovery-root", root)
@@ -107,7 +108,7 @@ func TestTemporalServerProviderRecoveryRelayAndReplay(t *testing.T) {
 	require.NoError(t, eng.SealRegistration(ctx))
 	id := queue + "-root"
 	handle, err := eng.StartWorkflow(ctx, engine.WorkflowStartRequest{
-		ID: id, Workflow: "recovery-root", TaskQueue: queue, Input: &api.RunInput{RunID: id},
+		ID: id, Workflow: "recovery-root", TaskQueue: queue, Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: id},
 	})
 	require.NoError(t, err)
 	_, err = handle.Wait(ctx)
@@ -186,7 +187,7 @@ func recoveryTestLeaf(eng *Engine) func(workflow.Context, *api.RunInput) (*api.R
 		if err := w.Await(func() bool { return settled }); err != nil {
 			return nil, err
 		}
-		return &api.RunOutput{RunID: input.RunID}, nil
+		return &api.RunOutput{Subject: input.Subject, RunID: input.RunID}, nil
 	}
 }
 
@@ -239,7 +240,7 @@ func TestTemporalServerProviderRecoveryAfterUnpolledAttempts(t *testing.T) {
 		}
 		child, err := w.StartChildWorkflow(w.Context(), engine.ChildWorkflowRequest{
 			ID: input.RunID + "-child", Workflow: "late-child", TaskQueue: queue + "-late",
-			Input:      &api.RunInput{RunID: input.RunID + "-child"},
+			Input:      &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: input.RunID + "-child"},
 			RunTimeout: 3 * time.Second, RetryPolicy: engine.RetryPolicy{MaxAttempts: 3, InitialInterval: time.Millisecond},
 		})
 		if err != nil {
@@ -251,7 +252,7 @@ func TestTemporalServerProviderRecoveryAfterUnpolledAttempts(t *testing.T) {
 		if opened != 1 || pauses != 1 {
 			return nil, fmt.Errorf("unpolled attempts created recovery state: opened=%d pauses=%d", opened, pauses)
 		}
-		return &api.RunOutput{RunID: input.RunID}, nil
+		return &api.RunOutput{Subject: input.Subject, RunID: input.RunID}, nil
 	})
 	eng.workerForQueue(queue).registerWorkflow("late-parent", root)
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
@@ -259,7 +260,7 @@ func TestTemporalServerProviderRecoveryAfterUnpolledAttempts(t *testing.T) {
 	require.NoError(t, eng.SealRegistration(ctx))
 	id := queue + "-late-parent"
 	handle, err := eng.StartWorkflow(ctx, engine.WorkflowStartRequest{
-		ID: id, Workflow: "late-parent", TaskQueue: queue, Input: &api.RunInput{RunID: id},
+		ID: id, Workflow: "late-parent", TaskQueue: queue, Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: id},
 	})
 	require.NoError(t, err)
 	var current *historypb.WorkflowExecutionStartedEventAttributes
@@ -338,7 +339,7 @@ func TestTemporalServerProviderRecoveryContinuationAndDelayedDuplicate(t *testin
 		}
 		child, err := w.StartChildWorkflow(w.Context(), engine.ChildWorkflowRequest{
 			ID: input.RunID + "-child", Workflow: "continuing-child", TaskQueue: queue,
-			Input: &api.RunInput{RunID: input.RunID + "-child"},
+			Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: input.RunID + "-child"},
 		})
 		if err != nil {
 			return nil, err
@@ -350,7 +351,7 @@ func TestTemporalServerProviderRecoveryContinuationAndDelayedDuplicate(t *testin
 			return nil, fmt.Errorf("continuation or duplicate replaced original evidence: opened=%d pauses=%d requests=%d",
 				opened, pauses, len(native.control.endpoints))
 		}
-		return &api.RunOutput{RunID: input.RunID}, nil
+		return &api.RunOutput{Subject: input.Subject, RunID: input.RunID}, nil
 	})
 	bundle := eng.workerForQueue(queue)
 	bundle.registerWorkflow("continuing-root", root)
@@ -360,7 +361,7 @@ func TestTemporalServerProviderRecoveryContinuationAndDelayedDuplicate(t *testin
 	require.NoError(t, eng.SealRegistration(ctx))
 	id := queue + "-continuing"
 	handle, err := eng.StartWorkflow(ctx, engine.WorkflowStartRequest{
-		ID: id, Workflow: "continuing-root", TaskQueue: queue, Input: &api.RunInput{RunID: id},
+		ID: id, Workflow: "continuing-root", TaskQueue: queue, Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: id},
 	})
 	require.NoError(t, err)
 	require.Eventually(t, func() bool {

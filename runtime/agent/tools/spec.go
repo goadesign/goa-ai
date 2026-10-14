@@ -139,6 +139,10 @@ type (
 		// Payload describes exactly the arguments accepted from the model. Its
 		// codec excludes fields supplied by the runtime or provider.
 		Payload TypeSpec
+		// PrepareInput completes the value decoded by Payload.Codec with typed values owned
+		// by this planning activity. Generated consumer helpers install it locally;
+		// shared provider registrations and saved calls never retain the callback.
+		PrepareInput func(any) (rawjson.Message, error)
 		// Result describes the response schema for the tool. It is the zero
 		// TypeSpec, including nil codec functions, when the tool succeeds without
 		// returning a value.
@@ -199,9 +203,9 @@ type (
 		// SourceTool is the canonical query tool whose successful result this
 		// dedicated continuation advances. Empty on initial query tools.
 		SourceTool Ident
-		// ReplayPayload retains SourceTool's canonical query arguments and replaces
-		// only CursorField before execution.
-		ReplayPayload bool
+		// RetainedFields names execution JSON fields copied from the exact prior
+		// call before CursorField is added. An empty list retains no fields.
+		RetainedFields []string
 		// CursorField is the String field used to request subsequent pages.
 		CursorField string
 		// NextCursorField is the canonical field name for the next-page cursor in

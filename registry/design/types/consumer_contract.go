@@ -138,19 +138,23 @@ var ToolUntaggedUnionBranch = Type("ToolUntaggedUnionBranch", func() {
 
 // ToolBounds declares result limits and the associated continuation contract.
 var ToolBounds = Type("ToolBounds", func() {
+	Meta("struct:pkg:path", "registry")
 	Description("Declares that successful results include the runtime's canonical result bounds.")
 	Field(1, "paging", ToolPaging, "Cursor-based continuation contract, when supported.")
 })
 
 // ToolPaging relates a query tool to the tool that reads its next result page.
 var ToolPaging = Type("ToolPaging", func() {
+	Meta("struct:pkg:path", "registry")
 	Description("Generated relationship between a query tool and its continuation.")
 	Field(1, "continue_tool", String, "Qualified tool that advances this result; omitted when the tool advances itself.")
 	Field(2, "source_tool", String, "Qualified query tool whose retained arguments a dedicated continuation advances.")
-	Field(3, "replay_payload", Boolean, "Whether the runtime retains the source query's arguments and replaces only its cursor.")
+	Meta("rpc:reserved:number", "3")
+	Meta("rpc:reserved:name", "replay_payload")
+	Field(6, "retained_fields", ArrayOf(String), "Execution JSON field names copied from the exact preceding call before adding its continuation cursor.")
 	Field(4, "cursor_field", String, "JSON argument name containing the continuation cursor.", func() { MinLength(1) })
 	Field(5, "next_cursor_field", String, "JSON result name containing the next cursor.", func() { MinLength(1) })
-	Required("replay_payload", "cursor_field", "next_cursor_field")
+	Required("retained_fields", "cursor_field", "next_cursor_field")
 })
 
 // ToolConfirmation describes the approval required before executing a tool.
@@ -180,10 +184,10 @@ var ToolServerData = Type("ToolServerData", func() {
 	Required("kind", "audience", "schema", "type")
 })
 
-// AgentToolTarget identifies the configured worker and immutable child Agent configuration.
+// AgentToolTarget carries the admitted worker route and exact configuration for one Agent operation.
 var AgentToolTarget = Type("AgentToolTarget", func() {
-	Description("A native child Agent invocation. The worker is authorized at startup; the application owns the immutable configuration reference.")
-	Field(1, "executor", String, "Identifier of the preconfigured Agent worker that accepts this configuration.", func() {
+	Description("An owner-admitted Agent operation. The registry supplies the worker route and immutable configuration; model arguments cannot choose either. The provider prepares the input and executes the child run on its own worker.")
+	Field(1, "executor", String, "Identifier of the admitted Agent worker that owns this operation.", func() {
 		MinLength(1)
 		Example("generic.agent")
 	})
@@ -191,5 +195,13 @@ var AgentToolTarget = Type("AgentToolTarget", func() {
 		MinLength(1)
 		Example("installer/revisions/7")
 	})
-	Required("executor", "configuration")
+	Field(3, "workflow", String, "Registered workflow that executes this Agent on its provider worker.", func() {
+		MinLength(1)
+		Example("generic.workflow")
+	})
+	Field(4, "queue", String, "Provider task queue that receives preparation and execution for this operation.", func() {
+		MinLength(1)
+		Example("generic.queue")
+	})
+	Required("executor", "configuration", "workflow", "queue")
 })

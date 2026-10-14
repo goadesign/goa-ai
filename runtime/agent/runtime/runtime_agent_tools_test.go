@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -40,13 +41,17 @@ func setupTestAgentWithPlanner(plannerFn func(context.Context, *planner.PlanInpu
 	ctx := engine.WithWorkflowContext(context.Background(), wf)
 	rt.agents["svc.agent"] = AgentRegistration{Definition: testRegistrationDefinition("svc.agent",
 
-		engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) { return &RunOutput{}, nil }}, nil),
+		engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) {
+			return &RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}}, nil
+		}}, nil),
 
 		WorkflowHandler:
 
 		// registerAgentToolTestConfig installs the same immutable spec and child
 		// configuration that production registration makes available to the activity.
-		(engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) { return &RunOutput{}, nil }}).Handler, Planner: &stubPlanner{start: plannerFn},
+		(engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) {
+			return &RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}}, nil
+		}}).Handler, Planner: &stubPlanner{start: plannerFn},
 		PlanActivityName:    "plan",
 		ResumeActivityName:  "resume",
 		ExecuteToolActivity: "execute",
@@ -74,10 +79,10 @@ func registerAgentToolTestConfig(rt *Runtime, cfg AgentToolConfig, toolset strin
 func dispatchTestAgentTool(t *testing.T, rt *Runtime, ctx context.Context, call ToolCall) (*ToolExecutionResult, error) {
 	t.Helper()
 	parent := run.Context{RunID: call.RunID, SessionID: call.SessionID, TurnID: call.TurnID}
-	position := testToolHistory(t, rt, call.AgentID, parent, nil)
-	results, timedOut, err := rt.executeToolCalls(
+	position := testToolHistory(t, rt, testSubjectAgent(t, call.Subject), parent, nil)
+	results, timedOut, err := rt.executeToolCalls(nil,
 		engine.WorkflowContextFromContext(ctx), "execute", engine.ActivityOptions{},
-		call.AgentID, &parent, position, []ToolCall{call}, 0, nil, time.Time{}, nil,
+		testSubjectAgent(t, call.Subject), &parent, position, []ToolCall{call}, 0, nil, time.Time{}, nil,
 	)
 	if err != nil {
 		return nil, err
@@ -116,7 +121,7 @@ func TestAgentToolDispatch_TemplatePreferredOverText(t *testing.T) {
 		Payload:    rawjson.Message([]byte(`{"x":"world"}`)),
 	}
 	registerAgentToolTestConfig(rt, cfg, "svc.tools", newAnyJSONSpec(call.Name))
-	call.AgentID = parentAgentID
+	call.Subject = genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(parentAgentID))}
 	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
 	res, err := dispatchTestAgentTool(t, rt, ctx, call)
 	require.NoError(t, err)
@@ -168,7 +173,7 @@ func TestAgentToolDispatch_UsesTextWhenNoTemplate(t *testing.T) {
 		RunID:      "run",
 		SessionID:  "sess-1",
 	}
-	call.AgentID = parentAgentID
+	call.Subject = genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(parentAgentID))}
 	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
 	res, err := dispatchTestAgentTool(t, rt, ctx, call)
 	require.NoError(t, err)
@@ -204,7 +209,7 @@ func TestAgentToolDispatch_DefaultContentFromPayload(t *testing.T) {
 		Payload:    rawjson.Message([]byte(`{"x":"world"}`)),
 	}
 	registerAgentToolTestConfig(rt, cfg, "svc.tools", newAnyJSONSpec(call.Name))
-	call.AgentID = parentAgentID
+	call.Subject = genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(parentAgentID))}
 	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
 	res, err := dispatchTestAgentTool(t, rt, ctx, call)
 	require.NoError(t, err)
@@ -247,7 +252,7 @@ func TestAgentToolDispatch_PreChildValidatorReturnsToolResult(t *testing.T) {
 		Payload:         rawjson.Message([]byte(`{"sources":["x"]}`)),
 	}
 	registerAgentToolTestConfig(rt, cfg, "svc.tools", newAnyJSONSpec(call.Name))
-	call.AgentID = parentAgentID
+	call.Subject = genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(parentAgentID))}
 	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
 
 	result, err := dispatchTestAgentTool(t, rt, ctx, call)
@@ -318,7 +323,7 @@ func TestAgentToolDispatch_PromptSpecPreferredOverTemplateTextPromptBuilder(t *t
 		Payload:    rawjson.Message([]byte(`{"x":"world"}`)),
 	}
 	registerAgentToolTestConfig(rt, cfg, "svc.tools", newAnyJSONSpec(call.Name))
-	call.AgentID = parentAgentID
+	call.Subject = genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(parentAgentID))}
 	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
 
 	res, err := dispatchTestAgentTool(t, rt, ctx, call)
@@ -361,7 +366,7 @@ func TestAgentToolDispatch_PromptSpecMissingReturnsError(t *testing.T) {
 		SessionID:  "sess-1",
 	}
 	registerAgentToolTestConfig(rt, cfg, "svc.tools", newAnyJSONSpec(call.Name))
-	call.AgentID = parentAgentID
+	call.Subject = genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(parentAgentID))}
 	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
 
 	_, err := dispatchTestAgentTool(t, rt, ctx, call)
@@ -432,7 +437,7 @@ func TestAgentToolDispatch_PromptSpecRendersWithSchemaKeys(t *testing.T) {
 		},
 	}
 	registerAgentToolTestConfig(rt, cfg, "svc.tools", spec)
-	call.AgentID = parentAgentID
+	call.Subject = genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(parentAgentID))}
 	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
 	_, err := dispatchTestAgentTool(t, rt, ctx, call)
 	require.NoError(t, err)
@@ -497,7 +502,7 @@ func TestAgentToolDispatch_PromptSpecRejectsNonObjectPayloadShape(t *testing.T) 
 		},
 	}
 	registerAgentToolTestConfig(rt, cfg, "svc.tools", spec)
-	call.AgentID = parentAgentID
+	call.Subject = genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(parentAgentID))}
 	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
 	_, err := dispatchTestAgentTool(t, rt, ctx, call)
 	require.Error(t, err)
@@ -528,6 +533,7 @@ func TestBuildAgentChildRequest_PreservesCanonicalToolArgs(t *testing.T) {
 
 	payload := rawjson.Message([]byte(`{"time_context":"last 48h","scope_context":{"type":"site","id":"s1"}}`))
 	call := &ToolCall{
+		Subject:    genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(parentAgentID))},
 		Name:       toolName,
 		RunID:      "run-1",
 		ToolCallID: "tooluse_123",
@@ -579,7 +585,8 @@ func TestBuildAgentChildRequestCarriesRenderedPromptToChild(t *testing.T) {
 			toolName: "svc.agent.tool",
 		}},
 	}, &ToolCall{
-		Name: toolName, RunID: "parent", SessionID: "session", ToolCallID: "tool-call",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))},
+		Name:    toolName, RunID: "parent", SessionID: "session", ToolCallID: "tool-call",
 		Payload: rawjson.Message([]byte(`{"time_context":"last 48h"}`)),
 	}, nil, nil)
 	require.NoError(t, err)
@@ -613,6 +620,7 @@ func TestBuildAgentChildRequestRejectsMissingPayloadThroughCodec(t *testing.T) {
 	rt.toolSpecs[toolName] = spec
 
 	call := &ToolCall{
+		Subject:    genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(parentAgentID))},
 		Name:       toolName,
 		RunID:      "run-1",
 		ToolCallID: "tooluse_123",

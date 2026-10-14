@@ -4,9 +4,19 @@ import (
 	"strings"
 	"testing"
 	"text/template"
+	"time"
 
 	"goa.design/goa-ai/runtime/agent/tools"
 )
+
+type (
+	timestampText     string
+	timestampStringer string
+)
+
+func (t timestampStringer) String() string {
+	return "2025-01-01T00:00:00Z"
+}
 
 func TestCompileHintTemplates_Since(t *testing.T) {
 	t.Parallel()
@@ -19,7 +29,15 @@ func TestCompileHintTemplates_Since(t *testing.T) {
 		wantErr bool
 	}
 
+	from := timestampText("2025-01-01T00:00:00.125Z")
+	to := timestampText("2025-01-01T00:00:10.125Z")
 	cases := []testCase{
+		{
+			name: "named_string_pointers",
+			from: &from,
+			to:   &to,
+			want: "10",
+		},
 		{
 			name: "rfc3339_z",
 			from: "2025-01-01T00:00:00Z",
@@ -86,7 +104,23 @@ func TestCompileHintTemplates_HumanTime(t *testing.T) {
 		want string
 	}
 
+	named := timestampText("2025-01-01T00:00:00Z")
 	cases := []testCase{
+		{
+			name: "named_string",
+			in:   named,
+			want: "Jan 1, 12:00 AM",
+		},
+		{
+			name: "named_string_pointer",
+			in:   &named,
+			want: "Jan 1, 12:00 AM",
+		},
+		{
+			name: "nil_named_string_pointer",
+			in:   (*timestampText)(nil),
+			want: "<nil>",
+		},
 		{
 			name: "rfc3339_z",
 			in:   "2025-01-01T00:00:00Z",
@@ -225,5 +259,53 @@ func TestRenderResultHintRejectsEmptyOutput(t *testing.T) {
 	}
 	if err == nil {
 		t.Fatalf("expected empty output error")
+	}
+}
+
+func TestParseTimestamp(t *testing.T) {
+	t.Parallel()
+
+	text := "2025-01-01T00:00:00.123456789-08:00"
+	want, err := time.Parse(time.RFC3339, text)
+	if err != nil {
+		t.Fatal(err)
+	}
+	named := timestampText(text)
+	invalid := timestampText("not-a-time")
+	empty := timestampText("")
+	stringer := timestampStringer("not-a-time")
+	stringerWant := time.Date(2025, time.January, 1, 0, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name string
+		in   any
+		want time.Time
+		ok   bool
+	}{
+		{name: "string", in: text, want: want, ok: true},
+		{name: "string_pointer", in: &text, want: want, ok: true},
+		{name: "named_string", in: named, want: want, ok: true},
+		{name: "named_string_pointer", in: &named, want: want, ok: true},
+		{name: "time", in: want, want: want, ok: true},
+		{name: "time_pointer", in: &want, want: want, ok: true},
+		{name: "stringer", in: stringer, want: stringerWant, ok: true},
+		{name: "stringer_pointer", in: &stringer, want: stringerWant, ok: true},
+		{name: "nil", in: nil},
+		{name: "nil_time_pointer", in: (*time.Time)(nil)},
+		{name: "nil_string_pointer", in: (*string)(nil)},
+		{name: "nil_named_string_pointer", in: (*timestampText)(nil)},
+		{name: "empty_named_string", in: empty},
+		{name: "empty_named_string_pointer", in: &empty},
+		{name: "invalid_named_string", in: invalid},
+		{name: "invalid_named_string_pointer", in: &invalid},
+		{name: "unsupported_number", in: 123},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, ok := parseTimestamp(tc.in)
+			if ok != tc.ok || !got.Equal(tc.want) || got.Nanosecond() != tc.want.Nanosecond() {
+				t.Fatalf("parseTimestamp(%T) = (%v, %v), want (%v, %v)", tc.in, got, ok, tc.want, tc.ok)
+			}
+		})
 	}
 }

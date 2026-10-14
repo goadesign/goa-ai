@@ -6,7 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"goa.design/goa-ai/runtime/agent/engine"
 )
 
@@ -44,7 +46,7 @@ func TestStartActivityHeartbeatRecordsHeartbeatsWhenHeartbeatTimeoutConfigured(t
 	}, 100*time.Millisecond, 5*time.Millisecond)
 }
 
-func TestStartActivityHeartbeatSkipsContextsWithoutHeartbeatTimeout(t *testing.T) {
+func TestStartActivityHeartbeatRecordsHeartbeatsWithoutHeartbeatTimeout(t *testing.T) {
 	t.Parallel()
 
 	recorder := &heartbeatRecorder{}
@@ -55,6 +57,32 @@ func TestStartActivityHeartbeatSkipsContextsWithoutHeartbeatTimeout(t *testing.T
 	stop := startActivityHeartbeatWithInterval(ctx, time.Millisecond)
 	defer stop()
 
-	time.Sleep(10 * time.Millisecond)
-	require.Zero(t, recorder.Count())
+	require.Eventually(t, func() bool {
+		return recorder.Count() >= 2
+	}, time.Second, time.Millisecond)
+}
+
+func TestStartActivityHeartbeatWithoutRecorder(t *testing.T) {
+	t.Parallel()
+	stop := startActivityHeartbeat(t.Context())
+	stop()
+	stop()
+}
+
+func TestHeartbeatIntervalPreservesOptionalFailureDeadline(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name    string
+		timeout time.Duration
+		want    time.Duration
+	}{
+		{name: "no failure deadline", want: 5 * time.Second},
+		{name: "short deadline", timeout: 3 * time.Second, want: time.Second},
+		{name: "at cadence ceiling", timeout: 15 * time.Second, want: 5 * time.Second},
+		{name: "long deadline", timeout: time.Minute, want: 5 * time.Second},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.want, heartbeatInterval(test.timeout))
+		})
+	}
 }

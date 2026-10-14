@@ -21,6 +21,11 @@ import (
 
 // Server implements the registrypb.RegistryServer interface.
 type Server struct {
+	CheckCatalogResourceH   goagrpc.UnaryHandler
+	ListCatalogResourcesH   goagrpc.UnaryHandler
+	RegisterAgentExportsH   goagrpc.UnaryHandler
+	ValidateAgentExportsH   goagrpc.UnaryHandler
+	RetireAgentResourceH    goagrpc.UnaryHandler
 	DeclareServiceToolsetH  goagrpc.UnaryHandler
 	ReplaceServiceToolsetH  goagrpc.UnaryHandler
 	AttachProviderH         goagrpc.UnaryHandler
@@ -50,6 +55,11 @@ type Server struct {
 // New instantiates the server struct with the registry service endpoints.
 func New(e *registry.Endpoints, uh goagrpc.UnaryHandler) *Server {
 	return &Server{
+		CheckCatalogResourceH:   NewCheckCatalogResourceHandler(e.CheckCatalogResource, uh),
+		ListCatalogResourcesH:   NewListCatalogResourcesHandler(e.ListCatalogResources, uh),
+		RegisterAgentExportsH:   NewRegisterAgentExportsHandler(e.RegisterAgentExports, uh),
+		ValidateAgentExportsH:   NewValidateAgentExportsHandler(e.ValidateAgentExports, uh),
+		RetireAgentResourceH:    NewRetireAgentResourceHandler(e.RetireAgentResource, uh),
 		DeclareServiceToolsetH:  NewDeclareServiceToolsetHandler(e.DeclareServiceToolset, uh),
 		ReplaceServiceToolsetH:  NewReplaceServiceToolsetHandler(e.ReplaceServiceToolset, uh),
 		AttachProviderH:         NewAttachProviderHandler(e.AttachProvider, uh),
@@ -74,6 +84,166 @@ func New(e *registry.Endpoints, uh goagrpc.UnaryHandler) *Server {
 		ReportToolCallOverloadH: NewReportToolCallOverloadHandler(e.ReportToolCallOverload, uh),
 		ClaimToolCallH:          NewClaimToolCallHandler(e.ClaimToolCall, uh),
 	}
+}
+
+// NewCheckCatalogResourceHandler creates a gRPC handler which serves the
+// "registry" service "CheckCatalogResource" endpoint.
+func NewCheckCatalogResourceHandler(endpoint goa.Endpoint, h goagrpc.UnaryHandler) goagrpc.UnaryHandler {
+	if h == nil {
+		h = goagrpc.NewUnaryHandler(endpoint, DecodeCheckCatalogResourceRequest, EncodeCheckCatalogResourceResponse)
+	}
+	return h
+}
+
+// CheckCatalogResource implements the "CheckCatalogResource" method in
+// registrypb.RegistryServer interface.
+func (s *Server) CheckCatalogResource(ctx context.Context, message *registrypb.CheckCatalogResourceRequest) (*registrypb.CheckCatalogResourceResponse, error) {
+	ctx = context.WithValue(ctx, goa.MethodKey, "CheckCatalogResource")
+	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
+	resp, err := s.CheckCatalogResourceH.Handle(ctx, message)
+	if err != nil {
+		en, _, _ := errorOwner(err)
+		if en != nil {
+			switch en.GoaErrorName() {
+			case "not_found":
+				return nil, goagrpc.NewStatusError(codes.NotFound, err, goagrpc.NewErrorResponse(err))
+			case "admission_retired":
+				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
+			case "service_unavailable":
+				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
+			}
+		}
+		return nil, goagrpc.EncodeError(err)
+	}
+	return resp.(*registrypb.CheckCatalogResourceResponse), nil
+}
+
+// NewListCatalogResourcesHandler creates a gRPC handler which serves the
+// "registry" service "ListCatalogResources" endpoint.
+func NewListCatalogResourcesHandler(endpoint goa.Endpoint, h goagrpc.UnaryHandler) goagrpc.UnaryHandler {
+	if h == nil {
+		h = goagrpc.NewUnaryHandler(endpoint, DecodeListCatalogResourcesRequest, EncodeListCatalogResourcesResponse)
+	}
+	return h
+}
+
+// ListCatalogResources implements the "ListCatalogResources" method in
+// registrypb.RegistryServer interface.
+func (s *Server) ListCatalogResources(ctx context.Context, message *registrypb.ListCatalogResourcesRequest) (*registrypb.ListCatalogResourcesResponse, error) {
+	ctx = context.WithValue(ctx, goa.MethodKey, "ListCatalogResources")
+	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
+	resp, err := s.ListCatalogResourcesH.Handle(ctx, message)
+	if err != nil {
+		en, _, _ := errorOwner(err)
+		if en != nil {
+			switch en.GoaErrorName() {
+			case "validation_error":
+				return nil, goagrpc.NewStatusError(codes.InvalidArgument, err, goagrpc.NewErrorResponse(err))
+			case "service_unavailable":
+				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
+			}
+		}
+		return nil, goagrpc.EncodeError(err)
+	}
+	return resp.(*registrypb.ListCatalogResourcesResponse), nil
+}
+
+// NewRegisterAgentExportsHandler creates a gRPC handler which serves the
+// "registry" service "RegisterAgentExports" endpoint.
+func NewRegisterAgentExportsHandler(endpoint goa.Endpoint, h goagrpc.UnaryHandler) goagrpc.UnaryHandler {
+	if h == nil {
+		h = goagrpc.NewUnaryHandler(endpoint, DecodeRegisterAgentExportsRequest, EncodeRegisterAgentExportsResponse)
+	}
+	return h
+}
+
+// RegisterAgentExports implements the "RegisterAgentExports" method in
+// registrypb.RegistryServer interface.
+func (s *Server) RegisterAgentExports(ctx context.Context, message *registrypb.RegisterAgentExportsRequest) (*registrypb.RegisterAgentExportsResponse, error) {
+	ctx = context.WithValue(ctx, goa.MethodKey, "RegisterAgentExports")
+	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
+	resp, err := s.RegisterAgentExportsH.Handle(ctx, message)
+	if err != nil {
+		en, _, _ := errorOwner(err)
+		if en != nil {
+			switch en.GoaErrorName() {
+			case "validation_error":
+				return nil, goagrpc.NewStatusError(codes.InvalidArgument, err, goagrpc.NewErrorResponse(err))
+			case "admission_conflict":
+				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
+			case "admission_retired":
+				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
+			case "service_unavailable":
+				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
+			}
+		}
+		return nil, goagrpc.EncodeError(err)
+	}
+	return resp.(*registrypb.RegisterAgentExportsResponse), nil
+}
+
+// NewValidateAgentExportsHandler creates a gRPC handler which serves the
+// "registry" service "ValidateAgentExports" endpoint.
+func NewValidateAgentExportsHandler(endpoint goa.Endpoint, h goagrpc.UnaryHandler) goagrpc.UnaryHandler {
+	if h == nil {
+		h = goagrpc.NewUnaryHandler(endpoint, DecodeValidateAgentExportsRequest, EncodeValidateAgentExportsResponse)
+	}
+	return h
+}
+
+// ValidateAgentExports implements the "ValidateAgentExports" method in
+// registrypb.RegistryServer interface.
+func (s *Server) ValidateAgentExports(ctx context.Context, message *registrypb.ValidateAgentExportsRequest) (*registrypb.ValidateAgentExportsResponse, error) {
+	ctx = context.WithValue(ctx, goa.MethodKey, "ValidateAgentExports")
+	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
+	resp, err := s.ValidateAgentExportsH.Handle(ctx, message)
+	if err != nil {
+		en, _, _ := errorOwner(err)
+		if en != nil {
+			switch en.GoaErrorName() {
+			case "validation_error":
+				return nil, goagrpc.NewStatusError(codes.InvalidArgument, err, goagrpc.NewErrorResponse(err))
+			case "not_found":
+				return nil, goagrpc.NewStatusError(codes.NotFound, err, goagrpc.NewErrorResponse(err))
+			case "admission_retired":
+				return nil, goagrpc.NewStatusError(codes.FailedPrecondition, err, goagrpc.NewErrorResponse(err))
+			case "service_unavailable":
+				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
+			}
+		}
+		return nil, goagrpc.EncodeError(err)
+	}
+	return resp.(*registrypb.ValidateAgentExportsResponse), nil
+}
+
+// NewRetireAgentResourceHandler creates a gRPC handler which serves the
+// "registry" service "RetireAgentResource" endpoint.
+func NewRetireAgentResourceHandler(endpoint goa.Endpoint, h goagrpc.UnaryHandler) goagrpc.UnaryHandler {
+	if h == nil {
+		h = goagrpc.NewUnaryHandler(endpoint, DecodeRetireAgentResourceRequest, EncodeRetireAgentResourceResponse)
+	}
+	return h
+}
+
+// RetireAgentResource implements the "RetireAgentResource" method in
+// registrypb.RegistryServer interface.
+func (s *Server) RetireAgentResource(ctx context.Context, message *registrypb.RetireAgentResourceRequest) (*registrypb.RetireAgentResourceResponse, error) {
+	ctx = context.WithValue(ctx, goa.MethodKey, "RetireAgentResource")
+	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
+	resp, err := s.RetireAgentResourceH.Handle(ctx, message)
+	if err != nil {
+		en, _, _ := errorOwner(err)
+		if en != nil {
+			switch en.GoaErrorName() {
+			case "validation_error":
+				return nil, goagrpc.NewStatusError(codes.InvalidArgument, err, goagrpc.NewErrorResponse(err))
+			case "service_unavailable":
+				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
+			}
+		}
+		return nil, goagrpc.EncodeError(err)
+	}
+	return resp.(*registrypb.RetireAgentResourceResponse), nil
 }
 
 // NewDeclareServiceToolsetHandler creates a gRPC handler which serves the
@@ -434,6 +604,15 @@ func (s *Server) ListToolsets(ctx context.Context, message *registrypb.ListTools
 	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
 	resp, err := s.ListToolsetsH.Handle(ctx, message)
 	if err != nil {
+		en, _, _ := errorOwner(err)
+		if en != nil {
+			switch en.GoaErrorName() {
+			case "forbidden":
+				return nil, goagrpc.NewStatusError(codes.PermissionDenied, err, goagrpc.NewErrorResponse(err))
+			case "service_unavailable":
+				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
+			}
+		}
 		return nil, goagrpc.EncodeError(err)
 	}
 	return resp.(*registrypb.ListToolsetsResponse), nil
@@ -460,6 +639,10 @@ func (s *Server) GetToolset(ctx context.Context, message *registrypb.GetToolsetR
 			switch en.GoaErrorName() {
 			case "not_found":
 				return nil, goagrpc.NewStatusError(codes.NotFound, err, goagrpc.NewErrorResponse(err))
+			case "forbidden":
+				return nil, goagrpc.NewStatusError(codes.PermissionDenied, err, goagrpc.NewErrorResponse(err))
+			case "service_unavailable":
+				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
 			}
 		}
 		return nil, goagrpc.EncodeError(err)
@@ -490,6 +673,8 @@ func (s *Server) ResolveToolset(ctx context.Context, message *registrypb.Resolve
 				return nil, goagrpc.NewStatusError(codes.NotFound, err, goagrpc.NewErrorResponse(err))
 			case "service_unavailable":
 				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
+			case "forbidden":
+				return nil, goagrpc.NewStatusError(codes.PermissionDenied, err, goagrpc.NewErrorResponse(err))
 			}
 		}
 		return nil, goagrpc.EncodeError(err)
@@ -518,6 +703,8 @@ func (s *Server) CheckAdmission(ctx context.Context, message *registrypb.CheckAd
 			switch en.GoaErrorName() {
 			case "service_unavailable":
 				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
+			case "forbidden":
+				return nil, goagrpc.NewStatusError(codes.PermissionDenied, err, goagrpc.NewErrorResponse(err))
 			}
 		}
 		return nil, goagrpc.EncodeError(err)
@@ -540,6 +727,15 @@ func (s *Server) Search(ctx context.Context, message *registrypb.SearchRequest) 
 	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
 	resp, err := s.SearchH.Handle(ctx, message)
 	if err != nil {
+		en, _, _ := errorOwner(err)
+		if en != nil {
+			switch en.GoaErrorName() {
+			case "forbidden":
+				return nil, goagrpc.NewStatusError(codes.PermissionDenied, err, goagrpc.NewErrorResponse(err))
+			case "service_unavailable":
+				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
+			}
+		}
 		return nil, goagrpc.EncodeError(err)
 	}
 	return resp.(*registrypb.SearchResponse), nil
@@ -566,6 +762,8 @@ func (s *Server) CallTool(ctx context.Context, message *registrypb.CallToolReque
 			switch en.GoaErrorName() {
 			case "not_found":
 				return nil, goagrpc.NewStatusError(codes.NotFound, err, goagrpc.NewErrorResponse(err))
+			case "forbidden":
+				return nil, goagrpc.NewStatusError(codes.PermissionDenied, err, goagrpc.NewErrorResponse(err))
 			case "validation_error":
 				return nil, goagrpc.NewStatusError(codes.InvalidArgument, err, goagrpc.NewErrorResponse(err))
 			case "service_unavailable":
@@ -600,6 +798,8 @@ func (s *Server) CallResolvedTool(ctx context.Context, message *registrypb.CallR
 			switch en.GoaErrorName() {
 			case "not_found":
 				return nil, goagrpc.NewStatusError(codes.NotFound, err, goagrpc.NewErrorResponse(err))
+			case "forbidden":
+				return nil, goagrpc.NewStatusError(codes.PermissionDenied, err, goagrpc.NewErrorResponse(err))
 			case "validation_error":
 				return nil, goagrpc.NewStatusError(codes.InvalidArgument, err, goagrpc.NewErrorResponse(err))
 			case "service_unavailable":
@@ -636,6 +836,8 @@ func (s *Server) RetryTool(ctx context.Context, message *registrypb.RetryToolReq
 			switch en.GoaErrorName() {
 			case "not_found":
 				return nil, goagrpc.NewStatusError(codes.NotFound, err, goagrpc.NewErrorResponse(err))
+			case "forbidden":
+				return nil, goagrpc.NewStatusError(codes.PermissionDenied, err, goagrpc.NewErrorResponse(err))
 			case "validation_error":
 				return nil, goagrpc.NewStatusError(codes.InvalidArgument, err, goagrpc.NewErrorResponse(err))
 			case "service_unavailable":

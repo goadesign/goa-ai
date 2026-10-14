@@ -22,23 +22,24 @@ type (
 
 	// agentPackagePlan stores one generated agent package and its declarations.
 	agentPackagePlan struct {
-		pkg                     *goacodegen.GeneratedPackage
-		fixed                   map[string]*goacodegen.NameDeclaration
-		configType              *goacodegen.NameDeclaration
-		structType              *goacodegen.NameDeclaration
-		constructor             *goacodegen.NameDeclaration
-		registrationConstructor *goacodegen.NameDeclaration
-		register                *goacodegen.NameDeclaration
-		usedOptions             *goacodegen.NameDeclaration
-		used                    map[string]*plannedUsedToolsetNames
-		agentToolsConsumers     map[string]*goacodegen.NameDeclaration
-		agentToolsImports       map[string]string
-		specsImportPaths        map[string]string
-		implementationPaths     []string
-		configPaths             []string
-		registryPaths           []string
-		definitionAgentIDs      []string
-		registrySources         []*agentRegistrySourcesData
+		pkg                      *goacodegen.GeneratedPackage
+		fixed                    map[string]*goacodegen.NameDeclaration
+		configType               *goacodegen.NameDeclaration
+		structType               *goacodegen.NameDeclaration
+		constructor              *goacodegen.NameDeclaration
+		registrationConstructor  *goacodegen.NameDeclaration
+		register                 *goacodegen.NameDeclaration
+		usedOptions              *goacodegen.NameDeclaration
+		used                     map[string]*plannedUsedToolsetNames
+		agentToolsConsumers      map[string]*goacodegen.NameDeclaration
+		agentToolsImports        map[string]string
+		specsImportPaths         map[string]string
+		implementationPaths      []string
+		configPaths              []string
+		requiresInputPreparation bool
+		registryPaths            []string
+		definitionAgentIDs       []string
+		registrySources          []*agentRegistrySourcesData
 	}
 
 	// agentPackageFilesData contains the imports and package names used by the
@@ -93,6 +94,10 @@ type (
 	// agentConfigFileData contains the chosen import names used by config.go.
 	agentConfigFileData struct {
 		*AgentData
+		// RequiresInputPreparation makes declared consumer bindings a required startup dependency.
+		RequiresInputPreparation bool
+		// ContextAlias names the context passed to input preparation.
+		ContextAlias string
 		// Imports contains the packages used by config.go.
 		Imports []*goacodegen.ImportSpec
 		// ErrorsAlias names the standard errors package.
@@ -111,6 +116,9 @@ type (
 
 	// agentRegistryImports contains the chosen import names used by registry.go.
 	agentRegistryImports struct {
+		// RequiredInputBindings names the compiled tools that must receive input values
+		// before each planning activity can expose them to the model.
+		RequiredInputBindings []string
 		// Imports contains the packages used by registry.go.
 		Imports []*goacodegen.ImportSpec
 		// ContextAlias names the standard context package.
@@ -315,6 +323,13 @@ func (p *agentPackagePlan) declareFileImports(agent *agentir.Agent) error {
 		}
 	}
 	p.configPaths = []string{"errors", plannerImportPath}
+	for _, reference := range agent.UsedToolsets {
+		if len(reference.Expr.InputBindings) > 0 {
+			p.requiresInputPreparation = true
+			p.configPaths = append(p.configPaths, "context", runtimeImportPath)
+			break
+		}
+	}
 	p.registryPaths = []string{
 		"context",
 		"errors",
@@ -322,6 +337,9 @@ func (p *agentPackagePlan) declareFileImports(agent *agentir.Agent) error {
 		engineImportPath,
 		runtimeImportPath,
 		"time",
+	}
+	if p.requiresInputPreparation {
+		p.registryPaths = append(p.registryPaths, toolsImportPath)
 	}
 	if len(p.registrySources) > 0 {
 		p.implementationPaths = append(p.implementationPaths, "context")
@@ -664,31 +682,44 @@ func (p *agentPackagePlan) linkFileData(agent *AgentData, agentsByID map[string]
 		implementation.ChildDefinitions = append(implementation.ChildDefinitions, definition)
 	}
 	config := &agentConfigFileData{
-		AgentData:    agent,
-		Imports:      p.linkImports(p.configPaths),
-		ErrorsAlias:  p.pkg.ImportName("errors"),
-		PlannerAlias: p.pkg.ImportName(plannerImportPath),
+		RequiresInputPreparation: p.requiresInputPreparation,
+		AgentData:                agent,
+		Imports:                  p.linkImports(p.configPaths),
+		ErrorsAlias:              p.pkg.ImportName("errors"),
+		PlannerAlias:             p.pkg.ImportName(plannerImportPath),
 	}
 	if importPathIncluded(p.configPaths, modelImportPath) {
 		config.ModelAlias = p.pkg.ImportName(modelImportPath)
+	}
+	if importPathIncluded(p.configPaths, runtimeImportPath) {
 		config.RuntimeAlias = p.pkg.ImportName(runtimeImportPath)
+	}
+	if p.requiresInputPreparation {
+		config.ContextAlias = p.pkg.ImportName("context")
 	}
 	registryPaths := p.registryPaths
 	if len(agent.Tools) == 0 {
 		registryPaths = importPathsWithout(registryPaths, agent.ToolSpecsImportPath)
 	}
+	requiredInputs, err := requiredStaticInputBindings(agent)
+	if err != nil {
+		return nil, err
+	}
 	registry := &agentRegistryImports{
-		Imports:      p.linkImports(registryPaths),
-		ContextAlias: p.pkg.ImportName("context"),
-		EngineAlias:  p.pkg.ImportName(engineImportPath),
-		ErrorsAlias:  p.pkg.ImportName("errors"),
-		FmtAlias:     p.pkg.ImportName("fmt"),
-		RuntimeAlias: p.pkg.ImportName(runtimeImportPath),
-		TimeAlias:    p.pkg.ImportName("time"),
+		RequiredInputBindings: requiredInputs,
+		Imports:               p.linkImports(registryPaths),
+		ContextAlias:          p.pkg.ImportName("context"),
+		EngineAlias:           p.pkg.ImportName(engineImportPath),
+		ErrorsAlias:           p.pkg.ImportName("errors"),
+		FmtAlias:              p.pkg.ImportName("fmt"),
+		RuntimeAlias:          p.pkg.ImportName(runtimeImportPath),
+		TimeAlias:             p.pkg.ImportName("time"),
 	}
 	registry.AgentVar = localNameForImports("agent", registry.Imports)
 	if importPathIncluded(p.registryPaths, hintsImportPath) {
 		registry.HintsAlias = p.pkg.ImportName(hintsImportPath)
+	}
+	if importPathIncluded(p.registryPaths, toolsImportPath) {
 		registry.ToolsAlias = p.pkg.ImportName(toolsImportPath)
 	}
 	if importPathIncluded(registryPaths, agent.ToolSpecsImportPath) {
@@ -699,6 +730,33 @@ func (p *agentPackagePlan) linkFileData(agent *AgentData, agentsByID map[string]
 		config:         config,
 		registry:       registry,
 	}, nil
+}
+
+// requiredStaticInputBindings reads consumer declarations and returns the exact
+// compiled tool names that must be prepared before the model can see them.
+// Published aliases remain outside this list because discovery owns their names.
+func requiredStaticInputBindings(agent *AgentData) ([]string, error) {
+	var required []string
+	for _, toolset := range agent.UsedToolsets {
+		for _, binding := range toolset.Expr.InputBindings {
+			if toolset.IsRegistryBacked {
+				return nil, fmt.Errorf("agent %q cannot require input binding for registry toolset %q", agent.ID, toolset.Name)
+			}
+			var selected *ToolData
+			for _, tool := range toolset.Tools {
+				if tool.Name == binding.Tool {
+					selected = tool
+					break
+				}
+			}
+			if selected == nil {
+				return nil, fmt.Errorf("agent %q input binding tool %q has no compiled declaration", agent.ID, binding.Tool)
+			}
+			required = append(required, selected.QualifiedName)
+		}
+	}
+	slices.Sort(required)
+	return required, nil
 }
 
 // reachableAgentIDs returns every agent reachable through generated agent

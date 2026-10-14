@@ -702,7 +702,7 @@ func validateBoundsShape(tool *ToolExpr, verr *eval.ValidationErrors) {
 			if isCursorOnlyPayload(tool, tool.Bounds.Paging.CursorField) {
 				validateRequiredPagingField("Args", tool.Args, tool.Bounds.Paging.CursorField, verr, tool)
 			} else {
-				validatePagingField("Args", tool.Args, tool.Bounds.Paging.CursorField, true)
+				validateContinuationCursor("Args", tool.Args, tool.Bounds.Paging.CursorField, verr, tool)
 				validateContinuationPayloadMatch(sources[0], tool, verr)
 			}
 		} else {
@@ -715,14 +715,15 @@ func validateBoundsShape(tool *ToolExpr, verr *eval.ValidationErrors) {
 		verr.Add(tool, "ContinueWith() references unknown tool %q", tool.Bounds.Paging.ContinueTool)
 		return
 	}
+	if continuation.Bounds == nil || continuation.Bounds.Paging == nil || continuation.Bounds.Paging.CursorField != tool.Bounds.Paging.CursorField {
+		verr.Add(tool, "continuation tool %q must declare Cursor(%q) inside BoundedResult", continuation.Name, tool.Bounds.Paging.CursorField)
+		return
+	}
 	if isCursorOnlyPayload(continuation, tool.Bounds.Paging.CursorField) {
 		validateRequiredPagingField("continuation Args", continuation.Args, tool.Bounds.Paging.CursorField, verr, tool)
 	} else {
-		validatePagingField("continuation Args", continuation.Args, tool.Bounds.Paging.CursorField, true)
+		validateContinuationCursor("continuation Args", continuation.Args, tool.Bounds.Paging.CursorField, verr, tool)
 		validateContinuationPayloadMatch(tool, continuation, verr)
-	}
-	if continuation.Bounds == nil || continuation.Bounds.Paging == nil || continuation.Bounds.Paging.CursorField != tool.Bounds.Paging.CursorField {
-		verr.Add(tool, "continuation tool %q must declare Cursor(%q) inside BoundedResult", continuation.Name, tool.Bounds.Paging.CursorField)
 	}
 }
 
@@ -751,21 +752,6 @@ func isCursorOnlyPayload(tool *ToolExpr, cursorField string) bool {
 	}
 	obj, ok := root.Type.(*goaexpr.Object)
 	return ok && len(*obj) == 1 && (*obj)[0].Name == cursorField
-}
-
-// validateContinuationPayloadMatch requires replaying continuations to use the
-// exact source payload type, so retaining the prior canonical payload cannot
-// change query semantics.
-func validateContinuationPayloadMatch(source, continuation *ToolExpr, verr *eval.ValidationErrors) {
-	if source.Args == nil || continuation.Args == nil || source.Args.Type == nil || continuation.Args.Type == nil ||
-		source.Args.Type.Hash() != continuation.Args.Type.Hash() {
-		verr.Add(
-			continuation,
-			"continuation Args must match source tool %q Args or contain only the cursor field %q",
-			source.Name,
-			continuation.Bounds.Paging.CursorField,
-		)
-	}
 }
 
 // findSiblingTool returns the named tool from the same defining toolset.

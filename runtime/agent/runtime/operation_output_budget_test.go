@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/internal/tooloperation"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/mcp"
 )
 
@@ -21,7 +22,7 @@ func TestPlanActivityOutputBudgetMeasuresExecutionContinuation(t *testing.T) {
 		budget := &planActivityOutputBudget{}
 		require.NoError(t, budget.add(value))
 	}
-	one := &PlanActivityOutput{Result: &PlanResult{ToolCalls: []ToolCall{{ExecutionSequence: 1, ExecutionContinuation: operation}}}}
+	one := &PlanActivityOutput{Result: &PlanResult{ToolCalls: []ToolCall{{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(parentAgentID))}, ExecutionSequence: 1, ExecutionContinuation: operation}}}}
 	require.NoError(t, checkPlanActivityOutputBudget(one))
 	one.Result.ToolCalls = append(one.Result.ToolCalls, one.Result.ToolCalls[0])
 	require.ErrorContains(t, checkPlanActivityOutputBudget(one), "conservative encoded-size bound")

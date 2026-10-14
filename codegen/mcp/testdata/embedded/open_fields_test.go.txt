@@ -1,0 +1,46 @@
+package openfields_test
+
+import (
+	"bytes"
+	"encoding/json"
+	"io"
+	"net/http/httptest"
+	"testing"
+
+	goahttp "goa.design/goa/v3/http"
+	genclient "open-fields.example/gen/http/sample/client"
+	genserver "open-fields.example/gen/http/sample/server"
+	gensample "open-fields.example/gen/sample"
+)
+
+func TestGeneratedEncoderPreservesOpenSibling(t *testing.T) {
+	req := httptest.NewRequest("POST", "/echo", nil)
+	value := []byte(`{"integer":9007199254740993123456789}`)
+	err := genclient.EncodeEchoRequest(goahttp.RequestEncoder)(req, &gensample.Question{Message: "Choose", Extensions: map[string]json.RawMessage{"extra": value}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := io.ReadAll(req.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := req.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(encoded, append([]byte(`"extra":`), value...)) || bytes.Contains(encoded, []byte(`"Extensions"`)) {
+		t.Fatalf("open sibling was not preserved: %s", encoded)
+	}
+}
+
+func TestGeneratedDecoderPreservesOpenSibling(t *testing.T) {
+	value := []byte(`{"integer":9007199254740993123456789}`)
+	req := httptest.NewRequest("POST", "/echo", bytes.NewBufferString(`{"message":"Choose","MESSAGE":"extra value","extra":{"integer":9007199254740993123456789}}`))
+	req.Header.Set("Content-Type", "application/json")
+	got, err := genserver.DecodeEchoRequest(goahttp.NewMuxer(), goahttp.RequestDecoder)(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Message != "Choose" || string(got.Extensions["MESSAGE"]) != `"extra value"` || !bytes.Equal(got.Extensions["extra"], value) {
+		t.Fatalf("open sibling lost: %#v", got.Extensions)
+	}
+}

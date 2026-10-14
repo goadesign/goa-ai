@@ -7,6 +7,8 @@ import (
 	"context"
 	"fmt"
 
+	"goa.design/goa-ai/runtime/agent"
+
 	"goa.design/goa-ai/internal/registrycall"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -15,8 +17,9 @@ import (
 
 type (
 	resolvedRegistryClient struct {
-		client *genregistry.Client
-		token  string
+		client    *genregistry.Client
+		token     string
+		operation string
 	}
 	registryExecutionSpecs map[tools.Ident]tools.ToolSpec
 )
@@ -24,7 +27,11 @@ type (
 // executeRegistryTool uses the call's saved schemas for decoding and sends its
 // token to the registry before any provider can execute the request.
 func (r *Runtime) executeRegistryTool(ctx context.Context, call *ToolCall) (*ToolExecutionResult, error) {
-	resolved, err := r.resolveRegistryExecution(call.AgentID, *call)
+	agentExecutor, isAgent := call.Subject.Executor.AsAgent()
+	if !isAgent {
+		return nil, fmt.Errorf("registry call requires an Agent workflow subject")
+	}
+	resolved, err := r.resolveRegistryExecution(agent.Ident(agentExecutor), *call)
 	if err != nil {
 		return nil, err
 	}
@@ -32,7 +39,11 @@ func (r *Runtime) executeRegistryTool(ctx context.Context, call *ToolCall) (*Too
 	if err != nil {
 		return nil, err
 	}
-	client := resolvedRegistryClient{client: connection.client, token: resolved.Registered.RegistrationToken}
+	declaration, err := resolved.Declaration(call.Name)
+	if err != nil {
+		return nil, err
+	}
+	client := resolvedRegistryClient{client: connection.client, token: resolved.Registered.RegistrationToken, operation: declaration.Name}
 	executor, err := registrycall.New(client, connection.pulse, resolved.Registered.Toolset.Name,
 		registryExecutionSpecs(resolved.Specs), r.registryCallOptions...)
 	if err != nil {
@@ -58,7 +69,7 @@ func (c resolvedRegistryClient) CallTool(ctx context.Context, payload *genregist
 	result, err := c.client.CallResolvedTool(ctx, &genregistry.CallResolvedToolPayload{
 		ExpectedRegistrationToken: c.token,
 		Toolset:                   payload.Toolset,
-		Tool:                      payload.Tool,
+		Tool:                      c.operation,
 		PayloadJSON:               payload.PayloadJSON,
 		WireProtocolVersion:       payload.WireProtocolVersion,
 		Meta:                      payload.Meta,

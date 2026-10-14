@@ -10,7 +10,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"goa.design/goa-ai/runtime/agent"
+	genregistry "goa.design/goa-ai/registry/gen/registry"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -32,10 +33,10 @@ func TestResolvePromptRefsTraversesReachableRunsBreadthFirst(t *testing.T) {
 	store := newTestStore()
 	rt := New(store)
 	for _, meta := range []session.RunMeta{
-		{RunID: "root", AgentID: "agent", SessionID: "session", Status: session.RunStatusRunning},
-		{RunID: "child-1", AgentID: "child-agent-1", SessionID: "session", ParentRunID: "root", Status: session.RunStatusRunning},
-		{RunID: "child-2", AgentID: "child-agent-2", SessionID: "session", ParentRunID: "root", Status: session.RunStatusRunning},
-		{RunID: "grandchild", AgentID: "grandchild-agent", SessionID: "session", ParentRunID: "child-1", Status: session.RunStatusRunning},
+		{RunID: "root", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, SessionID: "session", Status: session.RunStatusRunning},
+		{RunID: "child-1", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("child-agent-1"))}, SessionID: "session", ParentRunID: "root", Status: session.RunStatusRunning},
+		{RunID: "child-2", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("child-agent-2"))}, SessionID: "session", ParentRunID: "root", Status: session.RunStatusRunning},
+		{RunID: "grandchild", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("grandchild-agent"))}, SessionID: "session", ParentRunID: "child-1", Status: session.RunStatusRunning},
 	} {
 		admitRunForTest(t, store, meta)
 	}
@@ -44,9 +45,12 @@ func TestResolvePromptRefsTraversesReachableRunsBreadthFirst(t *testing.T) {
 	appendPromptEvent(t, store, "child-2", "child-2-prompt", "v2")
 	appendPromptEvent(t, store, "child-2", "root-prompt", "v1")
 	appendPromptEvent(t, store, "grandchild", "grandchild-prompt", "v1")
-	admitRunForTest(t, store, session.RunMeta{RunID: "unrelated", AgentID: "agent", SessionID: "session", Status: session.RunStatusRunning})
+	admitRunForTest(t, store, session.RunMeta{RunID: "unrelated", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+		RunExecutorBranchAgent("agent"))}, SessionID: "session", Status: session.RunStatusRunning})
 	_, err := store.AppendRunRecord(t.Context(), &runlog.Event{
-		EventKey: "unrelated-malformed", RunID: "unrelated", AgentID: "agent",
+		EventKey: "unrelated-malformed", RunID: "unrelated", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+				RunExecutorBranchAgent("agent"))},
+
 		SessionID: "session", Type: hooks.PromptRendered, Payload: rawjson.Message(`{`),
 		Timestamp: time.Now().UTC().Truncate(time.Millisecond),
 	})
@@ -66,12 +70,14 @@ func TestResolvePromptRefsPaginatesOneRun(t *testing.T) {
 	store := newTestStore()
 	rt := New(store)
 	admitRunForTest(t, store, session.RunMeta{
-		RunID: "root", AgentID: "agent", SessionID: "session", Status: session.RunStatusRunning,
+		RunID: "root", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("agent"))}, SessionID: "session", Status: session.RunStatusRunning,
 	})
 	for index := range 500 {
 		_, err := store.AppendRunRecord(t.Context(), &runlog.Event{
 			EventKey: fmt.Sprintf("irrelevant-%03d", index),
-			RunID:    "root", AgentID: "agent", SessionID: "session",
+			RunID:    "root", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("agent"))}, SessionID: "session",
 			Type: "irrelevant", Payload: rawjson.Message(`{}`),
 			Timestamp: time.Now().UTC().Truncate(time.Millisecond),
 		})
@@ -88,7 +94,8 @@ func TestResolvePromptRefsRequiresRootInSession(t *testing.T) {
 	store := newTestStore()
 	rt := New(store)
 	admitRunForTest(t, store, session.RunMeta{
-		RunID: "root", AgentID: "agent", SessionID: "other-session", Status: session.RunStatusRunning,
+		RunID: "root", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("agent"))}, SessionID: "other-session", Status: session.RunStatusRunning,
 	})
 
 	_, err := rt.ResolvePromptRefs(t.Context(), "session", "root")
@@ -108,7 +115,9 @@ func TestResolvePromptRefsSupportsSessionlessRun(t *testing.T) {
 		Template: "hello",
 		Version:  "v1",
 	}))
-	require.NoError(t, rt.RunOneShot(t.Context(), OneShotRunInput{
+	callback, err := NewSynchronous(store, rt.PromptRegistry, rt.Bus)
+	require.NoError(t, err)
+	require.NoError(t, callback.RunOneShot(t.Context(), OneShotRunInput{
 		AgentID: "svc.agent",
 		RunID:   "one-shot",
 	}, func(ctx context.Context) error {
@@ -125,18 +134,21 @@ func TestResolvePromptRefsTraversesSessionlessChild(t *testing.T) {
 	store := newTestStore()
 	startedAt := time.Now().UTC().Truncate(time.Millisecond)
 	parent := session.RunStart{
-		AgentID:   "parent-agent",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("parent-agent"))},
+
 		RunID:     "parent",
 		StartedAt: startedAt,
 	}
 	seedEndID, err := publishLiteralHistory(t.Context(), store, storage.SeedDeclaration{
-		AgentID: parent.AgentID, RunID: parent.RunID, Kind: storage.SeedLiteral,
+		Subject: parent.Subject, RunID: parent.RunID, Kind: storage.SeedLiteral,
+		Origin: genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: parent.RunID})},
 	}, nil)
 	require.NoError(t, err)
 	parent.SeedEndID = seedEndID
 	parentStarted := testHookRecord(t, hooks.NewRunStartedEvent(
 		parent.RunID,
-		agent.Ident(parent.AgentID),
+		parent.Subject,
 		"",
 		"",
 		"",
@@ -147,27 +159,30 @@ func TestResolvePromptRefsTraversesSessionlessChild(t *testing.T) {
 	})
 	require.NoError(t, err)
 	child := session.RunStart{
-		AgentID:     "child-agent",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("child-agent"))},
+
 		RunID:       "child",
 		ParentRunID: parent.RunID,
 		StartedAt:   startedAt,
 	}
 	child.SeedEndID, err = publishLiteralHistory(t.Context(), store, storage.SeedDeclaration{
-		AgentID: child.AgentID, RunID: child.RunID, Kind: storage.SeedLiteral,
+		Subject: child.Subject, RunID: child.RunID, Kind: storage.SeedLiteral,
+		Origin: genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: parent.RunID, ToolCallID: "call-child"})},
 	}, nil)
 	require.NoError(t, err)
 	linked := testHookRecord(t, hooks.NewChildRunLinkedEvent(
 		parent.RunID,
-		agent.Ident(parent.AgentID),
+		parent.Subject,
 		"",
 		"child.lookup",
 		"call-child",
 		child.RunID,
-		agent.Ident(child.AgentID),
+		testSubjectAgent(t, child.Subject),
 	), "child-link", startedAt)
 	childStarted := testHookRecord(t, hooks.NewRunStartedEvent(
 		child.RunID,
-		agent.Ident(child.AgentID),
+		child.Subject,
 		"",
 		parent.RunID,
 		"",
@@ -195,7 +210,8 @@ func TestResolvePromptRefsTreatsStoppedRunAsEmpty(t *testing.T) {
 	_, err = store.EndSession(t.Context(), "session", time.Now().UTC())
 	require.NoError(t, err)
 	meta := session.RunMeta{
-		RunID: "stopped", AgentID: "agent", SessionID: "session",
+		RunID: "stopped", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("agent"))}, SessionID: "session",
 		Status: session.RunStatusCanceled,
 	}
 	startStoppedRunForTest(t, store, meta)
@@ -211,7 +227,7 @@ func TestResolvePromptRefsTreatsStoppedRunAsEmpty(t *testing.T) {
 	finished := stored.StartedAt.Add(time.Second)
 	_, err = store.RecordRunTerminal(t.Context(), storage.RunTerminal{
 		RunID: meta.RunID, Status: session.RunStatusCanceled,
-		Record: testHookRecord(t, hooks.NewRunCompletedEvent(meta.RunID, agent.Ident(meta.AgentID), meta.SessionID, "canceled", agentrun.PhaseCanceled, stored.Labels, context.Canceled, &agentrun.Cancellation{Reason: agentrun.CancellationReasonSessionEnded}), "completed", finished),
+		Record: testHookRecord(t, hooks.NewRunCompletedEvent(meta.RunID, meta.Subject, meta.SessionID, "canceled", agentrun.PhaseCanceled, stored.Labels, context.Canceled, &agentrun.Cancellation{Reason: agentrun.CancellationReasonSessionEnded}), "completed", finished),
 	})
 	require.NoError(t, err)
 	refs, err = rt.ResolvePromptRefs(t.Context(), "session", meta.RunID)
@@ -252,7 +268,7 @@ func TestResolvePromptRefsRejectsCorruptStoppedCompletion(t *testing.T) {
 			name: "status",
 			completion: func(meta session.RunMeta) *runlog.Event {
 				return testHookRecord(t, hooks.NewRunCompletedEvent(
-					meta.RunID, agent.Ident(meta.AgentID), meta.SessionID,
+					meta.RunID, meta.Subject, meta.SessionID,
 					"success", agentrun.PhaseCompleted, meta.Labels, nil, nil,
 				), "stopped", meta.StartedAt.Add(time.Second))
 			},
@@ -261,7 +277,7 @@ func TestResolvePromptRefsRejectsCorruptStoppedCompletion(t *testing.T) {
 			name: "reason",
 			completion: func(meta session.RunMeta) *runlog.Event {
 				return testHookRecord(t, hooks.NewRunCompletedEvent(
-					meta.RunID, agent.Ident(meta.AgentID), meta.SessionID,
+					meta.RunID, meta.Subject, meta.SessionID,
 					"canceled", agentrun.PhaseCanceled, meta.Labels, context.Canceled,
 					&agentrun.Cancellation{Reason: agentrun.CancellationReasonUserRequested},
 				), "stopped", meta.StartedAt.Add(time.Second))
@@ -271,7 +287,7 @@ func TestResolvePromptRefsRejectsCorruptStoppedCompletion(t *testing.T) {
 			name: "labels",
 			completion: func(meta session.RunMeta) *runlog.Event {
 				return testHookRecord(t, hooks.NewRunCompletedEvent(
-					meta.RunID, agent.Ident(meta.AgentID), meta.SessionID,
+					meta.RunID, meta.Subject, meta.SessionID,
 					"canceled", agentrun.PhaseCanceled, map[string]string{"site": "other"}, context.Canceled,
 					&agentrun.Cancellation{Reason: agentrun.CancellationReasonSessionEnded},
 				), "stopped", meta.StartedAt.Add(time.Second))
@@ -286,7 +302,8 @@ func TestResolvePromptRefsRejectsCorruptStoppedCompletion(t *testing.T) {
 			_, err = store.EndSession(t.Context(), "session", time.Now().UTC())
 			require.NoError(t, err)
 			startStoppedRunForTest(t, store, session.RunMeta{
-				RunID: "stopped", AgentID: "agent", SessionID: "session",
+				RunID: "stopped", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("agent"))}, SessionID: "session",
 				Status: session.RunStatusCanceled, Labels: map[string]string{"site": "one"},
 			})
 			meta, err := store.LoadRun(t.Context(), "stopped")
@@ -294,13 +311,13 @@ func TestResolvePromptRefsRejectsCorruptStoppedCompletion(t *testing.T) {
 			finished := meta.StartedAt.Add(time.Second)
 			_, err = store.RecordRunTerminal(t.Context(), storage.RunTerminal{
 				RunID: meta.RunID, Status: session.RunStatusCanceled,
-				Record: testHookRecord(t, hooks.NewRunCompletedEvent(meta.RunID, agent.Ident(meta.AgentID), meta.SessionID, "canceled", agentrun.PhaseCanceled, meta.Labels, context.Canceled, &agentrun.Cancellation{Reason: agentrun.CancellationReasonSessionEnded}), "completed", finished),
+				Record: testHookRecord(t, hooks.NewRunCompletedEvent(meta.RunID, meta.Subject, meta.SessionID, "canceled", agentrun.PhaseCanceled, meta.Labels, context.Canceled, &agentrun.Cancellation{Reason: agentrun.CancellationReasonSessionEnded}), "completed", finished),
 			})
 			require.NoError(t, err)
 			meta, err = store.LoadRun(t.Context(), "stopped")
 			require.NoError(t, err)
 			started := testHookRecord(t, hooks.NewRunStartedEvent(
-				meta.RunID, agent.Ident(meta.AgentID), meta.SessionID,
+				meta.RunID, meta.Subject, meta.SessionID,
 				meta.ParentRunID, "", meta.Labels,
 			), "start", meta.StartedAt)
 			rt := New(&promptRefsStore{
@@ -322,7 +339,8 @@ func TestResolvePromptRefsTraversesStoppedChildAsEmpty(t *testing.T) {
 		t.Run(fmt.Sprintf("stopped-parent-%t", stoppedParent), func(t *testing.T) {
 			store := newTestStore()
 			parent := session.RunMeta{
-				RunID: "parent", AgentID: "parent-agent", SessionID: "session",
+				RunID: "parent", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("parent-agent"))}, SessionID: "session",
 				Status: session.RunStatusRunning,
 			}
 			if stoppedParent {
@@ -337,7 +355,8 @@ func TestResolvePromptRefsTraversesStoppedChildAsEmpty(t *testing.T) {
 				require.NoError(t, err)
 			}
 			startStoppedRunForTest(t, store, session.RunMeta{
-				RunID: "child", AgentID: "child-agent", SessionID: parent.SessionID,
+				RunID: "child", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("child-agent"))}, SessionID: parent.SessionID,
 				ParentRunID: parent.RunID, Status: session.RunStatusCanceled,
 			})
 
@@ -352,9 +371,9 @@ func TestResolvePromptRefsTraversesContinuationPredecessors(t *testing.T) {
 	store := newTestStore()
 	rt := New(store)
 	for _, meta := range []session.RunMeta{
-		{RunID: "predecessor", AgentID: "agent", SessionID: "session", Status: session.RunStatusRunning},
+		{RunID: "predecessor", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, SessionID: "session", Status: session.RunStatusRunning},
 		{
-			RunID: "predecessor-child", AgentID: "agent", SessionID: "session",
+			RunID: "predecessor-child", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, SessionID: "session",
 			ParentRunID: "predecessor", Status: session.RunStatusRunning,
 		},
 	} {
@@ -366,7 +385,8 @@ func TestResolvePromptRefsTraversesContinuationPredecessors(t *testing.T) {
 		ID: "predecessor-suspension", Data: []byte(`{}`),
 	}))
 	admitContinuedRunForTest(t, store, session.RunMeta{
-		RunID: "successor", AgentID: "agent", SessionID: "session", Status: session.RunStatusRunning,
+		RunID: "successor", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("agent"))}, SessionID: "session", Status: session.RunStatusRunning,
 	}, "predecessor")
 	appendPromptEvent(t, store, "successor", "successor-prompt", "v2")
 	appendPromptEvent(t, store, "predecessor-child", "child-prompt", "v3")
@@ -383,11 +403,13 @@ func TestResolvePromptRefsTraversesContinuationPredecessors(t *testing.T) {
 // execution parent changes. An independent call is not a valid replacement.
 func TestResolvePromptRefsContinuedChildKeepsExactCallAcrossParents(t *testing.T) {
 	store := newTestStore()
-	parent := session.RunMeta{RunID: "parent-0", AgentID: "parent-agent", SessionID: "session", Status: session.RunStatusRunning}
+	parent := session.RunMeta{RunID: "parent-0", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+		RunExecutorBranchAgent("parent-agent"))}, SessionID: "session", Status: session.RunStatusRunning}
 	admitRunForTest(t, store, parent)
 	for _, runID := range []string{"child-0", "independent-child"} {
 		admitRunForTest(t, store, session.RunMeta{
-			RunID: runID, AgentID: "child-agent", SessionID: "session",
+			RunID: runID, Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+				RunExecutorBranchAgent("child-agent"))}, SessionID: "session",
 			ParentRunID: parent.RunID, Status: session.RunStatusRunning,
 		})
 		appendPromptEvent(t, store, runID, prompt.Ident(runID+"-prompt"), "v1")
@@ -399,10 +421,11 @@ func TestResolvePromptRefsContinuedChildKeepsExactCallAcrossParents(t *testing.T
 		ID: "parent-suspension", Data: []byte(`{}`),
 	}))
 	admitContinuedRunForTest(t, store, session.RunMeta{
-		RunID: "parent-1", AgentID: parent.AgentID, SessionID: parent.SessionID, Status: session.RunStatusRunning,
+		RunID: "parent-1", Subject: parent.Subject, SessionID: parent.SessionID, Status: session.RunStatusRunning,
 	}, parent.RunID)
 	child := session.RunMeta{
-		RunID: "child-1", AgentID: "child-agent", SessionID: "session",
+		RunID: "child-1", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("child-agent"))}, SessionID: "session",
 		ParentRunID: "parent-1", Status: session.RunStatusRunning,
 	}
 	admitPromptChildContinuationForTest(t, store, child, "child-0", "call-child-0")
@@ -434,11 +457,13 @@ func TestResolvePromptRefsContinuedChildKeepsExactCallAcrossParents(t *testing.T
 func TestResolvePromptRefsRejectsMalformedStartRecord(t *testing.T) {
 	store := newTestStore()
 	meta := session.RunMeta{
-		RunID: "successor", AgentID: "agent", SessionID: "session", Status: session.RunStatusRunning,
+		RunID: "successor", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("agent"))}, SessionID: "session", Status: session.RunStatusRunning,
 	}
 	admitRunForTest(t, store, meta)
 	malformed := &runlog.Event{
-		EventKey: "malformed-start", RunID: meta.RunID, AgentID: agent.Ident(meta.AgentID),
+		EventKey: "malformed-start", RunID: meta.RunID, Subject: meta.Subject,
+
 		SessionID: meta.SessionID, Type: hooks.RunStarted,
 		Payload:   rawjson.Message(`{"parent_run_id":"","predecessor_run_id":"predecessor","extra":true}`),
 		Timestamp: time.Now().UTC().Truncate(time.Millisecond),
@@ -462,28 +487,32 @@ func TestResolvePromptRefsRejectsCorruptContinuationRelationship(t *testing.T) {
 		{
 			name: "different session",
 			predecessor: session.RunMeta{
-				RunID: "predecessor", AgentID: "agent", SessionID: "other-session",
+				RunID: "predecessor", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("agent"))}, SessionID: "other-session",
 				Status: session.RunStatusSuspended,
 			},
 		},
 		{
 			name: "different agent",
 			predecessor: session.RunMeta{
-				RunID: "predecessor", AgentID: "other-agent", SessionID: "session",
+				RunID: "predecessor", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("other-agent"))}, SessionID: "session",
 				Status: session.RunStatusSuspended,
 			},
 		},
 		{
 			name: "different parent",
 			predecessor: session.RunMeta{
-				RunID: "predecessor", AgentID: "agent", SessionID: "session",
+				RunID: "predecessor", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("agent"))}, SessionID: "session",
 				ParentRunID: "other-parent", Status: session.RunStatusSuspended,
 			},
 		},
 		{
 			name: "predecessor did not suspend",
 			predecessor: session.RunMeta{
-				RunID: "predecessor", AgentID: "agent", SessionID: "session",
+				RunID: "predecessor", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("agent"))}, SessionID: "session",
 				Status: session.RunStatusCompleted,
 			},
 		},
@@ -492,10 +521,12 @@ func TestResolvePromptRefsRejectsCorruptContinuationRelationship(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			store := newTestStore()
 			admitRunForTest(t, store, session.RunMeta{
-				RunID: "predecessor", AgentID: "agent", SessionID: "session", Status: session.RunStatusSuspended,
+				RunID: "predecessor", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("agent"))}, SessionID: "session", Status: session.RunStatusSuspended,
 			})
 			admitContinuedRunForTest(t, store, session.RunMeta{
-				RunID: "successor", AgentID: "agent", SessionID: "session", Status: session.RunStatusRunning,
+				RunID: "successor", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("agent"))}, SessionID: "session", Status: session.RunStatusRunning,
 			}, "predecessor")
 			rt := New(&promptRefsStore{
 				Store: store,
@@ -514,7 +545,8 @@ func TestResolvePromptRefsRejectsCorruptContinuationRelationship(t *testing.T) {
 func TestResolvePromptRefsRejectsMissingContinuationPredecessor(t *testing.T) {
 	store := newTestStore()
 	meta := session.RunMeta{
-		RunID: "successor", AgentID: "agent", SessionID: "session", Status: session.RunStatusRunning,
+		RunID: "successor", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("agent"))}, SessionID: "session", Status: session.RunStatusRunning,
 	}
 	admitRunForTest(t, store, meta)
 	rt := New(&promptRefsStore{
@@ -533,7 +565,8 @@ func TestResolvePromptRefsRejectsMissingContinuationPredecessor(t *testing.T) {
 func TestResolvePromptRefsRejectsSelfContinuationPredecessor(t *testing.T) {
 	store := newTestStore()
 	meta := session.RunMeta{
-		RunID: "run", AgentID: "agent", SessionID: "session", Status: session.RunStatusRunning,
+		RunID: "run", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("agent"))}, SessionID: "session", Status: session.RunStatusRunning,
 	}
 	admitRunForTest(t, store, meta)
 	rt := New(&promptRefsStore{
@@ -551,10 +584,12 @@ func TestResolvePromptRefsRejectsSelfContinuationPredecessor(t *testing.T) {
 func TestResolvePromptRefsRejectsContinuationCycle(t *testing.T) {
 	store := newTestStore()
 	first := session.RunMeta{
-		RunID: "first", AgentID: "agent", SessionID: "session", Status: session.RunStatusSuspended,
+		RunID: "first", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("agent"))}, SessionID: "session", Status: session.RunStatusSuspended,
 	}
 	second := session.RunMeta{
-		RunID: "second", AgentID: "agent", SessionID: "session", Status: session.RunStatusSuspended,
+		RunID: "second", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("agent"))}, SessionID: "session", Status: session.RunStatusSuspended,
 	}
 	admitRunForTest(t, store, first)
 	admitRunForTest(t, store, second)
@@ -578,7 +613,8 @@ func TestResolvePromptRefsRejectsContinuationCycle(t *testing.T) {
 func TestResolvePromptRefsRejectsMultipleStartRecordsAcrossPages(t *testing.T) {
 	store := newTestStore()
 	meta := session.RunMeta{
-		RunID: "successor", AgentID: "agent", SessionID: "session", Status: session.RunStatusRunning,
+		RunID: "successor", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("agent"))}, SessionID: "session", Status: session.RunStatusRunning,
 	}
 	admitRunForTest(t, store, meta)
 	rt := New(&promptRefsStore{
@@ -605,9 +641,9 @@ func TestResolvePromptRefsAllowsAcyclicConvergence(t *testing.T) {
 	store := newTestStore()
 	rt := New(store)
 	for _, meta := range []session.RunMeta{
-		{RunID: "root", AgentID: "parent-agent", SessionID: "session", Status: session.RunStatusRunning},
+		{RunID: "root", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("parent-agent"))}, SessionID: "session", Status: session.RunStatusRunning},
 		{
-			RunID: "predecessor", AgentID: "child-agent", SessionID: "session",
+			RunID: "predecessor", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("child-agent"))}, SessionID: "session",
 			ParentRunID: "root", Status: session.RunStatusRunning,
 		},
 	} {
@@ -620,7 +656,7 @@ func TestResolvePromptRefsAllowsAcyclicConvergence(t *testing.T) {
 	}))
 	for _, meta := range []session.RunMeta{
 		{
-			RunID: "child-1", AgentID: "child-agent", SessionID: "session",
+			RunID: "child-1", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("child-agent"))}, SessionID: "session",
 			ParentRunID: "root", Status: session.RunStatusRunning,
 		},
 	} {
@@ -653,21 +689,24 @@ func TestResolvePromptRefsRejectsCorruptChildRelationship(t *testing.T) {
 		{
 			name: "different session",
 			child: session.RunMeta{
-				RunID: "child", AgentID: "child-agent", SessionID: "other-session",
+				RunID: "child", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("child-agent"))}, SessionID: "other-session",
 				ParentRunID: "parent", Status: session.RunStatusRunning,
 			},
 		},
 		{
 			name: "different agent",
 			child: session.RunMeta{
-				RunID: "child", AgentID: "other-agent", SessionID: "session",
+				RunID: "child", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("other-agent"))}, SessionID: "session",
 				ParentRunID: "parent", Status: session.RunStatusRunning,
 			},
 		},
 		{
 			name: "different parent",
 			child: session.RunMeta{
-				RunID: "child", AgentID: "child-agent", SessionID: "session",
+				RunID: "child", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("child-agent"))}, SessionID: "session",
 				ParentRunID: "other-parent", Status: session.RunStatusRunning,
 			},
 		},
@@ -676,10 +715,12 @@ func TestResolvePromptRefsRejectsCorruptChildRelationship(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			store := newTestStore()
 			admitRunForTest(t, store, session.RunMeta{
-				RunID: "parent", AgentID: "parent-agent", SessionID: "session", Status: session.RunStatusRunning,
+				RunID: "parent", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("parent-agent"))}, SessionID: "session", Status: session.RunStatusRunning,
 			})
 			admitRunForTest(t, store, session.RunMeta{
-				RunID: "child", AgentID: "child-agent", SessionID: "session",
+				RunID: "child", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("child-agent"))}, SessionID: "session",
 				ParentRunID: "parent", Status: session.RunStatusRunning,
 			})
 			rt := New(&promptRefsStore{
@@ -710,11 +751,16 @@ func admitPromptChildContinuationForTest(t *testing.T, store storage.Store, meta
 	require.NoError(t, err)
 	require.Empty(t, page.NextCursor)
 	require.NotEmpty(t, page.Events)
+	predecessor, err := store.LoadRun(t.Context(), predecessorRunID)
+	require.NoError(t, err)
 	declaration := storage.SeedDeclaration{
-		AgentID: meta.AgentID, RunID: meta.RunID, SessionID: meta.SessionID,
+		Origin:  predecessor.Origin,
+		Subject: meta.Subject, RunID: meta.RunID, SessionID: meta.SessionID,
 		CommandID: meta.RunID, AttemptID: meta.RunID, Kind: storage.SeedContinuation,
-		SourceRunID: predecessorRunID, SourceEndID: page.Events[len(page.Events)-1].ID,
+		PredecessorRunID: predecessorRunID, SourceRunID: predecessorRunID, SourceEndID: page.Events[len(page.Events)-1].ID,
 	}
+	_, err = bindHistoryOperation(t.Context(), store, declaration)
+	require.NoError(t, err)
 	seed, err := store.BeginRunSeed(t.Context(), declaration)
 	require.NoError(t, err)
 	writer := initialHistoryWriter{store: store, runID: meta.RunID, attemptID: meta.RunID, endID: storage.EmptySeedEndID}
@@ -725,19 +771,18 @@ func admitPromptChildContinuationForTest(t *testing.T, store storage.Store, meta
 	require.NoError(t, err)
 	startedAt := time.Now().UTC().Truncate(time.Millisecond)
 	start := session.RunStart{
-		AgentID: meta.AgentID, RunID: meta.RunID, SessionID: meta.SessionID,
+		Subject: meta.Subject, RunID: meta.RunID, SessionID: meta.SessionID,
 		ParentRunID: meta.ParentRunID, PredecessorRunID: predecessorRunID,
 		SeedEndID: seedEndID, StartedAt: startedAt, Labels: meta.Labels,
 	}
 	started := testHookRecord(t, hooks.NewRunStartedEvent(
-		meta.RunID, agent.Ident(meta.AgentID), meta.SessionID, meta.ParentRunID, predecessorRunID, meta.Labels,
+		meta.RunID, meta.Subject, meta.SessionID, meta.ParentRunID, predecessorRunID, meta.Labels,
 	), "start", startedAt)
 	linked := testHookRecord(t, hooks.NewChildRunLinkedEvent(
-		parent.RunID, agent.Ident(parent.AgentID), meta.SessionID, "test.child", callID, meta.RunID, agent.Ident(meta.AgentID),
+		parent.RunID, parent.Subject, meta.SessionID, "test.child", callID, meta.RunID, testSubjectAgent(t, meta.Subject),
 	), "child-link-"+meta.RunID, startedAt)
-	canceled := testStartCancellationRecord(t, start)
 	result, err := store.StartChildRun(t.Context(), storage.ChildRunStart{
-		RequestDigest: [32]byte{1}, Run: start, ParentLinked: linked, Started: started, Cancellation: canceled,
+		RequestDigest: [32]byte{1}, Run: start, ParentLinked: linked, Started: started,
 	})
 	require.NoError(t, err)
 	require.Equal(t, session.RunStartProceed, result.Outcome)
@@ -748,7 +793,7 @@ func appendPromptEvent(t *testing.T, store storage.Store, runID string, promptID
 	meta, err := store.LoadRun(t.Context(), runID)
 	require.NoError(t, err)
 	event := hooks.NewPromptRenderedEvent(
-		runID, agent.Ident(meta.AgentID), meta.SessionID, promptID, version, prompt.Scope{},
+		runID, testSubjectAgent(t, meta.Subject), meta.SessionID, promptID, version, prompt.Scope{},
 	)
 	suffix := string(promptID) + "-" + version
 	record, err := hooks.EncodeToRecordInput(event, hooks.EncodeOptions{
@@ -757,7 +802,8 @@ func appendPromptEvent(t *testing.T, store storage.Store, runID string, promptID
 	})
 	require.NoError(t, err)
 	_, err = store.AppendRunRecord(t.Context(), &runlog.Event{
-		EventKey: record.EventKey, RunID: record.RunID, AgentID: record.AgentID,
+		EventKey: record.EventKey, RunID: record.RunID, Subject: record.Subject,
+
 		SessionID: record.SessionID, TurnID: record.TurnID, Type: record.Type,
 		Payload: record.Payload, Timestamp: time.UnixMilli(record.TimestampMS).UTC(),
 	})
@@ -768,26 +814,30 @@ func startStoppedRunForTest(t *testing.T, store storage.Store, meta session.RunM
 	t.Helper()
 	startedAt := time.Now().UTC().Truncate(time.Millisecond)
 	start := session.RunStart{
-		AgentID: meta.AgentID, RunID: meta.RunID, SessionID: meta.SessionID,
+		Subject: meta.Subject, RunID: meta.RunID, SessionID: meta.SessionID,
 		ParentRunID: meta.ParentRunID, StartedAt: startedAt, Labels: meta.Labels,
 	}
+	origin := genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: meta.RunID})}
+	if meta.ParentRunID != "" {
+		origin = genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: meta.ParentRunID, ToolCallID: "call-" + meta.RunID})}
+	}
 	seedEndID, err := publishLiteralHistory(t.Context(), store, storage.SeedDeclaration{
-		AgentID: meta.AgentID, RunID: meta.RunID, SessionID: meta.SessionID, Kind: storage.SeedLiteral,
+		Origin:  origin,
+		Subject: meta.Subject, RunID: meta.RunID, SessionID: meta.SessionID, Kind: storage.SeedLiteral,
 	}, nil)
 	require.NoError(t, err)
 	start.SeedEndID = seedEndID
 	started := testHookRecord(t, hooks.NewRunStartedEvent(
 		meta.RunID,
-		agent.Ident(meta.AgentID),
+		meta.Subject,
 		meta.SessionID,
 		meta.ParentRunID,
 		"",
 		meta.Labels,
 	), "start", startedAt)
-	canceled := testStartCancellationRecord(t, start)
 	if meta.ParentRunID == "" {
 		result, err := store.StartRootRun(t.Context(), storage.RootRunStart{RequestDigest: [32]byte{1},
-			Run: start, Started: started, Cancellation: canceled,
+			Run: start, Started: started,
 		})
 		require.NoError(t, err)
 		require.Equal(t, session.RunStartStop, result.Outcome)
@@ -797,15 +847,15 @@ func startStoppedRunForTest(t *testing.T, store storage.Store, meta session.RunM
 	require.NoError(t, err)
 	linked := testHookRecord(t, hooks.NewChildRunLinkedEvent(
 		meta.ParentRunID,
-		agent.Ident(parent.AgentID),
+		parent.Subject,
 		meta.SessionID,
 		"test.child",
 		"call-"+meta.RunID,
 		meta.RunID,
-		agent.Ident(meta.AgentID),
+		testSubjectAgent(t, meta.Subject),
 	), "child-link-"+meta.RunID, startedAt)
 	result, err := store.StartChildRun(t.Context(), storage.ChildRunStart{RequestDigest: [32]byte{1},
-		Run: start, ParentLinked: linked, Started: started, Cancellation: canceled,
+		Run: start, ParentLinked: linked, Started: started,
 	})
 	require.NoError(t, err)
 	require.Equal(t, session.RunStartStop, result.Outcome)
@@ -824,7 +874,7 @@ func runStartedRecord(
 	require.NoError(t, err)
 	return testHookRecord(t, hooks.NewRunStartedEvent(
 		meta.RunID,
-		agent.Ident(meta.AgentID),
+		meta.Subject,
 		meta.SessionID,
 		meta.ParentRunID,
 		predecessorRunID,

@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/internal/startrecipe"
@@ -21,13 +22,13 @@ func TestAcceptedStartDigestSurvivesContextChanges(t *testing.T) {
 	e := New()
 	child := engine.ChildWorkflowRequest{
 		ID: "child", Workflow: "child", TaskQueue: "queue",
-		Input: &api.RunInput{RunID: "child", Metadata: map[string]any{"value": "original child"}},
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "child", Metadata: map[string]any{"value": "original child"}},
 	}
 	childSnapshot, err := startrecipe.SnapshotChildRequest(child)
 	require.NoError(t, err)
 	request := engine.WorkflowStartRequest{
 		ID: "root", Workflow: "root", TaskQueue: "queue",
-		Input: &api.RunInput{RunID: "root", Metadata: map[string]any{"value": "original root"}},
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "root", Metadata: map[string]any{"value": "original root"}},
 	}
 	rootSnapshot, err := startrecipe.SnapshotRequest(request)
 	require.NoError(t, err)
@@ -63,7 +64,7 @@ func TestAcceptedStartDigestSurvivesContextChanges(t *testing.T) {
 						return nil, err
 					}
 				}
-				return &api.RunOutput{RunID: input.RunID}, nil
+				return &api.RunOutput{Subject: input.Subject, RunID: input.RunID}, nil
 			},
 		}))
 	}
@@ -86,7 +87,7 @@ func TestAcceptedStartConflictStopsWorkflowRetry(t *testing.T) {
 		},
 	}))
 	handle, err := e.StartWorkflow(t.Context(), engine.WorkflowStartRequest{
-		ID: "run", Workflow: "conflict", TaskQueue: "queue", Input: &api.RunInput{RunID: "run"},
+		ID: "run", Workflow: "conflict", TaskQueue: "queue", Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run"},
 		RetryPolicy: engine.RetryPolicy{MaxAttempts: 3, InitialInterval: time.Millisecond},
 	})
 	require.NoError(t, err)

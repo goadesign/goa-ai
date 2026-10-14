@@ -18,6 +18,7 @@ import (
 	"unicode"
 
 	"github.com/google/uuid"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -186,6 +187,10 @@ func clonePromptRenderEvents(events []prompt.RenderEvent) []prompt.RenderEvent {
 // runtime retains the canonical call for result validation, publication, and
 // continuation correlation.
 func cloneToolCall(src ToolCall) ToolCall {
+	if service, ok := src.Subject.Executor.AsServiceTool(); ok && service != nil {
+		owned := *service
+		src.Subject.Executor = genrunidentity.NewRunExecutorServiceTool(&owned)
+	}
 	cloned := src
 	cloned.Payload = append(rawjson.Message(nil), src.Payload...)
 	cloned.ModelPayload = append(rawjson.Message(nil), src.ModelPayload...)
@@ -510,10 +515,11 @@ func (r *Runtime) publishTranscriptMessages(
 		eventKey = responseID
 	}
 	input := &runlog.ActivityInput{
-		Type:        recordType,
-		EventKey:    eventKey,
-		RunID:       runID,
-		AgentID:     agentID,
+		Type:     recordType,
+		EventKey: eventKey,
+		RunID:    runID,
+		Subject:  genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))},
+
 		SessionID:   sessionID,
 		TurnID:      turnID,
 		ResponseID:  responseID,

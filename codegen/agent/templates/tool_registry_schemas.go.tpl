@@ -72,7 +72,7 @@ func ({{ if or (eq .Kind "schema") (and (eq .Kind "metadata") .Value.Fields) }}d
             {{- if .SourceTool }}
             SourceTool: {{ pointer .SourceTool }},
             {{- end }}
-            ReplayPayload: {{ .ReplayPayload }},
+            RetainedFields: []string{ {{ range .RetainedFields }}{{ printf "%q" . }}, {{ end }} },
             CursorField: {{ printf "%q" .CursorField }},
             NextCursorField: {{ printf "%q" .NextCursorField }},
         },

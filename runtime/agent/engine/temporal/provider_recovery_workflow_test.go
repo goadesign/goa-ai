@@ -18,6 +18,7 @@ import (
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/worker"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -116,7 +117,7 @@ func TestProviderRecoveryWorkflowDoesNotRepeatCompletedTool(t *testing.T) {
 	env.RegisterActivityWithOptions(rt.PlanResumeActivity, activity.RegisterOptions{Name: resumeName})
 	env.RegisterActivityWithOptions(rt.ExecuteToolActivity, activity.RegisterOptions{Name: executeName})
 	input := prepareAcceptedTestWorkflow(t, env, workflowName, queue, &api.RunInput{
-		AgentID: agentID, RunID: "run", SessionID: "session", TurnID: "turn", SeedEndID: seed,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))}, RunID: "run", SessionID: "session", TurnID: "turn", SeedEndID: seed,
 		Policy: &api.PolicyOverrides{TimeBudget: time.Second, ProviderRetryBudget: time.Hour},
 	})
 	env.SetWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{&workflowControlInterceptor{engine: eng}}})
@@ -161,7 +162,7 @@ func TestProviderCertificateCrossesBothPlannerActivityAdapters(t *testing.T) {
 				assert.Equal(t, failure.Error(), actual.Error())
 				require.EqualError(t, actual.Unwrap(), failure.Unwrap().Error())
 				assert.NotSame(t, failure.Unwrap(), actual.Unwrap())
-				return &api.RunOutput{}, nil
+				return &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}}, nil
 			}
 			if adapter == "inmem" {
 				eng := engineinmem.New()
@@ -169,7 +170,7 @@ func TestProviderCertificateCrossesBothPlannerActivityAdapters(t *testing.T) {
 				require.NoError(t, eng.RegisterWorkflow(t.Context(), engine.WorkflowDefinition{Name: workflowName, Handler: handler}))
 				handle, err := eng.StartWorkflow(t.Context(), engine.WorkflowStartRequest{
 					ID: "certificate-run", Workflow: workflowName, TaskQueue: queue,
-					Input: &api.RunInput{RunID: "certificate-run"},
+					Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "certificate-run"},
 				})
 				require.NoError(t, err)
 				_, err = handle.Wait(t.Context())
@@ -181,7 +182,7 @@ func TestProviderCertificateCrossesBothPlannerActivityAdapters(t *testing.T) {
 			env := suite.NewTestWorkflowEnvironment()
 			env.SetDataConverter(NewAgentDataConverter())
 			env.RegisterActivityWithOptions(produce, activity.RegisterOptions{Name: planName})
-			input := prepareAcceptedTestWorkflow(t, env, workflowName, queue, &api.RunInput{RunID: "certificate-run"})
+			input := prepareAcceptedTestWorkflow(t, env, workflowName, queue, &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "certificate-run"})
 			env.SetWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{&workflowControlInterceptor{engine: eng}}})
 			env.ExecuteWorkflow(eng.temporalWorkflowHandler(handler), input)
 			require.NoError(t, env.GetWorkflowError())

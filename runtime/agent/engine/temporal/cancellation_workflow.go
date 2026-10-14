@@ -55,6 +55,24 @@ func (e *Engine) RegisterCancellationWorkflow(_ context.Context, name string, op
 	return nil
 }
 
+// StartActiveCancellationWorkflow reads the accepted workflow type, queue and
+// status in one Temporal description. Once observed active, its cleanup job can
+// follow a later saved transition even if the owner closes during job admission.
+func (e *Engine) StartActiveCancellationWorkflow(ctx context.Context, ownerRunID string, request engine.CancellationRequest) error {
+	description, err := e.client.DescribeWorkflowExecution(ctx, ownerRunID, "")
+	if err != nil {
+		return mapDescribeWorkflowExecutionError(err)
+	}
+	info := description.GetWorkflowExecutionInfo()
+	if info.GetExecution().GetWorkflowId() != ownerRunID || info.GetType().GetName() == "" || info.GetTaskQueue() == "" {
+		return errors.New("active cancellation owner description has missing or mismatched execution routing")
+	}
+	if info.GetStatus() != enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING && info.GetStatus() != enumspb.WORKFLOW_EXECUTION_STATUS_PAUSED {
+		return engine.ErrWorkflowCompleted
+	}
+	return e.StartCancellationWorkflow(ctx, info.GetType().GetName()+".cancel", info.GetTaskQueue(), request)
+}
+
 // StartCancellationWorkflow acknowledges Temporal acceptance without waiting
 // for cleanup. Duplicate delivery verifies routing and the original reason.
 func (e *Engine) StartCancellationWorkflow(ctx context.Context, name, queue string, request engine.CancellationRequest) error {

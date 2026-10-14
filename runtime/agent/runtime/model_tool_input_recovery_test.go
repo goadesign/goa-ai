@@ -73,7 +73,7 @@ func TestCompleteToolInputRecoveryWorkflow(t *testing.T) {
 	h.registration.Planner.(*stubPlanner).start = func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
 		return ask(ctx, input.Agent, input.Messages)
 	}
-	h.runtime.agents[h.input.AgentID] = h.registration
+	h.runtime.agents[testSubjectAgent(t, h.input.Subject)] = h.registration
 	h.input.RunID = "complete-input-workflow"
 	h.workflow.runID = h.input.RunID
 	publishTestRunInput(t, h.runtime, h.input, []*model.Message{userMsg("Look up a record.")})

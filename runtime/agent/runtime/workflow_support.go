@@ -15,6 +15,9 @@ import (
 	"strings"
 	"time"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
+	"goa.design/goa-ai/runtime/agent"
+
 	"github.com/google/uuid"
 
 	"goa.design/goa-ai/runtime/agent/api"
@@ -129,6 +132,8 @@ func (r *Runtime) finalizeFromHistory(
 	reason planner.TerminationReason,
 	hardDeadline time.Time,
 ) (*RunOutput, error) {
+	executor, _ := input.Subject.Executor.AsAgent()
+
 	ctx := wfCtx.Context()
 	// Transition to synthesizing phase while we obtain a final answer without
 	// scheduling additional budgeted tools.
@@ -136,7 +141,7 @@ func (r *Runtime) finalizeFromHistory(
 		ctx,
 		hooks.NewRunPhaseChangedEvent(
 			base.RunContext.RunID,
-			input.AgentID,
+			input.Subject,
 			base.RunContext.SessionID,
 			run.PhaseSynthesizing,
 		),
@@ -161,7 +166,7 @@ func (r *Runtime) finalizeFromHistory(
 		return nil, err
 	}
 	req := PlanActivityInput{
-		AgentID:             input.AgentID,
+		AgentID:             agent.Ident(executor),
 		RunID:               base.RunContext.RunID,
 		HistoryEndID:        base.HistoryEndID,
 		HistoryContext:      historyContext,
@@ -313,7 +318,7 @@ func (r *Runtime) finalizeFromHistory(
 	}
 	if err := r.appendSelectedModelResponse(
 		ctx,
-		input.AgentID,
+		agent.Ident(executor),
 		base,
 		turnID,
 		output.PublicationBatchID,
@@ -402,6 +407,8 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 	reason planner.TerminationReason,
 	hardDeadline time.Time,
 ) (*RunOutput, error) {
+	executor, _ := input.Subject.Executor.AsAgent()
+
 	if result == nil {
 		return nil, errors.New("finalization terminal tool plan is missing planner output")
 	}
@@ -455,7 +462,7 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 		calls:  result.ToolCalls,
 		kind:   stepKindTools,
 	}
-	program.calls = r.prepareAllowedCallsMetadata(input.AgentID, &execBase, program.calls, nil)
+	program.calls = r.prepareAllowedCallsMetadata(agent.Ident(executor), &execBase, program.calls, nil)
 	program.result.ToolCalls = program.calls
 	if err := validatePlanResultToolCallIDs(program.result); err != nil {
 		return nil, err
@@ -474,7 +481,7 @@ func (r *Runtime) finishFinalizationTerminalToolCalls(
 		}
 		if err := r.appendTranscriptMessages(
 			wfCtx.Context(),
-			input.AgentID,
+			agent.Ident(executor),
 			&execBase,
 			turnID,
 			messages,
@@ -823,6 +830,25 @@ func (r *Runtime) runPlanActivityOnce(
 		// before returning it and again before reuse. Workflow memory holds
 		// only this run's additions, so it cannot repeat that source check.
 	}
+	if out.Result != nil {
+		if err := r.validateCompletionToolPlanResult(out.Result, completionToolFromPolicy(input.Policy)); err != nil {
+			return nil, err
+		}
+		if input.Finalize != nil {
+			if err := validateFinalizationPlanResult(out.Result); err != nil {
+				return nil, err
+			}
+		}
+		// A terminal-only result is complete before progress is published. A
+		// result with bookkeeping calls is accepted only after those calls finish.
+		if out.Result.FinalToolResult != nil && len(out.Result.ToolCalls) == 0 {
+			result, err := operationResultFromToolEvent(finalToolResultEvent(input.RunContext.Tool, out.Result.FinalToolResult))
+			if err != nil {
+				return nil, err
+			}
+			base.finalization.operationResult = result
+		}
+	}
 	batch, err := preparePlannerPublicationBatch(wfCtx, input, out)
 	if err != nil {
 		return nil, err
@@ -953,7 +979,7 @@ func preparePlannerPublicationBatch(
 			Type:        record.Type,
 			EventKey:    formatPlannerPublicationEventKey(workflowID, out.PublicationBatchID, index, record.Type),
 			RunID:       input.RunID,
-			AgentID:     input.AgentID,
+			Subject:     genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(input.AgentID))},
 			SessionID:   input.RunContext.SessionID,
 			TurnID:      input.RunContext.TurnID,
 			TimestampMS: timestampMS,

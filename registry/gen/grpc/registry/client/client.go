@@ -34,6 +34,281 @@ func NewClient(cc *grpc.ClientConn, opts ...grpc.CallOption) *Client {
 	}
 }
 
+// CheckCatalogResource calls the "CheckCatalogResource" function in
+// registrypb.RegistryClient interface.
+func (c *Client) CheckCatalogResource() goa.Endpoint {
+	return func(ctx context.Context, v any) (any, error) {
+		remote := BuildCheckCatalogResourceFunc(c.grpccli, c.opts...)
+		// Convert errors from the RPC call here so local encoding and decoding
+		// errors keep their original types and validation details.
+		inv := goagrpc.NewInvoker(
+			func(ctx context.Context, request any, opts ...grpc.CallOption) (any, error) {
+				res, err := remote(ctx, request, opts...)
+				if err != nil {
+					resp := goagrpc.DecodeError(err)
+					switch message := resp.(type) {
+					case *goapb.ErrorResponse:
+						return nil, goagrpc.NewServiceErrorWithCause(err, message)
+					}
+					if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+						return nil, ctxErr
+					}
+					// Inspect one cause chain so an independent failure cannot select
+					// a child's cancellation code for the complete returned error.
+					singleCause := true
+					for cause := err; cause != nil && singleCause; {
+						if joined, ok := cause.(interface{ Unwrap() []error }); ok {
+							cause = nil
+							for _, child := range joined.Unwrap() {
+								if child != nil {
+									if cause != nil {
+										singleCause = false
+										break
+									}
+									cause = child
+								}
+							}
+						} else {
+							cause = errors.Unwrap(cause)
+						}
+					}
+					if singleCause {
+						// A remote stop keeps its status while the caller is still active.
+						switch status.Code(err) {
+						case codes.Canceled, codes.DeadlineExceeded:
+							return nil, err
+						}
+					}
+					return nil, goa.Fault("%s", err.Error())
+				}
+				return res, nil
+			},
+			EncodeCheckCatalogResourceRequest,
+			nil)
+		return inv.Invoke(ctx, v)
+	}
+}
+
+// ListCatalogResources calls the "ListCatalogResources" function in
+// registrypb.RegistryClient interface.
+func (c *Client) ListCatalogResources() goa.Endpoint {
+	return func(ctx context.Context, v any) (any, error) {
+		remote := BuildListCatalogResourcesFunc(c.grpccli, c.opts...)
+		// Convert errors from the RPC call here so local encoding and decoding
+		// errors keep their original types and validation details.
+		inv := goagrpc.NewInvoker(
+			func(ctx context.Context, request any, opts ...grpc.CallOption) (any, error) {
+				res, err := remote(ctx, request, opts...)
+				if err != nil {
+					resp := goagrpc.DecodeError(err)
+					switch message := resp.(type) {
+					case *goapb.ErrorResponse:
+						return nil, goagrpc.NewServiceErrorWithCause(err, message)
+					}
+					if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+						return nil, ctxErr
+					}
+					// Inspect one cause chain so an independent failure cannot select
+					// a child's cancellation code for the complete returned error.
+					singleCause := true
+					for cause := err; cause != nil && singleCause; {
+						if joined, ok := cause.(interface{ Unwrap() []error }); ok {
+							cause = nil
+							for _, child := range joined.Unwrap() {
+								if child != nil {
+									if cause != nil {
+										singleCause = false
+										break
+									}
+									cause = child
+								}
+							}
+						} else {
+							cause = errors.Unwrap(cause)
+						}
+					}
+					if singleCause {
+						// A remote stop keeps its status while the caller is still active.
+						switch status.Code(err) {
+						case codes.Canceled, codes.DeadlineExceeded:
+							return nil, err
+						}
+					}
+					return nil, goa.Fault("%s", err.Error())
+				}
+				return res, nil
+			},
+			EncodeListCatalogResourcesRequest,
+			DecodeListCatalogResourcesResponse)
+		return inv.Invoke(ctx, v)
+	}
+}
+
+// RegisterAgentExports calls the "RegisterAgentExports" function in
+// registrypb.RegistryClient interface.
+func (c *Client) RegisterAgentExports() goa.Endpoint {
+	return func(ctx context.Context, v any) (any, error) {
+		remote := BuildRegisterAgentExportsFunc(c.grpccli, c.opts...)
+		// Convert errors from the RPC call here so local encoding and decoding
+		// errors keep their original types and validation details.
+		inv := goagrpc.NewInvoker(
+			func(ctx context.Context, request any, opts ...grpc.CallOption) (any, error) {
+				res, err := remote(ctx, request, opts...)
+				if err != nil {
+					resp := goagrpc.DecodeError(err)
+					switch message := resp.(type) {
+					case *goapb.ErrorResponse:
+						return nil, goagrpc.NewServiceErrorWithCause(err, message)
+					}
+					if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+						return nil, ctxErr
+					}
+					// Inspect one cause chain so an independent failure cannot select
+					// a child's cancellation code for the complete returned error.
+					singleCause := true
+					for cause := err; cause != nil && singleCause; {
+						if joined, ok := cause.(interface{ Unwrap() []error }); ok {
+							cause = nil
+							for _, child := range joined.Unwrap() {
+								if child != nil {
+									if cause != nil {
+										singleCause = false
+										break
+									}
+									cause = child
+								}
+							}
+						} else {
+							cause = errors.Unwrap(cause)
+						}
+					}
+					if singleCause {
+						// A remote stop keeps its status while the caller is still active.
+						switch status.Code(err) {
+						case codes.Canceled, codes.DeadlineExceeded:
+							return nil, err
+						}
+					}
+					return nil, goa.Fault("%s", err.Error())
+				}
+				return res, nil
+			},
+			EncodeRegisterAgentExportsRequest,
+			DecodeRegisterAgentExportsResponse)
+		return inv.Invoke(ctx, v)
+	}
+}
+
+// ValidateAgentExports calls the "ValidateAgentExports" function in
+// registrypb.RegistryClient interface.
+func (c *Client) ValidateAgentExports() goa.Endpoint {
+	return func(ctx context.Context, v any) (any, error) {
+		remote := BuildValidateAgentExportsFunc(c.grpccli, c.opts...)
+		// Convert errors from the RPC call here so local encoding and decoding
+		// errors keep their original types and validation details.
+		inv := goagrpc.NewInvoker(
+			func(ctx context.Context, request any, opts ...grpc.CallOption) (any, error) {
+				res, err := remote(ctx, request, opts...)
+				if err != nil {
+					resp := goagrpc.DecodeError(err)
+					switch message := resp.(type) {
+					case *goapb.ErrorResponse:
+						return nil, goagrpc.NewServiceErrorWithCause(err, message)
+					}
+					if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+						return nil, ctxErr
+					}
+					// Inspect one cause chain so an independent failure cannot select
+					// a child's cancellation code for the complete returned error.
+					singleCause := true
+					for cause := err; cause != nil && singleCause; {
+						if joined, ok := cause.(interface{ Unwrap() []error }); ok {
+							cause = nil
+							for _, child := range joined.Unwrap() {
+								if child != nil {
+									if cause != nil {
+										singleCause = false
+										break
+									}
+									cause = child
+								}
+							}
+						} else {
+							cause = errors.Unwrap(cause)
+						}
+					}
+					if singleCause {
+						// A remote stop keeps its status while the caller is still active.
+						switch status.Code(err) {
+						case codes.Canceled, codes.DeadlineExceeded:
+							return nil, err
+						}
+					}
+					return nil, goa.Fault("%s", err.Error())
+				}
+				return res, nil
+			},
+			EncodeValidateAgentExportsRequest,
+			nil)
+		return inv.Invoke(ctx, v)
+	}
+}
+
+// RetireAgentResource calls the "RetireAgentResource" function in
+// registrypb.RegistryClient interface.
+func (c *Client) RetireAgentResource() goa.Endpoint {
+	return func(ctx context.Context, v any) (any, error) {
+		remote := BuildRetireAgentResourceFunc(c.grpccli, c.opts...)
+		// Convert errors from the RPC call here so local encoding and decoding
+		// errors keep their original types and validation details.
+		inv := goagrpc.NewInvoker(
+			func(ctx context.Context, request any, opts ...grpc.CallOption) (any, error) {
+				res, err := remote(ctx, request, opts...)
+				if err != nil {
+					resp := goagrpc.DecodeError(err)
+					switch message := resp.(type) {
+					case *goapb.ErrorResponse:
+						return nil, goagrpc.NewServiceErrorWithCause(err, message)
+					}
+					if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
+						return nil, ctxErr
+					}
+					// Inspect one cause chain so an independent failure cannot select
+					// a child's cancellation code for the complete returned error.
+					singleCause := true
+					for cause := err; cause != nil && singleCause; {
+						if joined, ok := cause.(interface{ Unwrap() []error }); ok {
+							cause = nil
+							for _, child := range joined.Unwrap() {
+								if child != nil {
+									if cause != nil {
+										singleCause = false
+										break
+									}
+									cause = child
+								}
+							}
+						} else {
+							cause = errors.Unwrap(cause)
+						}
+					}
+					if singleCause {
+						// A remote stop keeps its status while the caller is still active.
+						switch status.Code(err) {
+						case codes.Canceled, codes.DeadlineExceeded:
+							return nil, err
+						}
+					}
+					return nil, goa.Fault("%s", err.Error())
+				}
+				return res, nil
+			},
+			EncodeRetireAgentResourceRequest,
+			nil)
+		return inv.Invoke(ctx, v)
+	}
+}
+
 // DeclareServiceToolset calls the "DeclareServiceToolset" function in
 // registrypb.RegistryClient interface.
 func (c *Client) DeclareServiceToolset() goa.Endpoint {
@@ -648,8 +923,9 @@ func (c *Client) ListToolsets() goa.Endpoint {
 			func(ctx context.Context, request any, opts ...grpc.CallOption) (any, error) {
 				res, err := remote(ctx, request, opts...)
 				if err != nil {
-					// Decode service fields before considering a native context stop.
-					if message, ok := goagrpc.DecodeError(err).(*goapb.ErrorResponse); ok {
+					resp := goagrpc.DecodeError(err)
+					switch message := resp.(type) {
+					case *goapb.ErrorResponse:
 						return nil, goagrpc.NewServiceErrorWithCause(err, message)
 					}
 					if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {
@@ -866,8 +1142,9 @@ func (c *Client) Search() goa.Endpoint {
 			func(ctx context.Context, request any, opts ...grpc.CallOption) (any, error) {
 				res, err := remote(ctx, request, opts...)
 				if err != nil {
-					// Decode service fields before considering a native context stop.
-					if message, ok := goagrpc.DecodeError(err).(*goapb.ErrorResponse); ok {
+					resp := goagrpc.DecodeError(err)
+					switch message := resp.(type) {
+					case *goapb.ErrorResponse:
 						return nil, goagrpc.NewServiceErrorWithCause(err, message)
 					}
 					if ctxErr := goagrpc.ContextError(ctx, err); ctxErr != nil {

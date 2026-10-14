@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/hooks"
@@ -149,7 +150,7 @@ func TestStreamSubscriber_ToolStart(t *testing.T) {
 	sub, err := NewSubscriber(sink, AgentDebugProfile())
 	require.NoError(t, err)
 	ctx := context.Background()
-	evt := hooks.NewToolCallScheduledEvent("r1", agent.Ident("agent1"), "session-1", tools.Ident("svc.tool"), "call-1", rawjson.Message([]byte(`{"q":1}`)), "queue", "", 0)
+	evt := hooks.NewToolCallScheduledEvent("r1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent1")))}, "session-1", tools.Ident("svc.tool"), "call-1", rawjson.Message([]byte(`{"q":1}`)), "queue", "", 0)
 	evt.DisplayHint = "custom display hint"
 	require.NoError(t, sub.HandleEvent(ctx, evt))
 	require.Len(t, sink.events, 1)
@@ -168,7 +169,7 @@ func TestStreamSubscriber_ToolEnd_EmitsServerData(t *testing.T) {
 	server := rawjson.Message([]byte(`[{"kind":"example.evidence","data":[{"uri":"example://points/123"}]}]`))
 	evt := hooks.NewToolResultReceivedEvent(
 		"result-run",
-		agent.Ident("agent1"),
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent1")))},
 		"session-1",
 		"call-run",
 		tools.Ident("svc.tool"),
@@ -201,7 +202,7 @@ func TestStreamSubscriber_ToolEnd_PreservesCompleteResult(t *testing.T) {
 	result := rawjson.Message(`{"value":"done"}`)
 	evt := hooks.NewToolResultReceivedEvent(
 		"r1",
-		agent.Ident("agent1"),
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent1")))},
 		"session-1",
 		"r1",
 		tools.Ident("svc.tool"),
@@ -230,7 +231,7 @@ func TestStreamSubscriber_ToolEnd_RejectsMissingCallRunID(t *testing.T) {
 
 	evt := hooks.NewToolResultReceivedEvent(
 		"result-run",
-		agent.Ident("agent1"),
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent1")))},
 		"session-1",
 		"",
 		tools.Ident("svc.tool"),
@@ -253,7 +254,7 @@ func TestStreamSubscriber_ToolUpdate(t *testing.T) {
 	sub, err := NewSubscriber(sink, AgentDebugProfile())
 	require.NoError(t, err)
 	ctx := context.Background()
-	evt := hooks.NewToolCallUpdatedEvent("r1", agent.Ident("agent1"), "session-1", "parent-1", 3)
+	evt := hooks.NewToolCallUpdatedEvent("r1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent1")))}, "session-1", "parent-1", 3)
 	require.NoError(t, sub.HandleEvent(ctx, evt))
 	require.Len(t, sink.events, 1)
 	require.Equal(t, EventToolUpdate, sink.events[0].Type())
@@ -400,7 +401,7 @@ func TestStreamSubscriberRuntimeHostProfile(t *testing.T) {
 	require.NoError(t, subscriber.HandleEvent(t.Context(), evt))
 	require.NoError(t, subscriber.HandleEvent(t.Context(), hooks.NewToolCallScheduledEvent(
 		"r1",
-		agent.Ident("agent1"),
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent1")))},
 		"session-1",
 		tools.Ident("tools.lookup"),
 		"call-1",
@@ -411,7 +412,7 @@ func TestStreamSubscriberRuntimeHostProfile(t *testing.T) {
 	)))
 	require.NoError(t, subscriber.HandleEvent(t.Context(), hooks.NewRunPhaseChangedEvent(
 		"r1",
-		agent.Ident("agent1"),
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent1")))},
 		"session-1",
 		run.PhasePlanning,
 	)))
@@ -480,7 +481,7 @@ func TestStreamSubscriber_WorkflowFromRunCompleted(t *testing.T) {
 	sub, err := NewSubscriber(sink, AgentDebugProfile())
 	require.NoError(t, err)
 	ctx := context.Background()
-	evt := hooks.NewRunCompletedEvent("r1", agent.Ident("agent1"), "session-1", "success", run.PhaseCompleted, nil, nil, nil)
+	evt := hooks.NewRunCompletedEvent("r1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent1")))}, "session-1", "success", run.PhaseCompleted, nil, nil, nil)
 	evt.SetEventKey("r1/12")
 	require.NoError(t, sub.HandleEvent(ctx, evt))
 	require.Len(t, sink.events, 2)
@@ -508,7 +509,7 @@ func TestStreamSubscriberWorkflowFromRunSuspended(t *testing.T) {
 	subscriber, err := NewSubscriber(sink, AgentDebugProfile())
 	require.NoError(t, err)
 	event := hooks.NewRunSuspendedEvent(
-		"r1", agent.Ident("agent1"), "session-1", "suspension-1", "v1", 1, nil,
+		"r1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent1")))}, "session-1", "suspension-1", "v1", 1, nil,
 	)
 
 	require.NoError(t, subscriber.HandleEvent(t.Context(), event))
@@ -528,7 +529,7 @@ func TestStreamSubscriber_WorkflowFromRunCompleted_FailedHasPublicAndDebugErrors
 	ctx := context.Background()
 
 	pe := model.NewProviderError("bedrock", "converse_stream", 429, model.ProviderErrorKindRateLimited, "rate_limited", "", "", true, context.DeadlineExceeded)
-	evt := hooks.NewRunCompletedEvent("r1", agent.Ident("agent1"), "session-1", "failed", run.PhaseFailed, nil, pe, nil)
+	evt := hooks.NewRunCompletedEvent("r1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent1")))}, "session-1", "failed", run.PhaseFailed, nil, pe, nil)
 	require.NoError(t, sub.HandleEvent(ctx, evt))
 
 	require.Len(t, sink.events, 2)
@@ -553,7 +554,7 @@ func TestStreamSubscriber_WorkflowFromRunCompleted_CanceledHasNoFailureMetadata(
 
 	evt := hooks.NewRunCompletedEvent(
 		"r1",
-		agent.Ident("agent1"),
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent1")))},
 		"session-1",
 		"canceled",
 		run.PhaseCanceled,
@@ -579,7 +580,7 @@ func TestStreamSubscriber_WorkflowFromRunPhaseChanged(t *testing.T) {
 	sub, err := NewSubscriber(sink, AgentDebugProfile())
 	require.NoError(t, err)
 	ctx := context.Background()
-	evt := hooks.NewRunPhaseChangedEvent("r1", agent.Ident("agent1"), "session-1", run.PhasePlanning)
+	evt := hooks.NewRunPhaseChangedEvent("r1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent1")))}, "session-1", run.PhasePlanning)
 	require.NoError(t, sub.HandleEvent(ctx, evt))
 	require.Len(t, sink.events, 1)
 	wf, ok := sink.events[0].(Workflow)
@@ -639,7 +640,7 @@ func TestStreamSubscriber_ChildRunLinked(t *testing.T) {
 
 	evt := hooks.NewChildRunLinkedEvent(
 		"parent-run",
-		agent.Ident("parent.agent"),
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("parent.agent")))},
 		"session-1",
 		tools.Ident("svc.agent.records"),
 		"parent-call",
@@ -668,8 +669,8 @@ func TestStreamSubscriber_MultipleRunsPreserveRunID(t *testing.T) {
 	// Parent and child runs must retain distinct RunIDs in the stream. The
 	// subscriber never rewrites run identities; higher-level projections that
 	// want a flattened view are expected to build it on top.
-	parent := hooks.NewRunPhaseChangedEvent("parent-run", agent.Ident("parent.agent"), "session-1", run.PhasePlanning)
-	child := hooks.NewRunPhaseChangedEvent("child-run", agent.Ident("child.agent"), "session-1", run.PhasePlanning)
+	parent := hooks.NewRunPhaseChangedEvent("parent-run", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("parent.agent")))}, "session-1", run.PhasePlanning)
+	child := hooks.NewRunPhaseChangedEvent("child-run", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("child.agent")))}, "session-1", run.PhasePlanning)
 
 	require.NoError(t, sub.HandleEvent(ctx, parent))
 	require.NoError(t, sub.HandleEvent(ctx, child))
@@ -687,7 +688,7 @@ func TestStreamSubscriber_ToolEndPrecedesRunStreamEnd(t *testing.T) {
 
 	toolEnd := hooks.NewToolResultReceivedEvent(
 		"r1",
-		agent.Ident("agent1"),
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent1")))},
 		"session-1",
 		"r1",
 		tools.Ident("svc.tool"),
@@ -703,7 +704,7 @@ func TestStreamSubscriber_ToolEndPrecedesRunStreamEnd(t *testing.T) {
 	)
 	require.NoError(t, sub.HandleEvent(ctx, toolEnd))
 
-	completed := hooks.NewRunCompletedEvent("r1", agent.Ident("agent1"), "session-1", "success", run.PhaseCompleted, nil, nil, nil)
+	completed := hooks.NewRunCompletedEvent("r1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent1")))}, "session-1", "success", run.PhaseCompleted, nil, nil, nil)
 	require.NoError(t, sub.HandleEvent(ctx, completed))
 
 	require.Len(t, sink.events, 3)
@@ -724,7 +725,7 @@ func TestMCPInputUsesHostStreamProfile(t *testing.T) {
 		sink := &mockSink{}
 		sub, err := NewSubscriber(sink, profile)
 		require.NoError(t, err)
-		require.NoError(t, sub.HandleEvent(t.Context(), hooks.NewAwaitMCPInputEvent("run-1", "service.agent", "session-1", input)))
+		require.NoError(t, sub.HandleEvent(t.Context(), hooks.NewAwaitMCPInputEvent("run-1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("service.agent"))}, "session-1", input)))
 		if !host {
 			require.Empty(t, sink.events)
 			continue
@@ -733,5 +734,26 @@ func TestMCPInputUsesHostStreamProfile(t *testing.T) {
 		event, ok := sink.events[0].(AwaitMCPInput)
 		require.True(t, ok)
 		require.Equal(t, input, event.Data)
+	}
+}
+
+func TestStreamSubscriberServiceSubjectKeepsToolAndTerminalEvents(t *testing.T) {
+	sink := &mockSink{}
+	subscriber, err := NewSubscriber(sink, AgentDebugProfile())
+	require.NoError(t, err)
+	subject := genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorServiceTool(&genrunidentity.ServiceToolSubject{
+		Registry: "primary", Tool: "records.lookup",
+	})}
+	scheduled := hooks.NewToolCallScheduledEvent("service-run", subject, "session", "records.lookup", "call", nil, "", "", 0)
+	completed := hooks.NewRunCompletedEvent("service-run", subject, "session", "success", run.PhaseCompleted, nil, nil, nil)
+	require.NoError(t, subscriber.HandleEvent(t.Context(), scheduled))
+	require.NoError(t, subscriber.HandleEvent(t.Context(), completed))
+	require.Len(t, sink.events, 3)
+	require.Equal(t, EventToolStart, sink.events[0].Type())
+	require.Equal(t, EventWorkflow, sink.events[1].Type())
+	require.Equal(t, EventRunStreamEnd, sink.events[2].Type())
+	for _, event := range sink.events {
+		require.Equal(t, "service-run", event.RunID())
+		require.Equal(t, "session", event.SessionID())
 	}
 }

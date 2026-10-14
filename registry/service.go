@@ -769,15 +769,9 @@ func (s *Service) routeUnpublishedToolCall(
 			return s.rejectPreparedToolCall(ctx, prepared, err)
 		}
 		admission, _, err := s.callAdmissions.Ensure(
-			ctx,
-			prepared.toolset,
-			prepared.toolUseID,
-			registration.RegistrationToken,
-			prepared.admissionDigest,
-			executionTimeout,
-			s.resultStreamTTL,
-			outcomeUnknownPayload(registration.RegistrationToken, prepared.toolUseID),
-			prepared.meta.TextOnly,
+			ctx, prepared.toolset, prepared.toolUseID, registration.RegistrationToken,
+			prepared.admissionDigest, executionTimeout, s.resultStreamTTL,
+			outcomeUnknownPayload(registration.RegistrationToken, prepared.toolUseID), prepared.meta.TextOnly,
 		)
 		if err != nil {
 			return nil, callDecisionError(err)
@@ -1076,14 +1070,8 @@ func (s *Service) rejectPreparedToolCall(
 	if err != nil {
 		return nil, genregistry.MakeServiceUnavailable(err)
 	}
-	admission, err := s.callAdmissions.Reject(
-		ctx,
-		prepared.toolset,
-		prepared.toolUseID,
-		prepared.admissionDigest,
-		rejection,
-		s.resultStreamTTL,
-	)
+	admission, err := s.callAdmissions.Reject(ctx, prepared.toolset, prepared.toolUseID,
+		prepared.admissionDigest, rejection, s.resultStreamTTL)
 	if err != nil {
 		return nil, callDecisionError(err)
 	}

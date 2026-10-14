@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/internal/registrycontract"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -59,7 +60,7 @@ func TestScheduledCallHintRendersHintForNilAndEmptyPayload(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			event := hooks.NewToolCallScheduledEvent("run-1", "svc.agent", "session-1", toolID, "call-1", tc.payload, "queue", "", 0)
+			event := hooks.NewToolCallScheduledEvent("run-1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, "session-1", toolID, "call-1", tc.payload, "queue", "", 0)
 			changed, err := rt.enrichToolCallScheduledHint(t.Context(), event)
 			require.NoError(t, err)
 			assert.True(t, changed)
@@ -102,7 +103,7 @@ func TestScheduledCallHintRendersHintForRawJSONPayload(t *testing.T) {
 		logger: telemetry.NoopLogger{},
 	}
 
-	event := hooks.NewToolCallScheduledEvent("run-1", "svc.agent", "session-1", toolID, "call-1", rawjson.Message(`{"resolution":"hourly"}`), "queue", "", 0)
+	event := hooks.NewToolCallScheduledEvent("run-1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, "session-1", toolID, "call-1", rawjson.Message(`{"resolution":"hourly"}`), "queue", "", 0)
 	changed, err := rt.enrichToolCallScheduledHint(t.Context(), event)
 	require.NoError(t, err)
 	assert.True(t, changed)
@@ -126,7 +127,7 @@ func TestScheduledCallHintUsesToolTitleForMalformedPayload(t *testing.T) {
 		logger: telemetry.NoopLogger{},
 	}
 
-	event := hooks.NewToolCallScheduledEvent("run-1", "svc.agent", "session-1", toolID, "call-1", rawjson.Message(`{"resolution":42}`), "queue", "", 0)
+	event := hooks.NewToolCallScheduledEvent("run-1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, "session-1", toolID, "call-1", rawjson.Message(`{"resolution":42}`), "queue", "", 0)
 	changed, err := rt.enrichToolCallScheduledHint(t.Context(), event)
 	require.NoError(t, err)
 	assert.True(t, changed)
@@ -135,7 +136,7 @@ func TestScheduledCallHintUsesToolTitleForMalformedPayload(t *testing.T) {
 
 func TestScheduledCallHintRendersHintForToolUnavailable(t *testing.T) {
 	rt := New(newTestStore())
-	event := hooks.NewToolCallScheduledEvent("run-1", "svc.agent", "session-1", tools.ToolUnavailable, "call-1", rawjson.Message(`{"requested_tool":"catalog.resolve_sources"}`), "queue", "", 0)
+	event := hooks.NewToolCallScheduledEvent("run-1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, "session-1", tools.ToolUnavailable, "call-1", rawjson.Message(`{"requested_tool":"catalog.resolve_sources"}`), "queue", "", 0)
 	changed, err := rt.enrichToolCallScheduledHint(t.Context(), event)
 	require.NoError(t, err)
 	assert.True(t, changed)
@@ -158,7 +159,7 @@ func TestScheduledCallHintOverrideWins(t *testing.T) {
 		},
 	}
 
-	event := hooks.NewToolCallScheduledEvent("run-1", "svc.agent", "session-1", toolID, "call-1", rawjson.Message(`{"resolution":"hourly"}`), "queue", "", 0)
+	event := hooks.NewToolCallScheduledEvent("run-1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, "session-1", toolID, "call-1", rawjson.Message(`{"resolution":"hourly"}`), "queue", "", 0)
 	changed, err := rt.enrichToolCallScheduledHint(t.Context(), event)
 	require.NoError(t, err)
 	assert.True(t, changed)
@@ -186,7 +187,7 @@ func TestScheduledCallHintRejectsEmptyOverride(t *testing.T) {
 		},
 	}
 
-	event := hooks.NewToolCallScheduledEvent("run-1", "svc.agent", "session-1", toolID, "call-1", rawjson.Message(`{"resolution":"hourly"}`), "queue", "", 0)
+	event := hooks.NewToolCallScheduledEvent("run-1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, "session-1", toolID, "call-1", rawjson.Message(`{"resolution":"hourly"}`), "queue", "", 0)
 	changed, err := rt.enrichToolCallScheduledHint(t.Context(), event)
 	require.ErrorContains(t, err, "returned empty display hint")
 	assert.False(t, changed)
@@ -210,7 +211,7 @@ func TestScheduledCallHintStoredAndStreamedOnce(t *testing.T) {
 					},
 				}))
 			rt.toolSpecs[toolID] = newTypedHintSpec(toolID)
-			event := hooks.NewToolCallScheduledEvent("run", "svc.agent", "session", toolID,
+			event := hooks.NewToolCallScheduledEvent("run", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, "session", toolID,
 				"call", rawjson.Message(`{"resolution":"hourly"}`), "queue", "", 0)
 			want := "Stored override"
 			if dynamic {

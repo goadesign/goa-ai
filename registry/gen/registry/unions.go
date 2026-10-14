@@ -14,6 +14,796 @@ import (
 	goa "goa.design/goa/v3/pkg"
 )
 
+// CatalogSourceTarget holds exactly one of its branch values.
+type CatalogSourceTarget struct {
+	kind    CatalogSourceTargetKind
+	native  *NativeCatalogSource
+	service *ServiceCatalogSource
+}
+
+// CatalogSourceTargetKind records which CatalogSourceTarget branch is selected.
+type CatalogSourceTargetKind string
+
+const (
+	// CatalogSourceTargetKindNative identifies the native branch.
+	CatalogSourceTargetKindNative CatalogSourceTargetKind = "native"
+	// CatalogSourceTargetKindService identifies the service branch.
+	CatalogSourceTargetKindService CatalogSourceTargetKind = "service"
+)
+
+// Kind returns the selected branch.
+func (u CatalogSourceTarget) Kind() CatalogSourceTargetKind {
+	return u.kind
+}
+
+// NewCatalogSourceTargetNative constructs CatalogSourceTarget with the native branch set.
+func NewCatalogSourceTargetNative(v *NativeCatalogSource) CatalogSourceTarget {
+	return CatalogSourceTarget{
+		kind:   CatalogSourceTargetKindNative,
+		native: v,
+	}
+}
+
+// AsNative returns the value when the native branch is selected.
+func (u CatalogSourceTarget) AsNative() (_ *NativeCatalogSource, ok bool) {
+	if u.kind != CatalogSourceTargetKindNative {
+		return
+	}
+	return u.native, true
+}
+
+// SetNative selects the native branch and stores v.
+func (u *CatalogSourceTarget) SetNative(v *NativeCatalogSource) {
+	*u = CatalogSourceTarget{
+		kind:   CatalogSourceTargetKindNative,
+		native: v,
+	}
+}
+
+// NewCatalogSourceTargetService constructs CatalogSourceTarget with the service branch set.
+func NewCatalogSourceTargetService(v *ServiceCatalogSource) CatalogSourceTarget {
+	return CatalogSourceTarget{
+		kind:    CatalogSourceTargetKindService,
+		service: v,
+	}
+}
+
+// AsService returns the value when the service branch is selected.
+func (u CatalogSourceTarget) AsService() (_ *ServiceCatalogSource, ok bool) {
+	if u.kind != CatalogSourceTargetKindService {
+		return
+	}
+	return u.service, true
+}
+
+// SetService selects the service branch and stores v.
+func (u *CatalogSourceTarget) SetService(v *ServiceCatalogSource) {
+	*u = CatalogSourceTarget{
+		kind:    CatalogSourceTargetKindService,
+		service: v,
+	}
+}
+
+// Validate ensures exactly one valid branch is selected.
+func (u CatalogSourceTarget) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u CatalogSourceTarget) Value() (any, error) {
+	switch u.kind {
+	case "":
+		return nil, goa.InvalidEnumValueError("type", "", []any{
+			string(CatalogSourceTargetKindNative),
+			string(CatalogSourceTargetKindService),
+		})
+	case CatalogSourceTargetKindNative:
+		if u.native == nil {
+			return nil, goa.MissingFieldError("value", "CatalogSourceTarget")
+		}
+		return u.native, nil
+	case CatalogSourceTargetKindService:
+		if u.service == nil {
+			return nil, goa.MissingFieldError("value", "CatalogSourceTarget")
+		}
+		return u.service, nil
+	default:
+		return nil, goa.InvalidEnumValueError("type", u.kind, []any{
+			string(CatalogSourceTargetKindNative),
+			string(CatalogSourceTargetKindService),
+		})
+	}
+}
+
+// MarshalJSON marshals the union into the canonical {type,value} JSON shape.
+func (u CatalogSourceTarget) MarshalJSON() ([]byte, error) {
+	value, err := u.Value()
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(struct {
+		Type  string `json:"type"`
+		Value any    `json:"value"`
+	}{
+		Type:  string(u.kind),
+		Value: value,
+	})
+}
+
+// UnmarshalJSON unmarshals the union from the canonical {type,value} JSON shape.
+func (u *CatalogSourceTarget) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Type  string          `json:"type"`
+		Value json.RawMessage `json:"value"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if len(raw.Value) == 0 {
+		return goa.MissingFieldError("value", "CatalogSourceTarget")
+	}
+	if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
+		return goa.InvalidFieldTypeError("value", nil, "non-null JSON value")
+	}
+	switch raw.Type {
+	case string(CatalogSourceTargetKindNative):
+		var v *NativeCatalogSource
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetNative(v)
+	case string(CatalogSourceTargetKindService):
+		var v *ServiceCatalogSource
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetService(v)
+	default:
+		if raw.Type == "" {
+			return goa.MissingFieldError("type", "CatalogSourceTarget")
+		}
+		return goa.InvalidEnumValueError("type", raw.Type, []any{
+			string(CatalogSourceTargetKindNative),
+			string(CatalogSourceTargetKindService),
+		})
+	}
+	return nil
+}
+
+// CatalogTarget holds exactly one of its branch values.
+type CatalogTarget struct {
+	kind    CatalogTargetKind
+	native  *NativeCatalogTarget
+	service *ServiceCatalogTarget
+}
+
+// CatalogTargetKind records which CatalogTarget branch is selected.
+type CatalogTargetKind string
+
+const (
+	// CatalogTargetKindNative identifies the native branch.
+	CatalogTargetKindNative CatalogTargetKind = "native"
+	// CatalogTargetKindService identifies the service branch.
+	CatalogTargetKindService CatalogTargetKind = "service"
+)
+
+// Kind returns the selected branch.
+func (u CatalogTarget) Kind() CatalogTargetKind {
+	return u.kind
+}
+
+// NewCatalogTargetNative constructs CatalogTarget with the native branch set.
+func NewCatalogTargetNative(v *NativeCatalogTarget) CatalogTarget {
+	return CatalogTarget{
+		kind:   CatalogTargetKindNative,
+		native: v,
+	}
+}
+
+// AsNative returns the value when the native branch is selected.
+func (u CatalogTarget) AsNative() (_ *NativeCatalogTarget, ok bool) {
+	if u.kind != CatalogTargetKindNative {
+		return
+	}
+	return u.native, true
+}
+
+// SetNative selects the native branch and stores v.
+func (u *CatalogTarget) SetNative(v *NativeCatalogTarget) {
+	*u = CatalogTarget{
+		kind:   CatalogTargetKindNative,
+		native: v,
+	}
+}
+
+// NewCatalogTargetService constructs CatalogTarget with the service branch set.
+func NewCatalogTargetService(v *ServiceCatalogTarget) CatalogTarget {
+	return CatalogTarget{
+		kind:    CatalogTargetKindService,
+		service: v,
+	}
+}
+
+// AsService returns the value when the service branch is selected.
+func (u CatalogTarget) AsService() (_ *ServiceCatalogTarget, ok bool) {
+	if u.kind != CatalogTargetKindService {
+		return
+	}
+	return u.service, true
+}
+
+// SetService selects the service branch and stores v.
+func (u *CatalogTarget) SetService(v *ServiceCatalogTarget) {
+	*u = CatalogTarget{
+		kind:    CatalogTargetKindService,
+		service: v,
+	}
+}
+
+// Validate ensures exactly one valid branch is selected.
+func (u CatalogTarget) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u CatalogTarget) Value() (any, error) {
+	switch u.kind {
+	case "":
+		return nil, goa.InvalidEnumValueError("type", "", []any{
+			string(CatalogTargetKindNative),
+			string(CatalogTargetKindService),
+		})
+	case CatalogTargetKindNative:
+		if u.native == nil {
+			return nil, goa.MissingFieldError("value", "CatalogTarget")
+		}
+		return u.native, nil
+	case CatalogTargetKindService:
+		if u.service == nil {
+			return nil, goa.MissingFieldError("value", "CatalogTarget")
+		}
+		return u.service, nil
+	default:
+		return nil, goa.InvalidEnumValueError("type", u.kind, []any{
+			string(CatalogTargetKindNative),
+			string(CatalogTargetKindService),
+		})
+	}
+}
+
+// MarshalJSON marshals the union into the canonical {type,value} JSON shape.
+func (u CatalogTarget) MarshalJSON() ([]byte, error) {
+	value, err := u.Value()
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(struct {
+		Type  string `json:"type"`
+		Value any    `json:"value"`
+	}{
+		Type:  string(u.kind),
+		Value: value,
+	})
+}
+
+// UnmarshalJSON unmarshals the union from the canonical {type,value} JSON shape.
+func (u *CatalogTarget) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Type  string          `json:"type"`
+		Value json.RawMessage `json:"value"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if len(raw.Value) == 0 {
+		return goa.MissingFieldError("value", "CatalogTarget")
+	}
+	if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
+		return goa.InvalidFieldTypeError("value", nil, "non-null JSON value")
+	}
+	switch raw.Type {
+	case string(CatalogTargetKindNative):
+		var v *NativeCatalogTarget
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetNative(v)
+	case string(CatalogTargetKindService):
+		var v *ServiceCatalogTarget
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetService(v)
+	default:
+		if raw.Type == "" {
+			return goa.MissingFieldError("type", "CatalogTarget")
+		}
+		return goa.InvalidEnumValueError("type", raw.Type, []any{
+			string(CatalogTargetKindNative),
+			string(CatalogTargetKindService),
+		})
+	}
+	return nil
+}
+
+// ExecutionInvocationKind holds exactly one of its branch values.
+type ExecutionInvocationKind struct {
+	kind ExecutionInvocationKindKind
+	root *RootInvocation
+	tool *ToolInvocation
+}
+
+// ExecutionInvocationKindKind records which ExecutionInvocationKind branch is selected.
+type ExecutionInvocationKindKind string
+
+const (
+	// ExecutionInvocationKindKindRoot identifies the root branch.
+	ExecutionInvocationKindKindRoot ExecutionInvocationKindKind = "root"
+	// ExecutionInvocationKindKindTool identifies the tool branch.
+	ExecutionInvocationKindKindTool ExecutionInvocationKindKind = "tool"
+)
+
+// Kind returns the selected branch.
+func (u ExecutionInvocationKind) Kind() ExecutionInvocationKindKind {
+	return u.kind
+}
+
+// NewExecutionInvocationKindRoot constructs ExecutionInvocationKind with the root branch set.
+func NewExecutionInvocationKindRoot(v *RootInvocation) ExecutionInvocationKind {
+	return ExecutionInvocationKind{
+		kind: ExecutionInvocationKindKindRoot,
+		root: v,
+	}
+}
+
+// AsRoot returns the value when the root branch is selected.
+func (u ExecutionInvocationKind) AsRoot() (_ *RootInvocation, ok bool) {
+	if u.kind != ExecutionInvocationKindKindRoot {
+		return
+	}
+	return u.root, true
+}
+
+// SetRoot selects the root branch and stores v.
+func (u *ExecutionInvocationKind) SetRoot(v *RootInvocation) {
+	*u = ExecutionInvocationKind{
+		kind: ExecutionInvocationKindKindRoot,
+		root: v,
+	}
+}
+
+// NewExecutionInvocationKindTool constructs ExecutionInvocationKind with the tool branch set.
+func NewExecutionInvocationKindTool(v *ToolInvocation) ExecutionInvocationKind {
+	return ExecutionInvocationKind{
+		kind: ExecutionInvocationKindKindTool,
+		tool: v,
+	}
+}
+
+// AsTool returns the value when the tool branch is selected.
+func (u ExecutionInvocationKind) AsTool() (_ *ToolInvocation, ok bool) {
+	if u.kind != ExecutionInvocationKindKindTool {
+		return
+	}
+	return u.tool, true
+}
+
+// SetTool selects the tool branch and stores v.
+func (u *ExecutionInvocationKind) SetTool(v *ToolInvocation) {
+	*u = ExecutionInvocationKind{
+		kind: ExecutionInvocationKindKindTool,
+		tool: v,
+	}
+}
+
+// Validate ensures exactly one valid branch is selected.
+func (u ExecutionInvocationKind) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u ExecutionInvocationKind) Value() (any, error) {
+	switch u.kind {
+	case "":
+		return nil, goa.InvalidEnumValueError("type", "", []any{
+			string(ExecutionInvocationKindKindRoot),
+			string(ExecutionInvocationKindKindTool),
+		})
+	case ExecutionInvocationKindKindRoot:
+		if u.root == nil {
+			return nil, goa.MissingFieldError("value", "ExecutionInvocationKind")
+		}
+		return u.root, nil
+	case ExecutionInvocationKindKindTool:
+		if u.tool == nil {
+			return nil, goa.MissingFieldError("value", "ExecutionInvocationKind")
+		}
+		return u.tool, nil
+	default:
+		return nil, goa.InvalidEnumValueError("type", u.kind, []any{
+			string(ExecutionInvocationKindKindRoot),
+			string(ExecutionInvocationKindKindTool),
+		})
+	}
+}
+
+// MarshalJSON marshals the union into the canonical {type,value} JSON shape.
+func (u ExecutionInvocationKind) MarshalJSON() ([]byte, error) {
+	value, err := u.Value()
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(struct {
+		Type  string `json:"type"`
+		Value any    `json:"value"`
+	}{
+		Type:  string(u.kind),
+		Value: value,
+	})
+}
+
+// UnmarshalJSON unmarshals the union from the canonical {type,value} JSON shape.
+func (u *ExecutionInvocationKind) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Type  string          `json:"type"`
+		Value json.RawMessage `json:"value"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if len(raw.Value) == 0 {
+		return goa.MissingFieldError("value", "ExecutionInvocationKind")
+	}
+	if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
+		return goa.InvalidFieldTypeError("value", nil, "non-null JSON value")
+	}
+	switch raw.Type {
+	case string(ExecutionInvocationKindKindRoot):
+		var v *RootInvocation
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetRoot(v)
+	case string(ExecutionInvocationKindKindTool):
+		var v *ToolInvocation
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetTool(v)
+	default:
+		if raw.Type == "" {
+			return goa.MissingFieldError("type", "ExecutionInvocationKind")
+		}
+		return goa.InvalidEnumValueError("type", raw.Type, []any{
+			string(ExecutionInvocationKindKindRoot),
+			string(ExecutionInvocationKindKindTool),
+		})
+	}
+	return nil
+}
+
+// RegistrySelectionKind holds exactly one of its branch values.
+type RegistrySelectionKind struct {
+	kind       RegistrySelectionKindKind
+	direct     *ResolvedToolset
+	registered *RegisteredToolsetSelection
+}
+
+// RegistrySelectionKindKind records which RegistrySelectionKind branch is selected.
+type RegistrySelectionKindKind string
+
+const (
+	// RegistrySelectionKindKindDirect identifies the direct branch.
+	RegistrySelectionKindKindDirect RegistrySelectionKindKind = "direct"
+	// RegistrySelectionKindKindRegistered identifies the registered branch.
+	RegistrySelectionKindKindRegistered RegistrySelectionKindKind = "registered"
+)
+
+// Kind returns the selected branch.
+func (u RegistrySelectionKind) Kind() RegistrySelectionKindKind {
+	return u.kind
+}
+
+// NewRegistrySelectionKindDirect constructs RegistrySelectionKind with the direct branch set.
+func NewRegistrySelectionKindDirect(v *ResolvedToolset) RegistrySelectionKind {
+	return RegistrySelectionKind{
+		kind:   RegistrySelectionKindKindDirect,
+		direct: v,
+	}
+}
+
+// AsDirect returns the value when the direct branch is selected.
+func (u RegistrySelectionKind) AsDirect() (_ *ResolvedToolset, ok bool) {
+	if u.kind != RegistrySelectionKindKindDirect {
+		return
+	}
+	return u.direct, true
+}
+
+// SetDirect selects the direct branch and stores v.
+func (u *RegistrySelectionKind) SetDirect(v *ResolvedToolset) {
+	*u = RegistrySelectionKind{
+		kind:   RegistrySelectionKindKindDirect,
+		direct: v,
+	}
+}
+
+// NewRegistrySelectionKindRegistered constructs RegistrySelectionKind with the registered branch set.
+func NewRegistrySelectionKindRegistered(v *RegisteredToolsetSelection) RegistrySelectionKind {
+	return RegistrySelectionKind{
+		kind:       RegistrySelectionKindKindRegistered,
+		registered: v,
+	}
+}
+
+// AsRegistered returns the value when the registered branch is selected.
+func (u RegistrySelectionKind) AsRegistered() (_ *RegisteredToolsetSelection, ok bool) {
+	if u.kind != RegistrySelectionKindKindRegistered {
+		return
+	}
+	return u.registered, true
+}
+
+// SetRegistered selects the registered branch and stores v.
+func (u *RegistrySelectionKind) SetRegistered(v *RegisteredToolsetSelection) {
+	*u = RegistrySelectionKind{
+		kind:       RegistrySelectionKindKindRegistered,
+		registered: v,
+	}
+}
+
+// Validate ensures exactly one valid branch is selected.
+func (u RegistrySelectionKind) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u RegistrySelectionKind) Value() (any, error) {
+	switch u.kind {
+	case "":
+		return nil, goa.InvalidEnumValueError("type", "", []any{
+			string(RegistrySelectionKindKindDirect),
+			string(RegistrySelectionKindKindRegistered),
+		})
+	case RegistrySelectionKindKindDirect:
+		if u.direct == nil {
+			return nil, goa.MissingFieldError("value", "RegistrySelectionKind")
+		}
+		return u.direct, nil
+	case RegistrySelectionKindKindRegistered:
+		if u.registered == nil {
+			return nil, goa.MissingFieldError("value", "RegistrySelectionKind")
+		}
+		return u.registered, nil
+	default:
+		return nil, goa.InvalidEnumValueError("type", u.kind, []any{
+			string(RegistrySelectionKindKindDirect),
+			string(RegistrySelectionKindKindRegistered),
+		})
+	}
+}
+
+// MarshalJSON marshals the union into the canonical {type,value} JSON shape.
+func (u RegistrySelectionKind) MarshalJSON() ([]byte, error) {
+	value, err := u.Value()
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(struct {
+		Type  string `json:"type"`
+		Value any    `json:"value"`
+	}{
+		Type:  string(u.kind),
+		Value: value,
+	})
+}
+
+// UnmarshalJSON unmarshals the union from the canonical {type,value} JSON shape.
+func (u *RegistrySelectionKind) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Type  string          `json:"type"`
+		Value json.RawMessage `json:"value"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if len(raw.Value) == 0 {
+		return goa.MissingFieldError("value", "RegistrySelectionKind")
+	}
+	if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
+		return goa.InvalidFieldTypeError("value", nil, "non-null JSON value")
+	}
+	switch raw.Type {
+	case string(RegistrySelectionKindKindDirect):
+		var v *ResolvedToolset
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetDirect(v)
+	case string(RegistrySelectionKindKindRegistered):
+		var v *RegisteredToolsetSelection
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetRegistered(v)
+	default:
+		if raw.Type == "" {
+			return goa.MissingFieldError("type", "RegistrySelectionKind")
+		}
+		return goa.InvalidEnumValueError("type", raw.Type, []any{
+			string(RegistrySelectionKindKindDirect),
+			string(RegistrySelectionKindKindRegistered),
+		})
+	}
+	return nil
+}
+
+// ResourcePageContinuation holds exactly one of its branch values.
+type ResourcePageContinuation struct {
+	kind ResourcePageContinuationKind
+	done *ResourcePageDone
+	more *ResourcePageMore
+}
+
+// ResourcePageContinuationKind records which ResourcePageContinuation branch is selected.
+type ResourcePageContinuationKind string
+
+const (
+	// ResourcePageContinuationKindDone identifies the done branch.
+	ResourcePageContinuationKindDone ResourcePageContinuationKind = "done"
+	// ResourcePageContinuationKindMore identifies the more branch.
+	ResourcePageContinuationKindMore ResourcePageContinuationKind = "more"
+)
+
+// Kind returns the selected branch.
+func (u ResourcePageContinuation) Kind() ResourcePageContinuationKind {
+	return u.kind
+}
+
+// NewResourcePageContinuationDone constructs ResourcePageContinuation with the done branch set.
+func NewResourcePageContinuationDone(v *ResourcePageDone) ResourcePageContinuation {
+	return ResourcePageContinuation{
+		kind: ResourcePageContinuationKindDone,
+		done: v,
+	}
+}
+
+// AsDone returns the value when the done branch is selected.
+func (u ResourcePageContinuation) AsDone() (_ *ResourcePageDone, ok bool) {
+	if u.kind != ResourcePageContinuationKindDone {
+		return
+	}
+	return u.done, true
+}
+
+// SetDone selects the done branch and stores v.
+func (u *ResourcePageContinuation) SetDone(v *ResourcePageDone) {
+	*u = ResourcePageContinuation{
+		kind: ResourcePageContinuationKindDone,
+		done: v,
+	}
+}
+
+// NewResourcePageContinuationMore constructs ResourcePageContinuation with the more branch set.
+func NewResourcePageContinuationMore(v *ResourcePageMore) ResourcePageContinuation {
+	return ResourcePageContinuation{
+		kind: ResourcePageContinuationKindMore,
+		more: v,
+	}
+}
+
+// AsMore returns the value when the more branch is selected.
+func (u ResourcePageContinuation) AsMore() (_ *ResourcePageMore, ok bool) {
+	if u.kind != ResourcePageContinuationKindMore {
+		return
+	}
+	return u.more, true
+}
+
+// SetMore selects the more branch and stores v.
+func (u *ResourcePageContinuation) SetMore(v *ResourcePageMore) {
+	*u = ResourcePageContinuation{
+		kind: ResourcePageContinuationKindMore,
+		more: v,
+	}
+}
+
+// Validate ensures exactly one valid branch is selected.
+func (u ResourcePageContinuation) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u ResourcePageContinuation) Value() (any, error) {
+	switch u.kind {
+	case "":
+		return nil, goa.InvalidEnumValueError("type", "", []any{
+			string(ResourcePageContinuationKindDone),
+			string(ResourcePageContinuationKindMore),
+		})
+	case ResourcePageContinuationKindDone:
+		if u.done == nil {
+			return nil, goa.MissingFieldError("value", "ResourcePageContinuation")
+		}
+		return u.done, nil
+	case ResourcePageContinuationKindMore:
+		if u.more == nil {
+			return nil, goa.MissingFieldError("value", "ResourcePageContinuation")
+		}
+		return u.more, nil
+	default:
+		return nil, goa.InvalidEnumValueError("type", u.kind, []any{
+			string(ResourcePageContinuationKindDone),
+			string(ResourcePageContinuationKindMore),
+		})
+	}
+}
+
+// MarshalJSON marshals the union into the canonical {type,value} JSON shape.
+func (u ResourcePageContinuation) MarshalJSON() ([]byte, error) {
+	value, err := u.Value()
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(struct {
+		Type  string `json:"type"`
+		Value any    `json:"value"`
+	}{
+		Type:  string(u.kind),
+		Value: value,
+	})
+}
+
+// UnmarshalJSON unmarshals the union from the canonical {type,value} JSON shape.
+func (u *ResourcePageContinuation) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Type  string          `json:"type"`
+		Value json.RawMessage `json:"value"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if len(raw.Value) == 0 {
+		return goa.MissingFieldError("value", "ResourcePageContinuation")
+	}
+	if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
+		return goa.InvalidFieldTypeError("value", nil, "non-null JSON value")
+	}
+	switch raw.Type {
+	case string(ResourcePageContinuationKindDone):
+		var v *ResourcePageDone
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetDone(v)
+	case string(ResourcePageContinuationKindMore):
+		var v *ResourcePageMore
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetMore(v)
+	default:
+		if raw.Type == "" {
+			return goa.MissingFieldError("type", "ResourcePageContinuation")
+		}
+		return goa.InvalidEnumValueError("type", raw.Type, []any{
+			string(ResourcePageContinuationKindDone),
+			string(ResourcePageContinuationKindMore),
+		})
+	}
+	return nil
+}
+
 // ToolFieldSegment holds exactly one of its branch values.
 type ToolFieldSegment struct {
 	kind    ToolFieldSegmentKind

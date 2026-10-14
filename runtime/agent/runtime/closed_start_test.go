@@ -57,7 +57,7 @@ func TestRunOneShotClosedStartSkipsCallback(t *testing.T) {
 			f := newClosedStartFixture(t, storageCommandOneShotStart, status, false)
 			calls := 0
 
-			err := f.runtime.RunOneShot(t.Context(), OneShotRunInput{
+			err := newTestSynchronous(t, f.store, f.runtime.Bus).RunOneShot(t.Context(), OneShotRunInput{
 				AgentID: "agent", RunID: "run", TurnID: "turn",
 			}, func(context.Context) error {
 				calls++

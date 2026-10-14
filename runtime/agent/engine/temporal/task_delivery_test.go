@@ -17,6 +17,8 @@ import (
 	"go.temporal.io/sdk/worker"
 
 	"goa.design/goa-ai/internal/tooloperation"
+	genregistry "goa.design/goa-ai/registry/gen/registry"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 )
@@ -59,7 +61,7 @@ func TestToolActivityRetryPolicyKeepsRejectedInputFinal(t *testing.T) {
 				return &api.ToolOutput{PendingExecution: pending}, nil
 			}))
 			require.NoError(t, eng.RegisterWorkflow(t.Context(), engine.WorkflowDefinition{Name: "task.delivery", Handler: func(wf engine.WorkflowContext, _ *api.RunInput) (*api.RunOutput, error) {
-				future, err := wf.ExecuteToolActivityAsync(engine.ToolActivityCall{Name: "task.cancel", Input: &api.ToolInput{ExecutionSequence: 3, ExecutionContinuation: operation}, Options: engine.ActivityOptions{StartToCloseTimeout: time.Second, RetryPolicy: engine.RetryPolicy{UnlimitedAttempts: true, InitialInterval: time.Millisecond}}})
+				future, err := wf.ExecuteToolActivityAsync(engine.ToolActivityCall{Name: "task.cancel", Input: &api.ToolInput{Invocation: genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: "test-run", ToolCallID: "test-call"})}, Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, ExecutionSequence: 3, ExecutionContinuation: operation}, Options: engine.ActivityOptions{StartToCloseTimeout: time.Second, RetryPolicy: engine.RetryPolicy{UnlimitedAttempts: true, InitialInterval: time.Millisecond}}})
 				if err != nil {
 					return nil, err
 				}
@@ -70,9 +72,9 @@ func TestToolActivityRetryPolicyKeepsRejectedInputFinal(t *testing.T) {
 				id, _, waiting := out.PendingExecution.AsTaskWait()
 				assert.True(t, waiting)
 				assert.Empty(t, id)
-				return &api.RunOutput{RunID: "task-run"}, nil
+				return &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "task-run"}, nil
 			}}))
-			env.ExecuteWorkflow("task.delivery", &api.RunInput{RunID: "task-run"})
+			env.ExecuteWorkflow("task.delivery", &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "task-run"})
 			if permanent {
 				err := env.GetWorkflowError()
 				require.ErrorContains(t, err, "authorization rejected")

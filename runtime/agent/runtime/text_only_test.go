@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	genrecords "goa.design/goa-ai/internal/testpresentation/gen/records/toolsets/records"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -89,7 +90,9 @@ func TestTextOnlyCatalogAndExecution(t *testing.T) {
 	}
 	for _, value := range []string{"true", "false"} {
 		payload := []byte(`{"query":"active","render_ui":` + value + `}`)
-		err := rt.normalizePlanResultForExecution(&PlanResult{ToolCalls: []ToolCall{{Name: genrecords.Read, ModelName: genrecords.Read, ModelPayload: payload, Payload: payload, ToolCallID: "call"}}}, textRun, "service.agent")
+		_, err := prepareConsumerInput(func(name tools.Ident) (tools.ToolSpec, bool) {
+			return genrecords.SpecRead().ForTextOnly(), name == genrecords.Read
+		}, genrecords.Read, payload)
 		require.Error(t, err)
 	}
 	err := rt.normalizePlanResultForExecution(&PlanResult{ToolCalls: []ToolCall{{Name: genrecords.Read, Payload: []byte(`{"query":"active","render_ui":false}`), ToolCallID: "compiled"}}}, textRun, "service.agent")
@@ -125,9 +128,9 @@ func TestTextOnlyChildAndCheckpointPolicy(t *testing.T) {
 		}
 	}
 	saved := checkpointContextFromRun(run.Context{RunID: "first", TextOnly: true})
-	restored := restoreCheckpointRunContext(saved, &RunInput{RunID: "resumed"})
+	restored := restoreCheckpointRunContext(saved, &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("test.agent"))}, RunID: "resumed"})
 	assert.True(t, restored.TextOnly)
-	assert.False(t, restoreCheckpointRunContext(checkpointContextFromRun(run.Context{}), &RunInput{}).TextOnly)
+	assert.False(t, restoreCheckpointRunContext(checkpointContextFromRun(run.Context{}), &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("test.agent"))}}).TextOnly)
 }
 
 func TestTextOnlyCompletedActivityFailsWithoutRetry(t *testing.T) {
@@ -141,7 +144,7 @@ func TestTextOnlyCompletedActivityFailsWithoutRetry(t *testing.T) {
 		assert.JSONEq(t, `{"query":"active","render_ui":false,"render_summary":false}`, string(call.Payload))
 		return &ToolExecutionResult{ToolResult: &planner.ToolResult{Name: genrecords.Read, Result: &genrecords.ReadResult{Count: 2}, ServerData: []byte(`[{"kind":"record.card","audience":"timeline","data":{"count":2}}]`)}}, nil
 	}}))
-	output, err := rt.ExecuteToolActivity(t.Context(), &ToolInput{ToolName: genrecords.Read, ToolsetName: "records", RunID: "run", ToolCallID: "read", Payload: []byte(`{"query":"active"}`), TextOnly: true})
+	output, err := rt.ExecuteToolActivity(t.Context(), &ToolInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("test.agent"))}, ToolName: genrecords.Read, ToolsetName: "records", RunID: "run", ToolCallID: "read", Payload: []byte(`{"query":"active"}`), TextOnly: true})
 	assert.Nil(t, output)
 	require.Error(t, err)
 	assert.True(t, engine.IsActivityErrorNonRetryable(err))
@@ -193,11 +196,14 @@ func TestTextOnlyLimitFinalizationChecksInlineArguments(t *testing.T) {
 			}))
 			reg := AgentRegistration{Definition: testRegistrationDefinition("records.reader", engine.WorkflowDefinition{}, []tools.ToolSpec{spec})}
 			rt.agents[reg.Definition.route.ID] = reg
-			input := &RunInput{AgentID: reg.Definition.route.ID, RunID: "run", SessionID: "session", TurnID: "turn", Policy: &PolicyOverrides{TextOnly: true}}
+			input := &RunInput{Subject: genrunidentity.RunSubject{
+				Executor: genrunidentity.
+					NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(reg.Definition.route.ID)),
+			}, RunID: "run", SessionID: "session", TurnID: "turn", Policy: &PolicyOverrides{TextOnly: true}}
 			seedRunMeta(t, rt, input)
 			_, err := createSessionForTest(t.Context(), rt.Store, input.SessionID)
 			require.NoError(t, err)
-			base := &workflowConversation{RunContext: run.Context{RunID: input.RunID, TextOnly: true, SessionID: input.SessionID}}
+			base := &workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{RunID: input.RunID, TextOnly: true, SessionID: input.SessionID}}
 			wf := &testWorkflowContext{ctx: t.Context(), hookRuntime: rt}
 			output, err := rt.finishLimitTerminalCall(wf, reg, input, base, nil, nil, model.TokenUsage{}, initialCaps(RunPolicy{}), 1, input.TurnID, LimitTerminalCall{Name: spec.Name, Payload: rawjson.Message(test.payload)}, planner.TerminationReasonToolCap, time.Time{})
 			if test.rejected {
@@ -257,7 +263,7 @@ func TestTextOnlyNativeDefaultPrompt(t *testing.T) {
 			original := rawjson.Message(`{"query":"explain render_ui as domain text"}`)
 			payload, err := prepareTextOnlyExecutionPayload(spec, original)
 			require.NoError(t, err)
-			call := ToolCall{Name: spec.Name, Payload: payload, ModelPayload: append(rawjson.Message(nil), original...), TextOnly: true}
+			call := ToolCall{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("service.agent")}, Name: spec.Name, Payload: payload, ModelPayload: append(rawjson.Message(nil), original...), TextOnly: true}
 			request, err := rt.buildAgentChildRequest(t.Context(), &AgentToolConfig{}, &call, nil, nil)
 			require.NoError(t, err)
 			require.Len(t, request.messages, 1)
@@ -294,7 +300,7 @@ func TestTextOnlyNativeDefaultPromptPreservesDomainShapes(t *testing.T) {
 			spec := newAnyJSONSpec("service.tools.delegate")
 			spec.TextOnly = &tools.ModelContract{Payload: spec.Payload, ExecutionCodec: spec.ExecutionPayloadCodec}
 			rt.toolSpecs[spec.Name] = spec
-			call := ToolCall{Name: spec.Name, Payload: rawjson.Message(input), TextOnly: true}
+			call := ToolCall{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("service.agent")}, Name: spec.Name, Payload: rawjson.Message(input), TextOnly: true}
 			request, err := rt.buildAgentChildRequest(t.Context(), &AgentToolConfig{}, &call, nil, nil)
 			require.NoError(t, err)
 			assert.JSONEq(t, input, firstText(request.messages[0]))

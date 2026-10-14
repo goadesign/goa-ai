@@ -17,6 +17,7 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/internal/workflowcodec"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/session"
@@ -25,8 +26,9 @@ import (
 
 type savedStartContext struct {
 	*routeWorkflowContext
-	result *api.StorageActivityResult
-	calls  *atomic.Int32
+	result    *api.StorageActivityResult
+	calls     *atomic.Int32
+	terminals *[]*api.UnstartedTerminalCommand
 }
 
 func TestStartResultValidationBeforeHooks(t *testing.T) {
@@ -57,9 +59,9 @@ func TestStartResultValidationBeforeHooks(t *testing.T) {
 					child: storage.ChildRunStartResult{
 						Outcome: session.RunStartProceed, RunStatus: test.status, ParentRecord: record, Started: record,
 					},
-					oneShot: storage.OneShotRunStartResult{RunStatus: test.status, Record: record},
+					oneShot: storage.OneShotRunStartResult{Outcome: session.RunStartProceed, RunStatus: test.status, Record: record},
 					oneShotChild: storage.OneShotChildRunStartResult{
-						RunStatus: test.status, ParentRecord: record, Started: record,
+						Outcome: session.RunStartProceed, RunStatus: test.status, ParentRecord: record, Started: record,
 					},
 				}
 
@@ -88,9 +90,9 @@ func TestStartResultRejectsInvalidRelations(t *testing.T) {
 			{"stop completed", func(s *api.StartRunResult) {
 				s.Outcome, s.RunStatus, s.CancellationReason = session.RunStartStop, session.RunStatusCompleted, run.CancellationReasonSessionEnded
 			}, "requires running, canceled, or failed status"},
-			{"stop other reason", func(s *api.StartRunResult) {
-				s.Outcome, s.RunStatus, s.CancellationReason = session.RunStartStop, session.RunStatusCanceled, run.CancellationReasonUserRequested
-			}, "session_ended reason"},
+			{"stop missing reason", func(s *api.StartRunResult) {
+				s.Outcome, s.RunStatus, s.CancellationReason = session.RunStartStop, session.RunStatusCanceled, ""
+			}, "nonempty cancellation reason"},
 			{"missing records", func(s *api.StartRunResult) { s.Records = nil }, "records, want"},
 			{"extra record", func(s *api.StartRunResult) { s.Records = append(s.Records, s.Records[0]) }, "records, want"},
 			{"missing id", func(s *api.StartRunResult) { s.Records[0].ID = "" }, "no committed id"},
@@ -101,6 +103,24 @@ func TestStartResultRejectsInvalidRelations(t *testing.T) {
 				test.mutate(runStartStorageResult(f.input, result))
 				err := validateStorageResult(kind, result)
 				assert.ErrorContains(t, err, test.want)
+			})
+		}
+	}
+}
+
+func TestStartResultPreservesOwnerCancellationReason(t *testing.T) {
+	for _, kind := range []storageCommandKind{
+		storageCommandRootStart, storageCommandChildStart, storageCommandOneShotStart, storageCommandOneShotChildStart,
+	} {
+		for _, reason := range []string{run.CancellationReasonSessionEnded, run.CancellationReasonUserRequested, run.CancellationReasonEngineCanceled} {
+			t.Run(fmt.Sprintf("%d/%s", kind, reason), func(t *testing.T) {
+				f := newClosedStartFixture(t, kind, session.RunStatusCanceled, true)
+				result := testStorageResult(f.command)
+				start := runStartStorageResult(f.input, result)
+				start.Outcome, start.RunStatus, start.CancellationReason = session.RunStartStop, session.RunStatusCanceled, reason
+				start.Records = append(start.Records, storage.AppendResult{ID: "cancellation", SessionStatus: start.Records[0].SessionStatus})
+				require.NoError(t, validateStorageResult(kind, result))
+				assert.Equal(t, reason, start.CancellationReason)
 			})
 		}
 	}
@@ -125,7 +145,7 @@ func TestStartResultCodecAndOldHistory(t *testing.T) {
 			payload.Data = []byte(strings.Replace(string(payload.Data), `"RunStatus":"running",`, "", 1))
 			var old api.StorageActivityResult
 			require.NoError(t, dc.FromPayload(payload, &old))
-			wfCtx := &savedStartContext{routeWorkflowContext: f.context, result: &old, calls: &atomic.Int32{}}
+			wfCtx := &savedStartContext{routeWorkflowContext: f.context, result: &old, calls: &atomic.Int32{}, terminals: &[]*api.UnstartedTerminalCommand{}}
 			output, err := f.runtime.ExecuteWorkflow(wfCtx, f.input)
 			require.ErrorContains(t, err, `unknown run status ""`)
 			assert.True(t, engine.IsActivityErrorNonRetryable(err))
@@ -137,6 +157,17 @@ func TestStartResultCodecAndOldHistory(t *testing.T) {
 			assert.Zero(t, f.store.ordinaryCalls)
 			assert.Zero(t, f.store.terminalCalls)
 			assert.EqualValues(t, 1, wfCtx.calls.Load())
+			require.Len(t, *wfCtx.terminals, 1)
+			terminal := (*wfCtx.terminals)[0]
+			assert.Equal(t, f.input.RunID, terminal.RunID)
+			require.NotNil(t, terminal.PublishedSeed)
+			assert.Equal(t, f.input.SeedEndID, terminal.PublishedSeed.EndID)
+			failure, ok := terminal.Outcome.AsFailed()
+			require.True(t, ok)
+			require.NotNil(t, failure.Message)
+			assert.Equal(t, hooks.PublicErrorInternal, *failure.Message)
+			require.NotNil(t, failure.DebugMessage)
+			assert.Contains(t, *failure.DebugMessage, `unknown run status ""`)
 
 			payload.Data = []byte(strings.Replace(string(payload.Data), `"Outcome":`, `"Unexpected":true,"Outcome":`, 1))
 			assert.ErrorContains(t, dc.FromPayload(payload, &decoded), `unknown field "Unexpected"`)
@@ -159,15 +190,25 @@ func (s *savedStartContext) Detached() engine.WorkflowContext {
 		routeWorkflowContext: s.withContext(context.WithoutCancel(s.ctx)),
 		result:               s.result,
 		calls:                s.calls,
+		terminals:            s.terminals,
 	}
 }
 
 func (s *savedStartContext) WithCancel() (engine.WorkflowContext, func()) {
 	ctx, cancel := context.WithCancel(s.ctx)
-	return &savedStartContext{routeWorkflowContext: s.withContext(ctx), result: s.result, calls: s.calls}, cancel
+	return &savedStartContext{routeWorkflowContext: s.withContext(ctx), result: s.result, calls: s.calls, terminals: s.terminals}, cancel
 }
 
-func (s *savedStartContext) ExecuteStorageActivity(engine.StorageActivityCall) (*api.StorageActivityResult, error) {
-	s.calls.Add(1)
-	return s.result, nil
+// Saved start history returns its malformed response only for the start command.
+// A later failure write uses the real store so the test observes durable completion.
+func (s *savedStartContext) ExecuteStorageActivity(call engine.StorageActivityCall) (*api.StorageActivityResult, error) {
+	command := call.Command
+	if command.RootStart != nil || command.ChildStart != nil || command.OneShotStart != nil || command.OneShotChildStart != nil {
+		s.calls.Add(1)
+		return s.result, nil
+	}
+	if command.UnstartedTerminal != nil {
+		*s.terminals = append(*s.terminals, command.UnstartedTerminal)
+	}
+	return s.routeWorkflowContext.ExecuteStorageActivity(call)
 }

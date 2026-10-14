@@ -1580,7 +1580,7 @@ directly:
   `codegen.CapsData.MaxRecoveryTurns`.
 
 These names and their serialized field names are intentionally breaking.
-Suspensions written by this runtime use `goa-ai.run-suspension.v13`. Earlier
+Suspensions written by this runtime use `goa-ai.run-suspension.v14`. Earlier
 versions cannot resume on this runtime. Current checkpoints reference an exact
 saved history position; see [Runtime Store](#runtime-store-storagestore) for
 preparation and checkpoint upgrade requirements. They retain the recovery contract: the advertised catalog is stored for every accepted recovery
@@ -3038,7 +3038,7 @@ publication. Register applies the provider version check during startup.
 RenewProvider sends no version field: strict current-state validation and the
 exact expected token enforce the version admitted at startup. The earlier catalog
 layout split did not itself change protocol-10 identity. The current release uses
-wire protocol 13; its version participates in token derivation, so regenerated
+wire protocol 14; its version participates in token derivation, so regenerated
 declarations require current admission rather than reuse of old tokens.
 Incoming `run_id`, `session_id`, `turn_id`, `tool_call_id`, and
 `parent_tool_call_id` values are bounded to 256
@@ -3166,11 +3166,17 @@ wrappers and callbacks together. The generated method now returns
 `(*CompleteToolCallResult, error)` instead of only `error`; the response has a
 required `accepted` field. This changes the generated Go and gRPC response
 contracts. Providers must connect to a registry implementing that response
-before relying on it. Existing call records, provider request messages, and
-terminal events keep their format; no storage migration or compatibility mode
-is needed.
+before relying on it. For an installation already using current registry wire
+protocol 14, adopting this completion response leaves call records, provider
+request messages, and terminal events unchanged. An installation upgrading from
+an earlier protocol must first drain accepted calls and old providers under the
+[executable ownership and upgrade instructions](#executable-ownership-and-upgrade).
+The completion response itself needs no storage migration or compatibility mode.
 
-Every retained call hash has an explicit `admitted` or `rejected` decision.
+Every retained call hash has an explicit `prepared` or `rejected` decision.
+A prepared record retains the validated request before publication and keeps its
+provider assignment fixed after publication. A rejected record retains the
+error that prevented execution.
 Missing and unknown decisions are protocol errors; reads reject them without
 mutating the record.
 
@@ -3375,6 +3381,20 @@ existing registration token. Execution and overload retry require that token;
 confirmation and checkpoint restoration use the saved definitions without
 reading the current catalog. Current agent consumption and run policy still
 constrain new work. Runtime registration of static tools remains immutable.
+
+Applications with owner-selected catalogs use `IncludeRegistered` with the exact
+`CatalogSource` and resolved registration. This gives equal operation names from
+different owners distinct derived names while preserving the original provider
+operation. `IncludeResolved` retains original names for direct imports.
+`ForEachRegisteredSource` supplies copies for generated source input bindings;
+those bindings require the same owner, resource and exact target.
+
+Saved bindings now encode the generated `RegistrySelection` union, distinguishing
+direct registrations from registered resources with required source identity.
+Convert old protobuf `ResolveToolsetResponse` binding bytes before starting the
+new runtime, and verify replay and fresh-turn recovery against preserved state.
+The [consumer binding upgrade](tool_search.md#generation-and-upgrades) describes
+conversion and rollback requirements separately from registry storage changes.
 
 `Deferred()` independently chooses native model tool search for either static
 or registry tools. Planners continue to pass
@@ -3683,6 +3703,153 @@ instead of calling the generated result codec and bounded-result projection
 helpers separately.
 
 ---
+
+## Independent Registered Operations
+
+`StartToolOperation` and `StartOneShotToolOperation` submit a generated
+`RegisteredInvocation` together with its exact `ResolvedToolset`. The invocation
+retains the root run identity, selected target and original arguments.
+The resolved toolset supplies the executable schema and provider route; the
+runtime checks that they match the selected target.
+
+The host checks the caller's access before submitting work. The engine owns the
+request before a provider starts. Native Agent operations use their
+generated provider workflow and queue.
+Service operations use `WithToolWorkflowQueue` and a worker that calls
+`RegisterToolWorkflow`; they require no Agent, planner, model, or conversation.
+Submit-only processes do not register the provider locally. Configure the same
+Registry name and generated client used by the retained binding.
+
+Service runs publish an empty literal seed with their service subject. The seed
+records execution ownership without creating model messages. Native roots retain
+`RegisteredInvocation` through the existing run context and private checkpoint;
+direct host-authorized Agent operations retain `Operation` instead. These fields
+cannot describe the same invocation simultaneously.
+
+A service accepting an input answer must first save the predecessor, new run ID,
+and typed answer as an immutable dispatch obligation. Its durable worker calls
+`StartToolContinuation` and `EnsureToolContinuationCompletion`. Those methods
+recover the exact published successor request before reading saved suspension
+again, reject a changed answer, and derive authority and routing from saved data.
+They are worker submission and completion methods, not a client retry protocol.
+The existing cancellation job likewise owns cleanup of suspended service work.
+
+Service workflow completion stores the selected operation's structured result,
+including failure details and returned content, before the engine reports
+completion. A preparation stop before the initial Run saves the original
+invocation and the owner's exact cancellation reason without calling a provider.
+For an already saved continuation, preparation may still publish its immutable
+request after a stop. The worker submits that request to the engine, and the
+first Run start records cancellation before any provider call. Recovery reuses
+the published request and rejects a different answer.
+
+`SeedDeclaration.PredecessorRunID` records lifecycle succession separately from
+model history. A service successor uses an empty literal seed and its exact
+predecessor; an Agent continuation must match `SourceRunID`. A new conversational
+turn may read earlier model history while leaving `PredecessorRunID` empty.
+Stores must atomically require the same subject, session, original invocation,
+a suspended predecessor, and no previous successor. Service one-shot successors
+preserve the absence of a Session.
+
+Custom stores and all seed producers must migrate together. Persisted Agent
+continuation seeds require the exact predecessor copied from their existing
+continuation source. Other existing seed kinds retain an empty predecessor.
+Do not infer missing lifecycle identity from labels or timestamps. Service
+continuation seeds are a new format; they cannot be executed by older workers.
+
+## Direct Agent Operations
+
+Call an exported operation without first publishing it as a tool. The caller
+needs its generated portable declaration and an authorized immutable
+configuration, not the provider implementation or private Agent definition.
+
+```go
+handle, err := rt.StartOneShotOperation(
+    ctx, runID, operation, arguments, labels, nil,
+)
+if err != nil {
+    return err
+}
+output, err := handle.Wait(ctx)
+```
+
+Use `StartOperation(ctx, sessionID, runID, operation, arguments, labels, memo)`
+for an existing host-owned session. The host must authorize the application and
+actor before calling either method. The selected configuration owns planner
+policy. A caller cannot redirect the selected worker queue or supply prepared
+history, provider policy, a Registry publication or a synthetic parent.
+
+The final required argument is the existing engine memo map; pass `nil` when
+there is no memo. Its values belong to the accepted launch request and are part
+of engine replay identity. Provider preparation cannot change them. Fixed planner
+facts instead belong in `AgentToolConfiguration.Metadata`, which is saved with
+the prepared input and restored without rerunning the provider.
+
+The engine owns the complete accepted request before preparation starts.
+The provider's typed preparation activity checks the operation against its own
+generated export and route, then invokes its registered configuration resolver.
+Direct calls and delegation use the same resolver and exported contract checks.
+The runtime publishes the prepared input through its store, enters the common
+Agent execution loop, and validates `FinalToolResult` against that exact contract.
+`PlanInput.ParentTool` carries the selected result contract for direct calls as
+well as delegation; it is not an advertised callable tool.
+
+A one-shot direct call has its own root run and no product conversation or child
+link. Losing an observer leaves the engine responsible for accepted work. Exact
+request replay observes the original run; changed input under the same identity
+conflicts. A lost preparation reply recovers the original prepared input rather
+than rerendering it. Input continuations restore the selected operation from the
+checkpoint and do not take a new declaration from the caller.
+
+Preparation can fail before the runtime store creates its run record. A host's
+public run owner must observe the accepted engine execution to report that
+failure; an absent runtime-store record alone does not mean no work was accepted.
+
+### Provider-Owned History
+
+Every `AgentToolResolver` returns an explicit history selection in
+`AgentToolConfiguration.History`. This applies to direct operations and Registry
+Agent children:
+
+```go
+configuration := &runtime.AgentToolConfiguration{
+    History: runtime.LiteralAgentHistory(messages),
+    Labels: labels,
+    Policy: policy,
+}
+```
+
+For a later conversational turn, select an exact successfully completed run:
+
+```go
+configuration.History = runtime.NextTurnAgentHistory(
+    completedRunID, systemMessages, freshMessages,
+).WithoutPriorReasoning()
+```
+
+The source must belong to the same Agent and session as the new run. The store
+captures its committed terminal position. The runtime replaces the source's
+system messages with `systemMessages`, retains its other messages by reference,
+and appends `freshMessages`, which cannot contain system messages. It validates
+the completed source before combining it with fresh input. One-shot runs cannot
+select a prior session's history.
+
+`WithoutPriorReasoning` applies to supplied messages and inherited history.
+Exclusions remain effective through later turns, even when a later provider does
+not request another exclusion. Prompt versions belong in `RenderedPrompts`.
+The runtime copies resolver values and publishes history, labels and policy
+together. A lost reply or exact request replay recovers the accepted preparation
+without resolving a newer source or configuration. Registry providers do not
+load their caller's transcript to prepare their own history.
+
+**Resolver upgrade:** `AgentToolConfiguration.Messages`, present in v0.88.0,
+has been replaced by required `History`. Replace each `Messages: messages` with
+`History: runtime.LiteralAgentHistory(messages)`. An intentionally empty
+transcript is `runtime.LiteralAgentHistory(nil)`; a zero `AgentHistory` is rejected.
+Update and rebuild every provider resolver when adopting this API. This is a
+source-breaking upgrade; no optional legacy field or alternate parser remains.
+`AgentClient.Prepare` and `PrepareNextTurn` keep their signatures and history
+semantics. Existing published history and preparation records need no migration.
 
 ## Agent-as-Tool Composition
 
@@ -4124,14 +4291,14 @@ For MCP services:
 
 The catalog layout split separates combined records into compact state, current
 definitions, and permanent retired tokens. That earlier change preserved
-protocol-10 identity. The current release additionally uses wire protocol 13
+protocol-10 identity. The current release additionally uses wire protocol 14
 and generated operation contracts. Treat layout conversion and protocol cutover
 as separate steps; matching wire versions alone do not make old and new catalog
 writers compatible. Do not delete the catalog or its retired-token history.
 
 The procedure below preserves data during the layout conversion. Before admitting
 work on the current release, settle old executable calls, regenerate complete
-declarations, and re-admit providers under wire protocol 13. Compare generated
+declarations, and re-admit providers under wire protocol 14. Compare generated
 fingerprints and preserve historical identity; a version-derived old token cannot
 serve as a new admission. See [current release actions](releases/v0.88.0.md#required-upgrade-actions).
 
@@ -4362,7 +4529,7 @@ For runtime storage and workflow adapters:
 - Stop setting `policy.CapsState.ExpiresAt`. The workflow owns its budget and
   hard deadlines directly.
 - Treat saved suspensions from versions before
-  `goa-ai.run-suspension.v13` as incompatible. They cannot be resumed by this
+  `goa-ai.run-suspension.v14` as incompatible. They cannot be resumed by this
   runtime.
 
 Install the Goa revision required by this module before regenerating:
@@ -4384,7 +4551,7 @@ For a release that changes generated or persisted runtime shapes:
    new work.
 
 Completed run history keeps the same meaning. Suspensions restored for
-continuation must use the current `goa-ai.run-suspension.v13` contract. Historical
+continuation must use the current `goa-ai.run-suspension.v14` contract. Historical
 reporting does not restore private checkpoint state; see
 [Runtime Store](#runtime-store-storagestore). A host may still need to convert
 its physical records or collections so the new store can read them. That
@@ -4400,7 +4567,7 @@ workflow still requires attachment by exact ID. Deploy every workflow starter
 together before admission resumes. A queryable execution without the reserved
 recipe memo is a conflict; the runtime never infers its original start request.
 
-`goa-ai.run-suspension.v13` is the only accepted suspension schema for
+`goa-ai.run-suspension.v14` is the only accepted suspension schema for
 continuation restoration. Version eleven and earlier are rejected without an
 omission fallback. Before coordinated
 worker upgrade, finish old-format saved work under its owning runtime; if any
@@ -5334,16 +5501,42 @@ original Run; missing, unpublished, changed or purged history remains an error.
 The engine digest covers the accepted input containing that position. It does
 not replace publication checks or the digest used to verify compiled bytes.
 
+Callback applications construct `NewSynchronous(store, registry, bus)` and call
+`SynchronousRuntime.RunOneShot`. The required `storage.SynchronousStore` exposes
+only callback preparation, empty-history publication, synchronous start, prompt
+append, metadata read, and terminal write. It does not embed the engine Store.
+The supplied `*prompt.Registry` remains available as `PromptRegistry`; supply an
+existing `hooks.Bus` to retain local observer behavior. Missing dependencies
+fail construction. Callbacks do not submit workflows, create Sessions, suspend,
+or claim engine acceptance.
+
+Migrating a callback caller means replacing its Runtime constructor with
+`NewSynchronous`, supplying the existing prompt registry and hook bus, and keeping
+the same `OneShotRunInput` and callback. An application using both execution kinds
+constructs both runtimes; each receives only the store capability it requires.
+Store implementers keep historical synchronous start records and their empty
+engine proof unchanged. Never infer the synchronous kind from a missing legacy
+digest or submit historical callbacks to engine repair.
+
 `RunOneShot` publishes empty history and its immutable synchronous command
 before invoking the callback. Lost begin, append, publish or start replies use
 the existing storage retry rule with the same command, attempt, bytes and
 timestamp. General caller preparation retains its context-aware behavior.
-PreparedRun v3 references, compiled v2 envelopes, checkpoint v9, and rendered
-prompt facts keep their existing ownership and formats.
+PreparedRun references, compiled envelopes, checkpoints, and rendered prompt
+facts keep their existing owners. Retained format names do not make old nested
+run inputs compatible with the required Subject representation; the stored-data
+upgrade described below still applies.
 
-Changed run, agent, session, or parent identity returns
-`session.ErrRunConflict`. A record whose agent or session differs from its
-stored run returns `storage.ErrRunRecordOwnerMismatch`.
+Every common Run input, output, start, metadata record, seed, preparation,
+hook record, and snapshot carries the required generated `Subject`. It selects
+one actual Agent or a service tool plus its configured Registry source.
+Agent-specific planner inputs, model-history checkpoints, and child Agent
+identifiers keep their Agent meaning. See [Run subjects](run-subjects.md) for
+construction, ownership, and the breaking stored-data upgrade.
+
+Changed run, subject, session, or parent identity returns
+`session.ErrRunConflict`. A record whose full subject or session differs from
+its stored run returns `storage.ErrRunRecordOwnerMismatch`.
 
 Every mutation method returns `storage.ContractError` when repeating the same
 command cannot succeed, including stored-state conflicts and invalid record
@@ -6250,6 +6443,14 @@ long a healthy planner or tool attempt may run once execution starts. Queue-wait
 timeouts and heartbeat-based liveness detection are engine-specific concerns and
 belong in the engine adapter, not the generic runtime API.
 
+Planner, tool, and preparation activities send heartbeats when the engine
+provides a recorder, even without a heartbeat failure timeout. This lets the
+engine deliver cancellation to a running activity. Temporal workers use a
+five-second default heartbeat batching interval when callers leave that worker
+option unset; explicit worker settings remain unchanged. Cancellation is
+cooperative: callbacks must observe their context, and the heartbeat interval
+does not promise a maximum cancellation latency.
+
 ---
 
 ## Introspection
@@ -6405,6 +6606,24 @@ search values to their portable types and fixes the root request digest. Each
 adapter still translates and submits those values through its own backend.
 The public functions use only `engine` and `api` values.
 
+Custom adapters must implement `Engine.RegisterAgentOperationActivity` and
+`WorkflowContext.ExecuteAgentOperationActivity`. Agent registration installs this
+typed preparation activity even when the caller starts only message-based runs,
+so both methods are required before upgrading. Registration receives the
+activity name, `ActivityOptions`, and a handler from `*api.RunInput` to
+`*api.RunInput`. Execution receives `AgentOperationActivityCall` and returns the
+complete prepared input for that same accepted operation.
+
+Use the supplied provider queue, activity timeouts and retry policy, and carry
+workflow cancellation into the preparation attempt. Preparation performs I/O in
+an activity, never in replayed workflow code. Copy the complete accepted input
+and successful prepared result through the adapter's workflow converter; retain
+the result in history so replay uses the recorded preparation. Preserve all
+operation, input, label, policy and history fields without numeric conversion or
+sharing mutable handler values with callers. The in-memory and Temporal adapters
+implement these requirements. An optional interface or local preparation
+fallback would let custom adapters bypass provider ownership and is unsupported.
+
 Custom adapters must also implement `RegisterAgentChildActivity` and
 `ExecuteAgentChildActivity`. This activity prepares a nested agent's messages,
 renders any consumer-side prompt, and returns exactly one `Success` or
@@ -6429,14 +6648,39 @@ that Temporal would surface.
 start. The Temporal adapter waits for Temporal's child-start acknowledgement;
 the returned handle represents the already-accepted child's later completion.
 
-`QueryRunCompletion` returns the current `Status` in the same `RunCompletion`
-value as the terminal `Output` or `WorkflowError`. Open runs return only their
-non-terminal status. Closed runs return their terminal status, stable
-`CompletedAt` time, and output or workflow error. The method's separate `error`
+`QueryRunCompletion` returns the current `Status` and the engine's actual
+accepted `StartRequestDigest` in the same `RunCompletion` value as the terminal
+`Output` or `WorkflowError`. Open runs return their status and accepted digest.
+Closed runs additionally return stable `CompletedAt` time and output or
+workflow error. Adapters reject missing acceptance metadata and intermediate
+retry attempts with a successor. Temporal pins all completion reads to the
+same backend execution. The method's separate `error`
 reports that the adapter could not retrieve this information. There is no
 separate status method.
 Adapters must preserve this distinction so completion recovery cannot record a
 network or backend query error as the workflow's own failure.
+
+High-level Agent workflows call `WorkflowContext.RequireSingleAttempt` before
+execution. Their durable activities may retry; the workflow itself must have
+no retry policy or a maximum of one attempt. Custom engine workflows may keep
+their own retry behavior.
+
+Failures or accepted cancellation before Run creation are stored through
+`Store.RecordUnstartedExecutionTerminal`. The required generated command
+retains the original invocation, executor, Session, actual accepted digest,
+canonical outcome and an explicit workflow-decision or engine-closure time.
+The first terminal decision wins against later decisions and first Run start.
+It creates no Run, start time or transcript. Prepared inputs obtain their
+original invocation from the exact published seed; direct operations derive
+their original root identity from the accepted Run ID.
+
+`EnsureOperationCompletion` and `EnsureOneShotOperationCompletion` repair a
+closed direct operation using the same declaration, arguments, labels and memo
+as its corresponding start method. They rebuild the expected request privately
+and compare its digest with engine evidence before writing. They never start
+or prepare work. Missing engine history remains an error. The host's durable
+recovery owner must retain the request and retry temporary delivery failures;
+ordinary reads do not acquire a repair side effect.
 
 The activity methods and `Await` no longer accept a separate
 `context.Context`; the `WorkflowContext` receiver owns cancellation for
@@ -6813,7 +7057,10 @@ stores must implement the retained-work contract before enabling durable executi
 
 `Runtime.CancelRun` accepts cancellation of suspended work without asking the
 caller to reconstruct or answer its checkpoint. Temporal owns a cancellation job
-on the route saved by the original accepted preparation. The job follows the
+on the highest parent’s worker. For a running parent, the engine derives that
+route from its accepted execution. For a suspended parent, retained preparation
+or suspension supplies the route without depending on old engine history. The
+job delivers to the nearest running ancestor and follows the
 successor selected by storage, including a competing answer, and restores saved
 work through the ordinary continuation path. It also follows saved child work to
 its execution parent rather than starting an unrelated root. Duplicate requests
@@ -6830,9 +7077,19 @@ or another continuation settles their work. A suspended predecessor with an
 admitted successor transfers that obligation to the successor. Purge checks
 that consider only running engine executions can delete unfinished work and
 must be updated before cutover. Custom engine implementations must implement
-`RegisterCancellationWorkflow` and `StartCancellationWorkflow`; cancellation
+`RegisterCancellationWorkflow`, `StartCancellationWorkflow`, and
+`StartActiveCancellationWorkflow`. The active operation must observe the owner’s
+status and accepted workflow/queue together, start the workflow named by appending
+`.cancel` on that same queue, and return `ErrWorkflowCompleted`
+or `ErrWorkflowNotFound` if it cannot admit work from an active owner. Update
+custom adapters before upgrading the runtime; the route-based operation remains
+required for saved runs whose original engine history is unavailable. Cancellation
 delivery now carries the receiving workflow ID separately from the requested
-run ID. Deploy providers, consumers, workers and storage owners together.
+run ID. When `CancellationHandler` returns `ErrWorkflowCompleted` because
+terminal work has started, `RequestCancellation` must wait for that execution to
+close before returning it. The handler itself must return promptly so serialized
+workflow execution can finish. Deploy providers, consumers, workers and storage
+owners together.
 
 The `ttlMs` member is required on the wire; null means unlimited retention, while
 an absent member is invalid. `TaskInfo.TTLMs` represents that value with `*int64`
@@ -7060,12 +7317,13 @@ Gemini 3 function-response media contract; selected-model acceptance remains
 owned by the provider. Regenerate or update both sides of any model gateway
 before sending content-bearing message records to older decoders.
 
-Content types now contain raw JSON extension metadata. The generic standalone
-codec generator deliberately excludes custom raw JSON fields, so it no longer
-emits `EncodeContentItem`/`DecodeContentItem`, `EncodePromptMessage`/`DecodePromptMessage`
-or `EncodeResourceContent`/`DecodeResourceContent`. Use the generated MCP endpoint
-clients and servers to encode and decode protocol envelopes; their content
-validators enforce MCP's selected variant. No text-only codec alias remains.
+Content types retain raw JSON extension metadata. The standalone codec generator
+supports `Any` and `Bytes` fields explicitly represented as `json.RawMessage`,
+preserving their open JSON values while checking syntax, text and duplicate
+members. See [JSON codecs](json_codecs.md) for the complete supported-type contract.
+Use the generated MCP endpoint clients and servers to encode and decode protocol
+envelopes; their content validators also enforce MCP's selected variant.
+No text-only codec alias remains.
 
 ### Private authorization storage
 
@@ -7617,10 +7875,10 @@ continuation, publish an input prompt or retry an accepted tool operation.
 
 Generated MCP and native `BindTo` executors return this unfinished outcome to
 the agent runtime. Generated registry providers send the same host requests
-through registry wire protocol 13; the consumer returns the existing unfinished
+through registry wire protocol 14; the consumer returns the existing unfinished
 execution outcome. Only the completed branch runs tool-result transforms,
 bounds and server-only data conversion.
-The runtime saves the original tool arguments and opaque state in a version-13
+The runtime saves the original tool arguments and opaque state in a version-14
 run suspension, then publishes `await_mcp_input` to the trusted host. The host
 resumes the exact saved suspension with `PendingInputResponse.MCP`, containing
 the tool call ID and a response for each requested input ID. The runtime validates
@@ -7643,13 +7901,13 @@ repeat an external side effect.
 This is a breaking upgrade. Remove the DSL `ProtocolVersion` option and
 regenerate all packages. Deploy clients and servers using the same current
 protocol. Resolve incompatible suspended runs on their owning worker version
-before installing the new runtime. Only `goa-ai.run-suspension.v13` is accepted;
+before installing the new runtime. Only `goa-ai.run-suspension.v14` is accepted;
 earlier checkpoints have no legacy reader or conversion path. Rollback requires
 compatible binaries, generated contracts and stored data; current suspensions
 cannot be resumed by the previous runtime. See the
 [complete release upgrade instructions](releases/v0.88.0.md#required-upgrade-actions).
 
-Registry wire protocol 13 carries a workflow-owned execution sequence and one
+Registry wire protocol 14 carries a workflow-owned execution sequence and one
 typed operation separately from tool arguments. The original tool call uses
 sequence zero; every new input continuation or Task operation advances it.
 Duplicate delivery retains the sequence and returns its saved outcome. Required
@@ -8055,3 +8313,22 @@ calls still admit their own successors. This is a required store contract;
 update every durable implementation together with its generated clients.
 Suspended Task cancellation still requires the subsequent execution work and
 does not become available merely because admission is exclusive.
+
+### Preparation ownership upgrade
+
+Custom stores now implement `BeginRunPreparationOperation` before accepting
+`BeginRunSeed`. The first method binds the destination's subject, Session,
+immutable command and original `genregistry.ExecutionInvocation`. Seed declarations
+retain that required invocation. Root continuations copy it from their exact
+predecessor; delegated calls retain the original issuing Run and tool-call pair,
+even after the current parent continues. Settlement closes one upload attempt
+without choosing an operation owner. Recovery still takes the existing operation
+key and reads the saved invocation; callers do not rebuild it.
+
+Provider resolvers now take the required generated invocation before the
+configuration reference and tool call. Update every resolver signature together
+with its runtime dependency. The invocation identifies saved execution ownership;
+it is not an authorization credential. Hosts obtain current or accepted caller
+facts from their owning service. Resolver metadata is prepared once and retained
+with history. Existing persisted preparations require an explicit migration;
+missing invocation data must not be assigned a default root identity.

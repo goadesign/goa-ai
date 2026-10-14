@@ -4,12 +4,10 @@
 package workflowcodec
 
 import (
-	"bytes"
 	"encoding"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"math"
 	"reflect"
 	"unicode/utf8"
@@ -20,6 +18,9 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"goa.design/goa-ai/internal/tooloperation"
+	genregistry "goa.design/goa-ai/registry/gen/registry"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
+	genrunterminal "goa.design/goa-ai/registry/gen/runterminal"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -139,7 +140,10 @@ func (c *dataConverter) FromPayload(payload *commonpb.Payload, valuePtr any) err
 		return nil
 	}
 	if string(payload.Metadata[converter.MetadataEncoding]) == converter.MetadataEncodingJSON && isRunOutputType(reflect.TypeOf(valuePtr)) {
-		return decodeLegacyRunOutput(payload, valuePtr)
+		return errors.New("legacy json/plain run output is unsupported by this worker; retain its matching worker build")
+	}
+	if string(payload.Metadata[converter.MetadataEncoding]) == "json/goa-ai-run-output-v2" {
+		return errors.New("legacy v2 run output is unsupported by this worker; retain its matching worker build")
 	}
 	if string(payload.Metadata[converter.MetadataEncoding]) == converter.MetadataEncodingJSON && isPlanOutputType(reflect.TypeOf(valuePtr)) {
 		return decodeLegacyPlanOutput(payload, valuePtr)
@@ -324,19 +328,10 @@ func (c *strictJSONPayloadConverter) FromPayload(payload *commonpb.Payload, valu
 	if payload == nil {
 		return errors.New("workflow codec: payload is nil")
 	}
-	if !utf8.Valid(payload.Data) {
-		return errors.New("workflow codec: canonical JSON payload contains invalid UTF-8")
+	if err := DecodeJSON(payload.Data, valuePtr); err != nil {
+		return err
 	}
-	decoder := json.NewDecoder(bytes.NewReader(payload.Data))
-	decoder.UseNumber()
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(valuePtr); err != nil {
-		return fmt.Errorf("workflow codec: decode canonical JSON payload: %w", err)
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return errors.New("workflow codec: canonical JSON payload has trailing data")
-	}
-	return nil
+	return preflightValues(valuePtr)
 }
 
 // walk inspects nested values before encoding/json may invoke custom code.
@@ -345,6 +340,9 @@ func (c *strictJSONPayloadConverter) FromPayload(payload *commonpb.Payload, valu
 // contribute their complete size directly. Byte slices at any nesting depth
 // are one byte block rather than one visited value per byte.
 func (p *workflowJSONPreflight) walk(value reflect.Value, depth int) error {
+	if err := validatePreparationResult(value); err != nil {
+		return err
+	}
 	if depth > maxWorkflowJSONDepth {
 		return fmt.Errorf("workflow codec: workflow JSON value exceeds maximum depth %d", maxWorkflowJSONDepth)
 	}
@@ -362,6 +360,12 @@ func (p *workflowJSONPreflight) walk(value reflect.Value, depth int) error {
 			}
 			return p.budget.addBytes(size)
 		}
+	}
+	if selected, known, err := generatedUnionJSONValue(value); known {
+		if err != nil {
+			return err
+		}
+		return p.walk(selected, depth+1)
 	}
 	typ := value.Type()
 	if typ == reflect.TypeFor[api.PlanActivityOutput]() {
@@ -450,6 +454,36 @@ func (p *workflowJSONPreflight) walk(value reflect.Value, depth int) error {
 			if err := p.walk(value.Field(index), depth+1); err != nil {
 				return err
 			}
+		}
+		if value.Type() == reflect.TypeFor[genrunterminal.PreparationDecision]() {
+			decision := value.Interface().(genrunterminal.PreparationDecision)
+			_, err := genrunterminal.EncodePreparationDecision(&decision)
+			return err
+		}
+		if value.Type() == reflect.TypeFor[genrunterminal.ExecutionFailure]() {
+			terminal := value.Interface().(genrunterminal.ExecutionFailure)
+			_, err := genrunterminal.EncodeExecutionFailure(&terminal)
+			return err
+		}
+		if value.Type() == reflect.TypeFor[genrunterminal.UnstartedExecutionTerminal]() {
+			terminal := value.Interface().(genrunterminal.UnstartedExecutionTerminal)
+			_, err := genrunterminal.EncodeUnstartedExecutionTerminal(&terminal)
+			return err
+		}
+		if value.Type() == reflect.TypeFor[genrunterminal.UnstartedExecutionTerminalResult]() {
+			terminal := value.Interface().(genrunterminal.UnstartedExecutionTerminalResult)
+			_, err := genrunterminal.EncodeUnstartedExecutionTerminalResult(&terminal)
+			return err
+		}
+		if value.Type() == reflect.TypeFor[genregistry.ExecutionInvocation]() {
+			invocation := value.Interface().(genregistry.ExecutionInvocation)
+			_, err := genregistry.EncodeExecutionInvocation(&invocation)
+			return err
+		}
+		if value.Type() == reflect.TypeFor[genrunidentity.RunSubject]() {
+			subject := value.Interface().(genrunidentity.RunSubject)
+			_, err := genrunidentity.EncodeRunSubject(&subject)
+			return err
 		}
 	case reflect.Slice, reflect.Array:
 		if value.Kind() == reflect.Slice && value.IsNil() {

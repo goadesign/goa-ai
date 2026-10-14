@@ -26,10 +26,10 @@ func TestContinuationAdmissionSelectsOneSuccessor(t *testing.T) {
 	commands := make([]storage.RootRunStart, 0, 8)
 	for i := range 8 {
 		start := publishStartHistory(t, store, session.RunStart{
-			AgentID: predecessor.AgentID, RunID: fmt.Sprintf("successor-%d", i),
+			Subject: predecessor.Subject, RunID: fmt.Sprintf("successor-%d", i),
 			SessionID: predecessor.SessionID, PredecessorRunID: predecessor.RunID,
 			StartedAt: predecessor.StartedAt,
-		})
+		}, "")
 		commands = append(commands, rootStartCommand(t, start))
 	}
 	type outcome struct {

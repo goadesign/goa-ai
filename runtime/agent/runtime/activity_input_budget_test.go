@@ -19,6 +19,7 @@ import (
 func TestBuildNextResumeRequestKeepsLargePayloadAndResultsOffWire(t *testing.T) {
 	rt := newTestRuntimeWithPlanner("service.agent.budget", &stubPlanner{})
 	base := &workflowConversation{
+		finalization: &workflowFinalizationState{},
 		Messages: []*model.Message{
 			{
 				Role:  model.ConversationRoleUser,
@@ -81,7 +82,7 @@ func TestToolResultContentTruncatesOversizedResults(t *testing.T) {
 	}
 
 	record := materializedToolRecordForTest(t, rt, "service.agent",
-		&workflowConversation{RunContext: run.Context{RunID: "run-1"}},
+		&workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{RunID: "run-1"}},
 		ToolCall{Name: name, ToolCallID: tr.ToolCallID}, tr)
 	part, err := toolResultRecordPart(record)
 	require.NoError(t, err)

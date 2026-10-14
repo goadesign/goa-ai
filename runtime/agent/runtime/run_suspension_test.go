@@ -3,12 +3,18 @@
 package runtime
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
+	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/session"
 	"goa.design/goa-ai/runtime/agent/storage"
 )
@@ -28,9 +34,9 @@ func TestLoadRunSuspensionRejectsCheckpointOwnerMismatch(t *testing.T) {
 		{
 			name: "agent",
 			mutate: func(run *session.RunMeta) {
-				run.AgentID = "svc.other"
+				run.Subject = genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.other"))}
 			},
-			wantText: "does not match run agent",
+			wantText: "does not match run subject",
 		},
 		{
 			name: "session",
@@ -58,7 +64,8 @@ func TestLoadRunSuspensionRejectsCheckpointOwnerMismatch(t *testing.T) {
 			data, err := json.Marshal(suspension)
 			require.NoError(t, err)
 			run := session.RunMeta{
-				RunID: "run-1", AgentID: "svc.agent", SessionID: "session-1",
+				RunID: "run-1", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("svc.agent"))}, SessionID: "session-1",
 				ParentRunID: "parent", Status: session.RunStatusSuspended,
 				Labels: map[string]string{"site": "one"},
 			}
@@ -88,7 +95,8 @@ func TestLoadRunSuspensionAcceptsLabelsAddedAfterRunStart(t *testing.T) {
 	require.NoError(t, err)
 	store := suspensionReadStore{
 		run: session.RunMeta{
-			RunID: "run-1", AgentID: "svc.agent", SessionID: "session-1",
+			RunID: "run-1", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+				RunExecutorBranchAgent("svc.agent"))}, SessionID: "session-1",
 			Status: session.RunStatusSuspended, Labels: map[string]string{"site": "one"},
 		},
 		suspension: session.RunSuspension{ID: suspension.ID, Data: data},
@@ -105,4 +113,49 @@ func (s suspensionReadStore) LoadRun(context.Context, string) (session.RunMeta, 
 
 func (s suspensionReadStore) LoadRunSuspension(context.Context, string) (session.RunSuspension, error) {
 	return s.suspension, nil
+}
+
+// A saved checkpoint is a storage record. Reading it must not acquire the
+// transport's smaller payload limit after generated subject validation is added.
+func TestStoredCheckpointAboveWorkflowPayloadLimit(t *testing.T) {
+	suspension := suspensionContractFixtureWithContext(t, "svc.lookup", "svc.agent", "run-1", nil,
+		map[string]any{"saved": strings.Repeat("x", engine.MaxPayloadBytes+1)})
+	subject := genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("svc.agent")}
+	rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
+		for index := range checkpoint.Batch.Calls {
+			checkpoint.Batch.Calls[index].Subject = subject
+		}
+		for index := range checkpoint.Batch.Result.ToolCalls {
+			checkpoint.Batch.Result.ToolCalls[index].Subject = subject
+		}
+	})
+	require.Greater(t, len(suspension.Checkpoint), engine.MaxPayloadBytes)
+	data, err := json.Marshal(suspension)
+	require.NoError(t, err)
+	run := session.RunMeta{Subject: subject, RunID: "run-1", SessionID: "session-1", Status: session.RunStatusSuspended}
+	decoded, err := validateStoredRunSuspension(session.RunSuspension{ID: suspension.ID, Data: data}, run)
+	require.NoError(t, err)
+	require.Equal(t, suspension, decoded)
+}
+
+func TestStoredCheckpointRejectsMalformedNestedSubjects(t *testing.T) {
+	for _, extra := range []string{`,"unknown":true`, `,"service_tool":{}`} {
+		suspension := suspensionContractFixture(t, "svc.lookup")
+		rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
+			subject := genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("svc.agent")}
+			for index := range checkpoint.Batch.Calls {
+				checkpoint.Batch.Calls[index].Subject = subject
+			}
+			for index := range checkpoint.Batch.Result.ToolCalls {
+				checkpoint.Batch.Result.ToolCalls[index].Subject = subject
+			}
+		})
+		original := []byte(`"type":"agent","value":"svc.agent"`)
+		require.Contains(t, string(suspension.Checkpoint), string(original))
+		suspension.Checkpoint = bytes.Replace(suspension.Checkpoint, original, append(append([]byte(nil), original...), []byte(extra)...), 1)
+		digest := sha256.Sum256(suspension.Checkpoint)
+		suspension.ID = hex.EncodeToString(digest[:16])
+		_, err := decodeWorkflowCheckpointState(suspension)
+		require.ErrorContains(t, err, "saved run subject")
+	}
 }

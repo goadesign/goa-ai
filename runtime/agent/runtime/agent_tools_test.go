@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/sdk/temporal"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -47,6 +48,7 @@ func TestAgentToolPlannerOutputFailureEndsParentWorkflow(t *testing.T) {
 			handle: &controlledChildHandle{ready: ready, err: cause},
 			call:   ToolCall{Name: "child", ToolCallID: "child-1"},
 		}},
+		make(map[string]*ToolExecutionResult),
 		nil,
 	)
 
@@ -77,6 +79,7 @@ func TestAgentToolProviderFailureEndsParentWorkflow(t *testing.T) {
 			handle: &controlledChildHandle{ready: ready, err: cause},
 			call:   ToolCall{Name: "child", ToolCallID: "child-1"},
 		}},
+		make(map[string]*ToolExecutionResult),
 		nil,
 	)
 
@@ -226,7 +229,8 @@ func TestAgentToolTerminalFailureSkipsParentResume(t *testing.T) {
 			_, err := createSessionForTest(context.Background(), rt.Store, sessionID)
 			require.NoError(t, err)
 			input := &RunInput{
-				AgentID:   parentID,
+				Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(parentID))},
+
 				RunID:     "parent-run-" + test.name,
 				SessionID: sessionID,
 				TurnID:    "parent-turn-" + test.name,
@@ -248,7 +252,7 @@ func TestAgentToolTerminalFailureSkipsParentResume(t *testing.T) {
 				wfCtx,
 				parentRegistration,
 				input,
-				&workflowConversation{RunContext: run.Context{
+				&workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{
 					RunID: input.RunID, SessionID: sessionID, TurnID: input.TurnID, Attempt: 1,
 				}},
 				&PlanResult{ToolCalls: []ToolCall{{
@@ -324,7 +328,8 @@ func seedParentRun(t *testing.T, store storage.Store, runID, sessionID string) {
 	_, err := createSessionForTest(context.Background(), store, sessionID)
 	require.NoError(t, err)
 	admitRunForTest(t, store, session.RunMeta{
-		AgentID:   parentAgentID,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(parentAgentID))},
+
 		RunID:     runID,
 		SessionID: sessionID,
 		Status:    session.RunStatusRunning,
@@ -340,9 +345,13 @@ func TestAgentTool_DefaultContentFromPayload(t *testing.T) {
 	// Register nested agent
 	require.NoError(t, rt.RegisterAgent(context.Background(), AgentRegistration{Definition: testRegistrationDefinition(agentID,
 
-		engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) { return &RunOutput{}, nil }}, nil),
+		engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) {
+			return &RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))}}, nil
+		}}, nil),
 
-		WorkflowHandler: (engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) { return &RunOutput{}, nil }}).Handler, Planner: pl,
+		WorkflowHandler: (engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) {
+			return &RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))}}, nil
+		}}).Handler, Planner: pl,
 
 		PlanActivityName:    "plan",
 		ResumeActivityName:  "resume",
@@ -364,7 +373,7 @@ func TestAgentTool_DefaultContentFromPayload(t *testing.T) {
 		Payload:    rawjson.Message([]byte(`"hello"`)),
 	}
 	registerAgentToolTestConfig(rt, *reg.AgentTool, "svc.tools", newAnyJSONSpec(call.Name))
-	call.AgentID = parentAgentID
+	call.Subject = genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(parentAgentID))}
 	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
 	tr, err := dispatchTestAgentTool(t, rt, ctx, call)
 	require.NoError(t, err)
@@ -380,9 +389,13 @@ func TestAgentToolRejectsUnknownFieldThroughPayloadCodec(t *testing.T) {
 	pl := &capturePlanner{}
 	require.NoError(t, rt.RegisterAgent(context.Background(), AgentRegistration{Definition: testRegistrationDefinition(agentID,
 
-		engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) { return &RunOutput{}, nil }}, nil),
+		engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) {
+			return &RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))}}, nil
+		}}, nil),
 
-		WorkflowHandler: (engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) { return &RunOutput{}, nil }}).Handler, Planner: pl,
+		WorkflowHandler: (engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) {
+			return &RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))}}, nil
+		}}).Handler, Planner: pl,
 
 		PlanActivityName:    "plan",
 		ResumeActivityName:  "resume",
@@ -444,7 +457,7 @@ func TestAgentToolRejectsUnknownFieldThroughPayloadCodec(t *testing.T) {
 		Name:            callName,
 		Payload:         rawjson.Message([]byte(`{"sources_ref":"src_1","server_data":"on"}`)),
 	}
-	call.AgentID = parentAgentID
+	call.Subject = genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(parentAgentID))}
 	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
 	wf := &testWorkflowContext{ctx: context.Background(), runtime: rt}
 	ctx := engine.WithWorkflowContext(context.Background(), wf)
@@ -467,9 +480,13 @@ func TestAgentTool_TextContent(t *testing.T) {
 	pl := &capturePlanner{}
 	require.NoError(t, rt.RegisterAgent(context.Background(), AgentRegistration{Definition: testRegistrationDefinition(agentID,
 
-		engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) { return &RunOutput{}, nil }}, nil),
+		engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) {
+			return &RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))}}, nil
+		}}, nil),
 
-		WorkflowHandler: (engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) { return &RunOutput{}, nil }}).Handler, Planner: pl,
+		WorkflowHandler: (engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) {
+			return &RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))}}, nil
+		}}).Handler, Planner: pl,
 
 		PlanActivityName:    "plan",
 		ResumeActivityName:  "resume",
@@ -493,7 +510,7 @@ func TestAgentTool_TextContent(t *testing.T) {
 		Payload:    rawjson.Message([]byte(`"hello"`)),
 	}
 	registerAgentToolTestConfig(rt, *reg.AgentTool, "svc.tools", newAnyJSONSpec(call.Name))
-	call.AgentID = parentAgentID
+	call.Subject = genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(parentAgentID))}
 	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
 	tr, err := dispatchTestAgentTool(t, rt, ctx, call)
 	require.NoError(t, err)
@@ -511,9 +528,13 @@ func TestAgentTool_PromptBuilderOverrides(t *testing.T) {
 	pl := &capturePlanner{}
 	require.NoError(t, rt.RegisterAgent(context.Background(), AgentRegistration{Definition: testRegistrationDefinition(agentID,
 
-		engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) { return &RunOutput{}, nil }}, nil),
+		engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) {
+			return &RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))}}, nil
+		}}, nil),
 
-		WorkflowHandler: (engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) { return &RunOutput{}, nil }}).Handler, Planner: pl,
+		WorkflowHandler: (engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) {
+			return &RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))}}, nil
+		}}).Handler, Planner: pl,
 
 		PlanActivityName:    "plan",
 		ResumeActivityName:  "resume",
@@ -539,7 +560,7 @@ func TestAgentTool_PromptBuilderOverrides(t *testing.T) {
 		Payload:    rawjson.Message([]byte(`"hello"`)),
 	}
 	registerAgentToolTestConfig(rt, *reg.AgentTool, "svc.tools", newAnyJSONSpec(call.Name))
-	call.AgentID = parentAgentID
+	call.Subject = genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(parentAgentID))}
 	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
 	tr, err := dispatchTestAgentTool(t, rt, ctx, call)
 	require.NoError(t, err)
@@ -562,9 +583,13 @@ func TestAgentTool_SystemPromptPrepended(t *testing.T) {
 	pl := &capturePlanner{}
 	require.NoError(t, rt.RegisterAgent(context.Background(), AgentRegistration{Definition: testRegistrationDefinition(agentID,
 
-		engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) { return &RunOutput{}, nil }}, nil),
+		engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) {
+			return &RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))}}, nil
+		}}, nil),
 
-		WorkflowHandler: (engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) { return &RunOutput{}, nil }}).Handler, Planner: pl,
+		WorkflowHandler: (engine.WorkflowDefinition{Name: "wf", Handler: func(engine.WorkflowContext, *RunInput) (*RunOutput, error) {
+			return &RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))}}, nil
+		}}).Handler, Planner: pl,
 
 		PlanActivityName:    "plan",
 		ResumeActivityName:  "resume",
@@ -590,7 +615,7 @@ func TestAgentTool_SystemPromptPrepended(t *testing.T) {
 		Payload:    rawjson.Message([]byte(`"hello"`)),
 	}
 	registerAgentToolTestConfig(rt, *reg.AgentTool, "svc.tools", newAnyJSONSpec(call.Name))
-	call.AgentID = parentAgentID
+	call.Subject = genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(parentAgentID))}
 	seedParentRun(t, rt.Store, call.RunID, call.SessionID)
 	_, err := dispatchTestAgentTool(t, rt, ctx, call)
 	require.NoError(t, err)
@@ -643,7 +668,7 @@ func TestAgentTool_UsesFinalToolResultBeforeAggregation(t *testing.T) {
 		RunID:      "run",
 		SessionID:  "sess",
 	}
-	out := &RunOutput{
+	out := &RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("test.agent"))},
 		FinalToolResult: &api.ToolEvent{
 			Name:      parent.Name,
 			Result:    rawjson.Message([]byte(`{"events":["ok"]}`)),
@@ -672,7 +697,7 @@ func TestConvertRunOutputToToolResultKeepsTerminalChildFailureHistorical(t *test
 		{Name: "child.internal", Failure: testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "broken")},
 	})
 	require.NoError(t, err)
-	output := &RunOutput{
+	output := &RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("test.agent"))},
 		Final: &model.Message{
 			Role:  model.ConversationRoleAssistant,
 			Parts: []model.Part{model.TextPart{Text: "completed after recovery"}},
@@ -693,7 +718,7 @@ func TestConvertRunOutputToToolResultKeepsNonTerminalChildFailuresHistorical(t *
 		{Name: "child.search", Failure: testToolFailure(planner.FailureUnavailable, planner.RecoveryReplan, "offline")},
 	})
 	require.NoError(t, err)
-	output := &RunOutput{
+	output := &RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("test.agent"))},
 		Final: &model.Message{
 			Role:  model.ConversationRoleAssistant,
 			Parts: []model.Part{model.TextPart{Text: "completed without the unavailable tool"}},

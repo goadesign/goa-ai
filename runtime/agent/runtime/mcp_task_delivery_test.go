@@ -128,7 +128,7 @@ func TestTaskReadOutageKeepsLastPollingGuidance(t *testing.T) {
 	}
 	wf := newTaskTimerWorkflow(root)
 	runCtx := run.Context{RunID: "read-outage", SessionID: "session-task", TurnID: "turn-task"}
-	results, timedOut, err := rt.executeToolCalls(wf, "execute", engine.ActivityOptions{RetryPolicy: engine.RetryPolicy{UnlimitedAttempts: true}}, "test.agent", &runCtx, testToolHistory(t, rt, "test.agent", runCtx, nil), []ToolCall{{Name: spec.Name, ToolCallID: "task-call", Payload: []byte(`{}`)}}, 0, nil, time.Time{}, nil)
+	results, timedOut, err := rt.executeToolCalls(nil, wf, "execute", engine.ActivityOptions{RetryPolicy: engine.RetryPolicy{UnlimitedAttempts: true}}, "test.agent", &runCtx, testToolHistory(t, rt, "test.agent", runCtx, nil), []ToolCall{{Name: spec.Name, ToolCallID: "task-call", Payload: []byte(`{}`)}}, 0, nil, time.Time{}, nil)
 	require.NoError(t, err)
 	assert.False(t, timedOut)
 	require.Len(t, results, 1)
@@ -213,7 +213,7 @@ func TestTaskObservedTerminalFailureNeedsNoCancellation(t *testing.T) {
 	}
 	wf := newTaskTimerWorkflow(root)
 	runCtx := run.Context{RunID: "terminal-task", SessionID: "session-task", TurnID: "turn-task"}
-	results, timedOut, err := rt.executeToolCalls(wf, "execute", engine.ActivityOptions{}, "test.agent", &runCtx, testToolHistory(t, rt, "test.agent", runCtx, nil), []ToolCall{{Name: spec.Name, ToolCallID: "task-call", Payload: []byte(`{}`)}}, 0, nil, time.Time{}, nil)
+	results, timedOut, err := rt.executeToolCalls(nil, wf, "execute", engine.ActivityOptions{}, "test.agent", &runCtx, testToolHistory(t, rt, "test.agent", runCtx, nil), []ToolCall{{Name: spec.Name, ToolCallID: "task-call", Payload: []byte(`{}`)}}, 0, nil, time.Time{}, nil)
 	require.NoError(t, err)
 	assert.False(t, timedOut)
 	require.Len(t, results, 1)

@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -251,7 +252,8 @@ func newCompletionSubscriber(t *testing.T) *stream.Subscriber {
 func TestEnsureRunCompletionStoresSuccessfulResultOnce(t *testing.T) {
 	store := newTestStore()
 	admitRunForTest(t, store, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run", SessionID: "session",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))}, RunID: "run", SessionID: "session",
 		Status: session.RunStatusRunning, Labels: map[string]string{"site": "one"},
 	})
 	runtime := &Runtime{
@@ -259,7 +261,8 @@ func TestEnsureRunCompletionStoresSuccessfulResultOnce(t *testing.T) {
 		Bus:   hooks.NewBus(),
 		Engine: completionQueryEngine{
 			completion: engine.RunCompletion{Status: engine.RunStatusCompleted, CompletedAt: ensuredCompletionTime, Output: &api.RunOutput{
-				AgentID: "svc.agent", RunID: "run", Final: &model.Message{},
+				Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("svc.agent"))}, RunID: "run", Final: &model.Message{},
 			}},
 		},
 		streamSubscriber: newCompletionSubscriber(t),
@@ -280,14 +283,15 @@ func TestEnsureRunCompletionStoresSuccessfulResultOnce(t *testing.T) {
 func TestEnsureRunCompletionReplaysStoredTerminalExactly(t *testing.T) {
 	stored := newTestStore()
 	meta := session.RunMeta{
-		AgentID: "svc.agent", RunID: "run", SessionID: "session",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))}, RunID: "run", SessionID: "session",
 		Status: session.RunStatusRunning, Labels: map[string]string{"site": "one"},
 	}
 	admitRunForTest(t, stored, meta)
 	at := ensuredCompletionTime.Add(123 * time.Millisecond)
 	record := testHookRecord(t, hooks.NewRunCompletedEvent(
 		meta.RunID,
-		agent.Ident(meta.AgentID),
+		meta.Subject,
 		meta.SessionID,
 		"failed",
 		run.PhaseFailed,
@@ -334,13 +338,14 @@ func TestEnsureRunCompletionReplaysStoredTerminalExactly(t *testing.T) {
 func TestEnsureRunCompletionRequiresStreamForActiveSession(t *testing.T) {
 	stored := newTestStore()
 	meta := session.RunMeta{
-		AgentID: "svc.agent", RunID: "run", SessionID: "session",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))}, RunID: "run", SessionID: "session",
 		Status: session.RunStatusRunning,
 	}
 	admitRunForTest(t, stored, meta)
 	record := testHookRecord(t, hooks.NewRunCompletedEvent(
 		meta.RunID,
-		agent.Ident(meta.AgentID),
+		meta.Subject,
 		meta.SessionID,
 		"success",
 		run.PhaseCompleted,
@@ -369,7 +374,8 @@ func TestEnsureRunCompletionRequiresStreamForActiveSession(t *testing.T) {
 func TestEnsureRunCompletionNotifiesBusOnceBeforeMissingStream(t *testing.T) {
 	store := newTestStore()
 	admitRunForTest(t, store, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))}, RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
 	})
 	bus := hooks.NewBus()
 	busCalls := 0
@@ -383,7 +389,8 @@ func TestEnsureRunCompletionNotifiesBusOnceBeforeMissingStream(t *testing.T) {
 		Bus:   bus,
 		Engine: completionQueryEngine{completion: engine.RunCompletion{
 			Status: engine.RunStatusCompleted, CompletedAt: ensuredCompletionTime,
-			Output: &api.RunOutput{AgentID: "svc.agent", RunID: "run", Final: &model.Message{}},
+			Output: &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+				RunExecutorBranchAgent("svc.agent"))}, RunID: "run", Final: &model.Message{}},
 		}},
 	}
 
@@ -402,7 +409,8 @@ func TestEnsureRunCompletionNotifiesBusOnceBeforeMissingStream(t *testing.T) {
 func TestEnsureRunCompletionValidatesSessionStatusBeforeBus(t *testing.T) {
 	stored := newTestStore()
 	admitRunForTest(t, stored, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))}, RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
 	})
 	bus := hooks.NewBus()
 	busCalls := 0
@@ -416,7 +424,8 @@ func TestEnsureRunCompletionValidatesSessionStatusBeforeBus(t *testing.T) {
 		Bus:   bus,
 		Engine: completionQueryEngine{completion: engine.RunCompletion{
 			Status: engine.RunStatusCompleted, CompletedAt: ensuredCompletionTime,
-			Output: &api.RunOutput{AgentID: "svc.agent", RunID: "run", Final: &model.Message{}},
+			Output: &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+				RunExecutorBranchAgent("svc.agent"))}, RunID: "run", Final: &model.Message{}},
 		}},
 		streamSubscriber: newCompletionSubscriber(t),
 	}
@@ -429,7 +438,8 @@ func TestEnsureRunCompletionValidatesSessionStatusBeforeBus(t *testing.T) {
 func TestEnsureRunCompletionReplaysStoredSuspensionExactly(t *testing.T) {
 	stored := newTestStore()
 	meta := session.RunMeta{
-		AgentID: "svc.agent", RunID: "run-1", SessionID: "session-1",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))}, RunID: "run-1", SessionID: "session-1",
 		Status: session.RunStatusRunning,
 	}
 	admitRunForTest(t, stored, meta)
@@ -440,7 +450,7 @@ func TestEnsureRunCompletionReplaysStoredSuspensionExactly(t *testing.T) {
 	at := ensuredCompletionTime.Add(456 * time.Millisecond)
 	record := testHookRecord(t, hooks.NewRunSuspendedEvent(
 		meta.RunID,
-		agent.Ident(meta.AgentID),
+		meta.Subject,
 		meta.SessionID,
 		suspension.ID,
 		publicSuspension.Version,
@@ -471,10 +481,29 @@ func TestEnsureRunCompletionReplaysStoredSuspensionExactly(t *testing.T) {
 	require.Equal(t, 2, sink.callCount())
 }
 
+func TestHistoricalServiceSuspensionChecksFullDigest(t *testing.T) {
+	suspension := suspensionContractFixture(t, "records.find")
+	suspension.Version = registeredRootCheckpointVersion
+	digest := sha256.Sum256(suspension.Checkpoint)
+	suspension.ID = hex.EncodeToString(digest[:])
+	data, err := json.Marshal(suspension)
+	require.NoError(t, err)
+	stored := session.RunSuspension{ID: suspension.ID, Data: data}
+	actual, err := validateHistoricalSuspension(stored)
+	require.NoError(t, err)
+	require.Equal(t, suspension, actual)
+	suspension.Checkpoint = []byte(`{"different":true}`)
+	stored.Data, err = json.Marshal(suspension)
+	require.NoError(t, err)
+	_, err = validateHistoricalSuspension(stored)
+	require.ErrorContains(t, err, "id does not match checkpoint")
+}
+
 func TestEnsureRunCompletionReportsOpaqueHistoryWithoutExecutingIt(t *testing.T) {
 	stored := newTestStore()
 	meta := session.RunMeta{
-		AgentID: "svc.agent", RunID: "run-1", SessionID: "session-1",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))}, RunID: "run-1", SessionID: "session-1",
 		Status: session.RunStatusRunning,
 	}
 	admitRunForTest(t, stored, meta)
@@ -488,7 +517,7 @@ func TestEnsureRunCompletionReportsOpaqueHistoryWithoutExecutingIt(t *testing.T)
 	data, err := json.Marshal(suspension)
 	require.NoError(t, err)
 	record := testHookRecord(t, hooks.NewRunSuspendedEvent(
-		meta.RunID, agent.Ident(meta.AgentID), meta.SessionID, suspension.ID,
+		meta.RunID, meta.Subject, meta.SessionID, suspension.ID,
 		suspension.Version, len(suspension.Pending), suspension.RequiredTools,
 	), "stored-suspension", ensuredCompletionTime)
 	_, err = stored.RecordRunSuspension(t.Context(), storage.RunSuspension{
@@ -541,7 +570,8 @@ func TestEnsureRunCompletionRejectsSuspensionEventMismatch(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			stored := newTestStore()
 			meta := session.RunMeta{
-				AgentID: "svc.agent", RunID: "run-1", SessionID: "session-1",
+				Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("svc.agent"))}, RunID: "run-1", SessionID: "session-1",
 				Status: session.RunStatusRunning,
 			}
 			admitRunForTest(t, stored, meta)
@@ -551,7 +581,7 @@ func TestEnsureRunCompletionRejectsSuspensionEventMismatch(t *testing.T) {
 			suspension := session.RunSuspension{ID: publicSuspension.ID, Data: data}
 			record := testHookRecord(t, hooks.NewRunSuspendedEvent(
 				meta.RunID,
-				agent.Ident(meta.AgentID),
+				meta.Subject,
 				meta.SessionID,
 				suspension.ID,
 				publicSuspension.Version,
@@ -596,7 +626,8 @@ func TestEnsureRunCompletionRejectsSuspensionEventMismatch(t *testing.T) {
 func TestEnsureRunCompletionDoesNotReplayStoredCompletionForEndedSession(t *testing.T) {
 	stored := newTestStore()
 	meta := session.RunMeta{
-		AgentID: "svc.agent", RunID: "run", SessionID: "session",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))}, RunID: "run", SessionID: "session",
 		Status: session.RunStatusCompleted,
 	}
 	admitRunForTest(t, stored, meta)
@@ -616,11 +647,13 @@ func TestEnsureRunCompletionDoesNotReplayStoredCompletionForEndedSession(t *test
 func TestEnsureChildRunLinkRequiresStreamForActiveSession(t *testing.T) {
 	stored := newTestStore()
 	admitRunForTest(t, stored, session.RunMeta{
-		AgentID: "parent.agent", RunID: "parent", SessionID: "session",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("parent.agent"))}, RunID: "parent", SessionID: "session",
 		Status: session.RunStatusRunning,
 	})
 	admitRunForTest(t, stored, session.RunMeta{
-		AgentID: "child.agent", RunID: "child", SessionID: "session",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("child.agent"))}, RunID: "child", SessionID: "session",
 		ParentRunID: "parent", Status: session.RunStatusCompleted,
 	})
 	runtime := &Runtime{Store: stored, Bus: hooks.NewBus()}
@@ -633,11 +666,13 @@ func TestEnsureChildRunLinkRequiresStreamForActiveSession(t *testing.T) {
 func TestEnsureChildRunLinkRejectsCorruptionBeforeMissingStream(t *testing.T) {
 	stored := newTestStore()
 	admitRunForTest(t, stored, session.RunMeta{
-		AgentID: "parent.agent", RunID: "parent", SessionID: "session",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("parent.agent"))}, RunID: "parent", SessionID: "session",
 		Status: session.RunStatusRunning,
 	})
 	admitRunForTest(t, stored, session.RunMeta{
-		AgentID: "child.agent", RunID: "child", SessionID: "session",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("child.agent"))}, RunID: "child", SessionID: "session",
 		ParentRunID: "parent", Status: session.RunStatusCompleted,
 	})
 	store := &completionReplayStore{
@@ -660,11 +695,12 @@ func TestEnsureChildRunLinkRejectsCorruptionBeforeMissingStream(t *testing.T) {
 func TestEnsureRunCompletionRedeliversStoredChildLinkBeforeCompletion(t *testing.T) {
 	stored := newTestStore()
 	admitRunForTest(t, stored, session.RunMeta{
-		AgentID: "parent.agent", RunID: "parent", SessionID: "session", Status: session.RunStatusRunning,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("parent.agent"))}, RunID: "parent", SessionID: "session", Status: session.RunStatusRunning,
 	})
 	started, err := prepareHookRecordInput(t.Context(), hooks.NewRunStartedEvent(
 		"child",
-		agent.Ident("child.agent"),
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("child.agent")))},
 		"session",
 		"parent",
 		"",
@@ -673,7 +709,7 @@ func TestEnsureRunCompletionRedeliversStoredChildLinkBeforeCompletion(t *testing
 	require.NoError(t, err)
 	linkedInput, err := prepareHookRecordInput(t.Context(), hooks.NewChildRunLinkedEvent(
 		"parent",
-		agent.Ident("parent.agent"),
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("parent.agent")))},
 		"session",
 		tools.Ident("parent.tools.child"),
 		"tool-call",
@@ -689,7 +725,8 @@ func TestEnsureRunCompletionRedeliversStoredChildLinkBeforeCompletion(t *testing
 	startRuntime := &Runtime{
 		Store: stored, Bus: hooks.NewBus(), streamSubscriber: failedSubscriber,
 	}
-	childInput := &RunInput{AgentID: "child.agent", RunID: "child", SessionID: "session"}
+	childInput := &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+		RunExecutorBranchAgent("child.agent"))}, RunID: "child", SessionID: "session", ParentRunID: "parent", ParentToolCallID: "tool-call"}
 	publishTestRunInput(t, startRuntime, childInput, nil)
 	_, err = startRuntime.executeStorageCommand(t.Context(), &api.StorageActivityCommand{
 		ChildStart: &api.ChildRunStartCommand{RequestDigest: append([]byte{1}, make([]byte, 31)...), SeedEndID: childInput.SeedEndID, ParentLinked: linkedInput, Started: started},
@@ -697,7 +734,7 @@ func TestEnsureRunCompletionRedeliversStoredChildLinkBeforeCompletion(t *testing
 	require.ErrorContains(t, err, "child link delivery failed")
 	completed := testHookRecord(t, hooks.NewRunCompletedEvent(
 		"child",
-		agent.Ident("child.agent"),
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("child.agent")))},
 		"session",
 		"success",
 		run.PhaseCompleted,
@@ -825,10 +862,12 @@ func TestEnsureRunCompletionRejectsCorruptStoredChildPublication(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			stored := newTestStore()
 			admitRunForTest(t, stored, session.RunMeta{
-				AgentID: "parent.agent", RunID: completionParentRunID, SessionID: "session", Status: session.RunStatusRunning,
+				Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("parent.agent"))}, RunID: completionParentRunID, SessionID: "session", Status: session.RunStatusRunning,
 			})
 			admitRunForTest(t, stored, session.RunMeta{
-				AgentID: "child.agent", RunID: "child", SessionID: "session",
+				Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("child.agent"))}, RunID: "child", SessionID: "session",
 				ParentRunID: completionParentRunID, Status: session.RunStatusCompleted,
 			})
 			store := &completionReplayStore{Store: stored, listRun: test.mutate}
@@ -897,7 +936,8 @@ func TestEnsureRunCompletionRejectsCorruptStoredStartBeforeWritingCompletion(t *
 		t.Run(test.name, func(t *testing.T) {
 			stored := newTestStore()
 			meta := session.RunMeta{
-				AgentID: "svc.agent", RunID: "run", SessionID: "session",
+				Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("svc.agent"))}, RunID: "run", SessionID: "session",
 				Status: session.RunStatusRunning, Labels: map[string]string{"site": "one"},
 			}
 			admitRunForTest(t, stored, meta)
@@ -915,7 +955,7 @@ func TestEnsureRunCompletionRejectsCorruptStoredStartBeforeWritingCompletion(t *
 				Engine: completionQueryEngine{completion: engine.RunCompletion{
 					Status: engine.RunStatusCompleted, CompletedAt: ensuredCompletionTime,
 					Output: &api.RunOutput{
-						AgentID: agent.Ident(meta.AgentID), RunID: meta.RunID, Final: &model.Message{},
+						Subject: meta.Subject, RunID: meta.RunID, Final: &model.Message{},
 					},
 				}},
 			}
@@ -963,7 +1003,7 @@ func TestEnsureRunCompletionRejectsCorruptStoredCompletion(t *testing.T) {
 			status: session.RunStatusCompleted,
 			list: func(page runlog.Page) runlog.Page {
 				page = cloneCompletionPage(page)
-				page.Events[len(page.Events)-1].AgentID = "other.agent"
+				page.Events[len(page.Events)-1].Subject = genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("other.agent"))}
 				return page
 			},
 		},
@@ -987,7 +1027,8 @@ func TestEnsureRunCompletionRejectsCorruptStoredCompletion(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			stored := newTestStore()
 			meta := session.RunMeta{
-				AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: test.status,
+				Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("svc.agent"))}, RunID: "run", SessionID: "session", Status: test.status,
 			}
 			admitRunForTest(t, stored, meta)
 			store := &completionReplayStore{

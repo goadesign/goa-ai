@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"go.temporal.io/sdk/temporal"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/internal/temporalerrors"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/run"
@@ -24,7 +25,7 @@ func TestRequestValidationRunFailureHasNoProviderFacts(t *testing.T) {
 	codec := temporal.GetDefaultFailureConverter()
 	saved := codec.FailureToError(codec.ErrorToFailure(temporalerrors.Wrap(wrapped)))
 	for _, err := range []error{native, wrapped, saved} {
-		event := NewRunCompletedEvent("run-1", "service.agent", "session-1", "failed", run.PhaseFailed, nil, err, nil)
+		event := NewRunCompletedEvent("run-1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("service.agent"))}, "session-1", "failed", run.PhaseFailed, nil, err, nil)
 		assert.Equal(t, &run.Failure{
 			Message: PublicErrorModelRequest, DebugMessage: err.Error(), Kind: ErrorKindModelRequest,
 			Retryable: false,

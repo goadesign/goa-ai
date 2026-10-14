@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"sync"
 	"testing"
 	"time"
@@ -17,6 +18,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
+	genrunterminal "goa.design/goa-ai/registry/gen/runterminal"
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -36,6 +39,17 @@ import (
 )
 
 const mutatedTestValue = "mutated"
+
+// testSubjectAgent checks the generated subject and returns its Agent executor.
+// Agent-only fixtures fail immediately if they receive a service-tool subject.
+func testSubjectAgent(t testing.TB, subject genrunidentity.RunSubject) agent.Ident {
+	t.Helper()
+	_, err := genrunidentity.EncodeRunSubject(&subject)
+	require.NoError(t, err)
+	executor, ok := subject.Executor.AsAgent()
+	require.True(t, ok, "Agent-only fixture requires an Agent subject")
+	return agent.Ident(executor)
+}
 
 type testStore struct {
 	*storageinmem.Store
@@ -57,11 +71,11 @@ func (s *testStore) AppendRunRecord(ctx context.Context, record *runlog.Event) (
 	}
 	startedAt := time.Now().UTC().Truncate(time.Millisecond)
 	start := session.RunStart{
-		AgentID: string(record.AgentID), RunID: record.RunID,
+		Subject: record.Subject, RunID: record.RunID,
 		SessionID: record.SessionID, StartedAt: startedAt,
 	}
 	started, encodeErr := encodeTestHookRecord(
-		hooks.NewRunStartedEvent(record.RunID, record.AgentID, record.SessionID, "", "", nil),
+		hooks.NewRunStartedEvent(record.RunID, record.Subject, record.SessionID, "", "", nil),
 		"test/start",
 		startedAt,
 	)
@@ -74,9 +88,18 @@ func (s *testStore) AppendRunRecord(ctx context.Context, record *runlog.Event) (
 			return storage.AppendResult{}, err
 		}
 	}
-	if _, err := s.BeginRunSeed(ctx, storage.SeedDeclaration{
-		AgentID: string(record.AgentID), RunID: record.RunID, SessionID: record.SessionID, CommandID: record.RunID, AttemptID: record.RunID, Kind: storage.SeedLiteral,
-	}); err != nil {
+	declaration := storage.SeedDeclaration{
+		Origin:  genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: record.RunID})},
+		Subject: record.Subject, RunID: record.RunID, SessionID: record.SessionID, CommandID: record.RunID, AttemptID: record.RunID, Kind: storage.SeedLiteral,
+	}
+	decision, err := bindHistoryOperation(ctx, s, declaration)
+	if err != nil {
+		return storage.AppendResult{}, err
+	}
+	if _, err := genrunterminal.EncodePreparationDecision(&decision); err != nil {
+		return storage.AppendResult{}, err
+	}
+	if _, err := s.BeginRunSeed(ctx, declaration); err != nil {
 		return storage.AppendResult{}, err
 	}
 	prepared := []byte(`{}`)
@@ -100,15 +123,7 @@ func (s *testStore) AppendRunRecord(ctx context.Context, record *runlog.Event) (
 			return storage.AppendResult{}, startErr
 		}
 	} else {
-		cancellationInput, cancellationErr := buildCancellationRecord(&RecordActivityInput{
-			RunID: record.RunID, AgentID: record.AgentID, SessionID: record.SessionID,
-			TimestampMS: startedAt.UnixMilli(),
-		}, agentrun.CancellationReasonSessionEnded)
-		if cancellationErr != nil {
-			return storage.AppendResult{}, cancellationErr
-		}
-		canceled := runLogEvent(cancellationInput, cancellationInput.Payload, cancellationInput.TimestampMS)
-		_, startErr := s.StartRootRun(ctx, storage.RootRunStart{RequestDigest: [32]byte{1}, Run: start, Started: started, Cancellation: canceled})
+		_, startErr := s.StartRootRun(ctx, storage.RootRunStart{RequestDigest: [32]byte{1}, Run: start, Started: started})
 		if startErr != nil {
 			return storage.AppendResult{}, startErr
 		}
@@ -130,7 +145,7 @@ func storeSuspensionForTest(ctx context.Context, store storage.Store, runID stri
 	}
 	record, err := encodeTestHookRecord(hooks.NewRunSuspendedEvent(
 		runID,
-		agent.Ident(meta.AgentID),
+		meta.Subject,
 		meta.SessionID,
 		value.ID,
 		"v6",
@@ -190,13 +205,23 @@ func admitRunWithPredecessorForTest(
 	}
 	run.StartedAt = run.StartedAt.Truncate(time.Millisecond)
 	start := session.RunStart{
-		AgentID: run.AgentID, RunID: run.RunID, SessionID: run.SessionID,
+		Subject: run.Subject, RunID: run.RunID, SessionID: run.SessionID,
 		ParentRunID: run.ParentRunID, PredecessorRunID: predecessorRunID,
 		StartedAt: run.StartedAt, Labels: run.Labels, SeedEndID: run.SeedEndID,
 	}
 	if start.SeedEndID == "" {
+		origin := genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: run.RunID})}
+		if run.ParentRunID != "" {
+			origin = genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: run.ParentRunID, ToolCallID: "call-" + run.RunID})}
+		}
+		if predecessorRunID != "" {
+			predecessor, err := store.LoadRun(t.Context(), predecessorRunID)
+			require.NoError(t, err)
+			origin = predecessor.Origin
+		}
 		declaration := storage.SeedDeclaration{
-			AgentID: run.AgentID, RunID: run.RunID, SessionID: run.SessionID, CommandID: run.RunID, AttemptID: run.RunID, Kind: storage.SeedLiteral,
+			Origin:  origin,
+			Subject: run.Subject, RunID: run.RunID, SessionID: run.SessionID, CommandID: run.RunID, AttemptID: run.RunID, Kind: storage.SeedLiteral,
 		}
 		if predecessorRunID != "" {
 			var endID string
@@ -213,9 +238,14 @@ func admitRunWithPredecessorForTest(
 				cursor = page.NextCursor
 			}
 			declaration.Kind = storage.SeedContinuation
+			declaration.PredecessorRunID = predecessorRunID
 			declaration.SourceRunID = predecessorRunID
 			declaration.SourceEndID = endID
 		}
+		decision, err := bindHistoryOperation(t.Context(), store, declaration)
+		require.NoError(t, err)
+		_, err = genrunterminal.EncodePreparationDecision(&decision)
+		require.NoError(t, err)
 		seed, err := store.BeginRunSeed(t.Context(), declaration)
 		require.NoError(t, err)
 		start.SeedEndID = storage.EmptySeedEndID
@@ -236,32 +266,35 @@ func admitRunWithPredecessorForTest(
 	}
 	started := testHookRecord(t, hooks.NewRunStartedEvent(
 		run.RunID,
-		agent.Ident(run.AgentID),
+		run.Subject,
 		run.SessionID,
 		run.ParentRunID,
 		predecessorRunID,
 		run.Labels,
 	), "start", run.StartedAt)
-	canceled := testStartCancellationRecord(t, start)
 	var err error
 	switch {
 	case run.SessionID == "":
 		_, err = store.StartOneShotRun(context.Background(), storage.OneShotRunStart{RequestDigest: [32]byte{1}, Run: start, Started: started})
 	case start.ParentRunID == "":
-		_, err = store.StartRootRun(context.Background(), storage.RootRunStart{RequestDigest: [32]byte{1}, Run: start, Started: started, Cancellation: canceled})
+		_, err = store.StartRootRun(context.Background(), storage.RootRunStart{RequestDigest: [32]byte{1}, Run: start, Started: started})
 	default:
 		parent, loadErr := store.LoadRun(context.Background(), run.ParentRunID)
 		require.NoError(t, loadErr)
+		seed, loadErr := store.LoadRunSeed(t.Context(), run.RunID, start.SeedEndID)
+		require.NoError(t, loadErr)
+		invocation, ok := seed.Declaration.Origin.Invocation.AsTool()
+		require.True(t, ok)
 		linked := testHookRecord(t, hooks.NewChildRunLinkedEvent(
 			run.ParentRunID,
-			agent.Ident(parent.AgentID),
+			parent.Subject,
 			run.SessionID,
 			"test.child",
-			"call-"+run.RunID,
+			invocation.ToolCallID,
 			run.RunID,
-			agent.Ident(run.AgentID),
+			testSubjectAgent(t, run.Subject),
 		), "child-link-"+run.RunID, run.StartedAt)
-		_, err = store.StartChildRun(context.Background(), storage.ChildRunStart{RequestDigest: [32]byte{1}, Run: start, ParentLinked: linked, Started: started, Cancellation: canceled})
+		_, err = store.StartChildRun(context.Background(), storage.ChildRunStart{RequestDigest: [32]byte{1}, Run: start, ParentLinked: linked, Started: started})
 	}
 	require.NoError(t, err)
 	switch target {
@@ -270,7 +303,7 @@ func admitRunWithPredecessorForTest(
 		if target == session.RunStatusSuspended {
 			suspended := testHookRecord(t, hooks.NewRunSuspendedEvent(
 				run.RunID,
-				agent.Ident(run.AgentID),
+				run.Subject,
 				run.SessionID,
 				"test",
 				"v6",
@@ -299,7 +332,7 @@ func admitRunWithPredecessorForTest(
 			}
 			terminal := testHookRecord(t, hooks.NewRunCompletedEvent(
 				run.RunID,
-				agent.Ident(run.AgentID),
+				run.Subject,
 				run.SessionID,
 				status,
 				phase,
@@ -333,9 +366,10 @@ func encodeTestHookRecord(event hooks.Event, key string, at time.Time) (*runlog.
 		return nil, err
 	}
 	return &runlog.Event{
-		EventKey:  input.EventKey,
-		RunID:     input.RunID,
-		AgentID:   input.AgentID,
+		EventKey: input.EventKey,
+		RunID:    input.RunID,
+		Subject:  input.Subject,
+
 		SessionID: input.SessionID,
 		TurnID:    input.TurnID,
 		Type:      input.Type,
@@ -569,7 +603,11 @@ func (r *Runtime) buildAndSubmitWorkflowForTest(
 ) error {
 	id := agent.Ident("")
 	if input != nil {
-		id = input.AgentID
+		executor, ok := input.Subject.Executor.AsAgent()
+		if !ok {
+			return errors.New("test workflow requires an Agent subject")
+		}
+		id = agent.Ident(executor)
 	}
 	definition := testRuntimeDefinition(r, id)
 	definition.route.WorkflowName = workflow
@@ -880,8 +918,9 @@ func (t *testWorkflowContext) StartChildWorkflow(ctx context.Context, req engine
 		h := &controlledChildHandle{
 			ready: make(chan struct{}),
 			out: &api.RunOutput{
-				AgentID: req.Input.AgentID,
-				RunID:   req.Input.RunID,
+				Subject: req.Input.Subject,
+
+				RunID: req.Input.RunID,
 				Final: &model.Message{
 					Role:  model.ConversationRoleAssistant,
 					Parts: []model.Part{model.TextPart{Text: "completed"}},
@@ -1059,6 +1098,17 @@ func (t *testWorkflowContext) ExecuteContinuationActivity(call engine.Continuati
 	return rt.continuationAvailableActivity(t.Context(), call.Input)
 }
 
+func (t *testWorkflowContext) ExecuteAgentOperationActivity(call engine.AgentOperationActivityCall) (*api.AgentOperationActivityResult, error) {
+	rt := t.runtime
+	if rt == nil {
+		rt = t.hookRuntime
+	}
+	if rt == nil {
+		return nil, errors.New("agent operation activity runtime is required")
+	}
+	return rt.prepareAgentOperationActivity(t.Context(), call.Input)
+}
+
 func (t *testWorkflowContext) ExecuteAgentChildActivity(call engine.AgentChildActivityCall) (*api.AgentChildActivityOutput, error) {
 	t.lastAgentChildCall = call
 	t.agentChildCalls++
@@ -1231,6 +1281,10 @@ func (s *stubEngine) RegisterCancellationWorkflow(context.Context, string, engin
 	return nil
 }
 
+func (s *stubEngine) StartActiveCancellationWorkflow(context.Context, string, engine.CancellationRequest) error {
+	return nil
+}
+
 func (s *stubEngine) StartCancellationWorkflow(context.Context, string, string, engine.CancellationRequest) error {
 	return errors.New("cancellation workflow start is not implemented by this test stub")
 }
@@ -1260,6 +1314,10 @@ func (s *stubEngine) RegisterExecuteToolActivity(_ context.Context, name string,
 	s.registeredExecuteActivityOptions[name] = opts
 	return nil
 }
+func (s *stubEngine) RegisterAgentOperationActivity(context.Context, string, engine.ActivityOptions, func(context.Context, *api.RunInput) (*api.AgentOperationActivityResult, error)) error {
+	return nil
+}
+
 func (s *stubEngine) RegisterAgentChildActivity(_ context.Context, name string, opts engine.ActivityOptions, _ func(context.Context, *api.AgentChildActivityInput) (*api.AgentChildActivityOutput, error)) error {
 	if s.registeredAgentChildOptions == nil {
 		s.registeredAgentChildOptions = make(map[string]engine.ActivityOptions)
@@ -1273,12 +1331,12 @@ func (s *stubEngine) RegisterContinuationActivity(context.Context, string, engin
 func (s *stubEngine) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequest) (engine.WorkflowHandle, error) {
 	s.startCalls++
 	s.last = req
-	return noopWorkflowHandle{}, nil
+	return noopWorkflowHandle{output: &api.RunOutput{Subject: req.Input.Subject, RunID: req.Input.RunID}}, nil
 }
 
 func (s *stubEngine) QueryRunCompletion(context.Context, string) (engine.RunCompletion, error) {
 	return engine.RunCompletion{
-		Status: engine.RunStatusCompleted, CompletedAt: time.Now().UTC(), Output: &api.RunOutput{},
+		Status: engine.RunStatusCompleted, CompletedAt: time.Now().UTC(), Output: &api.RunOutput{Subject: s.last.Input.Subject, RunID: s.last.Input.RunID},
 	}, nil
 }
 
@@ -1297,14 +1355,17 @@ func (s *stubEngine) SealRegistration(context.Context) error {
 	return s.sealErrors[idx]
 }
 
-type noopWorkflowHandle struct{}
+type noopWorkflowHandle struct{ output *api.RunOutput }
 
-func (noopWorkflowHandle) Wait(context.Context) (*api.RunOutput, error) { return &api.RunOutput{}, nil }
-func (noopWorkflowHandle) Cancel(context.Context) error                 { return nil }
+func (h noopWorkflowHandle) Wait(context.Context) (*api.RunOutput, error) { return h.output, nil }
+func (noopWorkflowHandle) Cancel(context.Context) error                   { return nil }
 
 func newTestRuntimeWithPlanner(agentID agent.Ident, pl planner.Planner) *Runtime {
 	return &Runtime{
-		agents:    map[agent.Ident]AgentRegistration{agentID: {Planner: pl}},
+		agents: map[agent.Ident]AgentRegistration{agentID: {
+			Definition: testRegistrationDefinition(agentID, engine.WorkflowDefinition{}, nil),
+			Planner:    pl,
+		}},
 		toolsets:  make(map[string]ToolsetRegistration),
 		toolSpecs: make(map[tools.Ident]tools.ToolSpec),
 		logger:    telemetry.NoopLogger{},
@@ -1390,8 +1451,9 @@ func (h *testChildHandle) Get(ctx context.Context) (*api.RunOutput, error) {
 		return h.runtime.ExecuteWorkflow(h.wfCtx, h.request.Input)
 	}
 	return &api.RunOutput{
-		AgentID: h.request.Input.AgentID,
-		RunID:   h.request.Input.RunID,
+		Subject: h.request.Input.Subject,
+
+		RunID: h.request.Input.RunID,
 		Final: &model.Message{
 			Role:  model.ConversationRoleAssistant,
 			Parts: []model.Part{model.TextPart{Text: "completed"}},
@@ -1428,25 +1490,13 @@ func newAnyJSONSpec(name tools.Ident) tools.ToolSpec {
 			Schema: rawjson.Message(`{"type":"object"}`),
 			Codec:  codec,
 		},
-		Result: tools.TypeSpec{Name: string(name + "_result"), Codec: codec},
+		Result: tools.TypeSpec{Name: string(name + "_result"), Schema: rawjson.Message(`{}`), Codec: codec},
 	}
 }
 
 // StartRequestDigest supplies the fixed accepted request for this workflow fixture.
 func (t *testWorkflowContext) StartRequestDigest() ([32]byte, error) {
 	return [32]byte{1}, nil
-}
-
-// testStartCancellationRecord uses the runtime encoder to build the intent that
-// an ended session selects instead of ordinary execution.
-func testStartCancellationRecord(t testing.TB, start session.RunStart) *runlog.Event {
-	t.Helper()
-	input, err := buildCancellationRecord(&RecordActivityInput{
-		RunID: start.RunID, AgentID: agent.Ident(start.AgentID), SessionID: start.SessionID,
-		TimestampMS: start.StartedAt.UnixMilli(),
-	}, agentrun.CancellationReasonSessionEnded)
-	require.NoError(t, err)
-	return runLogEvent(input, input.Payload, input.TimestampMS)
 }
 
 // runLoopWithState executes the same loop used by workflow admission. Tests
@@ -1471,3 +1521,6 @@ func (r *Runtime) resumeSuspendedWorkflow(wfCtx *providerRecoveryWorkflowContext
 	}
 	return loop.resumeRestoredWorkflow()
 }
+
+// RequireSingleAttempt accepts this fixture, which represents one workflow attempt.
+func (*testWorkflowContext) RequireSingleAttempt() error { return nil }

@@ -1,0 +1,136 @@
+package openfields_test
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	goahttp "goa.design/goa/v3/http"
+	genclient "open-fields.example/gen/jsonrpc/mcp_tools/client"
+	genserver "open-fields.example/gen/jsonrpc/mcp_tools/server"
+	genmcp "open-fields.example/gen/mcp_tools"
+)
+
+func TestGeneratedMCPExtraMembers(t *testing.T) {
+	for _, mode := range []string{"form", "url"} {
+		t.Run(mode, func(t *testing.T) {
+			extras := map[string]json.RawMessage{"extra": json.RawMessage(`{"integer":9007199254740993123456789,"nested":[null,{"x":true}]}`), "null": json.RawMessage(`null`), "MESSAGE": json.RawMessage(`"extra value"`), "MODE": json.RawMessage(`false`)}
+			request := protocolRequest(mode, extras)
+			encoded, err := genmcp.EncodeInputRequest(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoded, err := genmcp.DecodeInputRequest(encoded)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertProtocolExtra(t, decoded, mode, extras)
+			state := "exact-private-state"
+			result := &genmcp.ToolsCallResult{Outcome: genmcp.NewToolsCallOutcomeInputRequired(&genmcp.InputRequiredResult{InputRequests: map[string]*genmcp.InputRequest{"question": request}, RequestState: &state})}
+			writer := httptest.NewRecorder()
+			if err := goahttp.ResponseEncoder(context.Background(), writer).Encode(genserver.NewToolsCallResponseBody(result)); err != nil {
+				t.Fatal(err)
+			}
+			body := writer.Body.Bytes()
+			if bytes.Contains(body, []byte(`"extensions"`)) || !bytes.Contains(body, extras["extra"]) {
+				t.Fatalf("wrong wire shape: %s", body)
+			}
+			response := &http.Response{Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(bytes.NewReader(body))}
+			var decodedBody genclient.ToolsCallOutcomeResponseBody
+			if err := goahttp.ResponseDecoder(response).Decode(&decodedBody); err != nil {
+				t.Fatal(err)
+			}
+			if err := response.Body.Close(); err != nil {
+				t.Fatal(err)
+			}
+			got := genclient.NewToolsCallResultOK(&decodedBody)
+			pending, ok := got.Outcome.AsInputRequired()
+			if !ok {
+				t.Fatal("lost input branch")
+			}
+			if pending.RequestState == nil || *pending.RequestState != state {
+				t.Fatal("changed state")
+			}
+			assertProtocolExtra(t, pending.InputRequests["question"], mode, extras)
+		})
+	}
+}
+
+func TestGeneratedMCPRejectsExtraMemberCollisions(t *testing.T) {
+	for _, mode := range []string{"form", "url"} {
+		keys := []string{"mode", "message"}
+		if mode == "form" {
+			keys = append(keys, "requestedSchema")
+		} else {
+			keys = append(keys, "url")
+		}
+		for _, key := range keys {
+			t.Run(mode+"/"+key, func(t *testing.T) {
+				request := protocolRequest(mode, map[string]json.RawMessage{key: json.RawMessage(`"conflict"`)})
+				if _, err := genmcp.EncodeInputRequest(request); err == nil {
+					t.Fatal("accepted collision")
+				}
+			})
+		}
+	}
+	for _, raw := range []string{`!`, `{"x":1,"x":2}`} {
+		if _, err := genmcp.EncodeInputRequest(protocolRequest("form", map[string]json.RawMessage{"extra": json.RawMessage(raw)})); err == nil {
+			t.Fatalf("accepted invalid raw %s", raw)
+		}
+	}
+	for _, input := range []string{
+		`{"method":"elicitation/create","params":{"mode":"url","message":"first","message":"second","url":"https://example.com"}}`,
+		`{"method":"elicitation/create","params":{"mode":"url","message":"known","url":"https://example.com","extra":1,"extra":2}}`,
+		`{"method":"elicitation/create","params":{"mode":"url","url":"https://example.com","extra":1}}`,
+		`{"method":"elicitation/create","params":{"mode":"url","message":false,"url":"https://example.com"}}`,
+	} {
+		if _, err := genmcp.DecodeInputRequest([]byte(input)); err == nil {
+			t.Fatalf("accepted invalid request %s", input)
+		}
+	}
+}
+
+func protocolRequest(mode string, extras map[string]json.RawMessage) *genmcp.InputRequest {
+	request := &genmcp.InputRequest{Method: "elicitation/create"}
+	if mode == "form" {
+		request.Params = genmcp.NewElicitationParamsForm(&genmcp.ElicitationFormParams{Message: "Choose", RequestedSchema: json.RawMessage(`{"type":"object","properties":{}}`), Extensions: extras})
+	} else {
+		request.Params = genmcp.NewElicitationParamsURL(&genmcp.ElicitationURLParams{Message: "Consent", URL: "https://example.com/consent", Extensions: extras})
+	}
+	return request
+}
+func assertProtocolExtra(t *testing.T, request *genmcp.InputRequest, mode string, want map[string]json.RawMessage) {
+	t.Helper()
+	var got map[string]json.RawMessage
+	if mode == "form" {
+		value, ok := request.Params.AsForm()
+		if !ok {
+			t.Fatal("lost form")
+		}
+		if value.Message != "Choose" {
+			t.Fatalf("known message changed: %q", value.Message)
+		}
+		got = value.Extensions
+	} else {
+		value, ok := request.Params.AsURL()
+		if !ok {
+			t.Fatal("lost URL")
+		}
+		if value.Message != "Consent" {
+			t.Fatalf("known message changed: %q", value.Message)
+		}
+		got = value.Extensions
+	}
+	if len(got) != len(want) {
+		t.Fatalf("changed members: %v", got)
+	}
+	for key, value := range want {
+		if !bytes.Equal(value, got[key]) {
+			t.Fatalf("changed member %s: %s", key, got[key])
+		}
+	}
+}

@@ -69,7 +69,7 @@ func TestRegistryIncludeResolvedRetainsCompleteContractWithoutRemoteRead(t *test
 }
 
 func TestRegistryIncludeResolvedRejectsAtExistingContractBoundary(t *testing.T) {
-	for _, name := range []string{"connection", "consumption", "invalid registration", "unsupported execution", "duplicate", "static collision", "native executor", "reserved name"} {
+	for _, name := range []string{"connection", "consumption", "invalid registration", "unsupported execution", "duplicate", "static collision", "missing provider route", "reserved name"} {
 		t.Run(name, func(t *testing.T) {
 			rt := New(newTestStore())
 			selected := testRuntimeRegistryResolution("records.find", strings.Repeat("a", 64))
@@ -84,10 +84,10 @@ func TestRegistryIncludeResolvedRejectsAtExistingContractBoundary(t *testing.T) 
 				selected.RegistrationToken, want = "", "resolve registry"
 			case "unsupported execution":
 				selected.Toolset.Tools[0].ConsumerContract.Kind, want = "control", "requires compiled control execution"
-			case "native executor":
+			case "missing provider route":
 				selected.Toolset.Tools[0].ConsumerContract.Kind = registryAgentKind
 				selected.Toolset.Tools[0].ConsumerContract.Agent = &genregistry.AgentToolTarget{Executor: "unconfigured.worker", Configuration: "revision/7"}
-				want = "unconfigured Agent executor"
+				want = "workflow"
 			case "reserved name":
 				selected.Toolset.Tools[0].Name, want = string(continuationActionName("records.more", "selection-1")), "must be qualified"
 			case "duplicate", "static collision":
@@ -111,7 +111,7 @@ func TestRegistryIncludeResolvedNativeUsesConfiguredTarget(t *testing.T) {
 	rt := New(newTestStore())
 	selected := testRuntimeRegistryResolution("specialist.inspect", strings.Repeat("b", 64))
 	selected.Toolset.Tools[0].ConsumerContract.Kind = registryAgentKind
-	selected.Toolset.Tools[0].ConsumerContract.Agent = &genregistry.AgentToolTarget{Executor: "records.agent", Configuration: "revision/7"}
+	selected.Toolset.Tools[0].ConsumerContract.Agent = &genregistry.AgentToolTarget{Executor: "records.agent", Configuration: "revision/7", Workflow: "records.workflow", Queue: "records.queue"}
 	source := resolvedTestSource{selected, testRegistryName, true}
 	definition := testRegistryAgentDefinition(source)
 	require.NoError(t, rt.RegisterRegistry(testRegistryName, &genregistry.Client{}, unusedRegistryPulse{}))

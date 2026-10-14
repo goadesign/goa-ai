@@ -11,26 +11,10 @@
 //   - Subscriber: the interface implementations must satisfy to receive events
 //   - Subscription: a handle for unregistering from the bus
 //
-// Typical usage pattern:
-//
-//	bus := hooks.NewBus()
-//
-//	// Register a subscriber
-//	sub := hooks.SubscriberFunc(func(ctx context.Context, evt hooks.Event) error {
-//	    if evt.Type == hooks.WorkflowStarted {
-//	        fmt.Printf("Workflow %s started\n", evt.RunID)
-//	    }
-//	    return nil
-//	})
-//	subscription, _ := bus.Register(sub)
-//	defer subscription.Close()
-//
-//	// Publish events
-//	bus.Publish(ctx, hooks.Event{
-//	    Type:    hooks.WorkflowStarted,
-//	    RunID:   "run-123",
-//	    AgentID: "chat-agent",
-//	})
+// A host registers a Subscriber and publishes typed events such as
+// NewRunStartedEvent. Every event carries the generated run subject, identifying
+// either its Agent executor or the selected service tool.
+
 package hooks
 
 import (

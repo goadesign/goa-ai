@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -106,9 +107,10 @@ func TestMCPProgressActivityHostVisibility(t *testing.T) {
 			if test.session {
 				sessionID = "session-1"
 			}
-			input := &RunInput{AgentID: "test.agent", RunID: "run-1", SessionID: "session-1", TurnID: "turn-1"}
+			input := &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+				RunExecutorBranchAgent("test.agent"))}, RunID: "run-1", SessionID: "session-1", TurnID: "turn-1"}
 			seedRunMeta(t, rt, input)
-			result, err := rt.ExecuteToolActivity(t.Context(), &ToolInput{RunID: input.RunID, AgentID: input.AgentID, SessionID: sessionID, TurnID: input.TurnID, ToolsetName: "remote", ToolName: tools.Ident("remote.work"), ToolCallID: "call-1", ParentToolCallID: "parent-1", Payload: rawjson.Message(`{}`)})
+			result, err := rt.ExecuteToolActivity(t.Context(), &ToolInput{RunID: input.RunID, Subject: input.Subject, SessionID: sessionID, TurnID: input.TurnID, ToolsetName: "remote", ToolName: tools.Ident("remote.work"), ToolCallID: "call-1", ParentToolCallID: "parent-1", Payload: rawjson.Message(`{}`)})
 			if test.fail {
 				require.ErrorIs(t, err, hostFailure)
 				assert.Nil(t, result)

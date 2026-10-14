@@ -243,17 +243,23 @@ existing lease lifecycle. Calling a native Agent through `CallTool` or
 
 ### Prepare the child configuration
 
-Before sealing the consuming runtime, register an `AgentToolResolver` for each
-native executor. The callback receives the saved configuration reference and a
-copy of the validated tool call. It returns `*runtime.AgentToolConfiguration`:
+Before sealing the provider runtime, register an `AgentToolResolver` for each
+Agent it runs. Consumers do not register this resolver or load the provider
+definition. The callback receives the original generated execution invocation,
+the saved configuration reference and a copy of the validated tool call.
+`call.Name` identifies the original provider operation, including when a
+registered import derives a different model-visible name. `call.TranscriptName()` and
+`call.TranscriptPayload()` retain the model's name and input; `call.Payload`
+contains the complete validated input after consumer-owned values were added.
+The callback returns `*runtime.AgentToolConfiguration`:
 
 ```go
 err := rt.RegisterAgentToolResolver(gengeneric.AgentID,
-    func(ctx context.Context, revision string, call *runtime.ToolCall) (*runtime.AgentToolConfiguration, error) {
+    func(ctx context.Context, origin genregistry.ExecutionInvocation, revision string, call *runtime.ToolCall) (*runtime.AgentToolConfiguration, error) {
         // Application code loads this exact revision and builds its transcript
         // using call.Payload. Model and product choices can travel in Labels;
         // enforceable tool restrictions belong in Policy.
-        return configurations.Prepare(ctx, revision, call)
+        return configurations.Prepare(ctx, origin, revision, call)
     },
 )
 if err != nil {
@@ -261,36 +267,44 @@ if err != nil {
 }
 ```
 
-The returned configuration contains `Messages`, `Labels`, `Policy`, and optional
-`RenderedPrompts`. Its labels extend or replace inherited parent labels. The
-application is responsible for its facility and product scope rules. The runtime
+The returned configuration contains required `History` plus planner metadata,
+execution labels, policy and optional rendered-prompt facts. Select `runtime.LiteralAgentHistory(messages)` or
+`runtime.NextTurnAgentHistory(completedRunID, systemMessages, freshMessages)`.
+The [provider history contract and upgrade](runtime.md#provider-owned-history)
+explain exact source ownership, reasoning exclusion and the replacement of the
+previous `Messages` field. Its labels extend or replace inherited parent labels.
+The application is responsible for its facility and product scope rules. The runtime
 owns the child run ID, session ID, parent links, and original tool arguments.
 Preparation runs in an activity. Workflow replay uses the recorded configuration;
 a continuation uses the saved checkpoint instead of resolving the revision again.
 
-An Agent definition already permits its own worker and its generated child
-workers. This supports many saved configurations running on one generic worker.
-To permit an additional worker in a programmatically assembled definition:
+Each registered Agent target supplies its executor ID, workflow name, worker
+queue and immutable configuration reference. The provider checks those route
+values against its own registered Agent before preparing the input. Consumers
+retain this operation contract and route; they do not import the provider
+implementation or its private tool definitions. Static child Agents declared
+with the DSL continue using their generated definitions.
 
-```go
-executor := gengeneric.Definition()
-consumer := genassistant.Definition().WithAgentExecutors(&executor)
-```
+When a provider suspends for external tool results, the checkpoint retains only
+those requested result schemas and bounded-result contracts. The parent checks
+the response before creating its successor, without loading private tools. The
+provider still validates its complete saved planner state with its generated
+codecs before executing. Cancellation follows the exact saved child links;
+another run in the same session is not a valid cancellation target.
 
-`WithAgentExecutors` copies the supplied definitions and returns a new immutable
-definition. Use that same definition for `AgentRegistration.Definition` on the
-worker and `rt.ClientFor(consumer)` in callers. The generated registration and
-client helpers continue using their original generated definition. A registry
-target outside the allowed workers fails discovery before model invocation.
 
 ### Return the selected result
 
 Both `planner.PlanInput` and `planner.PlanResumeInput` expose `ParentTool` for a
-nested run. Its `Result` contains the exact result schema and codec selected by
-the parent. A generic planner can use this schema with `model.StructuredOutput`
-in its final model call, then return `planner.FinalToolResult`. Structured output
-and tool calls use separate model requests under the existing model contract.
-Top-level runs have no `ParentTool`.
+nested run. `ParentTool.Name` identifies the original provider operation, so
+planners use it to select operation-specific behavior. `RunContext.Tool` retains
+the name selected by the caller, including a derived registered-resource name; it keeps
+saved registry lookup and child run identity stable. `ParentTool.Result` contains
+the exact result schema and codec selected by the parent. A generic planner can
+use this schema with `model.StructuredOutput` in its final model call, then return
+`planner.FinalToolResult`. Structured output and tool calls use separate model
+requests under the existing model contract. Message-based runs have no
+`ParentTool`.
 
 The runtime validates the final JSON against that retained contract and links the
 result to the child run. A native Agent tool that returns only a chat message is
@@ -303,12 +317,42 @@ and approval use the normal child workflow and continuation machinery.
 
 ## Select sources using application scope
 
+The host authenticates the caller and authorizes registered resource owners
+before exposing or invoking their operations. Registry's `CatalogIdentity`
+records the owning scope and permanent resource name. `ListCatalogResources`
+reads a bounded page for one owning scope. A selected registration retains
+its original declarations without granting access. Invocation identity, labels, and catalog
+membership are never credentials. Registry does not retain end-user permission
+decisions or sharing relationships.
+
 An application can implement `runtime.RegistryTools` and attach it with
 `AgentDefinition.WithRegistryTools`. During `Resolve`, `catalog.RunLabels()`
 returns an owned copy of the current run labels. Use these to select product
 registrations through `IncludeToolset` or `IncludeRegistry`. `Allows` declares
 the sources that saved calls may continue consuming. Existing run policies
 still restrict the tools advertised and executed.
+
+When an application has already selected an exact registration, `IncludeResolved`
+imports it without another read and preserves original operation names. Use
+`IncludeRegistered(registry, source, resolved, deferred)` when multiple owners or
+resources can supply the same operation. Its required `CatalogSource` identifies
+the logical owner, resource and exact native revision or service registration.
+The application authorizes that selection; the runtime validates its declaration
+route, token and operation kind. It never interprets a private route as an owner.
+
+Registered names retain the original operation around a separate identity segment:
+`originalToolset.originalOperation.hexRegistry_kind_hexOwner_hexResource.originalOperation`.
+The original operation appears first for provider name projection and last to
+preserve the qualified tool identifier's operation leaf.
+Each hex field encodes the exact UTF-8 bytes, so separators are unambiguous.
+Resource revisions and service replacement tokens do not affect the name. No
+caller supplies aliases, and no additional catalog record is stored. Existing
+provider adapters apply their own name projection and reject collisions.
+
+`ForEachRegisteredSource` visits each distinct selected source once and supplies
+independent copies. Generated `Bind*SourceInput` helpers attach application-owned
+input only when registry, owner, resource, target kind, route and registration
+all match. Static `Bind*Input` helpers retain their existing behavior.
 
 For example, an application can use its own `namespace` label to select
 support tools for one session and operations tools for another. Goa-AI
@@ -330,6 +374,29 @@ and finish their runs before rolling back to those versions. Any earlier
 Regenerate tool packages to obtain `Toolset()`. Existing `ToolSchemas()` callers
 and generated service codecs keep their existing contracts. The published
 compiler and planner input fields are additive; `PlannerContext` is unchanged.
+
+### Upgrade independent Agent providers
+
+Every native `AgentToolTarget` now requires `Workflow` and `Queue` in addition
+to `Executor` and `Configuration`. Update the declarations at their producer;
+these values must match the registered provider Agent route. Existing native
+records without those fields must be replaced before consumers discover them.
+Service tool registrations retain their current contract.
+
+Remove consumer calls to `WithAgentExecutors`. Register each Agent definition
+and its `AgentToolResolver` on the provider worker instead. Preparation uses
+`runtime.prepare_agent_child.<agent-id>` on that worker's queue. Static child
+preparation uses the parent's corresponding activity on the parent queue.
+Finish accepted workflows on their old workers before replacing those workers;
+old workflow histories refer to the earlier activity name. Do not mix the two
+worker implementations on the same queue while such work is accepted.
+
+New suspensions use `goa-ai.run-suspension.v14`. Older suspensions are rejected
+without conversion. Hosts must finish them before upgrading or provide their
+own recovery, such as a fresh turn using the retained conversation history.
+The runtime does not delete history or choose that product recovery policy.
+Rolling back requires finishing new-format work and restoring compatible
+native declarations before the old workers are used again.
 
 ## Keep planners small
 
@@ -466,6 +533,24 @@ turning on dynamic consumers. Upgrade the registry to serve `ResolveToolset`
 and `CallResolvedTool`; older registry servers cannot serve this consumer path.
 Old registrations without `ConsumerContract` remain usable by their existing
 static integrations but are rejected by dynamic consumers.
+
+The saved consumer binding format also changes. `RegistryBinding.Resolution`
+previously held protobuf JSON for `ResolveToolsetResponse`. It now holds generated
+`RegistrySelection` JSON with exactly one `direct` or `registered` selection.
+The direct variant contains the original resolved registration; the registered
+variant additionally requires its `CatalogSource`. The runtime reads only the new
+format.
+
+Before starting new consumers, stop writers and convert every saved binding in
+calls, results, run context and continuation records using the old protobuf
+validator and the new generated `EncodeRegistrySelection` codec. Old bindings
+become direct selections. Do not merely wrap the old JSON: the generated codec
+uses its own field names. Preserve registry names, original tool names, complete
+arguments, model arguments, call identities and pagination declarations. Retain
+backups until replay and fresh-turn conversation recovery are verified. Old
+readers cannot consume the new format; rollback requires restoring the preserved
+old-format state and preventing new-format writes. Registration and provider
+storage migrations remain separate.
 
 The [registry storage upgrade](runtime.md#registry-storage-upgrade) is separate
 from consumer loading and earlier wire-version migrations. It requires the

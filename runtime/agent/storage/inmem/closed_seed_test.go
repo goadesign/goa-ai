@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/session"
 	"goa.design/goa-ai/runtime/agent/storage"
 )
@@ -37,7 +38,7 @@ func TestClosedRequestRequiresExactPublishedHistory(t *testing.T) {
 				case "unpublished":
 					store.seeds[start.RunID].published = false
 				case "owner":
-					store.seeds[start.RunID].seed.Declaration.AgentID = "another-agent"
+					store.seeds[start.RunID].seed.Declaration.Subject = genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("another-agent"))}
 				case "predecessor":
 					store.seeds[start.RunID].seed.Declaration.Kind = storage.SeedContinuation
 					store.seeds[start.RunID].seed.Declaration.SourceRunID = "another-run"

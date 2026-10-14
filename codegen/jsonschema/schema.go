@@ -25,7 +25,8 @@ const (
 // recursion remains in local $defs; synthesized OpenAPI examples are removed.
 // Callers evaluate the Goa design first and supply its API, original attribute
 // and example identity. The returned bytes use the generated JSON field names
-// and reject unknown object fields; unsupported representations return an error.
+// and reject unknown fields unless an authored embedded map accepts them.
+// Unsupported representations return an error.
 func Build(api *goaexpr.APIExpr, att *goaexpr.AttributeExpr, identity goaexpr.ExampleIdentity) ([]byte, error) {
 	return build(api, att, identity, true)
 }
@@ -91,6 +92,15 @@ func alignSchemaNodeWithGeneratedDecoder(att *goaexpr.AttributeExpr, schema map[
 	if att == nil || att.Type == nil || len(schema) == 0 {
 		return nil
 	}
+	if jsonshape.IsRawJSON(att) {
+		// Raw JSON values may contain any JSON kind. Their Go byte storage
+		// does not make the public value a base64-encoded string.
+		clear(schema)
+		if att.Description != "" {
+			schema["description"] = att.Description
+		}
+		return nil
+	}
 	if att.Description != "" {
 		schema["description"] = att.Description
 	}
@@ -145,6 +155,10 @@ func alignSchemaNodeWithGeneratedDecoder(att *goaexpr.AttributeExpr, schema map[
 		}
 		return alignSchemaNodeWithGeneratedDecoder(&effective, schema, defs, seen, closeObjects)
 	case *goaexpr.Object:
+		embedded, err := jsonshape.EmbeddedMap(att)
+		if err != nil {
+			return err
+		}
 		if closeObjects {
 			schema["additionalProperties"] = false
 		} else if len(*dt) == 0 {
@@ -156,10 +170,32 @@ func alignSchemaNodeWithGeneratedDecoder(att *goaexpr.AttributeExpr, schema map[
 		wireProperties := make(map[string]any, len(properties))
 		required := make([]string, 0, len(att.AllRequired()))
 		for _, nat := range *dt {
+			if embedded == nat && jsonshape.IsRawJSON(goaexpr.AsMap(nat.Attribute.Type).ElemType) {
+				// A raw JSON map accepts every JSON value. Its storage field may
+				// be hidden from OpenAPI without hiding the additional members.
+				schema["additionalProperties"] = map[string]any{}
+				continue
+			}
 			name, visible := jsonshape.FieldName(nat)
 			childSchema, ok := properties[nat.Name].(map[string]any)
 			if !ok {
 				return fmt.Errorf("schema for field %q is missing", nat.Name)
+			}
+			if embedded == nat {
+				if err := alignSchemaNodeWithGeneratedDecoder(nat.Attribute, childSchema, defs, seen, closeObjects); err != nil {
+					return err
+				}
+				// A named map keeps its value schema in the referenced definition.
+				// Follow that same definition after alignment before using its values.
+				for refName := schemaRefName(childSchema); refName != ""; refName = schemaRefName(childSchema) {
+					definition, ok := defs[refName].(map[string]any)
+					if !ok {
+						return fmt.Errorf("embedded map schema ref %q is missing from $defs", refName)
+					}
+					childSchema = definition
+				}
+				schema["additionalProperties"] = childSchema["additionalProperties"]
+				continue
 			}
 			if !visible {
 				continue

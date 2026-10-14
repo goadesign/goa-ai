@@ -6,7 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	agent "goa.design/goa-ai/runtime/agent"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
@@ -45,8 +45,11 @@ func TestExecuteToolActivityIsolatesExecutorMutation(t *testing.T) {
 	}
 	seedTestToolset(rt, toolset, newAnyJSONSpec(toolName))
 	input := &ToolInput{
-		RunID:            "run-1",
-		AgentID:          "svc.agent",
+		RunID: "run-1",
+		Subject: genrunidentity.RunSubject{
+			Executor: genrunidentity.
+				NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))},
+
 		ToolsetName:      toolset,
 		ToolName:         toolName,
 		ToolCallID:       "call-1",
@@ -65,7 +68,7 @@ func TestExecuteToolActivityIsolatesExecutorMutation(t *testing.T) {
 	require.Equal(t, "call-1", executorResult.ToolCallID)
 	require.Equal(t, toolName, materialized.Name)
 	require.Equal(t, rawjson.Message(`{"query":"status"}`), materialized.Payload)
-	require.Equal(t, agent.Ident("svc.agent"), materialized.AgentID)
+	require.Equal(t, input.Subject, materialized.Subject)
 	require.Equal(t, "run-1", materialized.RunID)
 	require.Equal(t, "session-1", materialized.SessionID)
 	require.Equal(t, map[string]string{"scope": "canonical"}, materialized.Labels)
@@ -105,11 +108,14 @@ func TestInlineToolExecutionIsolatesExecutorMutation(t *testing.T) {
 	}
 	seedTestToolset(rt, toolset, newAnyJSONSpec(toolName))
 	canonical := ToolCall{
-		Name:                       toolName,
-		Payload:                    rawjson.Message(`{"query":"status"}`),
-		ModelName:                  "model.lookup",
-		ModelPayload:               rawjson.Message(`{"query":"original"}`),
-		AgentID:                    "svc.agent",
+		Name:         toolName,
+		Payload:      rawjson.Message(`{"query":"status"}`),
+		ModelName:    "model.lookup",
+		ModelPayload: rawjson.Message(`{"query":"original"}`),
+		Subject: genrunidentity.RunSubject{
+			Executor: genrunidentity.
+				NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))},
+
 		RunID:                      "run-1",
 		SessionID:                  "session-1",
 		Labels:                     map[string]string{"scope": "canonical"},
@@ -121,7 +127,7 @@ func TestInlineToolExecutionIsolatesExecutorMutation(t *testing.T) {
 	exec := &toolBatchExec{
 		r:         rt,
 		runID:     canonical.RunID,
-		agentID:   canonical.AgentID,
+		agentID:   testSubjectAgent(t, canonical.Subject),
 		sessionID: canonical.SessionID,
 		turnID:    canonical.TurnID,
 		runCtx: &run.Context{
@@ -158,7 +164,7 @@ func mutateEveryToolCallField(call *ToolCall) {
 	if len(call.ModelPayload) > 0 {
 		call.ModelPayload[0] = '!'
 	}
-	call.AgentID = "mutated.agent"
+	call.Subject = genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("mutated.agent"))}
 	call.RunID = "mutated-run"
 	call.SessionID = "mutated-session"
 	call.Labels["scope"] = mutatedTestValue

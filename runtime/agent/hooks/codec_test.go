@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -33,7 +34,7 @@ func TestRunStartedCodecUsesCurrentDurablePayload(t *testing.T) {
 
 	event := NewRunStartedEvent(
 		testRunID,
-		agent.Ident("service.agent"),
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("service.agent")))},
 		testSessionID,
 		"parent-1",
 		"predecessor-1",
@@ -64,7 +65,7 @@ func TestRunStartedCodecOmitsMissingPredecessor(t *testing.T) {
 
 	record, err := EncodeToRecordInput(NewRunStartedEvent(
 		testRunID,
-		agent.Ident("service.agent"),
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("service.agent")))},
 		testSessionID,
 		"parent-1",
 		"",
@@ -87,7 +88,7 @@ func TestRunStartedCodecAcceptsEmptyPayload(t *testing.T) {
 	decoded, err := DecodeFromRecordInput(&runlog.ActivityInput{
 		Type:    RunStarted,
 		RunID:   testRunID,
-		AgentID: agent.Ident("service.agent"),
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("service.agent")))},
 		Payload: rawjson.Message(`{}`),
 	})
 	require.NoError(t, err)
@@ -130,7 +131,7 @@ func TestRunStartedCodecRejectsLegacyAndUnknownPayloadFields(t *testing.T) {
 			_, err := DecodeFromRecordInput(&runlog.ActivityInput{
 				Type:    RunStarted,
 				RunID:   testRunID,
-				AgentID: agent.Ident("service.agent"),
+				Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("service.agent")))},
 				Payload: rawjson.Message(tt.payload),
 			})
 
@@ -148,7 +149,7 @@ func TestToolCallScheduledCodecPreservesContinuationRoot(t *testing.T) {
 
 	event := NewToolCallScheduledEvent(
 		"run-1",
-		"agent-1",
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent-1"))},
 		"session-1",
 		tools.Ident("tools.continue_search"),
 		"continue-1",
@@ -177,7 +178,7 @@ func TestDecodeRunlogEventPreservesDurableEnvelope(t *testing.T) {
 
 	event := NewToolCallScheduledEvent(
 		"run-1",
-		"agent-1",
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent-1"))},
 		"session-1",
 		tools.Ident("tools.lookup"),
 		"call-1",
@@ -197,7 +198,7 @@ func TestDecodeRunlogEventPreservesDurableEnvelope(t *testing.T) {
 		ID:        "opaque-cursor",
 		EventKey:  record.EventKey,
 		RunID:     record.RunID,
-		AgentID:   record.AgentID,
+		Subject:   record.Subject,
 		SessionID: record.SessionID,
 		TurnID:    record.TurnID,
 		Type:      record.Type,
@@ -428,7 +429,7 @@ func TestDecodeFromRecordInput_ToolResultReceivedPreservesServerDataBytes(t *tes
 
 	ev := NewToolResultReceivedEvent(
 		testRunID,
-		agentID,
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))},
 		testSessionID,
 		"call-run",
 		toolName,
@@ -465,7 +466,7 @@ func TestDecodeFromRecordInput_ToolResultReceivedPreservesServerDataBytes(t *tes
 func TestEncodeRecordPayloadRejectsFailureWithResultJSON(t *testing.T) {
 	event := NewToolResultReceivedEvent(
 		testRunID,
-		"agent-1",
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent-1"))},
 		testSessionID,
 		"call-run",
 		"svc.tools.lookup",
@@ -516,7 +517,7 @@ func TestDecodeFromRecordInput_PromptRenderedRoundTrip(t *testing.T) {
 	got, ok := decoded.(*PromptRenderedEvent)
 	require.True(t, ok)
 	require.Equal(t, testRunID, got.RunID())
-	require.Equal(t, string(agentID), got.AgentID())
+	require.Equal(t, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))}, got.Subject())
 	require.Equal(t, testSessionID, got.SessionID())
 	require.Equal(t, "turn-1", got.TurnID())
 	require.Equal(t, prompt.Ident("example.agent.system"), got.PromptID)
@@ -558,7 +559,7 @@ func TestDecodeFromRecordInput_RunCompletedRoundTripsLabels(t *testing.T) {
 		"household_id": "house-42",
 		"source":       "email",
 	}
-	ev := NewRunCompletedEvent(testRunID, agent.Ident("agent-1"), testSessionID, "success", run.PhaseCompleted, labels, nil, nil)
+	ev := NewRunCompletedEvent(testRunID, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent-1")))}, testSessionID, "success", run.PhaseCompleted, labels, nil, nil)
 
 	in, err := EncodeToRecordInput(ev, EncodeOptions{
 		EventKey:    "evt-run-completed-labels",
@@ -577,7 +578,7 @@ func TestDecodeFromRecordInput_RunCompletedRoundTripsLabels(t *testing.T) {
 func TestDecodeFromRecordInputRunSuspendedRoundTrip(t *testing.T) {
 	event := NewRunSuspendedEvent(
 		testRunID,
-		agent.Ident("agent-1"),
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent-1")))},
 		testSessionID,
 		"suspension-1",
 		"v1",
@@ -605,7 +606,7 @@ func TestDecodeFromRecordInputRejectsFieldsAndValuesOutsideLifecyclePayload(t *t
 	for _, event := range []Event{
 		NewRunCompletedEvent(
 			testRunID,
-			agent.Ident("agent-1"),
+			genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent-1")))},
 			testSessionID,
 			"success",
 			run.PhaseCompleted,
@@ -615,7 +616,7 @@ func TestDecodeFromRecordInputRejectsFieldsAndValuesOutsideLifecyclePayload(t *t
 		),
 		NewRunSuspendedEvent(
 			testRunID,
-			agent.Ident("agent-1"),
+			genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent-1")))},
 			testSessionID,
 			"suspension-1",
 			"v1",
@@ -624,7 +625,7 @@ func TestDecodeFromRecordInputRejectsFieldsAndValuesOutsideLifecyclePayload(t *t
 		),
 		NewChildRunLinkedEvent(
 			"parent-run",
-			agent.Ident("parent-agent"),
+			genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("parent-agent")))},
 			testSessionID,
 			tools.Ident("parent.tools.child"),
 			"tool-call-1",
@@ -667,7 +668,7 @@ func TestDecodeFromRecordInputRejectsNullLifecyclePayload(t *testing.T) {
 			_, err := DecodeFromRecordInput(&runlog.ActivityInput{
 				Type:    eventType,
 				RunID:   testRunID,
-				AgentID: agent.Ident("service.agent"),
+				Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("service.agent")))},
 				Payload: rawjson.Message(`null`),
 			})
 			require.EqualError(
@@ -689,7 +690,7 @@ func TestDecodeFromRecordInput_RunCompletedRejectsFailedPayloadWithoutFailure(t 
 	_, err = DecodeFromRecordInput(&runlog.ActivityInput{
 		Type:        RunCompleted,
 		RunID:       testRunID,
-		AgentID:     agent.Ident("agent-1"),
+		Subject:     genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent-1")))},
 		SessionID:   testSessionID,
 		EventKey:    "evt-run-completed-failed",
 		TimestampMS: time.Now().UnixMilli(),
@@ -709,7 +710,7 @@ func TestDecodeFromRecordInput_RunCompletedRejectsCanceledPayloadWithoutReason(t
 	_, err = DecodeFromRecordInput(&runlog.ActivityInput{
 		Type:        RunCompleted,
 		RunID:       testRunID,
-		AgentID:     agent.Ident("agent-1"),
+		Subject:     genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent-1")))},
 		SessionID:   testSessionID,
 		EventKey:    "evt-run-completed-canceled",
 		TimestampMS: time.Now().UnixMilli(),
@@ -722,7 +723,7 @@ func TestDecodeFromRecordInput_RunCompletedRejectsCanceledPayloadWithoutReason(t
 func TestMCPInputCodecOwnsHostRequests(t *testing.T) {
 	params := json.RawMessage(`{"message":"Continue","mode":"url","url":"https://example.test/approve"}`)
 	requests := map[string]mcp.InputRequest{"approve": {Method: "elicitation/create", Params: params}}
-	event := NewAwaitMCPInputEvent(testRunID, "service.agent", testSessionID, api.PendingMCPInput{ToolName: "remote.lookup", ToolCallID: "call-1", Requests: requests})
+	event := NewAwaitMCPInputEvent(testRunID, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("service.agent"))}, testSessionID, api.PendingMCPInput{ToolName: "remote.lookup", ToolCallID: "call-1", Requests: requests})
 	params[0] = 'x'
 	delete(requests, "approve")
 	record, err := EncodeToRecordInput(event, EncodeOptions{EventKey: "mcp-input", TimestampMS: 1})
@@ -738,7 +739,7 @@ func TestMCPInputCodecOwnsHostRequests(t *testing.T) {
 
 // Stored input records must describe an interaction the host can actually show.
 func TestMCPInputCodecRejectsMalformedStoredInteraction(t *testing.T) {
-	event := NewAwaitMCPInputEvent(testRunID, "service.agent", testSessionID, api.PendingMCPInput{
+	event := NewAwaitMCPInputEvent(testRunID, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("service.agent"))}, testSessionID, api.PendingMCPInput{
 		ToolName: "remote.lookup", ToolCallID: "call-1",
 		Requests: map[string]mcp.InputRequest{"approve": {Method: "elicitation/create", Params: json.RawMessage(`{"message":"Continue","mode":"url","url":"relative"}`)}},
 	})

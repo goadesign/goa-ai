@@ -3,13 +3,12 @@ package runtime
 import (
 	"context"
 	"encoding/json"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
-	agent "goa.design/goa-ai/runtime/agent"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	engineinmem "goa.design/goa-ai/runtime/agent/engine/inmem"
@@ -31,10 +30,8 @@ type (
 	// suspensionOrderingControls lets a test stop suspension storage after
 	// workflow finalization has claimed the terminal outcome.
 	suspensionOrderingControls struct {
-		suspensionStarted   chan struct{}
-		suspensionRelease   chan struct{}
-		cancellationWaiting chan struct{}
-		waitOnce            sync.Once
+		suspensionStarted chan struct{}
+		suspensionRelease chan struct{}
 	}
 
 	// suspensionOrderingWorkflowContext exposes the exact ordering between
@@ -66,17 +63,6 @@ func (w *suspensionOrderingWorkflowContext) Detached() engine.WorkflowContext {
 		testWorkflowContext: detached,
 		controls:            w.controls,
 	}
-}
-
-// Await reports when a later cancellation is waiting for finalization to
-// finish, then delegates the actual wait to the normal test context.
-func (w *suspensionOrderingWorkflowContext) Await(condition func() bool) error {
-	if !condition() {
-		w.controls.waitOnce.Do(func() {
-			close(w.controls.cancellationWaiting)
-		})
-	}
-	return w.testWorkflowContext.Await(condition)
 }
 
 // ExecuteStorageActivity pauses the suspension write while leaving every
@@ -122,7 +108,10 @@ func TestCancelRunReturnsReasonConflict(t *testing.T) {
 func TestCancelRunTreatsCompletedEngineRaceAsSuccess(t *testing.T) {
 	store := newTestStore()
 	admitRunForTest(t, store, session.RunMeta{
-		AgentID: "agent", RunID: "run", SessionID: "session", Status: session.RunStatusCompleted,
+		Subject: genrunidentity.RunSubject{
+			Executor: genrunidentity.
+				NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("agent"))}, RunID: "run", SessionID: "session", Status: session.RunStatusCompleted,
 	})
 	workflowEngine := &recordingCancellationEngine{
 		Engine: engineinmem.New(),
@@ -138,7 +127,10 @@ func TestCancelRunTreatsCompletedEngineRaceAsSuccess(t *testing.T) {
 func TestCancelRunComparesReasonAfterWorkflowClosure(t *testing.T) {
 	store := newTestStore()
 	admitRunForTest(t, store, session.RunMeta{
-		AgentID: "agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
+		Subject: genrunidentity.RunSubject{
+			Executor: genrunidentity.
+				NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("agent"))}, RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
 	})
 	meta, err := store.LoadRun(t.Context(), "run")
 	require.NoError(t, err)
@@ -148,7 +140,8 @@ func TestCancelRunComparesReasonAfterWorkflowClosure(t *testing.T) {
 	_, err = store.RecordRunCancellation(t.Context(), storage.RunCancellation{
 		RunID: "run", Reason: run.CancellationReasonSessionEnded,
 		Record: &runlog.Event{
-			EventKey: cancellationIntentEventKey, RunID: "run", AgentID: agent.Ident(meta.AgentID),
+			EventKey: cancellationIntentEventKey, RunID: "run", Subject: meta.Subject,
+
 			SessionID: meta.SessionID, Type: storage.CancellationRecordType, Payload: payload,
 			Timestamp: timestamp,
 		},
@@ -156,7 +149,7 @@ func TestCancelRunComparesReasonAfterWorkflowClosure(t *testing.T) {
 	require.NoError(t, err)
 	terminal := testHookRecord(t, hooks.NewRunCompletedEvent(
 		"run",
-		agent.Ident(meta.AgentID),
+		meta.Subject,
 		meta.SessionID,
 		"canceled",
 		run.PhaseCanceled,
@@ -190,7 +183,10 @@ func TestCancelRunComparesReasonAfterWorkflowClosure(t *testing.T) {
 func TestCancelRunRejectsMissingWorkflowForActiveRun(t *testing.T) {
 	store := newTestStore()
 	admitRunForTest(t, store, session.RunMeta{
-		AgentID: "agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
+		Subject: genrunidentity.RunSubject{
+			Executor: genrunidentity.
+				NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("agent"))}, RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
 	})
 	workflowEngine := &recordingCancellationEngine{
 		Engine: engineinmem.New(),
@@ -232,7 +228,11 @@ func TestAcceptedCancellationReplacesSuccessfulWorkflowReturn(t *testing.T) {
 	}
 
 	input := &RunInput{
-		AgentID:   "agent",
+		Subject: genrunidentity.RunSubject{
+			Executor: genrunidentity.
+				NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("agent"))},
+
 		RunID:     "run",
 		SessionID: "session",
 	}
@@ -279,7 +279,11 @@ func TestAcceptedCancellationReplacesWorkflowSuspension(t *testing.T) {
 	}
 
 	input := &RunInput{
-		AgentID:   "agent",
+		Subject: genrunidentity.RunSubject{
+			Executor: genrunidentity.
+				NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("agent"))},
+
 		RunID:     "run",
 		SessionID: "session",
 	}
@@ -315,9 +319,8 @@ func TestWorkflowSuspensionRejectsCancellationAfterPersistenceStarts(t *testing.
 	registration.PlanActivityName = cancellationPlanActivityName
 	runtime.agents["agent"] = registration
 	controls := &suspensionOrderingControls{
-		suspensionStarted:   make(chan struct{}),
-		suspensionRelease:   make(chan struct{}),
-		cancellationWaiting: make(chan struct{}),
+		suspensionStarted: make(chan struct{}),
+		suspensionRelease: make(chan struct{}),
 	}
 	wfCtx := &suspensionOrderingWorkflowContext{
 		testWorkflowContext: &testWorkflowContext{
@@ -332,7 +335,10 @@ func TestWorkflowSuspensionRejectsCancellationAfterPersistenceStarts(t *testing.
 		err    error
 	}
 	workflowDone := make(chan workflowResult, 1)
-	input := &RunInput{AgentID: "agent", RunID: "run", SessionID: "session"}
+	input := &RunInput{Subject: genrunidentity.RunSubject{
+		Executor: genrunidentity.
+			NewRunExecutorAgent(genrunidentity.
+				RunExecutorBranchAgent("agent"))}, RunID: "run", SessionID: "session"}
 	publishTestRunInput(t, runtime, input, nil)
 	go func() {
 		output, executeErr := runtime.ExecuteWorkflow(wfCtx, input)
@@ -347,14 +353,13 @@ func TestWorkflowSuspensionRejectsCancellationAfterPersistenceStarts(t *testing.
 			Reason: run.CancellationReasonUserRequested,
 		})
 	}()
-	<-controls.cancellationWaiting
+	require.ErrorIs(t, <-cancellationDone, engine.ErrWorkflowCompleted)
 	close(controls.suspensionRelease)
 
 	result := <-workflowDone
 	require.NoError(t, result.err)
 	require.NotNil(t, result.output)
 	require.NotNil(t, result.output.Suspension)
-	require.ErrorIs(t, <-cancellationDone, engine.ErrWorkflowCompleted)
 	stored, err := store.LoadRun(t.Context(), "run")
 	require.NoError(t, err)
 	require.Equal(t, session.RunStatusSuspended, stored.Status)
@@ -387,24 +392,15 @@ func TestWorkflowFinalizationRejectsCancellationAfterTerminalStorageStarts(t *te
 	require.NoError(t, err)
 	require.False(t, accepted)
 
-	done := make(chan error, 1)
-	go func() {
-		done <- state.beginCancellation(wfCtx)
-	}()
-	select {
-	case err := <-done:
-		t.Fatalf("cancellation completed before terminal storage: %v", err)
-	case <-time.After(20 * time.Millisecond):
-	}
-
+	require.ErrorIs(t, state.beginCancellation(), engine.ErrWorkflowCompleted)
 	state.finishFinalization()
-	require.ErrorIs(t, <-done, engine.ErrWorkflowCompleted)
+	require.ErrorIs(t, state.beginCancellation(), engine.ErrWorkflowCompleted)
 }
 
 func TestWorkflowFinalizationWaitsForAcceptedCancellation(t *testing.T) {
 	state := &workflowFinalizationState{}
 	wfCtx := &testWorkflowContext{ctx: t.Context()}
-	require.NoError(t, state.beginCancellation(wfCtx))
+	require.NoError(t, state.beginCancellation())
 
 	type finalizationResult struct {
 		accepted bool
@@ -426,19 +422,19 @@ func TestWorkflowFinalizationWaitsForAcceptedCancellation(t *testing.T) {
 	require.NoError(t, result.err)
 	require.True(t, result.accepted)
 	state.finishFinalization()
-	require.ErrorIs(t, state.beginCancellation(wfCtx), engine.ErrWorkflowCompleted)
+	require.ErrorIs(t, state.beginCancellation(), engine.ErrWorkflowCompleted)
 }
 
 func TestWorkflowFinalizationReopensAfterFailedCancellation(t *testing.T) {
 	state := &workflowFinalizationState{}
 	wfCtx := &testWorkflowContext{ctx: t.Context()}
-	require.NoError(t, state.beginCancellation(wfCtx))
+	require.NoError(t, state.beginCancellation())
 	state.finishCancellation(false)
-	require.NoError(t, state.beginCancellation(wfCtx))
+	require.NoError(t, state.beginCancellation())
 	state.finishCancellation(true)
 	accepted, err := state.beginFinalization(wfCtx)
 	require.NoError(t, err)
 	require.True(t, accepted)
 	state.finishFinalization()
-	require.ErrorIs(t, state.beginCancellation(wfCtx), engine.ErrWorkflowCompleted)
+	require.ErrorIs(t, state.beginCancellation(), engine.ErrWorkflowCompleted)
 }

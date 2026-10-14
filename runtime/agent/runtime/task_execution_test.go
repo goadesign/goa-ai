@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/internal/tooloperation"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
@@ -112,10 +113,11 @@ func TestTaskInputSurvivesSuccessorRuns(t *testing.T) {
 		rt.toolsets["remote.tools"] = binding
 	}
 	install(rt)
-	input := &RunInput{AgentID: "test.agent", RunID: "run-1", SessionID: "session-1", TurnID: "turn-1"}
+	input := &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+		RunExecutorBranchAgent("test.agent"))}, RunID: "run-1", SessionID: "session-1", TurnID: "turn-1"}
 	seedRunMeta(t, rt, input)
 	wf := &testWorkflowContext{ctx: t.Context(), runtime: rt, hookRuntime: rt}
-	out, err := rt.runLoop(wf, registration, input, &workflowConversation{RunContext: run.Context{RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID, Attempt: 1}}, &PlanResult{ToolCalls: []ToolCall{{Name: spec.Name, ToolCallID: "original-call", Payload: rawjson.Message(`{"query":"original"}`)}}}, initialCaps(RunPolicy{MaxToolCalls: 1}), time.Time{}, time.Time{}, input.TurnID, nil)
+	out, err := rt.runLoop(wf, registration, input, &workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID, Attempt: 1}}, &PlanResult{ToolCalls: []ToolCall{{Name: spec.Name, ToolCallID: "original-call", Payload: rawjson.Message(`{"query":"original"}`)}}}, initialCaps(RunPolicy{MaxToolCalls: 1}), time.Time{}, time.Time{}, input.TurnID, nil)
 	require.NoError(t, err)
 	require.NotNil(t, out.Suspension)
 	for successor := 2; successor <= 3; successor++ {
@@ -128,7 +130,7 @@ func TestTaskInputSurvivesSuccessorRuns(t *testing.T) {
 		assert.Contains(t, out.Suspension.Pending[0].MCP.Requests, key)
 		rt = New(rt.Store)
 		install(rt)
-		input = &RunInput{AgentID: input.AgentID, RunID: fmt.Sprintf("run-%d", successor), SessionID: input.SessionID, TurnID: fmt.Sprintf("turn-%d", successor), Continuation: &api.RunContinuationInput{
+		input = &RunInput{Subject: input.Subject, RunID: fmt.Sprintf("run-%d", successor), SessionID: input.SessionID, TurnID: fmt.Sprintf("turn-%d", successor), Continuation: &api.RunContinuationInput{
 			Suspension: out.Suspension, Response: &api.PendingInputResponse{MCP: &api.MCPInputResponse{
 				ToolCallID: "original-call", Responses: map[string]json.RawMessage{key: json.RawMessage(`{"action":"accept","content":{}}`)},
 			}},
@@ -273,7 +275,7 @@ func TestTaskCleanupBeforeActiveRunSettles(t *testing.T) {
 				deadline = time.Now().Add(10 * time.Millisecond)
 			}
 			runCtx := run.Context{RunID: "run-task", SessionID: "session-task", TurnID: "turn-task"}
-			results, timedOut, err := rt.executeToolCalls(wf, "execute", engine.ActivityOptions{}, "test.agent", &runCtx, testToolHistory(t, rt, "test.agent", runCtx, nil), []ToolCall{{Name: spec.Name, ToolCallID: "task-call", Payload: []byte(`{"query":"original"}`)}}, 0, nil, deadline, nil)
+			results, timedOut, err := rt.executeToolCalls(nil, wf, "execute", engine.ActivityOptions{}, "test.agent", &runCtx, testToolHistory(t, rt, "test.agent", runCtx, nil), []ToolCall{{Name: spec.Name, ToolCallID: "task-call", Payload: []byte(`{"query":"original"}`)}}, 0, nil, deadline, nil)
 			switch mode {
 			case "deadline":
 				require.NoError(t, err)
@@ -320,7 +322,7 @@ func TestTaskReadFailureCancelsWithANewOperation(t *testing.T) {
 				wf = &taskActivityFailureWorkflow{WorkflowContext: root}
 			}
 			runCtx := run.Context{RunID: "read-failure", SessionID: "session-task", TurnID: "turn-task"}
-			results, _, err := rt.executeToolCalls(wf, "execute", engine.ActivityOptions{}, "test.agent", &runCtx, testToolHistory(t, rt, "test.agent", runCtx, nil), []ToolCall{{Name: spec.Name, ToolCallID: "task-call", Payload: []byte(`{}`)}}, 0, nil, time.Time{}, nil)
+			results, _, err := rt.executeToolCalls(nil, wf, "execute", engine.ActivityOptions{}, "test.agent", &runCtx, testToolHistory(t, rt, "test.agent", runCtx, nil), []ToolCall{{Name: spec.Name, ToolCallID: "task-call", Payload: []byte(`{}`)}}, 0, nil, time.Time{}, nil)
 			if mode == "schedule" {
 				require.ErrorContains(t, err, "read scheduling unavailable")
 			} else {

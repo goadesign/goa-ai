@@ -16,7 +16,7 @@ import (
 	pulsec "goa.design/goa-ai/features/stream/pulse/clients/pulse"
 	"goa.design/goa-ai/internal/registrycontract"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
-	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -41,6 +41,7 @@ type (
 		runtime     *Runtime
 		definition  AgentDefinition
 		runLabels   map[string]string
+		runID       string
 		textOnly    bool
 		sources     RegistryTools
 		specs       map[tools.Ident]tools.ToolSpec
@@ -146,6 +147,20 @@ func (c *RegistryCatalog) IncludeResolved(registry string, registered *genregist
 	return c.includeResolved(registry, registered, resolved, deferred)
 }
 
+// IncludeRegistered imports one exact resource selected by its owner. The caller
+// supplies the authorized owner and logical resource identity; the runtime checks
+// its target against the declaration and derives distinct names for its operations.
+func (c *RegistryCatalog) IncludeRegistered(registry string, source *genregistry.CatalogSource, registered *genregistry.ResolvedToolset, deferred bool) error {
+	if _, err := c.runtime.registryConnection(registry); err != nil {
+		return err
+	}
+	resolved, err := registrycontract.ResolveRegistered(registry, source, registered)
+	if err != nil {
+		return fmt.Errorf("resolve registry %q registered resource: %w", registry, err)
+	}
+	return c.includeResolved(registry, resolved.Registered, resolved, deferred)
+}
+
 func (c *RegistryCatalog) includeResolved(registry string, registered *genregistry.ResolvedToolset, resolved *registrycontract.Resolution, deferred bool) error {
 	name := registered.Toolset.Name
 	actualVersion := ""
@@ -155,21 +170,18 @@ func (c *RegistryCatalog) includeResolved(registry string, registered *genregist
 	if !c.sources.Allows(registry, name, actualVersion) {
 		return fmt.Errorf("registry %q toolset %q is outside this agent's declared consumption", registry, name)
 	}
-	for _, declaration := range registered.Toolset.Tools {
-		tool := tools.Ident(declaration.Name)
+	for tool, compiled := range resolved.Specs {
+		declaration, err := resolved.Declaration(tool)
+		if err != nil {
+			return err
+		}
 		if _, exists := c.specs[tool]; exists {
 			return fmt.Errorf("registry %q toolset %q repeats tool %q already supplied to this agent", registry, name, tool)
 		}
-		spec := resolved.Specs[tool]
+		spec := compiled
 		if c.textOnly {
 			if spec.RequiresUI || spec.Confirmation != nil || spec.TextOnly == nil {
 				continue
-			}
-			spec = spec.ForTextOnly()
-		}
-		if spec.IsAgentTool {
-			if _, allowed := c.definition.agents[agent.Ident(spec.AgentID)]; !allowed {
-				return fmt.Errorf("registry tool %q targets unconfigured Agent executor %q", tool, spec.AgentID)
 			}
 		}
 		if IsGeneratedContinuationToolName(tool) {
@@ -236,28 +248,37 @@ func (r *Runtime) resolveRegistryCatalog(ctx context.Context, definition AgentDe
 }
 
 // planningCatalog reads the current sources once for an activity that can start
-// new work. Final answers and explicit finalizers use only compiled contracts.
+// new work. Final answers and explicit finalizers skip source discovery but
+// still prepare application-owned input values before exposing static tools.
 func (r *Runtime) planningCatalog(ctx context.Context, input *PlanActivityInput) (*RegistryCatalog, error) {
 	registration, exists := r.agentByID(input.AgentID)
 	if !exists {
 		return nil, fmt.Errorf("agent %q is not registered", input.AgentID)
 	}
-	if input.Finalize != nil || input.SynthesisOnly {
-		return r.newRegistryCatalog(registration.Definition), nil
-	}
 	catalog := r.newRegistryCatalog(registration.Definition)
 	catalog.runLabels = cloneLabels(input.RunContext.Labels)
+	catalog.runID = input.RunContext.RunID
 	catalog.textOnly = input.Policy != nil && input.Policy.TextOnly
-	if input.Policy != nil && input.Policy.TextOnly {
+	if input.Finalize == nil && !input.SynthesisOnly && registration.Definition.registryTools != nil {
+		if err := registration.Definition.registryTools.Resolve(ctx, catalog); err != nil {
+			return nil, err
+		}
+	}
+	if registration.Definition.prepareInputs != nil {
+		if err := registration.Definition.prepareInputs(ctx, catalog); err != nil {
+			return nil, engine.MarkActivityErrorNonRetryable(fmt.Errorf("prepare agent inputs: %w", err))
+		}
+	}
+	for _, name := range registration.Definition.requiredInputBindings {
+		if catalog.specs[name].PrepareInput == nil {
+			return nil, engine.MarkActivityErrorNonRetryable(fmt.Errorf("required input binding %q was not installed", name))
+		}
+	}
+	if catalog.textOnly {
 		for name, spec := range catalog.specs {
 			if spec.TextOnly != nil {
 				catalog.specs[name] = spec.ForTextOnly()
 			}
-		}
-	}
-	if registration.Definition.registryTools != nil {
-		if err := registration.Definition.registryTools.Resolve(ctx, catalog); err != nil {
-			return nil, err
 		}
 	}
 	return catalog, nil
@@ -292,4 +313,15 @@ func (c *RegistryCatalog) spec(name tools.Ident) (tools.ToolSpec, bool) {
 // arguments do not provide these labels or authorize catalog membership.
 func (c *RegistryCatalog) RunLabels() map[string]string {
 	return cloneLabels(c.runLabels)
+}
+
+// ExecutionInvocation loads the current run and returns the original root or
+// tool-call identity retained by its owner. Continued runs preserve that value;
+// a missing run is an error and never substitutes the current parent identity.
+func (c *RegistryCatalog) ExecutionInvocation(ctx context.Context) (genregistry.ExecutionInvocation, error) {
+	meta, err := c.runtime.Store.LoadRun(ctx, c.runID)
+	if err != nil {
+		return genregistry.ExecutionInvocation{}, fmt.Errorf("load catalog run: %w", err)
+	}
+	return meta.Origin, nil
 }

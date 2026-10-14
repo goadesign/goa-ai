@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	goa "goa.design/goa/v3/pkg"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -119,7 +120,7 @@ func TestCustomExecutorLabelInjection_TypedFieldPopulated(t *testing.T) {
 	rt.addToolsetLocked(ts, mustToolDefinitions(ts.Specs))
 	rt.mu.Unlock()
 
-	input := ToolInput{
+	input := ToolInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("test.agent"))},
 		ToolsetName: "helpers",
 		ToolName:    tools.Ident("helpers.lookup_household"),
 		Payload:     rawjson.Message(`{"query":"who lives here"}`),
@@ -145,7 +146,7 @@ func TestCustomExecutorLabelInjection_MissingLabelProducesPreciseToolError(t *te
 	rt.addToolsetLocked(ts, mustToolDefinitions(ts.Specs))
 	rt.mu.Unlock()
 
-	input := ToolInput{
+	input := ToolInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("test.agent"))},
 		ToolsetName: "helpers",
 		ToolName:    tools.Ident("helpers.lookup_household"),
 		Payload:     rawjson.Message(`{"query":"who lives here"}`),
@@ -172,7 +173,7 @@ func TestCustomExecutorLabelInjection_MalformedLabelProducesPreciseToolError(t *
 	rt.addToolsetLocked(ts, mustToolDefinitions(ts.Specs))
 	rt.mu.Unlock()
 
-	input := ToolInput{
+	input := ToolInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("test.agent"))},
 		ToolsetName: "helpers",
 		ToolName:    tools.Ident("helpers.lookup_household"),
 		Payload:     rawjson.Message(`{"query":"who lives here"}`),

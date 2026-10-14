@@ -369,7 +369,12 @@ func pagingData(tool *agentsExpr.ToolExpr, p *agentsExpr.ToolPagingExpr) *ToolPa
 	}
 	if source := dedicatedContinuationSource(tool); source != nil {
 		data.SourceTool = continuationToolIdent(source, source.Name)
-		data.ReplayPayload = !isCursorOnlyContinuation(tool)
+		for _, field := range *effectiveObject(tool.Args) {
+			if field.Name != p.CursorField && !slices.Contains(tool.InjectedFields, field.Name) && !hiddenJSONTag(field.Attribute) {
+				data.RetainedFields = append(data.RetainedFields, modelJSONName(field.Name))
+			}
+		}
+		slices.Sort(data.RetainedFields)
 	}
 	return data
 }
@@ -404,13 +409,6 @@ func dedicatedContinuationSource(tool *agentsExpr.ToolExpr) *agentsExpr.ToolExpr
 		}
 	}
 	return nil
-}
-
-// isCursorOnlyContinuation reports whether the continuation cursor carries all
-// query state needed by its executor.
-func isCursorOnlyContinuation(tool *agentsExpr.ToolExpr) bool {
-	obj := effectiveObject(tool.Args)
-	return obj != nil && len(*obj) == 1 && (*obj)[0].Name == tool.Bounds.Paging.CursorField
 }
 
 // continuationModelHiddenFields returns every root payload field for a

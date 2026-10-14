@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/engine"
 	engineinmem "goa.design/goa-ai/runtime/agent/engine/inmem"
 )
@@ -26,7 +27,7 @@ func TestProviderRecoveryRuntimeDeepChildKeepsHealthySiblingActive(t *testing.T)
 	var midBeforeRecovery time.Duration
 	childRequest := func(id string) engine.ChildWorkflowRequest {
 		return engine.ChildWorkflowRequest{
-			ID: id, Workflow: id, TaskQueue: "test", Input: &RunInput{RunID: id},
+			ID: id, Workflow: id, TaskQueue: "test", Input: &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("recovery.agent"))}, RunID: id},
 		}
 	}
 	handlers := []engine.WorkflowDefinition{
@@ -38,7 +39,7 @@ func TestProviderRecoveryRuntimeDeepChildKeepsHealthySiblingActive(t *testing.T)
 					return nil, err
 				}
 				_, err = timer.Get(w.Context())
-				return &RunOutput{RunID: "healthy"}, err
+				return &RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("recovery.agent"))}, RunID: "healthy"}, err
 			},
 		},
 		{
@@ -81,7 +82,7 @@ func TestProviderRecoveryRuntimeDeepChildKeepsHealthySiblingActive(t *testing.T)
 				if err := recovery.await(w, providerRecoveryRequestComplete); err != nil {
 					return nil, err
 				}
-				return &RunOutput{RunID: "leaf"}, nil
+				return &RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("recovery.agent"))}, RunID: "leaf"}, nil
 			},
 		},
 		{
@@ -116,7 +117,7 @@ func TestProviderRecoveryRuntimeDeepChildKeepsHealthySiblingActive(t *testing.T)
 				midBeforeRecovery = mid.elapsed
 				close(healthyFinished)
 				_, err = child.Get(w.Context())
-				return &RunOutput{RunID: "mid"}, err
+				return &RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("recovery.agent"))}, RunID: "mid"}, err
 			},
 		},
 		{
@@ -137,7 +138,7 @@ func TestProviderRecoveryRuntimeDeepChildKeepsHealthySiblingActive(t *testing.T)
 					return nil, err
 				}
 				_, err = child.Get(w.Context())
-				return &RunOutput{RunID: "root"}, err
+				return &RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("recovery.agent"))}, RunID: "root"}, err
 			},
 		},
 	}
@@ -145,7 +146,7 @@ func TestProviderRecoveryRuntimeDeepChildKeepsHealthySiblingActive(t *testing.T)
 		require.NoError(t, implementation.RegisterWorkflow(ctx, definition))
 	}
 	handle, err := implementation.StartWorkflow(ctx, engine.WorkflowStartRequest{
-		ID: "root", Workflow: "root", TaskQueue: "test", Input: &RunInput{RunID: "root"},
+		ID: "root", Workflow: "root", TaskQueue: "test", Input: &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("recovery.agent"))}, RunID: "root"},
 	})
 	require.NoError(t, err)
 	_, err = handle.Wait(ctx)

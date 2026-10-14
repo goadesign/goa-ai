@@ -9,9 +9,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	genregistry "goa.design/goa-ai/registry/gen/registry"
 
 	"github.com/google/uuid"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
+	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/run"
@@ -27,10 +30,14 @@ func (r *Runtime) prepareAgentChildActivity(ctx context.Context, input *api.Agen
 	stopHeartbeat := startActivityHeartbeat(ctx)
 	defer stopHeartbeat()
 
+	executor, isAgent := input.Call.Subject.Executor.AsAgent()
+	if !isAgent {
+		return nil, engine.MarkActivityErrorNonRetryable(errors.New("child preparation requires an Agent parent subject"))
+	}
 	if input.Call.RunID != input.ParentRun.RunID || input.Call.SessionID != input.ParentRun.SessionID {
 		return nil, engine.MarkActivityErrorNonRetryable(errors.New("child call does not belong to the parent run"))
 	}
-	cfg, err := r.selectedAgentToolConfig(input.Call)
+	cfg, err := r.agentChildPreparationConfig(input.Call)
 	if err != nil {
 		return nil, engine.MarkActivityErrorNonRetryable(err)
 	}
@@ -39,7 +46,15 @@ func (r *Runtime) prepareAgentChildActivity(ctx context.Context, input *api.Agen
 		return nil, err
 	}
 	digest := sha256.Sum256(commandBytes)
-	operation := storage.PreparationOperation{AgentID: string(cfg.Definition.route.ID), RunID: agentChildRunContext(&input.Call).RunID, SessionID: input.ParentRun.SessionID, CommandID: hex.EncodeToString(digest[:])}
+	operation := storage.PreparationOperation{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(string(cfg.Definition.route.ID)))}, RunID: agentChildRunContext(&input.Call).RunID, SessionID: input.ParentRun.SessionID, CommandID: hex.EncodeToString(digest[:])}
+	origin := input.Origin
+	decision, err := r.Store.BeginRunPreparationOperation(ctx, storage.RunPreparationBegin{Operation: operation, Origin: origin})
+	if err != nil {
+		return nil, classifyStorageActivityError(err)
+	}
+	if reason, stopped := decision.State.AsStop(); stopped {
+		return &api.AgentChildActivityOutput{Stopped: &api.CancellationRequest{RunID: operation.RunID, Reason: string(reason)}}, nil
+	}
 	accepted, found, err := r.Store.FindRunPreparation(ctx, operation)
 	if err != nil {
 		return nil, classifyStorageActivityError(err)
@@ -47,23 +62,27 @@ func (r *Runtime) prepareAgentChildActivity(ctx context.Context, input *api.Agen
 	if found {
 		return recoverChildPreparation(ctx, r.Store, accepted)
 	}
-	messages, err := r.loadActivityHistory(ctx, input.Call.AgentID, input.ParentRun.RunID, input.ParentRun.SessionID, input.HistoryEndID)
-	if err != nil {
-		return nil, err
-	}
 	var request agentChildRequest
+	var history AgentHistory
 	if input.Call.Registry != nil {
 		var config *AgentToolConfiguration
-		config, err = r.prepareRegistryAgentChild(ctx, input.Call)
+		config, err = r.prepareRegistryAgentChild(ctx, origin, input.Call)
 		if err == nil {
 			request = agentChildRequest{
-				messages: config.Messages, renderedPrompts: config.RenderedPrompts,
-				policy: config.Policy, runContext: agentChildRunContext(&input.Call),
+				renderedPrompts: config.RenderedPrompts,
+				policy:          config.Policy, runContext: agentChildRunContext(&input.Call),
 			}
 			request.runContext.Labels = config.Labels
+			request.runContext.Metadata = config.Metadata
+			history = config.History
 		}
 	} else {
+		messages, historyErr := r.loadActivityHistory(ctx, agent.Ident(executor), input.ParentRun.RunID, input.ParentRun.SessionID, input.HistoryEndID)
+		if historyErr != nil {
+			return nil, historyErr
+		}
 		request, err = r.buildAgentChildRequest(ctx, cfg, &input.Call, messages, &input.ParentRun)
+		history = LiteralAgentHistory(request.messages)
 	}
 	if err != nil {
 		if failure := buildToolFailureFromAgentToolRequestError(err); failure != nil {
@@ -94,14 +113,15 @@ func (r *Runtime) prepareAgentChildActivity(ctx context.Context, input *api.Agen
 	if _, err := agentChildRunInput(cfg.Definition, request); err != nil {
 		return nil, err
 	}
-	writer, err := stageLiteralHistory(ctx, r.Store, storage.SeedDeclaration{
-		AgentID: operation.AgentID, RunID: operation.RunID, SessionID: operation.SessionID,
-		CommandID: operation.CommandID, AttemptID: uuid.NewString(), Kind: storage.SeedLiteral, RenderedPrompts: request.renderedPrompts,
-	}, request.messages)
+	writer, err := stageAgentHistory(ctx, r.Store, storage.SeedDeclaration{
+		Origin:  origin,
+		Subject: operation.Subject, RunID: operation.RunID, SessionID: operation.SessionID,
+		CommandID: operation.CommandID, AttemptID: uuid.NewString(), RenderedPrompts: request.renderedPrompts,
+	}, history)
 	if err != nil {
 		return r.recoverChildPublication(ctx, operation, err)
 	}
-	success := &api.AgentChildActivitySuccess{SeedEndID: writer.endID, Labels: request.runContext.Labels, Policy: request.policy}
+	success := &api.AgentChildActivitySuccess{Metadata: request.runContext.Metadata, SeedEndID: writer.endID, Labels: request.runContext.Labels, Policy: request.policy}
 	data, err := json.Marshal(success)
 	if err != nil {
 		return nil, err
@@ -144,34 +164,58 @@ func recoverChildPreparation(ctx context.Context, store storage.Store, accepted 
 
 // prepareAgentChild schedules prompt rendering outside workflow code and
 // converts the recorded result into the runtime's private child request.
-func (r *Runtime) prepareAgentChild(wfCtx engine.WorkflowContext, call ToolCall, historyEndID string, parentRun run.Context) (agentChildRequest, error) {
+func (r *Runtime) prepareAgentChild(wfCtx engine.WorkflowContext, call ToolCall, historyEndID string, parentRun run.Context) (agentChildRequest, *api.CancellationRequest, error) {
+	origin := genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: call.RunID, ToolCallID: call.ToolCallID})}
+	call.RunID = parentRun.RunID
+	var options engine.ActivityOptions
+	executor, isAgent := call.Subject.Executor.AsAgent()
+	if !isAgent {
+		return agentChildRequest{}, nil, errors.New("child preparation requires an Agent parent subject")
+	}
+	preparer := agent.Ident(executor)
+	if call.Registry != nil {
+		declaration, err := registryAgentDeclaration(call)
+		if err != nil {
+			return agentChildRequest{}, nil, err
+		}
+		options.Queue = declaration.ConsumerContract.Agent.Queue
+		preparer = agent.Ident(declaration.ConsumerContract.Agent.Executor)
+	}
 	output, err := wfCtx.ExecuteAgentChildActivity(engine.AgentChildActivityCall{
-		Name: agentChildActivityName,
+		Name:    agentChildPreparationActivityName(preparer),
+		Options: options,
 		Input: &api.AgentChildActivityInput{
+			Origin:       origin,
 			Call:         call,
 			HistoryEndID: historyEndID,
 			ParentRun:    parentRun,
 		},
 	})
 	if err != nil {
-		return agentChildRequest{}, err
+		return agentChildRequest{}, nil, err
 	}
 	if output == nil {
-		return agentChildRequest{}, errors.New("agent child activity returned nil output")
+		return agentChildRequest{}, nil, errors.New("agent child activity returned nil output")
 	}
 	switch {
-	case output.Success != nil && output.Failure == nil:
+	case output.Stopped != nil && output.Success == nil && output.Failure == nil:
+		if output.Stopped.RunID != agentChildRunContext(&call).RunID {
+			return agentChildRequest{}, nil, errors.New("child preparation stop belongs to another run")
+		}
+		return agentChildRequest{}, output.Stopped, nil
+	case output.Success != nil && output.Failure == nil && output.Stopped == nil:
 		nested := agentChildRunContext(&call)
 		nested.Labels = mergeLabels(nested.Labels, output.Success.Labels)
+		nested.Metadata = cloneMetadata(output.Success.Metadata)
 		return agentChildRequest{
 			policy:     clonePolicyOverrides(output.Success.Policy),
 			seedEndID:  output.Success.SeedEndID,
 			runContext: nested,
-		}, nil
-	case output.Success == nil && output.Failure != nil:
-		return agentChildRequest{}, &agentChildRequestFailure{failure: output.Failure}
+		}, nil, nil
+	case output.Success == nil && output.Failure != nil && output.Stopped == nil:
+		return agentChildRequest{}, nil, &agentChildRequestFailure{failure: output.Failure}
 	default:
-		return agentChildRequest{}, errors.New("agent child activity must return exactly one of success or failure")
+		return agentChildRequest{}, nil, errors.New("agent child activity must return exactly one of success, failure or stopped")
 	}
 }
 
@@ -193,4 +237,11 @@ func (r *Runtime) agentToolConfig(name tools.Ident) (*AgentToolConfig, error) {
 		return nil, fmt.Errorf("agent tool %q has no child-agent configuration", name)
 	}
 	return toolset.AgentTool, nil
+}
+
+// agentChildPreparationActivityName gives each Agent a stable preparation
+// activity name. The engine registers that name on the Agent's declared queue,
+// so static parents and registry providers can prepare on separate workers.
+func agentChildPreparationActivityName(executor agent.Ident) string {
+	return agentChildActivityName + "." + string(executor)
 }

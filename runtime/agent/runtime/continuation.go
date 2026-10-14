@@ -503,14 +503,19 @@ func isContinuationOutput(spec tools.ToolSpec, output tools.Ident) bool {
 	return output == spec.Name || output == spec.Bounds.Paging.SourceTool
 }
 
-// continuationPayload builds the canonical executable payload. Replaying
-// continuations retain the exact prior query arguments and replace only the
-// generated cursor field; self-contained continuations need only the cursor.
+// continuationPayload copies the declared fields from the exact prior call,
+// adds its next cursor, and returns input validated by the continuation codec.
 func continuationPayload(spec tools.ToolSpec, state continuationState) (rawjson.Message, error) {
 	fields := make(map[string]json.RawMessage)
-	if spec.Bounds.Paging.ReplayPayload {
-		if err := json.Unmarshal(state.payload, &fields); err != nil {
+	if len(spec.Bounds.Paging.RetainedFields) > 0 {
+		var previous map[string]json.RawMessage
+		if err := json.Unmarshal(state.payload, &previous); err != nil {
 			return nil, fmt.Errorf("decode prior query payload: %w", err)
+		}
+		for _, name := range spec.Bounds.Paging.RetainedFields {
+			if value, present := previous[name]; present {
+				fields[name] = value
+			}
 		}
 	}
 	cursor, err := json.Marshal(state.cursor)

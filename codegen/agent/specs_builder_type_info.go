@@ -68,7 +68,7 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 	typeName := planned.publicDeclaration.Name()
 	key := "name:" + typeName
 	if usage == usageModelPayload || usage == usageTextOnlyPayload || usage == usageTextOnlyExecution {
-		key += ":" + string(usage)
+		key += ":" + string(usage) + ":" + planned.marshal.Name()
 	}
 
 	defineType := false
@@ -78,11 +78,14 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		publicDefaults = true
 	)
 	b.materializeNestedLocalTypes(scope, planned.publicTypes, publicPtr, publicDefaults)
-	tt, defLine, fullRef := b.buildTypeDefinition(typeName, planned.public, scope, defineType, publicPtr, publicDefaults)
+	var tt *goaexpr.AttributeExpr
+	var defLine, fullRef string
 	if usage == usageModelPayload || usage == usageTextOnlyPayload || usage == usageTextOnlyExecution {
-		defLine = ""
+		fullRef = planned.publicLayout.Link(b.publicPackage.ImportPath(), b.publicPackage.ImportName).Name()
+	} else {
+		tt, defLine, fullRef = b.buildTypeDefinition(typeName, planned.public, scope, defineType, publicPtr, publicDefaults)
+		b.collectUnionSumTypes(scope, tt)
 	}
-	b.collectUnionSumTypes(scope, tt)
 	ptr := planned.publicLayout.ReferenceIsPointer()
 
 	transportAttr := planned.transportShape
@@ -297,6 +300,9 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 
 // typeFor returns the saved type record for one tool or completion value.
 func (p *toolSpecsPackagePlan) typeFor(owner *contractTypeOwner, usage typeUsage, qualifier string) *plannedSpecType {
+	if owner.Kind == contractTypeOwnerConsumerInput {
+		return p.types[stableTypeKey(owner, usage, qualifier)]
+	}
 	if owner.Kind == contractTypeOwnerCompletion {
 		return p.completionNames[owner.Name].resultType
 	}

@@ -26,6 +26,7 @@ import (
 	"go.temporal.io/sdk/worker"
 	"google.golang.org/grpc"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/internal/startrecipe"
@@ -50,7 +51,7 @@ func TestRegisterWorkflowRejectsDuplicateBeforeCreatingWorkerForNewQueue(t *test
 
 	eng := newTestEngine(t)
 	handler := func(ctx engine.WorkflowContext, input *api.RunInput) (*api.RunOutput, error) {
-		return &api.RunOutput{}, nil
+		return &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}}, nil
 	}
 
 	err := eng.RegisterWorkflow(context.Background(), engine.WorkflowDefinition{
@@ -110,7 +111,7 @@ func TestTemporalWorkflowHandlerPreservesCancellationStatus(t *testing.T) {
 			env := suite.NewTestWorkflowEnvironment()
 
 			env.SetWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{&workflowControlInterceptor{engine: eng}}})
-			env.ExecuteWorkflow(handler, &api.RunInput{RunID: "run-1"})
+			env.ExecuteWorkflow(handler, &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run-1"})
 
 			err := env.GetWorkflowError()
 			require.Error(t, err)
@@ -163,7 +164,7 @@ func TestClientStartWorkflowPropagatesRequestedValuesWithoutRegistration(t *test
 		require.NoError(t, eng.Close())
 	})
 
-	input := &api.RunInput{RunID: "run-123"}
+	input := &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run-123"}
 	occurredAt := time.Date(2026, time.March, 14, 15, 9, 26, 0, time.UTC)
 	req := engine.WorkflowStartRequest{
 		ID:        "run-123",
@@ -252,7 +253,7 @@ func TestStartWorkflowRejectsUnsupportedSearchAttributeType(t *testing.T) {
 	err := eng.RegisterWorkflow(context.Background(), engine.WorkflowDefinition{
 		Name: "agent.workflow",
 		Handler: func(ctx engine.WorkflowContext, input *api.RunInput) (*api.RunOutput, error) {
-			return &api.RunOutput{}, nil
+			return &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}}, nil
 		},
 	})
 	require.NoError(t, err)
@@ -261,7 +262,7 @@ func TestStartWorkflowRejectsUnsupportedSearchAttributeType(t *testing.T) {
 		ID:        "run-123",
 		Workflow:  "agent.workflow",
 		TaskQueue: "agent.queue",
-		Input:     &api.RunInput{RunID: "run-123"},
+		Input:     &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run-123"},
 		SearchAttributes: map[string]any{
 			"Unsupported": []int{1, 2, 3},
 		},
@@ -274,13 +275,13 @@ func TestStartWorkflowRejectsReservedRecipeMemoKey(t *testing.T) {
 	require.NoError(t, eng.RegisterWorkflow(t.Context(), engine.WorkflowDefinition{
 		Name: "agent.workflow",
 		Handler: func(engine.WorkflowContext, *api.RunInput) (*api.RunOutput, error) {
-			return &api.RunOutput{}, nil
+			return &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}}, nil
 		},
 	}))
 
 	_, err := eng.StartWorkflow(t.Context(), engine.WorkflowStartRequest{
 		ID: "run", Workflow: "agent.workflow", TaskQueue: "agent.queue",
-		Input: &api.RunInput{RunID: "run"},
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run"},
 		Memo:  map[string]engine.EncodedValue{workflowStartRecipeMemoKey: {Data: []byte("caller")}},
 	})
 	require.ErrorContains(t, err, "reserved")
@@ -305,13 +306,13 @@ func TestStartWorkflowValidatesDuplicateRecipe(t *testing.T) {
 	err = eng.RegisterWorkflow(t.Context(), engine.WorkflowDefinition{
 		Name: "agent.workflow",
 		Handler: func(engine.WorkflowContext, *api.RunInput) (*api.RunOutput, error) {
-			return &api.RunOutput{}, nil
+			return &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}}, nil
 		},
 	})
 	require.NoError(t, err)
 	request := engine.WorkflowStartRequest{
 		ID: "run-123", Workflow: "agent.workflow", TaskQueue: "agent.queue",
-		Input: &api.RunInput{RunID: "run-123"},
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run-123"},
 		Memo: map[string]engine.EncodedValue{
 			"kind": {Metadata: map[string][]byte{"encoding": []byte("binary/plain")}, Data: []byte("value")},
 		},
@@ -367,7 +368,7 @@ func TestStartWorkflowRejectsIncompleteRequest(t *testing.T) {
 		ID:        "run-123",
 		Workflow:  "agent.workflow",
 		TaskQueue: "agent.queue",
-		Input:     &api.RunInput{RunID: "run-123"},
+		Input:     &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run-123"},
 	}
 	tests := []struct {
 		name    string
@@ -387,7 +388,7 @@ func TestStartWorkflowRejectsIncompleteRequest(t *testing.T) {
 			req.Input = nil
 		}},
 		{name: "mismatched run id", wantErr: "workflow id must match input run id", change: func(req *engine.WorkflowStartRequest) {
-			req.Input = &api.RunInput{RunID: "other-run"}
+			req.Input = &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "other-run"}
 		}},
 		{name: "retry interval without attempts", wantErr: "workflow retry timing requires max attempts or unlimited attempts", change: func(req *engine.WorkflowStartRequest) {
 			req.RetryPolicy.InitialInterval = time.Second
@@ -417,7 +418,7 @@ func TestNewClientRejectsRegistration(t *testing.T) {
 	err = eng.RegisterWorkflow(context.Background(), engine.WorkflowDefinition{
 		Name: "agent.workflow",
 		Handler: func(ctx engine.WorkflowContext, input *api.RunInput) (*api.RunOutput, error) {
-			return &api.RunOutput{}, nil
+			return &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}}, nil
 		},
 	})
 	require.ErrorContains(t, err, "client mode cannot register workflows")
@@ -570,12 +571,12 @@ func temporalInputAtWorkflowBudget(
 ) *api.RunInput {
 	t.Helper()
 	dataConverter := workflowcodec.NewDataConverter()
-	base := &api.RunInput{RunID: id, Metadata: map[string]any{"payload": ""}}
+	base := &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: id, Metadata: map[string]any{"payload": ""}}
 	payload, err := dataConverter.ToPayload(base)
 	require.NoError(t, err)
 	padding := engine.MaxPayloadBytes - temporalPayloadSize(payload) - len(id) - len(workflow) - len(queue) - reserved + extra
 	require.Positive(t, padding)
-	input := &api.RunInput{RunID: id, Metadata: map[string]any{"payload": strings.Repeat("x", padding)}}
+	input := &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: id, Metadata: map[string]any{"payload": strings.Repeat("x", padding)}}
 	payload, err = dataConverter.ToPayload(input)
 	require.NoError(t, err)
 	require.Equal(t, engine.MaxPayloadBytes+extra, temporalPayloadSize(payload)+len(id)+len(workflow)+len(queue)+reserved)

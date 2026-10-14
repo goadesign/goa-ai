@@ -436,3 +436,65 @@ func TestCompletionToolIsRequiredBySuspendedRun(t *testing.T) {
 
 	assert.Equal(t, []tools.Ident{"reports.persist"}, requiredCheckpointToolNames(checkpoint))
 }
+
+// A successful terminal tool keeps its own stored result while the run returns
+// the same bytes under its selected operation's validated result contract.
+func TestCompletionToolValidatesSelectedRootOperation(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		empty   bool
+		invalid bool
+	}{
+		{name: "empty", empty: true},
+		{name: "typed"},
+		{name: "wrong outer result", invalid: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			operation := testNativeRegistryResolution("revision/1").Toolset.Tools[0]
+			operation.Name = "tasks.execute"
+			completion := newAnyJSONSpec("tasks.complete")
+			completion.TerminalRun = true
+			completion.Bookkeeping = true
+			var result any = map[string]any{"value": 42}
+			if test.empty {
+				operation.ConsumerContract.Result = nil
+				operation.ResultSchema = []byte(`{"type":"null"}`)
+				completion.Result = tools.TypeSpec{}
+				result = nil
+			}
+			if test.invalid {
+				result = map[string]any{"different": true}
+			}
+			h := newRecoveryHarness(t, "selected-"+test.name, []tools.ToolSpec{completion},
+				func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
+					return &planner.ToolResult{Name: call.Name, ToolCallID: call.ToolCallID, Result: result}, nil
+				}, func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error) {
+					t.Fatal("terminal completion must not request another planner turn")
+					return nil, nil
+				})
+			operation.ConsumerContract.Agent.Executor = string(testSubjectAgent(t, h.input.Subject))
+			h.base.RunContext.Operation = operation
+			h.base.RunContext.Tool = tools.Ident(operation.Name)
+			out, err := h.run(&PlanResult{ToolCalls: []ToolCall{{
+				Name: completion.Name, Payload: rawjson.Message(`{}`), ToolCallID: "finish",
+			}}}, initialCaps(RunPolicy{MaxToolCalls: 2}))
+			if test.invalid {
+				require.ErrorContains(t, err, "completion result for operation")
+				return
+			}
+			require.NoError(t, err)
+			require.NotNil(t, out.FinalToolResult)
+			assert.Equal(t, tools.Ident(operation.Name), out.FinalToolResult.Name)
+			assert.Nil(t, out.Final)
+			stored := storedToolResults(t, h.runtime, h.input.RunID)
+			require.Len(t, stored, 1)
+			assert.Equal(t, completion.Name, stored[0].ToolName)
+			assert.Equal(t, stored[0].ResultJSON, out.FinalToolResult.Result)
+			if test.empty {
+				assert.Empty(t, out.FinalToolResult.Result)
+			} else {
+				assert.JSONEq(t, `{"value":42}`, string(out.FinalToolResult.Result))
+			}
+		})
+	}
+}

@@ -14,6 +14,7 @@ import (
 	"go.temporal.io/sdk/converter"
 	"google.golang.org/protobuf/proto"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/internal/workflowcodec"
@@ -30,9 +31,18 @@ type (
 	}
 )
 
-const preparedRequestV2Golden = `{"version":"goa-ai-prepared-run-v2","agent_id":"agent","id":"run-1","workflow":"agent.workflow","task_queue":"custom.queue","input":{"metadata":{"encoding":"anNvbi9wbGFpbg=="},"data":"eyJBZ2VudElEIjoiYWdlbnQiLCJSdW5JRCI6InJ1bi0xIiwiU2Vzc2lvbklEIjoic2Vzc2lvbi0xIiwiVHVybklEIjoiIiwiUGFyZW50VG9vbENhbGxJRCI6IiIsIlBhcmVudFJ1bklEIjoiIiwiUGFyZW50QWdlbnRJRCI6IiIsIlRvb2wiOiIiLCJUb29sQXJncyI6bnVsbCwiU2VlZEVuZElEIjoicHVibGlzaGVkIiwiTGFiZWxzIjpudWxsLCJNZXRhZGF0YSI6bnVsbCwiUG9saWN5IjpudWxsLCJDb250aW51YXRpb24iOm51bGx9"},"run_timeout":0,"retry_policy":{"MaxAttempts":4,"UnlimitedAttempts":false,"InitialInterval":2000000000,"BackoffCoefficient":1.5},"memo":[{"name":"note","payload":{"metadata":{"encoding":"anNvbi9wbGFpbg=="},"data":"Im1lbW8gdmFsdWUi"}}],"search_attributes":[{"name":"Attempt","payload":{"metadata":{"encoding":"anNvbi9wbGFpbg==","type":"SW50"},"data":"Mw=="}}],"task_queue_override":"custom.queue"}`
+const preparedRequestV2Golden = `{"version":"goa-ai-prepared-run-v2","agent_id":"agent","id":"run-1","workflow":"agent.workflow","task_queue":"custom.queue","input":{"metadata":{"encoding":"anNvbi9wbGFpbg=="},"data":"eyJTdWJqZWN0Ijp7ImV4ZWN1dG9yIjp7InR5cGUiOiJhZ2VudCIsInZhbHVlIjoiYWdlbnQifX0sIlJ1bklEIjoicnVuLTEiLCJTZXNzaW9uSUQiOiJzZXNzaW9uLTEiLCJUdXJuSUQiOiIiLCJQYXJlbnRUb29sQ2FsbElEIjoiIiwiUGFyZW50UnVuSUQiOiIiLCJQYXJlbnRBZ2VudElEIjoiIiwiVG9vbCI6IiIsIlRvb2xBcmdzIjpudWxsLCJTZWVkRW5kSUQiOiJwdWJsaXNoZWQiLCJMYWJlbHMiOm51bGwsIk1ldGFkYXRhIjpudWxsLCJQb2xpY3kiOm51bGwsIkNvbnRpbnVhdGlvbiI6bnVsbH0="},"run_timeout":0,"retry_policy":{"MaxAttempts":4,"UnlimitedAttempts":false,"InitialInterval":2000000000,"BackoffCoefficient":1.5},"memo":[{"name":"note","payload":{"metadata":{"encoding":"anNvbi9wbGFpbg=="},"data":"Im1lbW8gdmFsdWUi"}}],"search_attributes":[{"name":"Attempt","payload":{"metadata":{"encoding":"anNvbi9wbGFpbg==","type":"SW50"},"data":"Mw=="}}],"task_queue_override":"custom.queue"}`
+
+// This retained envelope predates required workflow subjects. It must stay rejected.
+const preparedRequestAgentIDGolden = `{"version":"goa-ai-prepared-run-v2","agent_id":"agent","id":"run-1","workflow":"agent.workflow","task_queue":"custom.queue","input":{"metadata":{"encoding":"anNvbi9wbGFpbg=="},"data":"eyJBZ2VudElEIjoiYWdlbnQiLCJSdW5JRCI6InJ1bi0xIiwiU2Vzc2lvbklEIjoic2Vzc2lvbi0xIiwiVHVybklEIjoiIiwiUGFyZW50VG9vbENhbGxJRCI6IiIsIlBhcmVudFJ1bklEIjoiIiwiUGFyZW50QWdlbnRJRCI6IiIsIlRvb2wiOiIiLCJUb29sQXJncyI6bnVsbCwiU2VlZEVuZElEIjoicHVibGlzaGVkIiwiTGFiZWxzIjpudWxsLCJNZXRhZGF0YSI6bnVsbCwiUG9saWN5IjpudWxsLCJDb250aW51YXRpb24iOm51bGx9"},"run_timeout":0,"retry_policy":{"MaxAttempts":4,"UnlimitedAttempts":false,"InitialInterval":2000000000,"BackoffCoefficient":1.5},"memo":[{"name":"note","payload":{"metadata":{"encoding":"anNvbi9wbGFpbg=="},"data":"Im1lbW8gdmFsdWUi"}}],"search_attributes":[{"name":"Attempt","payload":{"metadata":{"encoding":"anNvbi9wbGFpbg==","type":"SW50"},"data":"Mw=="}}],"task_queue_override":"custom.queue"}`
+
+const preparedInputSubjectGolden = `{"Subject":{"executor":{"type":"agent","value":"agent"}},"RunID":"run-1","SessionID":"session-1","TurnID":"","ParentToolCallID":"","ParentRunID":"","ParentAgentID":"","Tool":"","ToolArgs":null,"SeedEndID":"published","Labels":null,"Metadata":null,"Policy":null,"Continuation":null}`
 
 func TestPreparedRequestV2GoldenBytes(t *testing.T) {
+	var wire preparedRequestWire
+	require.NoError(t, json.Unmarshal([]byte(preparedRequestV2Golden), &wire))
+	//nolint:testifylint // The input bytes pin the required nested subject contract.
+	require.Equal(t, preparedInputSubjectGolden, string(wire.Input.Data))
 	memo, err := EncodeMemo(map[string]any{"note": "memo value"})
 	require.NoError(t, err)
 	created, err := NewPreparedRequest("agent", engine.WorkflowStartRequest{
@@ -40,7 +50,7 @@ func TestPreparedRequestV2GoldenBytes(t *testing.T) {
 		Workflow:  "agent.workflow",
 		TaskQueue: "custom.queue",
 		Input: &api.RunInput{
-			AgentID:   "agent",
+			Subject:   genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))},
 			RunID:     "run-1",
 			SessionID: "session-1",
 			SeedEndID: "published",
@@ -75,7 +85,7 @@ func TestPreparedRequestV2GoldenBytes(t *testing.T) {
 func TestNewPreparedRequestDefersDurableEncoding(t *testing.T) {
 	prepared, err := NewPreparedRequest("agent", engine.WorkflowStartRequest{
 		ID: "run-1", Workflow: "agent.workflow", TaskQueue: "agent.queue",
-		Input: &api.RunInput{AgentID: "agent", RunID: "run-1"},
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, RunID: "run-1"},
 	}, "")
 	require.NoError(t, err)
 	require.Nil(t, prepared.data)
@@ -89,7 +99,7 @@ func TestNewPreparedRequestDefersDurableEncoding(t *testing.T) {
 func TestPreparedRequestMarshalBinaryUsesAcceptedSnapshot(t *testing.T) {
 	prepared, err := NewPreparedRequest("agent", engine.WorkflowStartRequest{
 		ID: "run-1", Workflow: "agent.workflow", TaskQueue: "agent.queue",
-		Input: &api.RunInput{AgentID: "agent", RunID: "run-1"},
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, RunID: "run-1"},
 	}, "")
 	require.NoError(t, err)
 	prepared.Request = engine.WorkflowStartRequest{}
@@ -112,7 +122,7 @@ func TestPreparedRequestMarshalBinaryPreservesLargeAcceptedRequest(t *testing.T)
 	taskQueue := strings.Repeat("\x01", 140_000)
 	prepared, err := NewPreparedRequest("agent", engine.WorkflowStartRequest{
 		ID: "run-1", Workflow: workflow, TaskQueue: taskQueue,
-		Input: &api.RunInput{AgentID: "agent", RunID: "run-1"},
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, RunID: "run-1"},
 		Memo:  memo,
 	}, taskQueue)
 	require.NoError(t, err)
@@ -157,7 +167,7 @@ func TestPreparedRequestRoundTripPreservesEveryEngineField(t *testing.T) {
 		Workflow:  "agent.workflow",
 		TaskQueue: "agent.queue",
 		Input: &api.RunInput{
-			AgentID: "agent", RunID: "run-1", SessionID: "session-1", TurnID: "turn-1",
+			Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, RunID: "run-1", SessionID: "session-1", TurnID: "turn-1",
 			Metadata: map[string]any{"count": 7, "nested": map[string]any{"enabled": true}},
 		},
 		RunTimeout:       3 * time.Minute,
@@ -182,7 +192,7 @@ func TestPreparedRequestRoundTripPreservesEveryEngineField(t *testing.T) {
 	require.Equal(t, "agent.queue", prepared.TaskQueueOverride)
 	require.Equal(t, request.RunTimeout, prepared.Request.RunTimeout)
 	require.Equal(t, request.RetryPolicy, prepared.Request.RetryPolicy)
-	require.Equal(t, request.Input.AgentID, prepared.Request.Input.AgentID)
+	require.Equal(t, request.Input.Subject, prepared.Request.Input.Subject)
 	require.Equal(t, request.Input.RunID, prepared.Request.Input.RunID)
 	require.Equal(t, request.Input.SessionID, prepared.Request.Input.SessionID)
 	require.Equal(t, request.Input.TurnID, prepared.Request.Input.TurnID)
@@ -205,7 +215,7 @@ func TestPreparedRequestRoundTripPreservesEveryEngineField(t *testing.T) {
 func TestPreparedRequestRejectsInvalidEnvelope(t *testing.T) {
 	created, err := NewPreparedRequest("agent", engine.WorkflowStartRequest{
 		ID: "run-1", Workflow: "agent.workflow", TaskQueue: "agent.queue",
-		Input: &api.RunInput{AgentID: "agent", RunID: "run-1", SessionID: "session-1"},
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, RunID: "run-1", SessionID: "session-1"},
 	}, "")
 	require.NoError(t, err)
 	valid, err := created.MarshalBinary()
@@ -227,7 +237,7 @@ func TestPreparedRequestRejectsInvalidEnvelope(t *testing.T) {
 	require.NoError(t, json.Unmarshal(valid, &mismatchedInput))
 	var input *api.RunInput
 	require.NoError(t, workflowcodec.NewDataConverter().FromPayload(preparedPayloadView(mismatchedInput.Input), &input))
-	input.AgentID = otherRecipeValue
+	input.Subject = genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(otherRecipeValue))}
 	payload, err := workflowcodec.NewDataConverter().ToPayload(input)
 	require.NoError(t, err)
 	mismatchedInput.Input = marshalPreparedPayload(payload)
@@ -255,7 +265,7 @@ func TestPreparedRequestRejectsInvalidEnvelope(t *testing.T) {
 	)
 	withSearch, err := NewPreparedRequest("agent", engine.WorkflowStartRequest{
 		ID: "run-1", Workflow: "agent.workflow", TaskQueue: "agent.queue",
-		Input:            &api.RunInput{AgentID: "agent", RunID: "run-1", SessionID: "session-1"},
+		Input:            &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, RunID: "run-1", SessionID: "session-1"},
 		SearchAttributes: map[string]any{"site": "site-1"},
 	}, "")
 	require.NoError(t, err)
@@ -300,7 +310,7 @@ func TestPreparedRequestRejectsInvalidEnvelope(t *testing.T) {
 func TestNewPreparedRequestRejectsInvalidLaunchValues(t *testing.T) {
 	base := engine.WorkflowStartRequest{
 		ID: "run-1", Workflow: "agent.workflow", TaskQueue: "agent.queue",
-		Input: &api.RunInput{AgentID: "agent", RunID: "run-1", SessionID: "session-1"},
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, RunID: "run-1", SessionID: "session-1"},
 	}
 
 	tests := []struct {
@@ -343,7 +353,7 @@ func TestNewPreparedRequestRejectsInvalidLaunchValues(t *testing.T) {
 func TestNewPreparedRequestRejectsOversizedPayloads(t *testing.T) {
 	base := engine.WorkflowStartRequest{
 		ID: "run-1", Workflow: "agent.workflow", TaskQueue: "agent.queue",
-		Input: &api.RunInput{AgentID: "agent", RunID: "run-1", SessionID: "session-1"},
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, RunID: "run-1", SessionID: "session-1"},
 	}
 
 	t.Run("input", func(t *testing.T) {
@@ -378,7 +388,7 @@ func TestNewPreparedRequestRejectsOversizedPayloads(t *testing.T) {
 func TestParsePreparedRequestValidatesCompleteEngineRequest(t *testing.T) {
 	created, err := NewPreparedRequest("agent", engine.WorkflowStartRequest{
 		ID: "run-1", Workflow: "agent.workflow", TaskQueue: "agent.queue",
-		Input: &api.RunInput{AgentID: "agent", RunID: "run-1", SessionID: "session-1"},
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, RunID: "run-1", SessionID: "session-1"},
 	}, "")
 	require.NoError(t, err)
 	var wire preparedRequestWire
@@ -405,7 +415,7 @@ func TestParsePreparedRequestValidatesCompleteEngineRequest(t *testing.T) {
 func TestParsePreparedRequestRejectsTimingBeforeDynamicValues(t *testing.T) {
 	created, err := NewPreparedRequest("agent", engine.WorkflowStartRequest{
 		ID: "run-1", Workflow: "agent.workflow", TaskQueue: "agent.queue",
-		Input: &api.RunInput{AgentID: "agent", RunID: "run-1", SessionID: "session-1"},
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, RunID: "run-1", SessionID: "session-1"},
 	}, "")
 	require.NoError(t, err)
 	createdData, err := created.MarshalBinary()
@@ -449,7 +459,7 @@ func TestParsePreparedRequestRejectsTimingBeforeDynamicValues(t *testing.T) {
 func TestParsePreparedRequestRejectsOversizedSearchListBeforeDecoding(t *testing.T) {
 	created, err := NewPreparedRequest("agent", engine.WorkflowStartRequest{
 		ID: "run-1", Workflow: "agent.workflow", TaskQueue: "agent.queue",
-		Input: &api.RunInput{AgentID: "agent", RunID: "run-1", SessionID: "session-1"},
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, RunID: "run-1", SessionID: "session-1"},
 	}, "")
 	require.NoError(t, err)
 	var wire preparedRequestWire
@@ -486,7 +496,7 @@ func TestParsePreparedRequestRejectsOversizedEnvelopeBeforeJSON(t *testing.T) {
 func TestPreparedRequestRoundTripsUnlimitedRetryPolicy(t *testing.T) {
 	request := engine.WorkflowStartRequest{
 		ID: "run-1", Workflow: "agent.workflow", TaskQueue: "agent.queue",
-		Input:       &api.RunInput{AgentID: "agent", RunID: "run-1", SessionID: "session-1"},
+		Input:       &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, RunID: "run-1", SessionID: "session-1"},
 		RetryPolicy: engine.RetryPolicy{UnlimitedAttempts: true},
 	}
 
@@ -523,7 +533,7 @@ func TestPreparedRequestRoundTripsEncodedMemoValues(t *testing.T) {
 			require.NoError(t, err)
 			request := engine.WorkflowStartRequest{
 				ID: "run-1", Workflow: "agent.workflow", TaskQueue: "agent.queue",
-				Input: &api.RunInput{AgentID: "agent", RunID: "run-1", SessionID: "session-1"},
+				Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, RunID: "run-1", SessionID: "session-1"},
 				Memo:  memo,
 			}
 
@@ -577,7 +587,7 @@ func TestSnapshotRequestPreservesNilMemo(t *testing.T) {
 		ID:        "run-1",
 		Workflow:  "agent.workflow",
 		TaskQueue: "agent.queue",
-		Input:     &api.RunInput{RunID: "run-1"},
+		Input:     &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, RunID: "run-1"},
 	})
 	require.NoError(t, err)
 	require.Nil(t, snapshot.Request.Memo)
@@ -588,7 +598,7 @@ func TestSnapshotsValidateRequestsBeforeEncoding(t *testing.T) {
 	_, err := SnapshotRequest(engine.WorkflowStartRequest{
 		Workflow:  "agent.workflow",
 		TaskQueue: "agent.queue",
-		Input: &api.RunInput{
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))},
 			Metadata: map[string]any{"payload": oversized},
 		},
 	})
@@ -597,7 +607,7 @@ func TestSnapshotsValidateRequestsBeforeEncoding(t *testing.T) {
 	_, err = SnapshotChildRequest(engine.ChildWorkflowRequest{
 		ID:       "run-1",
 		Workflow: "agent.workflow",
-		Input: &api.RunInput{
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))},
 			RunID:    "run-1",
 			Metadata: map[string]any{"payload": oversized},
 		},
@@ -612,7 +622,7 @@ func TestSnapshotRequestIsStableAfterNormalization(t *testing.T) {
 	require.NoError(t, err)
 	first, err := SnapshotRequest(engine.WorkflowStartRequest{
 		ID: "run-1", Workflow: "agent.workflow", TaskQueue: "agent.queue",
-		Input: &api.RunInput{
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))},
 			RunID:    "run-1",
 			ToolArgs: rawjson.Message(`{"site":"one","count":9007199254740993}`),
 			Metadata: map[string]any{
@@ -643,17 +653,17 @@ func TestStartRecipeRejectsInvalidUTF8AtEveryTextBoundary(t *testing.T) {
 	require.ErrorContains(t, err, "invalid UTF-8")
 	_, err = SnapshotRequest(engine.WorkflowStartRequest{
 		ID: invalid, Workflow: "agent.workflow", TaskQueue: "agent.queue",
-		Input: &api.RunInput{RunID: invalid},
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, RunID: invalid},
 	})
 	require.ErrorContains(t, err, "invalid UTF-8")
 	_, err = SnapshotChildRequest(engine.ChildWorkflowRequest{
 		ID: "run-1", Workflow: invalid, TaskQueue: "agent.queue",
-		Input: &api.RunInput{RunID: "run-1"},
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, RunID: "run-1"},
 	})
 	require.ErrorContains(t, err, "invalid UTF-8")
 	_, err = SnapshotRequest(engine.WorkflowStartRequest{
 		ID: "run-1", Workflow: "agent.workflow", TaskQueue: "agent.queue",
-		Input: &api.RunInput{RunID: "run-1"},
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, RunID: "run-1"},
 		Memo: map[string]engine.EncodedValue{"value": {
 			Metadata: map[string][]byte{invalid: []byte("value")},
 		}},
@@ -672,7 +682,7 @@ func TestEncodedCollectionsBoundRepeatedSharedValues(t *testing.T) {
 
 func TestSnapshotsEnforceRootAndChildPayloadLimits(t *testing.T) {
 	dataConverter := workflowcodec.NewDataConverter()
-	baseInput := &api.RunInput{RunID: "run-1", Metadata: map[string]any{"payload": ""}}
+	baseInput := &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, RunID: "run-1", Metadata: map[string]any{"payload": ""}}
 	basePayload, err := dataConverter.ToPayload(baseInput)
 	require.NoError(t, err)
 	id, workflowName, taskQueue := "run-1", "agent.workflow", "agent.queue"
@@ -681,7 +691,7 @@ func TestSnapshotsEnforceRootAndChildPayloadLimits(t *testing.T) {
 
 	rootPadding := engine.MaxPayloadBytes - fixedText - rootReserve - payloadByteSize(basePayload)
 	require.Positive(t, rootPadding)
-	rootInput := &api.RunInput{
+	rootInput := &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))},
 		RunID:    "run-1",
 		Metadata: map[string]any{"payload": strings.Repeat("x", rootPadding)},
 	}
@@ -701,7 +711,7 @@ func TestSnapshotsEnforceRootAndChildPayloadLimits(t *testing.T) {
 
 	childPadding := engine.MaxPayloadBytes - fixedText - rootReserve - payloadByteSize(basePayload)
 	require.Equal(t, childPadding, rootPadding)
-	childInput := &api.RunInput{
+	childInput := &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))},
 		RunID:    "run-1",
 		Metadata: map[string]any{"payload": strings.Repeat("x", childPadding)},
 	}
@@ -728,14 +738,14 @@ func TestSnapshotRequestEnforcesAggregatePayloadLimit(t *testing.T) {
 	dataConverter := workflowcodec.NewDataConverter()
 
 	t.Run("input", func(t *testing.T) {
-		baseInput := &api.RunInput{RunID: "run-1", Metadata: map[string]any{"payload": ""}}
+		baseInput := &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, RunID: "run-1", Metadata: map[string]any{"payload": ""}}
 		basePayload, err := dataConverter.ToPayload(baseInput)
 		require.NoError(t, err)
 		paddingSize := engine.MaxPayloadBytes - rootRecipeMemoByteSize(t) -
 			payloadByteSize(basePayload) - len("run-1agent.workflowagent.queue")
 		require.Positive(t, paddingSize)
 
-		exactInput := &api.RunInput{
+		exactInput := &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))},
 			RunID:    "run-1",
 			Metadata: map[string]any{"payload": strings.Repeat("x", paddingSize)},
 		}
@@ -748,7 +758,7 @@ func TestSnapshotRequestEnforcesAggregatePayloadLimit(t *testing.T) {
 		})
 		require.NoError(t, err)
 
-		oversizedInput := &api.RunInput{
+		oversizedInput := &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))},
 			RunID:    "run-1",
 			Metadata: map[string]any{"payload": strings.Repeat("x", paddingSize+1)},
 		}
@@ -759,7 +769,7 @@ func TestSnapshotRequestEnforcesAggregatePayloadLimit(t *testing.T) {
 	})
 
 	t.Run("memo with input", func(t *testing.T) {
-		input := &api.RunInput{RunID: "run-1"}
+		input := &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, RunID: "run-1"}
 		inputPayload, err := dataConverter.ToPayload(input)
 		require.NoError(t, err)
 		memoSize := engine.MaxPayloadBytes - rootRecipeMemoByteSize(t) -
@@ -793,7 +803,7 @@ func mapsClone(source map[string]any) map[string]any {
 
 func TestDigestFramesMapEntriesAndIgnoresMapOrder(t *testing.T) {
 	dataConverter := workflowcodec.NewDataConverter()
-	inputSnapshot, err := snapshotRunInput(dataConverter, &api.RunInput{RunID: "run-1"})
+	inputSnapshot, err := snapshotRunInput(dataConverter, &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, RunID: "run-1"})
 	require.NoError(t, err)
 	base := digestInput{
 		Workflow: "agent.workflow", TaskQueue: "agent.queue", InputPayload: inputSnapshot.Payload,
@@ -818,7 +828,7 @@ func TestDigestFramesMapEntriesAndIgnoresMapOrder(t *testing.T) {
 
 func TestDigestPreservesEncodedPayloadType(t *testing.T) {
 	dataConverter := workflowcodec.NewDataConverter()
-	inputSnapshot, err := snapshotRunInput(dataConverter, &api.RunInput{RunID: "run-1"})
+	inputSnapshot, err := snapshotRunInput(dataConverter, &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, RunID: "run-1"})
 	require.NoError(t, err)
 	base := digestInput{
 		Workflow: "agent.workflow", TaskQueue: "agent.queue", InputPayload: inputSnapshot.Payload,
@@ -836,7 +846,7 @@ func TestDigestPreservesEncodedPayloadType(t *testing.T) {
 
 func TestDigestBindsEachSubmittedStartComponent(t *testing.T) {
 	dataConverter := workflowcodec.NewDataConverter()
-	inputSnapshot, err := snapshotRunInput(dataConverter, &api.RunInput{RunID: "run-1"})
+	inputSnapshot, err := snapshotRunInput(dataConverter, &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, RunID: "run-1"})
 	require.NoError(t, err)
 	searchAttributes, err := EncodeSearchAttributes(map[string]any{"site": "one"})
 	require.NoError(t, err)
@@ -852,7 +862,7 @@ func TestDigestBindsEachSubmittedStartComponent(t *testing.T) {
 	baseDigest, err := digest(dataConverter, base)
 	require.NoError(t, err)
 
-	changedInput, err := snapshotRunInput(dataConverter, &api.RunInput{RunID: "run-2"})
+	changedInput, err := snapshotRunInput(dataConverter, &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, RunID: "run-2"})
 	require.NoError(t, err)
 	changedSearch, err := EncodeSearchAttributes(map[string]any{"site": "two"})
 	require.NoError(t, err)
@@ -905,4 +915,23 @@ func rootRecipeMemoByteSize(t *testing.T) int {
 	payload, err := workflowcodec.NewDataConverter().ToPayload(make([]byte, 32))
 	require.NoError(t, err)
 	return len(MemoKey) + payloadByteSize(payload)
+}
+
+func TestPreparedRequestRequiresMatchingAgentSubject(t *testing.T) {
+	for _, subject := range []genrunidentity.RunSubject{
+		{},
+		{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("other"))},
+		{Executor: genrunidentity.NewRunExecutorServiceTool(&genrunidentity.ServiceToolSubject{Registry: "primary", Tool: "catalog.lookup"})},
+	} {
+		_, err := NewPreparedRequest("agent", engine.WorkflowStartRequest{
+			ID: "run-1", Workflow: "agent.workflow", TaskQueue: "agent.queue",
+			Input: &api.RunInput{Subject: subject, RunID: "run-1"},
+		}, "")
+		require.Error(t, err)
+	}
+}
+
+func TestPreparedRequestRejectsRetainedAgentIDInput(t *testing.T) {
+	_, err := ParsePreparedRequest([]byte(preparedRequestAgentIDGolden))
+	require.ErrorContains(t, err, `unknown field "AgentID"`)
 }

@@ -11,8 +11,10 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/eval/evidence"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
+	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -22,6 +24,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/agent/transcript"
+	"goa.design/goa-ai/runtime/toolregistry/contract"
 )
 
 func TestRunLoopToolClarificationPreservesCallAndReturnsAnswer(t *testing.T) {
@@ -33,14 +36,15 @@ func TestRunLoopToolClarificationPreservesCallAndReturnsAnswer(t *testing.T) {
 
 	wfCtx := &testWorkflowContext{ctx: t.Context(), hookRuntime: rt}
 
-	base := &workflowConversation{RunContext: run.Context{
+	base := &workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{
 		RunID:     "run-1",
 		SessionID: "session-1",
 		TurnID:    "turn-1",
 		Attempt:   1,
 	}}
 	input := &RunInput{
-		AgentID:   agent.Ident("agent-1"),
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent-1")))},
+
 		RunID:     "run-1",
 		SessionID: "session-1",
 		TurnID:    "turn-1",
@@ -56,9 +60,13 @@ func TestRunLoopToolClarificationPreservesCallAndReturnsAnswer(t *testing.T) {
 		}),
 	)}
 
+	preparedAwait, err := prepareConsumerAwait(rt.toolSpec, initial.Await)
+	require.NoError(t, err)
+	initial.Await = preparedAwait
+
 	out, err := rt.runLoop(
 		wfCtx,
-		AgentRegistration{ResumeActivityName: "resume"},
+		AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, input.Subject), engine.WorkflowDefinition{}, nil), ResumeActivityName: "resume"},
 		input,
 		base,
 		initial,
@@ -91,7 +99,7 @@ func TestRunLoopToolClarificationPreservesCallAndReturnsAnswer(t *testing.T) {
 		require.NoError(t, firstSubscriber.HandleEvent(t.Context(), event))
 	}
 	require.NoError(t, firstSubscriber.HandleEvent(t.Context(), hooks.NewRunSuspendedEvent(
-		"run-1", input.AgentID, input.SessionID, "suspension-1", "v1", 1, nil,
+		"run-1", input.Subject, input.SessionID, "suspension-1", "v1", 1, nil,
 	)))
 	firstCollector := evidence.NewCollector()
 	sawAwait := false
@@ -117,7 +125,8 @@ func TestRunLoopToolClarificationPreservesCallAndReturnsAnswer(t *testing.T) {
 		hasPlanResult: true,
 	}
 	continuedInput := &RunInput{
-		AgentID:   agent.Ident("agent-1"),
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent-1")))},
+
 		RunID:     "run-2",
 		SessionID: "session-1",
 		TurnID:    "turn-2",
@@ -132,7 +141,7 @@ func TestRunLoopToolClarificationPreservesCallAndReturnsAnswer(t *testing.T) {
 	require.NoError(t, restoreContinuationRunInput(continuedInput, checkpoint))
 	out, err = rt.resumeSuspendedWorkflow(
 		recoveryContinuationWorkflow(t, continuedCtx, checkpoint),
-		AgentRegistration{ResumeActivityName: "resume"},
+		AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, continuedInput.Subject), engine.WorkflowDefinition{}, nil), ResumeActivityName: "resume"},
 		continuedInput,
 		checkpoint, seedTestContinuationHistory(t, rt, continuedInput, checkpoint),
 	)
@@ -159,13 +168,13 @@ func TestRunLoopToolClarificationPreservesCallAndReturnsAnswer(t *testing.T) {
 	secondSubscriber, err := stream.NewSubscriber(secondSink, stream.RuntimeHostProfile())
 	require.NoError(t, err)
 	require.NoError(t, secondSubscriber.HandleEvent(t.Context(), hooks.NewRunPhaseChangedEvent(
-		"run-2", continuedInput.AgentID, continuedInput.SessionID, run.PhasePlanning,
+		"run-2", continuedInput.Subject, continuedInput.SessionID, run.PhasePlanning,
 	)))
 	for _, event := range events.events[firstEventCount:] {
 		require.NoError(t, secondSubscriber.HandleEvent(t.Context(), event))
 	}
 	require.NoError(t, secondSubscriber.HandleEvent(t.Context(), hooks.NewRunCompletedEvent(
-		"run-2", continuedInput.AgentID, continuedInput.SessionID, "success", run.PhaseCompleted, nil, nil, nil,
+		"run-2", continuedInput.Subject, continuedInput.SessionID, "success", run.PhaseCompleted, nil, nil, nil,
 	)))
 	secondCollector, err := evidence.NewContinuationCollector(firstEvidence, "run-2")
 	require.NoError(t, err)
@@ -205,11 +214,11 @@ func TestRunLoopQuestionsPreservesProviderAndRuntimeIdentityAcrossResume(t *test
 	tool := newAnyJSONSpec(tools.Ident("assistant.ask_question"))
 	seedTestToolSpecs(rt, tool)
 
-	base := &workflowConversation{RunContext: run.Context{
+	base := &workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{
 		RunID: "run-1", SessionID: "session-1", TurnID: "turn-1", Attempt: 1,
 	}}
 	input := &RunInput{
-		AgentID: agent.Ident("agent-1"), RunID: "run-1", SessionID: "session-1", TurnID: "turn-1",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent-1")))}, RunID: "run-1", SessionID: "session-1", TurnID: "turn-1",
 	}
 	seedRunMeta(t, rt, input)
 	initial := &PlanResult{Await: planner.NewAwait(planner.AwaitQuestionsItem(&planner.AwaitQuestions{
@@ -220,9 +229,13 @@ func TestRunLoopQuestionsPreservesProviderAndRuntimeIdentityAcrossResume(t *test
 		Questions:       []planner.AwaitQuestion{{ID: "record_group", Prompt: "Which record group?"}},
 	}))}
 
+	preparedAwait, err := prepareConsumerAwait(rt.toolSpec, initial.Await)
+	require.NoError(t, err)
+	initial.Await = preparedAwait
+
 	out, err := rt.runLoop(
 		&testWorkflowContext{ctx: t.Context(), hookRuntime: rt},
-		AgentRegistration{ResumeActivityName: "resume"},
+		AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, input.Subject), engine.WorkflowDefinition{}, nil), ResumeActivityName: "resume"},
 		input,
 		base,
 		initial,
@@ -254,7 +267,7 @@ func TestRunLoopQuestionsPreservesProviderAndRuntimeIdentityAcrossResume(t *test
 		hasPlanResult: true,
 	}
 	continuedInput := &RunInput{
-		AgentID: agent.Ident("agent-1"), RunID: "run-2", SessionID: "session-1", TurnID: "turn-2",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent-1")))}, RunID: "run-2", SessionID: "session-1", TurnID: "turn-2",
 		Continuation: &api.RunContinuationInput{
 			Suspension: out.Suspension,
 			Response: &api.PendingInputResponse{ToolResults: &api.ToolResultsSet{
@@ -270,7 +283,7 @@ func TestRunLoopQuestionsPreservesProviderAndRuntimeIdentityAcrossResume(t *test
 	require.NoError(t, restoreContinuationRunInput(continuedInput, checkpoint))
 	out, err = rt.resumeSuspendedWorkflow(
 		recoveryContinuationWorkflow(t, continuedCtx, checkpoint),
-		AgentRegistration{ResumeActivityName: "resume"},
+		AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, continuedInput.Subject), engine.WorkflowDefinition{}, nil), ResumeActivityName: "resume"},
 		continuedInput,
 		checkpoint, seedTestContinuationHistory(t, rt, continuedInput, checkpoint),
 	)
@@ -298,18 +311,39 @@ func TestRunLoopQuestionsPreservesProviderAndRuntimeIdentityAcrossResume(t *test
 }
 
 func TestRunLoopExternalToolsPreservesIdentityForSuccessAndCorrection(t *testing.T) {
+	for _, bound := range []bool{false, true} {
+		name := "unbound"
+		if bound {
+			name = "bound"
+		}
+		t.Run(name, func(t *testing.T) {
+			testExternalToolsInputPreservation(t, bound)
+		})
+	}
+}
+
+// testExternalToolsInputPreservation suspends two calls, restores their saved
+// inputs, and consumes one success and one correction without preparing again.
+func testExternalToolsInputPreservation(t *testing.T, bound bool) {
 	rt := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
 	events := &recordingHooks{}
 	rt.Bus = events
 	firstTool := newAnyJSONSpec(tools.Ident("external.read_first"))
 	secondTool := newAnyJSONSpec(tools.Ident("external.read_second"))
+	if bound {
+		complete, err := contract.Compile(consumerResource("owner").Resolved.Toolset.Tools[0])
+		require.NoError(t, err)
+		complete.Name = firstTool.Name
+		complete.Result = firstTool.Result
+		firstTool = complete
+	}
 	seedTestToolSpecs(rt, firstTool, secondTool)
 
-	base := &workflowConversation{RunContext: run.Context{
+	base := &workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{
 		RunID: "run-1", SessionID: "session-1", TurnID: "turn-1", Attempt: 1,
 	}}
 	input := &RunInput{
-		AgentID: agent.Ident("agent-1"), RunID: "run-1", SessionID: "session-1", TurnID: "turn-1",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent-1")))}, RunID: "run-1", SessionID: "session-1", TurnID: "turn-1",
 	}
 	seedRunMeta(t, rt, input)
 	initial := &PlanResult{Await: planner.NewAwait(planner.AwaitExternalToolsItem(&planner.AwaitExternalTools{
@@ -328,9 +362,29 @@ func TestRunLoopExternalToolsPreservesIdentityForSuccessAndCorrection(t *testing
 		},
 	}))}
 
+	preparations := 0
+	lookup := rt.toolSpec
+	if bound {
+		local := consumerBoundSpec(t, firstTool, consumerScopeRef{ID: "accepted"})
+		prepare := local.PrepareInput
+		local.PrepareInput = func(input any) (rawjson.Message, error) {
+			preparations++
+			return prepare(input)
+		}
+		lookup = func(name tools.Ident) (tools.ToolSpec, bool) {
+			if name == local.Name {
+				return local, true
+			}
+			return rt.toolSpec(name)
+		}
+	}
+	preparedAwait, err := prepareConsumerAwait(lookup, initial.Await)
+	require.NoError(t, err)
+	initial.Await = preparedAwait
+
 	out, err := rt.runLoop(
 		&testWorkflowContext{ctx: t.Context(), hookRuntime: rt},
-		AgentRegistration{ResumeActivityName: "resume"},
+		AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, input.Subject), engine.WorkflowDefinition{}, nil), ResumeActivityName: "resume"},
 		input,
 		base,
 		initial,
@@ -346,6 +400,10 @@ func TestRunLoopExternalToolsPreservesIdentityForSuccessAndCorrection(t *testing
 	await := out.Suspension.Pending[0].Await.ExternalTools
 	require.NotNil(t, await)
 	require.Len(t, await.Items, 2)
+	if bound {
+		require.JSONEq(t, `{"scope":{"id":"accepted"},"query":"first"}`, string(await.Items[0].Payload))
+		require.JSONEq(t, `{"query":"first"}`, string(await.Items[0].ModelPayload))
+	}
 	firstRuntimeID := generateDeterministicToolCallID("run-1", "turn-1", 1, firstTool.Name, 0)
 	secondRuntimeID := generateDeterministicToolCallID("run-1", "turn-1", 1, secondTool.Name, 1)
 	require.Equal(t, firstRuntimeID, await.Items[0].ToolCallID)
@@ -369,7 +427,7 @@ func TestRunLoopExternalToolsPreservesIdentityForSuccessAndCorrection(t *testing
 		hasPlanResult: true,
 	}
 	continuedInput := &RunInput{
-		AgentID: agent.Ident("agent-1"), RunID: "run-2", SessionID: "session-1", TurnID: "turn-2",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent-1")))}, RunID: "run-2", SessionID: "session-1", TurnID: "turn-2",
 		Continuation: &api.RunContinuationInput{
 			Suspension: out.Suspension,
 			Response: &api.PendingInputResponse{ToolResults: &api.ToolResultsSet{
@@ -396,12 +454,15 @@ func TestRunLoopExternalToolsPreservesIdentityForSuccessAndCorrection(t *testing
 	require.NoError(t, restoreContinuationRunInput(continuedInput, checkpoint))
 	out, err = rt.resumeSuspendedWorkflow(
 		recoveryContinuationWorkflow(t, continuedCtx, checkpoint),
-		AgentRegistration{ResumeActivityName: "resume"},
+		AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, continuedInput.Subject), engine.WorkflowDefinition{}, nil), ResumeActivityName: "resume"},
 		continuedInput,
 		checkpoint, seedTestContinuationHistory(t, rt, continuedInput, checkpoint),
 	)
 	require.NoError(t, err)
 	require.Equal(t, "done", out.Final.Text())
+	if bound {
+		require.Equal(t, 1, preparations, "restoring accepted work must not bind its input again")
+	}
 	outputs := continuedCtx.lastPlannerCall.Input.ToolOutputs
 	require.Len(t, outputs, 2)
 	require.Equal(t, firstRuntimeID, outputs[0].ToolCallID)
@@ -439,10 +500,10 @@ func TestRunLoopExternalToolsPreservesIdentityForSuccessAndCorrection(t *testing
 	require.JSONEq(t, `{"query":"second"}`, string(resultEvents[secondRuntimeID].Failure.Recovery.PriorInput))
 }
 
-func TestRunLoopSessionlessRunRejectsExternalInput(t *testing.T) {
+func TestRunLoopSessionlessRunSuspendsForExternalInput(t *testing.T) {
 	runtime := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
-	input := &RunInput{AgentID: "agent-1", RunID: "run-1", TurnID: "turn-1"}
-	base := &workflowConversation{RunContext: run.Context{
+	input := &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent-1"))}, RunID: "run-1", TurnID: "turn-1"}
+	base := &workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{
 		RunID: "run-1", TurnID: "turn-1", Attempt: 1,
 	}}
 	result := &PlanResult{Await: planner.NewAwait(
@@ -451,7 +512,7 @@ func TestRunLoopSessionlessRunRejectsExternalInput(t *testing.T) {
 		}),
 	)}
 
-	_, err := runtime.runLoop(
+	output, err := runtime.runLoop(
 		&testWorkflowContext{ctx: t.Context()},
 		AgentRegistration{},
 		input,
@@ -463,5 +524,9 @@ func TestRunLoopSessionlessRunRejectsExternalInput(t *testing.T) {
 		"turn-1",
 		nil,
 	)
-	require.ErrorContains(t, err, "sessionless run cannot request external input")
+	require.NoError(t, err)
+	require.NotNil(t, output.Suspension)
+	require.Len(t, output.Suspension.Pending, 1)
+	require.Equal(t, api.PendingInputKindClarification, output.Suspension.Pending[0].Kind)
+	require.Equal(t, "clarification-1", output.Suspension.Pending[0].Await.Clarification.ID)
 }

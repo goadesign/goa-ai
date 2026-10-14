@@ -11,7 +11,7 @@ import (
 
 	"go.temporal.io/sdk/temporal"
 
-	agent "goa.design/goa-ai/runtime/agent"
+	genrunoutput "goa.design/goa-ai/registry/gen/runoutput"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
@@ -70,7 +70,8 @@ func (r *Runtime) EnsureRunCompletion(ctx context.Context, runID string) error {
 		}
 	}
 	input := &RunInput{
-		AgentID:   agent.Ident(meta.AgentID),
+		Subject: meta.Subject,
+
 		RunID:     meta.RunID,
 		SessionID: meta.SessionID,
 		TurnID:    turnID,
@@ -97,29 +98,18 @@ func (r *Runtime) EnsureRunCompletion(ctx context.Context, runID string) error {
 		}
 		return r.finalizeEnsuredRunCompletion(ctx, meta, event, result)
 	}
-	terminalStatus, phase := terminalStateFromEngineCompletion(completion.Status)
-	completed, err := r.buildRunCompletedEvent(
-		ctx,
-		meta.RunID,
-		agent.Ident(meta.AgentID),
-		meta.SessionID,
-		terminalStatus,
-		phase,
-		meta.Labels,
-		completion.WorkflowError,
-	)
+	resultData, err := operationResultFromRunOutput(completion.Output)
 	if err != nil {
-		return fmt.Errorf("build engine completion record: %w", err)
+		return fmt.Errorf("prepare engine completion result: %w", err)
 	}
-	record, err := prepareHookRecordInputWithMetadata(completed, turnID, recordDispatchMetadata{
-		TimestampMS: completion.CompletedAt.UnixMilli(),
-	})
-	if err != nil {
-		return fmt.Errorf("prepare engine completion record: %w", err)
-	}
-	command, event, err := runTerminalStorageCommand(record)
+	terminalStatus, _ := terminalStateFromEngineCompletion(completion.Status)
+	inputCommand, err := buildRunTerminalCommand(input, turnID, terminalStatus, completion.WorkflowError, resultData, recordDispatchMetadata{TimestampMS: completion.CompletedAt.UnixMilli()})
 	if err != nil {
 		return fmt.Errorf("build engine completion command: %w", err)
+	}
+	command, event, err := runTerminalStorageCommand(inputCommand, meta)
+	if err != nil {
+		return fmt.Errorf("build engine completion storage: %w", err)
 	}
 	result, err := r.repairRunTerminalUntilApplied(ctx, command)
 	if err != nil {
@@ -247,7 +237,11 @@ func validateHistoricalSuspension(stored session.RunSuspension) (*api.RunSuspens
 		return nil, errors.New("stored checkpoint id does not match payload")
 	}
 	digest := sha256.Sum256(suspension.Checkpoint)
-	if suspension.ID != hex.EncodeToString(digest[:16]) {
+	encodedDigest := hex.EncodeToString(digest[:16])
+	if suspension.Version == registeredRootCheckpointVersion {
+		encodedDigest = hex.EncodeToString(digest[:])
+	}
+	if suspension.ID != encodedDigest {
 		return nil, errors.New("run suspension id does not match checkpoint")
 	}
 	return &suspension, nil
@@ -511,7 +505,7 @@ func validateEngineCompletion(completion engine.RunCompletion, input *RunInput) 
 		if completion.WorkflowError != nil || completion.Output == nil {
 			return fmt.Errorf("%w: completed run %q has no successful output", ErrRunCompletionCorrupt, input.RunID)
 		}
-		if err := validateWorkflowOutput(completion.Output, input.AgentID, input.RunID); err != nil {
+		if err := validateWorkflowOutput(completion.Output, input.Subject, input.RunID); err != nil {
 			return fmt.Errorf("%w: run %q has invalid workflow output: %w", ErrRunCompletionCorrupt, input.RunID, err)
 		}
 		return nil
@@ -551,26 +545,37 @@ func terminalStateFromEngineCompletion(status engine.RunStatus) (string, run.Pha
 	}
 }
 
-// buildRunCompletedEvent constructs the canonical terminal hook payload,
-// including the cancellation reason stored before engine cancellation.
-func (r *Runtime) buildRunCompletedEvent(
-	ctx context.Context,
-	runID string,
-	agentID agent.Ident,
-	sessionID, status string,
-	phase run.Phase,
-	labels map[string]string,
-	err error,
-) (*hooks.RunCompletedEvent, error) {
-	var cancellation *run.Cancellation
-	if status == runStatusCanceled {
-		stored, loadErr := r.loadRunCancellation(ctx, runID)
-		if loadErr != nil {
-			return nil, fmt.Errorf("load cancellation provenance: %w", loadErr)
+// buildRunTerminalCommand freezes the workflow's outcome and selected result.
+// Saved Run metadata supplies labels and the accepted cancellation reason inside
+// the retrying activity, so neither is copied into this workflow request.
+func buildRunTerminalCommand(input *RunInput, turnID, status string, workflowErr error, result *genrunoutput.OperationResult, metadata recordDispatchMetadata) (*api.RunTerminalCommand, error) {
+	completed := hooks.NewRunCompletedEvent(input.RunID, input.Subject, input.SessionID, status, terminalRunPhaseForStatus(status), nil, workflowErr, nil)
+	// Only the direct service-workflow error owns this diagnostic. A wrapped or
+	// joined error retains its independent context in the completion request.
+	//nolint:errorlint // The exact producer type selects this transport source.
+	selectedFailure, failureFromOperation := workflowErr.(*selectedOperationError)
+	if failureFromOperation {
+		if result == nil {
+			return nil, errors.New("selected operation error requires its operation result")
 		}
-		cancellation = stored
+		failure, ok := result.Outcome.AsFailure()
+		if !ok || failure.Message != selectedFailure.cause.Message {
+			return nil, errors.New("selected operation error does not match its frozen result")
+		}
+		completed.Failure.DebugMessage = ""
 	}
-	return hooks.NewRunCompletedEvent(runID, agentID, sessionID, status, phase, labels, err, cancellation), nil
+	record, err := prepareHookRecordInputWithMetadata(completed, turnID, metadata)
+	if err != nil {
+		return nil, err
+	}
+	command := &api.RunTerminalCommand{Record: record, FailureFromOperation: failureFromOperation}
+	if result != nil {
+		command.OperationResult, err = genrunoutput.EncodeOperationResult(result)
+		if err != nil {
+			return nil, fmt.Errorf("encode terminal operation result: %w", err)
+		}
+	}
+	return command, nil
 }
 
 // terminalRunStatusForError maps workflow completion errors onto the public

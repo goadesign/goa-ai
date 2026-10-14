@@ -74,7 +74,8 @@ func (r *Runtime) continuationAvailableActivity(ctx context.Context, request *ap
 			if err != nil {
 				return false, activityHistoryError(err)
 			}
-			if meta.RunID != runID || meta.AgentID != string(request.AgentID) || meta.SessionID != request.SessionID {
+			executor, isAgent := meta.Subject.Executor.AsAgent()
+			if meta.RunID != runID || !isAgent || string(executor) != string(request.AgentID) || meta.SessionID != request.SessionID {
 				return false, engine.MarkActivityErrorNonRetryable(errors.New("continuation output owner mismatch"))
 			}
 			owners[runID] = struct{}{}
@@ -127,7 +128,7 @@ func (l *workflowLoop) continuationAvailable() (bool, error) {
 		return false, err
 	}
 	request := &api.ContinuationActivityInput{
-		AgentID: l.input.AgentID, RunID: l.base.RunContext.RunID,
+		AgentID: l.reg.Definition.route.ID, RunID: l.base.RunContext.RunID,
 		SessionID: l.base.RunContext.SessionID, HistoryEndID: l.base.HistoryEndID,
 		ToolOutputs: refs, TextOnly: l.base.RunContext.TextOnly,
 	}

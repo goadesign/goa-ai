@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -52,7 +53,10 @@ func TestExecuteToolActivity_UsesGeneratedCodecs(t *testing.T) {
 	}
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{spec.Name: spec}
 
-	input := ToolInput{AgentID: "agent", RunID: "run", ToolsetName: "svc.ts", ToolName: spec.Name, Payload: rawjson.Message([]byte(`{"server_data":"on"}`))}
+	input := ToolInput{Subject: genrunidentity.RunSubject{
+		Executor: genrunidentity.
+			NewRunExecutorAgent(genrunidentity.
+				RunExecutorBranchAgent("agent"))}, RunID: "run", ToolsetName: "svc.ts", ToolName: spec.Name, Payload: rawjson.Message([]byte(`{"server_data":"on"}`))}
 	out, err := rt.ExecuteToolActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -99,7 +103,11 @@ func TestExecuteToolActivity_RejectsEmptyPayloadAtActivityBoundary(t *testing.T)
 	}
 
 	out, err := rt.ExecuteToolActivity(context.Background(), &ToolInput{
-		AgentID:     "agent",
+		Subject: genrunidentity.RunSubject{
+			Executor: genrunidentity.
+				NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("agent"))},
+
 		RunID:       "run",
 		ToolsetName: "svc.ts",
 		ToolName:    spec.Name,

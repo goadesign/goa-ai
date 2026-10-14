@@ -14,6 +14,7 @@ import (
 
 	"goa.design/goa-ai/internal/registrycontract"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/hooks"
@@ -44,7 +45,7 @@ func TestHistoricalRegistryContinuationRetainsEachRegistration(t *testing.T) {
 			return finalPlannerResult("Saved pages remain."), nil
 		}},
 	}))
-	admitRunForTest(t, store, session.RunMeta{AgentID: string(definition.route.ID), RunID: "saved", SessionID: "registry-history", Status: session.RunStatusRunning})
+	admitRunForTest(t, store, session.RunMeta{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(string(definition.route.ID)))}, RunID: "saved", SessionID: "registry-history", Status: session.RunStatusRunning})
 	messages := make([]*model.Message, 0, 4)
 	for index, token := range []string{strings.Repeat("a", 64), strings.Repeat("b", 64)} {
 		resolved, err := registrycontract.Resolve(testRegistryPagingResolution(token))
@@ -56,9 +57,9 @@ func TestHistoricalRegistryContinuationRetainsEachRegistration(t *testing.T) {
 			Name: "records.find", ToolCallID: id, ModelToolCallID: "reused-provider",
 			Registry: binding, Payload: rawjson.Message(`{"value":1}`),
 		}
-		appendHistoricalHookEvent(t, store, newToolCallScheduledEvent("saved", definition.route.ID, "registry-history", call, "", "", 0), id, int64(index*2+1))
+		appendHistoricalHookEvent(t, store, newToolCallScheduledEvent("saved", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(definition.route.ID))}, "registry-history", call, "", "", 0), id, int64(index*2+1))
 		appendHistoricalHookEvent(t, store, hooks.NewToolResultReceivedEvent(
-			"saved", definition.route.ID, "registry-history", "saved", call.Name, id, "",
+			"saved", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(definition.route.ID))}, "registry-history", "saved", call.Name, id, "",
 			rawjson.Message(`{"value":1}`), nil, nil, "Saved result", &agent.Bounds{Returned: 1, Truncated: true, NextCursor: pointer("same-cursor")}, 0, nil, nil,
 		), id+"-result", int64(index*2+2))
 		messages = append(messages,

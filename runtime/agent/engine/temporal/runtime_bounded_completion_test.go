@@ -21,6 +21,7 @@ import (
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	engineinmem "goa.design/goa-ai/runtime/agent/engine/inmem"
@@ -213,8 +214,8 @@ func boundedCompletionRuntime(t *testing.T, backend string, pages int, modelName
 		WorkflowHandler:  rt.ExecuteWorkflow,
 		PlanActivityName: "completion.plan", ResumeActivityName: "completion.resume", ExecuteToolActivity: "completion.tool",
 	}))
-	input := &api.RunInput{AgentID: "completion.agent", RunID: "completion-run", SessionID: "completion-session", TurnID: "completion-turn"}
-	input.SeedEndID = publishTemporalTestSeed(t, store, input.AgentID, input.RunID, input.SessionID)
+	input := &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("completion.agent"))}, RunID: "completion-run", SessionID: "completion-session", TurnID: "completion-turn"}
+	input.SeedEndID = publishTemporalTestSeed(t, store, "completion.agent", input.RunID, input.SessionID)
 	return rt, store, func() (*api.RunOutput, error) {
 		if env != nil {
 			input = prepareAcceptedTestWorkflow(t, env, "completion.workflow", "default.queue", input)

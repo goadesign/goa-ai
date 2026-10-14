@@ -16,6 +16,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/redis/go-redis/v9"
+	genregistry "goa.design/goa-ai/registry/gen/registry"
 )
 
 type (
@@ -48,6 +49,8 @@ type (
 		RoutableUntilUnixMilli int64
 		Scope                  string
 		Indexed                bool
+		ResourceKind           string
+		ResourceName           string
 	}
 
 	redisCatalogStore struct {
@@ -117,9 +120,11 @@ if tonumber(ARGV[8]) > 0 then
   end
 end
 if ARGV[9] ~= "" then
-  local index_type = redis.call("TYPE", KEYS[4]).ok
-  if index_type ~= "none" and index_type ~= "zset" then
-    return redis.error_reply("CATALOGINVALIDINDEX")
+  for index = 4, 6 do
+    local index_type = redis.call("TYPE", KEYS[index]).ok
+    if index_type ~= "none" and index_type ~= "zset" then
+      return redis.error_reply("CATALOGINVALIDINDEX")
+    end
   end
 end
 if ARGV[4] ~= "" then
@@ -131,8 +136,11 @@ end
 redis.call("HSET", KEYS[1], ARGV[1], ARGV[3])
 if ARGV[9] == "active" then
   redis.call("ZADD", KEYS[4], 0, ARGV[10])
+  redis.call("ZADD", KEYS[5], 0, ARGV[10])
+  redis.call("ZADD", KEYS[6], 0, ARGV[11])
 elseif ARGV[9] == "retired" then
   redis.call("ZREM", KEYS[4], ARGV[10])
+  redis.call("ZREM", KEYS[5], ARGV[10])
 end
 return 1
 `)
@@ -206,9 +214,16 @@ func (s *redisCatalogStore) Commit(ctx context.Context, key, previous string, ne
 		))
 	defer finishCatalogSpan(ctx, span, &err)
 	indexState := ""
+	resourceMember := ""
 	keys := []string{s.state, s.definitions, s.retired}
 	if next.Scope != "" {
-		keys = append(keys, s.scopeIndex(next.Scope))
+		resource := &genregistry.CatalogResource{Kind: next.ResourceKind, Scope: next.Scope, Name: next.ResourceName}
+		encoded, encodeErr := genregistry.EncodeCatalogResource(resource)
+		if encodeErr != nil {
+			return false, encodeErr
+		}
+		resourceMember = string(encoded)
+		keys = append(keys, s.scopeIndex(next.Scope), s.resourceIndex(resource), s.ownerResourcesIndex(next.Scope, next.ResourceKind))
 		indexState = string(catalogEntryRetired)
 		if next.Indexed {
 			indexState = string(catalogEntryActive)
@@ -217,7 +232,7 @@ func (s *redisCatalogStore) Commit(ctx context.Context, key, previous string, ne
 	result, err := catalogCommitScript.Run(ctx, s.redis,
 		keys,
 		key, previous, next.State, next.Definition, next.CandidateToken, next.RetireToken, next.LiveLease, next.RoutableUntilUnixMilli,
-		indexState, strings.TrimPrefix(key, toolsetCatalogKeyPrefix),
+		indexState, strings.TrimPrefix(key, toolsetCatalogKeyPrefix), resourceMember,
 	).Int()
 	if err != nil {
 		switch {

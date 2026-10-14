@@ -17,7 +17,7 @@ type (
 	// transientTerminalStore fails the first terminal write so the one-shot
 	// runtime must retry the same record without running caller work again.
 	transientTerminalStore struct {
-		storage.Store
+		storage.SynchronousStore
 		failures    int
 		attempts    int
 		terminalErr error
@@ -26,7 +26,7 @@ type (
 	// uncertainStartStore commits the first start but reports a temporary error.
 	// The retry must observe that exact write before caller work runs.
 	uncertainStartStore struct {
-		storage.Store
+		storage.SynchronousStore
 		cancel   context.CancelFunc
 		attempts int
 		commands []storage.SynchronousRunStart
@@ -36,7 +36,7 @@ type (
 func (s *uncertainStartStore) StartSynchronousRun(ctx context.Context, command storage.SynchronousRunStart) (storage.OneShotRunStartResult, error) {
 	s.attempts++
 	s.commands = append(s.commands, command)
-	result, err := s.Store.StartSynchronousRun(ctx, command)
+	result, err := s.SynchronousStore.StartSynchronousRun(ctx, command)
 	if err != nil {
 		return storage.OneShotRunStartResult{}, err
 	}
@@ -56,12 +56,12 @@ func (s *transientTerminalStore) RecordRunTerminal(ctx context.Context, command 
 		s.failures--
 		return storage.AppendResult{}, errors.New("database unavailable")
 	}
-	return s.Store.RecordRunTerminal(ctx, command)
+	return s.SynchronousStore.RecordRunTerminal(ctx, command)
 }
 
 func TestRunOneShotStoresCompleteLifecycle(t *testing.T) {
 	store := newTestStore()
-	runtime := newFromOptions(store, Options{Hooks: hooks.NewBus()})
+	runtime := newTestSynchronous(t, store, hooks.NewBus())
 	err := runtime.RunOneShot(context.Background(), OneShotRunInput{
 		AgentID: "svc.agent", RunID: "run",
 	}, func(context.Context) error {
@@ -80,7 +80,7 @@ func TestRunOneShotStoresCompleteLifecycle(t *testing.T) {
 
 func TestRunOneShotStoresPromptAfterStart(t *testing.T) {
 	store := newTestStore()
-	runtime := newFromOptions(store, Options{Hooks: hooks.NewBus()})
+	runtime := newTestSynchronous(t, store, hooks.NewBus())
 	require.NoError(t, runtime.PromptRegistry.Register(prompt.PromptSpec{
 		ID:       "svc.agent.system",
 		AgentID:  "svc.agent",
@@ -105,7 +105,7 @@ func TestRunOneShotStoresPromptAfterStart(t *testing.T) {
 
 func TestRunOneShotStoresFailedLifecycle(t *testing.T) {
 	store := newTestStore()
-	runtime := newFromOptions(store, Options{Hooks: hooks.NewBus()})
+	runtime := newTestSynchronous(t, store, hooks.NewBus())
 	want := errors.New("failed")
 	err := runtime.RunOneShot(context.Background(), OneShotRunInput{
 		AgentID: "svc.agent", RunID: "run",
@@ -120,7 +120,7 @@ func TestRunOneShotStoresFailedLifecycle(t *testing.T) {
 
 func TestRunOneShotStoresDeadlineAsFailure(t *testing.T) {
 	store := newTestStore()
-	runtime := newFromOptions(store, Options{Hooks: hooks.NewBus()})
+	runtime := newTestSynchronous(t, store, hooks.NewBus())
 	err := runtime.RunOneShot(t.Context(), OneShotRunInput{
 		AgentID: "svc.agent", RunID: "run",
 	}, func(context.Context) error {
@@ -134,8 +134,8 @@ func TestRunOneShotStoresDeadlineAsFailure(t *testing.T) {
 
 func TestRunOneShotStoresPromptAndCancellationAfterCallbackCancelsContext(t *testing.T) {
 	store := newTestStore()
-	retryingStore := &transientTerminalStore{Store: store, failures: 1}
-	runtime := newFromOptions(retryingStore, Options{Hooks: hooks.NewBus()})
+	retryingStore := &transientTerminalStore{SynchronousStore: store, failures: 1}
+	runtime := newTestSynchronous(t, retryingStore, hooks.NewBus())
 	require.NoError(t, runtime.PromptRegistry.Register(prompt.PromptSpec{
 		ID:       "svc.agent.system",
 		AgentID:  "svc.agent",
@@ -172,8 +172,8 @@ func TestRunOneShotStoresPromptAndCancellationAfterCallbackCancelsContext(t *tes
 func TestRunOneShotCompletesLifecycleAfterUncertainStartAndCallerCancellation(t *testing.T) {
 	store := newTestStore()
 	ctx, cancel := context.WithCancel(context.Background())
-	retryingStore := &uncertainStartStore{Store: store, cancel: cancel}
-	runtime := newFromOptions(retryingStore, Options{Hooks: hooks.NewBus()})
+	retryingStore := &uncertainStartStore{SynchronousStore: store, cancel: cancel}
+	runtime := newTestSynchronous(t, retryingStore, hooks.NewBus())
 	executions := 0
 
 	err := runtime.RunOneShot(ctx, OneShotRunInput{
@@ -201,9 +201,9 @@ func TestRunOneShotCompletesLifecycleAfterUncertainStartAndCallerCancellation(t 
 func TestRunOneShotDoesNotRetryPermanentTerminalConflict(t *testing.T) {
 	store := newTestStore()
 	conflictingStore := &transientTerminalStore{
-		Store: store, terminalErr: storage.NewContractError(session.ErrRunTerminalConflict),
+		SynchronousStore: store, terminalErr: storage.NewContractError(session.ErrRunTerminalConflict),
 	}
-	runtime := newFromOptions(conflictingStore, Options{Hooks: hooks.NewBus()})
+	runtime := newTestSynchronous(t, conflictingStore, hooks.NewBus())
 	executions := 0
 
 	err := runtime.RunOneShot(t.Context(), OneShotRunInput{
@@ -216,4 +216,12 @@ func TestRunOneShotDoesNotRetryPermanentTerminalConflict(t *testing.T) {
 	require.ErrorIs(t, err, session.ErrRunTerminalConflict)
 	require.Equal(t, 1, executions)
 	require.Equal(t, 1, conflictingStore.attempts)
+}
+
+// newTestSynchronous constructs only the callback capability for these fixtures.
+func newTestSynchronous(t *testing.T, store storage.SynchronousStore, bus hooks.Bus) *SynchronousRuntime {
+	t.Helper()
+	runtime, err := NewSynchronous(store, prompt.NewRegistry(nil), bus)
+	require.NoError(t, err)
+	return runtime
 }

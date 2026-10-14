@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"goa.design/goa-ai/codegen/internal/jsonshape"
 	goacodegen "goa.design/goa/v3/codegen"
 	goaexpr "goa.design/goa/v3/expr"
 )
@@ -100,6 +101,7 @@ type (
 		kind        *goacodegen.NameDeclaration
 		constructor *goacodegen.NameDeclaration
 		layout      *goacodegen.GoTypePlan
+		rawJSON     bool
 	}
 
 	// nameOrder gives colliding generated names a stable order.
@@ -460,7 +462,7 @@ func (v *Value) declareTypes(localTypes []goaexpr.UserType) error {
 			validatorDeclaration: validator,
 			// Named unions and raw JSON keep the underlying transport's JSON
 			// methods so decoding receives the authored value rather than bytes.
-			alias: goaexpr.IsUnion(userType) || isRawJSON(userType.Attribute()),
+			alias: goaexpr.IsUnion(userType) || jsonshape.IsRawJSON(userType.Attribute()),
 		})
 	}
 	return nil
@@ -628,6 +630,7 @@ func (v *Value) planTypes() error {
 				kind:        kind,
 				constructor: constructor,
 				layout:      layout,
+				rawJSON:     jsonshape.IsRawJSON(branch.Attribute),
 			})
 		}
 	}

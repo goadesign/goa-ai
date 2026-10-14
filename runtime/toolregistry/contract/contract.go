@@ -52,8 +52,8 @@ func Compile(declaration *genregistry.ToolSchema) (tools.ToolSpec, error) {
 	if contract.Kind != "service" && contract.Kind != agentKind {
 		return tools.ToolSpec{}, fmt.Errorf("tool %q requires compiled %s execution", declaration.Name, contract.Kind)
 	}
-	if contract.Kind == agentKind && (contract.Agent == nil || contract.Result == nil) {
-		return tools.ToolSpec{}, fmt.Errorf("agent tool %q requires an executor, immutable configuration, and result contract", declaration.Name)
+	if contract.Kind == agentKind && contract.Agent == nil {
+		return tools.ToolSpec{}, fmt.Errorf("agent tool %q requires an executor and immutable configuration", declaration.Name)
 	}
 	if contract.Kind != agentKind && contract.Agent != nil {
 		return tools.ToolSpec{}, fmt.Errorf("tool %q declares an agent target for %s execution", declaration.Name, contract.Kind)
@@ -125,7 +125,7 @@ func Compile(declaration *genregistry.ToolSchema) (tools.ToolSpec, error) {
 		spec.Bounds = &tools.BoundsSpec{}
 		if paging := contract.Bounds.Paging; paging != nil {
 			spec.Bounds.Paging = &tools.PagingSpec{
-				ReplayPayload:   paging.ReplayPayload,
+				RetainedFields:  slices.Clone(paging.RetainedFields),
 				CursorField:     paging.CursorField,
 				NextCursorField: paging.NextCursorField,
 			}

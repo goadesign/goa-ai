@@ -1,0 +1,42 @@
+package openfields_test
+
+import (
+	"bytes"
+	"encoding/json"
+	"testing"
+
+	"google.golang.org/protobuf/proto"
+	genclient "open-fields.example/gen/grpc/sample/client"
+	genpb "open-fields.example/gen/grpc/sample/pb"
+	genserver "open-fields.example/gen/grpc/sample/server"
+	gensample "open-fields.example/gen/sample"
+)
+
+func TestGeneratedProtobufPreservesOpenMembers(t *testing.T) {
+	raw := []byte(`{"integer":9007199254740993123456789,"nested":[null,true,"text"]}`)
+	value := &gensample.Question{Message: "Choose", Extensions: map[string]json.RawMessage{"extra": raw, "MESSAGE": json.RawMessage(`"extra value"`)}}
+	encoded, err := proto.Marshal(genclient.NewProtoEchoRequest(value))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var request genpb.EchoRequest
+	if err := proto.Unmarshal(encoded, &request); err != nil {
+		t.Fatal(err)
+	}
+	received := genserver.NewEchoPayload(&request)
+	if !bytes.Equal(received.Extensions["MESSAGE"], value.Extensions["MESSAGE"]) || received.Message != value.Message || !bytes.Equal(received.Extensions["extra"], raw) {
+		t.Fatalf("request changed: %#v", received)
+	}
+	encoded, err = proto.Marshal(genserver.NewProtoEchoResponse(received))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response genpb.EchoResponse
+	if err := proto.Unmarshal(encoded, &response); err != nil {
+		t.Fatal(err)
+	}
+	returned := genclient.NewEchoResult(&response)
+	if !bytes.Equal(returned.Extensions["MESSAGE"], value.Extensions["MESSAGE"]) || returned.Message != value.Message || !bytes.Equal(returned.Extensions["extra"], raw) {
+		t.Fatalf("response changed: %#v", returned)
+	}
+}

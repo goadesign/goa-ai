@@ -55,7 +55,7 @@ var (
 var boundedPublishScript = redis.NewScript(`
 local admitted = ARGV[4] ~= ""
 if admitted then
-    if redis.call("HGET", KEYS[2], "decision") ~= "admitted"
+    if redis.call("HGET", KEYS[2], "decision") ~= "prepared"
     or redis.call("HGET", KEYS[2], "digest") ~= ARGV[4]
     or redis.call("HGET", KEYS[2], "registration_token") ~= ARGV[7] then
         return redis.error_reply("CALLADMISSIONCHANGED")

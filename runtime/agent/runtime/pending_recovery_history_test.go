@@ -123,13 +123,21 @@ func TestPendingRecoveryHistoryAcrossInputContractChange(t *testing.T) {
 			currentSpec.Payload = generated.Payload
 			currentSpec.ExecutionPayloadSchema = generated.ExecutionPayloadSchema
 			currentSpec.ExecutionPayloadCodec = generated.ExecutionPayloadCodec
+			decodeModel := currentSpec.Payload.Codec.FromJSON
+			currentSpec.Payload.Codec.FromJSON = func(raw []byte) (any, error) {
+				if bytes.Equal(raw, oldPayload) {
+					historicalDecodes.Add(1)
+				}
+				if bytes.Equal(raw, []byte(`{"id":false}`)) {
+					invalidCorrections.Add(1)
+				}
+				return decodeModel(raw)
+			}
 			decode := currentSpec.ExecutionPayloadCodec.FromJSON
 			currentSpec.ExecutionPayloadCodec.FromJSON = func(raw []byte) (any, error) {
 				switch {
 				case bytes.Equal(raw, oldPayload):
 					historicalDecodes.Add(1)
-				case bytes.Equal(raw, []byte(`{"id":false}`)):
-					invalidCorrections.Add(1)
 				case bytes.Equal(raw, []byte(`{"id":"corrected"}`)):
 					validCorrections.Add(1)
 				}

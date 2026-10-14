@@ -83,7 +83,7 @@ func prepareRegistrySchema(tool *ToolData, entry *toolEntry) error {
 			contract.Bounds.Paging = &genregistry.ToolPaging{
 				ContinueTool:    registryOptionalString(paging.ContinueTool),
 				SourceTool:      registryOptionalString(paging.SourceTool),
-				ReplayPayload:   paging.ReplayPayload,
+				RetainedFields:  append([]string{}, paging.RetainedFields...),
 				CursorField:     paging.CursorField,
 				NextCursorField: paging.NextCursorField,
 			}

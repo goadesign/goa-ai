@@ -86,9 +86,9 @@ func TestAgentTimeoutRecoveryKeepsFailureAndOtherWork(t *testing.T) {
 			registration.Specs = []tools.ToolSpec{lookup}
 			require.NoError(t, h.runtime.RegisterToolset(registration))
 			specs := []tools.ToolSpec{lookup, alternative}
-			h.registration.Definition = testRegistrationDefinition(h.input.AgentID, engine.WorkflowDefinition{}, specs)
-			h.runtime.agents[h.input.AgentID] = h.registration
-			h.runtime.agentToolSpecs[h.input.AgentID] = specs
+			h.registration.Definition = testRegistrationDefinition(testSubjectAgent(t, h.input.Subject), engine.WorkflowDefinition{}, specs)
+			h.runtime.agents[testSubjectAgent(t, h.input.Subject)] = h.registration
+			h.runtime.agentToolSpecs[testSubjectAgent(t, h.input.Subject)] = specs
 			h.workflow.childRuntime = h.runtime
 			h.workflow.plannerRoutes["lookup.plan"] = h.runtime.PlanStartActivity
 			out, err := h.run(&PlanResult{ToolCalls: []ToolCall{{

@@ -26,7 +26,7 @@ func TestRegistrySuspensionUsesSavedContractAndCurrentSource(t *testing.T) {
 	require.NoError(t, err)
 	suspension := suspensionContractFixtureWithContext(t, "records.find", string(definition.route.ID), "run-1", nil, nil)
 	rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
-		call := ToolCall{Name: "records.find", ToolCallID: "call-1",
+		call := ToolCall{Subject: checkpoint.Batch.Calls[0].Subject, Name: "records.find", ToolCallID: "call-1",
 			Payload: rawjson.Message(`{"value":1}`), Registry: binding}
 		checkpoint.Batch.Result.ToolCalls = []ToolCall{call}
 		checkpoint.Batch.Calls = []ToolCall{call}

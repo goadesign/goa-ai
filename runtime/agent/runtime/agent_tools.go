@@ -24,6 +24,8 @@ import (
 	"strings"
 	"text/template"
 
+	"goa.design/goa-ai/runtime/agent"
+
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -458,6 +460,10 @@ func (r *Runtime) buildAgentChildRequest(ctx context.Context, cfg *AgentToolConf
 // call. Activities do not return these values because workflow code already
 // owns the exact call recorded in its history.
 func agentChildRunContext(call *ToolCall) run.Context {
+	executor, isAgent := call.Subject.Executor.AsAgent()
+	if !isAgent {
+		panic("Agent child requires a validated Agent parent subject")
+	}
 	return run.Context{
 		TextOnly:         call.TextOnly,
 		Tool:             call.Name,
@@ -466,7 +472,7 @@ func agentChildRunContext(call *ToolCall) run.Context {
 		TurnID:           call.TurnID,
 		ParentToolCallID: call.ToolCallID,
 		ParentRunID:      call.RunID,
-		ParentAgentID:    call.AgentID,
+		ParentAgentID:    agent.Ident(executor),
 		ToolArgs:         append(rawjson.Message(nil), call.Payload...),
 		ToolRegistry:     call.Registry.Clone(),
 		Labels:           cloneLabels(call.Labels),

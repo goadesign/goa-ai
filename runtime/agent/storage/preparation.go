@@ -4,14 +4,27 @@ package storage
 // Settlement and publication share the owner's transaction: a caller receives
 // either the accepted value or a durable rejection of that upload attempt.
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+
+	genregistry "goa.design/goa-ai/registry/gen/registry"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
+)
 
 type (
+	// RunPreparationBegin binds a complete original invocation before provider
+	// resolution. Exact repetition preserves the owner; changed values conflict.
+	RunPreparationBegin struct {
+		Operation PreparationOperation
+		Origin    genregistry.ExecutionInvocation
+	}
+
 	// PreparationOperation identifies the authenticated original command. Its
 	// identity stays fixed while separate attempts may resolve current inputs.
 	PreparationOperation struct {
-		// AgentID identifies the executing agent.
-		AgentID string
+		// Subject identifies the executing Agent or service tool.
+		Subject genrunidentity.RunSubject
 		// RunID is the original allocated workflow identifier.
 		RunID string
 		// SessionID owns the body; empty identifies a sessionless operation.
@@ -57,8 +70,11 @@ type (
 
 // ValidatePreparationOperation checks identity where it enters a store.
 func ValidatePreparationOperation(operation PreparationOperation) error {
-	if operation.AgentID == "" || operation.RunID == "" || operation.CommandID == "" {
-		return errors.New("preparation agent, run and command IDs are required")
+	if _, err := genrunidentity.EncodeRunSubject(&operation.Subject); err != nil {
+		return fmt.Errorf("preparation subject: %w", err)
+	}
+	if operation.RunID == "" || operation.CommandID == "" {
+		return errors.New("preparation run and command IDs are required")
 	}
 	return nil
 }
@@ -70,6 +86,18 @@ func ValidatePreparationAttempt(attempt PreparationAttempt) error {
 	}
 	if attempt.AttemptID == "" {
 		return errors.New("preparation attempt ID is required")
+	}
+	return nil
+}
+
+// ValidateRunPreparationBegin checks the generated invocation and original key
+// before either value can reserve an operation in the owning store.
+func ValidateRunPreparationBegin(command RunPreparationBegin) error {
+	if err := ValidatePreparationOperation(command.Operation); err != nil {
+		return err
+	}
+	if _, err := genregistry.EncodeExecutionInvocation(&command.Origin); err != nil {
+		return fmt.Errorf("preparation origin: %w", err)
 	}
 	return nil
 }

@@ -8,6 +8,7 @@ package runtime
 import (
 	"context"
 	"fmt"
+	"reflect"
 	"slices"
 
 	"goa.design/goa-ai/internal/registrycontract"
@@ -62,7 +63,8 @@ func (r *Runtime) loadHistoricalContinuationOutputs(ctx context.Context, input *
 		if err != nil {
 			return nil, err
 		}
-		if meta.RunID != ref.RunID || meta.AgentID != string(input.AgentID) || meta.SessionID != input.RunContext.SessionID {
+		executor, isAgent := meta.Subject.Executor.AsAgent()
+		if meta.RunID != ref.RunID || !isAgent || string(executor) != string(input.AgentID) || meta.SessionID != input.RunContext.SessionID {
 			return nil, storage.NewContractError(storage.ErrRunRecordOwnerMismatch)
 		}
 		reader.runs[ref.RunID] = struct{}{}
@@ -73,7 +75,7 @@ func (r *Runtime) loadHistoricalContinuationOutputs(ctx context.Context, input *
 				return nil, err
 			}
 			if frame.seed.EndID != meta.SeedEndID || frame.seed.Declaration.RunID != meta.RunID ||
-				frame.seed.Declaration.AgentID != meta.AgentID || frame.seed.Declaration.SessionID != meta.SessionID {
+				!reflect.DeepEqual(frame.seed.Declaration.Subject, meta.Subject) || frame.seed.Declaration.SessionID != meta.SessionID {
 				return nil, storage.NewContractError(storage.ErrRunRecordOwnerMismatch)
 			}
 		}
@@ -408,8 +410,12 @@ func (r *selectedContinuationReader) entry(runID, callID string) *canonicalToolE
 // validateEvent rejects foreign, absent or repeated stored records before any
 // of their payloads can affect the selected continuation history.
 func (r *selectedContinuationReader) validateEvent(event *runlog.Event, runID string, seen map[string]struct{}) error {
-	if event == nil || event.ID == "" || event.RunID != runID ||
-		event.AgentID != r.input.AgentID || event.SessionID != r.input.RunContext.SessionID {
+	if event == nil {
+		return storage.NewContractError(storage.ErrRunRecordOwnerMismatch)
+	}
+	executor, isAgent := event.Subject.Executor.AsAgent()
+	if event.ID == "" || event.RunID != runID || !isAgent ||
+		string(executor) != string(r.input.AgentID) || event.SessionID != r.input.RunContext.SessionID {
 		return storage.NewContractError(storage.ErrRunRecordOwnerMismatch)
 	}
 	if _, duplicate := seen[event.ID]; duplicate {

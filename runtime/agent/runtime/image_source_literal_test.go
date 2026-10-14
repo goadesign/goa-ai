@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	genpictures "goa.design/goa-ai/internal/testimage/gen/images/toolsets/pictures"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -97,7 +98,8 @@ func TestNativeImageLiteralPreparationAndClosedReplay(t *testing.T) {
 	prepared = assertNativeImagePreparationRecovery(t, ctx, client, prepared, "holder", "mixed-run")
 	assert.Empty(t, owner.reads)
 	accepted, found, err := store.FindRunPreparation(ctx, storage.PreparationOperation{
-		AgentID: "mixed.reader", SessionID: "holder", RunID: "mixed-run", CommandID: "mixed-run",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("mixed.reader"))}, SessionID: "holder", RunID: "mixed-run", CommandID: "mixed-run",
 	})
 	require.NoError(t, err)
 	require.True(t, found)

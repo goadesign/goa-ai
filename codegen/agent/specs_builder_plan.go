@@ -25,12 +25,13 @@ type (
 	// toolSpecsPlan stores the public and HTTP packages for every toolset and
 	// completion service, plus the Goa API and MCP design used to build them.
 	toolSpecsPlan struct {
-		byDir       map[string]*toolSpecsPackagePlan
-		completions map[string]*toolSpecsPackagePlan
-		genpkg      string
-		api         *goaexpr.APIExpr
-		mcp         *mcpexpr.RootExpr
-		service     *service.Plan
+		consumerInputs []*consumerInputPlan
+		byDir          map[string]*toolSpecsPackagePlan
+		completions    map[string]*toolSpecsPackagePlan
+		genpkg         string
+		api            *goaexpr.APIExpr
+		mcp            *mcpexpr.RootExpr
+		service        *service.Plan
 	}
 
 	// toolSpecsPackagePlan stores the public specs package and the HTTP helper
@@ -308,6 +309,9 @@ func planToolSpecs(
 		); err != nil {
 			return nil, err
 		}
+	}
+	if err := planned.planConsumerInputs(generation, design); err != nil {
+		return nil, err
 	}
 	for _, completion := range design.Completions {
 		if completion == nil || completion.Expr == nil || completion.Service == nil {

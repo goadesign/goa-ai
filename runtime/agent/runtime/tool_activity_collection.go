@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"time"
 
+	genregistry "goa.design/goa-ai/registry/gen/registry"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/internal/temporalerrors"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -195,7 +197,7 @@ func (e *toolBatchExec) executionFromActivityOutput(ctx context.Context, info fu
 		duration:          duration,
 		executionSequence: info.call.ExecutionSequence,
 	}
-	result.resultRecord, err = e.publishToolResultReceived(ctx, info.call, toolRes, out.Payload, duration)
+	result.resultRecord, err = e.publishToolResultReceived(ctx, info.call, result, out.Payload, duration)
 	if err != nil {
 		return result, err
 	}
@@ -214,20 +216,23 @@ func (e *toolBatchExec) scheduleToolActivity(wfCtx engine.WorkflowContext, call 
 		toolsetName, ts, hasTS = e.r.toolsetForTool(call.Name)
 	}
 	input := &ToolInput{
+		Invocation:            genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: call.RunID, ToolCallID: call.ToolCallID})},
+		OriginalArguments:     append(rawjson.Message(nil), call.TranscriptPayload()...),
 		ExecutionContinuation: call.ExecutionContinuation,
 		ExecutionSequence:     call.ExecutionSequence,
 		TextOnly:              call.TextOnly,
 		Registry:              call.Registry.Clone(),
-		AgentID:               e.agentID,
-		RunID:                 call.RunID,
-		ToolsetName:           toolsetName,
-		ToolName:              call.Name,
-		ToolCallID:            call.ToolCallID,
-		Payload:               append(rawjson.Message(nil), call.Payload...),
-		SessionID:             call.SessionID,
-		Labels:                cloneLabels(call.Labels),
-		TurnID:                call.TurnID,
-		ParentToolCallID:      call.ParentToolCallID,
+		Subject:               genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(e.agentID))},
+
+		RunID:            call.RunID,
+		ToolsetName:      toolsetName,
+		ToolName:         call.Name,
+		ToolCallID:       call.ToolCallID,
+		Payload:          append(rawjson.Message(nil), call.Payload...),
+		SessionID:        call.SessionID,
+		Labels:           cloneLabels(call.Labels),
+		TurnID:           call.TurnID,
+		ParentToolCallID: call.ParentToolCallID,
 	}
 	finishBy := e.finishBy
 	cancelling := false

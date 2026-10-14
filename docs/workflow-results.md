@@ -19,7 +19,9 @@ the returned value. The existing per-call workflow byte allowance is unchanged.
   reported model names produce no summary. Conflicting nonempty model names
   preserve an empty summary even when totals are zero. Individual extra
   telemetry stays with its original stored event;
-- the existing agent/run identity, planner notes, and model usage.
+- the required generated `Subject`, run identity, planner notes, and model usage.
+  `Subject` selects one actual Agent executor or one service tool and its
+  configured Registry source. See [Run subjects](run-subjects.md).
 
 For a typed child result, the parent uses `FinalToolResult.Telemetry`, not the
 combined summary. For a text child result, the parent uses `ToolTelemetry`.
@@ -51,7 +53,7 @@ Callers that previously inspected `RunOutput.ToolEvents` must change source:
 No new history store, history API, automatic full-history read, or model-visible
 field is introduced by the result encoding. This change did not change the
 suspension schema. Current continuation restoration requires
-`goa-ai.run-suspension.v13`, which references saved history while retaining active tool and recovery state. The separate
+`goa-ai.run-suspension.v14`, which references saved history while retaining active tool and recovery state. The separate
 preparation and checkpoint upgrade requirements are described in
 [Runtime Store](runtime.md#runtime-store-storagestore).
 The result encoding itself does not change suspension-checkpoint size limits.
@@ -59,58 +61,38 @@ The result encoding itself does not change suspension-checkpoint size limits.
 ## Strict saved formats
 
 New **top-level RunOutput** payloads use Temporal metadata
-`encoding=json/goa-ai-run-output-v2`. Other values retain their existing
+`encoding=json/goa-ai-run-output-v3`. Other values retain their existing
 encodings, including nil payloads. Value and pointer result forms are supported.
 
-A `json/plain` payload decoded into RunOutput selects one frozen private legacy
-schema, then computes the same count and telemetry. The reader does not infer
-the version from fields, retry another schema, accept unknown fields, rewrite
-history, or silently omit malformed data. The new tag selects only the new
-schema. Unknown tags, wrong-schema fields, malformed or trailing JSON,
-oversized payloads, and invalid statistics remain errors. The byte allowance
-continues to count data and encoding metadata together.
+Version three requires the generated `Subject` in place of `AgentID`. The
+strict reader validates the original subject JSON before decoding a union, so
+unknown fields, duplicate subject fields, and combined branches cannot disappear
+during decoding. Missing subjects, old `AgentID` fields, malformed or trailing
+JSON, oversized transport payloads, and invalid statistics are errors.
+The transport byte allowance still counts data and encoding metadata together.
 
-Applications that store RunOutput outside the workflow engine must also migrate
-those saved copies under their own retention contract. Do not decode old JSON
-directly into the new struct or remove unknown fields to make it fit. Use the
-framework data converter with the saved encoding metadata; legacy unversioned
-copies must be explicitly identified as the old `json/plain` schema.
+The current reader rejects earlier version-two and unversioned RunOutput
+payloads. It does not infer a format from fields, recover a missing subject from
+an AgentID, or rewrite a saved result. Applications that store copies outside
+the workflow engine must convert those copies explicitly under their owning
+storage contract.
 
 ## Deployment and rollback
 
-Update source callers together with the runtime. Before activating new writers,
-establish that no old active parent or client can receive a new-format result.
-Worker pinning alone does not establish this: cross-deployment child routing
-and ordinary retained-result reads can use a different caller's decoder.
-No maintenance stop or history purge is required when this condition is proved.
-Deploy a coordinated application release normally; this framework introduces
-no readers-first flag, dual-write mode, or alternate runtime configuration.
+This is a breaking source and saved-data change. Update all common run envelopes,
+Store implementations, record consumers, and generated application transports
+together. Follow the complete [run-subject upgrade requirements](run-subjects.md#upgrade-required).
 
-If old active callers remain, their completion or an explicitly planned
-temporary preparation release must be handled by the application before new
-writers activate. Do not move a pinned workflow to new code without separate
-replay-compatibility evidence. Old binaries cannot decode new-format results;
-rollback must retain a compatible reader rather than blindly reverting the
-decoder. Retained old results remain readable by the new reader immediately;
-activation need not wait for their retention to expire.
+Before activating new writers, account for open workflows, saved starts and
+preparations, suspension checkpoints, child results embedded in parent history,
+closed queryable histories, exported replay files, and application-owned result
+copies. Finishing an old child does not remove its result from a parent's history.
+Retain old code for work that still requires its format, or complete an explicit
+owner-controlled conversion with replay evidence before switching that work.
+Do not move a pinned workflow onto the new decoder merely because it is idle.
 
-## Removing the temporary legacy reader
-
-The target architecture has only the new result schema. Delete the old reader
-and migration-only tests/documentation after all supported deployments prove:
-
-- No old-format writer can start or finish more work, including retained workers
-  that can create child or continued executions.
-- No open parent/workflow can replay an old child completion. Expiring only the
-  child's own history is insufficient.
-- Every closed history containing an old result, including parent histories,
-  has actually ended its owner's retention and is no longer queryable or
-  resettable through supported operations. Require deletion/absence evidence;
-  deployment time plus a fixed number of days is not proof.
-- Supported offline replay/exported histories and application-owned result
-  copies have been migrated or have ended their supported retention.
-
-These are saved-result conditions, not authority to remove saved suspensions or
-canonical run-log records. Earlier suspension versions remain rejected; follow
-the [stored-work cutover](runtime.md#executable-ownership-and-upgrade) separately.
-Public consumers must establish their own saved-copy and supported-retention obligations.
+Old binaries cannot decode version-three results; new binaries cannot read the
+removed result formats. A rollback must restore matching data and request bytes
+or retain the matching execution owner. Neither a deployment date nor a guessed
+retention interval proves that old data is gone. There is no compatibility flag,
+dual write, or automatic legacy reader in the target runtime.

@@ -19,6 +19,8 @@ import (
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 
+	genregistry "goa.design/goa-ai/registry/gen/registry"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -115,7 +117,7 @@ func TestNewWorkflowContextPreservesNativeCoroutine(t *testing.T) {
 					if err := workflow.Sleep(ctx, time.Millisecond); err != nil {
 						return nil, err
 					}
-					return &api.RunOutput{RunID: input.RunID}, nil
+					return &api.RunOutput{Subject: input.Subject, RunID: input.RunID}, nil
 				}, workflow.RegisterOptions{Name: "native.child"})
 			env.ExecuteWorkflow(func(ctx workflow.Context) error {
 				root, err := NewWorkflowContext(eng, ctx)
@@ -383,7 +385,7 @@ func runNativeContextOperation(
 		return err
 	case "tool":
 		future, err := w.ExecuteToolActivityAsync(engine.ToolActivityCall{
-			Name: "native.tool", Input: &api.ToolInput{},
+			Name: "native.tool", Input: &api.ToolInput{Invocation: genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: "test-run", ToolCallID: "test-call"})}, Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}},
 		})
 		if err != nil {
 			return err
@@ -393,7 +395,7 @@ func runNativeContextOperation(
 	case "child_workflow":
 		child, err := w.StartChildWorkflow(w.Context(), engine.ChildWorkflowRequest{
 			ID: "native-child", Workflow: "native.child", TaskQueue: "native-context",
-			Input: &api.RunInput{RunID: "native-child"},
+			Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "native-child"},
 		})
 		if err != nil {
 			return err

@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -576,12 +577,12 @@ func TestLoadPlannerToolOutputsCombinesDifferentRunLogs(t *testing.T) {
 	spec := newAnyJSONSpec("svc.lookup")
 	seedTestToolSpecs(runtime, spec)
 	require.NoError(t, runtime.publishHookErr(t.Context(), hooks.NewToolCallScheduledEvent(
-		"run-call", "svc.agent", "session-1", spec.Name, "call-1",
+		"run-call", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, "session-1", spec.Name, "call-1",
 		rawjson.Message(`{"query":"temperature"}`), "queue", "", 0,
 	), "turn-1"))
 	result := rawjson.Message(`{"value":"42"}`)
 	require.NoError(t, runtime.publishHookErr(t.Context(), hooks.NewToolResultReceivedEvent(
-		"run-result", "svc.agent", "session-1", "run-call", spec.Name, "call-1", "",
+		"run-result", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, "session-1", "run-call", spec.Name, "call-1", "",
 		result, nil, nil, "", nil, 0, nil, nil,
 	), "turn-1"))
 
@@ -609,7 +610,8 @@ func suspensionContractFixtureWithContext(t *testing.T, tool tools.Ident, agentI
 		ID: "clarification-1", Question: "Which facility?",
 	})
 	calls := []ToolCall{{
-		Name: tool, ToolCallID: "call-1", Payload: rawjson.Message(`{"query":"status"}`),
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))},
+		Name:    tool, ToolCallID: "call-1", Payload: rawjson.Message(`{"query":"status"}`),
 	}}
 	result := &PlanResult{ToolCalls: calls}
 	checkpoint := &workflowCheckpoint{

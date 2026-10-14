@@ -39,8 +39,8 @@ func TestUnsupportedOriginalsAreSkipped(t *testing.T) {
 	}{
 		{"any", func() { dsl.Attribute("value", dsl.Any) }},
 		{"custom", func() {
-			dsl.Attribute("value", dsl.Bytes, func() {
-				dsl.Meta("struct:field:type", "json.RawMessage", "encoding/json")
+			dsl.Attribute("value", dsl.String, func() {
+				dsl.Meta("struct:field:type", "json.Number", "encoding/json")
 			})
 		}},
 		{"nonstringmap", func() {

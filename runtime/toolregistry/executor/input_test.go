@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 	genrecords "goa.design/goa-ai/internal/testpresentation/gen/records/toolsets/records"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
@@ -45,7 +46,7 @@ func TestExecutorRequiredInputReachesActivityWithoutCompletedDecoding(t *testing
 				meta := agentsruntime.ToolCallMetaFromCall(*call)
 				return exec.Execute(ctx, &meta, call)
 			}}))
-			out, err := rt.ExecuteToolActivity(t.Context(), &agentsruntime.ToolInput{ToolsetName: "records", ToolName: spec.Name, ToolCallID: "model-call", RunID: "run", SessionID: "session", Payload: rawjson.Message(`{"query":"active"}`), TextOnly: textOnly})
+			out, err := rt.ExecuteToolActivity(t.Context(), &agentsruntime.ToolInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("records.agent")}, ToolsetName: "records", ToolName: spec.Name, ToolCallID: "model-call", RunID: "run", SessionID: "session", Payload: rawjson.Message(`{"query":"active"}`), TextOnly: textOnly})
 			require.NoError(t, err)
 			require.NotNil(t, out)
 			if textOnly {

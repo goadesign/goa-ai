@@ -32,7 +32,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"maps"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -46,6 +48,7 @@ import (
 	openai "goa.design/goa-ai/features/model/openai"
 	vertexprovider "goa.design/goa-ai/features/model/vertex"
 	"goa.design/goa-ai/internal/registrycall"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -106,6 +109,7 @@ type (
 	// The Runtime automatically subscribes to hooks for memory persistence and
 	// stream publishing when MemoryStore or WithStream are configured.
 	Runtime struct {
+		toolWorkflowQueue string
 		// Engine is the workflow backend adapter (Temporal by default).
 		Engine engine.Engine
 		// MemoryStore persists run transcripts and annotations.
@@ -178,9 +182,9 @@ type (
 		// storageActivityRegistered tracks whether the runtime storage activity has
 		// been registered with the engine.
 		storageActivityRegistered bool
-		// agentChildActivityRegistered tracks whether child prompt preparation is
-		// available to every registered workflow.
-		agentChildActivityRegistered bool
+		// agentChildActivitiesRegistered records which Agents have input preparation
+		// installed on their declared worker queue.
+		agentChildActivitiesRegistered map[agent.Ident]struct{}
 		// continuationActivityRegistered makes the saved-page read available
 		// before workflows choose recovery or finalization.
 		continuationActivityRegistered bool
@@ -207,7 +211,8 @@ type (
 	// for production deployments. Noop implementations are substituted for nil Logger,
 	// Metrics, and Tracer. A default in-memory event bus is created if Hooks is nil.
 	Options struct {
-		imageSources *imageSourceRegistry
+		toolWorkflowQueue string
+		imageSources      *imageSourceRegistry
 		// Engine is the workflow backend adapter (Temporal by default).
 		Engine engine.Engine
 		// MemoryStore persists run transcripts and annotations.
@@ -806,6 +811,7 @@ func newFromOptions(store storage.Store, opts Options) *Runtime {
 	}
 	rt := &Runtime{
 		Engine:                 eng,
+		toolWorkflowQueue:      opts.toolWorkflowQueue,
 		Memory:                 opts.MemoryStore,
 		PromptRegistry:         prompt.NewRegistry(opts.PromptStore),
 		Store:                  store,
@@ -845,6 +851,10 @@ func newFromOptions(store storage.Store, opts Options) *Runtime {
 	}
 	if rt.Memory != nil {
 		memSub := hooks.SubscriberFunc(func(ctx context.Context, event hooks.Event) error {
+			executor, isAgent := event.Subject().Executor.AsAgent()
+			if !isAgent {
+				return nil
+			}
 			var memEvent memory.Event
 			switch evt := event.(type) {
 			case *hooks.ToolCallScheduledEvent:
@@ -856,7 +866,7 @@ func newFromOptions(store storage.Store, opts Options) *Runtime {
 					Queue:                 evt.Queue,
 					ExpectedChildrenTotal: evt.ExpectedChildrenTotal,
 				}, nil)
-				return rt.Memory.AppendEvents(ctx, evt.AgentID(), evt.RunID(), memEvent)
+				return rt.Memory.AppendEvents(ctx, string(executor), evt.RunID(), memEvent)
 			case *hooks.ToolResultReceivedEvent:
 				errorMessage := ""
 				if evt.Failure != nil {
@@ -872,13 +882,13 @@ func newFromOptions(store storage.Store, opts Options) *Runtime {
 					Duration:         evt.Duration,
 					ErrorMessage:     errorMessage,
 				}, nil)
-				return rt.Memory.AppendEvents(ctx, evt.AgentID(), evt.RunID(), memEvent)
+				return rt.Memory.AppendEvents(ctx, string(executor), evt.RunID(), memEvent)
 			case *hooks.AssistantMessageEvent:
 				memEvent = memory.NewEvent(time.UnixMilli(evt.Timestamp()), memory.AssistantMessageData{
 					Message:    evt.Message,
 					Structured: evt.Structured,
 				}, nil)
-				return rt.Memory.AppendEvents(ctx, evt.AgentID(), evt.RunID(), memEvent)
+				return rt.Memory.AppendEvents(ctx, string(executor), evt.RunID(), memEvent)
 			case *hooks.ThinkingBlockEvent:
 				memEvent = memory.NewEvent(time.UnixMilli(evt.Timestamp()), memory.ThinkingData{
 					Text:         evt.Text,
@@ -887,12 +897,12 @@ func newFromOptions(store storage.Store, opts Options) *Runtime {
 					ContentIndex: evt.ContentIndex,
 					Final:        evt.Final,
 				}, nil)
-				return rt.Memory.AppendEvents(ctx, evt.AgentID(), evt.RunID(), memEvent)
+				return rt.Memory.AppendEvents(ctx, string(executor), evt.RunID(), memEvent)
 			case *hooks.PlannerNoteEvent:
 				memEvent = memory.NewEvent(time.UnixMilli(evt.Timestamp()), memory.PlannerNoteData{
 					Note: evt.Note,
 				}, evt.Labels)
-				return rt.Memory.AppendEvents(ctx, evt.AgentID(), evt.RunID(), memEvent)
+				return rt.Memory.AppendEvents(ctx, string(executor), evt.RunID(), memEvent)
 			}
 			return nil
 		})
@@ -1106,7 +1116,10 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 	if err := r.ensureStorageActivityRegistered(ctx); err != nil {
 		return err
 	}
-	if err := r.ensureAgentChildActivityRegistered(ctx); err != nil {
+	if err := r.Engine.RegisterAgentOperationActivity(ctx, agentOperationActivityName(reg.Definition.route.ID), engine.ActivityOptions{Queue: reg.Definition.route.DefaultTaskQueue, StartToCloseTimeout: defaultPlanActivityTimeout, RetryPolicy: defaultRetriedActivityPolicy()}, r.prepareAgentOperationActivity); err != nil {
+		return err
+	}
+	if err := r.ensureAgentChildActivityRegistered(ctx, reg.Definition.route); err != nil {
 		return err
 	}
 	if err := r.ensureContinuationActivityRegistered(ctx); err != nil {
@@ -1274,22 +1287,26 @@ func (r *Runtime) ensureStorageActivityRegistered(ctx context.Context) error {
 // RegisterAgent owns the registration lock during this call. The engine
 // installs the child-input activity without the registry state lock held;
 // only a successful call marks the activity registered.
-func (r *Runtime) ensureAgentChildActivityRegistered(ctx context.Context) error {
+func (r *Runtime) ensureAgentChildActivityRegistered(ctx context.Context, route AgentRoute) error {
 	r.mu.Lock()
-	if r.agentChildActivityRegistered {
+	if _, registered := r.agentChildActivitiesRegistered[route.ID]; registered {
 		r.mu.Unlock()
 		return nil
 	}
 	opts := engine.ActivityOptions{
+		Queue:               route.DefaultTaskQueue,
 		StartToCloseTimeout: defaultAgentChildActivityTimeout,
 		RetryPolicy:         defaultRetriedActivityPolicy(),
 	}
 	r.mu.Unlock()
-	if err := r.Engine.RegisterAgentChildActivity(ctx, agentChildActivityName, opts, r.prepareAgentChildActivity); err != nil {
+	if err := r.Engine.RegisterAgentChildActivity(ctx, agentChildPreparationActivityName(route.ID), opts, r.prepareAgentChildActivity); err != nil {
 		return err
 	}
 	r.mu.Lock()
-	r.agentChildActivityRegistered = true
+	if r.agentChildActivitiesRegistered == nil {
+		r.agentChildActivitiesRegistered = make(map[agent.Ident]struct{})
+	}
+	r.agentChildActivitiesRegistered[route.ID] = struct{}{}
 	r.mu.Unlock()
 	return nil
 }
@@ -1695,7 +1712,8 @@ func (r *Runtime) ExecuteAgentChild(
 		return nil, err
 	}
 	writer, err := stageLiteralHistory(wfCtx.Context(), workflowSeedWriter{r: r}, storage.SeedDeclaration{
-		AgentID: string(definition.route.ID), RunID: nestedRunCtx.RunID, SessionID: nestedRunCtx.SessionID,
+		Origin:  genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: nestedRunCtx.ParentRunID, ToolCallID: nestedRunCtx.ParentToolCallID})},
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(string(definition.route.ID)))}, RunID: nestedRunCtx.RunID, SessionID: nestedRunCtx.SessionID,
 		CommandID: nestedRunCtx.RunID, AttemptID: nestedRunCtx.RunID, Kind: storage.SeedLiteral,
 	}, messages)
 	if err != nil {
@@ -1741,7 +1759,7 @@ func (r *Runtime) executeAgentChild(
 	if err != nil {
 		return nil, err
 	}
-	if err := validateWorkflowOutput(out, route.ID, input.RunID); err != nil {
+	if err := validateWorkflowOutput(out, input.Subject, input.RunID); err != nil {
 		return nil, err
 	}
 	return out, nil
@@ -1770,7 +1788,8 @@ func agentChildRunInput(definition AgentDefinition, request agentChildRequest) (
 		policy.TextOnly = true
 	}
 	return &RunInput{
-		AgentID:          definition.route.ID,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(definition.route.ID))},
+
 		RunID:            nested.RunID,
 		SessionID:        nested.SessionID,
 		TurnID:           nested.TurnID,
@@ -1792,17 +1811,15 @@ func prepareRunWithDefinition(input *RunInput, launch workflowLaunchSettings, de
 	if !definition.valid() {
 		return engine.WorkflowStartRequest{}, fmt.Errorf("%w: invalid agent definition", ErrAgentNotFound)
 	}
-	if input.AgentID == "" {
-		input.AgentID = definition.route.ID
-	}
-	if input.AgentID != definition.route.ID {
-		return engine.WorkflowStartRequest{}, fmt.Errorf("%w: input agent %q does not match definition %q", ErrAgentNotFound, input.AgentID, definition.route.ID)
-	}
 	if err := validateWorkflowRunInput(input); err != nil {
 		if input != nil && input.Continuation != nil {
 			return engine.WorkflowStartRequest{}, continuationContractError(err)
 		}
 		return engine.WorkflowStartRequest{}, err
+	}
+	executor, _ := input.Subject.Executor.AsAgent()
+	if agent.Ident(executor) != definition.route.ID {
+		return engine.WorkflowStartRequest{}, fmt.Errorf("%w: input agent %q does not match definition %q", ErrAgentNotFound, executor, definition.route.ID)
 	}
 	if requireSession {
 		if strings.TrimSpace(input.SessionID) == "" {
@@ -1815,36 +1832,43 @@ func prepareRunWithDefinition(input *RunInput, launch workflowLaunchSettings, de
 		if requireSession {
 			return engine.WorkflowStartRequest{}, errors.New("run id is required for a sessionful workflow")
 		}
-		input.RunID = generateRunID(string(input.AgentID))
+		input.RunID = generateRunID(string(executor))
 	}
 	runLabels := input.Labels
 	effectivePolicy := input.Policy
+	providerOwnsValidation := false
 	if input.Continuation != nil {
-		checkpoint, err := prepareContinuation(input, definition)
+		checkpoint, err := prepareClientContinuation(input, definition)
 		if err != nil {
 			return engine.WorkflowStartRequest{}, continuationContractError(err)
 		}
 		runLabels = checkpoint.Context.Labels
 		effectivePolicy = checkpoint.Policy
-	}
-	if err := validateRequiredLabels(definition, runLabels); err != nil {
-		if input.Continuation != nil {
-			return engine.WorkflowStartRequest{}, continuationContractError(err)
+		providerOwnsValidation = checkpoint.Context.Operation != nil || checkpoint.Context.RegisteredInvocation != nil
+		if providerOwnsValidation && launch.taskQueue != "" && launch.taskQueue != definition.route.DefaultTaskQueue {
+			return engine.WorkflowStartRequest{}, continuationContractError(errors.New("direct continuation cannot override its retained provider queue"))
 		}
-		return engine.WorkflowStartRequest{}, err
 	}
-	if effectivePolicy != nil {
-		if err := validateCompletionToolPolicyForDefinition(definition, effectivePolicy); err != nil {
+	if !providerOwnsValidation {
+		if err := validateRequiredLabels(definition, runLabels); err != nil {
 			if input.Continuation != nil {
 				return engine.WorkflowStartRequest{}, continuationContractError(err)
 			}
 			return engine.WorkflowStartRequest{}, err
 		}
-		if err := validateLimitTerminalPlansForDefinition(definition, effectivePolicy.LimitTerminalPlans); err != nil {
-			if input.Continuation != nil {
-				return engine.WorkflowStartRequest{}, continuationContractError(err)
+		if effectivePolicy != nil {
+			if err := validateCompletionToolPolicyForDefinition(definition, effectivePolicy); err != nil {
+				if input.Continuation != nil {
+					return engine.WorkflowStartRequest{}, continuationContractError(err)
+				}
+				return engine.WorkflowStartRequest{}, err
 			}
-			return engine.WorkflowStartRequest{}, err
+			if err := validateLimitTerminalPlansForDefinition(definition, effectivePolicy.LimitTerminalPlans); err != nil {
+				if input.Continuation != nil {
+					return engine.WorkflowStartRequest{}, continuationContractError(err)
+				}
+				return engine.WorkflowStartRequest{}, err
+			}
 		}
 	}
 	req := engine.WorkflowStartRequest{
@@ -1986,34 +2010,34 @@ func (r *Runtime) GetRunSnapshot(ctx context.Context, runID string) (*run.Snapsh
 
 // loadRunSnapshot replays the canonical run log without changing stored state.
 func (r *Runtime) loadRunSnapshot(ctx context.Context, runID string) (*run.Snapshot, error) {
-	const pageSize = 512
-
-	var (
-		cursor = ""
-		events []*runlog.Event
-	)
-	seen := make(map[string]struct{})
-	for {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		page, err := r.Store.ListRunRecords(ctx, runID, cursor, pageSize)
-		if err != nil {
-			return nil, err
-		}
-		events = append(events, page.Events...)
-		if page.NextCursor == "" {
-			break
-		}
-		if _, repeated := seen[page.NextCursor]; repeated || page.NextCursor == cursor {
-			return nil, storage.NewContractError(fmt.Errorf("snapshot record page made no progress"))
-		}
-		seen[page.NextCursor] = struct{}{}
-		cursor = page.NextCursor
-	}
-	snapshot, err := newRunSnapshot(events)
+	events, err := r.loadRunEvents(ctx, runID)
 	if err != nil {
 		return nil, err
+	}
+	metadata, err := r.Store.LoadRun(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := genrunidentity.EncodeRunSubject(&metadata.Subject); err != nil {
+		return nil, fmt.Errorf("saved run subject: %w", err)
+	}
+	parentToolCallID, err := r.snapshotParentToolCall(ctx, metadata)
+	if err != nil {
+		return nil, err
+	}
+	inherited, err := r.snapshotInheritedEvents(ctx, metadata)
+	if err != nil {
+		return nil, err
+	}
+	snapshot, err := newRunSnapshot(events, parentToolCallID, inherited)
+	if err != nil {
+		return nil, err
+	}
+	if !reflect.DeepEqual(snapshot.Subject, metadata.Subject) {
+		return nil, errors.New("run snapshot subject differs from saved run metadata")
+	}
+	if _, isAgent := metadata.Subject.Executor.AsAgent(); !isAgent {
+		return snapshot, nil
 	}
 	messages, err := transcript.BuildMessagesFromRunLogPrefix(ctx, r.Store, runID, events[len(events)-1].ID)
 	if err != nil {

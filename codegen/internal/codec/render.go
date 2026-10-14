@@ -65,6 +65,7 @@ type (
 		Constructor string
 		Nilable     bool
 		JSONKind    byte
+		RawJSON     bool
 	}
 
 	// valueData contains the generated functions for one service value.
@@ -120,7 +121,7 @@ func (p *Plan) Files(packageName string) ([]*goacodegen.File, error) {
 	if len(data.JSONValidators) > 0 {
 		sections = append(sections, &goacodegen.SectionTemplate{
 			Name:   "strict-json-values",
-			Source: `{{template "json-value-validators" .}}` + jsonshape.ValidatorsSource + standaloneSource + `{{.Preflights}}`,
+			Source: `{{template "json-value-validators" .}}` + jsonshape.ValidatorsSource + StrictJSONReaderSource + standaloneSource + `{{.Preflights}}`,
 			Data:   data,
 		})
 	}
@@ -205,6 +206,7 @@ func (p *Plan) link() (*fileData, []*goacodegen.ImportSpec, error) {
 					FieldType:   fieldType,
 					Kind:        branch.kind.Name(),
 					Constructor: branch.constructor.Name(),
+					RawJSON:     branch.rawJSON,
 					JSONKind:    goaexpr.JSONKind(expression.Values[index].Attribute.Type),
 					Nilable: strings.HasPrefix(fieldType, "*") ||
 						strings.HasPrefix(fieldType, "[]") || strings.HasPrefix(fieldType, "map["),
@@ -398,6 +400,8 @@ func {{ .Name }}(value {{ .Reference }}) (err error) {
 {{ end }}
 {{ range .Unions }}
 {{- $union := . }}
+{{- $hasRawJSON := false }}
+{{- range .Branches }}{{ if .RawJSON }}{{ $hasRawJSON = true }}{{ end }}{{ end }}
 // {{ .Name }} stores exactly one selected Goa OneOf branch.
 type {{ .Name }} struct {
 	kind {{ .KindName }}
@@ -581,13 +585,20 @@ func (u *{{ .Name }}) UnmarshalJSON(data []byte) error {
 	if len(raw.Value) == 0 {
 		return {{ $.Imports.Goa }}.MissingFieldError({{ printf "%q" .ValueKey }}, {{ printf "%q" .Name }})
 	}
+    {{- if not $hasRawJSON }}
 	if {{ $.Imports.Bytes }}.Equal({{ $.Imports.Bytes }}.TrimSpace(raw.Value), []byte("null")) {
 		return {{ $.Imports.Goa }}.InvalidFieldTypeError({{ printf "%q" .ValueKey }}, nil, "non-null JSON value")
 	}
+    {{- end }}
 	{{- end }}
 	switch raw.Type {
 	{{- range .Branches }}
 	case string({{ .Kind }}):
+        {{- if and $hasRawJSON (not .RawJSON) }}
+        if {{ $.Imports.Bytes }}.Equal({{ $.Imports.Bytes }}.TrimSpace(raw.Value), []byte("null")) {
+            return {{ $.Imports.Goa }}.InvalidFieldTypeError({{ printf "%q" $union.ValueKey }}, nil, "non-null JSON value")
+        }
+        {{- end }}
 		var value {{ .FieldType }}
 		{{- if $union.Open }}
 		if err := {{ $.Imports.JSONV2 }}.Unmarshal(raw.Value, &value); err != nil {

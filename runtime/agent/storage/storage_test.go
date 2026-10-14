@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"goa.design/goa-ai/runtime/agent"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/runlog"
 )
 
@@ -19,7 +19,7 @@ func TestValidateRunRecord(t *testing.T) {
 		return &runlog.Event{
 			EventKey: "event",
 			RunID:    "run",
-			AgentID:  agent.Ident("service.agent"),
+			Subject:  genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("service.agent"))},
 			Type:     runlog.Type("event"),
 			Payload:  []byte(`{"value":1}`),
 			Timestamp: time.Date(
@@ -50,10 +50,10 @@ func TestValidateRunRecord(t *testing.T) {
 		{
 			name: "agent id",
 			mutate: func(record *runlog.Event) *runlog.Event {
-				record.AgentID = ""
+				record.Subject = genrunidentity.RunSubject{}
 				return record
 			},
-			want: "agent id is required",
+			want: "record subject:",
 		},
 		{
 			name: "event key",
@@ -101,7 +101,7 @@ func TestValidateRunRecord(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
-			require.EqualError(t, ValidateRunRecord(test.mutate(valid())), test.want)
+			require.ErrorContains(t, ValidateRunRecord(test.mutate(valid())), test.want)
 		})
 	}
 }

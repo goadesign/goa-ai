@@ -16,6 +16,126 @@ import (
 	goa "goa.design/goa/v3/pkg"
 )
 
+// NewProtoCheckCatalogResourceRequest builds
+// *registrypb.CheckCatalogResourceRequest from *registry.CatalogResource.
+func NewProtoCheckCatalogResourceRequest(payload *registry.CatalogResource) *registrypb.CheckCatalogResourceRequest {
+	message := &registrypb.CheckCatalogResourceRequest{
+		Kind:  &payload.Kind,
+		Scope: &payload.Scope,
+		Name:  &payload.Name,
+	}
+	return message
+}
+
+// NewProtoListCatalogResourcesRequest builds
+// *registrypb.ListCatalogResourcesRequest from *registry.CatalogResourcesQuery.
+func NewProtoListCatalogResourcesRequest(payload *registry.CatalogResourcesQuery) *registrypb.ListCatalogResourcesRequest {
+	message := &registrypb.ListCatalogResourcesRequest{
+		Scope: &payload.Scope,
+		Kind:  &payload.Kind,
+		After: payload.After,
+		Limit: &payload.Limit,
+		Name:  payload.Name,
+	}
+	return message
+}
+
+// NewListCatalogResourcesResult builds *registry.CatalogResourcesPage from
+// *registrypb.ListCatalogResourcesResponse.
+func NewListCatalogResourcesResult(message *registrypb.ListCatalogResourcesResponse) *registry.CatalogResourcesPage {
+	result := &registry.CatalogResourcesPage{}
+	result.Resources = make([]*registry.CatalogResource, len(message.Resources))
+	for i, val := range message.Resources {
+		result.Resources[i] = transformProtoCatalogResourceToCatalogResource(val)
+	}
+	if message.Continuation != nil {
+		switch val := message.Continuation.(type) {
+		case *registrypb.ListCatalogResourcesResponse_Done:
+			{
+				u := result.Continuation
+				u.SetDone(transformProtoResourcePageDoneToResourcePageDone(val.Done))
+				result.Continuation = u
+			}
+		case *registrypb.ListCatalogResourcesResponse_More:
+			{
+				u := result.Continuation
+				u.SetMore(transformProtoResourcePageMoreToResourcePageMore(val.More))
+				result.Continuation = u
+			}
+		}
+	}
+	return result
+}
+
+// NewProtoRegisterAgentExportsRequest builds
+// *registrypb.RegisterAgentExportsRequest from
+// *registry.AgentExportsDeclaration.
+func NewProtoRegisterAgentExportsRequest(payload *registry.AgentExportsDeclaration) *registrypb.RegisterAgentExportsRequest {
+	message := &registrypb.RegisterAgentExportsRequest{
+		Scope:        &payload.Scope,
+		ResourceName: &payload.ResourceName,
+		Name:         &payload.Name,
+		Description:  payload.Description,
+	}
+	if payload.Version != nil {
+		version := string(*payload.Version)
+		message.Version = &version
+	}
+	if payload.Tags != nil {
+		message.Tags = make([]string, len(payload.Tags))
+		for i, val := range payload.Tags {
+			message.Tags[i] = val
+		}
+	}
+	if payload.Exports != nil {
+		message.Exports = make([]*registrypb.ToolSchema, len(payload.Exports))
+		for i, val := range payload.Exports {
+			message.Exports[i] = transformToolSchemaToProtoToolSchema(val)
+		}
+	}
+	return message
+}
+
+// NewRegisterAgentExportsResult builds *registry.ResolvedToolset from
+// *registrypb.RegisterAgentExportsResponse.
+func NewRegisterAgentExportsResult(message *registrypb.RegisterAgentExportsResponse) *registry.ResolvedToolset {
+	result := &registry.ResolvedToolset{
+		RegistrationToken: *message.RegistrationToken,
+	}
+	if message.Toolset != nil {
+		result.Toolset = transformProtoToolsetToToolset(message.Toolset)
+	}
+	return result
+}
+
+// NewProtoValidateAgentExportsRequest builds
+// *registrypb.ValidateAgentExportsRequest from
+// *registry.AgentExportsValidation.
+func NewProtoValidateAgentExportsRequest(payload *registry.AgentExportsValidation) *registrypb.ValidateAgentExportsRequest {
+	message := &registrypb.ValidateAgentExportsRequest{
+		Scope:        &payload.Scope,
+		ResourceName: &payload.ResourceName,
+	}
+	if payload.Exports != nil {
+		message.Exports = make([]*registrypb.ToolSchema, len(payload.Exports))
+		for i, val := range payload.Exports {
+			message.Exports[i] = transformToolSchemaToProtoToolSchema(val)
+		}
+	}
+	return message
+}
+
+// NewProtoRetireAgentResourceRequest builds
+// *registrypb.RetireAgentResourceRequest from *registry.CatalogResource.
+func NewProtoRetireAgentResourceRequest(payload *registry.CatalogResource) *registrypb.RetireAgentResourceRequest {
+	message := &registrypb.RetireAgentResourceRequest{
+		Kind:  &payload.Kind,
+		Scope: &payload.Scope,
+		Name:  &payload.Name,
+	}
+	return message
+}
+
 // NewProtoDeclareServiceToolsetRequest builds
 // *registrypb.DeclareServiceToolsetRequest from
 // *registry.ServiceToolsetDeclaration.
@@ -603,32 +723,203 @@ func NewClaimToolCallResult(message *registrypb.ClaimToolCallResponse) *registry
 	return result
 }
 
-// ValidateDeclareServiceToolsetRequest runs the validations defined on
-// DeclareServiceToolsetRequest.
-func ValidateDeclareServiceToolsetRequest(message *registrypb.DeclareServiceToolsetRequest) (err error) {
+// ValidateCheckCatalogResourceRequest runs the validations defined on
+// CheckCatalogResourceRequest.
+func ValidateCheckCatalogResourceRequest(message *registrypb.CheckCatalogResourceRequest) (err error) {
+	if message.Kind == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("kind", "message"))
+	}
+	if message.Scope == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("scope", "message"))
+	}
 	if message.Name == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("name", "message"))
+	}
+	if message.Kind != nil {
+		if !(*message.Kind == "agent" || *message.Kind == "service") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.kind", *message.Kind, []any{"agent", "service"}))
+		}
+	}
+	if message.Scope != nil {
+		if utf8.RuneCountInString(*message.Scope) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.scope", *message.Scope, utf8.RuneCountInString(*message.Scope), 1, true))
+		}
 	}
 	if message.Name != nil {
 		if utf8.RuneCountInString(*message.Name) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 1, true))
 		}
-		if utf8.RuneCountInString(*message.Name) > 256 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 256, false))
+	}
+	return
+}
+
+// ValidateListCatalogResourcesRequest runs the validations defined on
+// ListCatalogResourcesRequest.
+func ValidateListCatalogResourcesRequest(message *registrypb.ListCatalogResourcesRequest) (err error) {
+	if message.Scope == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("scope", "message"))
+	}
+	if message.Kind == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("kind", "message"))
+	}
+	if message.Limit == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("limit", "message"))
+	}
+	if message.Scope != nil {
+		if utf8.RuneCountInString(*message.Scope) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.scope", *message.Scope, utf8.RuneCountInString(*message.Scope), 1, true))
 		}
 	}
-	if message.Description != nil {
-		if utf8.RuneCountInString(*message.Description) > 4096 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("message.description", *message.Description, utf8.RuneCountInString(*message.Description), 4096, false))
+	if message.Kind != nil {
+		if !(*message.Kind == "agent" || *message.Kind == "service") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.kind", *message.Kind, []any{"agent", "service"}))
+		}
+	}
+	if message.After != nil {
+		if utf8.RuneCountInString(*message.After) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.after", *message.After, utf8.RuneCountInString(*message.After), 1, true))
+		}
+	}
+	if message.Limit != nil {
+		if *message.Limit < 1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("message.limit", *message.Limit, 1, true))
+		}
+	}
+	if message.Name != nil {
+		if utf8.RuneCountInString(*message.Name) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 1, true))
+		}
+	}
+	return
+}
+
+// ValidateListCatalogResourcesResponse runs the validations defined on
+// ListCatalogResourcesResponse.
+func ValidateListCatalogResourcesResponse(message *registrypb.ListCatalogResourcesResponse) (err error) {
+	if message.Continuation == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("continuation", "message"))
+	}
+	for _, e := range message.Resources {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("message.resources", "[*]"))
+		}
+		if e != nil {
+			if err2 := validateregistry_registry_CatalogResource_At_elem(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	switch v := message.Continuation.(type) {
+	case *registrypb.ListCatalogResourcesResponse_Done:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("done", "message.continuation"))
+			break
+		}
+		if v.Done == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("done", "message.continuation"))
+			break
+		}
+
+	case *registrypb.ListCatalogResourcesResponse_More:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("more", "message.continuation"))
+			break
+		}
+		if v.More == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("more", "message.continuation"))
+			break
+		}
+		if v.More != nil {
+			if err2 := validateregistry_registry_ResourcePageMore_At_more(v.More); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+
+	return
+}
+
+// validateregistry_registry_CatalogResource_At_elem runs the validations
+// defined on CatalogResource.
+func validateregistry_registry_CatalogResource_At_elem(elem *registrypb.CatalogResource) (err error) {
+	if elem.Kind == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("kind", "elem"))
+	}
+	if elem.Scope == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("scope", "elem"))
+	}
+	if elem.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "elem"))
+	}
+	if elem.Kind != nil {
+		if !(*elem.Kind == "agent" || *elem.Kind == "service") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("elem.kind", *elem.Kind, []any{"agent", "service"}))
+		}
+	}
+	if elem.Scope != nil {
+		if utf8.RuneCountInString(*elem.Scope) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("elem.scope", *elem.Scope, utf8.RuneCountInString(*elem.Scope), 1, true))
+		}
+	}
+	if elem.Name != nil {
+		if utf8.RuneCountInString(*elem.Name) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("elem.name", *elem.Name, utf8.RuneCountInString(*elem.Name), 1, true))
+		}
+	}
+	return
+}
+
+// validateregistry_registry_ResourcePageMore_At_more runs the validations
+// defined on ResourcePageMore.
+func validateregistry_registry_ResourcePageMore_At_more(more *registrypb.ResourcePageMore) (err error) {
+	if more.After == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("after", "more"))
+	}
+	if more.After != nil {
+		if utf8.RuneCountInString(*more.After) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("more.after", *more.After, utf8.RuneCountInString(*more.After), 1, true))
+		}
+	}
+	return
+}
+
+// ValidateRegisterAgentExportsRequest runs the validations defined on
+// RegisterAgentExportsRequest.
+func ValidateRegisterAgentExportsRequest(message *registrypb.RegisterAgentExportsRequest) (err error) {
+	if message.Scope == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("scope", "message"))
+	}
+	if message.ResourceName == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("resource_name", "message"))
+	}
+	if message.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "message"))
+	}
+	if message.Scope != nil {
+		if utf8.RuneCountInString(*message.Scope) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.scope", *message.Scope, utf8.RuneCountInString(*message.Scope), 1, true))
+		}
+	}
+	if message.ResourceName != nil {
+		if utf8.RuneCountInString(*message.ResourceName) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.resource_name", *message.ResourceName, utf8.RuneCountInString(*message.ResourceName), 1, true))
+		}
+	}
+	if message.Name != nil {
+		if utf8.RuneCountInString(*message.Name) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 1, true))
 		}
 	}
 	if message.Version != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern("message.version", string(*message.Version), "^v?\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?$"))
 	}
-	if len(message.Tools) < 1 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("message.tools", message.Tools, len(message.Tools), 1, true))
+	if len(message.Exports) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("message.exports", message.Exports, len(message.Exports), 1, true))
 	}
-	for _, e := range message.Tools {
+	for _, e := range message.Exports {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("message.exports", "[*]"))
+		}
 		if e != nil {
 			if err2 := validateregistry_registry_ToolSchema_At_elem(e); err2 != nil {
 				err = goa.MergeErrors(err, err2)
@@ -979,9 +1270,6 @@ func validateregistry_registry_ToolBounds_At_bounds(bounds *registrypb.ToolBound
 // validateregistry_registry_ToolPaging_At_paging runs the validations defined
 // on ToolPaging.
 func validateregistry_registry_ToolPaging_At_paging(paging *registrypb.ToolPaging) (err error) {
-	if paging.ReplayPayload == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("replay_payload", "paging"))
-	}
 	if paging.CursorField == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("cursor_field", "paging"))
 	}
@@ -1091,6 +1379,12 @@ func validateregistry_registry_AgentToolTarget_At_agent(agent *registrypb.AgentT
 	if agent.Configuration == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("configuration", "agent"))
 	}
+	if agent.Workflow == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("workflow", "agent"))
+	}
+	if agent.Queue == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("queue", "agent"))
+	}
 	if agent.Executor != nil {
 		if utf8.RuneCountInString(*agent.Executor) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("agent.executor", *agent.Executor, utf8.RuneCountInString(*agent.Executor), 1, true))
@@ -1099,6 +1393,16 @@ func validateregistry_registry_AgentToolTarget_At_agent(agent *registrypb.AgentT
 	if agent.Configuration != nil {
 		if utf8.RuneCountInString(*agent.Configuration) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("agent.configuration", *agent.Configuration, utf8.RuneCountInString(*agent.Configuration), 1, true))
+		}
+	}
+	if agent.Workflow != nil {
+		if utf8.RuneCountInString(*agent.Workflow) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("agent.workflow", *agent.Workflow, utf8.RuneCountInString(*agent.Workflow), 1, true))
+		}
+	}
+	if agent.Queue != nil {
+		if utf8.RuneCountInString(*agent.Queue) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("agent.queue", *agent.Queue, utf8.RuneCountInString(*agent.Queue), 1, true))
 		}
 	}
 	return
@@ -1145,9 +1449,9 @@ func validateregistry_registry_TextOnlyToolContract_Target_textOnly_Context_text
 	return
 }
 
-// ValidateDeclareServiceToolsetResponse runs the validations defined on
-// DeclareServiceToolsetResponse.
-func ValidateDeclareServiceToolsetResponse(message *registrypb.DeclareServiceToolsetResponse) (err error) {
+// ValidateRegisterAgentExportsResponse runs the validations defined on
+// RegisterAgentExportsResponse.
+func ValidateRegisterAgentExportsResponse(message *registrypb.RegisterAgentExportsResponse) (err error) {
 	if message.Toolset == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("toolset", "message"))
 	}
@@ -1194,6 +1498,126 @@ func validateregistry_registry_Toolset_At_toolset(toolset *registrypb.Toolset) (
 	}
 	if toolset.RegisteredAt != nil {
 		err = goa.MergeErrors(err, goa.ValidateFormat("toolset.registered_at", *toolset.RegisteredAt, goa.FormatDateTime))
+	}
+	return
+}
+
+// ValidateValidateAgentExportsRequest runs the validations defined on
+// ValidateAgentExportsRequest.
+func ValidateValidateAgentExportsRequest(message *registrypb.ValidateAgentExportsRequest) (err error) {
+	if message.Scope == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("scope", "message"))
+	}
+	if message.ResourceName == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("resource_name", "message"))
+	}
+	if message.Scope != nil {
+		if utf8.RuneCountInString(*message.Scope) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.scope", *message.Scope, utf8.RuneCountInString(*message.Scope), 1, true))
+		}
+	}
+	if message.ResourceName != nil {
+		if utf8.RuneCountInString(*message.ResourceName) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.resource_name", *message.ResourceName, utf8.RuneCountInString(*message.ResourceName), 1, true))
+		}
+	}
+	if len(message.Exports) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("message.exports", message.Exports, len(message.Exports), 1, true))
+	}
+	for _, e := range message.Exports {
+		if e == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("message.exports", "[*]"))
+		}
+		if e != nil {
+			if err2 := validateregistry_registry_ToolSchema_At_elem(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateRetireAgentResourceRequest runs the validations defined on
+// RetireAgentResourceRequest.
+func ValidateRetireAgentResourceRequest(message *registrypb.RetireAgentResourceRequest) (err error) {
+	if message.Kind == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("kind", "message"))
+	}
+	if message.Scope == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("scope", "message"))
+	}
+	if message.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "message"))
+	}
+	if message.Kind != nil {
+		if !(*message.Kind == "agent" || *message.Kind == "service") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.kind", *message.Kind, []any{"agent", "service"}))
+		}
+	}
+	if message.Scope != nil {
+		if utf8.RuneCountInString(*message.Scope) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.scope", *message.Scope, utf8.RuneCountInString(*message.Scope), 1, true))
+		}
+	}
+	if message.Name != nil {
+		if utf8.RuneCountInString(*message.Name) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 1, true))
+		}
+	}
+	return
+}
+
+// ValidateDeclareServiceToolsetRequest runs the validations defined on
+// DeclareServiceToolsetRequest.
+func ValidateDeclareServiceToolsetRequest(message *registrypb.DeclareServiceToolsetRequest) (err error) {
+	if message.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "message"))
+	}
+	if message.Name != nil {
+		if utf8.RuneCountInString(*message.Name) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 1, true))
+		}
+		if utf8.RuneCountInString(*message.Name) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 256, false))
+		}
+	}
+	if message.Description != nil {
+		if utf8.RuneCountInString(*message.Description) > 4096 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.description", *message.Description, utf8.RuneCountInString(*message.Description), 4096, false))
+		}
+	}
+	if message.Version != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.version", string(*message.Version), "^v?\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?$"))
+	}
+	if len(message.Tools) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("message.tools", message.Tools, len(message.Tools), 1, true))
+	}
+	for _, e := range message.Tools {
+		if e != nil {
+			if err2 := validateregistry_registry_ToolSchema_At_elem(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	return
+}
+
+// ValidateDeclareServiceToolsetResponse runs the validations defined on
+// DeclareServiceToolsetResponse.
+func ValidateDeclareServiceToolsetResponse(message *registrypb.DeclareServiceToolsetResponse) (err error) {
+	if message.Toolset == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("toolset", "message"))
+	}
+	if message.RegistrationToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("registration_token", "message"))
+	}
+	if message.Toolset != nil {
+		if err2 := validateregistry_registry_Toolset_At_toolset(message.Toolset); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if message.RegistrationToken != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("message.registration_token", *message.RegistrationToken, "^[0-9a-f]{64}$"))
 	}
 	return
 }
@@ -1307,8 +1731,8 @@ func ValidateAttachProviderRequest(message *registrypb.AttachProviderRequest) (e
 		err = goa.MergeErrors(err, goa.ValidateFormat("message.provider_incarnation_id", *message.ProviderIncarnationId, goa.FormatUUID))
 	}
 	if message.WireProtocolVersion != nil {
-		if !(*message.WireProtocolVersion == 13) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{13}))
+		if !(*message.WireProtocolVersion == 14) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{14}))
 		}
 	}
 	return
@@ -1402,8 +1826,8 @@ func ValidateRegisterRequest(message *registrypb.RegisterRequest) (err error) {
 		err = goa.MergeErrors(err, goa.ValidateFormat("message.provider_incarnation_id", *message.ProviderIncarnationId, goa.FormatUUID))
 	}
 	if message.WireProtocolVersion != nil {
-		if !(*message.WireProtocolVersion == 13) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{13}))
+		if !(*message.WireProtocolVersion == 14) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{14}))
 		}
 	}
 	if message.SchemaFingerprint != nil {
@@ -1986,8 +2410,8 @@ func ValidateCallToolRequest(message *registrypb.CallToolRequest) (err error) {
 		}
 	}
 	if message.WireProtocolVersion != nil {
-		if !(*message.WireProtocolVersion == 13) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{13}))
+		if !(*message.WireProtocolVersion == 14) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{14}))
 		}
 	}
 	return
@@ -2201,8 +2625,8 @@ func ValidateCallResolvedToolRequest(message *registrypb.CallResolvedToolRequest
 		}
 	}
 	if message.WireProtocolVersion != nil {
-		if !(*message.WireProtocolVersion == 13) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{13}))
+		if !(*message.WireProtocolVersion == 14) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{14}))
 		}
 	}
 	return
@@ -2293,8 +2717,8 @@ func ValidateRetryToolRequest(message *registrypb.RetryToolRequest) (err error) 
 		}
 	}
 	if message.WireProtocolVersion != nil {
-		if !(*message.WireProtocolVersion == 13) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{13}))
+		if !(*message.WireProtocolVersion == 14) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{14}))
 		}
 	}
 	return
@@ -2630,6 +3054,36 @@ func ValidateClaimToolCallResponse(message *registrypb.ClaimToolCallResponse) (e
 	return
 }
 
+// transformProtoCatalogResourceToCatalogResource builds a value of type
+// *registry.CatalogResource from a value of type *registrypb.CatalogResource.
+func transformProtoCatalogResourceToCatalogResource(v *registrypb.CatalogResource) *registry.CatalogResource {
+	res := &registry.CatalogResource{
+		Kind:  *v.Kind,
+		Scope: *v.Scope,
+		Name:  *v.Name,
+	}
+
+	return res
+}
+
+// transformProtoResourcePageDoneToResourcePageDone builds a value of type
+// *registry.ResourcePageDone from a value of type *registrypb.ResourcePageDone.
+func transformProtoResourcePageDoneToResourcePageDone(v *registrypb.ResourcePageDone) *registry.ResourcePageDone {
+	res := &registry.ResourcePageDone{}
+
+	return res
+}
+
+// transformProtoResourcePageMoreToResourcePageMore builds a value of type
+// *registry.ResourcePageMore from a value of type *registrypb.ResourcePageMore.
+func transformProtoResourcePageMoreToResourcePageMore(v *registrypb.ResourcePageMore) *registry.ResourcePageMore {
+	res := &registry.ResourcePageMore{
+		After: *v.After,
+	}
+
+	return res
+}
+
 // transformToolSchemaToProtoToolSchema builds a value of type
 // *registrypb.ToolSchema from a value of type *registry.ToolSchema.
 func transformToolSchemaToProtoToolSchema(v *registry.ToolSchema) *registrypb.ToolSchema {
@@ -2878,9 +3332,14 @@ func transformToolPagingToProtoToolPaging(v *registry.ToolPaging) *registrypb.To
 	res := &registrypb.ToolPaging{
 		ContinueTool:    v.ContinueTool,
 		SourceTool:      v.SourceTool,
-		ReplayPayload:   &v.ReplayPayload,
 		CursorField:     &v.CursorField,
 		NextCursorField: &v.NextCursorField,
+	}
+	if v.RetainedFields != nil {
+		res.RetainedFields = make([]string, len(v.RetainedFields))
+		for i, val := range v.RetainedFields {
+			res.RetainedFields[i] = val
+		}
 	}
 
 	return res
@@ -2921,6 +3380,8 @@ func transformAgentToolTargetToProtoAgentToolTarget(v *registry.AgentToolTarget)
 	res := &registrypb.AgentToolTarget{
 		Executor:      &v.Executor,
 		Configuration: &v.Configuration,
+		Workflow:      &v.Workflow,
+		Queue:         &v.Queue,
 	}
 
 	return res
@@ -3208,9 +3669,12 @@ func transformProtoToolPagingToToolPaging(v *registrypb.ToolPaging) *registry.To
 	res := &registry.ToolPaging{
 		ContinueTool:    v.ContinueTool,
 		SourceTool:      v.SourceTool,
-		ReplayPayload:   *v.ReplayPayload,
 		CursorField:     *v.CursorField,
 		NextCursorField: *v.NextCursorField,
+	}
+	res.RetainedFields = make([]string, len(v.RetainedFields))
+	for i, val := range v.RetainedFields {
+		res.RetainedFields[i] = val
 	}
 
 	return res
@@ -3256,6 +3720,8 @@ func transformProtoAgentToolTargetToAgentToolTarget(v *registrypb.AgentToolTarge
 	res := &registry.AgentToolTarget{
 		Executor:      *v.Executor,
 		Configuration: *v.Configuration,
+		Workflow:      *v.Workflow,
+		Queue:         *v.Queue,
 	}
 
 	return res

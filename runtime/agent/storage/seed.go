@@ -9,8 +9,11 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"reflect"
 	"slices"
 
+	genregistry "goa.design/goa-ai/registry/gen/registry"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 )
@@ -24,11 +27,14 @@ type (
 	// source and let the store capture its terminal position. Continuations name
 	// the exact saved position in their suspended predecessor.
 	SeedDeclaration struct {
-		// AgentID is the agent that will execute the destination run.
-		AgentID string
+		// Origin is the original invocation already bound before provider resolution.
+		Origin genregistry.ExecutionInvocation
+		// Subject identifies the Agent or service tool for the destination run.
+		Subject genrunidentity.RunSubject
 		// RunID is the destination workflow ID, including before submission.
 		RunID string
-		// SessionID owns all linked history; empty is allowed only for literals.
+		// SessionID identifies the conversation when present. Standalone runs
+		// may retain their exact predecessor history without a Session.
 		SessionID string
 		// CommandID identifies the original operation, before mutable resolution.
 		CommandID string
@@ -36,7 +42,10 @@ type (
 		AttemptID string
 		// Kind selects literal, completed-turn, or continuation history.
 		Kind SeedKind
-		// SourceRunID names the exact completed or suspended predecessor.
+		// PredecessorRunID identifies the suspended execution continued by this
+		// preparation. It is separate from any model-history source.
+		PredecessorRunID string
+		// SourceRunID names the exact completed or suspended model-history source.
 		SourceRunID string
 		// SourceEndID is required only for a continuation's saved history.
 		SourceEndID string
@@ -147,17 +156,44 @@ var (
 // ValidateSeedDeclaration checks the cross-field source contract before a store
 // resolves source ownership and lifecycle state.
 func ValidateSeedDeclaration(d SeedDeclaration) error {
-	if d.AgentID == "" || d.RunID == "" || d.CommandID == "" || d.AttemptID == "" {
-		return errors.New("preparation agent, run, command and attempt IDs are required")
+	if _, err := genregistry.EncodeExecutionInvocation(&d.Origin); err != nil {
+		return fmt.Errorf("seed origin: %w", err)
+	}
+	if _, err := genrunidentity.EncodeRunSubject(&d.Subject); err != nil {
+		return fmt.Errorf("seed subject: %w", err)
+	}
+	if d.RunID == "" || d.CommandID == "" || d.AttemptID == "" {
+		return errors.New("preparation run, command and attempt IDs are required")
+	}
+	if d.PredecessorRunID != "" && d.PredecessorRunID == d.RunID {
+		return errors.New("preparation cannot continue itself")
+	}
+	if _, service := d.Subject.Executor.AsServiceTool(); service && len(d.RenderedPrompts) != 0 {
+		return errors.New("service preparation cannot contain model prompts")
 	}
 	switch d.Kind {
 	case SeedLiteral:
+		if _, agent := d.Subject.Executor.AsAgent(); agent && d.PredecessorRunID != "" {
+			return errors.New("agent continuation requires referenced history")
+		}
 		if d.SourceRunID != "" || d.SourceEndID != "" || d.ExcludeReasoning {
 			return errors.New("literal seed cannot declare a source or source transform")
 		}
 	case SeedNextTurn, SeedContinuation:
-		if d.SessionID == "" || d.SourceRunID == "" || d.SourceRunID == d.RunID {
-			return errors.New("referenced history requires a session and a distinct source run")
+		if _, ok := d.Subject.Executor.AsAgent(); !ok {
+			return errors.New("referenced model history requires an Agent subject")
+		}
+		if d.Kind == SeedNextTurn && d.PredecessorRunID != "" {
+			return errors.New("next-turn history cannot claim a lifecycle predecessor")
+		}
+		if d.Kind == SeedContinuation && d.PredecessorRunID != d.SourceRunID {
+			return errors.New("agent continuation predecessor must match its history source")
+		}
+		if d.Kind == SeedNextTurn && d.SessionID == "" {
+			return errors.New("next-turn history requires a session")
+		}
+		if d.SourceRunID == "" || d.SourceRunID == d.RunID {
+			return errors.New("referenced history requires a distinct source run")
 		}
 		if d.Kind == SeedNextTurn && d.SourceEndID != "" {
 			return errors.New("completed source position is assigned by the store")
@@ -234,7 +270,7 @@ func ValidateSeedPageSize(page SeedPage) error {
 // collections have the same meaning whether a transport decodes them as nil or
 // empty; prompt order and every actual scope value remain significant.
 func EqualSeedDeclarations(a, b SeedDeclaration) bool {
-	return a.AgentID == b.AgentID && a.RunID == b.RunID && a.SessionID == b.SessionID &&
+	return reflect.DeepEqual(a.Origin, b.Origin) && reflect.DeepEqual(a.Subject, b.Subject) && a.RunID == b.RunID && a.SessionID == b.SessionID &&
 		a.CommandID == b.CommandID && a.AttemptID == b.AttemptID &&
 		a.Kind == b.Kind && a.SourceRunID == b.SourceRunID && a.SourceEndID == b.SourceEndID &&
 		a.ExcludeReasoning == b.ExcludeReasoning &&

@@ -5,6 +5,7 @@ package design
 
 import (
 	_ "goa.design/goa-ai/dsl"
+	_ "goa.design/goa-ai/runtime/agent/run/design/types"
 	. "goa.design/goa/v3/dsl"
 
 	registrytypes "goa.design/goa-ai/registry/design/types"
@@ -24,6 +25,8 @@ var _ = API("registry", func() {
 
 	// Error definitions
 	Error("not_found", ErrorResult, "Toolset or tool not found")
+	Error("resource_exhausted", ErrorResult, "The complete catalog read exceeds the configured per-request byte budget")
+	Error("forbidden", ErrorResult, "The host denied access to this operation")
 	Error("validation_error", ErrorResult, "Payload validation failed")
 	Error("service_unavailable", ErrorResult, "Registry routing infrastructure or healthy providers are unavailable")
 	Error("call_not_admitted", ErrorResult, "The registry chose a rejected decision for this tool-use identity before provider publication, so no exact retry can execute while the run-scoped decision is retained")
@@ -35,6 +38,8 @@ var _ = API("registry", func() {
 	// gRPC transport configuration
 	GRPC(func() {
 		Response("not_found", CodeNotFound)
+		Response("resource_exhausted", CodeResourceExhausted)
+		Response("forbidden", CodePermissionDenied)
 		Response("validation_error", CodeInvalidArgument)
 		Response("service_unavailable", CodeUnavailable)
 		Response("call_not_admitted", CodeUnavailable)
@@ -53,6 +58,8 @@ var _ = Service("registry", func() {
 	GRPC(func() {
 		Package("goa_ai_registry")
 	})
+
+	catalogResourceMethods()
 
 	// ---- Provider Operations ----
 
@@ -181,6 +188,8 @@ var _ = Service("registry", func() {
 		Description("List all registered toolsets with optional tag filtering")
 		Payload(ListToolsetsPayload)
 		Result(ListToolsetsResult)
+		Error("forbidden")
+		Error("service_unavailable")
 		GRPC(func() {})
 	})
 
@@ -189,6 +198,8 @@ var _ = Service("registry", func() {
 		Payload(GetToolsetPayload)
 		Result(Toolset)
 		Error("not_found")
+		Error("forbidden")
+		Error("service_unavailable")
 		GRPC(func() {})
 	})
 
@@ -198,6 +209,7 @@ var _ = Service("registry", func() {
 		Result(ResolvedToolset)
 		Error("not_found")
 		Error("service_unavailable")
+		Error("forbidden")
 		GRPC(func() {})
 	})
 
@@ -206,6 +218,7 @@ var _ = Service("registry", func() {
 		Payload(CheckAdmissionPayload)
 		Result(AdmissionStatus)
 		Error("service_unavailable")
+		Error("forbidden")
 		GRPC(func() {})
 	})
 
@@ -213,6 +226,8 @@ var _ = Service("registry", func() {
 		Description("Search toolsets by keyword matching name, description, or tags")
 		Payload(SearchPayload)
 		Result(SearchResult)
+		Error("forbidden")
+		Error("service_unavailable")
 		GRPC(func() {})
 	})
 
@@ -223,6 +238,7 @@ var _ = Service("registry", func() {
 		Payload(CallToolPayload)
 		Result(CallToolResult)
 		Error("not_found")
+		Error("forbidden")
 		Error("validation_error")
 		Error("service_unavailable")
 		Error("call_not_admitted")
@@ -234,6 +250,7 @@ var _ = Service("registry", func() {
 		Payload(CallResolvedToolPayload)
 		Result(CallToolResult)
 		Error("not_found")
+		Error("forbidden")
 		Error("validation_error")
 		Error("service_unavailable")
 		Error("call_not_admitted")
@@ -246,6 +263,7 @@ var _ = Service("registry", func() {
 		Payload(RetryToolPayload)
 		Result(CallToolResult)
 		Error("not_found")
+		Error("forbidden")
 		Error("validation_error")
 		Error("service_unavailable")
 		Error("admission_conflict")
@@ -462,15 +480,8 @@ var GetToolsetPayload = Type("GetToolsetPayload", func() {
 	Required("name")
 })
 
-var ResolvedToolset = Type("ResolvedToolset", func() {
-	Description("One active toolset definition and the registration that supplied it.")
-	Field(1, "toolset", Toolset, "Complete toolset definition read from the active registration.")
-	Field(2, "registration_token", String, "Exact registration required when executing a call selected from this definition.", func() {
-		Pattern(toolregistry.RegistrationTokenPattern)
-		Example("1111111111111111111111111111111111111111111111111111111111111111")
-	})
-	Required("toolset", "registration_token")
-})
+// ResolvedToolset describes the active definition and registration selected by the registry.
+var ResolvedToolset = registrytypes.ResolvedToolset
 
 var CheckAdmissionPayload = Type("CheckAdmissionPayload", func() {
 	Description("The exact toolset admission derived from one deployed provider's generated schemas, admission revision, and wire protocol.")
@@ -640,27 +651,8 @@ var ClaimToolCallResult = Type("ClaimToolCallResult", func() {
 
 // ---- Shared Types ----
 
-var Toolset = Type("Toolset", func() {
-	Description("Complete toolset definition with all tool schemas")
-	Field(1, "name", String, "Unique name for the toolset", func() {
-		MinLength(1)
-		MaxLength(256)
-		Example("data-tools")
-	})
-	Field(2, "description", String, "Human-readable description", func() {
-		Example("Tools for data processing and analysis")
-	})
-	Field(3, "version", registrytypes.SemVer, "Semantic version of the toolset.")
-	Field(4, "tags", ArrayOf(String), "Tags for categorization", func() {
-		Example([]string{"data", "etl"})
-	})
-	Field(5, "tools", ArrayOf(registrytypes.ToolSchema), "Tool schemas included in the toolset.")
-	Field(6, "registered_at", String, "ISO 8601 registration timestamp", func() {
-		Format(FormatDateTime)
-		Example("2024-01-15T10:30:00Z")
-	})
-	Required("name", "tools", "registered_at")
-})
+// Toolset describes the complete definition returned by the registry.
+var Toolset = registrytypes.Toolset
 
 var ToolsetInfo = Type("ToolsetInfo", func() {
 	Description("Toolset metadata for listing and search results")

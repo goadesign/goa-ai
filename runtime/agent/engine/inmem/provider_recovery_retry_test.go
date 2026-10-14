@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 )
@@ -45,7 +46,7 @@ func TestIndependentRetainsPauseFromPriorIssuedAttempt(t *testing.T) {
 				return nil, err
 			}
 			close(secondStarted)
-			return &api.RunOutput{RunID: "child"}, nil
+			return &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "child"}, nil
 		},
 	}))
 	require.NoError(t, implementation.RegisterWorkflow(ctx, engine.WorkflowDefinition{
@@ -62,7 +63,7 @@ func TestIndependentRetainsPauseFromPriorIssuedAttempt(t *testing.T) {
 				return nil, err
 			}
 			child, err := w.StartChildWorkflow(w.Context(), engine.ChildWorkflowRequest{
-				ID: "child", Workflow: "child", TaskQueue: "test", Input: &api.RunInput{RunID: "child"},
+				ID: "child", Workflow: "child", TaskQueue: "test", Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "child"},
 				RunTimeout: 10 * time.Millisecond, RetryPolicy: engine.RetryPolicy{MaxAttempts: 2, InitialInterval: time.Millisecond},
 			})
 			if err != nil {
@@ -85,10 +86,10 @@ func TestIndependentRetainsPauseFromPriorIssuedAttempt(t *testing.T) {
 			if accepted != 1 {
 				return nil, fmt.Errorf("accepted %d prior attempt pauses, want 1", accepted)
 			}
-			return &api.RunOutput{RunID: "parent"}, nil
+			return &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "parent"}, nil
 		},
 	}))
-	handle, err := implementation.StartWorkflow(ctx, engine.WorkflowStartRequest{ID: "parent", Workflow: "parent", TaskQueue: "test", Input: &api.RunInput{RunID: "parent"}})
+	handle, err := implementation.StartWorkflow(ctx, engine.WorkflowStartRequest{ID: "parent", Workflow: "parent", TaskQueue: "test", Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "parent"}})
 	require.NoError(t, err)
 	_, err = handle.Wait(ctx)
 	require.NoError(t, err)

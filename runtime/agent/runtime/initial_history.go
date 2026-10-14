@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"strconv"
 
+	genrunterminal "goa.design/goa-ai/registry/gen/runterminal"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/internal/workflowcodec"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -23,6 +24,7 @@ import (
 
 type (
 	seedWriter interface {
+		BeginRunPreparationOperation(context.Context, storage.RunPreparationBegin) (genrunterminal.PreparationDecision, error)
 		BeginRunSeed(context.Context, storage.SeedDeclaration) (storage.RunSeed, error)
 		AppendRunSeed(context.Context, storage.SeedAppend) (string, error)
 		PublishRunSeed(context.Context, storage.SeedPublication) error
@@ -52,6 +54,11 @@ func stageLiteralHistory(ctx context.Context, store seedWriter, declaration stor
 		return nil, fmt.Errorf("runtime: invalid initial transcript: %w", err)
 	}
 	if err := validateSeedPromptFacts(declaration.SessionID, declaration.RenderedPrompts); err != nil {
+		return nil, err
+	}
+	// This writes only supplied history. A stopped decision still permits saving
+	// the exact recipe; the actual engine start checks the stop before execution.
+	if _, err := bindHistoryOperation(ctx, store, declaration); err != nil {
 		return nil, err
 	}
 	if _, err := store.BeginRunSeed(ctx, declaration); err != nil {
@@ -294,4 +301,21 @@ func validateSeedPromptFacts(sessionID string, events []prompt.RenderEvent) erro
 		}
 	}
 	return nil
+}
+
+// bindHistoryOperation binds the declared invocation before history writes.
+// Repeating an earlier provider binding verifies the same immutable owner.
+func bindHistoryOperation(ctx context.Context, store seedWriter, declaration storage.SeedDeclaration) (genrunterminal.PreparationDecision, error) {
+	return store.BeginRunPreparationOperation(ctx, storage.RunPreparationBegin{
+		Operation: storage.PreparationOperation{Subject: declaration.Subject, RunID: declaration.RunID, SessionID: declaration.SessionID, CommandID: declaration.CommandID},
+		Origin:    declaration.Origin,
+	})
+}
+
+func (w workflowSeedWriter) BeginRunPreparationOperation(ctx context.Context, command storage.RunPreparationBegin) (genrunterminal.PreparationDecision, error) {
+	result, err := w.r.executeStorageWithRetry(ctx, &api.StorageActivityCommand{PreparationBegin: &command})
+	if err != nil {
+		return genrunterminal.PreparationDecision{}, err
+	}
+	return *result.PreparationBegin, nil
 }

@@ -8,8 +8,11 @@ import (
 	"errors"
 	"testing"
 
+	genregistry "goa.design/goa-ai/registry/gen/registry"
+
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -75,7 +78,7 @@ func TestActivityHistoryRejectsForeignOwnersBeforeReading(t *testing.T) {
 			require.Zero(t, store.prefixReads)
 
 			child, childErr := rt.prepareAgentChildActivity(t.Context(), &api.AgentChildActivityInput{
-				Call:      ToolCall{AgentID: input.AgentID, RunID: input.RunID, SessionID: "session"},
+				Call:      ToolCall{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(input.AgentID))}, RunID: input.RunID, SessionID: "session"},
 				ParentRun: input.RunContext, HistoryEndID: input.HistoryEndID,
 			})
 			require.Nil(t, child)
@@ -143,7 +146,8 @@ func TestActivityHistoryChildValidatorReceivesPendingCall(t *testing.T) {
 	registerAgentToolTestConfig(rt, *reg.AgentTool, "child", newAnyJSONSpec("child.lookup"))
 	appendTestActivityHistory(t, rt, &PlanActivityInput{AgentID: "parent.agent", RunID: parent.RunID, RunContext: parent}, []*model.Message{userMsg("later input")})
 	out, err := rt.prepareAgentChildActivity(t.Context(), &api.AgentChildActivityInput{
-		Call: ToolCall{AgentID: "parent.agent", RunID: parent.RunID, SessionID: parent.SessionID,
+		Origin: genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: parent.RunID, ToolCallID: "child-call"})},
+		Call: ToolCall{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("parent.agent"))}, RunID: parent.RunID, SessionID: parent.SessionID,
 			Name: "child.lookup", ToolCallID: "child-call", Payload: rawjson.Message(`{}`)},
 		ParentRun: parent, HistoryEndID: position,
 	})

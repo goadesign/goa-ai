@@ -207,7 +207,7 @@ func TestMaterializedHistoryAcrossSuspendedChildAndPreparedStart(t *testing.T) {
 						continue
 					}
 					decoded, err := hooks.DecodeFromRecordInput(&RecordActivityInput{
-						Type: recorded.Type, RunID: recorded.RunID, AgentID: recorded.AgentID,
+						Type: recorded.Type, RunID: recorded.RunID, Subject: recorded.Subject,
 						SessionID: recorded.SessionID, Payload: recorded.Payload,
 					})
 					require.NoError(t, err)

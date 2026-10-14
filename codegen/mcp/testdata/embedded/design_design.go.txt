@@ -1,0 +1,33 @@
+package design
+
+import . "goa.design/goa/v3/dsl"
+import . "goa.design/goa-ai/dsl"
+
+var _ = API("openfields", func() {})
+var Question = Type("Question", func() {
+	Meta("openapi:additionalProperties", "true")
+	Field(1, "message", String, func() { Meta("struct:tag:json", "message,case:strict") })
+	Field(2, "extensions", MapOf(String, Bytes), func() {
+		Elem(func() { Meta("struct:field:type", "json.RawMessage", "encoding/json") })
+		Meta("struct:tag:json", ",embed")
+	})
+	Required("message")
+})
+var _ = Service("sample", func() {
+	Method("echo", func() {
+		Payload(Question)
+		Result(Question)
+		HTTP(func() { POST("/echo"); Response(StatusOK) })
+		GRPC(func() { Response(CodeOK) })
+	})
+})
+
+var _ = Service("tools", func() {
+	MCP("tools", "1")
+	JSONRPC(func() { POST("/mcp") })
+	Method("lookup", func() {
+		Payload(func() { Attribute("name", String); Required("name") })
+		Result(String)
+		Tool("lookup", "Look up a synthetic value")
+	})
+})

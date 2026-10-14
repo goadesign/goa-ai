@@ -17,6 +17,9 @@ import (
 	"fmt"
 	"time"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
+	"goa.design/goa-ai/runtime/agent"
+
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -75,10 +78,12 @@ func (l *workflowLoop) executeToolStep(program stepProgram, batch *stepBatch) ([
 		}
 		return nil, nil, nil
 	}
+	l.unfinishedBatch = batch
 	batch.budgetCost += program.budgetCost
 	l.r.logger.Info(ctx, "Executing allowed tool calls", "count", len(allowed))
 	outcomes, timedOut, executionErr := l.executeImmediateToolCalls(program.immediate, result.ExpectedChildren, nil)
 	records, resultErr := stepToolRecordsAfterExecution(program.immediate, outcomes, executionErr)
+	l.finishToolBatches(records)
 	batch.records = append(batch.records, records...)
 	batch.timedOut = batch.timedOut || timedOut
 	if err := errors.Join(executionErr, resultErr); err != nil {
@@ -89,22 +94,11 @@ func (l *workflowLoop) executeToolStep(program stepProgram, batch *stepBatch) ([
 	}
 
 	toolClarifications := toolClarificationsFromRecords(records)
-	for i := range records {
-		if records[i].mcpPending != nil {
-			batch.pending = append(batch.pending, checkpointPendingInput{MCP: pendingMCPInput(records[i].call, records[i].mcpPending)})
-			continue
-		}
-		if records[i].childSuspension == nil {
-			continue
-		}
-		if err := validatePublicRunSuspension(records[i].childSuspension); err != nil {
-			return nil, nil, fmt.Errorf("validate suspended child %s: %w", records[i].call.ToolCallID, err)
-		}
-		batch.pending = append(batch.pending, checkpointPendingInput{Child: &checkpointChildContinuation{
-			ToolCallID: records[i].call.ToolCallID,
-			Suspension: records[i].childSuspension,
-		}})
+	pending, err := pendingInputsFromToolRecords(records)
+	if err != nil {
+		return nil, nil, err
 	}
+	batch.pending = append(batch.pending, pending...)
 	if len(program.awaitItems) > 0 && len(toolClarifications) > 0 {
 		return nil, nil, errors.New("planner await and tool clarification cannot both be present in the same turn")
 	}
@@ -120,6 +114,30 @@ func (l *workflowLoop) executeToolStep(program stepProgram, batch *stepBatch) ([
 		return nil, nil, errors.New("workflow step terminal payload cannot accompany await work")
 	}
 	return program.confirmations, items, nil
+}
+
+// pendingInputsFromToolRecords preserves unfinished service and child work as
+// requests for more input. Both ordinary execution and an approved call use
+// these requests to suspend before a later workflow consumes the answer.
+func pendingInputsFromToolRecords(records []stepToolRecord) ([]checkpointPendingInput, error) {
+	var pending []checkpointPendingInput
+	for i := range records {
+		if records[i].mcpPending != nil {
+			pending = append(pending, checkpointPendingInput{MCP: pendingMCPInput(records[i].call, records[i].mcpPending)})
+			continue
+		}
+		if records[i].childSuspension == nil {
+			continue
+		}
+		if err := validatePublicRunSuspension(records[i].childSuspension); err != nil {
+			return nil, fmt.Errorf("validate suspended child %s: %w", records[i].call.ToolCallID, err)
+		}
+		pending = append(pending, checkpointPendingInput{Child: &checkpointChildContinuation{
+			ToolCallID: records[i].call.ToolCallID,
+			Suspension: records[i].childSuspension,
+		}})
+	}
+	return pending, nil
 }
 
 // recordToolResultsBeforeError preserves the committed tool-use/result
@@ -153,7 +171,7 @@ func (l *workflowLoop) prepareToolStep(program *stepProgram) error {
 		}
 		if call.Registry != nil {
 			call.Labels = mergeLabels(cloneLabels(l.base.RunContext.Labels), call.Labels)
-			if _, err := l.r.resolveRegistryExecution(l.input.AgentID, call); err != nil {
+			if _, err := l.r.resolveRegistryExecution(l.reg.Definition.route.ID, call); err != nil {
 				return err
 			}
 		}
@@ -251,7 +269,7 @@ func (l *workflowLoop) prepareToolStep(program *stepProgram) error {
 				ctx,
 				hooks.NewToolCallUpdatedEvent(
 					l.base.RunContext.ParentRunID,
-					l.base.RunContext.ParentAgentID,
+					genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(l.base.RunContext.ParentAgentID))},
 					l.base.RunContext.SessionID,
 					l.parentTracker.parentToolCallID,
 					l.parentTracker.currentTotal(),
@@ -357,9 +375,10 @@ func (l *workflowLoop) executeImmediateToolClass(
 	}
 	grouped, timeouts := l.r.groupToolCallsByTimeout(calls, l.input, l.toolOpts.StartToCloseTimeout)
 	return l.r.executeGroupedToolCalls(
+		l,
 		l.wfCtx,
 		l.reg,
-		l.input.AgentID,
+		l.reg.Definition.route.ID,
 		l.base,
 		expectedChildren,
 		l.parentTracker,
@@ -440,6 +459,8 @@ func (r *Runtime) recordStepToolResults(
 	turnID string,
 	records []stepToolRecord,
 ) error {
+	executor, _ := input.Subject.Executor.AsAgent()
+
 	for i := range records {
 		record := &records[i]
 		if record.scheduleRequired {
@@ -466,7 +487,7 @@ func (r *Runtime) recordStepToolResults(
 	if err := r.appendToolOutputRecords(st, records); err != nil {
 		return err
 	}
-	if err := r.appendUserToolRecordResults(ctx, input.AgentID, base, records, turnID); err != nil {
+	if err := r.appendUserToolRecordResults(ctx, agent.Ident(executor), base, records, turnID); err != nil {
 		return err
 	}
 	return nil
@@ -482,7 +503,7 @@ func (r *Runtime) publishStepToolSchedule(
 ) error {
 	event := newToolCallScheduledEvent(
 		base.RunContext.RunID,
-		input.AgentID,
+		input.Subject,
 		base.RunContext.SessionID,
 		record.call,
 		record.scheduleQueue,
@@ -524,7 +545,7 @@ func (r *Runtime) publishStepToolResult(
 	}
 	event := hooks.NewToolResultReceivedEvent(
 		base.RunContext.RunID,
-		input.AgentID,
+		input.Subject,
 		base.RunContext.SessionID,
 		record.callRunID,
 		record.call.Name,
@@ -632,7 +653,7 @@ func (l *workflowLoop) recordCapDeniedToolCall(
 		ctx,
 		newToolCallScheduledEvent(
 			l.base.RunContext.RunID,
-			l.input.AgentID,
+			l.input.Subject,
 			l.base.RunContext.SessionID,
 			call,
 			"",
@@ -657,7 +678,7 @@ func (l *workflowLoop) recordCapDeniedToolCall(
 	}
 	event := hooks.NewToolResultReceivedEvent(
 		l.base.RunContext.RunID,
-		l.input.AgentID,
+		l.input.Subject,
 		l.base.RunContext.SessionID,
 		call.RunID,
 		call.Name,

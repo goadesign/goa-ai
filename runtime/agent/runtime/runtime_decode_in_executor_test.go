@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -64,7 +65,7 @@ func TestExecuteToolActivity_DecodeInExecutor_PassesRaw(t *testing.T) {
 
 	// Call ExecuteToolActivity with a pre-encoded payload; it should flow through.
 	raw := rawjson.Message([]byte(`{"x":1}`))
-	input := ToolInput{ToolsetName: "svc.ts", ToolName: tools.Ident("svc.ts.tool"), Payload: raw}
+	input := ToolInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("test.agent"))}, ToolsetName: "svc.ts", ToolName: tools.Ident("svc.ts.tool"), Payload: raw}
 	out, err := rt.ExecuteToolActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.NotNil(t, out)

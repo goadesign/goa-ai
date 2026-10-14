@@ -14,6 +14,7 @@ import (
 	"goa.design/goa-ai/internal/registrycontract"
 	"goa.design/goa-ai/internal/tooloperation"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -56,7 +57,7 @@ func TestRegistryActivityPreservesSelectedAdmission(t *testing.T) {
 	}}
 	execution := &toolBatchExec{r: rt, activityName: "execute", runID: "run-2", agentID: definition.route.ID}
 	future, err := execution.scheduleToolActivity(wf, ToolCall{
-		Registry: binding, AgentID: definition.route.ID, Name: "records.find",
+		Registry: binding, Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(definition.route.ID))}, Name: "records.find",
 		RunID: "run-1", SessionID: "session-1", ToolCallID: "call-1",
 		Payload:           rawjson.Message(`{"value":9007199254740993}`),
 		ExecutionSequence: 1, ExecutionContinuation: operation,
@@ -102,9 +103,9 @@ func TestRegistryResultRestoresWithoutCurrentCatalog(t *testing.T) {
 		Name: "records.find", Registry: binding, ToolCallID: "call-1",
 		Payload: rawjson.Message(`{"value":1}`),
 	}
-	scheduled := newToolCallScheduledEvent("run-1", "records.agent", "session-1", call, "", "", 0)
+	scheduled := newToolCallScheduledEvent("run-1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("records.agent"))}, "session-1", call, "", "", 0)
 	result := hooks.NewToolResultReceivedEvent(
-		"run-1", "records.agent", "session-1", "run-1", "records.find", "call-1", "",
+		"run-1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("records.agent"))}, "session-1", "run-1", "records.find", "call-1", "",
 		rawjson.Message(`{"value":9007199254740993}`), nil, nil, "", nil, 0, nil, nil,
 	)
 	output, err := rt.plannerToolOutputFromCanonicalEvents("run-1", "run-1", "call-1",
@@ -126,9 +127,9 @@ func TestRegistryCorrectionUsesNewlyResolvedContract(t *testing.T) {
 	require.NoError(t, err)
 	call := ToolCall{Name: "records.find", ToolCallID: "failed", Registry: binding, Payload: rawjson.Message(`{"value":1}`)}
 	require.NoError(t, rt.publishHookErr(t.Context(),
-		newToolCallScheduledEvent("run", definition.route.ID, "session", call, "", "", 0), "turn"))
+		newToolCallScheduledEvent("run", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(definition.route.ID))}, "session", call, "", "", 0), "turn"))
 	require.NoError(t, rt.publishHookErr(t.Context(), hooks.NewToolResultReceivedEvent(
-		"run", definition.route.ID, "session", "run", call.Name, call.ToolCallID, "",
+		"run", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(definition.route.ID))}, "session", "run", call.Name, call.ToolCallID, "",
 		nil, nil, nil, "", nil, 0, nil, testToolFailure(planner.FailureInvalidCall, planner.RecoveryCorrectCall, "choose another value"),
 	), "turn"))
 

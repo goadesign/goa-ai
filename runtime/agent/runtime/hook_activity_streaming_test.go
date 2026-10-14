@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/session"
@@ -84,7 +85,7 @@ func TestHookActivityUsesCommittedSessionStateForStreaming(t *testing.T) {
 			_, err := store.CreateSession(ctx, "session", time.Now().UTC())
 			require.NoError(t, err)
 			admitRunForTest(t, store, session.RunMeta{
-				AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
+				Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
 			})
 			if test.end {
 				_, err = store.EndSession(ctx, "session", time.Now().UTC())
@@ -121,7 +122,7 @@ func TestHookActivityRetriesStreamAfterDurableInsert(t *testing.T) {
 	_, err := store.CreateSession(ctx, "session", time.Now().UTC())
 	require.NoError(t, err)
 	admitRunForTest(t, store, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
 	})
 
 	bus := hooks.NewBus()
@@ -159,7 +160,7 @@ func TestTranscriptActivityRetriesStreamAfterDurableInsert(t *testing.T) {
 	_, err := store.CreateSession(ctx, "session", time.Now().UTC())
 	require.NoError(t, err)
 	admitRunForTest(t, store, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
 	})
 	messages := []*model.Message{
 		{
@@ -179,7 +180,7 @@ func TestTranscriptActivityRetriesStreamAfterDurableInsert(t *testing.T) {
 	require.NoError(t, err)
 	record := &RecordActivityInput{
 		Type: transcript.RunLogMessagesAppended, EventKey: testPublicationBatchID, RunID: "run",
-		AgentID: "svc.agent", SessionID: "session", TurnID: "turn",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, SessionID: "session", TurnID: "turn",
 		ResponseID: testPublicationBatchID, TimestampMS: 1, Payload: payload,
 	}
 	streamErr := errors.New("stream send failed")
@@ -232,7 +233,7 @@ func TestTranscriptActivityRejectsInvalidResponseIdentityBeforeStorage(t *testin
 			_, err := store.CreateSession(ctx, "session", time.Now().UTC())
 			require.NoError(t, err)
 			admitRunForTest(t, store, session.RunMeta{
-				AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
+				Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
 			})
 			payload, err := transcript.EncodeRunLogDelta([]*model.Message{{
 				Role:  model.ConversationRoleAssistant,
@@ -241,7 +242,7 @@ func TestTranscriptActivityRejectsInvalidResponseIdentityBeforeStorage(t *testin
 			require.NoError(t, err)
 			record := &RecordActivityInput{
 				Type: transcript.RunLogMessagesAppended, EventKey: test.eventKey, RunID: "run",
-				AgentID: "svc.agent", SessionID: "session", TurnID: "turn",
+				Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, SessionID: "session", TurnID: "turn",
 				ResponseID: test.responseID, TimestampMS: 1, Payload: payload,
 			}
 			runtime := &Runtime{Store: store, Bus: hooks.NewBus()}

@@ -13,6 +13,8 @@ import (
 	"errors"
 	"fmt"
 
+	"goa.design/goa-ai/runtime/agent"
+
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/internal/toolstats"
@@ -60,6 +62,8 @@ func (r *Runtime) materializeTerminalPlannerResult(
 	turnID string,
 	state terminalPlannerState,
 ) (*RunOutput, error) {
+	executor, _ := input.Subject.Executor.AsAgent()
+
 	result := state.result
 	if err := validateTerminalPlanResult(result); err != nil {
 		r.logger.Error(ctx, "ERROR - invalid planner terminal result", "err", err)
@@ -76,16 +80,24 @@ func (r *Runtime) materializeTerminalPlannerResult(
 		)
 	}
 
+	finalToolResult := finalToolResultEvent(base.RunContext.Tool, result.FinalToolResult)
+	if finalToolResult != nil {
+		accepted, err := operationResultFromToolEvent(finalToolResult)
+		if err != nil {
+			return nil, err
+		}
+		base.finalization.operationResult = accepted
+	}
 	var finalMsg *model.Message
-	if result.FinalResponse != nil {
-		finalMsg = result.FinalResponse.Message
+	if response := terminalResponse(result.FinalResponse, result.FinalToolResult); response != nil {
+		finalMsg = response.Message
 	}
 	for _, note := range result.Notes {
 		if err := r.publishHook(
 			ctx,
 			hooks.NewPlannerNoteEvent(
 				base.RunContext.RunID,
-				input.AgentID,
+				agent.Ident(executor),
 				base.RunContext.SessionID,
 				note.Text,
 				note.Labels,
@@ -105,9 +117,9 @@ func (r *Runtime) materializeTerminalPlannerResult(
 		return nil, err
 	}
 
-	finalToolResult := finalToolResultEvent(base.RunContext.Tool, result.FinalToolResult)
 	return &RunOutput{
-		AgentID:         input.AgentID,
+		Subject: input.Subject,
+
 		RunID:           base.RunContext.RunID,
 		Final:           finalMsg,
 		FinalToolResult: finalToolResult,
@@ -156,22 +168,48 @@ func (r *Runtime) finishAfterSuccessfulToolCompletion(
 	base *workflowConversation,
 	st *runLoopState,
 ) (*RunOutput, error) {
-	toolCount, toolTelemetry, err := completedToolStats(st.ToolEvents)
-	if err != nil {
-		return nil, err
-	}
 	finalToolResult, err := r.successfulCompletionToolEvent(input, st.ToolEvents, st.ToolOutputs)
 	if err != nil {
 		return nil, err
 	}
+	executor, _ := input.Subject.Executor.AsAgent()
+	if err := r.retainCompletionToolResult(base, agent.Ident(executor), finalToolResult); err != nil {
+		return nil, err
+	}
+	toolCount, toolTelemetry, err := completedToolStats(st.ToolEvents)
+	if err != nil {
+		return nil, err
+	}
 	return &RunOutput{
-		AgentID:         input.AgentID,
+		Subject: input.Subject,
+
 		RunID:           base.RunContext.RunID,
 		FinalToolResult: finalToolResult,
 		ToolCount:       toolCount,
 		ToolTelemetry:   toolTelemetry,
 		Usage:           &st.AggUsage,
 	}, nil
+}
+
+// retainCompletionToolResult validates the completed call against the selected
+// operation and keeps an independent copy before reporting can fail.
+func (r *Runtime) retainCompletionToolResult(base *workflowConversation, executor agent.Ident, finalToolResult *api.ToolEvent) error {
+	selected, err := selectedRunTool(base.RunContext, executor, r.toolSpec)
+	if err != nil {
+		return err
+	}
+	if selected != nil {
+		if _, err := decodeSuccessfulToolResult(*selected, finalToolResult.Result); err != nil {
+			return fmt.Errorf("completion result for operation %q: %w", selected.Name, err)
+		}
+		finalToolResult.Name = selected.Name
+	}
+	accepted, err := operationResultFromToolEvent(finalToolResult)
+	if err != nil {
+		return err
+	}
+	base.finalization.operationResult = accepted
+	return nil
 }
 
 // successfulCompletionToolEvent returns the one successful tool result that

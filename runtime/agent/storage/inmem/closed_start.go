@@ -119,7 +119,7 @@ func (s *Store) closedStartLocked(meta session.RunMeta, proposed session.RunStar
 		if err != nil {
 			return sessionRunStartResult{}, err
 		}
-		if cancellation == nil || meta.SessionID == "" || (meta.Status != session.RunStatusCanceled && meta.Status != session.RunStatusFailed) {
+		if cancellation == nil || (meta.Status != session.RunStatusCanceled && meta.Status != session.RunStatusFailed) {
 			return sessionRunStartResult{}, session.ErrRunConflict
 		}
 		if err := lifecycle.ValidateRunCancellation(storage.RunCancellation{
@@ -131,6 +131,7 @@ func (s *Store) closedStartLocked(meta session.RunMeta, proposed session.RunStar
 			return sessionRunStartResult{}, session.ErrRunConflict
 		}
 		result.cancellation = s.existingRecordResultLocked(intent)
+		result.cancellationReason = meta.CancellationReason
 	}
 	return result, nil
 }

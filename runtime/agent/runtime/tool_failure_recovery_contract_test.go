@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -96,7 +97,7 @@ func TestRuntimeOwnsCorrectCallRecoveryContext(t *testing.T) {
 				Payload:         executionPayload,
 				ModelPayload:    modelPayload,
 			}
-			results, _, err := rt.executeToolCalls(
+			results, _, err := rt.executeToolCalls(nil,
 				wfCtx,
 				"execute",
 				engine.ActivityOptions{},
@@ -197,8 +198,9 @@ func TestToolActivityCarriesUncanonicalizedCorrectionFailure(t *testing.T) {
 	seedTestToolset(rt, toolsetName, spec)
 
 	out, err := rt.ExecuteToolActivity(context.Background(), &ToolInput{
-		RunID:       "run-1",
-		AgentID:     "svc.agent",
+		RunID:   "run-1",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))},
+
 		ToolsetName: toolsetName,
 		ToolName:    toolName,
 		ToolCallID:  "tool-call-1",
@@ -394,7 +396,7 @@ func TestAutomaticContinuationCannotRequestCorrectCall(t *testing.T) {
 	require.Len(t, plan.ToolCalls, 1)
 	require.Empty(t, plan.ToolCalls[0].ModelToolCallID)
 
-	results, _, err := rt.executeToolCalls(
+	results, _, err := rt.executeToolCalls(nil,
 		&testWorkflowContext{
 			ctx:         context.Background(),
 			runtime:     rt,

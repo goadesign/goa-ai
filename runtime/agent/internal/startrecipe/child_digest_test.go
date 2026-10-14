@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 )
@@ -17,7 +18,7 @@ import (
 func TestChildDigestBindsCompleteAcceptedRequest(t *testing.T) {
 	request := engine.ChildWorkflowRequest{
 		ID: "child", Workflow: "workflow", TaskQueue: "queue",
-		Input: &api.RunInput{RunID: "child", Metadata: map[string]any{"value": "one"}},
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("child.agent")}, RunID: "child", Metadata: map[string]any{"value": "one"}},
 	}
 	first, err := SnapshotChildRequest(request)
 	require.NoError(t, err)
@@ -33,16 +34,21 @@ func TestChildDigestBindsCompleteAcceptedRequest(t *testing.T) {
 		name   string
 		change func(*engine.ChildWorkflowRequest)
 	}{
+		{"subject", func(r *engine.ChildWorkflowRequest) {
+			copy := *r.Input
+			copy.Subject = genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("other.agent")}
+			r.Input = &copy
+		}},
 		{"workflow", func(r *engine.ChildWorkflowRequest) { r.Workflow = "different" }},
 		{"queue", func(r *engine.ChildWorkflowRequest) { r.TaskQueue = "different" }},
 		{"timeout", func(r *engine.ChildWorkflowRequest) { r.RunTimeout = time.Minute }},
 		{"retry", func(r *engine.ChildWorkflowRequest) { r.RetryPolicy.MaxAttempts = 2 }},
 		{"input", func(r *engine.ChildWorkflowRequest) {
-			r.Input = &api.RunInput{RunID: "child", Metadata: map[string]any{"value": "two"}}
+			r.Input = &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("child.agent")}, RunID: "child", Metadata: map[string]any{"value": "two"}}
 		}},
 		{"id", func(r *engine.ChildWorkflowRequest) {
 			r.ID = "next-child"
-			r.Input = &api.RunInput{RunID: "next-child", Metadata: map[string]any{"value": "one"}}
+			r.Input = &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("child.agent")}, RunID: "next-child", Metadata: map[string]any{"value": "one"}}
 		}},
 	} {
 		t.Run(test.name, func(t *testing.T) {

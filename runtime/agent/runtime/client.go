@@ -5,8 +5,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"slices"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -78,6 +80,16 @@ type (
 			options ...RunOption,
 		) (*PreparedRun, error)
 
+		// PrepareOneShotContinuation loads a standalone run's exact suspension
+		// and saves its answer and history for StartPrepared without a Session.
+		PrepareOneShotContinuation(
+			ctx context.Context,
+			predecessorRunID, runID, turnID string,
+			response *api.PendingInputResponse,
+			workflowOptions WorkflowOptions,
+			options ...RunOption,
+		) (*PreparedRun, error)
+
 		// RecoverPrepared loads the original command's exact accepted request.
 		// Absence does not authorize canceling an upload still in progress.
 		RecoverPrepared(ctx context.Context, sessionID, runID, commandID string) (*PreparedRun, bool, error)
@@ -131,15 +143,17 @@ type (
 	// a run before the workflow engine accepts it. Its data cannot be changed
 	// after construction.
 	AgentDefinition struct {
-		route           AgentRoute
-		specs           []tools.ToolSpec
-		specByName      map[tools.Ident]tools.ToolSpec
-		metadata        map[tools.Ident]policy.ToolMetadata
-		requiredLabels  []string
-		executableTools []tools.Ident
-		deferredTools   map[tools.Ident]struct{}
-		registryTools   RegistryTools
-		agents          map[agent.Ident]AgentDefinition
+		route                 AgentRoute
+		specs                 []tools.ToolSpec
+		specByName            map[tools.Ident]tools.ToolSpec
+		metadata              map[tools.Ident]policy.ToolMetadata
+		requiredLabels        []string
+		executableTools       []tools.Ident
+		deferredTools         map[tools.Ident]struct{}
+		registryTools         RegistryTools
+		prepareInputs         func(context.Context, *RegistryCatalog) error
+		requiredInputBindings []tools.Ident
+		agents                map[agent.Ident]AgentDefinition
 	}
 
 	// agentClient binds execution to one generated agent definition.
@@ -359,7 +373,8 @@ func (c *agentClient) PrepareOneShot(ctx context.Context, messages []*model.Mess
 func (c *agentClient) prepareLiteral(ctx context.Context, start *runStart, request engine.WorkflowStartRequest) (*PreparedRun, error) {
 	command, attempt := start.preparationIdentity()
 	writer, err := stageLiteralHistory(ctx, c.r.Store, storage.SeedDeclaration{
-		AgentID: string(start.input.AgentID), RunID: start.input.RunID, SessionID: start.input.SessionID,
+		Origin:  genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: start.input.RunID})},
+		Subject: start.input.Subject, RunID: start.input.RunID, SessionID: start.input.SessionID,
 		CommandID: command, AttemptID: attempt, Kind: storage.SeedLiteral, RenderedPrompts: start.renderedPrompts,
 	}, start.messages)
 	if err != nil {
@@ -387,78 +402,19 @@ func (c *agentClient) PrepareNextTurn(ctx context.Context, sessionID, completedR
 	if err != nil {
 		return nil, err
 	}
-	if err := validateSeedPromptFacts(sessionID, start.renderedPrompts); err != nil {
-		return nil, err
-	}
-	for _, message := range systemMessages {
-		if message == nil || message.Role != model.ConversationRoleSystem {
-			return nil, errors.New("next-turn system messages must have the system role")
-		}
-	}
-	for _, message := range freshMessages {
-		if message == nil || message.Role == model.ConversationRoleSystem {
-			return nil, errors.New("next-turn fresh input cannot contain system messages")
-		}
-	}
 	commandID, attemptID := start.preparationIdentity()
-	seed, err := c.r.Store.BeginRunSeed(ctx, storage.SeedDeclaration{
-		AgentID: string(start.input.AgentID), RunID: start.input.RunID, SessionID: sessionID,
+	writer, err := stageNextTurnHistory(ctx, c.r.Store, storage.SeedDeclaration{
+		Origin:  genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: start.input.RunID})},
+		Subject: start.input.Subject, RunID: start.input.RunID, SessionID: sessionID,
 		CommandID: commandID, AttemptID: attemptID,
 		Kind: storage.SeedNextTurn, SourceRunID: completedRunID,
 		ExcludeReasoning: start.withoutPriorReasoning, RenderedPrompts: start.renderedPrompts,
-	})
+	}, systemMessages, freshMessages)
 	if err != nil {
-		return nil, err
-	}
-	prior, err := transcript.BuildMessagesFromRunLogPrefix(ctx, c.r.Store, seed.Source.RunID, seed.Source.EndID)
-	if err != nil {
-		return nil, err
-	}
-	priorWithoutSystem := prior[:0]
-	for _, message := range prior {
-		if message.Role != model.ConversationRoleSystem {
-			priorWithoutSystem = append(priorWithoutSystem, message)
-		}
-	}
-	if len(priorWithoutSystem) == 0 {
-		return nil, errors.New("completed source history has no non-system messages")
-	}
-	if err := transcript.ValidatePlannerTranscript(priorWithoutSystem); err != nil {
-		return nil, fmt.Errorf("invalid completed source transcript: %w", err)
-	}
-	if start.withoutPriorReasoning {
-		priorWithoutSystem, err = transcript.WithoutCompletedReasoning(priorWithoutSystem)
-		if err != nil {
-			return nil, err
-		}
-		systemMessages, err = transcript.WithoutCompletedReasoning(systemMessages)
-		if err != nil {
-			return nil, err
-		}
-		freshMessages, err = transcript.WithoutCompletedReasoning(freshMessages)
-		if err != nil {
-			return nil, err
-		}
-	}
-	complete := make([]*model.Message, 0, len(systemMessages)+len(priorWithoutSystem)+len(freshMessages))
-	complete = append(complete, systemMessages...)
-	complete = append(complete, priorWithoutSystem...)
-	complete = append(complete, freshMessages...)
-	if err := transcript.ValidatePlannerTranscript(complete); err != nil {
-		return nil, fmt.Errorf("runtime: invalid next-turn transcript: %w", err)
-	}
-	writer := initialHistoryWriter{store: c.r.Store, runID: start.input.RunID, attemptID: attemptID, endID: storage.EmptySeedEndID}
-	if err := writer.appendMessages(ctx, systemMessages); err != nil {
-		return nil, err
-	}
-	if err := writer.appendPrefix(ctx, seed.Source); err != nil {
-		return nil, err
-	}
-	if err := writer.appendMessages(ctx, freshMessages); err != nil {
 		return nil, err
 	}
 	start.input.SeedEndID = writer.endID
-	return publishPreparedRun(ctx, &writer, c.definition.route.ID, request, start.launch.taskQueue, commandID)
+	return publishPreparedRun(ctx, writer, c.definition.route.ID, request, start.launch.taskQueue, commandID)
 }
 
 func (c *agentClient) Continue(
@@ -485,6 +441,31 @@ func (c *agentClient) PrepareContinuation(
 	workflowOptions WorkflowOptions,
 	options ...RunOption,
 ) (*PreparedRun, error) {
+	if sessionID == "" {
+		return nil, continuationContractError(ErrMissingSessionID)
+	}
+	return c.prepareStoredContinuation(ctx, sessionID, predecessorRunID, runID, turnID, response, workflowOptions, options)
+}
+
+func (c *agentClient) PrepareOneShotContinuation(
+	ctx context.Context,
+	predecessorRunID, runID, turnID string,
+	response *api.PendingInputResponse,
+	workflowOptions WorkflowOptions,
+	options ...RunOption,
+) (*PreparedRun, error) {
+	return c.prepareStoredContinuation(ctx, "", predecessorRunID, runID, turnID, response, workflowOptions, options)
+}
+
+// prepareStoredContinuation saves the exact answer and predecessor history for
+// either public continuation method; the checkpoint owns all execution values.
+func (c *agentClient) prepareStoredContinuation(
+	ctx context.Context,
+	sessionID, predecessorRunID, runID, turnID string,
+	response *api.PendingInputResponse,
+	workflowOptions WorkflowOptions,
+	options []RunOption,
+) (*PreparedRun, error) {
 	start := runStart{input: RunInput{RunID: runID}}
 	for _, option := range options {
 		preparation, ok := option.(preparationOption)
@@ -502,7 +483,7 @@ func (c *agentClient) PrepareContinuation(
 	if err != nil {
 		return nil, continuationContractError(err)
 	}
-	request, err := prepareRunWithDefinition(input, launch, c.definition, true)
+	request, err := prepareRunWithDefinition(input, launch, c.definition, sessionID != "")
 	if err != nil {
 		return nil, continuationContractError(err)
 	}
@@ -529,7 +510,8 @@ func (c *agentClient) OneShotRun(ctx context.Context, messages []*model.Message,
 // engine launch settings.
 func buildSessionRunStart(agentID agent.Ident, sessionID string, messages []*model.Message, opts []RunOption) (runStart, error) {
 	start := runStart{messages: messages, input: RunInput{
-		AgentID:   agentID,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))},
+
 		SessionID: sessionID,
 	}}
 	if err := applyRunOptions(&start, opts); err != nil {
@@ -547,7 +529,7 @@ func buildSessionRunStart(agentID agent.Ident, sessionID string, messages []*mod
 // separate engine launch settings.
 func buildOneShotRunStart(agentID agent.Ident, messages []*model.Message, opts []RunOption) (runStart, error) {
 	start := runStart{messages: messages, input: RunInput{
-		AgentID: agentID,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))},
 	}}
 	if err := applyRunOptions(&start, opts); err != nil {
 		return runStart{}, err
@@ -561,12 +543,9 @@ func buildOneShotRunStart(agentID agent.Ident, messages []*model.Message, opts [
 }
 
 // buildContinuationRunInput constructs the only legal input shape for a
-// suspended sessionful run. Policy, labels, tool context, and transcript state
+// suspended run. Policy, labels, tool context, and transcript state
 // are restored from the opaque checkpoint by the worker.
 func buildContinuationRunInput(agentID agent.Ident, sessionID, runID, turnID string, suspension *api.RunSuspension, operation *api.RunContinuationInput) (*RunInput, error) {
-	if sessionID == "" {
-		return nil, ErrMissingSessionID
-	}
 	if runID == "" {
 		return nil, errors.New("continuation run id is required")
 	}
@@ -583,7 +562,8 @@ func buildContinuationRunInput(agentID agent.Ident, sessionID, runID, turnID str
 		return nil, err
 	}
 	return &RunInput{
-		AgentID:   agentID,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))},
+
 		RunID:     runID,
 		SessionID: sessionID,
 		TurnID:    turnID,
@@ -615,22 +595,33 @@ func (r *Runtime) buildStoredContinuationRunInput(
 	if err != nil {
 		return nil, nil, continuationContractError(err)
 	}
-	checkpoint, err := decodeWorkflowCheckpoint(suspension, definition)
+	checkpoint, err := decodeClientCheckpoint(suspension, definition)
 	if err != nil {
 		return nil, nil, continuationContractError(err)
 	}
 	input.ParentRunID = checkpoint.Context.ParentRunID
-	if err := validateContinuationAgainstCheckpoint(input, checkpoint, definition); err != nil {
+	if err := validateClientContinuation(input, checkpoint, definition); err != nil {
 		return nil, nil, continuationContractError(err)
 	}
 	if checkpoint.PreviousRunID != predecessorRunID {
 		return nil, nil, continuationContractError(errors.New("predecessor run id does not match stored suspension"))
 	}
-	seed, err := r.Store.BeginRunSeed(ctx, storage.SeedDeclaration{
-		AgentID: string(input.AgentID), RunID: runID, SessionID: sessionID,
+	predecessor, err := r.Store.LoadRun(ctx, predecessorRunID)
+	if err != nil {
+		return nil, nil, err
+	}
+	declaration := storage.SeedDeclaration{
+		Origin:  predecessor.Origin,
+		Subject: input.Subject, RunID: runID, SessionID: sessionID,
 		CommandID: commandID, AttemptID: attemptID,
-		Kind: storage.SeedContinuation, SourceRunID: predecessorRunID, SourceEndID: checkpoint.HistoryEndID,
-	})
+		Kind: storage.SeedContinuation, PredecessorRunID: predecessorRunID, SourceRunID: predecessorRunID, SourceEndID: checkpoint.HistoryEndID,
+	}
+	// Saving supplied or retained history performs no provider work. The actual
+	// engine start checks any stop returned while binding this exact recipe.
+	if _, err := bindHistoryOperation(ctx, r.Store, declaration); err != nil {
+		return nil, nil, err
+	}
+	seed, err := r.Store.BeginRunSeed(ctx, declaration)
 	if err != nil {
 		return nil, nil, err
 	}

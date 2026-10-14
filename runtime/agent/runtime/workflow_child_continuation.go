@@ -9,8 +9,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"reflect"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -36,7 +38,7 @@ func (l *workflowLoop) applyChildContinuation(batch *stepBatch, pending *checkpo
 	if out == nil {
 		return nil, errors.New("child continuation returned no output")
 	}
-	if err := validateWorkflowOutput(out, info.cfg.Definition.route.ID, info.nestedRun.RunID); err != nil {
+	if err := validateWorkflowOutput(out, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(info.cfg.Definition.route.ID))}, info.nestedRun.RunID); err != nil {
 		return nil, err
 	}
 	if out.Suspension != nil {
@@ -93,26 +95,40 @@ func (l *workflowLoop) startChildContinuation(batch *stepBatch, pending *checkpo
 		TurnID:           currentCall.TurnID,
 		ParentToolCallID: currentCall.ToolCallID,
 		ParentRunID:      currentCall.RunID,
-		ParentAgentID:    currentCall.AgentID,
+		ParentAgentID:    agentChildRunContext(&currentCall).ParentAgentID,
 		ToolArgs:         append(rawjson.Message(nil), currentCall.Payload...),
 		ToolRegistry:     currentCall.Registry.Clone(),
 		Labels:           cloneLabels(currentCall.Labels),
 	}
 	childInput := &RunInput{
-		AgentID: cfg.Definition.route.ID, ParentRunID: nested.ParentRunID,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(cfg.Definition.route.ID))}, ParentRunID: nested.ParentRunID,
 		RunID: nested.RunID, SessionID: nested.SessionID, TurnID: nested.TurnID,
 		Continuation: &api.RunContinuationInput{Suspension: pending.Suspension, Response: operation.Response, Cancellation: operation.Cancellation},
 	}
-	checkpoint, err := prepareContinuation(childInput, cfg.Definition)
+	var checkpoint *workflowCheckpoint
+	if currentCall.Registry != nil {
+		// The parent needs the saved history position to publish the successor
+		// input. The provider validates its private continuation before effects.
+		checkpoint, err = decodeWorkflowCheckpointState(pending.Suspension)
+	} else {
+		checkpoint, err = prepareContinuation(childInput, cfg.Definition)
+	}
 	if err != nil {
 		return agentChildFutureInfo{}, -1, err
 	}
 	seedStore := workflowSeedWriter{r: l.r}
-	seed, err := seedStore.BeginRunSeed(l.wfCtx.Context(), storage.SeedDeclaration{
-		AgentID: string(childInput.AgentID), RunID: childInput.RunID, SessionID: childInput.SessionID,
+	declaration := storage.SeedDeclaration{
+		Origin:  genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: record.call.RunID, ToolCallID: record.call.ToolCallID})},
+		Subject: childInput.Subject, RunID: childInput.RunID, SessionID: childInput.SessionID,
 		CommandID: childInput.RunID, AttemptID: childInput.RunID,
-		Kind: storage.SeedContinuation, SourceRunID: checkpoint.PreviousRunID, SourceEndID: checkpoint.HistoryEndID,
-	})
+		Kind: storage.SeedContinuation, PredecessorRunID: checkpoint.PreviousRunID, SourceRunID: checkpoint.PreviousRunID, SourceEndID: checkpoint.HistoryEndID,
+	}
+	// Saving supplied or retained history performs no provider work. The actual
+	// engine start checks any stop returned while binding this exact recipe.
+	if _, err := bindHistoryOperation(l.wfCtx.Context(), seedStore, declaration); err != nil {
+		return agentChildFutureInfo{}, -1, err
+	}
+	seed, err := seedStore.BeginRunSeed(l.wfCtx.Context(), declaration)
 	if err != nil {
 		return agentChildFutureInfo{}, -1, err
 	}

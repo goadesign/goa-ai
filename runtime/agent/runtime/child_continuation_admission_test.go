@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	genpictures "goa.design/goa-ai/internal/testimage/gen/images/toolsets/pictures"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	engineinmem "goa.design/goa-ai/runtime/agent/engine/inmem"
 	"goa.design/goa-ai/runtime/agent/hooks"
@@ -30,6 +32,16 @@ import (
 const admissionChildAgentID = "child.agent"
 
 func TestChildContinuationKeepsIndependentCallsAcrossParentRuns(t *testing.T) {
+	for _, sessionID := range []string{"session-1", ""} {
+		t.Run("session="+sessionID, func(t *testing.T) {
+			testChildContinuationKeepsIndependentCalls(t, sessionID)
+		})
+	}
+}
+
+// testChildContinuationKeepsIndependentCalls answers two saved child calls over
+// three parent successors and checks each result's original call and history.
+func testChildContinuationKeepsIndependentCalls(t *testing.T, sessionID string) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	rt := New(newTestStore(), WithEngine(engineinmem.New()))
@@ -65,6 +77,19 @@ func TestChildContinuationKeepsIndependentCallsAcrossParentRuns(t *testing.T) {
 				return nil, err
 			}
 			childContexts <- in.RunContext
+			var history []string
+			for _, message := range in.Messages {
+				history = append(history, message.Text())
+			}
+			saved := strings.Join(history, "\n")
+			if payload.ID == "A" {
+				assert.Contains(t, saved, "A confirmed")
+				if in.RunContext.ParentRunID == "parent-3" {
+					assert.Contains(t, saved, "A detail confirmed")
+				}
+			} else {
+				assert.Contains(t, saved, "B confirmed")
+			}
 			if payload.ID == "A" && in.RunContext.ParentRunID == "parent-1" {
 				return &planner.PlanResult{Await: planner.NewAwait(planner.AwaitClarificationItem(&planner.AwaitClarification{
 					ID: "question-A-again", Question: "Confirm the remaining detail for A",
@@ -101,11 +126,16 @@ func TestChildContinuationKeepsIndependentCallsAcrossParentRuns(t *testing.T) {
 			},
 		},
 	}))
-	_, err = createSessionForTest(ctx, rt.Store, "session-1")
-	require.NoError(t, err)
 	client := rt.MustClient(parentAgentID)
 	labels := map[string]string{"actor": "original-user", "facility": "original-facility", "files": "retained-files"}
-	first, err := client.Run(ctx, "session-1", []*model.Message{userMsg("Inspect A and B")}, WithRunID("parent-0"), WithTurnID("turn-0"), WithLabels(labels))
+	var first *RunOutput
+	if sessionID == "" {
+		first, err = client.OneShotRun(ctx, []*model.Message{userMsg("Inspect A and B")}, WithRunID("parent-0"), WithTurnID("turn-0"), WithLabels(labels))
+	} else {
+		_, err = createSessionForTest(ctx, rt.Store, sessionID)
+		require.NoError(t, err)
+		first, err = client.Run(ctx, sessionID, []*model.Message{userMsg("Inspect A and B")}, WithRunID("parent-0"), WithTurnID("turn-0"), WithLabels(labels))
+	}
 	require.NoError(t, err)
 	require.Len(t, first.Suspension.Pending, 2)
 	checkpoint, err := decodeWorkflowCheckpoint(first.Suspension, parentDefinition)
@@ -113,11 +143,14 @@ func TestChildContinuationKeepsIndependentCallsAcrossParentRuns(t *testing.T) {
 	callA := checkpoint.Pending[0].Child.ToolCallID
 	callB := checkpoint.Pending[1].Child.ToolCallID
 	require.NotEqual(t, callA, callB)
+	if sessionID == "" {
+		rejectUnrelatedStandaloneChildForTest(t, rt, childDefinition, tool.Name, checkpoint.Pending[0].Child.Suspension, callA)
+	}
 	originalB := checkpoint.Pending[1].Child.Suspension
 	originalBBytes := append([]byte(nil), originalB.Checkpoint...)
-	second, err := client.Continue(ctx, "session-1", "parent-0", "parent-1", "turn-1", &api.PendingInputResponse{
+	second, err := continueChildParentForTest(ctx, client, sessionID, "parent-0", "parent-1", "turn-1", &api.PendingInputResponse{
 		Clarification: &api.ClarificationAnswer{ID: "question-A", Answer: "A confirmed"},
-	}, WorkflowOptions{})
+	})
 	require.NoError(t, err)
 	require.Len(t, second.Suspension.Pending, 2)
 	secondCheckpoint, err := decodeWorkflowCheckpoint(second.Suspension, parentDefinition)
@@ -125,17 +158,17 @@ func TestChildContinuationKeepsIndependentCallsAcrossParentRuns(t *testing.T) {
 	require.Equal(t, callB, secondCheckpoint.Pending[0].Child.ToolCallID)
 	require.Equal(t, originalB, secondCheckpoint.Pending[0].Child.Suspension)
 	require.Equal(t, callA, secondCheckpoint.Pending[1].Child.ToolCallID)
-	third, err := client.Continue(ctx, "session-1", "parent-1", "parent-2", "turn-2", &api.PendingInputResponse{
+	third, err := continueChildParentForTest(ctx, client, sessionID, "parent-1", "parent-2", "turn-2", &api.PendingInputResponse{
 		Clarification: &api.ClarificationAnswer{ID: "question-B", Answer: "B confirmed"},
-	}, WorkflowOptions{})
+	})
 	require.NoError(t, err)
 	require.Len(t, third.Suspension.Pending, 1)
 	thirdCheckpoint, err := decodeWorkflowCheckpoint(third.Suspension, parentDefinition)
 	require.NoError(t, err)
 	require.Equal(t, callA, thirdCheckpoint.Pending[0].Child.ToolCallID)
-	last, err := client.Continue(ctx, "session-1", "parent-2", "parent-3", "turn-3", &api.PendingInputResponse{
+	last, err := continueChildParentForTest(ctx, client, sessionID, "parent-2", "parent-3", "turn-3", &api.PendingInputResponse{
 		Clarification: &api.ClarificationAnswer{ID: "question-A-again", Answer: "A detail confirmed"},
-	}, WorkflowOptions{})
+	})
 	require.NoError(t, err)
 	require.Nil(t, last.Suspension)
 	require.Equal(t, "both original calls completed", last.Final.Text())
@@ -168,7 +201,7 @@ func TestChildContinuationKeepsIndependentCallsAcrossParentRuns(t *testing.T) {
 				continue
 			}
 			event, err := hooks.DecodeFromRecordInput(&RecordActivityInput{
-				Type: record.Type, EventKey: record.EventKey, RunID: record.RunID, AgentID: record.AgentID,
+				Type: record.Type, EventKey: record.EventKey, RunID: record.RunID, Subject: record.Subject,
 				SessionID: record.SessionID, TurnID: record.TurnID,
 				TimestampMS: record.Timestamp.UnixMilli(), Payload: record.Payload,
 			})
@@ -207,7 +240,7 @@ func TestChildContinuationKeepsIndependentCallsAcrossParentRuns(t *testing.T) {
 	for range 5 {
 		childContext := <-childContexts
 		require.Equal(t, labels, childContext.Labels)
-		require.Equal(t, "session-1", childContext.SessionID)
+		require.Equal(t, sessionID, childContext.SessionID)
 		meta, err := rt.Store.LoadRun(ctx, childContext.RunID)
 		require.NoError(t, err)
 		require.Equal(t, childContext.ParentRunID, meta.ParentRunID)
@@ -217,14 +250,27 @@ func TestChildContinuationKeepsIndependentCallsAcrossParentRuns(t *testing.T) {
 			previous, err := rt.Store.LoadRun(ctx, seed.Declaration.SourceRunID)
 			require.NoError(t, err)
 			require.Equal(t, meta.RunID, previous.SuccessorRunID)
-			start := session.RunStart{AgentID: meta.AgentID, RunID: meta.RunID, SessionID: meta.SessionID, ParentRunID: meta.ParentRunID, PredecessorRunID: seed.Declaration.SourceRunID, SeedEndID: meta.SeedEndID}
-			linked := hooks.NewChildRunLinkedEvent(meta.ParentRunID, parentAgentID, meta.SessionID, tool.Name, childContext.ParentToolCallID, meta.RunID, admissionChildAgentID)
+			start := session.RunStart{Subject: meta.Subject, RunID: meta.RunID, SessionID: meta.SessionID, ParentRunID: meta.ParentRunID, PredecessorRunID: seed.Declaration.SourceRunID, SeedEndID: meta.SeedEndID}
+			linked := hooks.NewChildRunLinkedEvent(meta.ParentRunID, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(parentAgentID))}, meta.SessionID, tool.Name, childContext.ParentToolCallID, meta.RunID, admissionChildAgentID)
 			require.NoError(t, rt.validateChildContinuationStart(ctx, start, linked, seed))
+			// A child worker reads the parent's accepted relationship through
+			// storage without loading the parent's planner or tool definitions.
+			independentChild := New(rt.Store)
+			assert.Empty(t, independentChild.agents)
+			require.NoError(t, independentChild.validateChildContinuationStart(ctx, start, linked, seed))
 		}
 	}
 	oldB, err := rt.LoadRunSuspension(ctx, NestedRunIDForToolCall("parent-0", tool.Name, callB))
 	require.NoError(t, err)
 	require.Equal(t, originalB, oldB)
+	if sessionID == "" {
+		_, err := continueChildParentForTest(ctx, client, sessionID, "parent-2", "duplicate-parent", "duplicate-turn", &api.PendingInputResponse{
+			Clarification: &api.ClarificationAnswer{ID: "question-A-again", Answer: "A detail confirmed"},
+		})
+		require.Error(t, err)
+		_, err = rt.Store.LoadRun(ctx, "duplicate-parent")
+		require.ErrorIs(t, err, session.ErrRunNotFound)
+	}
 }
 
 func TestChildContinuationStartRejectsAnotherParentsPendingCall(t *testing.T) {
@@ -236,7 +282,7 @@ func TestChildContinuationStartRejectsAnotherParentsPendingCall(t *testing.T) {
 	parentDefinition := testAgentDefinitionWithChildren(parentAgentID, "parent.workflow", "parent.queue", []tools.ToolSpec{tool}, nil, []AgentDefinition{childDefinition})
 	rt.agents[parentAgentID] = AgentRegistration{Definition: parentDefinition}
 	seedTestToolSpecs(rt, tool, childTool)
-	parent := session.RunMeta{AgentID: parentAgentID, RunID: "parent-0", SessionID: "session-1", Status: session.RunStatusRunning}
+	parent := session.RunMeta{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(parentAgentID))}, RunID: "parent-0", SessionID: "session-1", Status: session.RunStatusRunning}
 	admitRunForTest(t, rt.Store, parent)
 	child := suspensionContractFixtureWithContext(t, childTool.Name, admissionChildAgentID, "child-0", nil, nil)
 	parentSuspension := nestedChildSuspensionFixture(t, parentAgentID, parent.RunID, tool, child)
@@ -254,8 +300,8 @@ func TestChildContinuationStartRejectsAnotherParentsPendingCall(t *testing.T) {
 		checkpoint.Batch.Records = append(checkpoint.Batch.Records, checkpointToolRecord{Call: call, ChildSuspension: childB})
 		checkpoint.Pending = append(checkpoint.Pending, checkpointPendingInput{Child: &checkpointChildContinuation{ToolCallID: call.ToolCallID, Suspension: childB}})
 	})
-	admitRunForTest(t, rt.Store, session.RunMeta{AgentID: admissionChildAgentID, RunID: "child-B", SessionID: "session-1", ParentRunID: parent.RunID, Status: session.RunStatusRunning})
-	admitRunForTest(t, rt.Store, session.RunMeta{AgentID: admissionChildAgentID, RunID: "child-0", SessionID: "session-1", ParentRunID: parent.RunID, Status: session.RunStatusRunning})
+	admitRunForTest(t, rt.Store, session.RunMeta{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(admissionChildAgentID))}, RunID: "child-B", SessionID: "session-1", ParentRunID: parent.RunID, Status: session.RunStatusRunning})
+	admitRunForTest(t, rt.Store, session.RunMeta{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(admissionChildAgentID))}, RunID: "child-0", SessionID: "session-1", ParentRunID: parent.RunID, Status: session.RunStatusRunning})
 	for runID, suspension := range map[string]*api.RunSuspension{"parent-0": parentSuspension, "child-0": child, "child-B": childB} {
 		data, err := json.Marshal(suspension)
 		require.NoError(t, err)
@@ -267,9 +313,9 @@ func TestChildContinuationStartRejectsAnotherParentsPendingCall(t *testing.T) {
 	compiled, err := json.Marshal(active)
 	require.NoError(t, err)
 	require.NoError(t, writer.publish(t.Context(), compiled))
-	admitContinuedRunForTest(t, rt.Store, session.RunMeta{AgentID: parentAgentID, RunID: active.RunID, SessionID: active.SessionID, SeedEndID: active.SeedEndID, Status: session.RunStatusRunning}, "parent-0")
-	admitRunForTest(t, rt.Store, session.RunMeta{AgentID: parentAgentID, RunID: "unrelated-parent", SessionID: "session-1", Status: session.RunStatusRunning})
-	admitRunForTest(t, rt.Store, session.RunMeta{AgentID: parentAgentID, RunID: "foreign-parent", SessionID: "session-other", Status: session.RunStatusRunning})
+	admitContinuedRunForTest(t, rt.Store, session.RunMeta{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(parentAgentID))}, RunID: active.RunID, SessionID: active.SessionID, SeedEndID: active.SeedEndID, Status: session.RunStatusRunning}, "parent-0")
+	admitRunForTest(t, rt.Store, session.RunMeta{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(parentAgentID))}, RunID: "unrelated-parent", SessionID: "session-1", Status: session.RunStatusRunning})
+	admitRunForTest(t, rt.Store, session.RunMeta{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(parentAgentID))}, RunID: "foreign-parent", SessionID: "session-other", Status: session.RunStatusRunning})
 	for _, test := range []struct{ name, parent, predecessor, call, want string }{
 		{"unrelated", "unrelated-parent", "child-0", "child-call", "exact continuation seed"},
 		{"cross-chat", "foreign-parent", "child-0", "child-call", "execution parent owner mismatch"},
@@ -286,9 +332,9 @@ func TestChildContinuationStartRejectsAnotherParentsPendingCall(t *testing.T) {
 			compiled, err := json.Marshal(input)
 			require.NoError(t, err)
 			require.NoError(t, writer.publish(t.Context(), compiled))
-			started, err := hooks.EncodeToRecordInput(hooks.NewRunStartedEvent(input.RunID, input.AgentID, input.SessionID, parentID, test.predecessor, nil), hooks.EncodeOptions{EventKey: "start", TimestampMS: 1})
+			started, err := hooks.EncodeToRecordInput(hooks.NewRunStartedEvent(input.RunID, input.Subject, input.SessionID, parentID, test.predecessor, nil), hooks.EncodeOptions{EventKey: "start", TimestampMS: 1})
 			require.NoError(t, err)
-			linked, err := hooks.EncodeToRecordInput(hooks.NewChildRunLinkedEvent(parentID, parentAgentID, input.SessionID, tool.Name, test.call, input.RunID, input.AgentID), hooks.EncodeOptions{EventKey: "link", TimestampMS: 1})
+			linked, err := hooks.EncodeToRecordInput(hooks.NewChildRunLinkedEvent(parentID, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(parentAgentID))}, input.SessionID, tool.Name, test.call, input.RunID, testSubjectAgent(t, input.Subject)), hooks.EncodeOptions{EventKey: "link", TimestampMS: 1})
 			require.NoError(t, err)
 			before, err := rt.Store.ListRunRecords(t.Context(), parentID, "", 100)
 			require.NoError(t, err)
@@ -330,16 +376,15 @@ func TestChildContinuationPublicClientKeepsRunningParent(t *testing.T) {
 			return &planner.PlanResult{FinalToolResult: &planner.FinalToolResult{Result: result}}, nil
 		}},
 	}))
-	admitRunForTest(t, rt.Store, session.RunMeta{AgentID: parentAgentID, RunID: "running-parent", SessionID: "session-1", Status: session.RunStatusRunning})
+	admitRunForTest(t, rt.Store, session.RunMeta{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(parentAgentID))}, RunID: "running-parent", SessionID: "session-1", Status: session.RunStatusRunning})
 	payload, err := genpictures.MarshalViewPayload(&genpictures.ViewPayload{ID: "retained"})
 	require.NoError(t, err)
-	original := &RunInput{AgentID: admissionChildAgentID, RunID: "child-0", SessionID: "session-1", ParentRunID: "running-parent"}
+	original := &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(admissionChildAgentID))}, RunID: "child-0", SessionID: "session-1", ParentRunID: "running-parent", ParentToolCallID: "original-call"}
 	publishTestRunInput(t, rt, original, nil)
-	start := session.RunStart{AgentID: admissionChildAgentID, RunID: original.RunID, SessionID: original.SessionID, ParentRunID: original.ParentRunID, SeedEndID: original.SeedEndID, StartedAt: time.Now().UTC().Truncate(time.Millisecond)}
+	start := session.RunStart{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(admissionChildAgentID))}, RunID: original.RunID, SessionID: original.SessionID, ParentRunID: original.ParentRunID, SeedEndID: original.SeedEndID, StartedAt: time.Now().UTC().Truncate(time.Millisecond)}
 	_, err = rt.Store.StartChildRun(ctx, storage.ChildRunStart{RequestDigest: [32]byte{1}, Run: start,
-		ParentLinked: testHookRecord(t, hooks.NewChildRunLinkedEvent(start.ParentRunID, parentAgentID, start.SessionID, tool.Name, "original-call", start.RunID, admissionChildAgentID), "link", start.StartedAt),
-		Started:      testHookRecord(t, hooks.NewRunStartedEvent(start.RunID, admissionChildAgentID, start.SessionID, start.ParentRunID, "", nil), "start", start.StartedAt),
-		Cancellation: testStartCancellationRecord(t, start),
+		ParentLinked: testHookRecord(t, hooks.NewChildRunLinkedEvent(start.ParentRunID, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(parentAgentID))}, start.SessionID, tool.Name, "original-call", start.RunID, admissionChildAgentID), "link", start.StartedAt),
+		Started:      testHookRecord(t, hooks.NewRunStartedEvent(start.RunID, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(admissionChildAgentID))}, start.SessionID, start.ParentRunID, "", nil), "start", start.StartedAt),
 	})
 	require.NoError(t, err)
 	suspension := suspensionContractFixtureWithContext(t, lookup.Name, admissionChildAgentID, start.RunID, map[string]string{"actor": "original"}, map[string]any{"retained": "original metadata"})
@@ -376,20 +421,20 @@ func TestChildContinuationPublicClientKeepsRunningParent(t *testing.T) {
 // The fixed current-version bytes preserve an earlier run's execution parent
 // while a successor supplies its own parent. No deployed data is used.
 func TestRetainedChildSuspensionKeepsHistoricalParentBytes(t *testing.T) {
-	data, err := os.ReadFile("testdata/retained_child_suspension_v13.json")
+	data, err := os.ReadFile("testdata/retained_child_suspension_v14.json")
 	require.NoError(t, err)
 	var envelope api.RunSuspension
 	require.NoError(t, json.Unmarshal(data, &envelope))
 	stored := session.RunSuspension{ID: envelope.ID, Data: data}
 	loaded, err := validateStoredRunSuspension(stored, session.RunMeta{
-		AgentID: admissionChildAgentID, RunID: "child-0", SessionID: "session-1", ParentRunID: "parent-0", Status: session.RunStatusSuspended,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(admissionChildAgentID))}, RunID: "child-0", SessionID: "session-1", ParentRunID: "parent-0", Status: session.RunStatusSuspended,
 	})
 	require.NoError(t, err)
 	generated := genpictures.SpecView()
 	tool := tools.ToolSpec{Name: "delegate.inspect", IsAgentTool: true, AgentID: admissionChildAgentID, Payload: generated.Payload, Result: generated.Result,
 		ExecutionPayloadSchema: generated.ExecutionPayloadSchema, ExecutionPayloadCodec: generated.ExecutionPayloadCodec}
 	definition := testAgentDefinition(admissionChildAgentID, "child.workflow", "child.queue", []tools.ToolSpec{tool}, nil)
-	input := &RunInput{AgentID: admissionChildAgentID, RunID: "child-1", SessionID: "session-1", TurnID: "turn-1", ParentRunID: "parent-1",
+	input := &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(admissionChildAgentID))}, RunID: "child-1", SessionID: "session-1", TurnID: "turn-1", ParentRunID: "parent-1",
 		Continuation: &api.RunContinuationInput{Suspension: loaded, Response: &api.PendingInputResponse{Clarification: &api.ClarificationAnswer{ID: "question", Answer: "Confirmed"}}}}
 	checkpoint, err := prepareContinuation(input, definition)
 	require.NoError(t, err)
@@ -401,22 +446,31 @@ func TestRetainedChildSuspensionKeepsHistoricalParentBytes(t *testing.T) {
 	require.Equal(t, "original metadata", input.Metadata["retained"])
 	require.Equal(t, envelope.Checkpoint, input.Continuation.Suspension.Checkpoint)
 	require.Equal(t, data, stored.Data)
-	missing := &RunInput{AgentID: admissionChildAgentID, RunID: "child-2", SessionID: "session-1", TurnID: "turn-2", Continuation: input.Continuation}
+	missing := &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(admissionChildAgentID))}, RunID: "child-2", SessionID: "session-1", TurnID: "turn-2", Continuation: input.Continuation}
 	_, err = prepareContinuation(missing, definition)
 	require.ErrorContains(t, err, "explicit execution parent")
 }
 
 // Earlier suspensions cannot be resumed after the execution-operation upgrade.
 func TestStoredSuspensionRejectsPreviousVersion(t *testing.T) {
-	data, err := os.ReadFile("testdata/retained_child_suspension_v12.json")
+	previous, err := os.ReadFile("testdata/retained_child_suspension_v12.json")
 	require.NoError(t, err)
-	var envelope api.RunSuspension
-	require.NoError(t, json.Unmarshal(data, &envelope))
-	_, err = validateStoredRunSuspension(session.RunSuspension{ID: envelope.ID, Data: data}, session.RunMeta{
-		AgentID: admissionChildAgentID, RunID: "child-0", SessionID: "session-1", ParentRunID: "parent-0", Status: session.RunStatusSuspended,
-	})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "version")
+	last, err := os.ReadFile("testdata/retained_child_suspension_v13.json")
+	require.NoError(t, err)
+	for _, fixture := range []struct {
+		version string
+		data    []byte
+	}{{version: "v12", data: previous}, {version: "v13", data: last}} {
+		t.Run(fixture.version, func(t *testing.T) {
+			data := fixture.data
+			var envelope api.RunSuspension
+			require.NoError(t, json.Unmarshal(data, &envelope))
+			_, err := validateStoredRunSuspension(session.RunSuspension{ID: envelope.ID, Data: data}, session.RunMeta{
+				Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(admissionChildAgentID))}, RunID: "child-0", SessionID: "session-1", ParentRunID: "parent-0", Status: session.RunStatusSuspended,
+			})
+			require.ErrorContains(t, err, "version")
+		})
+	}
 }
 
 // TestEndedSessionContinuationSettlesAllSavedChildren proves that cleanup keeps
@@ -623,4 +677,51 @@ func TestParentCancellationAfterChildResuspendsSettlesNewChild(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, session.RunStatusCanceled, parent.Status)
 	assert.Equal(t, run.CancellationReasonUserRequested, parent.CancellationReason)
+}
+
+// continueChildParentForTest submits the same response through the public method
+// for its conversation scope and returns the completed parent workflow result.
+func continueChildParentForTest(ctx context.Context, client AgentClient, sessionID, predecessor, runID, turnID string, response *api.PendingInputResponse) (*RunOutput, error) {
+	if sessionID != "" {
+		return client.Continue(ctx, sessionID, predecessor, runID, turnID, response, WorkflowOptions{})
+	}
+	prepared, err := client.PrepareOneShotContinuation(ctx, predecessor, runID, turnID, response, WorkflowOptions{})
+	if err != nil {
+		return nil, err
+	}
+	handle, err := client.StartPrepared(ctx, prepared)
+	if err != nil {
+		return nil, err
+	}
+	return handle.Wait(ctx)
+}
+
+// rejectUnrelatedStandaloneChildForTest submits a real child start under an
+// unrelated running parent and proves rejection creates neither link nor child.
+func rejectUnrelatedStandaloneChildForTest(t *testing.T, rt *Runtime, definition AgentDefinition, tool tools.Ident, suspension *api.RunSuspension, callID string) {
+	t.Helper()
+	checkpoint, err := decodeWorkflowCheckpointState(suspension)
+	require.NoError(t, err)
+	parent := session.RunMeta{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(parentAgentID)}, RunID: "unrelated-parent", Status: session.RunStatusRunning}
+	admitRunForTest(t, rt.Store, parent)
+	input, writer, err := rt.buildStoredContinuationRunInput(t.Context(), definition, "", checkpoint.PreviousRunID, "foreign-child", "foreign-turn",
+		&api.RunContinuationInput{Response: &api.PendingInputResponse{Clarification: &api.ClarificationAnswer{ID: "question-A", Answer: "A confirmed"}}}, "foreign-child", "foreign-child")
+	require.NoError(t, err)
+	input.ParentRunID = parent.RunID
+	compiled, err := json.Marshal(input)
+	require.NoError(t, err)
+	require.NoError(t, writer.publish(t.Context(), compiled))
+	started, err := hooks.EncodeToRecordInput(hooks.NewRunStartedEvent(input.RunID, input.Subject, "", parent.RunID, checkpoint.PreviousRunID, nil), hooks.EncodeOptions{EventKey: "start", TimestampMS: 1})
+	require.NoError(t, err)
+	linked, err := hooks.EncodeToRecordInput(hooks.NewChildRunLinkedEvent(parent.RunID, parent.Subject, "", tool, callID, input.RunID, definition.route.ID), hooks.EncodeOptions{EventKey: "link", TimestampMS: 1})
+	require.NoError(t, err)
+	before, err := rt.Store.ListRunRecords(t.Context(), parent.RunID, "", 100)
+	require.NoError(t, err)
+	_, err = rt.storeRunStart(t.Context(), storageCommandOneShotChildStart, append([]byte{1}, make([]byte, 31)...), input.SeedEndID, started, linked)
+	require.ErrorContains(t, err, "exact continuation seed")
+	_, err = rt.Store.LoadRun(t.Context(), input.RunID)
+	require.ErrorIs(t, err, session.ErrRunNotFound)
+	after, err := rt.Store.ListRunRecords(t.Context(), parent.RunID, "", 100)
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
 }

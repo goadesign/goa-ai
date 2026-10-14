@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -215,7 +216,9 @@ func TestWorkflowRecoversUnadvertisedToolName(t *testing.T) {
 	})
 
 	runInput := &RunInput{
-		AgentID:   agentID,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent(agentID))},
+
 		RunID:     "run-unadvertised-tool",
 		SessionID: sessionID,
 		TurnID:    "turn-unadvertised-tool",
@@ -304,7 +307,9 @@ func TestWorkflowExhaustsRepeatedUnadvertisedToolNames(t *testing.T) {
 	})
 
 	runInput := &RunInput{
-		AgentID:   agentID,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent(agentID))},
+
 		RunID:     "run-repeated-unadvertised-tool",
 		SessionID: sessionID,
 		TurnID:    "turn-repeated-unadvertised-tool",

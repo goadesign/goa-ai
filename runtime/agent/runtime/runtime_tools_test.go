@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -92,7 +93,10 @@ func TestExecuteToolActivityReturnsFailure(t *testing.T) {
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
 		tools.Ident("tool"): newAnyJSONSpec("tool"),
 	}
-	input := ToolInput{AgentID: "agent", RunID: "run", ToolsetName: "svc.ts", ToolName: "tool", ToolCallID: "tool-1", ParentToolCallID: "parent-1", Payload: []byte("{}")}
+	input := ToolInput{Subject: genrunidentity.RunSubject{
+		Executor: genrunidentity.
+			NewRunExecutorAgent(genrunidentity.
+				RunExecutorBranchAgent("agent"))}, RunID: "run", ToolsetName: "svc.ts", ToolName: "tool", ToolCallID: "tool-1", ParentToolCallID: "parent-1", Payload: []byte("{}")}
 	out, err := rt.ExecuteToolActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -116,7 +120,11 @@ func TestExecuteToolActivityPropagatesLabels(t *testing.T) {
 		tools.Ident("tool"): newAnyJSONSpec("tool"),
 	}
 	input := ToolInput{
-		AgentID:     "agent",
+		Subject: genrunidentity.RunSubject{
+			Executor: genrunidentity.
+				NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("agent"))},
+
 		RunID:       "run",
 		ToolsetName: "svc.ts",
 		ToolName:    "tool",
@@ -163,7 +171,7 @@ func TestExecuteToolActivityEagerDecodeDefersCorrectionEvidence(t *testing.T) {
 		toolSpecs: map[tools.Ident]tools.ToolSpec{toolName: spec},
 	}
 
-	out, err := rt.ExecuteToolActivity(context.Background(), &ToolInput{
+	out, err := rt.ExecuteToolActivity(context.Background(), &ToolInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("test.agent"))},
 		ToolsetName: "svc.ts",
 		ToolName:    toolName,
 		ToolCallID:  "call-1",
@@ -299,7 +307,10 @@ func TestExecuteToolActivityPropagatesServerData(t *testing.T) {
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
 		tools.Ident("tool"): withAnyServerDataSpec(newAnyJSONSpec("tool"), "example.evidence", tools.AudienceEvidence),
 	}
-	input := ToolInput{AgentID: "agent", RunID: "run", ToolsetName: "svc.ts", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte("{}")}
+	input := ToolInput{Subject: genrunidentity.RunSubject{
+		Executor: genrunidentity.
+			NewRunExecutorAgent(genrunidentity.
+				RunExecutorBranchAgent("agent"))}, RunID: "run", ToolsetName: "svc.ts", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte("{}")}
 	out, err := rt.ExecuteToolActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -329,7 +340,10 @@ func TestExecuteToolActivityRunsResultMaterializer(t *testing.T) {
 		"svc.ts",
 		withAnyServerDataSpec(newAnyJSONSpec("tool"), "example.materialized", tools.AudienceTimeline),
 	)
-	input := ToolInput{AgentID: "agent", RunID: "run", ToolsetName: "svc.ts", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte(`{"input":"ok"}`)}
+	input := ToolInput{Subject: genrunidentity.RunSubject{
+		Executor: genrunidentity.
+			NewRunExecutorAgent(genrunidentity.
+				RunExecutorBranchAgent("agent"))}, RunID: "run", ToolsetName: "svc.ts", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte(`{"input":"ok"}`)}
 	out, err := rt.ExecuteToolActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -355,7 +369,10 @@ func TestExecuteToolActivityPropagatesBounds(t *testing.T) {
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
 		tools.Ident("tool"): spec,
 	}
-	input := ToolInput{AgentID: "agent", RunID: "run", ToolsetName: "svc.ts", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte("{}")}
+	input := ToolInput{Subject: genrunidentity.RunSubject{
+		Executor: genrunidentity.
+			NewRunExecutorAgent(genrunidentity.
+				RunExecutorBranchAgent("agent"))}, RunID: "run", ToolsetName: "svc.ts", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte("{}")}
 	out, err := rt.ExecuteToolActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -429,7 +446,10 @@ func TestExecuteToolActivityProjectsBoundsIntoEncodedResult(t *testing.T) {
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
 		tools.Ident("tool"): newProjectedResultSpec(),
 	}
-	input := ToolInput{AgentID: "agent", RunID: "run", ToolsetName: "svc.ts", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte("{}")}
+	input := ToolInput{Subject: genrunidentity.RunSubject{
+		Executor: genrunidentity.
+			NewRunExecutorAgent(genrunidentity.
+				RunExecutorBranchAgent("agent"))}, RunID: "run", ToolsetName: "svc.ts", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte("{}")}
 	out, err := rt.ExecuteToolActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -463,7 +483,10 @@ func TestExecuteToolActivityDropsStaleOptionalBoundFieldsFromSemanticResult(t *t
 	rt.toolSpecs = map[tools.Ident]tools.ToolSpec{
 		tools.Ident("tool"): newProjectedResultSpec(),
 	}
-	input := ToolInput{AgentID: "agent", RunID: "run", ToolsetName: "svc.ts", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte("{}")}
+	input := ToolInput{Subject: genrunidentity.RunSubject{
+		Executor: genrunidentity.
+			NewRunExecutorAgent(genrunidentity.
+				RunExecutorBranchAgent("agent"))}, RunID: "run", ToolsetName: "svc.ts", ToolName: "tool", ToolCallID: "tool-1", Payload: []byte("{}")}
 	out, err := rt.ExecuteToolActivity(context.Background(), &input)
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -513,7 +536,9 @@ func TestPublishToolResultReceivedProjectsBoundsIntoResultPreview(t *testing.T) 
 		},
 	}
 
-	_, err := exec.publishToolResultReceived(context.Background(), call, tr, nil, 0)
+	_, err := exec.newToolCallBatch([]ToolCall{call})
+	require.NoError(t, err)
+	_, err = exec.publishToolResultReceived(context.Background(), call, Executed(tr), nil, 0)
 	require.NoError(t, err)
 	require.Len(t, recorder.events, 1)
 
@@ -544,14 +569,17 @@ func TestToolsetTaskQueueOverrideUsed(t *testing.T) {
 	})}}, Bus: noopHooks{}}
 	seedTestToolset(rt, "svc.export", childSpec)
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte(`{}`)}, planResult: &PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, hasPlanResult: true}
-	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
-	base := &workflowConversation{RunContext: run.Context{RunID: input.RunID}}
+	input := &RunInput{Subject: genrunidentity.RunSubject{
+		Executor: genrunidentity.
+			NewRunExecutorAgent(genrunidentity.
+				RunExecutorBranchAgent("svc.agent"))}, RunID: "run-1"}
+	base := &workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{RunID: input.RunID}}
 	initial := &PlanResult{ToolCalls: []ToolCall{{
 		ToolCallID: "child-call",
 		Name:       tools.Ident("child"),
 		Payload:    rawjson.Message(`{}`),
 	}}}
-	_, err := rt.runLoop(wfCtx, AgentRegistration{Definition: testRegistrationDefinition(input.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
+	_, err := rt.runLoop(wfCtx, AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, input.Subject), engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
 	}, input, base, initial, initialCaps(RunPolicy{MaxToolCalls: 1}), time.Time{}, time.Time{}, "", nil)
@@ -570,15 +598,18 @@ func TestPreserveModelProvidedToolCallID(t *testing.T) {
 	})}}, Bus: noopHooks{}}
 	seedTestToolset(rt, "svc.ts", toolSpec)
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte(`{}`)}, planResult: &PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "ok"}}}}}, hasPlanResult: true}
-	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
-	base := &workflowConversation{RunContext: run.Context{RunID: input.RunID}}
+	input := &RunInput{Subject: genrunidentity.RunSubject{
+		Executor: genrunidentity.
+			NewRunExecutorAgent(genrunidentity.
+				RunExecutorBranchAgent("svc.agent"))}, RunID: "run-1"}
+	base := &workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{RunID: input.RunID}}
 	// Planner supplies an explicit ToolCallID from the model
 	initial := &PlanResult{ToolCalls: []ToolCall{{
 		Name:       tools.Ident("tool"),
 		ToolCallID: "model-123",
 		Payload:    rawjson.Message(`{}`),
 	}}}
-	_, err := rt.runLoop(wfCtx, AgentRegistration{Definition: testRegistrationDefinition(input.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
+	_, err := rt.runLoop(wfCtx, AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, input.Subject), engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
 	}, input, base, initial, initialCaps(RunPolicy{MaxToolCalls: 1}), time.Time{}, time.Time{}, "", nil)
@@ -591,7 +622,7 @@ func TestPreserveModelProvidedToolCallID(t *testing.T) {
 func TestActivityToolExecutorExecute(t *testing.T) {
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("123")}}
 	exec := &ActivityToolExecutor{activityName: "execute"}
-	input := ToolInput{RunID: "r1"}
+	input := ToolInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("test.agent"))}, RunID: "r1"}
 	out, err := exec.Execute(context.Background(), wfCtx, &input)
 	require.NoError(t, err)
 	require.NotNil(t, out)
@@ -629,7 +660,7 @@ func TestServiceToolEventsUseChildExecutionContext(t *testing.T) {
 		Name:       tools.Ident("svc.tools.fetch_time_series"),
 		ToolCallID: "child-call",
 	}}
-	_, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "child.agent", parentCtx, testToolHistory(t, rt, "child.agent", *(parentCtx), nil), calls, 0, nil, time.Time{}, nil)
+	_, _, err := rt.executeToolCalls(nil, wfCtx, "execute", engine.ActivityOptions{}, "child.agent", parentCtx, testToolHistory(t, rt, "child.agent", *(parentCtx), nil), calls, 0, nil, time.Time{}, nil)
 	require.NoError(t, err)
 
 	var scheduled *hooks.ToolCallScheduledEvent
@@ -644,12 +675,12 @@ func TestServiceToolEventsUseChildExecutionContext(t *testing.T) {
 	}
 	require.NotNil(t, scheduled, "expected ToolCallScheduledEvent")
 	require.Equal(t, "child-run", scheduled.RunID())
-	require.Equal(t, "child.agent", scheduled.AgentID())
+	require.Equal(t, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("child.agent"))}, scheduled.Subject())
 	require.Equal(t, "tool-parent", scheduled.ParentToolCallID)
 
 	require.NotNil(t, resultEvt, "expected ToolResultReceivedEvent")
 	require.Equal(t, "child-run", resultEvt.RunID())
-	require.Equal(t, "child.agent", resultEvt.AgentID())
+	require.Equal(t, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("child.agent"))}, resultEvt.Subject())
 	require.Equal(t, "tool-parent", resultEvt.ParentToolCallID)
 }
 
@@ -689,7 +720,7 @@ func TestServiceToolEventsPropagateServerData(t *testing.T) {
 		Name:       tools.Ident("svc.tools.example"),
 		ToolCallID: "child-call",
 	}}
-	_, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "child.agent", parentCtx, testToolHistory(t, rt, "child.agent", *(parentCtx), nil), calls, 0, nil, time.Time{}, nil)
+	_, _, err := rt.executeToolCalls(nil, wfCtx, "execute", engine.ActivityOptions{}, "child.agent", parentCtx, testToolHistory(t, rt, "child.agent", *(parentCtx), nil), calls, 0, nil, time.Time{}, nil)
 	require.NoError(t, err)
 
 	var resultEvt *hooks.ToolResultReceivedEvent
@@ -731,6 +762,7 @@ func TestConsumeProvidedToolResultsRunsResultMaterializer(t *testing.T) {
 		tools.AudienceTimeline,
 	))
 	base := &workflowConversation{
+		finalization: &workflowFinalizationState{},
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "session-1",
@@ -747,7 +779,11 @@ func TestConsumeProvidedToolResultsRunsResultMaterializer(t *testing.T) {
 	records, err := rt.consumeProvidedToolResultRecords(
 		context.Background(),
 		&RunInput{
-			AgentID:   "agent",
+			Subject: genrunidentity.RunSubject{
+				Executor: genrunidentity.
+					NewRunExecutorAgent(genrunidentity.
+						RunExecutorBranchAgent("agent"))},
+
 			RunID:     "run-1",
 			SessionID: "session-1",
 			TurnID:    "turn-1",
@@ -1041,7 +1077,7 @@ func TestServiceToolEventsPropagateBounds(t *testing.T) {
 		Name:       tools.Ident("svc.tools.example"),
 		ToolCallID: "child-call",
 	}}
-	results, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "child.agent", parentCtx, testToolHistory(t, rt, "child.agent", *(parentCtx), nil), calls, 0, nil, time.Time{}, nil)
+	results, _, err := rt.executeToolCalls(nil, wfCtx, "execute", engine.ActivityOptions{}, "child.agent", parentCtx, testToolHistory(t, rt, "child.agent", *(parentCtx), nil), calls, 0, nil, time.Time{}, nil)
 	require.NoError(t, err)
 	require.Len(t, results, 1)
 	require.NotNil(t, results[0].ToolResult)
@@ -1100,9 +1136,13 @@ func TestInlineToolsetEmitsParentToolEvents(t *testing.T) {
 		},
 		hasPlanResult: true,
 	}
-	input := &RunInput{AgentID: "parent.agent", RunID: "run-inline", SessionID: "sess-1", TurnID: "turn-1"}
+	input := &RunInput{Subject: genrunidentity.RunSubject{
+		Executor: genrunidentity.
+			NewRunExecutorAgent(genrunidentity.
+				RunExecutorBranchAgent("parent.agent"))}, RunID: "run-inline", SessionID: "sess-1", TurnID: "turn-1"}
 	base := &workflowConversation{
-		RunContext: run.Context{RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID},
+		finalization: &workflowFinalizationState{},
+		RunContext:   run.Context{RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID},
 	}
 	initial := &PlanResult{ToolCalls: []ToolCall{{
 		Name:       tools.Ident("child.get_time_series"),
@@ -1111,7 +1151,7 @@ func TestInlineToolsetEmitsParentToolEvents(t *testing.T) {
 	}}}
 	_, err := rt.runLoop(
 		wfCtx,
-		AgentRegistration{Definition: testRegistrationDefinition(input.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
+		AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, input.Subject), engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
 			ExecuteToolActivity: "execute",
 			ResumeActivityName:  "resume",
 		},

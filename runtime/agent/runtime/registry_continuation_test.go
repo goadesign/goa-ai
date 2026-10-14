@@ -75,7 +75,8 @@ func TestRegistrySelfPagingDoesNotCreateDedicatedContinuation(t *testing.T) {
 	registered := testRuntimeRegistryResolution("records.find", strings.Repeat("a", 64))
 	declaration := registered.Toolset.Tools[0]
 	declaration.ConsumerContract.Bounds = &genregistry.ToolBounds{Paging: &genregistry.ToolPaging{
-		ContinueTool: &declaration.Name, CursorField: "cursor", NextCursorField: "next_cursor",
+		RetainedFields: []string{},
+		ContinueTool:   &declaration.Name, CursorField: "cursor", NextCursorField: "next_cursor",
 	}}
 	resolved, err := registrycontract.Resolve(registered)
 	require.NoError(t, err)
@@ -101,10 +102,12 @@ func testRegistryPagingResolution(token string) *genregistry.ResolvedToolset {
 	target.ConsumerContract.Payload.SchemaWithoutRootExample = target.PayloadSchema
 	target.ExecutionPayloadSchema = []byte(`{"type":"object","properties":{"cursor":{"type":"string"}},"required":["cursor"],"additionalProperties":false}`)
 	source.ConsumerContract.Bounds = &genregistry.ToolBounds{Paging: &genregistry.ToolPaging{
-		ContinueTool: &target.Name, CursorField: "cursor", NextCursorField: "next_cursor",
+		RetainedFields: []string{},
+		ContinueTool:   &target.Name, CursorField: "cursor", NextCursorField: "next_cursor",
 	}}
 	target.ConsumerContract.Bounds = &genregistry.ToolBounds{Paging: &genregistry.ToolPaging{
-		ContinueTool: &target.Name, SourceTool: &source.Name, CursorField: "cursor", NextCursorField: "next_cursor",
+		RetainedFields: []string{},
+		ContinueTool:   &target.Name, SourceTool: &source.Name, CursorField: "cursor", NextCursorField: "next_cursor",
 	}}
 	registered.Toolset.Tools = append(registered.Toolset.Tools, target)
 	return registered

@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -51,7 +52,7 @@ func TestCompletionStatisticsIncludeContinuationHistory(t *testing.T) {
 	require.NoError(t, rt.RegisterAgent(t.Context(), reg))
 	_, err := createSessionForTest(t.Context(), rt.Store, "completion-session")
 	require.NoError(t, err)
-	firstInput := &api.RunInput{AgentID: "records.agent", RunID: "first", SessionID: "completion-session", TurnID: "turn"}
+	firstInput := &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("records.agent"))}, RunID: "first", SessionID: "completion-session", TurnID: "turn"}
 	publishTestRunInput(t, rt, firstInput, nil)
 	firstHandle, err := rt.Engine.StartWorkflow(t.Context(), engine.WorkflowStartRequest{ID: "first", Workflow: "records.workflow", TaskQueue: "records.queue", Input: firstInput})
 	require.NoError(t, err)
@@ -68,16 +69,24 @@ func TestCompletionStatisticsIncludeContinuationHistory(t *testing.T) {
 	require.Len(t, checkpoint.State.ToolEvents, 1)
 	assert.Equal(t, page.Name, checkpoint.State.ToolEvents[0].Name)
 
-	secondInput := &api.RunInput{AgentID: "records.agent", RunID: "second", SessionID: "completion-session", TurnID: "turn-2",
+	secondInput := &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("records.agent"))}, RunID: "second", SessionID: "completion-session", TurnID: "turn-2",
 		Continuation: &api.RunContinuationInput{Suspension: first.Suspension, Response: &api.PendingInputResponse{
 			Confirmation: &api.ConfirmationDecision{ID: first.Suspension.Pending[0].Confirmation.ID, Approved: true, RequestedBy: "operator"},
 		}},
 	}
-	seed, err := rt.Store.BeginRunSeed(t.Context(), storage.SeedDeclaration{
-		AgentID: string(secondInput.AgentID), RunID: secondInput.RunID, SessionID: secondInput.SessionID,
+	predecessor, err := rt.Store.LoadRun(t.Context(), checkpoint.PreviousRunID)
+	require.NoError(t, err)
+	declaration := storage.SeedDeclaration{
+		Origin:  predecessor.Origin,
+		Subject: secondInput.Subject, RunID: secondInput.RunID, SessionID: secondInput.SessionID,
 		CommandID: secondInput.RunID, AttemptID: secondInput.RunID,
-		Kind: storage.SeedContinuation, SourceRunID: checkpoint.PreviousRunID, SourceEndID: checkpoint.HistoryEndID,
-	})
+		Kind: storage.SeedContinuation, PredecessorRunID: checkpoint.PreviousRunID, SourceRunID: checkpoint.PreviousRunID, SourceEndID: checkpoint.HistoryEndID,
+	}
+	decision, err := bindHistoryOperation(t.Context(), rt.Store, declaration)
+	require.NoError(t, err)
+	_, proceed := decision.State.AsProceed()
+	require.True(t, proceed)
+	seed, err := rt.Store.BeginRunSeed(t.Context(), declaration)
 	require.NoError(t, err)
 	writer := initialHistoryWriter{store: rt.Store, runID: secondInput.RunID, attemptID: secondInput.RunID, endID: storage.EmptySeedEndID}
 	require.NoError(t, writer.appendPrefix(t.Context(), seed.Source))

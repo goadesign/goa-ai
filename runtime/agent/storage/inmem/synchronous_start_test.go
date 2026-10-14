@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/session"
 	"goa.design/goa-ai/runtime/agent/storage"
 )
@@ -50,7 +51,7 @@ func TestSynchronousStartPreservesExactCommand(t *testing.T) {
 						proposed.Labels = map[string]string{"different": "metadata"}
 					}
 					if changed == "agent" {
-						proposed.AgentID = "other-agent"
+						proposed.Subject = genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("other-agent"))}
 					}
 					if changed == "seed" {
 						proposed.SeedEndID = "99"

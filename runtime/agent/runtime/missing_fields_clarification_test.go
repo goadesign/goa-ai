@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -32,13 +33,14 @@ func seedRunMeta(t testing.TB, rt *Runtime, input *RunInput) {
 		predecessorRunID = publishTestContinuationInput(t, rt, input)
 	}
 	admitRunWithPredecessorForTest(t, rt.Store, session.RunMeta{
-		AgentID:   string(input.AgentID),
-		RunID:     input.RunID,
-		SessionID: input.SessionID,
-		SeedEndID: input.SeedEndID,
-		Status:    session.RunStatusRunning,
-		StartedAt: now,
-		UpdatedAt: now,
+		Subject:     input.Subject,
+		ParentRunID: input.ParentRunID,
+		RunID:       input.RunID,
+		SessionID:   input.SessionID,
+		SeedEndID:   input.SeedEndID,
+		Status:      session.RunStatusRunning,
+		StartedAt:   now,
+		UpdatedAt:   now,
 	}, predecessorRunID)
 	meta, err := rt.Store.LoadRun(t.Context(), input.RunID)
 	require.NoError(t, err)
@@ -74,9 +76,10 @@ func TestMissingFieldsClarificationReturnsTypedAwait(t *testing.T) {
 	}
 	wfCtx := baseCtx
 
-	input := &RunInput{AgentID: "svc.agent", RunID: "run-1", SessionID: "sess-1"}
+	input := &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, RunID: "run-1", SessionID: "sess-1"}
 	seedRunMeta(t, rt, input)
 	base := &workflowConversation{
+		finalization: &workflowFinalizationState{},
 		RunContext: run.Context{
 			RunID:     input.RunID,
 			SessionID: input.SessionID,
@@ -103,7 +106,7 @@ func TestMissingFieldsClarificationReturnsTypedAwait(t *testing.T) {
 	deadline := wfCtx.Now().Add(1 * time.Hour)
 	out, await, err := rt.applyMissingFieldsPolicy(
 		wfCtx,
-		AgentRegistration{Definition: testRegistrationDefinition(input.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, ResumeActivityName: "resume",
+		AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, input.Subject), engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, ResumeActivityName: "resume",
 			Policy: RunPolicy{OnMissingFields: MissingFieldsAwaitClarification},
 		},
 		input,
@@ -160,8 +163,8 @@ func TestMissingFieldsClarificationResumesAfterAccountedFailure(t *testing.T) {
 		},
 	)
 	h.registration.Policy = RunPolicy{OnMissingFields: MissingFieldsAwaitClarification}
-	h.registration.Definition = testAgentDefinition(h.input.AgentID, string(h.input.AgentID)+".workflow", "test", []tools.ToolSpec{completion}, nil)
-	h.runtime.agents[h.input.AgentID] = h.registration
+	h.registration.Definition = testAgentDefinition(testSubjectAgent(t, h.input.Subject), string(testSubjectAgent(t, h.input.Subject))+".workflow", "test", []tools.ToolSpec{completion}, nil)
+	h.runtime.agents[testSubjectAgent(t, h.input.Subject)] = h.registration
 	h.input.Policy = &PolicyOverrides{CompletionTool: completion.Name}
 
 	first, err := h.run(&PlanResult{ToolCalls: []ToolCall{{
@@ -176,14 +179,15 @@ func TestMissingFieldsClarificationResumesAfterAccountedFailure(t *testing.T) {
 	require.NotNil(t, first.Suspension)
 	require.Len(t, first.Suspension.Pending, 1)
 
-	checkpoint, err := decodeWorkflowCheckpoint(first.Suspension, testRuntimeDefinition(h.runtime, h.input.AgentID))
+	checkpoint, err := decodeWorkflowCheckpoint(first.Suspension, testRuntimeDefinition(h.runtime, testSubjectAgent(t, h.input.Subject)))
 	require.NoError(t, err)
 	require.True(t, checkpoint.Batch.ResumePlannerAfterPending)
 	require.Equal(t, 2, checkpoint.State.Caps.RemainingToolCalls)
 	require.Equal(t, 2, checkpoint.State.Caps.RemainingRecoveryTurns)
 
 	nextInput := &RunInput{
-		AgentID:   h.input.AgentID,
+		Subject: h.input.Subject,
+
 		RunID:     "run-missing-fields-continuation-2",
 		SessionID: h.input.SessionID,
 		TurnID:    "turn-missing-fields-continuation-2",
@@ -229,7 +233,7 @@ func publishTestContinuationInput(t testing.TB, rt *Runtime, input *RunInput) st
 	// These fixtures call runLoop directly, below ExecuteWorkflow's
 	// suspension write. Complete that same write before preparing a successor.
 	previous := &RunInput{
-		AgentID: input.AgentID, RunID: predecessorRunID,
+		Subject: input.Subject, RunID: predecessorRunID,
 		SessionID: input.SessionID, TurnID: checkpoint.PreviousTurnID,
 	}
 	records, err := prepareRunSuspensionRecords(t.Context(), previous, input.Continuation.Suspension)
@@ -238,11 +242,19 @@ func publishTestContinuationInput(t testing.TB, rt *Runtime, input *RunInput) st
 	require.NoError(t, err)
 	_, err = rt.Store.RecordRunSuspension(t.Context(), command)
 	require.NoError(t, err)
-	seed, err := rt.Store.BeginRunSeed(t.Context(), storage.SeedDeclaration{
-		AgentID: string(input.AgentID), RunID: input.RunID, SessionID: input.SessionID,
+	predecessor, err := rt.Store.LoadRun(t.Context(), predecessorRunID)
+	require.NoError(t, err)
+	declaration := storage.SeedDeclaration{
+		Subject: input.Subject, RunID: input.RunID, SessionID: input.SessionID,
+		Origin:    predecessor.Origin,
 		CommandID: input.RunID, AttemptID: input.RunID,
-		Kind: storage.SeedContinuation, SourceRunID: predecessorRunID, SourceEndID: checkpoint.HistoryEndID,
-	})
+		Kind: storage.SeedContinuation, PredecessorRunID: predecessorRunID, SourceRunID: predecessorRunID, SourceEndID: checkpoint.HistoryEndID,
+	}
+	decision, err := bindHistoryOperation(t.Context(), rt.Store, declaration)
+	require.NoError(t, err)
+	_, proceed := decision.State.AsProceed()
+	require.True(t, proceed)
+	seed, err := rt.Store.BeginRunSeed(t.Context(), declaration)
 	require.NoError(t, err)
 	writer := initialHistoryWriter{store: rt.Store, runID: input.RunID, attemptID: input.RunID, endID: storage.EmptySeedEndID}
 	require.NoError(t, writer.appendPrefix(t.Context(), seed.Source))

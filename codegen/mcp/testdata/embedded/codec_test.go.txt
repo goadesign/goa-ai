@@ -1,0 +1,40 @@
+package openfields_test
+
+import (
+	"bytes"
+	"encoding/json"
+	"testing"
+
+	gensample "open-fields.example/gen/sample"
+)
+
+func TestGeneratedStrictCodecPreservesOpenMembers(t *testing.T) {
+	raw := []byte(`{"integer":9007199254740993123456789}`)
+	q := &gensample.Question{Message: "Choose", Extensions: map[string]json.RawMessage{"extra": raw, "MESSAGE": json.RawMessage(`"extra value"`)}}
+	data, err := gensample.EncodeQuestion(q)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data, append([]byte(`"extra":`), raw...)) || bytes.Contains(data, []byte(`"Extensions"`)) {
+		t.Fatalf("encoder changed field placement: %s", data)
+	}
+	got, err := gensample.DecodeQuestion(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got.Extensions["MESSAGE"], q.Extensions["MESSAGE"]) || got.Message != q.Message || !bytes.Equal(got.Extensions["extra"], raw) {
+		t.Fatalf("codec lost open member: %#v", got)
+	}
+}
+
+func TestGeneratedStrictDecodePreservesCaseDistinctMembers(t *testing.T) {
+	for _, data := range []string{`{"message":"known","MESSAGE":"extra"}`, `{"MESSAGE":"extra","message":"known"}`} {
+		got, err := gensample.DecodeQuestion([]byte(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Message != "known" || string(got.Extensions["MESSAGE"]) != `"extra"` {
+			t.Fatalf("changed members: %#v", got)
+		}
+	}
+}

@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -76,13 +77,16 @@ func TestPolicyAllowlistRewritesDeniedCalls(t *testing.T) {
 		hasPlanResult:   true,
 		recoveryCatalog: &RecoveryCatalog{Tools: []tools.Ident{allowedSpec.Name}},
 	}
-	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
-	base := &workflowConversation{RunContext: run.Context{RunID: input.RunID}}
+	input := &RunInput{Subject: genrunidentity.RunSubject{
+		Executor: genrunidentity.
+			NewRunExecutorAgent(genrunidentity.
+				RunExecutorBranchAgent("svc.agent"))}, RunID: "run-1"}
+	base := &workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{RunID: input.RunID}}
 	initial := &PlanResult{ToolCalls: []ToolCall{
 		{ToolCallID: "allowed-call", Name: tools.Ident("allowed"), Payload: rawjson.Message(`{}`)},
 		{ToolCallID: "blocked-call", Name: tools.Ident("blocked"), Payload: rawjson.Message(`{}`)},
 	}}
-	out, err := rt.runLoop(wfCtx, AgentRegistration{Definition: testRegistrationDefinition(input.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
+	out, err := rt.runLoop(wfCtx, AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, input.Subject), engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
 	}, input, base, initial, initialCaps(RunPolicy{MaxToolCalls: 5}), time.Time{}, time.Time{}, "turn-1", nil)
@@ -148,12 +152,17 @@ func TestRestrictedRunToolCapFinalizes(t *testing.T) {
 		hasPlanResult: true,
 	}
 	input := &RunInput{
-		AgentID: "svc.agent",
-		RunID:   "run-1",
-		Policy:  &PolicyOverrides{RestrictToTool: toolSpec.Name},
+		Subject: genrunidentity.RunSubject{
+			Executor: genrunidentity.
+				NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("svc.agent"))},
+
+		RunID:  "run-1",
+		Policy: &PolicyOverrides{RestrictToTool: toolSpec.Name},
 	}
 	base := &workflowConversation{
-		RunContext: run.Context{RunID: input.RunID},
+		finalization: &workflowFinalizationState{},
+		RunContext:   run.Context{RunID: input.RunID},
 	}
 	initial := &PlanResult{ToolCalls: []ToolCall{{
 		ToolCallID: "read-call",
@@ -161,7 +170,7 @@ func TestRestrictedRunToolCapFinalizes(t *testing.T) {
 		Payload:    rawjson.Message(`{}`),
 	}}}
 
-	out, err := rt.runLoop(wfCtx, AgentRegistration{Definition: testRegistrationDefinition(input.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
+	out, err := rt.runLoop(wfCtx, AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, input.Subject), engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
 	}, input, base, initial, policy.CapsState{
@@ -197,12 +206,17 @@ func TestToolCapDeniedCallHydratesFromCanonicalRunLog(t *testing.T) {
 		hasPlanResult: true,
 	}
 	input := &RunInput{
-		AgentID: "svc.agent",
-		RunID:   "run-1",
-		Policy:  &PolicyOverrides{RestrictToTool: toolSpec.Name},
+		Subject: genrunidentity.RunSubject{
+			Executor: genrunidentity.
+				NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("svc.agent"))},
+
+		RunID:  "run-1",
+		Policy: &PolicyOverrides{RestrictToTool: toolSpec.Name},
 	}
 	base := &workflowConversation{
-		RunContext: run.Context{RunID: input.RunID},
+		finalization: &workflowFinalizationState{},
+		RunContext:   run.Context{RunID: input.RunID},
 	}
 	initial := &PlanResult{ToolCalls: []ToolCall{{
 		Name:       toolSpec.Name,
@@ -210,7 +224,7 @@ func TestToolCapDeniedCallHydratesFromCanonicalRunLog(t *testing.T) {
 		Payload:    rawjson.Message(`{"q":"x"}`),
 	}}}
 
-	out, err := rt.runLoop(wfCtx, AgentRegistration{Definition: testRegistrationDefinition(input.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
+	out, err := rt.runLoop(wfCtx, AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, input.Subject), engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
 	}, input, base, initial, policy.CapsState{
@@ -256,12 +270,17 @@ func TestRestrictedRunRecoveryCapFinalizes(t *testing.T) {
 		hasPlanResult: true,
 	}
 	input := &RunInput{
-		AgentID: "svc.agent",
-		RunID:   "run-1",
-		Policy:  &PolicyOverrides{RestrictToTool: toolSpec.Name},
+		Subject: genrunidentity.RunSubject{
+			Executor: genrunidentity.
+				NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("svc.agent"))},
+
+		RunID:  "run-1",
+		Policy: &PolicyOverrides{RestrictToTool: toolSpec.Name},
 	}
 	base := &workflowConversation{
-		RunContext: run.Context{RunID: input.RunID},
+		finalization: &workflowFinalizationState{},
+		RunContext:   run.Context{RunID: input.RunID},
 	}
 	initial := &PlanResult{ToolCalls: []ToolCall{{
 		ToolCallID: "read-call",
@@ -269,7 +288,7 @@ func TestRestrictedRunRecoveryCapFinalizes(t *testing.T) {
 		Payload:    rawjson.Message(`{}`),
 	}}}
 
-	out, err := rt.runLoop(wfCtx, AgentRegistration{Definition: testRegistrationDefinition(input.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
+	out, err := rt.runLoop(wfCtx, AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, input.Subject), engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
 	}, input, base, initial, policy.CapsState{
@@ -298,12 +317,17 @@ func TestRestrictedUnknownToolFailsBeforeExecution(t *testing.T) {
 		hasPlanResult: true,
 	}
 	input := &RunInput{
-		AgentID: "svc.agent",
-		RunID:   "run-1",
-		Policy:  &PolicyOverrides{RestrictToTool: "svc.tools.read"},
+		Subject: genrunidentity.RunSubject{
+			Executor: genrunidentity.
+				NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("svc.agent"))},
+
+		RunID:  "run-1",
+		Policy: &PolicyOverrides{RestrictToTool: "svc.tools.read"},
 	}
 	base := &workflowConversation{
-		RunContext: run.Context{RunID: input.RunID},
+		finalization: &workflowFinalizationState{},
+		RunContext:   run.Context{RunID: input.RunID},
 	}
 	initial := &PlanResult{ToolCalls: []ToolCall{{
 		ToolCallID: "missing-call",
@@ -311,7 +335,7 @@ func TestRestrictedUnknownToolFailsBeforeExecution(t *testing.T) {
 		Payload:    rawjson.Message(`{}`),
 	}}}
 
-	out, err := rt.runLoop(wfCtx, AgentRegistration{Definition: testRegistrationDefinition(input.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
+	out, err := rt.runLoop(wfCtx, AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, input.Subject), engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
 	}, input, base, initial, policy.CapsState{
@@ -353,7 +377,7 @@ func TestApplyPerRunOverridesRejectsCallsExcludedByAnyTagClause(t *testing.T) {
 	}
 	allowed, err := rt.applyPerRunOverrides(
 		context.Background(),
-		&RunInput{
+		&RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("test.agent"))},
 			Policy: &PolicyOverrides{
 				TagClauses: []TagPolicyClause{
 					{AllowedAny: []string{"system"}},
@@ -373,7 +397,7 @@ func TestApplyPerRunOverridesRejectsCallsExcludedByAnyTagClause(t *testing.T) {
 	} {
 		_, err := rt.applyPerRunOverrides(
 			context.Background(),
-			&RunInput{Policy: &PolicyOverrides{TagClauses: []TagPolicyClause{
+			&RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("test.agent"))}, Policy: &PolicyOverrides{TagClauses: []TagPolicyClause{
 				{AllowedAny: []string{"system"}},
 				{AllowedAny: []string{"profile"}},
 				{DeniedAny: []string{"blocked"}},
@@ -464,8 +488,12 @@ func TestApplyRuntimePolicyRejectsInvalidRecoveryCaps(t *testing.T) {
 
 			_, got, err := rt.applyRuntimePolicy(
 				context.Background(),
-				&workflowConversation{RunContext: run.Context{RunID: "run-1"}},
-				&RunInput{AgentID: "svc.agent"},
+				&workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{RunID: "run-1"}},
+				&RunInput{Subject: genrunidentity.RunSubject{
+					Executor: genrunidentity.
+						NewRunExecutorAgent(genrunidentity.
+							RunExecutorBranchAgent("svc.agent"))},
+				},
 				nil,
 				current,
 				"turn-1",

@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/internal/errorevidence"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/runlog"
@@ -47,7 +48,7 @@ func TestStrictRecordDecodingPreservesText(t *testing.T) {
 					payload := bytes.ReplaceAll(input.Payload, quoted, []byte(test.quoted))
 					record := &runlog.Event{
 						ID: "cursor", EventKey: input.EventKey, Type: input.Type,
-						RunID: input.RunID, AgentID: input.AgentID, SessionID: input.SessionID,
+						RunID: input.RunID, Subject: input.Subject, SessionID: input.SessionID,
 						TurnID: input.TurnID, Timestamp: time.UnixMilli(input.TimestampMS).UTC(),
 						Payload: payload,
 					}
@@ -59,7 +60,7 @@ func TestStrictRecordDecodingPreservesText(t *testing.T) {
 					assert.Equal(t, input.Payload, encoded)
 					assert.Equal(t, input.EventKey, decoded.EventKey())
 					assert.Equal(t, input.RunID, decoded.RunID())
-					assert.Equal(t, string(input.AgentID), decoded.AgentID())
+					assert.Equal(t, input.Subject, decoded.Subject())
 					assert.Equal(t, input.SessionID, decoded.SessionID())
 					assert.Equal(t, input.TurnID, decoded.TurnID())
 					assert.Equal(t, input.TimestampMS, decoded.Timestamp())
@@ -141,7 +142,7 @@ func TestStrictRecordDecodingRejectsMalformedPayloads(t *testing.T) {
 
 					replayed, err := DecodeRunlogEvent(&runlog.Event{
 						ID: "cursor", EventKey: record.EventKey, Type: record.Type,
-						RunID: record.RunID, AgentID: record.AgentID, SessionID: record.SessionID,
+						RunID: record.RunID, Subject: record.Subject, SessionID: record.SessionID,
 						Timestamp: time.UnixMilli(record.TimestampMS).UTC(), Payload: record.Payload,
 					})
 					require.ErrorContains(t, err, test.want)
@@ -168,15 +169,15 @@ func strictTextEvents(t *testing.T, text string) []Event {
 	require.NoError(t, err)
 	plannerRejected.ReasonVersion, plannerRejected.Reason = errorevidence.ReasonVersion, text
 	completed, err := newRunCompletedEventFromPayload(
-		"run", "agent", "session", "failed", run.PhaseFailed, nil,
+		"run", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, "session", "failed", run.PhaseFailed, nil,
 		&run.Failure{Kind: "execution_failed", Message: text}, nil,
 	)
 	require.NoError(t, err)
 	return []Event{
-		NewRunStartedEvent("run", "agent", "session", "", "", map[string]string{"text": text}),
-		NewRunSuspendedEvent("run", "agent", "session", text, "v1", 1, nil),
+		NewRunStartedEvent("run", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, "session", "", "", map[string]string{"text": text}),
+		NewRunSuspendedEvent("run", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, "session", text, "v1", 1, nil),
 		completed,
-		NewChildRunLinkedEvent("run", "agent", "session", "tools.child", text, "child", "child-agent"),
+		NewChildRunLinkedEvent("run", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, "session", "tools.child", text, "child", "child-agent"),
 		modelRejected,
 		plannerRejected,
 	}

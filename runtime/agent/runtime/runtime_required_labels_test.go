@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/session"
@@ -131,7 +132,8 @@ func TestStartPreparedContinuationUsesCheckpointRequiredLabels(t *testing.T) {
 	)
 	now := time.Now().UTC()
 	admitRunForTest(t, rt.Store, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run-1", SessionID: "session-1",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))}, RunID: "run-1", SessionID: "session-1",
 		Status: session.RunStatusRunning, StartedAt: now, UpdatedAt: now, Labels: labels,
 	})
 	data, err := json.Marshal(suspension)

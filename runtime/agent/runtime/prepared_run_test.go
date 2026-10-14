@@ -15,6 +15,8 @@ import (
 	commonpb "go.temporal.io/api/common/v1"
 	"go.temporal.io/sdk/converter"
 
+	genregistry "goa.design/goa-ai/registry/gen/registry"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	engineinmem "goa.design/goa-ai/runtime/agent/engine/inmem"
@@ -318,7 +320,7 @@ func TestPreparedRunKeepsExactDuplicateIdentity(t *testing.T) {
 		Name: "agent.workflow",
 		Handler: func(_ engine.WorkflowContext, input *RunInput) (*RunOutput, error) {
 			received <- input.Metadata
-			return &RunOutput{RunID: "run-1"}, nil
+			return &RunOutput{Subject: input.Subject, RunID: input.RunID}, nil
 		},
 	}))
 	definition := testAgentDefinition(
@@ -382,7 +384,8 @@ func TestParsedContinuationStartsFromFreshClientWithPublishedHistory(t *testing.
 	)
 	now := time.Now().UTC()
 	admitRunForTest(t, sourceStore, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run-1", SessionID: "session-1",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))}, RunID: "run-1", SessionID: "session-1",
 		Status: session.RunStatusRunning, StartedAt: now, UpdatedAt: now,
 	})
 	suspensionData, err := json.Marshal(suspension)
@@ -409,7 +412,7 @@ func TestParsedContinuationStartsFromFreshClientWithPublishedHistory(t *testing.
 		Name: "agent.workflow",
 		Handler: func(_ engine.WorkflowContext, input *RunInput) (*RunOutput, error) {
 			received <- input
-			return &RunOutput{RunID: input.RunID}, nil
+			return &RunOutput{Subject: input.Subject, RunID: input.RunID}, nil
 		},
 	}))
 	freshClient := New(sourceStore, WithEngine(freshEngine)).MustClientFor(definition)
@@ -444,4 +447,39 @@ func decodePreparedMemo[T any](t *testing.T, values map[string]engine.EncodedVal
 	var value T
 	require.NoError(t, workflowcodec.NewDataConverter().FromPayload(startrecipe.MemoPayload(values[name]), &value))
 	return value
+}
+
+func TestParsePreparedRunRejectsServiceToolSubject(t *testing.T) {
+	reference := preparedReference(storage.PreparationOperation{
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorServiceTool(&genrunidentity.ServiceToolSubject{Registry: "primary", Tool: "catalog.lookup"})},
+		RunID:   "run", CommandID: "command",
+	}, "1", "2", []byte("prepared"))
+	data, err := reference.MarshalBinary()
+	require.NoError(t, err)
+	_, err = ParsePreparedRun(data)
+	require.ErrorIs(t, err, ErrPreparedRunRejected)
+	require.ErrorContains(t, err, "agent prepared run requires an Agent run subject")
+}
+
+func TestPreparedReferencePreservesMaximumSeedIdentity(t *testing.T) {
+	declaration := storage.SeedDeclaration{
+		Origin:  genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: "run"})},
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("x")},
+		RunID:   "run", CommandID: "command", AttemptID: "attempt", Kind: storage.SeedLiteral,
+	}
+	framing, err := json.Marshal(declaration)
+	require.NoError(t, err)
+	declaration.Subject = genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(strings.Repeat("x", 1+storage.MaxSeedCommandBytes-len(framing))))}
+	require.NoError(t, storage.ValidateSeedDeclaration(declaration))
+	encodedDeclaration, err := json.Marshal(declaration)
+	require.NoError(t, err)
+	require.Len(t, encodedDeclaration, storage.MaxSeedCommandBytes)
+	reference := preparedReference(storage.PreparationOperation{
+		Subject: declaration.Subject, RunID: declaration.RunID, CommandID: declaration.CommandID,
+	}, "9223372036854775807", "9223372036854775807", []byte("prepared"))
+	data, err := reference.MarshalBinary()
+	require.NoError(t, err)
+	parsed, err := ParsePreparedRun(data)
+	require.NoError(t, err)
+	require.Equal(t, declaration.Subject, parsed.reference.Operation.Subject)
 }

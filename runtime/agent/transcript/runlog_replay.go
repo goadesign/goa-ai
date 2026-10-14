@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/runlog"
 )
@@ -54,6 +55,9 @@ func BuildMessagesFromRunLog(ctx context.Context, store runLogLister, runID stri
 	if err != nil {
 		return nil, err
 	}
+	if err := validateHistorySubject(meta.Subject); err != nil {
+		return nil, err
+	}
 	var cursor, endID string
 	found := meta.SeedEndID != ""
 	seen := make(map[string]struct{})
@@ -96,6 +100,9 @@ func decodeTranscriptMessagesDelta(event *runlog.Event) ([]*model.Message, error
 	if event == nil {
 		return nil, fmt.Errorf("transcript: nil runlog event")
 	}
+	if err := validateHistorySubject(event.Subject); err != nil {
+		return nil, err
+	}
 	delta, err := DecodeRunLogDelta(event.Payload)
 	if err != nil {
 		return nil, fmt.Errorf("transcript: decode runlog event %q for run %q: %w", event.EventKey, event.RunID, err)
@@ -107,4 +114,16 @@ func decodeTranscriptMessagesDelta(event *runlog.Event) ([]*model.Message, error
 // messages for replay.
 func isTranscriptRunLogType(typ runlog.Type) bool {
 	return typ == RunLogMessagesSeeded || typ == RunLogMessagesAppended
+}
+
+// validateHistorySubject checks the saved run owner before messages are read.
+// Only an Agent executor has model history; service-tool runs are rejected.
+func validateHistorySubject(subject genrunidentity.RunSubject) error {
+	if _, err := genrunidentity.EncodeRunSubject(&subject); err != nil {
+		return prefixContractError("invalid transcript subject: %v", err)
+	}
+	if _, ok := subject.Executor.AsAgent(); !ok {
+		return prefixContractError("transcript history requires an Agent subject")
+	}
+	return nil
 }

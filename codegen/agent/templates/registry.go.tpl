@@ -40,7 +40,7 @@ func {{ .PackageNames.RegistrationConstructor }}(rt *{{ .RuntimeAlias }}.Runtime
         return {{ .RuntimeAlias }}.AgentRegistration{}, err
     }
     return {{ .RuntimeAlias }}.AgentRegistration{
-        Definition: {{ .PackageNames.Definition }}(),
+        Definition: {{ .PackageNames.Definition }}(){{ if .RequiredInputBindings }}.WithInputBinding([]{{ .ToolsAlias }}.Ident{ {{ range .RequiredInputBindings }}{{ printf "%q" . }}, {{ end }}}, cfg.PrepareInputs){{ end }},
         Planner: {{ .AgentVar }}.Planner,
         WorkflowHandler: rt.ExecuteWorkflow,
 {{- if .PlanActivity }}

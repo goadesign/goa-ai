@@ -3,6 +3,7 @@ package run
 import (
 	"time"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -16,8 +17,8 @@ type (
 	Snapshot struct {
 		// RunID uniquely identifies the durable workflow run.
 		RunID string
-		// AgentID identifies the agent that owns the run.
-		AgentID agent.Ident
+		// Subject identifies the Agent or service tool that owns the run.
+		Subject genrunidentity.RunSubject
 		// SessionID groups related runs into a logical session.
 		SessionID string
 		// TurnID groups events for a single conversational turn.

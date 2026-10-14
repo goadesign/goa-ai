@@ -14,6 +14,9 @@ import (
 	"unicode/utf8"
 
 	"goa.design/goa-ai/internal/tooloperation"
+	genregistry "goa.design/goa-ai/registry/gen/registry"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
+	genrunterminal "goa.design/goa-ai/registry/gen/runterminal"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 )
@@ -69,6 +72,12 @@ func (b *encodedOutputBudget) walk(value reflect.Value, depth int, quoted bool) 
 			}
 			return b.addBytes(size)
 		}
+	}
+	if selected, known, err := generatedUnionJSONValue(value); known {
+		if err != nil {
+			return err
+		}
+		return b.walk(selected, depth+1, quoted)
 	}
 	if value.Type() == reflect.TypeFor[api.PlanActivityOutput]() {
 		value = reflect.ValueOf(*planOutputView(value.Interface().(api.PlanActivityOutput)))
@@ -187,6 +196,36 @@ func (b *encodedOutputBudget) walk(value reflect.Value, depth int, quoted bool) 
 			if err := b.walk(value.Field(index), depth+1, fieldQuoted); err != nil {
 				return err
 			}
+		}
+		if value.Type() == reflect.TypeFor[genrunterminal.PreparationDecision]() {
+			decision := value.Interface().(genrunterminal.PreparationDecision)
+			_, err := genrunterminal.EncodePreparationDecision(&decision)
+			return err
+		}
+		if value.Type() == reflect.TypeFor[genrunterminal.ExecutionFailure]() {
+			terminal := value.Interface().(genrunterminal.ExecutionFailure)
+			_, err := genrunterminal.EncodeExecutionFailure(&terminal)
+			return err
+		}
+		if value.Type() == reflect.TypeFor[genrunterminal.UnstartedExecutionTerminal]() {
+			terminal := value.Interface().(genrunterminal.UnstartedExecutionTerminal)
+			_, err := genrunterminal.EncodeUnstartedExecutionTerminal(&terminal)
+			return err
+		}
+		if value.Type() == reflect.TypeFor[genrunterminal.UnstartedExecutionTerminalResult]() {
+			terminal := value.Interface().(genrunterminal.UnstartedExecutionTerminalResult)
+			_, err := genrunterminal.EncodeUnstartedExecutionTerminalResult(&terminal)
+			return err
+		}
+		if value.Type() == reflect.TypeFor[genregistry.ExecutionInvocation]() {
+			invocation := value.Interface().(genregistry.ExecutionInvocation)
+			_, err := genregistry.EncodeExecutionInvocation(&invocation)
+			return err
+		}
+		if value.Type() == reflect.TypeFor[genrunidentity.RunSubject]() {
+			subject := value.Interface().(genrunidentity.RunSubject)
+			_, err := genrunidentity.EncodeRunSubject(&subject)
+			return err
 		}
 	case reflect.Slice, reflect.Array:
 		if value.Kind() == reflect.Slice && value.IsNil() {

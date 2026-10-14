@@ -1,3 +1,6 @@
+// Package hooks defines typed runtime events for Agent and service-tool runs.
+// Common events retain their exact generated run owner; model and planner
+// events are constructed only for Agent executors.
 package hooks
 
 import (
@@ -10,6 +13,7 @@ import (
 	"maps"
 	"time"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/internal/temporalerrors"
@@ -56,9 +60,9 @@ type (
 		// All events for a given run share the same session ID, providing a stable
 		// join key across processes and transports.
 		SessionID() string
-		// AgentID returns the agent identifier that triggered this event. Subscribers can
-		// use this to filter events by agent when multiple agents run in the same system.
-		AgentID() string
+		// Subject returns the Agent executor or service tool that owns this event.
+		// Subscribers receive their own copy of the service-tool identity.
+		Subject() genrunidentity.RunSubject
 		// Timestamp returns the Unix timestamp in milliseconds when the event occurred.
 		// Events are timestamped at creation, not at delivery, so subscribers can calculate
 		// durations and latencies between related events.
@@ -368,10 +372,10 @@ type (
 
 	// baseEvent holds common fields shared by all event types. It is embedded
 	// anonymously in each concrete event struct, providing implementations of
-	// the RunID, AgentID, Timestamp, and TurnID methods.
+	// the RunID, Subject, Timestamp, and TurnID methods.
 	baseEvent struct {
 		runID     string
-		agentID   agent.Ident
+		subject   genrunidentity.RunSubject
 		timestamp int64
 		eventKey  string
 		// sessionID associates the event with the logical session that owns the
@@ -586,11 +590,11 @@ const (
 // duplicated here.
 func NewRunStartedEvent(
 	runID string,
-	agentID agent.Ident,
+	subject genrunidentity.RunSubject,
 	sessionID, parentRunID, predecessorRunID string,
 	labels map[string]string,
 ) *RunStartedEvent {
-	be := newBaseEvent(runID, agentID)
+	be := newBaseEvent(runID, subject)
 	be.sessionID = sessionID
 	return &RunStartedEvent{
 		baseEvent:        be,
@@ -611,7 +615,7 @@ func NewRunStartedEvent(
 //     (RunInput.Labels), nil when the run had none.
 func NewRunCompletedEvent(
 	runID string,
-	agentID agent.Ident,
+	subject genrunidentity.RunSubject,
 	sessionID, status string,
 	phase run.Phase,
 	labels map[string]string,
@@ -627,7 +631,7 @@ func NewRunCompletedEvent(
 	case "canceled":
 		cancellation = newRunCancellation(cancellation)
 	}
-	evt, buildErr := newRunCompletedEventFromPayload(runID, agentID, sessionID, status, phase, labels, failure, cancellation)
+	evt, buildErr := newRunCompletedEventFromPayload(runID, subject, sessionID, status, phase, labels, failure, cancellation)
 	if buildErr != nil {
 		panic("hooks: " + buildErr.Error())
 	}
@@ -638,14 +642,14 @@ func NewRunCompletedEvent(
 // payload before materializing a RunCompletedEvent from decoded hook input.
 func newRunCompletedEventFromPayload(
 	runID string,
-	agentID agent.Ident,
+	subject genrunidentity.RunSubject,
 	sessionID, status string,
 	phase run.Phase,
 	labels map[string]string,
 	failure *run.Failure,
 	cancellation *run.Cancellation,
 ) (*RunCompletedEvent, error) {
-	be := newBaseEvent(runID, agentID)
+	be := newBaseEvent(runID, subject)
 	be.sessionID = sessionID
 	out := &RunCompletedEvent{
 		baseEvent: be,
@@ -768,8 +772,8 @@ func newRunCancellation(cancellation *run.Cancellation) *run.Cancellation {
 
 // NewChildRunLinkedEvent constructs a ChildRunLinkedEvent for the given parent
 // run, tool call, and child run identifiers.
-func NewChildRunLinkedEvent(runID string, agentID agent.Ident, sessionID string, toolName tools.Ident, toolCallID, childRunID string, childAgentID agent.Ident) *ChildRunLinkedEvent {
-	be := newBaseEvent(runID, agentID)
+func NewChildRunLinkedEvent(runID string, subject genrunidentity.RunSubject, sessionID string, toolName tools.Ident, toolCallID, childRunID string, childAgentID agent.Ident) *ChildRunLinkedEvent {
+	be := newBaseEvent(runID, subject)
 	be.sessionID = sessionID
 	return &ChildRunLinkedEvent{
 		baseEvent:    be,
@@ -780,10 +784,9 @@ func NewChildRunLinkedEvent(runID string, agentID agent.Ident, sessionID string,
 	}
 }
 
-// NewRunPhaseChangedEvent constructs a RunPhaseChangedEvent for the given run
-// and agent.
-func NewRunPhaseChangedEvent(runID string, agentID agent.Ident, sessionID string, phase run.Phase) *RunPhaseChangedEvent {
-	be := newBaseEvent(runID, agentID)
+// NewRunPhaseChangedEvent records the new phase for the given run and owner.
+func NewRunPhaseChangedEvent(runID string, subject genrunidentity.RunSubject, sessionID string, phase run.Phase) *RunPhaseChangedEvent {
+	be := newBaseEvent(runID, subject)
 	be.sessionID = sessionID
 	return &RunPhaseChangedEvent{
 		baseEvent: be,
@@ -793,7 +796,7 @@ func NewRunPhaseChangedEvent(runID string, agentID agent.Ident, sessionID string
 
 // NewPromptRenderedEvent constructs a PromptRenderedEvent for one rendered prompt.
 func NewPromptRenderedEvent(runID string, agentID agent.Ident, sessionID string, promptID prompt.Ident, version string, scope prompt.Scope) *PromptRenderedEvent {
-	be := newBaseEvent(runID, agentID)
+	be := newBaseEvent(runID, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))})
 	be.sessionID = sessionID
 	return &PromptRenderedEvent{
 		baseEvent: be,
@@ -804,8 +807,8 @@ func NewPromptRenderedEvent(runID string, agentID agent.Ident, sessionID string,
 }
 
 // NewRunSuspendedEvent constructs the terminal event emitted with a suspension result.
-func NewRunSuspendedEvent(runID string, agentID agent.Ident, sessionID, suspensionID, version string, pendingCount int, requiredTools []tools.Ident) *RunSuspendedEvent {
-	be := newBaseEvent(runID, agentID)
+func NewRunSuspendedEvent(runID string, subject genrunidentity.RunSubject, sessionID, suspensionID, version string, pendingCount int, requiredTools []tools.Ident) *RunSuspendedEvent {
+	be := newBaseEvent(runID, subject)
 	be.sessionID = sessionID
 	return &RunSuspendedEvent{
 		baseEvent:     be,
@@ -817,8 +820,8 @@ func NewRunSuspendedEvent(runID string, agentID agent.Ident, sessionID, suspensi
 }
 
 // NewAwaitClarificationEvent constructs an AwaitClarificationEvent with the provided details.
-func NewAwaitClarificationEvent(runID string, agentID agent.Ident, sessionID, id, question string, missing []string, restrict tools.Ident, example rawjson.Message) *AwaitClarificationEvent {
-	be := newBaseEvent(runID, agentID)
+func NewAwaitClarificationEvent(runID string, subject genrunidentity.RunSubject, sessionID, id, question string, missing []string, restrict tools.Ident, example rawjson.Message) *AwaitClarificationEvent {
+	be := newBaseEvent(runID, subject)
 	be.sessionID = sessionID
 	return &AwaitClarificationEvent{
 		baseEvent:      be,
@@ -831,8 +834,8 @@ func NewAwaitClarificationEvent(runID string, agentID agent.Ident, sessionID, id
 }
 
 // NewAwaitMCPInputEvent records the host requests for an unfinished MCP call.
-func NewAwaitMCPInputEvent(runID string, agentID agent.Ident, sessionID string, input api.PendingMCPInput) *AwaitMCPInputEvent {
-	be := newBaseEvent(runID, agentID)
+func NewAwaitMCPInputEvent(runID string, subject genrunidentity.RunSubject, sessionID string, input api.PendingMCPInput) *AwaitMCPInputEvent {
+	be := newBaseEvent(runID, subject)
 	be.sessionID = sessionID
 	requests := make(map[string]mcp.InputRequest, len(input.Requests))
 	for id, request := range input.Requests {
@@ -844,8 +847,8 @@ func NewAwaitMCPInputEvent(runID string, agentID agent.Ident, sessionID string, 
 }
 
 // NewAwaitConfirmationEvent constructs an AwaitConfirmationEvent with the provided details.
-func NewAwaitConfirmationEvent(runID string, agentID agent.Ident, sessionID, id, title, prompt string, toolName tools.Ident, toolCallID string, payload rawjson.Message) *AwaitConfirmationEvent {
-	be := newBaseEvent(runID, agentID)
+func NewAwaitConfirmationEvent(runID string, subject genrunidentity.RunSubject, sessionID, id, title, prompt string, toolName tools.Ident, toolCallID string, payload rawjson.Message) *AwaitConfirmationEvent {
+	be := newBaseEvent(runID, subject)
 	be.sessionID = sessionID
 	return &AwaitConfirmationEvent{
 		baseEvent:  be,
@@ -859,8 +862,8 @@ func NewAwaitConfirmationEvent(runID string, agentID agent.Ident, sessionID, id,
 }
 
 // NewToolAuthorizationEvent constructs a ToolAuthorizationEvent for a pending tool call.
-func NewToolAuthorizationEvent(runID string, agentID agent.Ident, sessionID string, toolName tools.Ident, toolCallID string, approved bool, summary, approvedBy string) *ToolAuthorizationEvent {
-	be := newBaseEvent(runID, agentID)
+func NewToolAuthorizationEvent(runID string, subject genrunidentity.RunSubject, sessionID string, toolName tools.Ident, toolCallID string, approved bool, summary, approvedBy string) *ToolAuthorizationEvent {
+	be := newBaseEvent(runID, subject)
 	be.sessionID = sessionID
 	return &ToolAuthorizationEvent{
 		baseEvent:  be,
@@ -873,11 +876,11 @@ func NewToolAuthorizationEvent(runID string, agentID agent.Ident, sessionID stri
 }
 
 // NewAwaitExternalToolsEvent constructs an AwaitExternalToolsEvent.
-func NewAwaitExternalToolsEvent(runID string, agentID agent.Ident, sessionID, id string, items []AwaitToolItem) *AwaitExternalToolsEvent {
+func NewAwaitExternalToolsEvent(runID string, subject genrunidentity.RunSubject, sessionID, id string, items []AwaitToolItem) *AwaitExternalToolsEvent {
 	// ensure copy
 	copied := make([]AwaitToolItem, len(items))
 	copy(copied, items)
-	be := newBaseEvent(runID, agentID)
+	be := newBaseEvent(runID, subject)
 	be.sessionID = sessionID
 	return &AwaitExternalToolsEvent{
 		baseEvent: be,
@@ -887,7 +890,7 @@ func NewAwaitExternalToolsEvent(runID string, agentID agent.Ident, sessionID, id
 }
 
 // NewAwaitQuestionsEvent constructs an AwaitQuestionsEvent for a structured questions prompt.
-func NewAwaitQuestionsEvent(runID string, agentID agent.Ident, sessionID, id string, toolName tools.Ident, toolCallID string, payload rawjson.Message, title *string, questions []AwaitQuestion) *AwaitQuestionsEvent {
+func NewAwaitQuestionsEvent(runID string, subject genrunidentity.RunSubject, sessionID, id string, toolName tools.Ident, toolCallID string, payload rawjson.Message, title *string, questions []AwaitQuestion) *AwaitQuestionsEvent {
 	qcopy := make([]AwaitQuestion, 0, len(questions))
 	for _, q := range questions {
 		opts := make([]AwaitQuestionOption, len(q.Options))
@@ -899,7 +902,7 @@ func NewAwaitQuestionsEvent(runID string, agentID agent.Ident, sessionID, id str
 			Options:       opts,
 		})
 	}
-	be := newBaseEvent(runID, agentID)
+	be := newBaseEvent(runID, subject)
 	be.sessionID = sessionID
 	return &AwaitQuestionsEvent{
 		baseEvent:  be,
@@ -914,7 +917,7 @@ func NewAwaitQuestionsEvent(runID string, agentID agent.Ident, sessionID, id str
 
 // NewPolicyDecisionEvent constructs a PolicyDecisionEvent with the provided metadata.
 func NewPolicyDecisionEvent(runID string, agentID agent.Ident, sessionID string, allowed []tools.Ident, caps policy.CapsState, labels map[string]string, metadata map[string]any) *PolicyDecisionEvent {
-	be := newBaseEvent(runID, agentID)
+	be := newBaseEvent(runID, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))})
 	be.sessionID = sessionID
 	return &PolicyDecisionEvent{
 		baseEvent:    be,
@@ -946,8 +949,8 @@ func (e *AwaitExternalToolsEvent) Type() EventType { return AwaitExternalTools }
 // NewToolCallScheduledEvent constructs a ToolCallScheduledEvent. Payload is the
 // canonical JSON arguments for the scheduled tool; queue is the activity queue name.
 // ParentToolCallID and expectedChildren are optional (empty/0 for top-level calls).
-func NewToolCallScheduledEvent(runID string, agentID agent.Ident, sessionID string, toolName tools.Ident, toolCallID string, payload rawjson.Message, queue string, parentToolCallID string, expectedChildren int) *ToolCallScheduledEvent {
-	be := newBaseEvent(runID, agentID)
+func NewToolCallScheduledEvent(runID string, subject genrunidentity.RunSubject, sessionID string, toolName tools.Ident, toolCallID string, payload rawjson.Message, queue string, parentToolCallID string, expectedChildren int) *ToolCallScheduledEvent {
+	be := newBaseEvent(runID, subject)
 	be.sessionID = sessionID
 	return &ToolCallScheduledEvent{
 		baseEvent:             be,
@@ -968,8 +971,8 @@ func NewToolCallScheduledEvent(runID string, agentID agent.Ident, sessionID stri
 // identifies the exact run that emitted the matching scheduled-call event;
 // runID identifies the run emitting this result. The canonical result JSON and
 // server-side data and validated content blocks are retained for this invocation.
-func NewToolResultReceivedEvent(runID string, agentID agent.Ident, sessionID, callRunID string, toolName tools.Ident, toolCallID, parentToolCallID string, resultJSON rawjson.Message, serverData rawjson.Message, blocks content.Blocks, resultPreview string, bounds *agent.Bounds, duration time.Duration, telemetry *telemetry.ToolTelemetry, failure *planner.ToolFailure) *ToolResultReceivedEvent {
-	be := newBaseEvent(runID, agentID)
+func NewToolResultReceivedEvent(runID string, subject genrunidentity.RunSubject, sessionID, callRunID string, toolName tools.Ident, toolCallID, parentToolCallID string, resultJSON rawjson.Message, serverData rawjson.Message, blocks content.Blocks, resultPreview string, bounds *agent.Bounds, duration time.Duration, telemetry *telemetry.ToolTelemetry, failure *planner.ToolFailure) *ToolResultReceivedEvent {
+	be := newBaseEvent(runID, subject)
 	be.sessionID = sessionID
 	return &ToolResultReceivedEvent{
 		baseEvent:        be,
@@ -991,8 +994,8 @@ func NewToolResultReceivedEvent(runID string, agentID agent.Ident, sessionID, ca
 
 // NewToolCallUpdatedEvent constructs a ToolCallUpdatedEvent to signal that a
 // parent tool's child count has increased due to dynamic discovery.
-func NewToolCallUpdatedEvent(runID string, agentID agent.Ident, sessionID string, toolCallID string, expectedChildrenTotal int) *ToolCallUpdatedEvent {
-	be := newBaseEvent(runID, agentID)
+func NewToolCallUpdatedEvent(runID string, subject genrunidentity.RunSubject, sessionID string, toolCallID string, expectedChildrenTotal int) *ToolCallUpdatedEvent {
+	be := newBaseEvent(runID, subject)
 	be.sessionID = sessionID
 	return &ToolCallUpdatedEvent{
 		baseEvent:             be,
@@ -1003,7 +1006,7 @@ func NewToolCallUpdatedEvent(runID string, agentID agent.Ident, sessionID string
 
 // NewUsageEvent constructs a UsageEvent from an attributed usage snapshot.
 func NewUsageEvent(runID string, agentID agent.Ident, sessionID string, usage model.TokenUsage) *UsageEvent {
-	be := newBaseEvent(runID, agentID)
+	be := newBaseEvent(runID, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))})
 	be.sessionID = sessionID
 	return &UsageEvent{
 		baseEvent:  be,
@@ -1076,7 +1079,7 @@ func newModelOutputRejectedEvent(
 			modelResponseFingerprintVersion,
 		)
 	}
-	be := newBaseEvent(runID, agentID)
+	be := newBaseEvent(runID, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))})
 	be.sessionID = sessionID
 	return &ModelOutputRejectedEvent{
 		baseEvent:                       be,
@@ -1120,7 +1123,7 @@ func NewPlannerOutputRejectedEvent(
 	if err := validateReasonFingerprint(reasonSHA256, reasonSize); err != nil {
 		return nil, fmt.Errorf("planner output rejected event reason: %w", err)
 	}
-	be := newBaseEvent(runID, agentID)
+	be := newBaseEvent(runID, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))})
 	be.sessionID = sessionID
 	return &PlannerOutputRejectedEvent{
 		baseEvent:    be,
@@ -1132,7 +1135,7 @@ func NewPlannerOutputRejectedEvent(
 // NewPlannerNoteEvent constructs a PlannerNoteEvent with the given note text
 // and optional labels for categorization.
 func NewPlannerNoteEvent(runID string, agentID agent.Ident, sessionID string, note string, labels map[string]string) *PlannerNoteEvent {
-	be := newBaseEvent(runID, agentID)
+	be := newBaseEvent(runID, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))})
 	be.sessionID = sessionID
 	return &PlannerNoteEvent{
 		baseEvent: be,
@@ -1147,7 +1150,7 @@ func NewThinkingBlockEvent(runID string, agentID agent.Ident, sessionID string, 
 	if len(redacted) > 0 {
 		rb = append([]byte(nil), redacted...)
 	}
-	be := newBaseEvent(runID, agentID)
+	be := newBaseEvent(runID, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))})
 	be.sessionID = sessionID
 	return &ThinkingBlockEvent{
 		baseEvent:    be,
@@ -1162,7 +1165,7 @@ func NewThinkingBlockEvent(runID string, agentID agent.Ident, sessionID string, 
 // NewAssistantMessageEvent constructs an AssistantMessageEvent. Structured
 // may be nil if only a text message is provided.
 func NewAssistantMessageEvent(runID string, agentID agent.Ident, sessionID string, message string, structured any) *AssistantMessageEvent {
-	be := newBaseEvent(runID, agentID)
+	be := newBaseEvent(runID, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))})
 	be.sessionID = sessionID
 	return &AssistantMessageEvent{
 		baseEvent:  be,
@@ -1176,7 +1179,7 @@ func NewAssistantTurnCommittedEvent(runID string, agentID agent.Ident, sessionID
 	if responseID == "" || len(messages) == 0 {
 		panic("hooks: assistant turn committed requires response id and messages")
 	}
-	be := newBaseEvent(runID, agentID)
+	be := newBaseEvent(runID, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))})
 	be.sessionID = sessionID
 	be.eventKey = responseID
 	return &AssistantTurnCommittedEvent{
@@ -1189,7 +1192,7 @@ func NewAssistantTurnCommittedEvent(runID string, agentID agent.Ident, sessionID
 // NewMemoryAppendedEvent constructs a MemoryAppendedEvent indicating successful
 // persistence of memory entries.
 func NewMemoryAppendedEvent(runID string, agentID agent.Ident, sessionID string, eventCount int) *MemoryAppendedEvent {
-	be := newBaseEvent(runID, agentID)
+	be := newBaseEvent(runID, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))})
 	be.sessionID = sessionID
 	return &MemoryAppendedEvent{
 		baseEvent:  be,
@@ -1228,8 +1231,8 @@ func (e baseEvent) RunID() string { return e.runID }
 // SessionID returns the logical session identifier associated with the run.
 func (e baseEvent) SessionID() string { return e.sessionID }
 
-// AgentID returns the agent identifier.
-func (e baseEvent) AgentID() string { return string(e.agentID) }
+// Subject returns the event owner with independently owned service-tool fields.
+func (e baseEvent) Subject() genrunidentity.RunSubject { return copySubject(e.subject) }
 
 // Timestamp returns the Unix timestamp in milliseconds when the event occurred.
 func (e baseEvent) Timestamp() int64 { return e.timestamp }
@@ -1308,11 +1311,21 @@ func validateReasonFingerprint(digest string, size int64) error {
 
 // newBaseEvent constructs a baseEvent without durable dispatch metadata. The
 // runtime stamps event keys and timestamps when it emits the enclosing record.
-func newBaseEvent(runID string, agentID agent.Ident) baseEvent {
+func newBaseEvent(runID string, subject genrunidentity.RunSubject) baseEvent {
 	return baseEvent{
 		runID:   runID,
-		agentID: agentID,
+		subject: copySubject(subject),
 	}
+}
+
+// copySubject copies the selected service-tool fields so an event owner and its
+// callers can change their own values without changing another owner's identity.
+func copySubject(subject genrunidentity.RunSubject) genrunidentity.RunSubject {
+	if service, ok := subject.Executor.AsServiceTool(); ok && service != nil {
+		copied := *service
+		subject.Executor = genrunidentity.NewRunExecutorServiceTool(&copied)
+	}
+	return subject
 }
 
 // Type method implementations

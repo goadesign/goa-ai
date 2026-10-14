@@ -13,6 +13,7 @@ import (
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/workflow"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/internal/startrecipe"
@@ -20,7 +21,7 @@ import (
 
 func TestTemporalAcceptedStartDigest(t *testing.T) {
 	snapshot, err := startrecipe.SnapshotRequest(engine.WorkflowStartRequest{
-		ID: "root", Workflow: "root", TaskQueue: "queue", Input: &api.RunInput{RunID: "root"},
+		ID: "root", Workflow: "root", TaskQueue: "queue", Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "root"},
 	})
 	require.NoError(t, err)
 	for _, test := range []struct {

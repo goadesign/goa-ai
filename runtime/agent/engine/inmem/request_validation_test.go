@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/sdk/temporal"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/internal/temporalerrors"
@@ -63,7 +64,7 @@ func TestRequestValidationInMemoryRetryOwnership(t *testing.T) {
 			}))
 			handle, err := implementation.StartWorkflow(t.Context(), engine.WorkflowStartRequest{
 				ID: "run", Workflow: "request-workflow", TaskQueue: "queue",
-				Input: &api.RunInput{RunID: "run"}, RetryPolicy: retry,
+				Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run"}, RetryPolicy: retry,
 			})
 			require.NoError(t, err)
 			_, err = handle.Wait(t.Context())
@@ -88,7 +89,7 @@ func TestRequestValidationInMemoryChildStopsAfterOneAttempt(t *testing.T) {
 		Handler: func(ctx engine.WorkflowContext, _ *api.RunInput) (*api.RunOutput, error) {
 			child, err := ctx.StartChildWorkflow(ctx.Context(), engine.ChildWorkflowRequest{
 				ID: "child-run", Workflow: "child", TaskQueue: "queue",
-				Input:       &api.RunInput{RunID: "child-run"},
+				Input:       &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "child-run"},
 				RetryPolicy: engine.RetryPolicy{MaxAttempts: 3, InitialInterval: time.Millisecond},
 			})
 			if err != nil {
@@ -98,7 +99,7 @@ func TestRequestValidationInMemoryChildStopsAfterOneAttempt(t *testing.T) {
 		},
 	}))
 	handle, err := implementation.StartWorkflow(t.Context(), engine.WorkflowStartRequest{
-		ID: "parent-run", Workflow: "parent", TaskQueue: "queue", Input: &api.RunInput{RunID: "parent-run"},
+		ID: "parent-run", Workflow: "parent", TaskQueue: "queue", Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "parent-run"},
 	})
 	require.NoError(t, err)
 	_, err = handle.Wait(t.Context())

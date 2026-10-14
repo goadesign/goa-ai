@@ -209,6 +209,13 @@ type (
 		// Successful acceptance does not claim that cleanup has completed.
 		StartCancellationWorkflow(ctx context.Context, name, queue string, request CancellationRequest) error
 
+		// StartActiveCancellationWorkflow accepts a durable cancellation job on
+		// the route already accepted for ownerRunID: the accepted workflow name
+		// plus ".cancel", on its accepted task queue. The adapter observes an
+		// active owner and its route together. A closed or missing owner returns
+		// ErrWorkflowCompleted or ErrWorkflowNotFound without accepting a job.
+		StartActiveCancellationWorkflow(ctx context.Context, ownerRunID string, request CancellationRequest) error
+
 		// RegisterStorageActivity registers the one typed activity that applies
 		// runtime storage commands outside the deterministic workflow thread.
 		RegisterStorageActivity(ctx context.Context, name string, opts ActivityOptions, fn func(context.Context, *api.StorageActivityCommand) (*api.StorageActivityResult, error)) error
@@ -220,6 +227,10 @@ type (
 		// RegisterExecuteToolActivity registers a typed execute_tool activity that
 		// accepts *api.ToolInput and returns *api.ToolOutput.
 		RegisterExecuteToolActivity(ctx context.Context, name string, opts ActivityOptions, fn func(context.Context, *api.ToolInput) (*api.ToolOutput, error)) error
+
+		// RegisterAgentOperationActivity installs provider preparation for an accepted
+		// direct operation. It returns the complete prepared input for the same run.
+		RegisterAgentOperationActivity(ctx context.Context, name string, opts ActivityOptions, fn func(context.Context, *api.RunInput) (*api.AgentOperationActivityResult, error)) error
 
 		// RegisterAgentChildActivity registers the typed activity that prepares one
 		// child-agent run outside deterministic workflow code.
@@ -259,7 +270,7 @@ type (
 		// verify that it owns the requested run. It waits for handling, then
 		// cancels the workflow. An exact retry succeeds. A different reason returns
 		// CancellationConflictError. A request that arrives after terminal work
-		// starts returns ErrWorkflowCompleted.
+		// starts waits for execution closure, then returns ErrWorkflowCompleted.
 		RequestCancellation(ctx context.Context, workflowID string, request CancellationRequest) error
 	}
 
@@ -267,12 +278,16 @@ type (
 	CancellationRequest = api.CancellationRequest
 
 	// CancellationHandler records one cancellation request from workflow code.
-	// It returns ErrWorkflowCompleted when terminal work has already started.
+	// It returns ErrWorkflowCompleted immediately when terminal work has already
+	// started. The engine waits for execution closure outside this callback before
+	// returning that result to RequestCancellation callers.
 	CancellationHandler func(WorkflowContext, CancellationRequest) error
 
 	// RunCompletion separates the workflow result from errors encountered while
 	// retrieving it from the engine.
 	RunCompletion struct {
+		// StartRequestDigest identifies the exact request accepted for this execution.
+		StartRequestDigest [32]byte
 		// Status is the workflow state observed by the same query.
 		Status RunStatus
 		// CompletedAt is the time the engine closed the workflow. It is zero while
@@ -347,6 +362,10 @@ type (
 		// engine for this execution. Missing or malformed proof is an error.
 		StartRequestDigest() ([32]byte, error)
 
+		// RequireSingleAttempt rejects an accepted retry policy that permits another
+		// workflow attempt, so a handler can safely store its final outcome.
+		RequireSingleAttempt() error
+
 		// RunID returns the engine-assigned run identifier, used for observability
 		// and run-level correlation.
 		RunID() string
@@ -370,6 +389,10 @@ type (
 		// ExecuteToolActivityAsync schedules a tool execution activity and returns a Future
 		// so workflows can run multiple tools concurrently and collect results later.
 		ExecuteToolActivityAsync(call ToolActivityCall) (Future[*api.ToolOutput], error)
+
+		// ExecuteAgentOperationActivity prepares an accepted direct operation on its
+		// provider worker and records the complete prepared input for replay.
+		ExecuteAgentOperationActivity(call AgentOperationActivityCall) (*api.AgentOperationActivityResult, error)
 
 		// ExecuteAgentChildActivity prepares one child-agent run outside workflow
 		// code and returns the exact values recorded in workflow history.
@@ -514,6 +537,16 @@ type (
 		Input *api.ToolInput
 
 		// Options overrides the registered activity defaults for this invocation.
+		Options ActivityOptions
+	}
+
+	// AgentOperationActivityCall prepares one accepted direct Agent operation.
+	AgentOperationActivityCall struct {
+		// Name selects this Agent provider's registered preparation activity.
+		Name string
+		// Input is the exact accepted operation request without prepared history.
+		Input *api.RunInput
+		// Options selects the provider queue and activity execution settings.
 		Options ActivityOptions
 	}
 

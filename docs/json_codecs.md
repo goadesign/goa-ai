@@ -106,11 +106,16 @@ objects, arrays, maps with string or named-string keys, unions, and their named
 forms. Finite recursive values are supported; cyclic Go values are rejected
 before recursive conversion.
 
-An `Any` field explicitly represented as `json.RawMessage` through
+An `Any` or `Bytes` field explicitly represented as `json.RawMessage` through
 `Meta("struct:field:type", "json.RawMessage", "encoding/json")` retains open
 JSON values and exact numbers. Strict syntax, text and duplicate-key checks
 still apply inside those values; their members remain open. Encoding checks
 the raw bytes before returning a document and leaves the original bytes alone.
+A raw `Bytes` field retains protobuf bytes while its JSON codec writes the JSON
+value directly. Tagged union branches preserve JSON `null` as a selected raw
+value and still reject a missing value. Ordinary byte fields continue to use
+base64 JSON strings. Named raw types and separate raw branches keep their own
+Go types. Untagged unions cannot select branches with custom representations.
 
 Generation skips codec functions for a type if any other reachable field or branch,
 including an optional field, uses `Any`, custom Go representation metadata, or

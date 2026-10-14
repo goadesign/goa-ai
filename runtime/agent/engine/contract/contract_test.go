@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/engine/contract"
@@ -31,6 +32,7 @@ func TestNormalizeRootRequestOwnsValuesAndIdentifiesExactRetries(t *testing.T) {
 		Workflow:  "assistant",
 		TaskQueue: "agents",
 		Input: &api.RunInput{
+			Subject:   genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")},
 			RunID:     "run-1",
 			SeedEndID: "published",
 			Labels:    map[string]string{"tenant": "acme"},
@@ -73,7 +75,7 @@ func TestNormalizeRootRequestRejectsReservedMemo(t *testing.T) {
 		ID:        "run-1",
 		Workflow:  "assistant",
 		TaskQueue: "agents",
-		Input:     &api.RunInput{RunID: "run-1"},
+		Input:     &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run-1"},
 		Memo: map[string]engine.EncodedValue{
 			"goa_ai_engine_start_recipe_v1": {},
 		},
@@ -86,7 +88,7 @@ func TestNormalizeChildRequestOwnsInput(t *testing.T) {
 		ID:        "child-1",
 		Workflow:  "assistant-child",
 		TaskQueue: "agents",
-		Input:     &api.RunInput{RunID: "child-1", Labels: map[string]string{"tenant": "acme"}},
+		Input:     &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "child-1", Labels: map[string]string{"tenant": "acme"}},
 	}
 
 	owned, err := contract.NormalizeChildRequest(request)
@@ -101,8 +103,9 @@ func TestCustomAdapterIsolatesAttemptsAndReads(t *testing.T) {
 		Workflow:  "assistant",
 		TaskQueue: "agents",
 		Input: &api.RunInput{
-			RunID:  "run-1",
-			Labels: map[string]string{"tenant": "acme"},
+			Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")},
+			RunID:   "run-1",
+			Labels:  map[string]string{"tenant": "acme"},
 		},
 	})
 	require.NoError(t, err)
@@ -115,7 +118,8 @@ func TestCustomAdapterIsolatesAttemptsAndReads(t *testing.T) {
 	assert.Equal(t, "acme", secondInput.Labels["tenant"])
 
 	require.NoError(t, adapter.retainOutput(&api.RunOutput{
-		RunID: "run-1",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")},
+		RunID:   "run-1",
 		Final: &model.Message{
 			Role:  model.ConversationRoleAssistant,
 			Parts: []model.Part{model.TextPart{Text: "done"}},
@@ -131,7 +135,8 @@ func TestCustomAdapterIsolatesAttemptsAndReads(t *testing.T) {
 
 func TestCopyRunOutputOwnsValuesAndEnforcesLimit(t *testing.T) {
 	output := &api.RunOutput{
-		RunID: "run-1",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")},
+		RunID:   "run-1",
 		Final: &model.Message{
 			Role:  model.ConversationRoleAssistant,
 			Parts: []model.Part{model.TextPart{Text: "done"}},
@@ -143,7 +148,7 @@ func TestCopyRunOutputOwnsValuesAndEnforcesLimit(t *testing.T) {
 	output.Final.Parts[0] = model.TextPart{Text: changedValue}
 	assert.Equal(t, model.TextPart{Text: "done"}, copied.Final.Parts[0])
 
-	_, err = contract.CopyRunOutput(&api.RunOutput{RunID: strings.Repeat("x", engine.MaxPayloadBytes)})
+	_, err = contract.CopyRunOutput(&api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: strings.Repeat("x", engine.MaxPayloadBytes)})
 	assert.ErrorContains(t, err, "payloads exceed maximum aggregate size")
 }
 

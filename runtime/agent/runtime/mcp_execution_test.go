@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	genrecords "goa.design/goa-ai/internal/testpresentation/gen/records/toolsets/records"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 
 	"goa.design/goa-ai/internal/tooloperation"
 	"goa.design/goa-ai/runtime/agent/api"
@@ -81,10 +82,11 @@ func TestMCPInputSurvivesSuccessorRuns(t *testing.T) {
 				rt.toolsets["remote.tools"] = binding
 			}
 			install(rt)
-			firstInput := &RunInput{AgentID: "test.agent", RunID: "run-1", SessionID: "session-1", TurnID: "turn-1"}
+			firstInput := &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+				RunExecutorBranchAgent("test.agent"))}, RunID: "run-1", SessionID: "session-1", TurnID: "turn-1"}
 			seedRunMeta(t, rt, firstInput)
 			wfCtx := &testWorkflowContext{ctx: t.Context(), hookRuntime: rt, runtime: rt}
-			first, err := rt.runLoop(wfCtx, registration, firstInput, &workflowConversation{RunContext: run.Context{RunID: "run-1", SessionID: "session-1", TurnID: "turn-1", Attempt: 1}}, &PlanResult{ToolCalls: []ToolCall{{Name: spec.Name, ToolCallID: "original-call", Payload: rawjson.Message(`{"query":"original"}`)}}}, initialCaps(RunPolicy{MaxToolCalls: 1}), time.Time{}, time.Time{}, "turn-1", nil)
+			first, err := rt.runLoop(wfCtx, registration, firstInput, &workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{RunID: "run-1", SessionID: "session-1", TurnID: "turn-1", Attempt: 1}}, &PlanResult{ToolCalls: []ToolCall{{Name: spec.Name, ToolCallID: "original-call", Payload: rawjson.Message(`{"query":"original"}`)}}}, initialCaps(RunPolicy{MaxToolCalls: 1}), time.Time{}, time.Time{}, "turn-1", nil)
 			require.NoError(t, err)
 			require.NotNil(t, first.Suspension)
 			events, err := rt.ListRunEvents(t.Context(), "run-1", "", 100)
@@ -101,7 +103,8 @@ func TestMCPInputSurvivesSuccessorRuns(t *testing.T) {
 				if !stateOnly {
 					answers = map[string]json.RawMessage{requestID: json.RawMessage(`{"action":"accept","content":{"choice":"yes"}}`)}
 				}
-				input := &RunInput{AgentID: "test.agent", RunID: fmt.Sprintf("run-%d", successor), SessionID: "session-1", TurnID: fmt.Sprintf("turn-%d", successor), Continuation: &api.RunContinuationInput{Suspension: suspension, Response: &api.PendingInputResponse{MCP: &api.MCPInputResponse{ToolCallID: suspension.Pending[0].MCP.ToolCallID, Responses: answers}}}}
+				input := &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("test.agent"))}, RunID: fmt.Sprintf("run-%d", successor), SessionID: "session-1", TurnID: fmt.Sprintf("turn-%d", successor), Continuation: &api.RunContinuationInput{Suspension: suspension, Response: &api.PendingInputResponse{MCP: &api.MCPInputResponse{ToolCallID: suspension.Pending[0].MCP.ToolCallID, Responses: answers}}}}
 				require.NoError(t, restoreContinuationRunInput(input, checkpoint))
 				seedRunMeta(t, rt, input)
 				wfCtx = &testWorkflowContext{ctx: t.Context(), hookRuntime: rt, runtime: rt, plannerOutput: &PlanActivityOutput{PublicationBatchID: testPublicationBatchID, Result: &PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "done"}}}}}}}
@@ -118,7 +121,7 @@ func TestMCPInputSurvivesSuccessorRuns(t *testing.T) {
 						require.NotNil(t, out.Suspension)
 						require.Len(t, out.Suspension.Pending, 1)
 						assert.Equal(t, "after-result", out.Suspension.Pending[0].Await.Clarification.ID)
-						next := &RunInput{AgentID: input.AgentID, RunID: "run-4", SessionID: input.SessionID, TurnID: "turn-4", Continuation: &api.RunContinuationInput{Suspension: out.Suspension, Response: &api.PendingInputResponse{Clarification: &api.ClarificationAnswer{ID: "after-result", Answer: "yes"}}}}
+						next := &RunInput{Subject: input.Subject, RunID: "run-4", SessionID: input.SessionID, TurnID: "turn-4", Continuation: &api.RunContinuationInput{Suspension: out.Suspension, Response: &api.PendingInputResponse{Clarification: &api.ClarificationAnswer{ID: "after-result", Answer: "yes"}}}}
 						rt = New(rt.Store)
 						install(rt)
 						checkpoint, err := prepareContinuation(next, definition)
@@ -169,7 +172,7 @@ func TestMCPActivityRetryDoesNotChangeLocalTools(t *testing.T) {
 			rt.toolsets["lookup"] = binding
 			ctx := run.Context{RunID: "run-1", SessionID: "session-1", TurnID: "turn-1"}
 			wf := &testWorkflowContext{ctx: t.Context(), asyncResult: ToolOutput{Payload: []byte(`{}`)}}
-			_, _, err := rt.executeToolCalls(wf, "execute", engine.ActivityOptions{RetryPolicy: engine.RetryPolicy{MaxAttempts: 5}}, "test.agent", &ctx, testToolHistory(t, rt, "test.agent", ctx, nil), []ToolCall{{Name: spec.Name, ToolCallID: "call-1", Payload: []byte(`{}`)}}, 0, nil, time.Time{}, nil)
+			_, _, err := rt.executeToolCalls(nil, wf, "execute", engine.ActivityOptions{RetryPolicy: engine.RetryPolicy{MaxAttempts: 5}}, "test.agent", &ctx, testToolHistory(t, rt, "test.agent", ctx, nil), []ToolCall{{Name: spec.Name, ToolCallID: "call-1", Payload: []byte(`{}`)}}, 0, nil, time.Time{}, nil)
 			require.NoError(t, err)
 			want := 5
 			if remote {
@@ -185,8 +188,8 @@ func TestMCPActivityRetryDoesNotChangeLocalTools(t *testing.T) {
 func TestMCPCheckpointCorrelatesParallelCalls(t *testing.T) {
 	requests := map[string]mcp.InputRequest{"choice": {Method: "elicitation/create", Params: json.RawMessage(`{"message":"Choose","requestedSchema":{"type":"object","properties":{"value":{"type":"string"}},"required":["value"]}}`)}}
 	firstState, secondState := "first-state", "second-state"
-	first := ToolCall{Name: "remote.lookup", ToolCallID: "call-1", Payload: []byte(`{"key":"first"}`)}
-	second := ToolCall{Name: first.Name, ToolCallID: "call-2", Payload: []byte(`{"key":"second"}`)}
+	first := ToolCall{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, Name: "remote.lookup", ToolCallID: "call-1", Payload: []byte(`{"key":"first"}`)}
+	second := ToolCall{Subject: first.Subject, Name: first.Name, ToolCallID: "call-2", Payload: []byte(`{"key":"second"}`)}
 	inputs := []*mcp.InputRequired{{RequestState: &firstState, Requests: requests}, {RequestState: &secondState, Requests: requests}}
 	checkpoint := &workflowCheckpoint{Batch: checkpointStepBatch{Calls: []ToolCall{first, second}, Records: []checkpointToolRecord{{Call: first, MCPPending: mustPendingInput(t, inputs[0])}, {Call: second, MCPPending: mustPendingInput(t, inputs[1])}}}, Pending: []checkpointPendingInput{{MCP: pendingMCPInput(first, mustPendingInput(t, inputs[0]))}, {MCP: pendingMCPInput(second, mustPendingInput(t, inputs[1]))}}}
 	require.NoError(t, validateCheckpointMCPInputs(checkpoint))
@@ -226,7 +229,7 @@ func TestTextOnlyMCPInputBoundaries(t *testing.T) {
 					calls++
 					return AwaitMCPInput(input)
 				}}))
-				output, err := rt.ExecuteToolActivity(t.Context(), &ToolInput{ToolName: genrecords.Read, ToolsetName: "records", RunID: "run", ToolCallID: "read", Payload: []byte(`{"query":"active"}`), TextOnly: restricted})
+				output, err := rt.ExecuteToolActivity(t.Context(), &ToolInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("test.agent"))}, ToolName: genrecords.Read, ToolsetName: "records", RunID: "run", ToolCallID: "read", Payload: []byte(`{"query":"active"}`), TextOnly: restricted})
 				assert.Equal(t, 1, calls)
 				if restricted {
 					assert.Nil(t, output)
@@ -262,7 +265,7 @@ func TestTextOnlyExecutionContinuationCannotDispatch(t *testing.T) {
 	}}))
 	continuation, err := tooloperation.NewInput(&mcp.CallContinuation{})
 	require.NoError(t, err)
-	output, err := rt.ExecuteToolActivity(t.Context(), &ToolInput{ToolName: genrecords.Read, ToolsetName: "records", Payload: []byte(`{"query":"active"}`), TextOnly: true, ExecutionSequence: 1, ExecutionContinuation: continuation})
+	output, err := rt.ExecuteToolActivity(t.Context(), &ToolInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("test.agent"))}, ToolName: genrecords.Read, ToolsetName: "records", Payload: []byte(`{"query":"active"}`), TextOnly: true, ExecutionSequence: 1, ExecutionContinuation: continuation})
 	assert.Nil(t, output)
 	require.ErrorContains(t, err, "text-only calls cannot carry host input")
 	assert.True(t, engine.IsActivityErrorNonRetryable(err))

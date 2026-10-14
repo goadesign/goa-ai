@@ -109,8 +109,9 @@ func agentDesignRoots(roots []eval.Root) (*goaexpr.RootExpr, *agentsExpr.RootExp
 	return goaRoot, agentRoot
 }
 
-// modelTransportShape copies a tool input and marks fields supplied by the
-// runtime so model JSON cannot contain them.
+// modelTransportShape copies a tool input without the excluded fields. Generated
+// JSON conversions visit only the included fields, so callers can leave excluded
+// required objects and unions unset in the provider's existing Go payload.
 func modelTransportShape(att *goaexpr.AttributeExpr, hidden []string) *goaexpr.AttributeExpr {
 	if att == nil {
 		return nil
@@ -128,16 +129,14 @@ func modelTransportShape(att *goaexpr.AttributeExpr, hidden []string) *goaexpr.A
 		}
 	}
 
+	original := goaexpr.AsObject(att.Type)
 	obj := goaexpr.AsObject(newAtt.Type)
 	for _, fieldName := range hidden {
-		field := obj.Attribute(fieldName)
+		field := original.Attribute(fieldName)
 		if field == nil {
 			panic(fmt.Sprintf("model-hidden field %q is missing from the tool input", fieldName))
 		}
-		if field.Meta == nil {
-			field.Meta = make(goaexpr.MetaExpr)
-		}
-		field.Meta["struct:tag:json"] = []string{"-"}
+		obj.Delete(fieldName)
 		if newAtt.Validation != nil {
 			newAtt.Validation.RemoveRequired(fieldName)
 		}

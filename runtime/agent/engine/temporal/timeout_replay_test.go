@@ -93,7 +93,7 @@ func TestTemporalChildHandleReplaysSavedTimeoutFailures(t *testing.T) {
 			if oldGeneric {
 				failure = savedGenericTimeoutFailure()
 			}
-			history := retainedChildCompletionHistory()
+			history := retainedChildCompletionHistory(retainedOutputEncoding, retainedCurrentOutput)
 			succeeded := history.Events[6].GetChildWorkflowExecutionCompletedEventAttributes()
 			history.Events[6] = &historypb.HistoryEvent{
 				EventId: 7, EventType: enumspb.EVENT_TYPE_CHILD_WORKFLOW_EXECUTION_FAILED,

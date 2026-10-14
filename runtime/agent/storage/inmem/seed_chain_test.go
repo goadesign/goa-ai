@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/runlog"
 	"goa.design/goa-ai/runtime/agent/session"
@@ -35,10 +36,13 @@ func TestSeedChainLinearHistoryAndComposedReasoning(t *testing.T) {
 		if i > 0 {
 			kind = storage.SeedNextTurn
 		}
-		seed, err := store.BeginRunSeed(t.Context(), storage.SeedDeclaration{
-			AgentID: "agent", RunID: runID, SessionID: "session", CommandID: runID, AttemptID: runID, Kind: kind,
+		declaration := storage.SeedDeclaration{
+			Origin:  rootExecutionOrigin(runID),
+			Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, RunID: runID, SessionID: "session", CommandID: runID, AttemptID: runID, Kind: kind,
 			SourceRunID: previous, ExcludeReasoning: i == 1,
-		})
+		}
+		bindSeedTestOperation(t, store, declaration)
+		seed, err := store.BeginRunSeed(t.Context(), declaration)
 		require.NoError(t, err)
 		system := &model.Message{Role: model.ConversationRoleSystem, Parts: []model.Part{
 			model.TextPart{Text: fmt.Sprintf("system-%d", i)},
@@ -56,7 +60,7 @@ func TestSeedChainLinearHistoryAndComposedReasoning(t *testing.T) {
 		end = appendSeedChainLiteral(t, store, runID, end, "input", []*model.Message{fresh})
 		require.NoError(t, store.PublishRunSeed(t.Context(), appendSeedTestCompletion(t, store, seed.Declaration, end)))
 		start := session.RunStart{
-			AgentID: "agent", RunID: runID, SessionID: "session", SeedEndID: end, StartedAt: now,
+			Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, RunID: runID, SessionID: "session", SeedEndID: end, StartedAt: now,
 		}
 		_, err = store.StartRootRun(t.Context(), rootStartCommand(t, start))
 		require.NoError(t, err)
@@ -67,7 +71,7 @@ func TestSeedChainLinearHistoryAndComposedReasoning(t *testing.T) {
 		payload, err := transcript.EncodeRunLogDelta([]*model.Message{answer})
 		require.NoError(t, err)
 		_, err = store.AppendRunRecord(t.Context(), &runlog.Event{
-			RunID: runID, AgentID: "agent", SessionID: "session", EventKey: "answer",
+			RunID: runID, Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, SessionID: "session", EventKey: "answer",
 			Type: transcript.RunLogMessagesAppended, Payload: payload, Timestamp: now,
 		})
 		require.NoError(t, err)
