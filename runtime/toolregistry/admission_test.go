@@ -13,6 +13,7 @@ func TestValidateWireProtocolVersion(t *testing.T) {
 
 	require.NoError(t, ValidateWireProtocolVersion(WireProtocolVersion))
 	require.Error(t, ValidateWireProtocolVersion(0))
+	require.Error(t, ValidateWireProtocolVersion(14))
 	require.Error(t, ValidateWireProtocolVersion(WireProtocolVersion+1))
 }
 

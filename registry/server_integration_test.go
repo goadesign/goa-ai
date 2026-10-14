@@ -637,15 +637,15 @@ func TestServerGRPCStatusMappingsAndToolCallIDBoundary(t *testing.T) {
 		WireProtocolVersion: toolregistry.WireProtocolVersion,
 		Meta: &genregistry.ToolCallMeta{
 			RunID:      "run-1",
-			SessionID:  "session-1",
+			SessionID:  new("session-1"),
 			ToolCallID: "rejected-call",
-			Labels:     map[string]string{"facility": "allentown"},
+			Labels:     map[string]string{"application": "inventory"},
 		},
 	})
 	var serviceErr *goa.ServiceError
 	require.ErrorAs(t, err, &serviceErr)
 	assert.Equal(t, "call_not_admitted", serviceErr.Name)
-	require.Equal(t, map[string]string{"facility": "allentown"}, rejected.lastCall.Load().Meta.Labels)
+	require.Equal(t, map[string]string{"application": "inventory"}, rejected.lastCall.Load().Meta.Labels)
 	_, err = rejectedRawClient.CallTool(ctx, &registrypb.CallToolRequest{
 		Toolset:             strPtr("status-tools"),
 		Tool:                strPtr("status.lookup"),

@@ -213,6 +213,10 @@ uses the existing recovery-turn budget. See
   Catalogs retain resource ownership; applications authorize discovery and use.
   Registered imports derive distinct names for equal operations from different
   owners and retain original declarations for execution and replay.
+- **Standalone service operations.** Execute a registered service tool without
+  creating a session; sessionful calls retain their existing session. Protocol 15
+  requires coordinated registry, provider, and consumer upgrades; see
+  [session metadata and upgrade](docs/runtime.md#session-metadata-and-upgrade).
 - **Direct Agent operations.** Start typed operations before tool publication,
   using the same provider preparation and result contract as delegation. Providers
   can select literal messages or exact completed-run history with retained privacy

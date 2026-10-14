@@ -16,6 +16,7 @@ type (
 		RunID string
 
 		// SessionID groups related runs in one conversation or interaction.
+		// It is empty when this execution does not belong to a session.
 		SessionID string
 
 		// TurnID identifies the conversation turn that produced this call.

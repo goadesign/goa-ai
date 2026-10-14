@@ -6,6 +6,7 @@ package executor
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,72 +35,78 @@ func TestExecutorGeneratedClientPreservesExecutionOperations(t *testing.T) {
 	require.NoError(t, err)
 	cancel, err := tooloperation.NewTaskCancel("")
 	require.NoError(t, err)
-	for _, test := range []struct {
-		name      string
-		sequence  uint64
-		operation *api.ExecutionContinuation
-	}{
-		{"original", 0, nil},
-		{"input", 1, input},
-		{"task get", 2, get},
-		{"task update", 3, update},
-		{"task cancel", 4, cancel},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			const toolUseID = "generated-client-call"
-			deadline := testResultStreamExpiration(toolregistry.MaxToolCallWait)
-			expiration := testResultStreamExpiration(toolregistry.DefaultResultStreamTTL)
-			result := &genregistry.CallToolResult{ToolUseID: toolUseID, RegistrationToken: testRegistrationTokenA, ExecutionDeadline: deadline.Format(time.RFC3339Nano), ResultStreamExpiresAt: expiration.Format(time.RFC3339Nano)}
-			var admitted *genregistry.CallToolPayload
-			var retried *genregistry.RetryToolPayload
-			client := &genregistry.Client{
-				CallToolEndpoint: func(_ context.Context, value any) (any, error) {
-					admitted = value.(*genregistry.CallToolPayload)
-					return result, nil
-				},
-				RetryToolEndpoint: func(_ context.Context, value any) (any, error) {
-					retried = value.(*genregistry.RetryToolPayload)
-					return result, nil
-				},
-			}
-			stream := &fakeStream{t: t, requiredStart: "0", events: []*streaming.Event{
-				{ID: "1-0", EventName: toolregistry.ResultEventKey, Payload: mustJSON(t, toolregistry.NewToolResultRetryMessage(testRegistrationTokenA, toolUseID, toolregistry.ToolRetryReasonProviderOverloaded, toolregistry.ProviderOverloadRetryAfter))},
-				{ID: "2-0", EventName: toolregistry.ResultEventKey, Payload: mustJSON(t, toolregistry.NewToolResultMessage(testRegistrationTokenA, toolUseID, json.RawMessage(`{}`)))},
-			}}
-			exec := newExecutor(t, client, fakePulseClient{streamID: toolregistry.ResultStreamID(toolUseID), stream: stream}, "records", fakeSpecs{spec: &tools.ToolSpec{Name: "records.read"}})
-			out, err := exec.Execute(t.Context(), &agentsruntime.ToolCallMeta{RunID: "run", SessionID: "session", ToolCallID: "call", TurnID: "turn", ParentToolCallID: "parent", Labels: map[string]string{"scope": "selected"}}, &agentsruntime.ToolCall{Name: "records.read", Payload: []byte(`{"query":"active"}`), ExecutionSequence: test.sequence, ExecutionContinuation: test.operation})
-			require.NoError(t, err)
-			require.NotNil(t, out.ToolResult)
-			assert.Nil(t, out.ToolResult.Failure)
-			require.NotNil(t, admitted)
-			require.NotNil(t, retried)
-			assert.Equal(t, "records", admitted.Toolset)
-			assert.Equal(t, "records.read", admitted.Tool)
-			assert.JSONEq(t, `{"query":"active"}`, string(admitted.PayloadJSON))
-			assert.Equal(t, toolregistry.WireProtocolVersion, admitted.WireProtocolVersion)
-			assert.Equal(t, test.sequence, admitted.Meta.ExecutionSequence)
-			assert.Equal(t, "run", admitted.Meta.RunID)
-			assert.Equal(t, "session", admitted.Meta.SessionID)
-			assert.Equal(t, "call", admitted.Meta.ToolCallID)
-			assert.Equal(t, "turn", *admitted.Meta.TurnID)
-			assert.Equal(t, "parent", *admitted.Meta.ParentToolCallID)
-			assert.Equal(t, map[string]string{"scope": "selected"}, admitted.Meta.Labels)
-			if test.operation == nil {
-				assert.Nil(t, admitted.Meta.ExecutionContinuation)
-			} else {
-				encoded, err := gentooloperations.EncodeToolOperationExecutionContinuation(admitted.Meta.ExecutionContinuation)
+	for _, sessionID := range []string{"", "session"} {
+		for _, test := range []struct {
+			name      string
+			sequence  uint64
+			operation *api.ExecutionContinuation
+		}{
+			{"original", 0, nil},
+			{"input", 1, input},
+			{"task get", 2, get},
+			{"task update", 3, update},
+			{"task cancel", 4, cancel},
+		} {
+			t.Run(test.name+"/session="+sessionID, func(t *testing.T) {
+				const toolUseID = "generated-client-call"
+				deadline := testResultStreamExpiration(toolregistry.MaxToolCallWait)
+				expiration := testResultStreamExpiration(toolregistry.DefaultResultStreamTTL)
+				result := &genregistry.CallToolResult{ToolUseID: toolUseID, RegistrationToken: testRegistrationTokenA, ExecutionDeadline: deadline.Format(time.RFC3339Nano), ResultStreamExpiresAt: expiration.Format(time.RFC3339Nano)}
+				var admitted *genregistry.CallToolPayload
+				var retried *genregistry.RetryToolPayload
+				client := &genregistry.Client{
+					CallToolEndpoint: func(_ context.Context, value any) (any, error) {
+						admitted = value.(*genregistry.CallToolPayload)
+						return result, nil
+					},
+					RetryToolEndpoint: func(_ context.Context, value any) (any, error) {
+						retried = value.(*genregistry.RetryToolPayload)
+						return result, nil
+					},
+				}
+				stream := &fakeStream{t: t, requiredStart: "0", events: []*streaming.Event{
+					{ID: "1-0", EventName: toolregistry.ResultEventKey, Payload: mustJSON(t, toolregistry.NewToolResultRetryMessage(testRegistrationTokenA, toolUseID, toolregistry.ToolRetryReasonProviderOverloaded, toolregistry.ProviderOverloadRetryAfter))},
+					{ID: "2-0", EventName: toolregistry.ResultEventKey, Payload: mustJSON(t, toolregistry.NewToolResultMessage(testRegistrationTokenA, toolUseID, json.RawMessage(`{}`)))},
+				}}
+				exec := newExecutor(t, client, fakePulseClient{streamID: toolregistry.ResultStreamID(toolUseID), stream: stream}, "records", fakeSpecs{spec: &tools.ToolSpec{Name: "records.read"}})
+				out, err := exec.Execute(t.Context(), &agentsruntime.ToolCallMeta{RunID: "run", SessionID: sessionID, ToolCallID: "call", TurnID: "turn", ParentToolCallID: "parent", Labels: map[string]string{"scope": "selected"}}, &agentsruntime.ToolCall{Name: "records.read", Payload: []byte(`{"query":"active"}`), ExecutionSequence: test.sequence, ExecutionContinuation: test.operation})
 				require.NoError(t, err)
-				var operation api.ExecutionContinuation
-				require.NoError(t, json.Unmarshal(encoded, &operation))
-				assert.Equal(t, *test.operation, operation)
-			}
-			assert.Equal(t, testRegistrationTokenA, retried.ExpectedRegistrationToken)
-			assert.Equal(t, admitted.Meta, retried.Meta)
-			assert.Equal(t, admitted.Toolset, retried.Toolset)
-			assert.Equal(t, admitted.Tool, retried.Tool)
-			assert.Equal(t, admitted.PayloadJSON, retried.PayloadJSON)
-			assert.Equal(t, admitted.WireProtocolVersion, retried.WireProtocolVersion)
-		})
+				require.NotNil(t, out.ToolResult)
+				assert.Nil(t, out.ToolResult.Failure)
+				require.NotNil(t, admitted)
+				require.NotNil(t, retried)
+				assert.Equal(t, "records", admitted.Toolset)
+				assert.Equal(t, "records.read", admitted.Tool)
+				assert.JSONEq(t, `{"query":"active"}`, string(admitted.PayloadJSON))
+				assert.Equal(t, toolregistry.WireProtocolVersion, admitted.WireProtocolVersion)
+				assert.Equal(t, test.sequence, admitted.Meta.ExecutionSequence)
+				assert.Equal(t, "run", admitted.Meta.RunID)
+				if sessionID == "" {
+					assert.Nil(t, admitted.Meta.SessionID)
+				} else {
+					assert.Equal(t, new(sessionID), admitted.Meta.SessionID)
+				}
+				assert.Equal(t, "call", admitted.Meta.ToolCallID)
+				assert.Equal(t, "turn", *admitted.Meta.TurnID)
+				assert.Equal(t, "parent", *admitted.Meta.ParentToolCallID)
+				assert.Equal(t, map[string]string{"scope": "selected"}, admitted.Meta.Labels)
+				if test.operation == nil {
+					assert.Nil(t, admitted.Meta.ExecutionContinuation)
+				} else {
+					encoded, err := gentooloperations.EncodeToolOperationExecutionContinuation(admitted.Meta.ExecutionContinuation)
+					require.NoError(t, err)
+					var operation api.ExecutionContinuation
+					require.NoError(t, json.Unmarshal(encoded, &operation))
+					assert.Equal(t, *test.operation, operation)
+				}
+				assert.Equal(t, testRegistrationTokenA, retried.ExpectedRegistrationToken)
+				assert.Equal(t, admitted.Meta, retried.Meta)
+				assert.Equal(t, admitted.Toolset, retried.Toolset)
+				assert.Equal(t, admitted.Tool, retried.Tool)
+				assert.Equal(t, admitted.PayloadJSON, retried.PayloadJSON)
+				assert.Equal(t, admitted.WireProtocolVersion, retried.WireProtocolVersion)
+			})
+		}
 	}
 }
 
@@ -107,12 +114,13 @@ func TestExecutorGeneratedClientPreservesExecutionOperations(t *testing.T) {
 // request validation as calls with both identifiers, including overload recovery.
 func TestExecutorGeneratedClientPreservesOptionalIdentifiers(t *testing.T) {
 	for _, test := range []struct {
-		name, turn, parent string
+		name, session, turn, parent string
 	}{
 		{name: "both absent"},
 		{name: "turn only", turn: "turn"},
 		{name: "parent only", parent: "parent"},
 		{name: "both present", turn: "turn", parent: "parent"},
+		{name: "session present", session: "session"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			const toolUseID = "optional-identifiers-call"
@@ -145,13 +153,18 @@ func TestExecutorGeneratedClientPreservesOptionalIdentifiers(t *testing.T) {
 			}}
 			exec := newExecutor(t, client, fakePulseClient{streamID: toolregistry.ResultStreamID(toolUseID), stream: stream}, "records", fakeSpecs{spec: &tools.ToolSpec{Name: "records.read"}})
 			out, err := exec.Execute(t.Context(), &agentsruntime.ToolCallMeta{
-				RunID: "run", SessionID: "session", ToolCallID: "call", TurnID: test.turn, ParentToolCallID: test.parent,
+				RunID: "run", SessionID: test.session, ToolCallID: "call", TurnID: test.turn, ParentToolCallID: test.parent,
 			}, &agentsruntime.ToolCall{Name: "records.read", Payload: []byte(`{}`)})
 			require.NoError(t, err)
 			require.NotNil(t, out.ToolResult)
 			assert.Nil(t, out.ToolResult.Failure)
 			require.NotNil(t, admitted)
 			require.NotNil(t, retried)
+			if test.session == "" {
+				assert.Nil(t, admitted.Meta.SessionID)
+			} else {
+				assert.Equal(t, new(test.session), admitted.Meta.SessionID)
+			}
 			if test.turn == "" {
 				assert.Nil(t, admitted.Meta.TurnID)
 			} else {
@@ -168,6 +181,33 @@ func TestExecutorGeneratedClientPreservesOptionalIdentifiers(t *testing.T) {
 			empty := ""
 			admitted.Meta.TurnID = &empty
 			assert.Error(t, genregistrysrv.ValidateCallToolRequest(genregistryclient.NewProtoCallToolRequest(admitted)))
+		})
+	}
+}
+
+// Generated request validation accepts absent session membership but rejects a
+// present invalid identifier before any registry admission can run.
+func TestGeneratedRegistrySessionValidation(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		session *string
+		valid   bool
+	}{
+		{"absent", nil, true}, {"present", new("session"), true}, {"empty", new(""), false},
+		{"NUL", new("session\x00other"), false}, {"too long", new(strings.Repeat("x", toolregistry.MaxToolCallMetaIDLength+1)), false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			meta := &genregistry.ToolCallMeta{RunID: "run", ToolCallID: "call", SessionID: test.session}
+			call := &genregistry.CallToolPayload{Toolset: "records", Tool: "records.read", PayloadJSON: []byte(`{}`), Meta: meta, WireProtocolVersion: toolregistry.WireProtocolVersion}
+			resolved := &genregistry.CallResolvedToolPayload{Toolset: call.Toolset, Tool: call.Tool, PayloadJSON: call.PayloadJSON, Meta: meta, WireProtocolVersion: call.WireProtocolVersion, ExpectedRegistrationToken: testRegistrationTokenA}
+			retry := &genregistry.RetryToolPayload{Toolset: call.Toolset, Tool: call.Tool, PayloadJSON: call.PayloadJSON, Meta: meta, WireProtocolVersion: call.WireProtocolVersion, ExpectedRegistrationToken: testRegistrationTokenA}
+			for _, err := range []error{genregistrysrv.ValidateCallToolRequest(genregistryclient.NewProtoCallToolRequest(call)), genregistrysrv.ValidateCallResolvedToolRequest(genregistryclient.NewProtoCallResolvedToolRequest(resolved)), genregistrysrv.ValidateRetryToolRequest(genregistryclient.NewProtoRetryToolRequest(retry))} {
+				if test.valid {
+					assert.NoError(t, err)
+				} else {
+					assert.ErrorContains(t, err, "session_id")
+				}
+			}
 		})
 	}
 }

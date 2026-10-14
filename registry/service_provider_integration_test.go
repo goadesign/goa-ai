@@ -139,7 +139,7 @@ func TestDeclaredProviderServeLostReplyDrainAndAuthorityLoss(t *testing.T) {
 				call, err := client.CallResolvedTool(ctx, &genregistry.CallResolvedToolPayload{
 					Toolset: name, Tool: "inventory.lookup", ExpectedRegistrationToken: token,
 					PayloadJSON: []byte(`{"value":7}`), WireProtocolVersion: toolregistry.WireProtocolVersion,
-					Meta: &genregistry.ToolCallMeta{RunID: "service-run", SessionID: "service-session", ToolCallID: "read-inventory"},
+					Meta: &genregistry.ToolCallMeta{RunID: "service-run", SessionID: new("service-session"), ToolCallID: "read-inventory"},
 				})
 				require.NoError(t, err)
 				select {

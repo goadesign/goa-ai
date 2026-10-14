@@ -289,6 +289,9 @@ func (c *toolsetCatalog) RenewProvider(ctx context.Context, name, providerID, in
 		if entry.State != catalogEntryActive {
 			return fmt.Errorf("%w: admission is retired", errProviderLeaseLost)
 		}
+		if entry.WireProtocolVersion != toolregistry.WireProtocolVersion {
+			return fmt.Errorf("%w: admission uses another wire protocol", errProviderLeaseLost)
+		}
 		if entry.RegistrationToken != token {
 			return fmt.Errorf("%w: admission was replaced", errProviderLeaseLost)
 		}
@@ -609,7 +612,7 @@ func (c *toolsetCatalog) HealthIdentity(ctx context.Context, name string) (strin
 	if err != nil {
 		return "", 0, err
 	}
-	if routableProviderCount(entry, now) == 0 {
+	if entry.WireProtocolVersion != toolregistry.WireProtocolVersion || routableProviderCount(entry, now) == 0 {
 		return "", 0, errToolsetNotFound
 	}
 	return entry.RegistrationToken, entry.HealthEpoch, nil
@@ -656,6 +659,7 @@ func (c *toolsetCatalog) RecordPong(
 			}
 		}
 		if entry.State != catalogEntryActive ||
+			entry.WireProtocolVersion != toolregistry.WireProtocolVersion ||
 			entry.RegistrationToken != token ||
 			entry.HealthEpoch != epoch {
 			return nil

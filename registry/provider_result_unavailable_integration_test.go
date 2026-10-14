@@ -295,7 +295,7 @@ func unavailableCallPayload(name, callID string) *genregistry.CallToolPayload {
 	return &genregistry.CallToolPayload{
 		Toolset: name, Tool: "inventory.lookup", PayloadJSON: []byte(`{"value":7}`),
 		Meta: &genregistry.ToolCallMeta{
-			RunID: "result-unavailable-run", SessionID: "result-unavailable-session", ToolCallID: callID,
+			RunID: "result-unavailable-run", SessionID: new("result-unavailable-session"), ToolCallID: callID,
 		},
 		WireProtocolVersion: toolregistry.WireProtocolVersion,
 	}

@@ -365,7 +365,7 @@ func TestCallToolPayloadValidation(t *testing.T) {
 				WireProtocolVersion: toolregistry.WireProtocolVersion,
 				Meta: &genregistry.ToolCallMeta{
 					RunID:      "test-run",
-					SessionID:  "test-session",
+					SessionID:  new("test-session"),
 					ToolCallID: fmt.Sprintf("validation-%d", serviceTestSequence.Add(1)),
 				},
 			})
@@ -438,7 +438,7 @@ func TestCallToolDerivesGlobalTransportIdentity(t *testing.T) {
 		WireProtocolVersion: toolregistry.WireProtocolVersion,
 		Meta: &genregistry.ToolCallMeta{
 			RunID:            "run-1",
-			SessionID:        "session-1",
+			SessionID:        new("session-1"),
 			ToolCallID:       toolCallID,
 			TurnID:           nil,
 			ParentToolCallID: nil,
@@ -521,7 +521,7 @@ func TestRetryToolRejectsAdmissionRolloverBeforePublication(t *testing.T) {
 		WireProtocolVersion: toolregistry.WireProtocolVersion,
 		Meta: &genregistry.ToolCallMeta{
 			RunID:      "run-1",
-			SessionID:  "session-1",
+			SessionID:  new("session-1"),
 			ToolCallID: "tool-call-1",
 		},
 	}
@@ -604,7 +604,7 @@ func TestCallToolMapsPreAdmissionHealthFailures(t *testing.T) {
 				WireProtocolVersion: toolregistry.WireProtocolVersion,
 				Meta: &genregistry.ToolCallMeta{
 					RunID:      "run-1",
-					SessionID:  "test-session",
+					SessionID:  new("test-session"),
 					ToolCallID: "call-" + strings.ReplaceAll(test.name, " ", "-"),
 				},
 			}
@@ -668,7 +668,7 @@ func TestCallToolWaitsForHealthyProviderBeforeAdmission(t *testing.T) {
 		WireProtocolVersion: toolregistry.WireProtocolVersion,
 		Meta: &genregistry.ToolCallMeta{
 			RunID:      "run-1",
-			SessionID:  "session-1",
+			SessionID:  new("session-1"),
 			ToolCallID: "call-during-provider-handoff",
 		},
 	})
@@ -712,7 +712,7 @@ func TestCallToolCancellationDoesNotRejectWaitingCall(t *testing.T) {
 		WireProtocolVersion: toolregistry.WireProtocolVersion,
 		Meta: &genregistry.ToolCallMeta{
 			RunID:      "run-1",
-			SessionID:  "session-1",
+			SessionID:  new("session-1"),
 			ToolCallID: "canceled-provider-handoff",
 		},
 	}

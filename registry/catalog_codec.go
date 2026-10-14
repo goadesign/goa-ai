@@ -146,8 +146,9 @@ func marshalCatalogState(entry catalogState) (string, error) {
 	return string(body), nil
 }
 
-// parseCatalogState validates the current persistence contract. Definition bytes
-// and retirement history are not read or copied by health/lifecycle operations.
+// parseCatalogState validates saved catalog fields and their original identity.
+// A historical protocol version does not authorize current provider execution.
+// Definition bytes and retirement history are checked by snapshot loading.
 func parseCatalogState(name, body string) (catalogState, error) {
 	var entry catalogState
 	decoder := json.NewDecoder(strings.NewReader(body))
@@ -194,8 +195,8 @@ func parseCatalogState(name, body string) (catalogState, error) {
 	if err := toolregistry.ValidateAdmissionRevision(entry.AdmissionRevision); err != nil {
 		return catalogState{}, fmt.Errorf("toolset %q invalid admission revision: %w", name, err)
 	}
-	if err := toolregistry.ValidateWireProtocolVersion(entry.WireProtocolVersion); err != nil {
-		return catalogState{}, fmt.Errorf("toolset %q invalid wire protocol version: %w", name, err)
+	if entry.WireProtocolVersion <= 0 || entry.WireProtocolVersion > toolregistry.WireProtocolVersion {
+		return catalogState{}, fmt.Errorf("toolset %q invalid wire protocol version: %d", name, entry.WireProtocolVersion)
 	}
 	if err := toolregistry.ValidateRegistrationToken(entry.SchemaFingerprint); err != nil {
 		return catalogState{}, fmt.Errorf("toolset %q invalid schema fingerprint: %w", name, err)

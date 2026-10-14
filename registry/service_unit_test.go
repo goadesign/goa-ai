@@ -481,7 +481,7 @@ func TestCallToolEnsuresAdmissionWithActiveRegistrationToken(t *testing.T) {
 		WireProtocolVersion: toolregistry.WireProtocolVersion,
 		Meta: &genregistry.ToolCallMeta{
 			RunID:      "run-1",
-			SessionID:  "session-1",
+			SessionID:  new("session-1"),
 			ToolCallID: "call-1",
 		},
 	})
@@ -498,7 +498,7 @@ func TestCallToolEnsuresAdmissionWithActiveRegistrationToken(t *testing.T) {
 		WireProtocolVersion: toolregistry.WireProtocolVersion,
 		Meta: &genregistry.ToolCallMeta{
 			RunID:      "run-1",
-			SessionID:  "session-1",
+			SessionID:  new("session-1"),
 			ToolCallID: "call-1",
 		},
 	})
@@ -533,7 +533,7 @@ func TestCallToolRejectsUnpublishedCallWithoutProvider(t *testing.T) {
 		WireProtocolVersion: toolregistry.WireProtocolVersion,
 		Meta: &genregistry.ToolCallMeta{
 			RunID:      "run-1",
-			SessionID:  "session-1",
+			SessionID:  new("session-1"),
 			ToolCallID: "call-1",
 		},
 	})
@@ -552,7 +552,7 @@ func TestPrepareToolCallIdentityRejectsMalformedJSON(t *testing.T) {
 		[]byte(`{`),
 		&genregistry.ToolCallMeta{
 			RunID:      "run-1",
-			SessionID:  "session-1",
+			SessionID:  new("session-1"),
 			ToolCallID: "call-1",
 		},
 	)
@@ -567,9 +567,9 @@ func TestPrepareToolCallIdentityIncludesRunLabels(t *testing.T) {
 
 	meta := &genregistry.ToolCallMeta{
 		RunID:      "run-1",
-		SessionID:  "session-1",
+		SessionID:  new("session-1"),
 		ToolCallID: "call-1",
-		Labels:     map[string]string{"facility": "allentown"},
+		Labels:     map[string]string{"application": "inventory"},
 	}
 	prepared, err := prepareToolCallIdentity("test.toolset", "lookup", []byte(`{}`), meta)
 	require.NoError(t, err)
@@ -581,15 +581,15 @@ func TestPrepareToolCallIdentityIncludesRunLabels(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, plain.admissionDigest, prepared.admissionDigest)
 
-	meta.Labels["facility"] = "changed"
-	assert.Equal(t, "allentown", prepared.meta.Labels["facility"])
+	meta.Labels["application"] = "changed"
+	assert.Equal(t, "inventory", prepared.meta.Labels["application"])
 }
 
 // A new host-input round may repeat the same domain arguments. Its saved number
 // separates admission, while delivering that same round again keeps its identity.
 func TestPrepareToolCallIdentitySeparatesInputRounds(t *testing.T) {
 	t.Parallel()
-	meta := &genregistry.ToolCallMeta{RunID: "run-1", SessionID: "session-1", ToolCallID: "call-1"}
+	meta := &genregistry.ToolCallMeta{RunID: "run-1", SessionID: new("session-1"), ToolCallID: "call-1"}
 	initial, err := prepareToolCallIdentity("test.toolset", "lookup", []byte(`{"query":"same"}`), meta)
 	require.NoError(t, err)
 	seen := map[string]bool{initial.toolUseID: true}
@@ -613,7 +613,7 @@ func TestPrepareToolCallIdentitySeparatesInputRounds(t *testing.T) {
 // Repeated delivery of a Task operation reuses one immutable admission. A new
 // observation has a new sequence even when it reads the same Task identifier.
 func TestPrepareToolCallIdentitySeparatesTaskOperations(t *testing.T) {
-	meta := &genregistry.ToolCallMeta{RunID: "run", SessionID: "session", ToolCallID: "call", ExecutionSequence: 1}
+	meta := &genregistry.ToolCallMeta{RunID: "run", SessionID: new("session"), ToolCallID: "call", ExecutionSequence: 1}
 	get, err := tooloperation.NewTaskGet("")
 	require.NoError(t, err)
 	update, err := tooloperation.NewTaskUpdate("", map[string]json.RawMessage{})
@@ -651,7 +651,7 @@ func TestPrepareToolCallIdentityKeepsHostInputImmutable(t *testing.T) {
 	operation, err := tooloperation.NewInput(&mcp.CallContinuation{RequestState: &state, InputResponses: map[string]json.RawMessage{"question": answer}})
 	require.NoError(t, err)
 	meta := &genregistry.ToolCallMeta{
-		RunID: "run-1", SessionID: "session-1", ToolCallID: "call-1", ExecutionSequence: 1,
+		RunID: "run-1", SessionID: new("session-1"), ToolCallID: "call-1", ExecutionSequence: 1,
 		ExecutionContinuation: tooloperation.Value(operation),
 	}
 	prepared, err := prepareToolCallIdentity("test.toolset", "lookup", []byte(`{}`), meta)
@@ -836,7 +836,7 @@ func TestToolUseIDForCallUsesRequiredRunScopedIdentity(t *testing.T) {
 	callID := "model-call-1"
 	meta := &genregistry.ToolCallMeta{
 		RunID:      "run-1",
-		SessionID:  "session-1",
+		SessionID:  new("session-1"),
 		ToolCallID: callID,
 	}
 	assert.Equal(

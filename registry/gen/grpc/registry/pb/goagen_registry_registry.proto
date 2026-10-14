@@ -871,7 +871,8 @@ message CallToolRequest {
 message ToolCallMeta {
 	// Run identifier for the agent execution that issued this tool call.
 	optional string run_id = 1;
-	// Agent session identifier used to scope tool behavior and persistence.
+	// Session identifier when the execution belongs to a session; omitted for
+// standalone executions.
 	optional string session_id = 2;
 	// Turn identifier within the session.
 	optional string turn_id = 3;

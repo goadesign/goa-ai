@@ -225,6 +225,11 @@ func (h *healthTracker) healthFromEntry(entry catalogState, now time.Time) Tools
 		ProviderCount:      routableProviderCount(entry, now),
 		StalenessThreshold: h.stalenessThreshold,
 	}
+	// Historical leases remain available for cleanup but cannot receive work
+	// from this registry protocol, even when their last pong is recent.
+	if entry.WireProtocolVersion != toolregistry.WireProtocolVersion {
+		health.ProviderCount = 0
+	}
 	if entry.LastPongUnixNano != 0 {
 		health.LastPong = time.Unix(0, entry.LastPongUnixNano)
 		health.Age = now.Sub(health.LastPong)

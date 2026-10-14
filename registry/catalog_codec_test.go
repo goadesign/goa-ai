@@ -755,7 +755,7 @@ func TestTextOnlyRegistryAdmissionUsesGeneratedExecutionContract(t *testing.T) {
 	assert.NotContains(t, catalog.textOnlySchemas, genrecords.Show.String())
 	assert.NotContains(t, catalog.textOnlySchemas, genrecords.Erase.String())
 	service := &Service{healthTracker: unitHealthTracker{}}
-	registration := catalogEntry{Toolset: catalog, catalogState: catalogState{RegistrationToken: strings.Repeat("a", 64)}}
+	registration := catalogEntry{Toolset: catalog, catalogState: catalogState{RegistrationToken: strings.Repeat("a", 64), WireProtocolVersion: toolregistry.WireProtocolVersion}}
 	require.NoError(t, service.validatePreparedToolCall(t.Context(), preparedToolCall{toolset: "records", tool: genrecords.Read, payload: []byte(`{"query":"active"}`), meta: &toolregistry.ToolCallMeta{TextOnly: true}}, registration))
 	require.Error(t, service.validatePreparedToolCall(t.Context(), preparedToolCall{toolset: "records", tool: genrecords.Show, payload: []byte(`{}`), meta: &toolregistry.ToolCallMeta{TextOnly: true}}, registration))
 }

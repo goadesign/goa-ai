@@ -3045,7 +3045,7 @@ publication. Register applies the provider version check during startup.
 RenewProvider sends no version field: strict current-state validation and the
 exact expected token enforce the version admitted at startup. The earlier catalog
 layout split did not itself change protocol-10 identity. The current release uses
-wire protocol 14; its version participates in token derivation, so regenerated
+wire protocol 15; its version participates in token derivation, so regenerated
 declarations require current admission rather than reuse of old tokens.
 Incoming `run_id`, `session_id`, `turn_id`, `tool_call_id`, and
 `parent_tool_call_id` values are bounded to 256
@@ -3173,8 +3173,8 @@ wrappers and callbacks together. The generated method now returns
 `(*CompleteToolCallResult, error)` instead of only `error`; the response has a
 required `accepted` field. This changes the generated Go and gRPC response
 contracts. Providers must connect to a registry implementing that response
-before relying on it. For an installation already using current registry wire
-protocol 14, adopting this completion response leaves call records, provider
+before relying on it. For an installation already using registry wire
+protocol 14 or 15, adopting this completion response leaves call records, provider
 request messages, and terminal events unchanged. An installation upgrading from
 an earlier protocol must first drain accepted calls and old providers under the
 [executable ownership and upgrade instructions](#executable-ownership-and-upgrade).
@@ -4294,18 +4294,64 @@ For MCP services:
   packages; their constructors, adapters, and transport files are generated
   from the new contract.
 
+##### Session metadata and upgrade
+
+Registered tool calls always carry `run_id` and `tool_call_id`. `session_id` is
+present only when the execution belongs to a session. The generated registry
+contract rejects a present empty, NUL-containing, or oversized session identifier;
+it accepts omission for standalone execution. The provider message represents
+that absence as an empty `SessionID`. `StartToolOperation` continues to require
+a session, and `StartOneShotToolOperation` creates no session. Both execute the
+same selected provider contract and retain the original run, labels, invocation,
+and continuation identity.
+
+Registry wire protocol 15 updates this metadata contract. Protocol 14 providers
+reject sessionless messages, so do not mix registry, provider, and consumer
+versions. Drain accepted executable calls on their current workers, regenerate
+registry contracts and any designs importing the shared registry types, then
+deploy matching protocol 15 binaries and re-admit providers. Existing valid
+sessionful requests retain their behavior. The generated
+`genregistry.ToolCallMeta.SessionID` field changes from `string` to `*string`:
+use nil for no session and a pointer to a nonempty identifier for membership.
+Runtime `tools.ToolCallMeta` and provider `toolregistry.ToolCallMeta` keep their
+string fields; the shared executor performs the transport conversion.
+
+The catalog reloads historical registrations using their original positive wire
+version and exact token. It still rejects unknown future versions, malformed
+records, changed fingerprints, and mismatched tokens. Historical definitions
+remain available for discovery, resolution, retirement, and replacement, but
+cannot receive new calls, attach or renew providers, claim queued calls, or
+publish provider output. Their health is not ready. Completed call records may
+still replay their saved result through a current client without executing again.
+
+The protocol version participates in registration-token derivation. After old
+executable work and providers drain, use `ReplaceServiceToolset` with the saved
+registration token and a new replacement request identifier to create the
+protocol 15 registration. Ordinary `Register` also replaces its own old admission
+after all old leases have ended. Live old leases still block replacement; exact
+`DrainProvider` and `ReleaseProvider` remain available for orderly cleanup.
+The replacement preserves the previous token in permanent retirement history;
+old tokens cannot admit new protocol 15 calls. Preserve catalog records, retired-token history, and
+historical execution data. This change adds no storage conversion or suspension
+format change. Do not use historical record readability to run mixed-version
+workers: finish accepted protocol 14 work before replacing its registry. The [registry storage upgrade](#registry-storage-upgrade) remains
+necessary only for installations with the earlier combined catalog layout.
+Rollback requires matching old binaries and their old admission identities;
+protocol 14 cannot continue newly accepted standalone calls. Finish protocol 15
+work before rollback rather than routing it to older providers.
+
 ##### Registry storage upgrade
 
 The catalog layout split separates combined records into compact state, current
 definitions, and permanent retired tokens. That earlier change preserved
-protocol-10 identity. The current release additionally uses wire protocol 14
+protocol-10 identity. The current release additionally uses wire protocol 15
 and generated operation contracts. Treat layout conversion and protocol cutover
 as separate steps; matching wire versions alone do not make old and new catalog
 writers compatible. Do not delete the catalog or its retired-token history.
 
 The procedure below preserves data during the layout conversion. Before admitting
 work on the current release, settle old executable calls, regenerate complete
-declarations, and re-admit providers under wire protocol 14. Compare generated
+declarations, and re-admit providers under wire protocol 15. Compare generated
 fingerprints and preserve historical identity; a version-derived old token cannot
 serve as a new admission. See [current release actions](releases/v0.88.0.md#required-upgrade-actions).
 
@@ -7937,7 +7983,7 @@ continuation, publish an input prompt or retry an accepted tool operation.
 
 Generated MCP and native `BindTo` executors return this unfinished outcome to
 the agent runtime. Generated registry providers send the same host requests
-through registry wire protocol 14; the consumer returns the existing unfinished
+through registry wire protocol 15; the consumer returns the existing unfinished
 execution outcome. Only the completed branch runs tool-result transforms,
 bounds and server-only data conversion.
 The runtime saves the original tool arguments and opaque state in a version-14
@@ -7969,7 +8015,7 @@ compatible binaries, generated contracts and stored data; current suspensions
 cannot be resumed by the previous runtime. See the
 [complete release upgrade instructions](releases/v0.88.0.md#required-upgrade-actions).
 
-Registry wire protocol 14 carries a workflow-owned execution sequence and one
+Registry wire protocol 15 carries a workflow-owned execution sequence and one
 typed operation separately from tool arguments. The original tool call uses
 sequence zero; every new input continuation or Task operation advances it.
 Duplicate delivery retains the sequence and returns its saved outcome. Required

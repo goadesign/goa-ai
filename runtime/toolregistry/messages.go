@@ -39,8 +39,9 @@ type (
 		// It is absent on the original call and present on each later operation.
 		ExecutionContinuation *api.ExecutionContinuation `json:"execution_continuation,omitempty"`
 		RunID                 string                     `json:"run_id"`
-		SessionID             string                     `json:"session_id"`
-		TurnID                string                     `json:"turn_id,omitempty"`
+		// SessionID is empty when the execution does not belong to a session.
+		SessionID string `json:"session_id"`
+		TurnID    string `json:"turn_id,omitempty"`
 		// ToolCallID is the model/provider call identity. The registry preserves it
 		// as metadata and derives the separate global ToolUseID from RunID,
 		// ToolCallID and ExecutionSequence.
@@ -289,9 +290,8 @@ func ValidateToolCallMessage(message ToolCallMessage) error {
 		}
 		if message.Meta == nil ||
 			message.Meta.RunID == "" ||
-			message.Meta.SessionID == "" ||
 			message.Meta.ToolCallID == "" {
-			return fmt.Errorf("tool call run, session, and tool call metadata are required")
+			return fmt.Errorf("tool call run and tool call metadata are required")
 		}
 		if err := ValidateExecution(message.Meta.ExecutionSequence, message.Meta.ExecutionContinuation, message.Meta.TextOnly); err != nil {
 			return err

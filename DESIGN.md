@@ -1361,7 +1361,7 @@ var AnthropicRegistry = Registry("anthropic", func() {
 - **DSL registry source**: `Registry(...)` declares a remote catalog and `FromRegistry(...)` binds a toolset to it.
 - **Generated registry client**: `gen/<svc>/registry/<name>/` contains the agent-side client/helpers for one declared DSL registry source.
 - **Registry wire protocol**: `runtime/toolregistry/` defines the Pulse stream names, message envelopes, and output-delta context used by providers, executors, and the clustered gateway.
-  Registry protocol 13 carries workflow-owned operation sequences and host answers
+  Registry protocol 15 carries workflow-owned operation sequences and host answers
   outside model arguments. Each service round has its own admission identity;
   duplicate delivery of that round reuses the saved outcome. Required input is
   exclusive with completed result data, errors, retries, bounds and server data.
@@ -1602,6 +1602,18 @@ or capability negotiation. Consumers never register, but every `CallTool` and
 protocol bytes.
 Every replica with the same contract shares the revision across scaling and
 RollingUpdate; a revision changes only when a new execution fence is intended.
+Registry protocol 15 permits standalone tool executions without session membership.
+Run and tool-call identifiers remain required. A supplied session identifier is
+validated before admission; sessionful runtime entry points still require a session.
+The runtime carries the accepted session unchanged, while standalone executions
+carry no session. See [session metadata and upgrade](docs/runtime.md#session-metadata-and-upgrade)
+for generated source changes and coordinated cutover.
+Catalog loading validates the saved structure and original token independently
+from current execution compatibility. Historical registrations retain their exact
+version, definition, and retirement history. They remain readable and replaceable;
+only current-protocol registrations can acquire provider authority or receive
+new work. Completed results replay without reopening that authority.
+
 The registry rejects a missing or mismatched wire version with
 `validation_error` before creating streams, mutating catalog state, admitting a
 lease, or scheduling health checks. The catalog privately owns three kinds of durable Redis data:
@@ -1856,7 +1868,7 @@ run-scoped decision is retained, so the executor may safely replan. Generated
 decision record. Errors after request publication remain ambiguous and produce
 `outcome_unknown`, which forbids replacement execution because an effect may
 have occurred.
-The explicit decision record is wire protocol version 13. Registry replicas,
+The explicit decision record uses wire protocol version 15. Registry replicas,
 providers, and consumers use that exact protocol. Records with another shape
 are rejected and never rewritten.
 The earlier protocol-8/9 transition changed message and call-record contracts;
@@ -3351,7 +3363,7 @@ pending observations and retries temporary delivery failures without a total
 cleanup deadline. Temporal's history rollover hint carries the same request into
 a fresh execution with the same observation delay. Contract conflicts fail
 instead of retrying indefinitely.
-The in-memory engine mirrors acceptance and retry rules without durability. Registry protocol 13 and suspension version 14 reject prior
+The in-memory engine mirrors acceptance and retry rules without durability. Registry protocol 15 and suspension version 14 reject prior
 contracts; providers, consumers and workers must migrate together.
 
 A suspended run has one exclusive `RunMeta.SuspensionResolution`: nil while
