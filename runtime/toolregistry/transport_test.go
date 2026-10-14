@@ -309,3 +309,32 @@ func TestToolResultRetryMessageJSONContainsOnlyRetryControl(t *testing.T) {
 	require.NotNil(t, decoded.Retry)
 	assert.Nil(t, decoded.Error)
 }
+
+// Provider messages retain required execution identity even when the execution
+// has no session. A supplied session still has the ordinary identifier checks.
+func TestValidateToolCallMessageSessionMembership(t *testing.T) {
+	for _, test := range []struct {
+		name, session string
+		valid         bool
+	}{
+		{"absent", "", true}, {"present", "session", true}, {"NUL", "session\x00other", false},
+		{"too long", strings.Repeat("x", MaxToolCallMetaIDLength+1), false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			message := validToolCallMessage()
+			message.Meta.SessionID = test.session
+			if test.valid {
+				require.NoError(t, ValidateToolCallMessage(message))
+			} else {
+				require.ErrorContains(t, ValidateToolCallMessage(message), "session ID")
+			}
+		})
+	}
+	message := validToolCallMessage()
+	message.Meta.SessionID = ""
+	message.Meta.RunID = ""
+	require.Error(t, ValidateToolCallMessage(message))
+	message.Meta.RunID = "run"
+	message.Meta.ToolCallID = ""
+	require.Error(t, ValidateToolCallMessage(message))
+}

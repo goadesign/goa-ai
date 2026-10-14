@@ -59,6 +59,22 @@ func (s *Service) AttachProvider(ctx context.Context, p *genregistry.AttachProvi
 	if err := toolregistry.ValidateWireProtocolVersion(p.WireProtocolVersion); err != nil {
 		return nil, genregistry.MakeValidationError(err)
 	}
+	// Check the saved registration before creating its request stream. The
+	// catalog repeats this check when it commits the lease, so replacement
+	// cannot turn an incompatible selection into an attached provider.
+	selected, err := s.catalog.snapshot(ctx, p.Name)
+	if err != nil {
+		if errors.Is(err, errToolsetNotFound) {
+			return nil, genregistry.MakeAdmissionConflict(err)
+		}
+		return nil, genregistry.MakeServiceUnavailable(err)
+	}
+	if selected.State == catalogEntryRetired {
+		return nil, genregistry.MakeAdmissionRetired(errAdmissionRetired)
+	}
+	if selected.WireProtocolVersion != toolregistry.WireProtocolVersion {
+		return nil, genregistry.MakeAdmissionConflict(errors.New("selected registration uses another wire protocol"))
+	}
 	if _, _, err := s.streamManager.GetOrCreateStream(ctx, p.Name); err != nil {
 		return nil, genregistry.MakeServiceUnavailable(err)
 	}
@@ -303,7 +319,7 @@ func (c *toolsetCatalog) AttachProvider(ctx context.Context, name, token, provid
 		if err != nil {
 			return catalogState{}, err
 		}
-		if state.NativeAgent || state.RegistrationToken != token {
+		if state.NativeAgent || state.RegistrationToken != token || state.WireProtocolVersion != toolregistry.WireProtocolVersion {
 			return catalogState{}, errAdmissionConflict
 		}
 		if state.State == catalogEntryRetired {

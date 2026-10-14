@@ -25,7 +25,7 @@ var ToolCallMeta = Type("ToolCallMeta", func() {
 		Pattern(`^[^\x00]+$`)
 		Example("run_01J3K9Q9T6E2G7N0G2ZQH2KX1A")
 	})
-	Field(2, "session_id", String, "Agent session identifier used to scope tool behavior and persistence.", func() {
+	Field(2, "session_id", String, "Session identifier when the execution belongs to a session; omitted for standalone executions.", func() {
 		MinLength(1)
 		MaxLength(toolregistry.MaxToolCallMetaIDLength)
 		Pattern(`^[^\x00]+$`)
@@ -55,7 +55,7 @@ var ToolCallMeta = Type("ToolCallMeta", func() {
 	Field(7, "text_only", Boolean, "Accepted execution restriction prohibiting UI output or external interaction.", func() { Default(false) })
 	Field(8, "execution_sequence", UInt64, "Sequence of the runtime-selected operation on this tool invocation. Zero identifies the original tool call; each new continuation advances it, while repeated delivery retains the same sequence.", func() { Default(uint64(0)) })
 	Field(9, "execution_continuation", operationtypes.ExecutionContinuation, "The exact runtime-selected operation and its data; absent on the original tool call.")
-	Required("run_id", "session_id", "tool_call_id")
+	Required("run_id", "tool_call_id")
 })
 
 // ProviderToolCallClaimPayload identifies the provider lease and claimed invocation.

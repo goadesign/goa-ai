@@ -233,28 +233,41 @@ func TestSchemaFingerprintBindsExecutionPayloadSchema(t *testing.T) {
 	assert.NotEqual(t, firstFingerprint, secondFingerprint)
 }
 
-func TestCatalogRejectsPersistedMismatchedWireProtocol(t *testing.T) {
+func TestCatalogValidatesSavedWireProtocolIdentity(t *testing.T) {
 	t.Parallel()
-
-	entry, err := newToolsetCatalog(
-		newTestCatalogMap(),
-		newTestTimeSource(time.Unix(1_700_000_000, 0)),
-	).Register(
-		context.Background(),
-		testCatalogDefinition(t, testCatalogToolset("test.toolset", "test", nil)),
-		testAdmissionRevisionA,
-		"provider",
-		testIncarnationA,
-		time.Minute,
-	)
+	entry, err := newToolsetCatalog(newTestCatalogMap(), newTestTimeSource(time.Unix(1_700_000_000, 0))).Register(context.Background(), testCatalogDefinition(t, testCatalogToolset("test.toolset", "test", nil)), testAdmissionRevisionA, "provider", testIncarnationA, time.Minute)
 	require.NoError(t, err)
-	assert.Equal(t, toolregistry.WireProtocolVersion, entry.WireProtocolVersion)
-
-	entry.WireProtocolVersion++
-	body, err := marshalCatalogState(entry)
-	require.NoError(t, err)
-	_, err = parseCatalogState("test.toolset", body)
-	require.ErrorContains(t, err, "invalid wire protocol version")
+	for _, test := range []struct {
+		name      string
+		version   int
+		tampered  bool
+		wantError string
+	}{
+		{name: "current", version: toolregistry.WireProtocolVersion},
+		{name: "historical", version: 14},
+		{name: "zero", version: 0, wantError: "invalid wire protocol version"},
+		{name: "negative", version: -1, wantError: "invalid wire protocol version"},
+		{name: "future", version: toolregistry.WireProtocolVersion + 1, wantError: "invalid wire protocol version"},
+		{name: "historical token tampered", version: 14, tampered: true, wantError: "registration token"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			saved := entry
+			saved.WireProtocolVersion = test.version
+			if test.version > 0 && !test.tampered {
+				saved.RegistrationToken, err = admissionRegistrationToken(saved.SchemaFingerprint, saved.AdmissionRevision, test.version)
+				require.NoError(t, err)
+			}
+			body, err := marshalCatalogState(saved)
+			require.NoError(t, err)
+			decoded, err := parseCatalogState("test.toolset", body)
+			if test.wantError != "" {
+				require.ErrorContains(t, err, test.wantError)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, saved, decoded)
+		})
+	}
 }
 
 func TestCatalogValidatesEveryPersistedEntry(t *testing.T) {

@@ -377,7 +377,7 @@ func transitionCallPayload(toolset, callID string) *genregistry.CallToolPayload 
 		PayloadJSON: []byte(`{"query":"status"}`),
 		Meta: &genregistry.ToolCallMeta{
 			RunID:      "transition-run",
-			SessionID:  "transition-session",
+			SessionID:  new("transition-session"),
 			ToolCallID: callID,
 		},
 		WireProtocolVersion: toolregistry.WireProtocolVersion,

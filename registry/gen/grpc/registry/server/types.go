@@ -1583,8 +1583,8 @@ func ValidateAttachProviderRequest(message *registrypb.AttachProviderRequest) (e
 		err = goa.MergeErrors(err, goa.ValidateFormat("message.provider_incarnation_id", *message.ProviderIncarnationId, goa.FormatUUID))
 	}
 	if message.WireProtocolVersion != nil {
-		if !(*message.WireProtocolVersion == 14) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{14}))
+		if !(*message.WireProtocolVersion == 15) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{15}))
 		}
 	}
 	return
@@ -1649,8 +1649,8 @@ func ValidateRegisterRequest(message *registrypb.RegisterRequest) (err error) {
 		err = goa.MergeErrors(err, goa.ValidateFormat("message.provider_incarnation_id", *message.ProviderIncarnationId, goa.FormatUUID))
 	}
 	if message.WireProtocolVersion != nil {
-		if !(*message.WireProtocolVersion == 14) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{14}))
+		if !(*message.WireProtocolVersion == 15) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{15}))
 		}
 	}
 	if message.SchemaFingerprint != nil {
@@ -2027,8 +2027,8 @@ func ValidateCallToolRequest(message *registrypb.CallToolRequest) (err error) {
 		}
 	}
 	if message.WireProtocolVersion != nil {
-		if !(*message.WireProtocolVersion == 14) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{14}))
+		if !(*message.WireProtocolVersion == 15) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{15}))
 		}
 	}
 	return
@@ -2039,9 +2039,6 @@ func ValidateCallToolRequest(message *registrypb.CallToolRequest) (err error) {
 func validateregistry_registry_ToolCallMeta_At_meta(meta *registrypb.ToolCallMeta) (err error) {
 	if meta.RunId == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("run_id", "meta"))
-	}
-	if meta.SessionId == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("session_id", "meta"))
 	}
 	if meta.ToolCallId == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("tool_call_id", "meta"))
@@ -2208,8 +2205,8 @@ func ValidateCallResolvedToolRequest(message *registrypb.CallResolvedToolRequest
 		}
 	}
 	if message.WireProtocolVersion != nil {
-		if !(*message.WireProtocolVersion == 14) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{14}))
+		if !(*message.WireProtocolVersion == 15) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{15}))
 		}
 	}
 	return
@@ -2265,8 +2262,8 @@ func ValidateRetryToolRequest(message *registrypb.RetryToolRequest) (err error) 
 		}
 	}
 	if message.WireProtocolVersion != nil {
-		if !(*message.WireProtocolVersion == 14) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{14}))
+		if !(*message.WireProtocolVersion == 15) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("message.wire_protocol_version", *message.WireProtocolVersion, []any{15}))
 		}
 	}
 	return
@@ -3295,7 +3292,7 @@ func transformToolsetInfoToProtoToolsetInfo(v *registry.ToolsetInfo) *registrypb
 func transformProtoToolCallMetaToToolCallMeta(v *registrypb.ToolCallMeta) *registry.ToolCallMeta {
 	res := &registry.ToolCallMeta{
 		RunID:            *v.RunId,
-		SessionID:        *v.SessionId,
+		SessionID:        v.SessionId,
 		TurnID:           v.TurnId,
 		ToolCallID:       *v.ToolCallId,
 		ParentToolCallID: v.ParentToolCallId,

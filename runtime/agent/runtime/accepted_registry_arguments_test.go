@@ -37,7 +37,7 @@ func TestResolvedRegistryClientPreservesProviderArgumentsAcrossRetry(t *testing.
 		received = append(received, restored)
 		return &genregistry.CallToolResult{RegistrationToken: token}, nil
 	}}}
-	payload := &genregistry.CallToolPayload{Toolset: "provider.records", Tool: "records.read", PayloadJSON: enriched, Meta: &genregistry.ToolCallMeta{RunID: "root", SessionID: "session", ToolCallID: "call", ExecutionSequence: 1}, WireProtocolVersion: toolregistry.WireProtocolVersion}
+	payload := &genregistry.CallToolPayload{Toolset: "provider.records", Tool: "records.read", PayloadJSON: enriched, Meta: &genregistry.ToolCallMeta{RunID: "root", SessionID: new("session"), ToolCallID: "call", ExecutionSequence: 1}, WireProtocolVersion: toolregistry.WireProtocolVersion}
 	_, err := client.CallTool(t.Context(), payload)
 	require.NoError(t, err)
 	_, err = client.RetryTool(t.Context(), &genregistry.RetryToolPayload{ExpectedRegistrationToken: token, Toolset: payload.Toolset, Tool: payload.Tool, PayloadJSON: payload.PayloadJSON, Meta: payload.Meta, WireProtocolVersion: payload.WireProtocolVersion})

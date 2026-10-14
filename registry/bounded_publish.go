@@ -15,6 +15,8 @@ import (
 	"fmt"
 
 	"github.com/redis/go-redis/v9"
+
+	"goa.design/goa-ai/runtime/toolregistry"
 )
 
 const (
@@ -51,7 +53,7 @@ var (
 // [3]=optional catalog content hash
 // ARGV: [1]=queue bound (0 = unbounded) [2]=event name [3]=payload
 // [4]=admission digest (empty for ordinary publication) [5]=overload event ID
-// [6]=catalog field [7]=registration token
+// [6]=catalog field [7]=registration token [8]=current provider wire protocol
 var boundedPublishScript = redis.NewScript(`
 local admitted = ARGV[4] ~= ""
 if admitted then
@@ -80,7 +82,8 @@ if admitted then
         return redis.error_reply("ROUTINGUNAVAILABLE")
     end
     local entry = cjson.decode(raw)
-    if entry.state ~= "active" or entry.registration_token ~= ARGV[7] then
+    if entry.state ~= "active" or entry.registration_token ~= ARGV[7]
+    or entry.wire_protocol_version ~= tonumber(ARGV[8]) then
         return redis.error_reply("ROUTINGUNAVAILABLE")
     end
     local routable = false
@@ -247,6 +250,7 @@ func publishAdmittedBounded(
 		overloadEventID,
 		admission.catalogField,
 		admission.registrationToken,
+		toolregistry.WireProtocolVersion,
 	).Slice()
 	if err != nil {
 		switch {

@@ -223,13 +223,15 @@ func (e *Executor) Execute(ctx context.Context, meta *toolregistry.ToolCallMeta,
 			ExecutionSequence:     tmeta.ExecutionSequence,
 			ExecutionContinuation: tooloperation.Value(tmeta.ExecutionContinuation),
 			RunID:                 tmeta.RunID,
-			SessionID:             tmeta.SessionID,
 			ToolCallID:            tmeta.ToolCallID,
 			Labels:                tmeta.Labels,
 		},
 	}
-	// Empty optional identifiers mean this call has no turn or parent. Omit
+	// Empty optional identifiers mean this call has no session, turn or parent. Omit
 	// them from the generated request; present identifiers keep Goa validation.
+	if tmeta.SessionID != "" {
+		payload.Meta.SessionID = &tmeta.SessionID
+	}
 	if tmeta.TurnID != "" {
 		payload.Meta.TurnID = &tmeta.TurnID
 	}

@@ -1106,7 +1106,7 @@ func prepareToolCallIdentity(
 		ExecutionSequence:     meta.ExecutionSequence,
 		ExecutionContinuation: continuation,
 		RunID:                 meta.RunID,
-		SessionID:             meta.SessionID,
+		SessionID:             derefString(meta.SessionID),
 		TurnID:                derefString(meta.TurnID),
 		ToolCallID:            meta.ToolCallID,
 		ParentToolCallID:      derefString(meta.ParentToolCallID),
@@ -1152,6 +1152,9 @@ func (s *Service) validatePreparedToolCall(
 ) error {
 	if registration.NativeAgent {
 		return genregistry.MakeValidationError(errors.New("native Agent tools execute as child workflows, not Pulse calls"))
+	}
+	if err := toolregistry.ValidateWireProtocolVersion(registration.WireProtocolVersion); err != nil {
+		return genregistry.MakeValidationError(err)
 	}
 	if prepared.expectedRegistrationToken != "" &&
 		prepared.expectedRegistrationToken != registration.RegistrationToken {

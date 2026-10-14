@@ -92,7 +92,8 @@ if not raw then
   return redis.error_reply("PROVIDERLEASECHANGED")
 end
 local entry = cjson.decode(raw)
-if entry.registration_token ~= ARGV[4] then
+if entry.registration_token ~= ARGV[4]
+or entry.wire_protocol_version ~= tonumber(ARGV[11]) then
   return redis.error_reply("PROVIDERLEASECHANGED")
 end
 local lease = entry.provider_leases[ARGV[5]]
@@ -167,7 +168,8 @@ if not raw then
   return redis.error_reply("PROVIDERLEASECHANGED")
 end
 local entry = cjson.decode(raw)
-if entry.registration_token ~= ARGV[4] then
+if entry.registration_token ~= ARGV[4]
+or entry.wire_protocol_version ~= tonumber(ARGV[12]) then
   return redis.error_reply("PROVIDERLEASECHANGED")
 end
 local lease = entry.provider_leases[ARGV[5]]
@@ -249,7 +251,8 @@ if not raw then
   return redis.error_reply("PROVIDERLEASECHANGED")
 end
 local entry = cjson.decode(raw)
-if entry.registration_token ~= ARGV[4] then
+if entry.registration_token ~= ARGV[4]
+or entry.wire_protocol_version ~= tonumber(ARGV[11]) then
   return redis.error_reply("PROVIDERLEASECHANGED")
 end
 local lease = entry.provider_leases[ARGV[5]]
@@ -292,7 +295,8 @@ if not raw then
   return redis.error_reply("PROVIDERLEASECHANGED")
 end
 local entry = cjson.decode(raw)
-if entry.registration_token ~= ARGV[4] then
+if entry.registration_token ~= ARGV[4]
+or entry.wire_protocol_version ~= tonumber(ARGV[13]) then
   return redis.error_reply("PROVIDERLEASECHANGED")
 end
 local lease = entry.provider_leases[ARGV[5]]
@@ -550,6 +554,7 @@ func (s *callAdmissionStore) Complete(
 		toolregistry.ResultEventKey,
 		payload,
 		toolregistry.ResultStreamMaxLen,
+		toolregistry.WireProtocolVersion,
 	).Slice()
 	if err != nil {
 		switch {
@@ -620,6 +625,7 @@ func (s *callAdmissionStore) Claim(
 		hex.EncodeToString(digest[:]),
 		toolregistry.ResultStreamMaxLen,
 		claimOperationID,
+		toolregistry.WireProtocolVersion,
 	).Int()
 	if err != nil {
 		switch {
@@ -670,6 +676,7 @@ func (s *callAdmissionStore) PublishLiveEvent(
 		payload,
 		toolregistry.MaxToolOutputDeltaCount,
 		toolregistry.ResultStreamMaxLen,
+		toolregistry.WireProtocolVersion,
 	).Int()
 	if err != nil {
 		switch {
@@ -721,6 +728,7 @@ func (s *callAdmissionStore) ReportOverload(
 		hex.EncodeToString(staleDigest[:]),
 		toolregistry.ProviderOverloadRetryAfter.Milliseconds(),
 		toolregistry.ResultStreamMaxLen,
+		toolregistry.WireProtocolVersion,
 	).Int()
 	if err != nil {
 		switch {

@@ -837,8 +837,9 @@ type TextOnlyToolContract struct {
 type ToolCallMeta struct {
 	// Run identifier for the agent execution that issued this tool call.
 	RunID string
-	// Agent session identifier used to scope tool behavior and persistence.
-	SessionID string
+	// Session identifier when the execution belongs to a session; omitted for
+	// standalone executions.
+	SessionID *string
 	// Turn identifier within the session.
 	TurnID *string
 	// Tool call identifier used for correlation with model provider tool calls.
@@ -1511,8 +1512,8 @@ func validatejsonAttachProviderPayloadTransport(value *jsonAttachProviderPayload
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.provider_incarnation_id", *value.ProviderIncarnationID, goa.FormatUUID))
 	}
 	if value.WireProtocolVersion != nil {
-		if !(int(*value.WireProtocolVersion) == 14) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.wire_protocol_version", int(*value.WireProtocolVersion), []any{14}))
+		if !(int(*value.WireProtocolVersion) == 15) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.wire_protocol_version", int(*value.WireProtocolVersion), []any{15}))
 		}
 	}
 	return err
@@ -1591,8 +1592,8 @@ func validatejsonCallResolvedToolPayloadTransport(value *jsonCallResolvedToolPay
 		}
 	}
 	if value.WireProtocolVersion != nil {
-		if !(int(*value.WireProtocolVersion) == 14) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.wire_protocol_version", int(*value.WireProtocolVersion), []any{14}))
+		if !(int(*value.WireProtocolVersion) == 15) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.wire_protocol_version", int(*value.WireProtocolVersion), []any{15}))
 		}
 	}
 	return err
@@ -1663,8 +1664,8 @@ func validatejsonCallToolPayloadTransport(value *jsonCallToolPayloadTransport) (
 		}
 	}
 	if value.WireProtocolVersion != nil {
-		if !(int(*value.WireProtocolVersion) == 14) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.wire_protocol_version", int(*value.WireProtocolVersion), []any{14}))
+		if !(int(*value.WireProtocolVersion) == 15) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.wire_protocol_version", int(*value.WireProtocolVersion), []any{15}))
 		}
 	}
 	return err
@@ -2914,8 +2915,8 @@ func validatejsonRegisterPayloadTransport(value *jsonRegisterPayloadTransport) (
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.provider_incarnation_id", *value.ProviderIncarnationID, goa.FormatUUID))
 	}
 	if value.WireProtocolVersion != nil {
-		if !(int(*value.WireProtocolVersion) == 14) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.wire_protocol_version", int(*value.WireProtocolVersion), []any{14}))
+		if !(int(*value.WireProtocolVersion) == 15) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.wire_protocol_version", int(*value.WireProtocolVersion), []any{15}))
 		}
 	}
 	if value.SchemaFingerprint != nil {
@@ -3351,8 +3352,8 @@ func validatejsonRetryToolPayloadTransport(value *jsonRetryToolPayloadTransport)
 		}
 	}
 	if value.WireProtocolVersion != nil {
-		if !(int(*value.WireProtocolVersion) == 14) {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.wire_protocol_version", int(*value.WireProtocolVersion), []any{14}))
+		if !(int(*value.WireProtocolVersion) == 15) {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.wire_protocol_version", int(*value.WireProtocolVersion), []any{15}))
 		}
 	}
 	return err
@@ -3642,8 +3643,9 @@ func validatejsonToolBoundsTransport(value *jsonToolBoundsTransport) (err error)
 type jsonToolCallMetaTransport struct {
 	// Run identifier for the agent execution that issued this tool call.
 	RunID *string `json:"run_id"`
-	// Agent session identifier used to scope tool behavior and persistence.
-	SessionID *string `json:"session_id"`
+	// Session identifier when the execution belongs to a session; omitted for
+	// standalone executions.
+	SessionID *string `json:"session_id,omitempty"`
 	// Turn identifier within the session.
 	TurnID *string `json:"turn_id,omitempty"`
 	// Tool call identifier used for correlation with model provider tool calls.
@@ -3671,9 +3673,6 @@ func validatejsonToolCallMetaTransport(value *jsonToolCallMetaTransport) (err er
 	}
 	if value.RunID == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("run_id", "body"))
-	}
-	if value.SessionID == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("session_id", "body"))
 	}
 	if value.ToolCallID == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("tool_call_id", "body"))
@@ -5669,8 +5668,8 @@ func validateAttachProviderPayloadOriginal(value *AttachProviderPayload) (err er
 	}
 	err = goa.MergeErrors(err, goa.ValidatePattern("value.expected_registration_token", value.ExpectedRegistrationToken, "^[0-9a-f]{64}$"))
 	err = goa.MergeErrors(err, goa.ValidateFormat("value.provider_incarnation_id", value.ProviderIncarnationID, goa.FormatUUID))
-	if !(value.WireProtocolVersion == 14) {
-		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.wire_protocol_version", value.WireProtocolVersion, []any{14}))
+	if !(value.WireProtocolVersion == 15) {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.wire_protocol_version", value.WireProtocolVersion, []any{15}))
 	}
 	return err
 }
@@ -5704,8 +5703,8 @@ func validateCallResolvedToolPayloadOriginal(value *CallResolvedToolPayload) (er
 			err = goa.MergeErrors(err, err2)
 		}
 	}
-	if !(value.WireProtocolVersion == 14) {
-		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.wire_protocol_version", value.WireProtocolVersion, []any{14}))
+	if !(value.WireProtocolVersion == 15) {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.wire_protocol_version", value.WireProtocolVersion, []any{15}))
 	}
 	return err
 }
@@ -5719,12 +5718,14 @@ func validateToolCallMetaOriginal(value *ToolCallMeta) (err error) {
 	if utf8.RuneCountInString(value.RunID) > 256 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("value.run_id", value.RunID, utf8.RuneCountInString(value.RunID), 256, false))
 	}
-	err = goa.MergeErrors(err, goa.ValidatePattern("value.session_id", value.SessionID, "^[^\\x00]+$"))
-	if utf8.RuneCountInString(value.SessionID) < 1 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("value.session_id", value.SessionID, utf8.RuneCountInString(value.SessionID), 1, true))
-	}
-	if utf8.RuneCountInString(value.SessionID) > 256 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("value.session_id", value.SessionID, utf8.RuneCountInString(value.SessionID), 256, false))
+	if value.SessionID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("value.session_id", *value.SessionID, "^[^\\x00]+$"))
+		if utf8.RuneCountInString(*value.SessionID) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("value.session_id", *value.SessionID, utf8.RuneCountInString(*value.SessionID), 1, true))
+		}
+		if utf8.RuneCountInString(*value.SessionID) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("value.session_id", *value.SessionID, utf8.RuneCountInString(*value.SessionID), 256, false))
+		}
 	}
 	if value.TurnID != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern("value.turn_id", *value.TurnID, "^[^\\x00]+$"))
@@ -5813,8 +5814,8 @@ func validateCallToolPayloadOriginal(value *CallToolPayload) (err error) {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
-	if !(value.WireProtocolVersion == 14) {
-		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.wire_protocol_version", value.WireProtocolVersion, []any{14}))
+	if !(value.WireProtocolVersion == 15) {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.wire_protocol_version", value.WireProtocolVersion, []any{15}))
 	}
 	return err
 }
@@ -5828,12 +5829,14 @@ func validateToolCallMetaOriginal2(value *ToolCallMeta) (err error) {
 	if utf8.RuneCountInString(value.RunID) > 256 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("value.run_id", value.RunID, utf8.RuneCountInString(value.RunID), 256, false))
 	}
-	err = goa.MergeErrors(err, goa.ValidatePattern("value.session_id", value.SessionID, "^[^\\x00]+$"))
-	if utf8.RuneCountInString(value.SessionID) < 1 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("value.session_id", value.SessionID, utf8.RuneCountInString(value.SessionID), 1, true))
-	}
-	if utf8.RuneCountInString(value.SessionID) > 256 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("value.session_id", value.SessionID, utf8.RuneCountInString(value.SessionID), 256, false))
+	if value.SessionID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("value.session_id", *value.SessionID, "^[^\\x00]+$"))
+		if utf8.RuneCountInString(*value.SessionID) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("value.session_id", *value.SessionID, utf8.RuneCountInString(*value.SessionID), 1, true))
+		}
+		if utf8.RuneCountInString(*value.SessionID) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("value.session_id", *value.SessionID, utf8.RuneCountInString(*value.SessionID), 256, false))
+		}
 	}
 	if value.TurnID != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern("value.turn_id", *value.TurnID, "^[^\\x00]+$"))
@@ -6722,8 +6725,8 @@ func validateRegisterPayloadOriginal(value *RegisterPayload) (err error) {
 	}
 	err = goa.MergeErrors(err, goa.ValidatePattern("value.admission_revision", value.AdmissionRevision, "^[A-Za-z0-9][A-Za-z0-9._:/@+\\-]{0,255}$"))
 	err = goa.MergeErrors(err, goa.ValidateFormat("value.provider_incarnation_id", value.ProviderIncarnationID, goa.FormatUUID))
-	if !(value.WireProtocolVersion == 14) {
-		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.wire_protocol_version", value.WireProtocolVersion, []any{14}))
+	if !(value.WireProtocolVersion == 15) {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.wire_protocol_version", value.WireProtocolVersion, []any{15}))
 	}
 	err = goa.MergeErrors(err, goa.ValidatePattern("value.schema_fingerprint", value.SchemaFingerprint, "^[0-9a-f]{64}$"))
 	return err
@@ -8579,8 +8582,8 @@ func validateRetryToolPayloadOriginal(value *RetryToolPayload) (err error) {
 			err = goa.MergeErrors(err, err2)
 		}
 	}
-	if !(value.WireProtocolVersion == 14) {
-		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.wire_protocol_version", value.WireProtocolVersion, []any{14}))
+	if !(value.WireProtocolVersion == 15) {
+		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.wire_protocol_version", value.WireProtocolVersion, []any{15}))
 	}
 	return err
 }
@@ -8594,12 +8597,14 @@ func validateToolCallMetaOriginal3(value *ToolCallMeta) (err error) {
 	if utf8.RuneCountInString(value.RunID) > 256 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("value.run_id", value.RunID, utf8.RuneCountInString(value.RunID), 256, false))
 	}
-	err = goa.MergeErrors(err, goa.ValidatePattern("value.session_id", value.SessionID, "^[^\\x00]+$"))
-	if utf8.RuneCountInString(value.SessionID) < 1 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("value.session_id", value.SessionID, utf8.RuneCountInString(value.SessionID), 1, true))
-	}
-	if utf8.RuneCountInString(value.SessionID) > 256 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("value.session_id", value.SessionID, utf8.RuneCountInString(value.SessionID), 256, false))
+	if value.SessionID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("value.session_id", *value.SessionID, "^[^\\x00]+$"))
+		if utf8.RuneCountInString(*value.SessionID) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("value.session_id", *value.SessionID, utf8.RuneCountInString(*value.SessionID), 1, true))
+		}
+		if utf8.RuneCountInString(*value.SessionID) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("value.session_id", *value.SessionID, utf8.RuneCountInString(*value.SessionID), 256, false))
+		}
 	}
 	if value.TurnID != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern("value.turn_id", *value.TurnID, "^[^\\x00]+$"))
@@ -9303,12 +9308,14 @@ func validateToolCallMetaOriginal4(value *ToolCallMeta) (err error) {
 	if utf8.RuneCountInString(value.RunID) > 256 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("value.run_id", value.RunID, utf8.RuneCountInString(value.RunID), 256, false))
 	}
-	err = goa.MergeErrors(err, goa.ValidatePattern("value.session_id", value.SessionID, "^[^\\x00]+$"))
-	if utf8.RuneCountInString(value.SessionID) < 1 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("value.session_id", value.SessionID, utf8.RuneCountInString(value.SessionID), 1, true))
-	}
-	if utf8.RuneCountInString(value.SessionID) > 256 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("value.session_id", value.SessionID, utf8.RuneCountInString(value.SessionID), 256, false))
+	if value.SessionID != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("value.session_id", *value.SessionID, "^[^\\x00]+$"))
+		if utf8.RuneCountInString(*value.SessionID) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("value.session_id", *value.SessionID, utf8.RuneCountInString(*value.SessionID), 1, true))
+		}
+		if utf8.RuneCountInString(*value.SessionID) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("value.session_id", *value.SessionID, utf8.RuneCountInString(*value.SessionID), 256, false))
+		}
 	}
 	if value.TurnID != nil {
 		err = goa.MergeErrors(err, goa.ValidatePattern("value.turn_id", *value.TurnID, "^[^\\x00]+$"))
@@ -15468,7 +15475,7 @@ func EncodeToolCallMeta(in *ToolCallMeta) ([]byte, error) {
 	{
 		body = &jsonToolCallMetaTransport{
 			RunID:            &in.RunID,
-			SessionID:        &in.SessionID,
+			SessionID:        in.SessionID,
 			TurnID:           in.TurnID,
 			ToolCallID:       &in.ToolCallID,
 			ParentToolCallID: in.ParentToolCallID,
@@ -15525,7 +15532,7 @@ func DecodeToolCallMeta(data []byte) (out *ToolCallMeta, err error) {
 	{
 		out = &ToolCallMeta{
 			RunID:            *body.RunID,
-			SessionID:        *body.SessionID,
+			SessionID:        body.SessionID,
 			TurnID:           body.TurnID,
 			ToolCallID:       *body.ToolCallID,
 			ParentToolCallID: body.ParentToolCallID,
@@ -18159,7 +18166,7 @@ func decodeToolBoundsTransportToToolBounds9(v *jsonToolBoundsTransport) *ToolBou
 func decodeToolCallMetaTransportToToolCallMeta(v *jsonToolCallMetaTransport) *ToolCallMeta {
 	res := &ToolCallMeta{
 		RunID:            *v.RunID,
-		SessionID:        *v.SessionID,
+		SessionID:        v.SessionID,
 		TurnID:           v.TurnID,
 		ToolCallID:       *v.ToolCallID,
 		ParentToolCallID: v.ParentToolCallID,
@@ -18194,7 +18201,7 @@ func decodeToolCallMetaTransportToToolCallMeta(v *jsonToolCallMetaTransport) *To
 func decodeToolCallMetaTransportToToolCallMeta2(v *jsonToolCallMetaTransport) *ToolCallMeta {
 	res := &ToolCallMeta{
 		RunID:            *v.RunID,
-		SessionID:        *v.SessionID,
+		SessionID:        v.SessionID,
 		TurnID:           v.TurnID,
 		ToolCallID:       *v.ToolCallID,
 		ParentToolCallID: v.ParentToolCallID,
@@ -18229,7 +18236,7 @@ func decodeToolCallMetaTransportToToolCallMeta2(v *jsonToolCallMetaTransport) *T
 func decodeToolCallMetaTransportToToolCallMeta3(v *jsonToolCallMetaTransport) *ToolCallMeta {
 	res := &ToolCallMeta{
 		RunID:            *v.RunID,
-		SessionID:        *v.SessionID,
+		SessionID:        v.SessionID,
 		TurnID:           v.TurnID,
 		ToolCallID:       *v.ToolCallID,
 		ParentToolCallID: v.ParentToolCallID,
@@ -31945,7 +31952,7 @@ func encodeToolBoundsToToolBoundsTransport9(v *ToolBounds) *jsonToolBoundsTransp
 func encodeToolCallMetaToToolCallMetaTransport(v *ToolCallMeta) *jsonToolCallMetaTransport {
 	res := &jsonToolCallMetaTransport{
 		RunID:            &v.RunID,
-		SessionID:        &v.SessionID,
+		SessionID:        v.SessionID,
 		TurnID:           v.TurnID,
 		ToolCallID:       &v.ToolCallID,
 		ParentToolCallID: v.ParentToolCallID,
@@ -31971,7 +31978,7 @@ func encodeToolCallMetaToToolCallMetaTransport(v *ToolCallMeta) *jsonToolCallMet
 func encodeToolCallMetaToToolCallMetaTransport2(v *ToolCallMeta) *jsonToolCallMetaTransport {
 	res := &jsonToolCallMetaTransport{
 		RunID:            &v.RunID,
-		SessionID:        &v.SessionID,
+		SessionID:        v.SessionID,
 		TurnID:           v.TurnID,
 		ToolCallID:       &v.ToolCallID,
 		ParentToolCallID: v.ParentToolCallID,
@@ -31997,7 +32004,7 @@ func encodeToolCallMetaToToolCallMetaTransport2(v *ToolCallMeta) *jsonToolCallMe
 func encodeToolCallMetaToToolCallMetaTransport3(v *ToolCallMeta) *jsonToolCallMetaTransport {
 	res := &jsonToolCallMetaTransport{
 		RunID:            &v.RunID,
-		SessionID:        &v.SessionID,
+		SessionID:        v.SessionID,
 		TurnID:           v.TurnID,
 		ToolCallID:       &v.ToolCallID,
 		ParentToolCallID: v.ParentToolCallID,
@@ -52145,7 +52152,7 @@ func validateCallResolvedToolPayloadJSONValue13(path string, value any, descript
 		case "session_id":
 			if err := validateCallResolvedToolPayloadJSONValue14(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Agent session identifier used to scope tool behavior and persistence.",
+				typed[key], "Session identifier when the execution belongs to a session; omitted for standalone executions.",
 			); err != nil {
 				return err
 			}
@@ -52858,7 +52865,7 @@ func validateCallToolPayloadJSONValue2(path string, value any, description strin
 		case "session_id":
 			if err := validateCallToolPayloadJSONValue12(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Agent session identifier used to scope tool behavior and persistence.",
+				typed[key], "Session identifier when the execution belongs to a session; omitted for standalone executions.",
 			); err != nil {
 				return err
 			}
@@ -70006,7 +70013,7 @@ func validateRetryToolPayloadJSONValue13(path string, value any, description str
 		case "session_id":
 			if err := validateRetryToolPayloadJSONValue14(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Agent session identifier used to scope tool behavior and persistence.",
+				typed[key], "Session identifier when the execution belongs to a session; omitted for standalone executions.",
 			); err != nil {
 				return err
 			}
@@ -74674,7 +74681,7 @@ func validateToolCallMetaJSONValue(path string, value any, description string) e
 		case "session_id":
 			if err := validateToolCallMetaJSONValue11(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Agent session identifier used to scope tool behavior and persistence.",
+				typed[key], "Session identifier when the execution belongs to a session; omitted for standalone executions.",
 			); err != nil {
 				return err
 			}
@@ -85453,8 +85460,10 @@ func checkCallResolvedToolPayloadToolCallMetaValue(in *ToolCallMeta, field strin
 		if !utf8.ValidString(string(in.RunID)) {
 			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "run_id", false))
 		}
-		if !utf8.ValidString(string(in.SessionID)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "session_id", false))
+		if in.SessionID != nil {
+			if !utf8.ValidString(string(*in.SessionID)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "session_id", false))
+			}
 		}
 		if in.TurnID != nil {
 			if !utf8.ValidString(string(*in.TurnID)) {
@@ -85640,8 +85649,10 @@ func checkCallToolPayloadToolCallMetaValue(in *ToolCallMeta, field string, activ
 		if !utf8.ValidString(string(in.RunID)) {
 			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "run_id", false))
 		}
-		if !utf8.ValidString(string(in.SessionID)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "session_id", false))
+		if in.SessionID != nil {
+			if !utf8.ValidString(string(*in.SessionID)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "session_id", false))
+			}
 		}
 		if in.TurnID != nil {
 			if !utf8.ValidString(string(*in.TurnID)) {
@@ -90250,8 +90261,10 @@ func checkRetryToolPayloadToolCallMetaValue(in *ToolCallMeta, field string, acti
 		if !utf8.ValidString(string(in.RunID)) {
 			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "run_id", false))
 		}
-		if !utf8.ValidString(string(in.SessionID)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "session_id", false))
+		if in.SessionID != nil {
+			if !utf8.ValidString(string(*in.SessionID)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "session_id", false))
+			}
 		}
 		if in.TurnID != nil {
 			if !utf8.ValidString(string(*in.TurnID)) {
@@ -91526,8 +91539,10 @@ func checkToolCallMetaToolCallMetaValue(in *ToolCallMeta, field string, active m
 		if !utf8.ValidString(string(in.RunID)) {
 			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "run_id", false))
 		}
-		if !utf8.ValidString(string(in.SessionID)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "session_id", false))
+		if in.SessionID != nil {
+			if !utf8.ValidString(string(*in.SessionID)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "session_id", false))
+			}
 		}
 		if in.TurnID != nil {
 			if !utf8.ValidString(string(*in.TurnID)) {

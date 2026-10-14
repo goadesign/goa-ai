@@ -4374,7 +4374,8 @@ type ToolCallMeta struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Run identifier for the agent execution that issued this tool call.
 	RunId *string `protobuf:"bytes,1,opt,name=run_id,json=runId,proto3,oneof" json:"run_id,omitempty"`
-	// Agent session identifier used to scope tool behavior and persistence.
+	// Session identifier when the execution belongs to a session; omitted for
+	// standalone executions.
 	SessionId *string `protobuf:"bytes,2,opt,name=session_id,json=sessionId,proto3,oneof" json:"session_id,omitempty"`
 	// Turn identifier within the session.
 	TurnId *string `protobuf:"bytes,3,opt,name=turn_id,json=turnId,proto3,oneof" json:"turn_id,omitempty"`
