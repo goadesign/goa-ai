@@ -474,7 +474,7 @@ func (r *Runtime) startCancellationContinuation(ctx context.Context, owner sessi
 		if err != nil {
 			return err
 		}
-		compiled, err := prepareRunWithDefinition(input, launch, registration.Definition, true)
+		compiled, err := prepareRunWithDefinition(input, launch, registration.Definition, owner.SessionID != "")
 		if err != nil {
 			return engine.MarkActivityErrorNonRetryable(err)
 		}

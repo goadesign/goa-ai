@@ -169,16 +169,20 @@ func TestEndedSessionWorkflowStoresItsOwnTerminalResult(t *testing.T) {
 func TestContinuationCancellationSettlesSavedTaskAfterWorkerReplacement(t *testing.T) {
 	for _, ended := range []bool{true, false} {
 		t.Run(fmt.Sprintf("ended_session=%t", ended), func(t *testing.T) {
-			testContinuationCancellationAfterWorkerReplacement(t, ended, false)
+			testContinuationCancellationAfterWorkerReplacement(t, "session", ended, false)
 		})
 	}
 }
 
 func TestCancelRunSettlesSuspendedTaskAfterWorkerReplacement(t *testing.T) {
-	testContinuationCancellationAfterWorkerReplacement(t, false, true)
+	for _, sessionID := range []string{"session", ""} {
+		t.Run("session="+sessionID, func(t *testing.T) {
+			testContinuationCancellationAfterWorkerReplacement(t, sessionID, false, true)
+		})
+	}
 }
 
-func testContinuationCancellationAfterWorkerReplacement(t *testing.T, ended, useJob bool) {
+func testContinuationCancellationAfterWorkerReplacement(t *testing.T, sessionID string, ended, useJob bool) {
 	spec := newAnyJSONSpec("remote.tools.lookup")
 	definition := NewAgentDefinition(AgentRoute{ID: "test.agent", WorkflowName: "test.workflow", DefaultTaskQueue: "test.queue"},
 		[]tools.ToolSpec{spec}, nil, nil, []tools.Ident{spec.Name}, nil, nil)
@@ -224,9 +228,15 @@ func testContinuationCancellationAfterWorkerReplacement(t *testing.T, ended, use
 		return rt
 	}
 	rt := install()
-	_, err := createSessionForTest(t.Context(), store, "session")
-	require.NoError(t, err)
-	first, err := rt.MustClient(definition.route.ID).Run(t.Context(), "session", nil, WithRunID("source"), WithTurnID("turn-1"))
+	var first *RunOutput
+	var err error
+	if sessionID == "" {
+		first, err = rt.MustClient(definition.route.ID).OneShotRun(t.Context(), nil, WithRunID("source"), WithTurnID("turn-1"))
+	} else {
+		_, err = createSessionForTest(t.Context(), store, sessionID)
+		require.NoError(t, err)
+		first, err = rt.MustClient(definition.route.ID).Run(t.Context(), sessionID, nil, WithRunID("source"), WithTurnID("turn-1"))
+	}
 	require.NoError(t, err)
 	require.NotNil(t, first.Suspension)
 	response := &api.PendingInputResponse{
@@ -285,6 +295,7 @@ func testContinuationCancellationAfterWorkerReplacement(t *testing.T, ended, use
 	meta, err := store.LoadRun(t.Context(), cleanupRunID)
 	require.NoError(t, err)
 	assert.Equal(t, session.RunStatusCanceled, meta.Status)
+	assert.Equal(t, sessionID, meta.SessionID)
 	assert.Equal(t, reason, meta.CancellationReason)
 	previous, err := store.LoadRun(t.Context(), "source")
 	require.NoError(t, err)
