@@ -2210,6 +2210,20 @@ Service("calculator", func() {
 })
 ```
 
+`DynamicTools()` inside `MCP` selects application-owned tool listing and
+invocation. The generator emits the ordinary MCP tool methods and types even
+when no static tool is declared. The application implements those methods on
+the generated service interface and can embed `MCPAdapter` for discovery and
+other declared capabilities. Resource authorization and both HTTP protocol
+revisions remain owned by the generated transport. The application owns runtime
+schemas, argument validation, pagination, and per-tool authorization.
+
+Static `Tool` and `ToolCatalog` cannot be combined with `DynamicTools` in one
+service: one implementation owns the complete catalog and dispatch. Existing
+static services and services without tools retain their generated contracts.
+See [runtime-defined tools](docs/dsl.md#runtime-defined-tools) for composition
+and older-client schema requirements.
+
 ### Protocol and ownership
 
 MCP uses the framework-owned `2026-07-28` revision. Every request carries its

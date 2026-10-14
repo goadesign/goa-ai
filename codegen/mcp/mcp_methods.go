@@ -18,8 +18,8 @@ func (b *mcpExprBuilder) buildMethods() []*expr.MethodExpr {
 	methods := make([]*expr.MethodExpr, 0, 10)
 	methods = append(methods, b.buildDiscoverMethod())
 
-	// Add tool methods if tools are defined
-	if len(b.mcp.Tools) > 0 {
+	// Generate tool methods for authored tools or an application-owned catalog.
+	if len(b.mcp.Tools) > 0 || b.mcp.DynamicTools {
 		methods = append(methods, b.buildToolsListMethod(), b.buildToolsCallMethod())
 	}
 

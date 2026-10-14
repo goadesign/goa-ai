@@ -68,6 +68,8 @@ type (
 		ResourceDirectory *discoveryAdapter
 		// Tools contains the Goa methods exposed as MCP tools.
 		Tools []*ToolAdapter
+		// DynamicTools leaves tool listing and invocation to the generated service implementation.
+		DynamicTools bool
 		// Tasks contains configured creators with complete native job operations.
 		Tasks []*taskAdapter
 		// CredentialQueries lists native authentication query names by protocol method.
@@ -301,6 +303,7 @@ func (g *adapterGenerator) buildAdapterData() (*AdapterData, error) {
 		MCPVersion:           g.mcp.Version,
 		Package:              codegen.SnakeCase(g.originalService.Name),
 		Tools:                tools,
+		DynamicTools:         g.mcp.DynamicTools,
 		Resources:            resources,
 		ResourceTemplates:    templates,
 		ResourceReader:       reader,
@@ -344,7 +347,7 @@ func adapterDataNeedsNoArgumentsValidation(data *AdapterData) bool {
 }
 
 func (g *adapterGenerator) buildClientCallerData(data *AdapterData) *ClientCallerData {
-	if len(data.Tools) == 0 {
+	if len(data.Tools) == 0 && !data.DynamicTools {
 		return nil
 	}
 	return &ClientCallerData{Tools: data.Tools}

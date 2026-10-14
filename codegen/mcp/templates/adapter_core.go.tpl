@@ -159,7 +159,7 @@ func (a *MCPAdapter) ServerDiscover(ctx context.Context, _ {{ index .PayloadRefs
     {{- if .ExtensionMetadata }}
     capabilities.Extensions = json.RawMessage({{ quote .ExtensionMetadata }})
     {{- end }}
-    {{- if .Tools }}
+    {{- if or .Tools .DynamicTools }}
     capabilities.Tools = &ToolsCapability{ {{ if and .SubscriptionSource (index .SubscriptionSource.Catalogs "tools") }}ListChanged: boolPtr(true),{{ end }} }
     {{- end }}
     {{- if or .Resources .ResourceReader }}

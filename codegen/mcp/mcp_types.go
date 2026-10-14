@@ -16,7 +16,7 @@ func (b *mcpExprBuilder) buildMCPTypes() {
 	b.getOrCreateType("ServerCapabilities", b.buildServerCapabilitiesType)
 
 	// Tool types
-	if len(b.mcp.Tools) > 0 {
+	if len(b.mcp.Tools) > 0 || b.mcp.DynamicTools {
 		b.getOrCreateType("ToolInfo", b.buildToolInfoType)
 		b.getOrCreateType("ContentItem", b.buildContentItemType)
 	}

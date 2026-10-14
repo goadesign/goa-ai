@@ -482,6 +482,7 @@ an estimate is not a context-window guarantee or a billing count.
 | Function                            | Context                            | Purpose                                        |
 | ----------------------------------- | ---------------------------------- | ---------------------------------------------- |
 | `MCP(name, version)`       | Inside `Service`                   | Enables MCP protocol for the service           |
+| `DynamicTools()` | Inside `MCP` | Generates tool list/call methods implemented by the application |
 | `Tool(name, description)`           | Inside `Method` (with MCP enabled) | Marks method as MCP tool                       |
 | `ToolContent(field)` | Inside an MCP method's `Tool` block | Sends a typed result array as MCP content, excluding it from structured JSON |
 | `Resource(name, uri, mime)`         | Inside `Method`                    | Marks method as MCP resource provider          |
@@ -1524,6 +1525,48 @@ domain arguments. The imported `NewHTTPCaller` instead receives a complete
 endpoint URL, such as `https://example.com/organizations/blue/mcp`.
 Regenerate clients, servers and agent contracts together when upgrading.
 
+### Runtime-defined tools
+
+Use `DynamicTools()` inside `MCP` when tool definitions come from runtime data
+instead of authored Goa methods:
+
+```go
+Service("catalog", func() {
+    MCP("catalog", "1.0.0", func() {
+        DynamicTools()
+        Security(access, func() { Scope("tools:use") })
+    })
+    JSONRPC(func() { POST("/mcp") })
+})
+```
+
+This generates `ToolsList` and `ToolsCall` on the MCP service interface, with the
+same payloads, results, clients and HTTP transport as static tools. Implement
+those methods using the generated types. Embed the generated `MCPAdapter` to
+reuse discovery and any other declared resources or prompts, then pass your
+complete implementation to the generated `NewEndpoints` constructor. With no
+authored service methods, `NewMCPAdapter(nil, nil)` supplies discovery alone.
+`goa example` retains Goa's application method stubs for this service instead
+of returning the static adapter as a complete implementation.
+
+The application owns the complete catalog, pagination, tool selection, argument
+validation, result schemas, and per-tool authorization. MCP resource security
+still verifies every request and places the verified principal in its context.
+Listing a tool never authorizes a call. Return the generated protocol's
+`invalid_params` error for an unknown tool or invalid cursor. Return a completed
+tool result with `isError` for a recognized tool's argument or execution failure.
+
+`DynamicTools` cannot coexist with `Tool` or `ToolCatalog` in one service; it
+does not merge a runtime catalog with generated static dispatch. Existing static
+tool declarations retain their behavior. A service with neither static tools
+nor `DynamicTools` does not advertise or generate tool operations.
+
+Both supported protocol revisions use these same generated endpoints. Runtime
+tool implementations must supply schemas and results valid for their supported
+clients; use object-valued output schemas and structured results when serving
+basic `2025-11-25` clients. Automatic scalar/array wrapping is available only
+for statically authored tools whose schemas are known during generation.
+
 ### Secured MCP methods
 
 Declare credentials with Goa's security DSL, such as `Token`, `AccessToken`,
@@ -2403,6 +2446,7 @@ content field or compatibility decoder.
 | `StaticPrompt(...)`          | `prompts/list`, `prompts/get`      |
 | `ResourceReader()` / `ResourceTemplate(name, template, mime)` in Method | One service-owned URI reader and optional authored templates |
 | `ResourceCatalog()` / `ResourceTemplateCatalog()` in Method | Authenticated pages of typed resource descriptors or URI templates |
+| `DynamicTools()` in MCP | Runtime tool definitions and invocation implemented through generated protocol types |
 | `ToolCatalog()` / `PromptCatalog()` in Method | Authenticated pages of declared tools or prompts |
 | `SubscriptionSource()` in Method | `subscriptions/listen` for service-owned catalog, resource and Task updates over HTTP |
 | `TaskExchange(read, answer, cancel)` in Method | Task creation from `tools/call`, plus `tasks/get`, `tasks/update` and `tasks/cancel` |
