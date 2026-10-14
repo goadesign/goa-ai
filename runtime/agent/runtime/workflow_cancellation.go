@@ -41,6 +41,8 @@ func (l *workflowLoop) cancelSavedWork(request api.CancellationRequest) error {
 	cleanupErr := execution.cancelAcceptedTasks(cleanup.wfCtx)
 	children := make([]agentChildFutureInfo, 0, len(batch.records))
 	for i := range batch.records {
+		// Starting a child continuation clears its saved suspension. Only
+		// records that still hold one need a new workflow for cancellation.
 		saved := &batch.records[i]
 		if saved.childSuspension == nil {
 			continue

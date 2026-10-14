@@ -52,7 +52,7 @@ func TestOneShotChildContinuationClaimsOneSuccessor(t *testing.T) {
 	require.NoError(t, err)
 	var winner storage.OneShotChildRunStart
 	for _, candidate := range candidates {
-		if candidate.Run.RunID == previous.SuccessorRunID {
+		if candidate.Run.RunID == previous.SuspensionResolution.(session.ContinuedSuspension).RunID {
 			winner = candidate
 		} else {
 			_, err := store.LoadRun(t.Context(), candidate.Run.RunID)

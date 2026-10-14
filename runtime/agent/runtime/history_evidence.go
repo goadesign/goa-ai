@@ -93,6 +93,9 @@ func historySummaryRequest(messages []*model.Message, cfg *compressConfig) (*mod
 // records in the existing textual summary. Citation coordinates keep their
 // original meaning; the request layout is descriptive, not a guessed mapping.
 func renderHistorySummary(response *model.Response, documents string) (string, error) {
+	if response.StopReason == contextWindowStopReason {
+		return "", errors.New("history summary reached its model context window limit")
+	}
 	var rendered strings.Builder
 	hasCitations, hasGeneratedText := false, false
 	for i, message := range response.Content {

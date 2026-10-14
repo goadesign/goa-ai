@@ -41,7 +41,7 @@ func (e *toolBatchExec) collectAgentChildResults(wfCtx engine.WorkflowContext, c
 			if errors.Is(err, engine.ErrPlannerActivityDeadlineExceeded) {
 				return out, pending, true, executionErr
 			}
-			return out, pending, false, err
+			return out, pending, false, errors.Join(executionErr, err)
 		}
 
 		i := 0
@@ -63,10 +63,10 @@ func (e *toolBatchExec) collectAgentChildResults(wfCtx engine.WorkflowContext, c
 			outPtr, err := info.handle.Get(wfCtx.Context())
 			if err != nil {
 				if isRunCancellationError(err) || temporalerrors.IsOutputContract(err) || temporalerrors.IsRequestValidation(err) {
-					return out, pending, false, err
+					return out, pending, false, errors.Join(executionErr, err)
 				}
 				if _, ok := temporalerrors.Provider(err); ok {
-					return out, pending, false, err
+					return out, pending, false, errors.Join(executionErr, err)
 				}
 				duration := wfCtx.Now().Sub(info.startTime)
 				result, synthErr := e.synthesizeToolError(ctx, info.call, err, "agent tool execution failed", duration)

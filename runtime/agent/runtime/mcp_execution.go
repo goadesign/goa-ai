@@ -108,28 +108,30 @@ func (l *workflowLoop) applyExecutionContinuation(batch *stepBatch, pending *api
 		// update. The saved record takes it back only after another input round.
 		task := record.task
 		record.task = nil
-		outcomes, timedOut, err := l.executeImmediateToolCalls([]ToolCall{call}, record.expectedChildren, map[string]*taskExecution{call.ToolCallID: task})
+		outcomes, timedOut, executionErr := l.executeImmediateToolCalls([]ToolCall{call}, record.expectedChildren, map[string]*taskExecution{call.ToolCallID: task})
 		batch.timedOut = batch.timedOut || timedOut
-		if err != nil {
-			return nil, err
+		if len(outcomes) == 0 && executionErr != nil {
+			return nil, executionErr
 		}
 		if len(outcomes) != 1 {
-			return nil, errors.New("MCP continuation did not return one outcome")
+			return nil, errors.Join(executionErr, errors.New("MCP continuation did not return one outcome"))
 		}
 		outcome := outcomes[0]
 		id, err := executionToolCallID(outcome)
 		if err != nil {
-			return nil, err
+			return nil, errors.Join(executionErr, err)
 		}
 		if id != record.call.ToolCallID {
-			return nil, errors.New("MCP continuation changed tool call identity")
+			return nil, errors.Join(executionErr, errors.New("MCP continuation changed tool call identity"))
 		}
+		// A returned input request gives this record its Task back even when
+		// another execution error prevents suspension, so workflow cleanup owns it.
 		record.call.ExecutionSequence = max(call.ExecutionSequence, outcome.executionSequence)
 		record.task = outcome.task
 		record.duration += outcome.duration
 		record.mcpPending = outcome.mcpPending
 		if record.mcpPending != nil {
-			return []checkpointPendingInput{{MCP: pendingMCPInput(record.call, record.mcpPending)}}, nil
+			return []checkpointPendingInput{{MCP: pendingMCPInput(record.call, record.mcpPending)}}, executionErr
 		}
 		record.result = outcome.ToolResult
 		record.clarification = outcome.Clarification
@@ -137,6 +139,9 @@ func (l *workflowLoop) applyExecutionContinuation(batch *stepBatch, pending *api
 		record.resultRecord = outcome.resultRecord
 		record.resultRunID = l.input.RunID
 		record.requiresResume = true
+		if executionErr != nil {
+			return nil, executionErr
+		}
 		items, err := toolClarificationAwaitItems(toolClarificationsFromRecords([]stepToolRecord{*record}))
 		if err != nil {
 			return nil, err

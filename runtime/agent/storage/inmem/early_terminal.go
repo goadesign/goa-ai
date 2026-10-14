@@ -79,11 +79,11 @@ func (s *Store) RecordUnstartedExecutionTerminal(ctx context.Context, command ge
 	if seed, exists := s.seeds[selected.RunID]; exists && seed.seed.Declaration.PredecessorRunID != "" {
 		d := seed.seed.Declaration
 		predecessor, exists := s.runs[d.PredecessorRunID]
-		if !seed.published || !exists || predecessor.Status != session.RunStatusSuspended || predecessor.SuccessorRunID != "" || predecessor.SessionID != sessionID || !reflect.DeepEqual(predecessor.Subject, *selected.Subject) || !reflect.DeepEqual(predecessor.Origin, *selected.Origin) {
+		if !seed.published || !exists || predecessor.Status != session.RunStatusSuspended || predecessor.SessionID != sessionID || !reflect.DeepEqual(predecessor.Subject, *selected.Subject) || !reflect.DeepEqual(predecessor.Origin, *selected.Origin) {
 			return genrunterminal.UnstartedExecutionTerminalResult{}, storage.NewContractError(session.ErrRunConflict)
 		}
-		predecessor.SuccessorRunID = selected.RunID
-		s.runs[d.PredecessorRunID] = predecessor
+		// An execution that never started owns only its failure or cancellation.
+		// Only StartRun can transfer the predecessor's saved work to a successor.
 	}
 	s.unstartedTerminals[selected.RunID] = *selected
 	// Decode the retained bytes again so callers cannot mutate the stored winner.

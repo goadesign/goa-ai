@@ -120,8 +120,9 @@ func TestApprovedChildContinuationKeepsOriginalInvocation(t *testing.T) {
 			require.Equal(t, approvedRecords, approvedAfter)
 			oldChild, err := rt.Store.LoadRun(ctx, childCheckpoint.PreviousRunID)
 			require.NoError(t, err)
-			require.NotEmpty(t, oldChild.SuccessorRunID)
-			newChild, err := rt.Store.LoadRun(ctx, oldChild.SuccessorRunID)
+			resolution, continued := oldChild.SuspensionResolution.(session.ContinuedSuspension)
+			require.True(t, continued)
+			newChild, err := rt.Store.LoadRun(ctx, resolution.RunID)
 			require.NoError(t, err)
 			require.Equal(t, "continued", newChild.ParentRunID)
 			if cancelChild {

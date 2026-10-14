@@ -56,7 +56,7 @@ func TestChildContinuationPreservesCallAcrossExecutionParents(t *testing.T) {
 	require.Equal(t, session.RunStartProceed, first.Outcome)
 	chosen, err := store.LoadRun(ctx, a0.Run.RunID)
 	require.NoError(t, err)
-	require.Equal(t, a1.Run.RunID, chosen.SuccessorRunID)
+	require.Equal(t, a1.Run.RunID, chosen.SuspensionResolution.(session.ContinuedSuspension).RunID)
 	before, err := store.ListRunRecords(ctx, parent1.RunID, "", 100)
 	require.NoError(t, err)
 	wrong := command(parent1, "wrong-call", a0.Run.RunID, "call-B")

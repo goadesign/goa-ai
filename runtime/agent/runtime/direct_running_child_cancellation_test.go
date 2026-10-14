@@ -286,7 +286,7 @@ func testRunningParentCancellation(t *testing.T, activitySibling, cancelRoot, ne
 		for _, id := range []string{questionRun, ownerID, "outer"} {
 			meta, err := rt.Store.LoadRun(context.Background(), id)
 			t.Logf("cancellation source %q: %+v; load error: %v", id, meta, err)
-			if err == nil && meta.SuccessorRunID != "" {
+			if _, continued := meta.SuspensionResolution.(session.ContinuedSuspension); err == nil && continued {
 				current, loadErr := rt.selectedCancellationRun(context.Background(), meta)
 				completion, engineErr := backend.QueryRunCompletion(context.Background(), current.RunID)
 				t.Logf("cancellation successor: %+v; load error: %v; engine: %+v; engine error: %v", current, loadErr, completion, engineErr)
@@ -332,10 +332,11 @@ func testRunningParentCancellation(t *testing.T, activitySibling, cancelRoot, ne
 	}
 	require.Eventually(t, func() bool {
 		source, loadErr := rt.Store.LoadRun(ctx, questionRun)
-		if loadErr != nil || source.SuccessorRunID == "" {
+		resolution, continued := source.SuspensionResolution.(session.ContinuedSuspension)
+		if loadErr != nil || !continued {
 			return false
 		}
-		successor, loadErr := rt.Store.LoadRun(ctx, source.SuccessorRunID)
+		successor, loadErr := rt.Store.LoadRun(ctx, resolution.RunID)
 		reason := run.CancellationReasonUserRequested
 		if cancelRoot {
 			reason = run.CancellationReasonEngineCanceled
@@ -382,7 +383,7 @@ func testRunningParentCancellation(t *testing.T, activitySibling, cancelRoot, ne
 	completed, err := rt.Store.LoadRun(ctx, completedRun)
 	require.NoError(t, err)
 	assert.Equal(t, session.RunStatusCompleted, completed.Status)
-	assert.Empty(t, completed.SuccessorRunID)
+	assert.Nil(t, completed.SuspensionResolution)
 	page, err := rt.ListRunEvents(ctx, ownerID, "", 100)
 	require.NoError(t, err)
 	retained := 0

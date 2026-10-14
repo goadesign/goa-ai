@@ -1948,10 +1948,12 @@ func validateRequiredLabels(definition AgentDefinition, labels map[string]string
 }
 
 // CancelRun delivers the reason to a running workflow or accepts a durable
-// cancellation job for saved suspended work. The job follows the successor
+// cancellation job for saved suspended work. An empty root suspension closes
+// continuation directly while preserving its historical result. The job follows the successor
 // accepted by storage and performs cleanup without another client request.
 // Successful delivery acknowledges ownership; it does not wait for cleanup.
-// Repeating the same request is safe. A different accepted reason is rejected.
+// Repeating cancellation of a relinquished suspension needs no further work.
+// Competing requests that are still choosing a cancellation reason conflict.
 // A run that never started or already settled needs no further work.
 func (r *Runtime) CancelRun(ctx context.Context, req CancelRequest) error {
 	if req.RunID == "" {

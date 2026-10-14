@@ -4,8 +4,8 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
@@ -16,9 +16,16 @@ import (
 	engineinmem "goa.design/goa-ai/runtime/agent/engine/inmem"
 	"goa.design/goa-ai/runtime/agent/internal/startrecipe"
 	"goa.design/goa-ai/runtime/agent/session"
+	"goa.design/goa-ai/runtime/agent/storage"
+	"goa.design/goa-ai/runtime/mcp"
 )
 
 type (
+	serviceCancellationRejectStore struct {
+		storage.Store
+		reject bool
+	}
+
 	// serviceCancellationRaceEngine starts the answer before the cancellation
 	// workflow and withholds the cancellation query until that workflow closes.
 	serviceCancellationRaceEngine struct {
@@ -43,22 +50,35 @@ func TestServiceCancellationFollowsAnswerAfterLosingAttemptCloses(t *testing.T) 
 		firstOpen    bool
 		queryError   error
 		wantError    error
+		rejectStart  bool
 	}{
 		{name: "admitted answer receives cancellation"},
 		{name: "first observation remains pending", firstOpen: true, wantError: ErrRunCompletionNotReady},
 		{name: "changed engine identity remains conflict", changeDigest: true, wantError: engine.ErrWorkflowStartConflict},
 		{name: "unrelated query failure remains error", queryError: queryFailure, wantError: queryFailure},
+		{name: "failed cancellation without successor is permanent", rejectStart: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 			defer cancel()
 			resolution, invocation := registeredRootFixture()
-			resolution.Toolset.Tools[0].ConsumerContract.Confirmation = testRuntimeRegistryResolution("records.find", strings.Repeat("a", 64)).Toolset.Tools[0].ConsumerContract.Confirmation
+			questions := &mcp.InputRequired{Requests: map[string]mcp.InputRequest{"choice": {Method: "elicitation/create", Params: json.RawMessage(`{"message":"Choose","requestedSchema":{"type":"object","properties":{}}}`)}}}
+			zero := int64(0)
+			pending, err := api.NewPendingTaskInput("provider-task", &zero, questions)
+			require.NoError(t, err)
 			answerRunning := make(chan struct{})
 			backend := &serviceCancellationRaceEngine{
 				registeredRootTestEngine: registeredRootTestEngine{Engine: engineinmem.New(), execute: func(ctx context.Context, input *api.ToolInput) (*api.ToolOutput, error) {
 					assert.Equal(t, *invocation.Invocation, input.Invocation)
 					assert.Equal(t, invocation.Arguments, []byte(input.OriginalArguments))
+					if input.ExecutionSequence == 0 {
+						return &api.ToolOutput{PendingExecution: pending}, nil
+					}
+					if taskID, canceling := input.ExecutionContinuation.AsTaskCancel(); canceling {
+						assert.Equal(t, "provider-task", taskID)
+						acknowledged, err := api.NewPendingTaskWait(taskID, &zero)
+						return &api.ToolOutput{PendingExecution: acknowledged}, err
+					}
 					close(answerRunning)
 					<-ctx.Done()
 					return nil, ctx.Err()
@@ -67,7 +87,7 @@ func TestServiceCancellationFollowsAnswerAfterLosingAttemptCloses(t *testing.T) 
 				firstOpen:    test.firstOpen,
 				queryError:   test.queryError,
 			}
-			store := newTestStore()
+			store := &serviceCancellationRejectStore{Store: newTestStore(), reject: test.rejectStart}
 			runtime := New(store, WithEngine(backend), WithToolWorkflowQueue("service-worker"))
 			require.NoError(t, runtime.RegisterToolWorkflow(ctx))
 			handle, err := runtime.StartOneShotToolOperation(ctx, "registry", resolution, invocation, nil, nil)
@@ -77,8 +97,11 @@ func TestServiceCancellationFollowsAnswerAfterLosingAttemptCloses(t *testing.T) 
 			require.NotNil(t, output.Suspension)
 			var answer engine.WorkflowHandle
 			backend.beforeCancellation = func(ctx context.Context) error {
+				if test.rejectStart {
+					return nil
+				}
 				var err error
-				answer, err = runtime.StartToolContinuation(ctx, "service-root", "answer", &api.PendingInputResponse{Confirmation: &api.ConfirmationDecision{ID: output.Suspension.Pending[0].Confirmation.ID, Approved: true}})
+				answer, err = runtime.StartToolContinuation(ctx, "service-root", "answer", &api.PendingInputResponse{MCP: &api.MCPInputResponse{ToolCallID: "service-root", Responses: map[string]json.RawMessage{"choice": json.RawMessage(`{"action":"accept","content":{}}`)}}})
 				if err != nil {
 					return err
 				}
@@ -93,19 +116,33 @@ func TestServiceCancellationFollowsAnswerAfterLosingAttemptCloses(t *testing.T) 
 			settled, err := runtime.cancellationActivity(ctx, request)
 			assert.False(t, settled)
 			assert.Equal(t, 1, backend.queries)
+			if test.rejectStart {
+				require.ErrorContains(t, err, "cancellation continuation failed before admission")
+				assert.True(t, engine.IsActivityErrorNonRetryable(err))
+				predecessor, loadErr := store.LoadRun(ctx, "service-root")
+				require.NoError(t, loadErr)
+				assert.Nil(t, predecessor.SuspensionResolution)
+				_, loadErr = store.LoadRun(ctx, backend.accepted.ID)
+				assert.ErrorIs(t, loadErr, session.ErrRunNotFound) //nolint:testifylint // The next observation must independently preserve the permanent error.
+				settled, err = runtime.cancellationActivity(ctx, request)
+				assert.False(t, settled)
+				require.ErrorContains(t, err, "cancellation continuation failed before admission")
+				assert.True(t, engine.IsActivityErrorNonRetryable(err))
+				return
+			}
 			if test.wantError != nil {
 				require.ErrorIs(t, err, test.wantError)
 			} else {
 				require.NoError(t, err)
 			}
 			assert.Equal(t, engine.RunStatusFailed, backend.closed.Status)
-			require.ErrorContains(t, backend.closed.WorkflowError, session.ErrRunConflict.Error())
+			require.ErrorIs(t, backend.closed.WorkflowError, engine.ErrWorkflowStartConflict)
 			snapshot, err := startrecipe.SnapshotRequest(backend.accepted)
 			require.NoError(t, err)
 			assert.Equal(t, snapshot.Digest, backend.closed.StartRequestDigest)
 			predecessor, err := store.LoadRun(ctx, "service-root")
 			require.NoError(t, err)
-			assert.Equal(t, "answer", predecessor.SuccessorRunID)
+			assert.Equal(t, session.ContinuedSuspension{RunID: "answer"}, predecessor.SuspensionResolution)
 			assert.Empty(t, backend.deliveries)
 			// A later observation follows only the answer already admitted by
 			// storage, preserving the cancellation reason and original invocation.
@@ -122,6 +159,13 @@ func TestServiceCancellationFollowsAnswerAfterLosingAttemptCloses(t *testing.T) 
 			assert.Equal(t, *invocation.Invocation, meta.Origin)
 		})
 	}
+}
+
+func (s *serviceCancellationRejectStore) StartOneShotRun(ctx context.Context, command storage.OneShotRunStart) (storage.OneShotRunStartResult, error) {
+	if s.reject && command.Run.PredecessorRunID != "" {
+		return storage.OneShotRunStartResult{}, storage.NewContractError(session.ErrRunConflict)
+	}
+	return s.Store.StartOneShotRun(ctx, command)
 }
 
 func (e *serviceCancellationRaceEngine) StartWorkflow(ctx context.Context, request engine.WorkflowStartRequest) (engine.WorkflowHandle, error) {

@@ -223,3 +223,34 @@ func TestRunAutomaticRejectsRequestOverridesBeforeInference(t *testing.T) {
 		assert.Empty(t, provider.requests)
 	}
 }
+
+func TestToolOutputContextWindowStopsWithoutHistoryPolicy(t *testing.T) {
+	for _, choice := range []struct {
+		name string
+		run  func(context.Context, model.Client, *model.Request, completion.Spec[testOutput]) (testOutput, error)
+	}{{"forced", Run[testOutput]}, {"automatic", RunAutomatic[testOutput]}} {
+		for _, withCall := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/tool=%t", choice.name, withCall), func(t *testing.T) {
+				response := toolResponse(`{"value":"must not execute"}`)
+				if !withCall {
+					response.Content[0].Parts = []model.Part{model.TextPart{Text: "partial result"}}
+				}
+				response.StopReason = "model_context_window_exceeded"
+				response.OutputLimited = true
+				provider := &recordingProvider{responses: []*model.Response{response}}
+				spec := outputSpec()
+				encodes := 0
+				encode := spec.Codec.ToJSON
+				spec.Codec.ToJSON = func(value testOutput) ([]byte, error) { encodes++; return encode(value) }
+				value, err := choice.run(t.Context(), testClient(t, provider), outputRequest(), spec)
+				assert.Equal(t, testOutput{}, value)
+				var failure *RunError
+				require.ErrorAs(t, err, &failure)
+				var contract *planner.OutputContractError
+				require.ErrorAs(t, failure.TerminalError(), &contract)
+				assert.Len(t, provider.requests, 1)
+				assert.Zero(t, encodes)
+			})
+		}
+	}
+}

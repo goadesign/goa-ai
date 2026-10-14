@@ -181,8 +181,8 @@ func testChildContinuationKeepsIndependentCalls(t *testing.T, sessionID string) 
 		require.NoError(t, err)
 		previous, err := rt.Store.LoadRun(ctx, source.PreviousRunID)
 		require.NoError(t, err)
-		require.NotEmpty(t, previous.SuccessorRunID)
-		childRun, err := rt.Store.LoadRun(ctx, previous.SuccessorRunID)
+		require.NotNil(t, previous.SuspensionResolution)
+		childRun, err := rt.Store.LoadRun(ctx, previous.SuspensionResolution.(session.ContinuedSuspension).RunID)
 		require.NoError(t, err)
 		require.Equal(t, completed.parent, childRun.ParentRunID)
 		require.Equal(t, session.RunStatusCompleted, childRun.Status)
@@ -249,7 +249,7 @@ func testChildContinuationKeepsIndependentCalls(t *testing.T, sessionID string) 
 			require.NoError(t, err)
 			previous, err := rt.Store.LoadRun(ctx, seed.Declaration.SourceRunID)
 			require.NoError(t, err)
-			require.Equal(t, meta.RunID, previous.SuccessorRunID)
+			require.Equal(t, meta.RunID, previous.SuspensionResolution.(session.ContinuedSuspension).RunID)
 			start := session.RunStart{Subject: meta.Subject, RunID: meta.RunID, SessionID: meta.SessionID, ParentRunID: meta.ParentRunID, PredecessorRunID: seed.Declaration.SourceRunID, SeedEndID: meta.SeedEndID}
 			linked := hooks.NewChildRunLinkedEvent(meta.ParentRunID, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(parentAgentID))}, meta.SessionID, tool.Name, childContext.ParentToolCallID, meta.RunID, admissionChildAgentID)
 			require.NoError(t, rt.validateChildContinuationStart(ctx, start, linked, seed))
@@ -562,10 +562,10 @@ func testSavedChildrenCancellation(t *testing.T, useJob, selectedChild bool) {
 		require.NoError(t, rt.CancelRun(ctx, CancelRequest{RunID: selectedRunID, Reason: reason}))
 		require.Eventually(t, func() bool {
 			previous, err := rt.Store.LoadRun(ctx, "parent-source")
-			if err != nil || previous.SuccessorRunID == "" {
+			if err != nil || previous.SuspensionResolution == nil {
 				return false
 			}
-			cleanup, err := rt.Store.LoadRun(ctx, previous.SuccessorRunID)
+			cleanup, err := rt.Store.LoadRun(ctx, previous.SuspensionResolution.(session.ContinuedSuspension).RunID)
 			if err != nil || cleanup.Status != session.RunStatusCanceled {
 				return false
 			}
@@ -585,8 +585,8 @@ func testSavedChildrenCancellation(t *testing.T, useJob, selectedChild bool) {
 		require.NoError(t, err)
 		previous, err := rt.Store.LoadRun(ctx, saved.PreviousRunID)
 		require.NoError(t, err)
-		require.NotEmpty(t, previous.SuccessorRunID)
-		child, err := rt.Store.LoadRun(ctx, previous.SuccessorRunID)
+		require.NotNil(t, previous.SuspensionResolution)
+		child, err := rt.Store.LoadRun(ctx, previous.SuspensionResolution.(session.ContinuedSuspension).RunID)
 		require.NoError(t, err)
 		require.Equal(t, cleanupRunID, child.ParentRunID)
 		require.Equal(t, session.RunStatusCanceled, child.Status)
@@ -663,12 +663,12 @@ func TestParentCancellationAfterChildResuspendsSettlesNewChild(t *testing.T) {
 	assert.EqualValues(t, 1, childResumes.Load())
 	original, err := rt.Store.LoadRun(ctx, checkpoint.PreviousRunID)
 	require.NoError(t, err)
-	require.NotEmpty(t, original.SuccessorRunID)
-	answered, err := rt.Store.LoadRun(ctx, original.SuccessorRunID)
+	require.NotNil(t, original.SuspensionResolution)
+	answered, err := rt.Store.LoadRun(ctx, original.SuspensionResolution.(session.ContinuedSuspension).RunID)
 	require.NoError(t, err)
 	assert.Equal(t, session.RunStatusSuspended, answered.Status)
-	require.NotEmpty(t, answered.SuccessorRunID)
-	settled, err := rt.Store.LoadRun(ctx, answered.SuccessorRunID)
+	require.NotNil(t, answered.SuspensionResolution)
+	settled, err := rt.Store.LoadRun(ctx, answered.SuspensionResolution.(session.ContinuedSuspension).RunID)
 	require.NoError(t, err)
 	assert.Equal(t, "parent-1", settled.ParentRunID)
 	assert.Equal(t, session.RunStatusCanceled, settled.Status)

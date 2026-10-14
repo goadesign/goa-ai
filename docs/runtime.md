@@ -525,10 +525,17 @@ next input. It requires exactly one outcome:
   budget cannot.
 - `UnadvertisedToolName` retains the existing exact unknown-name outcome,
   without its arguments or a copied catalog.
+- `ContextWindow` records a selected completed response's explicit context
+  stop when the agent has a registered history policy. It carries no tool
+  arguments or model-selected recovery control. The [context-window recovery
+  contract](#context-window-recovery) requires compaction before another call.
+  Without a history policy, the response remains an immediate typed output
+  rejection; the runtime does not schedule a replacement activity.
 
-The invocation journal selects the exact eligible, finalized model operation
-by start order before copying its data. Generated correction remains free of
-submitted values. One runtime renderer JSON-encodes the calls with argument text
+For validation failures, the invocation journal selects the exact eligible,
+finalized model operation by start order before copying its data. Context stops
+belong to the exact response selected for planning. Generated correction remains
+free of submitted values. One runtime renderer JSON-encodes the calls with argument text
 as quoted strings and HTML escaping, explicitly labeling them untrusted,
 unexecuted data. This prevents argument text from closing the reminder's
 structure; it does not guarantee the model will interpret it correctly.
@@ -5856,6 +5863,49 @@ This correction changes no public API, generated code, stored transcript, or
 workflow command. Applications adopt it through their framework dependency;
 there is no data migration, and older binaries retain their previous behavior.
 
+### Context-window recovery
+
+A selected provider response with `model_context_window_exceeded` means
+generation stopped at the context window, even though the transport completed
+successfully. Anthropic Messages and Bedrock Converse adapters mark this as
+limited output. The designated planner model client requests workflow recovery
+before passing that response to custom planner code. Raw runtime model clients
+keep the canonical provider response available; the runtime applies the same
+rejection when the planner selects it. Direct model clients outside the runtime
+still expose partial responses normally.
+
+The workflow accounts for the completed call's reported usage and preserves
+text already delivered as a plain assistant message. None of that response's
+tool calls execute. A replacement activity carries only the context-stop fact;
+original messages and model/tool choices remain owned by their existing layers.
+The next request uses the registered history policy with mandatory compaction.
+`Compress` summarizes all older turns while preserving every System message
+and the newest complete turn. It does this even when a local estimate was
+below the ordinary trigger. A reused summary must replace additional original
+messages, and the destination counter must report a strictly smaller input
+count before another inference can start. Estimates remain estimates and do
+not guarantee provider fit. Missing summary support, failed counting, a larger
+summary, or already-maximal compaction stops explicitly without another request.
+Custom policies must return a valid summary with those same progress properties.
+
+Each replacement consumes the existing `MaxRecoveryTurns` budget; it does not
+reset tool-call or time budgets, repeat accepted tools, or create another retry
+setting. Cleanup failures and independent planner failures remain terminal. A
+`max_tokens` stop alone retains its existing behavior. Generic HTTP 400
+validation errors are not reclassified as context stops: they can represent
+other invalid requests. Cached input still occupies context; Anthropic usage
+reports uncached input, cache reads, and cache writes separately. Recovery
+retains those reported values without treating an estimate as billing data.
+
+There is no stored-transcript migration or model configuration change.
+`ModelInvocationRecovery.ContextWindow` is an additional runtime-owned activity
+variant, validated as mutually exclusive with other recovery variants. Keep
+existing workflow executions on their original code and deploy matching updated
+activity and workflow workers together, using the engine's workflow versioning
+contract. Old workers cannot interpret this new recovery variant. Rollback
+restores the earlier behavior for newly started executions; executions already
+using the new variant must retain their updated workers until completion.
+
 ### Preparing conversation messages
 
 `PlanInput.Messages` and `PlanResumeInput.Messages` contain saved conversation
@@ -6674,6 +6724,14 @@ It creates no Run, start time or transcript. Prepared inputs obtain their
 original invocation from the exact published seed; direct operations derive
 their original root identity from the accepted Run ID.
 
+An unstarted continuation does not resolve its predecessor's suspension. Only
+an actual Run start transfers saved work to `ContinuedSuspension`; another
+valid continuation may still start after the failed attempt. Completion repair
+does not cancel that winning run. When an initiating service requires saved
+work to be canceled after an accepted operation fails, its durable completion
+worker owns the cancellation request and must observe cleanup before closing
+the overall operation. The failed attempt's outcome remains unchanged.
+
 `EnsureOperationCompletion` and `EnsureOneShotOperationCompletion` repair a
 closed direct operation using the same declaration, arguments, labels and memo
 as its corresponding start method. They rebuild the expected request privately
@@ -7056,7 +7114,9 @@ Uncertain answer delivery never repeats answers or the creating tool. Applicatio
 stores must implement the retained-work contract before enabling durable execution.
 
 `Runtime.CancelRun` accepts cancellation of suspended work without asking the
-caller to reconstruct or answer its checkpoint. Temporal owns a cancellation job
+caller to reconstruct or answer its checkpoint. An empty root with a supported
+checkpoint closes directly; later cancellation succeeds without changing its
+first reason or closure time. For saved work that still needs cleanup, Temporal owns a cancellation job
 on the highest parent’s worker. For a running parent, the engine derives that
 route from its accepted execution. For a suspended parent, retained preparation
 or suspension supplies the route without depending on old engine history. The
@@ -7064,7 +7124,9 @@ job delivers to the nearest running ancestor and follows the
 successor selected by storage, including a competing answer, and restores saved
 work through the ordinary continuation path. It also follows saved child work to
 its execution parent rather than starting an unrelated root. Duplicate requests
-retain the first accepted reason. A different request is rejected. Acceptance
+retain the current owner's first accepted reason; a competing reason for that
+owner is rejected. An admitted successor owns its own reason acceptance, so its
+predecessor's old reason does not prevent delivery to it. Job acceptance
 does not mean cleanup has finished; replacement workers continue without another
 client call. Temporal may roll the job into a fresh execution to keep recorded
 history manageable; the same request and observation delay continue. Temporary
@@ -8304,15 +8366,37 @@ Generated MCP calls omit host input capabilities for these runs. Form, URL and
 state-only unfinished replies fail before suspension, while ordinary calls on
 the same caller retain their configured capabilities.
 
-A suspended predecessor admits one successor through `StartRootRun` or
-`StartChildRun`. The store writes `RunMeta.SuccessorRunID` with the successor's
-first records in the same atomic operation. A different successor receives
-`session.ErrRunConflict` before any run or parent link is written. Exact retries
-retain the admitted ID and records after either run has closed. Separate child
-calls still admit their own successors. This is a required store contract;
-update every durable implementation together with its generated clients.
-Suspended Task cancellation still requires the subsequent execution work and
-does not become available merely because admission is exclusive.
+A suspended predecessor has one exclusive `RunMeta.SuspensionResolution`.
+A nil value means unresolved; `session.ContinuedSuspension` names the real
+successor admitted by `StartRootRun` or `StartChildRun` in the same atomic write
+as its first records. `session.RelinquishedSuspension` closes an empty root's
+continuation and retains the cancellation reason and storage-owned time. Neither
+variant changes the original suspended result or checkpoint.
+
+`Runtime.CancelRun` decodes the exact current checkpoint before asking storage
+to relinquish an unresolved root. A saved Task, child or remote input stays on
+the existing durable cleanup path. Unknown checkpoints cannot be closed through
+this path. Already relinquished history needs no decoding or execution
+preparation; later cancellation, including Session deletion, succeeds without
+changing its original resolution.
+
+`Store.RelinquishRunSuspension` competes atomically with continuation admission.
+It returns the selected successor when an answer wins, and the runtime follows
+that successor through durable cancellation. When closure wins, a later start
+receives `session.ErrRunConflict` before any run or parent link is written.
+A selected successor is returned regardless of its predecessor's old cancellation
+reason. Unresolved cancellation intent and direct relinquishment reject a
+different reason; exact closure retries preserve the same reason and time.
+Separate children retain their own successor chains and parent-owned cleanup.
+Ending a Session does not discard unresolved suspensions: they block deletion.
+
+All durable stores and their generated clients must adopt this contract together.
+Replace old successor metadata with the continued variant, preserving its real
+ID and all historical bytes. Existing unresolved suspensions remain unresolved.
+Old writers cannot safely run alongside a writer that permits relinquishment,
+and rollback must preserve every permanent closure. Historical metadata reads
+may load runs without original execution preparation; that does not authorize
+those runs to execute. See [the runtime ownership contract](../DESIGN.md).
 
 ### Preparation ownership upgrade
 

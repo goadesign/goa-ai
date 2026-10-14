@@ -130,7 +130,7 @@ func TestOneShotContinuationCompletesExactNativeInvocation(t *testing.T) {
 			assert.Equal(t, session.RunStatusCompleted, after.Status)
 			prior, err := rt.Store.LoadRun(t.Context(), originalID)
 			require.NoError(t, err)
-			assert.Equal(t, "successor", prior.SuccessorRunID)
+			assert.Equal(t, session.ContinuedSuspension{RunID: "successor"}, prior.SuspensionResolution)
 			duplicate, err := client.PrepareOneShotContinuation(t.Context(), originalID, "duplicate", "turn-duplicate", response, WorkflowOptions{})
 			if err == nil {
 				var duplicateHandle engine.WorkflowHandle

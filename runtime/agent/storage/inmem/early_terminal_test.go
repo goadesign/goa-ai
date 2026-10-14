@@ -173,12 +173,12 @@ func TestUnstartedContinuationKeepsOriginalInvocation(t *testing.T) {
 			require.NoError(t, err)
 			selected, err := store.LoadRun(t.Context(), predecessor.RunID)
 			require.NoError(t, err)
-			assert.Equal(t, successor.RunID, selected.SuccessorRunID)
+			assert.Nil(t, selected.SuspensionResolution)
 			assert.Equal(t, session.RunStatusSuspended, selected.Status)
 			other := earlyTerminalCommand(competitor)
 			other.Origin = &meta.Origin
 			_, err = store.RecordUnstartedExecutionTerminal(t.Context(), other)
-			assert.ErrorIs(t, err, session.ErrRunConflict) //nolint:testifylint // The successor lookup must still check whether the competing terminal request created a Run.
+			require.NoError(t, err)
 			_, err = store.LoadRun(t.Context(), successor.RunID)
 			assert.ErrorIs(t, err, session.ErrRunNotFound) //nolint:testifylint // The record check must still verify that the terminal-only successor saved no Run records.
 			assert.Empty(t, store.records[successor.RunID])
@@ -186,7 +186,7 @@ func TestUnstartedContinuationKeepsOriginalInvocation(t *testing.T) {
 	}
 }
 
-func TestUnstartedServiceContinuationCompetesWithStart(t *testing.T) {
+func TestUnstartedServiceContinuationPreservesActualStart(t *testing.T) {
 	for _, sessionID := range []string{"session", ""} {
 		t.Run("session="+sessionID, func(t *testing.T) {
 			store, root := activeRunStore(t)
@@ -230,16 +230,18 @@ func TestUnstartedServiceContinuationCompetesWithStart(t *testing.T) {
 			}()
 			close(ready)
 			first, second := <-results, <-results
-			assert.NotEqual(t, first == nil, second == nil)
+			require.NoError(t, first)
+			require.NoError(t, second)
 			selected, err := store.LoadRun(t.Context(), root.RunID)
 			require.NoError(t, err)
-			assert.Contains(t, []string{terminalStart.RunID, runningStart.RunID}, selected.SuccessorRunID)
+			resolution := selected.SuspensionResolution.(session.ContinuedSuspension)
+			assert.Equal(t, runningStart.RunID, resolution.RunID)
 			assert.Equal(t, origin, selected.Origin)
 			_, err = store.LoadRun(t.Context(), terminalStart.RunID)
 			assert.ErrorIs(t, err, session.ErrRunNotFound) //nolint:testifylint // Record and terminal checks independently verify the successor selected by the race.
 			assert.Empty(t, store.records[terminalStart.RunID])
 			_, stored := store.unstartedTerminals[terminalStart.RunID]
-			assert.Equal(t, selected.SuccessorRunID == terminalStart.RunID, stored)
+			assert.True(t, stored)
 		})
 	}
 }

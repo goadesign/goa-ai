@@ -161,9 +161,12 @@ service wiring, and connecting a model. For MCP, follow the
   values receive specific feedback and authored examples. The runtime can ask
   the model for a replacement within your recovery budget, before execution.
 - **Specialist agents.** Expose agents as tools and compose real child runs with
-  linked progress and cancellation.
+  linked progress and cancellation. Cancellation preserves completed results
+  and waits for required cleanup before closing the run; cleanup failures remain errors.
 - **Human input and approvals.** Save a pending question or confirmation and
-  continue from the host's answer. Text-only runs exclude interactive tools.
+  continue from the host's answer. Canceling a root question with no saved
+  child or remote work closes its continuation while preserving the original
+  suspended result. Text-only runs exclude interactive tools.
 - **Large results and images.** Bound model-visible results, continue paginated
   queries, retain native image evidence, and keep rich host data outside model
   requests.
@@ -196,6 +199,13 @@ service wiring, and connecting a model. For MCP, follow the
 
 [MCP declarations](docs/dsl.md#mcp-server-definition) · [Clients and authorization](docs/runtime.md#mcp-callers) · [Apps example](integration_tests/apps/README.md) · [Skills guide](docs/mcp_skills.md)
 
+Context-limit responses are recovered by the workflow rather than accepted as
+completed answers or executable tool batches. The runtime uses its existing
+history policy to summarize older turns before a replacement request, preserves
+live text and usage, and stops if compaction cannot shorten the input. This
+uses the existing recovery-turn budget. See
+[context-window recovery](docs/runtime.md#context-window-recovery).
+
 ### Registries, search, and production execution
 
 - **Distributed tool registries.** Publish typed toolsets, discover changing
@@ -212,7 +222,9 @@ service wiring, and connecting a model. For MCP, follow the
 - **Durable execution.** Retain failures and cancellation even before the first
   Run is stored. Use Temporal and an application-owned durable store to
   retain accepted work, host continuations, remote Task identity, and cancellation
-  across worker restarts. The in-memory engine supports local development.
+  across worker restarts. New turns preserve saved results completed by a later
+  run, including conversations stored as literal history. The in-memory engine
+  supports local development.
 - **Policies and context.** Control permitted tools, call and recovery budgets,
   timing, history compression, prompt caching, and prompt overrides.
 - **Evaluation and observability.** Generate typed evaluation suites; observe

@@ -525,7 +525,7 @@ func TestGeneratedReusableInjectPackagesCompile(t *testing.T) {
 	files := buildWithPrepareAndPkg(t, testscenarios.InjectReusableExportExample())
 	root := writeGeneratedModuleKeepingGen(t, files)
 
-	writeGeneratedPackageTest(t, root, "gen/atlas/service_stub.go", `package atlas
+	writeGeneratedPackageTest(t, root, "gen/catalog/service_stub.go", `package catalog
 
 import "context"
 
@@ -555,26 +555,26 @@ func (c *Client) Explicit(context.Context, *ExplicitArgs) (string, error) {
 }
 `)
 
-	writeGeneratedPackageTest(t, root, "gen/atlas/toolsets/helpers/provider_exec_test.go", `package helpers
+	writeGeneratedPackageTest(t, root, "gen/catalog/toolsets/helpers/provider_exec_test.go", `package helpers
 
 import (
 	"context"
 	"testing"
 
-	atlas "generated.local/gen/atlas"
+	gencatalog "generated.local/gen/catalog"
 	"goa.design/goa-ai/runtime/toolregistry"
 )
 
 type capturingReusableService struct {
-	got *atlas.InheritedPayload
+	got *gencatalog.InheritedPayload
 }
 
-func (s *capturingReusableService) Inherited(_ context.Context, p *atlas.InheritedPayload) (string, error) {
+func (s *capturingReusableService) Inherited(_ context.Context, p *gencatalog.InheritedPayload) (string, error) {
 	s.got = p
 	return "ok", nil
 }
 
-func (s *capturingReusableService) Explicit(_ context.Context, _ *atlas.ExplicitArgs) (string, error) {
+func (s *capturingReusableService) Explicit(_ context.Context, _ *gencatalog.ExplicitArgs) (string, error) {
 	return "ok", nil
 }
 
@@ -609,5 +609,5 @@ func TestReusableProviderInjectsSession(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 	runGeneratedGoTestCommand(t, root, exec.CommandContext(ctx, "go", "test", "-mod=mod", "-count=1",
-		"./gen/atlas/toolsets/helpers", "./gen/chat/agents/assistant/helpers"))
+		"./gen/catalog/toolsets/helpers", "./gen/chat/agents/assistant/helpers"))
 }

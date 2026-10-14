@@ -4,10 +4,11 @@ package runtime
 
 import (
 	"context"
-	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	genregistry "goa.design/goa-ai/registry/gen/registry"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -161,21 +162,29 @@ func TestDirectSuspendedCancellationPreservesInitialAndContinuedRequests(t *test
 				require.NotNil(t, out.Suspension)
 				target = "answer"
 			}
+			acceptedCompletion, err := rt.Engine.QueryRunCompletion(ctx, target)
+			require.NoError(t, err)
 			retainedEngine := &expiredOwnerEngine{Engine: rt.Engine, expiredRun: target}
 			rt.Engine = retainedEngine
+			before, err := rt.Store.LoadRunSuspension(ctx, target)
+			require.NoError(t, err)
+			records, err := rt.Store.ListRunRecords(ctx, target, "", 100)
+			require.NoError(t, err)
 			request := CancelRequest{RunID: target, Reason: run.CancellationReasonUserRequested}
 			require.NoError(t, rt.CancelRun(ctx, request))
 			require.NoError(t, rt.CancelRun(ctx, request))
-			var cleanup session.RunMeta
-			require.Eventually(t, func() bool {
-				source, loadErr := rt.Store.LoadRun(ctx, target)
-				if loadErr != nil || source.SuccessorRunID == "" {
-					return false
-				}
-				cleanup, loadErr = rt.Store.LoadRun(ctx, source.SuccessorRunID)
-				return loadErr == nil && cleanup.Status == session.RunStatusCanceled
-			}, 5*time.Second, time.Millisecond)
-			assert.Equal(t, request.Reason, cleanup.CancellationReason)
+			retained, err := rt.Store.LoadRun(ctx, target)
+			require.NoError(t, err)
+			closed, ok := retained.SuspensionResolution.(session.RelinquishedSuspension)
+			require.True(t, ok)
+			assert.Equal(t, request.Reason, closed.Reason)
+			assert.Equal(t, session.RunStatusSuspended, retained.Status)
+			after, err := rt.Store.LoadRunSuspension(ctx, target)
+			require.NoError(t, err)
+			assert.Equal(t, before, after)
+			afterRecords, err := rt.Store.ListRunRecords(ctx, target, "", 100)
+			require.NoError(t, err)
+			assert.Equal(t, records, afterRecords)
 			assert.EqualValues(t, 1, plans.Load())
 			assert.EqualValues(t, 1, preparations.Load())
 			if continued {
@@ -184,12 +193,18 @@ func TestDirectSuspendedCancellationPreservesInitialAndContinuedRequests(t *test
 				assert.Zero(t, resumes.Load())
 			}
 			require.NoError(t, rt.CancelRun(ctx, request))
-			var conflict *CancellationReasonConflictError
-			require.ErrorAs(t, rt.CancelRun(ctx, CancelRequest{RunID: target, Reason: run.CancellationReasonSessionEnded}), &conflict)
-			seed, err := rt.Store.LoadRunSeed(ctx, cleanup.RunID, cleanup.SeedEndID)
+			require.NoError(t, rt.CancelRun(ctx, CancelRequest{RunID: target, Reason: run.CancellationReasonSessionEnded}))
+			closedCompletion, err := retainedEngine.Engine.QueryRunCompletion(ctx, target)
+			require.NoError(t, err)
+			assert.Equal(t, acceptedCompletion.StartRequestDigest, closedCompletion.StartRequestDigest)
+			assert.Zero(t, retainedEngine.expiredReads.Load(), "closure must not read expired engine routing")
+			if !continued {
+				return
+			}
+			seed, err := rt.Store.LoadRunSeed(ctx, retained.RunID, retained.SeedEndID)
 			require.NoError(t, err)
 			accepted, found, err := rt.Store.FindRunPreparation(ctx, storage.PreparationOperation{
-				Subject: cleanup.Subject, RunID: cleanup.RunID, SessionID: cleanup.SessionID, CommandID: seed.Declaration.CommandID,
+				Subject: retained.Subject, RunID: retained.RunID, SessionID: retained.SessionID, CommandID: seed.Declaration.CommandID,
 			})
 			require.NoError(t, err)
 			require.True(t, found)
@@ -203,7 +218,7 @@ func TestDirectSuspendedCancellationPreservesInitialAndContinuedRequests(t *test
 			expected.Memo, expected.SearchAttributes = launch.memo, launch.searchAttributes
 			snapshot, err := startrecipe.SnapshotRequest(expected)
 			require.NoError(t, err)
-			assert.Equal(t, snapshot.Digest, saved.Digest, "the cancellation successor retains the requested launch metadata")
+			assert.Equal(t, snapshot.Digest, saved.Digest, "closure preserves the original accepted launch metadata")
 			assert.Equal(t, definition.route.WorkflowName, saved.Request.Workflow)
 			assert.Equal(t, definition.route.DefaultTaskQueue, saved.Request.TaskQueue)
 			assert.Zero(t, retainedEngine.expiredReads.Load(), "saved cancellation must not read expired engine routing")

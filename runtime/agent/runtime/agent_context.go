@@ -180,7 +180,7 @@ func (c *simplePlannerContext) PlannerModelClient(id string) (planner.PlannerMod
 	if !ok {
 		return nil, false
 	}
-	return newPlannerModelClient(cli), true
+	return newPlannerModelClient(cli, c.invocations), true
 }
 
 // configuredModelClient returns the runtime-managed raw model client for the

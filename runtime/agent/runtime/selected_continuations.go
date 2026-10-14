@@ -240,23 +240,31 @@ func (r *selectedContinuationReader) readCheckpoint(ctx context.Context, ref sto
 	return nil
 }
 
-// addReference loads only the named schedule and result. The selected result
-// may name a schedule beyond an ancestor's transcript end; that exact reference
-// grants no access to other later results.
+// addReference loads only the named schedule and selected result. A result
+// completed by another run can name a schedule outside the transcript sources.
+// Their exact identities must match; this never selects that run's other results.
 func (r *selectedContinuationReader) addReference(ctx context.Context, ref *api.ToolOutputRef) error {
 	key := continuationOutputKey{ref.CallRunID, ref.ResultRunID, ref.ToolCallID}
 	if _, exists := r.seen[key]; exists {
 		return nil
 	}
-	for _, runID := range []string{ref.CallRunID, ref.ResultRunID} {
-		if _, selected := r.runs[runID]; !selected || ref.ToolCallID == "" {
-			return storage.NewContractError(fmt.Errorf("continuation output references unselected run %q", runID))
-		}
+	if ref.CallRunID == "" || ref.ToolCallID == "" {
+		return storage.NewContractError(fmt.Errorf("continuation output requires call run and tool call identities"))
+	}
+	if _, selected := r.runs[ref.ResultRunID]; !selected {
+		return storage.NewContractError(fmt.Errorf("continuation output references unselected run %q", ref.ResultRunID))
 	}
 	if err := r.readNamedEvent(ctx, ref.CallRunID, ref.ToolCallID, hooks.ToolCallScheduled); err != nil {
 		return err
 	}
 	call := r.entry(ref.CallRunID, ref.ToolCallID).scheduled
+	if err := r.readNamedEvent(ctx, ref.ResultRunID, ref.ToolCallID, hooks.ToolResultReceived); err != nil {
+		return err
+	}
+	result := r.entry(ref.ResultRunID, ref.ToolCallID)
+	if err := hooks.ValidateToolResultCorrelation(call, result.result); err != nil {
+		return storage.NewContractError(err)
+	}
 	specs := r.specs
 	if call.Registry != nil {
 		resolved, err := registrycontract.Read(call.Registry)
@@ -269,10 +277,6 @@ func (r *selectedContinuationReader) addReference(ctx context.Context, ref *api.
 	if _, relevant := names[call.ToolName.String()]; !relevant {
 		return nil
 	}
-	if err := r.readNamedEvent(ctx, ref.ResultRunID, ref.ToolCallID, hooks.ToolResultReceived); err != nil {
-		return err
-	}
-	result := r.entry(ref.ResultRunID, ref.ToolCallID)
 	output, err := toolOutputFromStoredEvents(ref.CallRunID, ref.ResultRunID, ref.ToolCallID, r.entry(ref.CallRunID, ref.ToolCallID), result)
 	if err != nil {
 		return err

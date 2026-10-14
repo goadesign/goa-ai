@@ -199,7 +199,8 @@ func (s *Store) PurgeSession(_ context.Context, sessionID string) error {
 		return session.ErrSessionActive
 	}
 	for _, meta := range s.runs {
-		if meta.SessionID == sessionID && !session.IsTerminalRunStatus(meta.Status) {
+		if meta.SessionID == sessionID && (!session.IsTerminalRunStatus(meta.Status) ||
+			(meta.Status == session.RunStatusSuspended && meta.SuspensionResolution == nil)) {
 			return session.ErrSessionHasActiveRuns
 		}
 	}
@@ -341,8 +342,11 @@ func (s *Store) startSessionlessRun(start session.RunStart, started *runlog.Even
 		return storage.OneShotRunStartResult{}, err
 	}
 	if existing, ok := s.runs[start.RunID]; ok {
-		if start.PredecessorRunID != "" && s.runs[start.PredecessorRunID].SuccessorRunID != start.RunID {
-			return storage.OneShotRunStartResult{}, session.ErrRunConflict
+		if start.PredecessorRunID != "" {
+			resolution, continued := s.runs[start.PredecessorRunID].SuspensionResolution.(session.ContinuedSuspension)
+			if !continued || resolution.RunID != start.RunID {
+				return storage.OneShotRunStartResult{}, session.ErrRunConflict
+			}
 		}
 		if kind == engineRunStart {
 			if err := s.checkStartDigestLocked(start.RunID, digest); err != nil {
@@ -370,11 +374,11 @@ func (s *Store) startSessionlessRun(start session.RunStart, started *runlog.Even
 	origin := rootExecutionOrigin(start.RunID)
 	if start.PredecessorRunID != "" {
 		predecessor := s.runs[start.PredecessorRunID]
-		if predecessor.SuccessorRunID != "" {
+		if predecessor.SuspensionResolution != nil {
 			return storage.OneShotRunStartResult{}, session.ErrRunConflict
 		}
 		origin = cloneExecutionOrigin(predecessor.Origin)
-		predecessor.SuccessorRunID = start.RunID
+		predecessor.SuspensionResolution = session.ContinuedSuspension{RunID: start.RunID}
 		predecessor.UpdatedAt = time.Now().UTC()
 		s.runs[start.PredecessorRunID] = predecessor
 	}
@@ -399,8 +403,11 @@ func (s *Store) startOneShotChildRun(command storage.OneShotChildRunStart) (stor
 		return storage.OneShotChildRunStartResult{}, err
 	}
 	if existing, ok := s.runs[command.Run.RunID]; ok {
-		if command.Run.PredecessorRunID != "" && s.runs[command.Run.PredecessorRunID].SuccessorRunID != command.Run.RunID {
-			return storage.OneShotChildRunStartResult{}, session.ErrRunConflict
+		if command.Run.PredecessorRunID != "" {
+			resolution, continued := s.runs[command.Run.PredecessorRunID].SuspensionResolution.(session.ContinuedSuspension)
+			if !continued || resolution.RunID != command.Run.RunID {
+				return storage.OneShotChildRunStartResult{}, session.ErrRunConflict
+			}
 		}
 		if err := s.checkStartDigestLocked(command.Run.RunID, command.RequestDigest); err != nil {
 			return storage.OneShotChildRunStartResult{}, err
@@ -451,11 +458,11 @@ func (s *Store) startOneShotChildRun(command storage.OneShotChildRunStart) (stor
 	// successor while holding the lock that also stores the new child and link.
 	if command.Run.PredecessorRunID != "" {
 		predecessor := s.runs[command.Run.PredecessorRunID]
-		if predecessor.SuccessorRunID != "" {
+		if predecessor.SuspensionResolution != nil {
 			return storage.OneShotChildRunStartResult{}, session.ErrRunConflict
 		}
 		origin = cloneExecutionOrigin(predecessor.Origin)
-		predecessor.SuccessorRunID = command.Run.RunID
+		predecessor.SuspensionResolution = session.ContinuedSuspension{RunID: command.Run.RunID}
 		predecessor.UpdatedAt = time.Now().UTC()
 		s.runs[command.Run.PredecessorRunID] = predecessor
 	}
@@ -824,7 +831,7 @@ func (s *Store) startSessionRun(requestDigest [32]byte, start session.RunStart, 
 		}
 	}
 	if existing, ok := s.runs[start.RunID]; ok {
-		if start.PredecessorRunID != "" && s.runs[start.PredecessorRunID].SuccessorRunID != start.RunID {
+		if start.PredecessorRunID != "" && s.runs[start.PredecessorRunID].SuspensionResolution != (session.ContinuedSuspension{RunID: start.RunID}) {
 			return sessionRunStartResult{}, session.ErrRunConflict
 		}
 		if err := s.checkStartDigestLocked(start.RunID, requestDigest); err != nil {
@@ -897,10 +904,10 @@ func (s *Store) startSessionRun(requestDigest [32]byte, start session.RunStart, 
 	// under the same lock that writes its first run and parent-link records.
 	if start.PredecessorRunID != "" {
 		predecessor := s.runs[start.PredecessorRunID]
-		if predecessor.SuccessorRunID != "" {
+		if predecessor.SuspensionResolution != nil {
 			return sessionRunStartResult{}, session.ErrRunConflict
 		}
-		predecessor.SuccessorRunID = start.RunID
+		predecessor.SuspensionResolution = session.ContinuedSuspension{RunID: start.RunID}
 		predecessor.UpdatedAt = time.Now().UTC()
 		s.runs[start.PredecessorRunID] = predecessor
 	}

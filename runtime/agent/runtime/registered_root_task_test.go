@@ -89,10 +89,11 @@ func TestRegisteredRootTaskCancellationIsDurable(t *testing.T) {
 	}
 	require.Eventually(t, func() bool {
 		original, err := store.LoadRun(t.Context(), "service-root")
-		if err != nil || original.SuccessorRunID == "" {
+		resolution, continued := original.SuspensionResolution.(session.ContinuedSuspension)
+		if err != nil || !continued {
 			return false
 		}
-		successor, err := store.LoadRun(t.Context(), original.SuccessorRunID)
+		successor, err := store.LoadRun(t.Context(), resolution.RunID)
 		return err == nil && successor.Status == session.RunStatusCanceled && successor.CancellationReason == "user-canceled"
 	}, 2*time.Second, time.Millisecond)
 }

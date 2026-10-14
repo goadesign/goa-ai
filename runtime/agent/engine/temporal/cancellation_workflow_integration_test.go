@@ -91,7 +91,7 @@ func TestTemporalServerCancellationAfterWorkerReplacement(t *testing.T) {
 	require.NoError(t, caller.CancelRun(ctx, request))
 	before, err := store.LoadRun(ctx, runID)
 	require.NoError(t, err)
-	assert.Empty(t, before.SuccessorRunID)
+	assert.Nil(t, before.SuspensionResolution)
 	assert.Zero(t, cancels.Load())
 
 	replacement, err := NewWorker(Options{
@@ -108,8 +108,8 @@ func TestTemporalServerCancellationAfterWorkerReplacement(t *testing.T) {
 	require.NoError(t, replacement.client.GetWorkflow(ctx, jobID, "").Get(ctx, nil))
 	previous, err := store.LoadRun(ctx, runID)
 	require.NoError(t, err)
-	require.NotEmpty(t, previous.SuccessorRunID)
-	cleanup, err := store.LoadRun(ctx, previous.SuccessorRunID)
+	require.NotNil(t, previous.SuspensionResolution)
+	cleanup, err := store.LoadRun(ctx, previous.SuspensionResolution.(session.ContinuedSuspension).RunID)
 	require.NoError(t, err)
 	assert.Equal(t, session.RunStatusCanceled, cleanup.Status)
 	assert.Equal(t, request.Reason, cleanup.CancellationReason)

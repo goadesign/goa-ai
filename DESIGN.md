@@ -508,6 +508,18 @@ Generated agent definitions populate the executable catalog. Code that builds
 an `AgentDefinition` directly must list every tool the agent may execute; an
 empty list means the agent has no executable tools.
 
+The selected model response owns context-stop recovery. A
+`model_context_window_exceeded` response cannot complete planning or execute
+tools. Its reported usage and already-delivered text retain their existing
+accounting and transcript paths. The next workflow activity requests mandatory
+compaction through the registered history policy and consumes the existing
+recovery-turn budget. Only a summary replacing additional original messages and
+a strictly smaller destination input count permits another inference. The
+newest whole turn and every System instruction remain intact; the runtime
+stops when no additional history can be summarized. Direct provider clients
+continue exposing partial responses, and ordinary output limits and validation
+errors retain their prior meaning.
+
 The validated model client applies each tool's advertised schema before its
 attached input decoder and before a response becomes canonical. A schema
 rejection or non-nil `*tools.ValidationError` can produce limited-size
@@ -712,7 +724,11 @@ recovery turn may end with an input suspension; its evidence remains available
 when a new workflow continues after the answer.
 
 Saved pagination uses the exact `RunSeed.Source` ancestry and completed
-execution records through each selected end. A continuation checkpoint also
+execution records through each selected end. A selected result can name a call
+scheduled in another run, including a run represented by literal history. The
+reader loads only that exact schedule and checks the call, tool, agent, and
+session identities before using the result. This does not select other results
+from the scheduling run or extend any selected end. A continuation checkpoint also
 selects its retained completed output references: a completed sibling's event
 can follow the predecessor's transcript end without being published again by
 the successor. Provider IDs remain transcript identities and can repeat across
@@ -1204,6 +1220,12 @@ terminal or suspended outcome. High-level workflows require one workflow
 attempt and retain activity retries for durable delivery. External engine
 closure uses exact-request completion repair, never a guessed failure or a
 new start to inspect history.
+
+An unstarted continuation records only its own outcome, never a continued
+successor on its predecessor. A different continuation can still start and own
+that saved work. The initiating service owns any cancellation required by its
+overall accepted operation; generic execution repair must not cancel another
+answer that won admission.
 
 All five Store methods return current run status in the same operation that
 selects the original records. Synchronous starts reuse the sessionless result
@@ -2454,6 +2476,10 @@ its own public completion event for an end-user interface.
   - Consumers should treat cancellation as a terminal, non-error end state.
   - Cancellation from a service activity, inline tool, or agent child cancels
     the owning run and does not synthesize a failed `ToolResult`.
+    Results received before cancellation retain their saved scheduling and result
+    records; unfinished calls are closed by the run's terminal event. A prior
+    execution error or a cleanup failure remains a failure even when cancellation
+    also occurs.
   - Engine adapters normalize backend cancellation to `context.Canceled` while
     runtime hooks are recorded, then restore the backend's cancellation type at
     the workflow boundary. Temporal therefore records the execution as canceled
@@ -3303,7 +3329,15 @@ without forbidding a fresh workflow attempt that chooses different input.
 Generated executors retain Task handles and use the same generated read, answer
 and cancel operations. The server requires Task capability before its creator
 can run. Applications must adopt the current store ownership contract before deployment.
-Public `CancelRun` accepts a durable cancellation job for a suspended run. The
+Public `CancelRun` first inspects the saved suspension resolution. A relinquished
+root already needs no further work, including when later Session deletion uses a
+different reason. For an unresolved root, the current strict checkpoint decoder
+proves the exact owner, content identity and saved runtime state. If it contains
+no child or remote operation, `Store.RelinquishRunSuspension` permanently closes
+continuation without starting a workflow. It preserves the original suspended
+result, checkpoint and records. An unknown checkpoint is rejected before closure.
+
+A suspension with saved work still receives a durable cancellation job. The
 job stays on the highest parent's worker. An active parent's route comes from
 engine admission; a saved parent's route comes from retained preparation or
 suspension, without requiring old engine history. Delivery targets the nearest
@@ -3320,12 +3354,28 @@ instead of retrying indefinitely.
 The in-memory engine mirrors acceptance and retry rules without durability. Registry protocol 13 and suspension version 14 reject prior
 contracts; providers, consumers and workers must migrate together.
 
-A suspended run owns one admitted successor. The existing atomic start command
-sets `RunMeta.SuccessorRunID` with the new run and its first records. That
-identity never changes and exact retries select the same records. Another
-successor cannot publish a run or child link. The owning store exposes the
-current identity through `LoadRun`; consumers do not scan history to select
-recent work. Each separate child call retains its own continuation chain.
+A suspended run has one exclusive `RunMeta.SuspensionResolution`: nil while
+unresolved, `session.ContinuedSuspension` naming a real admitted successor, or
+`session.RelinquishedSuspension` carrying the first cancellation reason and the
+storage owner's resolution time. Admission and relinquishment use the same
+atomic decision. A closure loses to an admitted successor and returns that
+successor; the runtime's durable cancellation then follows it. A later start
+loses to relinquishment before any run, start record or child link is written.
+Exact storage retries preserve the selected value; another relinquishment reason
+conflicts. Runtime cancellation of an already relinquished run succeeds without
+changing that value. Child calls keep independent continuation chains and their
+parent remains responsible for cleanup.
+
+Store implementations must adopt the typed resolution and the new mutation
+together with their generated clients. Historical metadata and checkpoint reads
+do not require original execution preparation; admission and actual execution
+retain their strict proof requirements. Session deletion must reject every
+running run and every unresolved suspension, including after Session ending.
+This is an API and persisted-owner-shape change; hosts must migrate existing real
+successor IDs to the continued variant without altering history. Mixed old and
+new writers cannot safely arbitrate closure; deploy the owner and its clients as
+one coordinated contract change. Rollback must not discard stored relinquishment
+or allow an old writer to admit a successor after it.
 
 Tool activities retain the original invocation's `ToolCall.RunID` across Task
 reads, updates, cancellation and host-input successors. Registry admission uses
@@ -3336,11 +3386,24 @@ through the existing separate call and result run references.
 Before dispatching a tool batch, the workflow loop owns its execution records.
 Ready child results remain visible even while an ordinary activity or another
 child blocks collection. Those results transfer into unfinished step records
-before active collection releases them. Initial and resumed workflows use that same owner during
-finalization; successful suspension transfers ownership through the stored
-checkpoint. A cancellation accepted before suspension cannot discard those
-records. Cleanup failure remains a separate error cause, so the runtime and
-both engine adapters report failure rather than successful cancellation.
+before active collection releases them.
+The activity batch owns Tasks while polling them. Returning a validated request
+for input transfers its Task to the workflow's unfinished record, even when a
+sibling call or a later execution group fails. Initial and resumed workflows
+retain returned ownership before propagating execution errors. Suspended child
+records likewise remain owned by the parent until a child continuation starts.
+Only completed outcomes enter the result transcript; requests for input and
+child suspensions never become completed tool results.
+
+Successful suspension transfers unfinished records through the stored checkpoint.
+Cancellation before suspension cannot discard those records. Cleanup failure
+remains a separate error cause, so the runtime and both engine adapters report
+failure rather than successful cancellation.
+
+Changes to workflow cancellation command ordering require the deployment's
+existing worker and workflow versioning procedure for Temporal histories.
+Unchanged API and stored-data shapes do not guarantee that an older execution's
+recorded history can replay on a worker with different workflow commands.
 
 A child continuation's execution ID includes the current parent call and exact
 source suspension. If answering produces another question, cancellation uses a

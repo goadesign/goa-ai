@@ -60,6 +60,48 @@ func TestRegisteredRootRequestRetainsExactSelection(t *testing.T) {
 	assert.NotEqual(t, before.Digest, snapshot.Digest)
 }
 
+// Canceling an unanswered service confirmation closes only its continuation;
+// the historical suspension remains readable and no provider operation runs.
+func TestRegisteredRootConfirmationRelinquishesWithoutExecution(t *testing.T) {
+	resolution, invocation := registeredRootFixture()
+	resolution.Toolset.Tools[0].ConsumerContract.Confirmation = testRuntimeRegistryResolution("records.find", strings.Repeat("a", 64)).Toolset.Tools[0].ConsumerContract.Confirmation
+	store := newTestStore()
+	backend := registeredRootTestEngine{Engine: engineinmem.New(), execute: func(context.Context, *api.ToolInput) (*api.ToolOutput, error) {
+		t.Error("closing an unanswered confirmation must not execute the provider")
+		return nil, errors.New("unexpected provider execution")
+	}}
+	runtime := New(store, WithEngine(backend), WithToolWorkflowQueue("service-worker"))
+	require.NoError(t, runtime.RegisterToolWorkflow(t.Context()))
+	handle, err := runtime.StartOneShotToolOperation(t.Context(), "registry", resolution, invocation, nil, nil)
+	require.NoError(t, err)
+	output, err := handle.Wait(t.Context())
+	require.NoError(t, err)
+	require.NotNil(t, output.Suspension)
+	before, err := store.LoadRunSuspension(t.Context(), "service-root")
+	require.NoError(t, err)
+	records, err := store.ListRunRecords(t.Context(), "service-root", "", 100)
+	require.NoError(t, err)
+	// A fresh client has no local provider registration or worker queue.
+	client := New(store)
+	require.NoError(t, client.CancelRun(t.Context(), CancelRequest{RunID: "service-root", Reason: "user-canceled"}))
+	meta, err := store.LoadRun(t.Context(), "service-root")
+	require.NoError(t, err)
+	closed, ok := meta.SuspensionResolution.(session.RelinquishedSuspension)
+	require.True(t, ok)
+	assert.Equal(t, "user-canceled", closed.Reason)
+	assert.Equal(t, session.RunStatusSuspended, meta.Status)
+	require.NoError(t, client.CancelRun(t.Context(), CancelRequest{RunID: "service-root", Reason: "session-ended"}))
+	after, err := store.LoadRunSuspension(t.Context(), "service-root")
+	require.NoError(t, err)
+	assert.Equal(t, before, after)
+	afterRecords, err := store.ListRunRecords(t.Context(), "service-root", "", 100)
+	require.NoError(t, err)
+	assert.Equal(t, records, afterRecords)
+	resolved, err := store.LoadRun(t.Context(), "service-root")
+	require.NoError(t, err)
+	assert.Equal(t, closed, resolved.SuspensionResolution)
+}
+
 func TestRegisteredRootRejectsChangedSourceAndMixedInput(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -239,7 +281,7 @@ func TestRegisteredRootConfirmationContinuationRecoversExactRequest(t *testing.T
 			assert.Equal(t, 1, calls)
 			predecessor, err := store.LoadRun(t.Context(), "service-root")
 			require.NoError(t, err)
-			assert.Equal(t, "successor", predecessor.SuccessorRunID)
+			assert.Equal(t, session.ContinuedSuspension{RunID: "successor"}, predecessor.SuspensionResolution)
 		})
 	}
 }

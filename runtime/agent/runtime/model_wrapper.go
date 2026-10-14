@@ -39,6 +39,7 @@ type (
 	// invocation for one planner turn.
 	plannerModelClient struct {
 		inner model.Client
+		sink  modelInvocationSink
 		mu    sync.Mutex
 		used  bool
 	}
@@ -46,11 +47,11 @@ type (
 
 // newPlannerModelClient returns a planner-scoped client whose validated text
 // and thinking are published as they arrive.
-func newPlannerModelClient(inner model.Client) planner.PlannerModelClient {
+func newPlannerModelClient(inner model.Client, sink modelInvocationSink) planner.PlannerModelClient {
 	if inner == nil {
 		return nil
 	}
-	return &plannerModelClient{inner: inner}
+	return &plannerModelClient{inner: inner, sink: sink}
 }
 
 // Complete calls the model. The runtime saves the complete output only if the
@@ -62,6 +63,11 @@ func (c *plannerModelClient) Complete(ctx context.Context, req *model.Request) (
 	resp, err := c.inner.Complete(ctx, req)
 	if err != nil {
 		return nil, err
+	}
+	if c.sink != nil {
+		if err := c.sink.contextWindowFailure(); err != nil {
+			return nil, err
+		}
 	}
 	return resp, nil
 }
@@ -79,7 +85,16 @@ func (c *plannerModelClient) Stream(ctx context.Context, req *model.Request) (pl
 		}
 		return planner.StreamSummary{}, err
 	}
-	return planner.ConsumeStream(ctx, st)
+	summary, err := planner.ConsumeStream(ctx, st)
+	if err != nil {
+		return planner.StreamSummary{}, err
+	}
+	if c.sink != nil {
+		if err := c.sink.contextWindowFailure(); err != nil {
+			return planner.StreamSummary{}, err
+		}
+	}
+	return summary, nil
 }
 
 // begin reserves this client for the planner's one selected model call.
@@ -124,6 +139,7 @@ func newRequestConfiguredClient(inner model.Client, cache CachePolicy, history H
 // It is separate from planner.PlannerEvents so custom planners do not save
 // responses themselves, and response storage does not depend on event wiring.
 type modelInvocationSink interface {
+	contextWindowFailure() error
 	beginModelInvocation(context.Context, model.ModelClass, context.CancelFunc) (modelInvocationID, error)
 	designateModelInvocation(invocationID modelInvocationID) error
 	stageRejectedModelOutput(

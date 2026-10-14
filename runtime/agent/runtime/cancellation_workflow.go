@@ -32,16 +32,27 @@ func (r *Runtime) startSuspendedCancellation(ctx context.Context, request Cancel
 			startErr = &CancellationReasonConflictError{RunID: request.RunID, Reason: request.Reason}
 		}
 	}()
-	if err := r.Seal(ctx); err != nil {
-		return err
-	}
 	for {
 		var err error
 		target, err = r.selectedCancellationRun(ctx, target)
 		if err != nil {
 			return err
 		}
+		// An admitted successor owns the remaining work. Check its permanent
+		// closure before reading a checkpoint or requiring a worker route.
+		if target.Status == session.RunStatusSuspended {
+			settled, err := r.relinquishEmptyRootSuspension(ctx, request, &target)
+			if err != nil || settled {
+				return err
+			}
+			if _, continued := target.SuspensionResolution.(session.ContinuedSuspension); continued {
+				continue
+			}
+		}
 		if settled, err := settledCancellationTarget(target, request); settled || err != nil {
+			return err
+		}
+		if err := r.Seal(ctx); err != nil {
 			return err
 		}
 		owner, err := r.cancellationRoot(ctx, target)
@@ -59,7 +70,7 @@ func (r *Runtime) startSuspendedCancellation(ctx context.Context, request Cancel
 				if err != nil {
 					return err
 				}
-				if current.Status == session.RunStatusRunning && current.SuccessorRunID == "" {
+				if current.Status == session.RunStatusRunning && current.SuspensionResolution == nil {
 					return storage.NewContractError(errors.New("closed cancellation owner has no stored transition"))
 				}
 				target, err = r.Store.LoadRun(ctx, request.RunID)
@@ -118,6 +129,15 @@ func (r *Runtime) cancellationActivity(ctx context.Context, request engine.Cance
 	target, err = r.selectedCancellationRun(ctx, target)
 	if err != nil {
 		return false, err
+	}
+	if target.Status == session.RunStatusSuspended {
+		settled, err := r.relinquishEmptyRootSuspension(ctx, request, &target)
+		if err != nil || settled {
+			return settled, err
+		}
+		if _, continued := target.SuspensionResolution.(session.ContinuedSuspension); continued {
+			return false, nil
+		}
 	}
 	if settled, err := settledCancellationTarget(target, request); settled || err != nil {
 		return settled, err
@@ -207,14 +227,15 @@ func (r *Runtime) selectedCancellationRun(ctx context.Context, current session.R
 			return session.RunMeta{}, storage.NewContractError(errors.New("cycle in admitted run successors"))
 		}
 		seen[current.RunID] = struct{}{}
-		if current.SuccessorRunID == "" {
+		resolution, continued := current.SuspensionResolution.(session.ContinuedSuspension)
+		if !continued {
 			return current, nil
 		}
-		next, err := r.Store.LoadRun(ctx, current.SuccessorRunID)
+		next, err := r.Store.LoadRun(ctx, resolution.RunID)
 		if err != nil {
 			return session.RunMeta{}, err
 		}
-		if current.Status != session.RunStatusSuspended || next.RunID != current.SuccessorRunID || !reflect.DeepEqual(next.Subject, current.Subject) || next.SessionID != current.SessionID {
+		if current.Status != session.RunStatusSuspended || next.RunID != resolution.RunID || !reflect.DeepEqual(next.Subject, current.Subject) || next.SessionID != current.SessionID {
 			return session.RunMeta{}, storage.NewContractError(errors.New("admitted successor does not match its predecessor"))
 		}
 		current = next
@@ -394,13 +415,13 @@ func (r *Runtime) startCancellationContinuation(ctx context.Context, owner sessi
 			if err != nil {
 				return err
 			}
+			if current.RunID != owner.RunID || current.SessionID != owner.SessionID || !reflect.DeepEqual(current.Subject, owner.Subject) || !reflect.DeepEqual(current.Origin, owner.Origin) {
+				return storage.NewContractError(storage.ErrRunRecordOwnerMismatch)
+			}
 			// A racing answer can own the predecessor before this cancellation
 			// starts. Follow that admitted work on the next observation instead
 			// of trying to store a second successor's terminal outcome.
-			if current.SuccessorRunID != "" && current.SuccessorRunID != runID {
-				if current.RunID != owner.RunID || current.SessionID != owner.SessionID || !reflect.DeepEqual(current.Subject, owner.Subject) || !reflect.DeepEqual(current.Origin, owner.Origin) {
-					return storage.NewContractError(storage.ErrRunRecordOwnerMismatch)
-				}
+			if resolution, continued := current.SuspensionResolution.(session.ContinuedSuspension); continued && resolution.RunID != runID {
 				successor, err := r.selectedCancellationRun(ctx, current)
 				if err != nil {
 					return err
@@ -409,6 +430,14 @@ func (r *Runtime) startCancellationContinuation(ctx context.Context, owner sessi
 					return storage.NewContractError(storage.ErrRunRecordOwnerMismatch)
 				}
 				return nil
+			}
+			if current.SuspensionResolution == nil {
+				if err := r.completeObservedOperation(ctx, expected, completion); err != nil {
+					return err
+				}
+				// The engine cannot restart this closed attempt. Preserve its
+				// outcome and report that saved work has not been cleaned up.
+				return engine.MarkActivityErrorNonRetryable(fmt.Errorf("cancellation continuation failed before admission: %w", completion.WorkflowError))
 			}
 		}
 		return r.completeObservedOperation(ctx, expected, completion)
@@ -467,7 +496,7 @@ func (r *Runtime) startCancellationContinuation(ctx context.Context, owner sessi
 		if err != nil {
 			return err
 		}
-		if current.SuccessorRunID == "" {
+		if current.SuspensionResolution == nil {
 			return engine.MarkActivityErrorNonRetryable(fmt.Errorf("cancellation continuation failed before admission: %w", completion.WorkflowError))
 		}
 	}
@@ -482,8 +511,9 @@ func classifyCancellationActivityError(err error) error {
 		return err
 	}
 	var cancellationConflict *engine.CancellationConflictError
+	var reasonConflict *CancellationReasonConflictError
 	var startConflict *engine.WorkflowStartConflictError
-	if errors.As(err, &cancellationConflict) || errors.As(err, &startConflict) ||
+	if errors.As(err, &cancellationConflict) || errors.As(err, &reasonConflict) || errors.As(err, &startConflict) ||
 		errors.Is(err, session.ErrRunNotFound) || errors.Is(err, session.ErrSessionPurged) {
 		return engine.MarkActivityErrorNonRetryable(err)
 	}
@@ -505,7 +535,7 @@ func (r *Runtime) observeClosedCancellationOwner(ctx context.Context, owner sess
 	if err != nil {
 		return err
 	}
-	if current.Status != session.RunStatusRunning || current.SuccessorRunID != "" {
+	if current.Status != session.RunStatusRunning || current.SuspensionResolution != nil {
 		return nil
 	}
 	switch completion.Status {

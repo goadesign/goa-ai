@@ -365,13 +365,24 @@ func (j *modelInvocationJournal) rejectedModelResponseEvidence() model.ResponseE
 	return model.ResponseEvidence{}
 }
 
-// recoverableModelInvocationRecovery returns the one bounded recovery fact
-// from the exact earliest-started invocation selected as this activity's
-// rejection. A later completion cannot supply a name or correction for an
-// earlier failure. Missing or contradictory facts remain terminal.
-func (j *modelInvocationJournal) recoverableModelInvocationRecovery() (*api.ModelInvocationRecovery, error) {
+// recoverableModelInvocationRecovery returns one recovery fact from the selected
+// completed response or the earliest eligible validation failure. Another model
+// call cannot supply its context-stop fact, name or correction. Missing or
+// contradictory facts remain terminal.
+func (j *modelInvocationJournal) recoverableModelInvocationRecovery(plannerErr error) (*api.ModelInvocationRecovery, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	if candidate := j.invocations[j.recovery]; candidate != nil && candidate.response != nil && candidate.response.StopReason == contextWindowStopReason {
+		if !onlyExpectedValidation(plannerErr, candidate) {
+			return nil, errors.New("context-window recovery cannot discard an unrelated planner failure")
+		}
+		for _, invocation := range j.invocations {
+			if !invocation.finished || invocation.outcome == nil || invocation.outcome.ValidateFinalized() != nil || invocation.outcome.Error() != nil {
+				return nil, errors.New("context-window recovery requires all model calls to finish cleanly")
+			}
+		}
+		return &api.ModelInvocationRecovery{ContextWindow: true}, nil
+	}
 	for _, id := range j.order {
 		candidate := j.invocations[id]
 		var outputErr *planner.OutputContractError
