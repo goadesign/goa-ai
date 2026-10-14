@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -68,7 +70,7 @@ func TestRelinquishSuspensionCompetesWithContinuation(t *testing.T) {
 			store, root := runningRootStore(t)
 			_, err := store.RecordRunSuspension(t.Context(), storage.RunSuspension{RunID: root.RunID, Suspension: session.RunSuspension{ID: "checkpoint", Data: []byte(`{}`)}, Record: suspendedRecord(t, "suspended", root, "checkpoint")})
 			require.NoError(t, err)
-			successor := publishStartHistory(t, store, session.RunStart{AgentID: root.AgentID, RunID: "successor", SessionID: root.SessionID, PredecessorRunID: root.RunID, StartedAt: root.StartedAt})
+			successor := publishStartHistory(t, store, session.RunStart{Subject: root.Subject, RunID: "successor", SessionID: root.SessionID, PredecessorRunID: root.RunID, StartedAt: root.StartedAt}, "")
 			command := rootStartCommand(t, successor)
 			closure := storage.RunSuspensionRelinquishment{RunID: root.RunID, SuspensionID: "checkpoint", Reason: "user_requested"}
 			var resolution session.SuspensionResolution
@@ -124,7 +126,7 @@ func TestRelinquishSuspensionReturnsSuccessorWithDifferentPredecessorReason(t *t
 	command := storage.RunSuspensionRelinquishment{RunID: root.RunID, SuspensionID: "checkpoint", Reason: "session_ended"}
 	_, err = store.RelinquishRunSuspension(t.Context(), command)
 	require.ErrorIs(t, err, session.ErrRunCancellationConflict)
-	successor := publishStartHistory(t, store, session.RunStart{AgentID: root.AgentID, RunID: "successor", SessionID: root.SessionID, PredecessorRunID: root.RunID, StartedAt: root.StartedAt})
+	successor := publishStartHistory(t, store, session.RunStart{Subject: root.Subject, RunID: "successor", SessionID: root.SessionID, PredecessorRunID: root.RunID, StartedAt: root.StartedAt}, "")
 	_, err = store.StartRootRun(t.Context(), rootStartCommand(t, successor))
 	require.NoError(t, err)
 	before, err := store.LoadRun(t.Context(), root.RunID)
@@ -150,12 +152,11 @@ func TestRelinquishSuspensionRejectsWrongOwnerOrCheckpoint(t *testing.T) {
 		t.Run(variation, func(t *testing.T) {
 			store, root := runningRootStore(t)
 			if variation == "child" {
-				child := publishStartHistory(t, store, session.RunStart{AgentID: "child.agent", RunID: "child", SessionID: root.SessionID, ParentRunID: root.RunID, StartedAt: root.StartedAt})
+				child := publishStartHistory(t, store, session.RunStart{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("child.agent"))}, RunID: "child", SessionID: root.SessionID, ParentRunID: root.RunID, StartedAt: root.StartedAt}, "tool-call")
 				_, err := store.StartChildRun(t.Context(), storage.ChildRunStart{
 					RequestDigest: [32]byte{1}, Run: child,
 					ParentLinked: childLinkRecord(t, "linked", root, child),
 					Started:      startedRecord(t, "started", child),
-					Cancellation: cancellationRecord(t, "canceled", child, "session_ended"),
 				})
 				require.NoError(t, err)
 				root = child

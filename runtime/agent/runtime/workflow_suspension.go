@@ -11,9 +11,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"time"
 
+	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/hooks"
@@ -47,17 +49,19 @@ type (
 	}
 
 	checkpointRunContext struct {
-		TextOnly         bool `json:",omitempty"` //nolint:tagliatelle // Saved checkpoints retain Go field names.
-		ParentToolCallID string
-		ParentRunID      string
-		ParentAgentID    agent.Ident
-		Tool             tools.Ident
-		ToolArgs         rawjson.Message
-		ToolRegistry     *tools.RegistryBinding `json:",omitempty"` //nolint:tagliatelle // Checkpoints retain Go field names.
-		Attempt          int
-		Labels           map[string]string
-		Metadata         map[string]any
-		MaxDuration      string
+		TextOnly             bool `json:",omitempty"` //nolint:tagliatelle // Saved checkpoints retain Go field names.
+		ParentToolCallID     string
+		ParentRunID          string
+		ParentAgentID        agent.Ident
+		Tool                 tools.Ident
+		ToolArgs             rawjson.Message
+		RegisteredInvocation *genregistry.RegisteredInvocation `json:",omitempty"` //nolint:tagliatelle // Saved checkpoints retain Go field names.
+		Operation            *genregistry.ToolSchema           `json:",omitempty"` //nolint:tagliatelle // Checkpoints retain Go field names.
+		ToolRegistry         *tools.RegistryBinding            `json:",omitempty"` //nolint:tagliatelle // Checkpoints retain Go field names.
+		Attempt              int
+		Labels               map[string]string
+		Metadata             map[string]any
+		MaxDuration          string
 	}
 
 	checkpointRunState struct {
@@ -109,12 +113,20 @@ type (
 		RequiresResume   bool
 	}
 
+	checkpointResponseContract struct {
+		ResultSchema rawjson.Message
+		Bounds       *tools.BoundsSpec
+	}
+
 	checkpointPendingInput struct {
-		Confirmation *checkpointConfirmation
-		Await        *planner.AwaitItem
-		Child        *checkpointChildContinuation
-		MCP          *api.PendingMCPInput
-		CallRunID    string
+		// ResponseContracts retains only the generated contracts for requested
+		// external results, so another worker can validate the caller response.
+		ResponseContracts map[tools.Ident]checkpointResponseContract `json:",omitempty"` //nolint:tagliatelle // Saved checkpoints retain Go field names.
+		Confirmation      *checkpointConfirmation
+		Await             *planner.AwaitItem
+		Child             *checkpointChildContinuation
+		MCP               *api.PendingMCPInput
+		CallRunID         string
 	}
 
 	checkpointChildContinuation struct {
@@ -144,9 +156,6 @@ func (l *workflowLoop) suspendPendingRun(batch stepBatch, pending []checkpointPe
 }
 
 func (l *workflowLoop) suspendCheckpointRun(batch stepBatch, confirmations []confirmationAwait, items []planner.AwaitItem, restoredPending []checkpointPendingInput) (*RunOutput, error) {
-	if l.input.SessionID == "" {
-		return nil, errors.New("sessionless run cannot request external input")
-	}
 	l.unfinishedBatch = &batch
 	l.unfinishedPending = batch.pending
 	checkpoint, pending, requiredTools, err := l.buildWorkflowCheckpoint(batch, confirmations, items, restoredPending)
@@ -174,7 +183,8 @@ func (l *workflowLoop) suspendCheckpointRun(batch stepBatch, confirmations []con
 		return nil, err
 	}
 	return &RunOutput{
-		AgentID:       l.input.AgentID,
+		Subject: l.input.Subject,
+
 		RunID:         l.input.RunID,
 		Suspension:    suspension,
 		Usage:         &l.st.AggUsage,
@@ -191,7 +201,7 @@ func (l *workflowLoop) publishPendingInputPrompts(pending []*api.PendingInput) e
 	for i, input := range pending {
 		switch input.Kind {
 		case api.PendingInputKindMCP:
-			if err := l.r.publishHook(ctx, hooks.NewAwaitMCPInputEvent(l.input.RunID, l.input.AgentID, l.input.SessionID, *input.MCP), l.turnID); err != nil {
+			if err := l.r.publishHook(ctx, hooks.NewAwaitMCPInputEvent(l.input.RunID, l.input.Subject, l.input.SessionID, *input.MCP), l.turnID); err != nil {
 				return err
 			}
 		case api.PendingInputKindConfirmation:
@@ -201,7 +211,7 @@ func (l *workflowLoop) publishPendingInputPrompts(pending []*api.PendingInput) e
 			}
 			if err := l.r.publishHook(ctx, hooks.NewAwaitConfirmationEvent(
 				l.input.RunID,
-				l.input.AgentID,
+				l.input.Subject,
 				l.input.SessionID,
 				confirmation.ID,
 				confirmation.Title,
@@ -319,6 +329,9 @@ func (l *workflowLoop) buildWorkflowCheckpoint(batch stepBatch, confirmations []
 			checkpointPending = append(checkpointPending, checkpointPendingInput{Await: &item, CallRunID: l.input.RunID})
 		}
 	}
+	if err := retainPendingResponseContracts(checkpointPending, l.r.toolSpec); err != nil {
+		return nil, nil, nil, err
+	}
 	publicPending, err := publicPendingInputs(checkpointPending)
 	if err != nil {
 		return nil, nil, nil, err
@@ -334,7 +347,7 @@ func (l *workflowLoop) buildWorkflowCheckpoint(batch stepBatch, confirmations []
 	pendingRecovery, pendingRecoveryCatalog := toolRecovery(l.st.PendingRecovery)
 	checkpoint := &workflowCheckpoint{
 		Version:        api.RunSuspensionVersion,
-		AgentID:        string(l.input.AgentID),
+		AgentID:        string(l.reg.Definition.route.ID),
 		SessionID:      l.input.SessionID,
 		PreviousRunID:  l.input.RunID,
 		PreviousTurnID: l.input.TurnID,
@@ -533,6 +546,7 @@ func decodeCheckpointToolEvent(event *api.ToolEvent, call ToolCall, lookup toolS
 func (r *Runtime) restoreSuspendedWorkflow(wfCtx *providerRecoveryWorkflowContext, reg AgentRegistration, input *RunInput, checkpoint *workflowCheckpoint, historyEndID string) (*workflowLoop, error) {
 	base := &workflowConversation{
 		HistoryEndID: historyEndID,
+		finalization: wfCtx.actor.finalization,
 		RunContext:   restoreCheckpointRunContext(checkpoint.Context, input),
 	}
 	base.providerRecovery = checkpoint.ProviderRecovery
@@ -616,6 +630,8 @@ func restoreContinuationRunInput(input *RunInput, checkpoint *workflowCheckpoint
 	input.Tool = checkpoint.Context.Tool
 	input.ToolArgs = append(rawjson.Message(nil), checkpoint.Context.ToolArgs...)
 	input.ToolRegistry = checkpoint.Context.ToolRegistry.Clone()
+	input.RegisteredInvocation = checkpoint.Context.RegisteredInvocation
+	input.Operation = checkpoint.Context.Operation
 	input.Labels = cloneLabels(checkpoint.Context.Labels)
 	input.Metadata = cloneMetadata(checkpoint.Context.Metadata)
 	input.Policy = clonePolicyOverrides(checkpoint.Policy)
@@ -625,8 +641,10 @@ func restoreContinuationRunInput(input *RunInput, checkpoint *workflowCheckpoint
 // validateContinuationIdentity ensures the new workflow continues the same
 // registered agent and session before any saved state is trusted or restored.
 func validateContinuationIdentity(input *RunInput, checkpoint *workflowCheckpoint) error {
-	if checkpoint.AgentID != string(input.AgentID) {
-		return fmt.Errorf("run continuation agent mismatch: checkpoint=%q input=%q", checkpoint.AgentID, input.AgentID)
+	executor, _ := input.Subject.Executor.AsAgent()
+
+	if checkpoint.AgentID != string(agent.Ident(executor)) {
+		return fmt.Errorf("run continuation agent mismatch: checkpoint=%q input=%q", checkpoint.AgentID, agent.Ident(executor))
 	}
 	if checkpoint.SessionID != input.SessionID {
 		return fmt.Errorf("run continuation session mismatch: checkpoint=%q input=%q", checkpoint.SessionID, input.SessionID)
@@ -656,6 +674,8 @@ func retargetRunContext(previous run.Context, input *RunInput) run.Context {
 	previous.Tool = input.Tool
 	previous.ToolArgs = input.ToolArgs
 	previous.ToolRegistry = input.ToolRegistry.Clone()
+	previous.RegisteredInvocation = input.RegisteredInvocation
+	previous.Operation = input.Operation
 	previous.Labels = input.Labels
 	previous.Metadata = input.Metadata
 	return previous
@@ -665,17 +685,19 @@ func retargetRunContext(previous run.Context, input *RunInput) run.Context {
 // continuation starts a new run and turn.
 func checkpointContextFromRun(context run.Context) checkpointRunContext {
 	return checkpointRunContext{
-		ParentToolCallID: context.ParentToolCallID,
-		ParentRunID:      context.ParentRunID,
-		ParentAgentID:    context.ParentAgentID,
-		Tool:             context.Tool,
-		ToolArgs:         append(rawjson.Message(nil), context.ToolArgs...),
-		ToolRegistry:     context.ToolRegistry.Clone(),
-		TextOnly:         context.TextOnly,
-		Attempt:          context.Attempt,
-		Labels:           cloneLabels(context.Labels),
-		Metadata:         cloneMetadata(context.Metadata),
-		MaxDuration:      context.MaxDuration,
+		ParentToolCallID:     context.ParentToolCallID,
+		ParentRunID:          context.ParentRunID,
+		ParentAgentID:        context.ParentAgentID,
+		Tool:                 context.Tool,
+		ToolArgs:             append(rawjson.Message(nil), context.ToolArgs...),
+		ToolRegistry:         context.ToolRegistry.Clone(),
+		RegisteredInvocation: context.RegisteredInvocation,
+		Operation:            context.Operation,
+		TextOnly:             context.TextOnly,
+		Attempt:              context.Attempt,
+		Labels:               cloneLabels(context.Labels),
+		Metadata:             cloneMetadata(context.Metadata),
+		MaxDuration:          context.MaxDuration,
 	}
 }
 
@@ -683,20 +705,22 @@ func checkpointContextFromRun(context run.Context) checkpointRunContext {
 // turn identity supplied by the continuation request.
 func restoreCheckpointRunContext(saved checkpointRunContext, input *RunInput) run.Context {
 	return run.Context{
-		RunID:            input.RunID,
-		ParentToolCallID: saved.ParentToolCallID,
-		ParentRunID:      input.ParentRunID,
-		ParentAgentID:    saved.ParentAgentID,
-		SessionID:        input.SessionID,
-		TurnID:           input.TurnID,
-		Tool:             saved.Tool,
-		ToolArgs:         append(rawjson.Message(nil), saved.ToolArgs...),
-		ToolRegistry:     saved.ToolRegistry.Clone(),
-		TextOnly:         saved.TextOnly,
-		Attempt:          saved.Attempt,
-		Labels:           cloneLabels(saved.Labels),
-		Metadata:         cloneMetadata(saved.Metadata),
-		MaxDuration:      saved.MaxDuration,
+		RunID:                input.RunID,
+		ParentToolCallID:     saved.ParentToolCallID,
+		ParentRunID:          input.ParentRunID,
+		ParentAgentID:        saved.ParentAgentID,
+		SessionID:            input.SessionID,
+		TurnID:               input.TurnID,
+		Tool:                 saved.Tool,
+		ToolArgs:             append(rawjson.Message(nil), saved.ToolArgs...),
+		ToolRegistry:         saved.ToolRegistry.Clone(),
+		RegisteredInvocation: saved.RegisteredInvocation,
+		Operation:            saved.Operation,
+		TextOnly:             saved.TextOnly,
+		Attempt:              saved.Attempt,
+		Labels:               cloneLabels(saved.Labels),
+		Metadata:             cloneMetadata(saved.Metadata),
+		MaxDuration:          saved.MaxDuration,
 	}
 }
 
@@ -810,7 +834,7 @@ func retargetToolRequests(calls []ToolCall, input *RunInput, runContext *run.Con
 }
 
 func retargetToolRequest(call ToolCall, input *RunInput, runContext *run.Context) ToolCall {
-	call.AgentID = input.AgentID
+	call.Subject = input.Subject
 	call.RunID = input.RunID
 	call.SessionID = input.SessionID
 	call.TurnID = input.TurnID
@@ -829,6 +853,9 @@ func (r *Runtime) restorePendingInputs(checkpoint []checkpointPendingInput, inpu
 		}
 		confirmation := *item.Confirmation
 		confirmation.Call = retargetToolRequest(confirmation.Call, input, runContext)
+		// The new workflow supplies execution context, but permission and
+		// preparation still belong to the originally confirmed call.
+		confirmation.Call.RunID = item.Confirmation.Call.RunID
 		pending[i].Confirmation = &confirmation
 	}
 	return pending
@@ -941,7 +968,10 @@ func (l *workflowLoop) consumeCheckpointInput(batch *stepBatch, pending checkpoi
 		if err != nil {
 			return nil, err
 		}
-		generated := make([]checkpointPendingInput, 0, len(clarificationItems))
+		generated, err := pendingInputsFromToolRecords(records)
+		if err != nil {
+			return nil, err
+		}
 		for i := range clarificationItems {
 			item := clarificationItems[i]
 			if err := l.r.publishAwaitToolUses(l.wfCtx.Context(), l.input, l.base, l.turnID, item, i); err != nil {
@@ -975,7 +1005,7 @@ func (l *workflowLoop) applyConfirmationDecision(decision *api.ConfirmationDecis
 		return nil, nil, false, fmt.Errorf("decode denied result for %s: %w", pending.Call.Name, err)
 	}
 	plan := &confirmationPlan{Title: pending.Title, Prompt: pending.Prompt, DeniedResult: deniedResult}
-	return l.r.resolveConfirmationDecision(l.wfCtx, l.reg, l.input, l.base, l.toolOpts, pending.Call, pending.ID, plan, decision, pending.ExpectedChildren, l.parentTracker, l.turnID, &l.deadlines)
+	return l.r.resolveConfirmationDecision(l, l.wfCtx, l.reg, l.input, l.base, l.toolOpts, pending.Call, pending.ID, plan, decision, pending.ExpectedChildren, l.parentTracker, l.turnID, &l.deadlines)
 }
 
 func (l *workflowLoop) applyAwaitResponse(item planner.AwaitItem, callRunID string, response *api.PendingInputResponse) ([]stepToolRecord, error) {
@@ -993,4 +1023,33 @@ func (l *workflowLoop) applyAwaitResponse(item planner.AwaitItem, callRunID stri
 	default:
 		return nil, fmt.Errorf("unknown await item kind %q", item.Kind)
 	}
+}
+
+// retainPendingResponseContracts saves the generated schemas for externally
+// supplied results. A parent can validate those results without the provider's
+// executable tools; child-owned pending inputs already retain their own data.
+func retainPendingResponseContracts(pending []checkpointPendingInput, lookup toolSpecLookup) error {
+	for i := range pending {
+		input := &pending[i]
+		if input.Await == nil {
+			continue
+		}
+		if input.Await.Kind != planner.AwaitItemKindQuestions && input.Await.Kind != planner.AwaitItemKindExternalTools {
+			continue
+		}
+		input.ResponseContracts = make(map[tools.Ident]checkpointResponseContract)
+		for _, call := range awaitToolRequests([]planner.AwaitItem{*input.Await}) {
+			spec, ok := lookup(call.Name)
+			if !ok {
+				return fmt.Errorf("pending result tool %q has no generated contract", call.Name)
+			}
+			if spec.Result.Codec.FromJSON != nil && len(spec.Result.Schema) == 0 {
+				return fmt.Errorf("pending result tool %q has a codec without a generated schema", call.Name)
+			}
+			input.ResponseContracts[call.Name] = checkpointResponseContract{
+				ResultSchema: slices.Clone(spec.Result.Schema), Bounds: spec.Bounds,
+			}
+		}
+	}
+	return nil
 }

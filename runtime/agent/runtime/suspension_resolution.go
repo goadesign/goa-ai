@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -46,21 +47,37 @@ func (r *Runtime) relinquishEmptyRootSuspension(ctx context.Context, request Can
 	if err != nil {
 		return false, err
 	}
-	_, checkpoint, err := validateStoredRunSuspension(stored, *target)
+	suspension, err := validateStoredRunSuspension(stored, *target)
 	if err != nil {
 		return false, storage.NewContractError(fmt.Errorf("%w: %w", ErrRunSuspensionCorrupt, err))
 	}
-	// Completed synchronous calls have no retained cancellation handle.
-	// ScheduleRequired requests event publication, not another execution;
-	// RequiresResume requests planner consumption, not remote cleanup.
-	for _, record := range checkpoint.Batch.Records {
-		if record.Task != nil || record.ChildSuspension != nil || record.MCPPending != nil {
+	// Service-tool roots can close an unanswered confirmation, but a retained
+	// Task or remote input still requires its ordinary cancellation operation.
+	if _, service := target.Subject.Executor.AsServiceTool(); service {
+		checkpoint, err := decodeRegisteredRootCheckpoint(suspension)
+		if err != nil {
+			return false, storage.NewContractError(err)
+		}
+		if checkpoint.Task != nil || checkpoint.Pending != nil {
 			return false, nil
 		}
-	}
-	for _, pending := range checkpoint.Pending {
-		if pending.Child != nil || pending.MCP != nil {
-			return false, nil
+	} else {
+		checkpoint, err := decodeWorkflowCheckpointState(suspension)
+		if err != nil {
+			return false, storage.NewContractError(err)
+		}
+		// Completed synchronous calls have no retained cancellation handle.
+		// ScheduleRequired requests event publication, not another execution;
+		// RequiresResume requests planner consumption, not remote cleanup.
+		for _, record := range checkpoint.Batch.Records {
+			if record.Task != nil || record.ChildSuspension != nil || record.MCPPending != nil {
+				return false, nil
+			}
+		}
+		for _, pending := range checkpoint.Pending {
+			if pending.Child != nil || pending.MCP != nil {
+				return false, nil
+			}
 		}
 	}
 	resolution, err := r.Store.RelinquishRunSuspension(ctx, storage.RunSuspensionRelinquishment{
@@ -73,7 +90,7 @@ func (r *Runtime) relinquishEmptyRootSuspension(ctx context.Context, request Can
 		if readErr != nil {
 			return false, readErr
 		}
-		if current.RunID != target.RunID || current.AgentID != target.AgentID ||
+		if current.RunID != target.RunID || !reflect.DeepEqual(current.Subject, target.Subject) || !reflect.DeepEqual(current.Origin, target.Origin) ||
 			current.SessionID != target.SessionID || current.ParentRunID != "" ||
 			current.Status != session.RunStatusSuspended {
 			return false, storage.NewContractError(errors.New("suspension resolution read does not match the suspended root owner"))

@@ -18,6 +18,7 @@ import (
 	"go.temporal.io/sdk/converter"
 	"google.golang.org/protobuf/proto"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/internal/workflowcodec"
@@ -27,7 +28,8 @@ type (
 	// PreparedRequest owns one validated engine request. MarshalBinary creates
 	// the bytes an application stores before submitting that request.
 	PreparedRequest struct {
-		// AgentID identifies the generated agent definition that prepared the run.
+		// AgentID identifies the generated Agent definition for an Agent subject.
+		// A service-tool subject requires the empty value.
 		AgentID string
 		// Request is the exact workflow request submitted to the engine.
 		Request engine.WorkflowStartRequest
@@ -239,9 +241,6 @@ func validatePreparedRequest(
 	request engine.WorkflowStartRequest,
 	taskQueueOverride string,
 ) error {
-	if agentID == "" {
-		return errors.New("prepared run agent id is required")
-	}
 	if request.ID == "" {
 		return errors.New("prepared run workflow id is required")
 	}
@@ -254,8 +253,15 @@ func validatePreparedRequest(
 	if request.Input == nil {
 		return errors.New("prepared run input is required")
 	}
-	if string(request.Input.AgentID) != agentID {
+	if _, err := genrunidentity.EncodeRunSubject(&request.Input.Subject); err != nil {
+		return fmt.Errorf("prepared run input subject: %w", err)
+	}
+	executor, isAgent := request.Input.Subject.Executor.AsAgent()
+	if isAgent && (agentID == "" || string(executor) != agentID) {
 		return errors.New("prepared run input agent id does not match its envelope")
+	}
+	if !isAgent && agentID != "" {
+		return errors.New("service prepared request cannot declare an Agent")
 	}
 	if request.Input.RunID != request.ID {
 		return errors.New("prepared run input run id does not match its workflow id")
@@ -275,9 +281,6 @@ func validatePreparedRequest(
 func validatePreparedWire(wire preparedRequestWire) error {
 	if wire.Version != preparedRequestVersion {
 		return fmt.Errorf("decode prepared run: unsupported version %q", wire.Version)
-	}
-	if wire.AgentID == "" {
-		return errors.New("decode prepared run: agent id is required")
 	}
 	if wire.ID == "" {
 		return errors.New("decode prepared run: workflow id is required")

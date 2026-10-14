@@ -41,7 +41,11 @@ and an application-specific guide to the code they need to implement.
 | --- | --- |
 | **An AI agent** that calls typed tools, returns structured answers, and can pause for human input | [Agent quickstart](quickstart/README.md) |
 | **An MCP server** exposing Go service methods, resources, and prompts, or **an MCP client** consuming them | [MCP integration guide](https://goa.design/docs/2-goa-ai/mcp-integration/) |
-| **A tool registry** that publishes capabilities across services and lets agents discover them | [Registries and tool search](docs/tool_search.md) |
+| **A tool registry** that publishes capabilities across services and lets agents discover independently implemented Agent operations without loading provider code | [Registries and tool search](docs/tool_search.md) |
+
+Low-level runtime and custom Store integrations use a required generated
+[run subject](docs/run-subjects.md) to identify the actual executor. Read its
+upgrade requirements before changing a deployment with saved runs.
 
 These capabilities compose. You can also use MCP servers and clients independently
 of the agent runtime.
@@ -182,6 +186,7 @@ service wiring, and connecting a model. For MCP, follow the
 - **Progress and subscriptions.** Report progress from ordinary service methods;
   observe catalog changes, resource updates, and full Task state.
 - **Additional input and durable Tasks.** Collect form input or URL consent;
+  preserve additional protocol members without changing declared fields;
   expose existing durable jobs with creation, observation, answers, and
   cancellation. The same native methods work as local and registry tools.
 - **Authorization.** Compose browser OAuth, machine credentials, signed client
@@ -205,9 +210,17 @@ uses the existing recovery-turn budget. See
 
 - **Distributed tool registries.** Publish typed toolsets, discover changing
   catalogs, and route calls to providers with exact contracts and renewable leases.
+  Catalogs retain resource ownership; applications authorize discovery and use.
+  Registered imports derive distinct names for equal operations from different
+  owners and retain original declarations for execution and replay.
+- **Direct Agent operations.** Start typed operations before tool publication,
+  using the same provider preparation and result contract as delegation. Providers
+  can select literal messages or exact completed-run history with retained privacy
+  exclusions; see the [resolver upgrade](docs/runtime.md#provider-owned-history).
 - **Load tools when needed.** Use deferred tool search for whole toolsets or
   selected compiled tools, through supported OpenAI and Claude integrations.
-- **Durable execution.** Use Temporal and an application-owned durable store to
+- **Durable execution.** Retain failures and cancellation even before the first
+  Run is stored. Use Temporal and an application-owned durable store to
   retain accepted work, host continuations, remote Task identity, and cancellation
   across worker restarts. New turns preserve saved results completed by a later
   run, including conversations stored as literal history. The in-memory engine

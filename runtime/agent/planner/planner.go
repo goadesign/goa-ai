@@ -312,21 +312,21 @@ type FinalResponse struct {
 	Message *model.Message
 }
 
-// FinalToolResult contains the workflow-safe final tool result emitted by a
-// nested planner when it owns the parent tool contract directly.
-//
-// Contract:
-//   - Result is canonical JSON bytes for the parent tool's result schema.
-//   - This type must remain workflow-boundary safe; it intentionally does not
-//     carry a typed `any` result value.
-//   - Top-level planners normally leave this nil and return FinalResponse
-//     instead.
+// FinalToolResult contains the workflow-safe result of a selected Agent
+// operation, whether called directly or by a parent Agent. Result uses that
+// operation's generated result codec; an optional FinalResponse retains the
+// same invocation's canonical message for observers and transcript history.
+// A PlanResult cannot also select its separate FinalResponse terminal branch.
 type FinalToolResult struct {
+	// FinalResponse retains the full canonical message associated with this
+	// typed outcome. It is observer data, not another completion decision.
+	FinalResponse *FinalResponse `json:",omitempty"` //nolint:tagliatelle // Workflow JSON uses Go field names for this result, including Blocks and Result.
+
 	// Blocks retains ordered text, media and resource descriptions for this
 	// invocation, including when execution failed.
 	Blocks content.Blocks
 
-	// Result is the canonical JSON result payload encoded with the parent tool's
+	// Result is the canonical JSON payload encoded with the selected operation's
 	// result codec.
 	Result rawjson.Message
 
@@ -442,8 +442,8 @@ type AwaitClarification struct {
 //
 // Contract: the tool result is an object with one required string field named
 // "answer". The planner supplies ToolName, ModelToolCallID, and Payload from the
-// model call and leaves ToolCallID empty. The workflow assigns ToolCallID before
-// exposing the suspension.
+// model call and leaves ToolCallID and ModelPayload empty. The activity preserves
+// the original arguments, and the workflow assigns ToolCallID before suspension.
 type AwaitToolClarification struct {
 	// ID uniquely identifies this clarification request.
 	ID string
@@ -459,8 +459,14 @@ type AwaitToolClarification struct {
 	// model-authored call.
 	ModelToolCallID string
 
-	// Payload is the canonical JSON payload for the model-authored call.
+	// Payload starts as model arguments; activity acceptance completes it with
+	// application-owned values before the workflow stores the call.
 	Payload rawjson.Message
+
+	// ModelPayload is the runtime-owned copy of the original model arguments.
+	// Planners must leave it empty. Activity acceptance preserves it before
+	// adding application-owned values to Payload.
+	ModelPayload rawjson.Message
 
 	// Question is the user-facing question to ask.
 	Question string
@@ -470,8 +476,8 @@ type AwaitToolClarification struct {
 //
 // Contract: AwaitQuestions represents one model-authored tool invocation whose
 // answers arrive in the next workflow continuation. The planner supplies
-// ToolName, ModelToolCallID, and Payload and leaves ToolCallID empty. Place
-// multiple questions in that one payload rather than merging calls.
+// ToolName, ModelToolCallID, and Payload and leaves ToolCallID and ModelPayload
+// empty. Place multiple questions in that one payload rather than merging calls.
 type AwaitQuestions struct {
 	// ID uniquely identifies this questions request.
 	ID string
@@ -487,8 +493,14 @@ type AwaitQuestions struct {
 	// model-authored call.
 	ModelToolCallID string
 
-	// Payload is the canonical JSON payload for the awaited tool call.
+	// Payload starts as model arguments; activity acceptance completes it with
+	// application-owned values before the workflow stores the call.
 	Payload rawjson.Message
+
+	// ModelPayload is the runtime-owned copy of the original model arguments.
+	// Planners must leave it empty. Activity acceptance preserves it before
+	// adding application-owned values to Payload.
+	ModelPayload rawjson.Message
 
 	// Title is an optional display title for the questions form.
 	Title *string
@@ -545,8 +557,14 @@ type AwaitToolItem struct {
 	// model-authored call.
 	ModelToolCallID string
 
-	// Payload is the canonical JSON payload for the external tool call.
+	// Payload starts as model arguments; activity acceptance completes it with
+	// application-owned values before the workflow stores the call.
 	Payload rawjson.Message
+
+	// ModelPayload is the runtime-owned copy of the original model arguments.
+	// Planners must leave it empty. Activity acceptance preserves it before
+	// adding application-owned values to Payload.
+	ModelPayload rawjson.Message
 }
 
 // TerminationReason indicates why the runtime forced finalization.
@@ -579,9 +597,9 @@ type Termination struct {
 
 // PlanInput carries the initial messages and context into PlanStart.
 type PlanInput struct {
-	// ParentTool is the parent call's retained contract for a nested Agent run.
-	// Its result schema describes FinalToolResult; it is not an advertised tool.
-	// Top-level runs have no ParentTool.
+	// ParentTool is the selected operation contract for direct or delegated
+	// Agent execution. Its result schema describes FinalToolResult; it is not
+	// an advertised tool. Message-based runs have no selected operation.
 	ParentTool *tools.ToolSpec
 
 	// Messages is the complete saved conversation for this activity. Treat it
@@ -606,9 +624,9 @@ type PlanInput struct {
 
 // PlanResumeInput carries messages plus execution history into PlanResume.
 type PlanResumeInput struct {
-	// ParentTool is the parent call's retained contract for a nested Agent run.
-	// Its result schema describes FinalToolResult; it is not an advertised tool.
-	// Top-level runs have no ParentTool.
+	// ParentTool is the selected operation contract for direct or delegated
+	// Agent execution. Its result schema describes FinalToolResult; it is not
+	// an advertised tool. Message-based runs have no selected operation.
 	ParentTool *tools.ToolSpec
 
 	// Messages is the complete saved conversation, including the latest tool
@@ -661,8 +679,8 @@ type PlanResult struct {
 	// FinalResponse ends the run with a final assistant message.
 	FinalResponse *FinalResponse
 
-	// FinalToolResult ends a nested agent run with a canonical parent tool result
-	// instead of an assistant message.
+	// FinalToolResult ends a direct or delegated Agent operation with its typed
+	// result and optional canonical observer message.
 	FinalToolResult *FinalToolResult
 
 	// Await requests that the current workflow end with required external input.

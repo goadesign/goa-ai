@@ -34,7 +34,12 @@ type workerBundle struct {
 	closedCh  chan struct{}
 }
 
-const defaultActivationRetryInterval = time.Second
+const (
+	defaultActivationRetryInterval = time.Second
+	// Without a heartbeat failure deadline, each activity still sends cancellation
+	// checks. Limit SDK batching to the runtime heartbeat cadence by default.
+	defaultHeartbeatThrottleInterval = 5 * time.Second
+)
 
 var errWorkerClosed = errors.New("worker bundle closed")
 
@@ -89,6 +94,9 @@ func (e *Engine) newWorkerBundle(queue string) *workerBundle {
 // caller-supplied hooks.
 func (e *Engine) workerOptionsForQueue(bundle *workerBundle) worker.Options {
 	opts := e.workerOpts
+	if opts.DefaultHeartbeatThrottleInterval == 0 {
+		opts.DefaultHeartbeatThrottleInterval = defaultHeartbeatThrottleInterval
+	}
 	upstream := opts.OnFatalError
 	opts.OnFatalError = func(err error) {
 		wrapped := bundle.handleFatal(err)

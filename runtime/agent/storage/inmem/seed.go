@@ -6,12 +6,15 @@ package inmem
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	genrunterminal "goa.design/goa-ai/registry/gen/runterminal"
 	"maps"
 	"reflect"
 	"slices"
 	"strconv"
 
+	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/session"
 	"goa.design/goa-ai/runtime/agent/storage"
 )
@@ -34,6 +37,48 @@ type (
 	}
 )
 
+// BeginRunPreparationOperation binds one invocation under the same lock used
+// by seed publication and run starts. It performs no provider or history reads.
+func (s *Store) BeginRunPreparationOperation(ctx context.Context, command storage.RunPreparationBegin) (genrunterminal.PreparationDecision, error) {
+	if err := ctx.Err(); err != nil {
+		return genrunterminal.PreparationDecision{}, err
+	}
+	if err := storage.ValidateRunPreparationBegin(command); err != nil {
+		return genrunterminal.PreparationDecision{}, storage.NewContractError(err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, terminal := s.unstartedTerminals[command.Operation.RunID]; terminal {
+		return genrunterminal.PreparationDecision{}, storage.NewContractError(session.ErrRunConflict)
+	}
+	if err := s.seedOwnerExistsLocked(command.Operation.SessionID); err != nil {
+		return genrunterminal.PreparationDecision{}, storage.NewContractError(err)
+	}
+	if original, exists := s.preparationOperations[command.Operation.RunID]; exists {
+		if !reflect.DeepEqual(original, command) {
+			return genrunterminal.PreparationDecision{}, storage.NewContractError(storage.ErrSeedConflict)
+		}
+	} else {
+		if _, exists := s.runs[command.Operation.RunID]; exists {
+			return genrunterminal.PreparationDecision{}, storage.NewContractError(session.ErrRunConflict)
+		}
+		command.Operation.Subject = cloneSubject(command.Operation.Subject)
+		command.Origin = cloneExecutionOrigin(command.Origin)
+		s.preparationOperations[command.Operation.RunID] = command
+	}
+	// An existing Run's reason wins over later Session closure. Binding remains
+	// saved even when stopped so pure history publication can produce an exact
+	// engine request whose first start records that owner-selected cancellation.
+	reason := s.runs[command.Operation.RunID].CancellationReason
+	if reason == "" && command.Operation.SessionID != "" && s.sessions[command.Operation.SessionID].Status == session.StatusEnded {
+		reason = run.CancellationReasonSessionEnded
+	}
+	if reason != "" {
+		return genrunterminal.PreparationDecision{State: genrunterminal.NewPreparationStateStop(genrunterminal.PreparationStateBranchStop(reason))}, nil
+	}
+	return genrunterminal.PreparationDecision{State: genrunterminal.NewPreparationStateProceed(&genrunterminal.PreparationProceed{})}, nil
+}
+
 // BeginRunSeed reserves the destination and captures the source under the same
 // lock as lifecycle writes. Failed declarations do not reserve anything.
 func (s *Store) BeginRunSeed(ctx context.Context, declaration storage.SeedDeclaration) (storage.RunSeed, error) {
@@ -45,11 +90,15 @@ func (s *Store) BeginRunSeed(ctx context.Context, declaration storage.SeedDeclar
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, terminal := s.unstartedTerminals[declaration.RunID]; terminal {
+		return contractResult(storage.RunSeed{}, session.ErrRunConflict)
+	}
 	if err := s.seedOwnerExistsLocked(declaration.SessionID); err != nil {
 		return contractResult(storage.RunSeed{}, err)
 	}
-	operation := storage.PreparationOperation{AgentID: declaration.AgentID, RunID: declaration.RunID, SessionID: declaration.SessionID, CommandID: declaration.CommandID}
-	if existing, exists := s.preparationOperations[declaration.RunID]; exists && existing != operation {
+	operation := storage.PreparationOperation{Subject: cloneSubject(declaration.Subject), RunID: declaration.RunID, SessionID: declaration.SessionID, CommandID: declaration.CommandID}
+	binding, exists := s.preparationOperations[declaration.RunID]
+	if !exists || !reflect.DeepEqual(binding.Operation, operation) || !reflect.DeepEqual(binding.Origin, declaration.Origin) {
 		return contractResult(storage.RunSeed{}, storage.ErrSeedConflict)
 	}
 	key := preparationKey{declaration.RunID, declaration.AttemptID}
@@ -77,7 +126,6 @@ func (s *Store) BeginRunSeed(ctx context.Context, declaration storage.SeedDeclar
 		Source:      source,
 		EndID:       storage.EmptySeedEndID,
 	})
-	s.preparationOperations[declaration.RunID] = operation
 	s.preparations[key] = &seedState{
 		seed: seed, keys: make(map[string]int), endID: storage.EmptySeedEndID,
 	}
@@ -98,6 +146,9 @@ func (s *Store) AppendRunSeed(ctx context.Context, command storage.SeedAppend) (
 	state, err := s.preparationLocked(command.RunID, command.AttemptID)
 	if err != nil {
 		return contractResult("", err)
+	}
+	if _, service := state.seed.Declaration.Subject.Executor.AsServiceTool(); service && len(command.Record.Prepared) == 0 {
+		return contractResult("", errors.New("service preparation cannot contain model history"))
 	}
 	record := command.Record
 	if index, exists := state.keys[record.Key]; exists {
@@ -153,6 +204,9 @@ func (s *Store) PublishRunSeed(ctx context.Context, publication storage.SeedPubl
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, terminal := s.unstartedTerminals[publication.RunID]; terminal {
+		return storage.NewContractError(session.ErrRunConflict)
+	}
 	state, err := s.preparationLocked(publication.RunID, publication.AttemptID)
 	if err != nil {
 		return storage.NewContractError(err)
@@ -202,7 +256,6 @@ func (s *Store) SettleRunPreparation(ctx context.Context, attempt storage.Prepar
 	if err != nil || found {
 		return accepted, found, err
 	}
-	s.preparationOperations[attempt.Operation.RunID] = attempt.Operation
 	key := preparationKey{attempt.Operation.RunID, attempt.AttemptID}
 	state, exists := s.preparations[key]
 	if exists && !preparationMatches(state, attempt.Operation) {
@@ -210,7 +263,7 @@ func (s *Store) SettleRunPreparation(ctx context.Context, attempt storage.Prepar
 	}
 	if !exists {
 		state = &seedState{seed: storage.RunSeed{Declaration: storage.SeedDeclaration{
-			AgentID: attempt.Operation.AgentID, RunID: attempt.Operation.RunID,
+			Subject: cloneSubject(attempt.Operation.Subject), RunID: attempt.Operation.RunID,
 			SessionID: attempt.Operation.SessionID, CommandID: attempt.Operation.CommandID,
 			AttemptID: attempt.AttemptID,
 		}}}
@@ -319,7 +372,7 @@ func preparationPage(state *seedState, start, end int, afterID string, limit int
 
 func preparationMatches(state *seedState, operation storage.PreparationOperation) bool {
 	d := state.seed.Declaration
-	return d.RunID == operation.RunID && d.AgentID == operation.AgentID &&
+	return d.RunID == operation.RunID && reflect.DeepEqual(d.Subject, operation.Subject) &&
 		d.SessionID == operation.SessionID && d.CommandID == operation.CommandID
 }
 
@@ -327,7 +380,7 @@ func (s *Store) acceptedPreparationLocked(operation storage.PreparationOperation
 	if err := s.seedOwnerExistsLocked(operation.SessionID); err != nil {
 		return storage.RunPreparation{}, false, storage.NewContractError(err)
 	}
-	if original, exists := s.preparationOperations[operation.RunID]; exists && original != operation {
+	if original, exists := s.preparationOperations[operation.RunID]; exists && !reflect.DeepEqual(original.Operation, operation) {
 		return storage.RunPreparation{}, false, storage.NewContractError(storage.ErrSeedConflict)
 	}
 	state, found := s.seeds[operation.RunID]
@@ -356,21 +409,33 @@ func (s *Store) preparationLocked(runID, attemptID string) (*seedState, error) {
 	return state, nil
 }
 
-// seedSourceLocked proves that a reference belongs to the same agent/session
+// seedSourceLocked proves that a reference belongs to the same subject and session
 // and captures the successful completion position without caller inference.
 func (s *Store) seedSourceLocked(d storage.SeedDeclaration) (*storage.HistoryPrefix, error) {
 	if d.Kind == storage.SeedLiteral {
+		if d.PredecessorRunID != "" {
+			predecessor, exists := s.runs[d.PredecessorRunID]
+			if !exists {
+				return nil, session.ErrRunNotFound
+			}
+			if predecessor.Status != session.RunStatusSuspended || predecessor.SessionID != d.SessionID || !reflect.DeepEqual(predecessor.Subject, d.Subject) || !reflect.DeepEqual(predecessor.Origin, d.Origin) {
+				return nil, storage.ErrSeedConflict
+			}
+		}
 		return nil, nil
 	}
 	source, ok := s.runs[d.SourceRunID]
 	if !ok {
 		return nil, session.ErrRunNotFound
 	}
-	if source.SessionID != d.SessionID || source.AgentID != d.AgentID {
+	if source.SessionID != d.SessionID || !reflect.DeepEqual(source.Subject, d.Subject) {
 		return nil, storage.ErrRunRecordOwnerMismatch
 	}
 	expected := session.RunStatusCompleted
 	if d.Kind == storage.SeedContinuation {
+		if !reflect.DeepEqual(source.Origin, d.Origin) {
+			return nil, storage.ErrSeedConflict
+		}
 		expected = session.RunStatusSuspended
 	}
 	if source.Status != expected {
@@ -435,24 +500,49 @@ func (s *Store) publishedSeedLocked(runID, endID string) (*seedState, error) {
 }
 
 // validateStartSeedLocked rejects any start that does not attach the exact
-// published initial history reserved for this agent and session.
+// published initial history reserved for this subject and session.
 func (s *Store) validateStartSeedLocked(start session.RunStart) error {
+	if _, terminal := s.unstartedTerminals[start.RunID]; terminal {
+		return session.ErrRunConflict
+	}
 	state, err := s.publishedSeedLocked(start.RunID, start.SeedEndID)
 	if err != nil {
 		return err
 	}
 	d := state.seed.Declaration
-	if d.AgentID != start.AgentID || d.SessionID != start.SessionID {
+	if err := storage.ValidateSeedDeclaration(d); err != nil {
+		return err
+	}
+	if start.ParentRunID == "" && start.PredecessorRunID == "" {
+		root, selected := d.Origin.Invocation.AsRoot()
+		if !selected || root.RunID != start.RunID {
+			return storage.ErrSeedConflict
+		}
+	}
+	if !reflect.DeepEqual(d.Subject, start.Subject) || d.SessionID != start.SessionID {
 		return storage.ErrRunRecordOwnerMismatch
 	}
-	if (d.Kind == storage.SeedContinuation) != (start.PredecessorRunID != "") ||
-		(d.Kind == storage.SeedContinuation && d.SourceRunID != start.PredecessorRunID) {
+	if d.PredecessorRunID != start.PredecessorRunID {
 		return storage.ErrSeedConflict
+	}
+	if _, service := start.Subject.Executor.AsServiceTool(); service && (d.Kind != storage.SeedLiteral || state.seed.EndID != storage.EmptySeedEndID) {
+		return storage.ErrSeedConflict
+	}
+	if start.PredecessorRunID != "" {
+		predecessor, exists := s.runs[start.PredecessorRunID]
+		if !exists {
+			return session.ErrRunNotFound
+		}
+		if !reflect.DeepEqual(predecessor.Origin, d.Origin) {
+			return storage.ErrSeedConflict
+		}
 	}
 	return nil
 }
 
 func cloneSeed(seed storage.RunSeed) storage.RunSeed {
+	seed.Declaration.Origin = cloneExecutionOrigin(seed.Declaration.Origin)
+	seed.Declaration.Subject = cloneSubject(seed.Declaration.Subject)
 	seed.Declaration.RenderedPrompts = slices.Clone(seed.Declaration.RenderedPrompts)
 	for index := range seed.Declaration.RenderedPrompts {
 		event := &seed.Declaration.RenderedPrompts[index]

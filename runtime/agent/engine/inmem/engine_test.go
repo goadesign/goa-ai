@@ -15,6 +15,8 @@ import (
 	"github.com/stretchr/testify/require"
 	commonpb "go.temporal.io/api/common/v1"
 
+	genregistry "goa.design/goa-ai/registry/gen/registry"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/internal/startrecipe"
@@ -59,7 +61,7 @@ func TestPlannerActivityTypedExecution(t *testing.T) {
 			if out == nil || out.Result == nil || out.Result.FinalResponse == nil {
 				t.Errorf("expected non-nil plan output/result/final response")
 			}
-			return &api.RunOutput{}, nil
+			return &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}}, nil
 		},
 	})
 	if err != nil {
@@ -70,7 +72,7 @@ func TestPlannerActivityTypedExecution(t *testing.T) {
 		ID:        "test-run-1",
 		Workflow:  "test_workflow",
 		TaskQueue: "test.queue",
-		Input:     &api.RunInput{RunID: "test-run-1"},
+		Input:     &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "test-run-1"},
 	})
 	if err != nil {
 		t.Fatalf("start workflow: %v", err)
@@ -87,13 +89,13 @@ func TestStartWorkflowRejectsReservedRecipeMemoKey(t *testing.T) {
 	require.NoError(t, eng.RegisterWorkflow(t.Context(), engine.WorkflowDefinition{
 		Name: "workflow",
 		Handler: func(engine.WorkflowContext, *api.RunInput) (*api.RunOutput, error) {
-			return &api.RunOutput{}, nil
+			return &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}}, nil
 		},
 	}))
 
 	_, err := eng.StartWorkflow(t.Context(), engine.WorkflowStartRequest{
 		ID: "run", Workflow: "workflow", TaskQueue: "test.queue",
-		Input: &api.RunInput{RunID: "run"},
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run"},
 		Memo:  map[string]engine.EncodedValue{startrecipe.MemoKey: {Data: []byte("caller")}},
 	})
 	require.ErrorContains(t, err, "reserved")
@@ -105,7 +107,7 @@ func TestStartWorkflowRejectsIncompleteRequest(t *testing.T) {
 		ID:        "run",
 		Workflow:  "workflow",
 		TaskQueue: "test.queue",
-		Input:     &api.RunInput{RunID: "run"},
+		Input:     &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run"},
 	}
 	tests := []struct {
 		name    string
@@ -125,7 +127,7 @@ func TestStartWorkflowRejectsIncompleteRequest(t *testing.T) {
 			req.Input = nil
 		}},
 		{name: "mismatched run id", wantErr: "workflow id must match input run id", change: func(req *engine.WorkflowStartRequest) {
-			req.Input = &api.RunInput{RunID: "other-run"}
+			req.Input = &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "other-run"}
 		}},
 		{name: "retry interval without attempts", wantErr: "workflow retry timing requires max attempts or unlimited attempts", change: func(req *engine.WorkflowStartRequest) {
 			req.RetryPolicy.InitialInterval = time.Second
@@ -149,7 +151,7 @@ func TestStartWorkflowRequiresRegisteredHandler(t *testing.T) {
 		ID:        "run",
 		Workflow:  "workflow",
 		TaskQueue: "test.queue",
-		Input:     &api.RunInput{RunID: "run"},
+		Input:     &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run"},
 	})
 	require.EqualError(t, err, `workflow "workflow" not registered`)
 }
@@ -160,7 +162,7 @@ func TestStartChildWorkflowRejectsIncompleteRequest(t *testing.T) {
 		ID:        "child",
 		Workflow:  "workflow",
 		TaskQueue: "test.queue",
-		Input:     &api.RunInput{RunID: "child"},
+		Input:     &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "child"},
 	}
 	tests := []struct {
 		name    string
@@ -180,7 +182,7 @@ func TestStartChildWorkflowRejectsIncompleteRequest(t *testing.T) {
 			req.Input = nil
 		}},
 		{name: "mismatched run id", wantErr: "child workflow id must match input run id", change: func(req *engine.ChildWorkflowRequest) {
-			req.Input = &api.RunInput{RunID: "other-child"}
+			req.Input = &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "other-child"}
 		}},
 		{name: "retry interval without attempts", wantErr: "workflow retry timing requires max attempts or unlimited attempts", change: func(req *engine.ChildWorkflowRequest) {
 			req.RetryPolicy.InitialInterval = time.Second
@@ -220,7 +222,7 @@ func TestStorageActivityUnlimitedRetryRecoversBeforeWorkflowContinues(t *testing
 			_, err := ctx.ExecuteStorageActivity(engine.StorageActivityCall{
 				Name: "record",
 				Command: &api.StorageActivityCommand{Append: &api.AppendRecordsCommand{
-					Records: []*api.RecordActivityInput{{}},
+					Records: []*api.RecordActivityInput{{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}}},
 				}},
 				Options: engine.ActivityOptions{
 					RetryPolicy: engine.RetryPolicy{UnlimitedAttempts: true},
@@ -230,14 +232,14 @@ func TestStorageActivityUnlimitedRetryRecoversBeforeWorkflowContinues(t *testing
 				return nil, err
 			}
 			continued.Store(true)
-			return &api.RunOutput{}, nil
+			return &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}}, nil
 		},
 	}))
 	handle, err := implementation.StartWorkflow(t.Context(), engine.WorkflowStartRequest{
 		ID:        "run",
 		Workflow:  "workflow",
 		TaskQueue: "test.queue",
-		Input:     &api.RunInput{RunID: "run"},
+		Input:     &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run"},
 	})
 	require.NoError(t, err)
 	_, err = handle.Wait(t.Context())
@@ -264,7 +266,7 @@ func TestStorageActivityContractErrorDoesNotRetry(t *testing.T) {
 			_, err := ctx.ExecuteStorageActivity(engine.StorageActivityCall{
 				Name: "record",
 				Command: &api.StorageActivityCommand{Append: &api.AppendRecordsCommand{
-					Records: []*api.RecordActivityInput{{}},
+					Records: []*api.RecordActivityInput{{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}}},
 				}},
 				Options: engine.ActivityOptions{RetryPolicy: engine.RetryPolicy{UnlimitedAttempts: true}},
 			})
@@ -275,7 +277,7 @@ func TestStorageActivityContractErrorDoesNotRetry(t *testing.T) {
 		ID:        "run",
 		Workflow:  "workflow",
 		TaskQueue: "test.queue",
-		Input:     &api.RunInput{RunID: "run"},
+		Input:     &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run"},
 	})
 	require.NoError(t, err)
 	_, err = handle.Wait(t.Context())
@@ -309,7 +311,7 @@ func TestStorageActivityRetriesWithFreshInputAndCopiesOutput(t *testing.T) {
 	result, err := wfCtx.ExecuteStorageActivity(engine.StorageActivityCall{
 		Name: "record",
 		Command: &api.StorageActivityCommand{Append: &api.AppendRecordsCommand{
-			Records: []*api.RecordActivityInput{{Payload: []byte(`{"value":"original"}`)}},
+			Records: []*api.RecordActivityInput{{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, Payload: []byte(`{"value":"original"}`)}},
 		}},
 	})
 	require.NoError(t, err)
@@ -330,12 +332,13 @@ func TestWorkflowRetryUsesFreshInput(t *testing.T) {
 			if attempts == 1 {
 				return nil, errors.New("retry")
 			}
-			return &api.RunOutput{RunID: input.RunID}, nil
+			return &api.RunOutput{Subject: input.Subject, RunID: input.RunID}, nil
 		},
 	}))
 	handle, err := eng.StartWorkflow(t.Context(), engine.WorkflowStartRequest{
 		ID: "run", Workflow: "workflow", TaskQueue: "test.queue", Input: &api.RunInput{
-			RunID: "run", Labels: map[string]string{"site": "original"},
+			Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")},
+			RunID:   "run", Labels: map[string]string{"site": "original"},
 		},
 		RetryPolicy: engine.RetryPolicy{MaxAttempts: 2, InitialInterval: time.Millisecond},
 	})
@@ -358,7 +361,7 @@ func TestWorkflowZeroRetryPolicyDoesNotRetry(t *testing.T) {
 	}))
 	handle, err := eng.StartWorkflow(t.Context(), engine.WorkflowStartRequest{
 		ID: "run", Workflow: "workflow", TaskQueue: "test.queue",
-		Input: &api.RunInput{RunID: "run"},
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run"},
 	})
 	require.NoError(t, err)
 	_, err = handle.Wait(t.Context())
@@ -377,7 +380,7 @@ func TestWorkflowFailurePreservesErrorWithoutExposingOutput(t *testing.T) {
 	}))
 	handle, err := implementation.StartWorkflow(t.Context(), engine.WorkflowStartRequest{
 		ID: "run", Workflow: "workflow", TaskQueue: "test.queue",
-		Input: &api.RunInput{RunID: "run"},
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run"},
 	})
 	require.NoError(t, err)
 	output, err := handle.Wait(t.Context())
@@ -401,7 +404,7 @@ func TestWorkflowRunTimeoutSetsTimedOutCompletion(t *testing.T) {
 	}))
 	handle, err := eng.StartWorkflow(t.Context(), engine.WorkflowStartRequest{
 		ID: "run", Workflow: "workflow", TaskQueue: "test.queue",
-		Input: &api.RunInput{RunID: "run"}, RunTimeout: 10 * time.Millisecond,
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run"}, RunTimeout: 10 * time.Millisecond,
 	})
 	require.NoError(t, err)
 	_, err = handle.Wait(t.Context())
@@ -438,7 +441,7 @@ func TestPlannerActivityReturnsNativeOutputContractError(t *testing.T) {
 		ID:        "test-run-error",
 		Workflow:  "test_workflow_error",
 		TaskQueue: "test.queue",
-		Input:     &api.RunInput{RunID: "test-run-error"},
+		Input:     &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "test-run-error"},
 	})
 	require.NoError(t, err)
 
@@ -458,7 +461,7 @@ func TestQueryRunCompletionReturnsExactWorkflowOutput(t *testing.T) {
 	require.NoError(t, err)
 	handle, err := eng.StartWorkflow(t.Context(), engine.WorkflowStartRequest{
 		ID: "run-1", Workflow: "test_workflow", TaskQueue: "test.queue",
-		Input: &api.RunInput{RunID: "run-1"},
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run-1"},
 	})
 	require.NoError(t, err)
 	_, err = handle.Wait(t.Context())
@@ -492,7 +495,7 @@ func TestWorkflowHandleWaitReturnsFreshOutput(t *testing.T) {
 
 	root, err := implementation.StartWorkflow(t.Context(), engine.WorkflowStartRequest{
 		ID: "root", Workflow: "root", TaskQueue: "test.queue",
-		Input: &api.RunInput{RunID: "root"},
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "root"},
 	})
 	require.NoError(t, err)
 	gotRoot, err := root.Wait(t.Context())
@@ -522,7 +525,7 @@ func TestExactWorkflowIDRetryReturnsFreshOutput(t *testing.T) {
 	}))
 	request := engine.WorkflowStartRequest{
 		ID: "run", Workflow: "workflow", TaskQueue: "test.queue",
-		Input: &api.RunInput{RunID: "run"},
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run"},
 	}
 	original, err := implementation.StartWorkflow(t.Context(), request)
 	require.NoError(t, err)
@@ -558,7 +561,7 @@ func TestChildWorkflowHandleGetReturnsFreshOutput(t *testing.T) {
 	}
 	child, err := parent.StartChildWorkflow(t.Context(), engine.ChildWorkflowRequest{
 		ID: "child", Workflow: "child", TaskQueue: "test.queue",
-		Input: &api.RunInput{RunID: "child"},
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "child"},
 	})
 	require.NoError(t, err)
 	gotChild, err := child.Get(t.Context())
@@ -589,7 +592,7 @@ func TestWorkflowCompletionPreservesNilRootAndChildOutputs(t *testing.T) {
 
 	root, err := implementation.StartWorkflow(t.Context(), engine.WorkflowStartRequest{
 		ID: "root", Workflow: "workflow", TaskQueue: "test.queue",
-		Input: &api.RunInput{RunID: "root"},
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "root"},
 	})
 	require.NoError(t, err)
 	rootOutput, err := root.Wait(t.Context())
@@ -606,7 +609,7 @@ func TestWorkflowCompletionPreservesNilRootAndChildOutputs(t *testing.T) {
 	}
 	child, err := parent.StartChildWorkflow(t.Context(), engine.ChildWorkflowRequest{
 		ID: "child", Workflow: "workflow", TaskQueue: "test.queue",
-		Input: &api.RunInput{RunID: "child"},
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "child"},
 	})
 	require.NoError(t, err)
 	childOutput, err := child.Get(t.Context())
@@ -619,13 +622,13 @@ func TestWorkflowCompletionRejectsOversizedRootAndChildOutputs(t *testing.T) {
 	require.NoError(t, implementation.RegisterWorkflow(t.Context(), engine.WorkflowDefinition{
 		Name: "workflow",
 		Handler: func(engine.WorkflowContext, *api.RunInput) (*api.RunOutput, error) {
-			return &api.RunOutput{RunID: strings.Repeat("x", engine.MaxPayloadBytes)}, nil
+			return &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: strings.Repeat("x", engine.MaxPayloadBytes)}, nil
 		},
 	}))
 
 	root, err := implementation.StartWorkflow(t.Context(), engine.WorkflowStartRequest{
 		ID: "root", Workflow: "workflow", TaskQueue: "test.queue",
-		Input: &api.RunInput{RunID: "root"},
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "root"},
 	})
 	require.NoError(t, err)
 	_, err = root.Wait(t.Context())
@@ -641,7 +644,7 @@ func TestWorkflowCompletionRejectsOversizedRootAndChildOutputs(t *testing.T) {
 	}
 	child, err := parent.StartChildWorkflow(t.Context(), engine.ChildWorkflowRequest{
 		ID: "child", Workflow: "workflow", TaskQueue: "test.queue",
-		Input: &api.RunInput{RunID: "child"},
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "child"},
 	})
 	require.NoError(t, err)
 	_, err = child.Get(t.Context())
@@ -652,7 +655,8 @@ func TestWorkflowCompletionRejectsOversizedRootAndChildOutputs(t *testing.T) {
 // at two levels so completion reads can prove that no saved memory is exposed.
 func mutableWorkflowOutput(runID string) *api.RunOutput {
 	return &api.RunOutput{
-		RunID: runID,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")},
+		RunID:   runID,
 		Suspension: &api.RunSuspension{
 			ID:         runID + "-suspension",
 			Version:    api.RunSuspensionVersion,
@@ -696,13 +700,13 @@ func TestStartWorkflowBindsExactRequestWhileQueryable(t *testing.T) {
 		Name: "test_workflow", TaskQueue: "default-queue",
 		Handler: func(engine.WorkflowContext, *api.RunInput) (*api.RunOutput, error) {
 			<-release
-			return &api.RunOutput{RunID: "run-1"}, nil
+			return &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run-1"}, nil
 		},
 	})
 	require.NoError(t, err)
 	request := engine.WorkflowStartRequest{
 		ID: "run-1", Workflow: "test_workflow", TaskQueue: "default-queue",
-		Input: &api.RunInput{RunID: "run-1"},
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run-1"},
 	}
 
 	original, err := eng.StartWorkflow(t.Context(), request)
@@ -712,7 +716,7 @@ func TestStartWorkflowBindsExactRequestWhileQueryable(t *testing.T) {
 	require.Same(t, original, retry)
 
 	changed := request
-	changed.Input = &api.RunInput{RunID: "run-1", TurnID: "changed"}
+	changed.Input = &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run-1", TurnID: "changed"}
 	_, err = eng.StartWorkflow(t.Context(), changed)
 	var conflict *engine.WorkflowStartConflictError
 	require.ErrorAs(t, err, &conflict)
@@ -739,11 +743,12 @@ func TestStartWorkflowSnapshotsCallerInput(t *testing.T) {
 		Handler: func(_ engine.WorkflowContext, input *api.RunInput) (*api.RunOutput, error) {
 			<-readInput
 			observed <- input
-			return &api.RunOutput{RunID: input.RunID}, nil
+			return &api.RunOutput{Subject: input.Subject, RunID: input.RunID}, nil
 		},
 	})
 	require.NoError(t, err)
 	input := &api.RunInput{
+		Subject:   genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")},
 		RunID:     "run-1",
 		SeedEndID: "published",
 		Labels:    map[string]string{"tenant": "accepted"},
@@ -774,7 +779,7 @@ func TestStartChildWorkflowSnapshotsCallerInput(t *testing.T) {
 		Handler: func(_ engine.WorkflowContext, input *api.RunInput) (*api.RunOutput, error) {
 			<-readInput
 			observed <- input
-			return &api.RunOutput{RunID: input.RunID}, nil
+			return &api.RunOutput{Subject: input.Subject, RunID: input.RunID}, nil
 		},
 	}))
 	parent := &wfCtx{
@@ -786,6 +791,7 @@ func TestStartChildWorkflowSnapshotsCallerInput(t *testing.T) {
 		startedChildren: make(map[string]struct{}),
 	}
 	input := &api.RunInput{
+		Subject:   genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")},
 		RunID:     "child",
 		SeedEndID: "published",
 		Labels:    map[string]string{"tenant": "accepted"},
@@ -812,7 +818,7 @@ func TestWorkflowStartsShareExactPayloadLimit(t *testing.T) {
 	require.NoError(t, implementation.RegisterWorkflow(t.Context(), engine.WorkflowDefinition{
 		Name: "workflow",
 		Handler: func(engine.WorkflowContext, *api.RunInput) (*api.RunOutput, error) {
-			return &api.RunOutput{}, nil
+			return &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}}, nil
 		},
 	}))
 	parent := &wfCtx{
@@ -873,7 +879,7 @@ func TestStartWorkflowOwnsExecutionContext(t *testing.T) {
 	submissionCtx, cancelSubmission := context.WithCancel(t.Context())
 	executionHandle, err := eng.StartWorkflow(submissionCtx, engine.WorkflowStartRequest{
 		ID: "run-1", Workflow: "test_workflow", TaskQueue: "test.queue",
-		Input: &api.RunInput{RunID: "run-1"},
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run-1"},
 	})
 	require.NoError(t, err)
 	<-started
@@ -910,7 +916,7 @@ func TestStartChildWorkflowInheritsParentCancellation(t *testing.T) {
 				ID:        "child-run",
 				Workflow:  "child",
 				TaskQueue: "test.queue",
-				Input:     &api.RunInput{RunID: "child-run"},
+				Input:     &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "child-run"},
 			})
 			if err != nil {
 				return nil, err
@@ -923,7 +929,7 @@ func TestStartChildWorkflowInheritsParentCancellation(t *testing.T) {
 
 	parent, err := implementation.StartWorkflow(t.Context(), engine.WorkflowStartRequest{
 		ID: "parent-run", Workflow: "parent", TaskQueue: "test.queue",
-		Input: &api.RunInput{RunID: "parent-run"},
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "parent-run"},
 	})
 	require.NoError(t, err)
 	<-childStarted
@@ -966,7 +972,7 @@ func TestRequestCancellationWaitsForWorkflowHandler(t *testing.T) {
 		},
 	}))
 	handle, err := implementation.StartWorkflow(t.Context(), engine.WorkflowStartRequest{
-		ID: "run", Workflow: "workflow", TaskQueue: "test.queue", Input: &api.RunInput{RunID: "run"},
+		ID: "run", Workflow: "workflow", TaskQueue: "test.queue", Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run"},
 	})
 	require.NoError(t, err)
 	<-workflowStarted
@@ -1008,7 +1014,7 @@ func TestRequestCancellationRetriesExactReasonAndRejectsConflict(t *testing.T) {
 		},
 	}))
 	_, err := implementation.StartWorkflow(t.Context(), engine.WorkflowStartRequest{
-		ID: "run", Workflow: "workflow", TaskQueue: "test.queue", Input: &api.RunInput{RunID: "run"},
+		ID: "run", Workflow: "workflow", TaskQueue: "test.queue", Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run"},
 	})
 	require.NoError(t, err)
 	<-registered
@@ -1036,11 +1042,11 @@ func TestRequestCancellationRejectsWorkflowThatAlreadyCompleted(t *testing.T) {
 			}); err != nil {
 				return nil, err
 			}
-			return &api.RunOutput{RunID: "run"}, nil
+			return &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run"}, nil
 		},
 	}))
 	handle, err := implementation.StartWorkflow(t.Context(), engine.WorkflowStartRequest{
-		ID: "run", Workflow: "workflow", TaskQueue: "test.queue", Input: &api.RunInput{RunID: "run"},
+		ID: "run", Workflow: "workflow", TaskQueue: "test.queue", Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run"},
 	})
 	require.NoError(t, err)
 	_, err = handle.Wait(t.Context())
@@ -1057,7 +1063,7 @@ func TestStartWorkflowDistinguishesEncodedMemoValues(t *testing.T) {
 	err := eng.RegisterWorkflow(t.Context(), engine.WorkflowDefinition{
 		Name: "test_workflow",
 		Handler: func(engine.WorkflowContext, *api.RunInput) (*api.RunOutput, error) {
-			return &api.RunOutput{RunID: "run-1"}, nil
+			return &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run-1"}, nil
 		},
 	})
 	require.NoError(t, err)
@@ -1065,7 +1071,7 @@ func TestStartWorkflowDistinguishesEncodedMemoValues(t *testing.T) {
 		ID:        "run-1",
 		Workflow:  "test_workflow",
 		TaskQueue: "test.queue",
-		Input:     &api.RunInput{RunID: "run-1"},
+		Input:     &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run-1"},
 		Memo: map[string]engine.EncodedValue{
 			"value": {Metadata: map[string][]byte{"encoding": []byte("binary/plain")}, Data: []byte("value")},
 		},
@@ -1107,14 +1113,15 @@ func TestStartWorkflowContinuationIdentity(t *testing.T) {
 	err := eng.RegisterWorkflow(t.Context(), engine.WorkflowDefinition{
 		Name: "test_workflow",
 		Handler: func(engine.WorkflowContext, *api.RunInput) (*api.RunOutput, error) {
-			return &api.RunOutput{RunID: "run-2"}, nil
+			return &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run-2"}, nil
 		},
 	})
 	require.NoError(t, err)
 	request := engine.WorkflowStartRequest{
 		ID: "run-2", Workflow: "test_workflow", TaskQueue: "test.queue",
 		Input: &api.RunInput{
-			RunID: "run-2",
+			Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")},
+			RunID:   "run-2",
 			Continuation: &api.RunContinuationInput{
 				Suspension: &api.RunSuspension{ID: "suspension-1", Version: api.RunSuspensionVersion},
 				Response: &api.PendingInputResponse{Clarification: &api.ClarificationAnswer{
@@ -1131,7 +1138,8 @@ func TestStartWorkflowContinuationIdentity(t *testing.T) {
 
 	changed := request
 	changed.Input = &api.RunInput{
-		RunID: "run-2",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")},
+		RunID:   "run-2",
 		Continuation: &api.RunContinuationInput{
 			Suspension: request.Input.Continuation.Suspension,
 			Response: &api.PendingInputResponse{Clarification: &api.ClarificationAnswer{
@@ -1164,7 +1172,7 @@ func TestStartChildWorkflowRejectsEveryExplicitIDReuse(t *testing.T) {
 		{
 			name: "completed",
 			handler: func(engine.WorkflowContext, *api.RunInput) (*api.RunOutput, error) {
-				return &api.RunOutput{}, nil
+				return &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}}, nil
 			},
 			settle: func(t *testing.T, handle engine.ChildWorkflowHandle) {
 				_, err := handle.Get(t.Context())
@@ -1213,7 +1221,7 @@ func TestStartChildWorkflowRejectsEveryExplicitIDReuse(t *testing.T) {
 				ID:        "child-id",
 				Workflow:  "child",
 				TaskQueue: "test.queue",
-				Input:     &api.RunInput{RunID: "child-id"},
+				Input:     &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "child-id"},
 			})
 			require.NoError(t, err)
 			test.settle(t, handle)
@@ -1222,7 +1230,7 @@ func TestStartChildWorkflowRejectsEveryExplicitIDReuse(t *testing.T) {
 				ID:        "child-id",
 				Workflow:  "changed",
 				TaskQueue: "test.queue",
-				Input:     &api.RunInput{RunID: "child-id"},
+				Input:     &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "child-id"},
 			})
 			require.ErrorIs(t, err, engine.ErrChildWorkflowIDReuse)
 			var reuse *engine.ChildWorkflowIDReuseError
@@ -1241,12 +1249,12 @@ func inputAtWorkflowBudget(t *testing.T, id string, reserved, extra int) *api.Ru
 		queue    = "test.queue"
 	)
 	dataConverter := workflowcodec.NewDataConverter()
-	base := &api.RunInput{RunID: id, Metadata: map[string]any{"payload": ""}}
+	base := &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: id, Metadata: map[string]any{"payload": ""}}
 	payload, err := dataConverter.ToPayload(base)
 	require.NoError(t, err)
 	padding := engine.MaxPayloadBytes - payloadSize(payload) - len(id) - len(workflow) - len(queue) - reserved + extra
 	require.Positive(t, padding)
-	input := &api.RunInput{RunID: id, Metadata: map[string]any{"payload": strings.Repeat("x", padding)}}
+	input := &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: id, Metadata: map[string]any{"payload": strings.Repeat("x", padding)}}
 	payload, err = dataConverter.ToPayload(input)
 	require.NoError(t, err)
 	require.Equal(t, engine.MaxPayloadBytes+extra, payloadSize(payload)+len(id)+len(workflow)+len(queue)+reserved)
@@ -1374,12 +1382,14 @@ func TestToolActivityFutureTypedExecution(t *testing.T) {
 			fut, err2 := wfCtx.ExecuteToolActivityAsync(engine.ToolActivityCall{
 				Name: "test_tool",
 				Input: &api.ToolInput{
-					RunID:       "test-run-1",
-					AgentID:     "agent",
-					ToolsetName: "svc.tools",
-					ToolName:    "svc.tools.tool",
-					ToolCallID:  "tool-1",
-					Payload:     []byte("null"),
+					Invocation:        genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: "test-run-1", ToolCallID: "tool-1"})},
+					OriginalArguments: []byte("null"),
+					RunID:             "test-run-1",
+					Subject:           genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))},
+					ToolsetName:       "svc.tools",
+					ToolName:          "svc.tools.tool",
+					ToolCallID:        "tool-1",
+					Payload:           []byte("null"),
 				},
 			})
 			if err2 != nil {
@@ -1392,7 +1402,7 @@ func TestToolActivityFutureTypedExecution(t *testing.T) {
 			if out == nil || string(out.Payload) != "null" {
 				t.Errorf("unexpected tool output: %+v", out)
 			}
-			return &api.RunOutput{}, nil
+			return &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}}, nil
 		},
 	})
 	if err != nil {
@@ -1403,7 +1413,7 @@ func TestToolActivityFutureTypedExecution(t *testing.T) {
 		ID:        "test-run-1",
 		Workflow:  "test_workflow",
 		TaskQueue: "test.queue",
-		Input:     &api.RunInput{RunID: "test-run-1"},
+		Input:     &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "test-run-1"},
 	})
 	if err != nil {
 		t.Fatalf("start workflow: %v", err)
@@ -1432,10 +1442,13 @@ func TestAgentChildActivityTypedExecution(t *testing.T) {
 	))
 	require.NoError(t, eng.RegisterWorkflow(t.Context(), engine.WorkflowDefinition{
 		Name: "workflow",
-		Handler: func(wfCtx engine.WorkflowContext, _ *api.RunInput) (*api.RunOutput, error) {
+		Handler: func(wfCtx engine.WorkflowContext, input *api.RunInput) (*api.RunOutput, error) {
 			output, err := wfCtx.ExecuteAgentChildActivity(engine.AgentChildActivityCall{
-				Name:  "prepare_child",
-				Input: &api.AgentChildActivityInput{},
+				Name: "prepare_child",
+				Input: &api.AgentChildActivityInput{
+					Origin: genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: input.RunID, ToolCallID: "test-call"})},
+					Call:   api.ToolCall{Subject: input.Subject, RunID: input.RunID, ToolCallID: "test-call"},
+				},
 			})
 			if err != nil {
 				return nil, err
@@ -1443,14 +1456,14 @@ func TestAgentChildActivityTypedExecution(t *testing.T) {
 			if output.Success.SeedEndID != recorded.Success.SeedEndID {
 				return nil, errors.New("agent child activity changed its recorded output")
 			}
-			return &api.RunOutput{}, nil
+			return &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}}, nil
 		},
 	}))
 	handle, err := eng.StartWorkflow(t.Context(), engine.WorkflowStartRequest{
 		ID:        "parent-run",
 		Workflow:  "workflow",
 		TaskQueue: "test.queue",
-		Input:     &api.RunInput{RunID: "parent-run"},
+		Input:     &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "parent-run"},
 	})
 	require.NoError(t, err)
 	_, err = handle.Wait(t.Context())
@@ -1479,9 +1492,15 @@ func TestAgentChildActivityRetriesWithFreshRecordedInput(t *testing.T) {
 	wfCtx := &wfCtx{ctx: t.Context(), eng: eng}
 	output, err := wfCtx.ExecuteAgentChildActivity(engine.AgentChildActivityCall{
 		Name: "prepare_child",
-		Input: &api.AgentChildActivityInput{Call: api.ToolCall{
-			Labels: map[string]string{"site": "one"},
-		}},
+		Input: &api.AgentChildActivityInput{
+			Origin: genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: "parent-run", ToolCallID: "test-call"})},
+			Call: api.ToolCall{
+				RunID:      "parent-run",
+				ToolCallID: "test-call",
+				Subject:    genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")},
+				Labels:     map[string]string{"site": "one"},
+			},
+		},
 	})
 	require.NoError(t, err)
 	require.NotNil(t, output.Success)
@@ -1518,7 +1537,11 @@ func TestAgentChildActivityGivesEachRetryItsOwnStartToCloseTimeout(t *testing.T)
 	wfCtx := &wfCtx{ctx: t.Context(), eng: eng}
 
 	output, err := wfCtx.ExecuteAgentChildActivity(engine.AgentChildActivityCall{
-		Name: "prepare_child", Input: &api.AgentChildActivityInput{},
+		Name: "prepare_child",
+		Input: &api.AgentChildActivityInput{
+			Origin: genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: "parent-run", ToolCallID: "test-call"})},
+			Call:   api.ToolCall{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "parent-run", ToolCallID: "test-call"},
+		},
 	})
 
 	require.NoError(t, err)
@@ -1542,7 +1565,11 @@ func TestAgentChildActivityDoesNotRetryPermanentFailure(t *testing.T) {
 	))
 	wfCtx := &wfCtx{ctx: t.Context(), eng: eng}
 	_, err := wfCtx.ExecuteAgentChildActivity(engine.AgentChildActivityCall{
-		Name: "prepare_child", Input: &api.AgentChildActivityInput{},
+		Name: "prepare_child",
+		Input: &api.AgentChildActivityInput{
+			Origin: genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: "parent-run", ToolCallID: "test-call"})},
+			Call:   api.ToolCall{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "parent-run", ToolCallID: "test-call"},
+		},
 	})
 	require.ErrorContains(t, err, "invalid child request")
 	require.Equal(t, 1, attempts)
@@ -1561,9 +1588,15 @@ func TestAgentChildActivityRejectsOversizedRecordedValues(t *testing.T) {
 		wfCtx := &wfCtx{ctx: t.Context(), eng: eng}
 		_, err := wfCtx.ExecuteAgentChildActivity(engine.AgentChildActivityCall{
 			Name: "prepare_child",
-			Input: &api.AgentChildActivityInput{Call: api.ToolCall{
-				Payload: rawjson.Message(`"` + strings.Repeat("x", engine.MaxPayloadBytes) + `"`),
-			}},
+			Input: &api.AgentChildActivityInput{
+				Origin: genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: "parent-run", ToolCallID: "test-call"})},
+				Call: api.ToolCall{
+					RunID:      "parent-run",
+					ToolCallID: "test-call",
+					Subject:    genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")},
+					Payload:    rawjson.Message(`"` + strings.Repeat("x", engine.MaxPayloadBytes) + `"`),
+				},
+			},
 		})
 		require.ErrorContains(t, err, "exceed maximum aggregate size")
 	})
@@ -1580,7 +1613,11 @@ func TestAgentChildActivityRejectsOversizedRecordedValues(t *testing.T) {
 		))
 		wfCtx := &wfCtx{ctx: t.Context(), eng: eng}
 		_, err := wfCtx.ExecuteAgentChildActivity(engine.AgentChildActivityCall{
-			Name: "prepare_child", Input: &api.AgentChildActivityInput{},
+			Name: "prepare_child",
+			Input: &api.AgentChildActivityInput{
+				Origin: genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: "parent-run", ToolCallID: "test-call"})},
+				Call:   api.ToolCall{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "parent-run", ToolCallID: "test-call"},
+			},
 		})
 		require.ErrorContains(t, err, "exceed maximum aggregate size")
 	})

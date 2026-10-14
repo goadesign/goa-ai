@@ -4,8 +4,10 @@ package runtime
 
 import (
 	"fmt"
+	"reflect"
 	"sort"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/run"
@@ -14,8 +16,11 @@ import (
 )
 
 // newRunSnapshot derives a compact run state snapshot by replaying canonical
-// run log events in order. The caller must supply events ordered oldest-first.
-func newRunSnapshot(events []*runlog.Event) (*run.Snapshot, error) {
+// run log events in order. The caller supplies oldest-first events and the
+// exact parent call verified from the parent run, or an empty ID for a root.
+// Inherited events come only from the exact suspended predecessors; they
+// initialize unfinished tool calls without replacing this run's identity.
+func newRunSnapshot(events []*runlog.Event, parentToolCallID string, inherited []*runlog.Event) (*run.Snapshot, error) {
 	if len(events) == 0 {
 		return nil, run.ErrNotFound
 	}
@@ -27,7 +32,7 @@ func newRunSnapshot(events []*runlog.Event) (*run.Snapshot, error) {
 
 	s := &run.Snapshot{
 		RunID:     events[0].RunID,
-		AgentID:   events[0].AgentID,
+		Subject:   events[0].Subject,
 		SessionID: events[0].SessionID,
 		TurnID:    events[0].TurnID,
 		Status:    run.StatusRunning,
@@ -35,17 +40,47 @@ func newRunSnapshot(events []*runlog.Event) (*run.Snapshot, error) {
 		StartedAt: events[0].Timestamp,
 		UpdatedAt: events[0].Timestamp,
 	}
-	toolCalls := make(map[string]*run.ToolCallSnapshot)
-	activeToolCalls := make(map[string]*run.ToolCallSnapshot)
-	scheduledToolEvents := make(map[string]*hooks.ToolCallScheduledEvent)
-	completedToolCallIDs := make(map[string]struct{})
+	if _, err := genrunidentity.EncodeRunSubject(&s.Subject); err != nil {
+		return nil, fmt.Errorf("snapshot run subject: %w", err)
+	}
+	if service, ok := s.Subject.Executor.AsServiceTool(); ok {
+		owner := *service
+		s.Subject.Executor = genrunidentity.NewRunExecutorServiceTool(&owner)
+	}
+	state := snapshotToolState{
+		parentToolCallID: parentToolCallID,
+		calls:            make(map[string]*run.ToolCallSnapshot),
+		active:           make(map[string]*run.ToolCallSnapshot),
+		schedules:        make(map[string]*hooks.ToolCallScheduledEvent),
+		completed:        make(map[string]struct{}),
+	}
+	for _, event := range inherited {
+		if event == nil || !reflect.DeepEqual(event.Subject, s.Subject) || event.SessionID != s.SessionID {
+			return nil, fmt.Errorf("snapshot inherited event owner does not match run %q", s.RunID)
+		}
+		switch event.Type {
+		case hooks.ToolCallScheduled, hooks.ToolCallUpdated, hooks.ToolResultReceived:
+			decoded, err := hooks.DecodeRunlogEvent(event)
+			if err != nil {
+				return nil, err
+			}
+			if err := state.apply(event, decoded); err != nil {
+				return nil, err
+			}
+		}
+	}
+	// Earlier completions remain invalid update targets, but only unfinished
+	// calls belong in the continued run's visible tool state.
+	for id := range state.completed {
+		delete(state.calls, id)
+	}
 
 	for _, e := range events {
 		if e.RunID != s.RunID {
 			return nil, fmt.Errorf("snapshot events contain multiple run IDs (%q, %q)", s.RunID, e.RunID)
 		}
-		if s.AgentID == "" && e.AgentID != "" {
-			s.AgentID = e.AgentID
+		if !reflect.DeepEqual(e.Subject, s.Subject) {
+			return nil, fmt.Errorf("snapshot event subject does not match run %q", s.RunID)
 		}
 		if s.SessionID == "" && e.SessionID != "" {
 			s.SessionID = e.SessionID
@@ -74,6 +109,13 @@ func newRunSnapshot(events []*runlog.Event) (*run.Snapshot, error) {
 			hooks.ToolResultReceived,
 			hooks.RunCompleted,
 			hooks.RunSuspended:
+		case hooks.PromptRendered, hooks.PolicyDecision, hooks.Usage,
+			hooks.ModelOutputRejected, hooks.PlannerOutputRejected, hooks.PlannerNote,
+			hooks.ThinkingBlock, hooks.AssistantTurnCommitted, hooks.MemoryAppended:
+			if _, ok := s.Subject.Executor.AsAgent(); !ok {
+				return nil, fmt.Errorf("snapshot event %q requires an Agent subject", e.Type)
+			}
+			continue
 		default:
 			// Most event types do not affect the snapshot; transcript events are
 			// replayed by transcript.ReplayRunLogEvents below.
@@ -130,77 +172,10 @@ func newRunSnapshot(events []*runlog.Event) (*run.Snapshot, error) {
 		case *hooks.AssistantMessageEvent:
 			s.LastAssistantMessage = p.Message
 
-		case *hooks.ToolCallScheduledEvent:
-			if _, ok := toolCalls[p.ToolCallID]; ok {
-				return nil, fmt.Errorf("duplicate tool schedule for call %q", p.ToolCallID)
+		case *hooks.ToolCallScheduledEvent, *hooks.ToolCallUpdatedEvent, *hooks.ToolResultReceivedEvent:
+			if err := state.apply(e, decoded); err != nil {
+				return nil, err
 			}
-			tc := &run.ToolCallSnapshot{
-				ToolCallID:            p.ToolCallID,
-				ToolName:              p.ToolName,
-				ParentToolCallID:      p.ParentToolCallID,
-				ScheduledAt:           e.Timestamp,
-				ExpectedChildrenTotal: p.ExpectedChildrenTotal,
-			}
-			toolCalls[p.ToolCallID] = tc
-			activeToolCalls[p.ToolCallID] = tc
-			scheduledToolEvents[p.ToolCallID] = p
-
-			if p.ParentToolCallID != "" {
-				parent, ok := activeToolCalls[p.ParentToolCallID]
-				if !ok {
-					return nil, fmt.Errorf(
-						"tool schedule for call %q requires active parent schedule %q",
-						p.ToolCallID,
-						p.ParentToolCallID,
-					)
-				}
-				parent.ObservedChildrenTotal++
-			}
-
-		case *hooks.ToolCallUpdatedEvent:
-			if _, ok := completedToolCallIDs[p.ToolCallID]; ok {
-				return nil, fmt.Errorf("tool update follows completion for call %q", p.ToolCallID)
-			}
-			tc, ok := activeToolCalls[p.ToolCallID]
-			if !ok {
-				return nil, fmt.Errorf("tool update requires active schedule for call %q", p.ToolCallID)
-			}
-			tc.ExpectedChildrenTotal = p.ExpectedChildrenTotal
-
-		case *hooks.ToolResultReceivedEvent:
-			if _, ok := completedToolCallIDs[p.ToolCallID]; ok {
-				return nil, fmt.Errorf("tool result follows completion for call %q", p.ToolCallID)
-			}
-			tc := activeToolCalls[p.ToolCallID]
-			if err := hooks.ValidateToolResultPlacement(
-				s.RunID,
-				scheduledToolEvents[p.ToolCallID],
-				p,
-			); err != nil {
-				return nil, fmt.Errorf(
-					"tool result placement is invalid for call %q: %w",
-					p.ToolCallID,
-					err,
-				)
-			}
-			if p.CallRunID == s.RunID {
-				delete(activeToolCalls, p.ToolCallID)
-			} else {
-				// The matching schedule belongs to CallRunID. This run records
-				// only the supplied result and must not count a child locally.
-				tc = &run.ToolCallSnapshot{
-					ToolCallID: p.ToolCallID,
-				}
-				toolCalls[p.ToolCallID] = tc
-			}
-			tc.ToolName = p.ToolName
-			tc.ParentToolCallID = p.ParentToolCallID
-			tc.CompletedAt = e.Timestamp
-			tc.Duration = p.Duration
-			if p.Failure != nil {
-				tc.ErrorSummary = p.Failure.Error.Message
-			}
-			completedToolCallIDs[p.ToolCallID] = struct{}{}
 
 		case *hooks.RunCompletedEvent:
 			s.Phase = p.Phase
@@ -225,9 +200,9 @@ func newRunSnapshot(events []*runlog.Event) (*run.Snapshot, error) {
 		}
 	}
 
-	if len(toolCalls) > 0 {
-		s.ToolCalls = make([]*run.ToolCallSnapshot, 0, len(toolCalls))
-		for _, v := range toolCalls {
+	if len(state.calls) > 0 {
+		s.ToolCalls = make([]*run.ToolCallSnapshot, 0, len(state.calls))
+		for _, v := range state.calls {
 			s.ToolCalls = append(s.ToolCalls, v)
 		}
 		sort.Slice(s.ToolCalls, func(i, j int) bool {

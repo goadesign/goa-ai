@@ -84,7 +84,7 @@ func {{ .Name }}(path string, value any, description string) error {
     {{- if $names.MissingField }}
     if !exists { return {{ $names.MissingField }}({{ $names.ChildPath }}(path, {{printf "%q" .ValueKey}}, false)) }
     {{- else }}
-    if !exists || branch == nil { return {{ $names.Fmt }}.Errorf("%s: missing union value", field) }
+    if !exists { return {{ $names.Fmt }}.Errorf("%s: missing union value", field) }
     {{- end }}
     {{- end }}
     switch discriminator {
@@ -123,11 +123,18 @@ func {{ .Name }}(path string, value any, description string) error {
             {{- end }}
         {{- end }}
         default:
+            {{- if .Element }}
+            {{- if .Element.AllowNull }}
+            if typed[key] == nil { continue }
+            {{- end }}
+            if err := {{ .Element.Name }}({{ $names.ChildPath }}(path, key, true), typed[key], {{ printf "%q" .Element.Description }}); err != nil { return err }
+            {{- else }}
             return {{ $names.UnknownField }}(path, key, []string{
                 {{- range .Fields }}
                 {{ printf "%q" .Name }},
                 {{- end }}
             })
+            {{- end }}
         }
     }
     {{- else if eq .Kind "array" }}

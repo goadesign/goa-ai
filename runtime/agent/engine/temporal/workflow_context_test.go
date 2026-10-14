@@ -20,6 +20,8 @@ import (
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
+	genregistry "goa.design/goa-ai/registry/gen/registry"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/internal/startrecipe"
@@ -296,7 +298,7 @@ func TestStartChildWorkflowRejectsIncompleteRequest(t *testing.T) {
 		ID:        "child",
 		Workflow:  "workflow",
 		TaskQueue: "test.queue",
-		Input:     &api.RunInput{RunID: "child"},
+		Input:     &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "child"},
 	}
 	tests := []struct {
 		name    string
@@ -316,7 +318,7 @@ func TestStartChildWorkflowRejectsIncompleteRequest(t *testing.T) {
 			req.Input = nil
 		}},
 		{name: "mismatched run id", wantErr: "child workflow id must match input run id", change: func(req *engine.ChildWorkflowRequest) {
-			req.Input = &api.RunInput{RunID: "other-child"}
+			req.Input = &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "other-child"}
 		}},
 		{name: "retry interval without attempts", wantErr: "workflow retry timing requires max attempts or unlimited attempts", change: func(req *engine.ChildWorkflowRequest) {
 			req.RetryPolicy.InitialInterval = time.Second
@@ -342,7 +344,7 @@ func TestStartChildWorkflowRejectsCompletedIDReuse(t *testing.T) {
 	installFirstAttemptRecoveryControl(t, env, eng, worker.Options{})
 	env.RegisterWorkflowWithOptions(
 		func(workflow.Context, *api.RunInput) (*api.RunOutput, error) {
-			return &api.RunOutput{}, nil
+			return &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}}, nil
 		},
 		workflow.RegisterOptions{Name: "child"},
 	)
@@ -355,7 +357,7 @@ func TestStartChildWorkflowRejectsCompletedIDReuse(t *testing.T) {
 			ID:        "single-use-child",
 			Workflow:  "child",
 			TaskQueue: "test.queue",
-			Input:     &api.RunInput{RunID: "single-use-child"},
+			Input:     &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "single-use-child"},
 		})
 		if err != nil {
 			return err
@@ -367,7 +369,7 @@ func TestStartChildWorkflowRejectsCompletedIDReuse(t *testing.T) {
 			ID:        "single-use-child",
 			Workflow:  "child",
 			TaskQueue: "test.queue",
-			Input:     &api.RunInput{RunID: "single-use-child"},
+			Input:     &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "single-use-child"},
 		})
 		if !errors.Is(err, engine.ErrChildWorkflowIDReuse) {
 			return fmt.Errorf("second child start: expected ID reuse, got %w", err)
@@ -392,7 +394,7 @@ func TestStartChildWorkflowSnapshotsCallerInput(t *testing.T) {
 	installFirstAttemptRecoveryControl(t, env, eng, worker.Options{})
 	env.RegisterWorkflowWithOptions(
 		func(_ workflow.Context, input *api.RunInput) (*api.RunOutput, error) {
-			return &api.RunOutput{RunID: input.Labels["tenant"]}, nil
+			return &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: input.Labels["tenant"]}, nil
 		},
 		workflow.RegisterOptions{Name: "child"},
 	)
@@ -401,7 +403,7 @@ func TestStartChildWorkflowSnapshotsCallerInput(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		input := &api.RunInput{RunID: "child", Labels: map[string]string{"tenant": "accepted"}}
+		input := &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "child", Labels: map[string]string{"tenant": "accepted"}}
 		child, err := wfCtx.StartChildWorkflow(context.Background(), engine.ChildWorkflowRequest{
 			ID: "child", Workflow: "child", TaskQueue: "test.queue", Input: input,
 		})
@@ -445,7 +447,7 @@ func TestStartChildWorkflowTerminatesWithParent(t *testing.T) {
 			ID:        "owned-child-run",
 			Workflow:  "owned-child",
 			TaskQueue: "test.queue",
-			Input:     &api.RunInput{RunID: "owned-child-run"},
+			Input:     &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "owned-child-run"},
 		})
 		return err
 	})
@@ -466,7 +468,7 @@ func TestStartChildWorkflowEnforcesExactPayloadLimit(t *testing.T) {
 	oversized := temporalInputAtWorkflowBudget(t, "child2", "child", "test.queue", reserved, 1)
 	env.RegisterWorkflowWithOptions(
 		func(workflow.Context, *api.RunInput) (*api.RunOutput, error) {
-			return &api.RunOutput{}, nil
+			return &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}}, nil
 		},
 		workflow.RegisterOptions{Name: "child"},
 	)
@@ -526,7 +528,7 @@ func TestStartChildWorkflowWaitsForCancellationCleanup(t *testing.T) {
 			ID:        "child-with-cleanup",
 			Workflow:  "child-with-cancellation-cleanup",
 			TaskQueue: "test.queue",
-			Input:     &api.RunInput{RunID: "child-with-cleanup"},
+			Input:     &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "child-with-cleanup"},
 		})
 		if err != nil {
 			return err
@@ -656,7 +658,8 @@ func TestExecuteAgentChildActivityReturnsRecordedOutput(t *testing.T) {
 		output, err := wfCtx.ExecuteAgentChildActivity(engine.AgentChildActivityCall{
 			Name: "prepare_child",
 			Input: &api.AgentChildActivityInput{
-				Call: api.ToolCall{RunID: "parent-run"},
+				Origin: genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: "parent-run", ToolCallID: "test-call"})},
+				Call:   api.ToolCall{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "parent-run", ToolCallID: "test-call"},
 			},
 			Options: engine.ActivityOptions{StartToCloseTimeout: time.Minute},
 		})

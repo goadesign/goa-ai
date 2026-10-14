@@ -23,6 +23,7 @@ import (
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/temporal"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/internal/startrecipe"
@@ -51,7 +52,7 @@ func TestTemporalServerChildAcceptedRequest(t *testing.T) {
 	eng, queue := localRequestEngine(t)
 	request := engine.ChildWorkflowRequest{
 		ID: queue + "-child", Workflow: "digest-child", TaskQueue: queue,
-		Input: &api.RunInput{RunID: queue + "-child", Metadata: map[string]any{"value": "accepted"}},
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: queue + "-child", Metadata: map[string]any{"value": "accepted"}},
 	}
 	snapshot, err := startrecipe.SnapshotChildRequest(request)
 	require.NoError(t, err)
@@ -75,7 +76,7 @@ func TestTemporalServerChildAcceptedRequest(t *testing.T) {
 			if detached != digest {
 				return nil, fmt.Errorf("detached child lost accepted request")
 			}
-			return &api.RunOutput{RunID: input.RunID}, nil
+			return &api.RunOutput{Subject: input.Subject, RunID: input.RunID}, nil
 		},
 	}))
 	require.NoError(t, eng.RegisterWorkflow(t.Context(), engine.WorkflowDefinition{
@@ -93,7 +94,7 @@ func TestTemporalServerChildAcceptedRequest(t *testing.T) {
 	require.NoError(t, eng.SealRegistration(ctx))
 	id := queue + "-parent"
 	handle, err := eng.StartWorkflow(ctx, engine.WorkflowStartRequest{
-		ID: id, Workflow: "digest-parent", TaskQueue: queue, Input: &api.RunInput{RunID: id},
+		ID: id, Workflow: "digest-parent", TaskQueue: queue, Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: id},
 	})
 	require.NoError(t, err)
 	output, err := handle.Wait(ctx)
@@ -127,7 +128,7 @@ func TestTemporalServerStartConflictStopsRetries(t *testing.T) {
 	defer cancel()
 	require.NoError(t, eng.SealRegistration(ctx))
 	handle, err := eng.StartWorkflow(ctx, engine.WorkflowStartRequest{
-		ID: id, Workflow: "conflict", TaskQueue: queue, Input: &api.RunInput{RunID: id},
+		ID: id, Workflow: "conflict", TaskQueue: queue, Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: id},
 		RetryPolicy: engine.RetryPolicy{MaxAttempts: 3, InitialInterval: time.Millisecond},
 	})
 	require.NoError(t, err)

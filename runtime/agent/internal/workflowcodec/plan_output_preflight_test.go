@@ -21,6 +21,7 @@ import (
 	"go.temporal.io/sdk/converter"
 	"google.golang.org/protobuf/proto"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -260,7 +261,7 @@ func TestPlanOutputCertificatePreservesSiblingRepresentations(t *testing.T) {
 		{name: "raw payload", value: converter.NewRawValue(&commonpb.Payload{
 			Data: []byte("synthetic"), Metadata: map[string][]byte{"encoding": []byte("binary/plain")},
 		})},
-		{name: "versioned result", value: &api.RunOutput{}},
+		{name: "versioned result", value: &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("agent")}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			codec := NewDataConverter()

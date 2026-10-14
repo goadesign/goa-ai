@@ -7,13 +7,13 @@
 
 package scalar
 
-import strconv "generated.local/gen/strconv"
+import strconv2 "generated.local/gen/strconv"
 
 type (
 	// StorePayload defines the JSON payload for the scalar.store tool.
 	StorePayload = struct {
 		// One value.
-		Value strconv.Token
+		Value strconv2.Token
 	}
 	// StoreResult defines the JSON result for the scalar.store tool.
 	StoreResult = string

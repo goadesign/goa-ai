@@ -35,10 +35,11 @@ type (
 	}
 	// elicitationParams retains the closed form-or-URL interaction received from a server.
 	elicitationParams struct {
-		Mode            string          `json:"mode"`
-		Message         *string         `json:"message"`
-		RequestedSchema json.RawMessage `json:"requestedSchema"` //nolint:tagliatelle // MCP defines this wire field name.
-		URL             *string         `json:"url"`
+		Mode            string                     `json:"mode"`
+		Message         *string                    `json:"message"`
+		RequestedSchema json.RawMessage            `json:"requestedSchema"` //nolint:tagliatelle // MCP defines this wire field name.
+		URL             *string                    `json:"url"`
+		Extensions      map[string]json.RawMessage `json:"-"`
 	}
 	elicitationResult struct {
 		Action  string          `json:"action"`
@@ -209,5 +210,11 @@ func decodeElicitation(request InputRequest) (elicitationParams, error) {
 	default:
 		return params, fmt.Errorf("unsupported elicitation mode %q", params.Mode)
 	}
+	// The typed fields carry known parameters. Preserve every other member for
+	// hosts that understand its extension, without changing the private request.
+	for _, name := range []string{"mode", "message", "requestedSchema", "url"} {
+		delete(fields, name)
+	}
+	params.Extensions = fields
 	return params, nil
 }

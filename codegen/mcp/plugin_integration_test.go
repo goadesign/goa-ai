@@ -203,6 +203,7 @@ import (
     "goa.design/goa-ai/runtime/agent/engine"
     "goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
 	storageinmem "goa.design/goa-ai/runtime/agent/storage/inmem"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -289,6 +290,7 @@ func TestRegisteredStringToolDecodesEveryControlCharacter(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, err := rt.ExecuteToolActivity(context.Background(), &agentsruntime.ToolInput{
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("fmt.agent")},
 		ToolsetName: "fmt.fmt",
 		ToolName:    genfmtspecs.Echo,
 		Payload:     rawjson.Message(` + "`{}`" + `),

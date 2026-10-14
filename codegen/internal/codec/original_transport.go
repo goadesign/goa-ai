@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"maps"
 
+	"goa.design/goa-ai/codegen/internal/jsonshape"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/expr"
 )
@@ -131,7 +132,7 @@ func (p *Plan) copyOriginalTransport(attribute *expr.AttributeExpr, layout *code
 		}
 		planned := &plannedType{
 			userType: local, declaration: name, validatorDeclaration: validator,
-			alias: expr.IsUnion(actual) || isRawJSON(actual.Attribute()),
+			alias: expr.IsUnion(actual) || jsonshape.IsRawJSON(actual.Attribute()),
 		}
 		p.originals.types[source] = planned
 		p.originals.typesByLocal[local] = planned

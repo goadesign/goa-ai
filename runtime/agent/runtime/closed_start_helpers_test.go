@@ -13,6 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	genregistry "goa.design/goa-ai/registry/gen/registry"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -29,6 +31,7 @@ import (
 type (
 	closedStartStore struct {
 		storage.Store
+		synchronous   storage.SynchronousStore
 		status        session.RunStatus
 		ordinaryCalls int
 		terminalCalls int
@@ -89,13 +92,13 @@ func (s *closedStartStore) StartOneShotChildRun(ctx context.Context, command sto
 }
 
 func (s *closedStartStore) StartSynchronousRun(ctx context.Context, command storage.SynchronousRunStart) (storage.OneShotRunStartResult, error) {
-	if _, err := s.Store.StartSynchronousRun(ctx, command); err != nil {
+	if _, err := s.synchronous.StartSynchronousRun(ctx, command); err != nil {
 		return storage.OneShotRunStartResult{}, err
 	}
 	if err := s.closeRun(ctx, command.Run.RunID); err != nil {
 		return storage.OneShotRunStartResult{}, err
 	}
-	return s.Store.StartSynchronousRun(ctx, command)
+	return s.synchronous.StartSynchronousRun(ctx, command)
 }
 
 func (s *closedStartStore) AppendRunRecord(ctx context.Context, record *runlog.Event) (storage.AppendResult, error) {
@@ -120,7 +123,7 @@ func (s *closedStartStore) RecordRunCancellation(ctx context.Context, command st
 func newClosedStartFixture(t *testing.T, kind storageCommandKind, status session.RunStatus, publishHistory bool) closedStartFixture {
 	t.Helper()
 	store := storageinmem.New()
-	input := &RunInput{AgentID: "agent", RunID: "run", TurnID: "turn"}
+	input := &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, RunID: "run", TurnID: "turn"}
 	if kind == storageCommandRootStart || kind == storageCommandChildStart {
 		input.SessionID = "session"
 		_, err := store.CreateSession(t.Context(), input.SessionID, time.Unix(1, 0))
@@ -130,11 +133,11 @@ func newClosedStartFixture(t *testing.T, kind storageCommandKind, status session
 		input.ParentRunID, input.ParentAgentID = "parent-run", parentAgentID
 		input.ParentToolCallID, input.Tool = "call", "parent.child"
 		admitRunForTest(t, store, session.RunMeta{
-			RunID: input.ParentRunID, AgentID: string(input.ParentAgentID), SessionID: input.SessionID,
+			RunID: input.ParentRunID, Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(string(input.ParentAgentID)))}, SessionID: input.SessionID,
 			Status: session.RunStatusRunning,
 		})
 	}
-	closedStore := &closedStartStore{Store: store, status: status}
+	closedStore := &closedStartStore{Store: store, synchronous: store, status: status}
 	runtime := newTestRuntimeWithPlanner("agent", &stubPlanner{
 		start: func(context.Context, *planner.PlanInput) (*planner.PlanResult, error) {
 			return nil, errors.New("closed run reached planner")
@@ -142,8 +145,12 @@ func newClosedStartFixture(t *testing.T, kind storageCommandKind, status session
 	})
 	runtime.Store = closedStore
 	if publishHistory {
+		origin := genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: input.RunID})}
+		if input.ParentRunID != "" {
+			origin.Invocation = genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: input.ParentRunID, ToolCallID: input.ParentToolCallID})
+		}
 		endID, err := publishLiteralHistory(t.Context(), runtime.Store, storage.SeedDeclaration{
-			AgentID: string(input.AgentID), RunID: input.RunID, SessionID: input.SessionID,
+			Subject: input.Subject, RunID: input.RunID, SessionID: input.SessionID, Origin: origin,
 			Kind:            storage.SeedLiteral,
 			RenderedPrompts: []prompt.RenderEvent{{PromptID: "agent.system", Version: "v1"}},
 		}, []*model.Message{{
@@ -164,12 +171,12 @@ func newClosedStartFixture(t *testing.T, kind storageCommandKind, status session
 	events := []hooks.Event{}
 	if input.ParentRunID != "" {
 		events = append(events, hooks.NewChildRunLinkedEvent(
-			input.ParentRunID, input.ParentAgentID, input.SessionID, input.Tool,
-			input.ParentToolCallID, input.RunID, input.AgentID,
+			input.ParentRunID, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(input.ParentAgentID))}, input.SessionID, input.Tool,
+			input.ParentToolCallID, input.RunID, testSubjectAgent(t, input.Subject),
 		))
 	}
 	events = append(events, hooks.NewRunStartedEvent(
-		input.RunID, input.AgentID, input.SessionID, input.ParentRunID, "", nil,
+		input.RunID, input.Subject, input.SessionID, input.ParentRunID, "", nil,
 	))
 	records, err := prepareRunStartRecords(wfCtx.Context(), events, input.TurnID)
 	require.NoError(t, err)
@@ -214,7 +221,8 @@ func (s *closedStartStore) closeRun(ctx context.Context, runID string) error {
 			_, cancelErr := s.Store.RecordRunCancellation(ctx, storage.RunCancellation{
 				RunID: runID, Reason: cancellation.Reason,
 				Record: &runlog.Event{
-					EventKey: cancellationIntentEventKey, RunID: runID, AgentID: "agent",
+					EventKey: cancellationIntentEventKey, RunID: runID, Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))},
+
 					SessionID: meta.SessionID, Type: storage.CancellationRecordType,
 					Payload: payload, Timestamp: time.Unix(3, 0),
 				},
@@ -224,7 +232,7 @@ func (s *closedStartStore) closeRun(ctx context.Context, runID string) error {
 			}
 		}
 		event := hooks.NewRunCompletedEvent(
-			runID, "agent", meta.SessionID, status, phase, nil, eventErr, cancellation,
+			runID, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, meta.SessionID, status, phase, nil, eventErr, cancellation,
 		)
 		record, recordErr := encodeTestHookRecord(event, terminalRunEventKey, time.Unix(3, 0))
 		if recordErr != nil {

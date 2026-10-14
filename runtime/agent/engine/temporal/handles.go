@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 
+	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/temporal"
 
@@ -87,6 +88,12 @@ func (e *Engine) requestCancellationUpdate(ctx context.Context, workflowID strin
 	}
 	var accepted engine.CancellationRequest
 	if err := handle.Get(ctx, &accepted); err != nil {
+		var applicationErr *temporal.ApplicationError
+		if !workflowCompleted && errors.As(err, &applicationErr) && applicationErr.Type() == cancellationCompletedErrorType {
+			if err := e.waitCancellationClosure(ctx, handle); err != nil {
+				return engine.CancellationRequest{}, err
+			}
+		}
 		mapped := mapCancellationUpdateError(err)
 		if workflowCompleted && errors.Is(mapped, engine.ErrWorkflowNotFound) {
 			return engine.CancellationRequest{}, engine.ErrWorkflowCompleted
@@ -94,6 +101,27 @@ func (e *Engine) requestCancellationUpdate(ctx context.Context, workflowID strin
 		return engine.CancellationRequest{}, mapped
 	}
 	return accepted, nil
+}
+
+// waitCancellationClosure waits outside workflow execution after a callback
+// rejects cancellation during terminal work. The update's exact execution must
+// have a close event before the caller receives ErrWorkflowCompleted.
+func (e *Engine) waitCancellationClosure(ctx context.Context, handle client.WorkflowUpdateHandle) error {
+	if handle.WorkflowID() == "" || handle.RunID() == "" {
+		return errors.New("cancellation update is missing its exact workflow execution")
+	}
+	history := e.client.GetWorkflowHistory(ctx, handle.WorkflowID(), handle.RunID(), true, enumspb.HISTORY_EVENT_FILTER_TYPE_CLOSE_EVENT)
+	if !history.HasNext() {
+		return errors.New("cancellation update execution has no close event")
+	}
+	closed, err := history.Next()
+	if err != nil {
+		return err
+	}
+	if closed == nil {
+		return errors.New("cancellation update execution returned no close event")
+	}
+	return nil
 }
 
 // mapCancellationUpdateError restores the engine conflict returned by workflow

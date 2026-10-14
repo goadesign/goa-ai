@@ -99,7 +99,7 @@ func TestAppendUserToolRecordResultsBoundsGuidance(t *testing.T) {
 			}
 			require.NoError(t, validateToolResultContract(spec, call, result))
 			beforeBounds := agent.CloneBounds(result.Bounds)
-			base := &workflowConversation{RunContext: run.Context{RunID: "run-1"}}
+			base := &workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{RunID: "run-1"}}
 			record := materializedToolRecordForTest(t, rt, "agent-1", base, call, result)
 			beforePart, err := toolResultRecordPart(record)
 			require.NoError(t, err)

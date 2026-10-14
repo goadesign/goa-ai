@@ -17,6 +17,11 @@ import (
 func generateAgentFiles(data *GeneratorData, roots []eval.Root, specsPlan *toolSpecsPlan, helpersPlan *toolsetHelperPackagesPlan, aggregates *aggregateSpecsPackagesPlan, exportsPlan *serviceExportPackagesPlan, registryPlan *registryClientPlan, files []*codegen.File) ([]*codegen.File, error) {
 	generated := serviceExportFiles(exportsPlan)
 	generated = append(generated, toolsetSpecsFiles(specsPlan)...)
+	bindings, err := consumerInputFiles(specsPlan.consumerInputs)
+	if err != nil {
+		return nil, err
+	}
+	generated = append(generated, bindings...)
 	inputFiles, err := nativeInputFiles(specsPlan)
 	if err != nil {
 		return nil, err

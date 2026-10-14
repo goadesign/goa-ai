@@ -1,3 +1,6 @@
+// Package runtime dispatches accepted tool calls and retains their scheduling
+// and result records. Workflows use those same records for normal collection,
+// suspension and cancellation, so interrupted work keeps its original identity.
 package runtime
 
 import (
@@ -6,7 +9,10 @@ import (
 	"fmt"
 	"time"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
+
 	agent "goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/internal/temporalerrors"
@@ -52,6 +58,7 @@ type (
 	}
 
 	toolScheduleState struct {
+		callRunID        string
 		published        bool
 		queue            string
 		expectedChildren int
@@ -80,7 +87,9 @@ type (
 	// lot of shared metadata (run IDs, timers) to be
 	// propagated consistently to hooks and result contracts.
 	toolBatchExec struct {
-		r *Runtime
+		r     *Runtime
+		owner *workflowLoop
+		batch *toolCallBatch
 
 		activityName   string
 		toolActOptions engine.ActivityOptions
@@ -118,9 +127,7 @@ func (e *toolBatchExec) normalizeToolCall(call ToolCall) ToolCall {
 	if call.RunID == "" {
 		call.RunID = e.runID
 	}
-	if call.AgentID == "" {
-		call.AgentID = e.agentID
-	}
+	call.Subject = genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(e.agentID))}
 	if call.SessionID == "" {
 		call.SessionID = e.sessionID
 	}
@@ -197,7 +204,7 @@ func (e *toolBatchExec) synthesizeToolError(ctx context.Context, call ToolCall, 
 	if err != nil {
 		return result, err
 	}
-	result.resultRecord, err = e.publishToolResultReceived(ctx, call, toolRes, resultJSON, duration)
+	result.resultRecord, err = e.publishToolResultReceived(ctx, call, result, resultJSON, duration)
 	if err != nil {
 		return result, err
 	}
@@ -227,7 +234,7 @@ func (e *toolBatchExec) synthesizeUnknownToolResult(ctx context.Context, call To
 	result := Executed(tr)
 	result.duration = duration
 	var err error
-	result.resultRecord, err = e.publishToolResultReceived(ctx, call, tr, nil, duration)
+	result.resultRecord, err = e.publishToolResultReceived(ctx, call, result, nil, duration)
 	if err != nil {
 		return result, err
 	}
@@ -263,7 +270,7 @@ func (e *toolBatchExec) synthesizeCanceledExecution(ctx context.Context, call To
 		}
 		resultJSON = encoded
 	}
-	result.resultRecord, err = e.publishToolResultReceived(ctx, call, tr, resultJSON, duration)
+	result.resultRecord, err = e.publishToolResultReceived(ctx, call, result, resultJSON, duration)
 	if err != nil {
 		return result, err
 	}
@@ -301,10 +308,43 @@ func canonicalizeAndValidateWorkflowToolResult(spec tools.ToolSpec, call ToolCal
 func (e *toolBatchExec) publishToolResultReceived(
 	ctx context.Context,
 	call ToolCall,
-	tr *planner.ToolResult,
+	execution *ToolExecutionResult,
 	resultJSON rawjson.Message,
 	duration time.Duration,
 ) (*RecordActivityInput, error) {
+	tr := execution.ToolResult
+	// Only a complete, sole action can choose its result before reporting.
+	// Timeout groups are smaller than planner steps, so inspect the whole step.
+	if e.owner != nil && tr.Failure == nil && execution.Clarification == nil && execution.childSuspension == nil && execution.mcpPending == nil && execution.task == nil {
+		plan := e.owner.st.Result
+		if len(plan.ToolCalls) == 1 && plan.Await == nil && !plan.SynthesizeAfterTools && plan.ToolCalls[0].ToolCallID == call.ToolCallID && plan.ToolCalls[0].Name == call.Name {
+			if e.owner.unfinishedBatch != nil && e.owner.unfinishedBatch.program.kind == stepKindToolTerminal {
+				records, err := stepToolRecordsFromExecutions([]ToolCall{call}, []*ToolExecutionResult{execution})
+				if err != nil {
+					return nil, err
+				}
+				completed := *e.owner.unfinishedBatch
+				completed.records = records
+				if err := e.owner.retainCompletedToolTerminalResult(completed); err != nil {
+					return nil, err
+				}
+			}
+			spec, _, err := lookupCallSpec(call, e.r.toolSpec)
+			if err != nil {
+				return nil, err
+			}
+			if spec.TerminalRun || call.Name == completionTool(e.owner.input) {
+				event := &api.ToolEvent{Name: call.Name, ToolCallID: call.ToolCallID, Result: resultJSON, Blocks: tr.Blocks, Bounds: tr.Bounds}
+				if err := e.r.retainCompletionToolResult(e.owner.base, e.agentID, event); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	schedule, ok := e.batch.scheduleByID[call.ToolCallID]
+	if !ok || schedule.callRunID == "" {
+		return nil, fmt.Errorf("tool result %q has no scheduling owner", call.ToolCallID)
+	}
 	parentID := parentToolCallID(call, e.runCtx)
 	preview, err := formatToolResultPreviewForCall(ctx, e.r, &call, tr)
 	if err != nil {
@@ -312,9 +352,9 @@ func (e *toolBatchExec) publishToolResultReceived(
 	}
 	ev := hooks.NewToolResultReceivedEvent(
 		e.runID,
-		e.agentID,
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(e.agentID))},
 		e.sessionID,
-		call.RunID,
+		schedule.callRunID,
 		call.Name,
 		call.ToolCallID,
 		parentID,
@@ -336,7 +376,7 @@ func (e *toolBatchExec) publishToolResultReceived(
 func (e *toolBatchExec) publishToolCallScheduled(ctx context.Context, call ToolCall, queue string) error {
 	ev := newToolCallScheduledEvent(
 		e.runID,
-		e.agentID,
+		call.Subject,
 		e.sessionID,
 		call,
 		queue,
@@ -351,7 +391,7 @@ func (e *toolBatchExec) publishToolCallScheduled(ctx context.Context, call ToolC
 // runtime-owned correlation metadata cannot be dropped.
 func newToolCallScheduledEvent(
 	runID string,
-	agentID agent.Ident,
+	subject genrunidentity.RunSubject,
 	sessionID string,
 	call ToolCall,
 	queue string,
@@ -360,7 +400,7 @@ func newToolCallScheduledEvent(
 ) *hooks.ToolCallScheduledEvent {
 	event := hooks.NewToolCallScheduledEvent(
 		runID,
-		agentID,
+		subject,
 		sessionID,
 		call.Name,
 		call.ToolCallID,
@@ -395,9 +435,10 @@ func computeToolActivityOptions(wfCtx engine.WorkflowContext, base engine.Activi
 	return callOpts
 }
 
-func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []ToolCall) (*toolCallBatch, error) {
-	ctx := wfCtx.Context()
-
+// newToolCallBatch retains the run that owns each accepted scheduling event.
+// A resumed execution reads that owner from its saved step; the original call
+// still supplies the unchanged identity sent to the tool provider.
+func (e *toolBatchExec) newToolCallBatch(calls []ToolCall) (*toolCallBatch, error) {
 	b := &toolCallBatch{
 		calls:         calls,
 		futures:       make([]futureInfo, 0, len(calls)),
@@ -405,6 +446,38 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 		inlineByID:    make(map[string]*ToolExecutionResult, len(calls)),
 		scheduleByID:  make(map[string]toolScheduleState, len(calls)),
 		discoveredIDs: make([]string, 0, len(calls)),
+	}
+	for _, call := range calls {
+		callRunID := e.runID
+		if call.ExecutionContinuation != nil {
+			if e.owner == nil || e.owner.unfinishedBatch == nil {
+				return nil, fmt.Errorf("continued tool %q has no saved step", call.ToolCallID)
+			}
+			callRunID = ""
+			for _, record := range e.owner.unfinishedBatch.records {
+				if record.call.ToolCallID == call.ToolCallID {
+					callRunID = record.callRunID
+					break
+				}
+			}
+			if callRunID == "" {
+				return nil, fmt.Errorf("continued tool %q has no saved scheduling owner", call.ToolCallID)
+			}
+		}
+		b.scheduleByID[call.ToolCallID] = toolScheduleState{callRunID: callRunID}
+	}
+	e.batch = b
+	if e.owner != nil {
+		e.owner.activeToolBatches = append(e.owner.activeToolBatches, e)
+	}
+	return b, nil
+}
+
+func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []ToolCall) (*toolCallBatch, error) {
+	ctx := wfCtx.Context()
+	b, err := e.newToolCallBatch(calls)
+	if err != nil {
+		return nil, err
 	}
 	var executionErr error
 
@@ -418,7 +491,8 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 			continue
 		}
 		if !hasSpec {
-			state := toolScheduleState{expectedChildren: e.expectedChildren}
+			state := b.scheduleByID[call.ToolCallID]
+			state.expectedChildren = e.expectedChildren
 			if err := e.publishToolCallScheduled(ctx, call, ""); err != nil {
 				executionErr = errors.Join(executionErr, err)
 				b.scheduleByID[call.ToolCallID] = state
@@ -460,10 +534,9 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 				queue = ts.TaskQueue
 			}
 		}
-		state := toolScheduleState{
-			queue:            queue,
-			expectedChildren: e.expectedChildren,
-		}
+		state := b.scheduleByID[call.ToolCallID]
+		state.queue = queue
+		state.expectedChildren = e.expectedChildren
 		if call.ExecutionContinuation == nil {
 			if err := e.publishToolCallScheduled(ctx, call, queue); err != nil {
 				executionErr = errors.Join(executionErr, err)
@@ -480,7 +553,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 				executionErr = errors.Join(executionErr, err)
 				continue
 			}
-			request, err := e.r.prepareAgentChild(wfCtx, call, e.historyEndID, *e.runCtx)
+			request, stopped, err := e.r.prepareAgentChild(wfCtx, call, e.historyEndID, *e.runCtx)
 			if err != nil {
 				tr, err := agentToolRequestFailureResult(call, err)
 				if err != nil {
@@ -493,7 +566,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 				}
 				result := Executed(tr)
 				b.inlineByID[call.ToolCallID] = result
-				result.resultRecord, err = e.publishToolResultReceived(ctx, call, tr, nil, 0)
+				result.resultRecord, err = e.publishToolResultReceived(ctx, call, result, nil, 0)
 				if err != nil {
 					executionErr = errors.Join(executionErr, err)
 				} else {
@@ -503,6 +576,12 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 					b.discoveredIDs = append(b.discoveredIDs, call.ToolCallID)
 				}
 				continue
+			}
+			if stopped != nil {
+				// A stopped preparation has no child workflow or tool result.
+				// Use the same cleanup as a canceled child; the parent retains
+				// its own saved cancellation reason rather than the child's.
+				return b, errors.Join(executionErr, context.Canceled)
 			}
 			input, err := agentChildRunInput(cfg.Definition, request)
 			if err != nil {
@@ -563,7 +642,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 				duration:      duration,
 			}
 			outcome := b.inlineByID[call.ToolCallID]
-			outcome.resultRecord, err = e.publishToolResultReceived(ctx, call, result, resultJSON, duration)
+			outcome.resultRecord, err = e.publishToolResultReceived(ctx, call, outcome, resultJSON, duration)
 			if err != nil {
 				executionErr = errors.Join(executionErr, err)
 			} else {
@@ -600,110 +679,12 @@ func (e *toolBatchExec) maybePublishChildTrackerUpdate(ctx context.Context, disc
 	if e.runCtx == nil || e.runCtx.ParentRunID == "" || e.runCtx.ParentAgentID == "" {
 		return fmt.Errorf("nested tool tracker requires parent run context")
 	}
-	ev := hooks.NewToolCallUpdatedEvent(e.runCtx.ParentRunID, e.runCtx.ParentAgentID, e.sessionID, e.parentTracker.parentToolCallID, e.parentTracker.currentTotal())
+	ev := hooks.NewToolCallUpdatedEvent(e.runCtx.ParentRunID, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(e.runCtx.ParentAgentID))}, e.sessionID, e.parentTracker.parentToolCallID, e.parentTracker.currentTotal())
 	if err := e.r.publishHook(ctx, ev, e.turnID); err != nil {
 		return err
 	}
 	e.parentTracker.markUpdated()
 	return nil
-}
-
-func (e *toolBatchExec) collectAgentChildResults(wfCtx engine.WorkflowContext, children []agentChildFutureInfo, finalizeTimer engine.Future[time.Time]) (map[string]*ToolExecutionResult, []agentChildFutureInfo, bool, error) {
-	ctx := wfCtx.Context()
-	if len(children) == 0 {
-		return map[string]*ToolExecutionResult{}, nil, false, nil
-	}
-
-	out := make(map[string]*ToolExecutionResult, len(children))
-	pending := append([]agentChildFutureInfo(nil), children...)
-	var executionErr error
-	for len(pending) > 0 {
-		if err := wfCtx.Await(func() bool {
-			if finalizeTimer != nil && finalizeTimer.IsReady() {
-				return true
-			}
-			for _, info := range pending {
-				if info.handle.IsReady() {
-					return true
-				}
-			}
-			return false
-		}); err != nil {
-			if errors.Is(err, engine.ErrPlannerActivityDeadlineExceeded) {
-				return out, pending, true, executionErr
-			}
-			return out, pending, false, errors.Join(executionErr, err)
-		}
-
-		i := 0
-		for i < len(pending) {
-			info := pending[i]
-			if !info.handle.IsReady() {
-				i++
-				continue
-			}
-			pending[i] = pending[len(pending)-1]
-			pending = pending[:len(pending)-1]
-
-			outPtr, err := info.handle.Get(wfCtx.Context())
-			if err != nil {
-				if isRunCancellationError(err) || temporalerrors.IsOutputContract(err) || temporalerrors.IsRequestValidation(err) {
-					return out, pending, false, errors.Join(executionErr, err)
-				}
-				if _, ok := temporalerrors.Provider(err); ok {
-					return out, pending, false, errors.Join(executionErr, err)
-				}
-				duration := wfCtx.Now().Sub(info.startTime)
-				result, synthErr := e.synthesizeToolError(ctx, info.call, err, "agent tool execution failed", duration)
-				if result != nil {
-					out[info.call.ToolCallID] = result
-				}
-				if synthErr != nil {
-					executionErr = errors.Join(executionErr, synthErr)
-				}
-				continue
-			}
-			if err := validateWorkflowOutput(outPtr, info.cfg.Definition.route.ID, info.nestedRun.RunID); err != nil {
-				executionErr = errors.Join(executionErr, err)
-				continue
-			}
-			if outPtr != nil && outPtr.Suspension != nil {
-				out[info.call.ToolCallID] = &ToolExecutionResult{
-					ToolResult: &planner.ToolResult{
-						Name:       info.call.Name,
-						ToolCallID: info.call.ToolCallID,
-					},
-					childSuspension: outPtr.Suspension,
-					duration:        wfCtx.Now().Sub(info.startTime),
-				}
-				continue
-			}
-			tr, err := e.r.adaptAgentChildOutput(info.cfg, &info.call, info.nestedRun, outPtr)
-			if err != nil {
-				executionErr = errors.Join(executionErr, err)
-				continue
-			}
-			duration := wfCtx.Now().Sub(info.startTime)
-			result := Executed(tr)
-			result.duration = duration
-			out[info.call.ToolCallID] = result
-			resultJSON, err := e.r.materializeToolResult(ctx, info.call, tr)
-			if err != nil {
-				executionErr = errors.Join(executionErr, err)
-				continue
-			}
-			result.resultRecord, err = e.publishToolResultReceived(ctx, info.call, tr, resultJSON, duration)
-			if err != nil {
-				executionErr = errors.Join(executionErr, err)
-			} else {
-				out[info.call.ToolCallID].resultPublished = true
-			}
-		}
-		if finalizeTimer != nil && finalizeTimer.IsReady() && len(pending) > 0 {
-			return out, pending, true, executionErr
-		}
-	}
-	return out, nil, false, executionErr
 }
 
 func mergeToolExecutionsInCallOrder(calls []ToolCall, activityByID, inlineByID map[string]*ToolExecutionResult) ([]*ToolExecutionResult, error) {
@@ -748,7 +729,7 @@ func availableToolExecutionsInCallOrder(calls []ToolCall, activityByID, inlineBy
 //
 // expectedChildren indicates how many child tools are expected to be discovered dynamically
 // by the tools in this batch (0 if not tracked).
-func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName string, toolActOptions engine.ActivityOptions, agentID agent.Ident, runCtx *run.Context, historyEndID string, calls []ToolCall, expectedChildren int, parentTracker *childTracker, finishBy time.Time, taskStates map[string]*taskExecution) (output []*ToolExecutionResult, timedOutResult bool, resultErr error) {
+func (r *Runtime) executeToolCalls(owner *workflowLoop, wfCtx engine.WorkflowContext, activityName string, toolActOptions engine.ActivityOptions, agentID agent.Ident, runCtx *run.Context, historyEndID string, calls []ToolCall, expectedChildren int, parentTracker *childTracker, finishBy time.Time, taskStates map[string]*taskExecution) (output []*ToolExecutionResult, timedOutResult bool, resultErr error) {
 	if runCtx == nil {
 		return nil, false, fmt.Errorf("missing run context")
 	}
@@ -769,6 +750,7 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 	}
 	exec := &toolBatchExec{
 		r:                r,
+		owner:            owner,
 		activityName:     activityName,
 		toolActOptions:   toolActOptions,
 		runID:            runCtx.RunID,
@@ -801,6 +783,10 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 
 	ctx := wfCtx.Context()
 	if !finishBy.IsZero() && !wfCtx.Now().Before(finishBy) {
+		batch, err := exec.newToolCallBatch(calls)
+		if err != nil {
+			return nil, false, err
+		}
 		results := make([]*ToolExecutionResult, 0, len(calls))
 		var executionErr error
 		for _, call := range calls {
@@ -817,10 +803,17 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 				}
 			}
 			schedulePublished := true
-			if err := exec.publishToolCallScheduled(ctx, call, queue); err != nil {
-				executionErr = errors.Join(executionErr, err)
-				schedulePublished = false
+			if call.ExecutionContinuation == nil {
+				if err := exec.publishToolCallScheduled(ctx, call, queue); err != nil {
+					executionErr = errors.Join(executionErr, err)
+					schedulePublished = false
+				}
 			}
+			state := batch.scheduleByID[call.ToolCallID]
+			state.published = schedulePublished
+			state.queue = queue
+			state.expectedChildren = expectedChildren
+			batch.scheduleByID[call.ToolCallID] = state
 
 			result, err := exec.synthesizeCanceledExecution(ctx, call, 0)
 			if result != nil {
@@ -860,6 +853,28 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 	}
 
 	batch, executionErr := exec.dispatchToolCalls(execWfCtx, calls)
+	if batch == nil {
+		return nil, false, executionErr
+	}
+	defer func() {
+		if resultErr != nil || timedOutResult {
+			resultErr = errors.Join(resultErr, exec.retainReadyChildResults(wfCtx.Detached()))
+			retained := make(map[string]*ToolExecutionResult, len(output))
+			for _, result := range output {
+				id, err := executionToolCallID(result)
+				if err != nil {
+					resultErr = errors.Join(resultErr, err)
+					continue
+				}
+				retained[id] = result
+			}
+			for id, result := range batch.inlineByID {
+				retained[id] = result
+			}
+			completeToolScheduleState(batch, retained, nil)
+			output = availableToolExecutionsInCallOrder(batch.calls, retained, batch.inlineByID)
+		}
+	}()
 	if err := exec.maybePublishChildTrackerUpdate(ctx, batch.discoveredIDs); err != nil {
 		executionErr = errors.Join(executionErr, err)
 	}
@@ -874,15 +889,10 @@ func (r *Runtime) executeToolCalls(wfCtx engine.WorkflowContext, activityName st
 		executionErr = errors.Join(executionErr, err)
 	}
 	if !isRunCancellationError(executionErr) {
-		childByID, remainingChildren, childrenTimedOut, err := exec.collectAgentChildResults(wfCtx, batch.childFutures, finalizeTimer)
+		_, remainingChildren, childrenTimedOut, err := exec.collectAgentChildResults(wfCtx, batch.childFutures, batch.inlineByID, finalizeTimer)
 		pendingChildren = remainingChildren
 		timedOut = timedOut || childrenTimedOut
 		executionErr = errors.Join(executionErr, err)
-		// A later child can cancel after an earlier child has returned a result.
-		// Retain those completed results before closing the remaining work.
-		for id, result := range childByID {
-			batch.inlineByID[id] = result
-		}
 	}
 	if isRunCancellationError(executionErr) {
 		timedOut = false

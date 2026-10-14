@@ -30,7 +30,7 @@ type (
 		Primitive expr.Primitive
 		// Fields are object members in deterministic name order.
 		Fields []*Field
-		// Element is the array or map value shape.
+		// Element describes array items, map values, or extra object members.
 		Element *Node
 		// ElementDescription retains a map element occurrence's description.
 		ElementDescription string
@@ -80,12 +80,18 @@ func FieldName(field *expr.NamedAttributeExpr) (string, bool) {
 		if name != "" {
 			return name, true
 		}
+		if slices.Contains(strings.Split(tag, ",")[1:], "embed") {
+			return "", false
+		}
 	}
 	return field.Name, true
 }
 
 // build preserves named identity and union sharing before following children.
 func (b *builder) build(attribute *expr.AttributeExpr) (*Node, error) {
+	if IsRawJSON(attribute) {
+		return &Node{Attribute: attribute, Kind: "any"}, nil
+	}
 	if primitive, ok := PrimitiveType(attribute); ok {
 		kind := "primitive"
 		if primitive == expr.Any {
@@ -130,6 +136,18 @@ func (b *builder) populate(node *Node, attribute *expr.AttributeExpr) error {
 		return b.populate(node, actual.Attribute())
 	case *expr.Object:
 		node.Kind = "object"
+		embedded, err := EmbeddedMap(attribute)
+		if err != nil {
+			return err
+		}
+		if embedded != nil {
+			values := expr.AsMap(embedded.Attribute.Type)
+			node.Element, err = b.build(values.ElemType)
+			if err != nil {
+				return err
+			}
+			node.ElementDescription = values.ElemType.Description
+		}
 		wireNames := make(map[string]string, len(*actual))
 		fields := slices.Clone(*actual)
 		sort.Slice(fields, func(i, j int) bool { return fields[i].Name < fields[j].Name })

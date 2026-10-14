@@ -408,6 +408,23 @@ func (e *Engine) RegisterExecuteToolActivity(_ context.Context, name string, opt
 	return e.registerActivityWithCtx(name, opts, wrapped)
 }
 
+// RegisterAgentOperationActivity installs direct preparation on the provider's worker queue.
+func (e *Engine) RegisterAgentOperationActivity(_ context.Context, name string, opts engine.ActivityOptions, fn func(context.Context, *api.RunInput) (*api.AgentOperationActivityResult, error)) error {
+	if err := e.requireWorkerMode("register agent operation activities"); err != nil {
+		return err
+	}
+	if name == "" || fn == nil {
+		return errors.New("agent operation activity name and handler are required")
+	}
+	opts = e.applyActivityClassDefaults(activityKindPlanner, opts)
+	wrapped := func(ctx context.Context, input *api.RunInput) (*api.AgentOperationActivityResult, error) {
+		output, err := fn(e.injectWorkflowContextIntoActivity(ctx), input)
+		e.recordActivityError(ctx, err)
+		return output, temporalerrors.WrapActivity(err)
+	}
+	return e.registerActivityWithCtx(name, opts, wrapped)
+}
+
 // RegisterAgentChildActivity registers the activity that prepares one child
 // run outside deterministic workflow code.
 func (e *Engine) RegisterAgentChildActivity(_ context.Context, name string, opts engine.ActivityOptions, fn func(context.Context, *api.AgentChildActivityInput) (*api.AgentChildActivityOutput, error)) error {

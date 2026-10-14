@@ -271,10 +271,14 @@ func runSharedProviderRecoveryNative(t *testing.T, direct bool) {
 				if w == nil || engine.IsActivityContext(ctx) {
 					return nil, errors.New("direct child requires the inline workflow context")
 				}
+				parentAgent, ok := call.Subject.Executor.AsAgent()
+				if !ok {
+					return nil, errors.New("direct Agent child requires an Agent parent")
+				}
 				nested := run.Context{
 					RunID:     agentruntime.NestedRunIDForToolCall(call.RunID, call.Name, call.ToolCallID),
 					SessionID: call.SessionID, TurnID: call.TurnID,
-					ParentRunID: call.RunID, ParentAgentID: call.AgentID,
+					ParentRunID: call.RunID, ParentAgentID: agent.Ident(parentAgent),
 					ParentToolCallID: call.ToolCallID, Tool: call.Name, ToolArgs: call.Payload,
 				}
 				out, err := rt.ExecuteAgentChild(w, helperDefinition, []*model.Message{{

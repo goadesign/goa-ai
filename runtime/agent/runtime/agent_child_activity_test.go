@@ -8,8 +8,11 @@ import (
 	"sync/atomic"
 	"testing"
 
+	genregistry "goa.design/goa-ai/registry/gen/registry"
+
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -59,8 +62,9 @@ func TestPrepareAgentChildUsesRecordedActivityOutputWithoutRendering(t *testing.
 	}
 	registerAgentToolTestConfig(rt, cfg, "svc.agents", newAnyJSONSpec(toolName))
 	call := ToolCall{
-		Name:       toolName,
-		AgentID:    "parent.agent",
+		Name:    toolName,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("parent.agent"))},
+
 		RunID:      "parent-run",
 		SessionID:  "session-1",
 		TurnID:     "turn-1",
@@ -73,8 +77,9 @@ func TestPrepareAgentChildUsesRecordedActivityOutputWithoutRendering(t *testing.
 		TurnID:    call.TurnID,
 	}
 
-	historyEndID := testToolHistory(t, rt, call.AgentID, parentRun, nil)
+	historyEndID := testToolHistory(t, rt, testSubjectAgent(t, call.Subject), parentRun, nil)
 	activityOutput, err := rt.prepareAgentChildActivity(t.Context(), &api.AgentChildActivityInput{
+		Origin:       genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: call.RunID, ToolCallID: call.ToolCallID})},
 		Call:         call,
 		ParentRun:    parentRun,
 		HistoryEndID: historyEndID,
@@ -92,10 +97,14 @@ func TestPrepareAgentChildUsesRecordedActivityOutputWithoutRendering(t *testing.
 		ctx:              context.Background(),
 		agentChildOutput: activityOutput,
 	}
-	request, err := rt.prepareAgentChild(wfCtx, call, historyEndID, parentRun)
+	rt.agents = map[agent.Ident]AgentRegistration{
+		"parent.agent": {Definition: testAgentDefinition("parent.agent", "parent.workflow", "parent.queue", nil, nil)},
+	}
+	request, stopped, err := rt.prepareAgentChild(wfCtx, call, historyEndID, parentRun)
+	require.Nil(t, stopped)
 	require.NoError(t, err)
 	require.Equal(t, 1, wfCtx.agentChildCalls)
-	require.Equal(t, agentChildActivityName, wfCtx.lastAgentChildCall.Name)
+	require.Equal(t, "runtime.prepare_agent_child.parent.agent", wfCtx.lastAgentChildCall.Name)
 	require.EqualValues(t, 1, store.resolveCalls.Load())
 	require.Equal(t, activityOutput.Success.SeedEndID, request.seedEndID)
 	require.Empty(t, request.messages)
@@ -104,7 +113,7 @@ func TestPrepareAgentChildUsesRecordedActivityOutputWithoutRendering(t *testing.
 }
 
 func TestPrepareAgentChildRejectsAmbiguousActivityOutput(t *testing.T) {
-	call := ToolCall{Name: "svc.agents.inspect", RunID: "parent", ToolCallID: "call"}
+	call := ToolCall{Name: "svc.agents.inspect", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("parent.agent"))}, RunID: "parent", ToolCallID: "call"}
 	failure := &planner.ToolFailure{
 		Kind:  planner.FailureInvalidCall,
 		Error: planner.NewToolError("invalid child request"),
@@ -121,8 +130,24 @@ func TestPrepareAgentChildRejectsAmbiguousActivityOutput(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			wfCtx := &testWorkflowContext{ctx: t.Context(), agentChildOutput: test.output}
-			_, err := (&Runtime{}).prepareAgentChild(wfCtx, call, "", run.Context{})
-			require.ErrorContains(t, err, "exactly one of success or failure")
+			rt := New(newTestStore())
+			rt.agents["parent.agent"] = AgentRegistration{Definition: testAgentDefinition("parent.agent", "parent.workflow", "parent.queue", nil, nil)}
+			_, _, err := rt.prepareAgentChild(wfCtx, call, "", run.Context{})
+			require.ErrorContains(t, err, "exactly one of success, failure or stopped")
 		})
 	}
+}
+
+func TestPrepareAgentChildReturnsOwnerStop(t *testing.T) {
+	call := ToolCall{Name: "svc.agents.inspect", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("parent.agent"))}, RunID: "parent", ToolCallID: "call"}
+	parent := run.Context{RunID: "parent"}
+	stopped := &api.CancellationRequest{RunID: agentChildRunContext(&call).RunID, Reason: "custom-stop-reason"}
+	wf := &testWorkflowContext{ctx: t.Context(), agentChildOutput: &api.AgentChildActivityOutput{Stopped: stopped}}
+	rt := New(newTestStore())
+	_, actual, err := rt.prepareAgentChild(wf, call, "", parent)
+	require.NoError(t, err)
+	require.Equal(t, stopped, actual)
+	stopped.RunID = "another-child"
+	_, _, err = rt.prepareAgentChild(wf, call, "", parent)
+	require.ErrorContains(t, err, "another run")
 }

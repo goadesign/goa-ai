@@ -3,10 +3,11 @@
 package codegen
 
 import (
-	"goa.design/goa-ai/codegen/internal/jsonshape"
 	"path/filepath"
 	"slices"
 
+	"goa.design/goa-ai/codegen/internal/codec"
+	"goa.design/goa-ai/codegen/internal/jsonshape"
 	internaladmission "goa.design/goa-ai/internal/toolregistry/admission"
 	"goa.design/goa/v3/codegen"
 )
@@ -127,7 +128,7 @@ func toolsetSpecsFiles(plan *toolSpecsPlan) []*codegen.File {
 				codegen.Header(ts.Name+" tool codecs", ts.SpecsPackageName, codecImports),
 				{
 					Name:   "tool-spec-codecs",
-					Source: agentsTemplates.Read(toolCodecsFileT) + jsonshape.ValidatorsSource,
+					Source: agentsTemplates.Read(toolCodecsFileT) + jsonshape.ValidatorsSource + codec.StrictJSONReaderSource,
 					Data: toolCodecsFileData{
 						Types:                  types,
 						Tools:                  specsData.tools,

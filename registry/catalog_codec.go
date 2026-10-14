@@ -68,7 +68,7 @@ func compileCatalogToolset(toolset *genregistry.Toolset, raw string, fingerprint
 		}
 		schemas[tool.Name] = schema
 		contract := tool.ConsumerContract
-		if contract != nil && contract.TextOnly != nil && !contract.RequiresUI && contract.Confirmation == nil && contract.Kind == "service" {
+		if contract != nil && contract.TextOnly != nil && !contract.RequiresUI && contract.Confirmation == nil && contract.Kind == catalogResourceKindService {
 			disabledSchema, err := validator.compiledSchema(contract.TextOnly.ExecutionSchema)
 			if err != nil {
 				return nil, err
@@ -176,6 +176,9 @@ func parseCatalogState(name, body string) (catalogState, error) {
 	case catalogEntryActive, catalogEntryRetired:
 	default:
 		return catalogState{}, fmt.Errorf("toolset %q has invalid catalog state %q", name, entry.State)
+	}
+	if entry.ImmutableNative && !entry.NativeAgent {
+		return catalogState{}, fmt.Errorf("toolset %q has native immutability on a service registration", name)
 	}
 	if entry.NativeAgent {
 		if err := toolregistry.ValidateRegistrationToken(entry.SchemaFingerprint); err != nil {

@@ -26,6 +26,8 @@ import (
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/internal/startrecipe"
+	"goa.design/goa-ai/runtime/agent/internal/temporalerrors"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 )
 
@@ -297,22 +299,16 @@ func (w *temporalWorkflowContext) RunID() string {
 // StartRequestDigest reads only the engine-reserved metadata attached to this
 // accepted execution. Caller input and current workflow state cannot replace it.
 func (w *temporalWorkflowContext) StartRequestDigest() ([32]byte, error) {
-	memo := workflow.GetInfo(w.ctx).Memo
-	if memo == nil || memo.Fields[startrecipe.MemoKey] == nil {
-		return [32]byte{}, errors.New("workflow accepted request digest is missing")
+	return acceptedRequestDigest(workflow.GetInfo(w.ctx).Memo)
+}
+
+// RequireSingleAttempt checks Temporal's accepted policy before lifecycle writes.
+func (w *temporalWorkflowContext) RequireSingleAttempt() error {
+	policy := workflow.GetInfo(w.ctx).RetryPolicy
+	if policy != nil && policy.MaximumAttempts != 1 {
+		return temporalerrors.Wrap(model.NewRequestValidationError(errors.New("workflow must permit only one attempt")))
 	}
-	var value []byte
-	if err := NewAgentDataConverter().FromPayload(memo.Fields[startrecipe.MemoKey], &value); err != nil {
-		return [32]byte{}, fmt.Errorf("decode accepted request digest: %w", err)
-	}
-	if len(value) != 32 {
-		return [32]byte{}, errors.New("workflow accepted request digest must contain 32 bytes")
-	}
-	digest := [32]byte(value)
-	if digest == ([32]byte{}) {
-		return [32]byte{}, errors.New("workflow accepted request digest is missing")
-	}
-	return digest, nil
+	return nil
 }
 
 func (w *temporalWorkflowContext) ExecuteStorageActivity(call engine.StorageActivityCall) (*api.StorageActivityResult, error) {
@@ -368,6 +364,20 @@ func (w *temporalWorkflowContext) ExecuteToolActivityAsync(call engine.ToolActiv
 	actx := workflow.WithActivityOptions(w.ctx, w.activityOptionsFor(call.Name, call.Options))
 	fut := workflow.ExecuteActivity(actx, call.Name, call.Input)
 	return &temporalFuture[*api.ToolOutput]{future: fut, ctx: actx}, nil
+}
+
+// ExecuteAgentOperationActivity records provider preparation before the Agent execution loop starts.
+func (w *temporalWorkflowContext) ExecuteAgentOperationActivity(call engine.AgentOperationActivityCall) (*api.AgentOperationActivityResult, error) {
+	if call.Name == "" || call.Input == nil {
+		return nil, errors.New("agent operation activity name and input are required")
+	}
+	ctx := workflow.WithActivityOptions(w.ctx, w.activityOptionsFor(call.Name, call.Options))
+	future := workflow.ExecuteActivity(ctx, call.Name, call.Input)
+	var output *api.AgentOperationActivityResult
+	if err := future.Get(ctx, &output); err != nil {
+		return nil, err
+	}
+	return output, nil
 }
 
 // ExecuteAgentChildActivity prepares one child run through a replay-safe

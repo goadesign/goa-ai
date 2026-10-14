@@ -47,7 +47,7 @@ func TestCorrectCallChoicesRespectRunPolicy(t *testing.T) {
 					assertAdvertisedTools(t, input, failed.Name)
 					return finalPlannerResult("qualified answer"), nil
 				})
-			h.runtime.agentToolSpecs[h.input.AgentID] = []tools.ToolSpec{failed, other}
+			h.runtime.agentToolSpecs[testSubjectAgent(t, h.input.Subject)] = []tools.ToolSpec{failed, other}
 			h.workflow.plannerRoutes["resume"] = func(ctx context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
 				input.Policy = test.policy
 				return h.runtime.PlanResumeActivity(ctx, seedTestPlanInput(t, h.runtime, *(input), nil))
@@ -90,22 +90,25 @@ func TestCorrectCallChoicesPreserveMixedFailureExclusions(t *testing.T) {
 	assert.Equal(t, 1, resumes)
 }
 
-func TestCorrectCallChoicesRejectConflictingAgentContract(t *testing.T) {
+func TestRegisterAgentRejectsConflictingRecoveryToolContract(t *testing.T) {
 	failed := newAnyJSONSpec("catalog.failed")
-	var resumes int
-	h := newRecoveryHarness(t, "conflicting-contract", []tools.ToolSpec{failed},
-		func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
-			return invalidCallResult(call), nil
-		},
-		func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error) {
-			resumes++
-			return finalPlannerResult("unexpected"), nil
-		})
+	rt := New(newTestStore(), WithEngine(engineinmem.New()))
+	executions, resumes := 0, 0
+	require.NoError(t, rt.RegisterToolset(ToolsetRegistration{Name: "catalog", Specs: []tools.ToolSpec{failed}, Execute: wrapExecute(func(_ context.Context, call *ToolCall) (*planner.ToolResult, error) {
+		executions++
+		return invalidCallResult(call), nil
+	})}))
 	changed := cloneToolSpec(failed)
 	changed.Description = "different contract"
-	h.runtime.agentToolSpecs[h.input.AgentID] = []tools.ToolSpec{changed}
-	_, err := h.run(&PlanResult{ToolCalls: []ToolCall{{Name: failed.Name, ToolCallID: "failed", Payload: rawjson.Message(`{}`)}}}, initialCaps(RunPolicy{MaxToolCalls: 2}))
-	require.ErrorContains(t, err, "conflicting agent and executable contracts")
+	registration := correctionTestRegistration(rt, &stubPlanner{resume: func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error) {
+		resumes++
+		return finalPlannerResult("unexpected"), nil
+	}}, []tools.ToolSpec{changed})
+	err := rt.RegisterAgent(t.Context(), registration)
+	require.ErrorContains(t, err, "different contract")
+	assert.ErrorIs(t, err, ErrInvalidConfig) //nolint:testifylint // Registration state and callback counts are checked independently of this error category.
+	assert.NotContains(t, rt.agents, registration.Definition.route.ID)
+	assert.Zero(t, executions)
 	assert.Zero(t, resumes)
 }
 

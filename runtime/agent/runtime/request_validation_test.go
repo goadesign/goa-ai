@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/internal/temporalerrors"
@@ -83,7 +84,7 @@ func TestRequestValidationToolFailureStopsWorkflow(t *testing.T) {
 				},
 			}
 			input := &RunInput{
-				AgentID: "service.agent", RunID: "run-1", SessionID: "session-1", TurnID: "turn-1",
+				Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("service.agent"))}, RunID: "run-1", SessionID: "session-1", TurnID: "turn-1",
 			}
 			publishTestRunInput(t, rt, input, nil)
 			out, err := rt.ExecuteWorkflow(wfCtx, input)

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -68,11 +69,11 @@ func TestConfirmationDecisionRejectsMissingToolCallID(t *testing.T) {
 			t.Parallel()
 
 			rt := New(newTestStore())
-			_, _, _, err := rt.resolveConfirmationDecision(
+			_, _, _, err := rt.resolveConfirmationDecision(nil,
 				&testWorkflowContext{ctx: context.Background()},
 				AgentRegistration{},
-				&RunInput{},
-				&workflowConversation{},
+				&RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("test.agent"))}},
+				&workflowConversation{finalization: &workflowFinalizationState{}},
 				engine.ActivityOptions{},
 				ToolCall{Name: "tool.confirm"},
 				"confirmation-1",
@@ -130,7 +131,8 @@ func TestApprovedTerminalBookkeepingExecutesBetweenBudgetAndHard(t *testing.T) {
 
 	current := time.Unix(100, 0)
 	input := &RunInput{
-		AgentID:   "agent-1",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent-1"))},
+
 		RunID:     "run-1",
 		SessionID: "sess-1",
 		TurnID:    "turn-1",
@@ -142,6 +144,7 @@ func TestApprovedTerminalBookkeepingExecutesBetweenBudgetAndHard(t *testing.T) {
 		runtime: rt,
 	}
 	base := &workflowConversation{
+		finalization: &workflowFinalizationState{},
 		RunContext: run.Context{
 			RunID:     input.RunID,
 			SessionID: input.SessionID,
@@ -159,7 +162,7 @@ func TestApprovedTerminalBookkeepingExecutesBetweenBudgetAndHard(t *testing.T) {
 
 	out, err := rt.runLoop(
 		wfCtx,
-		AgentRegistration{ExecuteToolActivity: "execute"},
+		AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, input.Subject), engine.WorkflowDefinition{}, nil), ExecuteToolActivity: "execute"},
 		input,
 		base,
 		initial,
@@ -207,9 +210,9 @@ func TestTerminalPayloadConfirmationIsRejectedBeforeTranscriptCommit(t *testing.
 		Specs: []tools.ToolSpec{bookkeeping},
 	}))
 	wfCtx := &testWorkflowContext{ctx: context.Background(), runtime: rt}
-	input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
+	input := &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent-1"))}, RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
 	seedRunMeta(t, rt, input)
-	base := &workflowConversation{RunContext: run.Context{
+	base := &workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{
 		RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID, Attempt: 1,
 	}}
 	initial := &PlanResult{
@@ -225,7 +228,7 @@ func TestTerminalPayloadConfirmationIsRejectedBeforeTranscriptCommit(t *testing.
 
 	out, err := rt.runLoop(
 		wfCtx,
-		AgentRegistration{ExecuteToolActivity: "execute"},
+		AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, input.Subject), engine.WorkflowDefinition{}, nil), ExecuteToolActivity: "execute"},
 		input,
 		base,
 		initial,
@@ -280,13 +283,14 @@ func TestExpiredBudgetedConfirmationDoesNotBlockBookkeepingConfirmation(t *testi
 
 	current := time.Unix(100, 0)
 	input := &RunInput{
-		AgentID:   "agent-1",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent-1"))},
+
 		RunID:     "run-1",
 		SessionID: "sess-1",
 		TurnID:    "turn-1",
 	}
 	seedRunMeta(t, rt, input)
-	reg := AgentRegistration{Definition: testRegistrationDefinition(input.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, ExecuteToolActivity: "execute",
+	reg := AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, input.Subject), engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, ExecuteToolActivity: "execute",
 		ResumeActivityName: "resume",
 		Planner: &stubPlanner{resume: func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error) {
 			return &planner.PlanResult{FinalResponse: &planner.FinalResponse{
@@ -297,7 +301,7 @@ func TestExpiredBudgetedConfirmationDoesNotBlockBookkeepingConfirmation(t *testi
 			}}, nil
 		}},
 	}
-	rt.agents[input.AgentID] = reg
+	rt.agents[testSubjectAgent(t, input.Subject)] = reg
 	wfCtx := &testWorkflowContext{
 		ctx:     context.Background(),
 		now:     func() time.Time { return current },
@@ -311,6 +315,7 @@ func TestExpiredBudgetedConfirmationDoesNotBlockBookkeepingConfirmation(t *testi
 		hasPlanResult: true,
 	}
 	base := &workflowConversation{
+		finalization: &workflowFinalizationState{},
 		RunContext: run.Context{
 			RunID:     input.RunID,
 			SessionID: input.SessionID,
@@ -374,9 +379,9 @@ func TestConfirmationErrorCompletesRemainingCommittedCalls(t *testing.T) {
 		Specs: []tools.ToolSpec{first, second},
 	}))
 	wfCtx := &testWorkflowContext{ctx: context.Background(), runtime: rt}
-	input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
+	input := &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent-1"))}, RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
 	seedRunMeta(t, rt, input)
-	base := &workflowConversation{RunContext: run.Context{
+	base := &workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{
 		RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID, Attempt: 1,
 	}}
 	initial := &PlanResult{ToolCalls: []ToolCall{
@@ -386,7 +391,7 @@ func TestConfirmationErrorCompletesRemainingCommittedCalls(t *testing.T) {
 
 	out, err := rt.runLoop(
 		wfCtx,
-		AgentRegistration{ExecuteToolActivity: "execute"},
+		AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, input.Subject), engine.WorkflowDefinition{}, nil), ExecuteToolActivity: "execute"},
 		input,
 		base,
 		initial,
@@ -428,9 +433,9 @@ func TestImmediateErrorCompletesUnenteredConfirmation(t *testing.T) {
 		Specs: []tools.ToolSpec{immediate, confirmed},
 	}))
 	wfCtx := &testWorkflowContext{ctx: context.Background(), runtime: rt}
-	input := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
+	input := &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent-1"))}, RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"}
 	seedRunMeta(t, rt, input)
-	base := &workflowConversation{RunContext: run.Context{
+	base := &workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{
 		RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID, Attempt: 1,
 	}}
 	initial := &PlanResult{ToolCalls: []ToolCall{
@@ -440,7 +445,7 @@ func TestImmediateErrorCompletesUnenteredConfirmation(t *testing.T) {
 
 	out, err := rt.runLoop(
 		wfCtx,
-		AgentRegistration{ExecuteToolActivity: "execute"},
+		AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, input.Subject), engine.WorkflowDefinition{}, nil), ExecuteToolActivity: "execute"},
 		input,
 		base,
 		initial,
@@ -492,6 +497,7 @@ func TestRunLoopMixedImmediateAndConfirmationRecordsOneAssistantToolUseTurn(t *t
 
 	ctx := context.Background()
 	base := &workflowConversation{
+		finalization: &workflowFinalizationState{},
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "sess-1",
@@ -500,7 +506,8 @@ func TestRunLoopMixedImmediateAndConfirmationRecordsOneAssistantToolUseTurn(t *t
 		},
 	}
 	input := &RunInput{
-		AgentID:   agent.Ident("agent-1"),
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent-1")))},
+
 		RunID:     "run-1",
 		SessionID: "sess-1",
 		TurnID:    "turn-1",
@@ -533,7 +540,7 @@ func TestRunLoopMixedImmediateAndConfirmationRecordsOneAssistantToolUseTurn(t *t
 
 	out, err := rt.runLoop(
 		wfCtx,
-		AgentRegistration{ExecuteToolActivity: "execute", ResumeActivityName: "resume"},
+		AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, input.Subject), engine.WorkflowDefinition{}, nil), ExecuteToolActivity: "execute", ResumeActivityName: "resume"},
 		input,
 		base,
 		initial,

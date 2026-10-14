@@ -35,7 +35,8 @@ func testDeclaration() *genregistry.ToolSchema {
 			},
 			Result: &genregistry.ToolTypeMetadata{SchemaWithoutRootExample: document},
 			Bounds: &genregistry.ToolBounds{Paging: &genregistry.ToolPaging{
-				ContinueTool: &continuation, CursorField: "cursor", NextCursorField: "next_cursor",
+				RetainedFields: []string{},
+				ContinueTool:   &continuation, CursorField: "cursor", NextCursorField: "next_cursor",
 			}},
 			Confirmation: &genregistry.ToolConfirmation{
 				PromptTemplate:       "Confirm {{ json .value }}",

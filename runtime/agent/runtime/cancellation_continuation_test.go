@@ -8,6 +8,8 @@ import (
 	"errors"
 	"testing"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -52,8 +54,8 @@ func testTaskContinuationOwnership(t *testing.T, mode string) {
 	}
 	initial, err := tooloperation.NewPendingTaskInput("owned-task", nil, inputFor("first"))
 	require.NoError(t, err)
-	call := ToolCall{Name: spec.Name, ToolCallID: "task-call", RunID: "child-run", AgentID: "child.agent", SessionID: "session", TurnID: "turn", Payload: rawjson.Message(`{}`)}
-	batch := &stepBatch{records: []stepToolRecord{{call: call, mcpPending: initial, task: &taskExecution{TaskID: "owned-task"}}}}
+	call := ToolCall{Name: spec.Name, ToolCallID: "task-call", RunID: "child-run", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("child.agent"))}, SessionID: "session", TurnID: "turn", Payload: rawjson.Message(`{}`)}
+	batch := &stepBatch{records: []stepToolRecord{{call: call, callRunID: call.RunID, mcpPending: initial, task: &taskExecution{TaskID: "owned-task"}}}}
 	updates, cancels := 0, 0
 	binding := rt.toolsets["remote.tools"]
 	binding.DecodeInExecutor = true
@@ -87,7 +89,7 @@ func testTaskContinuationOwnership(t *testing.T, mode string) {
 	wf := &testWorkflowContext{ctx: t.Context(), runtime: rt, hookRuntime: rt}
 	runCtx := run.Context{RunID: "child-run", SessionID: "session", TurnID: "turn", ParentRunID: "parent-run", ParentAgentID: "parent.agent", ParentToolCallID: "parent-call"}
 	base := &workflowConversation{RunContext: runCtx, HistoryEndID: testToolHistory(t, rt, "child.agent", runCtx, nil)}
-	loop := &workflowLoop{r: rt, wfCtx: wf, reg: reg, input: &RunInput{AgentID: "child.agent", RunID: runCtx.RunID, SessionID: runCtx.SessionID}, base: base, turnID: runCtx.TurnID, parentTracker: newChildTracker("parent-call"), unfinishedBatch: batch}
+	loop := &workflowLoop{r: rt, wfCtx: wf, reg: reg, input: &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("child.agent"))}, RunID: runCtx.RunID, SessionID: runCtx.SessionID}, base: base, turnID: runCtx.TurnID, parentTracker: newChildTracker("parent-call"), unfinishedBatch: batch}
 	_, executionErr := loop.applyExecutionContinuation(batch, pendingMCPInput(call, initial), &api.MCPInputResponse{ToolCallID: call.ToolCallID, Responses: map[string]json.RawMessage{"first": json.RawMessage(`{"action":"accept","content":{}}`)}})
 	assert.Equal(t, 1, updates)
 	if mode == "canceled_update" {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -231,7 +232,8 @@ func TestExecuteWorkflowFinalizesPlanStartAtBudget(t *testing.T) {
 	}
 
 	input := &RunInput{
-		AgentID:   "agent-1",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent-1"))},
+
 		RunID:     "run-1",
 		SessionID: "session-1",
 		TurnID:    "turn-1",
@@ -276,7 +278,8 @@ func TestExecuteWorkflowKeepsPlanStartResultAtBudget(t *testing.T) {
 	}
 
 	input := &RunInput{
-		AgentID:   "agent-1",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent-1"))},
+
 		RunID:     "run-1",
 		SessionID: "session-1",
 		TurnID:    "turn-1",
@@ -380,7 +383,8 @@ func TestExecuteWorkflowPreservesPlanStartProviderTimeout(t *testing.T) {
 	}
 
 	input := &RunInput{
-		AgentID:   "agent-1",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent-1"))},
+
 		RunID:     "run-1",
 		SessionID: "session-1",
 		TurnID:    "turn-1",
@@ -433,7 +437,8 @@ func TestExecuteWorkflowClassifiesExpiredPlanStartFinalizer(t *testing.T) {
 	}
 
 	input := &RunInput{
-		AgentID:   "agent-1",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent-1"))},
+
 		RunID:     "run-1",
 		SessionID: "session-1",
 		TurnID:    "turn-1",
@@ -561,6 +566,7 @@ func newResumeDeadlineTestLoop(
 		},
 	}
 	base := &workflowConversation{
+		finalization: &workflowFinalizationState{},
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "session-1",
@@ -569,7 +575,8 @@ func newResumeDeadlineTestLoop(
 		},
 	}
 	input := &RunInput{
-		AgentID:   agent.Ident("agent-1"),
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent-1")))},
+
 		RunID:     "run-1",
 		SessionID: "session-1",
 		TurnID:    "turn-1",

@@ -7,6 +7,9 @@ import (
 	"time"
 
 	"goa.design/goa-ai/internal/tooloperation"
+	genregistry "goa.design/goa-ai/registry/gen/registry"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
+	genrunterminal "goa.design/goa-ai/registry/gen/runterminal"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/internal/responseevidence"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -36,8 +39,8 @@ type (
 	// Initial history has already been published; engine commands carry its
 	// position plus caller-provided control values.
 	RunInput struct {
-		// AgentID identifies which agent should process the run.
-		AgentID agent.Ident
+		// Subject identifies the Agent or service tool that owns this execution.
+		Subject genrunidentity.RunSubject
 
 		// RunID is the durable workflow execution identifier.
 		RunID string
@@ -64,20 +67,26 @@ type (
 		// identity even though execution happens in a child agent.
 		ParentAgentID agent.Ident
 
-		// Tool identifies the fully-qualified tool name when this run is a nested
-		// agent-as-tool execution. For top-level runs (not invoked via a parent tool),
-		// Tool is empty. Planners may use this to select method-specific prompts.
-		// Format: "<service>.<toolset>.<tool>".
+		// Tool identifies the selected Agent operation for a direct or delegated
+		// call. It is empty for message-based runs. Parent identity is recorded
+		// separately and is never invented for a direct operation.
 		Tool tools.Ident
 
-		// ToolArgs carries the original JSON arguments for the parent tool when this run
-		// is an agent-as-tool execution. Nil for top-level runs. Nested agent planners
-		// can use this structured input to render method-specific prompts without
-		// reparsing free-form messages.
+		// ToolArgs retains the operation's original validated JSON input. Direct
+		// calls select Operation; delegated calls can select ToolRegistry.
 		ToolArgs rawjson.Message
 
-		// ToolRegistry retains the parent call's selected registry declaration.
-		// It is absent for top-level runs and compiled Agent tools.
+		// RegisteredInvocation retains the original identity, selected operation,
+		// and arguments for an independent registered operation. Resumed runs use
+		// this input even when their current workflow identity changes.
+		RegisteredInvocation *genregistry.RegisteredInvocation `json:",omitempty"` //nolint:tagliatelle // Saved records retain Go field names.
+
+		// Operation retains the generated declaration for a direct Agent call.
+		// Delegated calls retain ToolRegistry instead; callers cannot supply both.
+		Operation *genregistry.ToolSchema `json:",omitempty"` //nolint:tagliatelle // Saved records retain Go field names.
+
+		// ToolRegistry retains the exact registered declaration for an independent
+		// registered operation or delegated call. Direct Agent operations omit it.
 		ToolRegistry *tools.RegistryBinding `json:",omitempty"` //nolint:tagliatelle // Persisted records retain Go field names.
 
 		// SeedEndID identifies this run's exact published initial history.
@@ -221,24 +230,24 @@ type (
 	// including either a completed result or a suspension, tool statistics, and
 	// planner notes. Read complete tool history with Runtime.ListRunEvents.
 	RunOutput struct {
-		// AgentID echoes the agent that produced the result.
-		AgentID agent.Ident
+		// Subject identifies the Agent or service tool that owns this execution.
+		Subject genrunidentity.RunSubject
 
 		// RunID echoes the workflow execution identifier.
 		RunID string
 
-		// Final is the assistant reply returned to the caller. It is nil when the
-		// run ended by terminal-tool contract rather than planner-authored text.
+		// Final is the canonical assistant message for observers. A typed operation
+		// result may include this message; a result without observer text leaves it nil.
 		Final *model.Message
 
-		// FinalToolResult is the canonical tool result that completed the run
-		// without an assistant reply. Terminal and required completion tools place
-		// their successful result here. Nested agents use the same field when the
-		// child planner or runtime owns the outer tool contract directly.
+		// FinalToolResult is the typed result that completed the selected operation.
+		// Direct and delegated Agent operations use the same result contract.
+		// Final may retain that outcome's canonical message for observers.
+		// Terminal and required completion tools also place their result here.
 		//
 		// Contract:
 		// - This uses a workflow-safe envelope because it crosses a workflow boundary.
-		// - Result bytes are canonical JSON for the parent tool's result schema.
+		// - Result bytes are canonical JSON for the selected operation's result schema.
 		// - The complete execution history remains in the runtime Store.
 		FinalToolResult *ToolEvent
 
@@ -620,8 +629,8 @@ type (
 		// Payload.
 		ModelPayload rawjson.Message
 
-		// AgentID identifies the agent that owns this call.
-		AgentID agent.Ident
+		// Subject identifies the Agent or service tool that owns this execution.
+		Subject genrunidentity.RunSubject
 
 		// RunID identifies the run that owns this call.
 		RunID string
@@ -817,6 +826,10 @@ type (
 	// code freezes records before scheduling the activity, and retries reuse the
 	// complete command without rebuilding it.
 	StorageActivityCommand struct {
+		// UnstartedTerminal records an engine-owned failure before the Run starts.
+		UnstartedTerminal *UnstartedTerminalCommand
+		// PreparationBegin binds the original invocation before provider resolution.
+		PreparationBegin *storage.RunPreparationBegin
 		// SeedBegin reserves a child's initial history before engine submission.
 		SeedBegin *storage.SeedDeclaration
 		// SeedAppend writes one bounded record in the child's initial history.
@@ -844,6 +857,20 @@ type (
 		Suspension *RunSuspensionCommand
 		// Terminal stores a terminal record and final run status.
 		Terminal *RunTerminalCommand
+	}
+
+	// UnstartedTerminalCommand supplies an engine-owned outcome and exactly one
+	// original-invocation source. Fresh operations select Root; prepared runs
+	// select the exact published seed whose owner supplies the original identity.
+	UnstartedTerminalCommand struct {
+		RunID         string
+		Subject       genrunidentity.RunSubject
+		SessionID     string
+		RequestDigest []byte
+		Time          genrunterminal.ExecutionTerminalTime
+		Outcome       genrunterminal.UnstartedExecutionOutcome
+		Root          *struct{}
+		PublishedSeed *SeedPositionResult
 	}
 
 	// AppendRecordsCommand carries one non-empty immutable ordered record list.
@@ -919,8 +946,16 @@ type (
 		Suspended *RecordActivityInput
 	}
 
-	// RunTerminalCommand carries one completed, failed, or canceled record.
+	// RunTerminalCommand carries one completion record and its selected result.
 	RunTerminalCommand struct {
+		// FailureFromOperation identifies the service workflow error created from
+		// this command's selected operation failure. The activity restores its
+		// diagnostic from that result before storing the completion record.
+		FailureFromOperation bool `json:",omitempty"` //nolint:tagliatelle // Temporal payloads retain Go field names.
+		// OperationResult contains generated-encoded OperationResult JSON. The
+		// activity decodes it before writing the typed result with the record.
+		// Empty bytes mean that this run produced no selected operation result.
+		OperationResult rawjson.Message
 		// Record is the final run-completed record.
 		Record *RecordActivityInput
 	}
@@ -928,6 +963,10 @@ type (
 	// StorageActivityResult reports the result matching the selected command.
 	// Exactly one field is set, and it must match the command field.
 	StorageActivityResult struct {
+		// UnstartedTerminal reports the stored outcome or an already started Run.
+		UnstartedTerminal *genrunterminal.UnstartedExecutionTerminalResult
+		// PreparationBegin returns the owner decision after binding the invocation.
+		PreparationBegin *genrunterminal.PreparationDecision
 		// SeedBegin reports the immutable declaration and captured source.
 		SeedBegin *storage.RunSeed
 		// SeedAppend reports the accepted record position.
@@ -1001,8 +1040,13 @@ type (
 	RunCancellationOutcome string
 
 	// ToolInput carries the execution payload for one tool call from workflow
-	// code to its activity. The workflow retains model-authored transcript data.
+	// code to its activity, together with the original validated arguments.
 	ToolInput struct {
+		// Invocation identifies the original root or tool call across later workflows.
+		Invocation genregistry.ExecutionInvocation
+		// OriginalArguments retains the validated input before runtime enrichment.
+		// Permission decisions compare these bytes across later execution steps.
+		OriginalArguments rawjson.Message
 		// ExecutionContinuation selects the saved next operation on this unfinished
 		// invocation. The original tool arguments stay in Payload.
 		ExecutionContinuation *ExecutionContinuation
@@ -1018,8 +1062,8 @@ type (
 		// and input operations retain it; the workflow owns new result records.
 		RunID string
 
-		// AgentID identifies the agent that owns this tool call.
-		AgentID agent.Ident
+		// Subject identifies the Agent or service tool that owns this execution.
+		Subject genrunidentity.RunSubject
 
 		// ToolsetName identifies the owning toolset when known; it may be empty when inferred by ToolName.
 		ToolsetName string
@@ -1047,9 +1091,18 @@ type (
 		ParentToolCallID string
 	}
 
+	// AgentOperationActivityResult returns either the published input or the
+	// owner's saved stop request. Both branches at once are invalid.
+	AgentOperationActivityResult struct {
+		Prepared *RunInput
+		Stopped  *CancellationRequest
+	}
+
 	// AgentChildActivityInput carries the exact parent state needed to prepare
 	// one child-agent run outside workflow code.
 	AgentChildActivityInput struct {
+		// Origin is the original issuing run and call, before execution is retargeted.
+		Origin genregistry.ExecutionInvocation
 		// Call is the validated agent-tool invocation that starts the child.
 		Call ToolCall
 
@@ -1064,6 +1117,8 @@ type (
 	// AgentChildActivitySuccess contains the publication and control values
 	// recorded in workflow history after child preparation succeeds.
 	AgentChildActivitySuccess struct {
+		// Metadata contains fixed provider facts retained with the published history.
+		Metadata map[string]any
 		// SeedEndID identifies the child's published initial history.
 		SeedEndID string
 		// Labels supplies the child configuration's execution labels.
@@ -1075,6 +1130,8 @@ type (
 	// AgentChildActivityOutput contains exactly one preparation result. Workflow
 	// replay reuses a recorded success without rendering the prompt again.
 	AgentChildActivityOutput struct {
+		// Stopped preserves the owner-selected reason without invoking the provider.
+		Stopped *CancellationRequest
 		// Success contains the prepared messages and prompt versions.
 		Success *AgentChildActivitySuccess
 
@@ -1264,10 +1321,10 @@ const (
 	PendingInputKindToolResults PendingInputKind = "tool_results"
 
 	// RunSuspensionVersion identifies the checkpoint emitted by this runtime.
-	// Version 13 retains one closed unfinished outcome and its saved execution
-	// sequence alongside ordered tool content, the accepted catalog, unfinished arguments and host
-	// requests. Earlier versions are rejected without conversion.
-	RunSuspensionVersion = "goa-ai.run-suspension.v13"
+	// Version 14 retains the generated result contracts for requested external
+	// input. A consumer validates these responses without importing the child
+	// provider's tools. Earlier versions are rejected without conversion.
+	RunSuspensionVersion = "goa-ai.run-suspension.v14"
 
 	// ModelResponseFingerprintVersionV1 identifies the first stable rejected
 	// model-response fingerprint encoding stored in workflow payloads.

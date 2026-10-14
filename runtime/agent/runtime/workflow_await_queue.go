@@ -17,6 +17,8 @@ import (
 	"errors"
 	"fmt"
 
+	"goa.design/goa-ai/runtime/agent"
+
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
@@ -26,6 +28,7 @@ import (
 )
 
 func (r *Runtime) resolveConfirmationDecision(
+	owner *workflowLoop,
 	wfCtx engine.WorkflowContext,
 	reg AgentRegistration,
 	input *RunInput,
@@ -40,6 +43,8 @@ func (r *Runtime) resolveConfirmationDecision(
 	turnID string,
 	deadlines *runDeadlines,
 ) ([]stepToolRecord, []planner.AwaitItem, bool, error) {
+	executor, _ := input.Subject.Executor.AsAgent()
+
 	ctx := wfCtx.Context()
 	it := confirmationAwait{awaitID: awaitID, call: call, plan: plan}
 	if deadlines == nil {
@@ -65,6 +70,7 @@ func (r *Runtime) resolveConfirmationDecision(
 	if !approved {
 		decisionRecords = []stepToolRecord{{
 			call:             it.call,
+			callRunID:        base.RunContext.RunID,
 			scheduleRequired: true,
 			scheduleExact:    true,
 			expectedChildren: expectedChildren,
@@ -78,7 +84,7 @@ func (r *Runtime) resolveConfirmationDecision(
 	}
 	if err := r.publishHook(ctx, hooks.NewToolAuthorizationEvent(
 		base.RunContext.RunID,
-		input.AgentID,
+		input.Subject,
 		base.RunContext.SessionID,
 		it.call.Name,
 		it.call.ToolCallID,
@@ -94,8 +100,8 @@ func (r *Runtime) resolveConfirmationDecision(
 		if err := r.publishHook(
 			ctx,
 			newToolCallScheduledEvent(
-				it.call.RunID,
-				it.call.AgentID,
+				base.RunContext.RunID,
+				it.call.Subject,
 				it.call.SessionID,
 				it.call,
 				"",
@@ -123,10 +129,10 @@ func (r *Runtime) resolveConfirmationDecision(
 			return decisionRecords, nil, false, err
 		}
 		event := hooks.NewToolResultReceivedEvent(
-			it.call.RunID,
-			it.call.AgentID,
+			base.RunContext.RunID,
+			it.call.Subject,
 			it.call.SessionID,
-			it.call.RunID,
+			base.RunContext.RunID,
 			it.call.Name,
 			it.call.ToolCallID,
 			it.call.ParentToolCallID,
@@ -163,9 +169,10 @@ func (r *Runtime) resolveConfirmationDecision(
 		finishBy = deadlines.Hard
 	}
 	outcomes, timedOut, executionErr := r.executeGroupedToolCalls(
+		owner,
 		wfCtx,
 		reg,
-		input.AgentID,
+		agent.Ident(executor),
 		base,
 		expectedChildren,
 		parentTracker,
@@ -180,6 +187,9 @@ func (r *Runtime) resolveConfirmationDecision(
 		outcomes,
 		executionErr,
 	)
+	if owner != nil {
+		owner.finishToolBatches(records)
+	}
 	if err := errors.Join(executionErr, resultErr); err != nil {
 		return records, nil, timedOut, err
 	}
@@ -260,14 +270,14 @@ func (r *Runtime) publishAwaitToolUses(ctx context.Context, input *RunInput, bas
 		}
 		return r.publishHook(ctx, newToolCallScheduledEvent(
 			base.RunContext.RunID,
-			input.AgentID,
+			input.Subject,
 			base.RunContext.SessionID,
 			ToolCall{
 				Name:            c.ToolName,
 				ToolCallID:      c.ToolCallID,
 				ModelToolCallID: c.ModelToolCallID,
 				Payload:         append(rawjson.Message(nil), c.Payload...),
-				ModelPayload:    append(rawjson.Message(nil), c.Payload...),
+				ModelPayload:    append(rawjson.Message(nil), c.ModelPayload...),
 			},
 			"",
 			base.RunContext.ParentToolCallID,
@@ -286,14 +296,14 @@ func (r *Runtime) publishAwaitToolUses(ctx context.Context, input *RunInput, bas
 		}
 		return r.publishHook(ctx, newToolCallScheduledEvent(
 			base.RunContext.RunID,
-			input.AgentID,
+			input.Subject,
 			base.RunContext.SessionID,
 			ToolCall{
 				Name:            q.ToolName,
 				ToolCallID:      q.ToolCallID,
 				ModelToolCallID: q.ModelToolCallID,
 				Payload:         append(rawjson.Message(nil), q.Payload...),
-				ModelPayload:    append(rawjson.Message(nil), q.Payload...),
+				ModelPayload:    append(rawjson.Message(nil), q.ModelPayload...),
 			},
 			"",
 			base.RunContext.ParentToolCallID,
@@ -320,13 +330,13 @@ func (r *Runtime) publishAwaitToolUses(ctx context.Context, input *RunInput, bas
 				ToolCallID:      item.ToolCallID,
 				ModelToolCallID: item.ModelToolCallID,
 				Payload:         append(rawjson.Message(nil), item.Payload...),
-				ModelPayload:    append(rawjson.Message(nil), item.Payload...),
+				ModelPayload:    append(rawjson.Message(nil), item.ModelPayload...),
 			})
 		}
 		for _, call := range awaitCalls {
 			if err := r.publishHook(ctx, newToolCallScheduledEvent(
 				base.RunContext.RunID,
-				input.AgentID,
+				input.Subject,
 				base.RunContext.SessionID,
 				call,
 				"",
@@ -353,7 +363,7 @@ func (r *Runtime) publishAwaitPrompt(ctx context.Context, input *RunInput, turnI
 		}
 		return r.publishHook(ctx, hooks.NewAwaitClarificationEvent(
 			input.RunID,
-			input.AgentID,
+			input.Subject,
 			input.SessionID,
 			clarification.ID,
 			clarification.Question,
@@ -368,7 +378,7 @@ func (r *Runtime) publishAwaitPrompt(ctx context.Context, input *RunInput, turnI
 		}
 		return r.publishHook(ctx, hooks.NewAwaitClarificationEvent(
 			input.RunID,
-			input.AgentID,
+			input.Subject,
 			input.SessionID,
 			clarification.ID,
 			clarification.Question,
@@ -396,7 +406,7 @@ func (r *Runtime) publishAwaitPrompt(ctx context.Context, input *RunInput, turnI
 		}
 		return r.publishHook(ctx, hooks.NewAwaitQuestionsEvent(
 			input.RunID,
-			input.AgentID,
+			input.Subject,
 			input.SessionID,
 			questions.ID,
 			questions.ToolName,
@@ -420,7 +430,7 @@ func (r *Runtime) publishAwaitPrompt(ctx context.Context, input *RunInput, turnI
 		}
 		return r.publishHook(ctx, hooks.NewAwaitExternalToolsEvent(
 			input.RunID,
-			input.AgentID,
+			input.Subject,
 			input.SessionID,
 			external.ID,
 			visible,
@@ -440,6 +450,8 @@ func (r *Runtime) consumeClarificationResponse(
 	callRunID string,
 	ans *api.ClarificationAnswer,
 ) ([]stepToolRecord, error) {
+	executor, _ := input.Subject.Executor.AsAgent()
+
 	switch it.Kind {
 	case planner.AwaitItemKindClarification:
 		c := it.Clarification
@@ -453,7 +465,7 @@ func (r *Runtime) consumeClarificationResponse(
 			return nil, fmt.Errorf("clarification response id %q does not match pending id %q", ans.ID, c.ID)
 		}
 		if ans.Answer != "" {
-			if err := r.appendTranscriptMessages(ctx, input.AgentID, base, turnID, []*model.Message{{
+			if err := r.appendTranscriptMessages(ctx, agent.Ident(executor), base, turnID, []*model.Message{{
 				Role:  model.ConversationRoleUser,
 				Parts: []model.Part{model.TextPart{Text: ans.Answer}},
 			}}); err != nil {
@@ -483,9 +495,9 @@ func (r *Runtime) consumeClarificationResponse(
 			ToolCallID:      c.ToolCallID,
 			ModelToolCallID: c.ModelToolCallID,
 			Payload:         append(rawjson.Message(nil), c.Payload...),
-			ModelPayload:    append(rawjson.Message(nil), c.Payload...),
+			ModelPayload:    append(rawjson.Message(nil), c.ModelPayload...),
 		}
-		call = r.prepareAllowedCallsMetadata(input.AgentID, base, []ToolCall{call}, parentTracker)[0]
+		call = r.prepareAllowedCallsMetadata(agent.Ident(executor), base, []ToolCall{call}, parentTracker)[0]
 		call.RunID = callRunID
 		return r.consumeProvidedToolResultRecords(
 			ctx,
@@ -519,6 +531,8 @@ func (r *Runtime) consumeToolResultsResponse(
 	callRunID string,
 	rs *api.ToolResultsSet,
 ) ([]stepToolRecord, error) {
+	executor, _ := input.Subject.Executor.AsAgent()
+
 	if rs == nil {
 		return nil, errors.New("await: nil tool results set")
 	}
@@ -538,10 +552,10 @@ func (r *Runtime) consumeToolResultsResponse(
 				ToolCallID:      q.ToolCallID,
 				ModelToolCallID: q.ModelToolCallID,
 				Payload:         append(rawjson.Message(nil), q.Payload...),
-				ModelPayload:    append(rawjson.Message(nil), q.Payload...),
+				ModelPayload:    append(rawjson.Message(nil), q.ModelPayload...),
 			},
 		}
-		allowed = r.prepareAllowedCallsMetadata(input.AgentID, base, allowed, parentTracker)
+		allowed = r.prepareAllowedCallsMetadata(agent.Ident(executor), base, allowed, parentTracker)
 		allowed[0].RunID = callRunID
 		return r.consumeProvidedToolResultRecords(ctx, input, base, turnID, rs, allowed, expected)
 	case planner.AwaitItemKindExternalTools:
@@ -567,10 +581,10 @@ func (r *Runtime) consumeToolResultsResponse(
 				ToolCallID:      it.ToolCallID,
 				ModelToolCallID: it.ModelToolCallID,
 				Payload:         append(rawjson.Message(nil), it.Payload...),
-				ModelPayload:    append(rawjson.Message(nil), it.Payload...),
+				ModelPayload:    append(rawjson.Message(nil), it.ModelPayload...),
 			})
 		}
-		allowed = r.prepareAllowedCallsMetadata(input.AgentID, base, allowed, parentTracker)
+		allowed = r.prepareAllowedCallsMetadata(agent.Ident(executor), base, allowed, parentTracker)
 		for i := range allowed {
 			allowed[i].RunID = callRunID
 		}
@@ -633,7 +647,7 @@ func (r *Runtime) consumeProvidedToolResultRecords(ctx context.Context, input *R
 		}
 		event := hooks.NewToolResultReceivedEvent(
 			base.RunContext.RunID,
-			input.AgentID,
+			input.Subject,
 			base.RunContext.SessionID,
 			call.RunID,
 			tr.Name,

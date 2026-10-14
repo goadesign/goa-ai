@@ -44,6 +44,9 @@ func (r *Runtime) validateToolSpecRegistrations(
 
 	for _, registration := range registrations {
 		for _, spec := range registration.specs {
+			if spec.PrepareInput != nil {
+				return nil, fmt.Errorf("%w: tool %q input binding belongs to one planning activity, not a shared registration", ErrInvalidConfig, spec.Name)
+			}
 			if err := r.validateImageSourceProducer(spec); err != nil {
 				return nil, err
 			}
@@ -147,6 +150,7 @@ func toolSpecShape(spec tools.ToolSpec) tools.ToolSpec {
 	spec.ExecutionPayloadCodec = tools.JSONCodec[any]{}
 	spec.Result.Codec = tools.JSONCodec[any]{}
 	spec.CanonicalizeServerData = nil
+	spec.PrepareInput = nil
 	for _, item := range spec.ServerData {
 		if item == nil {
 			continue
@@ -212,6 +216,7 @@ func cloneToolSpec(spec tools.ToolSpec) tools.ToolSpec {
 		bounds := *spec.Bounds
 		if bounds.Paging != nil {
 			paging := *bounds.Paging
+			paging.RetainedFields = slices.Clone(paging.RetainedFields)
 			bounds.Paging = &paging
 		}
 		spec.Bounds = &bounds

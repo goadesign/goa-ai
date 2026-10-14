@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/session"
@@ -19,7 +20,7 @@ import (
 )
 
 type uncertainSynchronousHistoryStore struct {
-	storage.Store
+	storage.SynchronousStore
 	step     string
 	cancel   context.CancelFunc
 	failed   bool
@@ -35,17 +36,17 @@ func TestRunOneShotRetainsPublicationThroughLostReplies(t *testing.T) {
 			}
 			t.Run(name, func(t *testing.T) {
 				base := newTestStore()
-				var owner storage.Store = base
+				var owner storage.SynchronousStore = base
 				if closed {
-					owner = &closedStartStore{Store: base, status: session.RunStatusCompleted}
+					owner = &closedStartStore{Store: base, synchronous: base, status: session.RunStatusCompleted}
 				}
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
 				store := &uncertainSynchronousHistoryStore{
-					Store: owner, step: step, cancel: cancel, commands: make(map[string][][]byte),
+					SynchronousStore: owner, step: step, cancel: cancel, commands: make(map[string][][]byte),
 				}
 				bus := &recordingHooks{}
-				rt := newFromOptions(store, Options{Hooks: bus})
+				rt := newTestSynchronous(t, store, bus)
 				calls := 0
 				err := rt.RunOneShot(ctx, OneShotRunInput{
 					AgentID: "agent", RunID: "run", TurnID: "turn",
@@ -82,7 +83,7 @@ func TestRunOneShotRetainsPublicationThroughLostReplies(t *testing.T) {
 				assert.Equal(t, hooks.RunCompleted, page.Events[1].Type)
 				assert.Equal(t, meta.StartedAt, page.Events[0].Timestamp)
 				accepted, found, err := base.FindRunPreparation(t.Context(), storage.PreparationOperation{
-					AgentID: "agent", RunID: "run", CommandID: "run",
+					Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, RunID: "run", CommandID: "run",
 				})
 				require.NoError(t, err)
 				require.True(t, found)
@@ -103,7 +104,7 @@ func (s *uncertainSynchronousHistoryStore) BeginRunSeed(ctx context.Context, com
 	if err := s.capture("begin", command); err != nil {
 		return storage.RunSeed{}, err
 	}
-	result, err := s.Store.BeginRunSeed(ctx, command)
+	result, err := s.SynchronousStore.BeginRunSeed(ctx, command)
 	if err == nil {
 		err = s.lostReply("begin")
 	}
@@ -114,7 +115,7 @@ func (s *uncertainSynchronousHistoryStore) AppendRunSeed(ctx context.Context, co
 	if err := s.capture("append", command); err != nil {
 		return "", err
 	}
-	result, err := s.Store.AppendRunSeed(ctx, command)
+	result, err := s.SynchronousStore.AppendRunSeed(ctx, command)
 	if err == nil {
 		err = s.lostReply("append")
 	}
@@ -125,7 +126,7 @@ func (s *uncertainSynchronousHistoryStore) PublishRunSeed(ctx context.Context, c
 	if err := s.capture("publish", command); err != nil {
 		return err
 	}
-	if err := s.Store.PublishRunSeed(ctx, command); err != nil {
+	if err := s.SynchronousStore.PublishRunSeed(ctx, command); err != nil {
 		return err
 	}
 	return s.lostReply("publish")
@@ -135,7 +136,7 @@ func (s *uncertainSynchronousHistoryStore) StartSynchronousRun(ctx context.Conte
 	if err := s.capture("start", command); err != nil {
 		return storage.OneShotRunStartResult{}, err
 	}
-	result, err := s.Store.StartSynchronousRun(ctx, command)
+	result, err := s.SynchronousStore.StartSynchronousRun(ctx, command)
 	if err == nil {
 		err = s.lostReply("start")
 	}

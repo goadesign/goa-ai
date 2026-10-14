@@ -70,7 +70,7 @@ func TestSealContextDuringEngineRegistration(t *testing.T) {
 					assert.False(t, rt.storageActivityRegistered)
 				} else {
 					assert.True(t, rt.storageActivityRegistered)
-					assert.False(t, rt.agentChildActivityRegistered)
+					assert.Empty(t, rt.agentChildActivitiesRegistered)
 				}
 				rt.mu.RUnlock()
 
@@ -210,7 +210,7 @@ func TestRegistrationAllMethodsWaitForAdmittedAgent(t *testing.T) {
 		assert.Len(t, rt.agentToolResolvers, 1)
 		rt.mu.RUnlock()
 		assert.EqualValues(t, 1, eng.storageCalls.Load())
-		assert.EqualValues(t, 1, eng.childCalls.Load())
+		assert.EqualValues(t, 2, eng.childCalls.Load())
 	})
 }
 
@@ -316,10 +316,10 @@ func TestRegistrationActivityFailureCanRetryWithoutDuplicatingSuccess(t *testing
 			require.NoError(t, rt.RegisterAgent(t.Context(), sealContextAgent(rt, "last.agent", nil)))
 			if phase == storageRegistrationPhase {
 				assert.EqualValues(t, 2, eng.storageCalls.Load())
-				assert.EqualValues(t, 1, eng.childCalls.Load())
+				assert.EqualValues(t, 2, eng.childCalls.Load())
 			} else {
 				assert.EqualValues(t, 1, eng.storageCalls.Load())
-				assert.EqualValues(t, 2, eng.childCalls.Load())
+				assert.EqualValues(t, 3, eng.childCalls.Load())
 			}
 		})
 	}
@@ -329,7 +329,9 @@ func TestRegistrationRegistryAndResolverErrorPriority(t *testing.T) {
 	rt := New(newTestStore(), WithEngine(&sealContextEngine{}))
 	client := &genregistry.Client{}
 	pulse := unusedRegistryPulse{}
-	resolver := func(context.Context, string, *ToolCall) (*AgentToolConfiguration, error) { return nil, nil }
+	resolver := func(context.Context, genregistry.ExecutionInvocation, string, *ToolCall) (*AgentToolConfiguration, error) {
+		return nil, nil
+	}
 	require.NoError(t, rt.RegisterRegistry("catalog", client, pulse))
 	require.ErrorContains(t, rt.RegisterRegistry("catalog", client, pulse), "already registered")
 	require.NoError(t, rt.RegisterAgentToolResolver("executor", resolver))
@@ -400,7 +402,7 @@ func sealContextRegistrations(rt *Runtime) []func() error {
 		func() error { return rt.RegisterToolset(sealContextToolset("later", newAnyJSONSpec("later.lookup"))) },
 		func() error { return rt.RegisterRegistry("later", &genregistry.Client{}, unusedRegistryPulse{}) },
 		func() error {
-			return rt.RegisterAgentToolResolver("later", func(context.Context, string, *ToolCall) (*AgentToolConfiguration, error) {
+			return rt.RegisterAgentToolResolver("later", func(context.Context, genregistry.ExecutionInvocation, string, *ToolCall) (*AgentToolConfiguration, error) {
 				return nil, nil
 			})
 		},

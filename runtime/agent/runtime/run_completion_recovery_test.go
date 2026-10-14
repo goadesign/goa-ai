@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
@@ -28,13 +29,16 @@ func TestValidateEngineCompletionRejectsInvalidWorkflowOutput(t *testing.T) {
 		output *api.RunOutput
 	}{
 		{
-			name:   "missing terminal result",
-			output: &api.RunOutput{AgentID: "svc.agent", RunID: "run"},
+			name: "missing terminal result",
+			output: &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+				RunExecutorBranchAgent("svc.agent"))}, RunID: "run"},
 		},
 		{
 			name: "multiple terminal results",
 			output: &api.RunOutput{
-				AgentID:    "svc.agent",
+				Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("svc.agent"))},
+
 				RunID:      "run",
 				Final:      &model.Message{},
 				Suspension: &api.RunSuspension{},
@@ -43,7 +47,9 @@ func TestValidateEngineCompletionRejectsInvalidWorkflowOutput(t *testing.T) {
 		{
 			name: "invalid suspension",
 			output: &api.RunOutput{
-				AgentID:    "svc.agent",
+				Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("svc.agent"))},
+
 				RunID:      "run",
 				Suspension: &api.RunSuspension{},
 			},
@@ -56,7 +62,8 @@ func TestValidateEngineCompletionRejectsInvalidWorkflowOutput(t *testing.T) {
 				Status:      engine.RunStatusCompleted,
 				CompletedAt: ensuredCompletionTime,
 				Output:      test.output,
-			}, &RunInput{AgentID: "svc.agent", RunID: "run"})
+			}, &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+				RunExecutorBranchAgent("svc.agent"))}, RunID: "run"})
 
 			require.ErrorIs(t, err, ErrRunCompletionCorrupt)
 		})
@@ -66,7 +73,8 @@ func TestValidateEngineCompletionRejectsInvalidWorkflowOutput(t *testing.T) {
 func TestEnsureRunCompletionStoresWorkflowFailure(t *testing.T) {
 	store := newTestStore()
 	admitRunForTest(t, store, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))}, RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
 	})
 	runtime := &Runtime{
 		Store: store,
@@ -88,7 +96,8 @@ func TestEnsureRunCompletionStoresWorkflowFailure(t *testing.T) {
 func TestEnsureRunCompletionRetriesStreamWithoutRepeatingStore(t *testing.T) {
 	stored := newTestStore()
 	admitRunForTest(t, stored, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))}, RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
 	})
 	store := &countingTerminalRepairStore{Store: stored}
 	bus := hooks.NewBus()
@@ -105,7 +114,8 @@ func TestEnsureRunCompletionRetriesStreamWithoutRepeatingStore(t *testing.T) {
 		Store: store,
 		Bus:   bus,
 		Engine: completionQueryEngine{completion: engine.RunCompletion{Status: engine.RunStatusCompleted, CompletedAt: ensuredCompletionTime, Output: &api.RunOutput{
-			AgentID: "svc.agent", RunID: "run", Final: &model.Message{},
+			Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+				RunExecutorBranchAgent("svc.agent"))}, RunID: "run", Final: &model.Message{},
 		}}},
 		streamSubscriber: subscriber,
 	}
@@ -119,7 +129,8 @@ func TestEnsureRunCompletionRetriesStreamWithoutRepeatingStore(t *testing.T) {
 func TestEnsureRunCompletionExactRetryResumesStreamDelivery(t *testing.T) {
 	stored := newTestStore()
 	admitRunForTest(t, stored, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))}, RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
 	})
 	store := &lostTerminalRepairResponseStore{Store: stored}
 	bus := hooks.NewBus()
@@ -139,9 +150,11 @@ func TestEnsureRunCompletionExactRetryResumesStreamDelivery(t *testing.T) {
 			Status:      engine.RunStatusCompleted,
 			CompletedAt: ensuredCompletionTime,
 			Output: &api.RunOutput{
-				AgentID: "svc.agent",
-				RunID:   "run",
-				Final:   &model.Message{},
+				Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("svc.agent"))},
+
+				RunID: "run",
+				Final: &model.Message{},
 			},
 		}},
 		streamSubscriber: subscriber,
@@ -156,7 +169,8 @@ func TestEnsureRunCompletionExactRetryResumesStreamDelivery(t *testing.T) {
 func TestEnsureRunCompletionStoresSuspension(t *testing.T) {
 	store := newTestStore()
 	admitRunForTest(t, store, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run-1", SessionID: "session-1", Status: session.RunStatusRunning,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))}, RunID: "run-1", SessionID: "session-1", Status: session.RunStatusRunning,
 	})
 	suspension := suspensionContractFixtureWithContext(
 		t,
@@ -171,7 +185,8 @@ func TestEnsureRunCompletionStoresSuspension(t *testing.T) {
 		Bus:   hooks.NewBus(),
 		Engine: completionQueryEngine{
 			completion: engine.RunCompletion{Status: engine.RunStatusCompleted, CompletedAt: ensuredCompletionTime, Output: &api.RunOutput{
-				AgentID: "svc.agent", RunID: "run-1", Suspension: suspension,
+				Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("svc.agent"))}, RunID: "run-1", Suspension: suspension,
 			}},
 		},
 		streamSubscriber: newCompletionSubscriber(t),
@@ -189,7 +204,8 @@ func TestEnsureRunCompletionStoresSuspension(t *testing.T) {
 func TestEnsureRunCompletionRejectsSuspensionParentBeforeWriting(t *testing.T) {
 	stored := newTestStore()
 	admitRunForTest(t, stored, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run-1", SessionID: "session-1", Status: session.RunStatusRunning,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))}, RunID: "run-1", SessionID: "session-1", Status: session.RunStatusRunning,
 	})
 	suspension := suspensionContractFixtureWithContext(
 		t,
@@ -208,7 +224,8 @@ func TestEnsureRunCompletionRejectsSuspensionParentBeforeWriting(t *testing.T) {
 		Bus:   hooks.NewBus(),
 		Engine: completionQueryEngine{
 			completion: engine.RunCompletion{Status: engine.RunStatusCompleted, CompletedAt: ensuredCompletionTime, Output: &api.RunOutput{
-				AgentID: "svc.agent", RunID: "run-1", Suspension: suspension,
+				Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("svc.agent"))}, RunID: "run-1", Suspension: suspension,
 			}},
 		},
 	}
@@ -222,11 +239,13 @@ func TestEnsureRunCompletionRejectsSuspensionParentBeforeWriting(t *testing.T) {
 func TestEnsureRunCompletionRejectsMissingChildLinkBeforeWriting(t *testing.T) {
 	stored := newTestStore()
 	admitRunForTest(t, stored, session.RunMeta{
-		AgentID: "parent.agent", RunID: completionParentRunID,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("parent.agent"))}, RunID: completionParentRunID,
 		SessionID: "session", Status: session.RunStatusRunning,
 	})
 	admitRunForTest(t, stored, session.RunMeta{
-		AgentID: "child.agent", RunID: "child", SessionID: "session",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("child.agent"))}, RunID: "child", SessionID: "session",
 		ParentRunID: completionParentRunID, Status: session.RunStatusRunning,
 	})
 	store := &completionReplayStore{
@@ -250,7 +269,8 @@ func TestEnsureRunCompletionRejectsMissingChildLinkBeforeWriting(t *testing.T) {
 		Bus:   hooks.NewBus(),
 		Engine: completionQueryEngine{completion: engine.RunCompletion{
 			Status: engine.RunStatusCompleted, CompletedAt: ensuredCompletionTime,
-			Output: &api.RunOutput{AgentID: "child.agent", RunID: "child", Final: &model.Message{}},
+			Output: &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+				RunExecutorBranchAgent("child.agent"))}, RunID: "child", Final: &model.Message{}},
 		}},
 	}
 
@@ -263,7 +283,8 @@ func TestEnsureRunCompletionRejectsMissingChildLinkBeforeWriting(t *testing.T) {
 func TestEnsureRunCompletionDoesNotPublishWhenWorkflowTerminalWins(t *testing.T) {
 	store := newTestStore()
 	admitRunForTest(t, store, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))}, RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
 	})
 	workflowTimestamp := ensuredCompletionTime.Add(-time.Second)
 	bus := hooks.NewBus()
@@ -301,7 +322,8 @@ func TestEnsureRunCompletionDoesNotPublishWhenWorkflowTerminalWins(t *testing.T)
 func TestEnsureRunCompletionDoesNotPublishWhenWorkflowSuspensionWins(t *testing.T) {
 	store := newTestStore()
 	admitRunForTest(t, store, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run-1", SessionID: "session-1", Status: session.RunStatusRunning,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))}, RunID: "run-1", SessionID: "session-1", Status: session.RunStatusRunning,
 	})
 	suspension := suspensionContractFixtureWithContext(
 		t,
@@ -326,7 +348,8 @@ func TestEnsureRunCompletionDoesNotPublishWhenWorkflowSuspensionWins(t *testing.
 		Store: workflowSuspensionWinsStore{Store: store, workflowTimestamp: workflowTimestamp},
 		Bus:   bus,
 		Engine: completionQueryEngine{completion: engine.RunCompletion{Status: engine.RunStatusCompleted, CompletedAt: ensuredCompletionTime, Output: &api.RunOutput{
-			AgentID: "svc.agent", RunID: "run-1", Suspension: suspension,
+			Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+				RunExecutorBranchAgent("svc.agent"))}, RunID: "run-1", Suspension: suspension,
 		}}},
 		streamSubscriber: subscriber,
 	}
@@ -346,7 +369,8 @@ func TestEnsureRunCompletionDoesNotPublishWhenWorkflowSuspensionWins(t *testing.
 func TestEnsureRunCompletionSuppressesConcurrentWinnerForEndedSession(t *testing.T) {
 	store := newTestStore()
 	admitRunForTest(t, store, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))}, RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
 	})
 	sink := &completionEventSink{}
 	subscriber, err := stream.NewSubscriber(sink, stream.AgentDebugProfile())
@@ -370,7 +394,8 @@ func TestEnsureRunCompletionSuppressesConcurrentWinnerForEndedSession(t *testing
 func TestEnsureRunCompletionRejectsCorruptConcurrentWinner(t *testing.T) {
 	stored := newTestStore()
 	admitRunForTest(t, stored, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))}, RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
 	})
 	winner := workflowTerminalWinsStore{
 		Store: stored, workflowTimestamp: ensuredCompletionTime.Add(-time.Second),
@@ -399,7 +424,8 @@ func TestEnsureRunCompletionRejectsCorruptConcurrentWinner(t *testing.T) {
 func TestEnsureRunCompletionRejectsMismatchedConcurrentWinnerStatus(t *testing.T) {
 	store := newTestStore()
 	admitRunForTest(t, store, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))}, RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
 	})
 	runtime := &Runtime{
 		Store: workflowTerminalWinsStore{
@@ -422,7 +448,8 @@ func TestEnsureRunCompletionRejectsMismatchedConcurrentWinnerStatus(t *testing.T
 func TestEnsureRunCompletionDoesNotRepairClosedRun(t *testing.T) {
 	stored := newTestStore()
 	admitRunForTest(t, stored, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusCompleted,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))}, RunID: "run", SessionID: "session", Status: session.RunStatusCompleted,
 	})
 	runtime := &Runtime{
 		Store:            differentTerminalRepairStore{Store: stored},
@@ -438,7 +465,8 @@ func TestEnsureRunCompletionDoesNotRepairClosedRun(t *testing.T) {
 func TestEnsureRunCompletionDoesNotStoreRetrievalFailure(t *testing.T) {
 	store := newTestStore()
 	admitRunForTest(t, store, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))}, RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
 	})
 	retrievalErr := errors.New("temporal unavailable")
 	runtime := &Runtime{
@@ -462,7 +490,8 @@ func TestEnsureRunCompletionDoesNotStoreRetrievalFailure(t *testing.T) {
 func TestEnsureRunCompletionRejectsOpenWorkflow(t *testing.T) {
 	store := newTestStore()
 	admitRunForTest(t, store, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))}, RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
 	})
 	runtime := &Runtime{
 		Store:  store,
@@ -477,7 +506,8 @@ func TestEnsureRunCompletionRejectsOpenWorkflow(t *testing.T) {
 func TestEnsureRunCompletionStopsRetryingWhenCallerCancels(t *testing.T) {
 	stored := newTestStore()
 	admitRunForTest(t, stored, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))}, RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
 	})
 	called := make(chan struct{}, 1)
 	runtime := &Runtime{

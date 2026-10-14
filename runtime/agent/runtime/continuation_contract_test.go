@@ -9,7 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	agent "goa.design/goa-ai/runtime/agent"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -135,12 +135,12 @@ func TestValidatePendingInputResponseForRequiresMatchingFirstRequest(t *testing.
 func TestValidateWorkflowRunInputRejectsMixedContinuationState(t *testing.T) {
 	response := &api.PendingInputResponse{Clarification: &api.ClarificationAnswer{}}
 	require.NoError(t, validateWorkflowRunInput(&RunInput{
-		AgentID: "svc.agent", RunID: "run-2", SessionID: "session-1", TurnID: "turn-2",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, RunID: "run-2", SessionID: "session-1", TurnID: "turn-2",
 		Continuation: &api.RunContinuationInput{Response: response},
 	}))
 
 	err := validateWorkflowRunInput(&RunInput{
-		AgentID: "svc.agent", RunID: "run-2", SessionID: "session-1", TurnID: "turn-2",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, RunID: "run-2", SessionID: "session-1", TurnID: "turn-2",
 		Labels:       map[string]string{"caller": "cannot replace saved labels"},
 		Continuation: &api.RunContinuationInput{Response: response},
 	})
@@ -149,7 +149,8 @@ func TestValidateWorkflowRunInputRejectsMixedContinuationState(t *testing.T) {
 
 func TestValidateWorkflowRunInputRejectsNegativeRecoveryOverride(t *testing.T) {
 	err := validateWorkflowRunInput(&RunInput{
-		Policy: &PolicyOverrides{MaxRecoveryTurns: -1},
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))},
+		Policy:  &PolicyOverrides{MaxRecoveryTurns: -1},
 	})
 
 	require.ErrorIs(t, err, ErrInvalidConfig)
@@ -161,8 +162,9 @@ func TestValidateWorkflowOutputEnforcesIdentityAndTerminalShape(t *testing.T) {
 			ID: "clarification-1", Question: "Which facility?",
 		})
 		return &RunOutput{
-			AgentID: "child.agent",
-			RunID:   "child-run-1",
+			Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("child.agent"))},
+
+			RunID: "child-run-1",
 			Suspension: &api.RunSuspension{
 				ID:         "suspension-1",
 				Version:    "v1",
@@ -175,26 +177,26 @@ func TestValidateWorkflowOutputEnforcesIdentityAndTerminalShape(t *testing.T) {
 		}
 	}
 
-	require.NoError(t, validateWorkflowOutput(valid(), agent.Ident("child.agent"), "child-run-1"))
+	require.NoError(t, validateWorkflowOutput(valid(), genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("child.agent")}, "child-run-1"))
 
 	wrongAgent := valid()
-	wrongAgent.AgentID = "other.agent"
-	require.ErrorContains(t, validateWorkflowOutput(wrongAgent, agent.Ident("child.agent"), "child-run-1"), "agent mismatch")
+	wrongAgent.Subject = genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("other.agent")}
+	require.ErrorContains(t, validateWorkflowOutput(wrongAgent, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("child.agent")}, "child-run-1"), "subject mismatch")
 
 	wrongRun := valid()
 	wrongRun.RunID = "other-run"
-	require.ErrorContains(t, validateWorkflowOutput(wrongRun, agent.Ident("child.agent"), "child-run-1"), "run mismatch")
+	require.ErrorContains(t, validateWorkflowOutput(wrongRun, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("child.agent")}, "child-run-1"), "run mismatch")
 
 	mixed := valid()
 	mixed.Final = &model.Message{Role: model.ConversationRoleAssistant}
-	require.ErrorContains(t, validateWorkflowOutput(mixed, agent.Ident("child.agent"), "child-run-1"), "exactly one terminal result")
+	require.ErrorContains(t, validateWorkflowOutput(mixed, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("child.agent")}, "child-run-1"), "exactly one terminal result")
 
-	empty := &RunOutput{AgentID: "child.agent", RunID: "child-run-1"}
-	require.ErrorContains(t, validateWorkflowOutput(empty, agent.Ident("child.agent"), "child-run-1"), "exactly one terminal result")
+	empty := &RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("child.agent"))}, RunID: "child-run-1"}
+	require.ErrorContains(t, validateWorkflowOutput(empty, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("child.agent")}, "child-run-1"), "exactly one terminal result")
 
 	invalidPending := valid()
 	invalidPending.Suspension.Pending[0].Await = nil
-	require.ErrorContains(t, validateWorkflowOutput(invalidPending, agent.Ident("child.agent"), "child-run-1"), "invalid payload")
+	require.ErrorContains(t, validateWorkflowOutput(invalidPending, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("child.agent")}, "child-run-1"), "invalid payload")
 }
 
 func TestValidateContinuationIdentityRequiresNewRunAndTurn(t *testing.T) {
@@ -206,24 +208,24 @@ func TestValidateContinuationIdentityRequiresNewRunAndTurn(t *testing.T) {
 
 	operation := &api.RunContinuationInput{Response: &api.PendingInputResponse{Clarification: &api.ClarificationAnswer{ID: "clarification-1", Answer: "chosen"}}}
 	err = validateContinuationIdentity(&RunInput{
-		Continuation: operation, AgentID: "svc.agent", SessionID: "session-1", RunID: "run-1", TurnID: "turn-2",
+		Continuation: operation, Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, SessionID: "session-1", RunID: "run-1", TurnID: "turn-2",
 	}, checkpoint)
 	require.ErrorContains(t, err, "new run id")
 
 	err = validateContinuationIdentity(&RunInput{
-		Continuation: operation, AgentID: "svc.agent", SessionID: "session-1", RunID: "run-2", TurnID: "turn-1",
+		Continuation: operation, Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, SessionID: "session-1", RunID: "run-2", TurnID: "turn-1",
 	}, checkpoint)
 	require.ErrorContains(t, err, "new turn id")
 
 	require.NoError(t, validateContinuationIdentity(&RunInput{
-		Continuation: operation, AgentID: "svc.agent", SessionID: "session-1", RunID: "run-2", TurnID: "turn-2",
+		Continuation: operation, Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, SessionID: "session-1", RunID: "run-2", TurnID: "turn-2",
 	}, checkpoint))
 	cancellation := &api.RunContinuationInput{Cancellation: &api.CancellationRequest{RunID: "run-1", Reason: "user_requested"}}
 	require.NoError(t, validateContinuationIdentity(&RunInput{
-		Continuation: cancellation, AgentID: "svc.agent", SessionID: "session-1", RunID: "run-2", TurnID: "turn-1",
+		Continuation: cancellation, Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, SessionID: "session-1", RunID: "run-2", TurnID: "turn-1",
 	}, checkpoint))
 	err = validateContinuationIdentity(&RunInput{
-		Continuation: cancellation, AgentID: "svc.agent", SessionID: "session-1", RunID: "run-1", TurnID: "turn-1",
+		Continuation: cancellation, Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, SessionID: "session-1", RunID: "run-1", TurnID: "turn-1",
 	}, checkpoint)
 	require.ErrorContains(t, err, "new run id")
 }
@@ -264,7 +266,7 @@ func TestCancellationContinuationRequiresSelectedRun(t *testing.T) {
 	suspension := suspensionContractFixture(t, spec.Name)
 	for _, subject := range []string{"run-1", "other-run"} {
 		t.Run(subject, func(t *testing.T) {
-			input := &RunInput{AgentID: "svc.agent", SessionID: "session-1", RunID: "cleanup", TurnID: "turn-1",
+			input := &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, SessionID: "session-1", RunID: "cleanup", TurnID: "turn-1",
 				Continuation: &api.RunContinuationInput{Suspension: suspension, Cancellation: &api.CancellationRequest{RunID: subject, Reason: "user_requested"}},
 			}
 			_, err := prepareContinuation(input, definition)
@@ -273,6 +275,23 @@ func TestCancellationContinuationRequiresSelectedRun(t *testing.T) {
 				return
 			}
 			assert.NoError(t, err)
+		})
+	}
+}
+
+func TestValidateWorkflowRunInputRequiresAgentSubject(t *testing.T) {
+	tests := []struct {
+		name    string
+		subject genrunidentity.RunSubject
+		want    string
+	}{
+		{name: "missing", want: "run input subject"},
+		{name: "empty agent", subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(""))}, want: "run input subject"},
+		{name: "service tool", subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorServiceTool(&genrunidentity.ServiceToolSubject{Registry: "primary", Tool: "catalog.lookup"})}, want: "agent workflow requires an Agent run subject"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require.ErrorContains(t, validateWorkflowRunInput(&RunInput{Subject: test.subject}), test.want)
 		})
 	}
 }

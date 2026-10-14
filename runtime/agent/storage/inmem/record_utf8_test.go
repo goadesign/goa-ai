@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/session"
@@ -38,13 +39,13 @@ func TestRecordRunTerminalValidatesTextBeforeAppend(t *testing.T) {
 			ctx := t.Context()
 			store := New()
 			start := session.RunStart{
-				AgentID: "agent", RunID: "run", SessionID: "session",
+				Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, RunID: "run", SessionID: "session",
 				StartedAt: time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC),
 				Labels:    map[string]string{"text": "é e\u0301"},
 			}
 			_, err := store.CreateSession(ctx, start.SessionID, start.StartedAt)
 			require.NoError(t, err)
-			start = publishStartHistory(t, store, start)
+			start = publishStartHistory(t, store, start, "")
 			_, err = store.StartRootRun(ctx, rootStartCommand(t, start))
 			require.NoError(t, err)
 			before, err := store.LoadRun(ctx, start.RunID)

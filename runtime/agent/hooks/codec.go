@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/internal/errorevidence"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -88,6 +89,11 @@ func EncodeToRecordInput(evt Event, opts EncodeOptions) (*runlog.ActivityInput, 
 	if evt == nil {
 		return nil, errors.New("encode hook record: event is nil")
 	}
+	subject := evt.Subject()
+	if _, err := genrunidentity.EncodeRunSubject(&subject); err != nil {
+		return nil, fmt.Errorf("encode hook record subject: %w", err)
+	}
+
 	explicitMetadata := opts.EventKey != ""
 	eventKey := evt.EventKey()
 	timestampMS := evt.Timestamp()
@@ -116,7 +122,7 @@ func EncodeToRecordInput(evt Event, opts EncodeOptions) (*runlog.ActivityInput, 
 		Type:        evt.Type(),
 		EventKey:    eventKey,
 		RunID:       evt.RunID(),
-		AgentID:     agent.Ident(evt.AgentID()),
+		Subject:     subject,
 		SessionID:   evt.SessionID(),
 		TurnID:      turnID,
 		TimestampMS: timestampMS,
@@ -216,6 +222,19 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 	if input == nil {
 		return nil, errors.New("decode hook record: input is nil")
 	}
+	if _, err := genrunidentity.EncodeRunSubject(&input.Subject); err != nil {
+		return nil, fmt.Errorf("decode hook record subject: %w", err)
+	}
+	var agentID agent.Ident
+	switch input.Type {
+	case PromptRendered, PolicyDecision, Usage, ModelOutputRejected, PlannerOutputRejected,
+		PlannerNote, ThinkingBlock, AssistantMessage, AssistantTurnCommitted, MemoryAppended:
+		executor, ok := input.Subject.Executor.AsAgent()
+		if !ok {
+			return nil, fmt.Errorf("decode %s: event requires an Agent subject", input.Type)
+		}
+		agentID = agent.Ident(executor)
+	}
 	var evt Event
 	switch input.Type {
 	case RunStarted:
@@ -225,7 +244,7 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 		}
 		evt = NewRunStartedEvent(
 			input.RunID,
-			input.AgentID,
+			input.Subject,
 			input.SessionID,
 			p.ParentRunID,
 			p.PredecessorRunID,
@@ -237,21 +256,21 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 		if err := json.Unmarshal(input.Payload, &p); err != nil {
 			return nil, fmt.Errorf("decode %s payload: %w", RunPhaseChanged, err)
 		}
-		evt = NewRunPhaseChangedEvent(input.RunID, input.AgentID, input.SessionID, p.Phase)
+		evt = NewRunPhaseChangedEvent(input.RunID, input.Subject, input.SessionID, p.Phase)
 
 	case PromptRendered:
 		var p PromptRenderedEvent
 		if err := json.Unmarshal(input.Payload, &p); err != nil {
 			return nil, fmt.Errorf("decode %s payload: %w", PromptRendered, err)
 		}
-		evt = NewPromptRenderedEvent(input.RunID, input.AgentID, input.SessionID, p.PromptID, p.Version, p.Scope)
+		evt = NewPromptRenderedEvent(input.RunID, agentID, input.SessionID, p.PromptID, p.Version, p.Scope)
 
 	case RunSuspended:
 		p, err := decodeRecordPayload[RunSuspendedEvent](input.Payload)
 		if err != nil {
 			return nil, fmt.Errorf("decode %s payload: %w", RunSuspended, err)
 		}
-		evt = NewRunSuspendedEvent(input.RunID, input.AgentID, input.SessionID, p.SuspensionID, p.Version, p.PendingCount, p.RequiredTools)
+		evt = NewRunSuspendedEvent(input.RunID, input.Subject, input.SessionID, p.SuspensionID, p.Version, p.PendingCount, p.RequiredTools)
 
 	case RunCompleted:
 		p, err := decodeRecordPayload[runCompletedPayload](input.Payload)
@@ -260,7 +279,7 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 		}
 		rc, err := newRunCompletedEventFromPayload(
 			input.RunID,
-			input.AgentID,
+			input.Subject,
 			input.SessionID,
 			p.Status,
 			p.Phase,
@@ -280,7 +299,7 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 		}
 		evt = NewChildRunLinkedEvent(
 			input.RunID,
-			input.AgentID,
+			input.Subject,
 			input.SessionID,
 			p.ToolName,
 			p.ToolCallID,
@@ -293,7 +312,7 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 		if err := json.Unmarshal(input.Payload, &p); err != nil {
 			return nil, fmt.Errorf("decode %s payload: %w", AwaitClarification, err)
 		}
-		evt = NewAwaitClarificationEvent(input.RunID, input.AgentID, input.SessionID, p.ID, p.Question, p.MissingFields, p.RestrictToTool, p.ExampleJSON)
+		evt = NewAwaitClarificationEvent(input.RunID, input.Subject, input.SessionID, p.ID, p.Question, p.MissingFields, p.RestrictToTool, p.ExampleJSON)
 
 	case AwaitQuestions:
 		var p AwaitQuestionsEvent
@@ -302,7 +321,7 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 		}
 		evt = NewAwaitQuestionsEvent(
 			input.RunID,
-			input.AgentID,
+			input.Subject,
 			input.SessionID,
 			p.ID,
 			p.ToolName,
@@ -326,42 +345,42 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 				return nil, fmt.Errorf("decode %s input requests: %w", AwaitMCPInput, err)
 			}
 		}
-		evt = NewAwaitMCPInputEvent(input.RunID, input.AgentID, input.SessionID, p.Input)
+		evt = NewAwaitMCPInputEvent(input.RunID, input.Subject, input.SessionID, p.Input)
 
 	case AwaitConfirmation:
 		var p AwaitConfirmationEvent
 		if err := json.Unmarshal(input.Payload, &p); err != nil {
 			return nil, fmt.Errorf("decode %s payload: %w", AwaitConfirmation, err)
 		}
-		evt = NewAwaitConfirmationEvent(input.RunID, input.AgentID, input.SessionID, p.ID, p.Title, p.Prompt, p.ToolName, p.ToolCallID, p.Payload)
+		evt = NewAwaitConfirmationEvent(input.RunID, input.Subject, input.SessionID, p.ID, p.Title, p.Prompt, p.ToolName, p.ToolCallID, p.Payload)
 
 	case AwaitExternalTools:
 		var p AwaitExternalToolsEvent
 		if err := json.Unmarshal(input.Payload, &p); err != nil {
 			return nil, fmt.Errorf("decode %s payload: %w", AwaitExternalTools, err)
 		}
-		evt = NewAwaitExternalToolsEvent(input.RunID, input.AgentID, input.SessionID, p.ID, p.Items)
+		evt = NewAwaitExternalToolsEvent(input.RunID, input.Subject, input.SessionID, p.ID, p.Items)
 
 	case ToolAuthorization:
 		var p ToolAuthorizationEvent
 		if err := json.Unmarshal(input.Payload, &p); err != nil {
 			return nil, fmt.Errorf("decode %s payload: %w", ToolAuthorization, err)
 		}
-		evt = NewToolAuthorizationEvent(input.RunID, input.AgentID, input.SessionID, p.ToolName, p.ToolCallID, p.Approved, p.Summary, p.ApprovedBy)
+		evt = NewToolAuthorizationEvent(input.RunID, input.Subject, input.SessionID, p.ToolName, p.ToolCallID, p.Approved, p.Summary, p.ApprovedBy)
 
 	case AssistantMessage:
 		var p AssistantMessageEvent
 		if err := json.Unmarshal(input.Payload, &p); err != nil {
 			return nil, fmt.Errorf("decode %s payload: %w", AssistantMessage, err)
 		}
-		evt = NewAssistantMessageEvent(input.RunID, input.AgentID, input.SessionID, p.Message, p.Structured)
+		evt = NewAssistantMessageEvent(input.RunID, agentID, input.SessionID, p.Message, p.Structured)
 
 	case PlannerNote:
 		var p PlannerNoteEvent
 		if err := json.Unmarshal(input.Payload, &p); err != nil {
 			return nil, fmt.Errorf("decode %s payload: %w", PlannerNote, err)
 		}
-		evt = NewPlannerNoteEvent(input.RunID, input.AgentID, input.SessionID, p.Note, p.Labels)
+		evt = NewPlannerNoteEvent(input.RunID, agentID, input.SessionID, p.Note, p.Labels)
 
 	case ThinkingBlock:
 		var p ThinkingBlockEvent
@@ -370,7 +389,7 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 		}
 		evt = NewThinkingBlockEvent(
 			input.RunID,
-			input.AgentID,
+			agentID,
 			input.SessionID,
 			p.Text,
 			p.Signature,
@@ -384,7 +403,7 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 		if err := json.Unmarshal(input.Payload, &p); err != nil {
 			return nil, fmt.Errorf("decode %s payload: %w", ToolCallScheduled, err)
 		}
-		scheduled := NewToolCallScheduledEvent(input.RunID, input.AgentID, input.SessionID, p.ToolName, p.ToolCallID, p.Payload, p.Queue, p.ParentToolCallID, p.ExpectedChildrenTotal)
+		scheduled := NewToolCallScheduledEvent(input.RunID, input.Subject, input.SessionID, p.ToolName, p.ToolCallID, p.Payload, p.Queue, p.ParentToolCallID, p.ExpectedChildrenTotal)
 		scheduled.ModelToolCallID = p.ModelToolCallID
 		scheduled.Registry = p.Registry
 		scheduled.ContinuationRootToolCallID = p.ContinuationRootToolCallID
@@ -395,7 +414,7 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 		if err := json.Unmarshal(input.Payload, &p); err != nil {
 			return nil, fmt.Errorf("decode %s payload: %w", ToolCallUpdated, err)
 		}
-		evt = NewToolCallUpdatedEvent(input.RunID, input.AgentID, input.SessionID, p.ToolCallID, p.ExpectedChildrenTotal)
+		evt = NewToolCallUpdatedEvent(input.RunID, input.Subject, input.SessionID, p.ToolCallID, p.ExpectedChildrenTotal)
 
 	case ToolResultReceived:
 		var p toolResultReceivedPayload
@@ -404,7 +423,7 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 		}
 		result := NewToolResultReceivedEvent(
 			input.RunID,
-			input.AgentID,
+			input.Subject,
 			input.SessionID,
 			p.CallRunID,
 			p.ToolName,
@@ -428,21 +447,21 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 		if err := json.Unmarshal(input.Payload, &p); err != nil {
 			return nil, fmt.Errorf("decode %s payload: %w", PolicyDecision, err)
 		}
-		evt = NewPolicyDecisionEvent(input.RunID, input.AgentID, input.SessionID, p.AllowedTools, p.Caps, p.Labels, p.Metadata)
+		evt = NewPolicyDecisionEvent(input.RunID, agentID, input.SessionID, p.AllowedTools, p.Caps, p.Labels, p.Metadata)
 
 	case MemoryAppended:
 		var p MemoryAppendedEvent
 		if err := json.Unmarshal(input.Payload, &p); err != nil {
 			return nil, fmt.Errorf("decode %s payload: %w", MemoryAppended, err)
 		}
-		evt = NewMemoryAppendedEvent(input.RunID, input.AgentID, input.SessionID, p.EventCount)
+		evt = NewMemoryAppendedEvent(input.RunID, agentID, input.SessionID, p.EventCount)
 
 	case Usage:
 		var p UsageEvent
 		if err := json.Unmarshal(input.Payload, &p); err != nil {
 			return nil, fmt.Errorf("decode %s payload: %w", Usage, err)
 		}
-		evt = NewUsageEvent(input.RunID, input.AgentID, input.SessionID, p.TokenUsage)
+		evt = NewUsageEvent(input.RunID, agentID, input.SessionID, p.TokenUsage)
 
 	case ModelOutputRejected:
 		p, err := decodeRecordPayload[ModelOutputRejectedEvent](input.Payload)
@@ -454,7 +473,7 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 		}
 		rejected, err := NewModelOutputRejectedEvent(
 			input.RunID,
-			input.AgentID,
+			agentID,
 			input.SessionID,
 			p.ReasonSHA256,
 			p.ReasonSize,
@@ -480,7 +499,7 @@ func DecodeFromRecordInput(input *runlog.ActivityInput) (Event, error) {
 		}
 		rejected, err := NewPlannerOutputRejectedEvent(
 			input.RunID,
-			input.AgentID,
+			agentID,
 			input.SessionID,
 			p.ReasonSHA256,
 			p.ReasonSize,
@@ -514,7 +533,7 @@ func DecodeRunlogEvent(event *runlog.Event) (Event, error) {
 		Type:        event.Type,
 		EventKey:    event.EventKey,
 		RunID:       event.RunID,
-		AgentID:     event.AgentID,
+		Subject:     event.Subject,
 		SessionID:   event.SessionID,
 		TurnID:      event.TurnID,
 		TimestampMS: event.Timestamp.UnixMilli(),

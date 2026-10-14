@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/content"
@@ -29,7 +30,7 @@ func TestToolEndRetainsContentOnSuccessAndFailure(t *testing.T) {
 		sink := &mockSink{}
 		subscriber, err := NewSubscriber(sink, RuntimeHostProfile())
 		require.NoError(t, err)
-		event := hooks.NewToolResultReceivedEvent("result-run", "service.agent", "session-1", "call-run", "remote.lookup", "call-1", "", nil, nil, blocks, "preview", nil, 0, nil, failure)
+		event := hooks.NewToolResultReceivedEvent("result-run", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("service.agent"))}, "session-1", "call-run", "remote.lookup", "call-1", "", nil, nil, blocks, "preview", nil, 0, nil, failure)
 		require.NoError(t, subscriber.HandleEvent(t.Context(), event))
 		require.Len(t, sink.events, 1)
 		end := sink.events[0].(ToolEnd)

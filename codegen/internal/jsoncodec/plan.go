@@ -7,8 +7,10 @@ import (
 	"fmt"
 
 	"goa.design/goa-ai/codegen/internal/codec"
+	"goa.design/goa-ai/codegen/internal/jsonshape"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/codegen/service"
+	"goa.design/goa/v3/expr"
 )
 
 type (
@@ -43,6 +45,11 @@ func NewPlan(generation *codegen.Generation, services *service.Plan) (*Plan, err
 		attribute, layout, err := services.UserTypeLayout(userType, declaration)
 		if err != nil {
 			return nil, fmt.Errorf("JSON codec %q original type layout: %w", userType.Name(), err)
+		}
+		// Embedded fields must have one truthful JSON shape even when another
+		// field prevents generation of a complete-value strict codec.
+		if err := codegen.Walk(attribute, validateEmbeddedDeclaration); err != nil {
+			return nil, fmt.Errorf("JSON codec %q: %w", userType.Name(), err)
 		}
 		if !codec.SupportsStandalone(attribute) {
 			continue
@@ -128,4 +135,11 @@ func (p *Plan) Files(files []*codegen.File) ([]*codegen.File, error) {
 		}
 	}
 	return files, nil
+}
+
+// validateEmbeddedDeclaration checks one authored object before codec eligibility
+// is decided, so unsupported siblings cannot hide an invalid embedded field.
+func validateEmbeddedDeclaration(attribute *expr.AttributeExpr) error {
+	_, err := jsonshape.EmbeddedMap(attribute)
+	return err
 }

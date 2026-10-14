@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -50,7 +51,7 @@ func TestConfirmationExecutesInContinuationWorkflow(t *testing.T) {
 		Specs: []tools.ToolSpec{tool},
 	}))
 
-	firstInput := &RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "session-1", TurnID: "turn-1"}
+	firstInput := &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent-1"))}, RunID: "run-1", SessionID: "session-1", TurnID: "turn-1"}
 	// Reasoning generated during this unfinished turn must survive suspension,
 	// even when a new completed-history turn would opt out of prior reasoning.
 	nativeMessages := priorReasoningFixture()
@@ -65,15 +66,15 @@ func TestConfirmationExecutesInContinuationWorkflow(t *testing.T) {
 	require.NoError(t, err)
 	seedRunMeta(t, runtime, firstInput)
 	firstHistory := seedTestPlanInput(t, runtime, PlanActivityInput{
-		AgentID: firstInput.AgentID, RunID: firstInput.RunID,
+		AgentID: testSubjectAgent(t, firstInput.Subject), RunID: firstInput.RunID,
 		RunContext: run.Context{RunID: firstInput.RunID, SessionID: firstInput.SessionID},
 	}, nativeMessages).HistoryEndID
 	firstContext := &testWorkflowContext{ctx: t.Context(), runtime: runtime}
 	first, err := runtime.runLoop(
 		firstContext,
-		AgentRegistration{ExecuteToolActivity: "execute"},
+		AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, firstInput.Subject), engine.WorkflowDefinition{}, nil), ExecuteToolActivity: "execute"},
 		firstInput,
-		&workflowConversation{HistoryEndID: firstHistory, RunContext: run.Context{
+		&workflowConversation{finalization: &workflowFinalizationState{}, HistoryEndID: firstHistory, RunContext: run.Context{
 			RunID: firstInput.RunID, SessionID: firstInput.SessionID, TurnID: firstInput.TurnID, Attempt: 1,
 		}},
 		&PlanResult{ToolCalls: []ToolCall{{
@@ -97,7 +98,7 @@ func TestConfirmationExecutesInContinuationWorkflow(t *testing.T) {
 	require.IsType(t, model.ThinkingPart{}, savedMessages[1].Parts[0])
 	confirmation := first.Suspension.Pending[0].Confirmation
 	secondInput := &RunInput{
-		AgentID: "agent-1", RunID: "run-2", SessionID: "session-1", TurnID: "turn-2",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent-1"))}, RunID: "run-2", SessionID: "session-1", TurnID: "turn-2",
 		Continuation: &api.RunContinuationInput{
 			Suspension: first.Suspension,
 			Response: &api.PendingInputResponse{Confirmation: &api.ConfirmationDecision{
@@ -110,7 +111,7 @@ func TestConfirmationExecutesInContinuationWorkflow(t *testing.T) {
 	secondContext := &testWorkflowContext{ctx: t.Context(), runtime: runtime}
 	second, err := runtime.resumeSuspendedWorkflow(
 		recoveryContinuationWorkflow(t, secondContext, checkpoint),
-		AgentRegistration{ExecuteToolActivity: "execute"},
+		AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, secondInput.Subject), engine.WorkflowDefinition{}, nil), ExecuteToolActivity: "execute"},
 		secondInput,
 		checkpoint, seedTestContinuationHistory(t, runtime, secondInput, checkpoint),
 	)
@@ -158,7 +159,8 @@ func TestCompletionToolConfirmationDenialFailsContinuation(t *testing.T) {
 	runtime.agentToolSpecs[agentID] = registration.Definition.specs
 
 	firstInput := &RunInput{
-		AgentID:   agentID,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))},
+
 		RunID:     "run-1",
 		SessionID: "session-1",
 		TurnID:    "turn-1",
@@ -169,7 +171,7 @@ func TestCompletionToolConfirmationDenialFailsContinuation(t *testing.T) {
 		&testWorkflowContext{ctx: t.Context(), runtime: runtime},
 		registration,
 		firstInput,
-		&workflowConversation{RunContext: run.Context{
+		&workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{
 			RunID: firstInput.RunID, SessionID: firstInput.SessionID, TurnID: firstInput.TurnID, Attempt: 1,
 		}},
 		&PlanResult{ToolCalls: []ToolCall{{
@@ -186,7 +188,7 @@ func TestCompletionToolConfirmationDenialFailsContinuation(t *testing.T) {
 	require.NoError(t, err)
 	confirmation := first.Suspension.Pending[0].Confirmation
 	secondInput := &RunInput{
-		AgentID: agentID, RunID: "run-2", SessionID: "session-1", TurnID: "turn-2",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))}, RunID: "run-2", SessionID: "session-1", TurnID: "turn-2",
 		Continuation: &api.RunContinuationInput{
 			Suspension: first.Suspension,
 			Response: &api.PendingInputResponse{Confirmation: &api.ConfirmationDecision{

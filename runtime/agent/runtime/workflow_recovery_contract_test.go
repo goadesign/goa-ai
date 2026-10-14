@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -847,7 +848,8 @@ func TestWorkflowRecoversInitialRejectedModelAnswer(t *testing.T) {
 	rt.models["test"] = newRecoveryTestModel(t)
 
 	runInput := &RunInput{
-		AgentID:   agentID,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))},
+
 		RunID:     "run-initial-model-output",
 		SessionID: sessionID,
 		TurnID:    "turn-initial-model-output",
@@ -978,7 +980,8 @@ func TestExecuteWorkflowRecoversInitialGeneratedModelToolCall(t *testing.T) {
 	}
 	rt.agentToolSpecs[agentID] = []tools.ToolSpec{lookup}
 	input := &RunInput{
-		AgentID:   agentID,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))},
+
 		RunID:     "run-initial-recovery",
 		SessionID: sessionID,
 	}
@@ -1305,7 +1308,8 @@ func newRecoveryHarness(
 		},
 	}
 	input := &RunInput{
-		AgentID:   agentID,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))},
+
 		RunID:     runID,
 		SessionID: sessionID,
 		TurnID:    turnID,
@@ -1316,7 +1320,7 @@ func newRecoveryHarness(
 		registration: registration,
 		workflow:     wfCtx,
 		input:        input,
-		base: &workflowConversation{RunContext: run.Context{
+		base: &workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{
 			RunID: runID, SessionID: sessionID, TurnID: turnID, Attempt: 1,
 		}},
 	}

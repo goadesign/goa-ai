@@ -15,6 +15,11 @@ import (
 
 // Endpoints wraps the "registry" service endpoints.
 type Endpoints struct {
+	CheckCatalogResource   goa.Endpoint
+	ListCatalogResources   goa.Endpoint
+	RegisterAgentExports   goa.Endpoint
+	ValidateAgentExports   goa.Endpoint
+	RetireAgentResource    goa.Endpoint
 	DeclareServiceToolset  goa.Endpoint
 	ReplaceServiceToolset  goa.Endpoint
 	AttachProvider         goa.Endpoint
@@ -43,6 +48,11 @@ type Endpoints struct {
 // NewEndpoints wraps the methods of the "registry" service with endpoints.
 func NewEndpoints(s Service) *Endpoints {
 	return &Endpoints{
+		CheckCatalogResource:   NewCheckCatalogResourceEndpoint(s),
+		ListCatalogResources:   NewListCatalogResourcesEndpoint(s),
+		RegisterAgentExports:   NewRegisterAgentExportsEndpoint(s),
+		ValidateAgentExports:   NewValidateAgentExportsEndpoint(s),
+		RetireAgentResource:    NewRetireAgentResourceEndpoint(s),
 		DeclareServiceToolset:  NewDeclareServiceToolsetEndpoint(s),
 		ReplaceServiceToolset:  NewReplaceServiceToolsetEndpoint(s),
 		AttachProvider:         NewAttachProviderEndpoint(s),
@@ -71,6 +81,11 @@ func NewEndpoints(s Service) *Endpoints {
 
 // Use applies the given middleware to all the "registry" service endpoints.
 func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
+	e.CheckCatalogResource = m(e.CheckCatalogResource)
+	e.ListCatalogResources = m(e.ListCatalogResources)
+	e.RegisterAgentExports = m(e.RegisterAgentExports)
+	e.ValidateAgentExports = m(e.ValidateAgentExports)
+	e.RetireAgentResource = m(e.RetireAgentResource)
 	e.DeclareServiceToolset = m(e.DeclareServiceToolset)
 	e.ReplaceServiceToolset = m(e.ReplaceServiceToolset)
 	e.AttachProvider = m(e.AttachProvider)
@@ -94,6 +109,51 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.PublishToolOutputDelta = m(e.PublishToolOutputDelta)
 	e.ReportToolCallOverload = m(e.ReportToolCallOverload)
 	e.ClaimToolCall = m(e.ClaimToolCall)
+}
+
+// NewCheckCatalogResourceEndpoint returns an endpoint function that calls the
+// method "CheckCatalogResource" of service "registry".
+func NewCheckCatalogResourceEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*CatalogResource)
+		return nil, s.CheckCatalogResource(ctx, p)
+	}
+}
+
+// NewListCatalogResourcesEndpoint returns an endpoint function that calls the
+// method "ListCatalogResources" of service "registry".
+func NewListCatalogResourcesEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*CatalogResourcesQuery)
+		return s.ListCatalogResources(ctx, p)
+	}
+}
+
+// NewRegisterAgentExportsEndpoint returns an endpoint function that calls the
+// method "RegisterAgentExports" of service "registry".
+func NewRegisterAgentExportsEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*AgentExportsDeclaration)
+		return s.RegisterAgentExports(ctx, p)
+	}
+}
+
+// NewValidateAgentExportsEndpoint returns an endpoint function that calls the
+// method "ValidateAgentExports" of service "registry".
+func NewValidateAgentExportsEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*AgentExportsValidation)
+		return nil, s.ValidateAgentExports(ctx, p)
+	}
+}
+
+// NewRetireAgentResourceEndpoint returns an endpoint function that calls the
+// method "RetireAgentResource" of service "registry".
+func NewRetireAgentResourceEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*CatalogResource)
+		return nil, s.RetireAgentResource(ctx, p)
+	}
 }
 
 // NewDeclareServiceToolsetEndpoint returns an endpoint function that calls the

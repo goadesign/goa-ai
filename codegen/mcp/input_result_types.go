@@ -4,8 +4,12 @@
 package codegen
 
 import (
+	"reflect"
 	"strings"
 
+	"goa.design/goa-ai/internal/mcpvalue"
+
+	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/expr"
 )
 
@@ -49,16 +53,18 @@ func (b *mcpExprBuilder) inputResultAttr(name string, builder func() *expr.Attri
 // this branch; clients echo the state without interpreting it.
 func (b *mcpExprBuilder) buildInputRequiredResultType() *expr.AttributeExpr {
 	form := &expr.AttributeExpr{Type: b.getOrCreateType("ElicitationFormParams", func() *expr.AttributeExpr {
-		return &expr.AttributeExpr{Type: &expr.Object{
-			{Name: "message", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "Non-sensitive information requested from the user"}},
-			{Name: "requestedSchema", Attribute: protocolJSONAttribute("The flat form schema generated from accepted answer content")},
-		}, Validation: &expr.ValidationExpr{Required: []string{"message", "requestedSchema"}}}
+		attribute := elicitationParamsWithExtensions(mcpvalue.FormParams())
+		attribute.UserExamples = []*expr.ExampleExpr{{Value: map[string]any{
+			"message": "Choose a label", "requestedSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+		}}}
+		return attribute
 	})}
 	url := &expr.AttributeExpr{Type: b.getOrCreateType("ElicitationURLParams", func() *expr.AttributeExpr {
-		return &expr.AttributeExpr{Type: &expr.Object{
-			{Name: "message", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "The external interaction the user is asked to approve"}},
-			{Name: "url", Attribute: &expr.AttributeExpr{Type: expr.String, Description: "Absolute URL opened by the consenting host", Validation: &expr.ValidationExpr{Format: expr.FormatURI}}},
-		}, Validation: &expr.ValidationExpr{Required: []string{"message", "url"}}}
+		attribute := elicitationParamsWithExtensions(mcpvalue.URLParams())
+		attribute.UserExamples = []*expr.ExampleExpr{{Value: map[string]any{
+			"message": "Approve the request", "url": "https://example.com/consent",
+		}}}
+		return attribute
 	})}
 	request := b.getOrCreateType("InputRequest", func() *expr.AttributeExpr {
 		return &expr.AttributeExpr{
@@ -138,4 +144,29 @@ func (b *mcpExprBuilder) buildInputMethodErrors() []*expr.ErrorExpr {
 		Name:          mcpMissingClientCapabilityError.name,
 		AttributeExpr: &expr.AttributeExpr{Type: failure, Description: mcpMissingClientCapabilityError.description},
 	})
+}
+
+// elicitationParamsWithExtensions adds the protocol's open members to its typed
+// form or URL fields. Internal input requests keep their separate saved map.
+func elicitationParamsWithExtensions(attribute *expr.AttributeExpr) *expr.AttributeExpr {
+	object := expr.AsObject(attribute.Type)
+	// Exact field matching keeps an extra member such as MESSAGE separate from
+	// message when the ordinary JSON decoder reads these protocol parameters.
+	for _, field := range *object {
+		tags := strings.Trim(codegen.AttributeTagsWithName(nil, "", field.Attribute), " `")
+		tag := reflect.StructTag(tags).Get("json")
+		if tag == "" {
+			tag = field.Name
+		}
+		if field.Attribute.Meta == nil {
+			field.Attribute.Meta = make(expr.MetaExpr)
+		}
+		field.Attribute.Meta["struct:tag:json"] = []string{tag + ",case:strict"}
+	}
+	*object = append(*object, &expr.NamedAttributeExpr{Name: "extensions", Attribute: &expr.AttributeExpr{
+		Type:        &expr.Map{KeyType: &expr.AttributeExpr{Type: expr.String}, ElemType: &expr.AttributeExpr{Type: expr.Bytes, Meta: expr.MetaExpr{"struct:field:type": {"json.RawMessage", "encoding/json"}}}},
+		Meta:        expr.MetaExpr{"struct:tag:json": {",embed"}, "openapi:generate": {"false"}},
+		Description: "Additional protocol members preserved as JSON values",
+	}})
+	return attribute
 }

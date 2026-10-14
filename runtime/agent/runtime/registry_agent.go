@@ -1,29 +1,31 @@
-// Package runtime executes registry Agent tools using preconfigured workers
-// and immutable application configurations. Application resolution runs in the
-// existing child preparation activity, whose recorded output is reused during
-// workflow replay.
+// Package runtime routes registry Agent calls to the selected provider worker.
+// That worker loads the exact saved configuration and prepares the child input.
+// Workflow replay reuses the recorded input without loading provider code on
+// the consumer or resolving a newer configuration.
 package runtime
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 
+	"goa.design/goa-ai/internal/registrycontract"
+	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent"
-	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type (
-	// AgentToolConfiguration contains the messages, labels, and policy prepared
-	// for one child call. The runtime publishes its messages before returning
-	// the compact child activity result to workflow history.
+	// AgentToolConfiguration contains history, labels and policy prepared by a
+	// provider for one accepted operation. Runtime publishes the history and
+	// exact control values before execution consumes them.
 	AgentToolConfiguration struct {
-		// Messages is the exact initial transcript supplied by the resolver.
-		Messages []*model.Message
-		// RenderedPrompts identifies the prompt versions used in Messages.
+		// Metadata retains provider-owned fixed facts used by the planner.
+		Metadata map[string]any
+		// History explicitly selects literal messages or one completed source run.
+		History AgentHistory
+		// RenderedPrompts identifies the prompt versions used in new messages.
 		RenderedPrompts []prompt.RenderEvent
 		// Labels supplies the child configuration's execution labels.
 		Labels map[string]string
@@ -31,32 +33,16 @@ type (
 		Policy *PolicyOverrides
 	}
 
-	// AgentToolResolver loads an immutable application configuration and prepares
-	// a child transcript from the validated tool call. The reference comes from
-	// the selected registry declaration, never from model-authored arguments.
-	AgentToolResolver func(context.Context, string, *ToolCall) (*AgentToolConfiguration, error)
+	// AgentToolResolver receives the saved original invocation and prepares
+	// history and planner metadata from the validated call. Name identifies the
+	// original provider operation; TranscriptName retains the consumer name. The
+	// reference comes from the selected registry declaration, never model input.
+	AgentToolResolver func(context.Context, genregistry.ExecutionInvocation, string, *ToolCall) (*AgentToolConfiguration, error)
 )
 
-// WithAgentExecutors authorizes preconfigured child workers for registry Agent
-// tools. It returns a new definition and does not read the registry or advertise
-// tools. Callers and workers must use the same composed definition.
-func (d AgentDefinition) WithAgentExecutors(executors ...*AgentDefinition) AgentDefinition {
-	d.agents = maps.Clone(d.agents)
-	for _, executor := range executors {
-		if executor == nil || !executor.valid() {
-			panic("runtime: Agent executor requires a complete definition")
-		}
-		if _, exists := d.agents[executor.route.ID]; exists {
-			panic(fmt.Sprintf("runtime: duplicate Agent executor %q", executor.route.ID))
-		}
-		d.agents[executor.route.ID] = *executor
-	}
-	d.agents[d.route.ID] = d
-	return d
-}
-
-// RegisterAgentToolResolver installs application configuration loading for one
-// preconfigured executor. Registration must finish before Seal or the first run.
+// RegisterAgentToolResolver installs configuration loading on the worker that
+// runs the Agent. Registration must finish before Seal or the first run; registry
+// consumers do not register this resolver.
 func (r *Runtime) RegisterAgentToolResolver(executor agent.Ident, resolver AgentToolResolver) error {
 	if executor == "" || resolver == nil {
 		return errors.New("runtime: Agent executor and configuration resolver are required")
@@ -78,16 +64,20 @@ func (r *Runtime) RegisterAgentToolResolver(executor agent.Ident, resolver Agent
 	return nil
 }
 
-// selectedAgentToolConfig chooses a static registration or the explicitly
-// allowed worker from the parent definition. Registry targets cannot select an
-// arbitrary workflow name or queue.
+// selectedAgentToolConfig uses the static child definition or the retained
+// registry route after checking the parent's declared registry access. Model
+// arguments cannot supply a worker route.
 func (r *Runtime) selectedAgentToolConfig(call ToolCall) (*AgentToolConfig, error) {
 	if call.Registry == nil {
 		return r.agentToolConfig(call.Name)
 	}
-	parent, ok := r.agentByID(call.AgentID)
+	executor, isAgent := call.Subject.Executor.AsAgent()
+	if !isAgent {
+		return nil, errors.New("child Agent tool requires an Agent parent subject")
+	}
+	parent, ok := r.agentByID(agent.Ident(executor))
 	if !ok {
-		return nil, fmt.Errorf("parent agent %q is not registered", call.AgentID)
+		return nil, fmt.Errorf("parent agent %q is not registered", executor)
 	}
 	child, err := childDefinitionForCall(call, parent.Definition)
 	if err != nil {
@@ -96,59 +86,78 @@ func (r *Runtime) selectedAgentToolConfig(call ToolCall) (*AgentToolConfig, erro
 	return &AgentToolConfig{Definition: child}, nil
 }
 
-// prepareRegistryAgentChild resolves the saved configuration only after source,
-// executor, payload, and required-label checks have accepted the call.
-func (r *Runtime) prepareRegistryAgentChild(ctx context.Context, call ToolCall) (*AgentToolConfiguration, error) {
-	cfg, err := r.selectedAgentToolConfig(call)
+// prepareRegistryAgentChild runs on the provider worker, validates the selected
+// operation input and renders the exact configuration named by its registration.
+func (r *Runtime) prepareRegistryAgentChild(ctx context.Context, origin genregistry.ExecutionInvocation, call ToolCall) (*AgentToolConfiguration, error) {
+	cfg, err := r.providerAgentToolConfig(call)
 	if err != nil {
 		return nil, err
 	}
-	resolved, err := r.resolveRegistryExecution(call.AgentID, call)
+	declaration, err := registryAgentDeclaration(call)
 	if err != nil {
 		return nil, err
 	}
-	spec := resolved.Specs[call.Name]
-	if _, err := spec.Payload.Codec.FromJSON(call.Payload); err != nil {
+	spec, err := providerOperationSpec(cfg.Definition, declaration)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := spec.ExecutionPayloadCodec.FromJSON(call.Payload); err != nil {
 		return nil, fmt.Errorf("agent tool %q payload: %w", call.Name, err)
 	}
+	// A published name selects the saved caller contract. The provider receives
+	// its original operation on this local copy, while the caller keeps its alias
+	// for catalog lookup, transcript entries, and child run identity.
+	if call.Name != spec.Name {
+		call.ModelName = call.TranscriptName()
+		call.Name = spec.Name
+	}
+	return r.resolveAgentConfiguration(ctx, origin, cfg.Definition, declaration.ConsumerContract.Agent.Configuration, &call)
+}
+
+// resolveAgentConfiguration loads the selected immutable configuration on its
+// provider, then returns owned messages, labels and policy for this operation.
+func (r *Runtime) resolveAgentConfiguration(ctx context.Context, origin genregistry.ExecutionInvocation, definition AgentDefinition, reference string, call *ToolCall) (*AgentToolConfiguration, error) {
 	r.mu.RLock()
-	resolver := r.agentToolResolvers[cfg.Definition.route.ID]
+	resolver := r.agentToolResolvers[definition.route.ID]
 	r.mu.RUnlock()
 	if resolver == nil {
-		return nil, fmt.Errorf("agent executor %q has no configuration resolver", cfg.Definition.route.ID)
+		return nil, fmt.Errorf("agent executor %q has no configuration resolver", definition.route.ID)
 	}
-	for _, declaration := range resolved.Registered.Toolset.Tools {
-		if declaration.Name != call.Name.String() {
-			continue
-		}
-		ownedCall := cloneToolCall(call)
-		config, err := resolver(ctx, declaration.ConsumerContract.Agent.Configuration, &ownedCall)
-		if err != nil {
-			return nil, err
-		}
-		if config == nil {
-			return nil, errors.New("agent configuration resolver returned nil")
-		}
-		owned := *config
-		owned.Messages, err = model.CloneMessages(config.Messages)
-		if err != nil {
-			return nil, err
-		}
-		owned.Labels = mergeLabels(cloneLabels(call.Labels), config.Labels)
-		owned.Policy = clonePolicyOverrides(config.Policy)
-		if call.TextOnly {
-			if owned.Policy == nil {
-				owned.Policy = &PolicyOverrides{}
-			}
-			owned.Policy.TextOnly = true
-		}
-		owned.RenderedPrompts = clonePromptRenderEvents(config.RenderedPrompts)
-		if err := validateRequiredLabels(cfg.Definition, owned.Labels); err != nil {
-			return nil, err
-		}
-		return &owned, nil
+	ownedCall := cloneToolCall(*call)
+	ownedOrigin := origin
+	if root, ok := origin.Invocation.AsRoot(); ok {
+		value := *root
+		ownedOrigin.Invocation = genregistry.NewExecutionInvocationKindRoot(&value)
+	} else if tool, ok := origin.Invocation.AsTool(); ok {
+		value := *tool
+		ownedOrigin.Invocation = genregistry.NewExecutionInvocationKindTool(&value)
 	}
-	return nil, fmt.Errorf("saved registry declaration contains no tool %q", call.Name)
+	config, err := resolver(ctx, ownedOrigin, reference, &ownedCall)
+	if err != nil {
+		return nil, err
+	}
+	if config == nil {
+		return nil, errors.New("agent configuration resolver returned nil")
+	}
+	owned := *config
+	owned.Metadata = cloneMetadata(config.Metadata)
+	owned.History, err = cloneAgentHistory(config.History)
+	if err != nil {
+		return nil, err
+	}
+	owned.Labels = mergeLabels(cloneLabels(call.Labels), config.Labels)
+	owned.Policy = clonePolicyOverrides(config.Policy)
+	if call.TextOnly {
+		if owned.Policy == nil {
+			owned.Policy = &PolicyOverrides{}
+		}
+		owned.Policy.TextOnly = true
+	}
+	owned.RenderedPrompts = clonePromptRenderEvents(config.RenderedPrompts)
+	if err := validateRequiredLabels(definition, owned.Labels); err != nil {
+		return nil, err
+	}
+	return &owned, nil
 }
 
 // selectedParentTool checks the saved parent contract independently of the
@@ -160,15 +169,24 @@ func selectedParentTool(name tools.Ident, binding *tools.RegistryBinding, execut
 		}
 		return nil, nil
 	}
-	spec, exists, err := lookupCallSpec(ToolCall{Name: name, Registry: binding}, lookup)
-	if err != nil {
-		return nil, err
+	if binding != nil {
+		resolved, err := registrycontract.Read(binding)
+		if err != nil {
+			return nil, err
+		}
+		declaration, err := resolved.Declaration(name)
+		if err != nil {
+			return nil, err
+		}
+		spec, err := compileAgentOperation(declaration, executor)
+		if err != nil {
+			return nil, err
+		}
+		return &spec, nil
 	}
+	spec, exists := lookup(name)
 	if !exists {
 		return nil, nil
-	}
-	if binding != nil && (!spec.IsAgentTool || spec.AgentID != string(executor)) {
-		return nil, fmt.Errorf("parent tool %q does not target Agent executor %q", name, executor)
 	}
 	return &spec, nil
 }

@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/internal/workflowcodec"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -33,7 +34,9 @@ func TestToolContentCrossesActivityChildAndSavedResultBoundaries(t *testing.T) {
 			spec := newAnyJSONSpec("remote.lookup")
 			rt := New(newTestStore())
 			seedTestToolSpecs(rt, spec)
-			call := ToolCall{Name: spec.Name, ToolCallID: "runtime-call", ModelToolCallID: "provider-call", RunID: "call-run", SessionID: "session-1", AgentID: "service.agent"}
+			call := ToolCall{Name: spec.Name, ToolCallID: "runtime-call", ModelToolCallID: "provider-call", RunID: "call-run", SessionID: "session-1", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+				RunExecutorBranchAgent("service.agent"))},
+			}
 			result := &planner.ToolResult{Name: call.Name, ToolCallID: call.ToolCallID, Result: map[string]any{"answer": "accepted"}, Blocks: richToolContentForTest()}
 			if failed {
 				result.Result = nil
@@ -56,8 +59,8 @@ func TestToolContentCrossesActivityChildAndSavedResultBoundaries(t *testing.T) {
 			event.Blocks[0].(*content.TextContent).Text = "child source changed"
 			assert.Equal(t, want, child.Blocks)
 			child.ToolCallID = call.ToolCallID
-			base := &workflowConversation{RunContext: run.Context{RunID: "result-run", SessionID: call.SessionID}}
-			record := materializedToolRecordForTest(t, rt, call.AgentID, base, call, child)
+			base := &workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{RunID: "result-run", SessionID: call.SessionID}}
+			record := materializedToolRecordForTest(t, rt, testSubjectAgent(t, call.Subject), base, call, child)
 			child.Blocks[0].(*content.TextContent).Text = "executor changed after acceptance"
 			part, err := toolResultRecordPart(record)
 			require.NoError(t, err)
@@ -79,7 +82,7 @@ func TestContentOnlyResultsKeepDeclaredDomainContract(t *testing.T) {
 	seedTestToolSpecs(rt, noResult, declared)
 	for _, spec := range []tools.ToolSpec{noResult, declared} {
 		t.Run(string(spec.Name), func(t *testing.T) {
-			call := ToolCall{Name: spec.Name, ToolCallID: "call-1"}
+			call := ToolCall{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("service.agent")}, Name: spec.Name, ToolCallID: "call-1"}
 			result := &planner.ToolResult{Name: call.Name, Blocks: richToolContentForTest()}
 			out, err := executeRichContentActivityForTest(t, rt, call, result)
 			require.NoError(t, err)
@@ -100,7 +103,7 @@ func TestToolContentRejectsInvalidBoundaryValues(t *testing.T) {
 	rt := New(newTestStore())
 	spec := newAnyJSONSpec("remote.lookup")
 	seedTestToolSpecs(rt, spec)
-	call := ToolCall{Name: spec.Name, ToolCallID: "call-1"}
+	call := ToolCall{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("service.agent")}, Name: spec.Name, ToolCallID: "call-1"}
 	invalid := content.Blocks{&content.ImageContent{Data: "not base64", MIMEType: "image/png"}}
 	_, err := rt.decodeAgentChildFinalToolResult(&call, &api.ToolEvent{Blocks: invalid, Result: rawjson.Message(`{}`)})
 	require.ErrorContains(t, err, "agent-tool final content")
@@ -137,9 +140,9 @@ func TestModelResultContentSurvivesSemanticOmission(t *testing.T) {
 	rt := New(newTestStore())
 	spec := newAnyJSONSpec("remote.lookup")
 	seedTestToolSpecs(rt, spec)
-	call := ToolCall{Name: spec.Name, ToolCallID: "call-1"}
+	call := ToolCall{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("service.agent")}, Name: spec.Name, ToolCallID: "call-1"}
 	result := &planner.ToolResult{Name: call.Name, ToolCallID: call.ToolCallID, Result: map[string]any{"blob": strings.Repeat("x", transcript.MaxToolResultContentBytes+1)}, Blocks: richToolContentForTest()}
-	record := materializedToolRecordForTest(t, rt, "service.agent", &workflowConversation{RunContext: run.Context{RunID: "run-1"}}, call, result)
+	record := materializedToolRecordForTest(t, rt, "service.agent", &workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{RunID: "run-1"}}, call, result)
 	part, err := toolResultRecordPart(record)
 	require.NoError(t, err)
 	assert.Equal(t, true, part.Content.(map[string]any)["omitted"])
@@ -176,8 +179,8 @@ func TestCheckpointRejectsContentDisagreementForAcceptedResult(t *testing.T) {
 	rt := New(newTestStore())
 	spec := newAnyJSONSpec("remote.lookup")
 	seedTestToolSpecs(rt, spec)
-	base := &workflowConversation{RunContext: run.Context{RunID: "run-1", SessionID: "session-1"}}
-	call := ToolCall{Name: spec.Name, ToolCallID: "call-1"}
+	base := &workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{RunID: "run-1", SessionID: "session-1"}}
+	call := ToolCall{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("service.agent")}, Name: spec.Name, ToolCallID: "call-1"}
 	result := &planner.ToolResult{Name: call.Name, ToolCallID: call.ToolCallID, Result: map[string]any{"value": "accepted"}, Blocks: richToolContentForTest()}
 	accepted := materializedToolRecordForTest(t, rt, "service.agent", base, call, result)
 	event, err := encodeToolEvent(result, accepted.call, rt.toolSpec)
@@ -194,14 +197,15 @@ func TestSavedToolContentReplaysInModelTranscript(t *testing.T) {
 	rt := New(newTestStore())
 	spec := newAnyJSONSpec("remote.lookup")
 	seedTestToolSpecs(rt, spec)
-	input := &RunInput{AgentID: "service.agent", RunID: "run-1", SessionID: "session-1", TurnID: "turn-1"}
+	input := &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+		RunExecutorBranchAgent("service.agent"))}, RunID: "run-1", SessionID: "session-1", TurnID: "turn-1"}
 	seedRunMeta(t, rt, input)
-	base := &workflowConversation{RunContext: run.Context{RunID: input.RunID, SessionID: input.SessionID}}
+	base := &workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{RunID: input.RunID, SessionID: input.SessionID}}
 	call := ToolCall{Name: spec.Name, ToolCallID: "runtime-call", ModelToolCallID: "provider-call", Payload: rawjson.Message(`{}`)}
-	require.NoError(t, rt.appendTranscriptMessages(t.Context(), input.AgentID, base, input.TurnID, []*model.Message{{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.ToolUsePart{ID: call.ModelToolCallID, Name: string(call.Name), Input: call.Payload}}}}))
+	require.NoError(t, rt.appendTranscriptMessages(t.Context(), testSubjectAgent(t, input.Subject), base, input.TurnID, []*model.Message{{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.ToolUsePart{ID: call.ModelToolCallID, Name: string(call.Name), Input: call.Payload}}}}))
 	result := &planner.ToolResult{Name: call.Name, ToolCallID: call.ToolCallID, Result: map[string]any{"value": "accepted"}, Blocks: richToolContentForTest()}
-	accepted := materializedToolRecordForTest(t, rt, input.AgentID, base, call, result)
-	require.NoError(t, rt.appendUserToolRecordResults(t.Context(), input.AgentID, base, []stepToolRecord{accepted}, input.TurnID))
+	accepted := materializedToolRecordForTest(t, rt, testSubjectAgent(t, input.Subject), base, call, result)
+	require.NoError(t, rt.appendUserToolRecordResults(t.Context(), testSubjectAgent(t, input.Subject), base, []stepToolRecord{accepted}, input.TurnID))
 	messages, err := transcript.BuildMessagesFromRunLog(t.Context(), rt.Store, input.RunID)
 	require.NoError(t, err)
 	require.Len(t, messages, 2)
@@ -236,5 +240,5 @@ func executeRichContentActivityForTest(t *testing.T, rt *Runtime, call ToolCall,
 	binding := rt.toolsets["remote"]
 	binding.Execute = func(context.Context, *ToolCall) (*ToolExecutionResult, error) { return Executed(result), nil }
 	rt.toolsets["remote"] = binding
-	return rt.ExecuteToolActivity(t.Context(), &ToolInput{ToolsetName: "remote", ToolName: call.Name, ToolCallID: call.ToolCallID, RunID: call.RunID, AgentID: call.AgentID, SessionID: call.SessionID, Payload: rawjson.Message(`{}`)})
+	return rt.ExecuteToolActivity(t.Context(), &ToolInput{ToolsetName: "remote", ToolName: call.Name, ToolCallID: call.ToolCallID, RunID: call.RunID, Subject: call.Subject, SessionID: call.SessionID, Payload: rawjson.Message(`{}`)})
 }

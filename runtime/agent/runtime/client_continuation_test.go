@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -55,7 +56,8 @@ func TestPrepareContinuationRejectsIdentityMismatchBeforeWorkflowStart(t *testin
 			)
 			now := time.Now().UTC()
 			admitRunForTest(t, sessions, session.RunMeta{
-				AgentID: "svc.agent", RunID: "run-1", SessionID: "session-1",
+				Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("svc.agent"))}, RunID: "run-1", SessionID: "session-1",
 				Status: session.RunStatusRunning, StartedAt: now, UpdatedAt: now,
 			})
 			data, err := json.Marshal(suspension)
@@ -107,7 +109,8 @@ func TestPrepareContinuationRejectsWrongPendingResponseBeforeWorkflowStart(t *te
 	suspension := suspensionContractFixtureWithContext(t, spec.Name, "svc.agent", "run-1", nil, nil)
 	now := time.Now().UTC()
 	admitRunForTest(t, sessions, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run-1", SessionID: "session-1",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))}, RunID: "run-1", SessionID: "session-1",
 		Status: session.RunStatusRunning, StartedAt: now, UpdatedAt: now,
 	})
 	data, err := json.Marshal(suspension)
@@ -168,7 +171,8 @@ func TestPreparedRunOwnsExactContinuationStartInput(t *testing.T) {
 	suspension := externalResultsSuspensionFixture(t, spec.Name)
 	now := time.Now().UTC()
 	admitRunForTest(t, sessions, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run-1", SessionID: "session-1",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))}, RunID: "run-1", SessionID: "session-1",
 		Status: session.RunStatusRunning, StartedAt: now, UpdatedAt: now,
 	})
 	data, err := json.Marshal(suspension)
@@ -266,7 +270,8 @@ func TestPrepareContinuationRejectsInvalidProvidedResultBeforeEngineStart(t *tes
 	suspension := externalResultsSuspensionFixture(t, spec.Name)
 	now := time.Now().UTC()
 	admitRunForTest(t, sessions, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run-1", SessionID: "session-1",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))}, RunID: "run-1", SessionID: "session-1",
 		Status: session.RunStatusRunning, StartedAt: now, UpdatedAt: now,
 	})
 	data, err := json.Marshal(suspension)
@@ -322,7 +327,8 @@ func TestPrepareContinuationValidatesGrandchildDefinitionBeforeEngineStart(t *te
 	require.NoError(t, err)
 	now := time.Now().UTC()
 	admitRunForTest(t, sessions, session.RunMeta{
-		AgentID: "root.agent", RunID: "root-run", SessionID: "session-1",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("root.agent"))}, RunID: "root-run", SessionID: "session-1",
 		Status: session.RunStatusRunning, StartedAt: now, UpdatedAt: now,
 	})
 	data, err := json.Marshal(rootSuspension)
@@ -395,7 +401,8 @@ func TestPrepareContinuationRejectsDuplicateSavedChildCallBeforeEngineStart(t *t
 	require.NoError(t, err)
 	now := time.Now().UTC()
 	admitRunForTest(t, sessions, session.RunMeta{
-		AgentID: "parent.agent", RunID: "parent-run", SessionID: "session-1",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("parent.agent"))}, RunID: "parent-run", SessionID: "session-1",
 		Status: session.RunStatusRunning, StartedAt: now, UpdatedAt: now,
 	})
 	data, err := json.Marshal(parentSuspension)
@@ -433,10 +440,12 @@ func TestPrepareContinuationRejectsDuplicateModelToolCallIDBeforeEngineStart(t *
 		calls := []ToolCall{
 			{
 				Name: spec.Name, ToolCallID: "call-1", ModelToolCallID: "model-call",
+				Subject: checkpoint.Batch.Calls[0].Subject,
 				Payload: rawjson.Message(`{"query":"first"}`),
 			},
 			{
 				Name: spec.Name, ToolCallID: "call-2", ModelToolCallID: "model-call",
+				Subject: checkpoint.Batch.Calls[0].Subject,
 				Payload: rawjson.Message(`{"query":"second"}`),
 			},
 		}
@@ -447,7 +456,8 @@ func TestPrepareContinuationRejectsDuplicateModelToolCallIDBeforeEngineStart(t *
 	require.NoError(t, err)
 	now := time.Now().UTC()
 	admitRunForTest(t, sessions, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run-1", SessionID: "session-1",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))}, RunID: "run-1", SessionID: "session-1",
 		Status: session.RunStatusRunning, StartedAt: now, UpdatedAt: now,
 	})
 	data, err := json.Marshal(suspension)
@@ -513,12 +523,13 @@ func nestedChildSuspensionFixture(
 	rewriteSuspensionCheckpointAndPublic(t, suspension, func(checkpoint *workflowCheckpoint) {
 		call := ToolCall{
 			Name: tool.Name, ToolCallID: "child-call", ModelToolCallID: "model-child-call",
-			AgentID: agent.Ident(agentID), RunID: runID, SessionID: "session-1",
+			Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+				RunExecutorBranchAgent(agent.Ident(agentID)))}, RunID: runID, SessionID: "session-1",
 			Payload: rawjson.Message(`{}`), ModelPayload: rawjson.Message(`{}`),
 		}
 		rewriteSuspensionCheckpoint(t, child, func(childCheckpoint *workflowCheckpoint) {
 			childCheckpoint.Context.ParentRunID = runID
-			childCheckpoint.Context.ParentAgentID = call.AgentID
+			childCheckpoint.Context.ParentAgentID = testSubjectAgent(t, call.Subject)
 			childCheckpoint.Context.ParentToolCallID = call.ToolCallID
 			childCheckpoint.Context.Tool = call.Name
 			childCheckpoint.Context.ToolArgs = call.Payload

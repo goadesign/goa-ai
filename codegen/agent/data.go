@@ -732,9 +732,9 @@ type (
 		// SourceTool is the canonical query tool whose result set this dedicated
 		// continuation advances. It is empty on initial query tools.
 		SourceTool string
-		// ReplayPayload reports whether continuation execution starts from the
-		// source tool's most recent canonical payload before replacing its cursor.
-		ReplayPayload bool
+		// RetainedFields lists execution JSON fields copied from the exact prior
+		// call before the runtime adds the next cursor.
+		RetainedFields []string
 		// CursorField is the model-facing JSON payload field name.
 		CursorField string
 		// NextCursorField is the model-facing JSON result field name.

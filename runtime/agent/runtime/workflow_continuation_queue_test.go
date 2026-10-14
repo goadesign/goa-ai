@@ -10,7 +10,9 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
+	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -20,9 +22,9 @@ import (
 
 func TestContinuationConsumesOneOrderedPendingInputPerWorkflow(t *testing.T) {
 	runtime := New(newTestStore(), WithLogger(telemetry.NoopLogger{}))
-	registration := AgentRegistration{ResumeActivityName: "resume", ExecuteToolActivity: "execute"}
+	registration := AgentRegistration{Definition: testRegistrationDefinition("agent-1", engine.WorkflowDefinition{}, nil), ResumeActivityName: "resume", ExecuteToolActivity: "execute"}
 	firstInput := &RunInput{
-		AgentID: "agent-1", RunID: "run-1", SessionID: "session-1", TurnID: "turn-1",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent-1"))}, RunID: "run-1", SessionID: "session-1", TurnID: "turn-1",
 	}
 	seedRunMeta(t, runtime, firstInput)
 	firstContext := &testWorkflowContext{ctx: t.Context(), runtime: runtime}
@@ -30,8 +32,8 @@ func TestContinuationConsumesOneOrderedPendingInputPerWorkflow(t *testing.T) {
 		firstContext,
 		registration,
 		firstInput,
-		&workflowConversation{HistoryEndID: seedTestPlanInput(t, runtime, PlanActivityInput{
-			AgentID: firstInput.AgentID, RunID: firstInput.RunID,
+		&workflowConversation{finalization: &workflowFinalizationState{}, HistoryEndID: seedTestPlanInput(t, runtime, PlanActivityInput{
+			AgentID: testSubjectAgent(t, firstInput.Subject), RunID: firstInput.RunID,
 			RunContext: run.Context{RunID: firstInput.RunID, SessionID: firstInput.SessionID},
 		}, nil).HistoryEndID, RunContext: run.Context{
 			RunID: "run-1", SessionID: "session-1", TurnID: "turn-1", Attempt: 1,
@@ -56,7 +58,7 @@ func TestContinuationConsumesOneOrderedPendingInputPerWorkflow(t *testing.T) {
 	firstCheckpoint, err := decodeWorkflowCheckpoint(first.Suspension, testRuntimeDefinition(runtime, "svc.agent"))
 	require.NoError(t, err)
 	secondInput := &RunInput{
-		AgentID: "agent-1", RunID: "run-2", SessionID: "session-1", TurnID: "turn-2",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent-1"))}, RunID: "run-2", SessionID: "session-1", TurnID: "turn-2",
 		Continuation: &api.RunContinuationInput{
 			Suspension: first.Suspension,
 			Response: &api.PendingInputResponse{Clarification: &api.ClarificationAnswer{
@@ -82,7 +84,7 @@ func TestContinuationConsumesOneOrderedPendingInputPerWorkflow(t *testing.T) {
 	secondCheckpoint, err := decodeWorkflowCheckpoint(second.Suspension, testRuntimeDefinition(runtime, "svc.agent"))
 	require.NoError(t, err)
 	thirdInput := &RunInput{
-		AgentID: "agent-1", RunID: "run-3", SessionID: "session-1", TurnID: "turn-3",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent-1"))}, RunID: "run-3", SessionID: "session-1", TurnID: "turn-3",
 		Continuation: &api.RunContinuationInput{
 			Suspension: second.Suspension,
 			Response: &api.PendingInputResponse{Clarification: &api.ClarificationAnswer{

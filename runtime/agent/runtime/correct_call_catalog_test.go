@@ -266,7 +266,7 @@ func TestCorrectCallRecoveryRetainsCurrentAndSavedTool(t *testing.T) {
 			}
 		},
 	)
-	h.runtime.agentToolSpecs[h.input.AgentID] = []tools.ToolSpec{current}
+	h.runtime.agentToolSpecs[testSubjectAgent(t, h.input.Subject)] = []tools.ToolSpec{current}
 
 	out, err := h.run(&PlanResult{ToolCalls: []ToolCall{{
 		Name:       retired.Name,

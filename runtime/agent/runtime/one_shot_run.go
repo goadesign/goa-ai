@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	genregistry "goa.design/goa-ai/registry/gen/registry"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -59,7 +61,7 @@ type (
 // - RunOneShot stores run metadata but never creates, loads, or updates a session.
 // - RunOneShot never emits session stream events.
 // - Hook append failures are terminal.
-func (r *Runtime) RunOneShot(ctx context.Context, input OneShotRunInput, execute func(context.Context) error) error {
+func (r *SynchronousRuntime) RunOneShot(ctx context.Context, input OneShotRunInput, execute func(context.Context) error) error {
 	if execute == nil {
 		return errors.New("one-shot executor is required")
 	}
@@ -79,10 +81,11 @@ func (r *Runtime) RunOneShot(ctx context.Context, input OneShotRunInput, execute
 		Attempt:   1,
 		Labels:    cloneLabels(input.Labels),
 	}
+	subject := genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(input.AgentID))}
 	storageCtx := context.WithoutCancel(ctx)
 	startResult, err := r.recordOneShotEvent(storageCtx, hooks.NewRunStartedEvent(
 		input.RunID,
-		input.AgentID,
+		subject,
 		"",
 		"",
 		"",
@@ -112,10 +115,7 @@ func (r *Runtime) RunOneShot(ctx context.Context, input OneShotRunInput, execute
 	}
 	status := terminalRunStatusForError(execErr)
 	phase := terminalRunPhaseForStatus(status)
-	completed, err := r.buildRunCompletedEvent(storageCtx, input.RunID, input.AgentID, "", status, phase, runCtx.Labels, execErr)
-	if err != nil {
-		return errors.Join(execErr, fmt.Errorf("build one-shot terminal record: %w", err))
-	}
+	completed := hooks.NewRunCompletedEvent(input.RunID, subject, "", status, phase, nil, execErr, nil)
 	if _, err := r.recordOneShotEvent(storageCtx, completed, input.TurnID); err != nil {
 		return errors.Join(execErr, fmt.Errorf("record one-shot terminal result: %w", err))
 	}
@@ -125,7 +125,7 @@ func (r *Runtime) RunOneShot(ctx context.Context, input OneShotRunInput, execute
 // recordOneShotEvent prepares one immutable record and retries temporary store
 // failures without running the caller's work again. Permanent state conflicts
 // return immediately. The caller receives the accepted activity result.
-func (r *Runtime) recordOneShotEvent(ctx context.Context, event hooks.Event, turnID string) (*api.StorageActivityResult, error) {
+func (r *SynchronousRuntime) recordOneShotEvent(ctx context.Context, event hooks.Event, turnID string) (*api.StorageActivityResult, error) {
 	record, err := prepareHookRecordInput(ctx, event, turnID)
 	if err != nil {
 		return nil, err
@@ -136,7 +136,8 @@ func (r *Runtime) recordOneShotEvent(ctx context.Context, event hooks.Event, tur
 		// Callback runs have no initial messages. Publish that explicit empty
 		// history before accepting the run, just as prepared workflows do.
 		writer, err := stageLiteralHistory(ctx, synchronousSeedWriter{r: r}, storage.SeedDeclaration{
-			AgentID: event.AgentID(), RunID: event.RunID(), CommandID: event.RunID(), AttemptID: event.RunID(), Kind: storage.SeedLiteral,
+			Origin:  genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: event.RunID()})},
+			Subject: event.Subject(), RunID: event.RunID(), CommandID: event.RunID(), AttemptID: event.RunID(), Kind: storage.SeedLiteral,
 		}, nil)
 		if err != nil {
 			return nil, err

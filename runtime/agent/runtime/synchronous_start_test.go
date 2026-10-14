@@ -13,6 +13,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	genregistry "goa.design/goa-ai/registry/gen/registry"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
@@ -21,7 +23,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/storage"
 )
 
-func TestSynchronousStartActivityContract(t *testing.T) {
+func TestSynchronousStartCommandContract(t *testing.T) {
 	f := newClosedStartFixture(t, storageCommandOneShotStart, session.RunStatusCompleted, true)
 	command := &api.StorageActivityCommand{SynchronousStart: &api.SynchronousRunStartCommand{
 		SeedEndID: f.input.SeedEndID, Started: f.command.OneShotStart.Started,
@@ -32,7 +34,7 @@ func TestSynchronousStartActivityContract(t *testing.T) {
 	assert.NotContains(t, string(encoded.Data), `"RequestDigest"`)
 	var decoded api.StorageActivityCommand
 	require.NoError(t, codec.FromPayload(encoded, &decoded))
-	result, err := f.runtime.executeStorageCommand(t.Context(), &decoded)
+	result, err := newTestSynchronous(t, f.store, f.runtime.Bus).executeStorageCommand(t.Context(), &decoded)
 	require.NoError(t, err)
 	require.NotNil(t, result.SynchronousStart)
 	assert.Equal(t, session.RunStatusCompleted, result.SynchronousStart.RunStatus)
@@ -63,14 +65,15 @@ func TestSynchronousStartActivityContract(t *testing.T) {
 
 func TestRunOneShotRejectsAnotherPreparedCommand(t *testing.T) {
 	store := newTestStore()
-	runtime := newFromOptions(store, Options{Hooks: hooks.NewBus()})
-	event := hooks.NewRunStartedEvent("run", "svc.agent", "", "", "", nil)
+	runtime := newTestSynchronous(t, store, hooks.NewBus())
+	event := hooks.NewRunStartedEvent("run", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, "", "", "", nil)
 	record, err := hooks.EncodeToRecordInput(event, hooks.EncodeOptions{
 		TurnID: "run", EventKey: "run-started", TimestampMS: time.Unix(1, 0).UnixMilli(),
 	})
 	require.NoError(t, err)
 	writer, err := stageLiteralHistory(t.Context(), store, storage.SeedDeclaration{
-		AgentID: "svc.agent", RunID: "run", CommandID: "run", AttemptID: "run", Kind: storage.SeedLiteral,
+		Origin:  genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: "run"})},
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, RunID: "run", CommandID: "run", AttemptID: "run", Kind: storage.SeedLiteral,
 	}, nil)
 	require.NoError(t, err)
 	command := &api.StorageActivityCommand{SynchronousStart: &api.SynchronousRunStartCommand{

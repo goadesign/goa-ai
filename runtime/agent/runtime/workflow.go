@@ -14,6 +14,9 @@ import (
 	"fmt"
 	"time"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
+	"goa.design/goa-ai/runtime/agent"
+
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/engine/contract"
@@ -47,109 +50,47 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	if err := validateWorkflowRunInput(input); err != nil {
 		return nil, err
 	}
-	if input.SeedEndID == "" {
-		return nil, errors.New("published initial history is required")
+	if err := wfCtx.RequireSingleAttempt(); err != nil {
+		return nil, err
 	}
+
+	executor, _ := input.Subject.Executor.AsAgent()
+	agentID := agent.Ident(executor)
 	if r.logger != nil {
-		r.logger.Info(wfCtx.Context(), "ExecuteWorkflow called", "agent_id", input.AgentID, "run_id", input.RunID)
-	}
-	if input.AgentID == "" {
-		return nil, errors.New("agent id is required")
+		r.logger.Info(wfCtx.Context(), "ExecuteWorkflow called", "agent_id", agentID, "run_id", input.RunID)
 	}
 	defer func() {
 		if r.reminders != nil {
 			r.reminders.ClearRun(input.RunID)
 		}
 	}()
-	reg, ok := r.agentByID(input.AgentID)
-	if !ok {
-		return nil, fmt.Errorf("agent %q is not registered", input.AgentID)
-	}
 	requestDigest, err := wfCtx.StartRequestDigest()
 	if err != nil {
 		return nil, fmt.Errorf("accepted workflow request: %w", err)
 	}
-	var checkpoint *workflowCheckpoint
-	if input.Continuation != nil {
-		var err error
-		checkpoint, err = prepareContinuation(input, reg.Definition)
-		if err != nil {
-			return nil, err
-		}
-		if err := restoreContinuationRunInput(input, checkpoint); err != nil {
-			return nil, err
-		}
+	// Capture the original invocation source before preparation or continuation
+	// restoration changes the working input used by the execution loop.
+	earlyTerminal := &api.UnstartedTerminalCommand{
+		RunID: input.RunID, Subject: input.Subject, SessionID: input.SessionID,
+		RequestDigest: requestDigest[:],
 	}
-	if err := r.validateCompletionToolPolicy(reg, input.Policy); err != nil {
-		return nil, err
-	}
-	if input.Policy != nil {
-		if err := r.validateLimitTerminalPlans(reg, input.Policy.LimitTerminalPlans); err != nil {
-			return nil, err
-		}
-	}
-	r.logger.Info(wfCtx.Context(), "Agent found, executing plan activity", "agent_id", input.AgentID)
-	// Policy decisions merge additional labels into input.Labels in place during
-	// the run loop; the terminal RunCompleted event must carry the run-scoped
-	// labels as provided at start, so capture them before the loop runs.
-	textOnly := input.Policy != nil && input.Policy.TextOnly
-	input.Labels = cloneLabels(input.Labels)
-	if textOnly && input.Labels == nil {
-		input.Labels = make(map[string]string)
-	}
-	if textOnly {
-		input.Labels["runtime.text_only"] = "true"
+	if input.SeedEndID != "" {
+		earlyTerminal.PublishedSeed = &api.SeedPositionResult{EndID: input.SeedEndID}
 	} else {
-		delete(input.Labels, "runtime.text_only")
+		if err := validateDirectOperationInput(input); err != nil {
+			return nil, err
+		}
+		if input.Policy != nil || input.Continuation != nil {
+			return nil, errors.New("fresh operation cannot supply prepared policy or continuation")
+		}
+		earlyTerminal.Root = &struct{}{}
 	}
-	startLabels := cloneLabels(input.Labels)
-	predecessorRunID := ""
-	if checkpoint != nil {
-		predecessorRunID = checkpoint.PreviousRunID
-	}
-	runCtx := run.Context{
-		TextOnly:         textOnly,
-		RunID:            input.RunID,
-		SessionID:        input.SessionID,
-		TurnID:           input.TurnID,
-		ParentToolCallID: input.ParentToolCallID,
-		ParentRunID:      input.ParentRunID,
-		ParentAgentID:    input.ParentAgentID,
-		Tool:             input.Tool,
-		ToolArgs:         input.ToolArgs,
-		ToolRegistry:     input.ToolRegistry.Clone(),
-		Attempt:          1,
-		Labels:           input.Labels,
-		Metadata:         input.Metadata,
-	}
-	// The accepted workflow owns session-run creation. A child first records its
-	// parent link from child history; a root uses its start event for the same
-	// atomic active-versus-ended decision.
-	turnID := input.TurnID
-	startEvents := make([]hooks.Event, 0, 2)
-	if input.ParentRunID != "" {
-		startEvents = append(startEvents, hooks.NewChildRunLinkedEvent(
-			input.ParentRunID,
-			input.ParentAgentID,
-			input.SessionID,
-			input.Tool,
-			input.ParentToolCallID,
-			input.RunID,
-			input.AgentID,
-		))
-	}
-	startEvents = append(startEvents, hooks.NewRunStartedEvent(
-		input.RunID,
-		input.AgentID,
-		input.SessionID,
-		input.ParentRunID,
-		predecessorRunID,
-		startLabels,
-	))
-	startRecords, err := prepareRunStartRecords(wfCtx.Context(), startEvents, turnID)
-	if err != nil {
-		return nil, err
-	}
+	var checkpoint *workflowCheckpoint
+	var (
+		startCommand *api.StorageActivityCommand
+		startLabels  map[string]string
+		turnID       string
+	)
 	finalStatus := runStatusSuccess
 	finalization := &workflowFinalizationState{}
 	var (
@@ -173,6 +114,12 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 			output = nil
 		}
 		if !recordTerminalResult {
+			if workflowErr == nil || errors.Is(workflowErr, engine.ErrWorkflowCompleted) {
+				return
+			}
+			if err := r.persistUnstartedExecution(wfCtx, earlyTerminal, workflowErr, cleanupRequest.Reason); err != nil {
+				workflowErr = errors.Join(workflowErr, fmt.Errorf("store early terminal outcome: %w", err))
+			}
 			return
 		}
 		// Validate the exact engine result before recording success or suspension.
@@ -180,6 +127,11 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		// update; it is not an atomic commit between the Store and the engine.
 		if workflowErr == nil {
 			output, workflowErr = contract.CopyRunOutput(output)
+		}
+		// Direct declarations and saved registered selections require typed results.
+		// Static child tools may return final text for the parent adapter to consume.
+		if workflowErr == nil && output.Suspension == nil && (input.Operation != nil || input.ToolRegistry != nil) && output.FinalToolResult == nil {
+			workflowErr = errors.New("selected operation completed without its result")
 		}
 		// Suspension and cancellation both end the run. Store exactly one after
 		// cancellation admission closes so neither outcome can overtake the other.
@@ -215,37 +167,29 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		// race conditions in frontends that close streams on the first
 		// terminal event.
 		termCtx := wfCtx.Detached().Context()
-		phase := terminalRunPhaseForStatus(finalStatus)
-		completed, buildErr := r.buildRunCompletedEvent(
-			termCtx,
-			input.RunID,
-			input.AgentID,
-			input.SessionID,
-			finalStatus,
-			phase,
-			startLabels,
-			finalErr,
-		)
+		command, buildErr := buildRunTerminalCommand(input, turnID, finalStatus, finalErr, finalization.operationResult, recordDispatchMetadataForContext(termCtx))
 		if buildErr != nil {
 			workflowErr = errors.Join(workflowErr, fmt.Errorf("build terminal run record: %w", buildErr))
 			return
 		}
-		if err := r.publishHookWithOptions(
-			termCtx,
-			completed,
-			turnID,
-			engine.ActivityOptions{
-				RetryPolicy: engine.RetryPolicy{UnlimitedAttempts: true},
-			},
-		); err != nil {
+		if _, err := r.executeStorage(termCtx, &api.StorageActivityCommand{Terminal: command}, engine.ActivityOptions{RetryPolicy: engine.RetryPolicy{UnlimitedAttempts: true}}); err != nil {
 			workflowErr = errors.Join(workflowErr, fmt.Errorf("record terminal run result: %w", err))
 		}
 	}()
-	startCommand, err := runStartStorageCommand(input, requestDigest, startRecords)
-	if err != nil {
-		return nil, err
+	reg, ok := r.agentByID(agentID)
+	if !ok {
+		return nil, fmt.Errorf("agent %q is not registered", agentID)
 	}
-	if err := wfCtx.SetCancellationHandler(func(cancelCtx engine.WorkflowContext, request engine.CancellationRequest) error {
+	if input.Continuation != nil {
+		checkpoint, err = prepareContinuation(input, reg.Definition)
+		if err != nil {
+			return nil, err
+		}
+		if err := restoreContinuationRunInput(input, checkpoint); err != nil {
+			return nil, err
+		}
+	}
+	cancellationHandler := func(cancelCtx engine.WorkflowContext, request engine.CancellationRequest) error {
 		if request.RunID != input.RunID {
 			owned, err := workflowOwnsCancellation(checkpoint, executionLoop, reg.Definition, request.RunID)
 			if err != nil {
@@ -255,13 +199,132 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 				return engine.ErrCancellationRunNotOwned
 			}
 		}
+		// Before preparation publishes history, the engine update owns the reason.
+		// No session run exists yet; accepting the update stops the provider activity.
+		if startCommand == nil {
+			if err := finalization.beginCancellation(); err != nil {
+				return err
+			}
+			cleanupRequest = request
+			finalization.finishCancellation(true)
+			return nil
+		}
 		if err := r.handleWorkflowCancellation(finalization, cancelCtx, input, startCommand, request); err != nil {
 			return err
 		}
 		cleanupRequest = request
 		return nil
-	}); err != nil {
-		return nil, fmt.Errorf("register cancellation handler: %w", err)
+	}
+	prepareOperation := earlyTerminal.Root != nil
+	if prepareOperation {
+		if err := wfCtx.SetCancellationHandler(cancellationHandler); err != nil {
+			return nil, fmt.Errorf("register cancellation handler: %w", err)
+		}
+		if input.SeedEndID != "" || input.Policy != nil {
+			return nil, errors.New("direct operation cannot supply prepared history or provider policy")
+		}
+		prepared, stopped, err := r.prepareAgentOperation(wfCtx, input)
+		if err != nil {
+			return nil, err
+		}
+		if stopped != nil {
+			cleanupRequest = *stopped
+			return nil, context.Canceled
+		}
+		input = prepared
+		if err := wfCtx.Context().Err(); err != nil {
+			return nil, err
+		}
+		if err := validateWorkflowRunInput(input); err != nil {
+			return nil, err
+		}
+	}
+	if input.SeedEndID == "" {
+		return nil, errors.New("published initial history is required")
+	}
+	if err := validateRequiredLabels(reg.Definition, input.Labels); err != nil {
+		return nil, err
+	}
+	if err := r.validateCompletionToolPolicy(reg, input.Policy); err != nil {
+		return nil, err
+	}
+	if input.Policy != nil {
+		if err := r.validateLimitTerminalPlans(reg, input.Policy.LimitTerminalPlans); err != nil {
+			return nil, err
+		}
+	}
+	r.logger.Info(wfCtx.Context(), "Agent found, executing plan activity", "agent_id", agentID)
+	// Policy decisions merge additional labels into input.Labels in place during
+	// the run loop; the terminal RunCompleted event must carry the run-scoped
+	// labels as provided at start, so capture them before the loop runs.
+	textOnly := input.Policy != nil && input.Policy.TextOnly
+	input.Labels = cloneLabels(input.Labels)
+	if textOnly && input.Labels == nil {
+		input.Labels = make(map[string]string)
+	}
+	if textOnly {
+		input.Labels["runtime.text_only"] = "true"
+	} else {
+		delete(input.Labels, "runtime.text_only")
+	}
+	startLabels = cloneLabels(input.Labels)
+	predecessorRunID := ""
+	if checkpoint != nil {
+		predecessorRunID = checkpoint.PreviousRunID
+	}
+	runCtx := run.Context{
+		TextOnly:             textOnly,
+		RunID:                input.RunID,
+		SessionID:            input.SessionID,
+		TurnID:               input.TurnID,
+		ParentToolCallID:     input.ParentToolCallID,
+		ParentRunID:          input.ParentRunID,
+		ParentAgentID:        input.ParentAgentID,
+		Tool:                 input.Tool,
+		ToolArgs:             input.ToolArgs,
+		ToolRegistry:         input.ToolRegistry.Clone(),
+		Operation:            input.Operation,
+		RegisteredInvocation: input.RegisteredInvocation,
+		Attempt:              1,
+		Labels:               input.Labels,
+		Metadata:             input.Metadata,
+	}
+	// The accepted workflow owns session-run creation. A child first records its
+	// parent link from child history; a root uses its start event for the same
+	// atomic active-versus-ended decision.
+	turnID = input.TurnID
+	startEvents := make([]hooks.Event, 0, 2)
+	if input.ParentRunID != "" {
+		startEvents = append(startEvents, hooks.NewChildRunLinkedEvent(
+			input.ParentRunID,
+			genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(input.ParentAgentID))},
+			input.SessionID,
+			input.Tool,
+			input.ParentToolCallID,
+			input.RunID,
+			agentID,
+		))
+	}
+	startEvents = append(startEvents, hooks.NewRunStartedEvent(
+		input.RunID,
+		input.Subject,
+		input.SessionID,
+		input.ParentRunID,
+		predecessorRunID,
+		startLabels,
+	))
+	startRecords, err := prepareRunStartRecords(wfCtx.Context(), startEvents, turnID)
+	if err != nil {
+		return nil, err
+	}
+	startCommand, err = runStartStorageCommand(input, requestDigest, startRecords)
+	if err != nil {
+		return nil, err
+	}
+	if !prepareOperation {
+		if err := wfCtx.SetCancellationHandler(cancellationHandler); err != nil {
+			return nil, fmt.Errorf("register cancellation handler: %w", err)
+		}
 	}
 	startOutput, err := r.executeStorageWithRetry(wfCtx.Detached().Context(), startCommand)
 	if err != nil {
@@ -301,11 +364,14 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	}
 	if startResult.Outcome == session.RunStartStop || checkpoint != nil && input.Continuation.Cancellation != nil {
 		cancellationRecorded = startResult.Outcome == session.RunStartStop
+		if cancellationRecorded {
+			cleanupRequest.Reason = startResult.CancellationReason
+		}
 		if checkpoint == nil {
 			return nil, context.Canceled
 		}
 		if cancellationRecorded {
-			cleanupRequest.Reason = run.CancellationReasonSessionEnded
+			cleanupRequest.Reason = startResult.CancellationReason
 		} else {
 			cleanupRequest = *input.Continuation.Cancellation
 			reason := cleanupRequest.Reason
@@ -325,7 +391,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	promptEvents := make([]hooks.Event, 0, len(startResult.RenderedPrompts))
 	for _, rendered := range startResult.RenderedPrompts {
 		promptEvents = append(promptEvents, hooks.NewPromptRenderedEvent(
-			input.RunID, input.AgentID, input.SessionID,
+			input.RunID, agentID, input.SessionID,
 			rendered.PromptID, rendered.Version, rendered.Scope,
 		))
 	}
@@ -341,7 +407,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	// Initial phase: input has been received and planning is about to begin.
 	if err := r.publishHook(
 		wfCtx.Context(),
-		hooks.NewRunPhaseChangedEvent(input.RunID, input.AgentID, input.SessionID, run.PhasePrompted),
+		hooks.NewRunPhaseChangedEvent(input.RunID, input.Subject, input.SessionID, run.PhasePrompted),
 		turnID,
 	); err != nil {
 		return nil, err
@@ -349,7 +415,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	if checkpoint != nil {
 		if err := r.publishHook(
 			wfCtx.Context(),
-			hooks.NewRunPhaseChangedEvent(input.RunID, input.AgentID, input.SessionID, run.PhaseExecutingTools),
+			hooks.NewRunPhaseChangedEvent(input.RunID, input.Subject, input.SessionID, run.PhaseExecutingTools),
 			turnID,
 		); err != nil {
 			finalErr = err
@@ -370,6 +436,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		HistoryEndID:     historyEndID,
 		providerRecovery: recoveryBudget,
 		providerControl:  recoveryWorkflow.actor,
+		finalization:     finalization,
 	}
 	// Materialize one active cap state before planning so ordinary tools,
 	// recovery turns, and terminal finalization all observe the same run budget.
@@ -400,7 +467,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	recoveryWorkflow.actor.budget = &budgetDeadline
 	recoveryWorkflow.actor.hard = &hardDeadline
 	startReq := PlanActivityInput{
-		AgentID:      input.AgentID,
+		AgentID:      agentID,
 		RunID:        input.RunID,
 		HistoryEndID: planInput.HistoryEndID,
 		RunContext:   runCtx,
@@ -440,7 +507,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	// Transition into planning before invoking the planner activity.
 	if err := r.publishHook(
 		wfCtx.Context(),
-		hooks.NewRunPhaseChangedEvent(input.RunID, input.AgentID, input.SessionID, run.PhasePlanning),
+		hooks.NewRunPhaseChangedEvent(input.RunID, input.Subject, input.SessionID, run.PhasePlanning),
 		turnID,
 	); err != nil {
 		finalErr = err
@@ -527,7 +594,7 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 	// Enter tool execution phase for the main run loop.
 	if err := r.publishHook(
 		wfCtx.Context(),
-		hooks.NewRunPhaseChangedEvent(input.RunID, input.AgentID, input.SessionID, run.PhaseExecutingTools),
+		hooks.NewRunPhaseChangedEvent(input.RunID, input.Subject, input.SessionID, run.PhaseExecutingTools),
 		turnID,
 	); err != nil {
 		finalErr = err

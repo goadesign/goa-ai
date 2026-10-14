@@ -9,8 +9,12 @@ package storage
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
+	genrunoutput "goa.design/goa-ai/registry/gen/runoutput"
+	genrunterminal "goa.design/goa-ai/registry/gen/runterminal"
 	"goa.design/goa-ai/runtime/agent/runlog"
 	"goa.design/goa-ai/runtime/agent/session"
 )
@@ -41,7 +45,7 @@ type (
 	// StartRootRun and StartChildRun accept a continuation when
 	// Run.PredecessorRunID is set. Before either method writes the successor run,
 	// its RunStarted record, or a child parent link, the predecessor must exist,
-	// be suspended, and have the same session ID, agent ID, and root or child
+	// be suspended, and have the same session ID, execution subject, and root or child
 	// topology as the successor. Child continuations preserve the exact parent
 	// tool call, tool name and parent agent from the predecessor's stored link.
 	// The execution parent may change only after the runtime has proved the
@@ -57,6 +61,15 @@ type (
 	// it from record order or timestamps.
 	// Temporary database and network failures remain unwrapped.
 	Store interface {
+		// RecordUnstartedExecutionTerminal stores an accepted execution's failure
+		// before its first Run record. A concurrent start or earlier terminal
+		// outcome remains authoritative and is returned to the caller.
+		// This does not resolve a predecessor's suspension: only an actual Run
+		// start transfers saved work to a continued run.
+		RecordUnstartedExecutionTerminal(context.Context, genrunterminal.UnstartedExecutionTerminal) (genrunterminal.UnstartedExecutionTerminalResult, error)
+		// BeginRunPreparationOperation binds the original invocation before provider
+		// resolution. Another command or origin cannot reuse the destination Run.
+		BeginRunPreparationOperation(context.Context, RunPreparationBegin) (genrunterminal.PreparationDecision, error)
 		// BeginRunSeed freezes one destination's owner and exact source. It does
 		// not create a run. Exact retries return the same declaration and source.
 		BeginRunSeed(context.Context, SeedDeclaration) (RunSeed, error)
@@ -143,6 +156,20 @@ type (
 		ListSessionRunRecords(context.Context, string, string, int) (runlog.Page, error)
 	}
 
+	// SynchronousStore persists a callback's empty initial history, prompt records,
+	// and final result. It does not require engine starts, Sessions, or suspension.
+	SynchronousStore interface {
+		BeginRunPreparationOperation(context.Context, RunPreparationBegin) (genrunterminal.PreparationDecision, error)
+		BeginRunSeed(context.Context, SeedDeclaration) (RunSeed, error)
+		AppendRunSeed(context.Context, SeedAppend) (string, error)
+		PublishRunSeed(context.Context, SeedPublication) error
+		LoadRunSeed(context.Context, string, string) (RunSeed, error)
+		StartSynchronousRun(context.Context, SynchronousRunStart) (OneShotRunStartResult, error)
+		AppendRunRecord(context.Context, *runlog.Event) (AppendResult, error)
+		LoadRun(context.Context, string) (session.RunMeta, error)
+		RecordRunTerminal(context.Context, RunTerminal) (AppendResult, error)
+	}
+
 	// RootRunStart contains the records stored for a session root run.
 	RootRunStart struct {
 		// RequestDigest binds this start to the complete request accepted by the engine.
@@ -151,9 +178,6 @@ type (
 		Run session.RunStart
 		// Started is stored for every accepted workflow.
 		Started *runlog.Event
-		// Cancellation stores why an ended session prohibits ordinary execution.
-		// The workflow settles inherited work before storing its terminal record.
-		Cancellation *runlog.Event
 	}
 
 	// ChildRunStart contains the parent link and child lifecycle records.
@@ -166,9 +190,6 @@ type (
 		ParentLinked *runlog.Event
 		// Started is stored after ParentLinked for every accepted workflow.
 		Started *runlog.Event
-		// Cancellation stores why an ended session prohibits ordinary execution.
-		// The workflow settles inherited work before storing its terminal record.
-		Cancellation *runlog.Event
 	}
 
 	// OneShotRunStart contains the identity and first record for a sessionless
@@ -240,8 +261,12 @@ type (
 		Reason string
 	}
 
-	// RunTerminal stores one final status and its matching record.
+	// RunTerminal stores one final status, metadata record, and selected result together.
 	RunTerminal struct {
+		// OperationResult preserves the selected operation's exact public result.
+		// It is absent when execution ended before selecting a result or the run
+		// is a conversation without a selected operation.
+		OperationResult *genrunoutput.OperationResult
 		// RunID identifies the terminal run.
 		RunID string
 		// Status is completed, failed, or canceled.
@@ -269,6 +294,8 @@ type (
 
 	// RootRunStartResult reports the original root start and the current run state.
 	RootRunStartResult struct {
+		// CancellationReason is the owner-selected reason only when Outcome is stop.
+		CancellationReason string
 		// Outcome is the immutable decision made when the run first started.
 		Outcome session.RunStartOutcome
 		// RunStatus is the run state observed in the same atomic operation.
@@ -281,6 +308,8 @@ type (
 
 	// ChildRunStartResult reports the original child start and the current child state.
 	ChildRunStartResult struct {
+		// CancellationReason is the owner-selected reason only when Outcome is stop.
+		CancellationReason string
 		// Outcome is the immutable decision made when the child first started.
 		Outcome session.RunStartOutcome
 		// RunStatus is the child state observed in the same atomic operation.
@@ -295,6 +324,12 @@ type (
 
 	// OneShotRunStartResult reports the first record and current sessionless run state.
 	OneShotRunStartResult struct {
+		// CancellationReason is the owner-selected reason only when Outcome is stop.
+		CancellationReason string
+		// Outcome is the immutable decision made when the run first started.
+		Outcome session.RunStartOutcome
+		// Cancellation identifies the stop record, present only for a stopped start.
+		Cancellation AppendResult
 		// RunStatus is the run state observed in the same atomic operation.
 		RunStatus session.RunStatus
 		// Record is the run-started record.
@@ -303,6 +338,12 @@ type (
 
 	// OneShotChildRunStartResult reports the original records and current child state.
 	OneShotChildRunStartResult struct {
+		// CancellationReason is the owner-selected reason only when Outcome is stop.
+		CancellationReason string
+		// Outcome is the immutable decision made when the run first started.
+		Outcome session.RunStartOutcome
+		// Cancellation identifies the stop record, present only for a stopped start.
+		Cancellation AppendResult
 		// RunStatus is the child state observed in the same atomic operation.
 		RunStatus session.RunStatus
 		// ParentRecord is the child-link record stored on the parent run.
@@ -361,8 +402,6 @@ func ValidateRunRecord(record *runlog.Event) error {
 		return errors.New("run record is required")
 	case record.RunID == "":
 		return errors.New("run id is required")
-	case record.AgentID == "":
-		return errors.New("agent id is required")
 	case record.EventKey == "":
 		return errors.New("event key is required")
 	case record.Type == "":
@@ -374,6 +413,9 @@ func ValidateRunRecord(record *runlog.Event) error {
 	case !record.Timestamp.Equal(record.Timestamp.Truncate(time.Millisecond)):
 		return errors.New("record timestamp must use millisecond precision")
 	default:
+		if _, err := genrunidentity.EncodeRunSubject(&record.Subject); err != nil {
+			return fmt.Errorf("record subject: %w", err)
+		}
 		return nil
 	}
 }

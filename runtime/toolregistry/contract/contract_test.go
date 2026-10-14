@@ -183,3 +183,21 @@ func TestCompileValidatesRuntimeAuthoredDeclarations(t *testing.T) {
 	_, err := Compile(nil)
 	require.Error(t, err)
 }
+
+// A generated Empty result has no result metadata or codec. Native execution
+// must preserve the same zero-byte result contract used by service tools.
+func TestCompileNativeEmptyResult(t *testing.T) {
+	declaration := testDeclaration()
+	declaration.ConsumerContract.Kind = agentKind
+	declaration.ConsumerContract.Agent = &genregistry.AgentToolTarget{
+		Executor: "records.agent", Configuration: "revision/1",
+		Workflow: "records.workflow", Queue: "records.queue",
+	}
+	declaration.ConsumerContract.Result = nil
+	declaration.ResultSchema = []byte(`{"type":"null"}`)
+	spec, err := Compile(declaration)
+	require.NoError(t, err)
+	assert.Nil(t, spec.Result.Codec.FromJSON)
+	assert.Nil(t, spec.Result.Codec.ToJSON)
+	assert.Equal(t, "records.agent", spec.AgentID)
+}

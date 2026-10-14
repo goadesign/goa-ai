@@ -9,6 +9,7 @@ import (
 	"errors"
 	"testing"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -330,8 +331,9 @@ func TestToolsetRegistrationOwnsExecutionRoute(t *testing.T) {
 	}))
 
 	result, err := runtime.ExecuteToolActivity(context.Background(), &ToolInput{
-		RunID:       "run-1",
-		AgentID:     "beta.worker",
+		RunID:   "run-1",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("beta.worker"))},
+
 		ToolsetName: "beta.shared",
 		ToolName:    spec.Name,
 		ToolCallID:  "call-1",

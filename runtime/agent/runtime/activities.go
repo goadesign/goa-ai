@@ -15,6 +15,7 @@ import (
 
 	"github.com/google/uuid"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
@@ -184,6 +185,11 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, wireInput *PlanActivit
 		advertisedSpecs = correctCallSpecs
 		if input.Finalize == nil {
 			advertisedSpecs = r.ToolSpecsForAgent(input.AgentID)
+			for index, spec := range advertisedSpecs {
+				if local, exists := catalog.specs[spec.Name]; exists {
+					advertisedSpecs[index] = cloneToolSpec(local)
+				}
+			}
 			for _, correction := range correctCallSpecs {
 				index := slices.IndexFunc(advertisedSpecs, func(spec tools.ToolSpec) bool {
 					return spec.Name == correction.Name
@@ -385,6 +391,9 @@ func (r *Runtime) correctCallSpecs(outputs []*planner.ToolOutput, catalog *Regis
 				err,
 			)
 		}
+		if local, exists := catalog.specs[name]; exists {
+			spec = local
+		}
 		specs = append(specs, cloneToolSpec(spec))
 	}
 	return specs, nil
@@ -528,7 +537,7 @@ func (r *Runtime) preparePlannerActivity(
 	unavailableTools []tools.Ident,
 	advertisedSpecs []tools.ToolSpec,
 ) (*plannerActivityInvocation, error) {
-	parentTool, err := selectedParentTool(input.RunContext.Tool, input.RunContext.ToolRegistry, input.AgentID, r.toolSpec)
+	parentTool, err := selectedRunTool(input.RunContext, input.AgentID, r.toolSpec)
 	if err != nil {
 		return nil, err
 	}
@@ -536,6 +545,11 @@ func (r *Runtime) preparePlannerActivity(
 		advertisedSpecs = r.ToolSpecsForAgent(input.AgentID)
 	} else {
 		advertisedSpecs = cloneToolSpecs(advertisedSpecs)
+	}
+	for index, spec := range advertisedSpecs {
+		if local, exists := catalog.specs[spec.Name]; exists {
+			advertisedSpecs[index] = cloneToolSpec(local)
+		}
 	}
 	dynamicNames := make([]tools.Ident, 0, len(catalog.selections))
 	for name := range catalog.selections {
@@ -653,6 +667,21 @@ func (a *plannerActivityInvocation) output(
 	}
 	for index := range toolCalls {
 		call := &toolCalls[index]
+		// Code-authored dedicated pagination already contains the retained query
+		// and cursor. Validation checked its execution codec, so preserve those
+		// bytes instead of treating them as model arguments.
+		spec, registered := a.catalog.spec(call.Name)
+		codeContinuation := call.ModelToolCallID == "" && registered && isDedicatedContinuationSpec(spec)
+		if call.ContinuationRootToolCallID == "" && !codeContinuation {
+			complete, err := prepareConsumerInput(a.catalog.spec, call.Name, call.Payload)
+			if err != nil {
+				return nil, err
+			}
+			if len(call.ModelPayload) == 0 {
+				call.ModelPayload = append(rawjson.Message(nil), call.Payload...)
+			}
+			call.Payload = complete
+		}
 		if selected, ok := a.catalog.selections[call.Name]; ok && call.Registry == nil {
 			call.Registry, err = selected.resolution.Select(selected.registry, call.Name)
 			if err != nil {
@@ -660,12 +689,16 @@ func (a *plannerActivityInvocation) output(
 			}
 		}
 	}
+	await, err := prepareConsumerAwait(a.catalog.spec, result.Await)
+	if err != nil {
+		return nil, err
+	}
 	runtimeResult := &PlanResult{
 		ToolCalls:            toolCalls,
 		SynthesizeAfterTools: result.SynthesizeAfterTools,
 		FinalResponse:        result.FinalResponse,
 		FinalToolResult:      result.FinalToolResult,
-		Await:                result.Await,
+		Await:                await,
 		ExpectedChildren:     result.ExpectedChildren,
 		Notes:                result.Notes,
 	}
@@ -678,8 +711,8 @@ func (a *plannerActivityInvocation) runtimeOutput(ctx context.Context, result *P
 	return a.acceptedOutput(ctx, result, nil)
 }
 
-// acceptedOutput attaches planner events and usage to one validated result
-// before it crosses the activity/workflow boundary.
+// acceptedOutput attaches the registered Agent identity, planner events, and usage
+// to each accepted result before the workflow engine records the activity output.
 func (a *plannerActivityInvocation) acceptedOutput(
 	ctx context.Context,
 	result *PlanResult,
@@ -690,6 +723,13 @@ func (a *plannerActivityInvocation) acceptedOutput(
 		return nil, planner.NewOutputContractError(
 			errors.New("accepted model response does not extend its published assistant text"),
 		)
+	}
+	// Tool requests contain intent and arguments. The runtime supplies the Agent
+	// that owns this activity before its tool calls enter workflow history.
+	for index := range result.ToolCalls {
+		result.ToolCalls[index].Subject = genrunidentity.RunSubject{
+			Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(a.reg.Definition.route.ID)),
+		}
 	}
 	a.invocations.publishUsage(ctx, a.events)
 	historyContext, err := a.invocations.exportHistoryContext(false)
@@ -1131,6 +1171,9 @@ func validatePlannerToolCallIDs(result *planner.PlanResult) error {
 			if item.ToolClarification.ToolCallID != "" {
 				return fmt.Errorf("%s tool clarification must not set runtime tool call ID", context)
 			}
+			if len(item.ToolClarification.ModelPayload) != 0 {
+				return fmt.Errorf("%s must not set runtime model payload", context)
+			}
 			if err := addModelID(context+" tool clarification", item.ToolClarification.ModelToolCallID); err != nil {
 				return err
 			}
@@ -1140,6 +1183,9 @@ func validatePlannerToolCallIDs(result *planner.PlanResult) error {
 			}
 			if item.Questions.ToolCallID != "" {
 				return fmt.Errorf("%s questions must not set runtime tool call ID", context)
+			}
+			if len(item.Questions.ModelPayload) != 0 {
+				return fmt.Errorf("%s must not set runtime model payload", context)
 			}
 			if err := addModelID(context+" questions", item.Questions.ModelToolCallID); err != nil {
 				return err
@@ -1152,6 +1198,9 @@ func validatePlannerToolCallIDs(result *planner.PlanResult) error {
 				toolContext := fmt.Sprintf("%s external tool %d", context, toolIndex)
 				if tool.ToolCallID != "" {
 					return fmt.Errorf("%s must not set runtime tool call ID", toolContext)
+				}
+				if len(tool.ModelPayload) != 0 {
+					return fmt.Errorf("%s must not set runtime model payload", toolContext)
 				}
 				if err := addModelID(toolContext, tool.ModelToolCallID); err != nil {
 					return err
@@ -1169,12 +1218,13 @@ func validatePlannerResultPayloads(result *planner.PlanResult, parentName tools.
 	if result == nil {
 		return errors.New("planner returned a nil result")
 	}
-	if result.FinalResponse != nil {
-		if result.FinalResponse.Message == nil {
+	response := terminalResponse(result.FinalResponse, result.FinalToolResult)
+	if response != nil {
+		if response.Message == nil {
 			return errors.New("planner final response is missing its message")
 		}
 		if err := model.ValidateResponse(&model.Response{
-			Content:    []model.Message{*result.FinalResponse.Message},
+			Content:    []model.Message{*response.Message},
 			StopReason: "planner_final",
 		}); err != nil {
 			return fmt.Errorf("planner final response: %w", err)
@@ -1279,10 +1329,11 @@ func validatePlannerFinalToolResult(spec tools.ToolSpec, final *planner.FinalToo
 // declarations through PlanResult.ToolCalls. Provider-owned final messages are
 // matched to the exact complete response saved for that model call.
 func validatePlannerAuthoredFinalResponse(result *planner.PlanResult) error {
-	if result.FinalResponse == nil {
+	response := terminalResponse(result.FinalResponse, result.FinalToolResult)
+	if response == nil {
 		return nil
 	}
-	for index, part := range result.FinalResponse.Message.Parts {
+	for index, part := range response.Message.Parts {
 		if _, ok := part.(model.ToolUsePart); ok {
 			return fmt.Errorf(
 				"planner-authored final response part %d contains tool use; return it through ToolCalls",
@@ -1309,14 +1360,21 @@ func validatePlannerToolPayload(payload rawjson.Message) error {
 	return nil
 }
 
-// validatePlannerResultPayloadCodecs applies each visible tool's exact payload
-// codec before the planner result can cross the activity boundary.
+// validatePlannerResultPayloadCodecs checks planner requests before acceptance.
+// Code-authored dedicated pagination supplies a complete query and cursor, so
+// it uses the execution codec; model arguments keep their narrower codec.
 func validatePlannerResultPayloadCodecs(
 	lookup toolSpecLookup,
 	result *planner.PlanResult,
 	continuations []continuationAction,
 ) error {
 	for index, call := range result.ToolCalls {
+		if spec, ok := lookup(call.Name); ok && call.ModelToolCallID == "" && isDedicatedContinuationSpec(spec) {
+			if _, err := spec.ExecutionPayloadCodec.FromJSON(call.Payload); err != nil {
+				return fmt.Errorf("planner tool call %d execution payload: %w", index, err)
+			}
+			continue
+		}
 		if err := validatePlannerToolPayloadWithCodec(lookup, continuations, call.Name, call.Payload); err != nil {
 			return fmt.Errorf("planner tool call %d payload: %w", index, err)
 		}
@@ -1369,7 +1427,7 @@ func validatePlannerToolPayloadWithCodec(
 	payload rawjson.Message,
 ) error {
 	if spec, ok := lookup(name); ok {
-		if _, err := spec.ExecutionPayloadCodec.FromJSON(payload); err != nil {
+		if _, err := spec.Payload.Codec.FromJSON(payload); err != nil {
 			return fmt.Errorf("tool %q payload does not satisfy its generated contract: %w", name, err)
 		}
 		return nil
@@ -1403,6 +1461,9 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 	if req == nil {
 		return nil, errors.New("tool input is required")
 	}
+	if _, err := genrunidentity.EncodeRunSubject(&req.Subject); err != nil {
+		return nil, engine.MarkActivityErrorNonRetryable(err)
+	}
 	if err := toolregistry.ValidateExecution(req.ExecutionSequence, req.ExecutionContinuation, req.TextOnly); err != nil {
 		return nil, engine.MarkActivityErrorNonRetryable(err)
 	}
@@ -1422,13 +1483,15 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 		Registry:              req.Registry.Clone(),
 		Name:                  req.ToolName,
 		Payload:               raw,
+		ModelPayload:          append(rawjson.Message(nil), req.OriginalArguments...),
 		RunID:                 req.RunID,
-		AgentID:               req.AgentID,
-		SessionID:             req.SessionID,
-		Labels:                cloneLabels(req.Labels),
-		TurnID:                req.TurnID,
-		ParentToolCallID:      req.ParentToolCallID,
-		ToolCallID:            req.ToolCallID,
+		Subject:               req.Subject,
+
+		SessionID:        req.SessionID,
+		Labels:           cloneLabels(req.Labels),
+		TurnID:           req.TurnID,
+		ParentToolCallID: req.ParentToolCallID,
+		ToolCallID:       req.ToolCallID,
 	}
 
 	spec, hasSpec, err := lookupCallSpec(call, r.toolSpec)
@@ -1441,11 +1504,11 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 		// When the provider agent attempts to execute its own agent-as-tool via
 		// ExecuteToolActivity, surface a precise error so callers fix the planner
 		// tool list instead of routing through activities.
-		if string(req.AgentID) == spec.AgentID {
+		if executor, isAgent := req.Subject.Executor.AsAgent(); isAgent && string(executor) == spec.AgentID {
 			return nil, fmt.Errorf(
 				"agent %q attempted to execute its own agent-as-tool %q via ExecuteToolActivity; "+
 					"agent-as-tools must run inline in workflow context and must not be exposed to the provider's planner tool list",
-				req.AgentID,
+				executor,
 				req.ToolName,
 			)
 		}

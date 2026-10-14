@@ -15,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -150,10 +151,13 @@ func TestFinishCurrentPlanResult_UsesPlannerFinalToolResult(t *testing.T) {
 		Bus:     noopHooks{},
 	}
 	input := &RunInput{
-		AgentID:   "svc.agent",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))},
+
 		SessionID: "sess-1",
 	}
 	base := &workflowConversation{
+		finalization: &workflowFinalizationState{},
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "sess-1",
@@ -187,10 +191,13 @@ func TestRunLoopWithStateAcceptsInitialFinalToolResult(t *testing.T) {
 	seedTestToolSpecs(rt, newAnyJSONSpec("svc.tools.do"))
 	wf := &testWorkflowContext{ctx: context.Background()}
 	input := &RunInput{
-		AgentID:   "svc.agent",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))},
+
 		SessionID: "sess-1",
 	}
 	base := &workflowConversation{
+		finalization: &workflowFinalizationState{},
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "sess-1",
@@ -233,10 +240,13 @@ func TestFinishCurrentPlanResultRejectsDualTerminalOutputs(t *testing.T) {
 		Bus:     noopHooks{},
 	}
 	input := &RunInput{
-		AgentID:   "svc.agent",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))},
+
 		SessionID: "sess-1",
 	}
 	base := &workflowConversation{
+		finalization: &workflowFinalizationState{},
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "sess-1",
@@ -276,10 +286,13 @@ func TestFinishCurrentPlanResultAppendsTerminalTranscript(t *testing.T) {
 		Store:   store,
 	}
 	input := &RunInput{
-		AgentID:   "svc.agent",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))},
+
 		SessionID: "sess-1",
 	}
 	base := &workflowConversation{
+		finalization: &workflowFinalizationState{},
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "sess-1",
@@ -307,7 +320,7 @@ func TestFinishCurrentPlanResultAppendsTerminalTranscript(t *testing.T) {
 		}},
 	}
 	require.NoError(t, rt.appendSelectedModelResponse(
-		ctx, input.AgentID, base, "turn-1", testPublicationBatchID, st.Result, st.Transcript,
+		ctx, testSubjectAgent(t, input.Subject), base, "turn-1", testPublicationBatchID, st.Result, st.Transcript,
 	))
 	st.ResponseCommitted = true
 
@@ -340,10 +353,13 @@ func TestFinishCurrentPlanResultAppendsTerminalTranscriptFromCitationsPart(t *te
 		Store:   store,
 	}
 	input := &RunInput{
-		AgentID:   "svc.agent",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))},
+
 		SessionID: "sess-1",
 	}
 	base := &workflowConversation{
+		finalization: &workflowFinalizationState{},
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "sess-1",
@@ -362,7 +378,7 @@ func TestFinishCurrentPlanResultAppendsTerminalTranscriptFromCitationsPart(t *te
 		},
 	}
 	require.NoError(t, rt.appendSelectedModelResponse(
-		ctx, input.AgentID, base, "turn-1", testPublicationBatchID, st.Result, st.Transcript,
+		ctx, testSubjectAgent(t, input.Subject), base, "turn-1", testPublicationBatchID, st.Result, st.Transcript,
 	))
 	st.ResponseCommitted = true
 
@@ -419,7 +435,8 @@ func TestExecuteWorkflowAttachesInitialTranscriptWithoutCopying(t *testing.T) {
 		hookRuntime: rt,
 	}
 	input := &RunInput{
-		AgentID: "svc.agent", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))}, RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1",
 		Metadata: map[string]any{"task_state": "state-json"},
 	}
 	publishTestRunInput(t, rt, input, []*model.Message{
@@ -487,7 +504,9 @@ func TestExecuteWorkflowReferencesRestoredContinuationTranscript(t *testing.T) {
 	}
 
 	firstInput := &RunInput{
-		AgentID:   "svc.agent",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))},
+
 		RunID:     "run-1",
 		SessionID: "sess-1",
 		TurnID:    "turn-1",
@@ -498,22 +517,26 @@ func TestExecuteWorkflowReferencesRestoredContinuationTranscript(t *testing.T) {
 		runtime:     rt,
 		hookRuntime: rt,
 	}
+	initial := &PlanResult{Await: planner.NewAwait(
+		planner.AwaitToolClarificationItem(&planner.AwaitToolClarification{
+			ID:              "clarification-1",
+			ToolName:        tool.Name,
+			ModelToolCallID: "call-1",
+			Payload:         rawjson.Message(`{"question":"Which facility?"}`),
+			Question:        "Which facility?",
+		}),
+	)}
+	preparedAwait, err := prepareConsumerAwait(rt.toolSpec, initial.Await)
+	require.NoError(t, err)
+	initial.Await = preparedAwait
 	first, err := rt.runLoop(
 		firstContext,
-		AgentRegistration{ResumeActivityName: "resume"},
+		AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, firstInput.Subject), engine.WorkflowDefinition{}, nil), ResumeActivityName: "resume"},
 		firstInput,
-		&workflowConversation{RunContext: run.Context{
+		&workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{
 			RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1", Attempt: 1,
 		}},
-		&PlanResult{Await: planner.NewAwait(
-			planner.AwaitToolClarificationItem(&planner.AwaitToolClarification{
-				ID:              "clarification-1",
-				ToolName:        tool.Name,
-				ModelToolCallID: "call-1",
-				Payload:         rawjson.Message(`{"question":"Which facility?"}`),
-				Question:        "Which facility?",
-			}),
-		)},
+		initial,
 		initialCaps(RunPolicy{MaxToolCalls: 4}),
 		time.Time{},
 		time.Time{},
@@ -528,7 +551,9 @@ func TestExecuteWorkflowReferencesRestoredContinuationTranscript(t *testing.T) {
 		hookRuntime: rt,
 	}
 	secondInput := &RunInput{
-		AgentID:   "svc.agent",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))},
+
 		RunID:     "run-2",
 		SessionID: "sess-1",
 		TurnID:    "turn-2",
@@ -554,7 +579,7 @@ func TestExecuteWorkflowReferencesRestoredContinuationTranscript(t *testing.T) {
 	for _, event := range page.Events {
 		if event.Type == hooks.RunStarted {
 			decoded, err := hooks.DecodeFromRecordInput(&RecordActivityInput{
-				Type: event.Type, RunID: event.RunID, AgentID: event.AgentID,
+				Type: event.Type, RunID: event.RunID, Subject: event.Subject,
 				SessionID: event.SessionID, TurnID: event.TurnID,
 				TimestampMS: event.Timestamp.UnixMilli(), Payload: event.Payload,
 			})
@@ -620,7 +645,9 @@ func TestExecuteWorkflowEmitsRunLabelsOnTerminalCompletion(t *testing.T) {
 
 	labels := map[string]string{"household_id": "house-42", "source": "email"}
 	input := &RunInput{
-		AgentID:   "svc.agent",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))},
+
 		RunID:     "run-1",
 		SessionID: "sess-1",
 		TurnID:    "turn-1",
@@ -637,9 +664,10 @@ func TestExecuteWorkflowEmitsRunLabelsOnTerminalCompletion(t *testing.T) {
 	require.Equal(t, hooks.RunCompleted, last.Type)
 
 	decoded, err := hooks.DecodeFromRecordInput(&runlog.ActivityInput{
-		Type:      last.Type,
-		RunID:     last.RunID,
-		AgentID:   last.AgentID,
+		Type:    last.Type,
+		RunID:   last.RunID,
+		Subject: last.Subject,
+
 		SessionID: last.SessionID,
 		TurnID:    last.TurnID,
 		Payload:   last.Payload,
@@ -823,7 +851,8 @@ func TestRegisterAgentUsesDefinitionRouteAndAuthoredActivityQueues(t *testing.T)
 	require.Equal(t, time.Second, recordOpts.RetryPolicy.InitialInterval)
 	require.InDelta(t, 2.0, recordOpts.RetryPolicy.BackoffCoefficient, 0.000001)
 
-	agentChildOpts := eng.registeredAgentChildOptions[agentChildActivityName]
+	agentChildOpts := eng.registeredAgentChildOptions["runtime.prepare_agent_child.service.agent"]
+	require.Equal(t, "service.queue", agentChildOpts.Queue)
 	require.Equal(t, 2*time.Minute, agentChildOpts.StartToCloseTimeout)
 	require.Equal(t, 3, agentChildOpts.RetryPolicy.MaxAttempts)
 	require.Equal(t, time.Second, agentChildOpts.RetryPolicy.InitialInterval)
@@ -1068,7 +1097,9 @@ func TestRunOptionsPropagateToStartRequest(t *testing.T) {
 	sa := map[string]any{"SessionID": "sess-1"}
 
 	start := runStart{input: RunInput{
-		AgentID:   "service.agent",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("service.agent"))},
+
 		SessionID: "sess-1",
 	}}
 	for _, o := range []RunOption{
@@ -1148,14 +1179,15 @@ func TestRecoveryFinishFinalizesWithoutConsumingTurn(t *testing.T) {
 			return false, nil
 		},
 	}
-	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
-	base := &workflowConversation{RunContext: run.Context{RunID: input.RunID}}
+	input := &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+		RunExecutorBranchAgent("svc.agent"))}, RunID: "run-1"}
+	base := &workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{RunID: input.RunID}}
 	initial := &PlanResult{ToolCalls: []ToolCall{{
 		ToolCallID: "fail-call",
 		Name:       tools.Ident("fail"),
 		Payload:    rawjson.Message(`{}`),
 	}}}
-	_, err := rt.runLoop(wfCtx, AgentRegistration{Definition: testRegistrationDefinition(input.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
+	_, err := rt.runLoop(wfCtx, AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, input.Subject), engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
 		Policy:              RunPolicy{MaxRecoveryTurns: 1},
@@ -1176,7 +1208,7 @@ func TestStartRunForwardsWorkflowLaunchSettings(t *testing.T) {
 		metrics: telemetry.NoopMetrics{},
 		tracer:  telemetry.NoopTracer{},
 	}
-	in := RunInput{
+	in := RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("test.agent"))},
 		RunID:     "run-x",
 		SessionID: "sess-1",
 	}
@@ -1248,7 +1280,8 @@ func TestRegisterAgentAfterFirstRunIsRejected(t *testing.T) {
 			Name:      "service.workflow",
 			TaskQueue: "q",
 			Handler: func(wfctx engine.WorkflowContext, input *RunInput) (*RunOutput, error) {
-				return &RunOutput{AgentID: "service.agent", RunID: "r1"}, nil
+				return &RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("service.agent"))}, RunID: "r1"}, nil
 			},
 		}, nil),
 
@@ -1256,7 +1289,8 @@ func TestRegisterAgentAfterFirstRunIsRejected(t *testing.T) {
 			Name:      "service.workflow",
 			TaskQueue: "q",
 			Handler: func(wfctx engine.WorkflowContext, input *RunInput) (*RunOutput, error) {
-				return &RunOutput{AgentID: "service.agent", RunID: "r1"}, nil
+				return &RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+					RunExecutorBranchAgent("service.agent"))}, RunID: "r1"}, nil
 			},
 		}).Handler, Planner: &stubPlanner{},
 
@@ -1281,13 +1315,17 @@ func TestRegisterAgentAfterFirstRunIsRejected(t *testing.T) {
 		engine.WorkflowDefinition{
 			Name:      "service.other.workflow",
 			TaskQueue: "q",
-			Handler:   func(wfctx engine.WorkflowContext, input *RunInput) (*RunOutput, error) { return &RunOutput{}, nil },
+			Handler: func(wfctx engine.WorkflowContext, input *RunInput) (*RunOutput, error) {
+				return &RunOutput{Subject: input.Subject, RunID: input.RunID}, nil
+			},
 		}, nil),
 
 		WorkflowHandler: (engine.WorkflowDefinition{
 			Name:      "service.other.workflow",
 			TaskQueue: "q",
-			Handler:   func(wfctx engine.WorkflowContext, input *RunInput) (*RunOutput, error) { return &RunOutput{}, nil },
+			Handler: func(wfctx engine.WorkflowContext, input *RunInput) (*RunOutput, error) {
+				return &RunOutput{Subject: input.Subject, RunID: input.RunID}, nil
+			},
 		}).Handler, Planner: &stubPlanner{},
 
 		PlanActivityName:    "plan",
@@ -1374,14 +1412,15 @@ func TestTimeBudgetExceeded(t *testing.T) {
 	}
 	seedTestToolset(rt, "svc.ts", toolSpec)
 	wfCtx := &testWorkflowContext{ctx: context.Background(), asyncResult: ToolOutput{Payload: []byte("null")}}
-	input := &RunInput{AgentID: "svc.agent", RunID: "run-1"}
-	base := &workflowConversation{RunContext: run.Context{RunID: input.RunID}}
+	input := &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+		RunExecutorBranchAgent("svc.agent"))}, RunID: "run-1"}
+	base := &workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{RunID: input.RunID}}
 	initial := &PlanResult{ToolCalls: []ToolCall{{
 		ToolCallID: "tool-call",
 		Name:       tools.Ident("tool"),
 		Payload:    rawjson.Message(`{}`),
 	}}}
-	_, err := rt.runLoop(wfCtx, AgentRegistration{Definition: testRegistrationDefinition(input.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
+	_, err := rt.runLoop(wfCtx, AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, input.Subject), engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
 	}, input, base, initial, initialCaps(RunPolicy{MaxToolCalls: 1}), wfCtx.Now().Add(-time.Second), wfCtx.Now().Add(-time.Second), "", nil)
@@ -1433,7 +1472,7 @@ func TestConvertRunOutputToToolResult(t *testing.T) {
 			{Telemetry: &telemetry.ToolTelemetry{TokensUsed: 5, DurationMs: 50, Model: "m1"}},
 		})
 		require.NoError(t, err)
-		out := RunOutput{
+		out := RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("test.agent"))},
 			Final:         &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "final"}}},
 			ToolCount:     count,
 			ToolTelemetry: combined,
@@ -1453,7 +1492,7 @@ func TestConvertRunOutputToToolResult(t *testing.T) {
 			{Failure: testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "e2")},
 		})
 		require.NoError(t, err)
-		out := RunOutput{
+		out := RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("test.agent"))},
 			Final:         &model.Message{Role: "assistant", Parts: []model.Part{model.TextPart{Text: "final"}}},
 			ToolCount:     count,
 			ToolTelemetry: combined,
@@ -1478,7 +1517,8 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 	_, err := createSessionForTest(context.Background(), rt.Store, "session-1")
 	require.NoError(t, err)
 	admitRunForTest(t, rt.Store, session.RunMeta{
-		AgentID: "parent.agent", RunID: "run-parent", SessionID: "session-1",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("parent.agent"))}, RunID: "run-parent", SessionID: "session-1",
 		Status: session.RunStatusRunning,
 	})
 
@@ -1574,7 +1614,7 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 				RunID:            NestedRunIDForToolCall(call.RunID, call.Name, call.ToolCallID),
 				ParentToolCallID: call.ToolCallID,
 				ParentRunID:      call.RunID,
-				ParentAgentID:    call.AgentID,
+				ParentAgentID:    testSubjectAgent(t, call.Subject),
 				SessionID:        call.SessionID,
 				TurnID:           call.TurnID,
 				Tool:             call.Name,
@@ -1604,15 +1644,16 @@ func TestAgentAsToolNestedUpdates(t *testing.T) {
 	rt.mu.Unlock()
 
 	// Parent run requests a single agent-tool invocation
-	parentInput := &RunInput{AgentID: "parent.agent", RunID: "run-parent", SessionID: "session-1", TurnID: "turn-1"}
-	base := &workflowConversation{RunContext: run.Context{RunID: parentInput.RunID, SessionID: parentInput.SessionID, TurnID: parentInput.TurnID}}
+	parentInput := &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+		RunExecutorBranchAgent("parent.agent"))}, RunID: "run-parent", SessionID: "session-1", TurnID: "turn-1"}
+	base := &workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{RunID: parentInput.RunID, SessionID: parentInput.SessionID, TurnID: parentInput.TurnID}}
 	initial := &PlanResult{ToolCalls: []ToolCall{{
 		ToolCallID: "invoke-call",
 		Name:       tools.Ident("invoke"),
 		Payload:    rawjson.Message(`{}`),
 	}}}
 
-	_, err = rt.runLoop(wfCtx, AgentRegistration{Definition: testRegistrationDefinition(parentInput.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
+	_, err = rt.runLoop(wfCtx, AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, parentInput.Subject), engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
 		ExecuteToolActivity: "execute",
 		ResumeActivityName:  "resume",
 	}, parentInput, base, initial, initialCaps(RunPolicy{MaxToolCalls: 3}), time.Time{}, time.Time{}, parentInput.TurnID, nil)
@@ -1708,7 +1749,7 @@ func TestExecuteToolCallsPublishesChildUpdates(t *testing.T) {
 		ParentAgentID:    "agent-parent",
 		ParentToolCallID: "parent-123",
 	}
-	_, _, err := rt.executeToolCalls(wfCtx, "execute", engine.ActivityOptions{}, "agent-1", childCtx, testToolHistory(t, rt, "agent-1", *(childCtx), nil), calls, 0, tracker, time.Time{}, nil)
+	_, _, err := rt.executeToolCalls(nil, wfCtx, "execute", engine.ActivityOptions{}, "agent-1", childCtx, testToolHistory(t, rt, "agent-1", *(childCtx), nil), calls, 0, tracker, time.Time{}, nil)
 	require.NoError(t, err)
 
 	var update *hooks.ToolCallUpdatedEvent
@@ -1775,7 +1816,9 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 	}()
 
 	input := RunInput{
-		AgentID:   "svc.agent",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))},
+
 		RunID:     "run-123",
 		SessionID: "session-1",
 		TurnID:    "turn-1",
@@ -1786,6 +1829,7 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 	_, sessionErr := createSessionForTest(context.Background(), rt.Store, input.SessionID)
 	require.NoError(t, sessionErr)
 	base := &workflowConversation{
+		finalization: &workflowFinalizationState{},
 		Messages: []*model.Message{
 			{Role: "user", Parts: []model.Part{model.TextPart{Text: "hello"}}},
 		},
@@ -1807,7 +1851,7 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 
 	started, err := prepareHookRecordInput(
 		wfCtx.Context(),
-		hooks.NewRunStartedEvent(input.RunID, input.AgentID, input.SessionID, input.ParentRunID, "", input.Labels),
+		hooks.NewRunStartedEvent(input.RunID, input.Subject, input.SessionID, input.ParentRunID, "", input.Labels),
 		input.TurnID,
 	)
 	require.NoError(t, err)
@@ -1830,7 +1874,7 @@ func TestRuntimePublishesPolicyDecision(t *testing.T) {
 
 	_, err = rt.runLoop(
 		wfCtx,
-		AgentRegistration{Definition: testRegistrationDefinition(input.AgentID, engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
+		AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, input.Subject), engine.WorkflowDefinition{}, nil), WorkflowHandler: (engine.WorkflowDefinition{}).Handler, Planner: &stubPlanner{},
 			ExecuteToolActivity: "execute",
 			ResumeActivityName:  "resume",
 		},

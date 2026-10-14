@@ -6,14 +6,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/internal/startrecipe"
 	"goa.design/goa-ai/runtime/agent/storage"
 )
 
 // RecoverPrepared returns the complete request accepted for an original command.
 func (c *agentClient) RecoverPrepared(ctx context.Context, sessionID, runID, commandID string) (*PreparedRun, bool, error) {
-	accepted, found, err := c.r.Store.FindRunPreparation(ctx, storage.PreparationOperation{AgentID: string(c.definition.route.ID), SessionID: sessionID, RunID: runID, CommandID: commandID})
+	accepted, found, err := c.r.Store.FindRunPreparation(ctx, storage.PreparationOperation{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(string(c.definition.route.ID)))}, SessionID: sessionID, RunID: runID, CommandID: commandID})
 	if err != nil || !found {
 		return nil, found, err
 	}
@@ -26,7 +28,7 @@ func (c *agentClient) RecoverPrepared(ctx context.Context, sessionID, runID, com
 
 // SettlePrepared preserves a published request or closes the exact uploader.
 func (c *agentClient) SettlePrepared(ctx context.Context, sessionID, runID, commandID, attemptID string) (*PreparedRun, bool, error) {
-	accepted, found, err := c.r.Store.SettleRunPreparation(ctx, storage.PreparationAttempt{Operation: storage.PreparationOperation{AgentID: string(c.definition.route.ID), SessionID: sessionID, RunID: runID, CommandID: commandID}, AttemptID: attemptID})
+	accepted, found, err := c.r.Store.SettleRunPreparation(ctx, storage.PreparationAttempt{Operation: storage.PreparationOperation{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(string(c.definition.route.ID)))}, SessionID: sessionID, RunID: runID, CommandID: commandID}, AttemptID: attemptID})
 	if err != nil || !found {
 		return nil, found, err
 	}
@@ -45,11 +47,11 @@ func (c *agentClient) parseAcceptedPreparation(data []byte, accepted storage.Run
 		return nil, false, err
 	}
 	input := compiled.Request.Input
-	if compiled.AgentID != string(c.definition.route.ID) || input.RunID != accepted.Seed.Declaration.RunID || input.SessionID != accepted.Seed.Declaration.SessionID || input.SeedEndID != accepted.Seed.EndID {
+	if !reflect.DeepEqual(input.Subject, accepted.Seed.Declaration.Subject) || compiled.AgentID != string(c.definition.route.ID) || input.RunID != accepted.Seed.Declaration.RunID || input.SessionID != accepted.Seed.Declaration.SessionID || input.SeedEndID != accepted.Seed.EndID {
 		return nil, false, storage.NewContractError(storage.ErrSeedConflict)
 	}
 	d := accepted.Seed.Declaration
-	operation := storage.PreparationOperation{AgentID: d.AgentID, RunID: d.RunID, SessionID: d.SessionID, CommandID: d.CommandID}
+	operation := storage.PreparationOperation{Subject: d.Subject, RunID: d.RunID, SessionID: d.SessionID, CommandID: d.CommandID}
 	return preparedReference(operation, accepted.Seed.EndID, accepted.EndID, data), true, nil
 }
 

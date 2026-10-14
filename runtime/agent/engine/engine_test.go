@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 )
 
@@ -15,7 +16,7 @@ func TestValidateWorkflowStartRequest(t *testing.T) {
 		ID:        "run-1",
 		Workflow:  "agent.workflow",
 		TaskQueue: "agent.queue",
-		Input:     &api.RunInput{RunID: "run-1"},
+		Input:     &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run-1"},
 	}
 	require.NoError(t, ValidateWorkflowStartRequest(valid))
 
@@ -37,7 +38,7 @@ func TestValidateWorkflowStartRequest(t *testing.T) {
 			req.Input = nil
 		}},
 		{name: "mismatched run id", wantErr: "workflow id must match input run id", change: func(req *WorkflowStartRequest) {
-			req.Input = &api.RunInput{RunID: "other-run"}
+			req.Input = &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "other-run"}
 		}},
 	}
 	for _, test := range tests {
@@ -54,7 +55,7 @@ func TestValidateChildWorkflowRequest(t *testing.T) {
 		ID:        "child-1",
 		Workflow:  "agent.workflow",
 		TaskQueue: "agent.queue",
-		Input:     &api.RunInput{RunID: "child-1"},
+		Input:     &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "child-1"},
 	}
 	require.NoError(t, ValidateChildWorkflowRequest(valid))
 
@@ -76,7 +77,7 @@ func TestValidateChildWorkflowRequest(t *testing.T) {
 			req.Input = nil
 		}},
 		{name: "mismatched run id", wantErr: "child workflow id must match input run id", change: func(req *ChildWorkflowRequest) {
-			req.Input = &api.RunInput{RunID: "other-run"}
+			req.Input = &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "other-run"}
 		}},
 	}
 	for _, test := range tests {
@@ -138,12 +139,12 @@ func TestValidateWorkflowOptionsForRootAndChild(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			root := WorkflowStartRequest{
 				ID: "run", Workflow: "agent.workflow", TaskQueue: "agent.queue",
-				Input: &api.RunInput{RunID: "run"}, RunTimeout: test.runTimeout,
+				Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run"}, RunTimeout: test.runTimeout,
 				RetryPolicy: test.retry,
 			}
 			child := ChildWorkflowRequest{
 				ID: "child", Workflow: "agent.workflow", TaskQueue: "agent.queue",
-				Input: &api.RunInput{RunID: "child"}, RunTimeout: test.runTimeout,
+				Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "child"}, RunTimeout: test.runTimeout,
 				RetryPolicy: test.retry,
 			}
 			if test.wantErr == "" {

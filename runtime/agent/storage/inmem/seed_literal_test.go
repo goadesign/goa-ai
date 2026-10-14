@@ -35,7 +35,8 @@ func (s *literalPageStore) ListRunSeedRecords(ctx context.Context, runID, endID,
 
 func TestSeedLiteralClosureAndExactRetry(t *testing.T) {
 	store, start := activeRunStore(t)
-	d := storage.SeedDeclaration{AgentID: start.AgentID, RunID: start.RunID, SessionID: start.SessionID, CommandID: "command", AttemptID: "attempt", Kind: storage.SeedLiteral}
+	d := storage.SeedDeclaration{Origin: rootExecutionOrigin(start.RunID), Subject: start.Subject, RunID: start.RunID, SessionID: start.SessionID, CommandID: "command", AttemptID: "attempt", Kind: storage.SeedLiteral}
+	bindSeedTestOperation(t, store, d)
 	_, err := store.BeginRunSeed(t.Context(), d)
 	require.NoError(t, err)
 	first := storage.SeedAppend{RunID: d.RunID, AttemptID: d.AttemptID, Record: storage.SeedRecord{
@@ -67,7 +68,7 @@ func TestSeedLiteralClosureAndExactRetry(t *testing.T) {
 		RunID: d.RunID, AttemptID: d.AttemptID, SeedEndID: end, EndID: end, PreparedBytes: 1,
 	}), storage.ErrSeedConflict)
 	_, found, err := store.FindRunPreparation(t.Context(), storage.PreparationOperation{
-		AgentID: d.AgentID, RunID: d.RunID, SessionID: d.SessionID, CommandID: d.CommandID,
+		Subject: d.Subject, RunID: d.RunID, SessionID: d.SessionID, CommandID: d.CommandID,
 	})
 	require.NoError(t, err)
 	require.False(t, found)
@@ -87,7 +88,7 @@ func TestSeedLiteralClosureAndExactRetry(t *testing.T) {
 	require.ErrorIs(t, err, storage.ErrSeedConflict)
 	require.NoError(t, store.PublishRunSeed(t.Context(), publication))
 	accepted, found, err := store.SettleRunPreparation(t.Context(), storage.PreparationAttempt{
-		Operation: storage.PreparationOperation{AgentID: d.AgentID, RunID: d.RunID, SessionID: d.SessionID, CommandID: d.CommandID},
+		Operation: storage.PreparationOperation{Subject: d.Subject, RunID: d.RunID, SessionID: d.SessionID, CommandID: d.CommandID},
 		AttemptID: d.AttemptID,
 	})
 	require.NoError(t, err)
@@ -124,7 +125,8 @@ func TestSeedLiteralSettlementAndPurge(t *testing.T) {
 	for _, operation := range []string{"settle", "purge"} {
 		t.Run(operation, func(t *testing.T) {
 			store, start := activeRunStore(t)
-			d := storage.SeedDeclaration{AgentID: start.AgentID, RunID: start.RunID, SessionID: start.SessionID, CommandID: "command", AttemptID: "attempt", Kind: storage.SeedLiteral}
+			d := storage.SeedDeclaration{Origin: rootExecutionOrigin(start.RunID), Subject: start.Subject, RunID: start.RunID, SessionID: start.SessionID, CommandID: "command", AttemptID: "attempt", Kind: storage.SeedLiteral}
+			bindSeedTestOperation(t, store, d)
 			_, err := store.BeginRunSeed(t.Context(), d)
 			require.NoError(t, err)
 			command := storage.SeedAppend{RunID: d.RunID, AttemptID: d.AttemptID, Record: storage.SeedRecord{
@@ -135,7 +137,7 @@ func TestSeedLiteralSettlementAndPurge(t *testing.T) {
 			appendError, beginError := storage.ErrPreparationAbandoned, storage.ErrPreparationAbandoned
 			if operation == "settle" {
 				_, found, err := store.SettleRunPreparation(t.Context(), storage.PreparationAttempt{
-					Operation: storage.PreparationOperation{AgentID: d.AgentID, RunID: d.RunID, SessionID: d.SessionID, CommandID: d.CommandID},
+					Operation: storage.PreparationOperation{Subject: d.Subject, RunID: d.RunID, SessionID: d.SessionID, CommandID: d.CommandID},
 					AttemptID: d.AttemptID,
 				})
 				require.NoError(t, err)
@@ -165,7 +167,8 @@ func TestSeedLiteralReaderAcrossRealPages(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			store, start := activeRunStore(t)
-			d := storage.SeedDeclaration{AgentID: start.AgentID, RunID: start.RunID, SessionID: start.SessionID, CommandID: "command", AttemptID: "attempt", Kind: storage.SeedLiteral}
+			d := storage.SeedDeclaration{Origin: rootExecutionOrigin(start.RunID), Subject: start.Subject, RunID: start.RunID, SessionID: start.SessionID, CommandID: "command", AttemptID: "attempt", Kind: storage.SeedLiteral}
+			bindSeedTestOperation(t, store, d)
 			_, err := store.BeginRunSeed(ctx, d)
 			require.NoError(t, err)
 			messages := []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "before 雪 after"}}}}

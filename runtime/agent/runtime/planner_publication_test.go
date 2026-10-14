@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/runlog"
@@ -36,7 +37,7 @@ func TestPlannerPublicationReturnsExhaustedActivityErrorWithoutRescheduling(t *t
 		err:                 publicationErr,
 	}
 
-	err := publishPlannerPublicationBatch(wfCtx, []*RecordActivityInput{{EventKey: "event-1"}})
+	err := publishPlannerPublicationBatch(wfCtx, []*RecordActivityInput{{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("test.agent"))}, EventKey: "event-1"}})
 
 	require.ErrorIs(t, err, publicationErr)
 	require.Equal(t, 1, wfCtx.calls)
@@ -50,7 +51,7 @@ func TestPlannerPublicationSchedulesOneActivityForThousandsOfRecords(t *testing.
 			Type:        runlog.Type("planner_note"),
 			EventKey:    fmt.Sprintf("run-1/planner-publication/batch-1/%d", index),
 			RunID:       "run-1",
-			AgentID:     "svc.agent",
+			Subject:     genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))},
 			SessionID:   "session-1",
 			TurnID:      "turn-1",
 			TimestampMS: int64(index),

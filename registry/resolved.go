@@ -47,6 +47,12 @@ func (s *Service) CallResolvedTool(ctx context.Context, p *genregistry.CallResol
 		"resolved-tool-call-v1\x00" + prepared.admissionDigest + "\x00" + p.ExpectedRegistrationToken,
 	))
 	prepared.admissionDigest = fmt.Sprintf("%x", digest[:])
+	return s.callResolvedTool(ctx, prepared)
+}
+
+// callResolvedTool attaches exact transport history before checking provider
+// availability, so completed work remains readable after retirement.
+func (s *Service) callResolvedTool(ctx context.Context, prepared preparedToolCall) (*genregistry.CallToolResult, error) {
 	admission, err := s.callAdmissions.Attach(
 		ctx,
 		prepared.toolset,

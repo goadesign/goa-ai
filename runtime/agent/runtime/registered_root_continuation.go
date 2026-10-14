@@ -1,0 +1,143 @@
+// Package runtime stores the complete successor request before submitting a
+// registered continuation to the engine. Durable input and cancellation workers
+// recover the same request after a lost reply; clients do not retry completion.
+package runtime
+
+import (
+	"context"
+	"reflect"
+
+	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/api"
+	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/internal/startrecipe"
+	"goa.design/goa-ai/runtime/agent/storage"
+	"goa.design/goa-ai/runtime/agent/storage/lifecycle"
+)
+
+// StartToolContinuation submits an answer already durably owned by the calling
+// service. The saved predecessor supplies the original operation and identity.
+func (r *Runtime) StartToolContinuation(ctx context.Context, predecessorRunID, runID string, response *api.PendingInputResponse) (engine.WorkflowHandle, error) {
+	request, err := r.prepareRegisteredContinuationRequest(ctx, predecessorRunID, runID, &api.RunContinuationInput{Response: response})
+	if err != nil {
+		return nil, err
+	}
+	return r.startWorkflow(ctx, request)
+}
+
+// EnsureToolContinuationCompletion delivers the engine outcome for the exact
+// saved successor. Durable workers call it until storage owns the terminal state.
+func (r *Runtime) EnsureToolContinuationCompletion(ctx context.Context, predecessorRunID, runID string, response *api.PendingInputResponse) error {
+	request, err := r.prepareRegisteredContinuationRequest(ctx, predecessorRunID, runID, &api.RunContinuationInput{Response: response})
+	if err != nil {
+		return err
+	}
+	return r.ensureOperationCompletion(ctx, request)
+}
+
+// prepareRegisteredContinuationRequest recovers published bytes before reading
+// the suspended provider state, so retries cannot select new execution values.
+func (r *Runtime) prepareRegisteredContinuationRequest(ctx context.Context, predecessorRunID, runID string, continuation *api.RunContinuationInput) (engine.WorkflowStartRequest, error) {
+	owner, err := r.Store.LoadRun(ctx, predecessorRunID)
+	if err != nil {
+		return engine.WorkflowStartRequest{}, err
+	}
+	operation := storage.PreparationOperation{Subject: owner.Subject, SessionID: owner.SessionID, RunID: runID, CommandID: runID}
+	accepted, found, err := r.Store.FindRunPreparation(ctx, operation)
+	if err != nil {
+		return engine.WorkflowStartRequest{}, err
+	}
+	if found {
+		data, err := readPreparation(ctx, r.Store, accepted)
+		if err != nil {
+			return engine.WorkflowStartRequest{}, err
+		}
+		prepared, err := startrecipe.ParsePreparedRequest(data)
+		if err != nil {
+			return engine.WorkflowStartRequest{}, err
+		}
+		input := prepared.Request.Input
+		if accepted.Seed.Declaration.PredecessorRunID != predecessorRunID || input.RunID != runID || !reflect.DeepEqual(input.Subject, owner.Subject) || input.SessionID != owner.SessionID || input.SeedEndID != accepted.Seed.EndID || input.Continuation == nil || !reflect.DeepEqual(input.Continuation.Response, continuation.Response) || !reflect.DeepEqual(input.Continuation.Cancellation, continuation.Cancellation) {
+			return engine.WorkflowStartRequest{}, storage.ErrSeedConflict
+		}
+		if _, service := owner.Subject.Executor.AsServiceTool(); service {
+			if _, _, err := restoreRegisteredRoot(input); err != nil {
+				return engine.WorkflowStartRequest{}, err
+			}
+		} else {
+			checkpoint, err := decodeProviderCheckpoint(input.Continuation.Suspension)
+			if err != nil {
+				return engine.WorkflowStartRequest{}, err
+			}
+			if _, err := registeredCheckpointDeclaration(checkpoint); err != nil {
+				return engine.WorkflowStartRequest{}, err
+			}
+		}
+		return prepared.Request, nil
+	}
+	turnID, err := lifecycle.RegisteredRunTurnID(owner.Subject, runID, predecessorRunID)
+	if err != nil {
+		return engine.WorkflowStartRequest{}, err
+	}
+	suspension, err := r.LoadRunSuspension(ctx, predecessorRunID)
+	if err != nil {
+		return engine.WorkflowStartRequest{}, err
+	}
+	if _, native := owner.Subject.Executor.AsAgent(); native {
+		checkpoint, err := decodeProviderCheckpoint(suspension)
+		if err != nil {
+			return engine.WorkflowStartRequest{}, err
+		}
+		declaration, err := registeredCheckpointDeclaration(checkpoint)
+		if err != nil {
+			return engine.WorkflowStartRequest{}, err
+		}
+		route := declaration.ConsumerContract.Agent
+		definition := NewAgentDefinition(AgentRoute{ID: agent.Ident(route.Executor), WorkflowName: route.Workflow, DefaultTaskQueue: route.Queue}, nil, nil, nil, nil, nil, nil)
+		input, writer, err := r.buildStoredContinuationRunInput(ctx, definition, owner.SessionID, predecessorRunID, runID, turnID, continuation, runID, runID)
+		if err != nil {
+			return engine.WorkflowStartRequest{}, err
+		}
+		request, err := prepareRunWithDefinition(input, workflowLaunchSettings{}, definition, owner.SessionID != "")
+		if err != nil {
+			return engine.WorkflowStartRequest{}, err
+		}
+		snapshot, err := startrecipe.SnapshotRequest(request)
+		if err != nil {
+			return engine.WorkflowStartRequest{}, err
+		}
+		request = snapshot.Request
+		if _, err := publishPreparedRun(ctx, writer, definition.route.ID, request, "", runID); err != nil {
+			return engine.WorkflowStartRequest{}, err
+		}
+		return request, nil
+	}
+	checkpoint, err := decodeRegisteredRootCheckpoint(suspension)
+	if err != nil {
+		return engine.WorkflowStartRequest{}, err
+	}
+	selected := *continuation
+	selected.Suspension = suspension
+	input := &api.RunInput{Subject: owner.Subject, RunID: runID, SessionID: owner.SessionID, TurnID: turnID, SeedEndID: storage.EmptySeedEndID, Continuation: &selected}
+	if _, _, err := restoreRegisteredRoot(input); err != nil {
+		return engine.WorkflowStartRequest{}, err
+	}
+	request := engine.WorkflowStartRequest{ID: runID, Workflow: registeredRootWorkflow, TaskQueue: checkpoint.Queue, Input: input}
+	prepared, err := startrecipe.NewPreparedRequest("", request, "")
+	if err != nil {
+		return engine.WorkflowStartRequest{}, err
+	}
+	data, err := prepared.MarshalBinary()
+	if err != nil {
+		return engine.WorkflowStartRequest{}, err
+	}
+	declaration := storage.SeedDeclaration{Origin: owner.Origin, Subject: owner.Subject, SessionID: owner.SessionID, RunID: runID, CommandID: runID, AttemptID: runID, Kind: storage.SeedLiteral, PredecessorRunID: predecessorRunID}
+	writer, err := stageLiteralHistory(ctx, r.Store, declaration, nil)
+	if err != nil {
+		return engine.WorkflowStartRequest{}, err
+	}
+	if err := writer.publish(ctx, data); err != nil {
+		return engine.WorkflowStartRequest{}, err
+	}
+	return prepared.Request, nil
+}

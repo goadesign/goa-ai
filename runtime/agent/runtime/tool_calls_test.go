@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -20,7 +21,7 @@ func TestNewToolCallScheduledEventPreservesRuntimeCorrelation(t *testing.T) {
 
 	event := newToolCallScheduledEvent(
 		"run-1",
-		"svc.agent",
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))},
 		"session-1",
 		ToolCall{
 			Name:                       "tools.continue_search",
@@ -127,7 +128,7 @@ func TestExecuteToolCallsRetainsModelPayloadInWorkflow(t *testing.T) {
 		ModelPayload:    modelPayload,
 	}
 
-	results, _, err := rt.executeToolCalls(
+	results, _, err := rt.executeToolCalls(nil,
 		wfCtx,
 		"execute",
 		engine.ActivityOptions{},

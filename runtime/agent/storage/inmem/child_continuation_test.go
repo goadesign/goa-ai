@@ -9,9 +9,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"goa.design/goa-ai/runtime/agent"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/hooks"
-	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/session"
 	"goa.design/goa-ai/runtime/agent/storage"
 	"goa.design/goa-ai/runtime/agent/storage/lifecycle"
@@ -22,16 +21,15 @@ func TestChildContinuationPreservesCallAcrossExecutionParents(t *testing.T) {
 	ctx := t.Context()
 	command := func(parent session.RunStart, runID, predecessor, callID string) storage.ChildRunStart {
 		start := publishStartHistory(t, store, session.RunStart{
-			AgentID: "child", RunID: runID, SessionID: parent0.SessionID, ParentRunID: parent.RunID,
+			Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("child"))}, RunID: runID, SessionID: parent0.SessionID, ParentRunID: parent.RunID,
 			PredecessorRunID: predecessor, StartedAt: parent0.StartedAt,
-		})
+		}, callID)
 		return storage.ChildRunStart{
 			RequestDigest: [32]byte{1}, Run: start,
 			ParentLinked: hookRecord(t, "link-"+runID, start.StartedAt, hooks.NewChildRunLinkedEvent(
-				parent.RunID, agent.Ident(parent.AgentID), start.SessionID, "child", callID, runID, "child",
+				parent.RunID, parent.Subject, start.SessionID, "child", callID, runID, "child",
 			)),
-			Started:      startedRecord(t, "start", start),
-			Cancellation: cancellationRecord(t, "stop", start, run.CancellationReasonSessionEnded),
+			Started: startedRecord(t, "start", start),
 		}
 	}
 	suspend := func(start session.RunStart) {
@@ -49,7 +47,7 @@ func TestChildContinuationPreservesCallAcrossExecutionParents(t *testing.T) {
 		suspend(child.Run)
 	}
 	suspend(parent0)
-	parent1 := publishStartHistory(t, store, session.RunStart{AgentID: parent0.AgentID, RunID: "parent-1", SessionID: parent0.SessionID, PredecessorRunID: parent0.RunID, StartedAt: parent0.StartedAt})
+	parent1 := publishStartHistory(t, store, session.RunStart{Subject: parent0.Subject, RunID: "parent-1", SessionID: parent0.SessionID, PredecessorRunID: parent0.RunID, StartedAt: parent0.StartedAt}, "")
 	_, err := store.StartRootRun(ctx, rootStartCommand(t, parent1))
 	require.NoError(t, err)
 	a1 := command(parent1, "A1", a0.Run.RunID, "call-A")
@@ -80,7 +78,7 @@ func TestChildContinuationPreservesCallAcrossExecutionParents(t *testing.T) {
 
 	_, err = store.CreateSession(ctx, "other-chat", parent0.StartedAt)
 	require.NoError(t, err)
-	foreign := publishStartHistory(t, store, session.RunStart{AgentID: parent0.AgentID, RunID: "foreign-parent", SessionID: "other-chat", StartedAt: parent0.StartedAt})
+	foreign := publishStartHistory(t, store, session.RunStart{Subject: parent0.Subject, RunID: "foreign-parent", SessionID: "other-chat", StartedAt: parent0.StartedAt}, "")
 	_, err = store.StartRootRun(ctx, rootStartCommand(t, foreign))
 	require.NoError(t, err)
 	crossChat := command(foreign, "cross-chat-child", a0.Run.RunID, "call-A")
@@ -99,7 +97,7 @@ func TestChildContinuationPreservesCallAcrossExecutionParents(t *testing.T) {
 	require.NoError(t, err)
 	suspend(a2.Run)
 	suspend(parent1)
-	parent2 := publishStartHistory(t, store, session.RunStart{AgentID: parent0.AgentID, RunID: "parent-2", SessionID: parent0.SessionID, PredecessorRunID: parent1.RunID, StartedAt: parent0.StartedAt})
+	parent2 := publishStartHistory(t, store, session.RunStart{Subject: parent0.Subject, RunID: "parent-2", SessionID: parent0.SessionID, PredecessorRunID: parent1.RunID, StartedAt: parent0.StartedAt}, "")
 	_, err = store.StartRootRun(ctx, rootStartCommand(t, parent2))
 	require.NoError(t, err)
 	b1 := command(parent2, "B1", b0.Run.RunID, "call-B")
@@ -114,6 +112,37 @@ func TestChildContinuationPreservesCallAcrossExecutionParents(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, lifecycle.ValidateStoredChildLink(link, parentMeta, childMeta))
 		require.Equal(t, selected.Run.ParentRunID, childMeta.ParentRunID)
+	}
+	freshCall := command(parent2, "fresh-child", "", "call-new")
+	_, err = store.StartChildRun(ctx, freshCall)
+	require.NoError(t, err)
+	for _, root := range []session.RunStart{parent0, parent1, parent2} {
+		meta, err := store.LoadRun(ctx, root.RunID)
+		require.NoError(t, err)
+		origin, ok := meta.Origin.Invocation.AsRoot()
+		require.True(t, ok)
+		require.Equal(t, parent0.RunID, origin.RunID)
+	}
+	for _, child := range []storage.ChildRunStart{a0, a1, a2, b0, b1, freshCall} {
+		meta, err := store.LoadRun(ctx, child.Run.RunID)
+		require.NoError(t, err)
+		origin, ok := meta.Origin.Invocation.AsTool()
+		require.True(t, ok)
+		issuer, callID := parent0.RunID, "call-A"
+		if child.Run.RunID == b0.Run.RunID || child.Run.RunID == b1.Run.RunID {
+			callID = "call-B"
+		}
+		if child.Run.RunID == freshCall.Run.RunID {
+			issuer, callID = parent2.RunID, "call-new"
+		}
+		require.Equal(t, issuer, origin.RunID)
+		require.Equal(t, callID, origin.ToolCallID)
+		origin.RunID = "changed-returned-copy"
+		again, err := store.LoadRun(ctx, child.Run.RunID)
+		require.NoError(t, err)
+		saved, ok := again.Origin.Invocation.AsTool()
+		require.True(t, ok)
+		require.Equal(t, issuer, saved.RunID)
 	}
 	suspend(b1.Run)
 	suspend(parent2)

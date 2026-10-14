@@ -26,6 +26,7 @@ import (
 	shared "generated.local/gen/alpha/toolsets/shared"
 	beta "generated.local/gen/beta/agents/beta_worker"
 	"goa.design/goa-ai/runtime/agent/planner"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	agentsruntime "goa.design/goa-ai/runtime/agent/runtime"
 	storageinmem "goa.design/goa-ai/runtime/agent/storage/inmem"
 )
@@ -67,7 +68,7 @@ func TestGeneratedRoutes(t *testing.T) {
 	}
 	if _, err := runtime.ExecuteToolActivity(context.Background(), &agentsruntime.ToolInput{
 		RunID:       "run-1",
-		AgentID:     "beta.beta_worker",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("beta.beta_worker")},
 		ToolsetName: beta.SharedToolsetName,
 		ToolName:    shared.Ping,
 		ToolCallID:  "call-1",

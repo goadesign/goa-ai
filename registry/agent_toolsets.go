@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"time"
 
+	"goa.design/goa-ai/internal/registrycontract"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	toolcontract "goa.design/goa-ai/runtime/toolregistry/contract"
 )
@@ -100,16 +101,17 @@ func nativeAgentToken(fingerprint string) string {
 	return fmt.Sprintf("%x", sha256.Sum256([]byte("agent-toolset\x00"+fingerprint)))
 }
 
-// validateAgentTools rejects declarations that cannot finish through the native
-// child workflow path. Generated validators own required fields and formats.
+// validateAgentTools compiles the complete declaration group so names and paging
+// partners agree before storage accepts it, then requires every tool to use an
+// Agent executor. Generated validators own required fields and formats.
 func validateAgentTools(declarations []*genregistry.ToolSchema) error {
-	for _, declaration := range declarations {
-		spec, err := toolcontract.Compile(declaration)
-		if err != nil {
-			return err
-		}
+	compiled, err := registrycontract.Compile(declarations)
+	if err != nil {
+		return err
+	}
+	for _, spec := range compiled {
 		if !spec.IsAgentTool {
-			return fmt.Errorf("tool %q is not a native Agent tool", declaration.Name)
+			return fmt.Errorf("tool %q is not a native Agent tool", spec.Name)
 		}
 	}
 	return nil
@@ -224,6 +226,9 @@ func checkAgentRegistration(current catalogState, identity *CatalogIdentity, tok
 			return errAdmissionConflict
 		}
 		return nil
+	}
+	if current.ImmutableNative {
+		return fmt.Errorf("%w: immutable native revision cannot be replaced", errAdmissionConflict)
 	}
 	if current.RegistrationToken != expected {
 		return errAdmissionConflict

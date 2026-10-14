@@ -8,14 +8,17 @@ import (
 	"errors"
 	"fmt"
 
+	commonpb "go.temporal.io/api/common/v1"
 	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/api/serviceerror"
 	workflowpb "go.temporal.io/api/workflow/v1"
+	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/converter"
 	temporalsdk "go.temporal.io/sdk/temporal"
 
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/internal/startrecipe"
 )
 
 // QueryWorkflow exposes Temporal query execution through the engine's durable
@@ -41,24 +44,52 @@ func (e *Engine) QueryRunCompletion(ctx context.Context, workflowID string) (eng
 	if err != nil {
 		return engine.RunCompletion{}, mapDescribeWorkflowExecutionError(err)
 	}
-	status := queryRunStatusFromInfo(desc.GetWorkflowExecutionInfo())
-	if !isTerminalRunStatus(status) {
-		return engine.RunCompletion{Status: status}, nil
+	info := desc.GetWorkflowExecutionInfo()
+	executionID := info.GetExecution().GetRunId()
+	if executionID == "" {
+		return engine.RunCompletion{}, errors.New("workflow execution identity is missing")
 	}
-	completedAt := desc.GetWorkflowExecutionInfo().GetCloseTime().AsTime().UTC()
+	digest, err := acceptedRequestDigest(info.GetMemo())
+	if err != nil {
+		return engine.RunCompletion{}, err
+	}
+	status := queryRunStatusFromInfo(info)
+	completion := engine.RunCompletion{Status: status, StartRequestDigest: digest}
+	if !isTerminalRunStatus(status) {
+		return completion, nil
+	}
+	// A closed attempt with a successor has not completed the whole execution.
+	// Inspect its exact close event before allowing callers to persist an outcome.
+	history := e.client.GetWorkflowHistory(ctx, workflowID, executionID, false, enumspb.HISTORY_EVENT_FILTER_TYPE_CLOSE_EVENT)
+	if !history.HasNext() {
+		return engine.RunCompletion{}, errors.New("closed workflow has no close event")
+	}
+	closed, err := history.Next()
+	if err != nil {
+		return engine.RunCompletion{}, mapDescribeWorkflowExecutionError(err)
+	}
+	if closed.GetWorkflowExecutionCompletedEventAttributes().GetNewExecutionRunId() != "" ||
+		closed.GetWorkflowExecutionFailedEventAttributes().GetNewExecutionRunId() != "" ||
+		closed.GetWorkflowExecutionTimedOutEventAttributes().GetNewExecutionRunId() != "" ||
+		closed.GetWorkflowExecutionContinuedAsNewEventAttributes() != nil {
+		return engine.RunCompletion{}, errors.New("selected workflow attempt has a successor; completion requires the current execution")
+	}
+	completion.CompletedAt = info.GetCloseTime().AsTime().UTC()
 	var out *api.RunOutput
-	if err := e.client.GetWorkflow(ctx, workflowID, "").Get(ctx, &out); err != nil {
+	if err := e.client.GetWorkflow(ctx, workflowID, executionID).GetWithOptions(ctx, &out, client.WorkflowRunGetOptions{DisableFollowingRuns: true}); err != nil {
 		var notFound *serviceerror.NotFound
 		if errors.As(err, &notFound) {
 			return engine.RunCompletion{}, engine.ErrWorkflowNotFound
 		}
 		var workflowErr *temporalsdk.WorkflowExecutionError
 		if errors.As(err, &workflowErr) {
-			return engine.RunCompletion{Status: status, CompletedAt: completedAt, WorkflowError: err}, nil
+			completion.WorkflowError = err
+			return completion, nil
 		}
 		return engine.RunCompletion{}, err
 	}
-	return engine.RunCompletion{Status: status, CompletedAt: completedAt, Output: out}, nil
+	completion.Output = out
+	return completion, nil
 }
 
 // isTerminalRunStatus reports whether Temporal has a final workflow result.
@@ -132,4 +163,25 @@ func mapWorkflowMutationError(err error) error {
 	}
 
 	return err
+}
+
+// acceptedRequestDigest decodes the engine-owned request identity from one
+// execution's saved metadata. Missing or malformed metadata cannot authorize repair.
+func acceptedRequestDigest(memo *commonpb.Memo) ([32]byte, error) {
+	payload := memo.GetFields()[startrecipe.MemoKey]
+	if payload == nil {
+		return [32]byte{}, errors.New("workflow accepted request digest is missing")
+	}
+	var value []byte
+	if err := NewAgentDataConverter().FromPayload(payload, &value); err != nil {
+		return [32]byte{}, fmt.Errorf("decode accepted request digest: %w", err)
+	}
+	if len(value) != 32 {
+		return [32]byte{}, errors.New("workflow accepted request digest must contain 32 bytes")
+	}
+	digest := [32]byte(value)
+	if digest == ([32]byte{}) {
+		return [32]byte{}, errors.New("workflow accepted request digest is missing")
+	}
+	return digest, nil
 }

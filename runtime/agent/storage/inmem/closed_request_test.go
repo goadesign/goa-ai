@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/runlog"
 	"goa.design/goa-ai/runtime/agent/session"
@@ -116,7 +117,7 @@ func TestClosedRequestRejectsMissingOrCorruptProof(t *testing.T) {
 				delete(store.recordsByKey[start.ParentRunID], keys.parentLink)
 			case "parent identity":
 				parent := store.runs[start.ParentRunID]
-				parent.AgentID = "different"
+				parent.Subject = genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("different"))}
 				store.runs[start.ParentRunID] = parent
 			}
 			before := requestRecordSnapshot(store)
@@ -148,7 +149,11 @@ func TestRequestBindingDoesNotResumeRunningRun(t *testing.T) {
 			require.ErrorIs(t, err, session.ErrRunConflict)
 			assert.Equal(t, before, requestRecordSnapshot(store))
 			start.RunID = "next-run"
-			start = publishStartHistory(t, store, start)
+			toolCallID := ""
+			if start.ParentRunID != "" {
+				toolCallID = "tool-call"
+			}
+			start = publishStartHistory(t, store, start, toolCallID)
 			_, err = applyRequestStart(t, store, kind, start, [32]byte{2})
 			require.NoError(t, err)
 		})
@@ -243,6 +248,7 @@ func requestStartFixture(t *testing.T, kind string) (*Store, session.RunStart) {
 	if kind == requestKindOneShot || kind == requestKindOneShotChild {
 		start.SessionID = ""
 	}
+	toolCallID := ""
 	if kind == requestKindChild || kind == requestKindOneShotChild {
 		parent := start
 		parent.RunID = "parent"
@@ -250,12 +256,13 @@ func requestStartFixture(t *testing.T, kind string) (*Store, session.RunStart) {
 		if start.SessionID == "" {
 			parentKind = requestKindOneShot
 		}
-		parent = publishStartHistory(t, store, parent)
+		parent = publishStartHistory(t, store, parent, "")
 		_, err := applyRequestStart(t, store, parentKind, parent, [32]byte{3})
 		require.NoError(t, err)
 		start.ParentRunID = parent.RunID
+		toolCallID = "tool-call"
 	}
-	return store, publishStartHistory(t, store, start)
+	return store, publishStartHistory(t, store, start, toolCallID)
 }
 
 // applyRequestStart encodes the same event contracts as workflow code. Only the
@@ -276,7 +283,7 @@ func applyRequestStart(t *testing.T, store *Store, kind string, start session.Ru
 		return startReplayResult{result.Outcome, result.RunStatus, records}, err
 	case requestKindChild:
 		result, err := store.StartChildRun(t.Context(), storage.ChildRunStart{
-			RequestDigest: digest, Run: start, Started: root.Started, Cancellation: root.Cancellation,
+			RequestDigest: digest, Run: start, Started: root.Started,
 			ParentLinked: childLinkRecord(t, "link-"+start.RunID, parent, start),
 		})
 		records := []storage.AppendResult{result.ParentRecord, result.Started}
@@ -323,12 +330,12 @@ func TestEndedSessionStartRejectsCompletionAndSuspension(t *testing.T) {
 		RunID: start.RunID, Status: session.RunStatusCompleted,
 		Record: completedRecord(t, "finished", start, "success", nil),
 	})
-	require.ErrorContains(t, err, "ended-session start cannot complete successfully")
+	require.ErrorContains(t, err, "stopped start cannot complete successfully")
 	_, err = store.RecordRunSuspension(t.Context(), storage.RunSuspension{
 		RunID: start.RunID, Suspension: session.RunSuspension{ID: "checkpoint", Data: []byte(`{"version":"v6"}`)},
 		Record: suspendedRecord(t, "finished", start, "checkpoint"),
 	})
-	require.ErrorContains(t, err, "ended-session start cannot suspend")
+	require.ErrorContains(t, err, "stopped start cannot suspend")
 	assert.Equal(t, before, requestRecordSnapshot(store))
 	meta, err := store.LoadRun(t.Context(), start.RunID)
 	require.NoError(t, err)

@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/content"
@@ -30,7 +31,7 @@ func TestToolResultRecordRetainsContentOnSuccessAndFailure(t *testing.T) {
 			result = nil
 			failure = &planner.ToolFailure{Kind: planner.FailureDomainRejection, Error: planner.NewToolError("rejected"), Recovery: planner.RecoveryDirective{Action: planner.RecoveryReplan}}
 		}
-		event := NewToolResultReceivedEvent("result-run", "service.agent", "session-1", "call-run", "remote.lookup", "call-1", "", result, nil, blocks, "preview", nil, 0, nil, failure)
+		event := NewToolResultReceivedEvent("result-run", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("service.agent"))}, "session-1", "call-run", "remote.lookup", "call-1", "", result, nil, blocks, "preview", nil, 0, nil, failure)
 		record, err := EncodeToRecordInput(event, EncodeOptions{EventKey: "content-result", TimestampMS: 1})
 		require.NoError(t, err)
 		decoded, err := DecodeFromRecordInput(record)

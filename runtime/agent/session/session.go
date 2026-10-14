@@ -7,7 +7,11 @@ package session
 
 import (
 	"errors"
+	"fmt"
 	"time"
+
+	genregistry "goa.design/goa-ai/registry/gen/registry"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 )
 
 type (
@@ -31,11 +35,14 @@ type (
 
 	// RunMeta captures persistent lifecycle facts for a run execution.
 	RunMeta struct {
+		// Origin identifies the original root or tool invocation. A successor keeps
+		// its predecessor's value even when its workflow or parent Run changes.
+		Origin genregistry.ExecutionInvocation
 		// SeedEndID identifies the initial history attached at start. A run whose
 		// history consists entirely of ordinary literal records leaves it empty.
 		SeedEndID string
-		// AgentID identifies which agent processed the run.
-		AgentID string
+		// Subject identifies the Agent or service tool that processed the run.
+		Subject genrunidentity.RunSubject
 		// RunID is the durable workflow run identifier.
 		RunID string
 		// SessionID associates related runs (e.g., chat sessions).
@@ -68,8 +75,8 @@ type (
 		// SeedEndID is the required published initial-history position. Starting
 		// the workflow attaches these records without copying them.
 		SeedEndID string
-		// AgentID identifies the agent executing the workflow.
-		AgentID string
+		// Subject identifies the Agent or service tool executing the workflow.
+		Subject genrunidentity.RunSubject
 		// RunID is the caller-supplied workflow identifier.
 		RunID string
 		// SessionID identifies the session that owns the workflow.
@@ -178,15 +185,17 @@ var (
 // ValidateRunStart validates the immutable values required by a workflow-owned
 // session run start. Child starts additionally require ParentRunID.
 func ValidateRunStart(start RunStart, child bool) error {
+	if _, err := genrunidentity.EncodeRunSubject(&start.Subject); err != nil {
+		return fmt.Errorf("run subject: %w", err)
+	}
+	if _, ok := start.Subject.Executor.AsAgent(); child && !ok {
+		return ErrChildAgentIDRequired
+	}
 	switch {
 	case child && start.RunID == "":
 		return ErrChildRunIDRequired
 	case start.RunID == "":
 		return errors.New("run id is required")
-	case child && start.AgentID == "":
-		return ErrChildAgentIDRequired
-	case start.AgentID == "":
-		return errors.New("agent id is required")
 	case child && start.SessionID == "":
 		return ErrChildSessionIDRequired
 	case start.SessionID == "":

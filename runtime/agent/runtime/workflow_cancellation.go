@@ -26,7 +26,7 @@ func (l *workflowLoop) cancelSavedWork(request api.CancellationRequest) error {
 	cleanup.wfCtx = l.wfCtx.Detached()
 	execution := &toolBatchExec{
 		r: l.r, activityName: l.reg.ExecuteToolActivity, toolActOptions: l.toolOpts,
-		runID: l.input.RunID, agentID: l.input.AgentID, sessionID: l.input.SessionID,
+		runID: l.input.RunID, agentID: l.reg.Definition.route.ID, sessionID: l.input.SessionID,
 		turnID: l.turnID, runCtx: &l.base.RunContext, historyEndID: l.base.HistoryEndID,
 		ownedTasks: make(map[string]futureInfo),
 	}
@@ -56,12 +56,7 @@ func (l *workflowLoop) cancelSavedWork(request api.CancellationRequest) error {
 		if request.Reason == run.CancellationReasonSessionEnded {
 			selected.Reason = request.Reason
 		}
-		definition, err := childDefinitionForCall(saved.call, l.reg.Definition)
-		if err != nil {
-			cleanupErr = errors.Join(cleanupErr, err)
-			continue
-		}
-		contains, err := checkpointContainsRun(child, definition, request.RunID)
+		contains, err := checkpointChildContainsRun(saved.call, saved.childSuspension, l.reg.Definition, request.RunID)
 		if err != nil {
 			cleanupErr = errors.Join(cleanupErr, err)
 			continue
@@ -86,4 +81,25 @@ func (l *workflowLoop) cancelSavedWork(request api.CancellationRequest) error {
 		return errors.Join(errWorkCleanupFailure, cleanupErr)
 	}
 	return nil
+}
+
+// finishToolBatches transfers the accepted schedule facts to step records before
+// releasing active execution state. Calls interrupted without a result keep
+// their original schedule instead of publishing a second schedule during cleanup.
+func (l *workflowLoop) finishToolBatches(records []stepToolRecord) {
+	for _, execution := range l.activeToolBatches {
+		for i := range records {
+			record := &records[i]
+			state, scheduled := execution.batch.scheduleByID[record.call.ToolCallID]
+			if !scheduled {
+				continue
+			}
+			record.callRunID = state.callRunID
+			record.scheduleRequired = !state.published
+			record.scheduleQueue = state.queue
+			record.expectedChildren = state.expectedChildren
+			record.scheduleExact = true
+		}
+	}
+	l.activeToolBatches = nil
 }

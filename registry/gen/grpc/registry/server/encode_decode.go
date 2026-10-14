@@ -16,6 +16,159 @@ import (
 	"google.golang.org/grpc/metadata"
 )
 
+// EncodeCheckCatalogResourceResponse encodes responses from the "registry"
+// service "CheckCatalogResource" endpoint.
+func EncodeCheckCatalogResourceResponse(ctx context.Context, v any, hdr, trlr *metadata.MD) (any, error) {
+	resp := NewProtoCheckCatalogResourceResponse()
+	return resp, nil
+}
+
+// DecodeCheckCatalogResourceRequest decodes requests sent to "registry"
+// service "CheckCatalogResource" endpoint.
+func DecodeCheckCatalogResourceRequest(ctx context.Context, v any, md metadata.MD) (any, error) {
+	var (
+		message *registrypb.CheckCatalogResourceRequest
+		ok      bool
+	)
+	{
+		if message, ok = v.(*registrypb.CheckCatalogResourceRequest); !ok {
+			return nil, goagrpc.ErrInvalidType("registry", "CheckCatalogResource", "*registrypb.CheckCatalogResourceRequest", v)
+		}
+		if err := ValidateCheckCatalogResourceRequest(message); err != nil {
+			return nil, err
+		}
+	}
+	var payload *registry.CatalogResource
+	{
+		payload = NewCheckCatalogResourcePayload(message)
+	}
+	return payload, nil
+}
+
+// EncodeListCatalogResourcesResponse encodes responses from the "registry"
+// service "ListCatalogResources" endpoint.
+func EncodeListCatalogResourcesResponse(ctx context.Context, v any, hdr, trlr *metadata.MD) (any, error) {
+	result, ok := v.(*registry.CatalogResourcesPage)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "ListCatalogResources", "*registry.CatalogResourcesPage", v)
+	}
+	resp := NewProtoListCatalogResourcesResponse(result)
+	return resp, nil
+}
+
+// DecodeListCatalogResourcesRequest decodes requests sent to "registry"
+// service "ListCatalogResources" endpoint.
+func DecodeListCatalogResourcesRequest(ctx context.Context, v any, md metadata.MD) (any, error) {
+	var (
+		message *registrypb.ListCatalogResourcesRequest
+		ok      bool
+	)
+	{
+		if message, ok = v.(*registrypb.ListCatalogResourcesRequest); !ok {
+			return nil, goagrpc.ErrInvalidType("registry", "ListCatalogResources", "*registrypb.ListCatalogResourcesRequest", v)
+		}
+		if err := ValidateListCatalogResourcesRequest(message); err != nil {
+			return nil, err
+		}
+	}
+	var payload *registry.CatalogResourcesQuery
+	{
+		payload = NewListCatalogResourcesPayload(message)
+	}
+	return payload, nil
+}
+
+// EncodeRegisterAgentExportsResponse encodes responses from the "registry"
+// service "RegisterAgentExports" endpoint.
+func EncodeRegisterAgentExportsResponse(ctx context.Context, v any, hdr, trlr *metadata.MD) (any, error) {
+	result, ok := v.(*registry.ResolvedToolset)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "RegisterAgentExports", "*registry.ResolvedToolset", v)
+	}
+	resp := NewProtoRegisterAgentExportsResponse(result)
+	return resp, nil
+}
+
+// DecodeRegisterAgentExportsRequest decodes requests sent to "registry"
+// service "RegisterAgentExports" endpoint.
+func DecodeRegisterAgentExportsRequest(ctx context.Context, v any, md metadata.MD) (any, error) {
+	var (
+		message *registrypb.RegisterAgentExportsRequest
+		ok      bool
+	)
+	{
+		if message, ok = v.(*registrypb.RegisterAgentExportsRequest); !ok {
+			return nil, goagrpc.ErrInvalidType("registry", "RegisterAgentExports", "*registrypb.RegisterAgentExportsRequest", v)
+		}
+		if err := ValidateRegisterAgentExportsRequest(message); err != nil {
+			return nil, err
+		}
+	}
+	var payload *registry.AgentExportsDeclaration
+	{
+		payload = NewRegisterAgentExportsPayload(message)
+	}
+	return payload, nil
+}
+
+// EncodeValidateAgentExportsResponse encodes responses from the "registry"
+// service "ValidateAgentExports" endpoint.
+func EncodeValidateAgentExportsResponse(ctx context.Context, v any, hdr, trlr *metadata.MD) (any, error) {
+	resp := NewProtoValidateAgentExportsResponse()
+	return resp, nil
+}
+
+// DecodeValidateAgentExportsRequest decodes requests sent to "registry"
+// service "ValidateAgentExports" endpoint.
+func DecodeValidateAgentExportsRequest(ctx context.Context, v any, md metadata.MD) (any, error) {
+	var (
+		message *registrypb.ValidateAgentExportsRequest
+		ok      bool
+	)
+	{
+		if message, ok = v.(*registrypb.ValidateAgentExportsRequest); !ok {
+			return nil, goagrpc.ErrInvalidType("registry", "ValidateAgentExports", "*registrypb.ValidateAgentExportsRequest", v)
+		}
+		if err := ValidateValidateAgentExportsRequest(message); err != nil {
+			return nil, err
+		}
+	}
+	var payload *registry.AgentExportsValidation
+	{
+		payload = NewValidateAgentExportsPayload(message)
+	}
+	return payload, nil
+}
+
+// EncodeRetireAgentResourceResponse encodes responses from the "registry"
+// service "RetireAgentResource" endpoint.
+func EncodeRetireAgentResourceResponse(ctx context.Context, v any, hdr, trlr *metadata.MD) (any, error) {
+	resp := NewProtoRetireAgentResourceResponse()
+	return resp, nil
+}
+
+// DecodeRetireAgentResourceRequest decodes requests sent to "registry" service
+// "RetireAgentResource" endpoint.
+func DecodeRetireAgentResourceRequest(ctx context.Context, v any, md metadata.MD) (any, error) {
+	var (
+		message *registrypb.RetireAgentResourceRequest
+		ok      bool
+	)
+	{
+		if message, ok = v.(*registrypb.RetireAgentResourceRequest); !ok {
+			return nil, goagrpc.ErrInvalidType("registry", "RetireAgentResource", "*registrypb.RetireAgentResourceRequest", v)
+		}
+		if err := ValidateRetireAgentResourceRequest(message); err != nil {
+			return nil, err
+		}
+	}
+	var payload *registry.CatalogResource
+	{
+		payload = NewRetireAgentResourcePayload(message)
+	}
+	return payload, nil
+}
+
 // EncodeDeclareServiceToolsetResponse encodes responses from the "registry"
 // service "DeclareServiceToolset" endpoint.
 func EncodeDeclareServiceToolsetResponse(ctx context.Context, v any, hdr, trlr *metadata.MD) (any, error) {

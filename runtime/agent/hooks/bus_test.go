@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/run"
 )
@@ -20,9 +21,9 @@ func TestBusPublishFanOut(t *testing.T) {
 	})
 	_, err := bus.Register(sub)
 	require.NoError(t, err)
-	evt1 := NewRunStartedEvent("run1", agent.Ident("agent1"), "", "", "", nil)
+	evt1 := NewRunStartedEvent("run1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent1")))}, "", "", "", nil)
 	require.NoError(t, bus.Publish(ctx, evt1))
-	evt2 := NewRunCompletedEvent("run1", agent.Ident("agent1"), "", "success", run.PhaseCompleted, nil, nil, nil)
+	evt2 := NewRunCompletedEvent("run1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent1")))}, "", "success", run.PhaseCompleted, nil, nil, nil)
 	require.NoError(t, bus.Publish(ctx, evt2))
 	require.Equal(t, 2, count)
 }
@@ -43,10 +44,10 @@ func TestSubscriptionClose(t *testing.T) {
 	})
 	subscription, err := bus.Register(sub)
 	require.NoError(t, err)
-	evt1 := NewRunStartedEvent("run1", agent.Ident("agent1"), "", "", "", nil)
+	evt1 := NewRunStartedEvent("run1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent1")))}, "", "", "", nil)
 	require.NoError(t, bus.Publish(ctx, evt1))
 	require.NoError(t, subscription.Close())
-	evt2 := NewRunCompletedEvent("run1", agent.Ident("agent1"), "", "success", run.PhaseCompleted, nil, nil, nil)
+	evt2 := NewRunCompletedEvent("run1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent1")))}, "", "success", run.PhaseCompleted, nil, nil, nil)
 	require.NoError(t, bus.Publish(ctx, evt2))
 	require.Equal(t, 1, count)
 }

@@ -108,7 +108,7 @@ func testAgentToolset(revision string) *genregistry.AgentToolsetDeclaration {
 			Name: "installation.check", PayloadSchema: schema, ExecutionPayloadSchema: schema, ResultSchema: schema,
 			ConsumerContract: &genregistry.ConsumerContract{
 				Kind: "agent", Title: "Check installation",
-				Agent:   &genregistry.AgentToolTarget{Executor: "generic.agent", Configuration: revision},
+				Agent:   &genregistry.AgentToolTarget{Executor: "generic.agent", Configuration: revision, Workflow: "generic.workflow", Queue: "generic.queue"},
 				Search:  &genregistry.ToolSearchDocument{Length: 1, Terms: map[string]int{"installation": 1}},
 				Payload: &genregistry.ToolTypeMetadata{SchemaWithoutRootExample: schema},
 				Result:  &genregistry.ToolTypeMetadata{SchemaWithoutRootExample: schema},

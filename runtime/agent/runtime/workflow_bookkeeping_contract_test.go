@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -158,6 +159,7 @@ func TestRunLoopBookkeepingOnlyFinalResponseFinishesWithoutResume(t *testing.T) 
 		ctx: context.Background(),
 	}
 	base := &workflowConversation{
+		finalization: &workflowFinalizationState{},
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "sess-1",
@@ -166,7 +168,8 @@ func TestRunLoopBookkeepingOnlyFinalResponseFinishesWithoutResume(t *testing.T) 
 		},
 	}
 	input := &RunInput{
-		AgentID:   agent.Ident("agent-1"),
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent-1")))},
+
 		RunID:     "run-1",
 		SessionID: "sess-1",
 		TurnID:    "turn-1",
@@ -187,7 +190,7 @@ func TestRunLoopBookkeepingOnlyFinalResponseFinishesWithoutResume(t *testing.T) 
 
 	out, err := rt.runLoop(
 		wfCtx,
-		AgentRegistration{ExecuteToolActivity: "execute", ResumeActivityName: "resume"},
+		AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, input.Subject), engine.WorkflowDefinition{}, nil), ExecuteToolActivity: "execute", ResumeActivityName: "resume"},
 		input,
 		base,
 		initial,
@@ -225,6 +228,7 @@ func TestRunLoopBookkeepingOnlyWithoutTerminalPayloadFailsFast(t *testing.T) {
 		ctx: context.Background(),
 	}
 	base := &workflowConversation{
+		finalization: &workflowFinalizationState{},
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "sess-1",
@@ -233,7 +237,8 @@ func TestRunLoopBookkeepingOnlyWithoutTerminalPayloadFailsFast(t *testing.T) {
 		},
 	}
 	input := &RunInput{
-		AgentID:   agent.Ident("agent-1"),
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent-1")))},
+
 		RunID:     "run-1",
 		SessionID: "sess-1",
 		TurnID:    "turn-1",
@@ -248,7 +253,7 @@ func TestRunLoopBookkeepingOnlyWithoutTerminalPayloadFailsFast(t *testing.T) {
 
 	out, err := rt.runLoop(
 		wfCtx,
-		AgentRegistration{ExecuteToolActivity: "execute", ResumeActivityName: "resume"},
+		AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, input.Subject), engine.WorkflowDefinition{}, nil), ExecuteToolActivity: "execute", ResumeActivityName: "resume"},
 		input,
 		base,
 		initial,
@@ -300,6 +305,7 @@ func TestRunLoopRetryableBookkeepingTerminalFailureResumes(t *testing.T) {
 		recoveryCatalog: &RecoveryCatalog{Tools: []tools.Ident{terminal.Name}},
 	}
 	base := &workflowConversation{
+		finalization: &workflowFinalizationState{},
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "sess-1",
@@ -308,7 +314,8 @@ func TestRunLoopRetryableBookkeepingTerminalFailureResumes(t *testing.T) {
 		},
 	}
 	input := &RunInput{
-		AgentID:   agent.Ident("agent-1"),
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent-1")))},
+
 		RunID:     "run-1",
 		SessionID: "sess-1",
 		TurnID:    "turn-1",
@@ -321,10 +328,10 @@ func TestRunLoopRetryableBookkeepingTerminalFailureResumes(t *testing.T) {
 		}},
 	}
 
-	base.HistoryEndID = testToolHistory(t, rt, input.AgentID, base.RunContext, nil)
+	base.HistoryEndID = testToolHistory(t, rt, testSubjectAgent(t, input.Subject), base.RunContext, nil)
 	out, err := rt.runLoop(
 		wfCtx,
-		AgentRegistration{ExecuteToolActivity: "execute", ResumeActivityName: "resume"},
+		AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, input.Subject), engine.WorkflowDefinition{}, nil), ExecuteToolActivity: "execute", ResumeActivityName: "resume"},
 		input,
 		base,
 		initial,
@@ -364,11 +371,11 @@ func TestRunLoopRejectsProviderToolCallWithoutID(t *testing.T) {
 			"resume": rt.PlanResumeActivity,
 		},
 	}
-	base := &workflowConversation{RunContext: run.Context{
+	base := &workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{
 		RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1", Attempt: 1,
 	}}
 	input := &RunInput{
-		AgentID: agentID, RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))}, RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1",
 	}
 	initial := &PlanResult{ToolCalls: []ToolCall{{
 		Name: tools.ToolUnavailable, Payload: rawjson.Message(`{"requested_tool":"missing.0"}`),
@@ -403,8 +410,8 @@ func TestRunLoopRejectsMultipleProviderToolCallsWithoutIDs(t *testing.T) {
 	out, err := rt.runLoop(
 		&testWorkflowContext{ctx: context.Background()},
 		AgentRegistration{ExecuteToolActivity: "execute"},
-		&RunInput{AgentID: "agent-1", RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"},
-		&workflowConversation{RunContext: run.Context{
+		&RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent-1"))}, RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1"},
+		&workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{
 			RunID: "run-1", SessionID: "sess-1", TurnID: "turn-1", Attempt: 1,
 		}},
 		initial,
@@ -455,6 +462,7 @@ func TestRunLoopMixedBudgetedAndBookkeepingCarriesSynthesisOnly(t *testing.T) {
 		hasPlanResult: true,
 	}
 	base := &workflowConversation{
+		finalization: &workflowFinalizationState{},
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "sess-1",
@@ -463,7 +471,8 @@ func TestRunLoopMixedBudgetedAndBookkeepingCarriesSynthesisOnly(t *testing.T) {
 		},
 	}
 	input := &RunInput{
-		AgentID:   agent.Ident("agent-1"),
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent-1")))},
+
 		RunID:     "run-1",
 		SessionID: "sess-1",
 		TurnID:    "turn-1",
@@ -478,7 +487,7 @@ func TestRunLoopMixedBudgetedAndBookkeepingCarriesSynthesisOnly(t *testing.T) {
 
 	out, err := rt.runLoop(
 		wfCtx,
-		AgentRegistration{ExecuteToolActivity: "execute", ResumeActivityName: "resume"},
+		AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, input.Subject), engine.WorkflowDefinition{}, nil), ExecuteToolActivity: "execute", ResumeActivityName: "resume"},
 		input,
 		base,
 		initial,
@@ -535,6 +544,7 @@ func TestRunLoopBookkeepingOnlyToolClarificationPreservesTranscriptWithoutToolOu
 	}
 
 	base := &workflowConversation{
+		finalization: &workflowFinalizationState{},
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "sess-1",
@@ -543,7 +553,8 @@ func TestRunLoopBookkeepingOnlyToolClarificationPreservesTranscriptWithoutToolOu
 		},
 	}
 	input := &RunInput{
-		AgentID:   agent.Ident("agent-1"),
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent-1")))},
+
 		RunID:     "run-1",
 		SessionID: "sess-1",
 		TurnID:    "turn-1",
@@ -559,7 +570,7 @@ func TestRunLoopBookkeepingOnlyToolClarificationPreservesTranscriptWithoutToolOu
 
 	out, err := rt.runLoop(
 		wfCtx,
-		AgentRegistration{ExecuteToolActivity: "execute", ResumeActivityName: "resume"},
+		AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, input.Subject), engine.WorkflowDefinition{}, nil), ExecuteToolActivity: "execute", ResumeActivityName: "resume"},
 		input,
 		base,
 		initial,
@@ -613,6 +624,7 @@ func TestRunLoopBudgetedToolClarificationRecordsResultBeforeUserAnswer(t *testin
 	}
 
 	base := &workflowConversation{
+		finalization: &workflowFinalizationState{},
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "sess-1",
@@ -621,7 +633,8 @@ func TestRunLoopBudgetedToolClarificationRecordsResultBeforeUserAnswer(t *testin
 		},
 	}
 	input := &RunInput{
-		AgentID:   agent.Ident("agent-1"),
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent-1")))},
+
 		RunID:     "run-1",
 		SessionID: "sess-1",
 		TurnID:    "turn-1",
@@ -637,7 +650,7 @@ func TestRunLoopBudgetedToolClarificationRecordsResultBeforeUserAnswer(t *testin
 
 	out, err := rt.runLoop(
 		wfCtx,
-		AgentRegistration{ExecuteToolActivity: "execute", ResumeActivityName: "resume"},
+		AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, input.Subject), engine.WorkflowDefinition{}, nil), ExecuteToolActivity: "execute", ResumeActivityName: "resume"},
 		input,
 		base,
 		initial,
@@ -690,6 +703,7 @@ func TestRunLoopBookkeepingToolTerminalRejectsClarification(t *testing.T) {
 	}
 
 	base := &workflowConversation{
+		finalization: &workflowFinalizationState{},
 		RunContext: run.Context{
 			RunID:     "run-1",
 			SessionID: "sess-1",
@@ -698,7 +712,8 @@ func TestRunLoopBookkeepingToolTerminalRejectsClarification(t *testing.T) {
 		},
 	}
 	input := &RunInput{
-		AgentID:   agent.Ident("agent-1"),
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent-1")))},
+
 		RunID:     "run-1",
 		SessionID: "sess-1",
 		TurnID:    "turn-1",
@@ -720,7 +735,7 @@ func TestRunLoopBookkeepingToolTerminalRejectsClarification(t *testing.T) {
 
 	out, err := rt.runLoop(
 		wfCtx,
-		AgentRegistration{ExecuteToolActivity: "execute", ResumeActivityName: "resume"},
+		AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, input.Subject), engine.WorkflowDefinition{}, nil), ExecuteToolActivity: "execute", ResumeActivityName: "resume"},
 		input,
 		base,
 		initial,

@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/telemetry"
@@ -56,7 +57,7 @@ func TestToolSpanPreservesApplicationDiagnosticChoice(t *testing.T) {
 					Recovery: planner.RecoveryDirective{Action: planner.RecoveryFinish},
 				}
 			}
-			event := hooks.NewToolResultReceivedEvent("run", "service.agent", "session", "run",
+			event := hooks.NewToolResultReceivedEvent("run", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("service.agent"))}, "session", "run",
 				"service.read", "call", "", nil, nil, nil, "", nil, 125*time.Millisecond, nil, failure)
 			before := planner.CloneToolFailure(failure)
 

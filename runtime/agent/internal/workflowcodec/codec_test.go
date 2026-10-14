@@ -13,6 +13,8 @@ import (
 	commonpb "go.temporal.io/api/common/v1"
 	"go.temporal.io/sdk/converter"
 
+	genregistry "goa.design/goa-ai/registry/gen/registry"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -331,7 +333,7 @@ func TestNewDataConverterRejectsInvalidUTF8PersistedJSON(t *testing.T) {
 func TestNewDataConverterRejectsNestedToolResultInRunInput(t *testing.T) {
 	dc := NewDataConverter()
 	_, err := dc.ToPayload(&api.RunInput{
-		AgentID: "test.agent",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")},
 		RunID:   "run-123",
 		Metadata: map[string]any{
 			"nested": &planner.ToolResult{Name: "test.tool"},
@@ -492,7 +494,16 @@ func TestActivityHistoryWireRejectsInlineLegacyMessages(t *testing.T) {
 	require.Error(t, dc.FromPayload(payload, &plan))
 	var child api.AgentChildActivityInput
 	require.Error(t, dc.FromPayload(payload, &child))
-	childPayload, err := dc.ToPayload(&api.AgentChildActivityInput{HistoryEndID: "17"})
+	childPayload, err := dc.ToPayload(&api.AgentChildActivityInput{
+		HistoryEndID: "17",
+		Origin: genregistry.ExecutionInvocation{
+			Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{
+				RunID:      "parent-run",
+				ToolCallID: "child-call",
+			}),
+		},
+		Call: api.ToolCall{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("parent.agent")}},
+	})
 	require.NoError(t, err)
 	require.NoError(t, dc.FromPayload(childPayload, &child))
 	require.Equal(t, "17", child.HistoryEndID)
@@ -542,7 +553,7 @@ func TestNewDataConverterRejectsJSONStringifiedToolResult(t *testing.T) {
 func TestNewDataConverterRejectsObsoletePolicyFields(t *testing.T) {
 	dc := NewDataConverter()
 	payload, err := dc.ToPayload(map[string]any{
-		"AgentID": "test.agent",
+		"Subject": genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")},
 		"RunID":   "run-123",
 		"Policy": map[string]any{
 			"AllowedTags": []string{"obsolete"},

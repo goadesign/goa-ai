@@ -2,12 +2,13 @@ package temporal
 
 // These tests read retained workflow completions through the real Temporal
 // client and replay a parent's saved child completion. The payload literals
-// freeze the old and new wire formats; they are never encoded from today's
+// distinguish rejected old wire formats from the current subject-bearing format; they are never encoded from today's
 // RunOutput to manufacture an old result. The child history is synthetic, not
 // a history captured from a deployed Temporal service.
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"strings"
 	"sync/atomic"
@@ -31,8 +32,10 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/internal/startrecipe"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 )
 
@@ -45,14 +48,14 @@ const (
 	// The legacy literal follows the previous unversioned RunOutput. Null fields
 	// and both tool events are retained explicitly.
 	retainedLegacyOutput    = `{"AgentID":"agent","RunID":"child","Final":null,"FinalToolResult":{"Name":"report.finish","ToolCallID":"finish-2","Result":{"ok":true},"Telemetry":{"TokensUsed":2,"DurationMs":3,"Model":"terminal"}},"ToolEvents":[{"Name":"records.page","ToolCallID":"page-1","Result":{"rows":[1]},"Telemetry":{"TokensUsed":4,"DurationMs":5,"Model":"first"}},{"Name":"report.finish","ToolCallID":"finish-2","Result":{"ok":true},"Telemetry":{"TokensUsed":2,"DurationMs":3,"Model":"terminal"}}],"Notes":null,"Usage":null,"Suspension":null}`
-	retainedCurrentOutput   = `{"AgentID":"agent","RunID":"child","Final":null,"FinalToolResult":{"Name":"report.finish","ToolCallID":"finish-2","Result":{"ok":true},"Telemetry":{"TokensUsed":2,"DurationMs":3,"Model":"terminal"}},"ToolCount":2,"ToolTelemetry":{"TokensUsed":6,"DurationMs":8,"Model":""},"Notes":null,"Usage":null,"Suspension":null}`
-	retainedOutputEncoding  = "json/goa-ai-run-output-v2"
+	retainedPreviousOutput  = `{"AgentID":"agent","RunID":"child","Final":null,"FinalToolResult":{"Name":"report.finish","ToolCallID":"finish-2","Result":{"ok":true},"Telemetry":{"TokensUsed":2,"DurationMs":3,"Model":"terminal"}},"ToolCount":2,"ToolTelemetry":{"TokensUsed":6,"DurationMs":8,"Model":""},"Notes":null,"Usage":null,"Suspension":null}`
+	retainedCurrentOutput   = `{"Subject":{"executor":{"type":"agent","value":"agent"}},"RunID":"child","Final":null,"FinalToolResult":{"Name":"report.finish","ToolCallID":"finish-2","Result":{"ok":true},"Telemetry":{"TokensUsed":2,"DurationMs":3,"Model":"terminal"}},"ToolCount":2,"ToolTelemetry":{"TokensUsed":6,"DurationMs":8,"Model":""},"Notes":null,"Usage":null,"Suspension":null}`
+	retainedOutputEncoding  = "json/goa-ai-run-output-v3"
 	retainedChildWorkflowID = "child"
 )
 
 func TestRetainedRunOutputThroughTemporalHandleAndCompletionQuery(t *testing.T) {
 	for _, test := range []struct{ name, encoding, body string }{
-		{"legacy", converter.MetadataEncodingJSON, retainedLegacyOutput},
 		{"current", retainedOutputEncoding, retainedCurrentOutput},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -78,6 +81,8 @@ func TestRetainedRunOutputThroughTemporalHandleAndCompletionQuery(t *testing.T) 
 
 func TestRetainedRunOutputReadersPreserveStrictDecodeErrors(t *testing.T) {
 	for _, test := range []struct{ name, encoding, body string }{
+		{"unversioned frozen output", converter.MetadataEncodingJSON, retainedLegacyOutput},
+		{"v2 frozen output", "json/goa-ai-run-output-v2", retainedPreviousOutput},
 		{"new body under old tag", converter.MetadataEncodingJSON, retainedCurrentOutput},
 		{"old body under new tag", retainedOutputEncoding, retainedLegacyOutput},
 		{"unknown tag", "json/goa-ai-run-output-v999", retainedCurrentOutput},
@@ -112,28 +117,36 @@ func TestRetainedRunOutputReadersPreserveStrictDecodeErrors(t *testing.T) {
 	}
 }
 
-func TestTemporalChildHandleReplaysFrozenLegacyCompletion(t *testing.T) {
-	var output atomic.Pointer[api.RunOutput]
-	parent := func(ctx workflow.Context) (int, error) {
-		ctx = workflow.WithChildOptions(ctx, workflow.ChildWorkflowOptions{
-			WorkflowID: retainedChildWorkflowID, TaskQueue: "child.queue",
+func TestTemporalChildHandleRejectsFrozenPreviousCompletion(t *testing.T) {
+	for _, test := range []struct{ name, encoding, body, rejection string }{
+		{"unversioned", converter.MetadataEncodingJSON, retainedLegacyOutput, "legacy json/plain run output is unsupported"},
+		{"v2", "json/goa-ai-run-output-v2", retainedPreviousOutput, "legacy v2 run output is unsupported"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var rejected atomic.Pointer[error]
+			parent := func(ctx workflow.Context) (int, error) {
+				ctx = workflow.WithChildOptions(ctx, workflow.ChildWorkflowOptions{
+					WorkflowID: retainedChildWorkflowID, TaskQueue: "child.queue",
+				})
+				future := workflow.ExecuteChildWorkflow(ctx, "retained.child")
+				handle := &temporalChildHandle{future: future, ctx: ctx}
+				_, err := handle.Get(context.Background())
+				if err == nil {
+					return 0, fmt.Errorf("old child completion unexpectedly decoded")
+				}
+				rejected.Store(&err)
+				return 0, nil
+			}
+			replayer, err := worker.NewWorkflowReplayerWithOptions(worker.WorkflowReplayerOptions{
+				DataConverter: NewAgentDataConverter(),
+			})
+			require.NoError(t, err)
+			replayer.RegisterWorkflowWithOptions(parent, workflow.RegisterOptions{Name: "retained.parent"})
+			require.NoError(t, replayer.ReplayWorkflowHistory(nil, retainedChildCompletionHistory(test.encoding, test.body)))
+			require.NotNil(t, rejected.Load())
+			assert.ErrorContains(t, *rejected.Load(), test.rejection)
 		})
-		future := workflow.ExecuteChildWorkflow(ctx, "retained.child")
-		handle := &temporalChildHandle{future: future, ctx: ctx}
-		result, err := handle.Get(context.Background())
-		if err != nil {
-			return 0, err
-		}
-		output.Store(result)
-		return result.ToolCount, nil
 	}
-	replayer, err := worker.NewWorkflowReplayerWithOptions(worker.WorkflowReplayerOptions{
-		DataConverter: NewAgentDataConverter(),
-	})
-	require.NoError(t, err)
-	replayer.RegisterWorkflowWithOptions(parent, workflow.RegisterOptions{Name: "retained.parent"})
-	require.NoError(t, replayer.ReplayWorkflowHistory(nil, retainedChildCompletionHistory()))
-	assertRetainedOutput(t, output.Load())
 }
 
 // GetSystemInfo supplies the SDK handshake for this loopback-only service.
@@ -147,8 +160,14 @@ func (s *retainedOutputService) DescribeWorkflowExecution(_ context.Context, req
 	if request.GetExecution().GetWorkflowId() != retainedChildWorkflowID {
 		return nil, status.Error(codes.NotFound, "unexpected fixture workflow")
 	}
+	digest := [32]byte{1}
+	accepted, err := NewAgentDataConverter().ToPayload(digest[:])
+	if err != nil {
+		return nil, err
+	}
 	return &workflowservice.DescribeWorkflowExecutionResponse{
 		WorkflowExecutionInfo: &workflowpb.WorkflowExecutionInfo{
+			Memo:      &commonpb.Memo{Fields: map[string]*commonpb.Payload{startrecipe.MemoKey: accepted}},
 			Execution: &commonpb.WorkflowExecution{WorkflowId: retainedChildWorkflowID, RunId: "child-execution"},
 			Status:    enumspb.WORKFLOW_EXECUTION_STATUS_COMPLETED,
 			CloseTime: timestamppb.New(time.Unix(100, 0)),
@@ -202,6 +221,7 @@ func assertRetainedOutput(t *testing.T, output *api.RunOutput) {
 	t.Helper()
 	require.NotNil(t, output)
 	assert.Equal(t, retainedChildWorkflowID, output.RunID)
+	assert.Equal(t, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("agent")}, output.Subject)
 	assert.Equal(t, 2, output.ToolCount)
 	assert.Equal(t, &telemetry.ToolTelemetry{TokensUsed: 6, DurationMs: 8}, output.ToolTelemetry)
 	require.NotNil(t, output.FinalToolResult)
@@ -213,7 +233,7 @@ func assertRetainedOutput(t *testing.T, output *api.RunOutput) {
 
 // retainedChildCompletionHistory builds Temporal events around the frozen old
 // payload. No current RunOutput encoder participates in this replay fixture.
-func retainedChildCompletionHistory() *historypb.History {
+func retainedChildCompletionHistory(encoding, body string) *historypb.History {
 	execution := &commonpb.WorkflowExecution{WorkflowId: retainedChildWorkflowID, RunId: "child-execution"}
 	childType := &commonpb.WorkflowType{Name: "retained.child"}
 	return &historypb.History{Events: []*historypb.HistoryEvent{
@@ -247,8 +267,8 @@ func retainedChildCompletionHistory() *historypb.History {
 				ChildWorkflowExecutionCompletedEventAttributes: &historypb.ChildWorkflowExecutionCompletedEventAttributes{
 					Namespace: "default", InitiatedEventId: 5, StartedEventId: 6, WorkflowExecution: execution, WorkflowType: childType,
 					Result: &commonpb.Payloads{Payloads: []*commonpb.Payload{{
-						Metadata: map[string][]byte{converter.MetadataEncoding: []byte(converter.MetadataEncodingJSON)},
-						Data:     []byte(retainedLegacyOutput),
+						Metadata: map[string][]byte{converter.MetadataEncoding: []byte(encoding)},
+						Data:     []byte(body),
 					}}},
 				},
 			},

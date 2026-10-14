@@ -67,7 +67,8 @@ func TestStartActivityRequiresExactDigestBytes(t *testing.T) {
 				case storageCommandOneShotChildStart:
 					f.command.OneShotChildStart.RequestDigest = digest
 				case storageCommandAppend, storageCommandCancellation, storageCommandSuspension, storageCommandTerminal,
-					storageCommandSynchronousStart, storageCommandSeedBegin, storageCommandSeedAppend, storageCommandSeedPublish:
+					storageCommandSynchronousStart, storageCommandSeedBegin, storageCommandSeedAppend, storageCommandSeedPublish,
+					storageCommandPreparationBegin, storageCommandUnstartedTerminal:
 					t.Fatal("unexpected fixture kind")
 				}
 				// Decode the real activity payload. Byte length remains visible;

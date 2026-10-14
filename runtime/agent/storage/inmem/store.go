@@ -12,10 +12,15 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"reflect"
 	"strconv"
 	"sync"
 	"time"
 
+	genregistry "goa.design/goa-ai/registry/gen/registry"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
+	genrunoutput "goa.design/goa-ai/registry/gen/runoutput"
+	genrunterminal "goa.design/goa-ai/registry/gen/runterminal"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/runlog"
 	"goa.design/goa-ai/runtime/agent/session"
@@ -36,7 +41,9 @@ type (
 		purged                map[string]struct{}
 		seeds                 map[string]*seedState
 		preparations          map[preparationKey]*seedState
-		preparationOperations map[string]storage.PreparationOperation
+		preparationOperations map[string]storage.RunPreparationBegin
+		unstartedTerminals    map[string]genrunterminal.UnstartedExecutionTerminal
+		terminalResults       map[string][]byte
 
 		nextSequence   map[string]int64
 		records        map[string][]*runlog.Event
@@ -63,11 +70,12 @@ type (
 	// sessionRunStartResult is the common private result used while the store
 	// chooses the active-session or ended-session record.
 	sessionRunStartResult struct {
-		outcome      session.RunStartOutcome
-		runStatus    session.RunStatus
-		parentRecord storage.AppendResult
-		started      storage.AppendResult
-		cancellation storage.AppendResult
+		outcome            session.RunStartOutcome
+		cancellationReason string
+		runStatus          session.RunStatus
+		parentRecord       storage.AppendResult
+		started            storage.AppendResult
+		cancellation       storage.AppendResult
 	}
 )
 
@@ -88,7 +96,9 @@ func New() *Store {
 		purged:                make(map[string]struct{}),
 		seeds:                 make(map[string]*seedState),
 		preparations:          make(map[preparationKey]*seedState),
-		preparationOperations: make(map[string]storage.PreparationOperation),
+		preparationOperations: make(map[string]storage.RunPreparationBegin),
+		unstartedTerminals:    make(map[string]genrunterminal.UnstartedExecutionTerminal),
+		terminalResults:       make(map[string][]byte),
 		nextSequence:          make(map[string]int64),
 		records:               make(map[string][]*runlog.Event),
 		recordsByKey:          make(map[string]map[string]*runlog.Event),
@@ -202,8 +212,13 @@ func (s *Store) PurgeSession(_ context.Context, sessionID string) error {
 			delete(s.seeds, runID)
 		}
 	}
+	for runID, terminal := range s.unstartedTerminals {
+		if terminal.SessionID != nil && *terminal.SessionID == sessionID {
+			delete(s.unstartedTerminals, runID)
+		}
+	}
 	for runID, operation := range s.preparationOperations {
-		if operation.SessionID == sessionID {
+		if operation.Operation.SessionID == sessionID {
 			delete(s.preparationOperations, runID)
 		}
 	}
@@ -219,6 +234,7 @@ func (s *Store) PurgeSession(_ context.Context, sessionID string) error {
 		delete(s.runs, runID)
 		delete(s.suspensions, runID)
 		delete(s.lifecycle, runID)
+		delete(s.terminalResults, runID)
 		delete(s.nextSequence, runID)
 		delete(s.records, runID)
 		delete(s.recordsByKey, runID)
@@ -263,12 +279,13 @@ func (s *Store) StartRootRun(_ context.Context, command storage.RootRunStart) (s
 	if err := lifecycle.ValidateRootRunStart(command); err != nil {
 		return contractResult(storage.RootRunStartResult{}, err)
 	}
-	result, err := s.startSessionRun(command.RequestDigest, command.Run, false, nil, command.Started, command.Cancellation)
+	result, err := s.startSessionRun(command.RequestDigest, command.Run, false, nil, command.Started)
 	return contractResult(storage.RootRunStartResult{
-		Outcome:      result.outcome,
-		RunStatus:    result.runStatus,
-		Started:      result.started,
-		Cancellation: result.cancellation,
+		Outcome:            result.outcome,
+		CancellationReason: result.cancellationReason,
+		RunStatus:          result.runStatus,
+		Started:            result.started,
+		Cancellation:       result.cancellation,
 	}, err)
 }
 
@@ -278,13 +295,14 @@ func (s *Store) StartChildRun(_ context.Context, command storage.ChildRunStart) 
 	if err := lifecycle.ValidateChildRunStart(command); err != nil {
 		return contractResult(storage.ChildRunStartResult{}, err)
 	}
-	result, err := s.startSessionRun(command.RequestDigest, command.Run, true, command.ParentLinked, command.Started, command.Cancellation)
+	result, err := s.startSessionRun(command.RequestDigest, command.Run, true, command.ParentLinked, command.Started)
 	return contractResult(storage.ChildRunStartResult{
-		Outcome:      result.outcome,
-		RunStatus:    result.runStatus,
-		ParentRecord: result.parentRecord,
-		Started:      result.started,
-		Cancellation: result.cancellation,
+		Outcome:            result.outcome,
+		CancellationReason: result.cancellationReason,
+		RunStatus:          result.runStatus,
+		ParentRecord:       result.parentRecord,
+		Started:            result.started,
+		Cancellation:       result.cancellation,
 	}, err)
 }
 
@@ -320,14 +338,23 @@ func (s *Store) startSessionlessRun(start session.RunStart, started *runlog.Even
 	if err := s.validateStartSeedLocked(start); err != nil {
 		return storage.OneShotRunStartResult{}, err
 	}
+	if err := s.validatePredecessorLocked(start, nil); err != nil {
+		return storage.OneShotRunStartResult{}, err
+	}
 	if existing, ok := s.runs[start.RunID]; ok {
+		if start.PredecessorRunID != "" {
+			resolution, continued := s.runs[start.PredecessorRunID].SuspensionResolution.(session.ContinuedSuspension)
+			if !continued || resolution.RunID != start.RunID {
+				return storage.OneShotRunStartResult{}, session.ErrRunConflict
+			}
+		}
 		if kind == engineRunStart {
 			if err := s.checkStartDigestLocked(start.RunID, digest); err != nil {
 				return storage.OneShotRunStartResult{}, err
 			}
 			if session.IsTerminalRunStatus(existing.Status) {
 				result, err := s.closedStartLocked(existing, start, nil, started, nil)
-				return storage.OneShotRunStartResult{RunStatus: result.runStatus, Record: result.started}, err
+				return storage.OneShotRunStartResult{Outcome: session.RunStartProceed, RunStatus: result.runStatus, Record: result.started}, err
 			}
 		} else if err := s.checkStartKindLocked(start.RunID, kind); err != nil {
 			return storage.OneShotRunStartResult{}, err
@@ -339,15 +366,26 @@ func (s *Store) startSessionlessRun(start session.RunStart, started *runlog.Even
 			return storage.OneShotRunStartResult{}, session.ErrRunConflict
 		}
 		result, err := s.appendLocked(started)
-		return storage.OneShotRunStartResult{RunStatus: existing.Status, Record: result}, err
+		return storage.OneShotRunStartResult{Outcome: session.RunStartProceed, RunStatus: existing.Status, Record: result}, err
 	}
 	if err := s.checkNewRunRecordLocked(started, start); err != nil {
 		return storage.OneShotRunStartResult{}, err
 	}
-	s.runs[start.RunID] = newRunMeta(start, session.RunStartProceed, session.RunStatusRunning)
+	origin := rootExecutionOrigin(start.RunID)
+	if start.PredecessorRunID != "" {
+		predecessor := s.runs[start.PredecessorRunID]
+		if predecessor.SuspensionResolution != nil {
+			return storage.OneShotRunStartResult{}, session.ErrRunConflict
+		}
+		origin = cloneExecutionOrigin(predecessor.Origin)
+		predecessor.SuspensionResolution = session.ContinuedSuspension{RunID: start.RunID}
+		predecessor.UpdatedAt = time.Now().UTC()
+		s.runs[start.PredecessorRunID] = predecessor
+	}
+	s.runs[start.RunID] = newRunMeta(start, origin, session.RunStartProceed, session.RunStatusRunning)
 	s.lifecycle[start.RunID] = lifecycleRecords{startKind: kind, requestDigest: digest, start: started.EventKey}
 	result, err := s.appendLocked(started)
-	return storage.OneShotRunStartResult{RunStatus: session.RunStatusRunning, Record: result}, err
+	return storage.OneShotRunStartResult{Outcome: session.RunStartProceed, RunStatus: session.RunStatusRunning, Record: result}, err
 }
 
 // startOneShotChildRun applies the sessionless child start under the same lock
@@ -361,13 +399,22 @@ func (s *Store) startOneShotChildRun(command storage.OneShotChildRunStart) (stor
 	if err := s.validateStartSeedLocked(command.Run); err != nil {
 		return storage.OneShotChildRunStartResult{}, err
 	}
+	if err := s.validatePredecessorLocked(command.Run, command.ParentLinked); err != nil {
+		return storage.OneShotChildRunStartResult{}, err
+	}
 	if existing, ok := s.runs[command.Run.RunID]; ok {
+		if command.Run.PredecessorRunID != "" {
+			resolution, continued := s.runs[command.Run.PredecessorRunID].SuspensionResolution.(session.ContinuedSuspension)
+			if !continued || resolution.RunID != command.Run.RunID {
+				return storage.OneShotChildRunStartResult{}, session.ErrRunConflict
+			}
+		}
 		if err := s.checkStartDigestLocked(command.Run.RunID, command.RequestDigest); err != nil {
 			return storage.OneShotChildRunStartResult{}, err
 		}
 		if session.IsTerminalRunStatus(existing.Status) {
 			result, err := s.closedStartLocked(existing, command.Run, command.ParentLinked, command.Started, nil)
-			return storage.OneShotChildRunStartResult{RunStatus: result.runStatus, ParentRecord: result.parentRecord, Started: result.started}, err
+			return storage.OneShotChildRunStartResult{Outcome: session.RunStartProceed, RunStatus: result.runStatus, ParentRecord: result.parentRecord, Started: result.started}, err
 		}
 		keys := s.lifecycle[command.Run.RunID]
 		if !sameRunStart(existing, command.Run) || existing.StartOutcome != session.RunStartProceed ||
@@ -380,6 +427,7 @@ func (s *Store) startOneShotChildRun(command storage.OneShotChildRunStart) (stor
 		}
 		started, err := s.appendLocked(command.Started)
 		return storage.OneShotChildRunStartResult{
+			Outcome:   session.RunStartProceed,
 			RunStatus: existing.Status, ParentRecord: parentRecord, Started: started,
 		}, err
 	}
@@ -393,7 +441,7 @@ func (s *Store) startOneShotChildRun(command storage.OneShotChildRunStart) (stor
 	if parent.Status != session.RunStatusRunning {
 		return storage.OneShotChildRunStartResult{}, session.ErrRunNotActive
 	}
-	if string(command.ParentLinked.AgentID) != parent.AgentID {
+	if !reflect.DeepEqual(command.ParentLinked.Subject, parent.Subject) {
 		return storage.OneShotChildRunStartResult{}, storage.ErrRunRecordOwnerMismatch
 	}
 	if err := s.checkAppendLocked(command.ParentLinked); err != nil {
@@ -402,7 +450,23 @@ func (s *Store) startOneShotChildRun(command storage.OneShotChildRunStart) (stor
 	if err := s.checkNewRunRecordLocked(command.Started, command.Run); err != nil {
 		return storage.OneShotChildRunStartResult{}, err
 	}
-	s.runs[command.Run.RunID] = newRunMeta(command.Run, session.RunStartProceed, session.RunStatusRunning)
+	origin, err := childExecutionOrigin(command.ParentLinked, s.seeds[command.Run.RunID].seed.Declaration.Origin)
+	if err != nil {
+		return storage.OneShotChildRunStartResult{}, err
+	}
+	// The predecessor and both records have passed validation. Claim its one
+	// successor while holding the lock that also stores the new child and link.
+	if command.Run.PredecessorRunID != "" {
+		predecessor := s.runs[command.Run.PredecessorRunID]
+		if predecessor.SuspensionResolution != nil {
+			return storage.OneShotChildRunStartResult{}, session.ErrRunConflict
+		}
+		origin = cloneExecutionOrigin(predecessor.Origin)
+		predecessor.SuspensionResolution = session.ContinuedSuspension{RunID: command.Run.RunID}
+		predecessor.UpdatedAt = time.Now().UTC()
+		s.runs[command.Run.PredecessorRunID] = predecessor
+	}
+	s.runs[command.Run.RunID] = newRunMeta(command.Run, origin, session.RunStartProceed, session.RunStatusRunning)
 	s.lifecycle[command.Run.RunID] = lifecycleRecords{
 		startKind:     engineRunStart,
 		requestDigest: command.RequestDigest,
@@ -415,6 +479,7 @@ func (s *Store) startOneShotChildRun(command storage.OneShotChildRunStart) (stor
 	}
 	started, err := s.appendLocked(command.Started)
 	return storage.OneShotChildRunStartResult{
+		Outcome:   session.RunStartProceed,
 		RunStatus: session.RunStatusRunning, ParentRecord: parentRecord, Started: started,
 	}, err
 }
@@ -589,7 +654,14 @@ func (s *Store) recordRunTerminal(command storage.RunTerminal) (storage.AppendRe
 	if err := lifecycle.ValidateRunTerminal(command, meta); err != nil {
 		return storage.AppendResult{}, err
 	}
-	return s.recordRunTerminalLocked(command, meta)
+	var operationResult []byte
+	if command.OperationResult != nil {
+		operationResult, err = genrunoutput.EncodeOperationResult(command.OperationResult)
+		if err != nil {
+			return storage.AppendResult{}, err
+		}
+	}
+	return s.recordRunTerminalLocked(command, meta, operationResult)
 }
 
 // repairRunTerminal chooses the existing terminal state or the supplied
@@ -604,11 +676,19 @@ func (s *Store) repairRunTerminal(command storage.RunTerminal) (storage.RunRepai
 	if err := lifecycle.ValidateRunTerminal(command, meta); err != nil {
 		return storage.RunRepairResult{}, err
 	}
+	var operationResult []byte
+	if command.OperationResult != nil {
+		operationResult, err = genrunoutput.EncodeOperationResult(command.OperationResult)
+		if err != nil {
+			return storage.RunRepairResult{}, err
+		}
+	}
 	if session.IsTerminalRunStatus(meta.Status) {
 		keys := s.lifecycle[command.RunID]
 		record := s.recordsByKey[command.RunID][command.Record.EventKey]
 		if meta.Status == command.Status && keys.terminal == command.Record.EventKey &&
-			record != nil && sameEvent(record, command.Record) {
+			record != nil && sameEvent(record, command.Record) &&
+			bytes.Equal(s.terminalResults[command.RunID], operationResult) {
 			return storage.RunRepairResult{
 				Outcome: storage.RunRepairAlreadyStored,
 				Status:  meta.Status,
@@ -623,7 +703,7 @@ func (s *Store) repairRunTerminal(command storage.RunTerminal) (storage.RunRepai
 	if err := s.checkAppendLocked(command.Record); err != nil {
 		return storage.RunRepairResult{}, err
 	}
-	result, err := s.recordRunTerminalLocked(command, meta)
+	result, err := s.recordRunTerminalLocked(command, meta, operationResult)
 	return storage.RunRepairResult{
 		Outcome: storage.RunRepairStored,
 		Status:  command.Status,
@@ -633,7 +713,7 @@ func (s *Store) repairRunTerminal(command storage.RunTerminal) (storage.RunRepai
 
 // recordRunTerminalLocked applies one exact workflow-owned terminal result
 // after the caller loads the run under the store lock.
-func (s *Store) recordRunTerminalLocked(command storage.RunTerminal, meta session.RunMeta) (storage.AppendResult, error) {
+func (s *Store) recordRunTerminalLocked(command storage.RunTerminal, meta session.RunMeta, operationResult []byte) (storage.AppendResult, error) {
 	if session.IsTerminalRunStatus(meta.Status) && meta.Status != command.Status {
 		return storage.AppendResult{}, session.ErrRunTerminalConflict
 	}
@@ -641,7 +721,8 @@ func (s *Store) recordRunTerminalLocked(command storage.RunTerminal, meta sessio
 		return storage.AppendResult{}, err
 	}
 	keys := s.lifecycle[command.RunID]
-	if keys.terminal != "" && keys.terminal != command.Record.EventKey {
+	if keys.terminal != "" && (keys.terminal != command.Record.EventKey ||
+		!bytes.Equal(s.terminalResults[command.RunID], operationResult)) {
 		return storage.AppendResult{}, session.ErrRunTerminalConflict
 	}
 	result, err := s.appendLocked(command.Record)
@@ -651,6 +732,7 @@ func (s *Store) recordRunTerminalLocked(command storage.RunTerminal, meta sessio
 	meta.Status = command.Status
 	meta.UpdatedAt = time.Now().UTC()
 	s.runs[command.RunID] = meta
+	s.terminalResults[command.RunID] = operationResult
 	keys.terminal = command.Record.EventKey
 	s.lifecycle[command.RunID] = keys
 	return result, nil
@@ -720,7 +802,7 @@ func (s *Store) ListSessionRunRecords(_ context.Context, sessionID, cursor strin
 
 // startSessionRun chooses the active or ended path while holding the same lock
 // used by EndSession.
-func (s *Store) startSessionRun(requestDigest [32]byte, start session.RunStart, child bool, parent, started, cancellation *runlog.Event) (sessionRunStartResult, error) {
+func (s *Store) startSessionRun(requestDigest [32]byte, start session.RunStart, child bool, parent, started *runlog.Event) (sessionRunStartResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, purged := s.purged[start.SessionID]; purged {
@@ -731,6 +813,22 @@ func (s *Store) startSessionRun(requestDigest [32]byte, start session.RunStart, 
 	}
 	if err := s.validatePredecessorLocked(start, parent); err != nil {
 		return sessionRunStartResult{}, err
+	}
+	var cancellation *runlog.Event
+	reason := ""
+	if existing, exists := s.runs[start.RunID]; exists {
+		if existing.StartOutcome == session.RunStartStop {
+			reason = existing.CancellationReason
+		}
+	} else if s.sessions[start.SessionID].Status == session.StatusEnded {
+		reason = run.CancellationReasonSessionEnded
+	}
+	if reason != "" {
+		var err error
+		cancellation, err = lifecycle.StartCancellation(started, reason)
+		if err != nil {
+			return sessionRunStartResult{}, err
+		}
 	}
 	if existing, ok := s.runs[start.RunID]; ok {
 		if start.PredecessorRunID != "" && s.runs[start.PredecessorRunID].SuspensionResolution != (session.ContinuedSuspension{RunID: start.RunID}) {
@@ -792,6 +890,16 @@ func (s *Store) startSessionRun(requestDigest [32]byte, start session.RunStart, 
 			return sessionRunStartResult{}, errors.New("started and cancellation records require different event keys")
 		}
 	}
+	origin := rootExecutionOrigin(start.RunID)
+	if start.PredecessorRunID != "" {
+		origin = cloneExecutionOrigin(s.runs[start.PredecessorRunID].Origin)
+	} else if parent != nil {
+		var err error
+		origin, err = childExecutionOrigin(parent, s.seeds[start.RunID].seed.Declaration.Origin)
+		if err != nil {
+			return sessionRunStartResult{}, err
+		}
+	}
 	// All ownership and record checks have succeeded. Select this successor
 	// under the same lock that writes its first run and parent-link records.
 	if start.PredecessorRunID != "" {
@@ -803,7 +911,7 @@ func (s *Store) startSessionRun(requestDigest [32]byte, start session.RunStart, 
 		predecessor.UpdatedAt = time.Now().UTC()
 		s.runs[start.PredecessorRunID] = predecessor
 	}
-	s.runs[start.RunID] = newRunMeta(start, outcome, status)
+	s.runs[start.RunID] = newRunMeta(start, origin, outcome, status)
 	keys := lifecycleRecords{startKind: engineRunStart, requestDigest: requestDigest, start: started.EventKey}
 	if parent != nil {
 		keys.parentLink = parent.EventKey
@@ -841,12 +949,12 @@ func (s *Store) validatePredecessorLocked(start session.RunStart, parent *runlog
 			start.SessionID,
 		)
 	}
-	if predecessor.AgentID != start.AgentID {
+	if !reflect.DeepEqual(predecessor.Subject, start.Subject) {
 		return fmt.Errorf(
-			"continuation predecessor %q agent id %q does not match successor %q",
+			"continuation predecessor %q subject %v does not match successor %v",
 			start.PredecessorRunID,
-			predecessor.AgentID,
-			start.AgentID,
+			predecessor.Subject,
+			start.Subject,
 		)
 	}
 	if predecessor.ParentRunID == "" || start.ParentRunID == "" {
@@ -878,6 +986,9 @@ func (s *Store) validatePredecessorLocked(start session.RunStart, parent *runlog
 // appendStartRecordsLocked appends the exact record set selected by outcome.
 func (s *Store) appendStartRecordsLocked(outcome session.RunStartOutcome, parent, started, cancellation *runlog.Event) (sessionRunStartResult, error) {
 	result := sessionRunStartResult{outcome: outcome, runStatus: s.runs[started.RunID].Status}
+	if outcome == session.RunStartStop {
+		result.cancellationReason = s.runs[started.RunID].CancellationReason
+	}
 	if parent != nil {
 		stored, err := s.appendLocked(parent)
 		if err != nil {
@@ -930,7 +1041,7 @@ func checkNewRunRecordOwner(record *runlog.Event, start session.RunStart) error 
 	if record.RunID != start.RunID {
 		return errors.New("start record does not match run")
 	}
-	if string(record.AgentID) != start.AgentID || record.SessionID != start.SessionID {
+	if !reflect.DeepEqual(record.Subject, start.Subject) || record.SessionID != start.SessionID {
 		return storage.ErrRunRecordOwnerMismatch
 	}
 	return nil
@@ -993,7 +1104,7 @@ func (s *Store) checkAppendLocked(record *runlog.Event) error {
 	if !ok {
 		return session.ErrRunNotFound
 	}
-	if meta.AgentID != string(record.AgentID) || meta.SessionID != record.SessionID {
+	if !reflect.DeepEqual(meta.Subject, record.Subject) || meta.SessionID != record.SessionID {
 		return storage.ErrRunRecordOwnerMismatch
 	}
 	if record.SessionID != "" {
@@ -1030,14 +1141,15 @@ func (s *Store) sessionStatusLocked(sessionID string) session.SessionStatus {
 	return s.sessions[sessionID].Status
 }
 
-func newRunMeta(start session.RunStart, outcome session.RunStartOutcome, status session.RunStatus) session.RunMeta {
+func newRunMeta(start session.RunStart, origin genregistry.ExecutionInvocation, outcome session.RunStartOutcome, status session.RunStatus) session.RunMeta {
 	cancellationReason := ""
 	if outcome == session.RunStartStop {
 		cancellationReason = run.CancellationReasonSessionEnded
 	}
 	return session.RunMeta{
+		Origin:    origin,
 		SeedEndID: start.SeedEndID,
-		AgentID:   start.AgentID, RunID: start.RunID, SessionID: start.SessionID,
+		Subject:   cloneSubject(start.Subject), RunID: start.RunID, SessionID: start.SessionID,
 		ParentRunID: start.ParentRunID, Status: status, StartOutcome: outcome,
 		StartedAt: start.StartedAt.UTC(), UpdatedAt: time.Now().UTC(), Labels: maps.Clone(start.Labels),
 		CancellationReason: cancellationReason,
@@ -1073,14 +1185,14 @@ func pageRecords(all []*runlog.Event, after, limit int) runlog.Page {
 
 func sameRunStart(stored session.RunMeta, requested session.RunStart) bool {
 	return stored.SeedEndID == requested.SeedEndID &&
-		stored.RunID == requested.RunID && stored.AgentID == requested.AgentID &&
+		stored.RunID == requested.RunID && reflect.DeepEqual(stored.Subject, requested.Subject) &&
 		stored.SessionID == requested.SessionID && stored.ParentRunID == requested.ParentRunID &&
 		stored.StartedAt.Equal(requested.StartedAt.UTC()) && maps.Equal(stored.Labels, requested.Labels)
 }
 
 func sameEvent(left, right *runlog.Event) bool {
 	return left.EventKey == right.EventKey && left.RunID == right.RunID &&
-		left.AgentID == right.AgentID && left.SessionID == right.SessionID &&
+		reflect.DeepEqual(left.Subject, right.Subject) && left.SessionID == right.SessionID &&
 		left.TurnID == right.TurnID && left.Type == right.Type &&
 		left.Timestamp.Equal(right.Timestamp) && bytes.Equal(left.Payload, right.Payload)
 }
@@ -1104,6 +1216,8 @@ func cloneSession(value session.Session) session.Session {
 }
 
 func cloneRun(value session.RunMeta) session.RunMeta {
+	value.Origin = cloneExecutionOrigin(value.Origin)
+	value.Subject = cloneSubject(value.Subject)
 	value.Labels = maps.Clone(value.Labels)
 	return value
 }
@@ -1114,6 +1228,17 @@ func cloneSuspension(value session.RunSuspension) session.RunSuspension {
 
 func cloneEvent(value *runlog.Event) *runlog.Event {
 	copy := *value
+	copy.Subject = cloneSubject(value.Subject)
 	copy.Payload = bytes.Clone(value.Payload)
 	return &copy
+}
+
+// cloneSubject copies the service-tool identity so changes to a caller's value
+// cannot change a stored run or a record returned by an earlier read.
+func cloneSubject(subject genrunidentity.RunSubject) genrunidentity.RunSubject {
+	if tool, ok := subject.Executor.AsServiceTool(); ok {
+		copy := *tool
+		subject.Executor = genrunidentity.NewRunExecutorServiceTool(&copy)
+	}
+	return subject
 }

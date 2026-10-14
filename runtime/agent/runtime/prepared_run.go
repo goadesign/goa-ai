@@ -11,8 +11,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"strings"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/internal/startrecipe"
@@ -41,12 +43,14 @@ const preparedRunReferenceVersion = "goa-ai-prepared-run-v3"
 var preparedReferenceByteLimit = derivePreparedReferenceByteLimit()
 
 func derivePreparedReferenceByteLimit() int {
-	ref := preparedRunReference{Version: preparedRunReferenceVersion, HistoryEndID: "9223372036854775807", EndID: "9223372036854775807", Bytes: int64(startrecipe.PreparedRequestByteLimit()), Digest: strings.Repeat("f", 2*sha256.Size)}
+	ref := preparedRunReference{Version: preparedRunReferenceVersion, Operation: storage.PreparationOperation{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("x")}}, HistoryEndID: "9223372036854775807", EndID: "9223372036854775807", Bytes: int64(startrecipe.PreparedRequestByteLimit()), Digest: strings.Repeat("f", 2*sha256.Size)}
 	data, err := json.Marshal(ref)
 	if err != nil {
 		panic(err)
 	}
-	return storage.MaxSeedCommandBytes + len(data)
+	// The required subject needs a valid value while measuring its framing.
+	// Its one placeholder byte belongs to the identity allowance, not framing.
+	return storage.MaxSeedCommandBytes + len(data) - 1
 }
 
 // ParsePreparedRun accepts only the current canonical reference format.
@@ -68,6 +72,9 @@ func ParsePreparedRun(data []byte) (*PreparedRun, error) {
 	}
 	if err := storage.ValidatePreparationOperation(ref.Operation); err != nil {
 		return nil, preparedRunContractError(err)
+	}
+	if _, isAgent := ref.Operation.Subject.Executor.AsAgent(); !isAgent {
+		return nil, preparedRunContractError(errors.New("agent prepared run requires an Agent run subject"))
 	}
 	digest, err := hex.DecodeString(ref.Digest)
 	if err != nil || len(digest) != sha256.Size || ref.HistoryEndID == "" || ref.EndID == "" || ref.Bytes <= 0 || ref.Bytes > int64(startrecipe.PreparedRequestByteLimit()) {
@@ -102,13 +109,17 @@ func (p *PreparedRun) MarshalBinary() ([]byte, error) {
 // StartPrepared submits the exact engine request held by prepared. It first
 // checks the request against this client's generated agent definition.
 func (c *agentClient) StartPrepared(ctx context.Context, prepared *PreparedRun) (engine.WorkflowHandle, error) {
-	if prepared == nil || prepared.reference.Operation.AgentID == "" {
+	if prepared == nil {
 		return nil, preparedRunContractError(errors.New("prepared run is required"))
 	}
-	if prepared.reference.Operation.AgentID != string(c.definition.route.ID) {
+	executor, isAgent := prepared.reference.Operation.Subject.Executor.AsAgent()
+	if !isAgent {
+		return nil, preparedRunContractError(errors.New("agent prepared run requires an Agent run subject"))
+	}
+	if string(executor) != string(c.definition.route.ID) {
 		return nil, preparedRunContractError(fmt.Errorf(
 			"prepared run belongs to agent %q, not %q",
-			prepared.reference.Operation.AgentID,
+			executor,
 			c.definition.route.ID,
 		))
 	}
@@ -134,7 +145,7 @@ func (c *agentClient) StartPrepared(ctx context.Context, prepared *PreparedRun) 
 	if err != nil {
 		return nil, preparedRunContractError(err)
 	}
-	if request.AgentID != prepared.reference.Operation.AgentID || request.Request.ID != prepared.reference.Operation.RunID || request.Request.Input.SessionID != prepared.reference.Operation.SessionID {
+	if !reflect.DeepEqual(request.Request.Input.Subject, prepared.reference.Operation.Subject) || request.Request.ID != prepared.reference.Operation.RunID || request.Request.Input.SessionID != prepared.reference.Operation.SessionID {
 		return nil, preparedRunContractError(storage.ErrSeedConflict)
 	}
 	input := *request.Request.Input
@@ -142,11 +153,11 @@ func (c *agentClient) StartPrepared(ctx context.Context, prepared *PreparedRun) 
 	if input.SeedEndID != seed.EndID {
 		return nil, preparedRunContractError(storage.ErrSeedConflict)
 	}
-	if seed.Declaration.AgentID != string(input.AgentID) || seed.Declaration.SessionID != input.SessionID {
+	if !reflect.DeepEqual(seed.Declaration.Subject, input.Subject) || seed.Declaration.SessionID != input.SessionID {
 		return nil, preparedRunContractError(storage.ErrRunRecordOwnerMismatch)
 	}
 	if input.Continuation != nil {
-		checkpoint, err := prepareContinuation(&input, c.definition)
+		checkpoint, err := prepareClientContinuation(&input, c.definition)
 		if err != nil {
 			return nil, preparedRunContractError(err)
 		}
@@ -195,7 +206,7 @@ func publishPreparedRun(ctx context.Context, writer *initialHistoryWriter, agent
 	if err := writer.publish(ctx, data); err != nil {
 		return nil, err
 	}
-	operation := storage.PreparationOperation{AgentID: string(agentID), RunID: request.ID, SessionID: request.Input.SessionID, CommandID: commandID}
+	operation := storage.PreparationOperation{Subject: request.Input.Subject, RunID: request.ID, SessionID: request.Input.SessionID, CommandID: commandID}
 	return preparedReference(operation, historyEnd, writer.endID, data), nil
 }
 

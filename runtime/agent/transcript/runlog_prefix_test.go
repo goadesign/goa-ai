@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/runlog"
 	"goa.design/goa-ai/runtime/agent/session"
@@ -24,7 +25,7 @@ import (
 type prefixPageFunc func(context.Context, string, string, string, int) (runlog.Page, error)
 
 func (f prefixPageFunc) LoadRun(ctx context.Context, runID string) (session.RunMeta, error) {
-	return session.RunMeta{RunID: runID}, ctx.Err()
+	return session.RunMeta{RunID: runID, Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent-1"))}}, ctx.Err()
 }
 
 func (f prefixPageFunc) LoadRunSeed(context.Context, string, string) (storage.RunSeed, error) {
@@ -58,7 +59,7 @@ func TestRunLogPrefixPreservesLargeHistoryAndExcludesLaterWrites(t *testing.T) {
 		payload, err := transcript.EncodeRunLogDelta([]*model.Message{message})
 		require.NoError(t, err)
 		result, err := store.AppendRunRecord(t.Context(), &runlog.Event{
-			RunID: "run-1", AgentID: "agent-1", SessionID: "session-1",
+			RunID: "run-1", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent-1"))}, SessionID: "session-1",
 			EventKey: fmt.Sprintf("prefix-%d", i), Type: transcript.RunLogMessagesAppended,
 			Payload: payload, Timestamp: time.UnixMilli(int64(i)),
 		})
@@ -104,7 +105,7 @@ func TestRunLogPrefixDoesNotClassifyReturnedCursorAsInvalidHistory(t *testing.T)
 		}
 		return runlog.Page{
 			Events: []*runlog.Event{{
-				ID: "1", RunID: "run", Type: transcript.RunLogMessagesSeeded, Payload: []byte(`[]`),
+				ID: "1", RunID: "run", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent-1"))}, Type: transcript.RunLogMessagesSeeded, Payload: []byte(`[]`),
 			}},
 			NextCursor: "1",
 		}, nil
@@ -120,10 +121,10 @@ func TestRunLogPrefixRejectsBrokenPagesAndHonorsCancellation(t *testing.T) {
 		page runlog.Page
 	}{
 		{"empty continuation", runlog.Page{NextCursor: "next"}},
-		{"foreign run", runlog.Page{Events: []*runlog.Event{{ID: "1", RunID: "other", Type: transcript.RunLogMessagesSeeded, Payload: []byte(`[]`)}}}},
-		{"malformed payload", runlog.Page{Events: []*runlog.Event{{ID: "1", RunID: "run", Type: transcript.RunLogMessagesSeeded, Payload: []byte(`{`)}}}},
-		{"non transcript", runlog.Page{Events: []*runlog.Event{{ID: "1", RunID: "run", Type: "other", Payload: []byte(`[]`)}}}},
-		{"repeated page", runlog.Page{Events: []*runlog.Event{{ID: "1", RunID: "run", Type: transcript.RunLogMessagesSeeded, Payload: []byte(`[]`)}}, NextCursor: "1"}},
+		{"foreign run", runlog.Page{Events: []*runlog.Event{{ID: "1", RunID: "other", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent-1"))}, Type: transcript.RunLogMessagesSeeded, Payload: []byte(`[]`)}}}},
+		{"malformed payload", runlog.Page{Events: []*runlog.Event{{ID: "1", RunID: "run", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent-1"))}, Type: transcript.RunLogMessagesSeeded, Payload: []byte(`{`)}}}},
+		{"non transcript", runlog.Page{Events: []*runlog.Event{{ID: "1", RunID: "run", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent-1"))}, Type: "other", Payload: []byte(`[]`)}}}},
+		{"repeated page", runlog.Page{Events: []*runlog.Event{{ID: "1", RunID: "run", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent-1"))}, Type: transcript.RunLogMessagesSeeded, Payload: []byte(`[]`)}}, NextCursor: "1"}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			calls := 0

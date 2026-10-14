@@ -19,16 +19,16 @@ func InjectReusableExportExample() func() {
 		})
 		var Helpers = Toolset("helpers", func() {
 			Tool("inherited", "Use the bound method input", func() {
-				BindTo("atlas", "inherited")
+				BindTo("catalog", "inherited")
 				Inject("session_id")
 			})
 			Tool("explicit", "Use the declared tool input", func() {
 				Args(ExplicitArgs)
-				BindTo("atlas", "explicit")
+				BindTo("catalog", "explicit")
 				Inject("session_id")
 			})
 		})
-		Service("atlas", func() {
+		Service("catalog", func() {
 			Method("inherited", func() {
 				Payload(func() {
 					Attribute("session_id", String, "Server-injected session identifier.")

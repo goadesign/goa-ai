@@ -15,6 +15,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	genregistry "goa.design/goa-ai/registry/gen/registry"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -53,7 +55,7 @@ func TestProviderRecoverySerializesWorkflowWaits(t *testing.T) {
 					}
 					close(queued)
 					err = w.Await(func() bool { return replied })
-					return &api.RunOutput{RunID: "child"}, err
+					return &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "child"}, err
 				},
 			}))
 			require.NoError(t, implementation.RegisterWorkflow(ctx, engine.WorkflowDefinition{
@@ -102,7 +104,7 @@ func TestProviderRecoverySerializesWorkflowWaits(t *testing.T) {
 					}
 					assert.Equal(t, 10003, shared)
 					_, err = child.Get(w.Context())
-					return &api.RunOutput{RunID: "root"}, err
+					return &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "root"}, err
 				},
 			}))
 			h, err := implementation.StartWorkflow(ctx, recoveryStartRequest("root", "root"))
@@ -144,7 +146,7 @@ func TestProviderRecoveryWrapperForwardingAndPauseOwnership(t *testing.T) {
 							return nil, err
 						}
 					}
-					return &api.RunOutput{RunID: "leaf"}, w.Await(func() bool { return replies == 2 })
+					return &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "leaf"}, w.Await(func() bool { return replies == 2 })
 				},
 			}))
 			require.NoError(t, implementation.RegisterWorkflow(ctx, engine.WorkflowDefinition{
@@ -185,7 +187,7 @@ func TestProviderRecoveryWrapperForwardingAndPauseOwnership(t *testing.T) {
 						return nil
 					})
 					assert.Equal(t, 2, retained)
-					return &api.RunOutput{RunID: "wrapper"}, err
+					return &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "wrapper"}, err
 				},
 			}))
 			require.NoError(t, implementation.RegisterWorkflow(ctx, engine.WorkflowDefinition{
@@ -215,7 +217,7 @@ func TestProviderRecoveryWrapperForwardingAndPauseOwnership(t *testing.T) {
 						return nil, err
 					}
 					_, err = child.Get(w.Context())
-					return &api.RunOutput{RunID: "root"}, err
+					return &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "root"}, err
 				},
 			}))
 			h, err := implementation.StartWorkflow(ctx, recoveryStartRequest("root", "root"))
@@ -250,7 +252,7 @@ func TestProviderRecoveryDrainsCompletionAndStopsCanceledWait(t *testing.T) {
 					if canceled {
 						return nil, context.Canceled
 					}
-					return &api.RunOutput{RunID: "child"}, nil
+					return &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "child"}, nil
 				},
 			}))
 			require.NoError(t, implementation.RegisterWorkflow(ctx, engine.WorkflowDefinition{
@@ -275,7 +277,7 @@ func TestProviderRecoveryDrainsCompletionAndStopsCanceledWait(t *testing.T) {
 					if !canceled {
 						_, err = child.Get(w.Context())
 					}
-					return &api.RunOutput{RunID: "root"}, err
+					return &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "root"}, err
 				},
 			}))
 			h, err := implementation.StartWorkflow(ctx, recoveryStartRequest("root", "root"))
@@ -334,7 +336,9 @@ func registerRecoveryActivities(t *testing.T, implementation engine.Engine, acce
 		}))
 	require.NoError(t, implementation.RegisterAgentChildActivity(t.Context(), "prepare", engine.ActivityOptions{},
 		func(ctx context.Context, _ *api.AgentChildActivityInput) (*api.AgentChildActivityOutput, error) {
-			return &api.AgentChildActivityOutput{}, wait(ctx)
+			return &api.AgentChildActivityOutput{
+				Success: &api.AgentChildActivitySuccess{SeedEndID: "published-child"},
+			}, wait(ctx)
 		}))
 }
 
@@ -356,17 +360,20 @@ func recoveryWait(w engine.WorkflowContext, child engine.ChildWorkflowHandle, ki
 		_, err := w.ExecuteStorageActivity(engine.StorageActivityCall{Name: "storage", Command: &api.StorageActivityCommand{Append: &api.AppendRecordsCommand{}}})
 		return err
 	case "tool":
-		_, err := w.ExecuteToolActivity(engine.ToolActivityCall{Name: "tool", Input: &api.ToolInput{}})
+		_, err := w.ExecuteToolActivity(engine.ToolActivityCall{Name: "tool", Input: &api.ToolInput{Invocation: genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: "test-run", ToolCallID: "test-call"})}, Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}}})
 		return err
 	case "tool_future":
-		future, err := w.ExecuteToolActivityAsync(engine.ToolActivityCall{Name: "tool", Input: &api.ToolInput{}})
+		future, err := w.ExecuteToolActivityAsync(engine.ToolActivityCall{Name: "tool", Input: &api.ToolInput{Invocation: genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: "test-run", ToolCallID: "test-call"})}, Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}}})
 		if err != nil {
 			return err
 		}
 		_, err = future.Get(w.Context())
 		return err
 	case "prepare_child":
-		_, err := w.ExecuteAgentChildActivity(engine.AgentChildActivityCall{Name: "prepare", Input: &api.AgentChildActivityInput{}})
+		_, err := w.ExecuteAgentChildActivity(engine.AgentChildActivityCall{Name: "prepare", Input: &api.AgentChildActivityInput{
+			Origin: genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: w.WorkflowID(), ToolCallID: "test-call"})},
+			Call:   api.ToolCall{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: w.WorkflowID(), ToolCallID: "test-call"},
+		}})
 		return err
 	case "child":
 		_, err := child.Get(w.Context())
@@ -390,12 +397,12 @@ func recoveryFailure(publication string) engine.ProviderRecoveryFailure {
 func recoveryChildRequest(id, workflow string) engine.ChildWorkflowRequest {
 	return engine.ChildWorkflowRequest{
 		ID: id, Workflow: workflow, TaskQueue: "test",
-		Input: &api.RunInput{RunID: id},
+		Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: id},
 	}
 }
 
 func recoveryStartRequest(id, workflow string) engine.WorkflowStartRequest {
 	return engine.WorkflowStartRequest{
-		ID: id, Workflow: workflow, TaskQueue: "test", Input: &api.RunInput{RunID: id},
+		ID: id, Workflow: workflow, TaskQueue: "test", Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: id},
 	}
 }

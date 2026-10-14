@@ -403,8 +403,9 @@ type (
 )
 
 const (
-	contractTypeOwnerTool       contractTypeOwnerKind = "tool"
-	contractTypeOwnerCompletion contractTypeOwnerKind = "completion"
+	contractTypeOwnerTool          contractTypeOwnerKind = "tool"
+	contractTypeOwnerConsumerInput contractTypeOwnerKind = "consumer-input"
+	contractTypeOwnerCompletion    contractTypeOwnerKind = "completion"
 
 	usagePayload           typeUsage = "payload"
 	usageModelPayload      typeUsage = "model-payload"

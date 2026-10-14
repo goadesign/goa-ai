@@ -10,8 +10,11 @@ import (
 	"testing"
 	"time"
 
+	genregistry "goa.design/goa-ai/registry/gen/registry"
+
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/hooks"
@@ -54,21 +57,25 @@ func TestChildContinuationWaitsAfterParentCancellation(t *testing.T) {
 		controlledChildHandles: childHandles,
 	}
 	input := &RunInput{
-		AgentID: "parent.agent", RunID: "run-2", SessionID: "session-1", TurnID: "turn-2",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("parent.agent"))}, RunID: "run-2", SessionID: "session-1", TurnID: "turn-2",
 	}
-	base := &workflowConversation{RunContext: run.Context{
+	base := &workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{
 		RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID,
 	}}
 	suspension := suspensionContractFixtureWithContext(t, childTool.Name, continuationChildAgentID, "previous-child", nil, nil)
 	rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
 		checkpoint.Context.ParentRunID = "run-1"
 		checkpoint.Context.ParentAgentID = "parent.agent"
-		checkpoint.Context.ParentToolCallID = "call-child"
+		checkpoint.Context.ParentToolCallID = "call-previous-child"
 		checkpoint.Context.Tool = tool.Name
 		checkpoint.Context.ToolArgs = rawjson.Message(`{}`)
 	})
 	admitRunForTest(t, runtime.Store, session.RunMeta{
-		AgentID: continuationChildAgentID, RunID: "previous-child", SessionID: "session-1",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("parent.agent"))},
+		RunID:   "run-1", SessionID: "session-1", Status: session.RunStatusRunning,
+	})
+	admitRunForTest(t, runtime.Store, session.RunMeta{
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(continuationChildAgentID))}, RunID: "previous-child", SessionID: "session-1", ParentRunID: "run-1",
 		Status: session.RunStatusRunning,
 	})
 	suspensionData, err := json.Marshal(suspension)
@@ -77,15 +84,16 @@ func TestChildContinuationWaitsAfterParentCancellation(t *testing.T) {
 		ID: suspension.ID, Data: suspensionData,
 	}))
 	batch := stepBatch{records: []stepToolRecord{{
+		callRunID: "run-1",
 		call: ToolCall{
-			Name: tool.Name, ToolCallID: "call-child", Payload: rawjson.Message(`{}`),
-			AgentID: "parent.agent", RunID: "run-1", SessionID: "session-1",
+			Name: tool.Name, ToolCallID: "call-previous-child", Payload: rawjson.Message(`{}`),
+			Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("parent.agent"))}, RunID: "run-1", SessionID: "session-1",
 		},
 		childSuspension: suspension,
 	}}}
 	loop := &workflowLoop{r: runtime, wfCtx: wfCtx, input: input, base: base, reg: parentRegistration}
 	pending := &checkpointChildContinuation{
-		ToolCallID: "call-child",
+		ToolCallID: "call-previous-child",
 		Suspension: suspension,
 	}
 	response := &api.PendingInputResponse{Clarification: &api.ClarificationAnswer{
@@ -125,6 +133,16 @@ func testChildSuspensionContinuation(t *testing.T, dynamic bool) {
 		childID = "generic.agent"
 	}
 	childDefinition := testAgentDefinition(agent.Ident(childID), "nested.workflow", "nested.queue", []tools.ToolSpec{childTool, tool}, nil)
+	providerRuntime := runtime
+	if dynamic {
+		providerDefinition := testNativeProviderDefinition(t, nil)
+		exported, exists := providerDefinition.spec("records.find")
+		require.True(t, exists)
+		childDefinition = testAgentDefinition(agent.Ident(childID), providerDefinition.route.WorkflowName,
+			providerDefinition.route.DefaultTaskQueue, []tools.ToolSpec{childTool, exported}, nil)
+		providerRuntime = New(runtime.Store, WithLogger(telemetry.NoopLogger{}))
+		providerRuntime.agents[childDefinition.route.ID] = AgentRegistration{Definition: childDefinition}
+	}
 	parentDefinition := testAgentDefinitionWithChildren(
 		"parent.agent", "parent.workflow", "parent.queue", []tools.ToolSpec{tool}, nil,
 		[]AgentDefinition{childDefinition})
@@ -133,13 +151,13 @@ func testChildSuspensionContinuation(t *testing.T, dynamic bool) {
 	resolverCalls := 0
 	if dynamic {
 		call = testNativeRegistryCall(t, "revision/1")
-		call.AgentID, call.RunID = "parent.agent", "run-1"
+		call.Subject, call.RunID = genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("parent.agent"))}, "run-1"
 		parentDefinition = testAgentDefinition("parent.agent", "parent.workflow", "parent.queue", nil, nil).
-			WithRegistryTools(testRegistrySources{}).WithAgentExecutors(&childDefinition)
-		require.NoError(t, runtime.RegisterAgentToolResolver(childDefinition.route.ID, func(_ context.Context, revision string, _ *ToolCall) (*AgentToolConfiguration, error) {
+			WithRegistryTools(testRegistrySources{})
+		require.NoError(t, providerRuntime.RegisterAgentToolResolver(childDefinition.route.ID, func(_ context.Context, _ genregistry.ExecutionInvocation, revision string, _ *ToolCall) (*AgentToolConfiguration, error) {
 			resolverCalls++
 			require.Equal(t, "revision/1", revision)
-			return &AgentToolConfiguration{Labels: map[string]string{"child_revision": revision}}, nil
+			return &AgentToolConfiguration{Labels: map[string]string{"child_revision": revision}, History: LiteralAgentHistory(nil)}, nil
 		}))
 	}
 	parentRegistration := AgentRegistration{
@@ -157,11 +175,11 @@ func testChildSuspensionContinuation(t *testing.T, dynamic bool) {
 		seedTestToolset(runtime, registration.Name, tool)
 	}
 
-	firstInput := &RunInput{AgentID: "parent.agent", RunID: "run-1", SessionID: "session-1", TurnID: "turn-1"}
+	firstInput := &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("parent.agent"))}, RunID: "run-1", SessionID: "session-1", TurnID: "turn-1"}
 	seedRunMeta(t, runtime, firstInput)
 	firstChildren := make(chan *controlledChildHandle, 1)
 	firstContext := &testWorkflowContext{
-		ctx: t.Context(), hookRuntime: runtime, controlledChildHandles: firstChildren,
+		ctx: t.Context(), hookRuntime: runtime, runtime: providerRuntime, controlledChildHandles: firstChildren,
 	}
 	firstDone := make(chan struct {
 		out *RunOutput
@@ -172,7 +190,7 @@ func testChildSuspensionContinuation(t *testing.T, dynamic bool) {
 			firstContext,
 			parentRegistration,
 			firstInput,
-			&workflowConversation{RunContext: run.Context{
+			&workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{
 				RunID: firstInput.RunID, SessionID: firstInput.SessionID, TurnID: firstInput.TurnID, Attempt: 1,
 			}},
 			&PlanResult{ToolCalls: []ToolCall{call}},
@@ -184,7 +202,14 @@ func testChildSuspensionContinuation(t *testing.T, dynamic bool) {
 			err error
 		}{out: out, err: err}
 	}()
-	firstChild := waitForChildHandle(t, firstChildren, "first child")
+	var firstChild *controlledChildHandle
+	select {
+	case firstChild = <-firstChildren:
+	case early := <-firstDone:
+		t.Fatalf("parent returned before starting its child: %v", early.err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("parent did not start its child within the fixture deadline")
+	}
 	require.NotNil(t, firstChild)
 	childRuntime := New(runtime.Store, WithLogger(telemetry.NoopLogger{}))
 	childInput := firstContext.childRequests[0].Input
@@ -212,7 +237,8 @@ func testChildSuspensionContinuation(t *testing.T, dynamic bool) {
 		ID: childSuspension.ID, Data: suspensionData,
 	}))
 	firstChild.out = &api.RunOutput{
-		AgentID:    childDefinition.route.ID,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(childDefinition.route.ID))},
+
 		RunID:      firstContext.childRequests[0].Input.RunID,
 		Suspension: childSuspension,
 	}
@@ -230,14 +256,14 @@ func testChildSuspensionContinuation(t *testing.T, dynamic bool) {
 	if dynamic {
 		require.Equal(t, 1, resolverCalls)
 		// The new worker has no resolver or connection to the original catalog.
-		// Only the checkpoint and preconfigured worker definitions survive.
+		// The retained route and prepared input are enough to resume the child.
 		runtime = New(runtime.Store, WithLogger(telemetry.NoopLogger{}))
 		runtime.agents["parent.agent"] = parentRegistration
 		replacement := testNativeRegistryCall(t, "revision/2")
 		require.NotEqual(t, string(call.Registry.Resolution), string(replacement.Registry.Resolution))
 	}
 	secondInput := &RunInput{
-		AgentID: "parent.agent", RunID: "run-2", SessionID: "session-1", TurnID: "turn-2",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("parent.agent"))}, RunID: "run-2", SessionID: "session-1", TurnID: "turn-2",
 		Continuation: &api.RunContinuationInput{
 			Suspension: first.out.Suspension,
 			Response: &api.PendingInputResponse{Clarification: &api.ClarificationAnswer{
@@ -291,7 +317,7 @@ func testChildSuspensionContinuation(t *testing.T, dynamic bool) {
 		require.JSONEq(t, string(call.Registry.Resolution), string(continuedCheckpoint.Context.ToolRegistry.Resolution))
 	}
 	secondChild.out = &api.RunOutput{
-		AgentID: childDefinition.route.ID, RunID: secondContext.childRequests[0].Input.RunID,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(childDefinition.route.ID))}, RunID: secondContext.childRequests[0].Input.RunID,
 		Final: &model.Message{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "child done"}}},
 	}
 	if dynamic {

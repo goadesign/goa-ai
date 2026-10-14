@@ -123,22 +123,22 @@ func TestInjectLabelBackedWithValidation(t *testing.T) {
 func TestInjectReusableExportUsesDefiningContract(t *testing.T) {
 	files := buildWithPrepare(t, testscenarios.InjectReusableExportExample())
 
-	types := fileContent(t, files, "gen/atlas/toolsets/helpers/types.go")
+	types := fileContent(t, files, "gen/catalog/toolsets/helpers/types.go")
 	require.Equal(t, 2, strings.Count(types, "SessionID string"))
 	require.Equal(t, 2, strings.Count(types, "Query string"))
 
-	inject := fileContent(t, files, "gen/atlas/toolsets/helpers/inject.go")
+	inject := fileContent(t, files, "gen/catalog/toolsets/helpers/inject.go")
 	require.Contains(t, inject, "func InjectInherited(p *InheritedPayload")
 	require.Contains(t, inject, "func InjectExplicit(p *ExplicitPayload")
 	require.Contains(t, inject, "p.SessionID = v")
 	require.NotContains(t, inject, "p.SessionID = &v")
 
-	specs := fileContent(t, files, "gen/atlas/toolsets/helpers/specs.go")
+	specs := fileContent(t, files, "gen/catalog/toolsets/helpers/specs.go")
 	require.Contains(t, specs, `\"query\"`)
 	require.NotContains(t, specs, `\"session_id\"`)
 
-	transport := fileContent(t, files, "gen/atlas/toolsets/helpers/http/types.go")
-	require.Contains(t, transport, "SessionID *string `json:\"-\"`")
+	transport := fileContent(t, files, "gen/catalog/toolsets/helpers/http/types.go")
+	require.NotContains(t, transport, "SessionID", "the private model transport omits runtime-injected fields")
 }
 
 // TestInjectNoLabelsToolsetHasEmptyRequiredLabels proves RequiredLabels is

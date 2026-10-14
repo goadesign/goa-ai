@@ -19,6 +19,8 @@ import (
 	"go.temporal.io/sdk/testsuite"
 	"go.temporal.io/sdk/worker"
 
+	genregistry "goa.design/goa-ai/registry/gen/registry"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/telemetry"
@@ -64,11 +66,14 @@ func TestActivityWrappersOfferOriginalCustomError(t *testing.T) {
 				require.NoError(t, eng.RegisterPlannerActivity(t.Context(), name, engine.ActivityOptions{},
 					func(context.Context, *api.PlanActivityInput) (*api.PlanActivityOutput, error) { return nil, original }))
 			case "tool":
-				input = &api.ToolInput{}
+				input = &api.ToolInput{Invocation: genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: "test-run", ToolCallID: "test-call"})}, Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}}
 				require.NoError(t, eng.RegisterExecuteToolActivity(t.Context(), name, engine.ActivityOptions{},
 					func(context.Context, *api.ToolInput) (*api.ToolOutput, error) { return nil, original }))
 			case "child":
-				input = &api.AgentChildActivityInput{}
+				input = &api.AgentChildActivityInput{
+					Origin: genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: "test-run", ToolCallID: "test-call"})},
+					Call:   api.ToolCall{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "test-run", ToolCallID: "test-call"},
+				}
 				require.NoError(t, eng.RegisterAgentChildActivity(t.Context(), name, engine.ActivityOptions{},
 					func(context.Context, *api.AgentChildActivityInput) (*api.AgentChildActivityOutput, error) {
 						return nil, original

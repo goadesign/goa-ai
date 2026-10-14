@@ -6,6 +6,7 @@ package runtime
 
 import (
 	"context"
+	genrunterminal "goa.design/goa-ai/registry/gen/runterminal"
 
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/storage"
@@ -14,7 +15,7 @@ import (
 // synchronousSeedWriter uses the existing non-workflow retry contract only for
 // RunOneShot. General caller preparation keeps its context-aware error behavior.
 type synchronousSeedWriter struct {
-	r *Runtime
+	r *SynchronousRuntime
 }
 
 func (w synchronousSeedWriter) BeginRunSeed(ctx context.Context, declaration storage.SeedDeclaration) (storage.RunSeed, error) {
@@ -36,4 +37,12 @@ func (w synchronousSeedWriter) AppendRunSeed(ctx context.Context, command storag
 func (w synchronousSeedWriter) PublishRunSeed(ctx context.Context, publication storage.SeedPublication) error {
 	_, err := w.r.storageCommandUntilApplied(ctx, &api.StorageActivityCommand{SeedPublish: &publication})
 	return err
+}
+
+func (w synchronousSeedWriter) BeginRunPreparationOperation(ctx context.Context, command storage.RunPreparationBegin) (genrunterminal.PreparationDecision, error) {
+	result, err := w.r.storageCommandUntilApplied(ctx, &api.StorageActivityCommand{PreparationBegin: &command})
+	if err != nil {
+		return genrunterminal.PreparationDecision{}, err
+	}
+	return *result.PreparationBegin, nil
 }

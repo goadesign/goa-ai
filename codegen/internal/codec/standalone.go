@@ -18,15 +18,22 @@ type (
 		nodes              []*jsonshape.Node
 		names              map[*jsonshape.Node]*codegen.NameDeclaration
 		preflight          *codegen.NameDeclaration
-		typedChecks        map[expr.UserType]*typedCheckPlan
+		typedChecks        map[typedCheckKey]*typedCheckPlan
 		orderedTypedChecks []*typedCheckPlan
 		originalValidator  *codegen.NameDeclaration
 		originalValidators []*originalValidatorPlan
 	}
 
-	// typedCheckPlan retains one typed walk and its collection identity needs.
+	// typedCheckKey keeps separate helpers when one schema has different Go declarations.
+	typedCheckKey struct {
+		declaration *codegen.TypeDeclaration
+		policy      codegen.GoLayoutPolicy
+	}
+
+	// typedCheckPlan retains one generated Go type and its collection identity needs.
 	typedCheckPlan struct {
 		attribute           *expr.AttributeExpr
+		layout              *codegen.GoTypePlan
 		name                *codegen.NameDeclaration
 		recursiveCollection bool
 	}
@@ -73,7 +80,7 @@ func (p *Plan) AddStandalone(key, preferredName string, attribute *expr.Attribut
 	}
 	plan := &standalonePlan{
 		root: root, names: make(map[*jsonshape.Node]*codegen.NameDeclaration),
-		typedChecks: make(map[expr.UserType]*typedCheckPlan),
+		typedChecks: make(map[typedCheckKey]*typedCheckPlan),
 	}
 	value.standalone = plan
 	if err := p.planJSONHelpers(); err != nil {
@@ -89,37 +96,44 @@ func (p *Plan) AddStandalone(key, preferredName string, attribute *expr.Attribut
 	if err != nil {
 		return nil, err
 	}
-	if err := walkAttribute(attribute, make(map[expr.UserType]struct{}), func(current *expr.AttributeExpr) error {
+	if err := walkPreflightAttribute(attribute, make(map[expr.UserType]struct{}), func(current *expr.AttributeExpr) error {
 		named, ok := current.Type.(expr.UserType)
-		if !ok || named == expr.Empty || plan.typedChecks[named.Origin()] != nil {
+		if !ok || named == expr.Empty || jsonshape.IsRawJSON(current) {
 			return nil
 		}
-		name, err := value.strictName("check"+preferredName+named.Name()+"Value", "typed:"+strconv.Itoa(len(plan.orderedTypedChecks)))
-		if err != nil {
-			return err
-		}
-		check := &typedCheckPlan{attribute: current, name: name}
-		if expr.IsArray(named) || expr.IsMap(named) {
-			if err := walkAttribute(named.Attribute(), make(map[expr.UserType]struct{}), func(child *expr.AttributeExpr) error {
-				if nested, ok := child.Type.(expr.UserType); ok && nested.Origin() == named.Origin() {
-					check.recursiveCollection = true
-				}
-				return nil
-			}); err != nil {
+		for _, selected := range layout.PlansForOccurrence(current) {
+			key := typedCheckKey{selected.TypeDeclaration(), selected.Policy()}
+			if plan.typedChecks[key] != nil {
+				continue
+			}
+			name, err := value.strictName("check"+preferredName+named.Name()+"Value", "typed:"+strconv.Itoa(len(plan.orderedTypedChecks)))
+			if err != nil {
 				return err
 			}
-			if check.recursiveCollection {
-				if err := p.requireImport(codegen.NewImport("reflect", "reflect")); err != nil {
+			check := &typedCheckPlan{attribute: current, layout: selected, name: name}
+			if expr.IsArray(named) || expr.IsMap(named) {
+				if err := walkAttribute(named.Attribute(), make(map[expr.UserType]struct{}), func(child *expr.AttributeExpr) error {
+					if nested, ok := child.Type.(expr.UserType); ok && nested.Origin() == named.Origin() {
+						check.recursiveCollection = true
+					}
+					return nil
+				}); err != nil {
 					return err
 				}
+				if check.recursiveCollection {
+					if err := p.requireImport(codegen.NewImport("reflect", "reflect")); err != nil {
+						return err
+					}
+				}
 			}
+			plan.typedChecks[key] = check
+			plan.orderedTypedChecks = append(plan.orderedTypedChecks, check)
 		}
-		plan.typedChecks[named.Origin()] = check
-		plan.orderedTypedChecks = append(plan.orderedTypedChecks, check)
 		return nil
 	}); err != nil {
 		return nil, err
 	}
+
 	for _, imp := range []string{"sort", "strconv", "unicode/utf8"} {
 		name := imp
 		if imp == "unicode/utf8" {
@@ -184,6 +198,8 @@ func (v *Value) shapeData() []*shapeData {
 				shape.Element.AllowNull = !array.NonNullableElems && codegen.IsNilable(array.ElemType.Type)
 			} else if mapping := expr.AsMap(node.Attribute.Type); mapping != nil {
 				shape.Element.AllowNull = codegen.IsNilable(mapping.ElemType.Type)
+			} else if node.Kind == "object" {
+				shape.Element.AllowNull = codegen.IsNilable(node.Element.Attribute.Type)
 			}
 		}
 		if node.Union != nil {

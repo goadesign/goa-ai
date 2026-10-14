@@ -12,6 +12,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	genregistry "goa.design/goa-ai/registry/gen/registry"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
@@ -137,7 +139,8 @@ func TestInitialHistoryCommandByteBoundary(t *testing.T) {
 			messages := []*model.Message{{Role: model.ConversationRoleUser,
 				Parts: []model.Part{model.TextPart{Text: strings.Repeat("x", size-framingBytes)}}}}
 			end, err := publishLiteralHistory(t.Context(), store, storage.SeedDeclaration{
-				AgentID: "agent", RunID: "boundary", Kind: storage.SeedLiteral,
+				Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, RunID: "boundary", Kind: storage.SeedLiteral,
+				Origin: genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: "boundary"})},
 			}, messages)
 			if size > storage.MaxSeedCommandBytes {
 				require.NoError(t, err)
@@ -206,7 +209,7 @@ func TestNextTurnValidatesCompletedSourceBeforeFreshInput(t *testing.T) {
 				RunContext: run.Context{RunID: "source", SessionID: "session"},
 			}, test.prior)
 			record, err := prepareHookRecordInput(t.Context(), hooks.NewRunCompletedEvent(
-				"source", "agent", "session", "success", run.PhaseCompleted, nil, nil, nil,
+				"source", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, "session", "success", run.PhaseCompleted, nil, nil, nil,
 			), "")
 			require.NoError(t, err)
 			_, err = rt.executeStorageCommand(t.Context(), &api.StorageActivityCommand{

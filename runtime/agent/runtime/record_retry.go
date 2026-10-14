@@ -20,9 +20,17 @@ type runRepairCall func(context.Context) (storage.RunRepairResult, error)
 // storageCommandUntilApplied retries temporary failures without rebuilding the
 // command. Permanent Store contract failures return immediately.
 func (r *Runtime) storageCommandUntilApplied(ctx context.Context, command *api.StorageActivityCommand) (*api.StorageActivityResult, error) {
+	return retryStorageCommand(ctx, func(ctx context.Context) (*api.StorageActivityResult, error) {
+		return r.executeStorageCommand(ctx, command)
+	})
+}
+
+// retryStorageCommand retries the same prepared command after temporary storage
+// failures. It never repeats the caller's work or rebuilds timestamps.
+func retryStorageCommand(ctx context.Context, call func(context.Context) (*api.StorageActivityResult, error)) (*api.StorageActivityResult, error) {
 	delay := 100 * time.Millisecond
 	for {
-		if result, err := r.executeStorageCommand(ctx, command); err == nil {
+		if result, err := call(ctx); err == nil {
 			return result, nil
 		} else if engine.IsActivityErrorNonRetryable(err) {
 			return nil, err

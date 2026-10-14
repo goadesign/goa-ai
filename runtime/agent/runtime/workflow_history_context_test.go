@@ -51,7 +51,7 @@ func TestWorkflowHistoryContextSurvivesSerializedRecovery(t *testing.T) {
 						return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &response.Content[0]}}, nil
 					})
 				h.base.Messages = requestHistoryMessages()
-				h.base.HistoryEndID = testToolHistory(t, h.runtime, h.input.AgentID, h.base.RunContext, h.base.Messages)
+				h.base.HistoryEndID = testToolHistory(t, h.runtime, testSubjectAgent(t, h.input.Subject), h.base.RunContext, h.base.Messages)
 				original := canonicalHistory(t, h.base.Messages)
 				h.base.Messages = nil
 				h.runtime.models["test"] = mustTestModelClient(stubModelClient{complete: func(context.Context, *model.Request) (*model.Response, error) {
@@ -65,7 +65,7 @@ func TestWorkflowHistoryContextSurvivesSerializedRecovery(t *testing.T) {
 					}
 					return requestHistoryResult(req.Messages, "saved original evidence", prior)
 				}
-				h.runtime.agents[h.input.AgentID] = h.registration
+				h.runtime.agents[testSubjectAgent(t, h.input.Subject)] = h.registration
 				h.workflow.plannerRoutes["resume"] = func(ctx context.Context, input *PlanActivityInput) (*PlanActivityOutput, error) {
 					encoded, err := json.Marshal(input)
 					if err != nil {
@@ -121,7 +121,7 @@ func TestWorkflowHistoryContextResumeRequestOwnsCopy(t *testing.T) {
 	source, positions, _, err := historySourceHashes(messages, 2)
 	require.NoError(t, err)
 	saved := &api.HistoryContext{Summary: *result.Summary, SourceSHA256: source, SourcePositionsSHA256: positions}
-	base := &workflowConversation{Messages: messages, HistoryContext: saved}
+	base := &workflowConversation{finalization: &workflowFinalizationState{}, Messages: messages, HistoryContext: saved}
 	attempt := 1
 	rt := newTestRuntimeWithPlanner("service.agent", &stubPlanner{})
 	input, err := rt.buildNextResumeRequest("service.agent", base, nil, nil, nil, false, nil, nil, &attempt)
@@ -141,7 +141,7 @@ func TestWorkflowHistoryContextCodeOnlyStepRetainsPrior(t *testing.T) {
 			return finalPlannerResult("finished without a model"), nil
 		})
 	h.base.Messages = requestHistoryMessages()
-	h.base.HistoryEndID = testToolHistory(t, h.runtime, h.input.AgentID, h.base.RunContext, h.base.Messages)
+	h.base.HistoryEndID = testToolHistory(t, h.runtime, testSubjectAgent(t, h.input.Subject), h.base.RunContext, h.base.Messages)
 	result, err := requestHistoryResult(h.base.Messages, "existing summary", nil)
 	require.NoError(t, err)
 	source, positions, _, err := historySourceHashes(h.base.Messages, 2)

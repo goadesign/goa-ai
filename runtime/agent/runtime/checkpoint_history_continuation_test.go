@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	engineinmem "goa.design/goa-ai/runtime/agent/engine/inmem"
@@ -42,15 +43,15 @@ func TestCheckpointHistoryContinuesWithoutReexecuting(t *testing.T) {
 			}, nil
 		},
 	}))
-	input := &RunInput{AgentID: "svc.agent", RunID: "run-1", SessionID: "session-1", TurnID: "turn-1"}
+	input := &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, RunID: "run-1", SessionID: "session-1", TurnID: "turn-1"}
 	seedRunMeta(t, old, input)
 	historyEnd := seedTestPlanInput(t, old, PlanActivityInput{
-		AgentID: input.AgentID, RunID: input.RunID,
+		AgentID: testSubjectAgent(t, input.Subject), RunID: input.RunID,
 		RunContext: run.Context{RunID: input.RunID, SessionID: input.SessionID},
 	}, nil).HistoryEndID
-	reg := AgentRegistration{ExecuteToolActivity: "execute", ResumeActivityName: "resume"}
+	reg := AgentRegistration{Definition: testRegistrationDefinition(testSubjectAgent(t, input.Subject), engine.WorkflowDefinition{}, nil), ExecuteToolActivity: "execute", ResumeActivityName: "resume"}
 	first, err := old.runLoop(&testWorkflowContext{ctx: t.Context(), runtime: old}, reg, input,
-		&workflowConversation{HistoryEndID: historyEnd, RunContext: run.Context{
+		&workflowConversation{finalization: &workflowFinalizationState{}, HistoryEndID: historyEnd, RunContext: run.Context{
 			RunID: input.RunID, SessionID: input.SessionID, TurnID: input.TurnID, Attempt: 1,
 		}},
 		&PlanResult{ToolCalls: []ToolCall{{
@@ -79,13 +80,13 @@ func TestCheckpointHistoryContinuesWithoutReexecuting(t *testing.T) {
 	saved := first.Suspension
 	for i, answerID := range []string{"first", "second", "third"} {
 		next := &RunInput{
-			AgentID: input.AgentID, RunID: fmt.Sprintf("run-%d", i+2), SessionID: input.SessionID,
+			Subject: input.Subject, RunID: fmt.Sprintf("run-%d", i+2), SessionID: input.SessionID,
 			TurnID: fmt.Sprintf("turn-%d", i+2),
 			Continuation: &api.RunContinuationInput{Suspension: saved, Response: &api.PendingInputResponse{
 				Clarification: &api.ClarificationAnswer{ID: answerID, Answer: "Group A"},
 			}},
 		}
-		checkpoint, err := prepareContinuation(next, testRuntimeDefinition(current, input.AgentID))
+		checkpoint, err := prepareContinuation(next, testRuntimeDefinition(current, testSubjectAgent(t, input.Subject)))
 		require.NoError(t, err)
 		require.Equal(t, payload, checkpoint.State.ToolOutputs[0].Payload)
 		require.NoError(t, restoreContinuationRunInput(next, checkpoint))
@@ -131,7 +132,7 @@ func TestCheckpointHistoryPreparedBeforeContractChangeStartsUnchanged(t *testing
 	require.NoError(t, createPreparedRunSession(t.Context(), store))
 	suspension := recordedInputSuspension(t, spec.Name)
 	admitRunForTest(t, store, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run-1", SessionID: "session-1", Status: session.RunStatusRunning,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, RunID: "run-1", SessionID: "session-1", Status: session.RunStatusRunning,
 	})
 	data, err := json.Marshal(suspension)
 	require.NoError(t, err)
@@ -156,7 +157,7 @@ func TestCheckpointHistoryPreparedBeforeContractChangeStartsUnchanged(t *testing
 				return nil, err
 			}
 			received <- input
-			return &RunOutput{RunID: input.RunID}, nil
+			return &RunOutput{Subject: input.Subject, RunID: input.RunID}, nil
 		},
 	}))
 	freshClient := New(store, WithEngine(eng)).MustClientFor(currentDefinition)

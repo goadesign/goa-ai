@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -64,9 +65,9 @@ func TestPlanStartPreservesHistoricalResultAfterContractChange(t *testing.T) {
 			rt.agentToolSpecs = map[agent.Ident][]tools.ToolSpec{"svc.agent": {search, continuation}}
 			store := newTestStore()
 			rt.Store = store
-			call := hooks.NewToolCallScheduledEvent("run-1", "svc.agent", "session-1", search.Name,
+			call := hooks.NewToolCallScheduledEvent("run-1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, "session-1", search.Name,
 				"source-1", rawjson.Message(`{"query":"records"}`), "", "", 0)
-			result := hooks.NewToolResultReceivedEvent("run-1", "svc.agent", "session-1", "run-1",
+			result := hooks.NewToolResultReceivedEvent("run-1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, "session-1", "run-1",
 				search.Name, "source-1", "", oldResult, nil, nil, "Recorded evidence", tc.bounds, time.Second, nil, nil)
 			appendHistoricalHookEvent(t, store, call, "source-call", 1)
 			appendHistoricalHookEvent(t, store, result, "source-result", 2)
@@ -108,13 +109,13 @@ func TestHistoricalContinuationRetiresCompletedChainAfterContractChange(t *testi
 			payload = rawjson.Message(`{"cursor":"page-2"}`)
 			bounds = &agent.Bounds{Returned: 1}
 		}
-		call := hooks.NewToolCallScheduledEvent("run-1", "svc.agent", "session-1", name,
+		call := hooks.NewToolCallScheduledEvent("run-1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, "session-1", name,
 			callID, payload, "", "", 0)
 		if index == 1 {
 			call.ContinuationRootToolCallID = "source-1"
 		}
 		appendHistoricalHookEvent(t, store, call, callID, int64(index*2+1))
-		result := hooks.NewToolResultReceivedEvent("run-1", "svc.agent", "session-1", "run-1",
+		result := hooks.NewToolResultReceivedEvent("run-1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, "session-1", "run-1",
 			name, callID, "", rawjson.Message(`{"old_items":["evidence"]}`), nil, nil, "Page", bounds, time.Second, nil, nil)
 		appendHistoricalHookEvent(t, store, result, callID+"-result", int64(index*2+2))
 	}
@@ -158,9 +159,9 @@ func TestHistoricalContinuationRejectsDamagedMetadata(t *testing.T) {
 			rt, search, _ := continuationTestRuntime()
 			store := newTestStore()
 			rt.Store = store
-			call := hooks.NewToolCallScheduledEvent("run-1", "svc.agent", "session-1", search.Name,
+			call := hooks.NewToolCallScheduledEvent("run-1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, "session-1", search.Name,
 				"source-1", rawjson.Message(`{"query":"records"}`), "", "", 0)
-			result := hooks.NewToolResultReceivedEvent("run-1", "svc.agent", "session-1", "run-1",
+			result := hooks.NewToolResultReceivedEvent("run-1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, "session-1", "run-1",
 				search.Name, "source-1", "", rawjson.Message(`{"items":[]}`), nil, nil, "Page",
 				&agent.Bounds{Returned: 0}, time.Second, nil, nil)
 			tc.mutate(result)

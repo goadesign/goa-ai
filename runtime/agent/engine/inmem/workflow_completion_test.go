@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 )
@@ -41,7 +42,7 @@ func TestClosedWorkflowStopsRetries(t *testing.T) {
 			}
 			handle, err := eng.StartWorkflow(ctx, engine.WorkflowStartRequest{
 				ID: "run", Workflow: "closed", TaskQueue: "test",
-				Input: &api.RunInput{RunID: "run"}, RetryPolicy: policy,
+				Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run"}, RetryPolicy: policy,
 			})
 			require.NoError(t, err)
 			result, err := handle.Wait(ctx)
@@ -101,14 +102,14 @@ func TestActivityRejectionAllowsFreshWorkflowAttempt(t *testing.T) {
 					}
 					_, err = wfCtx.ExecuteStorageActivity(engine.StorageActivityCall{
 						Name: "apply", Command: &api.StorageActivityCommand{Append: &api.AppendRecordsCommand{
-							Records: []*api.RecordActivityInput{{EventKey: id}},
+							Records: []*api.RecordActivityInput{{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, EventKey: id}},
 						}},
 						Options: engine.ActivityOptions{RetryPolicy: engine.RetryPolicy{UnlimitedAttempts: true}},
 					})
 					if err != nil {
 						return nil, err
 					}
-					return &api.RunOutput{RunID: input.RunID}, nil
+					return &api.RunOutput{Subject: input.Subject, RunID: input.RunID}, nil
 				},
 			}))
 			policy := engine.RetryPolicy{MaxAttempts: 2, InitialInterval: time.Millisecond}
@@ -116,7 +117,7 @@ func TestActivityRejectionAllowsFreshWorkflowAttempt(t *testing.T) {
 				policy.MaxAttempts, policy.UnlimitedAttempts = 0, true
 			}
 			handle, err := eng.StartWorkflow(ctx, engine.WorkflowStartRequest{
-				ID: "run", Workflow: "retry", TaskQueue: "test", Input: &api.RunInput{RunID: "run"},
+				ID: "run", Workflow: "retry", TaskQueue: "test", Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "run"},
 				RetryPolicy: policy,
 			})
 			require.NoError(t, err)

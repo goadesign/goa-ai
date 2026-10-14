@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -31,11 +33,17 @@ type (
 		storage.Store
 		before func()
 	}
+	// resolvedCancellationHistoryStore exposes historical metadata without
+	// execution preparation and returns unsupported checkpoint bytes if read.
+	resolvedCancellationHistoryStore struct {
+		storage.Store
+		runs map[string]session.RunMeta
+	}
 )
 
 func TestCancelRunRelinquishesEmptyRootWithoutExecutionPreparation(t *testing.T) {
 	store := newTestStore()
-	admitRunForTest(t, store, session.RunMeta{AgentID: "svc.agent", RunID: "run-1", SessionID: "session-1", Status: session.RunStatusRunning})
+	admitRunForTest(t, store, session.RunMeta{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, RunID: "run-1", SessionID: "session-1", Status: session.RunStatusRunning})
 	saved := suspensionContractFixture(t, "svc.lookup")
 	data, err := json.Marshal(saved)
 	require.NoError(t, err)
@@ -92,7 +100,7 @@ func TestCancelRunDoesNotRelinquishUnknownCheckpoint(t *testing.T) {
 			data, err := json.Marshal(saved)
 			require.NoError(t, err)
 			store := newTestStore()
-			admitRunForTest(t, store, session.RunMeta{AgentID: "svc.agent", RunID: "run-1", SessionID: "session-1", Status: session.RunStatusRunning})
+			admitRunForTest(t, store, session.RunMeta{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, RunID: "run-1", SessionID: "session-1", Status: session.RunStatusRunning})
 			require.NoError(t, storeSuspensionForTest(t.Context(), store, "run-1", session.RunSuspension{ID: saved.ID, Data: data}))
 			backend := &recordingCancellationEngine{Engine: engineinmem.New(), err: engine.ErrWorkflowCompleted}
 			runtime := New(store, WithEngine(backend))
@@ -115,19 +123,19 @@ func TestEmptyRootProofLeavesSavedWorkOnCleanupPath(t *testing.T) {
 				// additionally validates nested tools on the existing cleanup path.
 				switch variation {
 				case "task":
-					value.Batch.Records = []checkpointToolRecord{{Task: &taskExecution{TaskID: ""}}}
+					value.Batch.Records = []checkpointToolRecord{{Call: value.Batch.Calls[0], Task: &taskExecution{TaskID: ""}}}
 				case "child record":
-					value.Batch.Records = []checkpointToolRecord{{ChildSuspension: &api.RunSuspension{ID: "child"}}}
+					value.Batch.Records = []checkpointToolRecord{{Call: value.Batch.Calls[0], ChildSuspension: &api.RunSuspension{ID: "child"}}}
 				case "child input":
 					value.Pending[0].Child = &checkpointChildContinuation{Suspension: &api.RunSuspension{ID: "child"}}
 				case "remote input":
 					state := "accepted-input"
-					value.Batch.Records = []checkpointToolRecord{{MCPPending: mustPendingInput(t, &mcp.InputRequired{RequestState: &state})}}
+					value.Batch.Records = []checkpointToolRecord{{Call: value.Batch.Calls[0], MCPPending: mustPendingInput(t, &mcp.InputRequired{RequestState: &state})}}
 				}
 			})
 			data, err := json.Marshal(saved)
 			require.NoError(t, err)
-			meta := session.RunMeta{AgentID: "svc.agent", RunID: "run-1", SessionID: "session-1", Status: session.RunStatusSuspended}
+			meta := session.RunMeta{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, RunID: "run-1", SessionID: "session-1", Status: session.RunStatusSuspended}
 			store := suspensionReadStore{run: meta, suspension: session.RunSuspension{ID: saved.ID, Data: data}}
 			runtime := New(store)
 			settled, err := runtime.relinquishEmptyRootSuspension(t.Context(), CancelRequest{RunID: meta.RunID, Reason: run.CancellationReasonUserRequested}, &meta)
@@ -161,7 +169,7 @@ func TestCancelRunFollowsAnswerThatWinsClosureRace(t *testing.T) {
 					start: func(ctx context.Context, _ *planner.PlanInput) (*planner.PlanResult, error) {
 						// This accepted Store state exercises historical cancellation intent;
 						// it does not simulate the current workflow's cancellation handler.
-						input, err := buildCancellationRecord(&RecordActivityInput{AgentID: "race.agent", RunID: "race-original", SessionID: "race-session", TimestampMS: time.Now().UnixMilli()}, run.CancellationReasonUserRequested)
+						input, err := buildCancellationRecord(&RecordActivityInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("race.agent"))}, RunID: "race-original", SessionID: "race-session", TimestampMS: time.Now().UnixMilli()}, run.CancellationReasonUserRequested)
 						if err != nil {
 							return nil, err
 						}
@@ -216,13 +224,50 @@ func TestCancelRunFollowsAnswerThatWinsClosureRace(t *testing.T) {
 func TestCancelRunAlreadyRelinquishedDoesNotDecodeHistoricalCheckpoint(t *testing.T) {
 	resolved := session.RelinquishedSuspension{Reason: run.CancellationReasonUserRequested, ResolvedAt: time.Unix(123, 0).UTC()}
 	store := suspensionReadStore{
-		run:        session.RunMeta{AgentID: "history.agent", RunID: "history-run", SessionID: "history-session", Status: session.RunStatusSuspended, SuspensionResolution: resolved},
+		run:        session.RunMeta{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("history.agent"))}, RunID: "history-run", SessionID: "history-session", Status: session.RunStatusSuspended, SuspensionResolution: resolved},
 		suspension: session.RunSuspension{ID: "historical", Data: []byte(`{"version":"unsupported"}`)},
 	}
 	backend := &recordingCancellationEngine{Engine: engineinmem.New(), err: engine.ErrWorkflowNotFound}
 	runtime := New(store, WithEngine(backend))
 	require.NoError(t, runtime.CancelRun(t.Context(), CancelRequest{RunID: store.run.RunID, Reason: run.CancellationReasonSessionEnded}))
 	assert.Equal(t, resolved, store.run.SuspensionResolution)
+}
+
+func TestCancelRunPredecessorOfRelinquishedSuccessorNeedsNoExecutionState(t *testing.T) {
+	for _, subject := range []genrunidentity.RunSubject{
+		{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("history.agent"))},
+		{Executor: genrunidentity.NewRunExecutorServiceTool(&genrunidentity.ServiceToolSubject{Registry: "registry", Tool: "records.find"})},
+	} {
+		t.Run(string(subject.Executor.Kind()), func(t *testing.T) {
+			resolved := session.RelinquishedSuspension{Reason: run.CancellationReasonUserRequested, ResolvedAt: time.Unix(123, 0).UTC()}
+			stored := &resolvedCancellationHistoryStore{runs: map[string]session.RunMeta{
+				"predecessor": {Subject: subject, RunID: "predecessor", SessionID: "session", Status: session.RunStatusSuspended, SuspensionResolution: session.ContinuedSuspension{RunID: "successor"}},
+				"successor":   {Subject: subject, RunID: "successor", SessionID: "session", Status: session.RunStatusSuspended, SuspensionResolution: resolved},
+			}}
+			store := &closureObservationStore{Store: stored}
+			backend := &closureObservationEngine{recordingCancellationEngine: recordingCancellationEngine{Engine: engineinmem.New(), err: engine.ErrWorkflowNotFound}}
+			runtime := New(store, WithEngine(backend))
+			require.NoError(t, runtime.CancelRun(t.Context(), CancelRequest{RunID: "predecessor", Reason: run.CancellationReasonSessionEnded}))
+			assert.Equal(t, []string{"predecessor", "successor"}, store.runReads)
+			assert.Zero(t, store.checkpointReads)
+			assert.Zero(t, store.preparationReads)
+			assert.Zero(t, store.mutations)
+			assert.Zero(t, backend.jobs)
+			assert.Equal(t, resolved, stored.runs["successor"].SuspensionResolution)
+		})
+	}
+}
+
+func (s *resolvedCancellationHistoryStore) LoadRun(_ context.Context, runID string) (session.RunMeta, error) {
+	meta, found := s.runs[runID]
+	if !found {
+		return session.RunMeta{}, session.ErrRunNotFound
+	}
+	return meta, nil
+}
+
+func (*resolvedCancellationHistoryStore) LoadRunSuspension(context.Context, string) (session.RunSuspension, error) {
+	return session.RunSuspension{ID: "historical", Data: []byte(`{"version":"unsupported"}`)}, nil
 }
 
 func (s *continuationBeforeClosureStore) RelinquishRunSuspension(ctx context.Context, command storage.RunSuspensionRelinquishment) (session.SuspensionResolution, error) {

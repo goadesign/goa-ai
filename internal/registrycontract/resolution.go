@@ -9,21 +9,24 @@ import (
 	"slices"
 
 	genregistryclient "goa.design/goa-ai/registry/gen/grpc/registry/client"
-	genregistrypb "goa.design/goa-ai/registry/gen/grpc/registry/pb"
 	genregistryserver "goa.design/goa-ai/registry/gen/grpc/registry/server"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent/tools"
 	toolcontract "goa.design/goa-ai/runtime/toolregistry/contract"
-	"google.golang.org/protobuf/encoding/protojson"
 )
 
 type (
 	// Resolution contains one validated registration and its compiled contracts.
 	// It is private to runtime integration and is never a model-facing catalog.
 	Resolution struct {
+		// Registered contains the unchanged provider declarations and exact token.
 		Registered *genregistry.ResolvedToolset
-		Specs      map[tools.Ident]tools.ToolSpec
-		byName     map[tools.Ident]*genregistry.ToolSchema
+		// Source is present only for an owner-selected registered resource.
+		// The exact route and token remain tied to Registered.
+		Source *genregistry.CatalogSource
+		// Specs contains the validated contracts under their consumer names.
+		Specs  map[tools.Ident]tools.ToolSpec
+		byName map[tools.Ident]*genregistry.ToolSchema
 	}
 )
 
@@ -82,14 +85,15 @@ func Read(binding *tools.RegistryBinding) (*Resolution, error) {
 	if binding == nil || binding.Registry == "" {
 		return nil, errors.New("selected tool registry is required")
 	}
-	var message genregistrypb.ResolveToolsetResponse
-	if err := protojson.Unmarshal(binding.Resolution, &message); err != nil {
+	selected, err := genregistry.DecodeRegistrySelection(binding.Resolution)
+	if err != nil {
 		return nil, fmt.Errorf("decode selected registry tool: %w", err)
 	}
-	if err := genregistryclient.ValidateResolveToolsetResponse(&message); err != nil {
-		return nil, fmt.Errorf("selected registry tool: %w", err)
+	if direct, ok := selected.Selection.AsDirect(); ok {
+		return Resolve(direct)
 	}
-	return Resolve(genregistryclient.NewResolveToolsetResult(&message))
+	registered, _ := selected.Selection.AsRegistered()
+	return ResolveRegistered(binding.Registry, registered.Source, registered.Resolved)
 }
 
 // Select retains just the chosen definition and its fixed pagination partner.
@@ -113,13 +117,22 @@ func (r *Resolution) Select(registry string, name tools.Ident) (*tools.RegistryB
 	for index, selected := range names {
 		toolset.Tools[index] = r.byName[selected]
 	}
-	encoded, err := protojson.Marshal(genregistryserver.NewProtoResolveToolsetResponse(&genregistry.ResolvedToolset{
+	retained := &genregistry.ResolvedToolset{
 		Toolset: &toolset, RegistrationToken: r.Registered.RegistrationToken,
-	}))
+	}
+	selection := genregistry.NewRegistrySelectionKindDirect(retained)
+	if r.Source != nil {
+		selection = genregistry.NewRegistrySelectionKindRegistered(&genregistry.RegisteredToolsetSelection{
+			Source: r.Source, Resolved: retained,
+		})
+	}
+	encoded, err := genregistry.EncodeRegistrySelection(&genregistry.RegistrySelection{Selection: selection})
 	if err != nil {
 		return nil, fmt.Errorf("encode selected registry tool: %w", err)
 	}
-	return &tools.RegistryBinding{Registry: registry, Resolution: encoded}, nil
+	binding := &tools.RegistryBinding{Registry: registry, Resolution: encoded}
+
+	return binding, nil
 }
 
 // validatePaging rejects incomplete or contradictory source/continuation
@@ -143,4 +156,14 @@ func validatePaging(specs map[tools.Ident]tools.ToolSpec, spec tools.ToolSpec) e
 		}
 	}
 	return nil
+}
+
+// Declaration returns the original provider operation for a consumer name.
+// Callers use it for execution and provider-owned policy, never schema renaming.
+func (r *Resolution) Declaration(name tools.Ident) (*genregistry.ToolSchema, error) {
+	declaration, ok := r.byName[name]
+	if !ok {
+		return nil, fmt.Errorf("registry selection contains no declaration for %q", name)
+	}
+	return declaration, nil
 }

@@ -48,7 +48,7 @@ func TestCheckpointRecoveredFailureHistory(t *testing.T) {
 			}}}, initialCaps(RunPolicy{MaxToolCalls: 8}))
 			require.NoError(t, err)
 			require.NotNil(t, out.Suspension)
-			definition := testRuntimeDefinition(h.runtime, h.input.AgentID)
+			definition := testRuntimeDefinition(h.runtime, testSubjectAgent(t, h.input.Subject))
 			checkpoint, err := decodeWorkflowCheckpoint(out.Suspension, definition)
 			require.NoError(t, err)
 			require.Empty(t, checkpoint.Batch.Calls)
@@ -71,7 +71,7 @@ func TestCheckpointRecoveredFailureHistory(t *testing.T) {
 			}
 			current := New(h.runtime.Store)
 			seedTestToolSpecs(current, spec)
-			_, err = decodeWorkflowCheckpoint(out.Suspension, testRuntimeDefinition(current, h.input.AgentID))
+			_, err = decodeWorkflowCheckpoint(out.Suspension, testRuntimeDefinition(current, testSubjectAgent(t, h.input.Subject)))
 			require.NoError(t, err)
 			require.Equal(t, original, out.Suspension.Checkpoint)
 

@@ -12,12 +12,13 @@ import (
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 )
 
 func TestProductionWorkflowRejectsHistoryWithoutAcceptedRequest(t *testing.T) {
 	for _, test := range []struct{ name, seed, rejection string }{
-		{"old input without publication", "", "published initial history is required"},
+		{"old input without publication", "", "accepted workflow request: workflow accepted request digest is missing"},
 		{"current input without memo", "published", "accepted request"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -25,7 +26,7 @@ func TestProductionWorkflowRejectsHistoryWithoutAcceptedRequest(t *testing.T) {
 			// Construct each rejected shape independently. Neither case upgrades
 			// saved history or supplies a fabricated engine acceptance memo.
 			input, err := NewAgentDataConverter().ToPayloads(&api.RunInput{
-				AgentID: productionReplayAgentID, RunID: productionReplayRunID,
+				Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(productionReplayAgentID))}, RunID: productionReplayRunID,
 				SessionID: productionReplaySessionID, TurnID: productionReplayTurnID, SeedEndID: test.seed,
 			})
 			require.NoError(t, err)

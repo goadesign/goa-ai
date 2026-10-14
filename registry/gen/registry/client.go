@@ -15,6 +15,11 @@ import (
 
 // Client is the "registry" service client.
 type Client struct {
+	CheckCatalogResourceEndpoint   goa.Endpoint
+	ListCatalogResourcesEndpoint   goa.Endpoint
+	RegisterAgentExportsEndpoint   goa.Endpoint
+	ValidateAgentExportsEndpoint   goa.Endpoint
+	RetireAgentResourceEndpoint    goa.Endpoint
 	DeclareServiceToolsetEndpoint  goa.Endpoint
 	ReplaceServiceToolsetEndpoint  goa.Endpoint
 	AttachProviderEndpoint         goa.Endpoint
@@ -41,8 +46,13 @@ type Client struct {
 }
 
 // NewClient initializes a "registry" service client given the endpoints.
-func NewClient(declareServiceToolset, replaceServiceToolset, attachProvider, register, renewProvider, releaseProvider, drainProvider, unregister, pong, registerAgentToolset, replaceAgentToolset, listToolsets, getToolset, resolveToolset, checkAdmission, search, callTool, callResolvedTool, retryTool, completeToolCall, publishToolOutputDelta, reportToolCallOverload, claimToolCall goa.Endpoint) *Client {
+func NewClient(checkCatalogResource, listCatalogResources, registerAgentExports, validateAgentExports, retireAgentResource, declareServiceToolset, replaceServiceToolset, attachProvider, register, renewProvider, releaseProvider, drainProvider, unregister, pong, registerAgentToolset, replaceAgentToolset, listToolsets, getToolset, resolveToolset, checkAdmission, search, callTool, callResolvedTool, retryTool, completeToolCall, publishToolOutputDelta, reportToolCallOverload, claimToolCall goa.Endpoint) *Client {
 	return &Client{
+		CheckCatalogResourceEndpoint:   checkCatalogResource,
+		ListCatalogResourcesEndpoint:   listCatalogResources,
+		RegisterAgentExportsEndpoint:   registerAgentExports,
+		ValidateAgentExportsEndpoint:   validateAgentExports,
+		RetireAgentResourceEndpoint:    retireAgentResource,
 		DeclareServiceToolsetEndpoint:  declareServiceToolset,
 		ReplaceServiceToolsetEndpoint:  replaceServiceToolset,
 		AttachProviderEndpoint:         attachProvider,
@@ -67,6 +77,74 @@ func NewClient(declareServiceToolset, replaceServiceToolset, attachProvider, reg
 		ReportToolCallOverloadEndpoint: reportToolCallOverload,
 		ClaimToolCallEndpoint:          claimToolCall,
 	}
+}
+
+// CheckCatalogResource calls the "CheckCatalogResource" endpoint of the
+// "registry" service.
+// CheckCatalogResource may return the following errors:
+//   - "not_found" (type *goa.ServiceError): Toolset or tool not found
+//   - "admission_retired" (type *goa.ServiceError): The requested admission was intentionally retired
+//   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
+//   - error: internal error
+func (c *Client) CheckCatalogResource(ctx context.Context, p *CatalogResource) (err error) {
+	_, err = c.CheckCatalogResourceEndpoint(ctx, p)
+	return
+}
+
+// ListCatalogResources calls the "ListCatalogResources" endpoint of the
+// "registry" service.
+// ListCatalogResources may return the following errors:
+//   - "validation_error" (type *goa.ServiceError): Payload validation failed
+//   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
+//   - error: internal error
+func (c *Client) ListCatalogResources(ctx context.Context, p *CatalogResourcesQuery) (res *CatalogResourcesPage, err error) {
+	var ires any
+	ires, err = c.ListCatalogResourcesEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*CatalogResourcesPage), nil
+}
+
+// RegisterAgentExports calls the "RegisterAgentExports" endpoint of the
+// "registry" service.
+// RegisterAgentExports may return the following errors:
+//   - "validation_error" (type *goa.ServiceError): Payload validation failed
+//   - "admission_conflict" (type *goa.ServiceError): The expected admission token does not match the catalog record
+//   - "admission_retired" (type *goa.ServiceError): The requested admission was intentionally retired
+//   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
+//   - error: internal error
+func (c *Client) RegisterAgentExports(ctx context.Context, p *AgentExportsDeclaration) (res *ResolvedToolset, err error) {
+	var ires any
+	ires, err = c.RegisterAgentExportsEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*ResolvedToolset), nil
+}
+
+// ValidateAgentExports calls the "ValidateAgentExports" endpoint of the
+// "registry" service.
+// ValidateAgentExports may return the following errors:
+//   - "validation_error" (type *goa.ServiceError): Payload validation failed
+//   - "not_found" (type *goa.ServiceError): Toolset or tool not found
+//   - "admission_retired" (type *goa.ServiceError): The requested admission was intentionally retired
+//   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
+//   - error: internal error
+func (c *Client) ValidateAgentExports(ctx context.Context, p *AgentExportsValidation) (err error) {
+	_, err = c.ValidateAgentExportsEndpoint(ctx, p)
+	return
+}
+
+// RetireAgentResource calls the "RetireAgentResource" endpoint of the
+// "registry" service.
+// RetireAgentResource may return the following errors:
+//   - "validation_error" (type *goa.ServiceError): Payload validation failed
+//   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
+//   - error: internal error
+func (c *Client) RetireAgentResource(ctx context.Context, p *CatalogResource) (err error) {
+	_, err = c.RetireAgentResourceEndpoint(ctx, p)
+	return
 }
 
 // DeclareServiceToolset calls the "DeclareServiceToolset" endpoint of the
@@ -220,6 +298,10 @@ func (c *Client) ReplaceAgentToolset(ctx context.Context, p *ReplaceAgentToolset
 }
 
 // ListToolsets calls the "ListToolsets" endpoint of the "registry" service.
+// ListToolsets may return the following errors:
+//   - "forbidden" (type *goa.ServiceError): The host denied access to this operation
+//   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
+//   - error: internal error
 func (c *Client) ListToolsets(ctx context.Context, p *ListToolsetsPayload) (res *ListToolsetsResult, err error) {
 	var ires any
 	ires, err = c.ListToolsetsEndpoint(ctx, p)
@@ -232,6 +314,8 @@ func (c *Client) ListToolsets(ctx context.Context, p *ListToolsetsPayload) (res 
 // GetToolset calls the "GetToolset" endpoint of the "registry" service.
 // GetToolset may return the following errors:
 //   - "not_found" (type *goa.ServiceError): Toolset or tool not found
+//   - "forbidden" (type *goa.ServiceError): The host denied access to this operation
+//   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
 //   - error: internal error
 func (c *Client) GetToolset(ctx context.Context, p *GetToolsetPayload) (res *Toolset, err error) {
 	var ires any
@@ -246,6 +330,7 @@ func (c *Client) GetToolset(ctx context.Context, p *GetToolsetPayload) (res *Too
 // ResolveToolset may return the following errors:
 //   - "not_found" (type *goa.ServiceError): Toolset or tool not found
 //   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
+//   - "forbidden" (type *goa.ServiceError): The host denied access to this operation
 //   - error: internal error
 func (c *Client) ResolveToolset(ctx context.Context, p *GetToolsetPayload) (res *ResolvedToolset, err error) {
 	var ires any
@@ -259,6 +344,7 @@ func (c *Client) ResolveToolset(ctx context.Context, p *GetToolsetPayload) (res 
 // CheckAdmission calls the "CheckAdmission" endpoint of the "registry" service.
 // CheckAdmission may return the following errors:
 //   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
+//   - "forbidden" (type *goa.ServiceError): The host denied access to this operation
 //   - error: internal error
 func (c *Client) CheckAdmission(ctx context.Context, p *CheckAdmissionPayload) (res *AdmissionStatus, err error) {
 	var ires any
@@ -270,6 +356,10 @@ func (c *Client) CheckAdmission(ctx context.Context, p *CheckAdmissionPayload) (
 }
 
 // Search calls the "Search" endpoint of the "registry" service.
+// Search may return the following errors:
+//   - "forbidden" (type *goa.ServiceError): The host denied access to this operation
+//   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
+//   - error: internal error
 func (c *Client) Search(ctx context.Context, p *SearchPayload) (res *SearchResult, err error) {
 	var ires any
 	ires, err = c.SearchEndpoint(ctx, p)
@@ -282,6 +372,7 @@ func (c *Client) Search(ctx context.Context, p *SearchPayload) (res *SearchResul
 // CallTool calls the "CallTool" endpoint of the "registry" service.
 // CallTool may return the following errors:
 //   - "not_found" (type *goa.ServiceError): Toolset or tool not found
+//   - "forbidden" (type *goa.ServiceError): The host denied access to this operation
 //   - "validation_error" (type *goa.ServiceError): Payload validation failed
 //   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
 //   - "call_not_admitted" (type *goa.ServiceError): The registry chose a rejected decision for this tool-use identity before provider publication, so no exact retry can execute while the run-scoped decision is retained
@@ -299,6 +390,7 @@ func (c *Client) CallTool(ctx context.Context, p *CallToolPayload) (res *CallToo
 // service.
 // CallResolvedTool may return the following errors:
 //   - "not_found" (type *goa.ServiceError): Toolset or tool not found
+//   - "forbidden" (type *goa.ServiceError): The host denied access to this operation
 //   - "validation_error" (type *goa.ServiceError): Payload validation failed
 //   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
 //   - "call_not_admitted" (type *goa.ServiceError): The registry chose a rejected decision for this tool-use identity before provider publication, so no exact retry can execute while the run-scoped decision is retained
@@ -316,6 +408,7 @@ func (c *Client) CallResolvedTool(ctx context.Context, p *CallResolvedToolPayloa
 // RetryTool calls the "RetryTool" endpoint of the "registry" service.
 // RetryTool may return the following errors:
 //   - "not_found" (type *goa.ServiceError): Toolset or tool not found
+//   - "forbidden" (type *goa.ServiceError): The host denied access to this operation
 //   - "validation_error" (type *goa.ServiceError): Payload validation failed
 //   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
 //   - "admission_conflict" (type *goa.ServiceError): The expected admission token does not match the catalog record

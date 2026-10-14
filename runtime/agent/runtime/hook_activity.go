@@ -11,10 +11,14 @@ import (
 	"reflect"
 	"time"
 
+	genrunoutput "goa.design/goa-ai/registry/gen/runoutput"
+	genrunterminal "goa.design/goa-ai/registry/gen/runterminal"
+
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/runlog"
 	"goa.design/goa-ai/runtime/agent/session"
@@ -23,6 +27,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/transcript"
 
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -46,6 +51,8 @@ const (
 	storageCommandSeedAppend
 	storageCommandSeedPublish
 	storageCommandSynchronousStart
+	storageCommandPreparationBegin
+	storageCommandUnstartedTerminal
 )
 
 // executeStorageCommand applies one explicitly selected storage operation
@@ -78,6 +85,12 @@ func (r *Runtime) executeStorageCommand(ctx context.Context, command *api.Storag
 	}
 	var result *api.StorageActivityResult
 	switch kind {
+	case storageCommandUnstartedTerminal:
+		result, err = r.storeUnstartedTerminal(ctx, command.UnstartedTerminal)
+	case storageCommandPreparationBegin:
+		var decision genrunterminal.PreparationDecision
+		decision, err = r.Store.BeginRunPreparationOperation(ctx, *command.PreparationBegin)
+		result = &api.StorageActivityResult{PreparationBegin: &decision}
 	case storageCommandSeedBegin:
 		seed, beginErr := r.Store.BeginRunSeed(ctx, *command.SeedBegin)
 		err = beginErr
@@ -100,13 +113,13 @@ func (r *Runtime) executeStorageCommand(ctx context.Context, command *api.Storag
 	case storageCommandOneShotChildStart:
 		result, err = r.storeRunStart(ctx, kind, command.OneShotChildStart.RequestDigest, command.OneShotChildStart.SeedEndID, command.OneShotChildStart.Started, command.OneShotChildStart.ParentLinked)
 	case storageCommandSynchronousStart:
-		result, err = r.storeRunStart(ctx, kind, nil, command.SynchronousStart.SeedEndID, command.SynchronousStart.Started, nil)
+		return nil, malformedStorageCommand(errors.New("synchronous starts require SynchronousRuntime"))
 	case storageCommandCancellation:
 		result, err = r.cancelRun(ctx, command.Cancellation.Record)
 	case storageCommandSuspension:
 		result, err = r.suspendRun(ctx, command.Suspension.Checkpoint, command.Suspension.Suspended)
 	case storageCommandTerminal:
-		result, err = r.completeRun(ctx, command.Terminal.Record)
+		result, err = r.completeRun(ctx, command.Terminal)
 	}
 	if err != nil {
 		return nil, classifyStorageActivityError(err)
@@ -230,7 +243,7 @@ func (r *Runtime) recordResult(ctx context.Context, input *RecordActivityInput) 
 // storeRunStart decodes and stores one explicit start operation, then validates
 // its result before publishing hooks. Only engine operations carry a digest.
 func (r *Runtime) storeRunStart(ctx context.Context, kind storageCommandKind, requestDigest []byte, seedEndID string, startedInput, linkedInput *RecordActivityInput) (*api.StorageActivityResult, error) {
-	if kind != storageCommandSynchronousStart && len(requestDigest) != 32 {
+	if len(requestDigest) != 32 {
 		return nil, malformedStorageCommand(errors.New("runtime: accepted request digest must contain 32 bytes"))
 	}
 	if startedInput == nil || startedInput.Type != hooks.RunStarted {
@@ -253,7 +266,7 @@ func (r *Runtime) storeRunStart(ctx context.Context, kind storageCommandKind, re
 		if started.SessionID() == "" || linkedInput == nil {
 			return nil, malformedStorageCommand(errors.New("runtime: child start requires a session and parent link"))
 		}
-	case storageCommandOneShotStart, storageCommandSynchronousStart:
+	case storageCommandOneShotStart:
 		if started.SessionID() != "" || linkedInput != nil {
 			return nil, malformedStorageCommand(errors.New("runtime: one-shot start cannot have a session or parent link"))
 		}
@@ -262,13 +275,14 @@ func (r *Runtime) storeRunStart(ctx context.Context, kind storageCommandKind, re
 			return nil, malformedStorageCommand(errors.New("runtime: one-shot child start requires a parent link and no session"))
 		}
 	case storageCommandAppend, storageCommandCancellation, storageCommandSuspension, storageCommandTerminal,
-		storageCommandSeedBegin, storageCommandSeedAppend, storageCommandSeedPublish:
+		storageCommandPreparationBegin, storageCommandSeedBegin, storageCommandSeedAppend, storageCommandSeedPublish,
+		storageCommandSynchronousStart, storageCommandUnstartedTerminal:
 		return nil, malformedStorageCommand(errors.New("runtime: start command has wrong operation"))
 	}
 	startedRecord := runLogEvent(startedInput, startedInput.Payload, started.Timestamp())
 	start := session.RunStart{
 		SeedEndID: seedEndID,
-		AgentID:   started.AgentID(), RunID: started.RunID(), SessionID: started.SessionID(),
+		Subject:   started.Subject(), RunID: started.RunID(), SessionID: started.SessionID(),
 		ParentRunID: started.ParentRunID, PredecessorRunID: started.PredecessorRunID,
 		StartedAt: time.UnixMilli(started.Timestamp()).UTC(), Labels: started.Labels,
 	}
@@ -276,51 +290,61 @@ func (r *Runtime) storeRunStart(ctx context.Context, kind storageCommandKind, re
 	if err != nil {
 		return nil, err
 	}
-	var outcome session.RunStartOutcome
-	var runStatus session.RunStatus
-	var records []storage.AppendResult
-	var selectedEvents []hooks.Event
-	switch kind {
-	case storageCommandOneShotStart, storageCommandSynchronousStart:
-		var result storage.OneShotRunStartResult
-		if kind == storageCommandSynchronousStart {
-			result, err = r.Store.StartSynchronousRun(ctx, storage.SynchronousRunStart{Run: start, Started: startedRecord})
-		} else {
-			result, err = r.Store.StartOneShotRun(ctx, storage.OneShotRunStart{RequestDigest: [32]byte(requestDigest), Run: start, Started: startedRecord})
-		}
-		runStatus = result.RunStatus
-		outcome = session.RunStartProceed
-		records = []storage.AppendResult{result.Record}
-		selectedEvents = []hooks.Event{started}
-	case storageCommandOneShotChildStart:
+	var linked *hooks.ChildRunLinkedEvent
+	var linkedRecord *runlog.Event
+	if linkedInput != nil {
 		linkedEvent, decodeErr := hooks.DecodeFromRecordInput(linkedInput)
 		if decodeErr != nil {
 			return nil, malformedStorageCommand(decodeErr)
 		}
-		linked, linkedOK := linkedEvent.(*hooks.ChildRunLinkedEvent)
+		var linkedOK bool
+		linked, linkedOK = linkedEvent.(*hooks.ChildRunLinkedEvent)
 		if !linkedOK || linked.ChildRunID != start.RunID || linked.RunID() != start.ParentRunID {
 			return nil, malformedStorageCommand(errors.New("runtime: child link does not match child start"))
 		}
+		if err := r.validateChildContinuationStart(ctx, start, linked, seed); err != nil {
+			return nil, err
+		}
+		linkedRecord = runLogEvent(linkedInput, linkedInput.Payload, linked.Timestamp())
+	}
+	var outcome session.RunStartOutcome
+	var cancellationReason string
+	var runStatus session.RunStatus
+	var records []storage.AppendResult
+	var selectedEvents []hooks.Event
+	switch kind {
+	case storageCommandOneShotStart:
+		var result storage.OneShotRunStartResult
+		result, err = r.Store.StartOneShotRun(ctx, storage.OneShotRunStart{RequestDigest: [32]byte(requestDigest), Run: start, Started: startedRecord})
+		runStatus = result.RunStatus
+		outcome = result.Outcome
+		cancellationReason = result.CancellationReason
+		records = []storage.AppendResult{result.Record}
+		if outcome == session.RunStartStop {
+			records = append(records, result.Cancellation)
+		}
+		selectedEvents = []hooks.Event{started}
+	case storageCommandOneShotChildStart:
 		result, startErr := r.Store.StartOneShotChildRun(ctx, storage.OneShotChildRunStart{RequestDigest: [32]byte(requestDigest),
-			Run: start, ParentLinked: runLogEvent(linkedInput, linkedInput.Payload, linked.Timestamp()), Started: startedRecord,
+			Run: start, ParentLinked: linkedRecord, Started: startedRecord,
 		})
 		err = startErr
 		runStatus = result.RunStatus
-		outcome = session.RunStartProceed
+		outcome = result.Outcome
+		cancellationReason = result.CancellationReason
 		records = []storage.AppendResult{result.ParentRecord, result.Started}
+		if outcome == session.RunStartStop {
+			records = append(records, result.Cancellation)
+		}
 		selectedEvents = []hooks.Event{linked, started}
 	case storageCommandRootStart, storageCommandChildStart:
-		cancellationInput, buildErr := buildCancellationRecord(startedInput, run.CancellationReasonSessionEnded)
-		if buildErr != nil {
-			return nil, malformedStorageCommand(buildErr)
-		}
-		cancellationRecord := runLogEvent(cancellationInput, cancellationInput.Payload, cancellationInput.TimestampMS)
 		if kind == storageCommandRootStart {
 			result, startErr := r.Store.StartRootRun(ctx, storage.RootRunStart{RequestDigest: [32]byte(requestDigest),
-				Run: start, Started: startedRecord, Cancellation: cancellationRecord,
+				Run: start, Started: startedRecord,
 			})
 			err = startErr
 			outcome = result.Outcome
+			cancellationReason = result.CancellationReason
 			runStatus = result.RunStatus
 			records = []storage.AppendResult{result.Started}
 			selectedEvents = []hooks.Event{started}
@@ -328,23 +352,12 @@ func (r *Runtime) storeRunStart(ctx context.Context, kind storageCommandKind, re
 				records = append(records, result.Cancellation)
 			}
 		} else {
-			linkedEvent, decodeErr := hooks.DecodeFromRecordInput(linkedInput)
-			if decodeErr != nil {
-				return nil, malformedStorageCommand(decodeErr)
-			}
-			linked, linkedOK := linkedEvent.(*hooks.ChildRunLinkedEvent)
-			if !linkedOK || linked.ChildRunID != start.RunID || linked.RunID() != start.ParentRunID {
-				return nil, malformedStorageCommand(errors.New("runtime: child link does not match child start"))
-			}
-			if err := r.validateChildContinuationStart(ctx, start, linked, seed); err != nil {
-				return nil, err
-			}
-			linkedRecord := runLogEvent(linkedInput, linkedInput.Payload, linked.Timestamp())
 			result, startErr := r.Store.StartChildRun(ctx, storage.ChildRunStart{RequestDigest: [32]byte(requestDigest),
-				Run: start, ParentLinked: linkedRecord, Started: startedRecord, Cancellation: cancellationRecord,
+				Run: start, ParentLinked: linkedRecord, Started: startedRecord,
 			})
 			err = startErr
 			outcome = result.Outcome
+			cancellationReason = result.CancellationReason
 			runStatus = result.RunStatus
 			records = []storage.AppendResult{result.ParentRecord, result.Started}
 			selectedEvents = []hooks.Event{linked, started}
@@ -353,11 +366,12 @@ func (r *Runtime) storeRunStart(ctx context.Context, kind storageCommandKind, re
 			}
 		}
 	case storageCommandAppend, storageCommandCancellation, storageCommandSuspension, storageCommandTerminal,
-		storageCommandSeedBegin, storageCommandSeedAppend, storageCommandSeedPublish:
+		storageCommandPreparationBegin, storageCommandSeedBegin, storageCommandSeedAppend, storageCommandSeedPublish,
+		storageCommandSynchronousStart, storageCommandUnstartedTerminal:
 		return nil, malformedStorageCommand(errors.New("runtime: start command has wrong operation"))
 	}
 	if err != nil {
-		if kind != storageCommandSynchronousStart && errors.Is(err, session.ErrRunConflict) {
+		if errors.Is(err, session.ErrRunConflict) {
 			return nil, engine.MarkActivityErrorNonRetryable(&engine.WorkflowStartConflictError{ID: start.RunID})
 		}
 		return nil, err
@@ -369,7 +383,7 @@ func (r *Runtime) storeRunStart(ctx context.Context, kind storageCommandKind, re
 		RenderedPrompts: clonePromptRenderEvents(seed.Declaration.RenderedPrompts),
 	}
 	if outcome == session.RunStartStop {
-		startResult.CancellationReason = run.CancellationReasonSessionEnded
+		startResult.CancellationReason = cancellationReason
 	}
 	result := &api.StorageActivityResult{}
 	switch kind {
@@ -381,10 +395,9 @@ func (r *Runtime) storeRunStart(ctx context.Context, kind storageCommandKind, re
 		result.OneShotStart = startResult
 	case storageCommandOneShotChildStart:
 		result.OneShotChildStart = startResult
-	case storageCommandSynchronousStart:
-		result.SynchronousStart = startResult
 	case storageCommandAppend, storageCommandCancellation, storageCommandSuspension, storageCommandTerminal,
-		storageCommandSeedBegin, storageCommandSeedAppend, storageCommandSeedPublish:
+		storageCommandPreparationBegin, storageCommandSeedBegin, storageCommandSeedAppend, storageCommandSeedPublish,
+		storageCommandSynchronousStart, storageCommandUnstartedTerminal:
 		return nil, malformedStorageCommand(errors.New("runtime: start command has wrong operation"))
 	}
 	if err := validateStorageResult(kind, result); err != nil {
@@ -425,10 +438,7 @@ func validateStartRecordSessionStatus(kind storageCommandKind, outcome session.R
 		}
 		return nil
 	}
-	if outcome == session.RunStartStop && want != session.StatusEnded {
-		return fmt.Errorf("runtime: stopped start has session status %q, want %q", want, session.StatusEnded)
-	}
-	if outcome == session.RunStartProceed && want != session.StatusActive && want != session.StatusEnded {
+	if want != session.StatusActive && want != session.StatusEnded {
 		return fmt.Errorf("runtime: proceeding start has invalid session status %q", want)
 	}
 	if outcome == session.RunStartProceed && want == session.StatusEnded {
@@ -483,8 +493,18 @@ func (r *Runtime) runSuspensionStorageCommand(checkpoint, suspendedInput *Record
 
 // completeRun stores one completed, failed, or canceled event and the matching
 // final run status in the same store command.
-func (r *Runtime) completeRun(ctx context.Context, input *RecordActivityInput) (*api.StorageActivityResult, error) {
-	command, completed, err := runTerminalStorageCommand(input)
+func (r *Runtime) completeRun(ctx context.Context, input *api.RunTerminalCommand) (*api.StorageActivityResult, error) {
+	if input == nil || input.Record == nil {
+		return nil, malformedStorageCommand(errors.New("runtime: completion command requires a record"))
+	}
+	// The same activity loads immutable labels and the saved cancellation reason
+	// before every attempt. A read outage therefore cannot discard the workflow's
+	// frozen result before its terminal write succeeds.
+	meta, err := r.Store.LoadRun(ctx, input.Record.RunID)
+	if err != nil {
+		return nil, fmt.Errorf("load terminal run metadata: %w", err)
+	}
+	command, completed, err := runTerminalStorageCommand(input, meta)
 	if err != nil {
 		return nil, err
 	}
@@ -500,10 +520,11 @@ func (r *Runtime) completeRun(ctx context.Context, input *RecordActivityInput) (
 
 // runTerminalStorageCommand decodes a completed event and returns the store
 // command that commits its final run status and record together.
-func runTerminalStorageCommand(input *RecordActivityInput) (storage.RunTerminal, *hooks.RunCompletedEvent, error) {
-	if input == nil || input.Type != hooks.RunCompleted {
+func runTerminalStorageCommand(request *api.RunTerminalCommand, meta session.RunMeta) (storage.RunTerminal, *hooks.RunCompletedEvent, error) {
+	if request == nil || request.Record == nil || request.Record.Type != hooks.RunCompleted {
 		return storage.RunTerminal{}, nil, malformedStorageCommand(errors.New("runtime: completion command requires a run-completed record"))
 	}
+	input := request.Record
 	event, err := hooks.DecodeFromRecordInput(input)
 	if err != nil {
 		return storage.RunTerminal{}, nil, malformedStorageCommand(err)
@@ -516,11 +537,39 @@ func runTerminalStorageCommand(input *RecordActivityInput) (storage.RunTerminal,
 	if err != nil {
 		return storage.RunTerminal{}, nil, malformedStorageCommand(err)
 	}
-	return storage.RunTerminal{
-		RunID:  input.RunID,
-		Status: status,
-		Record: runLogEvent(input, input.Payload, completed.Timestamp()),
-	}, completed, nil
+	completed.Labels = cloneLabels(meta.Labels)
+	if status == session.RunStatusCanceled && meta.CancellationReason != "" {
+		completed.Cancellation = &run.Cancellation{Reason: meta.CancellationReason}
+	}
+	command := storage.RunTerminal{RunID: input.RunID, Status: status}
+	if len(request.OperationResult) != 0 {
+		command.OperationResult, err = genrunoutput.DecodeOperationResult(request.OperationResult)
+		if err != nil {
+			return storage.RunTerminal{}, nil, malformedStorageCommand(err)
+		}
+	}
+	if request.FailureFromOperation {
+		if status != session.RunStatusFailed || command.OperationResult == nil {
+			return storage.RunTerminal{}, nil, malformedStorageCommand(errors.New("runtime: selected failure source requires a failed run and operation result"))
+		}
+		failure, ok := command.OperationResult.Outcome.AsFailure()
+		if !ok {
+			return storage.RunTerminal{}, nil, malformedStorageCommand(errors.New("runtime: selected failure source requires an operation failure"))
+		}
+		original := hooks.RunFailureFromError(&selectedOperationError{cause: planner.NewToolError(failure.Message)})
+		transported := *original
+		transported.DebugMessage = ""
+		if completed.Failure == nil || *completed.Failure != transported {
+			return storage.RunTerminal{}, nil, malformedStorageCommand(errors.New("runtime: selected failure source has conflicting runtime failure metadata"))
+		}
+		completed.Failure = original
+	}
+	encoded, err := hooks.EncodeToRecordInput(completed, hooks.EncodeOptions{TurnID: input.TurnID, EventKey: input.EventKey, TimestampMS: input.TimestampMS})
+	if err != nil {
+		return storage.RunTerminal{}, nil, malformedStorageCommand(err)
+	}
+	command.Record = runLogEvent(encoded, encoded.Payload, completed.Timestamp())
+	return command, completed, nil
 }
 
 // publishStoredHook sends a stored event to local observers and the live stream.
@@ -555,7 +604,8 @@ func (r *Runtime) publishStoredHookStream(ctx context.Context, event hooks.Event
 
 func runLogEvent(input *RecordActivityInput, payload []byte, timestampMS int64) *runlog.Event {
 	return &runlog.Event{
-		EventKey: input.EventKey, RunID: input.RunID, AgentID: input.AgentID,
+		EventKey: input.EventKey, RunID: input.RunID, Subject: input.Subject,
+
 		SessionID: input.SessionID, TurnID: input.TurnID, Type: input.Type,
 		Payload: append([]byte(nil), payload...), Timestamp: time.UnixMilli(timestampMS).UTC(),
 	}
@@ -582,6 +632,8 @@ func selectedStorageCommandKind(command *api.StorageActivityCommand) (storageCom
 	}
 	selected := storageCommandKind(0)
 	count := 0
+	selected, count = includeStorageKind(selected, count, storageCommandUnstartedTerminal, command.UnstartedTerminal != nil)
+	selected, count = includeStorageKind(selected, count, storageCommandPreparationBegin, command.PreparationBegin != nil)
 	selected, count = includeStorageKind(selected, count, storageCommandSeedBegin, command.SeedBegin != nil)
 	selected, count = includeStorageKind(selected, count, storageCommandSeedAppend, command.SeedAppend != nil)
 	selected, count = includeStorageKind(selected, count, storageCommandSeedPublish, command.SeedPublish != nil)
@@ -608,6 +660,8 @@ func validateStorageResult(kind storageCommandKind, result *api.StorageActivityR
 	}
 	selected := storageCommandKind(0)
 	count := 0
+	selected, count = includeStorageKind(selected, count, storageCommandUnstartedTerminal, result.UnstartedTerminal != nil)
+	selected, count = includeStorageKind(selected, count, storageCommandPreparationBegin, result.PreparationBegin != nil)
 	selected, count = includeStorageKind(selected, count, storageCommandSeedBegin, result.SeedBegin != nil)
 	selected, count = includeStorageKind(selected, count, storageCommandSeedAppend, result.SeedAppend != nil)
 	selected, count = includeStorageKind(selected, count, storageCommandSeedPublish, result.SeedPublish != nil)
@@ -627,6 +681,12 @@ func validateStorageResult(kind storageCommandKind, result *api.StorageActivityR
 		return errors.New("runtime: storage result does not match command")
 	}
 	switch kind {
+	case storageCommandPreparationBegin:
+		_, err := genrunterminal.EncodePreparationDecision(result.PreparationBegin)
+		return err
+	case storageCommandUnstartedTerminal:
+		_, err := genrunterminal.EncodeUnstartedExecutionTerminalResult(result.UnstartedTerminal)
+		return err
 	case storageCommandSeedBegin:
 		if result.SeedBegin.EndID == "" {
 			return errors.New("runtime: seed begin returned no position")
@@ -666,10 +726,10 @@ func validateStorageResult(kind storageCommandKind, result *api.StorageActivityR
 			return errors.New("runtime: proceeding start result cannot have a cancellation reason")
 		}
 		if start.Outcome == session.RunStartStop &&
-			((start.RunStatus != session.RunStatusRunning && start.RunStatus != session.RunStatusCanceled && start.RunStatus != session.RunStatusFailed) || start.CancellationReason != run.CancellationReasonSessionEnded) {
-			return errors.New("runtime: stopped start result requires running, canceled, or failed status and session_ended reason")
+			((start.RunStatus != session.RunStatusRunning && start.RunStatus != session.RunStatusCanceled && start.RunStatus != session.RunStatusFailed) || start.CancellationReason == "") {
+			return errors.New("runtime: stopped start result requires running, canceled, or failed status and a nonempty cancellation reason")
 		}
-		if (kind == storageCommandOneShotStart || kind == storageCommandOneShotChildStart || kind == storageCommandSynchronousStart) && start.Outcome != session.RunStartProceed {
+		if kind == storageCommandSynchronousStart && start.Outcome != session.RunStartProceed {
 			return errors.New("runtime: one-shot start result must proceed")
 		}
 		recordCount := 1
@@ -733,21 +793,20 @@ func classifyStorageActivityError(err error) error {
 // spans as a hook subscriber. Tool spans are reconstructed from result events so
 // inline, activity, and registry-backed tools share one observability shape.
 func (r *Runtime) recordGenAITelemetryEvent(ctx context.Context, evt hooks.Event) error {
+	identity := []attribute.KeyValue{
+		telemetry.AttrGenAIConversationID.String(conversationID(evt.SessionID(), evt.RunID())),
+	}
+	if executor, isAgent := evt.Subject().Executor.AsAgent(); isAgent {
+		identity = telemetry.GenAIIdentityAttrsFor(telemetry.GenAIContext{
+			ConversationID: conversationID(evt.SessionID(), evt.RunID()),
+			AgentID:        string(executor), AgentName: string(executor),
+		})
+	}
 	switch e := evt.(type) {
 	case *hooks.ToolResultReceivedEvent:
-		ctx = telemetry.WithGenAIContext(ctx, telemetry.GenAIContext{
-			ConversationID: conversationID(e.SessionID(), e.RunID()),
-			AgentID:        e.AgentID(),
-			AgentName:      e.AgentID(),
-		})
-		r.recordGenAIToolSpan(ctx, e)
+		r.recordGenAIToolSpan(ctx, e, identity)
 	case *hooks.ChildRunLinkedEvent:
-		ctx = telemetry.WithGenAIContext(ctx, telemetry.GenAIContext{
-			ConversationID: conversationID(e.SessionID(), e.RunID()),
-			AgentID:        e.AgentID(),
-			AgentName:      e.AgentID(),
-		})
-		r.recordGenAIInvokeAgentSpan(ctx, e)
+		r.recordGenAIInvokeAgentSpan(ctx, e, identity)
 	}
 	return nil
 }
@@ -755,7 +814,13 @@ func (r *Runtime) recordGenAITelemetryEvent(ctx context.Context, evt hooks.Event
 // recordGenAIToolSpan emits the standard execute_tool span from the completed
 // tool result event. The event timestamp marks completion; Duration reconstructs
 // the start timestamp when available.
-func (r *Runtime) recordGenAIToolSpan(ctx context.Context, evt *hooks.ToolResultReceivedEvent) {
+func (r *Runtime) recordGenAIToolSpan(ctx context.Context, evt *hooks.ToolResultReceivedEvent, identity []attribute.KeyValue) {
+	attrs := identity
+	attrs = append(attrs,
+		telemetry.AttrGenAIOperationName.String(telemetry.GenAIOperationExecuteTool),
+		telemetry.AttrGenAIToolName.String(string(evt.ToolName)),
+		telemetry.AttrGenAIToolCallID.String(evt.ToolCallID),
+	)
 	endedAt := time.UnixMilli(evt.Timestamp()).UTC()
 	startedAt := endedAt
 	if evt.Duration > 0 {
@@ -766,7 +831,7 @@ func (r *Runtime) recordGenAIToolSpan(ctx context.Context, evt *hooks.ToolResult
 		"execute_tool "+string(evt.ToolName),
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithTimestamp(startedAt),
-		trace.WithAttributes(telemetry.GenAIToolAttrs(ctx, string(evt.ToolName), evt.ToolCallID)...),
+		trace.WithAttributes(attrs...),
 	)
 	if evt.Failure != nil {
 		span.RecordError(evt.Failure.Error)
@@ -780,10 +845,11 @@ func (r *Runtime) recordGenAIToolSpan(ctx context.Context, evt *hooks.ToolResult
 // recordGenAIInvokeAgentSpan emits the caller-side invoke_agent span for an
 // agent-as-tool child run link. The child run emits its own model/tool spans
 // under its own agent identity.
-func (r *Runtime) recordGenAIInvokeAgentSpan(ctx context.Context, evt *hooks.ChildRunLinkedEvent) {
+func (r *Runtime) recordGenAIInvokeAgentSpan(ctx context.Context, evt *hooks.ChildRunLinkedEvent, identity []attribute.KeyValue) {
 	ts := time.UnixMilli(evt.Timestamp()).UTC()
-	attrs := telemetry.GenAIOperationAttrs(ctx, telemetry.GenAIOperationInvokeAgent)
+	attrs := identity
 	attrs = append(attrs,
+		telemetry.AttrGenAIOperationName.String(telemetry.GenAIOperationInvokeAgent),
 		telemetry.AttrGenAIToolName.String(string(evt.ToolName)),
 		telemetry.AttrGenAIToolCallID.String(evt.ToolCallID),
 	)
@@ -805,6 +871,10 @@ func (r *Runtime) recordGenAIInvokeAgentSpan(ctx context.Context, evt *hooks.Chi
 func (r *Runtime) appendTranscriptRunLogMessages(ctx context.Context, input *RecordActivityInput) (storage.AppendResult, error) {
 	if input == nil {
 		return storage.AppendResult{}, malformedStorageCommand(errors.New("runtime: transcript delta input is nil"))
+	}
+	executor, isAgent := input.Subject.Executor.AsAgent()
+	if !isAgent {
+		return storage.AppendResult{}, malformedStorageCommand(errors.New("transcript record requires an Agent subject"))
 	}
 	if input.ResponseID != "" && input.EventKey != input.ResponseID {
 		return storage.AppendResult{}, malformedStorageCommand(
@@ -828,9 +898,10 @@ func (r *Runtime) appendTranscriptRunLogMessages(ctx context.Context, input *Rec
 		}
 	}
 	result, err := r.Store.AppendRunRecord(ctx, &runlog.Event{
-		EventKey:  input.EventKey,
-		RunID:     input.RunID,
-		AgentID:   input.AgentID,
+		EventKey: input.EventKey,
+		RunID:    input.RunID,
+		Subject:  input.Subject,
+
 		SessionID: input.SessionID,
 		TurnID:    input.TurnID,
 		Type:      input.Type,
@@ -851,7 +922,7 @@ func (r *Runtime) appendTranscriptRunLogMessages(ctx context.Context, input *Rec
 	}
 	evt := hooks.NewAssistantTurnCommittedEvent(
 		input.RunID,
-		input.AgentID,
+		agent.Ident(executor),
 		input.SessionID,
 		input.ResponseID,
 		messages,
@@ -905,7 +976,7 @@ func (r *Runtime) validateChildContinuationStart(ctx context.Context, start sess
 	if err != nil {
 		return err
 	}
-	if parent.SessionID != start.SessionID || parent.AgentID != linked.AgentID() {
+	if parent.SessionID != start.SessionID || !reflect.DeepEqual(parent.Subject, linked.Subject()) {
 		return malformedStorageCommand(errors.New("runtime: child continuation execution parent owner mismatch"))
 	}
 	parentSeed, err := r.Store.LoadRunSeed(ctx, parent.RunID, parent.SeedEndID)
@@ -913,7 +984,7 @@ func (r *Runtime) validateChildContinuationStart(ctx context.Context, start sess
 		return err
 	}
 	if parentSeed.Declaration.Kind != storage.SeedContinuation || parentSeed.Source == nil ||
-		parentSeed.Declaration.RunID != parent.RunID || parentSeed.Declaration.AgentID != parent.AgentID ||
+		parentSeed.Declaration.RunID != parent.RunID || !reflect.DeepEqual(parentSeed.Declaration.Subject, parent.Subject) ||
 		parentSeed.Declaration.SessionID != parent.SessionID ||
 		parentSeed.Source.RunID != parentSeed.Declaration.SourceRunID || parentSeed.Source.EndID != parentSeed.Declaration.SourceEndID {
 		return malformedStorageCommand(errors.New("runtime: child continuation requires the execution parent's exact continuation seed"))
@@ -922,15 +993,15 @@ func (r *Runtime) validateChildContinuationStart(ctx context.Context, start sess
 	if err != nil {
 		return err
 	}
-	registration, ok := r.agents[agent.Ident(parent.AgentID)]
-	if !ok {
-		return malformedStorageCommand(fmt.Errorf("runtime: child continuation parent agent %q is not registered", parent.AgentID))
-	}
-	checkpoint, err := decodeWorkflowCheckpoint(suspension, registration.Definition)
+	// The parent already accepted its continuation through the owner's API.
+	// Check its saved relationship here; this child worker does not own the
+	// parent's planner or tools and must not require their local registration.
+	checkpoint, err := decodeProviderCheckpoint(suspension)
 	if err != nil {
 		return malformedStorageCommand(err)
 	}
-	if checkpoint.AgentID != parent.AgentID || checkpoint.SessionID != start.SessionID ||
+	parentAgent, parentIsAgent := parent.Subject.Executor.AsAgent()
+	if !parentIsAgent || checkpoint.AgentID != string(parentAgent) || checkpoint.SessionID != start.SessionID ||
 		checkpoint.PreviousRunID != parentSeed.Source.RunID || checkpoint.HistoryEndID != parentSeed.Source.EndID {
 		return malformedStorageCommand(errors.New("runtime: child continuation parent checkpoint does not match accepted seed"))
 	}
@@ -950,7 +1021,7 @@ func (r *Runtime) validateChildContinuationStart(ctx context.Context, start sess
 		return malformedStorageCommand(errors.New("runtime: child continuation is not selected by the parent's pending work"))
 	}
 	record, ok := checkpointRecordByCallID(checkpoint.Batch.Records, pending.ToolCallID)
-	if !ok || record.Call.Name != linked.ToolName || record.Call.AgentID != agent.Ident(parent.AgentID) {
+	if !ok || record.Call.Name != linked.ToolName || !reflect.DeepEqual(record.Call.Subject, parent.Subject) {
 		return malformedStorageCommand(errors.New("runtime: child continuation does not match the saved parent call"))
 	}
 	childSuspension, err := r.LoadRunSuspension(ctx, start.PredecessorRunID)
@@ -964,7 +1035,8 @@ func (r *Runtime) validateChildContinuationStart(ctx context.Context, start sess
 	if err != nil {
 		return malformedStorageCommand(err)
 	}
-	if childCheckpoint.PreviousRunID != start.PredecessorRunID || childCheckpoint.AgentID != start.AgentID ||
+	childAgent, childIsAgent := start.Subject.Executor.AsAgent()
+	if !childIsAgent || childCheckpoint.PreviousRunID != start.PredecessorRunID || childCheckpoint.AgentID != string(childAgent) ||
 		seed.Declaration.Kind != storage.SeedContinuation || seed.Source == nil ||
 		seed.Declaration.SourceRunID != start.PredecessorRunID || seed.Declaration.SourceEndID != childCheckpoint.HistoryEndID ||
 		seed.Source.RunID != start.PredecessorRunID || seed.Source.EndID != childCheckpoint.HistoryEndID {

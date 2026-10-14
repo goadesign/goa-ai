@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -152,7 +154,7 @@ func TestCancelRunReasonConflictReadFollowsSuccessor(t *testing.T) {
 	stored, _ := cancellationRaceFixture(t, run.CancellationReasonUserRequested)
 	store := &closureObservationStore{Store: stored, mutationErr: storage.NewContractError(session.ErrRunCancellationConflict)}
 	store.before = func() {
-		admitContinuedRunForTest(t, stored, session.RunMeta{AgentID: "svc.agent", RunID: "successor", SessionID: "session-1", Status: session.RunStatusRunning}, "run-1")
+		admitContinuedRunForTest(t, stored, session.RunMeta{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, RunID: "successor", SessionID: "session-1", Status: session.RunStatusRunning}, "run-1")
 	}
 	runtime := New(store)
 	target, err := store.LoadRun(t.Context(), "run-1")
@@ -174,10 +176,10 @@ func TestCancellationSuccessorOwnsReasonAcceptance(t *testing.T) {
 	for _, successorReason := range []string{"", run.CancellationReasonUserRequested} {
 		t.Run("successor reason="+successorReason, func(t *testing.T) {
 			stored, _ := cancellationRaceFixture(t, run.CancellationReasonUserRequested)
-			admitContinuedRunForTest(t, stored, session.RunMeta{AgentID: "svc.agent", RunID: "successor", SessionID: "session-1", Status: session.RunStatusRunning}, "run-1")
+			admitContinuedRunForTest(t, stored, session.RunMeta{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, RunID: "successor", SessionID: "session-1", Status: session.RunStatusRunning}, "run-1")
 			backend := &recordingCancellationEngine{Engine: engineinmem.New()}
 			if successorReason != "" {
-				input, err := buildCancellationRecord(&RecordActivityInput{AgentID: "svc.agent", RunID: "successor", SessionID: "session-1", TimestampMS: time.Now().UnixMilli()}, successorReason)
+				input, err := buildCancellationRecord(&RecordActivityInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, RunID: "successor", SessionID: "session-1", TimestampMS: time.Now().UnixMilli()}, successorReason)
 				require.NoError(t, err)
 				_, err = stored.RecordRunCancellation(t.Context(), storage.RunCancellation{RunID: "successor", Reason: successorReason, Record: runLogEvent(input, input.Payload, input.TimestampMS)})
 				require.NoError(t, err)
@@ -222,7 +224,7 @@ func TestCancelRunReasonConflictRequiresValidOwnerRead(t *testing.T) {
 				case "run":
 					meta.RunID = "different"
 				case "agent":
-					meta.AgentID = "different"
+					meta.Subject = genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("different"))}
 				case "session":
 					meta.SessionID = "different"
 				case "parent":
@@ -279,9 +281,9 @@ func TestCancelRunUnrelatedMutationErrorsDoNotRereadOwner(t *testing.T) {
 func cancellationRaceFixture(t *testing.T, priorReason string) (*testStore, session.RunSuspension) {
 	t.Helper()
 	stored := newTestStore()
-	admitRunForTest(t, stored, session.RunMeta{AgentID: "svc.agent", RunID: "run-1", SessionID: "session-1", Status: session.RunStatusRunning})
+	admitRunForTest(t, stored, session.RunMeta{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, RunID: "run-1", SessionID: "session-1", Status: session.RunStatusRunning})
 	if priorReason != "" {
-		input, err := buildCancellationRecord(&RecordActivityInput{AgentID: "svc.agent", RunID: "run-1", SessionID: "session-1", TimestampMS: time.Now().UnixMilli()}, priorReason)
+		input, err := buildCancellationRecord(&RecordActivityInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, RunID: "run-1", SessionID: "session-1", TimestampMS: time.Now().UnixMilli()}, priorReason)
 		require.NoError(t, err)
 		_, err = stored.RecordRunCancellation(t.Context(), storage.RunCancellation{RunID: "run-1", Reason: priorReason, Record: runLogEvent(input, input.Payload, input.TimestampMS)})
 		require.NoError(t, err)

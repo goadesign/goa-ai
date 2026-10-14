@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -34,17 +36,18 @@ type (
 
 func TestSelectedContinuationResultRetainsExactExternalSchedule(t *testing.T) {
 	rt, search, _ := continuationTestRuntime()
-	call := hooks.NewToolCallScheduledEvent("call-run", "svc.agent", "session-1", search.Name,
+	subject := genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}
+	call := hooks.NewToolCallScheduledEvent("call-run", subject, "session-1", search.Name,
 		"selected-call", rawjson.Message(`{"query":"selected"}`), "", "", 0)
 	appendHistoricalHookEvent(t, rt.Store, call, "call", 1)
-	unrelated := hooks.NewToolCallScheduledEvent("call-run", "svc.agent", "session-1", search.Name,
+	unrelated := hooks.NewToolCallScheduledEvent("call-run", subject, "session-1", search.Name,
 		"unrelated-call", rawjson.Message(`{"query":"unrelated"}`), "", "", 0)
 	appendHistoricalHookEvent(t, rt.Store, unrelated, "unrelated-call", 2)
-	unrelatedResult := hooks.NewToolResultReceivedEvent("call-run", "svc.agent", "session-1", "call-run",
+	unrelatedResult := hooks.NewToolResultReceivedEvent("call-run", subject, "session-1", "call-run",
 		search.Name, "unrelated-call", "", rawjson.Message(`{"items":["unrelated"]}`), nil, nil, "Unrelated",
 		&agent.Bounds{Returned: 1, Truncated: true, NextCursor: pointer("unrelated-page")}, time.Second, nil, nil)
 	appendHistoricalHookEvent(t, rt.Store, unrelatedResult, "unrelated-result", 3)
-	result := hooks.NewToolResultReceivedEvent("result-run", "svc.agent", "session-1", "call-run",
+	result := hooks.NewToolResultReceivedEvent("result-run", subject, "session-1", "call-run",
 		search.Name, "selected-call", "", rawjson.Message(`{"items":["selected"]}`), nil, nil, "Selected",
 		&agent.Bounds{Returned: 1, Truncated: true, NextCursor: pointer("selected-page")}, time.Second, nil, nil)
 	appendHistoricalHookEvent(t, rt.Store, result, "selected-result", 4)
@@ -92,10 +95,12 @@ func TestSelectedContinuationRejectsUnownedOrMismatchedReference(t *testing.T) {
 				callName = "tools.nonpaging"
 				resultName = tools.Ident(tc.resultTool)
 			}
-			call := hooks.NewToolCallScheduledEvent("call-run", tc.callAgent, tc.callSession, callName,
+			callSubject := genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(tc.callAgent))}
+			call := hooks.NewToolCallScheduledEvent("call-run", callSubject, tc.callSession, callName,
 				"selected-call", rawjson.Message(`{"query":"selected"}`), "", "", 0)
 			appendHistoricalHookEvent(t, rt.Store, call, "call", 1)
-			result := hooks.NewToolResultReceivedEvent("result-run", "svc.agent", "session-1", "call-run",
+			resultSubject := genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}
+			result := hooks.NewToolResultReceivedEvent("result-run", resultSubject, "session-1", "call-run",
 				resultName, "selected-call", "", rawjson.Message(`{"items":["selected"]}`), nil, nil, "Selected", nil, time.Second, nil, nil)
 			appendHistoricalHookEvent(t, rt.Store, result, "result", 2)
 			reader := selectedContinuationReader{
@@ -124,14 +129,15 @@ func TestSelectedContinuationNextTurnFromLiteralRunPreservesHistory(t *testing.T
 		{Role: model.ConversationRoleUser, Parts: []model.Part{model.ToolResultPart{ToolUseID: "saved-call", Content: rawjson.Message(`{"approved":true}`)}}},
 		{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "The saved answer."}}},
 	}
-	call := hooks.NewToolCallScheduledEvent("literal-predecessor", "svc.agent", "session-1", spec.Name,
+	subject := genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}
+	call := hooks.NewToolCallScheduledEvent("literal-predecessor", subject, "session-1", spec.Name,
 		"saved-call", rawjson.Message(`{"group":"A"}`), "", "", 0)
 	appendHistoricalHookEvent(t, store, call, "call", 1)
-	result := hooks.NewToolResultReceivedEvent("literal-completed", "svc.agent", "session-1", "literal-predecessor",
+	result := hooks.NewToolResultReceivedEvent("literal-completed", subject, "session-1", "literal-predecessor",
 		spec.Name, "saved-call", "", rawjson.Message(`{"approved":true}`), nil, nil, "Approved", nil, time.Second, nil, nil)
 	appendHistoricalHookEvent(t, store, result, "result", 2)
 	appendTestActivityHistory(t, rt, &PlanActivityInput{AgentID: "svc.agent", RunID: "literal-completed", RunContext: run.Context{SessionID: "session-1"}}, oldMessages)
-	terminal := testHookRecord(t, hooks.NewRunCompletedEvent("literal-completed", "svc.agent", "session-1", "success", run.PhaseCompleted, nil, nil, nil), "terminal", time.Now())
+	terminal := testHookRecord(t, hooks.NewRunCompletedEvent("literal-completed", subject, "session-1", "success", run.PhaseCompleted, nil, nil, nil), "terminal", time.Now())
 	_, err := store.RecordRunTerminal(t.Context(), storage.RunTerminal{RunID: "literal-completed", Status: session.RunStatusCompleted, Record: terminal})
 	require.NoError(t, err)
 	before, err := store.ListRunRecords(t.Context(), "literal-completed", "", 256)

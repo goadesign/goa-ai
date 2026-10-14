@@ -76,7 +76,7 @@ func TestCancellationRetainsCompletedChildAndWaitsForSibling(t *testing.T) {
 			}
 			done := make(chan batchResult, 1)
 			go func() {
-				outcomes, timedOut, err := rt.executeToolCalls(wf, "execute", engine.ActivityOptions{}, "parent.agent", &runCtx, history, calls, 0, nil, time.Time{}, nil)
+				outcomes, timedOut, err := rt.executeToolCalls(nil, wf, "execute", engine.ActivityOptions{}, "parent.agent", &runCtx, history, calls, 0, nil, time.Time{}, nil)
 				done <- batchResult{outcomes, timedOut, err}
 			}()
 			completed := waitForChildHandle(t, handles, "completed child")
@@ -100,7 +100,7 @@ func TestCancellationRetainsCompletedChildAndWaitsForSibling(t *testing.T) {
 			got := <-done
 			require.ErrorIs(t, got.err, context.Canceled)
 			assert.False(t, got.timedOut)
-			expectedOutcomes := 1
+			expectedOutcomes := 2
 			if failPublication {
 				require.ErrorIs(t, got.err, prior)
 				expectedOutcomes = 3
@@ -109,6 +109,10 @@ func TestCancellationRetainsCompletedChildAndWaitsForSibling(t *testing.T) {
 			assert.Equal(t, "completed", got.outcomes[0].ToolResult.ToolCallID)
 			assert.True(t, got.outcomes[0].schedulePublished)
 			assert.Equal(t, !failPublication, got.outcomes[0].resultPublished)
+			if !failPublication {
+				assert.Equal(t, "pending", got.outcomes[1].ToolResult.ToolCallID)
+				assert.Nil(t, got.outcomes[1].ToolResult.Failure)
+			}
 			assert.False(t, completed.wasCanceled())
 		})
 	}
@@ -141,7 +145,7 @@ func TestCancellationRetainsEarlierBatchError(t *testing.T) {
 			wf := &testWorkflowContext{ctx: t.Context(), runtime: rt, hookRuntime: rt}
 			runCtx := run.Context{RunID: "error-run", SessionID: "session", TurnID: "turn"}
 			history := testToolHistory(t, rt, "parent.agent", runCtx, nil)
-			outcomes, timedOut, err := rt.executeToolCalls(wf, "execute", engine.ActivityOptions{}, "parent.agent", &runCtx, history,
+			outcomes, timedOut, err := rt.executeToolCalls(nil, wf, "execute", engine.ActivityOptions{}, "parent.agent", &runCtx, history,
 				[]ToolCall{{Name: first.Name, ToolCallID: "first", Payload: []byte(`{}`)}, {Name: second.Name, ToolCallID: "second", Payload: []byte(`{}`)}}, 0, nil, time.Time{}, nil)
 			require.ErrorIs(t, err, prior)
 			require.ErrorIs(t, err, context.Canceled)
@@ -184,7 +188,7 @@ func TestSavedTaskCleanupBeforeDispatch(t *testing.T) {
 			}
 			runCtx := run.Context{RunID: "saved-run", SessionID: "session", TurnID: "turn"}
 			history := testToolHistory(t, rt, "parent.agent", runCtx, nil)
-			_, timedOut, err := rt.executeToolCalls(workflow, "execute", engine.ActivityOptions{}, "parent.agent", &runCtx, history,
+			_, timedOut, err := rt.executeToolCalls(nil, workflow, "execute", engine.ActivityOptions{}, "parent.agent", &runCtx, history,
 				[]ToolCall{{Name: spec.Name, ToolCallID: "saved-call", Payload: []byte(`{}`)}}, 0, nil, deadline,
 				map[string]*taskExecution{"saved-call": {TaskID: "saved-task"}})
 			if phase == "timer error" {

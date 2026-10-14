@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/completion"
@@ -74,7 +75,7 @@ func TestRunPlanActivityUsesOptions(t *testing.T) {
 		StartToCloseTimeout:    30 * time.Second,
 		RetryPolicy:            engine.RetryPolicy{MaxAttempts: 3, InitialInterval: time.Second, BackoffCoefficient: 2},
 	}
-	_, err := rt.runPlanActivity(wf, "calc.agent.plan", opts, PlanActivityInput{}, &workflowConversation{}, time.Time{})
+	_, err := rt.runPlanActivity(wf, "calc.agent.plan", opts, PlanActivityInput{}, &workflowConversation{finalization: &workflowFinalizationState{}}, time.Time{})
 	require.NoError(t, err)
 	require.Equal(t, opts.Queue, wf.lastPlannerCall.Options.Queue)
 	require.Equal(t, opts.ScheduleToStartTimeout, wf.lastPlannerCall.Options.ScheduleToStartTimeout)
@@ -141,7 +142,7 @@ func TestRunPlanActivityBoundsTotalLifetimeToRemainingDeadline(t *testing.T) {
 				"calc.agent.plan",
 				test.opts,
 				PlanActivityInput{},
-				&workflowConversation{}, wf.Now().Add(10*time.Second),
+				&workflowConversation{finalization: &workflowFinalizationState{}}, wf.Now().Add(10*time.Second),
 			)
 
 			require.NoError(t, err)
@@ -164,7 +165,7 @@ func TestRunPlanActivityRejectsExpiredDeadline(t *testing.T) {
 		ctx: context.Background(),
 	}
 
-	_, err := rt.runPlanActivity(wf, "calc.agent.plan", engine.ActivityOptions{}, PlanActivityInput{}, &workflowConversation{}, time.Unix(-1, 0))
+	_, err := rt.runPlanActivity(wf, "calc.agent.plan", engine.ActivityOptions{}, PlanActivityInput{}, &workflowConversation{finalization: &workflowFinalizationState{}}, time.Unix(-1, 0))
 
 	require.ErrorIs(t, err, engine.ErrPlannerActivityDeadlineExceeded)
 	require.ErrorIs(t, err, context.DeadlineExceeded)
@@ -191,7 +192,7 @@ func TestRunPlanActivityAcceptsTerminalFinalToolResult(t *testing.T) {
 
 	out, err := rt.runPlanActivity(wf, "calc.agent.plan", engine.ActivityOptions{}, PlanActivityInput{
 		RunContext: run.Context{Tool: "svc.tools.do"},
-	}, &workflowConversation{}, time.Time{})
+	}, &workflowConversation{finalization: &workflowFinalizationState{}}, time.Time{})
 	require.NoError(t, err)
 	require.NotNil(t, out)
 	require.NotNil(t, out.Result)
@@ -210,7 +211,7 @@ func TestRunPlanActivityRejectsNilPlanResultWithoutCriticalPrefix(t *testing.T) 
 		ctx: context.Background(),
 	}
 
-	_, err := rt.runPlanActivity(wf, "calc.agent.plan", engine.ActivityOptions{}, PlanActivityInput{}, &workflowConversation{}, time.Time{})
+	_, err := rt.runPlanActivity(wf, "calc.agent.plan", engine.ActivityOptions{}, PlanActivityInput{}, &workflowConversation{finalization: &workflowFinalizationState{}}, time.Time{})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "nil PlanResult")
 	require.NotContains(t, err.Error(), "CRITICAL:")
@@ -1724,31 +1725,138 @@ func TestValidatePlannerToolCatalogsUsesRequestProvenance(t *testing.T) {
 	}
 }
 
-func TestPlanStartActivityAcceptsPlannerAuthoredDedicatedContinuation(t *testing.T) {
-	search, continuation := continuationTestSpecs()
-	pl := &stubPlanner{start: func(context.Context, *planner.PlanInput) (*planner.PlanResult, error) {
-		return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
-			Name:    continuation.Name,
-			Payload: rawjson.Message(`{"cursor":"next"}`),
-		}}}, nil
-	}}
-	rt := newTestRuntimeWithPlanner("service.agent", pl)
-	seedTestToolSpecs(rt, search, continuation)
-	seedTestToolDefinitions(rt, search, continuation)
-	rt.agentToolSpecs = map[agent.Ident][]tools.ToolSpec{
-		"service.agent": {continuation},
+func TestPlanActivityAcceptsPlannerAuthoredDedicatedContinuation(t *testing.T) {
+	type executionInput struct {
+		Query  string `json:"query"`
+		Cursor string `json:"cursor"`
 	}
-
-	out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{
-		AgentID:    "service.agent",
-		RunID:      "run-123",
-		RunContext: run.Context{RunID: "run-123"},
-	}, nil))
-
-	require.NoError(t, err)
-	require.Len(t, out.Result.ToolCalls, 1)
-	require.Equal(t, continuation.Name, out.Result.ToolCalls[0].Name)
-	require.Empty(t, out.Result.ToolCalls[0].ModelToolCallID)
+	search, continuation := continuationTestSpecs()
+	continuation.Payload.Codec = tools.JSONCodec[any]{
+		FromJSON: func(data []byte) (any, error) {
+			if err := validateEmptyContinuationPayload(data); err != nil {
+				return nil, err
+			}
+			return struct{}{}, nil
+		},
+		ToJSON: json.Marshal,
+	}
+	continuation.ExecutionPayloadCodec = tools.JSONCodec[any]{
+		FromJSON: func(data []byte) (any, error) {
+			decoder := json.NewDecoder(strings.NewReader(string(data)))
+			decoder.DisallowUnknownFields()
+			var value executionInput
+			if err := decoder.Decode(&value); err != nil {
+				return nil, err
+			}
+			if value.Query == "" || value.Cursor == "" {
+				return nil, errors.New("query and cursor are required")
+			}
+			return value, nil
+		},
+		ToJSON: json.Marshal,
+	}
+	continuation.PrepareInput = func(any) (rawjson.Message, error) {
+		return nil, errors.New("complete pagination input must not be rebound")
+	}
+	tests := []struct {
+		name      string
+		payload   rawjson.Message
+		modelID   string
+		policy    *PolicyOverrides
+		wantError string
+	}{
+		{
+			name:    "retained query and cursor",
+			payload: rawjson.Message(`{ "query": "recent records", "cursor": "next" }`),
+		},
+		{
+			name:      "missing query",
+			payload:   rawjson.Message(`{"cursor":"next"}`),
+			wantError: "query and cursor are required",
+		},
+		{
+			name:      "missing cursor",
+			payload:   rawjson.Message(`{"query":"recent records"}`),
+			wantError: "query and cursor are required",
+		},
+		{
+			name:      "unexpected execution field",
+			payload:   rawjson.Message(`{"query":"recent records","cursor":"next","extra":true}`),
+			wantError: `unknown field "extra"`,
+		},
+		{
+			name:      "model cannot supply a canonical cursor",
+			payload:   rawjson.Message(`{"query":"recent records","cursor":"next"}`),
+			modelID:   "provider-call",
+			wantError: "outside the advertised catalog",
+		},
+		{
+			name:      "run policy still excludes pagination",
+			payload:   rawjson.Message(`{"query":"recent records","cursor":"next"}`),
+			policy:    &PolicyOverrides{RestrictToTool: search.Name},
+			wantError: "outside its allowed catalog for this turn",
+		},
+	}
+	for _, resume := range []bool{false, true} {
+		phase := "start"
+		if resume {
+			phase = "resume"
+		}
+		for _, test := range tests {
+			t.Run(phase+"/"+test.name, func(t *testing.T) {
+				result := &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
+					Name:            continuation.Name,
+					Payload:         test.payload,
+					ModelToolCallID: test.modelID,
+				}}}
+				pl := &stubPlanner{
+					start: func(context.Context, *planner.PlanInput) (*planner.PlanResult, error) {
+						return result, nil
+					},
+					resume: func(context.Context, *planner.PlanResumeInput) (*planner.PlanResult, error) {
+						return result, nil
+					},
+				}
+				rt := newTestRuntimeWithPlanner("service.agent", pl)
+				seedTestToolSpecs(rt, search, continuation)
+				seedTestToolDefinitions(rt, search, continuation)
+				rt.agentToolSpecs = map[agent.Ident][]tools.ToolSpec{
+					"service.agent": {search, continuation},
+				}
+				input := seedTestPlanInput(t, rt, PlanActivityInput{
+					AgentID:    "service.agent",
+					RunID:      "run-123",
+					RunContext: run.Context{RunID: "run-123"},
+					Policy:     test.policy,
+				}, nil)
+				activity := rt.PlanStartActivity
+				if resume {
+					activity = rt.PlanResumeActivity
+				}
+				out, err := activity(t.Context(), input)
+				require.NoError(t, err)
+				if test.wantError != "" {
+					require.NotNil(t, out.OutputContractFailure)
+					require.Contains(t, out.OutputContractFailure.Reason, test.wantError)
+					require.Nil(t, out.Result)
+					return
+				}
+				require.Nil(t, out.OutputContractFailure)
+				require.NotNil(t, out.Result)
+				require.Len(t, out.Result.ToolCalls, 1)
+				call := out.Result.ToolCalls[0]
+				require.Equal(t, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("service.agent"))}, call.Subject)
+				_, err = genrunidentity.EncodeRunSubject(&call.Subject)
+				require.NoError(t, err)
+				require.Equal(t, continuation.Name, call.Name)
+				require.Equal(t, test.payload, call.Payload)
+				require.Empty(t, call.ModelToolCallID)
+				require.Empty(t, call.ModelPayload)
+				require.Empty(t, call.ContinuationRootToolCallID)
+				require.Empty(t, out.Transcript)
+			})
+		}
+	}
 }
 
 func TestGeneratedContinuationRejectsModelCallForDifferentToolBeforeExecution(t *testing.T) {
@@ -1978,7 +2086,7 @@ func TestRunPlanActivityPublishesUsageAndRejectedResponseBeforeOutputContractFai
 		RunContext: run.Context{RunID: "run-123", TurnID: "turn-1"},
 	}
 
-	out, err := rt.runPlanActivity(wfCtx, "plan", engine.ActivityOptions{}, *seedTestPlanInput(t, rt, input, nil), &workflowConversation{}, time.Time{})
+	out, err := rt.runPlanActivity(wfCtx, "plan", engine.ActivityOptions{}, *seedTestPlanInput(t, rt, input, nil), &workflowConversation{finalization: &workflowFinalizationState{}}, time.Time{})
 
 	require.NotNil(t, out)
 	var outputErr *planner.OutputContractError
@@ -2022,7 +2130,7 @@ func TestRunPlanActivityDoesNotPublishModelRejectionForPlannerFailure(t *testing
 			RunID:      "run-123",
 			RunContext: run.Context{RunID: "run-123", TurnID: "turn-1"},
 		}, nil),
-		&workflowConversation{}, time.Time{},
+		&workflowConversation{finalization: &workflowFinalizationState{}}, time.Time{},
 	)
 
 	require.NotNil(t, out)
@@ -2068,7 +2176,7 @@ func TestRunPlanActivityCommitsPublishedTextBeforeReturningPlanningFailure(t *te
 			RunID:      "run-123",
 			RunContext: run.Context{RunID: "run-123", SessionID: "session-1", TurnID: "turn-1"},
 		},
-		&workflowConversation{}, time.Time{},
+		&workflowConversation{finalization: &workflowFinalizationState{}}, time.Time{},
 	)
 
 	require.Same(t, wfCtx.plannerOutput, out)
@@ -2106,7 +2214,7 @@ func TestRunPlanActivityPublishesEmptyPlannerRejectionReason(t *testing.T) {
 			RunID:      "run-123",
 			RunContext: run.Context{RunID: "run-123", TurnID: "turn-1"},
 		}, nil),
-		&workflowConversation{}, time.Time{},
+		&workflowConversation{finalization: &workflowFinalizationState{}}, time.Time{},
 	)
 
 	require.NotNil(t, out)
@@ -2173,7 +2281,7 @@ func TestRunPlanActivityPublishesTypedModelRejectionReason(t *testing.T) {
 			RunID:      "run-123",
 			RunContext: run.Context{RunID: "run-123", TurnID: "turn-1"},
 		}, nil),
-		&workflowConversation{}, time.Time{},
+		&workflowConversation{finalization: &workflowFinalizationState{}}, time.Time{},
 	)
 
 	require.NotNil(t, out)
@@ -2265,7 +2373,7 @@ func TestRunPlanActivityRetriesPublicationBeforeOutputFailure(t *testing.T) {
 			RunID:      "run-123",
 			RunContext: run.Context{RunID: "run-123", TurnID: "turn-1"},
 		}, nil),
-		&workflowConversation{}, time.Time{},
+		&workflowConversation{finalization: &workflowFinalizationState{}}, time.Time{},
 	)
 
 	require.NotNil(t, out)
@@ -2309,7 +2417,7 @@ func TestRunPlanActivityBoundsOversizedRejectedResponseFingerprint(t *testing.T)
 		RunContext: run.Context{RunID: "run-oversized", TurnID: "turn-1"},
 	}
 
-	out, err := rt.runPlanActivity(wfCtx, "plan", engine.ActivityOptions{}, *seedTestPlanInput(t, rt, input, nil), &workflowConversation{}, time.Time{})
+	out, err := rt.runPlanActivity(wfCtx, "plan", engine.ActivityOptions{}, *seedTestPlanInput(t, rt, input, nil), &workflowConversation{finalization: &workflowFinalizationState{}}, time.Time{})
 
 	require.NotNil(t, out)
 	var outputErr *planner.OutputContractError
@@ -2617,7 +2725,7 @@ func TestPlanStartActivityAdvertisesHistoricalContinuation(t *testing.T) {
 
 	appendHistoricalHookEvent(t, store, hooks.NewToolCallScheduledEvent(
 		"run-1",
-		"service.agent",
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("service.agent"))},
 		"session-1",
 		search.Name,
 		"source-1",
@@ -2629,7 +2737,7 @@ func TestPlanStartActivityAdvertisesHistoricalContinuation(t *testing.T) {
 	cursor := "opaque-next"
 	appendHistoricalHookEvent(t, store, hooks.NewToolResultReceivedEvent(
 		"run-1",
-		"service.agent",
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("service.agent"))},
 		"session-1",
 		"run-1",
 		search.Name,
@@ -2728,7 +2836,7 @@ func TestPlanResumeActivityBindsModelSelectedContinuation(t *testing.T) {
 		t.Context(),
 		hooks.NewToolCallScheduledEvent(
 			"run-123",
-			"service.agent",
+			genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("service.agent"))},
 			"",
 			search.Name,
 			"source-1",
@@ -2744,7 +2852,7 @@ func TestPlanResumeActivityBindsModelSelectedContinuation(t *testing.T) {
 		t.Context(),
 		hooks.NewToolResultReceivedEvent(
 			"run-123",
-			"service.agent",
+			genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("service.agent"))},
 			"",
 			"run-123",
 			search.Name,
@@ -3053,7 +3161,7 @@ func TestPlanResumeActivityPassesToolOutputs(t *testing.T) {
 		context.Background(),
 		hooks.NewToolCallScheduledEvent(
 			"run-123",
-			"service.agent",
+			genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("service.agent"))},
 			"",
 			toolName,
 			"call-1",
@@ -3068,7 +3176,7 @@ func TestPlanResumeActivityPassesToolOutputs(t *testing.T) {
 		context.Background(),
 		hooks.NewToolResultReceivedEvent(
 			"run-123",
-			"service.agent",
+			genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("service.agent"))},
 			"",
 			"run-123",
 			toolName,
@@ -3128,7 +3236,7 @@ func TestPlanResumeActivityAdvancesEmptyContinuationBeforePlanner(t *testing.T) 
 		context.Background(),
 		hooks.NewToolCallScheduledEvent(
 			"run-123",
-			"service.agent",
+			genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("service.agent"))},
 			"",
 			search.Name,
 			"source-1",
@@ -3145,7 +3253,7 @@ func TestPlanResumeActivityAdvancesEmptyContinuationBeforePlanner(t *testing.T) 
 		context.Background(),
 		hooks.NewToolResultReceivedEvent(
 			"run-123",
-			"service.agent",
+			genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("service.agent"))},
 			"",
 			"run-123",
 			search.Name,
@@ -3178,6 +3286,9 @@ func TestPlanResumeActivityAdvancesEmptyContinuationBeforePlanner(t *testing.T) 
 	require.Empty(t, historyProvider.countedAll)
 	require.Nil(t, historyProvider.summarized)
 	require.Len(t, out.Result.ToolCalls, 1)
+	require.Equal(t, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("service.agent"))}, out.Result.ToolCalls[0].Subject)
+	_, err = genrunidentity.EncodeRunSubject(&out.Result.ToolCalls[0].Subject)
+	require.NoError(t, err)
 	require.Equal(t, continuation.Name, out.Result.ToolCalls[0].Name)
 	require.Equal(t, "source-1", out.Result.ToolCalls[0].ContinuationRootToolCallID)
 	require.JSONEq(t, `{"cursor":"`+nextCursorValue+`"}`, string(out.Result.ToolCalls[0].Payload))
@@ -3215,7 +3326,7 @@ func TestPlanResumeActivityAdvertisesOnlyRestrictedCorrectionTool(t *testing.T) 
 			context.Background(),
 			hooks.NewToolCallScheduledEvent(
 				"run-123",
-				"service.agent",
+				genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("service.agent"))},
 				"",
 				failed.spec.Name,
 				failed.callID,
@@ -3230,7 +3341,7 @@ func TestPlanResumeActivityAdvertisesOnlyRestrictedCorrectionTool(t *testing.T) 
 			context.Background(),
 			hooks.NewToolResultReceivedEvent(
 				"run-123",
-				"service.agent",
+				genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("service.agent"))},
 				"",
 				"run-123",
 				failed.spec.Name,
@@ -3292,7 +3403,7 @@ func TestPlanResumeActivityFailsWhenCanonicalToolResultIsMissing(t *testing.T) {
 		context.Background(),
 		hooks.NewToolCallScheduledEvent(
 			"run-123",
-			"service.agent",
+			genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("service.agent"))},
 			"",
 			"svc.ts.tool",
 			"call-1",
@@ -3346,7 +3457,7 @@ func TestPlanResumeActivityHydratesSuccessfulResultFromCanonicalRunlog(t *testin
 		context.Background(),
 		hooks.NewToolCallScheduledEvent(
 			"run-123",
-			"service.agent",
+			genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("service.agent"))},
 			"",
 			"svc.ts.tool",
 			"call-1",
@@ -3361,7 +3472,7 @@ func TestPlanResumeActivityHydratesSuccessfulResultFromCanonicalRunlog(t *testin
 		context.Background(),
 		hooks.NewToolResultReceivedEvent(
 			"run-123",
-			"service.agent",
+			genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("service.agent"))},
 			"",
 			"run-123",
 			"svc.ts.tool",
@@ -3487,7 +3598,7 @@ func TestBuildPlannerToolOutputRecordsSkipsBookkeepingResults(t *testing.T) {
 func TestBuildNextResumeRequestCarriesTurnScopedRecoveryIdentity(t *testing.T) {
 	t.Parallel()
 
-	base := &workflowConversation{RunContext: run.Context{RunID: "run-123"}}
+	base := &workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{RunID: "run-123"}}
 	nextAttempt := 1
 	recovery := []*planner.ToolOutput{{
 		Name:       "svc.tools.rejected",
@@ -3523,6 +3634,7 @@ func TestBuildNextResumeRequestRejectsNilToolOutputEntry(t *testing.T) {
 
 	rt := &Runtime{}
 	base := &workflowConversation{
+		finalization: &workflowFinalizationState{},
 		RunContext: run.Context{
 			RunID:     "run-123",
 			SessionID: "sess-1",

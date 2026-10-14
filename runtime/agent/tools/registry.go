@@ -16,8 +16,8 @@ type (
 	RegistryBinding struct {
 		// Registry is the registry source named by the consuming agent's design.
 		Registry string `json:"registry"`
-		// Resolution is a generated registry ResolveToolsetResponse encoded as
-		// protobuf JSON, so saved data uses the generated transport validator.
+		// Resolution is a generated RegistrySelection encoded by its codec.
+		// It distinguishes direct imports from owner-selected registered resources.
 		// It contains only the selected tool and any declared pagination partner,
 		// with the registration token returned by the original catalog read.
 		Resolution rawjson.Message `json:"resolution"`

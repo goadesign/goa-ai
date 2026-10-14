@@ -1,19 +1,33 @@
-// Package codec checks standalone JSON syntax before decoding can replace malformed text
-// or overwrite duplicate members. They contain no application schema.
+// Package codec emits JSON readers that reject malformed text and duplicate members
+// before generated tool and original-value codecs decode their typed values.
 package codec
 
-const standaloneSource = `
-// {{ $.ReadStrictJSON }} checks syntax and nesting before walking for duplicate keys,
-// and preserves integer text for the generated type checks.
+// StrictJSONReaderSource emits the shared JSON reader that rejects duplicate members
+// and malformed Unicode before generated codecs check or convert the value.
+const StrictJSONReaderSource = `{{define "strict-json-reader"}}
+// {{ $.ReadStrictJSON }} checks the complete JSON document for malformed text and
+// duplicate members, then returns values with their original number text.
 func {{ $.ReadStrictJSON }}(data []byte) (any, error) {
 	if err := {{ $.ValidateJSONText }}(data); err != nil { return nil, err }
-	if !{{ $.Imports.JSON }}.Valid(data) { return nil, {{ $.Imports.Fmt }}.Errorf("invalid JSON syntax or nesting") }
+	if !{{ $.Imports.JSON }}.Valid(data) {
+		// When two complete JSON values arrive, keep the caller's distinct
+		// multiple-document error instead of reporting malformed syntax.
+		decoder := {{ $.Imports.JSON }}.NewDecoder({{ $.Imports.Bytes }}.NewReader(data))
+		var document {{ $.Imports.JSON }}.RawMessage
+		if err := decoder.Decode(&document); err == nil {
+			if err := decoder.Decode(&document); err == nil {
+				return nil, {{ $.Imports.Fmt }}.Errorf("multiple JSON documents")
+			}
+		}
+		return nil, {{ $.Imports.Fmt }}.Errorf("invalid JSON syntax or nesting")
+	}
 	decoder := {{ $.Imports.JSON }}.NewDecoder({{ $.Imports.Bytes }}.NewReader(data))
 	decoder.UseNumber()
 	return {{ $.ReadJSONValue }}(decoder)
 }
 
-// {{ $.ReadJSONValue }} checks duplicate decoded keys before storing any object member.
+// {{ $.ReadJSONValue }} reads one JSON value and rejects repeated object member
+// names, returning the value without replacing earlier members.
 func {{ $.ReadJSONValue }}(decoder *{{ $.Imports.JSON }}.Decoder) (any, error) {
 	token, err := decoder.Token()
 	if err != nil { return nil, err }
@@ -47,8 +61,8 @@ func {{ $.ReadJSONValue }}(decoder *{{ $.Imports.JSON }}.Decoder) (any, error) {
 	}
 }
 
-// {{ $.ValidateJSONText }} rejects invalid UTF-8 and unpaired UTF-16 escapes before
-// encoding/json can silently replace them. JSON grammar remains decoder-owned.
+// {{ $.ValidateJSONText }} checks JSON bytes for invalid text and unpaired Unicode
+// escapes, returning an error before encoding/json can replace those characters.
 func {{ $.ValidateJSONText }}(data []byte) error {
 	if !{{ $.Imports.UTF8 }}.Valid(data) { return {{ $.Imports.Fmt }}.Errorf("invalid UTF-8 in JSON") }
 	for i := 0; i < len(data); i++ {
@@ -74,6 +88,11 @@ func {{ $.ValidateJSONText }}(data []byte) error {
 	}
 	return nil
 }
+
+{{end}}`
+
+const standaloneSource = `
+{{template "strict-json-reader" .}}
 
 // {{ $.JSONNames.InvalidFieldType }} is the value-codec adapter for shared checks.
 func {{ $.JSONNames.InvalidFieldType }}(field, expected, actual, _ string) error {

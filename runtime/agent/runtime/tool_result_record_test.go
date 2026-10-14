@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -30,7 +31,9 @@ func testMaterializedCheckpointIntegrity(t *testing.T, suspension *api.RunSuspen
 			r.ResultRecord.Type = hooks.ToolCallUpdated
 			r.ResultRecord.Payload = rawjson.Message(`{}`)
 		}},
-		{"agent", func(r *checkpointToolRecord) { r.ResultRecord.AgentID = "corrupted.agent" }},
+		{"agent", func(r *checkpointToolRecord) {
+			r.ResultRecord.Subject = genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("corrupted.agent"))}
+		}},
 		{"session", func(r *checkpointToolRecord) { r.ResultRecord.SessionID = "other-session" }},
 		{"result run", func(r *checkpointToolRecord) { r.ResultRecord.RunID = mismatchedRun }},
 		{"call run", func(r *checkpointToolRecord) { r.CallRunID = mismatchedRun }},

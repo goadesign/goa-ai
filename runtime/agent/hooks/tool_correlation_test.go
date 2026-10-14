@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -16,7 +17,7 @@ func TestValidateToolResultPlacement(t *testing.T) {
 	schedule := func(runID string) *ToolCallScheduledEvent {
 		return NewToolCallScheduledEvent(
 			runID,
-			"agent",
+			genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))},
 			"session",
 			tools.Ident("service.tools.lookup"),
 			"call",
@@ -29,7 +30,7 @@ func TestValidateToolResultPlacement(t *testing.T) {
 	result := func(callRunID string) *ToolResultReceivedEvent {
 		return NewToolResultReceivedEvent(
 			"result-run",
-			"agent",
+			genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))},
 			"session",
 			callRunID,
 			tools.Ident("service.tools.lookup"),
@@ -95,7 +96,7 @@ func TestValidateToolResultCorrelation(t *testing.T) {
 
 	scheduled := NewToolCallScheduledEvent(
 		"call-run",
-		"agent",
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))},
 		"session",
 		tools.Ident("service.tools.lookup"),
 		"call",
@@ -107,7 +108,7 @@ func TestValidateToolResultCorrelation(t *testing.T) {
 	validResult := func() *ToolResultReceivedEvent {
 		return NewToolResultReceivedEvent(
 			"result-run",
-			"agent",
+			genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))},
 			"session",
 			"call-run",
 			tools.Ident("service.tools.lookup"),
@@ -166,9 +167,9 @@ func TestValidateToolResultCorrelation(t *testing.T) {
 		{
 			name: "agent",
 			change: func(result *ToolResultReceivedEvent) {
-				result.agentID = "other-agent"
+				result.subject = genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("other-agent"))}
 			},
-			wantErr: "scheduled agent",
+			wantErr: "scheduled subject",
 		},
 	}
 	for _, test := range tests {

@@ -135,7 +135,7 @@ func TestProviderRecoveryActivityProvesSafeFailure(t *testing.T) {
 func TestProviderRecoveryRetainsRequestAndActiveBudget(t *testing.T) {
 	var calls int
 	rt := newTestRuntimeWithPlanner("service.agent", nil)
-	base := &workflowConversation{providerRecovery: &providerRecoveryBudget{Remaining: time.Hour}}
+	base := &workflowConversation{finalization: &workflowFinalizationState{}, providerRecovery: &providerRecoveryBudget{Remaining: time.Hour}}
 	w := &providerRecoveryWorkflow{clock: time.Unix(100, 0)}
 	input := PlanActivityInput{AgentID: "service.agent", RunID: "run", HistoryEndID: "saved-position", RunContext: run.Context{RunID: "run", Attempt: 3}}
 	w.routeWorkflowContext = &routeWorkflowContext{
@@ -198,7 +198,7 @@ func TestProviderRecoveryStopsOnCancellationExpirationAndActivityError(t *testin
 			if tc == "cancellation" {
 				w.onTimer = cancel
 			}
-			base := &workflowConversation{providerRecovery: &providerRecoveryBudget{Remaining: time.Second}}
+			base := &workflowConversation{finalization: &workflowFinalizationState{}, providerRecovery: &providerRecoveryBudget{Remaining: time.Second}}
 			out, err := rt.runPlanActivity(w, "plan", engine.ActivityOptions{}, PlanActivityInput{RunID: "run"}, base, time.Time{})
 			require.Error(t, err)
 			assert.Equal(t, 1, calls)
@@ -218,7 +218,7 @@ func TestProviderRecoveryStopsOnCancellationExpirationAndActivityError(t *testin
 
 func TestProviderRecoveryBoundsRetryQueueAndExecution(t *testing.T) {
 	rt := newTestRuntimeWithPlanner("service.agent", nil)
-	base := &workflowConversation{providerRecovery: &providerRecoveryBudget{Remaining: time.Minute}}
+	base := &workflowConversation{finalization: &workflowFinalizationState{}, providerRecovery: &providerRecoveryBudget{Remaining: time.Minute}}
 	w := &providerRecoveryWorkflow{clock: time.Unix(100, 0)}
 	calls := 0
 	w.routeWorkflowContext = &routeWorkflowContext{
@@ -266,7 +266,7 @@ func TestProviderRecoveryDisabledAndExhaustedPreserveTypedFailure(t *testing.T) 
 				},
 			}
 			actual, err := rt.runPlanActivity(w, "plan", engine.ActivityOptions{}, PlanActivityInput{RunID: "run"},
-				&workflowConversation{providerRecovery: tc.recovery}, time.Time{})
+				&workflowConversation{finalization: &workflowFinalizationState{}, providerRecovery: tc.recovery}, time.Time{})
 			require.Error(t, err)
 			assert.Same(t, output, actual)
 			failure, ok := model.AsProviderError(err)

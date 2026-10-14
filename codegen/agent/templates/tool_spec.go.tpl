@@ -137,7 +137,7 @@ func {{ .ConstructorFunc }}() tools.ToolSpec {
             Paging: &tools.PagingSpec{
                 ContinueTool: tools.Ident({{ printf "%q" .Bounds.Paging.ContinueTool }}),
                 SourceTool: tools.Ident({{ printf "%q" .Bounds.Paging.SourceTool }}),
-                ReplayPayload: {{ .Bounds.Paging.ReplayPayload }},
+                RetainedFields: []string{ {{ range .Bounds.Paging.RetainedFields }}{{ printf "%q" . }}, {{ end }} },
                 CursorField: {{ printf "%q" .Bounds.Paging.CursorField }},
                 NextCursorField: {{ printf "%q" .Bounds.Paging.NextCursorField }},
             },

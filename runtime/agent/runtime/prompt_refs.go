@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/prompt"
@@ -138,7 +139,7 @@ func (r *Runtime) listRunPromptData(ctx context.Context, current session.RunMeta
 					return nil, nil, fmt.Errorf("%w: run %q has an invalid start record: %w", errPromptRefsCorrupt, current.RunID, err)
 				}
 				event, err := hooks.DecodeFromRecordInput(&RecordActivityInput{
-					Type: record.Type, RunID: record.RunID, AgentID: record.AgentID,
+					Type: record.Type, RunID: record.RunID, Subject: record.Subject,
 					SessionID: record.SessionID, TurnID: record.TurnID,
 					TimestampMS: record.Timestamp.UnixMilli(), Payload: record.Payload,
 				})
@@ -184,7 +185,7 @@ func (r *Runtime) listRunPromptData(ctx context.Context, current session.RunMeta
 				return nil, nil, err
 			}
 			event, err := hooks.DecodeFromRecordInput(&RecordActivityInput{
-				Type: record.Type, RunID: record.RunID, AgentID: record.AgentID,
+				Type: record.Type, RunID: record.RunID, Subject: record.Subject,
 				SessionID: record.SessionID, TurnID: record.TurnID,
 				TimestampMS: record.Timestamp.UnixMilli(), Payload: record.Payload,
 			})
@@ -258,7 +259,7 @@ func (r *Runtime) loadPromptRelatedRun(
 	}
 	switch relation.kind {
 	case continuationPromptRunRelation:
-		if related.SessionID != current.SessionID || related.AgentID != current.AgentID ||
+		if related.SessionID != current.SessionID || !reflect.DeepEqual(related.Subject, current.Subject) ||
 			(related.ParentRunID == "") != (current.ParentRunID == "") || related.Status != session.RunStatusSuspended {
 			return session.RunMeta{}, fmt.Errorf(
 				"%w: continuation from run %q to run %q has invalid predecessor identity or status",
@@ -276,7 +277,7 @@ func (r *Runtime) loadPromptRelatedRun(
 				return session.RunMeta{}, fmt.Errorf("load child continuation %q accepted history: %w", current.RunID, err)
 			}
 			if seed.Declaration.RunID != current.RunID || seed.Declaration.SessionID != current.SessionID ||
-				seed.Declaration.AgentID != current.AgentID || seed.EndID != current.SeedEndID ||
+				!reflect.DeepEqual(seed.Declaration.Subject, current.Subject) || seed.EndID != current.SeedEndID ||
 				seed.Declaration.Kind != storage.SeedContinuation || seed.Source == nil ||
 				seed.Declaration.SourceRunID != related.RunID || seed.Source.RunID != related.RunID ||
 				seed.Declaration.SourceEndID != seed.Source.EndID {
@@ -287,7 +288,8 @@ func (r *Runtime) loadPromptRelatedRun(
 			}
 		}
 	case childPromptRunRelation:
-		if related.SessionID != current.SessionID || related.AgentID != relation.childAgentID ||
+		executor, isAgent := related.Subject.Executor.AsAgent()
+		if related.SessionID != current.SessionID || !isAgent || string(executor) != relation.childAgentID ||
 			related.ParentRunID != current.RunID {
 			return session.RunMeta{}, fmt.Errorf(
 				"%w: child link from run %q does not match run %q identity",
@@ -347,7 +349,7 @@ func visitPromptRunPath(
 // whose prompt relationships are being read.
 func validatePromptRecordOwner(record *runlog.Event, current session.RunMeta) error {
 	if record.RunID != current.RunID || record.SessionID != current.SessionID ||
-		string(record.AgentID) != current.AgentID {
+		!reflect.DeepEqual(record.Subject, current.Subject) {
 		return fmt.Errorf(
 			"%w: record %q does not belong to run %q",
 			errPromptRefsCorrupt,

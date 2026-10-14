@@ -218,7 +218,7 @@ func (r *Runtime) normalizePlanResultContract(result *PlanResult, runContext run
 	if err := validatePlanResultToolCallIDs(result); err != nil {
 		return stepProgram{}, planner.NewOutputContractError(err)
 	}
-	parentTool, err := selectedParentTool(runContext.Tool, runContext.ToolRegistry, executor, r.toolSpec)
+	parentTool, err := selectedRunTool(runContext, executor, r.toolSpec)
 	if err != nil {
 		return stepProgram{}, planner.NewOutputContractError(err)
 	}
@@ -252,8 +252,9 @@ func plannerResultValidationProjection(result *PlanResult) *planner.PlanResult {
 	return plannerResult
 }
 
-// normalizePlanResultForExecution validates generated tool payload contracts
-// before planner events are published or the workflow accepts tool work.
+// normalizePlanResultForExecution validates complete executor input and policy
+// before the workflow accepts tool work. Planning activities already validate
+// the original model bytes against their activity-local consumer input schema.
 func (r *Runtime) normalizePlanResultForExecution(result *PlanResult, runContext run.Context, executor agent.Ident) error {
 	if runContext.TextOnly && result.FinalToolResult != nil {
 		if err := toolserverdata.ValidateTextOnly(result.FinalToolResult.ServerData); err != nil {
@@ -280,11 +281,6 @@ func (r *Runtime) normalizePlanResultForExecution(result *PlanResult, runContext
 			if spec.RequiresUI || spec.Confirmation != nil || spec.TextOnly == nil {
 				return planner.NewOutputContractError(fmt.Errorf("tool %q requires UI or has no text-only contract", call.Name))
 			}
-			if call.ContinuationRootToolCallID == "" && call.ModelName == call.Name && len(call.ModelPayload) > 0 {
-				if _, err := spec.TextOnly.Payload.Codec.FromJSON(call.ModelPayload); err != nil {
-					return planner.NewOutputContractError(fmt.Errorf("text-only tool %q arguments: %w", call.Name, err))
-				}
-			}
 		}
 		if call.TextOnly {
 			spec = spec.ForTextOnly()
@@ -300,7 +296,11 @@ func (r *Runtime) normalizePlanResultForExecution(result *PlanResult, runContext
 		awaitItems = result.Await.Items
 	}
 	for index, call := range awaitToolRequests(awaitItems) {
-		if err := validatePlannerToolPayloadWithCodec(r.toolSpec, nil, call.Name, call.Payload); err != nil {
+		spec, ok := r.toolSpec(call.Name)
+		if !ok {
+			return planner.NewOutputContractError(fmt.Errorf("await tool %q has no execution input contract", call.Name))
+		}
+		if _, err := spec.ExecutionPayloadCodec.FromJSON(call.Payload); err != nil {
 			return planner.NewOutputContractError(
 				fmt.Errorf("workflow step await tool call %d payload: %w", index, err),
 			)
@@ -395,7 +395,7 @@ func awaitToolRequests(items []planner.AwaitItem) []ToolCall {
 				ToolCallID:      q.ToolCallID,
 				ModelToolCallID: q.ModelToolCallID,
 				Payload:         append(rawjson.Message(nil), q.Payload...),
-				ModelPayload:    append(rawjson.Message(nil), q.Payload...),
+				ModelPayload:    append(rawjson.Message(nil), q.ModelPayload...),
 			})
 		case planner.AwaitItemKindQuestions:
 			q := item.Questions
@@ -404,7 +404,7 @@ func awaitToolRequests(items []planner.AwaitItem) []ToolCall {
 				ToolCallID:      q.ToolCallID,
 				ModelToolCallID: q.ModelToolCallID,
 				Payload:         append(rawjson.Message(nil), q.Payload...),
-				ModelPayload:    append(rawjson.Message(nil), q.Payload...),
+				ModelPayload:    append(rawjson.Message(nil), q.ModelPayload...),
 			})
 		case planner.AwaitItemKindExternalTools:
 			for _, call := range item.ExternalTools.Items {
@@ -413,7 +413,7 @@ func awaitToolRequests(items []planner.AwaitItem) []ToolCall {
 					ToolCallID:      call.ToolCallID,
 					ModelToolCallID: call.ModelToolCallID,
 					Payload:         append(rawjson.Message(nil), call.Payload...),
-					ModelPayload:    append(rawjson.Message(nil), call.Payload...),
+					ModelPayload:    append(rawjson.Message(nil), call.ModelPayload...),
 				})
 			}
 		}
@@ -449,6 +449,7 @@ func compilePlannerAwaitForRun(runCtx run.Context, firstIndex int, await *planne
 				callIndex,
 			)
 			clarification.Payload = append(rawjson.Message(nil), source.Payload...)
+			clarification.ModelPayload = append(rawjson.Message(nil), source.ModelPayload...)
 			items[itemIndex] = planner.AwaitToolClarificationItem(&clarification)
 			callIndex++
 		case planner.AwaitItemKindQuestions:
@@ -465,6 +466,7 @@ func compilePlannerAwaitForRun(runCtx run.Context, firstIndex int, await *planne
 				callIndex,
 			)
 			questions.Payload = append(rawjson.Message(nil), source.Payload...)
+			questions.ModelPayload = append(rawjson.Message(nil), source.ModelPayload...)
 			if source.Title != nil {
 				title := *source.Title
 				questions.Title = &title
@@ -492,6 +494,7 @@ func compilePlannerAwaitForRun(runCtx run.Context, firstIndex int, await *planne
 					callIndex,
 				)
 				tool.Payload = append(rawjson.Message(nil), tool.Payload...)
+				tool.ModelPayload = append(rawjson.Message(nil), tool.ModelPayload...)
 				external.Items[toolIndex] = tool
 				callIndex++
 			}
@@ -608,7 +611,7 @@ func (l *workflowLoop) runStep(program stepProgram) (*RunOutput, error) {
 	}
 	if len(program.calls) > 0 {
 		program.calls = l.r.prepareAllowedCallsMetadata(
-			l.input.AgentID,
+			l.reg.Definition.route.ID,
 			l.base,
 			program.calls,
 			l.parentTracker,
@@ -700,7 +703,7 @@ func (l *workflowLoop) executeStepProgram(program stepProgram) (stepBatch, error
 		if batch.finalize != nil {
 			awaitCalls := awaitToolRequests(program.awaitItems)
 			awaitCalls = l.r.prepareAllowedCallsMetadata(
-				l.input.AgentID,
+				l.reg.Definition.route.ID,
 				l.base,
 				awaitCalls,
 				l.parentTracker,
@@ -777,7 +780,7 @@ func (l *workflowLoop) failCommittedStep(batch *stepBatch, stepErr error) error 
 	allCalls := append([]ToolCall(nil), batch.program.calls...)
 	awaitCalls := awaitToolRequests(batch.program.awaitItems)
 	awaitCalls = l.r.prepareAllowedCallsMetadata(
-		l.input.AgentID,
+		l.reg.Definition.route.ID,
 		l.base,
 		awaitCalls,
 		l.parentTracker,
@@ -947,7 +950,7 @@ func (l *workflowLoop) resumePlanner(
 		return l.finalizeStep(planner.TerminationReasonRecoveryCap)
 	}
 	resumeReq, err := l.r.buildNextResumeRequest(
-		l.input.AgentID,
+		l.reg.Definition.route.ID,
 		l.base,
 		l.input.Policy,
 		l.st.ToolOutputs,
@@ -1156,6 +1159,9 @@ func (l *workflowLoop) recordUnrecordedStepToolResults(batch *stepBatch) error {
 	}
 	if batch.recorded > len(batch.records) {
 		panic("runtime: recorded step tool result count exceeds batch records")
+	}
+	if err := l.retainCompletedToolTerminalResult(*batch); err != nil {
+		return err
 	}
 	records := batch.records[batch.recorded:]
 	ordered, err := canonicalStepToolRecords(batch.program.calls, records)

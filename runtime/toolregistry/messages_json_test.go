@@ -167,3 +167,30 @@ func TestDecodeToolResultMessageLeavesSemanticValidationToOwners(t *testing.T) {
 		})
 	}
 }
+
+func TestEncodeToolResultMessagePreservesExistingSerialization(t *testing.T) {
+	const original = `{ "text": "<tag>&", "large": 9007199254740993123456789, "exponent": 1e9999999999 }`
+	const expected = `{"text":"\u003ctag\u003e\u0026","large":9007199254740993123456789,"exponent":1e9999999999}`
+	message := NewToolResultMessage(strings.Repeat("a", 64), "encoded-result", json.RawMessage(original))
+	previous, err := json.Marshal(message)
+	require.NoError(t, err)
+	encoded, err := EncodeToolResultMessage(message)
+	require.NoError(t, err)
+	assert.Equal(t, previous, encoded)
+	decoded, err := DecodeToolResultMessage(encoded)
+	require.NoError(t, err)
+	assert.Equal(t, []byte(expected), []byte(decoded.Result)) //nolint:testifylint // Serialization must preserve exact large integer and exponent text and escaped characters.
+	assert.Equal(t, original, string(message.Result))         //nolint:testifylint // Encoding must preserve the original result bytes, including spaces and number text.
+	assert.NotContains(t, string(encoded), "eyJ0ZXh0")
+}
+
+func TestEncodeToolResultMessageRejectsInvalidMessage(t *testing.T) {
+	for _, message := range []ToolResultMessage{
+		{},
+		NewToolResultMessage(strings.Repeat("a", 64), "invalid-json", json.RawMessage(`{"partial":`)),
+	} {
+		encoded, err := EncodeToolResultMessage(message)
+		require.Error(t, err)
+		assert.Nil(t, encoded)
+	}
+}

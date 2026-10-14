@@ -330,18 +330,15 @@ func {{ .UnmarshalFunc }}(data []byte) ({{ if .Pointer }}*{{ end }}{{ .FullRef }
 // {{ .Name }} parses one JSON document and checks the exact value
 // shapes known from this generated Goa type.
 func {{ .Name }}(data []byte) error {
-    var root any
-    dec := json.NewDecoder(bytes.NewReader(data))
-    dec.UseNumber()
-    if err := dec.Decode(&root); err != nil {
+    root, err := readStrictToolJSON(data)
+    if err != nil {
         return err
-    }
-    if err := dec.Decode(&struct{}{}); err != io.EOF {
-        return fmt.Errorf("multiple JSON documents")
     }
     return {{ .Root }}("", root, "")
 }
 {{- end }}
+
+{{- template "strict-json-reader" .StrictJSONReader }}
 
 {{- template "json-value-validators" . }}
 

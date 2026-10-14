@@ -97,8 +97,15 @@ func BuildMessagesFromRunLogPrefix(ctx context.Context, store transcriptPrefixSt
 				if err != nil {
 					return nil, err
 				}
-				if root.meta.SessionID == "" || child.meta.SessionID != root.meta.SessionID ||
-					child.meta.AgentID != root.meta.AgentID {
+				if child.meta.SessionID != root.meta.SessionID ||
+					!reflect.DeepEqual(child.meta.Subject, root.meta.Subject) {
+					return nil, invalidHistoryError(storage.ErrRunRecordOwnerMismatch)
+				}
+				// Standalone history may follow only the saved predecessor of the
+				// same original invocation, so unrelated runs cannot share messages.
+				if root.meta.SessionID == "" && (frame.seed.Declaration.Kind != storage.SeedContinuation ||
+					frame.seed.Declaration.PredecessorRunID != child.meta.RunID ||
+					!reflect.DeepEqual(child.meta.Origin, frame.meta.Origin)) {
 					return nil, invalidHistoryError(storage.ErrRunRecordOwnerMismatch)
 				}
 				stack = append(stack, child)
@@ -159,6 +166,9 @@ func loadPrefixFrame(ctx context.Context, store transcriptPrefixStore, ref stora
 	if err != nil {
 		return nil, err
 	}
+	if err := validateHistorySubject(meta.Subject); err != nil {
+		return nil, err
+	}
 	if meta.RunID != ref.RunID || ref.EndID == "" {
 		return nil, prefixContractError("invalid history owner or position")
 	}
@@ -186,7 +196,7 @@ func loadPrefixFrame(ctx context.Context, store transcriptPrefixStore, ref stora
 			return nil, err
 		}
 		if seed.EndID != meta.SeedEndID || seed.Declaration.RunID != ref.RunID ||
-			seed.Declaration.AgentID != meta.AgentID || seed.Declaration.SessionID != meta.SessionID {
+			!reflect.DeepEqual(seed.Declaration.Subject, meta.Subject) || seed.Declaration.SessionID != meta.SessionID {
 			return nil, storage.NewContractError(storage.ErrRunRecordOwnerMismatch)
 		}
 		frame.seed = seed
@@ -275,7 +285,7 @@ func (f *prefixFrame) nextRunRecord(ctx context.Context, store transcriptPrefixS
 	record := f.logPage.Events[f.logIndex]
 	f.logIndex++
 	if record == nil || record.RunID != f.ref.RunID || record.ID == "" ||
-		string(record.AgentID) != f.meta.AgentID || record.SessionID != f.meta.SessionID ||
+		!reflect.DeepEqual(record.Subject, f.meta.Subject) || record.SessionID != f.meta.SessionID ||
 		!isTranscriptRunLogType(record.Type) {
 		return nil, prefixContractError("invalid transcript record for run %q", f.ref.RunID)
 	}

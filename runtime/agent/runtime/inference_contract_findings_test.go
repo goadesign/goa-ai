@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -507,7 +508,7 @@ func TestSuccessfulOutputReturnsExhaustedPublicationErrorWithoutReplanning(t *te
 			RunID:      "run-success-publication-failure",
 			RunContext: run.Context{RunID: "run-success-publication-failure"},
 		}, nil),
-		&workflowConversation{}, time.Time{},
+		&workflowConversation{finalization: &workflowFinalizationState{}}, time.Time{},
 	)
 
 	require.ErrorContains(t, err, "record backend unavailable")
@@ -631,7 +632,7 @@ func TestInvalidPlannerActivityResultPublishesNoRecords(t *testing.T) {
 					RunID:      "run-invalid-result",
 					RunContext: run.Context{RunID: "run-invalid-result"},
 				},
-				&workflowConversation{}, time.Time{},
+				&workflowConversation{finalization: &workflowFinalizationState{}}, time.Time{},
 			)
 
 			require.Nil(t, got)
@@ -683,7 +684,7 @@ func TestOutputFailureReturnsExhaustedPublicationErrorWithoutReplanning(t *testi
 		"plan",
 		engine.ActivityOptions{},
 		*seedTestPlanInput(t, rt, input, nil),
-		&workflowConversation{}, time.Time{},
+		&workflowConversation{finalization: &workflowFinalizationState{}}, time.Time{},
 	)
 
 	require.Nil(t, output)
@@ -729,7 +730,7 @@ func TestOutputFailurePublicationDoesNotMaskActivityErrorAfterCancellation(t *te
 			RunID:      "run-canceled-publication",
 			RunContext: run.Context{RunID: "run-canceled-publication"},
 		}, nil),
-		&workflowConversation{}, time.Time{},
+		&workflowConversation{finalization: &workflowFinalizationState{}}, time.Time{},
 	)
 
 	require.Nil(t, output)
@@ -767,7 +768,7 @@ func (s *replayPublicationStore) AppendRunRecord(
 	}
 	if stored, ok := s.stored[event.EventKey]; ok {
 		if stored.RunID != event.RunID ||
-			stored.AgentID != event.AgentID ||
+			!reflect.DeepEqual(stored.Subject, event.Subject) ||
 			stored.SessionID != event.SessionID ||
 			stored.TurnID != event.TurnID ||
 			stored.Type != event.Type ||

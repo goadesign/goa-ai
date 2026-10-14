@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -77,7 +78,7 @@ func TestHistoricalContinuationRehydratesExactLatestPage(t *testing.T) {
 	require.Len(t, continueID, 64)
 	sourceCall := hooks.NewToolCallScheduledEvent(
 		"run-1",
-		agentID,
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))},
 		sessionID,
 		search.Name,
 		sourceID,
@@ -90,7 +91,7 @@ func TestHistoricalContinuationRehydratesExactLatestPage(t *testing.T) {
 	firstCursor := "first"
 	appendHistoricalHookEvent(t, store, hooks.NewToolResultReceivedEvent(
 		"run-1",
-		agentID,
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))},
 		sessionID,
 		"run-1",
 		search.Name,
@@ -107,7 +108,7 @@ func TestHistoricalContinuationRehydratesExactLatestPage(t *testing.T) {
 
 	continueCall := hooks.NewToolCallScheduledEvent(
 		"run-1",
-		agentID,
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))},
 		sessionID,
 		continuation.Name,
 		continueID,
@@ -121,7 +122,7 @@ func TestHistoricalContinuationRehydratesExactLatestPage(t *testing.T) {
 	secondCursor := "second"
 	appendHistoricalHookEvent(t, store, hooks.NewToolResultReceivedEvent(
 		"run-1",
-		agentID,
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))},
 		sessionID,
 		"run-1",
 		continuation.Name,
@@ -187,7 +188,7 @@ func TestContinuationActionRetainsCanonicalQueryPayload(t *testing.T) {
 	t.Parallel()
 
 	rt, search, continuation := continuationTestRuntime()
-	continuation.Bounds.Paging.ReplayPayload = true
+	continuation.Bounds.Paging.RetainedFields = []string{"limit", "query"}
 	rt.toolSpecs[continuation.Name] = continuation
 	rt.agentToolSpecs["svc.agent"][1] = continuation
 	outputs := []*planner.ToolOutput{sourceContinuationOutput(
@@ -224,7 +225,7 @@ func TestContinuationActionBindsAndEncodesWithExecutionCodec(t *testing.T) {
 		Cursor string `json:"cursor"`
 	}
 	rt, search, continuation := continuationTestRuntime()
-	continuation.Bounds.Paging.ReplayPayload = true
+	continuation.Bounds.Paging.RetainedFields = []string{"limit", "query"}
 	modelDecodes := 0
 	continuation.Payload.Codec.FromJSON = func(data []byte) (any, error) {
 		modelDecodes++
@@ -534,7 +535,7 @@ func TestPlannerToolOutputHydrationPreservesContinuationRoot(t *testing.T) {
 
 	scheduled := hooks.NewToolCallScheduledEvent(
 		"run-1",
-		"agent-1",
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent-1"))},
 		"session-1",
 		tools.Ident("tools.continue_search"),
 		"continue-1",
@@ -546,7 +547,7 @@ func TestPlannerToolOutputHydrationPreservesContinuationRoot(t *testing.T) {
 	scheduled.ContinuationRootToolCallID = "source-1"
 	result := hooks.NewToolResultReceivedEvent(
 		"run-1",
-		"agent-1",
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent-1"))},
 		"session-1",
 		"run-1",
 		scheduled.ToolName,
@@ -800,14 +801,15 @@ func appendHistoricalHookEvent(
 	require.NoError(t, err)
 	if _, loadErr := store.LoadRun(context.Background(), input.RunID); errors.Is(loadErr, session.ErrRunNotFound) {
 		admitRunForTest(t, store, session.RunMeta{
-			AgentID: string(input.AgentID), RunID: input.RunID, SessionID: input.SessionID,
+			Subject: input.Subject, RunID: input.RunID, SessionID: input.SessionID,
 			Status: session.RunStatusRunning, StartedAt: time.UnixMilli(input.TimestampMS).UTC(),
 		})
 	}
 	_, err = store.AppendRunRecord(context.Background(), &runlog.Event{
-		EventKey:  input.EventKey,
-		RunID:     input.RunID,
-		AgentID:   input.AgentID,
+		EventKey: input.EventKey,
+		RunID:    input.RunID,
+		Subject:  input.Subject,
+
 		SessionID: input.SessionID,
 		TurnID:    input.TurnID,
 		Type:      input.Type,

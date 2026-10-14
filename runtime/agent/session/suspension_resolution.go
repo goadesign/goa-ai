@@ -14,7 +14,7 @@ type (
 	}
 
 	// ContinuedSuspension identifies the real workflow admitted to inherit the
-	// suspended run's saved work. The successor has the same agent and session.
+	// suspended run's saved work. The successor has the same execution subject and session.
 	ContinuedSuspension struct {
 		// RunID identifies the admitted successor, never an unrelated later run.
 		RunID string

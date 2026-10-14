@@ -158,6 +158,12 @@ func (p *toolSpecsPackagePlan) planCompletionFileImports() error {
 // HTTP validation files. Optional imports are recorded only when that package
 // emits the matching source branch.
 func (p *toolSpecsPackagePlan) planSharedFileImports() error {
+	if err := declareExactNames(p.public, p.publicFixed, map[goacodegen.PackageNameKind][]string{
+		goacodegen.NameFunction: {"readStrictToolJSON", "readToolJSONValue", "validateToolJSONText"},
+	}); err != nil {
+		return err
+	}
+
 	for _, validator := range p.jsonValidators {
 		if validator.kind != "union" || validator.untagged {
 			continue
@@ -173,14 +179,12 @@ func (p *toolSpecsPackagePlan) planSharedFileImports() error {
 		goacodegen.SimpleImport("bytes"),
 		goacodegen.SimpleImport("encoding/json"),
 		goacodegen.SimpleImport("fmt"),
-		goacodegen.SimpleImport("io"),
+		goacodegen.SimpleImport("strconv"),
+		goacodegen.NewImport("utf8", "unicode/utf8"),
 		goacodegen.SimpleImport("goa.design/goa-ai/runtime/agent/tools"),
 	}
 	if p.hasJSONValidatorKind(jsonValidatorObject, jsonValidatorMap) {
 		codecImports = append(codecImports, goacodegen.SimpleImport("sort"))
-	}
-	if p.hasIndexedJSONValidator() {
-		codecImports = append(codecImports, goacodegen.SimpleImport("strconv"))
 	}
 	hasTransport := false
 	hasValidation := false
@@ -251,17 +255,6 @@ func (p *toolSpecsPackagePlan) planSharedFileImports() error {
 func (p *toolSpecsPackagePlan) hasJSONValidatorKind(kinds ...string) bool {
 	for _, validator := range p.jsonValidators {
 		if slices.Contains(kinds, validator.kind) {
-			return true
-		}
-	}
-	return false
-}
-
-// hasIndexedJSONValidator reports whether generated source writes an array
-// index or parses an integer value.
-func (p *toolSpecsPackagePlan) hasIndexedJSONValidator() bool {
-	for _, validator := range p.jsonValidators {
-		if validator.kind == jsonValidatorArray || validator.signedInteger || validator.unsignedInteger {
 			return true
 		}
 	}

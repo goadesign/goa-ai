@@ -8,13 +8,14 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/session"
 )
 
 func TestStorageResultStartVariants(t *testing.T) {
-	started := &api.RecordActivityInput{EventKey: "started"}
-	linked := &api.RecordActivityInput{EventKey: "linked"}
+	started := &api.RecordActivityInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("test.agent"))}, EventKey: "started"}
+	linked := &api.RecordActivityInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("test.agent"))}, EventKey: "linked"}
 	for _, test := range []struct {
 		name    string
 		command *api.StorageActivityCommand

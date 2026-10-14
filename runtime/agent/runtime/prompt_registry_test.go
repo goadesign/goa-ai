@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/session"
@@ -19,7 +20,9 @@ func TestNewFromOptionsInitializesPromptRegistryWithStore(t *testing.T) {
 		PromptStore: store,
 	})
 	admitRunForTest(t, rt.Store, session.RunMeta{
-		AgentID: "example.agent", RunID: "run_1", SessionID: "sess_1",
+		Subject: genrunidentity.RunSubject{
+			Executor: genrunidentity.
+				NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("example.agent"))}, RunID: "run_1", SessionID: "sess_1",
 		Status: session.RunStatusRunning,
 	})
 	require.NotNil(t, rt.PromptRegistry)
@@ -55,7 +58,9 @@ func TestNewFromOptionsInitializesPromptRegistryWithoutStore(t *testing.T) {
 
 	rt := newFromOptions(newTestStore(), Options{})
 	admitRunForTest(t, rt.Store, session.RunMeta{
-		AgentID: "example.agent", RunID: "run_1", SessionID: "sess_1",
+		Subject: genrunidentity.RunSubject{
+			Executor: genrunidentity.
+				NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("example.agent"))}, RunID: "run_1", SessionID: "sess_1",
 		Status: session.RunStatusRunning,
 	})
 	require.NotNil(t, rt.PromptRegistry)
@@ -81,7 +86,9 @@ func TestPlannerContextRenderPromptUsesRunScope(t *testing.T) {
 		PromptStore: store,
 	})
 	admitRunForTest(t, rt.Store, session.RunMeta{
-		AgentID: "example.agent", RunID: "run_1", SessionID: "sess_1",
+		Subject: genrunidentity.RunSubject{
+			Executor: genrunidentity.
+				NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("example.agent"))}, RunID: "run_1", SessionID: "sess_1",
 		Status: session.RunStatusRunning,
 	})
 

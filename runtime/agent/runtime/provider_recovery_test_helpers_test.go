@@ -20,6 +20,7 @@ func recoveryContinuationWorkflow(t *testing.T, wf engine.WorkflowContext, check
 	t.Helper()
 	wrapped, err := installProviderRecovery(wf, checkpoint.ProviderRecovery)
 	require.NoError(t, err)
+	wrapped.actor.finalization = &workflowFinalizationState{}
 	return wrapped
 }
 

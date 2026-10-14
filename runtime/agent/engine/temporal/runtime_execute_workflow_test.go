@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -24,6 +25,8 @@ import (
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 
+	genregistry "goa.design/goa-ai/registry/gen/registry"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -33,6 +36,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/run"
 	agentruntime "goa.design/goa-ai/runtime/agent/runtime"
 	"goa.design/goa-ai/runtime/agent/session"
 	"goa.design/goa-ai/runtime/agent/storage"
@@ -68,8 +72,17 @@ const runSuspensionType = "runtime.run_suspension"
 // engine-level tests bypass AgentClient and start a workflow directly.
 func publishTemporalTestSeed(t *testing.T, store storage.Store, agentID agent.Ident, runID, sessionID string) string {
 	t.Helper()
-	_, err := store.BeginRunSeed(t.Context(), storage.SeedDeclaration{
-		AgentID: string(agentID), RunID: runID, SessionID: sessionID, CommandID: runID, AttemptID: runID, Kind: storage.SeedLiteral,
+	origin := genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: runID})}
+	decision, err := store.BeginRunPreparationOperation(t.Context(), storage.RunPreparationBegin{
+		Operation: storage.PreparationOperation{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(string(agentID)))}, RunID: runID, SessionID: sessionID, CommandID: runID},
+		Origin:    origin,
+	})
+	require.NoError(t, err)
+	_, proceed := decision.State.AsProceed()
+	require.True(t, proceed)
+	_, err = store.BeginRunSeed(t.Context(), storage.SeedDeclaration{
+		Origin:  origin,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(string(agentID)))}, RunID: runID, SessionID: sessionID, CommandID: runID, AttemptID: runID, Kind: storage.SeedLiteral,
 	})
 	require.NoError(t, err)
 	prepared := []byte(`{}`)
@@ -208,7 +221,7 @@ func TestPlannerPublicationRetriesImmutableBatchWithoutReplanning(t *testing.T) 
 	env.RegisterActivityWithOptions(runtime.PlanStartActivity, activity.RegisterOptions{Name: planActivityName})
 	env.RegisterActivityWithOptions(runtime.PlanResumeActivity, activity.RegisterOptions{Name: resumeActivityName})
 	input := prepareAcceptedTestWorkflow(t, env, workflowName, taskQueue, &api.RunInput{
-		AgentID: agentID, RunID: runID, SessionID: sessionID, TurnID: "turn-publication",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))}, RunID: runID, SessionID: sessionID, TurnID: "turn-publication",
 		SeedEndID: seedEndID,
 	})
 	env.SetWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{&workflowControlInterceptor{engine: eng}}})
@@ -275,7 +288,7 @@ func TestExecuteWorkflowSuspendsAwaitQuestions(t *testing.T) {
 	env.RegisterActivityWithOptions(runtime.PlanStartActivity, activity.RegisterOptions{Name: planActivityName})
 	env.RegisterActivityWithOptions(runtime.PlanResumeActivity, activity.RegisterOptions{Name: resumeActivityName})
 	input := prepareAcceptedTestWorkflow(t, env, workflowName, taskQueue, &api.RunInput{
-		AgentID: agentID, RunID: runID, SessionID: sessionID, TurnID: turnID,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))}, RunID: runID, SessionID: sessionID, TurnID: turnID,
 		SeedEndID: seedEndID,
 	})
 	env.SetWorkerOptions(worker.Options{Interceptors: []interceptor.WorkerInterceptor{&workflowControlInterceptor{engine: eng}}})
@@ -371,7 +384,7 @@ func TestExecuteWorkflowServiceActivityCancellationClosesTemporalRunCanceled(t *
 	env.RegisterActivityWithOptions(runtime.PlanResumeActivity, activity.RegisterOptions{Name: resumeActivityName})
 	env.RegisterActivityWithOptions(runtime.ExecuteToolActivity, activity.RegisterOptions{Name: executeActivityName})
 	input := prepareAcceptedTestWorkflow(t, env, workflowName, taskQueue, &api.RunInput{
-		AgentID:   agentID,
+		Subject:   genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))},
 		RunID:     runID,
 		SessionID: sessionID,
 		TurnID:    "turn-1",
@@ -393,6 +406,11 @@ func TestExecuteWorkflowServiceActivityCancellationClosesTemporalRunCanceled(t *
 	require.Equal(t, "canceled", completed.Status)
 	require.Nil(t, completed.Failure)
 	require.NotNil(t, completed.Cancellation)
+	require.Equal(t, run.CancellationReasonEngineCanceled, completed.Cancellation.Reason)
+	meta, err := store.LoadRun(t.Context(), runID)
+	require.NoError(t, err)
+	require.Equal(t, session.RunStatusCanceled, meta.Status)
+	require.Equal(t, run.CancellationReasonEngineCanceled, meta.CancellationReason)
 }
 
 type cancelingServicePlanner struct {
@@ -536,6 +554,10 @@ func (r *publicationRetryRecorder) snapshot() (
 // Temporal activity boundary, including its payload bytes.
 func cloneRecordActivityInput(input *api.RecordActivityInput) *api.RecordActivityInput {
 	cloned := *input
+	if service, ok := input.Subject.Executor.AsServiceTool(); ok {
+		owner := *service
+		cloned.Subject.Executor = genrunidentity.NewRunExecutorServiceTool(&owner)
+	}
 	cloned.Payload = append([]byte(nil), input.Payload...)
 	return &cloned
 }
@@ -546,7 +568,7 @@ func equalRecordActivityInput(want, got *api.RecordActivityInput) error {
 	if want.Type != got.Type ||
 		want.EventKey != got.EventKey ||
 		want.RunID != got.RunID ||
-		want.AgentID != got.AgentID ||
+		!reflect.DeepEqual(want.Subject, got.Subject) ||
 		want.SessionID != got.SessionID ||
 		want.TurnID != got.TurnID ||
 		want.TimestampMS != got.TimestampMS ||
@@ -640,7 +662,8 @@ func storageCommandResult(command *api.StorageActivityCommand, recordCount int) 
 
 // record captures one ordered item from the runtime storage activity.
 func (r *hookRecorder) record(input *api.RecordActivityInput) error {
-	if input.Type == transcript.RunLogMessagesSeeded || input.Type == transcript.RunLogMessagesAppended {
+	// History and cancellation records go to storage without becoming public hooks.
+	if input.Type == transcript.RunLogMessagesSeeded || input.Type == transcript.RunLogMessagesAppended || input.Type == storage.CancellationRecordType {
 		return nil
 	}
 	if input.Type == runSuspensionType {
@@ -690,6 +713,6 @@ func anyJSONToolSpec(name tools.Ident) tools.ToolSpec {
 			Schema: rawjson.Message(`{"type":"object"}`),
 			Codec:  codec,
 		},
-		Result: tools.TypeSpec{Name: string(name) + "_result", Codec: codec},
+		Result: tools.TypeSpec{Name: string(name) + "_result", Schema: rawjson.Message(`{}`), Codec: codec},
 	}
 }

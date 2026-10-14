@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -112,7 +114,7 @@ func testWorkflowCancellationAfterTaskInput(t *testing.T, mode string) {
 	seedTestToolDefinitions(rt, specs...)
 	rt.agentToolSpecs = map[agent.Ident][]tools.ToolSpec{"synthetic.agent": specs}
 	wf := &testWorkflowContext{ctx: t.Context(), runtime: rt, hookRuntime: rt}
-	input := &RunInput{AgentID: "synthetic.agent", RunID: "run-pending", SessionID: "session-pending"}
+	input := &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("synthetic.agent"))}, RunID: "run-pending", SessionID: "session-pending"}
 	if mode == "timeout_groups" {
 		input.Policy = &PolicyOverrides{PerToolTimeout: map[tools.Ident]time.Duration{pendingSpec.Name: time.Second, cancelSpec.Name: 2 * time.Second}}
 	}
@@ -210,7 +212,7 @@ func TestWorkflowCancellationAfterChildTaskInput(t *testing.T) {
 	seedTestToolDefinitions(rt, first, second, pendingSpec)
 	rt.agentToolSpecs = map[agent.Ident][]tools.ToolSpec{"parent.agent": {first, second}, "first.agent": {pendingSpec}}
 	wf := &testWorkflowContext{ctx: t.Context(), runtime: rt, hookRuntime: rt}
-	input := &RunInput{AgentID: "parent.agent", RunID: "parent-run", SessionID: "child-session"}
+	input := &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("parent.agent"))}, RunID: "parent-run", SessionID: "child-session"}
 	publishTestRunInput(t, rt, input, nil)
 	out, workflowErr := rt.ExecuteWorkflow(wf, input)
 	assert.Nil(t, out)

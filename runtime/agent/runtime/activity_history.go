@@ -47,7 +47,8 @@ func (r *Runtime) loadActivityHistory(ctx context.Context, agentID agent.Ident, 
 		return nil, engine.MarkActivityErrorNonRetryable(errors.New("history requires agent, run and end record identifiers"))
 	}
 	meta, err := r.Store.LoadRun(ctx, runID)
-	if err == nil && (meta.RunID != runID || meta.AgentID != string(agentID) || meta.SessionID != sessionID) {
+	executor, isAgent := meta.Subject.Executor.AsAgent()
+	if err == nil && (meta.RunID != runID || !isAgent || string(executor) != string(agentID) || meta.SessionID != sessionID) {
 		err = storage.NewContractError(storage.ErrRunRecordOwnerMismatch)
 	}
 	if err != nil {

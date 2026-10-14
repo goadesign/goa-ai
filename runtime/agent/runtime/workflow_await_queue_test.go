@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -17,14 +18,15 @@ import (
 func TestPublishAwaitToolUsesQuestionsDoesNotDuplicateCommittedResponse(t *testing.T) {
 	rt := New(newTestStore())
 	seedTestToolSpecs(rt, newAnyJSONSpec("assistant.ask_question"))
-	base := &workflowConversation{RunContext: run.Context{RunID: "run-1", SessionID: "sess-1"}}
-	input := &RunInput{AgentID: agent.Ident("agent-1"), RunID: "run-1", SessionID: "sess-1"}
+	base := &workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{RunID: "run-1", SessionID: "sess-1"}}
+	input := &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent-1")))}, RunID: "run-1", SessionID: "sess-1"}
 	item := planner.AwaitQuestionsItem(&planner.AwaitQuestions{
 		ID:              "await-1",
 		ToolName:        "assistant.ask_question",
 		ToolCallID:      "runtime-call-1",
 		ModelToolCallID: "provider-call-1",
 		Payload:         rawjson.Message(`{}`),
+		ModelPayload:    rawjson.Message(`{}`),
 		Questions:       []planner.AwaitQuestion{{ID: "q1", Prompt: "which?"}},
 	})
 	result := &planner.PlanResult{Await: planner.NewAwait(item)}
@@ -39,7 +41,7 @@ func TestPublishAwaitToolUsesQuestionsDoesNotDuplicateCommittedResponse(t *testi
 	}}
 
 	require.NoError(t, rt.appendSelectedModelResponse(
-		t.Context(), input.AgentID, base, "turn-1", testPublicationBatchID, &PlanResult{Await: result.Await}, transcript,
+		t.Context(), testSubjectAgent(t, input.Subject), base, "turn-1", testPublicationBatchID, &PlanResult{Await: result.Await}, transcript,
 	))
 	require.NoError(t, rt.publishAwaitToolUses(t.Context(), input, base, "turn-1", item, 0))
 
@@ -54,8 +56,8 @@ func TestPublishAwaitToolUsesQuestionsDoesNotDuplicateCommittedResponse(t *testi
 func TestPublishAwaitToolUsesExternalToolsDoesNotRecordAssistantResponse(t *testing.T) {
 	rt := New(newTestStore())
 	seedTestToolSpecs(rt, newAnyJSONSpec("svc.tools.a"), newAnyJSONSpec("svc.tools.b"))
-	base := &workflowConversation{RunContext: run.Context{RunID: "run-1", SessionID: "sess-1"}}
-	input := &RunInput{AgentID: agent.Ident("agent-1"), RunID: "run-1", SessionID: "sess-1"}
+	base := &workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{RunID: "run-1", SessionID: "sess-1"}}
+	input := &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("agent-1")))}, RunID: "run-1", SessionID: "sess-1"}
 	item := planner.AwaitExternalToolsItem(&planner.AwaitExternalTools{
 		ID: "await-1",
 		Items: []planner.AwaitToolItem{
@@ -64,12 +66,14 @@ func TestPublishAwaitToolUsesExternalToolsDoesNotRecordAssistantResponse(t *test
 				ToolCallID:      "runtime-call-1",
 				ModelToolCallID: "provider-call-1",
 				Payload:         rawjson.Message(`{}`),
+				ModelPayload:    rawjson.Message(`{}`),
 			},
 			{
 				Name:            "svc.tools.b",
 				ToolCallID:      "runtime-call-2",
 				ModelToolCallID: "provider-call-2",
 				Payload:         rawjson.Message(`{}`),
+				ModelPayload:    rawjson.Message(`{}`),
 			},
 		},
 	})

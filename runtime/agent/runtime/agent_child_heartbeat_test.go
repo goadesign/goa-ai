@@ -12,8 +12,11 @@ import (
 	"testing/synctest"
 	"time"
 
+	genregistry "goa.design/goa-ai/registry/gen/registry"
+
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -98,7 +101,7 @@ func TestChildPublicationFailureEngineRetry(t *testing.T) {
 			}))
 			handle, err := rt.Engine.StartWorkflow(t.Context(), engine.WorkflowStartRequest{
 				ID: "test-parent", Workflow: "test.workflow", TaskQueue: "test.queue",
-				Input: &api.RunInput{RunID: "test-parent"},
+				Input: &api.RunInput{Subject: input.Call.Subject, RunID: "test-parent"},
 			})
 			require.NoError(t, err)
 			_, err = handle.Wait(t.Context())
@@ -246,7 +249,8 @@ func childHeartbeatFixture(t *testing.T) (*Runtime, *api.AgentChildActivityInput
 	cfg := AgentToolConfig{Definition: testAgentDefinition("child.agent", "child.workflow", "child.queue", nil, nil)}
 	registerAgentToolTestConfig(rt, cfg, "child", newAnyJSONSpec("child.lookup"))
 	return rt, &api.AgentChildActivityInput{
-		Call: ToolCall{AgentID: "parent.agent", RunID: parent.RunID, SessionID: parent.SessionID,
+		Origin: genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: parent.RunID, ToolCallID: "child-call"})},
+		Call: ToolCall{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("parent.agent"))}, RunID: parent.RunID, SessionID: parent.SessionID,
 			Name: "child.lookup", ToolCallID: "child-call", Payload: rawjson.Message(`{}`)},
 		ParentRun: parent, HistoryEndID: input.HistoryEndID,
 	}

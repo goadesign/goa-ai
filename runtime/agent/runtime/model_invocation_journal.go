@@ -495,9 +495,13 @@ func (j *modelInvocationJournal) exportModelInvocation(
 		return nil, j.outputErr
 	}
 	calls := planResultModelToolCalls(result)
+	var response *planner.FinalResponse
+	if result != nil {
+		response = terminalResponse(result.FinalResponse, result.FinalToolResult)
+	}
 	var owner modelInvocationMessageOwner
 	var hasOwner bool
-	if result != nil && result.FinalResponse != nil {
+	if response != nil {
 		for id, candidate := range j.invocations {
 			if candidate.response == nil {
 				continue
@@ -505,7 +509,7 @@ func (j *modelInvocationJournal) exportModelInvocation(
 			for messageIndex := range candidate.response.Content {
 				if !model.SameMessageOrigin(
 					&candidate.response.Content[messageIndex],
-					result.FinalResponse.Message,
+					response.Message,
 				) {
 					continue
 				}
@@ -538,7 +542,7 @@ func (j *modelInvocationJournal) exportModelInvocation(
 		candidateHasOwner := hasOwner && id == owner.invocationID
 		matches := (candidateHasOwner && modelInvocationMatches(candidate, calls)) ||
 			(!hasOwner &&
-				(result == nil || result.FinalResponse == nil) &&
+				response == nil &&
 				len(calls) > 0 &&
 				modelInvocationMatches(candidate, calls))
 		if !matches {
@@ -592,25 +596,25 @@ func (j *modelInvocationJournal) exportModelInvocation(
 	}
 	if hasOwner {
 		providerMessage := &captured.Content[owner.messageIndex]
-		plannerMessage := result.FinalResponse.Message
+		plannerMessage := response.Message
 		if providerMessage.Role != plannerMessage.Role ||
 			!reflect.DeepEqual(providerMessage.Parts, plannerMessage.Parts) {
 			return nil, errors.New("planner result modified provider-owned message content")
 		}
 		providerMeta := providerMessage.Meta
-		plannerMeta := result.FinalResponse.Message.Meta
+		plannerMeta := response.Message.Meta
 		for key, value := range providerMeta {
 			plannerValue, ok := plannerMeta[key]
 			if !ok || !reflect.DeepEqual(value, plannerValue) {
 				return nil, errors.New("planner result modified provider-owned message metadata")
 			}
 		}
-		enriched, err := model.CloneMessages([]*model.Message{result.FinalResponse.Message})
+		enriched, err := model.CloneMessages([]*model.Message{response.Message})
 		if err != nil {
 			return nil, err
 		}
 		providerMessage.Meta = enriched[0].Meta
-		result.FinalResponse.Message = providerMessage
+		response.Message = providerMessage
 	}
 	messages := make([]*model.Message, len(captured.Content))
 	for i := range captured.Content {
@@ -808,20 +812,20 @@ func runtimePlanResultModelToolCalls(result *PlanResult) []modelFacingToolCall {
 			calls = append(calls, modelFacingToolCall{
 				id:      item.ToolClarification.ModelToolCallID,
 				name:    item.ToolClarification.ToolName,
-				payload: item.ToolClarification.Payload,
+				payload: item.ToolClarification.ModelPayload,
 			})
 		case planner.AwaitItemKindQuestions:
 			calls = append(calls, modelFacingToolCall{
 				id:      item.Questions.ModelToolCallID,
 				name:    item.Questions.ToolName,
-				payload: item.Questions.Payload,
+				payload: item.Questions.ModelPayload,
 			})
 		case planner.AwaitItemKindExternalTools:
 			for _, call := range item.ExternalTools.Items {
 				calls = append(calls, modelFacingToolCall{
 					id:      call.ModelToolCallID,
 					name:    call.Name,
-					payload: call.Payload,
+					payload: call.ModelPayload,
 				})
 			}
 		}

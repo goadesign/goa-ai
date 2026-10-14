@@ -1,7 +1,7 @@
 // Package registry owns cross-replica admission for routed tool calls.
 //
-// One expiring Redis hash per transport identity stores the admitted or
-// rejected decision. An admitted record binds retries to one immutable request,
+// One expiring Redis hash per transport identity stores prepared or rejected
+// transport state. A prepared record binds retries to one immutable request,
 // absolute result-history expiration, and terminal state. Its provider token
 // may change before publication and becomes permanent when the request is
 // appended. Request and terminal-result publication each commit into that

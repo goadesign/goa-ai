@@ -142,6 +142,35 @@ var RegistryTools = Toolset("enterprise", FromRegistry(CorpRegistry, "data-tools
 
 All toolsets are first-class citizens—agents use `Use(toolset)` uniformly regardless of provider.
 
+## Direct Agent Operations
+
+An exported Agent operation can run before it is published as a tool.
+`Runtime.StartOperation` requires an existing session;
+`Runtime.StartOneShotOperation` creates no conversation. Both accept the generated
+operation declaration, input, run identity and labels.
+The host authorizes the selection before starting it. The declaration does not
+create an access grant.
+
+The engine accepts the request before the provider prepares messages. A typed
+activity on the selected provider queue checks its generated export and exact
+route, then uses that provider's configuration resolver. The existing Agent loop
+validates the result against the retained operation. A direct call has no parent;
+delegation keeps its real child relationship. Exact request replay observes the
+same work, while changed input conflicts. Continuations retain the original
+operation rather than accepting a replacement.
+
+Provider configuration selects literal messages or an exact completed run with
+`AgentHistory`. The shared history preparation code replaces old system messages,
+validates transcript order and preserves source and reasoning exclusions by
+reference. Storage captures the completed source's committed terminal position
+under the same Agent and session; the provider cannot choose record positions.
+Direct and delegated operations publish this history with their accepted control
+values, and retries recover that publication without resolving configuration again.
+
+See [direct operations](docs/runtime.md#direct-agent-operations) for the caller
+and provider contracts. The [provider history upgrade](docs/runtime.md#provider-owned-history)
+replaces the public resolver's `Messages` field with required `History`.
+
 ## Service-Owned Typed Completions
 
 Direct assistant output is a different contract than a tool call, so Goa-AI models
@@ -793,8 +822,13 @@ with the same request; continuing the parent starts a new child workflow from
 the child's saved checkpoint. That child names the new parent execution before
 its request is accepted, while retaining the original tool-call ID, call run,
 arguments, selected contract, actor and resource context. The old checkpoint
-keeps its historical parent unchanged. Sessionless one-shot runs reject
-external-input requests because they have no continuation API.
+keeps its historical parent unchanged. Standalone runs use
+`PrepareOneShotContinuation` and `StartPrepared` to answer the exact saved request
+without creating a Session. Registered standalone operations use their existing
+`StartToolContinuation` entry point. Standalone parents and children preserve the
+original invocation and exact history position; the store admits only one
+successor for each suspended run. Conversation continuation and next-turn APIs
+still require a Session.
 
 Initial sessionful runs use the same command. `Prepare(ctx, sessionID, messages,
 options...)` validates the generated agent contract and publishes the exact
@@ -917,10 +951,12 @@ Before recording success or suspension, it applies `contract.CopyRunOutput`
 to the exact result. This catches deterministic codec failures before terminal
 storage, but does not make Store and engine commits atomic. Full records remain
 in the existing paged Store; suspension tool-history contents remain unchanged.
-New top-level results use `json/goa-ai-run-output-v2`; a centralized strict
-reader maps the frozen old `json/plain` result schema to the same count and
-telemetry contract. The temporary reader's removal and deployment conditions
-are defined in [Workflow results](docs/workflow-results.md).
+New top-level results use `json/goa-ai-run-output-v3` with a required generated
+Agent-or-service-tool subject. Common records preserve that complete identity;
+Agent planning and model history still require the Agent branch. The strict
+reader rejects earlier results instead of inferring a subject from old fields.
+The breaking source and saved-data requirements are defined in
+[Run subjects](docs/run-subjects.md) and [Workflow results](docs/workflow-results.md).
 
 Malformed prepared references, changed publication identities, or a stored
 request that no longer satisfies the current generated definition return
@@ -1175,6 +1211,22 @@ running-start timestamp equality is unchanged; this does not resume a running
 Run or recover missing records. Matching closed results produce no new hooks,
 streams, planner work or outcome writes.
 
+An accepted workflow may fail before its first Run write. The common finalizer
+stores a generated `UnstartedExecutionTerminal` with the original invocation,
+actual engine input digest and sourced failure or cancellation time. The Store
+orders that decision with preparation and first start; a late writer cannot
+reopen the execution. If start already won, completion preserves its current
+terminal or suspended outcome. High-level workflows require one workflow
+attempt and retain activity retries for durable delivery. External engine
+closure uses exact-request completion repair, never a guessed failure or a
+new start to inspect history.
+
+An unstarted continuation records only its own outcome, never a continued
+successor on its predecessor. A different continuation can still start and own
+that saved work. The initiating service owns any cancellation required by its
+overall accepted operation; generic execution repair must not cancel another
+answer that won admission.
+
 All five Store methods return current run status in the same operation that
 selects the original records. Synchronous starts reuse the sessionless result
 shape. Hosts must implement the required engine digest and explicit execution
@@ -1199,7 +1251,7 @@ writers must not overlap. How the host reaches that state depends on its
 database and deployment environment.
 
 Continuation preparation accepts only the current suspension schema,
-`goa-ai.run-suspension.v13`, which references an exact saved history position.
+`goa-ai.run-suspension.v14`, which references an exact saved history position.
 Every accepted recovery plan that waits for input retains its actual advertised
 catalog, including authorized alternatives to a
 failed tool, preserving the catalog contract introduced in version eight.
@@ -1252,6 +1304,20 @@ never derives an engine run timeout from policy; engine start requests leave
 that field unset.
 
 ## Registry Integration
+
+Registry owns resource identity, immutable operation declarations and provider
+delivery. The host owns authorization: registered ownership identifies a resource
+but does not grant permission to a caller. `ListCatalogResources`
+returns bounded permanent identities for one owner without duplicating revisions;
+`CheckCatalogResource` checks registration and retirement. No sharing grants or
+per-invocation permission records are stored by Registry.
+
+`RegisteredInvocation` retains only the original invocation identity, exact
+selected target, and validated original arguments. These values survive workflow
+continuations; actor attribution stays with the host's execution records.
+Service delivery uses `CallResolvedTool` and its exact registration token, with
+the existing deadlines, provider leases, claims, result retention, and overload
+recovery. Native operations use their generated declaration and runtime path.
 
 Applications that expose tool registration through their own Goa services reuse
 `registry/design/types`. That package declares the registry schemas without
@@ -1359,6 +1425,24 @@ travels through child input and checkpoints, independently of live discovery.
 Planner inputs expose its result contract as `ParentTool`; completion validates
 against that contract, even after replacement. No shared application storage,
 per-configuration worker registration, or additional model loop is introduced.
+
+`RegistryCatalog.IncludeResolved` imports original operation names from an exact
+registration. `IncludeRegistered` instead requires the owner-selected
+`CatalogSource` and exact registration. It validates the route, registration token
+and operation kind, then derives names from registry, owner, resource kind,
+logical resource name and original operation. Revision routes and tokens do not
+change these names. Provider declarations remain unchanged; pagination partners
+use the same derived identity, and provider adapters own name length projection.
+Duplicate derived identities fail instead of replacing an existing operation.
+`ForEachRegisteredSource` returns independent source copies for generated
+`Bind*SourceInput` helpers. A binding must match the owner and exact target.
+
+Saved `RegistryBinding.Resolution` values use the generated `RegistrySelection`
+union: a direct registration, or a registered resource with its required source
+and registration. Replay reconstructs the same names and original operations
+without discovery or a saved alias table. Deployments upgrading from protobuf
+`ResolveToolsetResponse` bytes must convert every retained binding to the direct
+variant before starting the new reader; see the [upgrade contract](docs/tool_search.md#generation-and-upgrades).
 
 Generated `Toolset()` declarations and the public portable contract compiler
 support SDK integration. Applications can use `RegistryCatalog.RunLabels()` to
@@ -2087,7 +2171,7 @@ for details and the SDK source-compatibility change.
   error instead of fabricating success after the required side effect did not
   occur. `CompletionTool` and `LimitTerminalPlans` are mutually exclusive
   because they assign different outcomes to the same exhausted limits.
-  Completion-aware suspensions use `goa-ai.run-suspension.v13`. The saved policy
+  Completion-aware suspensions use `goa-ai.run-suspension.v14`. The saved policy
   is required, and a checkpoint with another version fails at that typed
   boundary.
 - **Provider reasoning stream contract**: when a caller enables thinking
@@ -2639,10 +2723,27 @@ containing untyped `Any`, other custom Go representations, or non-string map key
 complete codecs skipped; their original types remain valid and supported peers
 remain eligible. Runtime-owned builtin forms are excluded.
 
-An explicit `Any` field represented as `json.RawMessage` retains its open
+An explicit `Any` or `Bytes` field represented as `json.RawMessage` retains its open
 external contract. Complete-value codecs check raw syntax, text and duplicate
 members before encoding or typed decoding; future members and exact numbers
-remain intact. Other custom Go representations remain unsupported.
+remain intact. Raw byte unions preserve selected JSON null and named branch
+identity; ordinary bytes retain base64 JSON encoding and protobuf remains bytes.
+Other custom Go representations remain unsupported.
+
+An object may preserve additional JSON members in one optional, unbounded
+String-key map tagged `json:",embed"`. Its known sibling fields must have explicit literal JSON names and use
+`case:strict`, for example `json:"message,case:strict"`: `MESSAGE` then remains
+an extra member instead of overwriting `message` in Go's compatibility decoder.
+Literal names may contain Unicode; empty names, quoted or escaped tag-name syntax,
+and `-` with options are rejected. Only the exact `json:"-"` tag hides a field.
+Generation rejects required or bounded embedded maps, multiple embedded maps,
+and known siblings without explicit names and exact-case matching, even if another field prevents
+standalone codec generation. A named tag such as `json:"extras,embed"` stays an
+ordinary named map. Strict encoding rejects extra members that collide with known
+fields or a containing flattened union's discriminator. Strict decoding rejects
+duplicate names and checks extra values against the map element's declared type.
+Generated MCP form and URL parameters supply these tags automatically and keep
+extra protocol members as raw JSON values. Closed objects remain closed.
 
 Encoding checks the original typed value before conversion, including required
 nil fields, invalid text, and cycles. Decoding checks raw JSON names, types,
@@ -3237,8 +3338,11 @@ continuation without starting a workflow. It preserves the original suspended
 result, checkpoint and records. An unknown checkpoint is rejected before closure.
 
 A suspension with saved work still receives a durable cancellation job. The
-job obtains its route from the original accepted preparation, follows only
-storage-admitted successors, and publishes ordinary cancellation continuations.
+job stays on the highest parent's worker. An active parent's route comes from
+engine admission; a saved parent's route comes from retained preparation or
+suspension, without requiring old engine history. Delivery targets the nearest
+running ancestor. The job follows only storage-admitted successors and publishes
+ordinary cancellation continuations when all ancestors have suspended.
 A racing answer can win admission; the job then follows that accepted execution.
 Saved children remain owned by their execution parent. Cancellation never starts
 a detached child as an unrelated root. A selected child's reason is retained;
@@ -3247,7 +3351,7 @@ pending observations and retries temporary delivery failures without a total
 cleanup deadline. Temporal's history rollover hint carries the same request into
 a fresh execution with the same observation delay. Contract conflicts fail
 instead of retrying indefinitely.
-The in-memory engine mirrors acceptance and retry rules without durability. Registry protocol 13 and suspension version 13 reject prior
+The in-memory engine mirrors acceptance and retry rules without durability. Registry protocol 13 and suspension version 14 reject prior
 contracts; providers, consumers and workers must migrate together.
 
 A suspended run has one exclusive `RunMeta.SuspensionResolution`: nil while
@@ -3279,6 +3383,10 @@ that same identity and the saved operation sequence; it cannot reinterpret a
 successor as a fresh invocation. The successor workflow owns later result records
 through the existing separate call and result run references.
 
+Before dispatching a tool batch, the workflow loop owns its execution records.
+Ready child results remain visible even while an ordinary activity or another
+child blocks collection. Those results transfer into unfinished step records
+before active collection releases them.
 The activity batch owns Tasks while polling them. Returning a validated request
 for input transfers its Task to the workflow's unfinished record, even when a
 sibling call or a later execution group fails. Initial and resumed workflows

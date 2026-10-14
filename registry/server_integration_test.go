@@ -712,6 +712,11 @@ func startServiceAndClients(
 
 	grpcCli := grpcclient.NewClient(conn)
 	client := genregistry.NewClient(
+		grpcCli.CheckCatalogResource(),
+		grpcCli.ListCatalogResources(),
+		grpcCli.RegisterAgentExports(),
+		grpcCli.ValidateAgentExports(),
+		grpcCli.RetireAgentResource(),
 		grpcCli.DeclareServiceToolset(),
 		grpcCli.ReplaceServiceToolset(),
 		grpcCli.AttachProvider(),

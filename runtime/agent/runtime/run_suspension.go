@@ -12,8 +12,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"time"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
@@ -88,14 +90,14 @@ func prepareRunSuspensionRecordsWithMetadata(input *RunInput, suspension *api.Ru
 	record := &RecordActivityInput{
 		Type:      runSuspensionRecordType,
 		RunID:     input.RunID,
-		AgentID:   input.AgentID,
+		Subject:   input.Subject,
 		SessionID: input.SessionID,
 		Payload:   data,
 	}
 	suspendedRecord, err := prepareHookRecordInputWithMetadata(
 		hooks.NewRunSuspendedEvent(
 			input.RunID,
-			input.AgentID,
+			input.Subject,
 			input.SessionID,
 			suspension.ID,
 			suspension.Version,
@@ -114,8 +116,11 @@ func prepareRunSuspensionRecordsWithMetadata(input *RunInput, suspension *api.Ru
 // decodeRunSuspensionRecord validates the private activity variant and returns
 // the exact bytes that must be committed with the suspended record.
 func (r *Runtime) decodeRunSuspensionRecord(input *RecordActivityInput) (session.RunSuspension, error) {
-	if input.RunID == "" || input.AgentID == "" || input.SessionID == "" || len(input.Payload) == 0 {
-		return session.RunSuspension{}, errors.New("runtime: suspension record requires run, agent, session, and payload")
+	if _, err := genrunidentity.EncodeRunSubject(&input.Subject); err != nil {
+		return session.RunSuspension{}, fmt.Errorf("suspension record subject: %w", err)
+	}
+	if input.RunID == "" || len(input.Payload) == 0 {
+		return session.RunSuspension{}, errors.New("runtime: suspension record requires run and payload")
 	}
 	if input.EventKey != "" || input.TurnID != "" || input.TimestampMS != 0 {
 		return session.RunSuspension{}, errors.New("runtime: suspension record cannot contain run-log event fields")
@@ -124,14 +129,23 @@ func (r *Runtime) decodeRunSuspensionRecord(input *RecordActivityInput) (session
 	if err := decodeStoredRunSuspension(input.Payload, &suspension); err != nil {
 		return session.RunSuspension{}, fmt.Errorf("decode run suspension storage payload: %w", err)
 	}
-	checkpoint, err := decodeWorkflowCheckpointState(&suspension)
-	if err != nil {
-		return session.RunSuspension{}, err
-	}
-	if checkpoint.AgentID != string(input.AgentID) ||
-		checkpoint.SessionID != input.SessionID ||
-		checkpoint.PreviousRunID != input.RunID {
-		return session.RunSuspension{}, errors.New("runtime: suspension record identity does not match checkpoint")
+	if _, serviceTool := input.Subject.Executor.AsServiceTool(); serviceTool {
+		checkpoint, err := decodeRegisteredRootCheckpoint(&suspension)
+		if err != nil {
+			return session.RunSuspension{}, err
+		}
+		if checkpoint.Input.RunID != input.RunID || checkpoint.Input.SessionID != input.SessionID || !reflect.DeepEqual(checkpoint.Input.Subject, input.Subject) {
+			return session.RunSuspension{}, errors.New("runtime: service-tool suspension record identity does not match checkpoint")
+		}
+	} else {
+		executor, _ := input.Subject.Executor.AsAgent()
+		checkpoint, err := decodeWorkflowCheckpointState(&suspension)
+		if err != nil {
+			return session.RunSuspension{}, err
+		}
+		if checkpoint.AgentID != string(executor) || checkpoint.SessionID != input.SessionID || checkpoint.PreviousRunID != input.RunID {
+			return session.RunSuspension{}, errors.New("runtime: suspension record identity does not match checkpoint")
+		}
 	}
 	return session.RunSuspension{
 		ID:   suspension.ID,
@@ -167,7 +181,7 @@ func (r *Runtime) LoadRunSuspension(ctx context.Context, runID string) (*api.Run
 	if err != nil {
 		return nil, err
 	}
-	suspension, _, err := validateStoredRunSuspension(stored, run)
+	suspension, err := validateStoredRunSuspension(stored, run)
 	if err != nil {
 		return nil, fmt.Errorf("%w: run %q checkpoint: %w", ErrRunSuspensionCorrupt, runID, err)
 	}
@@ -177,31 +191,50 @@ func (r *Runtime) LoadRunSuspension(ctx context.Context, runID string) (*api.Run
 // validateStoredRunSuspension checks the saved suspension, its current private
 // checkpoint and run identity before execution or proof of no saved work.
 // Historical result reads use validateHistoricalSuspension instead.
-func validateStoredRunSuspension(stored session.RunSuspension, run session.RunMeta) (*api.RunSuspension, *workflowCheckpoint, error) {
+func validateStoredRunSuspension(stored session.RunSuspension, run session.RunMeta) (*api.RunSuspension, error) {
 	var suspension api.RunSuspension
 	if err := decodeStoredRunSuspension(stored.Data, &suspension); err != nil {
-		return nil, nil, fmt.Errorf("decode checkpoint envelope: %w", err)
+		return nil, fmt.Errorf("decode checkpoint envelope: %w", err)
 	}
 	if suspension.ID != stored.ID {
-		return nil, nil, errors.New("stored checkpoint id does not match payload")
+		return nil, errors.New("stored checkpoint id does not match payload")
+	}
+	// Direct service-tool checkpoints retain their complete accepted input. The
+	// decoder checks their private state before these stored identities are used.
+	if _, serviceTool := run.Subject.Executor.AsServiceTool(); serviceTool {
+		checkpoint, err := decodeRegisteredRootCheckpoint(&suspension)
+		if err != nil {
+			return nil, fmt.Errorf("decode service-tool checkpoint state: %w", err)
+		}
+		if checkpoint.Input.RunID != run.RunID || checkpoint.Input.SessionID != run.SessionID || checkpoint.Input.ParentRunID != run.ParentRunID || !reflect.DeepEqual(checkpoint.Input.Subject, run.Subject) {
+			return nil, errors.New("stored service-tool checkpoint identity does not match run")
+		}
+		if !reflect.DeepEqual(*checkpoint.Input.RegisteredInvocation.Invocation, run.Origin) {
+			return nil, errors.New("stored service-tool invocation does not match run origin")
+		}
+		return &suspension, nil
 	}
 	checkpoint, err := decodeWorkflowCheckpointState(&suspension)
 	if err != nil {
-		return nil, nil, fmt.Errorf("decode checkpoint state: %w", err)
+		return nil, fmt.Errorf("decode checkpoint state: %w", err)
 	}
 	if checkpoint.PreviousRunID != run.RunID {
-		return nil, nil, fmt.Errorf("stored checkpoint belongs to run %q instead of %q", checkpoint.PreviousRunID, run.RunID)
+		return nil, fmt.Errorf("stored checkpoint belongs to run %q instead of %q", checkpoint.PreviousRunID, run.RunID)
 	}
-	if checkpoint.AgentID != run.AgentID {
-		return nil, nil, fmt.Errorf("stored checkpoint agent %q does not match run agent %q", checkpoint.AgentID, run.AgentID)
+	executor, isAgent := run.Subject.Executor.AsAgent()
+	if !isAgent || checkpoint.AgentID != string(executor) {
+		return nil, errors.New("stored Agent checkpoint does not match run subject")
 	}
 	if checkpoint.SessionID != run.SessionID {
-		return nil, nil, fmt.Errorf("stored checkpoint session %q does not match run session %q", checkpoint.SessionID, run.SessionID)
+		return nil, fmt.Errorf("stored checkpoint session %q does not match run session %q", checkpoint.SessionID, run.SessionID)
+	}
+	if invocation := checkpoint.Context.RegisteredInvocation; invocation != nil && !reflect.DeepEqual(invocation.Invocation, &run.Origin) {
+		return nil, errors.New("stored Agent invocation does not match run origin")
 	}
 	if checkpoint.Context.ParentRunID != run.ParentRunID {
-		return nil, nil, fmt.Errorf("stored checkpoint parent %q does not match run parent %q", checkpoint.Context.ParentRunID, run.ParentRunID)
+		return nil, fmt.Errorf("stored checkpoint parent %q does not match run parent %q", checkpoint.Context.ParentRunID, run.ParentRunID)
 	}
-	return &suspension, checkpoint, nil
+	return &suspension, nil
 }
 
 // decodeStoredRunSuspension accepts exactly the runtime-owned suspension

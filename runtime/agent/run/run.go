@@ -42,6 +42,7 @@ package run
 import (
 	"errors"
 
+	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -86,20 +87,25 @@ type (
 		// Format: typically "turn-1", "turn-2", etc. within a session.
 		TurnID string
 
-		// Tool identifies the fully-qualified tool name when this run is a nested
-		// agent-as-tool execution. For top-level runs (not invoked via a parent tool),
-		// Tool is empty. Planners may use this to select method-specific prompts.
-		// Format: "<service>.<toolset>.<tool>".
+		// Tool identifies the selected Agent operation for a direct or delegated
+		// call. It is empty for message-based runs. Parent identity is recorded
+		// separately and is never invented for a direct operation.
 		Tool tools.Ident
 
-		// ToolArgs carries the original JSON arguments for the parent tool when this run
-		// is an agent-as-tool execution. Nil for top-level runs. Nested agent planners
-		// can use this structured input to render method-specific prompts without
-		// reparsing free-form messages.
+		// ToolArgs retains the operation's original validated JSON input. Direct
+		// host calls select Operation; registered calls select ToolRegistry.
 		ToolArgs rawjson.Message
 
-		// ToolRegistry retains the parent call's selected registry declaration.
-		// It is absent for top-level runs and compiled Agent tools.
+		// RegisteredInvocation retains the original identity, selected operation,
+		// and arguments when a registered Agent operation suspends for input.
+		RegisteredInvocation *genregistry.RegisteredInvocation `json:",omitempty"` //nolint:tagliatelle // Saved records retain Go field names.
+
+		// Operation retains the generated declaration for a direct host-authorized
+		// Agent call. It cannot accompany RegisteredInvocation or ToolRegistry.
+		Operation *genregistry.ToolSchema `json:",omitempty"` //nolint:tagliatelle // Saved records retain Go field names.
+
+		// ToolRegistry retains the selected declaration for an independent or
+		// delegated registered call. Compiled Agent tools do not supply it.
 		ToolRegistry *tools.RegistryBinding `json:",omitempty"` //nolint:tagliatelle // Persisted records retain Go field names.
 
 		// Attempt counts how many times the run has been attempted/resumed.

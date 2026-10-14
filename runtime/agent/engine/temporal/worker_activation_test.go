@@ -15,6 +15,7 @@ import (
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 )
@@ -155,7 +156,7 @@ func TestRegisterWorkflowRejectsRegistrationAfterSeal(t *testing.T) {
 	err := eng.RegisterWorkflow(context.Background(), engine.WorkflowDefinition{
 		Name: "agent.workflow",
 		Handler: func(ctx engine.WorkflowContext, input *api.RunInput) (*api.RunOutput, error) {
-			return &api.RunOutput{}, nil
+			return &api.RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}}, nil
 		},
 	})
 	require.NoError(t, err)

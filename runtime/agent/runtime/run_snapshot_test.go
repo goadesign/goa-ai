@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -39,9 +40,11 @@ func TestNewRunSnapshotDerivesToolStateAndCompletion(t *testing.T) {
 		})
 		require.NoError(t, err)
 		return &runlog.Event{
-			EventKey:  in.EventKey,
-			RunID:     runID,
-			AgentID:   agentID,
+			EventKey: in.EventKey,
+			RunID:    runID,
+			Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+				RunExecutorBranchAgent(agentID))},
+
 			SessionID: sessionID,
 			TurnID:    turnID,
 			Type:      in.Type,
@@ -58,14 +61,14 @@ func TestNewRunSnapshotDerivesToolStateAndCompletion(t *testing.T) {
 
 	labels := map[string]string{"household_id": "house-42"}
 	events := []*runlog.Event{
-		mk(t0, hooks.NewRunStartedEvent(runID, agentID, sessionID, "", "", labels)),
-		mk(t1, hooks.NewRunPhaseChangedEvent(runID, agentID, sessionID, run.PhasePlanning)),
-		mk(t2, hooks.NewToolCallScheduledEvent(runID, agentID, sessionID, tools.Ident("svc.tools.search"), "call-1", []byte(`{"q":"x"}`), "q", "", 0)),
-		mk(t3, hooks.NewToolResultReceivedEvent(runID, agentID, sessionID, runID, tools.Ident("svc.tools.search"), "call-1", "", nil, nil, nil, "", nil, 250*time.Millisecond, nil, testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "boom"))),
-		mk(t4, hooks.NewRunCompletedEvent(runID, agentID, sessionID, "failed", run.PhaseFailed, labels, errors.New("run failed"), nil)),
+		mk(t0, hooks.NewRunStartedEvent(runID, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))}, sessionID, "", "", labels)),
+		mk(t1, hooks.NewRunPhaseChangedEvent(runID, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))}, sessionID, run.PhasePlanning)),
+		mk(t2, hooks.NewToolCallScheduledEvent(runID, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))}, sessionID, tools.Ident("svc.tools.search"), "call-1", []byte(`{"q":"x"}`), "q", "", 0)),
+		mk(t3, hooks.NewToolResultReceivedEvent(runID, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))}, sessionID, runID, tools.Ident("svc.tools.search"), "call-1", "", nil, nil, nil, "", nil, 250*time.Millisecond, nil, testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "boom"))),
+		mk(t4, hooks.NewRunCompletedEvent(runID, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))}, sessionID, "failed", run.PhaseFailed, labels, errors.New("run failed"), nil)),
 	}
 
-	snap, err := newRunSnapshot(events)
+	snap, err := newRunSnapshot(events, "", nil)
 	require.NoError(t, err)
 
 	require.Equal(t, runID, snap.RunID)
@@ -85,12 +88,15 @@ func TestGetRunSnapshotReadsThroughStore(t *testing.T) {
 
 	store := newTestStore()
 	admitRunForTest(t, store, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run-1", SessionID: "sess-1", Status: session.RunStatusRunning,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent("svc.agent"))}, RunID: "run-1", SessionID: "sess-1", Status: session.RunStatusRunning,
 	})
 	_, err := store.AppendRunRecord(context.Background(), &runlog.Event{
-		EventKey:  "evt-1",
-		RunID:     "run-1",
-		AgentID:   agent.Ident("svc.agent"),
+		EventKey: "evt-1",
+		RunID:    "run-1",
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+			RunExecutorBranchAgent(agent.Ident("svc.agent")))},
+
 		SessionID: "sess-1",
 		TurnID:    "turn-1",
 		Type:      hooks.RunPhaseChanged,
@@ -108,7 +114,7 @@ func TestGetRunSnapshotReadsThroughStore(t *testing.T) {
 func TestNewRunSnapshotRejectsNilStoredEvent(t *testing.T) {
 	t.Parallel()
 
-	_, err := newRunSnapshot([]*runlog.Event{nil})
+	_, err := newRunSnapshot([]*runlog.Event{nil}, "", nil)
 
 	require.EqualError(t, err, "snapshot run log contains nil event at index 0")
 }
@@ -120,12 +126,12 @@ func TestNewRunSnapshotRejectsInvalidRunCompletedHookPayload(t *testing.T) {
 		ID:        "event-1",
 		EventKey:  "event-1",
 		RunID:     "run-1",
-		AgentID:   agent.Ident("svc.agent"),
+		Subject:   genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("svc.agent")))},
 		SessionID: "sess-1",
 		Type:      hooks.RunCompleted,
 		Payload:   []byte(`{"status":"failed","phase":"failed"}`),
 		Timestamp: time.Unix(1, 0).UTC(),
-	}})
+	}}, "", nil)
 
 	require.ErrorContains(t, err, "failed run completion requires failure payload")
 }
@@ -143,7 +149,7 @@ func TestNewRunSnapshotEnforcesLocalToolOrder(t *testing.T) {
 	schedule := func(name tools.Ident, parent string) hooks.Event {
 		return hooks.NewToolCallScheduledEvent(
 			runID,
-			"svc.agent",
+			genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))},
 			session,
 			name,
 			callID,
@@ -156,7 +162,7 @@ func TestNewRunSnapshotEnforcesLocalToolOrder(t *testing.T) {
 	result := func(name tools.Ident, parent string) hooks.Event {
 		return hooks.NewToolResultReceivedEvent(
 			runID,
-			"svc.agent",
+			genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))},
 			session,
 			runID,
 			name,
@@ -184,7 +190,7 @@ func TestNewRunSnapshotEnforcesLocalToolOrder(t *testing.T) {
 		{
 			name: "update before schedule",
 			events: []hooks.Event{
-				hooks.NewToolCallUpdatedEvent(runID, "svc.agent", session, callID, 1),
+				hooks.NewToolCallUpdatedEvent(runID, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, session, callID, 1),
 			},
 			wantErr: `tool update requires active schedule for call "call-1"`,
 		},
@@ -204,7 +210,7 @@ func TestNewRunSnapshotEnforcesLocalToolOrder(t *testing.T) {
 				schedule("svc.tools.parent", ""),
 				hooks.NewToolCallScheduledEvent(
 					runID,
-					"svc.agent",
+					genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))},
 					session,
 					toolName,
 					"child-1",
@@ -215,7 +221,7 @@ func TestNewRunSnapshotEnforcesLocalToolOrder(t *testing.T) {
 				),
 				hooks.NewToolResultReceivedEvent(
 					runID,
-					"svc.agent",
+					genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))},
 					session,
 					runID,
 					toolName,
@@ -237,7 +243,7 @@ func TestNewRunSnapshotEnforcesLocalToolOrder(t *testing.T) {
 			events: []hooks.Event{
 				schedule(toolName, ""),
 				result(toolName, ""),
-				hooks.NewToolCallUpdatedEvent(runID, "svc.agent", session, callID, 1),
+				hooks.NewToolCallUpdatedEvent(runID, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, session, callID, 1),
 			},
 			wantErr: `tool update follows completion for call "call-1"`,
 		},
@@ -255,7 +261,7 @@ func TestNewRunSnapshotEnforcesLocalToolOrder(t *testing.T) {
 			for index, event := range test.events {
 				events[index] = snapshotRunlogEvent(t, event, index+1)
 			}
-			_, err := newRunSnapshot(events)
+			_, err := newRunSnapshot(events, "", nil)
 			require.ErrorContains(t, err, test.wantErr)
 		})
 	}
@@ -267,7 +273,7 @@ func TestNewRunSnapshotValidatesToolResultPlacement(t *testing.T) {
 	schedule := func(runID string) hooks.Event {
 		return hooks.NewToolCallScheduledEvent(
 			runID,
-			"svc.agent",
+			genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))},
 			"session-1",
 			"svc.tools.search",
 			"call-1",
@@ -280,7 +286,7 @@ func TestNewRunSnapshotValidatesToolResultPlacement(t *testing.T) {
 	result := func(resultRunID, callRunID string) hooks.Event {
 		return hooks.NewToolResultReceivedEvent(
 			resultRunID,
-			"svc.agent",
+			genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))},
 			"session-1",
 			callRunID,
 			"svc.tools.search",
@@ -310,8 +316,9 @@ func TestNewRunSnapshotValidatesToolResultPlacement(t *testing.T) {
 			wantErr: "tool schedule is required",
 		},
 		{
-			name:   "cross run without local schedule",
-			events: []hooks.Event{result("result-run", "call-run")},
+			name:    "cross run without source schedule",
+			events:  []hooks.Event{result("result-run", "call-run")},
+			wantErr: "tool schedule is required",
 		},
 		{
 			name:    "cross run with local schedule",
@@ -327,7 +334,7 @@ func TestNewRunSnapshotValidatesToolResultPlacement(t *testing.T) {
 			for index, event := range test.events {
 				events[index] = snapshotRunlogEvent(t, event, index+1)
 			}
-			snapshot, err := newRunSnapshot(events)
+			snapshot, err := newRunSnapshot(events, "", nil)
 			if test.wantErr != "" {
 				require.ErrorContains(t, err, test.wantErr)
 				return
@@ -345,7 +352,7 @@ func TestNewRunSnapshotRetainsPendingRequestWhenSuspended(t *testing.T) {
 
 	await := hooks.NewAwaitClarificationEvent(
 		"run-1",
-		"svc.agent",
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))},
 		"sess-1",
 		"question-1",
 		"Which unit?",
@@ -355,7 +362,7 @@ func TestNewRunSnapshotRetainsPendingRequestWhenSuspended(t *testing.T) {
 	)
 	suspended := hooks.NewRunSuspendedEvent(
 		"run-1",
-		"svc.agent",
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))},
 		"sess-1",
 		"suspension-1",
 		"v1",
@@ -371,13 +378,14 @@ func TestNewRunSnapshotRetainsPendingRequestWhenSuspended(t *testing.T) {
 		})
 		require.NoError(t, err)
 		events = append(events, &runlog.Event{
-			EventKey: input.EventKey, RunID: input.RunID, AgentID: input.AgentID,
+			EventKey: input.EventKey, RunID: input.RunID, Subject: input.Subject,
+
 			SessionID: input.SessionID, TurnID: input.TurnID, Type: input.Type,
 			Payload: input.Payload, Timestamp: time.UnixMilli(input.TimestampMS).UTC(),
 		})
 	}
 
-	snapshot, err := newRunSnapshot(events)
+	snapshot, err := newRunSnapshot(events, "", nil)
 	require.NoError(t, err)
 	require.Equal(t, run.StatusSuspended, snapshot.Status)
 	require.Equal(t, run.PhaseSuspended, snapshot.Phase)
@@ -397,13 +405,13 @@ func TestNewRunSnapshotIncludesCanonicalTranscript(t *testing.T) {
 	snap, err := newRunSnapshot([]*runlog.Event{{
 		EventKey:  "evt-transcript",
 		RunID:     "run-1",
-		AgentID:   agent.Ident("svc.agent"),
+		Subject:   genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("svc.agent")))},
 		SessionID: "sess-1",
 		TurnID:    "turn-1",
 		Type:      transcript.RunLogMessagesAppended,
 		Payload:   payload,
 		Timestamp: time.Unix(10, 0).UTC(),
-	}})
+	}}, "", nil)
 	require.NoError(t, err)
 	require.Len(t, snap.Transcript, 1)
 	require.Equal(t, model.ConversationRoleUser, snap.Transcript[0].Role)
@@ -428,7 +436,7 @@ func TestNewRunSnapshotReplaysSeededAndAppendedTranscriptMessages(t *testing.T) 
 		{
 			EventKey:  "evt-seed",
 			RunID:     "run-1",
-			AgentID:   agent.Ident("svc.agent"),
+			Subject:   genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("svc.agent")))},
 			SessionID: "sess-1",
 			TurnID:    "turn-1",
 			Type:      transcript.RunLogMessagesSeeded,
@@ -438,14 +446,14 @@ func TestNewRunSnapshotReplaysSeededAndAppendedTranscriptMessages(t *testing.T) 
 		{
 			EventKey:  "evt-append",
 			RunID:     "run-1",
-			AgentID:   agent.Ident("svc.agent"),
+			Subject:   genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("svc.agent")))},
 			SessionID: "sess-1",
 			TurnID:    "turn-1",
 			Type:      transcript.RunLogMessagesAppended,
 			Payload:   appendPayload,
 			Timestamp: time.Unix(20, 0).UTC(),
 		},
-	})
+	}, "", nil)
 	require.NoError(t, err)
 	require.Len(t, snap.Transcript, 2)
 	require.Equal(t, model.ConversationRoleUser, snap.Transcript[0].Role)
@@ -465,13 +473,13 @@ func TestNewRunSnapshotUsesTranscriptAssistantMessage(t *testing.T) {
 	snap, err := newRunSnapshot([]*runlog.Event{{
 		EventKey:  "evt-transcript-assistant",
 		RunID:     "run-1",
-		AgentID:   agent.Ident("svc.agent"),
+		Subject:   genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("svc.agent")))},
 		SessionID: "sess-1",
 		TurnID:    "turn-1",
 		Type:      transcript.RunLogMessagesAppended,
 		Payload:   payload,
 		Timestamp: time.Unix(20, 0).UTC(),
-	}})
+	}}, "", nil)
 	require.NoError(t, err)
 	require.Equal(t, "final hello", snap.LastAssistantMessage)
 }
@@ -487,13 +495,73 @@ func snapshotRunlogEvent(t *testing.T, event hooks.Event, position int) *runlog.
 	})
 	require.NoError(t, err)
 	return &runlog.Event{
-		EventKey:  input.EventKey,
-		RunID:     input.RunID,
-		AgentID:   input.AgentID,
+		EventKey: input.EventKey,
+		RunID:    input.RunID,
+		Subject:  input.Subject,
+
 		SessionID: input.SessionID,
 		TurnID:    input.TurnID,
 		Type:      input.Type,
 		Payload:   input.Payload,
 		Timestamp: time.UnixMilli(input.TimestampMS).UTC(),
+	}
+}
+
+func TestNewRunSnapshotKeepsServiceSubjectWithoutMessages(t *testing.T) {
+	t.Parallel()
+	subject := genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorServiceTool(&genrunidentity.ServiceToolSubject{
+		Registry: "primary", Tool: "records.lookup",
+	})}
+	events := []*runlog.Event{
+		snapshotRunlogEvent(t, hooks.NewRunStartedEvent("service-run", subject, "session", "", "", nil), 1),
+		snapshotRunlogEvent(t, hooks.NewToolCallScheduledEvent("service-run", subject, "session", "records.lookup", "call", nil, "", "", 0), 2),
+		snapshotRunlogEvent(t, hooks.NewToolResultReceivedEvent("service-run", subject, "session", "service-run", "records.lookup", "call", "", nil, nil, nil, "", nil, 0, nil, nil), 3),
+		snapshotRunlogEvent(t, hooks.NewRunCompletedEvent("service-run", subject, "session", "success", run.PhaseCompleted, nil, nil, nil), 4),
+	}
+	snapshot, err := newRunSnapshot(events, "", nil)
+	require.NoError(t, err)
+	require.Equal(t, subject, snapshot.Subject)
+	require.Equal(t, run.StatusCompleted, snapshot.Status)
+	require.Len(t, snapshot.ToolCalls, 1)
+	require.Empty(t, snapshot.Transcript)
+	require.Empty(t, snapshot.LastAssistantMessage)
+	storedService, ok := events[0].Subject.Executor.AsServiceTool()
+	require.True(t, ok)
+	storedService.Registry = "changed-after-read"
+	require.Equal(t, subject, snapshot.Subject)
+}
+
+func TestNewRunSnapshotRejectsInvalidOrChangedSubject(t *testing.T) {
+	t.Parallel()
+	for _, test := range []struct {
+		name    string
+		subject genrunidentity.RunSubject
+	}{
+		{name: "no branch"},
+		{name: "empty Agent", subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("")}},
+		{name: "incomplete service", subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorServiceTool(&genrunidentity.ServiceToolSubject{Tool: "records.lookup"})}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := newRunSnapshot([]*runlog.Event{{RunID: "run", Subject: test.subject, Type: "ignored"}}, "", nil)
+			require.ErrorContains(t, err, "snapshot run subject")
+		})
+	}
+	first := genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorServiceTool(&genrunidentity.ServiceToolSubject{Registry: "primary", Tool: "records.lookup"})}
+	other := genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorServiceTool(&genrunidentity.ServiceToolSubject{Registry: "other", Tool: "records.lookup"})}
+	_, err := newRunSnapshot([]*runlog.Event{
+		{RunID: "run", Subject: first, Type: "ignored"},
+		{RunID: "run", Subject: other, Type: "ignored"},
+	}, "", nil)
+	require.ErrorContains(t, err, "snapshot event subject does not match")
+}
+
+func TestNewRunSnapshotRejectsServiceModelEvents(t *testing.T) {
+	t.Parallel()
+	subject := genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorServiceTool(&genrunidentity.ServiceToolSubject{Registry: "primary", Tool: "records.lookup"})}
+	for _, eventType := range []runlog.Type{hooks.PolicyDecision, hooks.Usage, transcript.RunLogMessagesAppended} {
+		t.Run(string(eventType), func(t *testing.T) {
+			_, err := newRunSnapshot([]*runlog.Event{{RunID: "run", Subject: subject, Type: eventType, Payload: []byte(`[]`)}}, "", nil)
+			require.ErrorContains(t, err, "requires an Agent subject")
+		})
 	}
 }

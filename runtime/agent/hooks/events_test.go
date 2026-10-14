@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"go.temporal.io/sdk/temporal"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/internal/outputcontract"
 	"goa.design/goa-ai/runtime/agent/internal/temporalerrors"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -32,7 +33,7 @@ func TestNewRunCompletedEventPreservesProviderRetryability(t *testing.T) {
 	require.ErrorAs(t, err, &appErr)
 	require.False(t, appErr.NonRetryable())
 
-	evt := NewRunCompletedEvent("run-1", "svc.agent", "sess-1", "failed", run.PhaseFailed, nil, err, nil)
+	evt := NewRunCompletedEvent("run-1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, "sess-1", "failed", run.PhaseFailed, nil, err, nil)
 
 	require.NotNil(t, evt.Failure)
 	require.Equal(t, PublicErrorProviderRateLimited, evt.Failure.Message)
@@ -52,7 +53,7 @@ func TestNewRunCompletedEventPreservesPlannerOutputRetryability(t *testing.T) {
 	require.ErrorAs(t, err, &appErr)
 	require.True(t, appErr.NonRetryable())
 
-	evt := NewRunCompletedEvent("run-1", "svc.agent", "sess-1", "failed", run.PhaseFailed, nil, err, nil)
+	evt := NewRunCompletedEvent("run-1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, "sess-1", "failed", run.PhaseFailed, nil, err, nil)
 
 	require.NotNil(t, evt.Failure)
 	require.Equal(t, PublicErrorOutputContract, evt.Failure.Message)
@@ -72,7 +73,7 @@ func TestNewRunCompletedEventPreservesModelOutputOrigin(t *testing.T) {
 	)
 	err := temporalerrors.Wrap(outputErr)
 
-	evt := NewRunCompletedEvent("run-1", "svc.agent", "sess-1", "failed", run.PhaseFailed, nil, err, nil)
+	evt := NewRunCompletedEvent("run-1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, "sess-1", "failed", run.PhaseFailed, nil, err, nil)
 
 	require.NotNil(t, evt.Failure)
 	require.Equal(t, PublicErrorOutputContract, evt.Failure.Message)
@@ -84,7 +85,7 @@ func TestNewRunCompletedEventPreservesModelOutputOrigin(t *testing.T) {
 func TestNewRunCompletedEventCanceledOmitsFailureMetadata(t *testing.T) {
 	evt := NewRunCompletedEvent(
 		"run-1",
-		"svc.agent",
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))},
 		"sess-1",
 		"canceled",
 		run.PhaseCanceled,
@@ -100,7 +101,7 @@ func TestNewRunCompletedEventCanceledOmitsFailureMetadata(t *testing.T) {
 
 func TestNewRunCompletedEventCarriesRunLabels(t *testing.T) {
 	labels := map[string]string{"household_id": "house-42"}
-	evt := NewRunCompletedEvent("run-1", "svc.agent", "sess-1", "success", run.PhaseCompleted, labels, nil, nil)
+	evt := NewRunCompletedEvent("run-1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, "sess-1", "success", run.PhaseCompleted, labels, nil, nil)
 
 	require.Equal(t, labels, evt.Labels)
 }

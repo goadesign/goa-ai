@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/internal/errorevidence"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/runlog"
@@ -19,7 +20,7 @@ import (
 func TestRejectionReasonCodecPreservesLegacyBytes(t *testing.T) {
 	digest, size := errorevidence.FingerprintText("historical reason")
 	legacy := fmt.Sprintf(`{"ReasonSHA256":%q,"ReasonSize":%d}`, digest, size)
-	record := &runlog.ActivityInput{Type: PlannerOutputRejected, RunID: "run", AgentID: "service.agent", Payload: rawjson.Message(legacy)}
+	record := &runlog.ActivityInput{Type: PlannerOutputRejected, RunID: "run", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("service.agent"))}, Payload: rawjson.Message(legacy)}
 	event, err := DecodeFromRecordInput(record)
 	require.NoError(t, err)
 	encoded, err := EncodeRecordPayload(event)
@@ -35,7 +36,7 @@ func TestHistoricalV1RejectionReasonKeepsFixedBytes(t *testing.T) {
 		`{"ReasonVersion":"goa_ai.rejection_reason.v1","ReasonOmitted":"size_limit","ReasonSHA256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","ReasonSize":3073}`,
 		`{"ReasonVersion":"goa_ai.rejection_reason.v1","ReasonOmitted":"invalid_utf8","ReasonSHA256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","ReasonSize":1}`,
 	} {
-		record := &runlog.ActivityInput{Type: PlannerOutputRejected, RunID: "run", AgentID: "service.agent", Payload: rawjson.Message(fixed)}
+		record := &runlog.ActivityInput{Type: PlannerOutputRejected, RunID: "run", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("service.agent"))}, Payload: rawjson.Message(fixed)}
 		event, err := DecodeFromRecordInput(record)
 		require.NoError(t, err)
 		encoded, err := EncodeRecordPayload(event)
@@ -54,7 +55,7 @@ func TestRejectionReasonCodecRequiresExactVersionedText(t *testing.T) {
 		event.Reason, event.ReasonOmitted = errorevidence.RetainedReason(reason)
 		encoded, err := EncodeRecordPayload(event)
 		require.NoError(t, err)
-		record := &runlog.ActivityInput{Type: PlannerOutputRejected, RunID: "run", AgentID: "service.agent", Payload: encoded}
+		record := &runlog.ActivityInput{Type: PlannerOutputRejected, RunID: "run", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("service.agent"))}, Payload: encoded}
 		decoded, err := DecodeFromRecordInput(record)
 		require.NoError(t, err)
 		reencoded, err := EncodeRecordPayload(decoded)
@@ -66,7 +67,7 @@ func TestRejectionReasonCodecRequiresExactVersionedText(t *testing.T) {
 	}
 	digest, size := errorevidence.FingerprintText("correct")
 	for _, version := range []string{"", "unknown", errorevidence.ReasonVersion} {
-		record := &runlog.ActivityInput{Type: PlannerOutputRejected, RunID: "run", AgentID: "service.agent",
+		record := &runlog.ActivityInput{Type: PlannerOutputRejected, RunID: "run", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("service.agent"))},
 			Payload: rawjson.Message(fmt.Sprintf(`{"ReasonVersion":%q,"Reason":"wrong","ReasonSHA256":%q,"ReasonSize":%d}`, version, digest, size))}
 		_, err := DecodeFromRecordInput(record)
 		assert.Error(t, err)

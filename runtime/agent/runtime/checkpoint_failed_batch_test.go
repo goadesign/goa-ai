@@ -37,7 +37,7 @@ func TestCheckpointFailedBatchInputs(t *testing.T) {
 		{Name: confirm.Name, ToolCallID: "confirmation", Payload: rawjson.Message(`{"id":"pending"}`)},
 	}}, initialCaps(RunPolicy{MaxToolCalls: 8}))
 	require.NoError(t, err)
-	saved, err := decodeWorkflowCheckpoint(out.Suspension, testRuntimeDefinition(h.runtime, h.input.AgentID))
+	saved, err := decodeWorkflowCheckpoint(out.Suspension, testRuntimeDefinition(h.runtime, testSubjectAgent(t, h.input.Subject)))
 	require.NoError(t, err)
 	require.Zero(t, saved.Batch.Recorded)
 	require.Len(t, saved.Batch.Records, 1)
@@ -54,7 +54,7 @@ func TestCheckpointFailedBatchInputs(t *testing.T) {
 	failed.Bounds = &tools.BoundsSpec{Paging: &tools.PagingSpec{CursorField: "cursor"}}
 	current := New(h.runtime.Store)
 	seedTestToolSpecs(current, failed, confirm)
-	definition := testRuntimeDefinition(current, h.input.AgentID)
+	definition := testRuntimeDefinition(current, testSubjectAgent(t, h.input.Subject))
 	require.NoError(t, validateCheckpointToolValues(saved, definition))
 	require.Zero(t, decodes)
 
@@ -78,6 +78,6 @@ func TestCheckpointFailedBatchInputs(t *testing.T) {
 		return nil, errors.New("pending confirmation must validate")
 	}
 	seedTestToolSpecs(current, confirm)
-	require.ErrorContains(t, validateCheckpointToolValues(saved, testRuntimeDefinition(current, h.input.AgentID)),
+	require.ErrorContains(t, validateCheckpointToolValues(saved, testRuntimeDefinition(current, testSubjectAgent(t, h.input.Subject))),
 		"pending confirmation must validate")
 }

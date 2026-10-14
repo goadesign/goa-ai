@@ -26,6 +26,7 @@ type (
 	// provider lifecycle operations. Tool definitions never enter this JSON.
 	catalogState struct {
 		Identity            *CatalogIdentity         `json:"identity,omitempty"`
+		ImmutableNative     bool                     `json:"immutable_native,omitempty"`
 		NativeAgent         bool                     `json:"native_agent,omitempty"`
 		State               catalogEntryState        `json:"state"`
 		Info                *genregistry.ToolsetInfo `json:"info"`
@@ -76,6 +77,9 @@ type (
 
 const (
 	toolsetCatalogKeyPrefix = "registry:toolset:"
+
+	catalogResourceKindAgent   = "agent"
+	catalogResourceKindService = "service"
 
 	catalogEntryActive  catalogEntryState = "active"
 	catalogEntryRetired catalogEntryState = "retired"
@@ -789,6 +793,11 @@ func (c *toolsetCatalog) commit(ctx context.Context, key, previous string, state
 	write.State = next
 	if state.Identity != nil {
 		write.Scope = state.Identity.Scope
+		write.ResourceName = state.Identity.Name
+		write.ResourceKind = catalogResourceKindService
+		if state.NativeAgent {
+			write.ResourceKind = catalogResourceKindAgent
+		}
 		write.Indexed = state.State == catalogEntryActive
 	}
 	updated, err := c.store.Commit(ctx, key, previous, write)

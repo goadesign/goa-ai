@@ -11,6 +11,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/runtime/agent/api"
@@ -120,7 +121,7 @@ func TestActivityHistoryTransportGrowsBeyondEngineLimitAndFinalizes(t *testing.T
 			require.NoError(t, err)
 			if input.Finalize != nil {
 				finalHistoryBytes = len(encoded)
-				require.Equal(t, planner.TerminationReasonToolCap, input.Finalize.Reason)
+				assert.Equal(t, planner.TerminationReasonToolCap, input.Finalize.Reason)
 				require.Equal(t, input.Finalize.Message, input.Messages[len(input.Messages)-1].Text())
 				return finalPlannerResult("complete evidence preserved"), nil
 			}

@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -91,12 +92,12 @@ func TestRecordActivityStoresRootStartDecision(t *testing.T) {
 			}
 			runtime := &Runtime{Store: store, Bus: hooks.NewBus()}
 			event := hooks.NewRunStartedEvent(
-				"run", agent.Ident("svc.agent"), "session", "", "", map[string]string{"site": "one"},
+				"run", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("svc.agent")))}, "session", "", "", map[string]string{"site": "one"},
 			)
 			record, err := prepareHookRecordInput(ctx, event, "turn")
 			require.NoError(t, err)
 
-			publishTestRunInput(t, runtime, &RunInput{AgentID: "svc.agent", RunID: "run", SessionID: "session"}, nil)
+			publishTestRunInput(t, runtime, &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, RunID: "run", SessionID: "session"}, nil)
 			output, err := runtime.executeStorageCommand(ctx, &api.StorageActivityCommand{
 				RootStart: &api.RootRunStartCommand{RequestDigest: append([]byte{1}, make([]byte, 31)...), SeedEndID: "0", Started: record},
 			})
@@ -147,7 +148,7 @@ func TestRecordActivityStoresRenderedPromptsOnlyForStartedRun(t *testing.T) {
 			runtime := &Runtime{Store: store, Bus: hooks.NewBus()}
 			started, err := prepareHookRecordInput(ctx, hooks.NewRunStartedEvent(
 				"run",
-				agent.Ident("svc.agent"),
+				genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("svc.agent")))},
 				"session",
 				"",
 				"",
@@ -164,7 +165,7 @@ func TestRecordActivityStoresRenderedPromptsOnlyForStartedRun(t *testing.T) {
 			), "turn")
 			require.NoError(t, err)
 
-			publishTestRunInput(t, runtime, &RunInput{AgentID: "svc.agent", RunID: "run", SessionID: "session"}, nil)
+			publishTestRunInput(t, runtime, &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, RunID: "run", SessionID: "session"}, nil)
 			output, err := runtime.executeStorageCommand(ctx, &api.StorageActivityCommand{
 				RootStart: &api.RootRunStartCommand{RequestDigest: append([]byte{1}, make([]byte, 31)...), SeedEndID: "0", Started: started},
 			})
@@ -193,11 +194,11 @@ func TestRecordActivityStartsOneShotRun(t *testing.T) {
 	ctx := context.Background()
 	store := newTestStore()
 	runtime := &Runtime{Store: store, Bus: hooks.NewBus()}
-	event := hooks.NewRunStartedEvent("run", agent.Ident("svc.agent"), "", "", "", nil)
+	event := hooks.NewRunStartedEvent("run", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("svc.agent")))}, "", "", "", nil)
 	record, err := prepareHookRecordInput(ctx, event, "")
 	require.NoError(t, err)
 
-	publishTestRunInput(t, runtime, &RunInput{AgentID: "svc.agent", RunID: "run"}, nil)
+	publishTestRunInput(t, runtime, &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, RunID: "run"}, nil)
 	output, err := runtime.executeStorageCommand(ctx, &api.StorageActivityCommand{
 		OneShotStart: &api.OneShotRunStartCommand{RequestDigest: append([]byte{1}, make([]byte, 31)...), SeedEndID: "0", Started: record},
 	})
@@ -211,22 +212,22 @@ func TestRecordActivityStartsOneShotRun(t *testing.T) {
 func TestRecordActivityStartsOneShotChildRun(t *testing.T) {
 	store := newTestStore()
 	runtime := &Runtime{Store: store, Bus: hooks.NewBus()}
-	parentEvent := hooks.NewRunStartedEvent("parent", agent.Ident("parent.agent"), "", "", "", nil)
+	parentEvent := hooks.NewRunStartedEvent("parent", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("parent.agent")))}, "", "", "", nil)
 	parentRecord, err := prepareHookRecordInput(t.Context(), parentEvent, "turn")
 	require.NoError(t, err)
-	publishTestRunInput(t, runtime, &RunInput{AgentID: "parent.agent", RunID: "parent"}, nil)
+	publishTestRunInput(t, runtime, &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("parent.agent"))}, RunID: "parent"}, nil)
 	_, err = runtime.executeStorageCommand(t.Context(), &api.StorageActivityCommand{
 		OneShotStart: &api.OneShotRunStartCommand{RequestDigest: append([]byte{1}, make([]byte, 31)...), SeedEndID: "0", Started: parentRecord},
 	})
 	require.NoError(t, err)
 	childEvent := hooks.NewRunStartedEvent(
-		"child", agent.Ident("child.agent"), "", "parent", "", nil,
+		"child", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("child.agent")))}, "", "parent", "", nil,
 	)
 	childRecord, err := prepareHookRecordInput(t.Context(), childEvent, "turn")
 	require.NoError(t, err)
 	linkedRecord, err := prepareHookRecordInput(t.Context(), hooks.NewChildRunLinkedEvent(
 		"parent",
-		agent.Ident("parent.agent"),
+		genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("parent.agent")))},
 		"",
 		tools.Ident("parent.tools.child"),
 		"call",
@@ -235,7 +236,7 @@ func TestRecordActivityStartsOneShotChildRun(t *testing.T) {
 	), "turn")
 	require.NoError(t, err)
 
-	publishTestRunInput(t, runtime, &RunInput{AgentID: "child.agent", RunID: "child"}, nil)
+	publishTestRunInput(t, runtime, &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("child.agent"))}, RunID: "child", ParentRunID: "parent", ParentToolCallID: "call"}, nil)
 	output, err := runtime.executeStorageCommand(t.Context(), &api.StorageActivityCommand{
 		OneShotChildStart: &api.OneShotChildRunStartCommand{RequestDigest: append([]byte{1}, make([]byte, 31)...),
 			SeedEndID:    "0",
@@ -279,10 +280,11 @@ func TestRecordActivityRejectsStartRecordsWithWrongSessionStatus(t *testing.T) {
 			name: "root stop",
 			kind: storageCommandRootStart,
 			store: startSessionStatusStore{root: storage.RootRunStartResult{
-				Outcome:      session.RunStartStop,
-				RunStatus:    session.RunStatusRunning,
-				Started:      ended,
-				Cancellation: active,
+				Outcome:            session.RunStartStop,
+				CancellationReason: run.CancellationReasonSessionEnded,
+				RunStatus:          session.RunStatusRunning,
+				Started:            ended,
+				Cancellation:       active,
 			}},
 			want: `start record 1 has session status "active", want all records to report "ended"`,
 		},
@@ -301,11 +303,12 @@ func TestRecordActivityRejectsStartRecordsWithWrongSessionStatus(t *testing.T) {
 			name: "child stop start",
 			kind: storageCommandChildStart,
 			store: startSessionStatusStore{child: storage.ChildRunStartResult{
-				Outcome:      session.RunStartStop,
-				RunStatus:    session.RunStatusRunning,
-				ParentRecord: ended,
-				Started:      active,
-				Cancellation: ended,
+				Outcome:            session.RunStartStop,
+				CancellationReason: run.CancellationReasonSessionEnded,
+				RunStatus:          session.RunStatusRunning,
+				ParentRecord:       ended,
+				Started:            active,
+				Cancellation:       ended,
 			}},
 			want: `start record 1 has session status "active", want all records to report "ended"`,
 		},
@@ -313,11 +316,12 @@ func TestRecordActivityRejectsStartRecordsWithWrongSessionStatus(t *testing.T) {
 			name: "child stop cancellation",
 			kind: storageCommandChildStart,
 			store: startSessionStatusStore{child: storage.ChildRunStartResult{
-				Outcome:      session.RunStartStop,
-				RunStatus:    session.RunStatusRunning,
-				ParentRecord: ended,
-				Started:      ended,
-				Cancellation: active,
+				Outcome:            session.RunStartStop,
+				CancellationReason: run.CancellationReasonSessionEnded,
+				RunStatus:          session.RunStatusRunning,
+				ParentRecord:       ended,
+				Started:            ended,
+				Cancellation:       active,
 			}},
 			want: `start record 2 has session status "active", want all records to report "ended"`,
 		},
@@ -325,6 +329,7 @@ func TestRecordActivityRejectsStartRecordsWithWrongSessionStatus(t *testing.T) {
 			name: "one shot",
 			kind: storageCommandOneShotStart,
 			store: startSessionStatusStore{oneShot: storage.OneShotRunStartResult{
+				Outcome:   session.RunStartProceed,
 				RunStatus: session.RunStatusRunning,
 				Record:    active,
 			}},
@@ -333,16 +338,16 @@ func TestRecordActivityRejectsStartRecordsWithWrongSessionStatus(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			started := hooks.NewRunStartedEvent(
-				"run", agent.Ident("svc.agent"), "session", "", "", nil,
+				"run", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("svc.agent")))}, "session", "", "", nil,
 			)
 			if test.kind == storageCommandChildStart {
 				started = hooks.NewRunStartedEvent(
-					"run", agent.Ident("svc.agent"), "session", "parent", "", nil,
+					"run", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("svc.agent")))}, "session", "parent", "", nil,
 				)
 			}
 			if test.kind == storageCommandOneShotStart {
 				started = hooks.NewRunStartedEvent(
-					"run", agent.Ident("svc.agent"), "", "", "", nil,
+					"run", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("svc.agent")))}, "", "", "", nil,
 				)
 			}
 			startedInput, err := prepareHookRecordInput(t.Context(), started, "turn")
@@ -351,7 +356,7 @@ func TestRecordActivityRejectsStartRecordsWithWrongSessionStatus(t *testing.T) {
 			if test.kind == storageCommandChildStart {
 				linkedInput, err = prepareHookRecordInput(t.Context(), hooks.NewChildRunLinkedEvent(
 					"parent",
-					agent.Ident("svc.parent"),
+					genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("svc.parent")))},
 					"session",
 					tools.Ident("svc.parent.child"),
 					"call",
@@ -376,10 +381,10 @@ func TestRecordActivityAcceptsProceedRetryAfterSessionEnds(t *testing.T) {
 	require.NoError(t, err)
 	runtime := &Runtime{Store: store, Bus: hooks.NewBus()}
 	started, err := prepareHookRecordInput(t.Context(), hooks.NewRunStartedEvent(
-		"run", agent.Ident("svc.agent"), "session", "", "", nil,
+		"run", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("svc.agent")))}, "session", "", "", nil,
 	), "turn")
 	require.NoError(t, err)
-	input := &RunInput{AgentID: "svc.agent", RunID: "run", SessionID: "session"}
+	input := &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, RunID: "run", SessionID: "session"}
 	publishTestRunInput(t, runtime, input, nil)
 	command := &api.StorageActivityCommand{
 		RootStart: &api.RootRunStartCommand{RequestDigest: append([]byte{1}, make([]byte, 31)...), SeedEndID: input.SeedEndID, Started: started},
@@ -403,7 +408,7 @@ func TestRecordActivityStoresFirstCancellationReason(t *testing.T) {
 	ctx := context.Background()
 	store := newTestStore()
 	admitRunForTest(t, store, session.RunMeta{
-		AgentID: "svc.agent", RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, RunID: "run", SessionID: "session", Status: session.RunStatusRunning,
 	})
 	runtime := &Runtime{Store: store, Bus: hooks.NewBus()}
 	record := func(reason string) *RecordActivityInput {
@@ -411,7 +416,7 @@ func TestRecordActivityStoresFirstCancellationReason(t *testing.T) {
 		require.NoError(t, err)
 		return &RecordActivityInput{
 			Type: storage.CancellationRecordType, EventKey: cancellationIntentEventKey,
-			RunID: "run", AgentID: agent.Ident("svc.agent"), SessionID: "session",
+			RunID: "run", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("svc.agent")))}, SessionID: "session",
 			TimestampMS: time.Now().UnixMilli(), Payload: payload,
 		}
 	}
@@ -455,7 +460,7 @@ func TestRecordActivityPreservesCancellationRecordConflict(t *testing.T) {
 	output, err := runtime.executeStorageCommand(ctx, &api.StorageActivityCommand{
 		Cancellation: &api.RunCancellationCommand{Record: &RecordActivityInput{
 			Type: storage.CancellationRecordType, EventKey: cancellationIntentEventKey,
-			RunID: "run", AgentID: agent.Ident("svc.agent"), SessionID: "session",
+			RunID: "run", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agent.Ident("svc.agent")))}, SessionID: "session",
 			TimestampMS: time.Now().UnixMilli(), Payload: payload,
 		}},
 	})
@@ -483,8 +488,8 @@ func TestStorageActivityRejectsCommandsWithoutExactlyOneOperation(t *testing.T) 
 	for _, command := range []*api.StorageActivityCommand{
 		{},
 		{
-			Append:   &api.AppendRecordsCommand{Records: []*RecordActivityInput{{}}},
-			Terminal: &api.RunTerminalCommand{Record: &RecordActivityInput{}},
+			Append:   &api.AppendRecordsCommand{Records: []*RecordActivityInput{{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("test.agent"))}}}},
+			Terminal: &api.RunTerminalCommand{Record: &RecordActivityInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("test.agent"))}}},
 		},
 	} {
 		output, err := runtime.executeStorageCommand(t.Context(), command)
@@ -516,7 +521,7 @@ func TestMalformedStorageCommandIsNotAStoreContractError(t *testing.T) {
 		{
 			name: "malformed transcript",
 			command: &api.StorageActivityCommand{Append: &api.AppendRecordsCommand{
-				Records: []*RecordActivityInput{{
+				Records: []*RecordActivityInput{{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("test.agent"))},
 					Type: transcript.RunLogMessagesAppended, Payload: []byte(`{"messages":`),
 				}},
 			}},

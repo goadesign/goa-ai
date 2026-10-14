@@ -105,23 +105,29 @@ func TestClosedStartCancellationAndFinalizationOrders(t *testing.T) {
 					finalized <- err
 				}()
 			}
-			select {
-			case <-control.waiting:
-			case <-ctx.Done():
-				t.Fatal(ctx.Err())
-			}
 			if cancellationFirst {
+				select {
+				case <-control.waiting:
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
+				}
 				close(control.release)
 				require.NoError(t, <-finalized)
+				require.ErrorIs(t, <-canceled, engine.ErrWorkflowCompleted)
 			} else {
+				select {
+				case err := <-canceled:
+					require.ErrorIs(t, err, engine.ErrWorkflowCompleted)
+				case <-ctx.Done():
+					t.Fatal("late callback blocked finalization")
+				}
+				assert.Equal(t, workflowFinalizationInProgress, state.phase.Load())
+				assert.Zero(t, control.calls.Load())
 				state.finishFinalization()
 			}
-			require.ErrorIs(t, <-canceled, engine.ErrWorkflowCompleted)
 			assert.Equal(t, workflowFinalizationFinished, state.phase.Load())
 			if cancellationFirst {
 				f.assertUnchanged(t)
-			} else {
-				assert.Zero(t, control.calls.Load())
 			}
 		})
 	}

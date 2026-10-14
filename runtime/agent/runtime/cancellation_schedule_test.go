@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/runtime/agent"
@@ -81,7 +83,7 @@ func TestWorkflowCancellationPreservesSchedules(t *testing.T) {
 			seedTestToolDefinitions(rt, tool)
 			rt.agentToolSpecs = map[agent.Ident][]tools.ToolSpec{"synthetic.agent": {tool}}
 			wf := &testWorkflowContext{ctx: ctx, runtime: rt, hookRuntime: rt, now: func() time.Time { return now }}
-			input := &RunInput{AgentID: "synthetic.agent", RunID: "run-1", SessionID: "session-1"}
+			input := &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("synthetic.agent"))}, RunID: "run-1", SessionID: "session-1"}
 			publishTestRunInput(t, rt, input, nil)
 			output, workflowErr := rt.ExecuteWorkflow(wf, input)
 			t.Logf("workflow error: %v; schedule attempts: %d", workflowErr, len(store.schedules))

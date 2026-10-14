@@ -16,21 +16,43 @@ func (v *Value) renderPreflight() (string, error) {
 	var source strings.Builder
 	imports := v.plan.importNames()
 	writer := &serviceTypeWriter{Attributor: v.serviceAttributor}
+	checks := make(map[string]*typedCheckPlan, len(v.standalone.orderedTypedChecks))
+	for _, check := range v.standalone.orderedTypedChecks {
+		reference := check.layout.Link(v.plan.pkg.ImportPath(), v.plan.pkg.ImportName).Ref()
+		if checks[reference] != nil {
+			return "", fmt.Errorf("preflight type %q has multiple planned helpers", reference)
+		}
+		checks[reference] = check
+	}
 	ref := writer.Ref(v.service, "")
 	fmt.Fprintf(&source, "\n// %s checks text and cycles before conversion.\nfunc %s(in %s) error {\n",
 		v.standalone.preflight.Name(), v.standalone.preflight.Name(), ref)
 	if codegen.IsNilable(v.service.Type) || expr.IsObject(v.service.Type) || expr.IsUnion(v.service.Type) {
 		fmt.Fprintf(&source, "if in == nil { return %s.Errorf(\"missing root value\") }\n", imports.Fmt)
 	}
-	source.WriteString("active := make(map[any]bool)\n")
-	if err := v.writeValueCheck(&source, writer, v.service, "in", `"$"`, expr.IsObject(v.service.Type) || expr.IsUnion(v.service.Type), 0); err != nil {
+	if !jsonshape.IsRawJSON(v.service) {
+		source.WriteString("active := make(map[any]bool)\n")
+	}
+	if err := v.writeValueCheck(&source, writer, checks, v.service, "in", `"$"`, expr.IsObject(v.service.Type) || expr.IsUnion(v.service.Type), 0); err != nil {
 		return "", err
 	}
 	source.WriteString("return nil\n}\n")
 	for _, check := range v.standalone.orderedTypedChecks {
 		attribute := check.attribute
 		named := attribute.Type.(expr.UserType)
-		ref := writer.Ref(attribute, "")
+		linked := check.layout.Link(v.plan.pkg.ImportPath(), v.plan.pkg.ImportName)
+		policy := check.layout.Policy()
+		context := &codegen.AttributeContext{
+			Scope: codegen.NewAttributeScope(v.plan.pkg.Scope()), Pointer: policy.Pointer, UseDefault: policy.UseDefault,
+			IgnoreRequired: policy.IgnoreRequired, IgnoreRequiredCollections: policy.IgnoreRequiredCollections,
+			UnionPointer: policy.UnionPointer, ArrayElementPointer: policy.ArrayElementPointer,
+		}
+		context, err := context.WithGoTypeLayout(linked)
+		if err != nil {
+			return "", err
+		}
+		writer := &serviceTypeWriter{Attributor: context.Scope}
+		ref := linked.Ref()
 		name := check.name.Name()
 		fmt.Fprintf(&source, "\n// %s checks one generated value on the active path.\nfunc %s(in %s, field string, active map[any]bool) error {\n", name, name, ref)
 		if expr.IsObject(named) || expr.IsUnion(named) {
@@ -67,7 +89,7 @@ defer delete(active, identity)
 			// Use that union's pointer for branch access, keeping in unchanged.
 			value = fmt.Sprintf("(%s)(in)", owner.Ref(definition, ""))
 		}
-		if err := v.writeValueCheck(&source, owner, definition, value, "field", expr.IsObject(named) || expr.IsUnion(named), 0); err != nil {
+		if err := v.writeValueCheck(&source, owner, checks, definition, value, "field", expr.IsObject(named) || expr.IsUnion(named), 0); err != nil {
 			return "", err
 		}
 		source.WriteString("return nil\n}\n")
@@ -77,16 +99,21 @@ defer delete(active, identity)
 
 // writeValueCheck specializes checks to one schema occurrence. Pointer is the
 // existing service layout's representation at this call site, not a codec mode.
-func (v *Value) writeValueCheck(out *strings.Builder, writer codegen.Attributor, attribute *expr.AttributeExpr, target, field string, pointer bool, depth int) error {
+func (v *Value) writeValueCheck(out *strings.Builder, writer codegen.Attributor, checks map[string]*typedCheckPlan, attribute *expr.AttributeExpr, target, field string, pointer bool, depth int) error {
 	imports := v.plan.importNames()
 	childPath := v.plan.jsonHelpers.child.Name()
-	if isRawJSON(attribute) {
+	if jsonshape.IsRawJSON(attribute) {
 		fmt.Fprintf(out, "if len(%s) != 0 { if _, err := %s(%s); err != nil { return %s.Errorf(\"%%s: invalid raw JSON: %%w\", %s, err) } }\n",
 			target, v.plan.jsonHelpers.read.Name(), target, imports.Fmt, field)
 		return nil
 	}
 	if named, ok := attribute.Type.(expr.UserType); ok && named != expr.Empty {
-		name := v.standalone.typedChecks[named.Origin()].name
+		reference := writer.Ref(attribute, "")
+		check := checks[reference]
+		if check == nil {
+			return fmt.Errorf("preflight type %q has no planned helper", reference)
+		}
+		name := check.name
 		arg := target
 		if expr.IsUnion(named) && !pointer {
 			arg = "&" + target
@@ -101,6 +128,7 @@ func (v *Value) writeValueCheck(out *strings.Builder, writer codegen.Attributor,
 		}
 		return nil
 	}
+	writer = writer.Enter(attribute)
 	switch actual := attribute.Type.(type) {
 	case expr.Primitive:
 		if actual != expr.String {
@@ -119,6 +147,9 @@ func (v *Value) writeValueCheck(out *strings.Builder, writer codegen.Attributor,
 		if pointer {
 			fmt.Fprintf(out, "if %s != nil {\n", target)
 		}
+		if err := v.writeEmbeddedCollisions(out, writer, attribute, target, field, ""); err != nil {
+			return err
+		}
 		for _, member := range *actual {
 			name := writer.Field(member.Attribute, member.Name, true)
 			child := target + "." + name
@@ -127,7 +158,7 @@ func (v *Value) writeValueCheck(out *strings.Builder, writer codegen.Attributor,
 			if expr.IsObject(member.Attribute.Type) {
 				memberPointer = true
 			}
-			if err := v.writeValueCheck(out, writer, member.Attribute, child, childField, memberPointer, depth+1); err != nil {
+			if err := v.writeValueCheck(out, writer, checks, member.Attribute, child, childField, memberPointer, depth+1); err != nil {
 				return err
 			}
 		}
@@ -139,7 +170,7 @@ func (v *Value) writeValueCheck(out *strings.Builder, writer codegen.Attributor,
 		fmt.Fprintf(out, "for %s, %s := range %s {\n", index, item, target)
 		fmt.Fprintf(out, "_ = %s; _ = %s\n", index, item)
 		childField := fmt.Sprintf("%s(%s, %s.Itoa(%s), true)", childPath, field, imports.Strconv, index)
-		if err := v.writeValueCheck(out, writer, actual.ElemType, item, childField, expr.IsObject(actual.ElemType.Type), depth+1); err != nil {
+		if err := v.writeValueCheck(out, writer, checks, actual.ElemType, item, childField, expr.IsObject(actual.ElemType.Type), depth+1); err != nil {
 			return err
 		}
 		out.WriteString("}\n")
@@ -149,7 +180,7 @@ func (v *Value) writeValueCheck(out *strings.Builder, writer codegen.Attributor,
 		fmt.Fprintf(out, "_ = %s\n", item)
 		fmt.Fprintf(out, "if !%s.ValidString(string(%s)) { return %s.Errorf(\"%%s: invalid UTF-8 map key\", %s) }\n", imports.UTF8, key, imports.Fmt, field)
 		childField := fmt.Sprintf("%s(%s, string(%s), true)", childPath, field, key)
-		if err := v.writeValueCheck(out, writer, actual.ElemType, item, childField, expr.IsObject(actual.ElemType.Type), depth+1); err != nil {
+		if err := v.writeValueCheck(out, writer, checks, actual.ElemType, item, childField, expr.IsObject(actual.ElemType.Type), depth+1); err != nil {
 			return err
 		}
 		out.WriteString("}\n")
@@ -165,7 +196,26 @@ func (v *Value) writeValueCheck(out *strings.Builder, writer codegen.Attributor,
 			if actual.Flatten || actual.Untagged {
 				childField = field
 			}
-			if err := v.writeValueCheck(out, writer.Enter(attribute), branch.Attribute, item, childField,
+			if actual.Flatten {
+				branchAttribute := branch.Attribute
+				branchWriter := writer
+				for {
+					branchWriter = branchWriter.Enter(branchAttribute)
+					named, ok := branchAttribute.Type.(expr.UserType)
+					if !ok {
+						break
+					}
+					branchAttribute = named.Attribute()
+				}
+				if expr.IsObject(branchAttribute.Type) {
+					fmt.Fprintf(out, "if %s != nil {\n", item)
+					if err := v.writeEmbeddedCollisions(out, branchWriter, branchAttribute, item, field, actual.GetTypeKey()); err != nil {
+						return err
+					}
+					out.WriteString("}\n")
+				}
+			}
+			if err := v.writeValueCheck(out, writer, checks, branch.Attribute, item, childField,
 				expr.IsObject(branch.Attribute.Type) || expr.IsUnion(branch.Attribute.Type), depth+1); err != nil {
 				return err
 			}
@@ -174,6 +224,30 @@ func (v *Value) writeValueCheck(out *strings.Builder, writer codegen.Attributor,
 		if pointer {
 			out.WriteString("}\n")
 		}
+	}
+	return nil
+}
+
+// writeEmbeddedCollisions checks extra-member keys before JSON marshaling can
+// overwrite a declared field or a containing union's branch selector.
+func (v *Value) writeEmbeddedCollisions(out *strings.Builder, writer codegen.Attributor, attribute *expr.AttributeExpr, target, field, discriminator string) error {
+	embedded, err := jsonshape.EmbeddedMap(attribute)
+	if err != nil || embedded == nil {
+		return err
+	}
+	selector := target + "." + writer.Field(embedded.Attribute, embedded.Name, true)
+	names := []string{}
+	if discriminator != "" {
+		names = append(names, discriminator)
+	} else {
+		for _, member := range *expr.AsObject(attribute.Type) {
+			if name, visible := jsonshape.FieldName(member); visible {
+				names = append(names, name)
+			}
+		}
+	}
+	for _, name := range names {
+		fmt.Fprintf(out, "if _, exists := %s[%q]; exists { return %s.Errorf(\"%%s: extra JSON member %%q conflicts with a declared member\", %s, %q) }\n", selector, name, v.plan.importNames().Fmt, field, name)
 	}
 	return nil
 }

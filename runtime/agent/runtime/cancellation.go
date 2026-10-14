@@ -4,11 +4,11 @@
 package runtime
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"sync/atomic"
 
+	genrunoutput "goa.design/goa-ai/registry/gen/runoutput"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -49,10 +49,13 @@ type (
 
 	// workflowFinalizationState makes cancellation storage and terminal storage
 	// choose one order. A cancellation that starts first records its reason before
-	// the terminal result. Once terminal storage starts, later cancellation waits
-	// for that storage and reports that the workflow already completed.
+	// the terminal result. Once terminal storage starts, the callback rejects
+	// cancellation immediately. The engine waits for execution closure before
+	// returning that rejection to the requesting caller. Accepted operation results
+	// remain here even when later reporting or cleanup clears the engine output.
 	workflowFinalizationState struct {
-		phase atomic.Uint32
+		phase           atomic.Uint32
+		operationResult *genrunoutput.OperationResult
 	}
 )
 
@@ -71,7 +74,7 @@ func (r *Runtime) handleWorkflowCancellation(
 	startCommand *api.StorageActivityCommand,
 	request engine.CancellationRequest,
 ) (err error) {
-	if err := state.beginCancellation(cancelCtx.Detached()); err != nil {
+	if err := state.beginCancellation(); err != nil {
 		return err
 	}
 	defer func() {
@@ -103,7 +106,7 @@ func (r *Runtime) handleWorkflowCancellation(
 // command. The engine waits for this activity before it stops the workflow.
 func (r *Runtime) publishRunCancellation(wfCtx engine.WorkflowContext, input *RunInput, req engine.CancellationRequest) error {
 	record, err := buildCancellationRecord(&RecordActivityInput{
-		RunID: input.RunID, AgentID: input.AgentID, SessionID: input.SessionID,
+		RunID: input.RunID, Subject: input.Subject, SessionID: input.SessionID,
 		TurnID: input.TurnID, TimestampMS: wfCtx.Now().UnixMilli(),
 	}, req.Reason)
 	if err != nil {
@@ -130,42 +133,23 @@ func buildCancellationRecord(input *RecordActivityInput, reason string) (*Record
 	}
 	return &RecordActivityInput{
 		Type: storage.CancellationRecordType, EventKey: cancellationIntentEventKey,
-		RunID: input.RunID, AgentID: input.AgentID, SessionID: input.SessionID,
+		RunID: input.RunID, Subject: input.Subject, SessionID: input.SessionID,
 		TurnID: input.TurnID, TimestampMS: input.TimestampMS, Payload: rawjson.Message(payload),
 	}, nil
 }
 
-// loadRunCancellation loads the stored cancellation provenance for the run when
-// one was recorded before cancellation.
-func (r *Runtime) loadRunCancellation(ctx context.Context, runID string) (*run.Cancellation, error) {
-	meta, err := r.Store.LoadRun(ctx, runID)
-	if err != nil {
-		return nil, err
-	}
-	if meta.CancellationReason == "" {
-		return nil, nil
-	}
-	return &run.Cancellation{Reason: meta.CancellationReason}, nil
-}
-
 // beginCancellation claims lifecycle storage for one accepted cancellation.
-// A command that arrives after finalization starts waits for the final record
-// so callers never observe a temporary active state beside a completed error.
-func (s *workflowFinalizationState) beginCancellation(wfCtx engine.WorkflowContext) error {
+// A command that arrives after finalization starts returns immediately so the
+// workflow can finish. The engine waits for closure before returning that result
+// to the requesting caller.
+func (s *workflowFinalizationState) beginCancellation() error {
 	for {
 		switch phase := s.phase.Load(); phase {
 		case workflowOpen:
 			if s.phase.CompareAndSwap(workflowOpen, workflowCancellationInProgress) {
 				return nil
 			}
-		case workflowFinalizationInProgress:
-			if err := wfCtx.Await(func() bool {
-				return s.phase.Load() == workflowFinalizationFinished
-			}); err != nil {
-				return err
-			}
-			return engine.ErrWorkflowCompleted
-		case workflowFinalizationFinished:
+		case workflowFinalizationInProgress, workflowFinalizationFinished:
 			return engine.ErrWorkflowCompleted
 		case workflowCancellationInProgress, workflowCancellationAccepted:
 			panic("runtime: engine invoked the cancellation handler concurrently")
@@ -220,15 +204,30 @@ func (s *workflowFinalizationState) finishFinalization() {
 	s.phase.Store(workflowFinalizationFinished)
 }
 
-// workflowOwnsCancellation checks only child work still held by this execution.
-// Once a child handle or a completed result takes ownership, an old checkpoint
-// cannot authorize cancellation through the parent anymore.
+// workflowOwnsCancellation checks child suspensions still held by active
+// execution or saved step records. A child already resumed by a new workflow
+// receives its own cancellation instead of reusing the old checkpoint.
 func workflowOwnsCancellation(checkpoint *workflowCheckpoint, loop *workflowLoop, definition AgentDefinition, runID string) (bool, error) {
 	if loop == nil {
 		if checkpoint == nil {
 			return false, nil
 		}
 		return checkpointContainsRun(checkpoint, definition, runID)
+	}
+	for _, execution := range loop.activeToolBatches {
+		if err := execution.retainReadyChildResults(loop.wfCtx.Detached()); err != nil {
+			return false, err
+		}
+		for _, call := range execution.batch.calls {
+			result := execution.batch.inlineByID[call.ToolCallID]
+			if result == nil || result.childSuspension == nil {
+				continue
+			}
+			owned, err := checkpointChildContainsRun(call, result.childSuspension, definition, runID)
+			if err != nil || owned {
+				return owned, err
+			}
+		}
 	}
 	if loop.unfinishedBatch == nil {
 		return false, nil

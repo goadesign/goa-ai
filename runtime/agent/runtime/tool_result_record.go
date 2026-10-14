@@ -28,7 +28,7 @@ func decodeToolResultRecord(input *RecordActivityInput, call ToolCall, callRunID
 		return nil, fmt.Errorf("saved result record for call %q is not a tool result", call.ToolCallID)
 	}
 	scheduled := newToolCallScheduledEvent(
-		callRunID, call.AgentID, call.SessionID, call, "", call.ParentToolCallID, 0,
+		callRunID, call.Subject, call.SessionID, call, "", call.ParentToolCallID, 0,
 	)
 	if err := hooks.ValidateToolResultCorrelation(scheduled, event); err != nil {
 		return nil, err
@@ -50,7 +50,8 @@ func validateCheckpointResultRecord(record checkpointToolRecord, checkpoint *wor
 	if err != nil {
 		return fmt.Errorf("decode saved result record: %w", err)
 	}
-	if event.AgentID() != checkpoint.AgentID || event.SessionID() != checkpoint.SessionID ||
+	executor, isAgent := event.Subject().Executor.AsAgent()
+	if !isAgent || string(executor) != checkpoint.AgentID || event.SessionID() != checkpoint.SessionID ||
 		event.ParentToolCallID != checkpoint.Context.ParentToolCallID {
 		return fmt.Errorf("saved result record owner does not match checkpoint for call %q", record.Call.ToolCallID)
 	}

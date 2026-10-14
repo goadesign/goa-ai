@@ -8,9 +8,12 @@ import (
 	"testing"
 	"time"
 
+	genregistry "goa.design/goa-ai/registry/gen/registry"
+
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/run"
@@ -35,7 +38,7 @@ func seedTestPlanInput(t testing.TB, rt *Runtime, input PlanActivityInput, messa
 	_, err := rt.Store.LoadRun(t.Context(), input.RunID)
 	if errors.Is(err, session.ErrRunNotFound) {
 		admitRunForTest(t, rt.Store, session.RunMeta{
-			AgentID: string(input.AgentID), RunID: input.RunID, SessionID: input.RunContext.SessionID,
+			Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(input.AgentID))}, RunID: input.RunID, SessionID: input.RunContext.SessionID,
 			Status: session.RunStatusRunning,
 		})
 	} else {
@@ -57,7 +60,7 @@ func appendTestActivityHistory(t testing.TB, rt *Runtime, input *PlanActivityInp
 	payload, err := transcript.EncodeRunLogDelta(messages)
 	require.NoError(t, err)
 	result, err := rt.Store.AppendRunRecord(t.Context(), &runlog.Event{
-		RunID: input.RunID, AgentID: input.AgentID, SessionID: input.RunContext.SessionID,
+		RunID: input.RunID, Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(input.AgentID))}, SessionID: input.RunContext.SessionID,
 		EventKey: uuid.NewString(), Timestamp: time.Now().Truncate(time.Millisecond),
 		Type: transcript.RunLogMessagesAppended, Payload: payload,
 	})
@@ -92,7 +95,7 @@ func seedTestContinuationHistory(t testing.TB, rt *Runtime, input *RunInput, che
 		require.NoError(t, err)
 	}
 	return seedTestPlanInput(t, rt, PlanActivityInput{
-		AgentID: input.AgentID, RunID: input.RunID,
+		AgentID: testSubjectAgent(t, input.Subject), RunID: input.RunID,
 		RunContext: restoreCheckpointRunContext(checkpoint.Context, input),
 	}, nil).HistoryEndID
 }
@@ -106,8 +109,13 @@ func publishTestRunInput(t testing.TB, rt *Runtime, input *RunInput, messages []
 			require.NoError(t, err)
 		}
 	}
+	origin := genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: input.RunID})}
+	if input.ParentRunID != "" {
+		origin = genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: input.ParentRunID, ToolCallID: input.ParentToolCallID})}
+	}
 	endID, err := publishLiteralHistory(t.Context(), rt.Store, storage.SeedDeclaration{
-		AgentID: string(input.AgentID), RunID: input.RunID, SessionID: input.SessionID,
+		Origin:  origin,
+		Subject: input.Subject, RunID: input.RunID, SessionID: input.SessionID,
 		Kind: storage.SeedLiteral,
 	}, messages)
 	require.NoError(t, err)
@@ -119,8 +127,8 @@ func publishTestRunInput(t testing.TB, rt *Runtime, input *RunInput, messages []
 func testInitialMessages(t testing.TB, store storage.Store, input *RunInput) []*model.Message {
 	t.Helper()
 	admitRunForTest(t, store, session.RunMeta{
-		AgentID: string(input.AgentID), RunID: input.RunID, SessionID: input.SessionID,
-		SeedEndID: input.SeedEndID, Status: session.RunStatusRunning,
+		Subject: input.Subject, RunID: input.RunID, SessionID: input.SessionID,
+		SeedEndID: input.SeedEndID, Status: session.RunStatusRunning, ParentRunID: input.ParentRunID,
 	})
 	messages, err := transcript.BuildMessagesFromRunLog(t.Context(), store, input.RunID)
 	require.NoError(t, err)

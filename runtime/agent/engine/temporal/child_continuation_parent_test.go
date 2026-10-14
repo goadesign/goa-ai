@@ -20,6 +20,7 @@ import (
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/internal/startrecipe"
@@ -103,11 +104,11 @@ func TestTemporalChildContinuationBindsExecutionParentAndRetainsCheckpoint(t *te
 		if expected.Digest != actual {
 			return nil, fmt.Errorf("accepted child digest changed")
 		}
-		return &api.RunOutput{AgentID: input.AgentID, RunID: input.RunID}, nil
+		return &api.RunOutput{Subject: input.Subject, RunID: input.RunID}, nil
 	}, workflow.RegisterOptions{Name: "continued.child"})
 	env.ExecuteWorkflow(func(ctx workflow.Context) error {
 		parentID := workflow.GetInfo(ctx).WorkflowExecution.ID
-		input := &api.RunInput{AgentID: "child.agent", RunID: "continued-child", SessionID: "session-1", TurnID: "turn-new", ParentRunID: parentID,
+		input := &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("child.agent"))}, RunID: "continued-child", SessionID: "session-1", TurnID: "turn-new", ParentRunID: parentID,
 			Continuation: &api.RunContinuationInput{Suspension: &suspension, Response: &api.PendingInputResponse{Clarification: &api.ClarificationAnswer{ID: "question", Answer: "Confirmed"}}}}
 		request := engine.ChildWorkflowRequest{ID: input.RunID, Workflow: "continued.child", TaskQueue: "child.queue", Input: input}
 		current, err := startrecipe.SnapshotChildRequest(request)

@@ -38,7 +38,7 @@ func TestContextWindowRecoveryWorkflow(t *testing.T) {
 					provider := &contextWindowTestProvider{withTool: toolBatch, rawClient: rawClient}
 					h, sink, summary := contextWindowHarness(t, provider, streaming)
 					initialHistory := []*model.Message{systemMsg(), userMsg(strings.Repeat("older evidence ", 400)), assistantTextMsg("older answer"), userMsg("continue the current task")}
-					h.base.HistoryEndID = testToolHistory(t, h.runtime, h.input.AgentID, h.base.RunContext, initialHistory)
+					h.base.HistoryEndID = testToolHistory(t, h.runtime, testSubjectAgent(t, h.input.Subject), h.base.RunContext, initialHistory)
 					out, err := h.run(contextWindowKickoff(), initialCaps(RunPolicy{MaxToolCalls: 4, MaxRecoveryTurns: 2}))
 					require.NoError(t, err)
 					assert.Equal(t, "continued answer", out.Final.Text())
@@ -74,7 +74,7 @@ func TestContextWindowRecoveryWorkflow(t *testing.T) {
 func TestContextWindowRecoveryStopsWhenAlreadyCompacted(t *testing.T) {
 	provider := &contextWindowTestProvider{repeatStop: true}
 	h, _, _ := contextWindowHarness(t, provider, false)
-	h.base.HistoryEndID = testToolHistory(t, h.runtime, h.input.AgentID, h.base.RunContext, []*model.Message{userMsg(strings.Repeat("older evidence ", 400)), assistantTextMsg("older answer"), userMsg("newest question")})
+	h.base.HistoryEndID = testToolHistory(t, h.runtime, testSubjectAgent(t, h.input.Subject), h.base.RunContext, []*model.Message{userMsg(strings.Repeat("older evidence ", 400)), assistantTextMsg("older answer"), userMsg("newest question")})
 	_, err := h.run(contextWindowKickoff(), initialCaps(RunPolicy{MaxToolCalls: 4, MaxRecoveryTurns: 3}))
 	require.ErrorContains(t, err, "cannot compact history further")
 	assert.Len(t, provider.requests, 2, "no third inference without more history to compact")
@@ -83,7 +83,7 @@ func TestContextWindowRecoveryStopsWhenAlreadyCompacted(t *testing.T) {
 func TestContextWindowRecoveryLeavesMaximumOutputStopUnchanged(t *testing.T) {
 	provider := &contextWindowTestProvider{stopReason: "max_tokens"}
 	h, _, summary := contextWindowHarness(t, provider, false)
-	h.base.HistoryEndID = testToolHistory(t, h.runtime, h.input.AgentID, h.base.RunContext, []*model.Message{userMsg("older question"), assistantTextMsg("older answer"), userMsg("newest question")})
+	h.base.HistoryEndID = testToolHistory(t, h.runtime, testSubjectAgent(t, h.input.Subject), h.base.RunContext, []*model.Message{userMsg("older question"), assistantTextMsg("older answer"), userMsg("newest question")})
 	out, err := h.run(contextWindowKickoff(), initialCaps(RunPolicy{MaxToolCalls: 4, MaxRecoveryTurns: 2}))
 	require.NoError(t, err)
 	assert.Equal(t, "Partial answer ", out.Final.Text())
@@ -160,7 +160,7 @@ func contextWindowHarness(t *testing.T, provider *contextWindowTestProvider, str
 	h.runtime.models["context-test"] = historyTestClient(t, provider)
 	summary := &historyCountingClient{summaryText: "older evidence summarized; continue the current task"}
 	h.registration.Policy.History = Compress(historyTestClient(t, summary), HistoryCompressionConfig{AllowEstimatedTokens: true, CompressAtMaxInputTokens: 100000, KeepMaxTurns: 12})
-	h.runtime.agents[h.input.AgentID] = h.registration
+	h.runtime.agents[testSubjectAgent(t, h.input.Subject)] = h.registration
 	sink := &recordingStreamSink{}
 	subscriber, err := stream.NewSubscriber(sink, stream.AgentDebugProfile())
 	require.NoError(t, err)
@@ -296,7 +296,7 @@ func TestContextWindowCompactionReusesCoveredEvidence(t *testing.T) {
 func TestContextWindowRecoveryHonorsExistingBudget(t *testing.T) {
 	provider := &contextWindowTestProvider{repeatStop: true}
 	h, _, _ := contextWindowHarness(t, provider, false)
-	h.base.HistoryEndID = testToolHistory(t, h.runtime, h.input.AgentID, h.base.RunContext, []*model.Message{userMsg(strings.Repeat("old evidence ", 400)), assistantTextMsg("old answer"), userMsg("new question")})
+	h.base.HistoryEndID = testToolHistory(t, h.runtime, testSubjectAgent(t, h.input.Subject), h.base.RunContext, []*model.Message{userMsg(strings.Repeat("old evidence ", 400)), assistantTextMsg("old answer"), userMsg("new question")})
 	out, err := h.run(contextWindowKickoff(), initialCaps(RunPolicy{MaxToolCalls: 4, MaxRecoveryTurns: 1}))
 	require.NoError(t, err)
 	assert.Equal(t, "stopped after recovery cap", out.Final.Text())
@@ -316,8 +316,8 @@ func TestContextWindowRecoveryRequiresHistoryPolicy(t *testing.T) {
 		rejected = output
 		return output, err
 	}
-	h.runtime.agents[h.input.AgentID] = h.registration
-	h.base.HistoryEndID = testToolHistory(t, h.runtime, h.input.AgentID, h.base.RunContext, []*model.Message{userMsg("question")})
+	h.runtime.agents[testSubjectAgent(t, h.input.Subject)] = h.registration
+	h.base.HistoryEndID = testToolHistory(t, h.runtime, testSubjectAgent(t, h.input.Subject), h.base.RunContext, []*model.Message{userMsg("question")})
 	_, err := h.run(contextWindowKickoff(), initialCaps(RunPolicy{MaxToolCalls: 4, MaxRecoveryTurns: 1}))
 	require.ErrorContains(t, err, "requires a history policy")
 	var contract *planner.OutputContractError
