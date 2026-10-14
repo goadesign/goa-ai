@@ -51,7 +51,7 @@ func (e *mcpLegacyEncoder) Encode(value any) error {
 }
 
 // mcpLegacyResult reuses each planned HTTP body. It removes modern result
-// markers and converts non-object tool results to the older advertised object.
+// markers and converts tool results to the older advertised object.
 func mcpLegacyResult(value any, mode mcpLegacyMode) (any, error) {
     switch body := value.(type) {
     {{- range .Bodies }}
@@ -97,13 +97,17 @@ func mcpLegacyResult(value any, mode mcpLegacyMode) (any, error) {
         copy := *completed
         {{- if eq .Method "tools/call" }}
         if len(copy.StructuredContent) != 0 {
+            {{- if not $.DynamicTools }}
             if mode.wrapOutput {
+            {{- end }}
                 encoded, err := json.Marshal(struct { Value json.RawMessage `json:"value"` }{copy.StructuredContent})
                 if err != nil {
                     return nil, fmt.Errorf("encode older structured tool result: %w", err)
                 }
                 copy.StructuredContent = encoded
+            {{- if not $.DynamicTools }}
             }
+            {{- end }}
             // A host that reads only text still receives the complete JSON result.
             text := string(copy.StructuredContent)
             copy.Content = append(append(copy.Content[:0:0], copy.Content...), &{{ $.ContentType.Name }}{Type: "text", Text: &text})
@@ -122,12 +126,57 @@ func mcpLegacyResult(value any, mode mcpLegacyMode) (any, error) {
         copy.Tools = append(copy.Tools[:0:0], copy.Tools...)
         for index, tool := range copy.Tools {
             item := *tool
+            {{- if $.DynamicTools }}
+            if len(item.OutputSchema) != 0 {
+                // A nested schema keeps its own reference root, so recursive
+                // results still validate after the older response adds value.
+                var schema map[string]json.RawMessage
+                if err := json.Unmarshal(item.OutputSchema, &schema); err != nil {
+                    return nil, fmt.Errorf("decode output schema for tool %q: %w", item.Name, err)
+                }
+                if schema == nil {
+                    return nil, fmt.Errorf("output schema for tool %q must be an object", item.Name)
+                }
+                if raw, present := schema["$schema"]; present {
+                    var dialect string
+                    if err := json.Unmarshal(raw, &dialect); err != nil {
+                        return nil, fmt.Errorf("decode output schema dialect for tool %q: %w", item.Name, err)
+                    }
+                    switch dialect {
+                    case "https://json-schema.org/draft/2020-12/schema", "https://json-schema.org/draft/2020-12/schema#", "http://json-schema.org/draft/2020-12/schema", "http://json-schema.org/draft/2020-12/schema#":
+                    default:
+                        return nil, &mcpruntime.Error{Code: mcpruntime.JSONRPCInternalError, Message: fmt.Sprintf("Basic MCP output schema for tool %q uses unsupported dialect %q; JSON Schema 2020-12 is required", item.Name, dialect)}
+                    }
+                }
+                digest := sha256.Sum256(item.OutputSchema)
+                identity := fmt.Sprintf("schema://goa-ai/mcp/result/%x", digest)
+                var identifier *string
+                if raw, present := schema["$id"]; present {
+                    if err := json.Unmarshal(raw, &identifier); err != nil {
+                        return nil, fmt.Errorf("decode output schema identifier for tool %q: %w", item.Name, err)
+                    }
+                    if identifier == nil {
+                        return nil, fmt.Errorf("output schema for tool %q requires a string $id", item.Name)
+                    }
+                }
+                if identifier == nil || *identifier == "" || *identifier == "#" {
+                    schema["$id"] = json.RawMessage(fmt.Sprintf(`%q`, identity+"/schema"))
+                }
+                nested, err := json.Marshal(schema)
+                if err != nil {
+                    return nil, fmt.Errorf("encode output schema for tool %q: %w", item.Name, err)
+                }
+                item.OutputSchema = append(json.RawMessage(fmt.Sprintf(`{"$id":%q,"type":"object","properties":{"value":`, fmt.Sprintf("%s/legacy-%x", identity, digest))), nested...)
+                item.OutputSchema = append(item.OutputSchema, []byte(`},"required":["value"],"additionalProperties":false}`)...)
+            }
+            {{- else }}
             switch item.Name {
             {{- range $name, $schema := $.OutputSchemas }}
             case {{ printf "%q" $name }}:
                 item.OutputSchema = json.RawMessage({{ printf "%q" $schema }})
             {{- end }}
             }
+            {{- end }}
             copy.Tools[index] = &item
         }
         body = &copy

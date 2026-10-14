@@ -2216,7 +2216,10 @@ when no static tool is declared. The application implements those methods on
 the generated service interface and can embed `MCPAdapter` for discovery and
 other declared capabilities. Resource authorization and both HTTP protocol
 revisions remain owned by the generated transport. The application owns runtime
-schemas, argument validation, pagination, and per-tool authorization.
+schemas, argument validation, pagination, and per-tool authorization. The legacy
+transport uniformly wraps present dynamic results and their output schemas in a
+`value` object, preserving schema reference identity. It does not reread the catalog
+during invocation or require the application to adapt results for each client.
 
 Static `Tool` and `ToolCatalog` cannot be combined with `DynamicTools` in one
 service: one implementation owns the complete catalog and dispatch. Existing
