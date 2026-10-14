@@ -750,7 +750,7 @@ func TestCallDecisionAtomicallyAdmitsOrRejects(t *testing.T) {
 	missingOutcomeKey := firstStore.callKey(missingOutcomeID)
 	require.NoError(t, testRedisClient.HDel(ctx, missingOutcomeKey, "outcome_unknown_payload").Err())
 	_, err = secondStore.Attach(ctx, toolset, missingOutcomeID, digest)
-	require.ErrorContains(t, err, "CALLDECISIONINVALID missing admitted field outcome_unknown_payload")
+	require.ErrorContains(t, err, "CALLDECISIONINVALID missing prepared field outcome_unknown_payload")
 	published, err := testRedisClient.HGet(ctx, missingOutcomeKey, "published").Result()
 	require.NoError(t, err)
 	assert.Equal(t, "0", published)
