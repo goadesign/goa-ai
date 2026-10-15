@@ -148,6 +148,15 @@ JSON codecs for the received schemas. Numbers retain their exact JSON value.
 References must resolve inside the supplied schema; schema compilation does
 not fetch files or remote resources.
 
+For bounded results, providers return result data as JSON and send counts,
+truncation, and paging information separately in `Bounds`. Like generated typed
+codecs, the portable result codec accepts both provider data and finalized
+results. Fields supplied by the runtime are optional in the codec and checked
+when present; the runtime adds their authoritative values after encoding.
+Advertised schemas still require counts and truncation in finalized output,
+including `total` when the bound method guarantees it. Schema-only clients
+continue validating the advertised schema.
+
 Dynamic execution supports service tools and [native Agent tools](#register-agent-tools),
 including confirmation, bounded results, declared pagination partners, and
 server-only result data. Terminal/bookkeeping tools and planner control
