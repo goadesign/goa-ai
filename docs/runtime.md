@@ -3601,6 +3601,13 @@ The runtime enforces one strict contract across all result ingress paths
 - when `truncated=true`, bounds must include either `next_cursor` or
   `refinement_hint`.
 
+Historical paging restoration uses only successful saved calls. Failed calls
+remain in the exact saved transcript, but cannot provide another page and are
+not restored as current execution outputs. This applies to literal history and
+exact saved-result references. Current outputs and suspended executable state
+retain the full result contract above; successful historical calls still require
+valid ownership, call/result identities, byte counts, and paging metadata.
+
 When `tools.ToolSpec.Bounds.Paging` names a dedicated continuation, the runtime
 advances compatible zero-item results with a non-empty next cursor before
 invoking the planner. The continuation is fully determined until the chain

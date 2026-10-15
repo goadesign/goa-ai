@@ -152,7 +152,11 @@ func (r *Runtime) loadLiteralContinuationOutputs(
 		if err != nil {
 			return nil, fmt.Errorf("runtime: hydrate historical continuation output: %w", err)
 		}
-		if err := r.validateHistoricalContinuationOutput(output, entry.events.result); err != nil {
+		// Failed calls remain in the transcript but cannot supply another page.
+		if output.Failure != nil {
+			continue
+		}
+		if err := r.validateHistoricalContinuationBounds(output); err != nil {
 			return nil, err
 		}
 		outputs = append(outputs, output)
@@ -160,26 +164,19 @@ func (r *Runtime) loadLiteralContinuationOutputs(
 	return outputs, nil
 }
 
-// validateHistoricalContinuationOutput checks paging and failure metadata.
-// Saved successful result bytes remain evidence under their original contract.
-func (r *Runtime) validateHistoricalContinuationOutput(output *planner.ToolOutput, result *hooks.ToolResultReceivedEvent) error {
+// validateHistoricalContinuationBounds checks the paging facts of a saved
+// successful call. Historical failures supply no paging state and are excluded
+// by the readers; current execution outputs retain their complete validation.
+func (r *Runtime) validateHistoricalContinuationBounds(output *planner.ToolOutput) error {
 	call := ToolCall{Name: output.Name, ToolCallID: output.ToolCallID, Registry: output.Registry}
-	var err error
-	if output.Failure != nil {
-		_, err = validatePersistedToolResult(nil, call, result.ResultJSON, output.ServerData, output.Blocks, output.Bounds, output.Failure)
-	} else {
-		var spec tools.ToolSpec
-		var ok bool
-		spec, ok, err = lookupCallSpec(call, r.toolSpec)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return fmt.Errorf("runtime: historical continuation references unregistered tool %q", output.Name)
-		}
-		err = validateToolBoundsContract(spec, call, false, output.Bounds)
-	}
+	spec, ok, err := lookupCallSpec(call, r.toolSpec)
 	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("runtime: historical continuation references unregistered tool %q", output.Name)
+	}
+	if err := validateToolBoundsContract(spec, call, false, output.Bounds); err != nil {
 		return fmt.Errorf("runtime: invalid historical continuation metadata (tool_call_id=%s): %w", output.ToolCallID, err)
 	}
 	return nil

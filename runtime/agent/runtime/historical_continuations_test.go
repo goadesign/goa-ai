@@ -129,12 +129,19 @@ func TestHistoricalContinuationRetiresCompletedChainAfterContractChange(t *testi
 	assert.Empty(t, actions)
 }
 
-func TestHistoricalContinuationRejectsDamagedMetadata(t *testing.T) {
+func TestHistoricalContinuationValidatesOnlySuccessfulMetadata(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
 		mutate  func(*hooks.ToolResultReceivedEvent)
 		wantErr string
 	}{
+		{name: "retained failure", mutate: func(result *hooks.ToolResultReceivedEvent) {
+			result.ResultJSON = nil
+			result.ResultBytes = 0
+			result.Bounds = nil
+			result.ServerData = rawjson.Message(`{"retained_detail":"original evidence"}`)
+			result.Failure = testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "Recorded failure")
+		}},
 		{name: "correlation", mutate: func(result *hooks.ToolResultReceivedEvent) {
 			result.CallRunID = "wrong-run"
 		}, wantErr: "identity mismatch"},
@@ -166,10 +173,18 @@ func TestHistoricalContinuationRejectsDamagedMetadata(t *testing.T) {
 			tc.mutate(result)
 			appendHistoricalHookEvent(t, store, call, "source-call", 1)
 			appendHistoricalHookEvent(t, store, result, "source-result", 2)
-			_, err := rt.loadHistoricalContinuationOutputs(t.Context(), testResolvedPlanInput(t, rt, seedTestPlanInput(t, rt, PlanActivityInput{AgentID: "svc.agent", RunContext: run.Context{SessionID: "session-1"}}, []*model.Message{{Role: model.ConversationRoleAssistant, Parts: []model.Part{
+			outputs, err := rt.loadHistoricalContinuationOutputs(t.Context(), testResolvedPlanInput(t, rt, seedTestPlanInput(t, rt, PlanActivityInput{AgentID: "svc.agent", RunContext: run.Context{SessionID: "session-1"}}, []*model.Message{{Role: model.ConversationRoleAssistant, Parts: []model.Part{
 				model.ToolUsePart{ID: "source-1", Name: search.Name.String(), Input: rawjson.Message(`{}`)},
 			}}})), rt.toolSpecs)
-			assert.ErrorContains(t, err, tc.wantErr)
+			if tc.wantErr == "" {
+				require.NoError(t, err)
+				assert.Empty(t, outputs)
+				events := &canonicalToolEvents{scheduled: call, result: result}
+				_, err = rt.plannerToolOutputFromCanonicalEvents("run-1", "run-1", "source-1", events, events)
+				assert.ErrorContains(t, err, "failure and server data")
+			} else {
+				assert.ErrorContains(t, err, tc.wantErr)
+			}
 		})
 	}
 }
