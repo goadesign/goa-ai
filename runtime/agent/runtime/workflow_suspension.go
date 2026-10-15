@@ -252,7 +252,13 @@ func (l *workflowLoop) buildWorkflowCheckpoint(batch stepBatch, confirmations []
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		encoded, err := encodeToolEvent(event, call, l.reg.Definition.spec)
+		// Unbound calls keep runtime-registered codecs. Saved registry calls use
+		// only this consuming Agent's definition to select generated codecs.
+		lookup := l.r.toolSpec
+		if call.Registry != nil {
+			lookup = l.reg.Definition.spec
+		}
+		encoded, err := encodeToolEvent(event, call, lookup)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -739,7 +745,11 @@ func (r *Runtime) restoreCheckpointState(
 		if err != nil {
 			return nil, err
 		}
-		decoded, err := decodeCheckpointToolEvent(event, call, lookup)
+		eventLookup := r.toolSpec
+		if call.Registry != nil {
+			eventLookup = lookup
+		}
+		decoded, err := decodeCheckpointToolEvent(event, call, eventLookup)
 		if err != nil {
 			return nil, err
 		}
