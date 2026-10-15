@@ -1460,9 +1460,11 @@ without discovery or a saved alias table. Deployments upgrading from protobuf
 variant before starting the new reader; see the [upgrade contract](docs/tool_search.md#generation-and-upgrades).
 
 Generated `Toolset()` declarations and the public portable contract compiler
-support SDK integration. Applications can use `RegistryCatalog.RunLabels()` to
-select per-run sources; product namespaces and authorization remain application
-concerns.
+support SDK integration. Portable bounded-result codecs accept provider result
+data before the runtime adds counts, truncation, and paging information from
+separate `Bounds`; advertised schemas still describe the final output. Applications can use
+`RegistryCatalog.RunLabels()` to select per-run sources; product namespaces and
+authorization remain application concerns.
 
 [Tool search and dynamic registries](docs/tool_search.md) describes consumer
 loading and execution. The [runtime provider guide](docs/runtime.md#registry-routed-provider-execution-service-side)

@@ -120,6 +120,12 @@ func Compile(declaration *genregistry.ToolSchema) (tools.ToolSpec, error) {
 		if err != nil {
 			return tools.ToolSpec{}, fmt.Errorf("tool %q result: %w", declaration.Name, err)
 		}
+		if contract.Bounds != nil {
+			spec.Result.Codec, err = compileBoundedResultCodec(declaration.ResultSchema, contract.Bounds)
+			if err != nil {
+				return tools.ToolSpec{}, fmt.Errorf("tool %q bounded result: %w", declaration.Name, err)
+			}
+		}
 	}
 	if contract.Bounds != nil {
 		spec.Bounds = &tools.BoundsSpec{}
