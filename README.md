@@ -41,7 +41,7 @@ and an application-specific guide to the code they need to implement.
 | --- | --- |
 | **An AI agent** that calls typed tools, returns structured answers, and can pause for human input | [Agent quickstart](quickstart/README.md) |
 | **An MCP server** exposing Go service methods, resources, and prompts, or **an MCP client** consuming them | [MCP integration guide](https://goa.design/docs/2-goa-ai/mcp-integration/) |
-| **A tool registry** that publishes capabilities across services and lets agents discover independently implemented Agent operations without loading provider code | [Registries and tool search](docs/tool_search.md) |
+| **A tool registry** that publishes capabilities across services and lets agents discover independently implemented Agent operations without loading provider code, or binds generated native tools to selected registrations while retaining typed codecs and child routes | [Registries and tool search](docs/tool_search.md) |
 
 Low-level runtime and custom Store integrations use a required generated
 [run subject](docs/run-subjects.md) to identify the actual executor. Read its

@@ -98,7 +98,10 @@ func validateRegistrySource(definition AgentDefinition, call ToolCall) (*registr
 			definition.route.ID, call.Registry.Registry, resolved.Registered.Toolset.Name, version)
 	}
 	if spec, exists := definition.specByName[call.Name]; exists {
-		if err := validateStaticServiceSpec(spec, resolved); err != nil {
+		if err := validateStaticRegistrySpec(spec, resolved); err != nil {
+			return nil, err
+		}
+		if err := validateStaticAgentRoute(definition, spec, resolved); err != nil {
 			return nil, err
 		}
 	}
@@ -177,7 +180,7 @@ func (r *Runtime) callSpec(call ToolCall) (tools.ToolSpec, bool, error) {
 }
 
 // lookupOwnedCallSpec accepts only a lookup scoped to the consuming definition.
-// Bound services retain generated codecs after their saved declaration is checked.
+// Bound static tools retain generated codecs after their saved declaration is checked.
 func lookupOwnedCallSpec(call ToolCall, lookup toolSpecLookup) (tools.ToolSpec, bool, error) {
 	if call.Registry != nil {
 		if spec, exists := lookup(call.Name); exists {
@@ -185,7 +188,7 @@ func lookupOwnedCallSpec(call ToolCall, lookup toolSpecLookup) (tools.ToolSpec, 
 			if err != nil {
 				return tools.ToolSpec{}, false, err
 			}
-			if err := validateStaticServiceSpec(spec, resolved); err != nil {
+			if err := validateStaticRegistrySpec(spec, resolved); err != nil {
 				return tools.ToolSpec{}, false, err
 			}
 			return spec, true, nil

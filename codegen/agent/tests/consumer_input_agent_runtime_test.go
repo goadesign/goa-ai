@@ -60,6 +60,7 @@ const consumerAgentRuntimeSource = `package bindingintegration
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -70,6 +71,8 @@ import (
 	genrecords "generated.local/gen/worker/agents/specialist/exports/records"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	pulse "goa.design/goa-ai/features/stream/pulse/clients/pulse"
+	genregistry "goa.design/goa-ai/registry/gen/registry"
 	engineinmem "goa.design/goa-ai/runtime/agent/engine/inmem"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -79,8 +82,8 @@ import (
 )
 
 type bindingPlanner struct {
-	t *testing.T
-	child, typed bool
+	t               *testing.T
+	child, typed    bool
 	starts, resumes atomic.Int32
 }
 
@@ -161,6 +164,71 @@ func TestStaticAgentBindingPreservesRouteAndResults(t *testing.T) {
 				require.Error(t, err)
 			})
 		}
+	}
+}
+
+// selectedNativeSource supplies the complete generated native operation set and
+// its owner-selected registration. Resolution never reads a remote catalog.
+type selectedNativeSource struct{ selected *genregistry.ResolvedToolset }
+type unusedNativePulse struct{ pulse.Client }
+
+func (source selectedNativeSource) Resolve(_ context.Context, catalog *runtime.RegistryCatalog) error {
+	return catalog.BindStaticAgent("native", genrecords.ToolSchemas(), source.selected, genrecords.Read)
+}
+
+func (source selectedNativeSource) Allows(registry, toolset, _ string) bool {
+	return registry == "native" && toolset == source.selected.Toolset.Name
+}
+
+func TestSelectedNativeRegistrationPreservesGeneratedInputAndChildResult(t *testing.T) {
+	for _, textOnly := range []bool{false, true} {
+		t.Run(fmt.Sprintf("text-only=%t", textOnly), func(t *testing.T) {
+			rt := runtime.New(storageinmem.New(), runtime.WithEngine(engineinmem.New()))
+			child := &bindingPlanner{t: t, child: true, typed: true}
+			parent := &bindingPlanner{t: t}
+			toolset := genrecords.Toolset()
+			toolset.Name = "selected.records"
+			toolset.RegisteredAt = "2026-09-17T00:00:00Z"
+			for _, operation := range toolset.Tools {
+				require.Equal(t, "agent", operation.ConsumerContract.Kind)
+				require.Nil(t, operation.ConsumerContract.Agent)
+				operation.ConsumerContract.Agent = &genregistry.AgentToolTarget{
+					Executor: string(genspecialist.AgentID), Workflow: genspecialist.WorkflowName,
+					Queue: genspecialist.DefaultTaskQueue, Configuration: "revision/selected",
+				}
+			}
+			selected := &genregistry.ResolvedToolset{Toolset: toolset, RegistrationToken: strings.Repeat("a", 64)}
+			require.NoError(t, rt.RegisterRegistry("native", &genregistry.Client{}, unusedNativePulse{}))
+			provider, err := genagenttools.NewRegistration(genspecialist.Definition(), "")
+			require.NoError(t, err)
+			require.NoError(t, rt.RegisterToolset(provider))
+			require.NoError(t, genspecialist.RegisterSpecialistAgent(t.Context(), rt, genspecialist.SpecialistAgentConfig{Planner: child}))
+			var resolutions atomic.Int32
+			require.NoError(t, rt.RegisterAgentToolResolver(genspecialist.AgentID, func(_ context.Context, _ genregistry.ExecutionInvocation, revision string, call *runtime.ToolCall) (*runtime.AgentToolConfiguration, error) {
+				resolutions.Add(1)
+				require.Equal(t, "revision/selected", revision)
+				input, err := genrecords.ReadPayloadCodec().FromJSON(call.Payload)
+				require.NoError(t, err)
+				assert.Equal(t, "accepted", input.Scope)
+				assert.Equal(t, "active", input.Query)
+				return &runtime.AgentToolConfiguration{History: runtime.LiteralAgentHistory(nil)}, nil
+			}))
+			registration, err := genbound.NewBoundAgentRegistration(rt, genbound.BoundAgentConfig{
+				Planner: parent,
+				PrepareInputs: func(_ context.Context, catalog *runtime.RegistryCatalog) error {
+					return genbinding.BindReadInput(catalog, "accepted")
+				},
+			})
+			require.NoError(t, err)
+			registration.Definition = registration.Definition.WithRegistryTools(selectedNativeSource{selected: selected})
+			require.NoError(t, rt.RegisterAgent(t.Context(), registration))
+			output, err := rt.MustClientFor(registration.Definition).OneShotRun(t.Context(), []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "read records"}}}}, runtime.WithTextOnly(textOnly))
+			require.NoError(t, err)
+			assert.Equal(t, "finished", output.Final.Text())
+			assert.EqualValues(t, 1, resolutions.Load())
+			assert.EqualValues(t, 1, parent.resumes.Load())
+			assert.EqualValues(t, 1, child.starts.Load())
+		})
 	}
 }
 `

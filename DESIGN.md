@@ -1441,6 +1441,14 @@ including removing a static tool, requires draining affected runs before the
 change. The existing saved direct selection cannot distinguish those histories.
 See the [binding contract](docs/tool_search.md#bind-generated-service-tools).
 
+`RegistryCatalog.BindStaticAgent` binds the complete generated native export set
+from unbound operation declarations and explicit original tool names. It checks
+every operation contract and the generated child's executor, workflow and queue.
+The selected registration owns configuration revisions; discovery descriptions
+and tags do not replace generated operation contracts. Saved calls and paging
+continuations retain that selection and use consumer-owned codecs. Native calls
+still run as durable child workflows, with no new wire fields or execution mode.
+
 `RegistryCatalog.IncludeResolved` imports original operation names from an exact
 registration and continues to reject collisions with generated static tools. `IncludeRegistered` instead requires the owner-selected
 `CatalogSource` and exact registration. It validates the route, registration token

@@ -415,6 +415,25 @@ or removing its static declaration, requires draining affected runs before
 changing the definition. Reverting such a change requires the same care. A
 same-named static tool owned by another Agent never changes the call's executor.
 
+## Bind generated native Agent tools
+
+Call `catalog.BindStaticAgent(registry, expected, selected, names...)` with the
+complete generated unbound operation declarations, the owner's selected
+`ResolvedToolset`, and every original generated tool name. The runtime compares
+all operation schemas and policy and checks the provider executor, workflow and
+queue against the consuming definition's generated child route. Registration
+configuration may change between revisions; each accepted call retains its
+selected revision. Toolset discovery descriptions and tags do not alter the
+operation contract.
+
+The consumer keeps generated payload and result codecs and `BindInput`
+preparation. Native execution uses the existing durable child workflow path.
+Saved calls and pagination continuations validate the retained contract without
+reading a replacement registration. Direct static calls and dynamic registry
+Agent calls retain their existing behavior. No regeneration or wire migration is
+required to use this binding method with existing generated declarations.
+
+
 ## Upgrade for native Agent tools
 
 Upgrade the registry, then the executor workers and every consumer that can

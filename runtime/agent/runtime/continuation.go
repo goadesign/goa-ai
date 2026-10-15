@@ -206,11 +206,17 @@ func (r *Runtime) continuationGroups(agentID agent.Ident, outputs []*planner.Too
 			if !exists {
 				return nil, fmt.Errorf("static continuation %q is not in this agent's definition", spec.Bounds.Paging.ContinueTool)
 			}
-			if err := validateStaticServiceSpec(continuation, resolved); err != nil {
+			if err := validateStaticRegistrySpec(continuation, resolved); err != nil {
+				return nil, err
+			}
+			if err := validateStaticAgentRoute(registration.Definition, continuation, resolved); err != nil {
 				return nil, err
 			}
 			source = registration.Definition.specByName[continuation.Bounds.Paging.SourceTool]
-			if err := validateStaticServiceSpec(source, resolved); err != nil {
+			if err := validateStaticRegistrySpec(source, resolved); err != nil {
+				return nil, err
+			}
+			if err := validateStaticAgentRoute(registration.Definition, source, resolved); err != nil {
 				return nil, err
 			}
 		}
