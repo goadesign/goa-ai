@@ -18,6 +18,7 @@ import (
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -42,6 +43,7 @@ type (
 		definition  AgentDefinition
 		runLabels   map[string]string
 		runID       string
+		runContext  run.Context
 		textOnly    bool
 		sources     RegistryTools
 		specs       map[tools.Ident]tools.ToolSpec
@@ -258,6 +260,7 @@ func (r *Runtime) planningCatalog(ctx context.Context, input *PlanActivityInput)
 	catalog := r.newRegistryCatalog(registration.Definition)
 	catalog.runLabels = cloneLabels(input.RunContext.Labels)
 	catalog.runID = input.RunContext.RunID
+	catalog.runContext = input.RunContext
 	catalog.textOnly = input.Policy != nil && input.Policy.TextOnly
 	if input.Finalize == nil && !input.SynthesisOnly && registration.Definition.registryTools != nil {
 		if err := registration.Definition.registryTools.Resolve(ctx, catalog); err != nil {

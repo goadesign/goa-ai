@@ -287,7 +287,7 @@ func (r *selectedContinuationReader) addReference(ctx context.Context, ref *api.
 		r.seen[key] = struct{}{}
 		return nil
 	}
-	if err := r.runtime.validateHistoricalContinuationBounds(output); err != nil {
+	if err := r.runtime.validateHistoricalContinuationBounds(output, call.Subject()); err != nil {
 		return err
 	}
 	r.outputs = append(r.outputs, output)

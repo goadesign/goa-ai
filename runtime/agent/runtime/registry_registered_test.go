@@ -5,6 +5,7 @@ package runtime
 import (
 	"context"
 	"errors"
+	"goa.design/goa-ai/internal/registrycall"
 	"strings"
 	"sync"
 	"testing"
@@ -164,11 +165,11 @@ func TestRegisteredPlanningRetainsDerivedNameAndOriginalBinding(t *testing.T) {
 
 func TestRegisteredServiceDispatchUsesOriginalOperation(t *testing.T) {
 	called := false
-	client := resolvedRegistryClient{token: strings.Repeat("a", 64), operation: "records.find", client: &genregistry.Client{CallResolvedToolEndpoint: func(_ context.Context, input any) (any, error) {
+	client := registrycall.NewResolvedClient(&genregistry.Client{CallResolvedToolEndpoint: func(_ context.Context, input any) (any, error) {
 		called = true
 		assert.Equal(t, "records.find", input.(*genregistry.CallResolvedToolPayload).Tool)
 		return nil, errors.New("stop before provider")
-	}}}
+	}}, strings.Repeat("a", 64), "records.find")
 	_, err := client.CallTool(t.Context(), &genregistry.CallToolPayload{Toolset: "provider.records", Tool: "selected-model-name"})
 	require.ErrorContains(t, err, "stop before provider")
 	assert.True(t, called)

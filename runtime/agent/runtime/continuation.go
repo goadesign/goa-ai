@@ -195,6 +195,25 @@ func (r *Runtime) continuationGroups(agentID agent.Ident, outputs []*planner.Too
 		if !isDedicatedContinuationSpec(continuation) {
 			continue
 		}
+		source := resolved.Specs[continuation.Bounds.Paging.SourceTool]
+		if _, static := registration.Definition.specByName[output.Name]; static {
+			call := ToolCall{Name: output.Name, Registry: output.Registry}
+			if _, err := validateRegistrySource(registration.Definition, call); err != nil {
+				return nil, err
+			}
+			var exists bool
+			continuation, exists = registration.Definition.spec(continuation.Name)
+			if !exists {
+				return nil, fmt.Errorf("static continuation %q is not in this agent's definition", spec.Bounds.Paging.ContinueTool)
+			}
+			if err := validateStaticServiceSpec(continuation, resolved); err != nil {
+				return nil, err
+			}
+			source = registration.Definition.specByName[continuation.Bounds.Paging.SourceTool]
+			if err := validateStaticServiceSpec(source, resolved); err != nil {
+				return nil, err
+			}
+		}
 		key := groupKey{registry: output.Registry.Registry, token: resolved.Registered.RegistrationToken, tool: continuation.Name}
 		index, exists := indices[key]
 		if !exists {
@@ -205,7 +224,7 @@ func (r *Runtime) continuationGroups(agentID agent.Ident, outputs []*planner.Too
 			index = len(groups)
 			indices[key] = index
 			groups = append(groups, continuationGroup{
-				spec: continuation, source: resolved.Specs[continuation.Bounds.Paging.SourceTool], registry: binding,
+				spec: continuation, source: source, registry: binding,
 			})
 		}
 		groups[index].outputs = append(groups[index].outputs, output)

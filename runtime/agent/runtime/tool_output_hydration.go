@@ -94,7 +94,7 @@ func (r *Runtime) plannerToolOutputFromCanonicalEvents(callRunID, resultRunID, t
 	}
 	var spec *tools.ToolSpec
 	if output.Failure == nil {
-		registered, ok, err := lookupCallSpec(ToolCall{Name: output.Name, Registry: output.Registry}, r.toolSpec)
+		registered, ok, err := r.callSpec(ToolCall{Name: output.Name, Registry: output.Registry, Subject: callEvents.scheduled.Subject()})
 		if err != nil {
 			return nil, err
 		}

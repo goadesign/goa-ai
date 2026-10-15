@@ -169,7 +169,7 @@ func (l *workflowLoop) prepareToolStep(program *stepProgram) error {
 	l.r.logger.Info(ctx, "Workflow received tool calls from planner", "count", len(program.calls))
 	candidates := append([]ToolCall(nil), program.calls...)
 	for _, call := range candidates {
-		_, ok, err := lookupCallSpec(call, l.r.toolSpec)
+		_, ok, err := l.r.callSpec(call)
 		if err != nil {
 			return err
 		}
@@ -232,7 +232,7 @@ func (l *workflowLoop) prepareToolStep(program *stepProgram) error {
 	}
 	if len(program.awaitItems) > 0 {
 		for _, call := range allowed {
-			spec, ok, err := lookupCallSpec(call, l.r.toolSpec)
+			spec, ok, err := l.r.callSpec(call)
 			if err != nil {
 				return err
 			}
@@ -302,7 +302,7 @@ func (r *Runtime) validateTerminalRunBatch(calls []ToolCall) error {
 	hasTerminal := false
 	hasNonTerminal := false
 	for _, call := range calls {
-		spec, ok, err := lookupCallSpec(call, r.toolSpec)
+		spec, ok, err := r.callSpec(call)
 		if err != nil {
 			return err
 		}
@@ -328,7 +328,7 @@ func (r *Runtime) validateTerminalToolClarifications(records []stepToolRecord) e
 		if record.clarification == nil {
 			continue
 		}
-		spec, ok, err := lookupCallSpec(record.call, r.toolSpec)
+		spec, ok, err := r.callSpec(record.call)
 		if err != nil {
 			return err
 		}
@@ -536,7 +536,7 @@ func (r *Runtime) publishStepToolResult(
 	}
 	resultJSON := record.resultJSON
 	if len(resultJSON) == 0 {
-		_, ok, err := lookupCallSpec(record.call, r.toolSpec)
+		_, ok, err := r.callSpec(record.call)
 		if err != nil {
 			return err
 		}
@@ -631,7 +631,7 @@ func (r *Runtime) executedSuccessfulTerminalRunTool(records []stepToolRecord) (b
 		if record.result == nil {
 			return false, fmt.Errorf("missing tool result for %q", record.call.Name)
 		}
-		spec, ok, err := lookupCallSpec(record.call, r.toolSpec)
+		spec, ok, err := r.callSpec(record.call)
 		if err != nil {
 			return false, err
 		}
@@ -674,7 +674,7 @@ func (l *workflowLoop) recordCapDeniedToolCall(
 		return false, nil, err
 	}
 	var resultJSON rawjson.Message
-	_, ok, err := lookupCallSpec(call, l.r.toolSpec)
+	_, ok, err := l.r.callSpec(call)
 	if err != nil {
 		return true, nil, err
 	}

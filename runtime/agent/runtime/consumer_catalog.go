@@ -49,9 +49,6 @@ func (c *RegistryCatalog) BindInput(original, bound tools.ToolSpec) error {
 	if !exists || !equivalentToolSpec(registered, original) {
 		return fmt.Errorf("tool %q input binding does not match its registered provider", original.Name)
 	}
-	if _, dynamic := c.selections[original.Name]; dynamic {
-		return fmt.Errorf("tool %q input binding requires a static registration", original.Name)
-	}
 	return c.bindConsumerInput(original.Name, original, bound)
 }
 

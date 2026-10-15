@@ -688,7 +688,7 @@ func (r *Runtime) isBookkeeping(name tools.Ident) bool {
 func (r *Runtime) toolMetadata(calls []ToolCall) ([]policy.ToolMetadata, error) {
 	metas := make([]policy.ToolMetadata, 0, len(calls))
 	for _, call := range calls {
-		if call.Registry != nil {
+		if r.isDynamicRegistryCall(call) {
 			meta, err := registryCallMetadata(call)
 			if err != nil {
 				return nil, err

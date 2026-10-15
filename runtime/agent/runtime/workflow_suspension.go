@@ -252,7 +252,13 @@ func (l *workflowLoop) buildWorkflowCheckpoint(batch stepBatch, confirmations []
 		if err != nil {
 			return nil, nil, nil, err
 		}
-		encoded, err := encodeToolEvent(event, call, l.r.toolSpec)
+		// Unbound calls keep runtime-registered codecs. Saved registry calls use
+		// only this consuming Agent's definition to select generated codecs.
+		lookup := l.r.toolSpec
+		if call.Registry != nil {
+			lookup = l.reg.Definition.spec
+		}
+		encoded, err := encodeToolEvent(event, call, lookup)
 		if err != nil {
 			return nil, nil, nil, err
 		}
@@ -266,7 +272,7 @@ func (l *workflowLoop) buildWorkflowCheckpoint(batch stepBatch, confirmations []
 		}
 		var encodedResult *api.ToolEvent
 		if record.childSuspension == nil && record.mcpPending == nil {
-			encoded, err := encodeToolEvent(record.result, record.call, l.r.toolSpec)
+			encoded, err := encodeToolEvent(record.result, record.call, l.r.callSpecLookup(record.call))
 			if err != nil {
 				return nil, nil, nil, err
 			}
@@ -297,7 +303,7 @@ func (l *workflowLoop) buildWorkflowCheckpoint(batch stepBatch, confirmations []
 	if len(checkpointPending) == 0 {
 		checkpointPending = make([]checkpointPendingInput, 0, len(confirmations)+len(batch.pending)+len(items))
 		for _, confirmation := range confirmations {
-			spec, ok, err := lookupCallSpec(confirmation.call, l.r.toolSpec)
+			spec, ok, err := l.r.callSpec(confirmation.call)
 			if err != nil {
 				return nil, nil, nil, err
 			}
@@ -503,7 +509,7 @@ func decodeCheckpointToolEvent(event *api.ToolEvent, call ToolCall, lookup toolS
 	}
 	var spec *tools.ToolSpec
 	if event.Failure == nil {
-		registered, ok, err := lookupCallSpec(call, lookup)
+		registered, ok, err := lookupOwnedCallSpec(call, lookup)
 		if err != nil {
 			return nil, err
 		}
@@ -551,7 +557,7 @@ func (r *Runtime) restoreSuspendedWorkflow(wfCtx *providerRecoveryWorkflowContex
 	}
 	base.providerRecovery = checkpoint.ProviderRecovery
 	base.providerControl = wfCtx.actor
-	state, err := r.restoreCheckpointState(checkpoint.State)
+	state, err := r.restoreCheckpointState(checkpoint.State, reg.Definition.spec)
 	if err != nil {
 		return nil, err
 	}
@@ -727,7 +733,7 @@ func restoreCheckpointRunContext(saved checkpointRunContext, input *RunInput) ru
 // restoreCheckpointState decodes saved tool results and reconstructs pending
 // recovery state from the current checkpoint contract.
 func (r *Runtime) restoreCheckpointState(
-	checkpoint checkpointRunState,
+	checkpoint checkpointRunState, lookup toolSpecLookup,
 ) (*runLoopState, error) {
 	toolEvents := make([]*planner.ToolResult, 0, len(checkpoint.ToolEvents))
 	calls, err := recordedToolCalls(checkpoint.ToolOutputs)
@@ -739,7 +745,11 @@ func (r *Runtime) restoreCheckpointState(
 		if err != nil {
 			return nil, err
 		}
-		decoded, err := decodeCheckpointToolEvent(event, call, r.toolSpec)
+		eventLookup := r.toolSpec
+		if call.Registry != nil {
+			eventLookup = lookup
+		}
+		decoded, err := decodeCheckpointToolEvent(event, call, eventLookup)
 		if err != nil {
 			return nil, err
 		}
@@ -771,7 +781,7 @@ func (r *Runtime) restoreCheckpointBatch(checkpoint checkpointStepBatch, input *
 		var decoded *planner.ToolResult
 		if record.ChildSuspension == nil && record.MCPPending == nil {
 			var err error
-			decoded, err = decodeCheckpointToolEvent(record.Result, record.Call, r.toolSpec)
+			decoded, err = decodeCheckpointToolEvent(record.Result, record.Call, r.callSpecLookup(record.Call))
 			if err != nil {
 				return stepBatch{}, err
 			}
@@ -993,7 +1003,7 @@ func (l *workflowLoop) applyConfirmationDecision(decision *api.ConfirmationDecis
 	if decision.ID != pending.ID {
 		return nil, nil, false, fmt.Errorf("confirmation response id %q does not match pending id %q", decision.ID, pending.ID)
 	}
-	spec, ok, err := lookupCallSpec(pending.Call, l.r.toolSpec)
+	spec, ok, err := l.r.callSpec(pending.Call)
 	if err != nil {
 		return nil, nil, false, err
 	}

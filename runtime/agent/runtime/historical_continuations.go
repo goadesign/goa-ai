@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"goa.design/goa-ai/internal/registrycontract"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -160,7 +161,7 @@ func (r *Runtime) loadLiteralContinuationOutputs(
 		if output.Failure != nil {
 			continue
 		}
-		if err := r.validateHistoricalContinuationBounds(output); err != nil {
+		if err := r.validateHistoricalContinuationBounds(output, entry.events.scheduled.Subject()); err != nil {
 			return nil, err
 		}
 		outputs = append(outputs, output)
@@ -171,9 +172,9 @@ func (r *Runtime) loadLiteralContinuationOutputs(
 // validateHistoricalContinuationBounds checks the paging facts of a saved
 // successful call. Historical failures supply no paging state and are excluded
 // by the readers; current execution outputs retain their complete validation.
-func (r *Runtime) validateHistoricalContinuationBounds(output *planner.ToolOutput) error {
-	call := ToolCall{Name: output.Name, ToolCallID: output.ToolCallID, Registry: output.Registry}
-	spec, ok, err := lookupCallSpec(call, r.toolSpec)
+func (r *Runtime) validateHistoricalContinuationBounds(output *planner.ToolOutput, subject genrunidentity.RunSubject) error {
+	call := ToolCall{Name: output.Name, ToolCallID: output.ToolCallID, Registry: output.Registry, Subject: subject}
+	spec, ok, err := r.callSpec(call)
 	if err != nil {
 		return err
 	}

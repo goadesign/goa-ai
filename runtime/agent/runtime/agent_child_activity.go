@@ -99,7 +99,7 @@ func (r *Runtime) prepareAgentChildActivity(ctx context.Context, input *api.Agen
 	// A selected child can require ordinary messages even when its parent allows
 	// UI output. Check that child's invocation before saving its model input.
 	if request.policy != nil && request.policy.TextOnly {
-		spec, exists, err := lookupCallSpec(input.Call, r.toolSpec)
+		spec, exists, err := r.callSpec(input.Call)
 		if err != nil {
 			return nil, engine.MarkActivityErrorNonRetryable(err)
 		}

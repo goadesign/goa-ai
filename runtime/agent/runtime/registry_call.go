@@ -97,8 +97,10 @@ func validateRegistrySource(definition AgentDefinition, call ToolCall) (*registr
 		return nil, fmt.Errorf("agent %q does not consume registry %q toolset %q at version %q",
 			definition.route.ID, call.Registry.Registry, resolved.Registered.Toolset.Name, version)
 	}
-	if _, exists := definition.specByName[call.Name]; exists {
-		return nil, fmt.Errorf("registry call %q conflicts with this agent's static contract", call.Name)
+	if spec, exists := definition.specByName[call.Name]; exists {
+		if err := validateStaticServiceSpec(spec, resolved); err != nil {
+			return nil, err
+		}
 	}
 	if _, exists := resolved.Specs[call.Name]; !exists {
 		return nil, fmt.Errorf("saved registry contract contains no tool %q", call.Name)
@@ -137,4 +139,57 @@ func recordedResultCall(name tools.Ident, id string, calls map[string]ToolCall) 
 		return ToolCall{}, fmt.Errorf("result for call %q names %q instead of %q", id, name, call.Name)
 	}
 	return call, nil
+}
+
+// callSpecLookup restricts bound-call decoding to the consuming Agent's static
+// tools. A static name in another Agent never changes a dynamic call's codec.
+func (r *Runtime) callSpecLookup(call ToolCall) toolSpecLookup {
+	if call.Registry == nil {
+		return r.toolSpec
+	}
+	executor, isAgent := call.Subject.Executor.AsAgent()
+	if isAgent {
+		if registration, exists := r.agentByID(agent.Ident(executor)); exists {
+			return registration.Definition.spec
+		}
+	}
+	return noStaticCallSpec
+}
+
+func noStaticCallSpec(tools.Ident) (tools.ToolSpec, bool) {
+	return tools.ToolSpec{}, false
+}
+
+// isDynamicRegistryCall selects remote decoding only when this consuming Agent
+// does not own the named generated tool. Saved source validation remains required.
+func (r *Runtime) isDynamicRegistryCall(call ToolCall) bool {
+	if call.Registry == nil {
+		return false
+	}
+	_, static := r.callSpecLookup(call)(call.Name)
+	return !static
+}
+
+// callSpec uses the call's saved consuming Agent to choose generated or portable
+// codecs without allowing unrelated registrations to change its result types.
+func (r *Runtime) callSpec(call ToolCall) (tools.ToolSpec, bool, error) {
+	return lookupOwnedCallSpec(call, r.callSpecLookup(call))
+}
+
+// lookupOwnedCallSpec accepts only a lookup scoped to the consuming definition.
+// Bound services retain generated codecs after their saved declaration is checked.
+func lookupOwnedCallSpec(call ToolCall, lookup toolSpecLookup) (tools.ToolSpec, bool, error) {
+	if call.Registry != nil {
+		if spec, exists := lookup(call.Name); exists {
+			resolved, err := registrycontract.Read(call.Registry)
+			if err != nil {
+				return tools.ToolSpec{}, false, err
+			}
+			if err := validateStaticServiceSpec(spec, resolved); err != nil {
+				return tools.ToolSpec{}, false, err
+			}
+			return spec, true, nil
+		}
+	}
+	return lookupCallSpec(call, lookup)
 }

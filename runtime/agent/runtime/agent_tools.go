@@ -591,7 +591,7 @@ func (r *Runtime) decodeAgentChildFinalToolResult(call *ToolCall, event *api.Too
 	if event == nil {
 		return nil, fmt.Errorf("agent-tool final result for %s: event is nil", call.Name)
 	}
-	spec, ok, err := lookupCallSpec(*call, r.toolSpec)
+	spec, ok, err := r.callSpec(*call)
 	if err != nil {
 		return nil, err
 	}

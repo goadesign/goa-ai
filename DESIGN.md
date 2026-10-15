@@ -1428,8 +1428,21 @@ Planner inputs expose its result contract as `ParentTool`; completion validates
 against that contract, even after replacement. No shared application storage,
 per-configuration worker registration, or additional model loop is introduced.
 
+`RegistryCatalog.BindStaticService` attaches an exact service registration to
+explicitly named tools already owned by the consuming generated definition. It
+compares the complete generated declaration, replacing only its toolset route
+name, and preserves generated codecs, input preparation, loading, hints, and
+execution. `executor.NewResolved` admits and retries through `CallResolvedTool`
+using the saved route, operation, and token. The existing `ToolCall.Registry`
+retains that selection; no new saved field or model argument is introduced.
+Classification uses the consuming Agent definition, never process-wide tool
+names. Changing that definition between direct dynamic and bound static usage,
+including removing a static tool, requires draining affected runs before the
+change. The existing saved direct selection cannot distinguish those histories.
+See the [binding contract](docs/tool_search.md#bind-generated-service-tools).
+
 `RegistryCatalog.IncludeResolved` imports original operation names from an exact
-registration. `IncludeRegistered` instead requires the owner-selected
+registration and continues to reject collisions with generated static tools. `IncludeRegistered` instead requires the owner-selected
 `CatalogSource` and exact registration. It validates the route, registration token
 and operation kind, then derives names from registry, owner, resource kind,
 logical resource name and original operation. Revision routes and tokens do not
@@ -1649,6 +1662,13 @@ Existing identity-free records need no migration. After identity-bearing records
 exist, downgrading those readers requires an application-owned data conversion;
 reverting the library alone is not a safe rollback. Provider wire messages and
 stored declaration JSON remain unchanged.
+
+`ReadCatalogIdentity` reads only the exact route's compact saved state and
+returns its immutable application owner, including after retirement. It neither
+loads declarations nor checks provider health or active status. Missing routes
+return `not_found`, identity-free records return `ErrCatalogIdentityMissing`, and
+corrupt state returns a validation error. Applications authorize the returned
+owner; existing admission decides whether work may reconnect or start.
 
 `CatalogRoutesAfter` reads bounded exclusive lexical positions from one scope;
 `CatalogContains` checks one exact membership. `ReadCatalogToolset` requires a

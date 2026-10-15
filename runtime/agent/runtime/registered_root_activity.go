@@ -72,7 +72,7 @@ func (r *Runtime) executeRegisteredRootActivity(ctx context.Context, input *api.
 	if err != nil {
 		return nil, err
 	}
-	executor, err := registrycall.New(resolvedRegistryClient{client: connection.client, token: resolution.Registered.RegistrationToken, operation: subject.Tool}, connection.pulse, resolution.Registered.Toolset.Name, registryExecutionSpecs(resolution.Specs), r.registryCallOptions...)
+	executor, err := registrycall.New(registrycall.NewResolvedClient(connection.client, resolution.Registered.RegistrationToken, subject.Tool), connection.pulse, resolution.Registered.Toolset.Name, registryExecutionSpecs(resolution.Specs), r.registryCallOptions...)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +88,7 @@ func (r *Runtime) executeRegisteredRootActivity(ctx context.Context, input *api.
 	// The shared decoder validates final result and server-only data against the
 	// retained declaration before the workflow observes a final tool result.
 	decoded := executor.DecodeCompletedResult(call, meta, output)
-	event, err := encodeToolEvent(decoded, *call, r.toolSpec)
+	event, err := encodeToolEvent(decoded, *call, r.callSpecLookup(*call))
 	if err != nil {
 		return nil, err
 	}

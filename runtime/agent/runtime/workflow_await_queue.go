@@ -113,7 +113,7 @@ func (r *Runtime) resolveConfirmationDecision(
 			return decisionRecords, nil, false, err
 		}
 		decisionRecords[0].scheduleRequired = false
-		spec, ok, err := lookupCallSpec(it.call, r.toolSpec)
+		spec, ok, err := r.callSpec(it.call)
 		if err != nil {
 			return decisionRecords, nil, false, err
 		}
