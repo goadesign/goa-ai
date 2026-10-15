@@ -14,6 +14,8 @@ import (
 	toolcontract "goa.design/goa-ai/runtime/toolregistry/contract"
 )
 
+const staticAgentKind = "agent"
+
 // BindStaticAgent attaches a selected native provider registration to its complete
 // generated export set. Expected declarations must be unbound native operations;
 // the selected provider supplies configuration while generated children own routes.
@@ -49,7 +51,7 @@ func (c *RegistryCatalog) BindStaticAgent(registry string, expected []*genregist
 	declarations := make([]*genregistry.ToolSchema, len(expected))
 	seen := make(map[tools.Ident]*genregistry.ToolSchema, len(expected))
 	for index, operation := range expected {
-		if operation == nil || operation.ConsumerContract == nil || operation.ConsumerContract.Kind != "agent" || operation.ConsumerContract.Agent != nil {
+		if operation == nil || operation.ConsumerContract == nil || operation.ConsumerContract.Kind != staticAgentKind || operation.ConsumerContract.Agent != nil {
 			return fmt.Errorf("static agent binding requires unbound generated agent operations")
 		}
 		name := tools.Ident(operation.Name)
@@ -61,7 +63,7 @@ func (c *RegistryCatalog) BindStaticAgent(registry string, expected []*genregist
 		if err != nil {
 			return err
 		}
-		if provider.ConsumerContract.Kind != "agent" {
+		if provider.ConsumerContract.Kind != staticAgentKind {
 			return fmt.Errorf("static agent binding requires an agent provider for %q", name)
 		}
 		declaration := *operation
@@ -126,7 +128,7 @@ func validateStaticRegistrySpec(spec tools.ToolSpec, resolved *registrycontract.
 	if err != nil {
 		return err
 	}
-	if resolved.Source != nil || declaration.ConsumerContract.Kind != "agent" || !equivalentToolSpec(spec, resolved.Specs[spec.Name]) {
+	if resolved.Source != nil || declaration.ConsumerContract.Kind != staticAgentKind || !equivalentToolSpec(spec, resolved.Specs[spec.Name]) {
 		return fmt.Errorf("saved agent tool %q differs from this agent's static contract", spec.Name)
 	}
 	return nil
