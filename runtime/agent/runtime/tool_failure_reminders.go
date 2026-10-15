@@ -138,7 +138,7 @@ func (r *Runtime) recoveryReminders(outputs []*planner.ToolOutput) ([]reminder.R
 	reminders := make([]reminder.Reminder, 0, len(outputs))
 	for _, output := range outputs {
 		var fields []tools.FieldMetadata
-		spec, ok, err := lookupCallSpec(ToolCall{Name: output.Name, Registry: output.Registry}, r.toolSpec)
+		spec, ok, err := r.callSpec(ToolCall{Name: output.Name, Registry: output.Registry})
 		if err != nil {
 			return nil, err
 		}

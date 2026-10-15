@@ -146,7 +146,7 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 // executionFromActivityOutput decodes and validates one activity result, then
 // publishes the canonical result event for the tool call.
 func (e *toolBatchExec) executionFromActivityOutput(ctx context.Context, info futureInfo, out *ToolOutput, duration time.Duration) (*ToolExecutionResult, error) {
-	spec, ok, err := lookupCallSpec(info.call, e.r.toolSpec)
+	spec, ok, err := e.r.callSpec(info.call)
 	if err != nil {
 		return nil, err
 	}
@@ -212,7 +212,7 @@ func (e *toolBatchExec) scheduleToolActivity(wfCtx engine.WorkflowContext, call 
 	var toolsetName string
 	var ts ToolsetRegistration
 	var hasTS bool
-	if call.Registry == nil {
+	if !e.r.isDynamicRegistryCall(call) {
 		toolsetName, ts, hasTS = e.r.toolsetForTool(call.Name)
 	}
 	input := &ToolInput{

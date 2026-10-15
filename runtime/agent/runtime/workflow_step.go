@@ -270,7 +270,7 @@ func (r *Runtime) normalizePlanResultForExecution(result *PlanResult, runContext
 	for index, call := range result.ToolCalls {
 		result.ToolCalls[index].TextOnly = runContext.TextOnly
 		call.TextOnly = runContext.TextOnly
-		spec, ok, err := lookupCallSpec(call, r.toolSpec)
+		spec, ok, err := r.callSpec(call)
 		if err != nil {
 			return err
 		}

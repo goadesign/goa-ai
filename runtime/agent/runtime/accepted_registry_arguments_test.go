@@ -4,6 +4,7 @@ package runtime
 
 import (
 	"context"
+	"goa.design/goa-ai/internal/registrycall"
 	"strings"
 	"testing"
 
@@ -21,7 +22,7 @@ func TestResolvedRegistryClientPreservesProviderArgumentsAcrossRetry(t *testing.
 	enriched := []byte(`{"query":"active","answer":"approved"}`)
 	token := strings.Repeat("a", 64)
 	var received []*genregistry.CallResolvedToolPayload
-	client := resolvedRegistryClient{operation: "records.read", token: token, client: &genregistry.Client{CallResolvedToolEndpoint: func(_ context.Context, value any) (any, error) {
+	client := registrycall.NewResolvedClient(&genregistry.Client{CallResolvedToolEndpoint: func(_ context.Context, value any) (any, error) {
 		request := value.(*genregistry.CallResolvedToolPayload)
 		encoded := genregistryclient.NewProtoCallResolvedToolRequest(request)
 		require.NoError(t, genregistryclient.ValidateCallResolvedToolRequest(encoded))
@@ -36,7 +37,7 @@ func TestResolvedRegistryClientPreservesProviderArgumentsAcrossRetry(t *testing.
 		assert.Equal(t, uint64(1), restored.Meta.ExecutionSequence)
 		received = append(received, restored)
 		return &genregistry.CallToolResult{RegistrationToken: token}, nil
-	}}}
+	}}, token, "records.read")
 	payload := &genregistry.CallToolPayload{Toolset: "provider.records", Tool: "records.read", PayloadJSON: enriched, Meta: &genregistry.ToolCallMeta{RunID: "root", SessionID: new("session"), ToolCallID: "call", ExecutionSequence: 1}, WireProtocolVersion: toolregistry.WireProtocolVersion}
 	_, err := client.CallTool(t.Context(), payload)
 	require.NoError(t, err)

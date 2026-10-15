@@ -142,7 +142,7 @@ func (c *simplePlannerContext) AdvertisedToolDefinitions() []*model.ToolDefiniti
 	}
 	for _, definition := range definitions {
 		if c.catalog != nil {
-			if _, dynamic := c.catalog.selections[tools.Ident(definition.Name)]; dynamic {
+			if _, static := registration.Definition.specByName[tools.Ident(definition.Name)]; !static {
 				continue
 			}
 		}

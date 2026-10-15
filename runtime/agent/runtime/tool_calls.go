@@ -182,7 +182,7 @@ func toolFailureFromExecutionError(err error, message string) *planner.ToolFailu
 // synthesizeToolError converts an ordinary tool execution error into a
 // ToolResult and publishes the corresponding ToolResultReceived event.
 func (e *toolBatchExec) synthesizeToolError(ctx context.Context, call ToolCall, err error, errMsg string, duration time.Duration) (*ToolExecutionResult, error) {
-	spec, ok, specErr := lookupCallSpec(call, e.r.toolSpec)
+	spec, ok, specErr := e.r.callSpec(call)
 	if specErr != nil {
 		return nil, specErr
 	}
@@ -259,7 +259,7 @@ func (e *toolBatchExec) synthesizeCanceledExecution(ctx context.Context, call To
 	result := Executed(tr)
 	result.duration = duration
 	var resultJSON rawjson.Message
-	_, ok, err := lookupCallSpec(call, e.r.toolSpec)
+	_, ok, err := e.r.callSpec(call)
 	if err != nil {
 		return nil, err
 	}
@@ -329,7 +329,7 @@ func (e *toolBatchExec) publishToolResultReceived(
 					return nil, err
 				}
 			}
-			spec, _, err := lookupCallSpec(call, e.r.toolSpec)
+			spec, _, err := e.r.callSpec(call)
 			if err != nil {
 				return nil, err
 			}
@@ -485,7 +485,7 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 		call = e.normalizeToolCall(call)
 		b.calls[i] = call
 
-		spec, hasSpec, err := lookupCallSpec(call, e.r.toolSpec)
+		spec, hasSpec, err := e.r.callSpec(call)
 		if err != nil {
 			executionErr = errors.Join(executionErr, err)
 			continue
@@ -523,12 +523,12 @@ func (e *toolBatchExec) dispatchToolCalls(wfCtx engine.WorkflowContext, calls []
 		}
 		var ts ToolsetRegistration
 		var hasTS bool
-		if call.Registry == nil {
+		if !e.r.isDynamicRegistryCall(call) {
 			_, ts, hasTS = e.r.toolsetForTool(call.Name)
 		}
 
 		queue := ""
-		if !spec.IsAgentTool && (call.Registry != nil || hasTS && !ts.Inline) {
+		if !spec.IsAgentTool && (e.r.isDynamicRegistryCall(call) || hasTS && !ts.Inline) {
 			queue = e.toolActOptions.Queue
 			if queue == "" {
 				queue = ts.TaskQueue

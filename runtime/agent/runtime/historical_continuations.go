@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	"goa.design/goa-ai/internal/registrycontract"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -156,7 +157,7 @@ func (r *Runtime) loadLiteralContinuationOutputs(
 		if err != nil {
 			return nil, fmt.Errorf("runtime: hydrate historical continuation output: %w", err)
 		}
-		if err := r.validateHistoricalContinuationOutput(output, entry.events.result); err != nil {
+		if err := r.validateHistoricalContinuationOutput(output, entry.events.result, entry.events.scheduled.Subject()); err != nil {
 			return nil, err
 		}
 		outputs = append(outputs, output)
@@ -166,15 +167,15 @@ func (r *Runtime) loadLiteralContinuationOutputs(
 
 // validateHistoricalContinuationOutput checks paging and failure metadata.
 // Saved successful result bytes remain evidence under their original contract.
-func (r *Runtime) validateHistoricalContinuationOutput(output *planner.ToolOutput, result *hooks.ToolResultReceivedEvent) error {
-	call := ToolCall{Name: output.Name, ToolCallID: output.ToolCallID, Registry: output.Registry}
+func (r *Runtime) validateHistoricalContinuationOutput(output *planner.ToolOutput, result *hooks.ToolResultReceivedEvent, subject genrunidentity.RunSubject) error {
+	call := ToolCall{Name: output.Name, ToolCallID: output.ToolCallID, Registry: output.Registry, Subject: subject}
 	var err error
 	if output.Failure != nil {
 		_, err = validatePersistedToolResult(nil, call, result.ResultJSON, output.ServerData, output.Blocks, output.Bounds, output.Failure)
 	} else {
 		var spec tools.ToolSpec
 		var ok bool
-		spec, ok, err = lookupCallSpec(call, r.toolSpec)
+		spec, ok, err = r.callSpec(call)
 		if err != nil {
 			return err
 		}

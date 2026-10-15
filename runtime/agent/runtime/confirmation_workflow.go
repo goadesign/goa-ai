@@ -100,7 +100,7 @@ func (r *Runtime) confirmationPlan(ctx context.Context, call *ToolCall) (*confir
 		}
 	}
 
-	spec, ok, err := lookupCallSpec(*call, r.toolSpec)
+	spec, ok, err := r.callSpec(*call)
 	if err != nil {
 		return nil, false, err
 	}

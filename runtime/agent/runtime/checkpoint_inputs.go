@@ -128,7 +128,7 @@ func validateCheckpointInputs(checkpoint *workflowCheckpoint, definition AgentDe
 				return err
 			}
 		}
-		spec, ok, err := lookupCallSpec(call, definition.spec)
+		spec, ok, err := lookupOwnedCallSpec(call, definition.spec)
 		if err != nil {
 			return err
 		}

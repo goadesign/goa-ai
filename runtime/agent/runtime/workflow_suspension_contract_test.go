@@ -521,7 +521,7 @@ func TestValidateContinuationRecoveryCatalogVersions(t *testing.T) {
 		require.NoError(t, runtime.ValidateContinuation(suspension))
 		checkpoint, err := runtime.decodeWorkflowCheckpoint(suspension)
 		require.NoError(t, err)
-		state, err := runtime.restoreCheckpointState(checkpoint.State)
+		state, err := runtime.restoreCheckpointState(checkpoint.State, runtime.toolSpec)
 		require.NoError(t, err)
 		_, catalog := toolRecovery(state.PendingRecovery)
 		require.Equal(t, &RecoveryCatalog{Tools: []tools.Ident{spec.Name}}, catalog)
@@ -535,7 +535,7 @@ func TestValidateContinuationRecoveryCatalogVersions(t *testing.T) {
 		require.NoError(t, runtime.ValidateContinuation(suspension))
 		checkpoint, err := runtime.decodeWorkflowCheckpoint(suspension)
 		require.NoError(t, err)
-		state, err := runtime.restoreCheckpointState(checkpoint.State)
+		state, err := runtime.restoreCheckpointState(checkpoint.State, runtime.toolSpec)
 		require.NoError(t, err)
 		state.PendingCorrection = pendingModelInvocationRecovery{recovery: ModelInvocationRecovery{UnadvertisedToolName: "unavailable"}}
 		outputs, catalog := toolRecovery(state.PendingRecovery)

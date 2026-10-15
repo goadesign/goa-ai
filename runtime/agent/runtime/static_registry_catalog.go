@@ -1,0 +1,138 @@
+// Package runtime attaches exact service registrations to generated static tools.
+// The selected declaration supplies admission identity; generated definitions
+// continue to own model names, codecs, input preparation, loading and execution.
+package runtime
+
+import (
+	"fmt"
+	"slices"
+
+	"goa.design/goa-ai/internal/registrycontract"
+	genregistry "goa.design/goa-ai/registry/gen/registry"
+	"goa.design/goa-ai/runtime/agent/tools"
+	toolcontract "goa.design/goa-ai/runtime/toolregistry/contract"
+)
+
+// BindStaticService attaches an owner-selected registration to explicitly named
+// generated service tools. The complete expected declaration must match, except
+// its toolset name may be replaced by the selected route. No catalog is read.
+func (c *RegistryCatalog) BindStaticService(registry string, expected *genregistry.Toolset, selected *genregistry.ResolvedToolset, names ...tools.Ident) error {
+	if len(names) == 0 {
+		return fmt.Errorf("static service binding requires explicit tool names")
+	}
+	if _, err := c.runtime.registryConnection(registry); err != nil {
+		return err
+	}
+	encoded, err := genregistry.EncodeResolvedToolset(selected)
+	if err != nil {
+		return err
+	}
+	selected, err = genregistry.DecodeResolvedToolset(encoded)
+	if err != nil {
+		return err
+	}
+	resolved, err := registrycontract.Resolve(selected)
+	if err != nil {
+		return err
+	}
+	if expected == nil {
+		return fmt.Errorf("static service binding requires the generated toolset declaration")
+	}
+	declaration := *expected
+	declaration.Name = selected.Toolset.Name
+	expectedFingerprint, err := toolcontract.Fingerprint(&declaration)
+	if err != nil {
+		return err
+	}
+	selectedFingerprint, err := toolcontract.Fingerprint(selected.Toolset)
+	if err != nil {
+		return err
+	}
+	if expectedFingerprint != selectedFingerprint {
+		return fmt.Errorf("static service binding differs from the complete generated declaration")
+	}
+	version := ""
+	if selected.Toolset.Version != nil {
+		version = string(*selected.Toolset.Version)
+	}
+	if c.sources == nil || !c.sources.Allows(registry, selected.Toolset.Name, version) {
+		return fmt.Errorf("registry %q toolset %q is outside this agent's declared consumption", registry, selected.Toolset.Name)
+	}
+	for _, declaration := range selected.Toolset.Tools {
+		if declaration.ConsumerContract.Kind != "service" {
+			return fmt.Errorf("static service binding cannot include %s tool %q", declaration.ConsumerContract.Kind, declaration.Name)
+		}
+	}
+	for index, name := range names {
+		if slices.Contains(names[:index], name) {
+			return fmt.Errorf("static service binding repeats tool %q", name)
+		}
+		if _, exists := c.selections[name]; exists {
+			return fmt.Errorf("tool %q already has a selected registration", name)
+		}
+		spec, exists := c.definition.specByName[name]
+		if !exists {
+			return fmt.Errorf("tool %q is not static in this consuming definition", name)
+		}
+		if err := validateStaticServiceSpec(spec, resolved); err != nil {
+			return err
+		}
+	}
+	for _, name := range names {
+		declaration, err := resolved.Declaration(name)
+		if err != nil {
+			return err
+		}
+		c.selections[name] = registrySelection{registry: registry, resolution: resolved}
+		c.labels[name] = slices.Clone(declaration.ConsumerContract.RequiredLabels)
+	}
+	return nil
+}
+
+// SelectedOperation returns an owned copy of the native operation retained by
+// this run. Direct and registered runs use their original declaration; absence
+// or malformed saved context fails without reading the current registry.
+func (c *RegistryCatalog) SelectedOperation() (*genregistry.ToolSchema, error) {
+	selected := c.runContext.Operation
+	if selected != nil && c.runContext.ToolRegistry != nil {
+		return nil, fmt.Errorf("selected operation cannot include both direct and registered declarations")
+	}
+	if c.runContext.ToolRegistry != nil {
+		resolved, err := registrycontract.Read(c.runContext.ToolRegistry)
+		if err != nil {
+			return nil, err
+		}
+		selected, err = resolved.Declaration(c.runContext.Tool)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if selected == nil {
+		return nil, fmt.Errorf("run has no selected native operation")
+	}
+	if _, err := compileAgentOperation(selected, c.definition.route.ID); err != nil {
+		return nil, err
+	}
+	if c.runContext.ToolRegistry == nil && tools.Ident(selected.Name) != c.runContext.Tool {
+		return nil, fmt.Errorf("selected operation name differs from the run's operation")
+	}
+	encoded, err := genregistry.EncodeToolSchema(selected)
+	if err != nil {
+		return nil, err
+	}
+	return genregistry.DecodeToolSchema(encoded)
+}
+
+// validateStaticServiceSpec compares saved portable policy and schemas with the
+// owning generated tool. Local-only semantics and native Agent tools cannot use
+// a service registration as their executor.
+func validateStaticServiceSpec(spec tools.ToolSpec, resolved *registrycontract.Resolution) error {
+	declaration, err := resolved.Declaration(spec.Name)
+	if err != nil {
+		return err
+	}
+	if resolved.Source != nil || declaration.ConsumerContract.Kind != "service" || !equivalentToolSpec(spec, resolved.Specs[spec.Name]) {
+		return fmt.Errorf("saved service tool %q differs from this agent's static contract", spec.Name)
+	}
+	return nil
+}

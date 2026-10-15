@@ -218,6 +218,10 @@ uses the existing recovery-turn budget. See
   Catalogs retain resource ownership; applications authorize discovery and use.
   Registered imports derive distinct names for equal operations from different
   owners and retain original declarations for execution and replay.
+- **Bind generated tools to selected services.** Keep generated tool names,
+  input preparation, codecs, and executors while attaching an exact owner-selected
+  registration. Calls and retries retain the original route and token. See
+  [static service bindings](docs/tool_search.md#bind-generated-service-tools).
 - **Standalone service operations.** Execute a registered service tool without
   creating a session; sessionful calls retain their existing session. Protocol 15
   requires coordinated registry, provider, and consumer upgrades; see

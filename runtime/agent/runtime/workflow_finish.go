@@ -231,7 +231,8 @@ func (r *Runtime) successfulCompletionToolEvent(input *RunInput, events []*plann
 		if err != nil {
 			return nil, err
 		}
-		spec, ok, err := lookupCallSpec(call, r.toolSpec)
+		call.Subject = input.Subject
+		spec, ok, err := r.callSpec(call)
 		if err != nil {
 			return nil, err
 		}

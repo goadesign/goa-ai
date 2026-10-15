@@ -209,7 +209,7 @@ func (r *Runtime) executeRegisteredRootWorkflow(wf engine.WorkflowContext, submi
 			return nil, err
 		}
 		if required {
-			spec, _, err := lookupCallSpec(call, r.toolSpec)
+			spec, _, err := r.callSpec(call)
 			if err != nil {
 				return nil, err
 			}
