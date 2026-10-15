@@ -232,8 +232,9 @@ uses the existing recovery-turn budget. See
   Run is stored. Use Temporal and an application-owned durable store to
   retain accepted work, host continuations, remote Task identity, and cancellation
   across worker restarts. New turns preserve saved results completed by a later
-  run, including conversations stored as literal history. The in-memory engine
-  supports local development.
+  run, including conversations stored as literal history. Failed calls stay in
+  the transcript and do not block later turns by restoring old paging state.
+  The in-memory engine supports local development.
 - **Policies and context.** Control permitted tools, call and recovery budgets,
   timing, history compression, prompt caching, and prompt overrides.
 - **Evaluation and observability.** Generate typed evaluation suites; observe

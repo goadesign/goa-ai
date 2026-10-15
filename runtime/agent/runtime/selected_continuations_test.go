@@ -73,15 +73,17 @@ func TestSelectedContinuationResultRetainsExactExternalSchedule(t *testing.T) {
 	assert.NotContains(t, reader.runs, "call-run")
 }
 
-func TestSelectedContinuationRejectsUnownedOrMismatchedReference(t *testing.T) {
+func TestSelectedContinuationRejectsForeignReferencesAndIgnoresFailures(t *testing.T) {
 	for _, tc := range []struct {
 		name           string
 		callAgent      agent.Ident
 		callSession    string
 		resultSelected bool
 		resultTool     string
+		failed         bool
 		want           string
 	}{
+		{name: "failed selected result", callAgent: "svc.agent", callSession: "session-1", resultSelected: true, failed: true},
 		{name: "unselected result", callAgent: "svc.agent", callSession: "session-1", want: "unselected run"},
 		{name: "foreign agent", callAgent: "other.agent", callSession: "session-1", resultSelected: true, want: "owner"},
 		{name: "foreign session", callAgent: "svc.agent", callSession: "other-session", resultSelected: true, want: "owner"},
@@ -102,6 +104,12 @@ func TestSelectedContinuationRejectsUnownedOrMismatchedReference(t *testing.T) {
 			resultSubject := genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}
 			result := hooks.NewToolResultReceivedEvent("result-run", resultSubject, "session-1", "call-run",
 				resultName, "selected-call", "", rawjson.Message(`{"items":["selected"]}`), nil, nil, "Selected", nil, time.Second, nil, nil)
+			if tc.failed {
+				result.ResultJSON = nil
+				result.ResultBytes = 0
+				result.ServerData = rawjson.Message(`{"retained_detail":"original evidence"}`)
+				result.Failure = testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "Recorded failure")
+			}
 			appendHistoricalHookEvent(t, rt.Store, result, "result", 2)
 			reader := selectedContinuationReader{
 				runtime: rt, input: &resolvedPlanActivityInput{PlanActivityInput: &PlanActivityInput{
@@ -113,28 +121,58 @@ func TestSelectedContinuationRejectsUnownedOrMismatchedReference(t *testing.T) {
 				reader.runs["result-run"] = struct{}{}
 			}
 			err := reader.addReference(t.Context(), &api.ToolOutputRef{CallRunID: "call-run", ResultRunID: "result-run", ToolCallID: "selected-call"})
-			require.ErrorContains(t, err, tc.want)
+			if tc.failed {
+				require.NoError(t, err)
+			} else {
+				require.ErrorContains(t, err, tc.want)
+			}
 			assert.Empty(t, reader.outputs)
 		})
 	}
 }
 
 func TestSelectedContinuationNextTurnFromLiteralRunPreservesHistory(t *testing.T) {
+	for _, failed := range []bool{false, true} {
+		name := "successful call"
+		if failed {
+			name = "failed call"
+		}
+		t.Run(name, func(t *testing.T) {
+			testSelectedContinuationNextTurnFromLiteralRun(t, failed)
+		})
+	}
+}
+
+// testSelectedContinuationNextTurnFromLiteralRun starts a new ordinary turn
+// after retained tool history. Both successful and failed evidence must reach
+// the planner unchanged without importing failed execution state.
+func testSelectedContinuationNextTurnFromLiteralRun(t *testing.T, failed bool) {
 	store := newTestStore()
 	rt := New(literalContinuationHistoryStore{Store: store})
-	spec := newAnyJSONSpec("tools.confirm")
+	spec, continuation := continuationTestSpecs()
+	seedTestToolSpecs(rt, spec, continuation)
+	seedTestToolDefinitions(rt, spec, continuation)
 	oldMessages := []*model.Message{
 		{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "Inspect the selected group."}}},
-		{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.ToolUsePart{ID: "saved-call", Name: spec.Name.String(), Input: rawjson.Message(`{"group":"A"}`)}}},
+		{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.ToolUsePart{ID: "saved-call", Name: spec.Name.String(), Input: rawjson.Message(`{"query":"records"}`)}}},
 		{Role: model.ConversationRoleUser, Parts: []model.Part{model.ToolResultPart{ToolUseID: "saved-call", Content: rawjson.Message(`{"approved":true}`)}}},
 		{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: "The saved answer."}}},
 	}
 	subject := genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}
 	call := hooks.NewToolCallScheduledEvent("literal-predecessor", subject, "session-1", spec.Name,
-		"saved-call", rawjson.Message(`{"group":"A"}`), "", "", 0)
+		"saved-call", rawjson.Message(`{"query":"records"}`), "", "", 0)
 	appendHistoricalHookEvent(t, store, call, "call", 1)
 	result := hooks.NewToolResultReceivedEvent("literal-completed", subject, "session-1", "literal-predecessor",
 		spec.Name, "saved-call", "", rawjson.Message(`{"approved":true}`), nil, nil, "Approved", nil, time.Second, nil, nil)
+	result.Bounds = &agent.Bounds{Returned: 1}
+	if failed {
+		result.ResultJSON = nil
+		result.ResultBytes = 0
+		result.Bounds = nil
+		result.ServerData = rawjson.Message(`{"retained_detail":"original evidence"}`)
+		result.Failure = testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "Recorded failure")
+		oldMessages[2].Parts[0] = model.ToolResultPart{ToolUseID: "saved-call", Content: "Recorded failure", IsError: true}
+	}
 	appendHistoricalHookEvent(t, store, result, "result", 2)
 	appendTestActivityHistory(t, rt, &PlanActivityInput{AgentID: "svc.agent", RunID: "literal-completed", RunContext: run.Context{SessionID: "session-1"}}, oldMessages)
 	terminal := testHookRecord(t, hooks.NewRunCompletedEvent("literal-completed", subject, "session-1", "success", run.PhaseCompleted, nil, nil, nil), "terminal", time.Now())
@@ -146,7 +184,7 @@ func TestSelectedContinuationNextTurnFromLiteralRunPreservesHistory(t *testing.T
 	require.NoError(t, err)
 	starts := 0
 	require.NoError(t, rt.RegisterAgent(t.Context(), AgentRegistration{
-		Definition:      testAgentDefinition("svc.agent", "svc.workflow", "svc.queue", []tools.ToolSpec{spec}, nil),
+		Definition:      testAgentDefinition("svc.agent", "svc.workflow", "svc.queue", []tools.ToolSpec{spec, continuation}, nil),
 		WorkflowHandler: rt.ExecuteWorkflow, PlanActivityName: "svc.plan", ResumeActivityName: "svc.resume", ExecuteToolActivity: "svc.execute",
 		Planner: &stubPlanner{start: func(_ context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
 			starts++
