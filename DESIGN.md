@@ -568,8 +568,10 @@ See [upgrade and retention requirements](docs/runtime.md#rejected-call-recovery-
 When a new run restores paging actions from earlier turns, saved result bodies
 remain evidence rather than typed inputs to current work. The runtime verifies
 the saved events and paging metadata without decoding old result bodies or
-server data against today's tool contract. Active outputs, suspended work, and
-new page requests retain their current codec checks. See the
+server data against today's tool contract. Failed historical calls remain in
+the transcript but never supply paging state, so their old execution details
+are not restored or revalidated. Active outputs, suspended work, and new page
+requests retain their current codec checks. See the
 [historical paging contract](docs/runtime.md#bounded-results).
 
 When a completed model reply or planner result breaks its required shape, the

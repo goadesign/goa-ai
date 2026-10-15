@@ -281,7 +281,13 @@ func (r *selectedContinuationReader) addReference(ctx context.Context, ref *api.
 	if err != nil {
 		return err
 	}
-	if err := r.runtime.validateHistoricalContinuationOutput(output, result.result, call.Subject()); err != nil {
+	// A failed historical call contributes no cursor to the next turn. Keep
+	// its saved transcript and mark the reference read without restoring it.
+	if output.Failure != nil {
+		r.seen[key] = struct{}{}
+		return nil
+	}
+	if err := r.runtime.validateHistoricalContinuationBounds(output, call.Subject()); err != nil {
 		return err
 	}
 	r.outputs = append(r.outputs, output)
