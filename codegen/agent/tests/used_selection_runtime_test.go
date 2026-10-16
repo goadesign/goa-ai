@@ -1,6 +1,7 @@
 // These tests construct and run generated agents with different tool selections.
 // Root definitions and embedded children must use matching catalogs, executable
 // names and deferred names, while shared provider registration stays complete.
+// JSON catalogs must match the agent specifications, including exported tools.
 package tests
 
 import (
@@ -28,6 +29,13 @@ func TestGeneratedSelectedAgentDefinitions(t *testing.T) {
 		})
 		Service("remote", func() {})
 		Service("discovery", func() {
+			Agent("all", "Use every record operation.", func() { Use(records) })
+			Agent("deferred", "Find every record operation on demand.", func() {
+				Use(records, func() { Deferred() })
+			})
+			Agent("remote_reader", "Consume one remote operation.", func() {
+				Use(owned, func() { Tool("first") })
+			})
 			Agent("owner", "Consume one operation and export both.", func() {
 				Use(owned, func() {
 					Tool("first")
@@ -54,16 +62,25 @@ const selectedAgentDefinitionsTestSource = `package discovery
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	genallspecs "generated.local/gen/discovery/agents/all/specs"
+	gendeferredspecs "generated.local/gen/discovery/agents/deferred/specs"
 	genparent "generated.local/gen/discovery/agents/parent"
+	genparentspecs "generated.local/gen/discovery/agents/parent/specs"
+	genremotereaderspecs "generated.local/gen/discovery/agents/remote_reader/specs"
 	genowner "generated.local/gen/discovery/agents/owner"
 	genownerspecs "generated.local/gen/discovery/agents/owner/specs"
 	genowned "generated.local/gen/remote/toolsets/owned"
 	genrecords "generated.local/gen/discovery/toolsets/records"
 	genspecialist "generated.local/gen/discovery/agents/specialist"
+	genspecialistspecs "generated.local/gen/discovery/agents/specialist/specs"
 	genactions "generated.local/gen/discovery/agents/specialist/agenttools/actions"
 	"goa.design/goa-ai/runtime/agent"
 	engineinmem "goa.design/goa-ai/runtime/agent/engine/inmem"
@@ -112,6 +129,73 @@ func (p catalogPlanner) PlanResume(_ context.Context, input *planner.PlanResumeI
 	return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &model.Message{
 		Role: model.ConversationRoleAssistant, Parts: []model.Part{model.TextPart{Text: string(p.call)+" verified"}},
 	}}}, nil
+}
+
+// Each agent's JSON file contains its selected tools and any complete exports,
+// with the same identifiers and result schemas as its generated Go catalog.
+func TestSelectedAgentJSONCatalogMatchesSpecs(t *testing.T) {
+	wantRoutes := map[string]string{
+		"records.lookup": "discovery.records",
+		"records.search": "discovery.records",
+		"actions.ask": "actions",
+		"actions.summarize": "actions",
+		"owned.first": "owned",
+		"owned.second": "owned",
+	}
+	for _, test := range []struct {
+		name string
+		service string
+		specs []tools.ToolSpec
+		want []string
+	}{
+		{"all", "discovery", genallspecs.Specs(), []string{"records.lookup", "records.search"}},
+		{"deferred", "discovery", gendeferredspecs.Specs(), []string{"records.lookup", "records.search"}},
+		{"remote_reader", "remote", genremotereaderspecs.Specs(), []string{"owned.first"}},
+		{"owner", "remote", genownerspecs.Specs(), []string{"owned.first", "owned.second"}},
+		{"parent", "discovery", genparentspecs.Specs(), []string{"actions.ask", "records.lookup"}},
+		{"specialist", "discovery", genspecialistspecs.Specs(), []string{"actions.ask", "actions.summarize", "records.search"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			payload, err := os.ReadFile(filepath.Join("..", "gen", "discovery", "agents", test.name, "specs", "tool_schemas.json"))
+			require.NoError(t, err)
+			var catalog struct {
+				Tools []struct {
+					ID string
+					Service string
+					Toolset string
+					Description string
+					Result struct {
+						Name string
+						Schema json.RawMessage
+					}
+				}
+			}
+			require.NoError(t, json.Unmarshal(payload, &catalog))
+			byName := make(map[string]tools.ToolSpec, len(test.specs))
+			specIDs := make([]string, 0, len(test.specs))
+			for _, spec := range test.specs {
+				id := string(spec.Name)
+				specIDs = append(specIDs, id)
+				byName[id] = spec
+			}
+			slices.Sort(specIDs)
+			require.Equal(t, test.want, specIDs)
+			catalogIDs := make([]string, 0, len(catalog.Tools))
+			for _, tool := range catalog.Tools {
+				catalogIDs = append(catalogIDs, tool.ID)
+				spec, ok := byName[tool.ID]
+				require.True(t, ok, "JSON includes an unselected tool %q", tool.ID)
+				require.Equal(t, test.service, tool.Service)
+				wantRoute, ok := wantRoutes[tool.ID]
+				require.True(t, ok, "missing expected route for %q", tool.ID)
+				require.Equal(t, wantRoute, tool.Toolset)
+				require.Equal(t, spec.Description, tool.Description)
+				require.Equal(t, spec.Result.Name, tool.Result.Name)
+				require.JSONEq(t, string(spec.Result.Schema), string(tool.Result.Schema))
+			}
+			require.Equal(t, specIDs, catalogIDs)
+		})
+	}
 }
 
 func TestSelectedRootAndEmbeddedChildConstructAndRun(t *testing.T) {
