@@ -237,7 +237,7 @@ func TestMappedValuesReachEveryEndpoint(t *testing.T){
    require.Nil(t,value.IsError,string(value.StructuredContent))
    assert.Equal(t,"\""+tc.want+"\"",string(value.StructuredContent))
    assert.Equal(t,before+1,calls.Load())
-   assert.Equal(t,"/api/prefix/organizations/"+tc.path+"/rpc",doer.path)
+   assert.Equal(t,"/api/prefix/organizations/"+url.PathEscape(tc.path)+"/rpc",doer.path)
    assert.NotContains(t,doer.body,"organization_id")
    assert.NotContains(t,doer.body,"httpPath")
   })
