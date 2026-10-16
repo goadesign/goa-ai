@@ -36,6 +36,8 @@ type (
 	}
 )
 
+const redisMissingKeyType = "none"
+
 func catalogKey(parts ...string) string {
 	raw, err := json.Marshal(parts)
 	if err != nil {
@@ -63,17 +65,9 @@ func (s *Service) updateCatalog(ctx context.Context, operation string, apply fun
 	}
 }
 
-// readCatalog makes one atomic read attempt. A concurrent change returns a
-// temporary error instead of silently spending another page's candidate budget.
-func (s *Service) readCatalog(ctx context.Context, operation string, apply func(*catalogTransaction) error) (err error) {
-	ctx, span := otel.Tracer("goa.design/goa-ai/registry").Start(ctx, "toolregistry.catalog."+operation)
-	defer finishCatalogSpan(ctx, span, &err)
-	return catalogError(s.catalogAttempt(ctx, apply))
-}
-
 // catalogAttempt reads and writes the catalog through one watched transaction.
-// Only the command or bounded-read owner decides whether another attempt fits
-// its lifetime; this method never repeats any reads by itself.
+// updateCatalog repeats the owner decision after a concurrent change; this
+// method performs one attempt and returns its result.
 func (s *Service) catalogAttempt(ctx context.Context, apply func(*catalogTransaction) error) error {
 	store, ok := s.catalog.store.(*redisCatalogStore)
 	if !ok {
@@ -86,7 +80,7 @@ func (s *Service) catalogAttempt(ctx context.Context, apply func(*catalogTransac
 			if err != nil {
 				return err
 			}
-			if kind != "none" && kind != "hash" {
+			if kind != redisMissingKeyType && kind != "hash" {
 				return errors.New("invalid catalog owner hash type")
 			}
 		}
@@ -112,7 +106,7 @@ func (s *Service) catalogAttempt(ctx context.Context, apply func(*catalogTransac
 			if err != nil {
 				return err
 			}
-			if kind != "none" && kind != "zset" {
+			if kind != redisMissingKeyType && kind != "zset" {
 				return errors.New("invalid catalog resource index type")
 			}
 		}

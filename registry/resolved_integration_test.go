@@ -35,6 +35,9 @@ func TestResolvedCallRejectsReplacementBeforePublication(t *testing.T) {
 			reg, err := New(ctx, Config{Redis: rdb, Name: name})
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, reg.Close(context.Background())) })
+			// Before registering the provider, stop health pings so the stream count
+			// includes only the tool calls requested by this test.
+			require.NoError(t, reg.healthTracker.Close())
 			svc := reg.Service()
 			svc.healthTracker = newMockHealthTracker()
 			provider := validRegisterPayloadForSchemaAdmission(name)
@@ -72,6 +75,9 @@ func TestResolvedCallPreservesIdentityAndPublishedResult(t *testing.T) {
 	reg, err := New(ctx, Config{Redis: rdb, Name: name})
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, reg.Close(context.Background())) })
+	// Before registering the provider, stop health pings so the stream count
+	// includes only the tool calls requested by this test.
+	require.NoError(t, reg.healthTracker.Close())
 	svc := reg.Service()
 	svc.healthTracker = newMockHealthTracker()
 	provider := validRegisterPayloadForSchemaAdmission(name)
@@ -114,6 +120,9 @@ func TestResolvedCallResumesOverloadOnlyOnOriginalRegistration(t *testing.T) {
 			reg, err := New(ctx, Config{Redis: rdb, Name: name})
 			require.NoError(t, err)
 			t.Cleanup(func() { require.NoError(t, reg.Close(context.Background())) })
+			// Before registering the provider, stop health pings so the stream count
+			// includes only the tool calls requested by this test.
+			require.NoError(t, reg.healthTracker.Close())
 			svc := reg.Service()
 			svc.healthTracker = newMockHealthTracker()
 			provider := validRegisterPayloadForSchemaAdmission(name)

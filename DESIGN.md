@@ -1316,6 +1316,12 @@ returns bounded permanent identities for one owner without duplicating revisions
 `CheckCatalogResource` checks registration and retirement. No sharing grants or
 per-invocation permission records are stored by Registry.
 
+Resource listing reads its bounded index candidates once, then checks their
+registration and permanent retirement together in one Redis transaction.
+Unrelated catalog writes do not invalidate the page. Retirement between selection
+and checking may leave an empty page with a continuation; insertions can appear
+on a later read. Pages do not retain a snapshot across requests.
+
 `RegisteredInvocation` retains only the original invocation identity, exact
 selected target, and validated original arguments. These values survive workflow
 continuations; actor attribution stays with the host's execution records.
