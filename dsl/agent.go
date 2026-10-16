@@ -86,6 +86,10 @@ func Agent(name, description string, dsl func()) *expragents.AgentExpr {
 //   - Define ad-hoc tools local to this agent
 //   - Defer all or selected tools through Deferred
 //
+// A referenced toolset with no Tool declarations consumes every provider tool.
+// Tool declarations select names from the provider; the provider keeps ownership
+// of their schemas. Metadata-only blocks do not narrow the selection.
+//
 // Example (referencing a provider toolset and subsetting):
 //
 //	var CommonTools = Toolset("common", func() {
@@ -132,6 +136,35 @@ func Use(value any, fn ...func()) {
 	}
 	if agent.Used == nil {
 		agent.Used = &expragents.ToolsetGroupExpr{Agent: agent}
+	}
+	if _, referenced := value.(*expragents.ToolsetExpr); referenced {
+		overlay := dsl
+		dsl = func() {
+			// The provider DSL has declared its tools on this copy. Run the
+			// consumer callback with those declarations available, then retain
+			// only its explicit selections. Without selections, keep the provider
+			// declarations so existing validation can still inspect every tool.
+			current := eval.Current().(*expragents.ToolsetExpr)
+			inherited := current.Tools
+			if overlay != nil {
+				overlay()
+			}
+			if len(current.Tools) == len(inherited) {
+				return
+			}
+			current.Tools = current.Tools[len(inherited):]
+			for i, selected := range current.Tools {
+				if selected.DSLFunc != nil || selected.Description != "" {
+					continue
+				}
+				for _, tool := range inherited {
+					if tool.Name == selected.Name {
+						current.Tools[i] = tool
+						break
+					}
+				}
+			}
+		}
 	}
 	ts := instantiateToolset(value, dsl, agent)
 	if ts == nil {

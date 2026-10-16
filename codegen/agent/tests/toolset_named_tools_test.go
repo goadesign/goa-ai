@@ -22,7 +22,7 @@ func TestToolsetNamedTools(t *testing.T) {
 
 	// Goa moves the generated toolset import away from the fixed runtime name.
 	require.Contains(t, specsContent, `tools2 "goa.design/goa-ai/gen/alpha/toolsets/tools"`)
-	require.Contains(t, specsContent, "specs = append(specs, tools2.Specs()...)")
+	require.Contains(t, specsContent, "specs = append(specs, tools2.SpecDoSomething())")
 
 	// Verify the generated code is syntactically valid by checking structure
 	require.Contains(t, specsContent, "package specs")
