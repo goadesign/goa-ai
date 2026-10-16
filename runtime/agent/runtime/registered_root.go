@@ -159,8 +159,9 @@ func (r *Runtime) prepareRegisteredRootRequest(sessionID, registry string, resol
 }
 
 // validateRegisteredRootInput rejects mixed Agent state and checks the exact
-// original arguments against the retained generated declaration before the
-// worker sends the selected operation to its provider.
+// complete service arguments against the retained execution contract before the
+// worker sends the selected operation to its provider. Provider-injected fields
+// remain excluded from caller input.
 func validateRegisteredRootInput(input *api.RunInput) (*registrycontract.Resolution, error) {
 	if input == nil {
 		return nil, errors.New("registered input is required")
@@ -195,7 +196,7 @@ func validateRegisteredRootInput(input *api.RunInput) (*registrycontract.Resolut
 	if !ok || spec.IsAgentTool {
 		return nil, errors.New("registered selection is not a service operation")
 	}
-	if _, err := spec.Payload.Codec.FromJSON(request.Arguments); err != nil {
+	if _, err := spec.ExecutionPayloadCodec.FromJSON(request.Arguments); err != nil {
 		return nil, fmt.Errorf("registered arguments: %w", err)
 	}
 	for _, declaration := range resolution.Registered.Toolset.Tools {

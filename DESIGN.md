@@ -2926,7 +2926,10 @@ cursor or correlation identifier.
 Each generated input schema has a matching generated codec. `Payload.Codec`
 accepts model-authored arguments, including the empty object for a dedicated
 continuation. `ExecutionPayloadCodec` accepts the restored execution payload
-and is used when running tools or restoring saved work. These codec functions
+and is used when running tools or restoring saved work. Standalone registered
+service operations use this execution codec during submission, workflow
+restoration, and provider dispatch; direct callers supply the complete query
+and cursor, while provider-injected fields remain excluded. These codec functions
 are shared when both inputs have the same shape. The generator derives cursor
 presence and hidden fields before creating the schema and decoder, so adding
 an authored example cannot make a valid continuation fail registration.

@@ -228,7 +228,9 @@ uses the existing recovery-turn budget. See
   registration. Calls and retries retain the original route and token. See
   [static service bindings](docs/tool_search.md#bind-generated-service-tools).
 - **Standalone service operations.** Execute a registered service tool without
-  creating a session; sessionful calls retain their existing session. Protocol 15
+  creating a session; sessionful calls retain their existing session. Direct calls
+  validate complete execution arguments, including retained query fields and
+  continuation cursors, while excluding provider-injected fields. Protocol 15
   requires coordinated registry, provider, and consumer upgrades; see
   [session metadata and upgrade](docs/runtime.md#session-metadata-and-upgrade).
 - **Direct Agent operations.** Start typed operations before tool publication,

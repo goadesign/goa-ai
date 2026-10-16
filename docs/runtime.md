@@ -1244,7 +1244,17 @@ tools; generation reuses one implementation when the inputs are identical.
 For example, the model selects a dedicated continuation with `{}`. Its model
 codec accepts that object, while its execution codec requires the cursor and
 any retained query arguments. Runtime execution and saved-workflow restoration
-use the execution codec, never the smaller model codec. Fields declared with
+use the execution codec, never the smaller model codec. This includes standalone
+registered service operations: `StartToolOperation` and
+`StartOneShotToolOperation` accept complete execution arguments, including
+retained query fields and a continuation cursor. Submission, saved-checkpoint
+validation, and provider dispatch use the same execution contract. Native Agent
+roots continue to accept their declared model input. This service validation
+correction needs no regeneration or schema migration. Upgrade submitting and
+worker runtimes that handle these calls: older runtimes still reject execution
+inputs that differ from model inputs, including when restoring accepted work.
+Finish that work on the fixed runtime before rolling back its workers.
+Fields declared with
 `Inject` are absent from both JSON inputs and filled inside the provider.
 Generated typed payload codecs and typed tool descriptors remain execution
 codecs. Model decoding may return that same Go payload type with fields left
