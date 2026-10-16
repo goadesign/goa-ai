@@ -220,6 +220,9 @@ uses the existing recovery-turn budget. See
   owners and retain original declarations for execution and replay.
   Portable bounded-result codecs accept provider result data; the runtime adds
   counts and truncation before publishing results against the advertised schema.
+  Generated Agent declarations also retain each operation's authored timeout
+  recovery policy through registry transport; see the
+  [regeneration requirements](docs/runtime.md#agent-timeout-recovery).
 - **Bind generated tools to selected services.** Keep generated tool names,
   input preparation, codecs, and executors while attaching an exact owner-selected
   registration. Calls and retries retain the original route and token. See

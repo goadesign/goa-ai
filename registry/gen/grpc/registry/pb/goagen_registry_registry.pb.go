@@ -695,9 +695,12 @@ type ConsumerContract struct {
 	// protocol.
 	RequiresUi *bool `protobuf:"varint,13,opt,name=requires_ui,json=requiresUi,proto3,oneof" json:"requires_ui,omitempty"`
 	// Generated model contract for execution using ordinary messages only.
-	TextOnly      *TextOnlyToolContract `protobuf:"bytes,14,opt,name=text_only,json=textOnly,proto3" json:"text_only,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	TextOnly *TextOnlyToolContract `protobuf:"bytes,14,opt,name=text_only,json=textOnly,proto3" json:"text_only,omitempty"`
+	// Whether the provider permits alternative work after this exported Agent
+	// operation times out. The failed operation remains failed and is not retried.
+	ReplanOnTimeout *bool `protobuf:"varint,15,opt,name=replan_on_timeout,json=replanOnTimeout,proto3,oneof" json:"replan_on_timeout,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *ConsumerContract) Reset() {
@@ -826,6 +829,13 @@ func (x *ConsumerContract) GetTextOnly() *TextOnlyToolContract {
 		return x.TextOnly
 	}
 	return nil
+}
+
+func (x *ConsumerContract) GetReplanOnTimeout() bool {
+	if x != nil && x.ReplanOnTimeout != nil {
+		return *x.ReplanOnTimeout
+	}
+	return false
 }
 
 // Precomputed word frequencies for local tool retrieval.
@@ -5807,7 +5817,7 @@ const file_goagen_registry_registry_proto_rawDesc = "" +
 	"\x0f_payload_schemaB\x1b\n" +
 	"\x19_execution_payload_schemaB\x10\n" +
 	"\x0e_result_schemaB\x11\n" +
-	"\x0f_sidecar_schema\"\x83\a\n" +
+	"\x0f_sidecar_schema\"\xca\a\n" +
 	"\x10ConsumerContract\x12\x17\n" +
 	"\x04kind\x18\x01 \x01(\tH\x00R\x04kind\x88\x01\x01\x12\x19\n" +
 	"\x05title\x18\x02 \x01(\tH\x01R\x05title\x88\x01\x01\x12;\n" +
@@ -5825,14 +5835,16 @@ const file_goagen_registry_registry_proto_rawDesc = "" +
 	"\x05agent\x18\f \x01(\v2 .goa_ai_registry.AgentToolTargetR\x05agent\x12$\n" +
 	"\vrequires_ui\x18\r \x01(\bH\x03R\n" +
 	"requiresUi\x88\x01\x01\x12B\n" +
-	"\ttext_only\x18\x0e \x01(\v2%.goa_ai_registry.TextOnlyToolContractR\btextOnly\x1aW\n" +
+	"\ttext_only\x18\x0e \x01(\v2%.goa_ai_registry.TextOnlyToolContractR\btextOnly\x12/\n" +
+	"\x11replan_on_timeout\x18\x0f \x01(\bH\x04R\x0freplanOnTimeout\x88\x01\x01\x1aW\n" +
 	"\tMetaEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x124\n" +
 	"\x05value\x18\x02 \x01(\v2\x1e.goa_ai_registry.ArrayOfStringR\x05value:\x028\x01B\a\n" +
 	"\x05_kindB\b\n" +
 	"\x06_titleB\x12\n" +
 	"\x10_result_reminderB\x0e\n" +
-	"\f_requires_ui\"\xbc\x01\n" +
+	"\f_requires_uiB\x14\n" +
+	"\x12_replan_on_timeout\"\xbc\x01\n" +
 	"\x12ToolSearchDocument\x12\x1b\n" +
 	"\x06length\x18\x01 \x01(\x11H\x00R\x06length\x88\x01\x01\x12D\n" +
 	"\x05terms\x18\x02 \x03(\v2..goa_ai_registry.ToolSearchDocument.TermsEntryR\x05terms\x1a8\n" +
