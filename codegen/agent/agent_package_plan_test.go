@@ -116,12 +116,14 @@ func packagePlanTestAgent(importPath string) *agentir.Agent {
 	mcpDefinition := &agentir.Toolset{Expr: mcpExpr}
 	agentToolsDefinition := &agentir.Toolset{Expr: agentToolsExpr}
 	return &agentir.Agent{
-		Expr:       &agentexpr.AgentExpr{RunPolicy: &agentexpr.RunPolicyExpr{}},
-		Name:       "scribe",
-		ID:         "alpha.scribe",
-		ImportPath: importPath,
-		StructName: "ScribeAgent",
-		ConfigType: "ScribeAgentConfig",
+		Expr:                &agentexpr.AgentExpr{RunPolicy: &agentexpr.RunPolicyExpr{}},
+		Name:                "scribe",
+		ID:                  "alpha.scribe",
+		ImportPath:          importPath,
+		ToolSpecsPackage:    "specs",
+		ToolSpecsImportPath: importPath + "/specs",
+		StructName:          "ScribeAgent",
+		ConfigType:          "ScribeAgentConfig",
 		UsedToolsets: []*agentir.ToolsetRef{
 			{
 				Expr:             localExpr,
@@ -190,22 +192,27 @@ func packagePlanTestData(agent *agentir.Agent) *GeneratorData {
 		QualifiedName:        "alpha.writer",
 		PathName:             "writer",
 		AgentToolsImportPath: agent.UsedToolsets[2].AgentToolsImportPath,
-		Tools:                []*ToolData{{Name: "write"}},
+		Tools:                []*ToolData{{Name: "write", QualifiedName: "writer.write"}},
 	}
 	linked := &AgentData{
-		Name:         agent.Name,
-		ID:           agent.ID,
-		StructName:   agent.StructName,
-		ConfigType:   agent.ConfigType,
-		UsedToolsets: []*ToolsetData{local, mcp, agentTools},
-		AllToolsets:  []*ToolsetData{local, mcp, agentTools},
-		MCPToolsets:  []*MCPToolsetMeta{mcpMeta},
+		Name:                agent.Name,
+		ID:                  agent.ID,
+		StructName:          agent.StructName,
+		ConfigType:          agent.ConfigType,
+		ToolSpecsPackage:    agent.ToolSpecsPackage,
+		ToolSpecsImportPath: agent.ToolSpecsImportPath,
+		UsedToolsets:        []*ToolsetData{local, mcp, agentTools},
+		AllToolsets:         []*ToolsetData{local, mcp, agentTools},
+		MCPToolsets:         []*MCPToolsetMeta{mcpMeta},
 		Runtime: RuntimeData{
 			Workflow:       WorkflowArtifact{Name: "alpha.scribe.workflow", Queue: "alpha_scribe_workflow"},
 			PlanActivity:   &ActivityArtifact{Name: "alpha.scribe.plan"},
 			ResumeActivity: &ActivityArtifact{Name: "alpha.scribe.resume"},
 			ExecuteTool:    &ActivityArtifact{Name: "alpha.scribe.execute_tool"},
 		},
+	}
+	for _, toolset := range linked.AllToolsets {
+		linked.Tools = append(linked.Tools, toolset.Tools...)
 	}
 	return &GeneratorData{Services: []*ServiceAgentsData{{Agents: []*AgentData{linked}}}}
 }

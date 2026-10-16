@@ -748,8 +748,11 @@ func resolveSourceService(
 		}
 	}
 	isMCPBacked := expr.Provider != nil && expr.Provider.Kind == agentsExpr.ProviderMCP
-	if !isMCPBacked && len(expr.Tools) > 0 {
-		if svcName := expr.Tools[0].BoundServiceName(); svcName != "" {
+	// Consumer selections do not change the service that owns bound methods.
+	// Read those bindings from the provider declaration for every consumer.
+	providerTools := definingToolsetExpr(expr).Tools
+	if !isMCPBacked && len(providerTools) > 0 {
+		if svcName := providerTools[0].BoundServiceName(); svcName != "" {
 			if svc := servicesByName[svcName]; svc != nil {
 				sourceService = svc
 			}
