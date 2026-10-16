@@ -1370,8 +1370,22 @@ unknown external write. Do not apply it to an operation that may change a
 setting, send a message, or perform another write whose outcome is unknown.
 The promise belongs to the tool definition, not to a consumer's configuration.
 It is supported only on generated agent exports and their generated
-agent-as-tool consumers. Direct service, inline, MCP, registry, and `PublishTo`
-routes are rejected during generation rather than losing the declaration.
+agent-as-tool consumers, including generated native tools bound to a selected
+Agent registration. The generated registry declaration retains the same policy
+as the local specification. Direct service, inline, MCP, `FromRegistry`, and
+`PublishTo` routes are rejected during generation rather than losing the declaration.
+
+After upgrading for registry timeout-policy preservation, regenerate marked
+Agent exports and refresh their registrations. Upgrade the registry, providers,
+and consumers together before using those refreshed declarations: older binaries
+cannot preserve a `true` policy. Existing declarations without the policy still
+mean `false` and retain their fingerprints. Generated JSON encoders omit the
+false default, so unmarked saved registry selections remain readable by older
+binaries. Saved selections with a true policy require the upgraded readers;
+do not resume that work on older binaries. Before rolling back marked exports,
+finish or retire work that saved a true policy and restore the previous generated
+exports and matching registrations. The registry compiler rejects a true policy
+on an ordinary service tool.
 
 The runtime records a typed timeout as `ToolFailure{Kind: "timeout"}`. For the
 declared operation its action is `replan`; otherwise its action remains

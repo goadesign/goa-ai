@@ -13,6 +13,7 @@ import (
 )
 
 type originalTransportGraph struct {
+	encoder       *codegen.TransformProgram
 	types         map[*codegen.TypeDeclaration]*plannedType
 	typesByLocal  map[expr.UserType]*plannedType
 	unions        map[*codegen.UnionDeclaration]*plannedUnion
@@ -32,7 +33,12 @@ func (p *Plan) addOriginal(key, preferredName string, attribute *expr.AttributeE
 		return nil, fmt.Errorf("standalone JSON value %q requires an original type declaration", key)
 	}
 	if p.originals == nil {
+		encoder, err := codegen.NewTransformProgram(&codegen.TransformHooks{GuardCondition: originalEncodeGuard})
+		if err != nil {
+			return nil, err
+		}
 		p.originals = &originalTransportGraph{
+			encoder:       encoder,
 			types:         make(map[*codegen.TypeDeclaration]*plannedType),
 			typesByLocal:  make(map[expr.UserType]*plannedType),
 			unions:        make(map[*codegen.UnionDeclaration]*plannedUnion),

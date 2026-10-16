@@ -94,8 +94,21 @@ func TestStaticAgentBindingRetainsTypedCodecsAndSelectedConfiguration(t *testing
 	assert.Equal(t, "generic.workflow", direct.route.WorkflowName)
 }
 
+func TestStaticAgentBindingPreservesTimeoutPolicy(t *testing.T) {
+	for _, marked := range []bool{false, true} {
+		_, catalog, expected, selected := staticAgentCatalog(t)
+		expected[0].ConsumerContract.ReplanOnTimeout = marked
+		selected.Toolset.Tools[0].ConsumerContract.ReplanOnTimeout = marked
+		spec := catalog.definition.specByName[genrecords.Read]
+		spec.ReplanOnTimeout = marked
+		catalog.definition.specByName[genrecords.Read] = spec
+		require.NoError(t, catalog.BindStaticAgent(testRegistryName, expected, selected, genrecords.Read))
+		assert.Equal(t, marked, catalog.selections[genrecords.Read].resolution.Specs[genrecords.Read].ReplanOnTimeout)
+	}
+}
+
 func TestStaticAgentBindingRejectsChangedContracts(t *testing.T) {
-	for _, change := range []string{"schema", "policy", "executor", "workflow", "queue", "configuration", "duplicate", "missing", "extra", "bound declaration", "service", "consumption"} {
+	for _, change := range []string{"schema", "policy", "timeout policy", "executor", "workflow", "queue", "configuration", "duplicate", "missing", "extra", "bound declaration", "service", "consumption"} {
 		t.Run(change, func(t *testing.T) {
 			_, catalog, expected, selected := staticAgentCatalog(t)
 			names := []tools.Ident{genrecords.Read}
@@ -105,6 +118,8 @@ func TestStaticAgentBindingRejectsChangedContracts(t *testing.T) {
 				selected.Toolset.Tools[0].PayloadSchema = []byte(`{"type":"string"}`)
 			case "policy":
 				selected.Toolset.Tools[0].ConsumerContract.RequiresUI = true
+			case "timeout policy":
+				selected.Toolset.Tools[0].ConsumerContract.ReplanOnTimeout = true
 			case "executor":
 				target.Executor = "other.agent"
 			case "workflow":

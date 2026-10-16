@@ -618,7 +618,9 @@ failure retains its SDK representation and full diagnostics. Other application,
 joined, and previously saved failures keep their existing conversion. A
 provider-authored `ReplanOnTimeout()` declaration on a generated agent export
 allows alternative work after that operation's typed timeout, without retrying
-it; unmarked operations still require finishing. See
+it; unmarked operations still require finishing. Generated registry declarations
+carry the same per-operation policy, and registry consumers restore it when
+checking a selected native registration against the local specification. See
 [agent timeout recovery](docs/runtime.md#agent-timeout-recovery).
 Other classification and retry settings are unchanged. Applications own
 capture, disclosure, and retention; arbitrary typed causes and custom Temporal

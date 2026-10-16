@@ -515,6 +515,9 @@ type ConsumerContract struct {
 	RequiresUI bool
 	// Generated model contract for execution using ordinary messages only.
 	TextOnly *TextOnlyToolContract
+	// Whether the provider permits alternative work after this exported Agent
+	// operation times out. The failed operation remains failed and is not retried.
+	ReplanOnTimeout bool `json:"ReplanOnTimeout,omitempty"`
 }
 
 // DrainProviderPayload is the payload type of the registry service
@@ -2267,6 +2270,9 @@ type jsonConsumerContractTransport struct {
 	RequiresUI *bool `json:"requires_ui,omitempty"`
 	// Generated model contract for execution using ordinary messages only.
 	TextOnly *jsonTextOnlyToolContractTransport `json:"text_only,omitempty"`
+	// Whether the provider permits alternative work after this exported Agent
+	// operation times out. The failed operation remains failed and is not retried.
+	ReplanOnTimeout *bool `json:"ReplanOnTimeout,omitempty"`
 }
 
 // validatejsonConsumerContractTransport checks decoded JSON before it becomes a service value.
@@ -13294,6 +13300,9 @@ func EncodeConsumerContract(in *ConsumerContract) ([]byte, error) {
 			ResultReminder: in.ResultReminder,
 			RequiresUI:     &in.RequiresUI,
 		}
+		if in.ReplanOnTimeout != false {
+			body.ReplanOnTimeout = &in.ReplanOnTimeout
+		}
 		body.Search = encodeToolSearchDocumentToToolSearchDocumentTransport7(in.Search)
 		body.Payload = encodeToolTypeMetadataToToolTypeMetadataTransport13(in.Payload)
 		if in.Result != nil {
@@ -13386,6 +13395,9 @@ func DecodeConsumerContract(data []byte) (out *ConsumerContract, err error) {
 		if body.RequiresUI != nil {
 			out.RequiresUI = *body.RequiresUI
 		}
+		if body.ReplanOnTimeout != nil {
+			out.ReplanOnTimeout = *body.ReplanOnTimeout
+		}
 		out.Search = decodeToolSearchDocumentTransportToToolSearchDocument7(body.Search)
 		out.Payload = decodeToolTypeMetadataTransportToToolTypeMetadata13(body.Payload)
 		if body.Result != nil {
@@ -13436,6 +13448,9 @@ func DecodeConsumerContract(data []byte) (out *ConsumerContract, err error) {
 		}
 		if body.TextOnly != nil {
 			out.TextOnly = decodeTextOnlyToolContractTransportToTextOnlyToolContract4(body.TextOnly)
+		}
+		if body.ReplanOnTimeout == nil {
+			out.ReplanOnTimeout = false
 		}
 	}
 	return out, nil
@@ -16168,7 +16183,9 @@ func EncodeToolServerData(in *ToolServerData) ([]byte, error) {
 			Audience:    &in.Audience,
 			Description: in.Description,
 			Schema:      in.Schema,
-			NativeImage: &in.NativeImage,
+		}
+		if in.NativeImage != false {
+			body.NativeImage = &in.NativeImage
 		}
 		body.Type = encodeToolTypeMetadataToToolTypeMetadataTransport46(in.Type)
 	}
@@ -17024,6 +17041,9 @@ func decodeConsumerContractTransportToConsumerContract(v *jsonConsumerContractTr
 	if v.RequiresUI != nil {
 		res.RequiresUI = *v.RequiresUI
 	}
+	if v.ReplanOnTimeout != nil {
+		res.ReplanOnTimeout = *v.ReplanOnTimeout
+	}
 	res.Search = decodeToolSearchDocumentTransportToToolSearchDocument(v.Search)
 	res.Payload = decodeToolTypeMetadataTransportToToolTypeMetadata(v.Payload)
 	if v.Result != nil {
@@ -17075,6 +17095,9 @@ func decodeConsumerContractTransportToConsumerContract(v *jsonConsumerContractTr
 	if v.TextOnly != nil {
 		res.TextOnly = decodeTextOnlyToolContractTransportToTextOnlyToolContract(v.TextOnly)
 	}
+	if v.ReplanOnTimeout == nil {
+		res.ReplanOnTimeout = false
+	}
 
 	return res
 }
@@ -17087,6 +17110,9 @@ func decodeConsumerContractTransportToConsumerContract10(v *jsonConsumerContract
 	}
 	if v.RequiresUI != nil {
 		res.RequiresUI = *v.RequiresUI
+	}
+	if v.ReplanOnTimeout != nil {
+		res.ReplanOnTimeout = *v.ReplanOnTimeout
 	}
 	res.Search = decodeToolSearchDocumentTransportToToolSearchDocument22(v.Search)
 	res.Payload = decodeToolTypeMetadataTransportToToolTypeMetadata42(v.Payload)
@@ -17139,6 +17165,9 @@ func decodeConsumerContractTransportToConsumerContract10(v *jsonConsumerContract
 	if v.TextOnly != nil {
 		res.TextOnly = decodeTextOnlyToolContractTransportToTextOnlyToolContract11(v.TextOnly)
 	}
+	if v.ReplanOnTimeout == nil {
+		res.ReplanOnTimeout = false
+	}
 
 	return res
 }
@@ -17151,6 +17180,9 @@ func decodeConsumerContractTransportToConsumerContract11(v *jsonConsumerContract
 	}
 	if v.RequiresUI != nil {
 		res.RequiresUI = *v.RequiresUI
+	}
+	if v.ReplanOnTimeout != nil {
+		res.ReplanOnTimeout = *v.ReplanOnTimeout
 	}
 	res.Search = decodeToolSearchDocumentTransportToToolSearchDocument24(v.Search)
 	res.Payload = decodeToolTypeMetadataTransportToToolTypeMetadata47(v.Payload)
@@ -17203,6 +17235,9 @@ func decodeConsumerContractTransportToConsumerContract11(v *jsonConsumerContract
 	if v.TextOnly != nil {
 		res.TextOnly = decodeTextOnlyToolContractTransportToTextOnlyToolContract12(v.TextOnly)
 	}
+	if v.ReplanOnTimeout == nil {
+		res.ReplanOnTimeout = false
+	}
 
 	return res
 }
@@ -17215,6 +17250,9 @@ func decodeConsumerContractTransportToConsumerContract2(v *jsonConsumerContractT
 	}
 	if v.RequiresUI != nil {
 		res.RequiresUI = *v.RequiresUI
+	}
+	if v.ReplanOnTimeout != nil {
+		res.ReplanOnTimeout = *v.ReplanOnTimeout
 	}
 	res.Search = decodeToolSearchDocumentTransportToToolSearchDocument3(v.Search)
 	res.Payload = decodeToolTypeMetadataTransportToToolTypeMetadata5(v.Payload)
@@ -17267,6 +17305,9 @@ func decodeConsumerContractTransportToConsumerContract2(v *jsonConsumerContractT
 	if v.TextOnly != nil {
 		res.TextOnly = decodeTextOnlyToolContractTransportToTextOnlyToolContract2(v.TextOnly)
 	}
+	if v.ReplanOnTimeout == nil {
+		res.ReplanOnTimeout = false
+	}
 
 	return res
 }
@@ -17279,6 +17320,9 @@ func decodeConsumerContractTransportToConsumerContract3(v *jsonConsumerContractT
 	}
 	if v.RequiresUI != nil {
 		res.RequiresUI = *v.RequiresUI
+	}
+	if v.ReplanOnTimeout != nil {
+		res.ReplanOnTimeout = *v.ReplanOnTimeout
 	}
 	res.Search = decodeToolSearchDocumentTransportToToolSearchDocument5(v.Search)
 	res.Payload = decodeToolTypeMetadataTransportToToolTypeMetadata9(v.Payload)
@@ -17331,6 +17375,9 @@ func decodeConsumerContractTransportToConsumerContract3(v *jsonConsumerContractT
 	if v.TextOnly != nil {
 		res.TextOnly = decodeTextOnlyToolContractTransportToTextOnlyToolContract3(v.TextOnly)
 	}
+	if v.ReplanOnTimeout == nil {
+		res.ReplanOnTimeout = false
+	}
 
 	return res
 }
@@ -17343,6 +17390,9 @@ func decodeConsumerContractTransportToConsumerContract4(v *jsonConsumerContractT
 	}
 	if v.RequiresUI != nil {
 		res.RequiresUI = *v.RequiresUI
+	}
+	if v.ReplanOnTimeout != nil {
+		res.ReplanOnTimeout = *v.ReplanOnTimeout
 	}
 	res.Search = decodeToolSearchDocumentTransportToToolSearchDocument9(v.Search)
 	res.Payload = decodeToolTypeMetadataTransportToToolTypeMetadata17(v.Payload)
@@ -17395,6 +17445,9 @@ func decodeConsumerContractTransportToConsumerContract4(v *jsonConsumerContractT
 	if v.TextOnly != nil {
 		res.TextOnly = decodeTextOnlyToolContractTransportToTextOnlyToolContract5(v.TextOnly)
 	}
+	if v.ReplanOnTimeout == nil {
+		res.ReplanOnTimeout = false
+	}
 
 	return res
 }
@@ -17407,6 +17460,9 @@ func decodeConsumerContractTransportToConsumerContract5(v *jsonConsumerContractT
 	}
 	if v.RequiresUI != nil {
 		res.RequiresUI = *v.RequiresUI
+	}
+	if v.ReplanOnTimeout != nil {
+		res.ReplanOnTimeout = *v.ReplanOnTimeout
 	}
 	res.Search = decodeToolSearchDocumentTransportToToolSearchDocument11(v.Search)
 	res.Payload = decodeToolTypeMetadataTransportToToolTypeMetadata21(v.Payload)
@@ -17459,6 +17515,9 @@ func decodeConsumerContractTransportToConsumerContract5(v *jsonConsumerContractT
 	if v.TextOnly != nil {
 		res.TextOnly = decodeTextOnlyToolContractTransportToTextOnlyToolContract6(v.TextOnly)
 	}
+	if v.ReplanOnTimeout == nil {
+		res.ReplanOnTimeout = false
+	}
 
 	return res
 }
@@ -17471,6 +17530,9 @@ func decodeConsumerContractTransportToConsumerContract6(v *jsonConsumerContractT
 	}
 	if v.RequiresUI != nil {
 		res.RequiresUI = *v.RequiresUI
+	}
+	if v.ReplanOnTimeout != nil {
+		res.ReplanOnTimeout = *v.ReplanOnTimeout
 	}
 	res.Search = decodeToolSearchDocumentTransportToToolSearchDocument13(v.Search)
 	res.Payload = decodeToolTypeMetadataTransportToToolTypeMetadata25(v.Payload)
@@ -17523,6 +17585,9 @@ func decodeConsumerContractTransportToConsumerContract6(v *jsonConsumerContractT
 	if v.TextOnly != nil {
 		res.TextOnly = decodeTextOnlyToolContractTransportToTextOnlyToolContract7(v.TextOnly)
 	}
+	if v.ReplanOnTimeout == nil {
+		res.ReplanOnTimeout = false
+	}
 
 	return res
 }
@@ -17535,6 +17600,9 @@ func decodeConsumerContractTransportToConsumerContract7(v *jsonConsumerContractT
 	}
 	if v.RequiresUI != nil {
 		res.RequiresUI = *v.RequiresUI
+	}
+	if v.ReplanOnTimeout != nil {
+		res.ReplanOnTimeout = *v.ReplanOnTimeout
 	}
 	res.Search = decodeToolSearchDocumentTransportToToolSearchDocument15(v.Search)
 	res.Payload = decodeToolTypeMetadataTransportToToolTypeMetadata29(v.Payload)
@@ -17587,6 +17655,9 @@ func decodeConsumerContractTransportToConsumerContract7(v *jsonConsumerContractT
 	if v.TextOnly != nil {
 		res.TextOnly = decodeTextOnlyToolContractTransportToTextOnlyToolContract8(v.TextOnly)
 	}
+	if v.ReplanOnTimeout == nil {
+		res.ReplanOnTimeout = false
+	}
 
 	return res
 }
@@ -17599,6 +17670,9 @@ func decodeConsumerContractTransportToConsumerContract8(v *jsonConsumerContractT
 	}
 	if v.RequiresUI != nil {
 		res.RequiresUI = *v.RequiresUI
+	}
+	if v.ReplanOnTimeout != nil {
+		res.ReplanOnTimeout = *v.ReplanOnTimeout
 	}
 	res.Search = decodeToolSearchDocumentTransportToToolSearchDocument17(v.Search)
 	res.Payload = decodeToolTypeMetadataTransportToToolTypeMetadata33(v.Payload)
@@ -17651,6 +17725,9 @@ func decodeConsumerContractTransportToConsumerContract8(v *jsonConsumerContractT
 	if v.TextOnly != nil {
 		res.TextOnly = decodeTextOnlyToolContractTransportToTextOnlyToolContract9(v.TextOnly)
 	}
+	if v.ReplanOnTimeout == nil {
+		res.ReplanOnTimeout = false
+	}
 
 	return res
 }
@@ -17663,6 +17740,9 @@ func decodeConsumerContractTransportToConsumerContract9(v *jsonConsumerContractT
 	}
 	if v.RequiresUI != nil {
 		res.RequiresUI = *v.RequiresUI
+	}
+	if v.ReplanOnTimeout != nil {
+		res.ReplanOnTimeout = *v.ReplanOnTimeout
 	}
 	res.Search = decodeToolSearchDocumentTransportToToolSearchDocument19(v.Search)
 	res.Payload = decodeToolTypeMetadataTransportToToolTypeMetadata37(v.Payload)
@@ -17714,6 +17794,9 @@ func decodeConsumerContractTransportToConsumerContract9(v *jsonConsumerContractT
 	}
 	if v.TextOnly != nil {
 		res.TextOnly = decodeTextOnlyToolContractTransportToTextOnlyToolContract10(v.TextOnly)
+	}
+	if v.ReplanOnTimeout == nil {
+		res.ReplanOnTimeout = false
 	}
 
 	return res
@@ -30861,6 +30944,9 @@ func encodeConsumerContractToConsumerContractTransport(v *ConsumerContract) *jso
 		ResultReminder: v.ResultReminder,
 		RequiresUI:     &v.RequiresUI,
 	}
+	if v.ReplanOnTimeout != false {
+		res.ReplanOnTimeout = &v.ReplanOnTimeout
+	}
 	res.Search = encodeToolSearchDocumentToToolSearchDocumentTransport(v.Search)
 	res.Payload = encodeToolTypeMetadataToToolTypeMetadataTransport(v.Payload)
 	if v.Result != nil {
@@ -30919,6 +31005,9 @@ func encodeConsumerContractToConsumerContractTransport10(v *ConsumerContract) *j
 		Title:          &v.Title,
 		ResultReminder: v.ResultReminder,
 		RequiresUI:     &v.RequiresUI,
+	}
+	if v.ReplanOnTimeout != false {
+		res.ReplanOnTimeout = &v.ReplanOnTimeout
 	}
 	res.Search = encodeToolSearchDocumentToToolSearchDocumentTransport22(v.Search)
 	res.Payload = encodeToolTypeMetadataToToolTypeMetadataTransport42(v.Payload)
@@ -30979,6 +31068,9 @@ func encodeConsumerContractToConsumerContractTransport11(v *ConsumerContract) *j
 		ResultReminder: v.ResultReminder,
 		RequiresUI:     &v.RequiresUI,
 	}
+	if v.ReplanOnTimeout != false {
+		res.ReplanOnTimeout = &v.ReplanOnTimeout
+	}
 	res.Search = encodeToolSearchDocumentToToolSearchDocumentTransport24(v.Search)
 	res.Payload = encodeToolTypeMetadataToToolTypeMetadataTransport47(v.Payload)
 	if v.Result != nil {
@@ -31037,6 +31129,9 @@ func encodeConsumerContractToConsumerContractTransport2(v *ConsumerContract) *js
 		Title:          &v.Title,
 		ResultReminder: v.ResultReminder,
 		RequiresUI:     &v.RequiresUI,
+	}
+	if v.ReplanOnTimeout != false {
+		res.ReplanOnTimeout = &v.ReplanOnTimeout
 	}
 	res.Search = encodeToolSearchDocumentToToolSearchDocumentTransport3(v.Search)
 	res.Payload = encodeToolTypeMetadataToToolTypeMetadataTransport5(v.Payload)
@@ -31097,6 +31192,9 @@ func encodeConsumerContractToConsumerContractTransport3(v *ConsumerContract) *js
 		ResultReminder: v.ResultReminder,
 		RequiresUI:     &v.RequiresUI,
 	}
+	if v.ReplanOnTimeout != false {
+		res.ReplanOnTimeout = &v.ReplanOnTimeout
+	}
 	res.Search = encodeToolSearchDocumentToToolSearchDocumentTransport5(v.Search)
 	res.Payload = encodeToolTypeMetadataToToolTypeMetadataTransport9(v.Payload)
 	if v.Result != nil {
@@ -31155,6 +31253,9 @@ func encodeConsumerContractToConsumerContractTransport4(v *ConsumerContract) *js
 		Title:          &v.Title,
 		ResultReminder: v.ResultReminder,
 		RequiresUI:     &v.RequiresUI,
+	}
+	if v.ReplanOnTimeout != false {
+		res.ReplanOnTimeout = &v.ReplanOnTimeout
 	}
 	res.Search = encodeToolSearchDocumentToToolSearchDocumentTransport9(v.Search)
 	res.Payload = encodeToolTypeMetadataToToolTypeMetadataTransport17(v.Payload)
@@ -31215,6 +31316,9 @@ func encodeConsumerContractToConsumerContractTransport5(v *ConsumerContract) *js
 		ResultReminder: v.ResultReminder,
 		RequiresUI:     &v.RequiresUI,
 	}
+	if v.ReplanOnTimeout != false {
+		res.ReplanOnTimeout = &v.ReplanOnTimeout
+	}
 	res.Search = encodeToolSearchDocumentToToolSearchDocumentTransport11(v.Search)
 	res.Payload = encodeToolTypeMetadataToToolTypeMetadataTransport21(v.Payload)
 	if v.Result != nil {
@@ -31273,6 +31377,9 @@ func encodeConsumerContractToConsumerContractTransport6(v *ConsumerContract) *js
 		Title:          &v.Title,
 		ResultReminder: v.ResultReminder,
 		RequiresUI:     &v.RequiresUI,
+	}
+	if v.ReplanOnTimeout != false {
+		res.ReplanOnTimeout = &v.ReplanOnTimeout
 	}
 	res.Search = encodeToolSearchDocumentToToolSearchDocumentTransport13(v.Search)
 	res.Payload = encodeToolTypeMetadataToToolTypeMetadataTransport25(v.Payload)
@@ -31333,6 +31440,9 @@ func encodeConsumerContractToConsumerContractTransport7(v *ConsumerContract) *js
 		ResultReminder: v.ResultReminder,
 		RequiresUI:     &v.RequiresUI,
 	}
+	if v.ReplanOnTimeout != false {
+		res.ReplanOnTimeout = &v.ReplanOnTimeout
+	}
 	res.Search = encodeToolSearchDocumentToToolSearchDocumentTransport15(v.Search)
 	res.Payload = encodeToolTypeMetadataToToolTypeMetadataTransport29(v.Payload)
 	if v.Result != nil {
@@ -31392,6 +31502,9 @@ func encodeConsumerContractToConsumerContractTransport8(v *ConsumerContract) *js
 		ResultReminder: v.ResultReminder,
 		RequiresUI:     &v.RequiresUI,
 	}
+	if v.ReplanOnTimeout != false {
+		res.ReplanOnTimeout = &v.ReplanOnTimeout
+	}
 	res.Search = encodeToolSearchDocumentToToolSearchDocumentTransport17(v.Search)
 	res.Payload = encodeToolTypeMetadataToToolTypeMetadataTransport33(v.Payload)
 	if v.Result != nil {
@@ -31450,6 +31563,9 @@ func encodeConsumerContractToConsumerContractTransport9(v *ConsumerContract) *js
 		Title:          &v.Title,
 		ResultReminder: v.ResultReminder,
 		RequiresUI:     &v.RequiresUI,
+	}
+	if v.ReplanOnTimeout != false {
+		res.ReplanOnTimeout = &v.ReplanOnTimeout
 	}
 	res.Search = encodeToolSearchDocumentToToolSearchDocumentTransport19(v.Search)
 	res.Payload = encodeToolTypeMetadataToToolTypeMetadataTransport37(v.Payload)
@@ -40135,7 +40251,9 @@ func encodeToolServerDataToToolServerDataTransport(v *ToolServerData) *jsonToolS
 		Audience:    &v.Audience,
 		Description: v.Description,
 		Schema:      v.Schema,
-		NativeImage: &v.NativeImage,
+	}
+	if v.NativeImage != false {
+		res.NativeImage = &v.NativeImage
 	}
 	res.Type = encodeToolTypeMetadataToToolTypeMetadataTransport3(v.Type)
 
@@ -40148,7 +40266,9 @@ func encodeToolServerDataToToolServerDataTransport10(v *ToolServerData) *jsonToo
 		Audience:    &v.Audience,
 		Description: v.Description,
 		Schema:      v.Schema,
-		NativeImage: &v.NativeImage,
+	}
+	if v.NativeImage != false {
+		res.NativeImage = &v.NativeImage
 	}
 	res.Type = encodeToolTypeMetadataToToolTypeMetadataTransport39(v.Type)
 
@@ -40161,7 +40281,9 @@ func encodeToolServerDataToToolServerDataTransport11(v *ToolServerData) *jsonToo
 		Audience:    &v.Audience,
 		Description: v.Description,
 		Schema:      v.Schema,
-		NativeImage: &v.NativeImage,
+	}
+	if v.NativeImage != false {
+		res.NativeImage = &v.NativeImage
 	}
 	res.Type = encodeToolTypeMetadataToToolTypeMetadataTransport44(v.Type)
 
@@ -40174,7 +40296,9 @@ func encodeToolServerDataToToolServerDataTransport12(v *ToolServerData) *jsonToo
 		Audience:    &v.Audience,
 		Description: v.Description,
 		Schema:      v.Schema,
-		NativeImage: &v.NativeImage,
+	}
+	if v.NativeImage != false {
+		res.NativeImage = &v.NativeImage
 	}
 	res.Type = encodeToolTypeMetadataToToolTypeMetadataTransport49(v.Type)
 
@@ -40187,7 +40311,9 @@ func encodeToolServerDataToToolServerDataTransport2(v *ToolServerData) *jsonTool
 		Audience:    &v.Audience,
 		Description: v.Description,
 		Schema:      v.Schema,
-		NativeImage: &v.NativeImage,
+	}
+	if v.NativeImage != false {
+		res.NativeImage = &v.NativeImage
 	}
 	res.Type = encodeToolTypeMetadataToToolTypeMetadataTransport7(v.Type)
 
@@ -40200,7 +40326,9 @@ func encodeToolServerDataToToolServerDataTransport3(v *ToolServerData) *jsonTool
 		Audience:    &v.Audience,
 		Description: v.Description,
 		Schema:      v.Schema,
-		NativeImage: &v.NativeImage,
+	}
+	if v.NativeImage != false {
+		res.NativeImage = &v.NativeImage
 	}
 	res.Type = encodeToolTypeMetadataToToolTypeMetadataTransport11(v.Type)
 
@@ -40213,7 +40341,9 @@ func encodeToolServerDataToToolServerDataTransport4(v *ToolServerData) *jsonTool
 		Audience:    &v.Audience,
 		Description: v.Description,
 		Schema:      v.Schema,
-		NativeImage: &v.NativeImage,
+	}
+	if v.NativeImage != false {
+		res.NativeImage = &v.NativeImage
 	}
 	res.Type = encodeToolTypeMetadataToToolTypeMetadataTransport15(v.Type)
 
@@ -40226,7 +40356,9 @@ func encodeToolServerDataToToolServerDataTransport5(v *ToolServerData) *jsonTool
 		Audience:    &v.Audience,
 		Description: v.Description,
 		Schema:      v.Schema,
-		NativeImage: &v.NativeImage,
+	}
+	if v.NativeImage != false {
+		res.NativeImage = &v.NativeImage
 	}
 	res.Type = encodeToolTypeMetadataToToolTypeMetadataTransport19(v.Type)
 
@@ -40239,7 +40371,9 @@ func encodeToolServerDataToToolServerDataTransport6(v *ToolServerData) *jsonTool
 		Audience:    &v.Audience,
 		Description: v.Description,
 		Schema:      v.Schema,
-		NativeImage: &v.NativeImage,
+	}
+	if v.NativeImage != false {
+		res.NativeImage = &v.NativeImage
 	}
 	res.Type = encodeToolTypeMetadataToToolTypeMetadataTransport23(v.Type)
 
@@ -40252,7 +40386,9 @@ func encodeToolServerDataToToolServerDataTransport7(v *ToolServerData) *jsonTool
 		Audience:    &v.Audience,
 		Description: v.Description,
 		Schema:      v.Schema,
-		NativeImage: &v.NativeImage,
+	}
+	if v.NativeImage != false {
+		res.NativeImage = &v.NativeImage
 	}
 	res.Type = encodeToolTypeMetadataToToolTypeMetadataTransport27(v.Type)
 
@@ -40265,7 +40401,9 @@ func encodeToolServerDataToToolServerDataTransport8(v *ToolServerData) *jsonTool
 		Audience:    &v.Audience,
 		Description: v.Description,
 		Schema:      v.Schema,
-		NativeImage: &v.NativeImage,
+	}
+	if v.NativeImage != false {
+		res.NativeImage = &v.NativeImage
 	}
 	res.Type = encodeToolTypeMetadataToToolTypeMetadataTransport31(v.Type)
 
@@ -40278,7 +40416,9 @@ func encodeToolServerDataToToolServerDataTransport9(v *ToolServerData) *jsonTool
 		Audience:    &v.Audience,
 		Description: v.Description,
 		Schema:      v.Schema,
-		NativeImage: &v.NativeImage,
+	}
+	if v.NativeImage != false {
+		res.NativeImage = &v.NativeImage
 	}
 	res.Type = encodeToolTypeMetadataToToolTypeMetadataTransport35(v.Type)
 
@@ -44892,35 +45032,35 @@ func validateAgentExportsDeclarationJSONValue(path string, value any, descriptio
 				return err
 			}
 		case "name":
-			if err := validateAgentExportsDeclarationJSONValue80(
+			if err := validateAgentExportsDeclarationJSONValue81(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Immutable revision route, separate from the resource name.",
 			); err != nil {
 				return err
 			}
 		case "resource_name":
-			if err := validateAgentExportsDeclarationJSONValue81(
+			if err := validateAgentExportsDeclarationJSONValue82(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Permanent native resource name.",
 			); err != nil {
 				return err
 			}
 		case "scope":
-			if err := validateAgentExportsDeclarationJSONValue82(
+			if err := validateAgentExportsDeclarationJSONValue83(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Owning scope.",
 			); err != nil {
 				return err
 			}
 		case "tags":
-			if err := validateAgentExportsDeclarationJSONValue83(
+			if err := validateAgentExportsDeclarationJSONValue84(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Discovery tags; tags never grant permission.",
 			); err != nil {
 				return err
 			}
 		case "version":
-			if err := validateAgentExportsDeclarationJSONValue85(
+			if err := validateAgentExportsDeclarationJSONValue86(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Provider declaration version.",
 			); err != nil {
@@ -45009,49 +45149,49 @@ func validateAgentExportsDeclarationJSONValue24(path string, value any, descript
 				return err
 			}
 		case "description":
-			if err := validateAgentExportsDeclarationJSONValue71(
+			if err := validateAgentExportsDeclarationJSONValue72(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Human-readable description of what the tool does.",
 			); err != nil {
 				return err
 			}
 		case "execution_payload_schema":
-			if err := validateAgentExportsDeclarationJSONValue72(
+			if err := validateAgentExportsDeclarationJSONValue73(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the payload sent to the provider. It includes fields supplied by continuation handling and excludes fields injected inside the provider.",
 			); err != nil {
 				return err
 			}
 		case "name":
-			if err := validateAgentExportsDeclarationJSONValue73(
+			if err := validateAgentExportsDeclarationJSONValue74(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Globally unique tool identifier of the form \"toolset.tool\".",
 			); err != nil {
 				return err
 			}
 		case "payload_schema":
-			if err := validateAgentExportsDeclarationJSONValue74(
+			if err := validateAgentExportsDeclarationJSONValue75(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for arguments accepted from the model.",
 			); err != nil {
 				return err
 			}
 		case "result_schema":
-			if err := validateAgentExportsDeclarationJSONValue75(
+			if err := validateAgentExportsDeclarationJSONValue76(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the tool result.",
 			); err != nil {
 				return err
 			}
 		case "sidecar_schema":
-			if err := validateAgentExportsDeclarationJSONValue76(
+			if err := validateAgentExportsDeclarationJSONValue77(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the tool sidecar (UI-only), when present.",
 			); err != nil {
 				return err
 			}
 		case "tags":
-			if err := validateAgentExportsDeclarationJSONValue77(
+			if err := validateAgentExportsDeclarationJSONValue78(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Optional tags used for policy, routing, or UI filtering.",
 			); err != nil {
@@ -45135,15 +45275,22 @@ func validateAgentExportsDeclarationJSONValue35(path string, value any, descript
 			); err != nil {
 				return err
 			}
-		case "required_labels":
+		case "ReplanOnTimeout":
 			if err := validateAgentExportsDeclarationJSONValue48(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Whether the provider permits alternative work after this exported Agent operation times out. The failed operation remains failed and is not retried.",
+			); err != nil {
+				return err
+			}
+		case "required_labels":
+			if err := validateAgentExportsDeclarationJSONValue49(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Run labels required by provider-side injection for this tool.",
 			); err != nil {
 				return err
 			}
 		case "requires_ui":
-			if err := validateAgentExportsDeclarationJSONValue50(
+			if err := validateAgentExportsDeclarationJSONValue51(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Whether executing this tool requires rendering or an interactive client protocol.",
 			); err != nil {
@@ -45157,35 +45304,35 @@ func validateAgentExportsDeclarationJSONValue35(path string, value any, descript
 				return err
 			}
 		case "result_reminder":
-			if err := validateAgentExportsDeclarationJSONValue51(
+			if err := validateAgentExportsDeclarationJSONValue52(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Model guidance emitted after this tool's result.",
 			); err != nil {
 				return err
 			}
 		case "search":
-			if err := validateAgentExportsDeclarationJSONValue52(
+			if err := validateAgentExportsDeclarationJSONValue53(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Word counts generated from the tool's name, title, and description.",
 			); err != nil {
 				return err
 			}
 		case "server_data":
-			if err := validateAgentExportsDeclarationJSONValue56(
+			if err := validateAgentExportsDeclarationJSONValue58(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Closed set of server-only result payloads emitted by this tool.",
 			); err != nil {
 				return err
 			}
 		case "text_only":
-			if err := validateAgentExportsDeclarationJSONValue64(
+			if err := validateAgentExportsDeclarationJSONValue65(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated model contract for execution using ordinary messages only.",
 			); err != nil {
 				return err
 			}
 		case "title":
-			if err := validateAgentExportsDeclarationJSONValue70(
+			if err := validateAgentExportsDeclarationJSONValue71(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Human-readable title declared for the tool.",
 			); err != nil {
@@ -45199,6 +45346,7 @@ func validateAgentExportsDeclarationJSONValue35(path string, value any, descript
 				"kind",
 				"meta",
 				"payload",
+				"ReplanOnTimeout",
 				"required_labels",
 				"requires_ui",
 				"result",
@@ -45255,7 +45403,7 @@ func validateAgentExportsDeclarationJSONValue46(path string, value any, descript
 				return err
 			}
 		case "workflow":
-			if err := validateAgentExportsDeclarationJSONValue86(
+			if err := validateAgentExportsDeclarationJSONValue87(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Registered workflow that executes this Agent on its provider worker.",
 			); err != nil {
@@ -45321,8 +45469,8 @@ func validateAgentExportsDeclarationJSONValue79(path string, value any, descript
 	return nil
 }
 
-// validateAgentExportsDeclarationJSONValue86 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentExportsDeclarationJSONValue86(path string, value any, description string) error {
+// validateAgentExportsDeclarationJSONValue87 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentExportsDeclarationJSONValue87(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -46454,6 +46602,22 @@ func validateAgentExportsDeclarationJSONValue48(path string, value any, descript
 		field = "$payload"
 	}
 	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
+	}
+	_, ok := value.(bool)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateAgentExportsDeclarationJSONValue49 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentExportsDeclarationJSONValue49(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "array", "null", description)
 	}
 	typed, ok := value.([]any)
@@ -46461,7 +46625,7 @@ func validateAgentExportsDeclarationJSONValue48(path string, value any, descript
 		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
 	}
 	for index, item := range typed {
-		if err := validateAgentExportsDeclarationJSONValue49(
+		if err := validateAgentExportsDeclarationJSONValue50(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -46471,8 +46635,8 @@ func validateAgentExportsDeclarationJSONValue48(path string, value any, descript
 	return nil
 }
 
-// validateAgentExportsDeclarationJSONValue49 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentExportsDeclarationJSONValue49(path string, value any, description string) error {
+// validateAgentExportsDeclarationJSONValue50 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentExportsDeclarationJSONValue50(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -46487,8 +46651,8 @@ func validateAgentExportsDeclarationJSONValue49(path string, value any, descript
 	return nil
 }
 
-// validateAgentExportsDeclarationJSONValue50 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentExportsDeclarationJSONValue50(path string, value any, description string) error {
+// validateAgentExportsDeclarationJSONValue51 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentExportsDeclarationJSONValue51(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -46503,8 +46667,8 @@ func validateAgentExportsDeclarationJSONValue50(path string, value any, descript
 	return nil
 }
 
-// validateAgentExportsDeclarationJSONValue51 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentExportsDeclarationJSONValue51(path string, value any, description string) error {
+// validateAgentExportsDeclarationJSONValue52 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentExportsDeclarationJSONValue52(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -46519,8 +46683,8 @@ func validateAgentExportsDeclarationJSONValue51(path string, value any, descript
 	return nil
 }
 
-// validateAgentExportsDeclarationJSONValue52 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentExportsDeclarationJSONValue52(path string, value any, description string) error {
+// validateAgentExportsDeclarationJSONValue53 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentExportsDeclarationJSONValue53(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -46540,14 +46704,14 @@ func validateAgentExportsDeclarationJSONValue52(path string, value any, descript
 	for _, key := range keys {
 		switch key {
 		case "length":
-			if err := validateAgentExportsDeclarationJSONValue53(
+			if err := validateAgentExportsDeclarationJSONValue54(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Total number of words in this document, including repeats.",
 			); err != nil {
 				return err
 			}
 		case "terms":
-			if err := validateAgentExportsDeclarationJSONValue54(
+			if err := validateAgentExportsDeclarationJSONValue55(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Lowercase words and their positive occurrence counts.",
 			); err != nil {
@@ -46563,8 +46727,8 @@ func validateAgentExportsDeclarationJSONValue52(path string, value any, descript
 	return nil
 }
 
-// validateAgentExportsDeclarationJSONValue53 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentExportsDeclarationJSONValue53(path string, value any, description string) error {
+// validateAgentExportsDeclarationJSONValue54 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentExportsDeclarationJSONValue54(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -46579,8 +46743,8 @@ func validateAgentExportsDeclarationJSONValue53(path string, value any, descript
 	return nil
 }
 
-// validateAgentExportsDeclarationJSONValue54 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentExportsDeclarationJSONValue54(path string, value any, description string) error {
+// validateAgentExportsDeclarationJSONValue55 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentExportsDeclarationJSONValue55(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -46598,7 +46762,7 @@ func validateAgentExportsDeclarationJSONValue54(path string, value any, descript
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		if err := validateAgentExportsDeclarationJSONValue55(
+		if err := validateAgentExportsDeclarationJSONValue56(
 			generatedJSONChildPath(path, key, true),
 			typed[key], description,
 		); err != nil {
@@ -46608,8 +46772,8 @@ func validateAgentExportsDeclarationJSONValue54(path string, value any, descript
 	return nil
 }
 
-// validateAgentExportsDeclarationJSONValue55 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentExportsDeclarationJSONValue55(path string, value any, description string) error {
+// validateAgentExportsDeclarationJSONValue56 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentExportsDeclarationJSONValue56(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -46624,8 +46788,8 @@ func validateAgentExportsDeclarationJSONValue55(path string, value any, descript
 	return nil
 }
 
-// validateAgentExportsDeclarationJSONValue56 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentExportsDeclarationJSONValue56(path string, value any, description string) error {
+// validateAgentExportsDeclarationJSONValue58 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentExportsDeclarationJSONValue58(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -46641,7 +46805,7 @@ func validateAgentExportsDeclarationJSONValue56(path string, value any, descript
 		if item == nil {
 			continue
 		}
-		if err := validateAgentExportsDeclarationJSONValue58(
+		if err := validateAgentExportsDeclarationJSONValue59(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -46651,8 +46815,8 @@ func validateAgentExportsDeclarationJSONValue56(path string, value any, descript
 	return nil
 }
 
-// validateAgentExportsDeclarationJSONValue58 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentExportsDeclarationJSONValue58(path string, value any, description string) error {
+// validateAgentExportsDeclarationJSONValue59 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentExportsDeclarationJSONValue59(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -46672,35 +46836,35 @@ func validateAgentExportsDeclarationJSONValue58(path string, value any, descript
 	for _, key := range keys {
 		switch key {
 		case "audience":
-			if err := validateAgentExportsDeclarationJSONValue59(
+			if err := validateAgentExportsDeclarationJSONValue60(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Consumers allowed to receive this payload.",
 			); err != nil {
 				return err
 			}
 		case "description":
-			if err := validateAgentExportsDeclarationJSONValue60(
+			if err := validateAgentExportsDeclarationJSONValue61(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Description of the data carried by this kind.",
 			); err != nil {
 				return err
 			}
 		case "kind":
-			if err := validateAgentExportsDeclarationJSONValue61(
+			if err := validateAgentExportsDeclarationJSONValue62(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Unique kind emitted by this tool.",
 			); err != nil {
 				return err
 			}
 		case "NativeImage":
-			if err := validateAgentExportsDeclarationJSONValue62(
+			if err := validateAgentExportsDeclarationJSONValue63(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Whether this evidence kind declares a typed image source requiring an explicitly admitted host reader.",
 			); err != nil {
 				return err
 			}
 		case "schema":
-			if err := validateAgentExportsDeclarationJSONValue63(
+			if err := validateAgentExportsDeclarationJSONValue64(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the item data.",
 			); err != nil {
@@ -46723,22 +46887,6 @@ func validateAgentExportsDeclarationJSONValue58(path string, value any, descript
 				"type",
 			})
 		}
-	}
-	return nil
-}
-
-// validateAgentExportsDeclarationJSONValue59 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentExportsDeclarationJSONValue59(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -46782,6 +46930,22 @@ func validateAgentExportsDeclarationJSONValue62(path string, value any, descript
 		field = "$payload"
 	}
 	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateAgentExportsDeclarationJSONValue63 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentExportsDeclarationJSONValue63(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
 	}
 	_, ok := value.(bool)
@@ -46791,8 +46955,8 @@ func validateAgentExportsDeclarationJSONValue62(path string, value any, descript
 	return nil
 }
 
-// validateAgentExportsDeclarationJSONValue63 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentExportsDeclarationJSONValue63(path string, value any, description string) error {
+// validateAgentExportsDeclarationJSONValue64 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentExportsDeclarationJSONValue64(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -46807,8 +46971,8 @@ func validateAgentExportsDeclarationJSONValue63(path string, value any, descript
 	return nil
 }
 
-// validateAgentExportsDeclarationJSONValue64 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentExportsDeclarationJSONValue64(path string, value any, description string) error {
+// validateAgentExportsDeclarationJSONValue65 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentExportsDeclarationJSONValue65(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -46828,14 +46992,14 @@ func validateAgentExportsDeclarationJSONValue64(path string, value any, descript
 	for _, key := range keys {
 		switch key {
 		case "description":
-			if err := validateAgentExportsDeclarationJSONValue65(
+			if err := validateAgentExportsDeclarationJSONValue66(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Domain instructions without optional UI guidance.",
 			); err != nil {
 				return err
 			}
 		case "execution_schema":
-			if err := validateAgentExportsDeclarationJSONValue66(
+			if err := validateAgentExportsDeclarationJSONValue67(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Complete input schema requiring disabled rendering controls.",
 			); err != nil {
@@ -46849,21 +47013,21 @@ func validateAgentExportsDeclarationJSONValue64(path string, value any, descript
 				return err
 			}
 		case "payload_schema":
-			if err := validateAgentExportsDeclarationJSONValue67(
+			if err := validateAgentExportsDeclarationJSONValue69(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Exact model argument schema without UI-only controls.",
 			); err != nil {
 				return err
 			}
 		case "result_reminder":
-			if err := validateAgentExportsDeclarationJSONValue69(
+			if err := validateAgentExportsDeclarationJSONValue70(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Domain result guidance without claiming UI output.",
 			); err != nil {
 				return err
 			}
 		case "search":
-			if err := validateAgentExportsDeclarationJSONValue52(
+			if err := validateAgentExportsDeclarationJSONValue53(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated word counts for these domain instructions.",
 			); err != nil {
@@ -46879,22 +47043,6 @@ func validateAgentExportsDeclarationJSONValue64(path string, value any, descript
 				"search",
 			})
 		}
-	}
-	return nil
-}
-
-// validateAgentExportsDeclarationJSONValue65 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentExportsDeclarationJSONValue65(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -47066,19 +47214,11 @@ func validateAgentExportsDeclarationJSONValue77(path string, value any, descript
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
 	}
-	typed, ok := value.([]any)
+	_, ok := value.(string)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
-	}
-	for index, item := range typed {
-		if err := validateAgentExportsDeclarationJSONValue78(
-			generatedJSONChildPath(path, strconv.Itoa(index), true),
-			item, description,
-		); err != nil {
-			return err
-		}
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -47090,11 +47230,19 @@ func validateAgentExportsDeclarationJSONValue78(path string, value any, descript
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
 	}
-	_, ok := value.(string)
+	typed, ok := value.([]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if err := validateAgentExportsDeclarationJSONValue80(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -47154,6 +47302,22 @@ func validateAgentExportsDeclarationJSONValue83(path string, value any, descript
 		field = "$payload"
 	}
 	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateAgentExportsDeclarationJSONValue84 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentExportsDeclarationJSONValue84(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "array", "null", description)
 	}
 	typed, ok := value.([]any)
@@ -47161,7 +47325,7 @@ func validateAgentExportsDeclarationJSONValue83(path string, value any, descript
 		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
 	}
 	for index, item := range typed {
-		if err := validateAgentExportsDeclarationJSONValue84(
+		if err := validateAgentExportsDeclarationJSONValue85(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -47171,8 +47335,8 @@ func validateAgentExportsDeclarationJSONValue83(path string, value any, descript
 	return nil
 }
 
-// validateAgentExportsDeclarationJSONValue84 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentExportsDeclarationJSONValue84(path string, value any, description string) error {
+// validateAgentExportsDeclarationJSONValue85 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentExportsDeclarationJSONValue85(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -47187,8 +47351,8 @@ func validateAgentExportsDeclarationJSONValue84(path string, value any, descript
 	return nil
 }
 
-// validateAgentExportsDeclarationJSONValue85 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentExportsDeclarationJSONValue85(path string, value any, description string) error {
+// validateAgentExportsDeclarationJSONValue86 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentExportsDeclarationJSONValue86(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -47231,14 +47395,14 @@ func validateAgentExportsValidationJSONValue(path string, value any, description
 				return err
 			}
 		case "resource_name":
-			if err := validateAgentExportsValidationJSONValue78(
+			if err := validateAgentExportsValidationJSONValue80(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Permanent native resource name.",
 			); err != nil {
 				return err
 			}
 		case "scope":
-			if err := validateAgentExportsValidationJSONValue80(
+			if err := validateAgentExportsValidationJSONValue81(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Owning scope.",
 			); err != nil {
@@ -47307,49 +47471,49 @@ func validateAgentExportsValidationJSONValue13(path string, value any, descripti
 				return err
 			}
 		case "description":
-			if err := validateAgentExportsValidationJSONValue70(
+			if err := validateAgentExportsValidationJSONValue71(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Human-readable description of what the tool does.",
 			); err != nil {
 				return err
 			}
 		case "execution_payload_schema":
-			if err := validateAgentExportsValidationJSONValue71(
+			if err := validateAgentExportsValidationJSONValue72(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the payload sent to the provider. It includes fields supplied by continuation handling and excludes fields injected inside the provider.",
 			); err != nil {
 				return err
 			}
 		case "name":
-			if err := validateAgentExportsValidationJSONValue72(
+			if err := validateAgentExportsValidationJSONValue73(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Globally unique tool identifier of the form \"toolset.tool\".",
 			); err != nil {
 				return err
 			}
 		case "payload_schema":
-			if err := validateAgentExportsValidationJSONValue73(
+			if err := validateAgentExportsValidationJSONValue74(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for arguments accepted from the model.",
 			); err != nil {
 				return err
 			}
 		case "result_schema":
-			if err := validateAgentExportsValidationJSONValue74(
+			if err := validateAgentExportsValidationJSONValue75(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the tool result.",
 			); err != nil {
 				return err
 			}
 		case "sidecar_schema":
-			if err := validateAgentExportsValidationJSONValue75(
+			if err := validateAgentExportsValidationJSONValue76(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the tool sidecar (UI-only), when present.",
 			); err != nil {
 				return err
 			}
 		case "tags":
-			if err := validateAgentExportsValidationJSONValue76(
+			if err := validateAgentExportsValidationJSONValue77(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Optional tags used for policy, routing, or UI filtering.",
 			); err != nil {
@@ -47399,7 +47563,7 @@ func validateAgentExportsValidationJSONValue24(path string, value any, descripti
 				return err
 			}
 		case "bounds":
-			if err := validateAgentExportsValidationJSONValue81(
+			if err := validateAgentExportsValidationJSONValue82(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Declared result limits and continuation relationship.",
 			); err != nil {
@@ -47433,15 +47597,22 @@ func validateAgentExportsValidationJSONValue24(path string, value any, descripti
 			); err != nil {
 				return err
 			}
-		case "required_labels":
+		case "ReplanOnTimeout":
 			if err := validateAgentExportsValidationJSONValue47(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Whether the provider permits alternative work after this exported Agent operation times out. The failed operation remains failed and is not retried.",
+			); err != nil {
+				return err
+			}
+		case "required_labels":
+			if err := validateAgentExportsValidationJSONValue48(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Run labels required by provider-side injection for this tool.",
 			); err != nil {
 				return err
 			}
 		case "requires_ui":
-			if err := validateAgentExportsValidationJSONValue49(
+			if err := validateAgentExportsValidationJSONValue50(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Whether executing this tool requires rendering or an interactive client protocol.",
 			); err != nil {
@@ -47455,35 +47626,35 @@ func validateAgentExportsValidationJSONValue24(path string, value any, descripti
 				return err
 			}
 		case "result_reminder":
-			if err := validateAgentExportsValidationJSONValue50(
+			if err := validateAgentExportsValidationJSONValue51(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Model guidance emitted after this tool's result.",
 			); err != nil {
 				return err
 			}
 		case "search":
-			if err := validateAgentExportsValidationJSONValue51(
+			if err := validateAgentExportsValidationJSONValue52(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Word counts generated from the tool's name, title, and description.",
 			); err != nil {
 				return err
 			}
 		case "server_data":
-			if err := validateAgentExportsValidationJSONValue55(
+			if err := validateAgentExportsValidationJSONValue56(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Closed set of server-only result payloads emitted by this tool.",
 			); err != nil {
 				return err
 			}
 		case "text_only":
-			if err := validateAgentExportsValidationJSONValue63(
+			if err := validateAgentExportsValidationJSONValue64(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated model contract for execution using ordinary messages only.",
 			); err != nil {
 				return err
 			}
 		case "title":
-			if err := validateAgentExportsValidationJSONValue69(
+			if err := validateAgentExportsValidationJSONValue70(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Human-readable title declared for the tool.",
 			); err != nil {
@@ -47497,6 +47668,7 @@ func validateAgentExportsValidationJSONValue24(path string, value any, descripti
 				"kind",
 				"meta",
 				"payload",
+				"ReplanOnTimeout",
 				"required_labels",
 				"requires_ui",
 				"result",
@@ -47635,8 +47807,8 @@ func validateAgentExportsValidationJSONValue79(path string, value any, descripti
 	return nil
 }
 
-// validateAgentExportsValidationJSONValue81 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentExportsValidationJSONValue81(path string, value any, description string) error {
+// validateAgentExportsValidationJSONValue82 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentExportsValidationJSONValue82(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -48752,6 +48924,22 @@ func validateAgentExportsValidationJSONValue47(path string, value any, descripti
 		field = "$payload"
 	}
 	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
+	}
+	_, ok := value.(bool)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateAgentExportsValidationJSONValue48 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentExportsValidationJSONValue48(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "array", "null", description)
 	}
 	typed, ok := value.([]any)
@@ -48759,7 +48947,7 @@ func validateAgentExportsValidationJSONValue47(path string, value any, descripti
 		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
 	}
 	for index, item := range typed {
-		if err := validateAgentExportsValidationJSONValue48(
+		if err := validateAgentExportsValidationJSONValue49(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -48769,8 +48957,8 @@ func validateAgentExportsValidationJSONValue47(path string, value any, descripti
 	return nil
 }
 
-// validateAgentExportsValidationJSONValue48 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentExportsValidationJSONValue48(path string, value any, description string) error {
+// validateAgentExportsValidationJSONValue49 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentExportsValidationJSONValue49(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -48785,8 +48973,8 @@ func validateAgentExportsValidationJSONValue48(path string, value any, descripti
 	return nil
 }
 
-// validateAgentExportsValidationJSONValue49 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentExportsValidationJSONValue49(path string, value any, description string) error {
+// validateAgentExportsValidationJSONValue50 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentExportsValidationJSONValue50(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -48801,8 +48989,8 @@ func validateAgentExportsValidationJSONValue49(path string, value any, descripti
 	return nil
 }
 
-// validateAgentExportsValidationJSONValue50 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentExportsValidationJSONValue50(path string, value any, description string) error {
+// validateAgentExportsValidationJSONValue51 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentExportsValidationJSONValue51(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -48817,8 +49005,8 @@ func validateAgentExportsValidationJSONValue50(path string, value any, descripti
 	return nil
 }
 
-// validateAgentExportsValidationJSONValue51 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentExportsValidationJSONValue51(path string, value any, description string) error {
+// validateAgentExportsValidationJSONValue52 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentExportsValidationJSONValue52(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -48838,14 +49026,14 @@ func validateAgentExportsValidationJSONValue51(path string, value any, descripti
 	for _, key := range keys {
 		switch key {
 		case "length":
-			if err := validateAgentExportsValidationJSONValue52(
+			if err := validateAgentExportsValidationJSONValue53(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Total number of words in this document, including repeats.",
 			); err != nil {
 				return err
 			}
 		case "terms":
-			if err := validateAgentExportsValidationJSONValue53(
+			if err := validateAgentExportsValidationJSONValue54(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Lowercase words and their positive occurrence counts.",
 			); err != nil {
@@ -48861,8 +49049,8 @@ func validateAgentExportsValidationJSONValue51(path string, value any, descripti
 	return nil
 }
 
-// validateAgentExportsValidationJSONValue52 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentExportsValidationJSONValue52(path string, value any, description string) error {
+// validateAgentExportsValidationJSONValue53 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentExportsValidationJSONValue53(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -48877,8 +49065,8 @@ func validateAgentExportsValidationJSONValue52(path string, value any, descripti
 	return nil
 }
 
-// validateAgentExportsValidationJSONValue53 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentExportsValidationJSONValue53(path string, value any, description string) error {
+// validateAgentExportsValidationJSONValue54 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentExportsValidationJSONValue54(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -48896,7 +49084,7 @@ func validateAgentExportsValidationJSONValue53(path string, value any, descripti
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		if err := validateAgentExportsValidationJSONValue54(
+		if err := validateAgentExportsValidationJSONValue55(
 			generatedJSONChildPath(path, key, true),
 			typed[key], description,
 		); err != nil {
@@ -48906,8 +49094,8 @@ func validateAgentExportsValidationJSONValue53(path string, value any, descripti
 	return nil
 }
 
-// validateAgentExportsValidationJSONValue54 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentExportsValidationJSONValue54(path string, value any, description string) error {
+// validateAgentExportsValidationJSONValue55 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentExportsValidationJSONValue55(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -48922,8 +49110,8 @@ func validateAgentExportsValidationJSONValue54(path string, value any, descripti
 	return nil
 }
 
-// validateAgentExportsValidationJSONValue55 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentExportsValidationJSONValue55(path string, value any, description string) error {
+// validateAgentExportsValidationJSONValue56 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentExportsValidationJSONValue56(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -48939,7 +49127,7 @@ func validateAgentExportsValidationJSONValue55(path string, value any, descripti
 		if item == nil {
 			continue
 		}
-		if err := validateAgentExportsValidationJSONValue56(
+		if err := validateAgentExportsValidationJSONValue58(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -48949,8 +49137,8 @@ func validateAgentExportsValidationJSONValue55(path string, value any, descripti
 	return nil
 }
 
-// validateAgentExportsValidationJSONValue56 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentExportsValidationJSONValue56(path string, value any, description string) error {
+// validateAgentExportsValidationJSONValue58 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentExportsValidationJSONValue58(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -48970,35 +49158,35 @@ func validateAgentExportsValidationJSONValue56(path string, value any, descripti
 	for _, key := range keys {
 		switch key {
 		case "audience":
-			if err := validateAgentExportsValidationJSONValue58(
+			if err := validateAgentExportsValidationJSONValue59(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Consumers allowed to receive this payload.",
 			); err != nil {
 				return err
 			}
 		case "description":
-			if err := validateAgentExportsValidationJSONValue59(
+			if err := validateAgentExportsValidationJSONValue60(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Description of the data carried by this kind.",
 			); err != nil {
 				return err
 			}
 		case "kind":
-			if err := validateAgentExportsValidationJSONValue60(
+			if err := validateAgentExportsValidationJSONValue61(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Unique kind emitted by this tool.",
 			); err != nil {
 				return err
 			}
 		case "NativeImage":
-			if err := validateAgentExportsValidationJSONValue61(
+			if err := validateAgentExportsValidationJSONValue62(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Whether this evidence kind declares a typed image source requiring an explicitly admitted host reader.",
 			); err != nil {
 				return err
 			}
 		case "schema":
-			if err := validateAgentExportsValidationJSONValue62(
+			if err := validateAgentExportsValidationJSONValue63(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the item data.",
 			); err != nil {
@@ -49021,22 +49209,6 @@ func validateAgentExportsValidationJSONValue56(path string, value any, descripti
 				"type",
 			})
 		}
-	}
-	return nil
-}
-
-// validateAgentExportsValidationJSONValue58 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentExportsValidationJSONValue58(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -49080,6 +49252,22 @@ func validateAgentExportsValidationJSONValue61(path string, value any, descripti
 		field = "$payload"
 	}
 	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateAgentExportsValidationJSONValue62 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentExportsValidationJSONValue62(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
 	}
 	_, ok := value.(bool)
@@ -49089,8 +49277,8 @@ func validateAgentExportsValidationJSONValue61(path string, value any, descripti
 	return nil
 }
 
-// validateAgentExportsValidationJSONValue62 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentExportsValidationJSONValue62(path string, value any, description string) error {
+// validateAgentExportsValidationJSONValue63 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentExportsValidationJSONValue63(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -49105,8 +49293,8 @@ func validateAgentExportsValidationJSONValue62(path string, value any, descripti
 	return nil
 }
 
-// validateAgentExportsValidationJSONValue63 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentExportsValidationJSONValue63(path string, value any, description string) error {
+// validateAgentExportsValidationJSONValue64 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentExportsValidationJSONValue64(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -49126,14 +49314,14 @@ func validateAgentExportsValidationJSONValue63(path string, value any, descripti
 	for _, key := range keys {
 		switch key {
 		case "description":
-			if err := validateAgentExportsValidationJSONValue64(
+			if err := validateAgentExportsValidationJSONValue65(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Domain instructions without optional UI guidance.",
 			); err != nil {
 				return err
 			}
 		case "execution_schema":
-			if err := validateAgentExportsValidationJSONValue65(
+			if err := validateAgentExportsValidationJSONValue66(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Complete input schema requiring disabled rendering controls.",
 			); err != nil {
@@ -49147,21 +49335,21 @@ func validateAgentExportsValidationJSONValue63(path string, value any, descripti
 				return err
 			}
 		case "payload_schema":
-			if err := validateAgentExportsValidationJSONValue66(
+			if err := validateAgentExportsValidationJSONValue67(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Exact model argument schema without UI-only controls.",
 			); err != nil {
 				return err
 			}
 		case "result_reminder":
-			if err := validateAgentExportsValidationJSONValue67(
+			if err := validateAgentExportsValidationJSONValue69(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Domain result guidance without claiming UI output.",
 			); err != nil {
 				return err
 			}
 		case "search":
-			if err := validateAgentExportsValidationJSONValue51(
+			if err := validateAgentExportsValidationJSONValue52(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated word counts for these domain instructions.",
 			); err != nil {
@@ -49177,22 +49365,6 @@ func validateAgentExportsValidationJSONValue63(path string, value any, descripti
 				"search",
 			})
 		}
-	}
-	return nil
-}
-
-// validateAgentExportsValidationJSONValue64 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentExportsValidationJSONValue64(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -49364,19 +49536,11 @@ func validateAgentExportsValidationJSONValue76(path string, value any, descripti
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
 	}
-	typed, ok := value.([]any)
+	_, ok := value.(string)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
-	}
-	for index, item := range typed {
-		if err := validateAgentExportsValidationJSONValue77(
-			generatedJSONChildPath(path, strconv.Itoa(index), true),
-			item, description,
-		); err != nil {
-			return err
-		}
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -49388,11 +49552,19 @@ func validateAgentExportsValidationJSONValue77(path string, value any, descripti
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
 	}
-	_, ok := value.(string)
+	typed, ok := value.([]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if err := validateAgentExportsValidationJSONValue78(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -49415,6 +49587,22 @@ func validateAgentExportsValidationJSONValue78(path string, value any, descripti
 
 // validateAgentExportsValidationJSONValue80 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateAgentExportsValidationJSONValue80(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateAgentExportsValidationJSONValue81 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentExportsValidationJSONValue81(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -49602,7 +49790,7 @@ func validateAgentToolsetDeclarationJSONValue(path string, value any, descriptio
 				return err
 			}
 		case "version":
-			if err := validateAgentToolsetDeclarationJSONValue83(
+			if err := validateAgentToolsetDeclarationJSONValue84(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Semantic version used by discovery filters.",
 			); err != nil {
@@ -49748,49 +49936,49 @@ func validateAgentToolsetDeclarationJSONValue57(path string, value any, descript
 				return err
 			}
 		case "description":
-			if err := validateAgentToolsetDeclarationJSONValue74(
+			if err := validateAgentToolsetDeclarationJSONValue75(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Human-readable description of what the tool does.",
 			); err != nil {
 				return err
 			}
 		case "execution_payload_schema":
-			if err := validateAgentToolsetDeclarationJSONValue75(
+			if err := validateAgentToolsetDeclarationJSONValue76(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the payload sent to the provider. It includes fields supplied by continuation handling and excludes fields injected inside the provider.",
 			); err != nil {
 				return err
 			}
 		case "name":
-			if err := validateAgentToolsetDeclarationJSONValue76(
+			if err := validateAgentToolsetDeclarationJSONValue77(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Globally unique tool identifier of the form \"toolset.tool\".",
 			); err != nil {
 				return err
 			}
 		case "payload_schema":
-			if err := validateAgentToolsetDeclarationJSONValue77(
+			if err := validateAgentToolsetDeclarationJSONValue78(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for arguments accepted from the model.",
 			); err != nil {
 				return err
 			}
 		case "result_schema":
-			if err := validateAgentToolsetDeclarationJSONValue78(
+			if err := validateAgentToolsetDeclarationJSONValue80(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the tool result.",
 			); err != nil {
 				return err
 			}
 		case "sidecar_schema":
-			if err := validateAgentToolsetDeclarationJSONValue80(
+			if err := validateAgentToolsetDeclarationJSONValue81(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the tool sidecar (UI-only), when present.",
 			); err != nil {
 				return err
 			}
 		case "tags":
-			if err := validateAgentToolsetDeclarationJSONValue81(
+			if err := validateAgentToolsetDeclarationJSONValue82(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Optional tags used for policy, routing, or UI filtering.",
 			); err != nil {
@@ -49874,15 +50062,22 @@ func validateAgentToolsetDeclarationJSONValue68(path string, value any, descript
 			); err != nil {
 				return err
 			}
-		case "required_labels":
+		case "ReplanOnTimeout":
 			if err := validateAgentToolsetDeclarationJSONValue51(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Whether the provider permits alternative work after this exported Agent operation times out. The failed operation remains failed and is not retried.",
+			); err != nil {
+				return err
+			}
+		case "required_labels":
+			if err := validateAgentToolsetDeclarationJSONValue52(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Run labels required by provider-side injection for this tool.",
 			); err != nil {
 				return err
 			}
 		case "requires_ui":
-			if err := validateAgentToolsetDeclarationJSONValue53(
+			if err := validateAgentToolsetDeclarationJSONValue54(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Whether executing this tool requires rendering or an interactive client protocol.",
 			); err != nil {
@@ -49896,35 +50091,35 @@ func validateAgentToolsetDeclarationJSONValue68(path string, value any, descript
 				return err
 			}
 		case "result_reminder":
-			if err := validateAgentToolsetDeclarationJSONValue54(
+			if err := validateAgentToolsetDeclarationJSONValue55(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Model guidance emitted after this tool's result.",
 			); err != nil {
 				return err
 			}
 		case "search":
-			if err := validateAgentToolsetDeclarationJSONValue55(
+			if err := validateAgentToolsetDeclarationJSONValue56(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Word counts generated from the tool's name, title, and description.",
 			); err != nil {
 				return err
 			}
 		case "server_data":
-			if err := validateAgentToolsetDeclarationJSONValue60(
+			if err := validateAgentToolsetDeclarationJSONValue61(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Closed set of server-only result payloads emitted by this tool.",
 			); err != nil {
 				return err
 			}
 		case "text_only":
-			if err := validateAgentToolsetDeclarationJSONValue67(
+			if err := validateAgentToolsetDeclarationJSONValue69(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated model contract for execution using ordinary messages only.",
 			); err != nil {
 				return err
 			}
 		case "title":
-			if err := validateAgentToolsetDeclarationJSONValue73(
+			if err := validateAgentToolsetDeclarationJSONValue74(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Human-readable title declared for the tool.",
 			); err != nil {
@@ -49938,6 +50133,7 @@ func validateAgentToolsetDeclarationJSONValue68(path string, value any, descript
 				"kind",
 				"meta",
 				"payload",
+				"ReplanOnTimeout",
 				"required_labels",
 				"requires_ui",
 				"result",
@@ -49973,7 +50169,7 @@ func validateAgentToolsetDeclarationJSONValue79(path string, value any, descript
 	for _, key := range keys {
 		switch key {
 		case "configuration":
-			if err := validateAgentToolsetDeclarationJSONValue84(
+			if err := validateAgentToolsetDeclarationJSONValue85(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Immutable application configuration reference retained with each accepted tool call.",
 			); err != nil {
@@ -50012,8 +50208,8 @@ func validateAgentToolsetDeclarationJSONValue79(path string, value any, descript
 	return nil
 }
 
-// validateAgentToolsetDeclarationJSONValue84 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentToolsetDeclarationJSONValue84(path string, value any, description string) error {
+// validateAgentToolsetDeclarationJSONValue85 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue85(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -51193,6 +51389,22 @@ func validateAgentToolsetDeclarationJSONValue51(path string, value any, descript
 		field = "$payload"
 	}
 	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
+	}
+	_, ok := value.(bool)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateAgentToolsetDeclarationJSONValue52 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue52(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "array", "null", description)
 	}
 	typed, ok := value.([]any)
@@ -51200,7 +51412,7 @@ func validateAgentToolsetDeclarationJSONValue51(path string, value any, descript
 		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
 	}
 	for index, item := range typed {
-		if err := validateAgentToolsetDeclarationJSONValue52(
+		if err := validateAgentToolsetDeclarationJSONValue53(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -51210,8 +51422,8 @@ func validateAgentToolsetDeclarationJSONValue51(path string, value any, descript
 	return nil
 }
 
-// validateAgentToolsetDeclarationJSONValue52 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentToolsetDeclarationJSONValue52(path string, value any, description string) error {
+// validateAgentToolsetDeclarationJSONValue53 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue53(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -51226,8 +51438,8 @@ func validateAgentToolsetDeclarationJSONValue52(path string, value any, descript
 	return nil
 }
 
-// validateAgentToolsetDeclarationJSONValue53 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentToolsetDeclarationJSONValue53(path string, value any, description string) error {
+// validateAgentToolsetDeclarationJSONValue54 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue54(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -51242,8 +51454,8 @@ func validateAgentToolsetDeclarationJSONValue53(path string, value any, descript
 	return nil
 }
 
-// validateAgentToolsetDeclarationJSONValue54 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentToolsetDeclarationJSONValue54(path string, value any, description string) error {
+// validateAgentToolsetDeclarationJSONValue55 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue55(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -51258,8 +51470,8 @@ func validateAgentToolsetDeclarationJSONValue54(path string, value any, descript
 	return nil
 }
 
-// validateAgentToolsetDeclarationJSONValue55 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentToolsetDeclarationJSONValue55(path string, value any, description string) error {
+// validateAgentToolsetDeclarationJSONValue56 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue56(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -51279,14 +51491,14 @@ func validateAgentToolsetDeclarationJSONValue55(path string, value any, descript
 	for _, key := range keys {
 		switch key {
 		case "length":
-			if err := validateAgentToolsetDeclarationJSONValue56(
+			if err := validateAgentToolsetDeclarationJSONValue58(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Total number of words in this document, including repeats.",
 			); err != nil {
 				return err
 			}
 		case "terms":
-			if err := validateAgentToolsetDeclarationJSONValue58(
+			if err := validateAgentToolsetDeclarationJSONValue59(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Lowercase words and their positive occurrence counts.",
 			); err != nil {
@@ -51302,8 +51514,8 @@ func validateAgentToolsetDeclarationJSONValue55(path string, value any, descript
 	return nil
 }
 
-// validateAgentToolsetDeclarationJSONValue56 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentToolsetDeclarationJSONValue56(path string, value any, description string) error {
+// validateAgentToolsetDeclarationJSONValue58 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue58(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -51318,8 +51530,8 @@ func validateAgentToolsetDeclarationJSONValue56(path string, value any, descript
 	return nil
 }
 
-// validateAgentToolsetDeclarationJSONValue58 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentToolsetDeclarationJSONValue58(path string, value any, description string) error {
+// validateAgentToolsetDeclarationJSONValue59 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue59(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -51337,7 +51549,7 @@ func validateAgentToolsetDeclarationJSONValue58(path string, value any, descript
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		if err := validateAgentToolsetDeclarationJSONValue59(
+		if err := validateAgentToolsetDeclarationJSONValue60(
 			generatedJSONChildPath(path, key, true),
 			typed[key], description,
 		); err != nil {
@@ -51347,8 +51559,8 @@ func validateAgentToolsetDeclarationJSONValue58(path string, value any, descript
 	return nil
 }
 
-// validateAgentToolsetDeclarationJSONValue59 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentToolsetDeclarationJSONValue59(path string, value any, description string) error {
+// validateAgentToolsetDeclarationJSONValue60 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue60(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -51363,8 +51575,8 @@ func validateAgentToolsetDeclarationJSONValue59(path string, value any, descript
 	return nil
 }
 
-// validateAgentToolsetDeclarationJSONValue60 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentToolsetDeclarationJSONValue60(path string, value any, description string) error {
+// validateAgentToolsetDeclarationJSONValue61 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue61(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -51380,7 +51592,7 @@ func validateAgentToolsetDeclarationJSONValue60(path string, value any, descript
 		if item == nil {
 			continue
 		}
-		if err := validateAgentToolsetDeclarationJSONValue61(
+		if err := validateAgentToolsetDeclarationJSONValue62(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -51390,8 +51602,8 @@ func validateAgentToolsetDeclarationJSONValue60(path string, value any, descript
 	return nil
 }
 
-// validateAgentToolsetDeclarationJSONValue61 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentToolsetDeclarationJSONValue61(path string, value any, description string) error {
+// validateAgentToolsetDeclarationJSONValue62 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue62(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -51411,35 +51623,35 @@ func validateAgentToolsetDeclarationJSONValue61(path string, value any, descript
 	for _, key := range keys {
 		switch key {
 		case "audience":
-			if err := validateAgentToolsetDeclarationJSONValue62(
+			if err := validateAgentToolsetDeclarationJSONValue63(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Consumers allowed to receive this payload.",
 			); err != nil {
 				return err
 			}
 		case "description":
-			if err := validateAgentToolsetDeclarationJSONValue63(
+			if err := validateAgentToolsetDeclarationJSONValue64(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Description of the data carried by this kind.",
 			); err != nil {
 				return err
 			}
 		case "kind":
-			if err := validateAgentToolsetDeclarationJSONValue64(
+			if err := validateAgentToolsetDeclarationJSONValue65(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Unique kind emitted by this tool.",
 			); err != nil {
 				return err
 			}
 		case "NativeImage":
-			if err := validateAgentToolsetDeclarationJSONValue65(
+			if err := validateAgentToolsetDeclarationJSONValue66(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Whether this evidence kind declares a typed image source requiring an explicitly admitted host reader.",
 			); err != nil {
 				return err
 			}
 		case "schema":
-			if err := validateAgentToolsetDeclarationJSONValue66(
+			if err := validateAgentToolsetDeclarationJSONValue67(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the item data.",
 			); err != nil {
@@ -51462,22 +51674,6 @@ func validateAgentToolsetDeclarationJSONValue61(path string, value any, descript
 				"type",
 			})
 		}
-	}
-	return nil
-}
-
-// validateAgentToolsetDeclarationJSONValue62 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentToolsetDeclarationJSONValue62(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -51521,6 +51717,22 @@ func validateAgentToolsetDeclarationJSONValue65(path string, value any, descript
 		field = "$payload"
 	}
 	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateAgentToolsetDeclarationJSONValue66 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue66(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
 	}
 	_, ok := value.(bool)
@@ -51530,8 +51742,8 @@ func validateAgentToolsetDeclarationJSONValue65(path string, value any, descript
 	return nil
 }
 
-// validateAgentToolsetDeclarationJSONValue66 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentToolsetDeclarationJSONValue66(path string, value any, description string) error {
+// validateAgentToolsetDeclarationJSONValue67 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue67(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -51546,8 +51758,8 @@ func validateAgentToolsetDeclarationJSONValue66(path string, value any, descript
 	return nil
 }
 
-// validateAgentToolsetDeclarationJSONValue67 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentToolsetDeclarationJSONValue67(path string, value any, description string) error {
+// validateAgentToolsetDeclarationJSONValue69 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue69(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -51567,14 +51779,14 @@ func validateAgentToolsetDeclarationJSONValue67(path string, value any, descript
 	for _, key := range keys {
 		switch key {
 		case "description":
-			if err := validateAgentToolsetDeclarationJSONValue69(
+			if err := validateAgentToolsetDeclarationJSONValue70(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Domain instructions without optional UI guidance.",
 			); err != nil {
 				return err
 			}
 		case "execution_schema":
-			if err := validateAgentToolsetDeclarationJSONValue70(
+			if err := validateAgentToolsetDeclarationJSONValue71(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Complete input schema requiring disabled rendering controls.",
 			); err != nil {
@@ -51588,21 +51800,21 @@ func validateAgentToolsetDeclarationJSONValue67(path string, value any, descript
 				return err
 			}
 		case "payload_schema":
-			if err := validateAgentToolsetDeclarationJSONValue71(
+			if err := validateAgentToolsetDeclarationJSONValue72(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Exact model argument schema without UI-only controls.",
 			); err != nil {
 				return err
 			}
 		case "result_reminder":
-			if err := validateAgentToolsetDeclarationJSONValue72(
+			if err := validateAgentToolsetDeclarationJSONValue73(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Domain result guidance without claiming UI output.",
 			); err != nil {
 				return err
 			}
 		case "search":
-			if err := validateAgentToolsetDeclarationJSONValue55(
+			if err := validateAgentToolsetDeclarationJSONValue56(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated word counts for these domain instructions.",
 			); err != nil {
@@ -51618,22 +51830,6 @@ func validateAgentToolsetDeclarationJSONValue67(path string, value any, descript
 				"search",
 			})
 		}
-	}
-	return nil
-}
-
-// validateAgentToolsetDeclarationJSONValue69 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentToolsetDeclarationJSONValue69(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -51805,6 +52001,22 @@ func validateAgentToolsetDeclarationJSONValue81(path string, value any, descript
 		field = "$payload"
 	}
 	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateAgentToolsetDeclarationJSONValue82 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue82(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "array", "null", description)
 	}
 	typed, ok := value.([]any)
@@ -51812,7 +52024,7 @@ func validateAgentToolsetDeclarationJSONValue81(path string, value any, descript
 		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
 	}
 	for index, item := range typed {
-		if err := validateAgentToolsetDeclarationJSONValue82(
+		if err := validateAgentToolsetDeclarationJSONValue83(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -51822,8 +52034,8 @@ func validateAgentToolsetDeclarationJSONValue81(path string, value any, descript
 	return nil
 }
 
-// validateAgentToolsetDeclarationJSONValue82 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentToolsetDeclarationJSONValue82(path string, value any, description string) error {
+// validateAgentToolsetDeclarationJSONValue83 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue83(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -51838,8 +52050,8 @@ func validateAgentToolsetDeclarationJSONValue82(path string, value any, descript
 	return nil
 }
 
-// validateAgentToolsetDeclarationJSONValue83 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAgentToolsetDeclarationJSONValue83(path string, value any, description string) error {
+// validateAgentToolsetDeclarationJSONValue84 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateAgentToolsetDeclarationJSONValue84(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -55333,15 +55545,22 @@ func validateConsumerContractJSONValue(path string, value any, description strin
 			); err != nil {
 				return err
 			}
-		case "required_labels":
+		case "ReplanOnTimeout":
 			if err := validateConsumerContractJSONValue43(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Whether the provider permits alternative work after this exported Agent operation times out. The failed operation remains failed and is not retried.",
+			); err != nil {
+				return err
+			}
+		case "required_labels":
+			if err := validateConsumerContractJSONValue44(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Run labels required by provider-side injection for this tool.",
 			); err != nil {
 				return err
 			}
 		case "requires_ui":
-			if err := validateConsumerContractJSONValue45(
+			if err := validateConsumerContractJSONValue47(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Whether executing this tool requires rendering or an interactive client protocol.",
 			); err != nil {
@@ -55355,35 +55574,35 @@ func validateConsumerContractJSONValue(path string, value any, description strin
 				return err
 			}
 		case "result_reminder":
-			if err := validateConsumerContractJSONValue47(
+			if err := validateConsumerContractJSONValue48(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Model guidance emitted after this tool's result.",
 			); err != nil {
 				return err
 			}
 		case "search":
-			if err := validateConsumerContractJSONValue48(
+			if err := validateConsumerContractJSONValue49(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Word counts generated from the tool's name, title, and description.",
 			); err != nil {
 				return err
 			}
 		case "server_data":
-			if err := validateConsumerContractJSONValue52(
+			if err := validateConsumerContractJSONValue53(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Closed set of server-only result payloads emitted by this tool.",
 			); err != nil {
 				return err
 			}
 		case "text_only":
-			if err := validateConsumerContractJSONValue60(
+			if err := validateConsumerContractJSONValue61(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated model contract for execution using ordinary messages only.",
 			); err != nil {
 				return err
 			}
 		case "title":
-			if err := validateConsumerContractJSONValue65(
+			if err := validateConsumerContractJSONValue66(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Human-readable title declared for the tool.",
 			); err != nil {
@@ -55397,6 +55616,7 @@ func validateConsumerContractJSONValue(path string, value any, description strin
 				"kind",
 				"meta",
 				"payload",
+				"ReplanOnTimeout",
 				"required_labels",
 				"requires_ui",
 				"result",
@@ -55556,7 +55776,7 @@ func validateConsumerContractJSONValue57(path string, value any, description str
 	for _, key := range keys {
 		switch key {
 		case "paging":
-			if err := validateConsumerContractJSONValue66(
+			if err := validateConsumerContractJSONValue67(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Cursor-based continuation contract, when supported.",
 			); err != nil {
@@ -55571,8 +55791,8 @@ func validateConsumerContractJSONValue57(path string, value any, description str
 	return nil
 }
 
-// validateConsumerContractJSONValue66 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue66(path string, value any, description string) error {
+// validateConsumerContractJSONValue67 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue67(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -55592,14 +55812,14 @@ func validateConsumerContractJSONValue66(path string, value any, description str
 	for _, key := range keys {
 		switch key {
 		case "continue_tool":
-			if err := validateConsumerContractJSONValue67(
+			if err := validateConsumerContractJSONValue68(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Qualified tool that advances this result; omitted when the tool advances itself.",
 			); err != nil {
 				return err
 			}
 		case "cursor_field":
-			if err := validateConsumerContractJSONValue68(
+			if err := validateConsumerContractJSONValue69(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "JSON argument name containing the continuation cursor.",
 			); err != nil {
@@ -55639,8 +55859,8 @@ func validateConsumerContractJSONValue66(path string, value any, description str
 	return nil
 }
 
-// validateConsumerContractJSONValue67 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue67(path string, value any, description string) error {
+// validateConsumerContractJSONValue68 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue68(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -55655,8 +55875,8 @@ func validateConsumerContractJSONValue67(path string, value any, description str
 	return nil
 }
 
-// validateConsumerContractJSONValue68 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue68(path string, value any, description string) error {
+// validateConsumerContractJSONValue69 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue69(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -56652,6 +56872,22 @@ func validateConsumerContractJSONValue43(path string, value any, description str
 		field = "$payload"
 	}
 	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
+	}
+	_, ok := value.(bool)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateConsumerContractJSONValue44 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue44(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "array", "null", description)
 	}
 	typed, ok := value.([]any)
@@ -56659,7 +56895,7 @@ func validateConsumerContractJSONValue43(path string, value any, description str
 		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
 	}
 	for index, item := range typed {
-		if err := validateConsumerContractJSONValue44(
+		if err := validateConsumerContractJSONValue45(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -56669,8 +56905,8 @@ func validateConsumerContractJSONValue43(path string, value any, description str
 	return nil
 }
 
-// validateConsumerContractJSONValue44 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue44(path string, value any, description string) error {
+// validateConsumerContractJSONValue45 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue45(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -56685,8 +56921,8 @@ func validateConsumerContractJSONValue44(path string, value any, description str
 	return nil
 }
 
-// validateConsumerContractJSONValue45 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue45(path string, value any, description string) error {
+// validateConsumerContractJSONValue47 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue47(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -56701,8 +56937,8 @@ func validateConsumerContractJSONValue45(path string, value any, description str
 	return nil
 }
 
-// validateConsumerContractJSONValue47 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue47(path string, value any, description string) error {
+// validateConsumerContractJSONValue48 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue48(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -56717,8 +56953,8 @@ func validateConsumerContractJSONValue47(path string, value any, description str
 	return nil
 }
 
-// validateConsumerContractJSONValue48 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue48(path string, value any, description string) error {
+// validateConsumerContractJSONValue49 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue49(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -56738,14 +56974,14 @@ func validateConsumerContractJSONValue48(path string, value any, description str
 	for _, key := range keys {
 		switch key {
 		case "length":
-			if err := validateConsumerContractJSONValue49(
+			if err := validateConsumerContractJSONValue50(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Total number of words in this document, including repeats.",
 			); err != nil {
 				return err
 			}
 		case "terms":
-			if err := validateConsumerContractJSONValue50(
+			if err := validateConsumerContractJSONValue51(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Lowercase words and their positive occurrence counts.",
 			); err != nil {
@@ -56761,8 +56997,8 @@ func validateConsumerContractJSONValue48(path string, value any, description str
 	return nil
 }
 
-// validateConsumerContractJSONValue49 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue49(path string, value any, description string) error {
+// validateConsumerContractJSONValue50 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue50(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -56777,8 +57013,8 @@ func validateConsumerContractJSONValue49(path string, value any, description str
 	return nil
 }
 
-// validateConsumerContractJSONValue50 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue50(path string, value any, description string) error {
+// validateConsumerContractJSONValue51 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue51(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -56796,7 +57032,7 @@ func validateConsumerContractJSONValue50(path string, value any, description str
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		if err := validateConsumerContractJSONValue51(
+		if err := validateConsumerContractJSONValue52(
 			generatedJSONChildPath(path, key, true),
 			typed[key], description,
 		); err != nil {
@@ -56806,8 +57042,8 @@ func validateConsumerContractJSONValue50(path string, value any, description str
 	return nil
 }
 
-// validateConsumerContractJSONValue51 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue51(path string, value any, description string) error {
+// validateConsumerContractJSONValue52 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue52(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -56822,8 +57058,8 @@ func validateConsumerContractJSONValue51(path string, value any, description str
 	return nil
 }
 
-// validateConsumerContractJSONValue52 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue52(path string, value any, description string) error {
+// validateConsumerContractJSONValue53 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue53(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -56839,7 +57075,7 @@ func validateConsumerContractJSONValue52(path string, value any, description str
 		if item == nil {
 			continue
 		}
-		if err := validateConsumerContractJSONValue53(
+		if err := validateConsumerContractJSONValue54(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -56849,8 +57085,8 @@ func validateConsumerContractJSONValue52(path string, value any, description str
 	return nil
 }
 
-// validateConsumerContractJSONValue53 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue53(path string, value any, description string) error {
+// validateConsumerContractJSONValue54 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue54(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -56870,35 +57106,35 @@ func validateConsumerContractJSONValue53(path string, value any, description str
 	for _, key := range keys {
 		switch key {
 		case "audience":
-			if err := validateConsumerContractJSONValue54(
+			if err := validateConsumerContractJSONValue55(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Consumers allowed to receive this payload.",
 			); err != nil {
 				return err
 			}
 		case "description":
-			if err := validateConsumerContractJSONValue55(
+			if err := validateConsumerContractJSONValue56(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Description of the data carried by this kind.",
 			); err != nil {
 				return err
 			}
 		case "kind":
-			if err := validateConsumerContractJSONValue56(
+			if err := validateConsumerContractJSONValue58(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Unique kind emitted by this tool.",
 			); err != nil {
 				return err
 			}
 		case "NativeImage":
-			if err := validateConsumerContractJSONValue58(
+			if err := validateConsumerContractJSONValue59(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Whether this evidence kind declares a typed image source requiring an explicitly admitted host reader.",
 			); err != nil {
 				return err
 			}
 		case "schema":
-			if err := validateConsumerContractJSONValue59(
+			if err := validateConsumerContractJSONValue60(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the item data.",
 			); err != nil {
@@ -56921,22 +57157,6 @@ func validateConsumerContractJSONValue53(path string, value any, description str
 				"type",
 			})
 		}
-	}
-	return nil
-}
-
-// validateConsumerContractJSONValue54 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue54(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -56980,6 +57200,22 @@ func validateConsumerContractJSONValue58(path string, value any, description str
 		field = "$payload"
 	}
 	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateConsumerContractJSONValue59 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue59(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
 	}
 	_, ok := value.(bool)
@@ -56989,8 +57225,8 @@ func validateConsumerContractJSONValue58(path string, value any, description str
 	return nil
 }
 
-// validateConsumerContractJSONValue59 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue59(path string, value any, description string) error {
+// validateConsumerContractJSONValue60 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue60(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -57005,8 +57241,8 @@ func validateConsumerContractJSONValue59(path string, value any, description str
 	return nil
 }
 
-// validateConsumerContractJSONValue60 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue60(path string, value any, description string) error {
+// validateConsumerContractJSONValue61 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue61(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -57026,14 +57262,14 @@ func validateConsumerContractJSONValue60(path string, value any, description str
 	for _, key := range keys {
 		switch key {
 		case "description":
-			if err := validateConsumerContractJSONValue61(
+			if err := validateConsumerContractJSONValue62(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Domain instructions without optional UI guidance.",
 			); err != nil {
 				return err
 			}
 		case "execution_schema":
-			if err := validateConsumerContractJSONValue62(
+			if err := validateConsumerContractJSONValue63(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Complete input schema requiring disabled rendering controls.",
 			); err != nil {
@@ -57047,21 +57283,21 @@ func validateConsumerContractJSONValue60(path string, value any, description str
 				return err
 			}
 		case "payload_schema":
-			if err := validateConsumerContractJSONValue63(
+			if err := validateConsumerContractJSONValue64(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Exact model argument schema without UI-only controls.",
 			); err != nil {
 				return err
 			}
 		case "result_reminder":
-			if err := validateConsumerContractJSONValue64(
+			if err := validateConsumerContractJSONValue65(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Domain result guidance without claiming UI output.",
 			); err != nil {
 				return err
 			}
 		case "search":
-			if err := validateConsumerContractJSONValue48(
+			if err := validateConsumerContractJSONValue49(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated word counts for these domain instructions.",
 			); err != nil {
@@ -57077,22 +57313,6 @@ func validateConsumerContractJSONValue60(path string, value any, description str
 				"search",
 			})
 		}
-	}
-	return nil
-}
-
-// validateConsumerContractJSONValue61 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateConsumerContractJSONValue61(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -57147,6 +57367,22 @@ func validateConsumerContractJSONValue64(path string, value any, description str
 
 // validateConsumerContractJSONValue65 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateConsumerContractJSONValue65(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateConsumerContractJSONValue66 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateConsumerContractJSONValue66(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -58658,21 +58894,21 @@ func validateRegisterPayloadJSONValue(path string, value any, description string
 				return err
 			}
 		case "tools":
-			if err := validateRegisterPayloadJSONValue89(
+			if err := validateRegisterPayloadJSONValue90(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Tool definitions with their schemas",
 			); err != nil {
 				return err
 			}
 		case "version":
-			if err := validateRegisterPayloadJSONValue87(
+			if err := validateRegisterPayloadJSONValue88(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Semantic version of the toolset.",
 			); err != nil {
 				return err
 			}
 		case "wire_protocol_version":
-			if err := validateRegisterPayloadJSONValue88(
+			if err := validateRegisterPayloadJSONValue89(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Required runtime-owned version of the provider message envelope. The registry admits only its exact canonical version.",
 			); err != nil {
@@ -58832,8 +59068,8 @@ func validateRegisterPayloadJSONValue79(path string, value any, description stri
 	return nil
 }
 
-// validateRegisterPayloadJSONValue89 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisterPayloadJSONValue89(path string, value any, description string) error {
+// validateRegisterPayloadJSONValue90 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue90(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -58887,49 +59123,49 @@ func validateRegisterPayloadJSONValue3(path string, value any, description strin
 				return err
 			}
 		case "description":
-			if err := validateRegisterPayloadJSONValue78(
+			if err := validateRegisterPayloadJSONValue80(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Human-readable description of what the tool does.",
 			); err != nil {
 				return err
 			}
 		case "execution_payload_schema":
-			if err := validateRegisterPayloadJSONValue80(
+			if err := validateRegisterPayloadJSONValue81(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the payload sent to the provider. It includes fields supplied by continuation handling and excludes fields injected inside the provider.",
 			); err != nil {
 				return err
 			}
 		case "name":
-			if err := validateRegisterPayloadJSONValue81(
+			if err := validateRegisterPayloadJSONValue82(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Globally unique tool identifier of the form \"toolset.tool\".",
 			); err != nil {
 				return err
 			}
 		case "payload_schema":
-			if err := validateRegisterPayloadJSONValue82(
+			if err := validateRegisterPayloadJSONValue83(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for arguments accepted from the model.",
 			); err != nil {
 				return err
 			}
 		case "result_schema":
-			if err := validateRegisterPayloadJSONValue83(
+			if err := validateRegisterPayloadJSONValue84(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the tool result.",
 			); err != nil {
 				return err
 			}
 		case "sidecar_schema":
-			if err := validateRegisterPayloadJSONValue84(
+			if err := validateRegisterPayloadJSONValue85(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the tool sidecar (UI-only), when present.",
 			); err != nil {
 				return err
 			}
 		case "tags":
-			if err := validateRegisterPayloadJSONValue85(
+			if err := validateRegisterPayloadJSONValue86(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Optional tags used for policy, routing, or UI filtering.",
 			); err != nil {
@@ -59013,15 +59249,22 @@ func validateRegisterPayloadJSONValue4(path string, value any, description strin
 			); err != nil {
 				return err
 			}
-		case "required_labels":
+		case "ReplanOnTimeout":
 			if err := validateRegisterPayloadJSONValue55(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Whether the provider permits alternative work after this exported Agent operation times out. The failed operation remains failed and is not retried.",
+			); err != nil {
+				return err
+			}
+		case "required_labels":
+			if err := validateRegisterPayloadJSONValue56(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Run labels required by provider-side injection for this tool.",
 			); err != nil {
 				return err
 			}
 		case "requires_ui":
-			if err := validateRegisterPayloadJSONValue58(
+			if err := validateRegisterPayloadJSONValue59(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Whether executing this tool requires rendering or an interactive client protocol.",
 			); err != nil {
@@ -59035,35 +59278,35 @@ func validateRegisterPayloadJSONValue4(path string, value any, description strin
 				return err
 			}
 		case "result_reminder":
-			if err := validateRegisterPayloadJSONValue59(
+			if err := validateRegisterPayloadJSONValue60(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Model guidance emitted after this tool's result.",
 			); err != nil {
 				return err
 			}
 		case "search":
-			if err := validateRegisterPayloadJSONValue60(
+			if err := validateRegisterPayloadJSONValue61(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Word counts generated from the tool's name, title, and description.",
 			); err != nil {
 				return err
 			}
 		case "server_data":
-			if err := validateRegisterPayloadJSONValue64(
+			if err := validateRegisterPayloadJSONValue65(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Closed set of server-only result payloads emitted by this tool.",
 			); err != nil {
 				return err
 			}
 		case "text_only":
-			if err := validateRegisterPayloadJSONValue72(
+			if err := validateRegisterPayloadJSONValue73(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated model contract for execution using ordinary messages only.",
 			); err != nil {
 				return err
 			}
 		case "title":
-			if err := validateRegisterPayloadJSONValue77(
+			if err := validateRegisterPayloadJSONValue78(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Human-readable title declared for the tool.",
 			); err != nil {
@@ -59077,6 +59320,7 @@ func validateRegisterPayloadJSONValue4(path string, value any, description strin
 				"kind",
 				"meta",
 				"payload",
+				"ReplanOnTimeout",
 				"required_labels",
 				"requires_ui",
 				"result",
@@ -60332,6 +60576,22 @@ func validateRegisterPayloadJSONValue55(path string, value any, description stri
 		field = "$payload"
 	}
 	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
+	}
+	_, ok := value.(bool)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateRegisterPayloadJSONValue56 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue56(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "array", "null", description)
 	}
 	typed, ok := value.([]any)
@@ -60339,7 +60599,7 @@ func validateRegisterPayloadJSONValue55(path string, value any, description stri
 		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
 	}
 	for index, item := range typed {
-		if err := validateRegisterPayloadJSONValue56(
+		if err := validateRegisterPayloadJSONValue58(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -60349,8 +60609,8 @@ func validateRegisterPayloadJSONValue55(path string, value any, description stri
 	return nil
 }
 
-// validateRegisterPayloadJSONValue56 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisterPayloadJSONValue56(path string, value any, description string) error {
+// validateRegisterPayloadJSONValue58 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue58(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -60365,8 +60625,8 @@ func validateRegisterPayloadJSONValue56(path string, value any, description stri
 	return nil
 }
 
-// validateRegisterPayloadJSONValue58 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisterPayloadJSONValue58(path string, value any, description string) error {
+// validateRegisterPayloadJSONValue59 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue59(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -60381,8 +60641,8 @@ func validateRegisterPayloadJSONValue58(path string, value any, description stri
 	return nil
 }
 
-// validateRegisterPayloadJSONValue59 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisterPayloadJSONValue59(path string, value any, description string) error {
+// validateRegisterPayloadJSONValue60 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue60(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -60397,8 +60657,8 @@ func validateRegisterPayloadJSONValue59(path string, value any, description stri
 	return nil
 }
 
-// validateRegisterPayloadJSONValue60 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisterPayloadJSONValue60(path string, value any, description string) error {
+// validateRegisterPayloadJSONValue61 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue61(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -60418,14 +60678,14 @@ func validateRegisterPayloadJSONValue60(path string, value any, description stri
 	for _, key := range keys {
 		switch key {
 		case "length":
-			if err := validateRegisterPayloadJSONValue61(
+			if err := validateRegisterPayloadJSONValue62(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Total number of words in this document, including repeats.",
 			); err != nil {
 				return err
 			}
 		case "terms":
-			if err := validateRegisterPayloadJSONValue62(
+			if err := validateRegisterPayloadJSONValue63(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Lowercase words and their positive occurrence counts.",
 			); err != nil {
@@ -60441,8 +60701,8 @@ func validateRegisterPayloadJSONValue60(path string, value any, description stri
 	return nil
 }
 
-// validateRegisterPayloadJSONValue61 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisterPayloadJSONValue61(path string, value any, description string) error {
+// validateRegisterPayloadJSONValue62 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue62(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -60457,8 +60717,8 @@ func validateRegisterPayloadJSONValue61(path string, value any, description stri
 	return nil
 }
 
-// validateRegisterPayloadJSONValue62 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisterPayloadJSONValue62(path string, value any, description string) error {
+// validateRegisterPayloadJSONValue63 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue63(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -60476,7 +60736,7 @@ func validateRegisterPayloadJSONValue62(path string, value any, description stri
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		if err := validateRegisterPayloadJSONValue63(
+		if err := validateRegisterPayloadJSONValue64(
 			generatedJSONChildPath(path, key, true),
 			typed[key], description,
 		); err != nil {
@@ -60486,8 +60746,8 @@ func validateRegisterPayloadJSONValue62(path string, value any, description stri
 	return nil
 }
 
-// validateRegisterPayloadJSONValue63 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisterPayloadJSONValue63(path string, value any, description string) error {
+// validateRegisterPayloadJSONValue64 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue64(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -60502,8 +60762,8 @@ func validateRegisterPayloadJSONValue63(path string, value any, description stri
 	return nil
 }
 
-// validateRegisterPayloadJSONValue64 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisterPayloadJSONValue64(path string, value any, description string) error {
+// validateRegisterPayloadJSONValue65 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue65(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -60519,7 +60779,7 @@ func validateRegisterPayloadJSONValue64(path string, value any, description stri
 		if item == nil {
 			continue
 		}
-		if err := validateRegisterPayloadJSONValue65(
+		if err := validateRegisterPayloadJSONValue66(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -60529,8 +60789,8 @@ func validateRegisterPayloadJSONValue64(path string, value any, description stri
 	return nil
 }
 
-// validateRegisterPayloadJSONValue65 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisterPayloadJSONValue65(path string, value any, description string) error {
+// validateRegisterPayloadJSONValue66 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue66(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -60550,35 +60810,35 @@ func validateRegisterPayloadJSONValue65(path string, value any, description stri
 	for _, key := range keys {
 		switch key {
 		case "audience":
-			if err := validateRegisterPayloadJSONValue66(
+			if err := validateRegisterPayloadJSONValue67(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Consumers allowed to receive this payload.",
 			); err != nil {
 				return err
 			}
 		case "description":
-			if err := validateRegisterPayloadJSONValue67(
+			if err := validateRegisterPayloadJSONValue69(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Description of the data carried by this kind.",
 			); err != nil {
 				return err
 			}
 		case "kind":
-			if err := validateRegisterPayloadJSONValue69(
+			if err := validateRegisterPayloadJSONValue70(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Unique kind emitted by this tool.",
 			); err != nil {
 				return err
 			}
 		case "NativeImage":
-			if err := validateRegisterPayloadJSONValue70(
+			if err := validateRegisterPayloadJSONValue71(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Whether this evidence kind declares a typed image source requiring an explicitly admitted host reader.",
 			); err != nil {
 				return err
 			}
 		case "schema":
-			if err := validateRegisterPayloadJSONValue71(
+			if err := validateRegisterPayloadJSONValue72(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the item data.",
 			); err != nil {
@@ -60601,22 +60861,6 @@ func validateRegisterPayloadJSONValue65(path string, value any, description stri
 				"type",
 			})
 		}
-	}
-	return nil
-}
-
-// validateRegisterPayloadJSONValue66 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisterPayloadJSONValue66(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -60660,6 +60904,22 @@ func validateRegisterPayloadJSONValue70(path string, value any, description stri
 		field = "$payload"
 	}
 	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateRegisterPayloadJSONValue71 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue71(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
 	}
 	_, ok := value.(bool)
@@ -60669,8 +60929,8 @@ func validateRegisterPayloadJSONValue70(path string, value any, description stri
 	return nil
 }
 
-// validateRegisterPayloadJSONValue71 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisterPayloadJSONValue71(path string, value any, description string) error {
+// validateRegisterPayloadJSONValue72 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue72(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -60685,8 +60945,8 @@ func validateRegisterPayloadJSONValue71(path string, value any, description stri
 	return nil
 }
 
-// validateRegisterPayloadJSONValue72 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisterPayloadJSONValue72(path string, value any, description string) error {
+// validateRegisterPayloadJSONValue73 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue73(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -60706,14 +60966,14 @@ func validateRegisterPayloadJSONValue72(path string, value any, description stri
 	for _, key := range keys {
 		switch key {
 		case "description":
-			if err := validateRegisterPayloadJSONValue73(
+			if err := validateRegisterPayloadJSONValue74(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Domain instructions without optional UI guidance.",
 			); err != nil {
 				return err
 			}
 		case "execution_schema":
-			if err := validateRegisterPayloadJSONValue74(
+			if err := validateRegisterPayloadJSONValue75(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Complete input schema requiring disabled rendering controls.",
 			); err != nil {
@@ -60727,21 +60987,21 @@ func validateRegisterPayloadJSONValue72(path string, value any, description stri
 				return err
 			}
 		case "payload_schema":
-			if err := validateRegisterPayloadJSONValue75(
+			if err := validateRegisterPayloadJSONValue76(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Exact model argument schema without UI-only controls.",
 			); err != nil {
 				return err
 			}
 		case "result_reminder":
-			if err := validateRegisterPayloadJSONValue76(
+			if err := validateRegisterPayloadJSONValue77(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Domain result guidance without claiming UI output.",
 			); err != nil {
 				return err
 			}
 		case "search":
-			if err := validateRegisterPayloadJSONValue60(
+			if err := validateRegisterPayloadJSONValue61(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated word counts for these domain instructions.",
 			); err != nil {
@@ -60757,22 +61017,6 @@ func validateRegisterPayloadJSONValue72(path string, value any, description stri
 				"search",
 			})
 		}
-	}
-	return nil
-}
-
-// validateRegisterPayloadJSONValue73 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisterPayloadJSONValue73(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -60944,19 +61188,11 @@ func validateRegisterPayloadJSONValue85(path string, value any, description stri
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
 	}
-	typed, ok := value.([]any)
+	_, ok := value.(string)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
-	}
-	for index, item := range typed {
-		if err := validateRegisterPayloadJSONValue86(
-			generatedJSONChildPath(path, strconv.Itoa(index), true),
-			item, description,
-		); err != nil {
-			return err
-		}
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -60968,11 +61204,19 @@ func validateRegisterPayloadJSONValue86(path string, value any, description stri
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
 	}
-	_, ok := value.(string)
+	typed, ok := value.([]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if err := validateRegisterPayloadJSONValue87(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -60995,6 +61239,22 @@ func validateRegisterPayloadJSONValue87(path string, value any, description stri
 
 // validateRegisterPayloadJSONValue88 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateRegisterPayloadJSONValue88(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateRegisterPayloadJSONValue89 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisterPayloadJSONValue89(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -61701,7 +61961,7 @@ func validateRegisteredToolsetSelectionJSONValue(path string, value any, descrip
 				return err
 			}
 		case "source":
-			if err := validateRegisteredToolsetSelectionJSONValue88(
+			if err := validateRegisteredToolsetSelectionJSONValue89(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Owner-selected resource and exact registration target.",
 			); err != nil {
@@ -61833,7 +62093,7 @@ func validateRegisteredToolsetSelectionJSONValue24(path string, value any, descr
 				return err
 			}
 		case "version":
-			if err := validateRegisteredToolsetSelectionJSONValue87(
+			if err := validateRegisteredToolsetSelectionJSONValue88(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Semantic version of the toolset.",
 			); err != nil {
@@ -61996,49 +62256,49 @@ func validateRegisteredToolsetSelectionJSONValue3(path string, value any, descri
 				return err
 			}
 		case "description":
-			if err := validateRegisteredToolsetSelectionJSONValue78(
+			if err := validateRegisteredToolsetSelectionJSONValue80(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Human-readable description of what the tool does.",
 			); err != nil {
 				return err
 			}
 		case "execution_payload_schema":
-			if err := validateRegisteredToolsetSelectionJSONValue80(
+			if err := validateRegisteredToolsetSelectionJSONValue81(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the payload sent to the provider. It includes fields supplied by continuation handling and excludes fields injected inside the provider.",
 			); err != nil {
 				return err
 			}
 		case "name":
-			if err := validateRegisteredToolsetSelectionJSONValue81(
+			if err := validateRegisteredToolsetSelectionJSONValue82(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Globally unique tool identifier of the form \"toolset.tool\".",
 			); err != nil {
 				return err
 			}
 		case "payload_schema":
-			if err := validateRegisteredToolsetSelectionJSONValue82(
+			if err := validateRegisteredToolsetSelectionJSONValue83(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for arguments accepted from the model.",
 			); err != nil {
 				return err
 			}
 		case "result_schema":
-			if err := validateRegisteredToolsetSelectionJSONValue83(
+			if err := validateRegisteredToolsetSelectionJSONValue84(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the tool result.",
 			); err != nil {
 				return err
 			}
 		case "sidecar_schema":
-			if err := validateRegisteredToolsetSelectionJSONValue84(
+			if err := validateRegisteredToolsetSelectionJSONValue85(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the tool sidecar (UI-only), when present.",
 			); err != nil {
 				return err
 			}
 		case "tags":
-			if err := validateRegisteredToolsetSelectionJSONValue85(
+			if err := validateRegisteredToolsetSelectionJSONValue86(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Optional tags used for policy, routing, or UI filtering.",
 			); err != nil {
@@ -62122,15 +62382,22 @@ func validateRegisteredToolsetSelectionJSONValue4(path string, value any, descri
 			); err != nil {
 				return err
 			}
-		case "required_labels":
+		case "ReplanOnTimeout":
 			if err := validateRegisteredToolsetSelectionJSONValue55(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Whether the provider permits alternative work after this exported Agent operation times out. The failed operation remains failed and is not retried.",
+			); err != nil {
+				return err
+			}
+		case "required_labels":
+			if err := validateRegisteredToolsetSelectionJSONValue56(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Run labels required by provider-side injection for this tool.",
 			); err != nil {
 				return err
 			}
 		case "requires_ui":
-			if err := validateRegisteredToolsetSelectionJSONValue58(
+			if err := validateRegisteredToolsetSelectionJSONValue59(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Whether executing this tool requires rendering or an interactive client protocol.",
 			); err != nil {
@@ -62144,35 +62411,35 @@ func validateRegisteredToolsetSelectionJSONValue4(path string, value any, descri
 				return err
 			}
 		case "result_reminder":
-			if err := validateRegisteredToolsetSelectionJSONValue59(
+			if err := validateRegisteredToolsetSelectionJSONValue60(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Model guidance emitted after this tool's result.",
 			); err != nil {
 				return err
 			}
 		case "search":
-			if err := validateRegisteredToolsetSelectionJSONValue60(
+			if err := validateRegisteredToolsetSelectionJSONValue61(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Word counts generated from the tool's name, title, and description.",
 			); err != nil {
 				return err
 			}
 		case "server_data":
-			if err := validateRegisteredToolsetSelectionJSONValue64(
+			if err := validateRegisteredToolsetSelectionJSONValue65(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Closed set of server-only result payloads emitted by this tool.",
 			); err != nil {
 				return err
 			}
 		case "text_only":
-			if err := validateRegisteredToolsetSelectionJSONValue72(
+			if err := validateRegisteredToolsetSelectionJSONValue73(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated model contract for execution using ordinary messages only.",
 			); err != nil {
 				return err
 			}
 		case "title":
-			if err := validateRegisteredToolsetSelectionJSONValue77(
+			if err := validateRegisteredToolsetSelectionJSONValue78(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Human-readable title declared for the tool.",
 			); err != nil {
@@ -62186,6 +62453,7 @@ func validateRegisteredToolsetSelectionJSONValue4(path string, value any, descri
 				"kind",
 				"meta",
 				"payload",
+				"ReplanOnTimeout",
 				"required_labels",
 				"requires_ui",
 				"result",
@@ -63441,6 +63709,22 @@ func validateRegisteredToolsetSelectionJSONValue55(path string, value any, descr
 		field = "$payload"
 	}
 	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
+	}
+	_, ok := value.(bool)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateRegisteredToolsetSelectionJSONValue56 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisteredToolsetSelectionJSONValue56(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "array", "null", description)
 	}
 	typed, ok := value.([]any)
@@ -63448,7 +63732,7 @@ func validateRegisteredToolsetSelectionJSONValue55(path string, value any, descr
 		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
 	}
 	for index, item := range typed {
-		if err := validateRegisteredToolsetSelectionJSONValue56(
+		if err := validateRegisteredToolsetSelectionJSONValue58(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -63458,8 +63742,8 @@ func validateRegisteredToolsetSelectionJSONValue55(path string, value any, descr
 	return nil
 }
 
-// validateRegisteredToolsetSelectionJSONValue56 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisteredToolsetSelectionJSONValue56(path string, value any, description string) error {
+// validateRegisteredToolsetSelectionJSONValue58 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisteredToolsetSelectionJSONValue58(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -63474,8 +63758,8 @@ func validateRegisteredToolsetSelectionJSONValue56(path string, value any, descr
 	return nil
 }
 
-// validateRegisteredToolsetSelectionJSONValue58 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisteredToolsetSelectionJSONValue58(path string, value any, description string) error {
+// validateRegisteredToolsetSelectionJSONValue59 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisteredToolsetSelectionJSONValue59(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -63490,8 +63774,8 @@ func validateRegisteredToolsetSelectionJSONValue58(path string, value any, descr
 	return nil
 }
 
-// validateRegisteredToolsetSelectionJSONValue59 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisteredToolsetSelectionJSONValue59(path string, value any, description string) error {
+// validateRegisteredToolsetSelectionJSONValue60 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisteredToolsetSelectionJSONValue60(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -63506,8 +63790,8 @@ func validateRegisteredToolsetSelectionJSONValue59(path string, value any, descr
 	return nil
 }
 
-// validateRegisteredToolsetSelectionJSONValue60 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisteredToolsetSelectionJSONValue60(path string, value any, description string) error {
+// validateRegisteredToolsetSelectionJSONValue61 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisteredToolsetSelectionJSONValue61(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -63527,14 +63811,14 @@ func validateRegisteredToolsetSelectionJSONValue60(path string, value any, descr
 	for _, key := range keys {
 		switch key {
 		case "length":
-			if err := validateRegisteredToolsetSelectionJSONValue61(
+			if err := validateRegisteredToolsetSelectionJSONValue62(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Total number of words in this document, including repeats.",
 			); err != nil {
 				return err
 			}
 		case "terms":
-			if err := validateRegisteredToolsetSelectionJSONValue62(
+			if err := validateRegisteredToolsetSelectionJSONValue63(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Lowercase words and their positive occurrence counts.",
 			); err != nil {
@@ -63550,8 +63834,8 @@ func validateRegisteredToolsetSelectionJSONValue60(path string, value any, descr
 	return nil
 }
 
-// validateRegisteredToolsetSelectionJSONValue61 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisteredToolsetSelectionJSONValue61(path string, value any, description string) error {
+// validateRegisteredToolsetSelectionJSONValue62 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisteredToolsetSelectionJSONValue62(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -63566,8 +63850,8 @@ func validateRegisteredToolsetSelectionJSONValue61(path string, value any, descr
 	return nil
 }
 
-// validateRegisteredToolsetSelectionJSONValue62 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisteredToolsetSelectionJSONValue62(path string, value any, description string) error {
+// validateRegisteredToolsetSelectionJSONValue63 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisteredToolsetSelectionJSONValue63(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -63585,7 +63869,7 @@ func validateRegisteredToolsetSelectionJSONValue62(path string, value any, descr
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		if err := validateRegisteredToolsetSelectionJSONValue63(
+		if err := validateRegisteredToolsetSelectionJSONValue64(
 			generatedJSONChildPath(path, key, true),
 			typed[key], description,
 		); err != nil {
@@ -63595,8 +63879,8 @@ func validateRegisteredToolsetSelectionJSONValue62(path string, value any, descr
 	return nil
 }
 
-// validateRegisteredToolsetSelectionJSONValue63 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisteredToolsetSelectionJSONValue63(path string, value any, description string) error {
+// validateRegisteredToolsetSelectionJSONValue64 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisteredToolsetSelectionJSONValue64(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -63611,8 +63895,8 @@ func validateRegisteredToolsetSelectionJSONValue63(path string, value any, descr
 	return nil
 }
 
-// validateRegisteredToolsetSelectionJSONValue64 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisteredToolsetSelectionJSONValue64(path string, value any, description string) error {
+// validateRegisteredToolsetSelectionJSONValue65 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisteredToolsetSelectionJSONValue65(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -63628,7 +63912,7 @@ func validateRegisteredToolsetSelectionJSONValue64(path string, value any, descr
 		if item == nil {
 			continue
 		}
-		if err := validateRegisteredToolsetSelectionJSONValue65(
+		if err := validateRegisteredToolsetSelectionJSONValue66(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -63638,8 +63922,8 @@ func validateRegisteredToolsetSelectionJSONValue64(path string, value any, descr
 	return nil
 }
 
-// validateRegisteredToolsetSelectionJSONValue65 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisteredToolsetSelectionJSONValue65(path string, value any, description string) error {
+// validateRegisteredToolsetSelectionJSONValue66 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisteredToolsetSelectionJSONValue66(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -63659,35 +63943,35 @@ func validateRegisteredToolsetSelectionJSONValue65(path string, value any, descr
 	for _, key := range keys {
 		switch key {
 		case "audience":
-			if err := validateRegisteredToolsetSelectionJSONValue66(
+			if err := validateRegisteredToolsetSelectionJSONValue67(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Consumers allowed to receive this payload.",
 			); err != nil {
 				return err
 			}
 		case "description":
-			if err := validateRegisteredToolsetSelectionJSONValue67(
+			if err := validateRegisteredToolsetSelectionJSONValue69(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Description of the data carried by this kind.",
 			); err != nil {
 				return err
 			}
 		case "kind":
-			if err := validateRegisteredToolsetSelectionJSONValue69(
+			if err := validateRegisteredToolsetSelectionJSONValue70(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Unique kind emitted by this tool.",
 			); err != nil {
 				return err
 			}
 		case "NativeImage":
-			if err := validateRegisteredToolsetSelectionJSONValue70(
+			if err := validateRegisteredToolsetSelectionJSONValue71(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Whether this evidence kind declares a typed image source requiring an explicitly admitted host reader.",
 			); err != nil {
 				return err
 			}
 		case "schema":
-			if err := validateRegisteredToolsetSelectionJSONValue71(
+			if err := validateRegisteredToolsetSelectionJSONValue72(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the item data.",
 			); err != nil {
@@ -63710,22 +63994,6 @@ func validateRegisteredToolsetSelectionJSONValue65(path string, value any, descr
 				"type",
 			})
 		}
-	}
-	return nil
-}
-
-// validateRegisteredToolsetSelectionJSONValue66 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisteredToolsetSelectionJSONValue66(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -63769,6 +64037,22 @@ func validateRegisteredToolsetSelectionJSONValue70(path string, value any, descr
 		field = "$payload"
 	}
 	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateRegisteredToolsetSelectionJSONValue71 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisteredToolsetSelectionJSONValue71(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
 	}
 	_, ok := value.(bool)
@@ -63778,8 +64062,8 @@ func validateRegisteredToolsetSelectionJSONValue70(path string, value any, descr
 	return nil
 }
 
-// validateRegisteredToolsetSelectionJSONValue71 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisteredToolsetSelectionJSONValue71(path string, value any, description string) error {
+// validateRegisteredToolsetSelectionJSONValue72 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisteredToolsetSelectionJSONValue72(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -63794,8 +64078,8 @@ func validateRegisteredToolsetSelectionJSONValue71(path string, value any, descr
 	return nil
 }
 
-// validateRegisteredToolsetSelectionJSONValue72 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisteredToolsetSelectionJSONValue72(path string, value any, description string) error {
+// validateRegisteredToolsetSelectionJSONValue73 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisteredToolsetSelectionJSONValue73(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -63815,14 +64099,14 @@ func validateRegisteredToolsetSelectionJSONValue72(path string, value any, descr
 	for _, key := range keys {
 		switch key {
 		case "description":
-			if err := validateRegisteredToolsetSelectionJSONValue73(
+			if err := validateRegisteredToolsetSelectionJSONValue74(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Domain instructions without optional UI guidance.",
 			); err != nil {
 				return err
 			}
 		case "execution_schema":
-			if err := validateRegisteredToolsetSelectionJSONValue74(
+			if err := validateRegisteredToolsetSelectionJSONValue75(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Complete input schema requiring disabled rendering controls.",
 			); err != nil {
@@ -63836,21 +64120,21 @@ func validateRegisteredToolsetSelectionJSONValue72(path string, value any, descr
 				return err
 			}
 		case "payload_schema":
-			if err := validateRegisteredToolsetSelectionJSONValue75(
+			if err := validateRegisteredToolsetSelectionJSONValue76(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Exact model argument schema without UI-only controls.",
 			); err != nil {
 				return err
 			}
 		case "result_reminder":
-			if err := validateRegisteredToolsetSelectionJSONValue76(
+			if err := validateRegisteredToolsetSelectionJSONValue77(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Domain result guidance without claiming UI output.",
 			); err != nil {
 				return err
 			}
 		case "search":
-			if err := validateRegisteredToolsetSelectionJSONValue60(
+			if err := validateRegisteredToolsetSelectionJSONValue61(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated word counts for these domain instructions.",
 			); err != nil {
@@ -63866,22 +64150,6 @@ func validateRegisteredToolsetSelectionJSONValue72(path string, value any, descr
 				"search",
 			})
 		}
-	}
-	return nil
-}
-
-// validateRegisteredToolsetSelectionJSONValue73 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisteredToolsetSelectionJSONValue73(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -64053,19 +64321,11 @@ func validateRegisteredToolsetSelectionJSONValue85(path string, value any, descr
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
 	}
-	typed, ok := value.([]any)
+	_, ok := value.(string)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
-	}
-	for index, item := range typed {
-		if err := validateRegisteredToolsetSelectionJSONValue86(
-			generatedJSONChildPath(path, strconv.Itoa(index), true),
-			item, description,
-		); err != nil {
-			return err
-		}
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -64077,11 +64337,19 @@ func validateRegisteredToolsetSelectionJSONValue86(path string, value any, descr
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
 	}
-	_, ok := value.(string)
+	typed, ok := value.([]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if err := validateRegisteredToolsetSelectionJSONValue87(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -64109,6 +64377,22 @@ func validateRegisteredToolsetSelectionJSONValue88(path string, value any, descr
 		field = "$payload"
 	}
 	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateRegisteredToolsetSelectionJSONValue89 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisteredToolsetSelectionJSONValue89(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
 	typed, ok := value.(map[string]any)
@@ -64123,21 +64407,21 @@ func validateRegisteredToolsetSelectionJSONValue88(path string, value any, descr
 	for _, key := range keys {
 		switch key {
 		case "name":
-			if err := validateRegisteredToolsetSelectionJSONValue89(
+			if err := validateRegisteredToolsetSelectionJSONValue91(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Permanent resource name supplied and authorized by the host within that scope.",
 			); err != nil {
 				return err
 			}
 		case "scope":
-			if err := validateRegisteredToolsetSelectionJSONValue91(
+			if err := validateRegisteredToolsetSelectionJSONValue92(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Owning scope supplied and authorized by the host.",
 			); err != nil {
 				return err
 			}
 		case "target":
-			if err := validateRegisteredToolsetSelectionJSONValue92(
+			if err := validateRegisteredToolsetSelectionJSONValue93(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "",
 			); err != nil {
@@ -64150,22 +64434,6 @@ func validateRegisteredToolsetSelectionJSONValue88(path string, value any, descr
 				"target",
 			})
 		}
-	}
-	return nil
-}
-
-// validateRegisteredToolsetSelectionJSONValue89 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisteredToolsetSelectionJSONValue89(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -64193,6 +64461,22 @@ func validateRegisteredToolsetSelectionJSONValue92(path string, value any, descr
 		field = "$payload"
 	}
 	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateRegisteredToolsetSelectionJSONValue93 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisteredToolsetSelectionJSONValue93(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
 	typed, ok := value.(map[string]any)
@@ -64214,16 +64498,16 @@ func validateRegisteredToolsetSelectionJSONValue92(path string, value any, descr
 	}
 	switch discriminator {
 	case "native":
-		return validateRegisteredToolsetSelectionJSONValue93(generatedJSONChildPath(path, "value", false), branch, "One immutable native revision.")
+		return validateRegisteredToolsetSelectionJSONValue94(generatedJSONChildPath(path, "value", false), branch, "One immutable native revision.")
 	case "service":
-		return validateRegisteredToolsetSelectionJSONValue95(generatedJSONChildPath(path, "value", false), branch, "One exact service registration.")
+		return validateRegisteredToolsetSelectionJSONValue96(generatedJSONChildPath(path, "value", false), branch, "One exact service registration.")
 	default:
 		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
 	}
 }
 
-// validateRegisteredToolsetSelectionJSONValue93 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisteredToolsetSelectionJSONValue93(path string, value any, description string) error {
+// validateRegisteredToolsetSelectionJSONValue94 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisteredToolsetSelectionJSONValue94(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -64243,7 +64527,7 @@ func validateRegisteredToolsetSelectionJSONValue93(path string, value any, descr
 	for _, key := range keys {
 		switch key {
 		case "toolset":
-			if err := validateRegisteredToolsetSelectionJSONValue94(
+			if err := validateRegisteredToolsetSelectionJSONValue95(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Immutable native revision route.",
 			); err != nil {
@@ -64258,8 +64542,8 @@ func validateRegisteredToolsetSelectionJSONValue93(path string, value any, descr
 	return nil
 }
 
-// validateRegisteredToolsetSelectionJSONValue94 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisteredToolsetSelectionJSONValue94(path string, value any, description string) error {
+// validateRegisteredToolsetSelectionJSONValue95 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisteredToolsetSelectionJSONValue95(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -64274,8 +64558,8 @@ func validateRegisteredToolsetSelectionJSONValue94(path string, value any, descr
 	return nil
 }
 
-// validateRegisteredToolsetSelectionJSONValue95 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisteredToolsetSelectionJSONValue95(path string, value any, description string) error {
+// validateRegisteredToolsetSelectionJSONValue96 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisteredToolsetSelectionJSONValue96(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -64295,14 +64579,14 @@ func validateRegisteredToolsetSelectionJSONValue95(path string, value any, descr
 	for _, key := range keys {
 		switch key {
 		case "registration_token":
-			if err := validateRegisteredToolsetSelectionJSONValue96(
+			if err := validateRegisteredToolsetSelectionJSONValue97(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Exact retained service registration.",
 			); err != nil {
 				return err
 			}
 		case "toolset":
-			if err := validateRegisteredToolsetSelectionJSONValue97(
+			if err := validateRegisteredToolsetSelectionJSONValue98(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Service registration route.",
 			); err != nil {
@@ -64318,8 +64602,8 @@ func validateRegisteredToolsetSelectionJSONValue95(path string, value any, descr
 	return nil
 }
 
-// validateRegisteredToolsetSelectionJSONValue96 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisteredToolsetSelectionJSONValue96(path string, value any, description string) error {
+// validateRegisteredToolsetSelectionJSONValue97 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisteredToolsetSelectionJSONValue97(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -64334,8 +64618,8 @@ func validateRegisteredToolsetSelectionJSONValue96(path string, value any, descr
 	return nil
 }
 
-// validateRegisteredToolsetSelectionJSONValue97 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegisteredToolsetSelectionJSONValue97(path string, value any, description string) error {
+// validateRegisteredToolsetSelectionJSONValue98 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegisteredToolsetSelectionJSONValue98(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -64416,7 +64700,7 @@ func validateRegistrySelectionJSONValue2(path string, value any, description str
 	case "direct":
 		return validateRegistrySelectionJSONValue13(generatedJSONChildPath(path, "value", false), branch, "Direct import using original operation names.")
 	case "registered":
-		return validateRegistrySelectionJSONValue89(generatedJSONChildPath(path, "value", false), branch, "Owner-selected resource with derived operation names.")
+		return validateRegistrySelectionJSONValue91(generatedJSONChildPath(path, "value", false), branch, "Owner-selected resource with derived operation names.")
 	default:
 		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
 	}
@@ -64538,7 +64822,7 @@ func validateRegistrySelectionJSONValue35(path string, value any, description st
 				return err
 			}
 		case "version":
-			if err := validateRegistrySelectionJSONValue88(
+			if err := validateRegistrySelectionJSONValue89(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Semantic version of the toolset.",
 			); err != nil {
@@ -64701,49 +64985,49 @@ func validateRegistrySelectionJSONValue4(path string, value any, description str
 				return err
 			}
 		case "description":
-			if err := validateRegistrySelectionJSONValue80(
+			if err := validateRegistrySelectionJSONValue81(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Human-readable description of what the tool does.",
 			); err != nil {
 				return err
 			}
 		case "execution_payload_schema":
-			if err := validateRegistrySelectionJSONValue81(
+			if err := validateRegistrySelectionJSONValue82(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the payload sent to the provider. It includes fields supplied by continuation handling and excludes fields injected inside the provider.",
 			); err != nil {
 				return err
 			}
 		case "name":
-			if err := validateRegistrySelectionJSONValue82(
+			if err := validateRegistrySelectionJSONValue83(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Globally unique tool identifier of the form \"toolset.tool\".",
 			); err != nil {
 				return err
 			}
 		case "payload_schema":
-			if err := validateRegistrySelectionJSONValue83(
+			if err := validateRegistrySelectionJSONValue84(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for arguments accepted from the model.",
 			); err != nil {
 				return err
 			}
 		case "result_schema":
-			if err := validateRegistrySelectionJSONValue84(
+			if err := validateRegistrySelectionJSONValue85(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the tool result.",
 			); err != nil {
 				return err
 			}
 		case "sidecar_schema":
-			if err := validateRegistrySelectionJSONValue85(
+			if err := validateRegistrySelectionJSONValue86(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the tool sidecar (UI-only), when present.",
 			); err != nil {
 				return err
 			}
 		case "tags":
-			if err := validateRegistrySelectionJSONValue86(
+			if err := validateRegistrySelectionJSONValue87(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Optional tags used for policy, routing, or UI filtering.",
 			); err != nil {
@@ -64827,15 +65111,22 @@ func validateRegistrySelectionJSONValue5(path string, value any, description str
 			); err != nil {
 				return err
 			}
-		case "required_labels":
+		case "ReplanOnTimeout":
 			if err := validateRegistrySelectionJSONValue56(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Whether the provider permits alternative work after this exported Agent operation times out. The failed operation remains failed and is not retried.",
+			); err != nil {
+				return err
+			}
+		case "required_labels":
+			if err := validateRegistrySelectionJSONValue58(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Run labels required by provider-side injection for this tool.",
 			); err != nil {
 				return err
 			}
 		case "requires_ui":
-			if err := validateRegistrySelectionJSONValue59(
+			if err := validateRegistrySelectionJSONValue60(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Whether executing this tool requires rendering or an interactive client protocol.",
 			); err != nil {
@@ -64849,35 +65140,35 @@ func validateRegistrySelectionJSONValue5(path string, value any, description str
 				return err
 			}
 		case "result_reminder":
-			if err := validateRegistrySelectionJSONValue60(
+			if err := validateRegistrySelectionJSONValue61(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Model guidance emitted after this tool's result.",
 			); err != nil {
 				return err
 			}
 		case "search":
-			if err := validateRegistrySelectionJSONValue61(
+			if err := validateRegistrySelectionJSONValue62(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Word counts generated from the tool's name, title, and description.",
 			); err != nil {
 				return err
 			}
 		case "server_data":
-			if err := validateRegistrySelectionJSONValue65(
+			if err := validateRegistrySelectionJSONValue66(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Closed set of server-only result payloads emitted by this tool.",
 			); err != nil {
 				return err
 			}
 		case "text_only":
-			if err := validateRegistrySelectionJSONValue73(
+			if err := validateRegistrySelectionJSONValue74(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated model contract for execution using ordinary messages only.",
 			); err != nil {
 				return err
 			}
 		case "title":
-			if err := validateRegistrySelectionJSONValue78(
+			if err := validateRegistrySelectionJSONValue80(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Human-readable title declared for the tool.",
 			); err != nil {
@@ -64891,6 +65182,7 @@ func validateRegistrySelectionJSONValue5(path string, value any, description str
 				"kind",
 				"meta",
 				"payload",
+				"ReplanOnTimeout",
 				"required_labels",
 				"requires_ui",
 				"result",
@@ -66146,6 +66438,22 @@ func validateRegistrySelectionJSONValue56(path string, value any, description st
 		field = "$payload"
 	}
 	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
+	}
+	_, ok := value.(bool)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateRegistrySelectionJSONValue58 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegistrySelectionJSONValue58(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "array", "null", description)
 	}
 	typed, ok := value.([]any)
@@ -66153,7 +66461,7 @@ func validateRegistrySelectionJSONValue56(path string, value any, description st
 		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
 	}
 	for index, item := range typed {
-		if err := validateRegistrySelectionJSONValue58(
+		if err := validateRegistrySelectionJSONValue59(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -66163,8 +66471,8 @@ func validateRegistrySelectionJSONValue56(path string, value any, description st
 	return nil
 }
 
-// validateRegistrySelectionJSONValue58 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegistrySelectionJSONValue58(path string, value any, description string) error {
+// validateRegistrySelectionJSONValue59 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegistrySelectionJSONValue59(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -66179,8 +66487,8 @@ func validateRegistrySelectionJSONValue58(path string, value any, description st
 	return nil
 }
 
-// validateRegistrySelectionJSONValue59 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegistrySelectionJSONValue59(path string, value any, description string) error {
+// validateRegistrySelectionJSONValue60 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegistrySelectionJSONValue60(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -66195,8 +66503,8 @@ func validateRegistrySelectionJSONValue59(path string, value any, description st
 	return nil
 }
 
-// validateRegistrySelectionJSONValue60 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegistrySelectionJSONValue60(path string, value any, description string) error {
+// validateRegistrySelectionJSONValue61 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegistrySelectionJSONValue61(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -66211,8 +66519,8 @@ func validateRegistrySelectionJSONValue60(path string, value any, description st
 	return nil
 }
 
-// validateRegistrySelectionJSONValue61 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegistrySelectionJSONValue61(path string, value any, description string) error {
+// validateRegistrySelectionJSONValue62 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegistrySelectionJSONValue62(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -66232,14 +66540,14 @@ func validateRegistrySelectionJSONValue61(path string, value any, description st
 	for _, key := range keys {
 		switch key {
 		case "length":
-			if err := validateRegistrySelectionJSONValue62(
+			if err := validateRegistrySelectionJSONValue63(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Total number of words in this document, including repeats.",
 			); err != nil {
 				return err
 			}
 		case "terms":
-			if err := validateRegistrySelectionJSONValue63(
+			if err := validateRegistrySelectionJSONValue64(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Lowercase words and their positive occurrence counts.",
 			); err != nil {
@@ -66255,8 +66563,8 @@ func validateRegistrySelectionJSONValue61(path string, value any, description st
 	return nil
 }
 
-// validateRegistrySelectionJSONValue62 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegistrySelectionJSONValue62(path string, value any, description string) error {
+// validateRegistrySelectionJSONValue63 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegistrySelectionJSONValue63(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -66271,8 +66579,8 @@ func validateRegistrySelectionJSONValue62(path string, value any, description st
 	return nil
 }
 
-// validateRegistrySelectionJSONValue63 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegistrySelectionJSONValue63(path string, value any, description string) error {
+// validateRegistrySelectionJSONValue64 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegistrySelectionJSONValue64(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -66290,7 +66598,7 @@ func validateRegistrySelectionJSONValue63(path string, value any, description st
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		if err := validateRegistrySelectionJSONValue64(
+		if err := validateRegistrySelectionJSONValue65(
 			generatedJSONChildPath(path, key, true),
 			typed[key], description,
 		); err != nil {
@@ -66300,8 +66608,8 @@ func validateRegistrySelectionJSONValue63(path string, value any, description st
 	return nil
 }
 
-// validateRegistrySelectionJSONValue64 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegistrySelectionJSONValue64(path string, value any, description string) error {
+// validateRegistrySelectionJSONValue65 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegistrySelectionJSONValue65(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -66316,8 +66624,8 @@ func validateRegistrySelectionJSONValue64(path string, value any, description st
 	return nil
 }
 
-// validateRegistrySelectionJSONValue65 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegistrySelectionJSONValue65(path string, value any, description string) error {
+// validateRegistrySelectionJSONValue66 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegistrySelectionJSONValue66(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -66333,7 +66641,7 @@ func validateRegistrySelectionJSONValue65(path string, value any, description st
 		if item == nil {
 			continue
 		}
-		if err := validateRegistrySelectionJSONValue66(
+		if err := validateRegistrySelectionJSONValue67(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -66343,8 +66651,8 @@ func validateRegistrySelectionJSONValue65(path string, value any, description st
 	return nil
 }
 
-// validateRegistrySelectionJSONValue66 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegistrySelectionJSONValue66(path string, value any, description string) error {
+// validateRegistrySelectionJSONValue67 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegistrySelectionJSONValue67(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -66364,35 +66672,35 @@ func validateRegistrySelectionJSONValue66(path string, value any, description st
 	for _, key := range keys {
 		switch key {
 		case "audience":
-			if err := validateRegistrySelectionJSONValue67(
+			if err := validateRegistrySelectionJSONValue69(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Consumers allowed to receive this payload.",
 			); err != nil {
 				return err
 			}
 		case "description":
-			if err := validateRegistrySelectionJSONValue69(
+			if err := validateRegistrySelectionJSONValue70(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Description of the data carried by this kind.",
 			); err != nil {
 				return err
 			}
 		case "kind":
-			if err := validateRegistrySelectionJSONValue70(
+			if err := validateRegistrySelectionJSONValue71(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Unique kind emitted by this tool.",
 			); err != nil {
 				return err
 			}
 		case "NativeImage":
-			if err := validateRegistrySelectionJSONValue71(
+			if err := validateRegistrySelectionJSONValue72(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Whether this evidence kind declares a typed image source requiring an explicitly admitted host reader.",
 			); err != nil {
 				return err
 			}
 		case "schema":
-			if err := validateRegistrySelectionJSONValue72(
+			if err := validateRegistrySelectionJSONValue73(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the item data.",
 			); err != nil {
@@ -66415,22 +66723,6 @@ func validateRegistrySelectionJSONValue66(path string, value any, description st
 				"type",
 			})
 		}
-	}
-	return nil
-}
-
-// validateRegistrySelectionJSONValue67 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegistrySelectionJSONValue67(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -66474,6 +66766,22 @@ func validateRegistrySelectionJSONValue71(path string, value any, description st
 		field = "$payload"
 	}
 	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateRegistrySelectionJSONValue72 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegistrySelectionJSONValue72(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
 	}
 	_, ok := value.(bool)
@@ -66483,8 +66791,8 @@ func validateRegistrySelectionJSONValue71(path string, value any, description st
 	return nil
 }
 
-// validateRegistrySelectionJSONValue72 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegistrySelectionJSONValue72(path string, value any, description string) error {
+// validateRegistrySelectionJSONValue73 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegistrySelectionJSONValue73(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -66499,8 +66807,8 @@ func validateRegistrySelectionJSONValue72(path string, value any, description st
 	return nil
 }
 
-// validateRegistrySelectionJSONValue73 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegistrySelectionJSONValue73(path string, value any, description string) error {
+// validateRegistrySelectionJSONValue74 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegistrySelectionJSONValue74(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -66520,14 +66828,14 @@ func validateRegistrySelectionJSONValue73(path string, value any, description st
 	for _, key := range keys {
 		switch key {
 		case "description":
-			if err := validateRegistrySelectionJSONValue74(
+			if err := validateRegistrySelectionJSONValue75(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Domain instructions without optional UI guidance.",
 			); err != nil {
 				return err
 			}
 		case "execution_schema":
-			if err := validateRegistrySelectionJSONValue75(
+			if err := validateRegistrySelectionJSONValue76(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Complete input schema requiring disabled rendering controls.",
 			); err != nil {
@@ -66541,21 +66849,21 @@ func validateRegistrySelectionJSONValue73(path string, value any, description st
 				return err
 			}
 		case "payload_schema":
-			if err := validateRegistrySelectionJSONValue76(
+			if err := validateRegistrySelectionJSONValue77(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Exact model argument schema without UI-only controls.",
 			); err != nil {
 				return err
 			}
 		case "result_reminder":
-			if err := validateRegistrySelectionJSONValue77(
+			if err := validateRegistrySelectionJSONValue78(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Domain result guidance without claiming UI output.",
 			); err != nil {
 				return err
 			}
 		case "search":
-			if err := validateRegistrySelectionJSONValue61(
+			if err := validateRegistrySelectionJSONValue62(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated word counts for these domain instructions.",
 			); err != nil {
@@ -66571,22 +66879,6 @@ func validateRegistrySelectionJSONValue73(path string, value any, description st
 				"search",
 			})
 		}
-	}
-	return nil
-}
-
-// validateRegistrySelectionJSONValue74 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegistrySelectionJSONValue74(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -66758,19 +67050,11 @@ func validateRegistrySelectionJSONValue86(path string, value any, description st
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
 	}
-	typed, ok := value.([]any)
+	_, ok := value.(string)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
-	}
-	for index, item := range typed {
-		if err := validateRegistrySelectionJSONValue87(
-			generatedJSONChildPath(path, strconv.Itoa(index), true),
-			item, description,
-		); err != nil {
-			return err
-		}
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -66782,11 +67066,19 @@ func validateRegistrySelectionJSONValue87(path string, value any, description st
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
 	}
-	_, ok := value.(string)
+	typed, ok := value.([]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if err := validateRegistrySelectionJSONValue88(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -66814,39 +67106,11 @@ func validateRegistrySelectionJSONValue89(path string, value any, description st
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
 	}
-	typed, ok := value.(map[string]any)
+	_, ok := value.(string)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "resolved":
-			if err := validateRegistrySelectionJSONValue13(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Original operation declarations and registration token.",
-			); err != nil {
-				return err
-			}
-		case "source":
-			if err := validateRegistrySelectionJSONValue91(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Owner-selected resource and exact registration target.",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"resolved",
-				"source",
-			})
-		}
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -66871,32 +67135,24 @@ func validateRegistrySelectionJSONValue91(path string, value any, description st
 	sort.Strings(keys)
 	for _, key := range keys {
 		switch key {
-		case "name":
+		case "resolved":
+			if err := validateRegistrySelectionJSONValue13(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Original operation declarations and registration token.",
+			); err != nil {
+				return err
+			}
+		case "source":
 			if err := validateRegistrySelectionJSONValue92(
 				generatedJSONChildPath(path, key, false),
-				typed[key], "Permanent resource name supplied and authorized by the host within that scope.",
-			); err != nil {
-				return err
-			}
-		case "scope":
-			if err := validateRegistrySelectionJSONValue93(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Owning scope supplied and authorized by the host.",
-			); err != nil {
-				return err
-			}
-		case "target":
-			if err := validateRegistrySelectionJSONValue94(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "",
+				typed[key], "Owner-selected resource and exact registration target.",
 			); err != nil {
 				return err
 			}
 		default:
 			return unknownJSONFieldError(path, key, []string{
-				"name",
-				"scope",
-				"target",
+				"resolved",
+				"source",
 			})
 		}
 	}
@@ -66910,11 +67166,47 @@ func validateRegistrySelectionJSONValue92(path string, value any, description st
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	_, ok := value.(string)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "name":
+			if err := validateRegistrySelectionJSONValue93(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Permanent resource name supplied and authorized by the host within that scope.",
+			); err != nil {
+				return err
+			}
+		case "scope":
+			if err := validateRegistrySelectionJSONValue94(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Owning scope supplied and authorized by the host.",
+			); err != nil {
+				return err
+			}
+		case "target":
+			if err := validateRegistrySelectionJSONValue95(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"name",
+				"scope",
+				"target",
+			})
+		}
 	}
 	return nil
 }
@@ -66942,6 +67234,22 @@ func validateRegistrySelectionJSONValue94(path string, value any, description st
 		field = "$payload"
 	}
 	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateRegistrySelectionJSONValue95 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegistrySelectionJSONValue95(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
 	typed, ok := value.(map[string]any)
@@ -66963,16 +67271,16 @@ func validateRegistrySelectionJSONValue94(path string, value any, description st
 	}
 	switch discriminator {
 	case "native":
-		return validateRegistrySelectionJSONValue95(generatedJSONChildPath(path, "value", false), branch, "One immutable native revision.")
+		return validateRegistrySelectionJSONValue96(generatedJSONChildPath(path, "value", false), branch, "One immutable native revision.")
 	case "service":
-		return validateRegistrySelectionJSONValue97(generatedJSONChildPath(path, "value", false), branch, "One exact service registration.")
+		return validateRegistrySelectionJSONValue98(generatedJSONChildPath(path, "value", false), branch, "One exact service registration.")
 	default:
 		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
 	}
 }
 
-// validateRegistrySelectionJSONValue95 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegistrySelectionJSONValue95(path string, value any, description string) error {
+// validateRegistrySelectionJSONValue96 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegistrySelectionJSONValue96(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -66992,7 +67300,7 @@ func validateRegistrySelectionJSONValue95(path string, value any, description st
 	for _, key := range keys {
 		switch key {
 		case "toolset":
-			if err := validateRegistrySelectionJSONValue96(
+			if err := validateRegistrySelectionJSONValue97(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Immutable native revision route.",
 			); err != nil {
@@ -67007,8 +67315,8 @@ func validateRegistrySelectionJSONValue95(path string, value any, description st
 	return nil
 }
 
-// validateRegistrySelectionJSONValue96 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegistrySelectionJSONValue96(path string, value any, description string) error {
+// validateRegistrySelectionJSONValue97 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegistrySelectionJSONValue97(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -67023,8 +67331,8 @@ func validateRegistrySelectionJSONValue96(path string, value any, description st
 	return nil
 }
 
-// validateRegistrySelectionJSONValue97 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegistrySelectionJSONValue97(path string, value any, description string) error {
+// validateRegistrySelectionJSONValue98 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegistrySelectionJSONValue98(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -67044,14 +67352,14 @@ func validateRegistrySelectionJSONValue97(path string, value any, description st
 	for _, key := range keys {
 		switch key {
 		case "registration_token":
-			if err := validateRegistrySelectionJSONValue98(
+			if err := validateRegistrySelectionJSONValue99(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Exact retained service registration.",
 			); err != nil {
 				return err
 			}
 		case "toolset":
-			if err := validateRegistrySelectionJSONValue99(
+			if err := validateRegistrySelectionJSONValue100(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Service registration route.",
 			); err != nil {
@@ -67067,8 +67375,8 @@ func validateRegistrySelectionJSONValue97(path string, value any, description st
 	return nil
 }
 
-// validateRegistrySelectionJSONValue98 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegistrySelectionJSONValue98(path string, value any, description string) error {
+// validateRegistrySelectionJSONValue99 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegistrySelectionJSONValue99(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -67083,8 +67391,8 @@ func validateRegistrySelectionJSONValue98(path string, value any, description st
 	return nil
 }
 
-// validateRegistrySelectionJSONValue99 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRegistrySelectionJSONValue99(path string, value any, description string) error {
+// validateRegistrySelectionJSONValue100 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRegistrySelectionJSONValue100(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -67515,7 +67823,7 @@ func validateResolvedToolsetJSONValue13(path string, value any, description stri
 				return err
 			}
 		case "version":
-			if err := validateResolvedToolsetJSONValue86(
+			if err := validateResolvedToolsetJSONValue87(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Semantic version of the toolset.",
 			); err != nil {
@@ -67640,7 +67948,7 @@ func validateResolvedToolsetJSONValue79(path string, value any, description stri
 		if item == nil {
 			continue
 		}
-		if err := validateResolvedToolsetJSONValue87(
+		if err := validateResolvedToolsetJSONValue88(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -67650,8 +67958,8 @@ func validateResolvedToolsetJSONValue79(path string, value any, description stri
 	return nil
 }
 
-// validateResolvedToolsetJSONValue87 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResolvedToolsetJSONValue87(path string, value any, description string) error {
+// validateResolvedToolsetJSONValue88 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue88(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -67678,49 +67986,49 @@ func validateResolvedToolsetJSONValue87(path string, value any, description stri
 				return err
 			}
 		case "description":
-			if err := validateResolvedToolsetJSONValue77(
+			if err := validateResolvedToolsetJSONValue78(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Human-readable description of what the tool does.",
 			); err != nil {
 				return err
 			}
 		case "execution_payload_schema":
-			if err := validateResolvedToolsetJSONValue78(
+			if err := validateResolvedToolsetJSONValue80(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the payload sent to the provider. It includes fields supplied by continuation handling and excludes fields injected inside the provider.",
 			); err != nil {
 				return err
 			}
 		case "name":
-			if err := validateResolvedToolsetJSONValue80(
+			if err := validateResolvedToolsetJSONValue81(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Globally unique tool identifier of the form \"toolset.tool\".",
 			); err != nil {
 				return err
 			}
 		case "payload_schema":
-			if err := validateResolvedToolsetJSONValue81(
+			if err := validateResolvedToolsetJSONValue82(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for arguments accepted from the model.",
 			); err != nil {
 				return err
 			}
 		case "result_schema":
-			if err := validateResolvedToolsetJSONValue82(
+			if err := validateResolvedToolsetJSONValue83(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the tool result.",
 			); err != nil {
 				return err
 			}
 		case "sidecar_schema":
-			if err := validateResolvedToolsetJSONValue83(
+			if err := validateResolvedToolsetJSONValue84(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the tool sidecar (UI-only), when present.",
 			); err != nil {
 				return err
 			}
 		case "tags":
-			if err := validateResolvedToolsetJSONValue84(
+			if err := validateResolvedToolsetJSONValue85(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Optional tags used for policy, routing, or UI filtering.",
 			); err != nil {
@@ -67804,15 +68112,22 @@ func validateResolvedToolsetJSONValue3(path string, value any, description strin
 			); err != nil {
 				return err
 			}
-		case "required_labels":
+		case "ReplanOnTimeout":
 			if err := validateResolvedToolsetJSONValue54(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Whether the provider permits alternative work after this exported Agent operation times out. The failed operation remains failed and is not retried.",
+			); err != nil {
+				return err
+			}
+		case "required_labels":
+			if err := validateResolvedToolsetJSONValue55(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Run labels required by provider-side injection for this tool.",
 			); err != nil {
 				return err
 			}
 		case "requires_ui":
-			if err := validateResolvedToolsetJSONValue56(
+			if err := validateResolvedToolsetJSONValue58(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Whether executing this tool requires rendering or an interactive client protocol.",
 			); err != nil {
@@ -67826,35 +68141,35 @@ func validateResolvedToolsetJSONValue3(path string, value any, description strin
 				return err
 			}
 		case "result_reminder":
-			if err := validateResolvedToolsetJSONValue58(
+			if err := validateResolvedToolsetJSONValue59(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Model guidance emitted after this tool's result.",
 			); err != nil {
 				return err
 			}
 		case "search":
-			if err := validateResolvedToolsetJSONValue59(
+			if err := validateResolvedToolsetJSONValue60(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Word counts generated from the tool's name, title, and description.",
 			); err != nil {
 				return err
 			}
 		case "server_data":
-			if err := validateResolvedToolsetJSONValue63(
+			if err := validateResolvedToolsetJSONValue64(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Closed set of server-only result payloads emitted by this tool.",
 			); err != nil {
 				return err
 			}
 		case "text_only":
-			if err := validateResolvedToolsetJSONValue71(
+			if err := validateResolvedToolsetJSONValue72(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated model contract for execution using ordinary messages only.",
 			); err != nil {
 				return err
 			}
 		case "title":
-			if err := validateResolvedToolsetJSONValue76(
+			if err := validateResolvedToolsetJSONValue77(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Human-readable title declared for the tool.",
 			); err != nil {
@@ -67868,6 +68183,7 @@ func validateResolvedToolsetJSONValue3(path string, value any, description strin
 				"kind",
 				"meta",
 				"payload",
+				"ReplanOnTimeout",
 				"required_labels",
 				"requires_ui",
 				"result",
@@ -69123,6 +69439,22 @@ func validateResolvedToolsetJSONValue54(path string, value any, description stri
 		field = "$payload"
 	}
 	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
+	}
+	_, ok := value.(bool)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateResolvedToolsetJSONValue55 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue55(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "array", "null", description)
 	}
 	typed, ok := value.([]any)
@@ -69130,7 +69462,7 @@ func validateResolvedToolsetJSONValue54(path string, value any, description stri
 		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
 	}
 	for index, item := range typed {
-		if err := validateResolvedToolsetJSONValue55(
+		if err := validateResolvedToolsetJSONValue56(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -69140,8 +69472,8 @@ func validateResolvedToolsetJSONValue54(path string, value any, description stri
 	return nil
 }
 
-// validateResolvedToolsetJSONValue55 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResolvedToolsetJSONValue55(path string, value any, description string) error {
+// validateResolvedToolsetJSONValue56 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue56(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -69156,8 +69488,8 @@ func validateResolvedToolsetJSONValue55(path string, value any, description stri
 	return nil
 }
 
-// validateResolvedToolsetJSONValue56 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResolvedToolsetJSONValue56(path string, value any, description string) error {
+// validateResolvedToolsetJSONValue58 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue58(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -69172,8 +69504,8 @@ func validateResolvedToolsetJSONValue56(path string, value any, description stri
 	return nil
 }
 
-// validateResolvedToolsetJSONValue58 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResolvedToolsetJSONValue58(path string, value any, description string) error {
+// validateResolvedToolsetJSONValue59 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue59(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -69188,8 +69520,8 @@ func validateResolvedToolsetJSONValue58(path string, value any, description stri
 	return nil
 }
 
-// validateResolvedToolsetJSONValue59 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResolvedToolsetJSONValue59(path string, value any, description string) error {
+// validateResolvedToolsetJSONValue60 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue60(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -69209,14 +69541,14 @@ func validateResolvedToolsetJSONValue59(path string, value any, description stri
 	for _, key := range keys {
 		switch key {
 		case "length":
-			if err := validateResolvedToolsetJSONValue60(
+			if err := validateResolvedToolsetJSONValue61(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Total number of words in this document, including repeats.",
 			); err != nil {
 				return err
 			}
 		case "terms":
-			if err := validateResolvedToolsetJSONValue61(
+			if err := validateResolvedToolsetJSONValue62(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Lowercase words and their positive occurrence counts.",
 			); err != nil {
@@ -69232,8 +69564,8 @@ func validateResolvedToolsetJSONValue59(path string, value any, description stri
 	return nil
 }
 
-// validateResolvedToolsetJSONValue60 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResolvedToolsetJSONValue60(path string, value any, description string) error {
+// validateResolvedToolsetJSONValue61 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue61(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -69248,8 +69580,8 @@ func validateResolvedToolsetJSONValue60(path string, value any, description stri
 	return nil
 }
 
-// validateResolvedToolsetJSONValue61 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResolvedToolsetJSONValue61(path string, value any, description string) error {
+// validateResolvedToolsetJSONValue62 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue62(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -69267,7 +69599,7 @@ func validateResolvedToolsetJSONValue61(path string, value any, description stri
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		if err := validateResolvedToolsetJSONValue62(
+		if err := validateResolvedToolsetJSONValue63(
 			generatedJSONChildPath(path, key, true),
 			typed[key], description,
 		); err != nil {
@@ -69277,8 +69609,8 @@ func validateResolvedToolsetJSONValue61(path string, value any, description stri
 	return nil
 }
 
-// validateResolvedToolsetJSONValue62 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResolvedToolsetJSONValue62(path string, value any, description string) error {
+// validateResolvedToolsetJSONValue63 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue63(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -69293,8 +69625,8 @@ func validateResolvedToolsetJSONValue62(path string, value any, description stri
 	return nil
 }
 
-// validateResolvedToolsetJSONValue63 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResolvedToolsetJSONValue63(path string, value any, description string) error {
+// validateResolvedToolsetJSONValue64 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue64(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -69310,7 +69642,7 @@ func validateResolvedToolsetJSONValue63(path string, value any, description stri
 		if item == nil {
 			continue
 		}
-		if err := validateResolvedToolsetJSONValue64(
+		if err := validateResolvedToolsetJSONValue65(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -69320,8 +69652,8 @@ func validateResolvedToolsetJSONValue63(path string, value any, description stri
 	return nil
 }
 
-// validateResolvedToolsetJSONValue64 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResolvedToolsetJSONValue64(path string, value any, description string) error {
+// validateResolvedToolsetJSONValue65 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue65(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -69341,35 +69673,35 @@ func validateResolvedToolsetJSONValue64(path string, value any, description stri
 	for _, key := range keys {
 		switch key {
 		case "audience":
-			if err := validateResolvedToolsetJSONValue65(
+			if err := validateResolvedToolsetJSONValue66(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Consumers allowed to receive this payload.",
 			); err != nil {
 				return err
 			}
 		case "description":
-			if err := validateResolvedToolsetJSONValue66(
+			if err := validateResolvedToolsetJSONValue67(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Description of the data carried by this kind.",
 			); err != nil {
 				return err
 			}
 		case "kind":
-			if err := validateResolvedToolsetJSONValue67(
+			if err := validateResolvedToolsetJSONValue69(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Unique kind emitted by this tool.",
 			); err != nil {
 				return err
 			}
 		case "NativeImage":
-			if err := validateResolvedToolsetJSONValue69(
+			if err := validateResolvedToolsetJSONValue70(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Whether this evidence kind declares a typed image source requiring an explicitly admitted host reader.",
 			); err != nil {
 				return err
 			}
 		case "schema":
-			if err := validateResolvedToolsetJSONValue70(
+			if err := validateResolvedToolsetJSONValue71(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the item data.",
 			); err != nil {
@@ -69392,22 +69724,6 @@ func validateResolvedToolsetJSONValue64(path string, value any, description stri
 				"type",
 			})
 		}
-	}
-	return nil
-}
-
-// validateResolvedToolsetJSONValue65 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResolvedToolsetJSONValue65(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -69451,6 +69767,22 @@ func validateResolvedToolsetJSONValue69(path string, value any, description stri
 		field = "$payload"
 	}
 	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateResolvedToolsetJSONValue70 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue70(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
 	}
 	_, ok := value.(bool)
@@ -69460,8 +69792,8 @@ func validateResolvedToolsetJSONValue69(path string, value any, description stri
 	return nil
 }
 
-// validateResolvedToolsetJSONValue70 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResolvedToolsetJSONValue70(path string, value any, description string) error {
+// validateResolvedToolsetJSONValue71 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue71(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -69476,8 +69808,8 @@ func validateResolvedToolsetJSONValue70(path string, value any, description stri
 	return nil
 }
 
-// validateResolvedToolsetJSONValue71 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResolvedToolsetJSONValue71(path string, value any, description string) error {
+// validateResolvedToolsetJSONValue72 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue72(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -69497,14 +69829,14 @@ func validateResolvedToolsetJSONValue71(path string, value any, description stri
 	for _, key := range keys {
 		switch key {
 		case "description":
-			if err := validateResolvedToolsetJSONValue72(
+			if err := validateResolvedToolsetJSONValue73(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Domain instructions without optional UI guidance.",
 			); err != nil {
 				return err
 			}
 		case "execution_schema":
-			if err := validateResolvedToolsetJSONValue73(
+			if err := validateResolvedToolsetJSONValue74(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Complete input schema requiring disabled rendering controls.",
 			); err != nil {
@@ -69518,21 +69850,21 @@ func validateResolvedToolsetJSONValue71(path string, value any, description stri
 				return err
 			}
 		case "payload_schema":
-			if err := validateResolvedToolsetJSONValue74(
+			if err := validateResolvedToolsetJSONValue75(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Exact model argument schema without UI-only controls.",
 			); err != nil {
 				return err
 			}
 		case "result_reminder":
-			if err := validateResolvedToolsetJSONValue75(
+			if err := validateResolvedToolsetJSONValue76(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Domain result guidance without claiming UI output.",
 			); err != nil {
 				return err
 			}
 		case "search":
-			if err := validateResolvedToolsetJSONValue59(
+			if err := validateResolvedToolsetJSONValue60(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated word counts for these domain instructions.",
 			); err != nil {
@@ -69548,22 +69880,6 @@ func validateResolvedToolsetJSONValue71(path string, value any, description stri
 				"search",
 			})
 		}
-	}
-	return nil
-}
-
-// validateResolvedToolsetJSONValue72 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResolvedToolsetJSONValue72(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -69735,6 +70051,22 @@ func validateResolvedToolsetJSONValue84(path string, value any, description stri
 		field = "$payload"
 	}
 	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateResolvedToolsetJSONValue85 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue85(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "array", "null", description)
 	}
 	typed, ok := value.([]any)
@@ -69742,7 +70074,7 @@ func validateResolvedToolsetJSONValue84(path string, value any, description stri
 		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
 	}
 	for index, item := range typed {
-		if err := validateResolvedToolsetJSONValue85(
+		if err := validateResolvedToolsetJSONValue86(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -69752,8 +70084,8 @@ func validateResolvedToolsetJSONValue84(path string, value any, description stri
 	return nil
 }
 
-// validateResolvedToolsetJSONValue85 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResolvedToolsetJSONValue85(path string, value any, description string) error {
+// validateResolvedToolsetJSONValue86 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue86(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -69768,8 +70100,8 @@ func validateResolvedToolsetJSONValue85(path string, value any, description stri
 	return nil
 }
 
-// validateResolvedToolsetJSONValue86 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResolvedToolsetJSONValue86(path string, value any, description string) error {
+// validateResolvedToolsetJSONValue87 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResolvedToolsetJSONValue87(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -71204,7 +71536,7 @@ func validateServiceToolsetDeclarationJSONValue(path string, value any, descript
 				return err
 			}
 		case "version":
-			if err := validateServiceToolsetDeclarationJSONValue83(
+			if err := validateServiceToolsetDeclarationJSONValue84(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Semantic version of the toolset.",
 			); err != nil {
@@ -71350,49 +71682,49 @@ func validateServiceToolsetDeclarationJSONValue57(path string, value any, descri
 				return err
 			}
 		case "description":
-			if err := validateServiceToolsetDeclarationJSONValue74(
+			if err := validateServiceToolsetDeclarationJSONValue75(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Human-readable description of what the tool does.",
 			); err != nil {
 				return err
 			}
 		case "execution_payload_schema":
-			if err := validateServiceToolsetDeclarationJSONValue75(
+			if err := validateServiceToolsetDeclarationJSONValue76(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the payload sent to the provider. It includes fields supplied by continuation handling and excludes fields injected inside the provider.",
 			); err != nil {
 				return err
 			}
 		case "name":
-			if err := validateServiceToolsetDeclarationJSONValue76(
+			if err := validateServiceToolsetDeclarationJSONValue77(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Globally unique tool identifier of the form \"toolset.tool\".",
 			); err != nil {
 				return err
 			}
 		case "payload_schema":
-			if err := validateServiceToolsetDeclarationJSONValue77(
+			if err := validateServiceToolsetDeclarationJSONValue78(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for arguments accepted from the model.",
 			); err != nil {
 				return err
 			}
 		case "result_schema":
-			if err := validateServiceToolsetDeclarationJSONValue78(
+			if err := validateServiceToolsetDeclarationJSONValue80(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the tool result.",
 			); err != nil {
 				return err
 			}
 		case "sidecar_schema":
-			if err := validateServiceToolsetDeclarationJSONValue80(
+			if err := validateServiceToolsetDeclarationJSONValue81(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the tool sidecar (UI-only), when present.",
 			); err != nil {
 				return err
 			}
 		case "tags":
-			if err := validateServiceToolsetDeclarationJSONValue81(
+			if err := validateServiceToolsetDeclarationJSONValue82(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Optional tags used for policy, routing, or UI filtering.",
 			); err != nil {
@@ -71476,15 +71808,22 @@ func validateServiceToolsetDeclarationJSONValue68(path string, value any, descri
 			); err != nil {
 				return err
 			}
-		case "required_labels":
+		case "ReplanOnTimeout":
 			if err := validateServiceToolsetDeclarationJSONValue51(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Whether the provider permits alternative work after this exported Agent operation times out. The failed operation remains failed and is not retried.",
+			); err != nil {
+				return err
+			}
+		case "required_labels":
+			if err := validateServiceToolsetDeclarationJSONValue52(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Run labels required by provider-side injection for this tool.",
 			); err != nil {
 				return err
 			}
 		case "requires_ui":
-			if err := validateServiceToolsetDeclarationJSONValue53(
+			if err := validateServiceToolsetDeclarationJSONValue54(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Whether executing this tool requires rendering or an interactive client protocol.",
 			); err != nil {
@@ -71498,35 +71837,35 @@ func validateServiceToolsetDeclarationJSONValue68(path string, value any, descri
 				return err
 			}
 		case "result_reminder":
-			if err := validateServiceToolsetDeclarationJSONValue54(
+			if err := validateServiceToolsetDeclarationJSONValue55(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Model guidance emitted after this tool's result.",
 			); err != nil {
 				return err
 			}
 		case "search":
-			if err := validateServiceToolsetDeclarationJSONValue55(
+			if err := validateServiceToolsetDeclarationJSONValue56(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Word counts generated from the tool's name, title, and description.",
 			); err != nil {
 				return err
 			}
 		case "server_data":
-			if err := validateServiceToolsetDeclarationJSONValue60(
+			if err := validateServiceToolsetDeclarationJSONValue61(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Closed set of server-only result payloads emitted by this tool.",
 			); err != nil {
 				return err
 			}
 		case "text_only":
-			if err := validateServiceToolsetDeclarationJSONValue67(
+			if err := validateServiceToolsetDeclarationJSONValue69(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated model contract for execution using ordinary messages only.",
 			); err != nil {
 				return err
 			}
 		case "title":
-			if err := validateServiceToolsetDeclarationJSONValue73(
+			if err := validateServiceToolsetDeclarationJSONValue74(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Human-readable title declared for the tool.",
 			); err != nil {
@@ -71540,6 +71879,7 @@ func validateServiceToolsetDeclarationJSONValue68(path string, value any, descri
 				"kind",
 				"meta",
 				"payload",
+				"ReplanOnTimeout",
 				"required_labels",
 				"requires_ui",
 				"result",
@@ -71575,7 +71915,7 @@ func validateServiceToolsetDeclarationJSONValue79(path string, value any, descri
 	for _, key := range keys {
 		switch key {
 		case "configuration":
-			if err := validateServiceToolsetDeclarationJSONValue84(
+			if err := validateServiceToolsetDeclarationJSONValue85(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Immutable application configuration reference retained with each accepted tool call.",
 			); err != nil {
@@ -71614,8 +71954,8 @@ func validateServiceToolsetDeclarationJSONValue79(path string, value any, descri
 	return nil
 }
 
-// validateServiceToolsetDeclarationJSONValue84 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolsetDeclarationJSONValue84(path string, value any, description string) error {
+// validateServiceToolsetDeclarationJSONValue85 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue85(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -72795,6 +73135,22 @@ func validateServiceToolsetDeclarationJSONValue51(path string, value any, descri
 		field = "$payload"
 	}
 	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
+	}
+	_, ok := value.(bool)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateServiceToolsetDeclarationJSONValue52 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue52(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "array", "null", description)
 	}
 	typed, ok := value.([]any)
@@ -72802,7 +73158,7 @@ func validateServiceToolsetDeclarationJSONValue51(path string, value any, descri
 		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
 	}
 	for index, item := range typed {
-		if err := validateServiceToolsetDeclarationJSONValue52(
+		if err := validateServiceToolsetDeclarationJSONValue53(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -72812,8 +73168,8 @@ func validateServiceToolsetDeclarationJSONValue51(path string, value any, descri
 	return nil
 }
 
-// validateServiceToolsetDeclarationJSONValue52 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolsetDeclarationJSONValue52(path string, value any, description string) error {
+// validateServiceToolsetDeclarationJSONValue53 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue53(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -72828,8 +73184,8 @@ func validateServiceToolsetDeclarationJSONValue52(path string, value any, descri
 	return nil
 }
 
-// validateServiceToolsetDeclarationJSONValue53 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolsetDeclarationJSONValue53(path string, value any, description string) error {
+// validateServiceToolsetDeclarationJSONValue54 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue54(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -72844,8 +73200,8 @@ func validateServiceToolsetDeclarationJSONValue53(path string, value any, descri
 	return nil
 }
 
-// validateServiceToolsetDeclarationJSONValue54 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolsetDeclarationJSONValue54(path string, value any, description string) error {
+// validateServiceToolsetDeclarationJSONValue55 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue55(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -72860,8 +73216,8 @@ func validateServiceToolsetDeclarationJSONValue54(path string, value any, descri
 	return nil
 }
 
-// validateServiceToolsetDeclarationJSONValue55 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolsetDeclarationJSONValue55(path string, value any, description string) error {
+// validateServiceToolsetDeclarationJSONValue56 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue56(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -72881,14 +73237,14 @@ func validateServiceToolsetDeclarationJSONValue55(path string, value any, descri
 	for _, key := range keys {
 		switch key {
 		case "length":
-			if err := validateServiceToolsetDeclarationJSONValue56(
+			if err := validateServiceToolsetDeclarationJSONValue58(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Total number of words in this document, including repeats.",
 			); err != nil {
 				return err
 			}
 		case "terms":
-			if err := validateServiceToolsetDeclarationJSONValue58(
+			if err := validateServiceToolsetDeclarationJSONValue59(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Lowercase words and their positive occurrence counts.",
 			); err != nil {
@@ -72904,8 +73260,8 @@ func validateServiceToolsetDeclarationJSONValue55(path string, value any, descri
 	return nil
 }
 
-// validateServiceToolsetDeclarationJSONValue56 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolsetDeclarationJSONValue56(path string, value any, description string) error {
+// validateServiceToolsetDeclarationJSONValue58 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue58(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -72920,8 +73276,8 @@ func validateServiceToolsetDeclarationJSONValue56(path string, value any, descri
 	return nil
 }
 
-// validateServiceToolsetDeclarationJSONValue58 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolsetDeclarationJSONValue58(path string, value any, description string) error {
+// validateServiceToolsetDeclarationJSONValue59 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue59(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -72939,7 +73295,7 @@ func validateServiceToolsetDeclarationJSONValue58(path string, value any, descri
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		if err := validateServiceToolsetDeclarationJSONValue59(
+		if err := validateServiceToolsetDeclarationJSONValue60(
 			generatedJSONChildPath(path, key, true),
 			typed[key], description,
 		); err != nil {
@@ -72949,8 +73305,8 @@ func validateServiceToolsetDeclarationJSONValue58(path string, value any, descri
 	return nil
 }
 
-// validateServiceToolsetDeclarationJSONValue59 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolsetDeclarationJSONValue59(path string, value any, description string) error {
+// validateServiceToolsetDeclarationJSONValue60 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue60(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -72965,8 +73321,8 @@ func validateServiceToolsetDeclarationJSONValue59(path string, value any, descri
 	return nil
 }
 
-// validateServiceToolsetDeclarationJSONValue60 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolsetDeclarationJSONValue60(path string, value any, description string) error {
+// validateServiceToolsetDeclarationJSONValue61 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue61(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -72982,7 +73338,7 @@ func validateServiceToolsetDeclarationJSONValue60(path string, value any, descri
 		if item == nil {
 			continue
 		}
-		if err := validateServiceToolsetDeclarationJSONValue61(
+		if err := validateServiceToolsetDeclarationJSONValue62(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -72992,8 +73348,8 @@ func validateServiceToolsetDeclarationJSONValue60(path string, value any, descri
 	return nil
 }
 
-// validateServiceToolsetDeclarationJSONValue61 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolsetDeclarationJSONValue61(path string, value any, description string) error {
+// validateServiceToolsetDeclarationJSONValue62 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue62(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -73013,35 +73369,35 @@ func validateServiceToolsetDeclarationJSONValue61(path string, value any, descri
 	for _, key := range keys {
 		switch key {
 		case "audience":
-			if err := validateServiceToolsetDeclarationJSONValue62(
+			if err := validateServiceToolsetDeclarationJSONValue63(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Consumers allowed to receive this payload.",
 			); err != nil {
 				return err
 			}
 		case "description":
-			if err := validateServiceToolsetDeclarationJSONValue63(
+			if err := validateServiceToolsetDeclarationJSONValue64(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Description of the data carried by this kind.",
 			); err != nil {
 				return err
 			}
 		case "kind":
-			if err := validateServiceToolsetDeclarationJSONValue64(
+			if err := validateServiceToolsetDeclarationJSONValue65(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Unique kind emitted by this tool.",
 			); err != nil {
 				return err
 			}
 		case "NativeImage":
-			if err := validateServiceToolsetDeclarationJSONValue65(
+			if err := validateServiceToolsetDeclarationJSONValue66(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Whether this evidence kind declares a typed image source requiring an explicitly admitted host reader.",
 			); err != nil {
 				return err
 			}
 		case "schema":
-			if err := validateServiceToolsetDeclarationJSONValue66(
+			if err := validateServiceToolsetDeclarationJSONValue67(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the item data.",
 			); err != nil {
@@ -73064,22 +73420,6 @@ func validateServiceToolsetDeclarationJSONValue61(path string, value any, descri
 				"type",
 			})
 		}
-	}
-	return nil
-}
-
-// validateServiceToolsetDeclarationJSONValue62 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolsetDeclarationJSONValue62(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -73123,6 +73463,22 @@ func validateServiceToolsetDeclarationJSONValue65(path string, value any, descri
 		field = "$payload"
 	}
 	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateServiceToolsetDeclarationJSONValue66 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue66(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
 	}
 	_, ok := value.(bool)
@@ -73132,8 +73488,8 @@ func validateServiceToolsetDeclarationJSONValue65(path string, value any, descri
 	return nil
 }
 
-// validateServiceToolsetDeclarationJSONValue66 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolsetDeclarationJSONValue66(path string, value any, description string) error {
+// validateServiceToolsetDeclarationJSONValue67 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue67(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -73148,8 +73504,8 @@ func validateServiceToolsetDeclarationJSONValue66(path string, value any, descri
 	return nil
 }
 
-// validateServiceToolsetDeclarationJSONValue67 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolsetDeclarationJSONValue67(path string, value any, description string) error {
+// validateServiceToolsetDeclarationJSONValue69 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue69(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -73169,14 +73525,14 @@ func validateServiceToolsetDeclarationJSONValue67(path string, value any, descri
 	for _, key := range keys {
 		switch key {
 		case "description":
-			if err := validateServiceToolsetDeclarationJSONValue69(
+			if err := validateServiceToolsetDeclarationJSONValue70(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Domain instructions without optional UI guidance.",
 			); err != nil {
 				return err
 			}
 		case "execution_schema":
-			if err := validateServiceToolsetDeclarationJSONValue70(
+			if err := validateServiceToolsetDeclarationJSONValue71(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Complete input schema requiring disabled rendering controls.",
 			); err != nil {
@@ -73190,21 +73546,21 @@ func validateServiceToolsetDeclarationJSONValue67(path string, value any, descri
 				return err
 			}
 		case "payload_schema":
-			if err := validateServiceToolsetDeclarationJSONValue71(
+			if err := validateServiceToolsetDeclarationJSONValue72(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Exact model argument schema without UI-only controls.",
 			); err != nil {
 				return err
 			}
 		case "result_reminder":
-			if err := validateServiceToolsetDeclarationJSONValue72(
+			if err := validateServiceToolsetDeclarationJSONValue73(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Domain result guidance without claiming UI output.",
 			); err != nil {
 				return err
 			}
 		case "search":
-			if err := validateServiceToolsetDeclarationJSONValue55(
+			if err := validateServiceToolsetDeclarationJSONValue56(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated word counts for these domain instructions.",
 			); err != nil {
@@ -73220,22 +73576,6 @@ func validateServiceToolsetDeclarationJSONValue67(path string, value any, descri
 				"search",
 			})
 		}
-	}
-	return nil
-}
-
-// validateServiceToolsetDeclarationJSONValue69 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolsetDeclarationJSONValue69(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -73407,6 +73747,22 @@ func validateServiceToolsetDeclarationJSONValue81(path string, value any, descri
 		field = "$payload"
 	}
 	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateServiceToolsetDeclarationJSONValue82 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue82(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "array", "null", description)
 	}
 	typed, ok := value.([]any)
@@ -73414,7 +73770,7 @@ func validateServiceToolsetDeclarationJSONValue81(path string, value any, descri
 		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
 	}
 	for index, item := range typed {
-		if err := validateServiceToolsetDeclarationJSONValue82(
+		if err := validateServiceToolsetDeclarationJSONValue83(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -73424,8 +73780,8 @@ func validateServiceToolsetDeclarationJSONValue81(path string, value any, descri
 	return nil
 }
 
-// validateServiceToolsetDeclarationJSONValue82 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolsetDeclarationJSONValue82(path string, value any, description string) error {
+// validateServiceToolsetDeclarationJSONValue83 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue83(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -73440,8 +73796,8 @@ func validateServiceToolsetDeclarationJSONValue82(path string, value any, descri
 	return nil
 }
 
-// validateServiceToolsetDeclarationJSONValue83 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolsetDeclarationJSONValue83(path string, value any, description string) error {
+// validateServiceToolsetDeclarationJSONValue84 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateServiceToolsetDeclarationJSONValue84(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -76301,49 +76657,49 @@ func validateToolSchemaJSONValue(path string, value any, description string) err
 				return err
 			}
 		case "description":
-			if err := validateToolSchemaJSONValue67(
+			if err := validateToolSchemaJSONValue69(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Human-readable description of what the tool does.",
 			); err != nil {
 				return err
 			}
 		case "execution_payload_schema":
-			if err := validateToolSchemaJSONValue69(
+			if err := validateToolSchemaJSONValue70(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the payload sent to the provider. It includes fields supplied by continuation handling and excludes fields injected inside the provider.",
 			); err != nil {
 				return err
 			}
 		case "name":
-			if err := validateToolSchemaJSONValue70(
+			if err := validateToolSchemaJSONValue71(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Globally unique tool identifier of the form \"toolset.tool\".",
 			); err != nil {
 				return err
 			}
 		case "payload_schema":
-			if err := validateToolSchemaJSONValue71(
+			if err := validateToolSchemaJSONValue72(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for arguments accepted from the model.",
 			); err != nil {
 				return err
 			}
 		case "result_schema":
-			if err := validateToolSchemaJSONValue72(
+			if err := validateToolSchemaJSONValue73(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the tool result.",
 			); err != nil {
 				return err
 			}
 		case "sidecar_schema":
-			if err := validateToolSchemaJSONValue73(
+			if err := validateToolSchemaJSONValue74(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the tool sidecar (UI-only), when present.",
 			); err != nil {
 				return err
 			}
 		case "tags":
-			if err := validateToolSchemaJSONValue74(
+			if err := validateToolSchemaJSONValue75(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Optional tags used for policy, routing, or UI filtering.",
 			); err != nil {
@@ -76427,15 +76783,22 @@ func validateToolSchemaJSONValue2(path string, value any, description string) er
 			); err != nil {
 				return err
 			}
-		case "required_labels":
+		case "ReplanOnTimeout":
 			if err := validateToolSchemaJSONValue44(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Whether the provider permits alternative work after this exported Agent operation times out. The failed operation remains failed and is not retried.",
+			); err != nil {
+				return err
+			}
+		case "required_labels":
+			if err := validateToolSchemaJSONValue45(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Run labels required by provider-side injection for this tool.",
 			); err != nil {
 				return err
 			}
 		case "requires_ui":
-			if err := validateToolSchemaJSONValue47(
+			if err := validateToolSchemaJSONValue48(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Whether executing this tool requires rendering or an interactive client protocol.",
 			); err != nil {
@@ -76449,35 +76812,35 @@ func validateToolSchemaJSONValue2(path string, value any, description string) er
 				return err
 			}
 		case "result_reminder":
-			if err := validateToolSchemaJSONValue48(
+			if err := validateToolSchemaJSONValue49(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Model guidance emitted after this tool's result.",
 			); err != nil {
 				return err
 			}
 		case "search":
-			if err := validateToolSchemaJSONValue49(
+			if err := validateToolSchemaJSONValue50(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Word counts generated from the tool's name, title, and description.",
 			); err != nil {
 				return err
 			}
 		case "server_data":
-			if err := validateToolSchemaJSONValue53(
+			if err := validateToolSchemaJSONValue54(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Closed set of server-only result payloads emitted by this tool.",
 			); err != nil {
 				return err
 			}
 		case "text_only":
-			if err := validateToolSchemaJSONValue61(
+			if err := validateToolSchemaJSONValue62(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated model contract for execution using ordinary messages only.",
 			); err != nil {
 				return err
 			}
 		case "title":
-			if err := validateToolSchemaJSONValue66(
+			if err := validateToolSchemaJSONValue67(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Human-readable title declared for the tool.",
 			); err != nil {
@@ -76491,6 +76854,7 @@ func validateToolSchemaJSONValue2(path string, value any, description string) er
 				"kind",
 				"meta",
 				"payload",
+				"ReplanOnTimeout",
 				"required_labels",
 				"requires_ui",
 				"result",
@@ -76650,7 +77014,7 @@ func validateToolSchemaJSONValue68(path string, value any, description string) e
 	for _, key := range keys {
 		switch key {
 		case "paging":
-			if err := validateToolSchemaJSONValue76(
+			if err := validateToolSchemaJSONValue77(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Cursor-based continuation contract, when supported.",
 			); err != nil {
@@ -76665,8 +77029,8 @@ func validateToolSchemaJSONValue68(path string, value any, description string) e
 	return nil
 }
 
-// validateToolSchemaJSONValue76 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolSchemaJSONValue76(path string, value any, description string) error {
+// validateToolSchemaJSONValue77 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue77(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -76686,7 +77050,7 @@ func validateToolSchemaJSONValue76(path string, value any, description string) e
 	for _, key := range keys {
 		switch key {
 		case "continue_tool":
-			if err := validateToolSchemaJSONValue77(
+			if err := validateToolSchemaJSONValue78(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Qualified tool that advances this result; omitted when the tool advances itself.",
 			); err != nil {
@@ -76733,8 +77097,8 @@ func validateToolSchemaJSONValue76(path string, value any, description string) e
 	return nil
 }
 
-// validateToolSchemaJSONValue77 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolSchemaJSONValue77(path string, value any, description string) error {
+// validateToolSchemaJSONValue78 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue78(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -77746,6 +78110,22 @@ func validateToolSchemaJSONValue44(path string, value any, description string) e
 		field = "$payload"
 	}
 	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
+	}
+	_, ok := value.(bool)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolSchemaJSONValue45 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue45(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "array", "null", description)
 	}
 	typed, ok := value.([]any)
@@ -77753,7 +78133,7 @@ func validateToolSchemaJSONValue44(path string, value any, description string) e
 		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
 	}
 	for index, item := range typed {
-		if err := validateToolSchemaJSONValue45(
+		if err := validateToolSchemaJSONValue47(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -77763,8 +78143,8 @@ func validateToolSchemaJSONValue44(path string, value any, description string) e
 	return nil
 }
 
-// validateToolSchemaJSONValue45 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolSchemaJSONValue45(path string, value any, description string) error {
+// validateToolSchemaJSONValue47 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue47(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -77779,8 +78159,8 @@ func validateToolSchemaJSONValue45(path string, value any, description string) e
 	return nil
 }
 
-// validateToolSchemaJSONValue47 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolSchemaJSONValue47(path string, value any, description string) error {
+// validateToolSchemaJSONValue48 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue48(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -77795,8 +78175,8 @@ func validateToolSchemaJSONValue47(path string, value any, description string) e
 	return nil
 }
 
-// validateToolSchemaJSONValue48 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolSchemaJSONValue48(path string, value any, description string) error {
+// validateToolSchemaJSONValue49 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue49(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -77811,8 +78191,8 @@ func validateToolSchemaJSONValue48(path string, value any, description string) e
 	return nil
 }
 
-// validateToolSchemaJSONValue49 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolSchemaJSONValue49(path string, value any, description string) error {
+// validateToolSchemaJSONValue50 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue50(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -77832,14 +78212,14 @@ func validateToolSchemaJSONValue49(path string, value any, description string) e
 	for _, key := range keys {
 		switch key {
 		case "length":
-			if err := validateToolSchemaJSONValue50(
+			if err := validateToolSchemaJSONValue51(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Total number of words in this document, including repeats.",
 			); err != nil {
 				return err
 			}
 		case "terms":
-			if err := validateToolSchemaJSONValue51(
+			if err := validateToolSchemaJSONValue52(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Lowercase words and their positive occurrence counts.",
 			); err != nil {
@@ -77855,8 +78235,8 @@ func validateToolSchemaJSONValue49(path string, value any, description string) e
 	return nil
 }
 
-// validateToolSchemaJSONValue50 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolSchemaJSONValue50(path string, value any, description string) error {
+// validateToolSchemaJSONValue51 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue51(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -77871,8 +78251,8 @@ func validateToolSchemaJSONValue50(path string, value any, description string) e
 	return nil
 }
 
-// validateToolSchemaJSONValue51 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolSchemaJSONValue51(path string, value any, description string) error {
+// validateToolSchemaJSONValue52 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue52(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -77890,7 +78270,7 @@ func validateToolSchemaJSONValue51(path string, value any, description string) e
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		if err := validateToolSchemaJSONValue52(
+		if err := validateToolSchemaJSONValue53(
 			generatedJSONChildPath(path, key, true),
 			typed[key], description,
 		); err != nil {
@@ -77900,8 +78280,8 @@ func validateToolSchemaJSONValue51(path string, value any, description string) e
 	return nil
 }
 
-// validateToolSchemaJSONValue52 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolSchemaJSONValue52(path string, value any, description string) error {
+// validateToolSchemaJSONValue53 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue53(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -77916,8 +78296,8 @@ func validateToolSchemaJSONValue52(path string, value any, description string) e
 	return nil
 }
 
-// validateToolSchemaJSONValue53 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolSchemaJSONValue53(path string, value any, description string) error {
+// validateToolSchemaJSONValue54 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue54(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -77933,7 +78313,7 @@ func validateToolSchemaJSONValue53(path string, value any, description string) e
 		if item == nil {
 			continue
 		}
-		if err := validateToolSchemaJSONValue54(
+		if err := validateToolSchemaJSONValue55(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -77943,8 +78323,8 @@ func validateToolSchemaJSONValue53(path string, value any, description string) e
 	return nil
 }
 
-// validateToolSchemaJSONValue54 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolSchemaJSONValue54(path string, value any, description string) error {
+// validateToolSchemaJSONValue55 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue55(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -77964,35 +78344,35 @@ func validateToolSchemaJSONValue54(path string, value any, description string) e
 	for _, key := range keys {
 		switch key {
 		case "audience":
-			if err := validateToolSchemaJSONValue55(
+			if err := validateToolSchemaJSONValue56(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Consumers allowed to receive this payload.",
 			); err != nil {
 				return err
 			}
 		case "description":
-			if err := validateToolSchemaJSONValue56(
+			if err := validateToolSchemaJSONValue58(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Description of the data carried by this kind.",
 			); err != nil {
 				return err
 			}
 		case "kind":
-			if err := validateToolSchemaJSONValue58(
+			if err := validateToolSchemaJSONValue59(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Unique kind emitted by this tool.",
 			); err != nil {
 				return err
 			}
 		case "NativeImage":
-			if err := validateToolSchemaJSONValue59(
+			if err := validateToolSchemaJSONValue60(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Whether this evidence kind declares a typed image source requiring an explicitly admitted host reader.",
 			); err != nil {
 				return err
 			}
 		case "schema":
-			if err := validateToolSchemaJSONValue60(
+			if err := validateToolSchemaJSONValue61(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the item data.",
 			); err != nil {
@@ -78015,22 +78395,6 @@ func validateToolSchemaJSONValue54(path string, value any, description string) e
 				"type",
 			})
 		}
-	}
-	return nil
-}
-
-// validateToolSchemaJSONValue55 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolSchemaJSONValue55(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -78074,6 +78438,22 @@ func validateToolSchemaJSONValue59(path string, value any, description string) e
 		field = "$payload"
 	}
 	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolSchemaJSONValue60 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue60(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
 	}
 	_, ok := value.(bool)
@@ -78083,8 +78463,8 @@ func validateToolSchemaJSONValue59(path string, value any, description string) e
 	return nil
 }
 
-// validateToolSchemaJSONValue60 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolSchemaJSONValue60(path string, value any, description string) error {
+// validateToolSchemaJSONValue61 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue61(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -78099,8 +78479,8 @@ func validateToolSchemaJSONValue60(path string, value any, description string) e
 	return nil
 }
 
-// validateToolSchemaJSONValue61 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolSchemaJSONValue61(path string, value any, description string) error {
+// validateToolSchemaJSONValue62 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue62(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -78120,14 +78500,14 @@ func validateToolSchemaJSONValue61(path string, value any, description string) e
 	for _, key := range keys {
 		switch key {
 		case "description":
-			if err := validateToolSchemaJSONValue62(
+			if err := validateToolSchemaJSONValue63(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Domain instructions without optional UI guidance.",
 			); err != nil {
 				return err
 			}
 		case "execution_schema":
-			if err := validateToolSchemaJSONValue63(
+			if err := validateToolSchemaJSONValue64(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Complete input schema requiring disabled rendering controls.",
 			); err != nil {
@@ -78141,21 +78521,21 @@ func validateToolSchemaJSONValue61(path string, value any, description string) e
 				return err
 			}
 		case "payload_schema":
-			if err := validateToolSchemaJSONValue64(
+			if err := validateToolSchemaJSONValue65(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Exact model argument schema without UI-only controls.",
 			); err != nil {
 				return err
 			}
 		case "result_reminder":
-			if err := validateToolSchemaJSONValue65(
+			if err := validateToolSchemaJSONValue66(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Domain result guidance without claiming UI output.",
 			); err != nil {
 				return err
 			}
 		case "search":
-			if err := validateToolSchemaJSONValue49(
+			if err := validateToolSchemaJSONValue50(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated word counts for these domain instructions.",
 			); err != nil {
@@ -78171,22 +78551,6 @@ func validateToolSchemaJSONValue61(path string, value any, description string) e
 				"search",
 			})
 		}
-	}
-	return nil
-}
-
-// validateToolSchemaJSONValue62 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolSchemaJSONValue62(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -78358,6 +78722,22 @@ func validateToolSchemaJSONValue74(path string, value any, description string) e
 		field = "$payload"
 	}
 	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolSchemaJSONValue75 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue75(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "array", "null", description)
 	}
 	typed, ok := value.([]any)
@@ -78365,7 +78745,7 @@ func validateToolSchemaJSONValue74(path string, value any, description string) e
 		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
 	}
 	for index, item := range typed {
-		if err := validateToolSchemaJSONValue75(
+		if err := validateToolSchemaJSONValue76(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -78375,8 +78755,8 @@ func validateToolSchemaJSONValue74(path string, value any, description string) e
 	return nil
 }
 
-// validateToolSchemaJSONValue75 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolSchemaJSONValue75(path string, value any, description string) error {
+// validateToolSchemaJSONValue76 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemaJSONValue76(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -80949,7 +81329,7 @@ func validateToolsetJSONValue(path string, value any, description string) error 
 				return err
 			}
 		case "version":
-			if err := validateToolsetJSONValue84(
+			if err := validateToolsetJSONValue85(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Semantic version of the toolset.",
 			); err != nil {
@@ -81112,49 +81492,49 @@ func validateToolsetJSONValue68(path string, value any, description string) erro
 				return err
 			}
 		case "description":
-			if err := validateToolsetJSONValue75(
+			if err := validateToolsetJSONValue76(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Human-readable description of what the tool does.",
 			); err != nil {
 				return err
 			}
 		case "execution_payload_schema":
-			if err := validateToolsetJSONValue76(
+			if err := validateToolsetJSONValue77(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the payload sent to the provider. It includes fields supplied by continuation handling and excludes fields injected inside the provider.",
 			); err != nil {
 				return err
 			}
 		case "name":
-			if err := validateToolsetJSONValue77(
+			if err := validateToolsetJSONValue78(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Globally unique tool identifier of the form \"toolset.tool\".",
 			); err != nil {
 				return err
 			}
 		case "payload_schema":
-			if err := validateToolsetJSONValue78(
+			if err := validateToolsetJSONValue80(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for arguments accepted from the model.",
 			); err != nil {
 				return err
 			}
 		case "result_schema":
-			if err := validateToolsetJSONValue80(
+			if err := validateToolsetJSONValue81(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the tool result.",
 			); err != nil {
 				return err
 			}
 		case "sidecar_schema":
-			if err := validateToolsetJSONValue81(
+			if err := validateToolsetJSONValue82(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the tool sidecar (UI-only), when present.",
 			); err != nil {
 				return err
 			}
 		case "tags":
-			if err := validateToolsetJSONValue82(
+			if err := validateToolsetJSONValue83(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Optional tags used for policy, routing, or UI filtering.",
 			); err != nil {
@@ -81197,7 +81577,7 @@ func validateToolsetJSONValue79(path string, value any, description string) erro
 	for _, key := range keys {
 		switch key {
 		case "Agent":
-			if err := validateToolsetJSONValue85(
+			if err := validateToolsetJSONValue86(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Worker and immutable application configuration used by a dynamically registered Agent tool.",
 			); err != nil {
@@ -81238,15 +81618,22 @@ func validateToolsetJSONValue79(path string, value any, description string) erro
 			); err != nil {
 				return err
 			}
-		case "required_labels":
+		case "ReplanOnTimeout":
 			if err := validateToolsetJSONValue52(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Whether the provider permits alternative work after this exported Agent operation times out. The failed operation remains failed and is not retried.",
+			); err != nil {
+				return err
+			}
+		case "required_labels":
+			if err := validateToolsetJSONValue53(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Run labels required by provider-side injection for this tool.",
 			); err != nil {
 				return err
 			}
 		case "requires_ui":
-			if err := validateToolsetJSONValue54(
+			if err := validateToolsetJSONValue55(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Whether executing this tool requires rendering or an interactive client protocol.",
 			); err != nil {
@@ -81260,35 +81647,35 @@ func validateToolsetJSONValue79(path string, value any, description string) erro
 				return err
 			}
 		case "result_reminder":
-			if err := validateToolsetJSONValue55(
+			if err := validateToolsetJSONValue56(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Model guidance emitted after this tool's result.",
 			); err != nil {
 				return err
 			}
 		case "search":
-			if err := validateToolsetJSONValue56(
+			if err := validateToolsetJSONValue58(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Word counts generated from the tool's name, title, and description.",
 			); err != nil {
 				return err
 			}
 		case "server_data":
-			if err := validateToolsetJSONValue61(
+			if err := validateToolsetJSONValue62(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Closed set of server-only result payloads emitted by this tool.",
 			); err != nil {
 				return err
 			}
 		case "text_only":
-			if err := validateToolsetJSONValue69(
+			if err := validateToolsetJSONValue70(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated model contract for execution using ordinary messages only.",
 			); err != nil {
 				return err
 			}
 		case "title":
-			if err := validateToolsetJSONValue74(
+			if err := validateToolsetJSONValue75(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Human-readable title declared for the tool.",
 			); err != nil {
@@ -81302,6 +81689,7 @@ func validateToolsetJSONValue79(path string, value any, description string) erro
 				"kind",
 				"meta",
 				"payload",
+				"ReplanOnTimeout",
 				"required_labels",
 				"requires_ui",
 				"result",
@@ -81316,8 +81704,8 @@ func validateToolsetJSONValue79(path string, value any, description string) erro
 	return nil
 }
 
-// validateToolsetJSONValue85 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolsetJSONValue85(path string, value any, description string) error {
+// validateToolsetJSONValue86 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue86(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -82557,6 +82945,22 @@ func validateToolsetJSONValue52(path string, value any, description string) erro
 		field = "$payload"
 	}
 	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
+	}
+	_, ok := value.(bool)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolsetJSONValue53 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue53(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "array", "null", description)
 	}
 	typed, ok := value.([]any)
@@ -82564,7 +82968,7 @@ func validateToolsetJSONValue52(path string, value any, description string) erro
 		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
 	}
 	for index, item := range typed {
-		if err := validateToolsetJSONValue53(
+		if err := validateToolsetJSONValue54(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -82574,8 +82978,8 @@ func validateToolsetJSONValue52(path string, value any, description string) erro
 	return nil
 }
 
-// validateToolsetJSONValue53 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolsetJSONValue53(path string, value any, description string) error {
+// validateToolsetJSONValue54 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue54(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -82590,8 +82994,8 @@ func validateToolsetJSONValue53(path string, value any, description string) erro
 	return nil
 }
 
-// validateToolsetJSONValue54 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolsetJSONValue54(path string, value any, description string) error {
+// validateToolsetJSONValue55 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue55(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -82606,8 +83010,8 @@ func validateToolsetJSONValue54(path string, value any, description string) erro
 	return nil
 }
 
-// validateToolsetJSONValue55 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolsetJSONValue55(path string, value any, description string) error {
+// validateToolsetJSONValue56 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue56(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -82622,8 +83026,8 @@ func validateToolsetJSONValue55(path string, value any, description string) erro
 	return nil
 }
 
-// validateToolsetJSONValue56 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolsetJSONValue56(path string, value any, description string) error {
+// validateToolsetJSONValue58 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue58(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -82643,14 +83047,14 @@ func validateToolsetJSONValue56(path string, value any, description string) erro
 	for _, key := range keys {
 		switch key {
 		case "length":
-			if err := validateToolsetJSONValue58(
+			if err := validateToolsetJSONValue59(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Total number of words in this document, including repeats.",
 			); err != nil {
 				return err
 			}
 		case "terms":
-			if err := validateToolsetJSONValue59(
+			if err := validateToolsetJSONValue60(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Lowercase words and their positive occurrence counts.",
 			); err != nil {
@@ -82666,8 +83070,8 @@ func validateToolsetJSONValue56(path string, value any, description string) erro
 	return nil
 }
 
-// validateToolsetJSONValue58 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolsetJSONValue58(path string, value any, description string) error {
+// validateToolsetJSONValue59 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue59(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -82682,8 +83086,8 @@ func validateToolsetJSONValue58(path string, value any, description string) erro
 	return nil
 }
 
-// validateToolsetJSONValue59 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolsetJSONValue59(path string, value any, description string) error {
+// validateToolsetJSONValue60 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue60(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -82701,7 +83105,7 @@ func validateToolsetJSONValue59(path string, value any, description string) erro
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		if err := validateToolsetJSONValue60(
+		if err := validateToolsetJSONValue61(
 			generatedJSONChildPath(path, key, true),
 			typed[key], description,
 		); err != nil {
@@ -82711,8 +83115,8 @@ func validateToolsetJSONValue59(path string, value any, description string) erro
 	return nil
 }
 
-// validateToolsetJSONValue60 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolsetJSONValue60(path string, value any, description string) error {
+// validateToolsetJSONValue61 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue61(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -82727,8 +83131,8 @@ func validateToolsetJSONValue60(path string, value any, description string) erro
 	return nil
 }
 
-// validateToolsetJSONValue61 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolsetJSONValue61(path string, value any, description string) error {
+// validateToolsetJSONValue62 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue62(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -82744,7 +83148,7 @@ func validateToolsetJSONValue61(path string, value any, description string) erro
 		if item == nil {
 			continue
 		}
-		if err := validateToolsetJSONValue62(
+		if err := validateToolsetJSONValue63(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -82754,8 +83158,8 @@ func validateToolsetJSONValue61(path string, value any, description string) erro
 	return nil
 }
 
-// validateToolsetJSONValue62 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolsetJSONValue62(path string, value any, description string) error {
+// validateToolsetJSONValue63 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue63(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -82775,35 +83179,35 @@ func validateToolsetJSONValue62(path string, value any, description string) erro
 	for _, key := range keys {
 		switch key {
 		case "audience":
-			if err := validateToolsetJSONValue63(
+			if err := validateToolsetJSONValue64(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Consumers allowed to receive this payload.",
 			); err != nil {
 				return err
 			}
 		case "description":
-			if err := validateToolsetJSONValue64(
+			if err := validateToolsetJSONValue65(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Description of the data carried by this kind.",
 			); err != nil {
 				return err
 			}
 		case "kind":
-			if err := validateToolsetJSONValue65(
+			if err := validateToolsetJSONValue66(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Unique kind emitted by this tool.",
 			); err != nil {
 				return err
 			}
 		case "NativeImage":
-			if err := validateToolsetJSONValue66(
+			if err := validateToolsetJSONValue67(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Whether this evidence kind declares a typed image source requiring an explicitly admitted host reader.",
 			); err != nil {
 				return err
 			}
 		case "schema":
-			if err := validateToolsetJSONValue67(
+			if err := validateToolsetJSONValue69(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical JSON schema for the item data.",
 			); err != nil {
@@ -82826,22 +83230,6 @@ func validateToolsetJSONValue62(path string, value any, description string) erro
 				"type",
 			})
 		}
-	}
-	return nil
-}
-
-// validateToolsetJSONValue63 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolsetJSONValue63(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -82885,6 +83273,22 @@ func validateToolsetJSONValue66(path string, value any, description string) erro
 		field = "$payload"
 	}
 	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolsetJSONValue67 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue67(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
 	}
 	_, ok := value.(bool)
@@ -82894,8 +83298,8 @@ func validateToolsetJSONValue66(path string, value any, description string) erro
 	return nil
 }
 
-// validateToolsetJSONValue67 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolsetJSONValue67(path string, value any, description string) error {
+// validateToolsetJSONValue69 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue69(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -82910,8 +83314,8 @@ func validateToolsetJSONValue67(path string, value any, description string) erro
 	return nil
 }
 
-// validateToolsetJSONValue69 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolsetJSONValue69(path string, value any, description string) error {
+// validateToolsetJSONValue70 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue70(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -82931,14 +83335,14 @@ func validateToolsetJSONValue69(path string, value any, description string) erro
 	for _, key := range keys {
 		switch key {
 		case "description":
-			if err := validateToolsetJSONValue70(
+			if err := validateToolsetJSONValue71(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Domain instructions without optional UI guidance.",
 			); err != nil {
 				return err
 			}
 		case "execution_schema":
-			if err := validateToolsetJSONValue71(
+			if err := validateToolsetJSONValue72(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Complete input schema requiring disabled rendering controls.",
 			); err != nil {
@@ -82952,21 +83356,21 @@ func validateToolsetJSONValue69(path string, value any, description string) erro
 				return err
 			}
 		case "payload_schema":
-			if err := validateToolsetJSONValue72(
+			if err := validateToolsetJSONValue73(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Exact model argument schema without UI-only controls.",
 			); err != nil {
 				return err
 			}
 		case "result_reminder":
-			if err := validateToolsetJSONValue73(
+			if err := validateToolsetJSONValue74(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Domain result guidance without claiming UI output.",
 			); err != nil {
 				return err
 			}
 		case "search":
-			if err := validateToolsetJSONValue56(
+			if err := validateToolsetJSONValue58(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Generated word counts for these domain instructions.",
 			); err != nil {
@@ -82982,22 +83386,6 @@ func validateToolsetJSONValue69(path string, value any, description string) erro
 				"search",
 			})
 		}
-	}
-	return nil
-}
-
-// validateToolsetJSONValue70 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolsetJSONValue70(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -83169,6 +83557,22 @@ func validateToolsetJSONValue82(path string, value any, description string) erro
 		field = "$payload"
 	}
 	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolsetJSONValue83 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue83(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "array", "null", description)
 	}
 	typed, ok := value.([]any)
@@ -83176,7 +83580,7 @@ func validateToolsetJSONValue82(path string, value any, description string) erro
 		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
 	}
 	for index, item := range typed {
-		if err := validateToolsetJSONValue83(
+		if err := validateToolsetJSONValue84(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -83186,8 +83590,8 @@ func validateToolsetJSONValue82(path string, value any, description string) erro
 	return nil
 }
 
-// validateToolsetJSONValue83 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolsetJSONValue83(path string, value any, description string) error {
+// validateToolsetJSONValue84 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue84(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -83202,8 +83606,8 @@ func validateToolsetJSONValue83(path string, value any, description string) erro
 	return nil
 }
 
-// validateToolsetJSONValue84 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolsetJSONValue84(path string, value any, description string) error {
+// validateToolsetJSONValue85 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetJSONValue85(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"

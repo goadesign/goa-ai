@@ -838,8 +838,9 @@ func TerminalRun() {
 // send messages, or otherwise have effects whose completion is unknown.
 //
 // ReplanOnTimeout must appear in a Tool exported by an agent. Generated
-// agent-as-tool consumers preserve the declaration. Direct service, inline,
-// MCP, and registry execution, including PublishTo, are not supported.
+// agent-as-tool consumers preserve the declaration, including when bound to a
+// selected native Agent registration. Direct service, inline, MCP, FromRegistry,
+// and PublishTo routes are not supported.
 func ReplanOnTimeout() {
 	tool, ok := eval.Current().(*agentsexpr.ToolExpr)
 	if !ok {

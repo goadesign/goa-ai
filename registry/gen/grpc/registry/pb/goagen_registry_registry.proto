@@ -329,6 +329,9 @@ message ConsumerContract {
 	optional bool requires_ui = 13;
 	// Generated model contract for execution using ordinary messages only.
 	TextOnlyToolContract text_only = 14;
+	// Whether the provider permits alternative work after this exported Agent
+// operation times out. The failed operation remains failed and is not retried.
+	optional bool replan_on_timeout = 15;
 }
 // Precomputed word frequencies for local tool retrieval.
 message ToolSearchDocument {

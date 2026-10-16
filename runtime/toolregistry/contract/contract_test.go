@@ -52,6 +52,39 @@ func TestCompilePreservesPortableContract(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestCompileTimeoutPolicyRequiresAgent(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		agent   bool
+		marked  bool
+		invalid bool
+	}{
+		{name: "marked agent", agent: true, marked: true},
+		{name: "unmarked agent", agent: true},
+		{name: "service default"},
+		{name: "marked service", marked: true, invalid: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			declaration := testDeclaration()
+			declaration.ConsumerContract.ReplanOnTimeout = test.marked
+			if test.agent {
+				declaration.ConsumerContract.Kind = agentKind
+				declaration.ConsumerContract.Agent = &genregistry.AgentToolTarget{
+					Executor: "reader.agent", Workflow: "reader.workflow",
+					Queue: "reader.queue", Configuration: "revision/1",
+				}
+			}
+			spec, err := Compile(declaration)
+			if test.invalid {
+				require.ErrorContains(t, err, "timeout recovery requires an agent tool")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, test.marked, spec.ReplanOnTimeout)
+		})
+	}
+}
+
 func TestCompilePreservesUntaggedUnionSelection(t *testing.T) {
 	for _, root := range []bool{false, true} {
 		declaration := testDeclaration()
