@@ -632,6 +632,10 @@ func (p *agentPackagePlan) link(agent *AgentData, agentsByID map[string]*AgentDa
 // linkFileData copies the selected import lines and qualifiers into the data
 // used by each agent package template.
 func (p *agentPackagePlan) linkFileData(agent *AgentData, agentsByID map[string]*AgentData) (*agentPackageFilesData, error) {
+	selected, err := selectedAgentData(agent)
+	if err != nil {
+		return nil, err
+	}
 	for _, sources := range p.registrySources {
 		sources.TypeName = sources.declaration.Name()
 	}
@@ -651,12 +655,12 @@ func (p *agentPackagePlan) linkFileData(agent *AgentData, agentsByID map[string]
 		implementation.ToolSpecsAlias = p.pkg.ImportName(agent.ToolSpecsImportPath)
 	}
 	implementation.RootDefinition = &agentDefinitionFileData{
-		AgentData:       agent,
+		AgentData:       selected,
 		ToolSpecsAlias:  implementation.ToolSpecsAlias,
 		RegistrySources: registrySourcesFor(agent.ID, p.registrySources),
 		ToolsAlias:      implementation.ToolsAlias,
 	}
-	deferred, err := agentDeferral(agent)
+	deferred, err := agentDeferral(selected)
 	if err != nil {
 		return nil, err
 	}
@@ -666,12 +670,16 @@ func (p *agentPackagePlan) linkFileData(agent *AgentData, agentsByID map[string]
 		if child == nil {
 			panic(fmt.Sprintf("agent codegen: reachable agent %q has no generator data", childID))
 		}
+		selectedChild, err := selectedAgentData(child)
+		if err != nil {
+			return nil, err
+		}
 		definition := &agentDefinitionFileData{
-			AgentData:       child,
+			AgentData:       selectedChild,
 			RegistrySources: registrySourcesFor(child.ID, p.registrySources),
 			ToolsAlias:      implementation.ToolsAlias,
 		}
-		deferred, err := agentDeferral(child)
+		deferred, err := agentDeferral(selectedChild)
 		if err != nil {
 			return nil, err
 		}
@@ -701,7 +709,7 @@ func (p *agentPackagePlan) linkFileData(agent *AgentData, agentsByID map[string]
 	if len(agent.Tools) == 0 {
 		registryPaths = importPathsWithout(registryPaths, agent.ToolSpecsImportPath)
 	}
-	requiredInputs, err := requiredStaticInputBindings(agent)
+	requiredInputs, err := requiredStaticInputBindings(selected)
 	if err != nil {
 		return nil, err
 	}

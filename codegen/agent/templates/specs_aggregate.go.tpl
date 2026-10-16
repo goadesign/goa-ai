@@ -14,7 +14,10 @@ func {{ .SpecsFunc }}() []{{ .ToolsPackageName }}.ToolSpec {
     }
     {{- end }}
     {{- else }}
-    specs = append(specs, {{ .SpecsPackageName }}.Specs()...)
+    {{- $pkg := .SpecsPackageName }}
+    {{- range .Tools }}
+    specs = append(specs, {{ $pkg }}.{{ .Spec.SpecVar }}())
+    {{- end }}
     {{- end }}
 {{- end }}
     return specs
