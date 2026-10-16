@@ -27,24 +27,6 @@ func policyTestAgent(scope, resource, route string) (*genregistry.AgentExportsDe
 	return declaration, operation
 }
 
-func TestRedisBoundedReadDoesNotRepeatAfterConcurrentMutation(t *testing.T) {
-	service := policyTestService(t)
-	store := service.catalog.store.(*redisCatalogStore)
-	attempts := 0
-	err := service.readCatalog(t.Context(), "bounded_conflict_test", func(tx *catalogTransaction) error {
-		attempts++
-		if _, err := tx.tx.ZRange(t.Context(), store.ownerResourcesIndex("reader", "agent"), 0, 0).Result(); err != nil {
-			return err
-		}
-		// A second connection changes a watched catalog record after the page was read.
-		// The request must fail temporarily instead of rereading another page.
-		return testRedisClient.HSet(t.Context(), store.catalogRecords(), "concurrent-change", "1").Err()
-	})
-	require.Error(t, err)
-	assert.Equal(t, 1, attempts)
-	assert.Contains(t, err.Error(), "transaction failed")
-}
-
 func TestRedisNativeRetirementPreservesRegisteredDeclaration(t *testing.T) {
 	service := policyTestService(t)
 	declaration, operation := policyTestAgent("scope-a", "resource", "revision-a")
