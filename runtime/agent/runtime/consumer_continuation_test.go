@@ -3,16 +3,22 @@
 package runtime
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
+	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/internal/startrecipe"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/session"
+	"goa.design/goa-ai/runtime/agent/storage"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -99,6 +105,120 @@ func TestDirectConsumerContinuationRejectsChangedIdentityAndResponse(t *testing.
 			}
 			_, err := prepareRunWithDefinition(input, launch, definition, true)
 			assert.ErrorIs(t, err, ErrContinuationRejected)
+		})
+	}
+}
+
+// A durable host can submit and complete direct successors using only the
+// predecessor, successor and answer, without loading provider-private tools.
+func TestRuntimeDirectContinuationRecoversExactRequest(t *testing.T) {
+	for _, test := range []struct {
+		sessionID string
+		canceled  bool
+	}{
+		{sessionID: "session-1"}, {}, {sessionID: "session-1", canceled: true}, {canceled: true},
+	} {
+		sessionID := test.sessionID
+		name := "failed"
+		if test.canceled {
+			name = "canceled"
+		}
+		t.Run(name+"/session="+sessionID, func(t *testing.T) {
+			suspension, definition := directConsumerSuspension(t)
+			rewriteSuspensionCheckpointAndPublic(t, suspension, func(saved *workflowCheckpoint) {
+				saved.SessionID = sessionID
+			})
+			store := newTestStore()
+			if sessionID != "" {
+				require.NoError(t, createPreparedRunSession(t.Context(), store))
+			}
+			admitRunForTest(t, store, session.RunMeta{
+				Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(definition.route.ID))},
+				RunID:   "run-1", SessionID: sessionID, Status: session.RunStatusRunning,
+			})
+			data, err := json.Marshal(suspension)
+			require.NoError(t, err)
+			require.NoError(t, storeSuspensionForTest(t.Context(), store, "run-1", session.RunSuspension{ID: suspension.ID, Data: data}))
+			response := directConsumerResponse(rawjson.Message(`9007199254740993`))
+			backend := &stubEngine{}
+			rt := New(store, WithEngine(backend))
+			_, err = rt.StartToolContinuation(t.Context(), "run-1", "run-2", response)
+			require.NoError(t, err)
+			first, err := startrecipe.SnapshotRequest(backend.last)
+			require.NoError(t, err)
+			assert.Equal(t, definition.route.WorkflowName, first.Request.Workflow)
+			assert.Equal(t, definition.route.DefaultTaskQueue, first.Request.TaskQueue)
+			assert.Equal(t, sessionID, first.Request.Input.SessionID)
+			actual := first.Request.Input.Continuation.Response.ToolResults
+			assert.Equal(t, response.ToolResults.ID, actual.ID)
+			require.Len(t, actual.Results, 1)
+			assert.Equal(t, response.ToolResults.Results[0].Name, actual.Results[0].Name)
+			assert.Equal(t, response.ToolResults.Results[0].ToolCallID, actual.Results[0].ToolCallID)
+			assert.Equal(t, response.ToolResults.Results[0].Success, actual.Results[0].Success)
+			assert.Empty(t, actual.Results[0].Blocks)
+			assert.Equal(t, suspension, first.Request.Input.Continuation.Suspension)
+			restarted := New(store, WithEngine(backend))
+			_, err = restarted.StartToolContinuation(t.Context(), "run-1", "run-2", response)
+			require.NoError(t, err)
+			again, err := startrecipe.SnapshotRequest(backend.last)
+			require.NoError(t, err)
+			assert.Equal(t, first, again)
+			_, err = restarted.StartToolContinuation(t.Context(), "run-1", "run-2", directConsumerResponse(rawjson.Message(`2`)))
+			require.ErrorIs(t, err, storage.ErrSeedConflict)
+			assert.Equal(t, 2, backend.startCalls)
+			cancel := &api.RunContinuationInput{Cancellation: &api.CancellationRequest{RunID: "run-1", Reason: "owner-requested-stop"}}
+			cancellation, err := restarted.prepareOperationContinuationRequest(t.Context(), "run-1", "cancel-run", cancel)
+			require.NoError(t, err)
+			replayedCancellation, err := restarted.prepareOperationContinuationRequest(t.Context(), "run-1", "cancel-run", cancel)
+			require.NoError(t, err)
+			assert.Equal(t, cancellation, replayedCancellation)
+			for _, changed := range []*api.CancellationRequest{
+				{RunID: "different-run", Reason: "owner-requested-stop"},
+				{RunID: "run-1", Reason: "different-reason"},
+			} {
+				_, err = restarted.prepareOperationContinuationRequest(t.Context(), "run-1", "cancel-run", &api.RunContinuationInput{Cancellation: changed})
+				require.ErrorIs(t, err, storage.ErrSeedConflict)
+			}
+
+			// The engine can close the accepted successor before it creates a Run.
+			// Completion must use the published continuation, not an initial request.
+			completion := &completionOnlyEngine{completion: engine.RunCompletion{
+				Status: engine.RunStatusFailed, StartRequestDigest: first.Digest,
+				CompletedAt: time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC), WorkflowError: errors.New("closed before workflow entry"),
+			}}
+			if test.canceled {
+				completion.completion.Status = engine.RunStatusCanceled
+				completion.completion.WorkflowError = context.Canceled
+			}
+			captured := &earlyTerminalCaptureStore{Store: store.Store}
+			repair := New(captured, WithEngine(completion))
+			for range 2 {
+				require.NoError(t, repair.EnsureToolContinuationCompletion(t.Context(), "run-1", "run-2", response))
+			}
+			assert.Zero(t, completion.starts)
+			require.NotNil(t, captured.terminal)
+			assert.Equal(t, first.Digest[:], captured.terminal.RequestDigest)
+			assert.Equal(t, "run-2", captured.terminal.RunID)
+			if sessionID == "" {
+				assert.Nil(t, captured.terminal.SessionID)
+			} else {
+				require.NotNil(t, captured.terminal.SessionID)
+				assert.Equal(t, sessionID, *captured.terminal.SessionID)
+			}
+			predecessor, err := store.LoadRun(t.Context(), "run-1")
+			require.NoError(t, err)
+			require.NotNil(t, captured.terminal.Origin)
+			assert.Equal(t, predecessor.Origin, *captured.terminal.Origin)
+			assert.Nil(t, predecessor.SuspensionResolution)
+			if test.canceled {
+				_, canceled := captured.terminal.Outcome.AsCanceled()
+				assert.True(t, canceled)
+			} else {
+				_, failed := captured.terminal.Outcome.AsFailed()
+				assert.True(t, failed)
+			}
+			_, err = store.LoadRun(t.Context(), "run-2")
+			assert.ErrorIs(t, err, session.ErrRunNotFound)
 		})
 	}
 }
