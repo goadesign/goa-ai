@@ -212,6 +212,10 @@ live text and usage, and stops if compaction cannot shorten the input. This
 uses the existing recovery-turn budget. See
 [context-window recovery](docs/runtime.md#context-window-recovery).
 
+Initial-history writes reference the already bound preparation operation; seed
+reads return its original invocation without duplicating it in bounded commands.
+Custom stores must follow the [preparation ownership upgrade](docs/runtime.md#preparation-ownership-upgrade).
+
 ### Registries, search, and production execution
 
 - **Distributed tool registries.** Publish typed toolsets, discover changing

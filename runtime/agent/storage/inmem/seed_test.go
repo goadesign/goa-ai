@@ -11,6 +11,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	genregistry "goa.design/goa-ai/registry/gen/registry"
+
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/session"
 	"goa.design/goa-ai/runtime/agent/storage"
@@ -19,8 +21,8 @@ import (
 
 func TestSeedPublicationAndExactRetry(t *testing.T) {
 	store, start := activeRunStore(t)
-	d := storage.SeedDeclaration{Origin: rootExecutionOrigin(start.RunID), Subject: start.Subject, RunID: start.RunID, SessionID: start.SessionID, CommandID: "command", AttemptID: "attempt", Kind: storage.SeedLiteral}
-	bindSeedTestOperation(t, store, d)
+	d := storage.SeedDeclaration{Subject: start.Subject, RunID: start.RunID, SessionID: start.SessionID, CommandID: "command", AttemptID: "attempt", Kind: storage.SeedLiteral}
+	bindSeedTestOperation(t, store, d, rootExecutionOrigin(start.RunID))
 	first, err := store.BeginRunSeed(t.Context(), d)
 	require.NoError(t, err)
 	require.Equal(t, storage.EmptySeedEndID, first.EndID)
@@ -70,8 +72,8 @@ func TestSeedPurgeRemovesUnstartedPublication(t *testing.T) {
 	for _, publish := range []bool{false, true} {
 		t.Run(fmt.Sprint(publish), func(t *testing.T) {
 			store, start := activeRunStore(t)
-			d := storage.SeedDeclaration{Origin: rootExecutionOrigin(start.RunID), Subject: start.Subject, RunID: start.RunID, SessionID: start.SessionID, CommandID: "command", AttemptID: "attempt", Kind: storage.SeedLiteral}
-			bindSeedTestOperation(t, store, d)
+			d := storage.SeedDeclaration{Subject: start.Subject, RunID: start.RunID, SessionID: start.SessionID, CommandID: "command", AttemptID: "attempt", Kind: storage.SeedLiteral}
+			bindSeedTestOperation(t, store, d, rootExecutionOrigin(start.RunID))
 			_, err := store.BeginRunSeed(t.Context(), d)
 			require.NoError(t, err)
 			if publish {
@@ -99,11 +101,10 @@ func TestSeedCapturedSourceAndSingleReference(t *testing.T) {
 	})
 	require.NoError(t, err)
 	d := storage.SeedDeclaration{
-		Origin:  rootExecutionOrigin("next"),
 		Subject: source.Subject, RunID: "next", SessionID: source.SessionID, CommandID: "command", AttemptID: "attempt",
 		Kind: storage.SeedNextTurn, SourceRunID: source.RunID, ExcludeReasoning: true,
 	}
-	bindSeedTestOperation(t, store, d)
+	bindSeedTestOperation(t, store, d, rootExecutionOrigin("next"))
 	seed, err := store.BeginRunSeed(t.Context(), d)
 	require.NoError(t, err)
 	require.Equal(t, &storage.HistoryPrefix{
@@ -137,11 +138,10 @@ func TestSeedRejectsUnusableSources(t *testing.T) {
 			meta.Status = status
 			store.runs[source.RunID] = meta
 			d := storage.SeedDeclaration{
-				Origin:  rootExecutionOrigin("next"),
 				Subject: source.Subject, RunID: "next", SessionID: source.SessionID, CommandID: "command", AttemptID: "attempt",
 				Kind: storage.SeedNextTurn, SourceRunID: source.RunID,
 			}
-			bindSeedTestOperation(t, store, d)
+			bindSeedTestOperation(t, store, d, rootExecutionOrigin("next"))
 			_, err := store.BeginRunSeed(t.Context(), d)
 			require.Error(t, err)
 			require.NotContains(t, store.seeds, "next")
@@ -154,10 +154,9 @@ func TestSeedCancellationBeforeReadOrWrite(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	d := storage.SeedDeclaration{
-		Origin:  rootExecutionOrigin(start.RunID),
 		Subject: start.Subject, RunID: start.RunID, SessionID: start.SessionID, CommandID: "command", AttemptID: "attempt", Kind: storage.SeedLiteral,
 	}
-	bindSeedTestOperation(t, store, d)
+	bindSeedTestOperation(t, store, d, rootExecutionOrigin(start.RunID))
 	_, err := store.BeginRunSeed(ctx, d)
 	require.ErrorIs(t, err, context.Canceled)
 	require.Empty(t, store.seeds)
@@ -166,10 +165,9 @@ func TestSeedCancellationBeforeReadOrWrite(t *testing.T) {
 func startSeedTestRun(t *testing.T, store *Store, start session.RunStart) session.RunStart {
 	t.Helper()
 	d := storage.SeedDeclaration{
-		Origin:  rootExecutionOrigin(start.RunID),
 		Subject: start.Subject, RunID: start.RunID, SessionID: start.SessionID, CommandID: "command", AttemptID: "attempt", Kind: storage.SeedLiteral,
 	}
-	bindSeedTestOperation(t, store, d)
+	bindSeedTestOperation(t, store, d, rootExecutionOrigin(start.RunID))
 	_, err := store.BeginRunSeed(t.Context(), d)
 	require.NoError(t, err)
 	start.SeedEndID = storage.EmptySeedEndID
@@ -192,11 +190,11 @@ func appendSeedTestCompletion(t *testing.T, store *Store, declaration storage.Se
 
 // bindSeedTestOperation records the declaration's original invocation before a
 // fixture uploads history, so seed assertions exercise an already-owned operation.
-func bindSeedTestOperation(t *testing.T, store *Store, declaration storage.SeedDeclaration) {
+func bindSeedTestOperation(t *testing.T, store *Store, declaration storage.SeedDeclaration, origin genregistry.ExecutionInvocation) {
 	t.Helper()
 	decision, err := store.BeginRunPreparationOperation(t.Context(), storage.RunPreparationBegin{
 		Operation: storage.PreparationOperation{Subject: declaration.Subject, RunID: declaration.RunID, SessionID: declaration.SessionID, CommandID: declaration.CommandID},
-		Origin:    declaration.Origin,
+		Origin:    origin,
 	})
 	require.NoError(t, err)
 	_, proceed := decision.State.AsProceed()

@@ -149,8 +149,8 @@ func newClosedStartFixture(t *testing.T, kind storageCommandKind, status session
 		if input.ParentRunID != "" {
 			origin.Invocation = genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: input.ParentRunID, ToolCallID: input.ParentToolCallID})
 		}
-		endID, err := publishLiteralHistory(t.Context(), runtime.Store, storage.SeedDeclaration{
-			Subject: input.Subject, RunID: input.RunID, SessionID: input.SessionID, Origin: origin,
+		endID, err := publishLiteralHistory(t.Context(), runtime.Store, origin, storage.SeedDeclaration{
+			Subject: input.Subject, RunID: input.RunID, SessionID: input.SessionID,
 			Kind:            storage.SeedLiteral,
 			RenderedPrompts: []prompt.RenderEvent{{PromptID: "agent.system", Version: "v1"}},
 		}, []*model.Message{{

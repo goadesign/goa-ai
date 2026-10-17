@@ -138,9 +138,8 @@ func TestInitialHistoryCommandByteBoundary(t *testing.T) {
 			store := &initialHistoryCaptureStore{Store: newTestStore()}
 			messages := []*model.Message{{Role: model.ConversationRoleUser,
 				Parts: []model.Part{model.TextPart{Text: strings.Repeat("x", size-framingBytes)}}}}
-			end, err := publishLiteralHistory(t.Context(), store, storage.SeedDeclaration{
+			end, err := publishLiteralHistory(t.Context(), store, genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: "boundary"})}, storage.SeedDeclaration{
 				Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, RunID: "boundary", Kind: storage.SeedLiteral,
-				Origin: genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: "boundary"})},
 			}, messages)
 			if size > storage.MaxSeedCommandBytes {
 				require.NoError(t, err)

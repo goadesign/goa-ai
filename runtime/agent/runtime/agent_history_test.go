@@ -218,8 +218,11 @@ func TestProviderHistoryRequiresExplicitChoiceAndCopiesMessages(t *testing.T) {
 	owned, err := rt.resolveAgentConfiguration(t.Context(), genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: "literal"})}, definition, "revision/1", &ToolCall{})
 	require.NoError(t, err)
 	original[0].Parts[0] = model.TextPart{Text: "mutated"}
-	writer, err := stageAgentHistory(t.Context(), rt.Store, storage.SeedDeclaration{Origin: genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: "literal"})}, Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
-		RunExecutorBranchAgent(string(definition.route.ID)))}, RunID: "literal", CommandID: "literal", AttemptID: "literal"}, owned.History)
+	declaration := storage.SeedDeclaration{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+		RunExecutorBranchAgent(string(definition.route.ID)))}, RunID: "literal", CommandID: "literal", AttemptID: "literal"}
+	_, err = bindHistoryOperation(t.Context(), rt.Store, declaration, genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: "literal"})})
+	require.NoError(t, err)
+	writer, err := stageAgentHistory(t.Context(), rt.Store, declaration, owned.History)
 	require.NoError(t, err)
 	require.NoError(t, writer.publish(t.Context(), []byte("prepared")))
 	input := &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.

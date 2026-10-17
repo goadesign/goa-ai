@@ -144,8 +144,8 @@ func (r *Runtime) executeRegisteredRootWorkflow(wf engine.WorkflowContext, submi
 	// input. No conversational record or Agent identity is manufactured.
 	if submitted.Continuation == nil {
 		commandID := hex.EncodeToString(digest[:])
-		declaration := storage.SeedDeclaration{Origin: *input.RegisteredInvocation.Invocation, Subject: input.Subject, RunID: input.RunID, SessionID: input.SessionID, CommandID: commandID, AttemptID: commandID, Kind: storage.SeedLiteral, PredecessorRunID: state.predecessor}
-		decision, err := bindHistoryOperation(wf.Context(), workflowSeedWriter{r: r}, declaration)
+		declaration := storage.SeedDeclaration{Subject: input.Subject, RunID: input.RunID, SessionID: input.SessionID, CommandID: commandID, AttemptID: commandID, Kind: storage.SeedLiteral, PredecessorRunID: state.predecessor}
+		decision, err := bindHistoryOperation(wf.Context(), workflowSeedWriter{r: r}, declaration, *input.RegisteredInvocation.Invocation)
 		if err != nil {
 			return nil, err
 		}

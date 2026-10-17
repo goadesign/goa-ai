@@ -450,7 +450,7 @@ func (s *Store) startOneShotChildRun(command storage.OneShotChildRunStart) (stor
 	if err := s.checkNewRunRecordLocked(command.Started, command.Run); err != nil {
 		return storage.OneShotChildRunStartResult{}, err
 	}
-	origin, err := childExecutionOrigin(command.ParentLinked, s.seeds[command.Run.RunID].seed.Declaration.Origin)
+	origin, err := childExecutionOrigin(command.ParentLinked, s.preparationOperations[command.Run.RunID].Origin)
 	if err != nil {
 		return storage.OneShotChildRunStartResult{}, err
 	}
@@ -895,7 +895,7 @@ func (s *Store) startSessionRun(requestDigest [32]byte, start session.RunStart, 
 		origin = cloneExecutionOrigin(s.runs[start.PredecessorRunID].Origin)
 	} else if parent != nil {
 		var err error
-		origin, err = childExecutionOrigin(parent, s.seeds[start.RunID].seed.Declaration.Origin)
+		origin, err = childExecutionOrigin(parent, s.preparationOperations[start.RunID].Origin)
 		if err != nil {
 			return sessionRunStartResult{}, err
 		}

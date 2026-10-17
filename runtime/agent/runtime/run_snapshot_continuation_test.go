@@ -238,12 +238,11 @@ func TestGetRunSnapshotAcrossStoredContinuations(t *testing.T) {
 		predecessor, err := store.LoadRun(ctx, pair[0])
 		require.NoError(t, err)
 		declaration := storage.SeedDeclaration{
-			Origin: predecessor.Origin,
 			Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
 				RunExecutorBranchAgent("worker"))}, RunID: pair[1], SessionID: "session", CommandID: pair[1], AttemptID: pair[1],
 			Kind: storage.SeedContinuation, PredecessorRunID: pair[0], SourceRunID: pair[0], SourceEndID: base.HistoryEndID,
 		}
-		decision, err := bindHistoryOperation(ctx, store, declaration)
+		decision, err := bindHistoryOperation(ctx, store, declaration, predecessor.Origin)
 		require.NoError(t, err)
 		_, proceed := decision.State.AsProceed()
 		require.True(t, proceed)
@@ -313,8 +312,9 @@ func snapshotHistoryFixture(t *testing.T) *snapshotHistoryStore {
 	}
 	for _, pair := range [][2]string{{"middle", "original"}, {"current", "middle"}} {
 		s.seeds[pair[0]] = storage.RunSeed{
+			Origin: origin,
 			Declaration: storage.SeedDeclaration{
-				Origin: origin, RunID: pair[0], Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+				RunID: pair[0], Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
 					RunExecutorBranchAgent("worker"))}, SessionID: "session", CommandID: "command", AttemptID: "attempt",
 				Kind: storage.SeedContinuation, PredecessorRunID: pair[1], SourceRunID: pair[1], SourceEndID: "1",
 			},
@@ -322,7 +322,8 @@ func snapshotHistoryFixture(t *testing.T) *snapshotHistoryStore {
 		}
 	}
 	s.seeds["original"] = storage.RunSeed{
-		Declaration: storage.SeedDeclaration{Origin: origin, RunID: "original", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+		Origin: origin,
+		Declaration: storage.SeedDeclaration{RunID: "original", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
 			RunExecutorBranchAgent("worker"))}, SessionID: "session", Kind: storage.SeedLiteral}, EndID: "seed",
 	}
 	s.events["original"] = snapshotEvents(t,

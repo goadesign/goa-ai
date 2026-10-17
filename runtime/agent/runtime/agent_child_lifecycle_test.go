@@ -23,10 +23,9 @@ func TestExecuteAgentChildWaitsAfterParentCancellation(t *testing.T) {
 	runtime := New(newTestStore())
 	_, err := createSessionForTest(t.Context(), runtime.Store, "session-1")
 	require.NoError(t, err)
-	seedEndID, err := publishLiteralHistory(ctx, runtime.Store, storage.SeedDeclaration{
+	seedEndID, err := publishLiteralHistory(ctx, runtime.Store, genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: "parent-run", ToolCallID: "call-1"})}, storage.SeedDeclaration{
 		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("child.agent"))}, RunID: "child-run", SessionID: "session-1",
-		Kind:   storage.SeedLiteral,
-		Origin: genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: "parent-run", ToolCallID: "call-1"})},
+		Kind: storage.SeedLiteral,
 	}, nil)
 	require.NoError(t, err)
 	childHandles := make(chan *controlledChildHandle, 1)

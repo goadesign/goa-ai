@@ -307,6 +307,13 @@ func testChildSuspensionContinuation(t *testing.T, dynamic bool) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("continuation did not start its child within the fixture deadline")
 	}
+	continuedSeed, err := runtime.Store.LoadRunSeed(t.Context(), secondContext.childRequests[0].Input.RunID, secondContext.childRequests[0].Input.SeedEndID)
+	require.NoError(t, err)
+	originalInvocation, selected := continuedSeed.Origin.Invocation.AsTool()
+	require.True(t, selected)
+	require.Equal(t, "run-1", originalInvocation.RunID)
+	require.Equal(t, call.ToolCallID, originalInvocation.ToolCallID)
+	require.Equal(t, "run-2", secondContext.childRequests[0].Input.ParentRunID)
 	require.Equal(t, childSuspension.ID, secondContext.childRequests[0].Input.Continuation.Suspension.ID)
 	require.Equal(t, "Unit 7", secondContext.childRequests[0].Input.Continuation.Response.Clarification.Answer)
 	require.NoError(t, validateWorkflowRunInput(secondContext.childRequests[0].Input))

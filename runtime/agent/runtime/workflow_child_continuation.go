@@ -118,14 +118,13 @@ func (l *workflowLoop) startChildContinuation(batch *stepBatch, pending *checkpo
 	}
 	seedStore := workflowSeedWriter{r: l.r}
 	declaration := storage.SeedDeclaration{
-		Origin:  genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: record.call.RunID, ToolCallID: record.call.ToolCallID})},
 		Subject: childInput.Subject, RunID: childInput.RunID, SessionID: childInput.SessionID,
 		CommandID: childInput.RunID, AttemptID: childInput.RunID,
 		Kind: storage.SeedContinuation, PredecessorRunID: checkpoint.PreviousRunID, SourceRunID: checkpoint.PreviousRunID, SourceEndID: checkpoint.HistoryEndID,
 	}
-	// Saving supplied or retained history performs no provider work. The actual
-	// engine start checks any stop returned while binding this exact recipe.
-	if _, err := bindHistoryOperation(l.wfCtx.Context(), seedStore, declaration); err != nil {
+	// The saved call retains the original invocation across parent continuations.
+	// currentCall selects the new parent for execution, but cannot replace that owner.
+	if _, err := bindHistoryOperation(l.wfCtx.Context(), seedStore, declaration, genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: record.call.RunID, ToolCallID: record.call.ToolCallID})}); err != nil {
 		return agentChildFutureInfo{}, -1, err
 	}
 	seed, err := seedStore.BeginRunSeed(l.wfCtx.Context(), declaration)

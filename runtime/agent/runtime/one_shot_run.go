@@ -135,10 +135,13 @@ func (r *SynchronousRuntime) recordOneShotEvent(ctx context.Context, event hooks
 	case hooks.RunStarted:
 		// Callback runs have no initial messages. Publish that explicit empty
 		// history before accepting the run, just as prepared workflows do.
-		writer, err := stageLiteralHistory(ctx, synchronousSeedWriter{r: r}, storage.SeedDeclaration{
-			Origin:  genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: event.RunID()})},
+		declaration := storage.SeedDeclaration{
 			Subject: event.Subject(), RunID: event.RunID(), CommandID: event.RunID(), AttemptID: event.RunID(), Kind: storage.SeedLiteral,
-		}, nil)
+		}
+		if _, err := bindHistoryOperation(ctx, synchronousSeedWriter{r: r}, declaration, genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: event.RunID()})}); err != nil {
+			return nil, err
+		}
+		writer, err := stageLiteralHistory(ctx, synchronousSeedWriter{r: r}, declaration, nil)
 		if err != nil {
 			return nil, err
 		}

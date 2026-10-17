@@ -8486,8 +8486,12 @@ those runs to execute. See [the runtime ownership contract](../DESIGN.md).
 
 Custom stores now implement `BeginRunPreparationOperation` before accepting
 `BeginRunSeed`. The first method binds the destination's subject, Session,
-immutable command and original `genregistry.ExecutionInvocation`. Seed declarations
-retain that required invocation. Root continuations copy it from their exact
+immutable command and original `genregistry.ExecutionInvocation`. `SeedDeclaration`
+contains only history-upload intent and the matching operation identity; it no
+longer accepts `Origin`. The required `RunSeed.Origin` result comes from that
+existing preparation binding, including results returned by `BeginRunSeed`,
+`LoadRunSeed`, and `FindRunPreparation`. Stores must not persist a second invocation
+copy in seed state. Root continuations copy it from their exact
 predecessor; delegated calls retain the original issuing Run and tool-call pair,
 even after the current parent continues. Settlement closes one upload attempt
 without choosing an operation owner. Recovery still takes the existing operation
@@ -8500,3 +8504,34 @@ it is not an authorization credential. Hosts obtain current or accepted caller
 facts from their owning service. Resolver metadata is prepared once and retained
 with history. Existing persisted preparations require an explicit migration;
 missing invocation data must not be assigned a default root identity.
+
+
+#### Adopting the seed invocation result
+
+Update custom stores, transport schemas, wrappers, and test fixtures together:
+remove `SeedDeclaration.Origin`, continue binding the required invocation through
+`RunPreparationBegin.Origin`, and populate `RunSeed.Origin` from the existing
+preparation whose subject, run, session, and command match the declaration.
+Validate source ownership and continuation identity against that binding. A new
+turn can use another completed run's history while retaining its own invocation;
+a continuation must retain its predecessor's original invocation. Do not derive
+it from the current parent, which can change after suspension.
+
+Existing preparations that already have an invocation binding need no new stored
+field. Remove the redundant invocation field from persisted seed declarations
+using the store's explicit migration process, and update strict encoders and
+readers together. Preserve the binding until its preparation and run are removed;
+session purge removes all three together. An abandoned attempt does not erase or
+replace the operation's invocation. Records predating invocation binding still
+require the explicit migration described above; missing identity is an error.
+
+Storage activity inputs contain seed declarations. Saved workflow histories and
+pending activity inputs written with the removed field require their original
+workers to drain, or an explicitly verified conversion before adoption by new
+workers. Draining old workers also requires their matching store transport;
+retaining workers alone is insufficient after a shared store rejects their input
+shape. Coordinate custom-store clients and servers; old declaration writers and
+new strict decoders cannot share this contract. This change does not alter
+`UnstartedExecutionTerminal.Origin`: terminal writers obtain it from the returned
+`RunSeed.Origin`. The history-command byte limit is unchanged and applies only to
+the history command, not to the separately accepted original invocation.

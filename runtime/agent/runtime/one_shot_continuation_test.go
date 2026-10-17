@@ -234,7 +234,6 @@ func TestOneShotContinuationRejectsChangedSavedIdentity(t *testing.T) {
 
 func TestOneShotHistoryRequiresExactContinuation(t *testing.T) {
 	declaration := storage.SeedDeclaration{
-		Origin:  genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: "original"})},
 		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("svc.agent")},
 		RunID:   "successor", CommandID: "successor", AttemptID: "successor", Kind: storage.SeedContinuation,
 		PredecessorRunID: "original", SourceRunID: "original", SourceEndID: "7",
