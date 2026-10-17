@@ -553,7 +553,9 @@ func (r *Runtime) preparePlannerActivity(
 	}
 	dynamicNames := make([]tools.Ident, 0, len(catalog.selections))
 	for name := range catalog.selections {
-		dynamicNames = append(dynamicNames, name)
+		if _, static := catalog.definition.specByName[name]; !static {
+			dynamicNames = append(dynamicNames, name)
+		}
 	}
 	slices.Sort(dynamicNames)
 	for _, name := range dynamicNames {
