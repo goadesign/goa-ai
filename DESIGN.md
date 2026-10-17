@@ -828,11 +828,14 @@ its request is accepted, while retaining the original tool-call ID, call run,
 arguments, selected contract, actor and resource context. The old checkpoint
 keeps its historical parent unchanged. Standalone runs use
 `PrepareOneShotContinuation` and `StartPrepared` to answer the exact saved request
-without creating a Session. Registered standalone operations use their existing
-`StartToolContinuation` entry point. Standalone parents and children preserve the
-original invocation and exact history position; the store admits only one
-successor for each suspended run. Conversation continuation and next-turn APIs
-still require a Session.
+without creating a Session. Durable host workers can use
+`StartToolContinuation` and `EnsureToolContinuationCompletion` for direct or
+registered operations, with or without a Session. Both methods recover the exact
+published successor request; direct operations retain their saved declaration
+while registered operations retain their original registered invocation.
+Standalone parents and children preserve the original invocation and exact
+history position; the store admits only one successor for each suspended run.
+Conversation continuation and next-turn APIs still require a Session.
 
 Initial sessionful runs use the same command. `Prepare(ctx, sessionID, messages,
 options...)` validates the generated agent contract and publishes the exact

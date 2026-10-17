@@ -3766,9 +3766,13 @@ cannot describe the same invocation simultaneously.
 
 A service accepting an input answer must first save the predecessor, new run ID,
 and typed answer as an immutable dispatch obligation. Its durable worker calls
-`StartToolContinuation` and `EnsureToolContinuationCompletion`. Those methods
-recover the exact published successor request before reading saved suspension
-again, reject a changed answer, and derive authority and routing from saved data.
+`StartToolContinuation` and `EnsureToolContinuationCompletion` for direct Agent
+operations as well as registered native and service operations, with or without
+a Session. Those methods recover the exact published successor request before
+reading saved suspension again, reject a changed answer, and derive authority
+and routing from saved data.
+Retry identity uses the same encoded request digest as engine submission, so
+equivalent empty content lists do not cause false conflicts.
 They are worker submission and completion methods, not a client retry protocol.
 The existing cancellation job likewise owns cleanup of suspended service work.
 
