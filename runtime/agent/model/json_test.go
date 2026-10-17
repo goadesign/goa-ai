@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/runtime/agent/prompt"
@@ -290,6 +291,130 @@ func TestSchemaWithoutRootExampleUsesSemanticJSONEquality(t *testing.T) {
 
 func TestEqualRawJSONRejectsMalformedValues(t *testing.T) {
 	require.False(t, equalRawJSON(json.RawMessage(`{"value":`), json.RawMessage(`{"value":`)))
+}
+
+func TestEqualRawJSONValues(t *testing.T) {
+	tests := []struct {
+		name  string
+		left  string
+		right string
+		equal bool
+	}{
+		{
+			name: "empty input",
+		},
+		{
+			name:  "whitespace input",
+			left:  " \n\t",
+			right: " \n\t",
+		},
+		{
+			name:  "malformed array",
+			left:  `[1,]`,
+			right: `[1,]`,
+		},
+		{
+			name:  "identical nested object",
+			left:  `{"items":[{"name":"sample","count":2,"active":true,"extra":null}],"empty":{}}`,
+			right: `{"items":[{"name":"sample","count":2,"active":true,"extra":null}],"empty":{}}`,
+			equal: true,
+		},
+		{
+			name:  "identical nested array",
+			left:  `[{"items":[null,false,"sample",2]},[]]`,
+			right: `[{"items":[null,false,"sample",2]},[]]`,
+			equal: true,
+		},
+		{
+			name:  "null with surrounding whitespace",
+			left:  " \nnull\t",
+			right: `null`,
+			equal: true,
+		},
+		{
+			name:  "number beyond float precision",
+			left:  `9007199254740993000`,
+			right: `9007199254740993e3`,
+			equal: true,
+		},
+		{
+			name:  "number beyond float range",
+			left:  `1e400`,
+			right: `10e399`,
+			equal: true,
+		},
+		{
+			name:  "unsupported number exponent",
+			left:  `1e1000001`,
+			right: `1e1000001`,
+		},
+		{
+			name:  "unsupported number in identical object",
+			left:  `{"nested":{"number":1e1000001}}`,
+			right: `{"nested":{"number":1e1000001}}`,
+		},
+		{
+			name:  "unsupported number in identical array",
+			left:  `[[1e1000001]]`,
+			right: `[[1e1000001]]`,
+		},
+		{
+			name:  "object order and string spelling",
+			left:  `{"first":"\u0061","second":[1,null]}`,
+			right: ` { "second": [1.0, null], "first": "a" } `,
+			equal: true,
+		},
+		{
+			name:  "different object members",
+			left:  `{"first":1}`,
+			right: `{"second":1}`,
+		},
+		{
+			name:  "different nested value",
+			left:  `{"value":[1,2]}`,
+			right: `{"value":[1,3]}`,
+		},
+		{
+			name:  "array order",
+			left:  `[1,2]`,
+			right: `[2,1]`,
+		},
+		{
+			name:  "null and empty object",
+			left:  `null`,
+			right: `{}`,
+		},
+		{
+			name:  "null and empty array",
+			left:  `null`,
+			right: `[]`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.Equal(t, test.equal, equalRawJSON(json.RawMessage(test.left), json.RawMessage(test.right)))
+		})
+	}
+}
+
+func BenchmarkEqualRawJSONIdenticalContainers(b *testing.B) {
+	object := json.RawMessage(`{"type":"object","properties":{"records":{"type":"array","items":{"type":"object","properties":{"label":{"type":"string"},"count":{"type":"integer","minimum":0}},"required":["label","count"],"additionalProperties":false}}},"required":["records"],"additionalProperties":false}`)
+	for _, test := range []struct {
+		name  string
+		input json.RawMessage
+	}{
+		{name: "object", input: object},
+		{name: "array", input: json.RawMessage("[" + string(object) + "," + string(object) + "]")},
+	} {
+		b.Run(test.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for b.Loop() {
+				if !equalRawJSON(test.input, test.input) {
+					b.Fatal("identical container did not compare equal")
+				}
+			}
+		})
+	}
 }
 
 func TestThinkingPartRoundTripPreservesSignature(t *testing.T) {
