@@ -3977,6 +3977,33 @@ historical parent is not rewritten. When a child is continued directly through
 its public client under the same running parent, the client derives that parent
 from the checkpoint; callers do not supply a parent selector.
 
+### Child run identifiers and worker upgrades
+
+`NestedRunIDForToolCall` derives each agent-tool child workflow ID from the
+complete parent run ID, tool name, and runtime tool-call ID. It hashes a distinct
+`goa-ai-agent-child-run-v1` domain followed by the three strings, each preceded
+by its byte length, with SHA-256 and returns all 64 lowercase hexadecimal
+characters. Long registered tool names and repeated nesting therefore do not
+grow the child workflow ID.
+An empty parent still means `unknown`; an empty tool-call ID remains part of the
+hashed tuple. The separate `NestedRunID` helper keeps its hierarchical format.
+
+Treat child IDs as opaque. The child request, stored parent links, and returned
+`ToolResult.RunLink` retain the parent and tool-call IDs separately; the child
+request also retains the full tool name. Tool names and tool-call IDs are not
+shortened, and typed child results keep their existing contracts.
+
+This changes the per-call helper's previous joined-string output. Saved IDs,
+links, and workflow histories are not rewritten. Before replacing workers, stop
+new admissions and let existing executions finish on their matching workers,
+including any child workflows they need. Alternatively, use an already configured
+and verified worker-versioning deployment that keeps existing executions on their
+original build. Do not assume an unversioned execution can be pinned afterward.
+Keep retained histories with matching code for replay; do not reset old histories
+onto new workers. Rollback has the same restriction: new-format executions must
+finish on matching workers before old workers can replace them. No record schema
+or typed result migration is required by this identifier change.
+
 ### How It Works
 
 1. Parent planner requests tool (e.g., `"service.analysis.analyze"`)

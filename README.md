@@ -163,6 +163,8 @@ service wiring, and connecting a model. For MCP, follow the
 - **Specialist agents.** Expose agents as tools and compose real child runs with
   linked progress and cancellation. Cancellation preserves completed results
   and waits for required cleanup before closing the run; cleanup failures remain errors.
+  Child workflow IDs stay bounded for long names and repeated nesting; see the
+  [identifier and worker upgrade contract](docs/runtime.md#child-run-identifiers-and-worker-upgrades).
 - **Human input and approvals.** Save a pending question or confirmation and
   continue from the host's answer. Direct and registered operations share durable
   continuation submission and completion. Canceling a root question with no saved
