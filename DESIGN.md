@@ -1454,6 +1454,10 @@ name, and preserves generated codecs, input preparation, loading, hints, and
 execution. `executor.NewResolved` admits and retries through `CallResolvedTool`
 using the saved route, operation, and token. The existing `ToolCall.Registry`
 retains that selection; no new saved field or model argument is introduced.
+The complete static declaration supplies validation contracts, while the Agent's
+executable list chooses its planner tools. Binding a static declaration never
+adds an omitted operation to that list, on initial planning or resume. Separately
+discovered tools remain additional planner choices.
 Classification uses the consuming Agent definition, never process-wide tool
 names. Changing that definition between direct dynamic and bound static usage,
 including removing a static tool, requires draining affected runs before the

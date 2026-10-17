@@ -394,6 +394,11 @@ Register the generated toolsets with an executor constructed by
 is the generated specification lookup. Generated model names, deferred loading,
 input preparation, result codecs, hints, and materializers remain in use. The
 binding changes only which exact service registration receives execution.
+The complete static declaration and the Agent's executable tool list serve
+different purposes: binding validates the declaration, but only executable tools
+become planner choices. Binding an omitted operation does not advertise or permit
+new calls to it, on initial planning or resume. Separately discovered tools remain
+available under their imported names.
 Every call routed to `NewResolved` must have a saved binding. Selecting only some
 operations does not install a separate executor for each name. If a generated
 toolset also contains unbound operations, application executor composition must
@@ -437,6 +442,10 @@ queue against the consuming definition's generated child route. Registration
 configuration may change between revisions; each accepted call retains its
 selected revision. Toolset discovery descriptions and tags do not alter the
 operation contract.
+
+Binding the complete native export set does not make every export executable by
+the consuming Agent. Its executable list still chooses the static planner tools,
+including on resume; the remaining declarations stay available for validation.
 
 The consumer keeps generated payload and result codecs and `BindInput`
 preparation. Native execution uses the existing durable child workflow path.
