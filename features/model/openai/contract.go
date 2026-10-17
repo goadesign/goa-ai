@@ -23,9 +23,11 @@
 //   - Direct OpenAI uses strict projected schemas. NewBedrock preserves full
 //     tool schemas with strict:false; canonical output validation still rejects
 //     invalid arguments without repairing them.
-//   - Direct OpenAI structured output is provider-enforced when requested, but
-//     it cannot be combined with tools. NewBedrock rejects structured output
-//     with model.ErrStructuredOutputUnsupported before inference.
+//   - Structured output uses the shared strict schema compiler and validates
+//     returned JSON against the original schema; it cannot be combined with
+//     tools. Bedrock accepts unary structured output on supporting models and
+//     rejects streaming structured output with model.ErrStructuredOutputUnsupported
+//     before inference. Direct OpenAI supports both methods.
 //   - Cache-bearing requests and explicit cache checkpoints fail fast; the
 //     adapter does not silently drop unsupported cache semantics.
 //   - Enabled thinking uses the configured ThinkingEffort. Disabled thinking

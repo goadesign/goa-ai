@@ -2016,9 +2016,11 @@ The official OpenAI Go SDK v3 owns Bedrock authentication and endpoint
 resolution. The adapter accepts only the configuration it consumes: region,
 refreshable credentials, model options and SDK request options. Bedrock requests
 disable storage, background execution, input truncation and implicit prompt
-cache writes. Unsupported structured output and cache-bearing requests fail
-before transport. Bedrock Responses exposes a declared local token estimate;
-direct OpenAI counting remains unsupported. The Bedrock estimator counts
+cache writes. Unary structured output uses the shared strict schema compiler
+and original-schema validation on supporting models. Streaming structured output
+and cache-bearing requests fail before transport. Bedrock Responses exposes a
+declared local token estimate; direct OpenAI counting remains unsupported.
+The Bedrock estimator counts
 GPT-5.6, GPT-6 Sol, and GPT-6.1 Sol images from dimensions rather than their base64 transfer
 size, retaining the byte approximation for text, tools, and opaque reasoning.
 GPT-6 Sol and GPT-6.1 Sol use an explicit local patch estimate; it does not claim the GPT-5.6
