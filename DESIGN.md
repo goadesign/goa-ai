@@ -776,6 +776,10 @@ boundary rather than reopening execution.
 Each accepted user input starts one top-level workflow for that turn. The
 workflow ends with either that turn's final result or an external-input
 suspension. Nested agents retain their linked child workflows.
+Agent-tool child IDs hash the complete parent, tool, and call identity into a
+fixed-size string; parent links remain separate. See
+[child run identifiers and worker upgrades](docs/runtime.md#child-run-identifiers-and-worker-upgrades)
+for the encoding and replay restrictions.
 
 The workflow loop is the sole owner of run-duration enforcement. `TimeBudget`
 becomes the deterministic Budget deadline for active planner and tool work.
