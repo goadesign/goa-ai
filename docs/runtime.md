@@ -833,9 +833,10 @@ it does not extend support to arbitrary custom schemas. Required, disjoint
 string tags select each object union branch's own optional-null removal rules.
 Original response bytes remain available for provider replay while canonical
 arguments undergo the original schema and generated decoder validation.
-Bedrock's native structured-output restriction and local token estimate apply
-to this constructor too. Existing Bedrock constructors keep their complete-schema
-contract unchanged; strictness is never selected per tool or after a failure.
+Bedrock's unary structured-output support, streaming restriction and local token
+estimate apply to this constructor too. Existing Bedrock constructors keep their
+complete-schema contract unchanged; strictness is never selected per tool or
+after a failure.
 
 These constructors share full ordered transcript encoding, text and tool-call
 streaming, provider-issued tool IDs, reversible tool names, encrypted reasoning
@@ -862,13 +863,29 @@ Bedrock requests explicitly set `store:false`, `background:false`, disabled
 input truncation, and explicit prompt caching without checkpoints. They do not
 write prompt caches implicitly. Cache options or inline checkpoints are
 rejected before HTTP rather than silently moved or dropped. Provider-reported
-cache reads and writes are retained in usage. Native `StructuredOutput` is
-rejected with `model.ErrStructuredOutputUnsupported` before HTTP.
+cache reads and writes are retained in usage.
+
+Unary `Complete` supports native `StructuredOutput` on models that accept
+Responses JSON Schema output. The adapter sends `text.format` with
+`type:"json_schema"`, the supplied name, the shared strict schema projection,
+and `strict:true`, then validates returned JSON against the original schema.
+This is independent of the constructor's function-tool strictness. The same
+strict-schema subset and prohibition on combining structured output with tools
+apply as for direct OpenAI. Unsupported model or schema settings return errors;
+the adapter does not switch to a tool or an unconstrained text response.
+For example, the [Bedrock GPT-5.6 Terra contract](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-terra.html)
+documents JSON Schema output for non-streaming Responses calls.
+
+`Stream` rejects `StructuredOutput` with `model.ErrStructuredOutputUnsupported`
+before HTTP, even when the request's `Stream` hint is false. Direct OpenAI
+structured-output streams and ordinary Bedrock text and tool streams retain
+their existing behavior.
 
 `CountTokens` prepares the request locally without HTTP and returns `Exact=false`.
-Text, tools, and opaque replay content use serialized bytes divided by three,
-rounded up, plus 500 framing tokens. Native image data URLs are excluded from
-that byte calculation. For GPT-5.6 Sol, Terra, and Luna, each image instead uses
+Text, tools, structured-output schemas, and opaque replay content use serialized
+bytes divided by three, rounded up, plus 500 framing tokens. Native image data
+URLs are excluded from that byte calculation. For GPT-5.6 Sol, Terra, and Luna,
+each image instead uses
 the [documented auto/original dimension rule](https://developers.openai.com/api/docs/guides/images-vision):
 fit within 65,535 pixels on each side, count 32-pixel patches, and round up the
 1.2 token multiplier. More than 30,000 patches rejects that individual image;

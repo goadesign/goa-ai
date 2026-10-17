@@ -33,8 +33,10 @@ var _ model.TokenCounter = (*bedrockProvider)(nil)
 //
 // Function tools advertise their complete generated schemas with strict:false;
 // returned arguments are preserved and validated locally, never repaired.
-// Cache-bearing requests and StructuredOutput are rejected before inference.
-// CountTokens estimates prepared text and tool bytes plus supported model image
+// Unary StructuredOutput uses the shared strict schema compiler and validates
+// returned JSON against the caller's original schema. Streaming StructuredOutput
+// and cache-bearing requests are rejected before inference.
+// CountTokens estimates prepared request bytes plus supported model image
 // tokens locally with Exact=false.
 // This approximation is neither a native token count nor a guaranteed upper bound;
 // callers that require exact counting must reject it.
@@ -65,9 +67,10 @@ func NewBedrockProvider(ctx context.Context, region string, credentials aws.Cred
 // The existing NewBedrockProvider continues to send complete canonical schemas.
 //
 // This provider retains Bedrock's request settings, local token estimate, and
-// rejection of native StructuredOutput and cache-bearing requests. Original
-// provider arguments and canonical replay agreement remain separate. Wrap the
-// provider with model.NewClient, or the model gateway, for canonical validation.
+// unary StructuredOutput support. It rejects streaming StructuredOutput and
+// cache-bearing requests. Original function-call arguments remain available for
+// replay. Wrap the provider with model.NewClient, or the model gateway, to check
+// returned values against the caller's original schema and generated decoder.
 func NewBedrockStrictProvider(ctx context.Context, region string, credentials aws.CredentialsProvider, opts Options, requestOpts ...option.RequestOption) (model.Provider, error) {
 	provider, err := newBedrockProvider(ctx, region, credentials, opts, requestOpts...)
 	if err != nil {
