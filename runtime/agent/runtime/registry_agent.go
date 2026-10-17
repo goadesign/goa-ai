@@ -12,8 +12,10 @@ import (
 	"goa.design/goa-ai/internal/registrycontract"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/tools"
+	registrycontractpublic "goa.design/goa-ai/runtime/toolregistry/contract"
 )
 
 type (
@@ -38,6 +40,10 @@ type (
 	// original provider operation; TranscriptName retains the consumer name. The
 	// reference comes from the selected registry declaration, never model input.
 	AgentToolResolver func(context.Context, genregistry.ExecutionInvocation, string, *ToolCall) (*AgentToolConfiguration, error)
+
+	// agentOperationProvider loads a revision-owned declaration and prepares the
+	// same invocation without receiving the caller-selected schema.
+	agentOperationProvider func(context.Context, genregistry.ExecutionInvocation, string, *ToolCall) (*genregistry.ToolSchema, *AgentToolConfiguration, error)
 )
 
 // RegisterAgentToolResolver installs configuration loading on the worker that
@@ -54,13 +60,44 @@ func (r *Runtime) RegisterAgentToolResolver(executor agent.Ident, resolver Agent
 	if r.registrationClosed.Load() {
 		return ErrRegistrationClosed
 	}
-	if _, exists := r.agentToolResolvers[executor]; exists {
+	if r.agentToolResolvers[executor] != nil || r.agentOperationProviders[executor] != nil {
 		return fmt.Errorf("runtime: Agent executor %q already has a resolver", executor)
 	}
 	if r.agentToolResolvers == nil {
 		r.agentToolResolvers = make(map[agent.Ident]AgentToolResolver)
 	}
 	r.agentToolResolvers[executor] = resolver
+	return nil
+}
+
+// RegisterAgentOperationProvider installs a provider whose immutable configuration
+// owns its exported operation contracts. The provider receives the original
+// operation name and configuration reference, loads that exact saved declaration,
+// and returns it with prepared history and policy. It must not derive the owned
+// declaration from the caller's Registry selection. Runtime checks declaration
+// equality before publishing history or starting model work. Providers must keep
+// preparation free of business side effects because an activity can retry.
+//
+// RegisterAgentToolResolver remains the registration for generated exports. An
+// executor can use exactly one registration, installed before Seal or any run.
+func (r *Runtime) RegisterAgentOperationProvider(executor agent.Ident, resolve func(context.Context, genregistry.ExecutionInvocation, string, *ToolCall) (*genregistry.ToolSchema, *AgentToolConfiguration, error)) error {
+	if executor == "" || resolve == nil {
+		return errors.New("runtime: Agent executor and operation provider are required")
+	}
+	r.registrationMu.Lock()
+	defer r.registrationMu.Unlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.registrationClosed.Load() {
+		return ErrRegistrationClosed
+	}
+	if r.agentToolResolvers[executor] != nil || r.agentOperationProviders[executor] != nil {
+		return fmt.Errorf("runtime: Agent executor %q already has a resolver", executor)
+	}
+	if r.agentOperationProviders == nil {
+		r.agentOperationProviders = make(map[agent.Ident]agentOperationProvider)
+	}
+	r.agentOperationProviders[executor] = resolve
 	return nil
 }
 
@@ -97,7 +134,7 @@ func (r *Runtime) prepareRegistryAgentChild(ctx context.Context, origin genregis
 	if err != nil {
 		return nil, err
 	}
-	spec, err := providerOperationSpec(cfg.Definition, declaration)
+	spec, err := r.providerOperationSpec(cfg.Definition, declaration)
 	if err != nil {
 		return nil, err
 	}
@@ -111,16 +148,17 @@ func (r *Runtime) prepareRegistryAgentChild(ctx context.Context, origin genregis
 		call.ModelName = call.TranscriptName()
 		call.Name = spec.Name
 	}
-	return r.resolveAgentConfiguration(ctx, origin, cfg.Definition, declaration.ConsumerContract.Agent.Configuration, &call)
+	return r.resolveAgentConfiguration(ctx, origin, cfg.Definition, declaration, &call)
 }
 
 // resolveAgentConfiguration loads the selected immutable configuration on its
 // provider, then returns owned messages, labels and policy for this operation.
-func (r *Runtime) resolveAgentConfiguration(ctx context.Context, origin genregistry.ExecutionInvocation, definition AgentDefinition, reference string, call *ToolCall) (*AgentToolConfiguration, error) {
+func (r *Runtime) resolveAgentConfiguration(ctx context.Context, origin genregistry.ExecutionInvocation, definition AgentDefinition, declaration *genregistry.ToolSchema, call *ToolCall) (*AgentToolConfiguration, error) {
 	r.mu.RLock()
 	resolver := r.agentToolResolvers[definition.route.ID]
+	provider := r.agentOperationProviders[definition.route.ID]
 	r.mu.RUnlock()
-	if resolver == nil {
+	if resolver == nil && provider == nil {
 		return nil, fmt.Errorf("agent executor %q has no configuration resolver", definition.route.ID)
 	}
 	ownedCall := cloneToolCall(*call)
@@ -132,7 +170,23 @@ func (r *Runtime) resolveAgentConfiguration(ctx context.Context, origin genregis
 		value := *tool
 		ownedOrigin.Invocation = genregistry.NewExecutionInvocationKindTool(&value)
 	}
-	config, err := resolver(ctx, ownedOrigin, reference, &ownedCall)
+	var config *AgentToolConfiguration
+	var err error
+	reference := declaration.ConsumerContract.Agent.Configuration
+	if provider != nil {
+		// The provider selects its saved export using only the operation name and
+		// configuration reference. Do not expose the caller's schema as evidence.
+		ownedCall.Registry = nil
+		var ownedDeclaration *genregistry.ToolSchema
+		ownedDeclaration, config, err = provider(ctx, ownedOrigin, reference, &ownedCall)
+		if err == nil {
+			if contractErr := validateOwnedAgentOperation(definition, declaration, ownedDeclaration); contractErr != nil {
+				err = engine.MarkActivityErrorNonRetryable(contractErr)
+			}
+		}
+	} else {
+		config, err = resolver(ctx, ownedOrigin, reference, &ownedCall)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -199,4 +253,25 @@ func cloneParentTool(spec *tools.ToolSpec) *tools.ToolSpec {
 	}
 	cloned := cloneToolSpec(*spec)
 	return &cloned
+}
+
+// validateOwnedAgentOperation checks the provider's independently loaded export
+// against the accepted declaration, including its saved configuration and route.
+// Both inputs use the Registry identity algorithm, which includes all annotations.
+func validateOwnedAgentOperation(definition AgentDefinition, selected, owned *genregistry.ToolSchema) error {
+	if _, err := compileAgentOperation(owned, definition.route.ID); err != nil {
+		return fmt.Errorf("provider-owned operation: %w", err)
+	}
+	selectedIdentity, err := registrycontractpublic.Fingerprint(&genregistry.Toolset{Name: selected.Name, Tools: []*genregistry.ToolSchema{selected}})
+	if err != nil {
+		return err
+	}
+	ownedIdentity, err := registrycontractpublic.Fingerprint(&genregistry.Toolset{Name: owned.Name, Tools: []*genregistry.ToolSchema{owned}})
+	if err != nil {
+		return err
+	}
+	if selectedIdentity != ownedIdentity {
+		return fmt.Errorf("operation %q differs from the provider's saved export", selected.Name)
+	}
+	return nil
 }

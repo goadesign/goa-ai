@@ -253,8 +253,11 @@ existing lease lifecycle. Calling a native Agent through `CallTool` or
 ### Prepare the child configuration
 
 Before sealing the provider runtime, register an `AgentToolResolver` for each
-Agent it runs. Consumers do not register this resolver or load the provider
-definition. The callback receives the original generated execution invocation,
+Agent whose exports are generated. For exports owned by immutable saved revisions,
+use [RegisterAgentOperationProvider](runtime.md#revision-owned-operation-contracts)
+instead; that section defines the independent declaration check. Consumers do not
+register this resolver or load the provider definition. The callback receives the
+original generated execution invocation,
 the saved configuration reference and a copy of the validated tool call.
 `call.Name` identifies the original provider operation, including when a
 registered import derives a different model-visible name. `call.TranscriptName()` and

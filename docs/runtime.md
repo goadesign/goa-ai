@@ -3802,7 +3802,7 @@ continuation seeds are a new format; they cannot be executed by older workers.
 ## Direct Agent Operations
 
 Call an exported operation without first publishing it as a tool. The caller
-needs its generated portable declaration and an authorized immutable
+needs its complete portable declaration and an authorized immutable
 configuration, not the provider implementation or private Agent definition.
 
 ```go
@@ -3828,9 +3828,10 @@ facts instead belong in `AgentToolConfiguration.Metadata`, which is saved with
 the prepared input and restored without rerunning the provider.
 
 The engine owns the complete accepted request before preparation starts.
-The provider's typed preparation activity checks the operation against its own
-generated export and route, then invokes its registered configuration resolver.
-Direct calls and delegation use the same resolver and exported contract checks.
+The provider's typed preparation activity checks the worker route and input.
+Generated providers require their compiled export; providers whose saved
+configurations define exports require that exact revision's declaration.
+Direct calls and delegation use the same provider registration and contract checks.
 The runtime publishes the prepared input through its store, enters the common
 Agent execution loop, and validates `FinalToolResult` against that exact contract.
 `PlanInput.ParentTool` carries the selected result contract for direct calls as
@@ -3847,9 +3848,58 @@ Preparation can fail before the runtime store creates its run record. A host's
 public run owner must observe the accepted engine execution to report that
 failure; an absent runtime-store record alone does not mean no work was accepted.
 
+### Revision-Owned Operation Contracts
+
+Use `Runtime.RegisterAgentOperationProvider` when an immutable configuration
+owns the exported operation names and complete input and result contracts.
+For example, two saved revisions can export `reports.summarize` with different
+result schemas. Each accepted call keeps the declaration from its selected
+revision; neither changes the worker's generated executable tools.
+
+Register this callback before sealing the provider runtime:
+
+```go
+err := rt.RegisterAgentOperationProvider(executor,
+    func(ctx context.Context, origin genregistry.ExecutionInvocation, reference string, call *runtime.ToolCall) (*genregistry.ToolSchema, *runtime.AgentToolConfiguration, error) {
+        return revisions.PrepareOperation(ctx, origin, reference, call)
+    },
+)
+if err != nil {
+    return err
+}
+```
+
+The application-owned `PrepareOperation` loads the exact saved revision named by
+`reference`, selects its export using `call.Name`, and returns that independently
+owned declaration with the prepared configuration. `call.Name` is the original
+operation name even when a consumer uses a registry alias. `call.Registry` is
+absent: the selected caller schema cannot serve as the provider's proof of its
+own contract. The callback receives the accepted invocation identity and copied
+arguments, labels, and transcript name just as a generated-provider resolver does.
+
+Runtime validates the selected executor, workflow, queue and input before the
+callback. It then validates the returned declaration and compares it using the
+Registry's declaration fingerprint, including the configuration reference,
+schemas, descriptions, tags and consumer contract. A mismatch is not retried and
+fails before prepared history is published or model work begins. Provider
+preparation must not perform business side effects because failures before
+publication can cause the activity to retry.
+
+Generated providers continue using `RegisterAgentToolResolver`: the selected
+operation must match their generated export before their resolver runs. An
+executor can register exactly one of these provider kinds. Existing callers need
+no changes or regeneration, and stored runs need no migration.
+
+Both provider kinds use [the same history contract](#provider-owned-history).
+An accepted preparation, workflow replay or continuation retains the original
+operation and configuration without loading a newer revision. Planners still
+own result generation: use `ParentTool.Result` for the selected schema and return
+`planner.FinalToolResult`; this registration does not itself turn ordinary model
+text into a structured result.
+
 ### Provider-Owned History
 
-Every `AgentToolResolver` returns an explicit history selection in
+Every provider callback returns an explicit history selection in
 `AgentToolConfiguration.History`. This applies to direct operations and Registry
 Agent children:
 

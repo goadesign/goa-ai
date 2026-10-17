@@ -146,16 +146,17 @@ All toolsets are first-class citizens—agents use `Use(toolset)` uniformly rega
 
 An exported Agent operation can run before it is published as a tool.
 `Runtime.StartOperation` requires an existing session;
-`Runtime.StartOneShotOperation` creates no conversation. Both accept the generated
+`Runtime.StartOneShotOperation` creates no conversation. Both accept the complete
 operation declaration, input, run identity and labels.
 The host authorizes the selection before starting it. The declaration does not
 create an access grant.
 
 The engine accepts the request before the provider prepares messages. A typed
-activity on the selected provider queue checks its generated export and exact
-route, then uses that provider's configuration resolver. The existing Agent loop
-validates the result against the retained operation. A direct call has no parent;
-delegation keeps its real child relationship. Exact request replay observes the
+activity on the selected provider queue checks its exact route and validates the
+export against either the generated definition or the independently loaded saved
+revision. The provider registration identifies which component owns the contract.
+The existing Agent loop validates the result against the retained operation.
+A direct call has no parent; delegation keeps its real child relationship. Exact request replay observes the
 same work, while changed input conflicts. Continuations retain the original
 operation rather than accepting a replacement.
 
@@ -168,7 +169,8 @@ Direct and delegated operations publish this history with their accepted control
 values, and retries recover that publication without resolving configuration again.
 
 See [direct operations](docs/runtime.md#direct-agent-operations) for the caller
-and provider contracts. The [provider history upgrade](docs/runtime.md#provider-owned-history)
+and provider contracts, including [revision-owned exports](docs/runtime.md#revision-owned-operation-contracts).
+The [provider history upgrade](docs/runtime.md#provider-owned-history)
 replaces the public resolver's `Messages` field with required `History`.
 
 ## Service-Owned Typed Completions
