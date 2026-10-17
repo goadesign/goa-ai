@@ -19,7 +19,7 @@ import (
 	registrycontract "goa.design/goa-ai/runtime/toolregistry/contract"
 )
 
-// StartOperation accepts one sessionful call to a generated Agent operation.
+// StartOperation accepts one sessionful call to a declared Agent operation.
 // The host must already own the session and authorize the selected declaration.
 // Provider preparation and effects belong to the accepted workflow; callers only
 // observe its handle. The selected configuration owns planner policy.
@@ -74,9 +74,10 @@ func compileAgentOperation(operation *genregistry.ToolSchema, executor agent.Ide
 	return spec, nil
 }
 
-// providerOperationSpec requires the selected declaration to match this worker's
-// generated export and route before either direct or delegated preparation.
-func providerOperationSpec(definition AgentDefinition, declaration *genregistry.ToolSchema) (tools.ToolSpec, error) {
+// providerOperationSpec checks the selected route before preparation. Generated
+// providers also require their compiled export; revision-owned providers return
+// their saved declaration during configuration loading for an exact comparison.
+func (r *Runtime) providerOperationSpec(definition AgentDefinition, declaration *genregistry.ToolSchema) (tools.ToolSpec, error) {
 	selected, err := compileAgentOperation(declaration, definition.route.ID)
 	if err != nil {
 		return tools.ToolSpec{}, err
@@ -84,6 +85,12 @@ func providerOperationSpec(definition AgentDefinition, declaration *genregistry.
 	target := declaration.ConsumerContract.Agent
 	if target.Workflow != definition.route.WorkflowName || target.Queue != definition.route.DefaultTaskQueue {
 		return tools.ToolSpec{}, errors.New("agent operation does not match the provider's registered route")
+	}
+	r.mu.RLock()
+	provider := r.agentOperationProviders[definition.route.ID]
+	r.mu.RUnlock()
+	if provider != nil {
+		return selected, nil
 	}
 	owned, exists := definition.spec(selected.Name)
 	if !exists || !owned.IsAgentTool || owned.AgentID != string(definition.route.ID) || !equivalentToolSpec(owned, selected) {

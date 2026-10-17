@@ -139,13 +139,14 @@ type (
 		// model spans when enabled via WithCaptureGenAIMessages.
 		captureGenAIMessages bool
 
-		mu                 sync.RWMutex
-		agents             map[agent.Ident]AgentRegistration
-		toolsets           map[string]ToolsetRegistration
-		toolSpecs          map[tools.Ident]tools.ToolSpec
-		imageSources       *imageSourceRegistry
-		registries         map[string]registryConnection
-		agentToolResolvers map[agent.Ident]AgentToolResolver
+		mu                      sync.RWMutex
+		agents                  map[agent.Ident]AgentRegistration
+		toolsets                map[string]ToolsetRegistration
+		toolSpecs               map[tools.Ident]tools.ToolSpec
+		imageSources            *imageSourceRegistry
+		registries              map[string]registryConnection
+		agentToolResolvers      map[agent.Ident]AgentToolResolver
+		agentOperationProviders map[agent.Ident]agentOperationProvider
 		// toolDefinitions stores the input schema validator compiled when each
 		// tool specification is first registered.
 		toolDefinitions map[tools.Ident]*model.ToolDefinition
@@ -163,7 +164,7 @@ type (
 		// Per-agent tool specs registered during agent registration for introspection.
 		agentToolSpecs map[agent.Ident][]tools.ToolSpec
 
-		// registrationMu keeps all four registration methods serialized from
+		// registrationMu keeps registration methods serialized from
 		// validation through engine callbacks and registry updates.
 		registrationMu contextLock
 

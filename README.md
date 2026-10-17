@@ -239,9 +239,11 @@ Custom stores must follow the [preparation ownership upgrade](docs/runtime.md#pr
   requires coordinated registry, provider, and consumer upgrades; see
   [session metadata and upgrade](docs/runtime.md#session-metadata-and-upgrade).
 - **Direct Agent operations.** Start typed operations before tool publication,
-  using the same provider preparation and result contract as delegation. Providers
-  can select literal messages or exact completed-run history with retained privacy
-  exclusions; see the [resolver upgrade](docs/runtime.md#provider-owned-history).
+  using the same provider preparation and result contract as delegation.
+  [Revision-owned providers](docs/runtime.md#revision-owned-operation-contracts)
+  load and verify complete exports from the selected immutable configuration.
+  Providers can select literal messages or exact completed-run history with
+  retained privacy exclusions; see the [resolver upgrade](docs/runtime.md#provider-owned-history).
 - **Load tools when needed.** Use deferred tool search for whole toolsets or
   selected compiled tools, through supported OpenAI and Claude integrations.
 - **Durable execution.** Retain failures and cancellation even before the first
