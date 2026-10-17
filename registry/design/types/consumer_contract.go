@@ -40,6 +40,7 @@ var ConsumerContract = Type("ConsumerContract", func() {
 
 // TextOnlyToolContract supplies the exact generated model contract without UI controls.
 var TextOnlyToolContract = Type("TextOnlyToolContract", func() {
+	Description("Generated tool instructions, argument schemas, and metadata for execution using ordinary messages without UI controls.")
 	Field(1, "description", String, "Domain instructions without optional UI guidance.")
 	Field(2, "search", ToolSearchDocument, "Generated word counts for these domain instructions.")
 	Field(3, "payload_schema", Bytes, "Exact model argument schema without UI-only controls.", func() { MinLength(1) })
