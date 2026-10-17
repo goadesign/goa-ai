@@ -118,11 +118,11 @@ func TestUnstartedTerminalRacesFirstStart(t *testing.T) {
 func TestUnstartedTerminalRejectsLatePreparationPublication(t *testing.T) {
 	store, start := activeRunStore(t)
 	declaration := storage.SeedDeclaration{
-		Origin: rootExecutionOrigin(start.RunID), Subject: start.Subject,
-		RunID: start.RunID, SessionID: start.SessionID,
+		Subject: start.Subject,
+		RunID:   start.RunID, SessionID: start.SessionID,
 		CommandID: "command", AttemptID: "attempt", Kind: storage.SeedLiteral,
 	}
-	bindSeedTestOperation(t, store, declaration)
+	bindSeedTestOperation(t, store, declaration, rootExecutionOrigin(start.RunID))
 	seed, err := store.BeginRunSeed(t.Context(), declaration)
 	require.NoError(t, err)
 	publication := appendSeedTestCompletion(t, store, declaration, seed.EndID)
@@ -193,8 +193,8 @@ func TestUnstartedServiceContinuationPreservesActualStart(t *testing.T) {
 			root.SessionID = sessionID
 			root.Subject = genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorServiceTool(&genrunidentity.ServiceToolSubject{Registry: "registry", Tool: "records.find"})}
 			prepare := func(id, predecessor string) session.RunStart {
-				d := storage.SeedDeclaration{Origin: rootExecutionOrigin(root.RunID), Subject: root.Subject, RunID: id, SessionID: sessionID, CommandID: id, AttemptID: id, Kind: storage.SeedLiteral, PredecessorRunID: predecessor}
-				bindSeedTestOperation(t, store, d)
+				d := storage.SeedDeclaration{Subject: root.Subject, RunID: id, SessionID: sessionID, CommandID: id, AttemptID: id, Kind: storage.SeedLiteral, PredecessorRunID: predecessor}
+				bindSeedTestOperation(t, store, d, rootExecutionOrigin(root.RunID))
 				_, err := store.BeginRunSeed(t.Context(), d)
 				require.NoError(t, err)
 				require.NoError(t, store.PublishRunSeed(t.Context(), appendSeedTestCompletion(t, store, d, storage.EmptySeedEndID)))

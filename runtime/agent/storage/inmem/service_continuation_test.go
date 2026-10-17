@@ -24,8 +24,8 @@ func TestServiceContinuationHasOneSuccessor(t *testing.T) {
 			}
 			subject := genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorServiceTool(&genrunidentity.ServiceToolSubject{Registry: "registry", Tool: "records.find"})}
 			prepare := func(id, predecessor string) session.RunStart {
-				d := storage.SeedDeclaration{Origin: rootExecutionOrigin("root"), Subject: subject, RunID: id, SessionID: sessionID, CommandID: id, AttemptID: id, Kind: storage.SeedLiteral, PredecessorRunID: predecessor}
-				bindSeedTestOperation(t, store, d)
+				d := storage.SeedDeclaration{Subject: subject, RunID: id, SessionID: sessionID, CommandID: id, AttemptID: id, Kind: storage.SeedLiteral, PredecessorRunID: predecessor}
+				bindSeedTestOperation(t, store, d, rootExecutionOrigin("root"))
 				_, err := store.BeginRunSeed(t.Context(), d)
 				require.NoError(t, err)
 				require.NoError(t, store.PublishRunSeed(t.Context(), appendSeedTestCompletion(t, store, d, storage.EmptySeedEndID)))

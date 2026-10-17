@@ -114,7 +114,6 @@ func (r *Runtime) prepareAgentChildActivity(ctx context.Context, input *api.Agen
 		return nil, err
 	}
 	writer, err := stageAgentHistory(ctx, r.Store, storage.SeedDeclaration{
-		Origin:  origin,
 		Subject: operation.Subject, RunID: operation.RunID, SessionID: operation.SessionID,
 		CommandID: operation.CommandID, AttemptID: uuid.NewString(), RenderedPrompts: request.renderedPrompts,
 	}, history)

@@ -895,6 +895,12 @@ validates the exact accepted body through bounded Store pages, then submits its
 original engine request. Child preparation uses the same acceptance lifecycle
 and recovers its saved result before resolving mutable prompts again.
 
+The preparation operation owns the original invocation. History declarations
+reference that operation without copying its invocation into bounded write
+commands. Stores return `RunSeed.Origin` from the matching preparation binding;
+continuations preserve that original value even when their current parent changes.
+See the [custom-store upgrade](docs/runtime.md#preparation-ownership-upgrade).
+
 Planner and child-preparation activity commands identify the exact committed
 end of the current run's transcript instead of carrying its message array.
 `storage.Store.ListRunTranscriptRecords` checks record ownership and returns

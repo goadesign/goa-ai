@@ -246,11 +246,10 @@ func publishTestContinuationInput(t testing.TB, rt *Runtime, input *RunInput) st
 	require.NoError(t, err)
 	declaration := storage.SeedDeclaration{
 		Subject: input.Subject, RunID: input.RunID, SessionID: input.SessionID,
-		Origin:    predecessor.Origin,
 		CommandID: input.RunID, AttemptID: input.RunID,
 		Kind: storage.SeedContinuation, PredecessorRunID: predecessorRunID, SourceRunID: predecessorRunID, SourceEndID: checkpoint.HistoryEndID,
 	}
-	decision, err := bindHistoryOperation(t.Context(), rt.Store, declaration)
+	decision, err := bindHistoryOperation(t.Context(), rt.Store, declaration, predecessor.Origin)
 	require.NoError(t, err)
 	_, proceed := decision.State.AsProceed()
 	require.True(t, proceed)

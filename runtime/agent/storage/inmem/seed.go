@@ -8,11 +8,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	genrunterminal "goa.design/goa-ai/registry/gen/runterminal"
 	"maps"
 	"reflect"
 	"slices"
 	"strconv"
+
+	genregistry "goa.design/goa-ai/registry/gen/registry"
+	genrunterminal "goa.design/goa-ai/registry/gen/runterminal"
 
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/session"
@@ -98,7 +100,7 @@ func (s *Store) BeginRunSeed(ctx context.Context, declaration storage.SeedDeclar
 	}
 	operation := storage.PreparationOperation{Subject: cloneSubject(declaration.Subject), RunID: declaration.RunID, SessionID: declaration.SessionID, CommandID: declaration.CommandID}
 	binding, exists := s.preparationOperations[declaration.RunID]
-	if !exists || !reflect.DeepEqual(binding.Operation, operation) || !reflect.DeepEqual(binding.Origin, declaration.Origin) {
+	if !exists || !reflect.DeepEqual(binding.Operation, operation) {
 		return contractResult(storage.RunSeed{}, storage.ErrSeedConflict)
 	}
 	key := preparationKey{declaration.RunID, declaration.AttemptID}
@@ -109,7 +111,7 @@ func (s *Store) BeginRunSeed(ctx context.Context, declaration storage.SeedDeclar
 		if !storage.EqualSeedDeclarations(existing.seed.Declaration, declaration) {
 			return contractResult(storage.RunSeed{}, storage.ErrSeedConflict)
 		}
-		return cloneSeed(existing.seed), nil
+		return s.seedResultLocked(existing.seed), nil
 	}
 	if _, accepted := s.seeds[declaration.RunID]; accepted {
 		return contractResult(storage.RunSeed{}, storage.ErrSeedConflict)
@@ -117,7 +119,7 @@ func (s *Store) BeginRunSeed(ctx context.Context, declaration storage.SeedDeclar
 	if _, exists := s.runs[declaration.RunID]; exists {
 		return contractResult(storage.RunSeed{}, session.ErrRunConflict)
 	}
-	source, err := s.seedSourceLocked(declaration)
+	source, err := s.seedSourceLocked(declaration, binding.Origin)
 	if err != nil {
 		return contractResult(storage.RunSeed{}, err)
 	}
@@ -129,7 +131,7 @@ func (s *Store) BeginRunSeed(ctx context.Context, declaration storage.SeedDeclar
 	s.preparations[key] = &seedState{
 		seed: seed, keys: make(map[string]int), endID: storage.EmptySeedEndID,
 	}
-	return cloneSeed(seed), nil
+	return s.seedResultLocked(seed), nil
 }
 
 // AppendRunSeed accepts one bounded literal or the declared source exactly
@@ -284,7 +286,7 @@ func (s *Store) LoadRunSeed(ctx context.Context, runID, endID string) (storage.R
 	if err != nil {
 		return contractResult(storage.RunSeed{}, err)
 	}
-	return cloneSeed(state.seed), nil
+	return s.seedResultLocked(state.seed), nil
 }
 
 // ListRunSeedRecords returns at most 512 records within the logical page budget.
@@ -391,7 +393,7 @@ func (s *Store) acceptedPreparationLocked(operation storage.PreparationOperation
 		return storage.RunPreparation{}, false, storage.NewContractError(storage.ErrSeedConflict)
 	}
 	return storage.RunPreparation{
-		Seed: cloneSeed(state.seed), EndID: state.endID, PreparedBytes: state.preparedBytes,
+		Seed: s.seedResultLocked(state.seed), EndID: state.endID, PreparedBytes: state.preparedBytes,
 	}, true, nil
 }
 
@@ -411,14 +413,14 @@ func (s *Store) preparationLocked(runID, attemptID string) (*seedState, error) {
 
 // seedSourceLocked proves that a reference belongs to the same subject and session
 // and captures the successful completion position without caller inference.
-func (s *Store) seedSourceLocked(d storage.SeedDeclaration) (*storage.HistoryPrefix, error) {
+func (s *Store) seedSourceLocked(d storage.SeedDeclaration, origin genregistry.ExecutionInvocation) (*storage.HistoryPrefix, error) {
 	if d.Kind == storage.SeedLiteral {
 		if d.PredecessorRunID != "" {
 			predecessor, exists := s.runs[d.PredecessorRunID]
 			if !exists {
 				return nil, session.ErrRunNotFound
 			}
-			if predecessor.Status != session.RunStatusSuspended || predecessor.SessionID != d.SessionID || !reflect.DeepEqual(predecessor.Subject, d.Subject) || !reflect.DeepEqual(predecessor.Origin, d.Origin) {
+			if predecessor.Status != session.RunStatusSuspended || predecessor.SessionID != d.SessionID || !reflect.DeepEqual(predecessor.Subject, d.Subject) || !reflect.DeepEqual(predecessor.Origin, origin) {
 				return nil, storage.ErrSeedConflict
 			}
 		}
@@ -433,7 +435,7 @@ func (s *Store) seedSourceLocked(d storage.SeedDeclaration) (*storage.HistoryPre
 	}
 	expected := session.RunStatusCompleted
 	if d.Kind == storage.SeedContinuation {
-		if !reflect.DeepEqual(source.Origin, d.Origin) {
+		if !reflect.DeepEqual(source.Origin, origin) {
 			return nil, storage.ErrSeedConflict
 		}
 		expected = session.RunStatusSuspended
@@ -510,11 +512,12 @@ func (s *Store) validateStartSeedLocked(start session.RunStart) error {
 		return err
 	}
 	d := state.seed.Declaration
+	origin := s.preparationOperations[start.RunID].Origin
 	if err := storage.ValidateSeedDeclaration(d); err != nil {
 		return err
 	}
 	if start.ParentRunID == "" && start.PredecessorRunID == "" {
-		root, selected := d.Origin.Invocation.AsRoot()
+		root, selected := origin.Invocation.AsRoot()
 		if !selected || root.RunID != start.RunID {
 			return storage.ErrSeedConflict
 		}
@@ -533,15 +536,23 @@ func (s *Store) validateStartSeedLocked(start session.RunStart) error {
 		if !exists {
 			return session.ErrRunNotFound
 		}
-		if !reflect.DeepEqual(predecessor.Origin, d.Origin) {
+		if !reflect.DeepEqual(predecessor.Origin, origin) {
 			return storage.ErrSeedConflict
 		}
 	}
 	return nil
 }
 
+// seedResultLocked returns independent history metadata and the invocation already
+// saved for its operation. Accepted seeds always have a matching preparation;
+// abandoned attempts are never returned as accepted history.
+func (s *Store) seedResultLocked(seed storage.RunSeed) storage.RunSeed {
+	result := cloneSeed(seed)
+	result.Origin = cloneExecutionOrigin(s.preparationOperations[seed.Declaration.RunID].Origin)
+	return result
+}
+
 func cloneSeed(seed storage.RunSeed) storage.RunSeed {
-	seed.Declaration.Origin = cloneExecutionOrigin(seed.Declaration.Origin)
 	seed.Declaration.Subject = cloneSubject(seed.Declaration.Subject)
 	seed.Declaration.RenderedPrompts = slices.Clone(seed.Declaration.RenderedPrompts)
 	for index := range seed.Declaration.RenderedPrompts {

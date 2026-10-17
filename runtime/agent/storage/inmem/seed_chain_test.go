@@ -37,11 +37,10 @@ func TestSeedChainLinearHistoryAndComposedReasoning(t *testing.T) {
 			kind = storage.SeedNextTurn
 		}
 		declaration := storage.SeedDeclaration{
-			Origin:  rootExecutionOrigin(runID),
 			Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent"))}, RunID: runID, SessionID: "session", CommandID: runID, AttemptID: runID, Kind: kind,
 			SourceRunID: previous, ExcludeReasoning: i == 1,
 		}
-		bindSeedTestOperation(t, store, declaration)
+		bindSeedTestOperation(t, store, declaration, rootExecutionOrigin(runID))
 		seed, err := store.BeginRunSeed(t.Context(), declaration)
 		require.NoError(t, err)
 		system := &model.Message{Role: model.ConversationRoleSystem, Parts: []model.Part{

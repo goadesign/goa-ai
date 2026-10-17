@@ -25,8 +25,8 @@ func TestServiceSubjectStorageIsolationAndReplay(t *testing.T) {
 	at := time.Now().UTC().Truncate(time.Millisecond)
 	_, err := store.CreateSession(ctx, "session", at)
 	require.NoError(t, err)
-	declaration := storage.SeedDeclaration{Origin: rootExecutionOrigin("run"), Subject: subject, RunID: "run", SessionID: "session", CommandID: "command", AttemptID: "attempt", Kind: storage.SeedLiteral}
-	bindSeedTestOperation(t, store, declaration)
+	declaration := storage.SeedDeclaration{Subject: subject, RunID: "run", SessionID: "session", CommandID: "command", AttemptID: "attempt", Kind: storage.SeedLiteral}
+	bindSeedTestOperation(t, store, declaration, rootExecutionOrigin("run"))
 	seed, err := store.BeginRunSeed(ctx, declaration)
 	require.NoError(t, err)
 	returnedTool, ok := seed.Declaration.Subject.Executor.AsServiceTool()
@@ -125,10 +125,9 @@ func TestServicePreparationSettlementCopiesSubject(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, found)
 	declaration := storage.SeedDeclaration{
-		Origin:  rootExecutionOrigin("run"),
 		Subject: attempt.Operation.Subject, RunID: "run", CommandID: "command", AttemptID: "attempt", Kind: storage.SeedLiteral,
 	}
-	bindSeedTestOperation(t, store, declaration)
+	bindSeedTestOperation(t, store, declaration, rootExecutionOrigin("run"))
 	_, err = store.BeginRunSeed(t.Context(), declaration)
 	require.ErrorIs(t, err, storage.ErrPreparationAbandoned)
 }

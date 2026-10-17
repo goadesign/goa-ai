@@ -89,10 +89,9 @@ func (s *testStore) AppendRunRecord(ctx context.Context, record *runlog.Event) (
 		}
 	}
 	declaration := storage.SeedDeclaration{
-		Origin:  genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: record.RunID})},
 		Subject: record.Subject, RunID: record.RunID, SessionID: record.SessionID, CommandID: record.RunID, AttemptID: record.RunID, Kind: storage.SeedLiteral,
 	}
-	decision, err := bindHistoryOperation(ctx, s, declaration)
+	decision, err := bindHistoryOperation(ctx, s, declaration, genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: record.RunID})})
 	if err != nil {
 		return storage.AppendResult{}, err
 	}
@@ -220,7 +219,6 @@ func admitRunWithPredecessorForTest(
 			origin = predecessor.Origin
 		}
 		declaration := storage.SeedDeclaration{
-			Origin:  origin,
 			Subject: run.Subject, RunID: run.RunID, SessionID: run.SessionID, CommandID: run.RunID, AttemptID: run.RunID, Kind: storage.SeedLiteral,
 		}
 		if predecessorRunID != "" {
@@ -242,7 +240,7 @@ func admitRunWithPredecessorForTest(
 			declaration.SourceRunID = predecessorRunID
 			declaration.SourceEndID = endID
 		}
-		decision, err := bindHistoryOperation(t.Context(), store, declaration)
+		decision, err := bindHistoryOperation(t.Context(), store, declaration, origin)
 		require.NoError(t, err)
 		_, err = genrunterminal.EncodePreparationDecision(&decision)
 		require.NoError(t, err)
@@ -283,7 +281,7 @@ func admitRunWithPredecessorForTest(
 		require.NoError(t, loadErr)
 		seed, loadErr := store.LoadRunSeed(t.Context(), run.RunID, start.SeedEndID)
 		require.NoError(t, loadErr)
-		invocation, ok := seed.Declaration.Origin.Invocation.AsTool()
+		invocation, ok := seed.Origin.Invocation.AsTool()
 		require.True(t, ok)
 		linked := testHookRecord(t, hooks.NewChildRunLinkedEvent(
 			run.ParentRunID,

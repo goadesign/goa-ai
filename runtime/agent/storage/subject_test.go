@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	genregistry "goa.design/goa-ai/registry/gen/registry"
 	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/runlog"
 )
@@ -29,7 +28,7 @@ func TestStorageSubjectValidation(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			errors := []error{
 				ValidatePreparationOperation(PreparationOperation{Subject: test.subject, RunID: "run", CommandID: "command"}),
-				ValidateSeedDeclaration(SeedDeclaration{Origin: genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: "run"})}, Subject: test.subject, RunID: "run", CommandID: "command", AttemptID: "attempt", Kind: SeedLiteral}),
+				ValidateSeedDeclaration(SeedDeclaration{Subject: test.subject, RunID: "run", CommandID: "command", AttemptID: "attempt", Kind: SeedLiteral}),
 				ValidateRunRecord(&runlog.Event{Subject: test.subject, RunID: "run", EventKey: "event", Type: "note", Payload: []byte(`{}`), Timestamp: time.Now().UTC().Truncate(time.Millisecond)}),
 			}
 			for _, err := range errors {
@@ -46,7 +45,6 @@ func TestStorageSubjectValidation(t *testing.T) {
 func TestServiceSubjectCannotReferenceModelHistory(t *testing.T) {
 	for _, kind := range []SeedKind{SeedNextTurn, SeedContinuation} {
 		declaration := SeedDeclaration{
-			Origin:  genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: "next"})},
 			Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorServiceTool(&genrunidentity.ServiceToolSubject{Registry: "primary", Tool: "catalog.lookup"})},
 			RunID:   "next", SessionID: "session", CommandID: "command", AttemptID: "attempt", Kind: kind, SourceRunID: "source",
 		}

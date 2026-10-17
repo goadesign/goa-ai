@@ -14,8 +14,6 @@ import (
 	"github.com/stretchr/testify/require"
 	commonpb "go.temporal.io/api/common/v1"
 	"go.temporal.io/sdk/converter"
-
-	genregistry "goa.design/goa-ai/registry/gen/registry"
 	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -463,7 +461,6 @@ func TestParsePreparedRunRejectsServiceToolSubject(t *testing.T) {
 
 func TestPreparedReferencePreservesMaximumSeedIdentity(t *testing.T) {
 	declaration := storage.SeedDeclaration{
-		Origin:  genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: "run"})},
 		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("x")},
 		RunID:   "run", CommandID: "command", AttemptID: "attempt", Kind: storage.SeedLiteral,
 	}

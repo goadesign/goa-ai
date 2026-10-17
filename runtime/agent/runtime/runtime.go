@@ -1711,11 +1711,14 @@ func (r *Runtime) ExecuteAgentChild(
 	if _, err := agentChildRunInput(definition, request); err != nil {
 		return nil, err
 	}
-	writer, err := stageLiteralHistory(wfCtx.Context(), workflowSeedWriter{r: r}, storage.SeedDeclaration{
-		Origin:  genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: nestedRunCtx.ParentRunID, ToolCallID: nestedRunCtx.ParentToolCallID})},
+	declaration := storage.SeedDeclaration{
 		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(string(definition.route.ID)))}, RunID: nestedRunCtx.RunID, SessionID: nestedRunCtx.SessionID,
 		CommandID: nestedRunCtx.RunID, AttemptID: nestedRunCtx.RunID, Kind: storage.SeedLiteral,
-	}, messages)
+	}
+	if _, err := bindHistoryOperation(wfCtx.Context(), workflowSeedWriter{r: r}, declaration, genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: nestedRunCtx.ParentRunID, ToolCallID: nestedRunCtx.ParentToolCallID})}); err != nil {
+		return nil, err
+	}
+	writer, err := stageLiteralHistory(wfCtx.Context(), workflowSeedWriter{r: r}, declaration, messages)
 	if err != nil {
 		return nil, err
 	}

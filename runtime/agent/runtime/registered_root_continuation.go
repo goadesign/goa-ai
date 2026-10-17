@@ -147,7 +147,10 @@ func (r *Runtime) prepareOperationContinuationRequest(ctx context.Context, prede
 	if err != nil {
 		return engine.WorkflowStartRequest{}, err
 	}
-	declaration := storage.SeedDeclaration{Origin: owner.Origin, Subject: owner.Subject, SessionID: owner.SessionID, RunID: runID, CommandID: runID, AttemptID: runID, Kind: storage.SeedLiteral, PredecessorRunID: predecessorRunID}
+	declaration := storage.SeedDeclaration{Subject: owner.Subject, SessionID: owner.SessionID, RunID: runID, CommandID: runID, AttemptID: runID, Kind: storage.SeedLiteral, PredecessorRunID: predecessorRunID}
+	if _, err := bindHistoryOperation(ctx, r.Store, declaration, owner.Origin); err != nil {
+		return engine.WorkflowStartRequest{}, err
+	}
 	writer, err := stageLiteralHistory(ctx, r.Store, declaration, nil)
 	if err != nil {
 		return engine.WorkflowStartRequest{}, err
