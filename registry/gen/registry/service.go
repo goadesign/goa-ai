@@ -820,6 +820,8 @@ type ServiceToolsetDeclaration struct {
 	Tools []*ToolSchema
 }
 
+// Generated tool instructions, argument schemas, and metadata for execution
+// using ordinary messages without UI controls.
 type TextOnlyToolContract struct {
 	// Domain instructions without optional UI guidance.
 	Description string

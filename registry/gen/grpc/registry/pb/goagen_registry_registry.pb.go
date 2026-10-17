@@ -1791,6 +1791,8 @@ func (x *AgentToolTarget) GetQueue() string {
 	return ""
 }
 
+// Generated tool instructions, argument schemas, and metadata for execution
+// using ordinary messages without UI controls.
 type TextOnlyToolContract struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Domain instructions without optional UI guidance.

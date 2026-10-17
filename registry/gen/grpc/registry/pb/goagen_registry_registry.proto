@@ -477,7 +477,8 @@ message AgentToolTarget {
 // operation.
 	optional string queue = 4;
 }
-
+// Generated tool instructions, argument schemas, and metadata for execution
+// using ordinary messages without UI controls.
 message TextOnlyToolContract {
 	// Domain instructions without optional UI guidance.
 	optional string description = 1;
