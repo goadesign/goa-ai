@@ -1346,16 +1346,28 @@ func equalRawJSON(left, right json.RawMessage) bool {
 	if kind != rawJSONKind(right[0]) {
 		return false
 	}
+	// Identical objects and arrays need only one decoded copy. Their children
+	// still pass through comparison so unsupported numbers remain rejected.
 	switch kind {
 	case '{':
 		var leftObject, rightObject map[string]json.RawMessage
-		if json.Unmarshal(left, &leftObject) != nil || json.Unmarshal(right, &rightObject) != nil {
+		if json.Unmarshal(left, &leftObject) != nil {
+			return false
+		}
+		if bytes.Equal(left, right) {
+			rightObject = leftObject
+		} else if json.Unmarshal(right, &rightObject) != nil {
 			return false
 		}
 		return maps.EqualFunc(leftObject, rightObject, equalRawJSON)
 	case '[':
 		var leftArray, rightArray []json.RawMessage
-		if json.Unmarshal(left, &leftArray) != nil || json.Unmarshal(right, &rightArray) != nil {
+		if json.Unmarshal(left, &leftArray) != nil {
+			return false
+		}
+		if bytes.Equal(left, right) {
+			rightArray = leftArray
+		} else if json.Unmarshal(right, &rightArray) != nil {
 			return false
 		}
 		if len(leftArray) != len(rightArray) {
