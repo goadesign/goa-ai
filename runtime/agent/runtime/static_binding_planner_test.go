@@ -42,21 +42,22 @@ func TestStaticBindingPreservesExecutablePlannerTools(t *testing.T) {
 					rt, definition, source := staticBindingPlannerRuntime(t, kind)
 					foreignName := registeredTestName(t, source.foreign, string(genrecords.Read))
 					chosen, payload := genrecords.Read, rawjson.Message(`{"query":"selected"}`)
-					if choice == "omitted" {
+					switch choice {
+					case "omitted":
 						chosen, payload = genrecords.Erase, rawjson.Message(`{}`)
-					} else if choice == "foreign" {
+					case "foreign":
 						chosen = foreignName
 					}
-					plan := func(ctx planner.PlannerContext) (*planner.PlanResult, error) {
+					plan := func(ctx planner.PlannerContext) *planner.PlanResult {
 						assert.ElementsMatch(t, []tools.Ident{genrecords.Read, foreignName}, toolDefinitionNames(ctx.AdvertisedToolDefinitions()))
-						return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: chosen, Payload: payload}}}, nil
+						return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: chosen, Payload: payload}}}
 					}
 					rt.agents[definition.route.ID] = AgentRegistration{Definition: definition, Planner: &stubPlanner{
 						start: func(_ context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
-							return plan(input.Agent)
+							return plan(input.Agent), nil
 						},
 						resume: func(_ context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
-							return plan(input.Agent)
+							return plan(input.Agent), nil
 						},
 					}}
 					input := seedTestPlanInput(t, rt, PlanActivityInput{AgentID: definition.route.ID, RunID: "binding-run", RunContext: run.Context{RunID: "binding-run"}}, nil)
