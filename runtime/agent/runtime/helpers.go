@@ -70,22 +70,24 @@ func NestedRunID(parentRunID string, toolName tools.Ident) string {
 	return fmt.Sprintf("%s/agent/%s", parentRunID, toolName)
 }
 
-// NestedRunIDForToolCall generates a child workflow ID for agent-as-tool runs that
-// is stable for a given tool invocation and unique across multiple invocations of
-// the same tool within a single parent run.
-//
-// The base prefix matches NestedRunID: "{parentRunID}/agent/{toolName}".
-// When toolCallID is set, the exact runtime-owned ID is appended:
-// "{parentRunID}/agent/{toolName}/{toolCallID}".
-//
-// This prevents Temporal child workflow ID collisions when planners invoke the
-// same agent tool multiple times in one parent workflow.
+// NestedRunIDForToolCall derives a child workflow ID from the complete parent
+// run ID, tool name, and tool-call ID. It returns the full SHA-256 digest as 64
+// lowercase hexadecimal characters, so long names and repeated nesting do not
+// grow the child ID. Each input includes its byte length before its bytes, so
+// adjacent inputs cannot absorb each other. An empty parent run ID retains the
+// same meaning as "unknown". Parent and tool-call relationships are stored
+// separately from this generated ID.
 func NestedRunIDForToolCall(parentRunID string, toolName tools.Ident, toolCallID string) string {
-	base := NestedRunID(parentRunID, toolName)
-	if toolCallID == "" {
-		return base
+	if parentRunID == "" {
+		parentRunID = unknownID
 	}
-	return fmt.Sprintf("%s/%s", base, toolCallID)
+	identity := []byte("goa-ai-agent-child-run-v1")
+	identity = appendLengthDelimited(identity, parentRunID)
+	identity = appendLengthDelimited(identity, string(toolName))
+	identity = appendLengthDelimited(identity, toolCallID)
+
+	sum := sha256.Sum256(identity)
+	return hex.EncodeToString(sum[:])
 }
 
 // generateDeterministicToolCallID creates a replay-safe tool-call ID using the
@@ -688,7 +690,7 @@ func (r *Runtime) isBookkeeping(name tools.Ident) bool {
 func (r *Runtime) toolMetadata(calls []ToolCall) ([]policy.ToolMetadata, error) {
 	metas := make([]policy.ToolMetadata, 0, len(calls))
 	for _, call := range calls {
-		if call.Registry != nil {
+		if r.isDynamicRegistryCall(call) {
 			meta, err := registryCallMetadata(call)
 			if err != nil {
 				return nil, err

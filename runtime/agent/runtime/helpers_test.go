@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
+	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/toolregistry"
 )
 
@@ -66,11 +68,79 @@ func TestGenerateDeterministicToolCallIDBoundsNestedIDs(t *testing.T) {
 	assert.NotEqual(t, id, nextIndex)
 }
 
-func TestNestedRunIDForToolCallKeepsExactRuntimeID(t *testing.T) {
-	callID := generateDeterministicToolCallID("parent", "turn", 1, "svc.agent", 0)
-	otherCallID := generateDeterministicToolCallID("parent", "turn", 1, "svc.agent", 1)
+func TestNestedRunIDForToolCallUsesBoundedIdentity(t *testing.T) {
+	assert.Equal(t, "52840d7da8caa2ca548065899c4e1d40a14cf7761a378b43f8d0fc694ab4b138", NestedRunIDForToolCall("parent", "svc.agent", "call-1"))
 
-	nested := NestedRunIDForToolCall("parent", "svc.agent", callID)
-	assert.Equal(t, "parent/agent/svc.agent/"+callID, nested)
-	assert.NotEqual(t, nested, NestedRunIDForToolCall("parent", "svc.agent", otherCallID))
+	tests := []struct {
+		name   string
+		parent string
+		tool   tools.Ident
+		call   string
+	}{
+		{name: "static", parent: "parent", tool: "svc.agent", call: "call-1"},
+		{name: "registered", parent: "parent", tool: tools.Ident("registry." + strings.Repeat("catalog.", 80) + "inspect"), call: "call-1"},
+		{name: "long inputs", parent: strings.Repeat("parent/", 80), tool: "svc.agent", call: strings.Repeat("call/", 80)},
+		{name: "empty call", parent: "parent", tool: "svc.agent"},
+		{name: "empty parent", tool: "svc.agent", call: "call-1"},
+		{name: "unicode", parent: "注文", tool: "svc.agent", call: "éclair"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			id := NestedRunIDForToolCall(test.parent, test.tool, test.call)
+			assert.Regexp(t, `^[0-9a-f]{64}$`, id)
+			assert.Equal(t, id, NestedRunIDForToolCall(test.parent, test.tool, test.call))
+		})
+	}
+	assert.Equal(t,
+		NestedRunIDForToolCall("unknown", "svc.agent", "call-1"),
+		NestedRunIDForToolCall("", "svc.agent", "call-1"),
+	)
+}
+
+func TestNestedRunIDForToolCallUsesEveryCompleteComponent(t *testing.T) {
+	base := NestedRunIDForToolCall("parent", "svc.agent", "call-1")
+	tests := []struct {
+		name   string
+		parent string
+		tool   tools.Ident
+		call   string
+	}{
+		{name: "parent", parent: "other-parent", tool: "svc.agent", call: "call-1"},
+		{name: "tool", parent: "parent", tool: "svc.other", call: "call-1"},
+		{name: "call", parent: "parent", tool: "svc.agent", call: "call-2"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assert.NotEqual(t, base, NestedRunIDForToolCall(test.parent, test.tool, test.call))
+		})
+	}
+	assert.NotEqual(t,
+		NestedRunIDForToolCall("parent/agent/svc.a", "svc.b", "call"),
+		NestedRunIDForToolCall("parent", "svc.a/agent/svc.b", "call"),
+	)
+	assert.NotEqual(t,
+		NestedRunIDForToolCall("parent", "svc.agent", "part/call"),
+		NestedRunIDForToolCall("parent", "svc.agent/part", "call"),
+	)
+	prefix := strings.Repeat("component", 80)
+	assert.NotEqual(t, NestedRunIDForToolCall(prefix+"a", "svc.agent", "call"), NestedRunIDForToolCall(prefix+"b", "svc.agent", "call"))
+	assert.NotEqual(t, NestedRunIDForToolCall("parent", tools.Ident(prefix+"a"), "call"), NestedRunIDForToolCall("parent", tools.Ident(prefix+"b"), "call"))
+	assert.NotEqual(t, NestedRunIDForToolCall("parent", "svc.agent", prefix+"a"), NestedRunIDForToolCall("parent", "svc.agent", prefix+"b"))
+}
+
+func TestNestedRunIDForToolCallBoundsRepeatedNesting(t *testing.T) {
+	parent := "root"
+	seen := map[string]bool{parent: true}
+	for range 100 {
+		child := NestedRunIDForToolCall(parent, "svc.agent", "call-1")
+		assert.Regexp(t, `^[0-9a-f]{64}$`, child)
+		assert.False(t, seen[child])
+		seen[child] = true
+		parent = child
+	}
+}
+
+func TestNestedRunIDKeepsHierarchicalFormat(t *testing.T) {
+	assert.Equal(t, "parent/agent/svc.agent", NestedRunID("parent", "svc.agent"))
+	assert.Equal(t, "unknown/agent/svc.agent", NestedRunID("", "svc.agent"))
 }

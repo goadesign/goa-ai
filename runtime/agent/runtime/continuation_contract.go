@@ -242,7 +242,7 @@ func childDefinitionForCall(call ToolCall, definition AgentDefinition) (AgentDef
 	if call.Registry != nil {
 		return registeredChildDefinition(call, definition)
 	}
-	spec, ok, err := lookupCallSpec(call, definition.spec)
+	spec, ok, err := lookupOwnedCallSpec(call, definition.spec)
 	if err != nil {
 		return AgentDefinition{}, err
 	}
@@ -339,7 +339,7 @@ func validateCheckpointToolOutput(output *planner.ToolOutput, definition AgentDe
 	call := ToolCall{Name: output.Name, ToolCallID: output.ToolCallID, Payload: output.Payload, Registry: output.Registry}
 	var spec *tools.ToolSpec
 	if output.Failure == nil {
-		registered, ok, err := lookupCallSpec(call, definition.spec)
+		registered, ok, err := lookupOwnedCallSpec(call, definition.spec)
 		if err != nil {
 			return err
 		}
@@ -364,7 +364,7 @@ func validateCheckpointToolOutput(output *planner.ToolOutput, definition AgentDe
 
 // decodeToolValue validates a saved value against the selected contract.
 func decodeToolValue(definition AgentDefinition, call ToolCall, data []byte, payload bool) error {
-	spec, ok, err := lookupCallSpec(call, definition.spec)
+	spec, ok, err := lookupOwnedCallSpec(call, definition.spec)
 	if err != nil {
 		return err
 	}

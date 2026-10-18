@@ -22,6 +22,8 @@ type (
 		ContentType *codegen.NameDeclaration
 		// OutputSchemas contains the older object schemas for non-object tool results.
 		OutputSchemas map[string]string
+		// DynamicTools selects a uniform object envelope for runtime-defined results.
+		DynamicTools bool
 	}
 	// legacyBody retains the existing response name and, for an operation union,
 	// the existing completed branch name. No application value type is copied.
@@ -40,7 +42,10 @@ type (
 // buildLegacyTransportData links basic methods to the native HTTP declarations.
 // Missing declarations mean the generator cannot safely write a typed encoder.
 func buildLegacyTransportData(files []*codegen.File, planned *plannedMCPService, transport httpcodegen.JSONRPCServiceSnapshot) (*legacyTransportData, error) {
-	result := &legacyTransportData{OutputSchemas: make(map[string]string)}
+	result := &legacyTransportData{
+		OutputSchemas: make(map[string]string),
+		DynamicTools:  planned.adapterData.DynamicTools,
+	}
 	for _, tool := range planned.adapterData.Tools {
 		if tool.legacyOutputSchema != "" {
 			result.OutputSchemas[tool.Name] = tool.legacyOutputSchema

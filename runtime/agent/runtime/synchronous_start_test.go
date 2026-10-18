@@ -71,10 +71,12 @@ func TestRunOneShotRejectsAnotherPreparedCommand(t *testing.T) {
 		TurnID: "run", EventKey: "run-started", TimestampMS: time.Unix(1, 0).UnixMilli(),
 	})
 	require.NoError(t, err)
-	writer, err := stageLiteralHistory(t.Context(), store, storage.SeedDeclaration{
-		Origin:  genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: "run"})},
+	declaration := storage.SeedDeclaration{
 		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, RunID: "run", CommandID: "run", AttemptID: "run", Kind: storage.SeedLiteral,
-	}, nil)
+	}
+	_, err = bindHistoryOperation(t.Context(), store, declaration, genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: "run"})})
+	require.NoError(t, err)
+	writer, err := stageLiteralHistory(t.Context(), store, declaration, nil)
 	require.NoError(t, err)
 	command := &api.StorageActivityCommand{SynchronousStart: &api.SynchronousRunStartCommand{
 		SeedEndID: writer.endID, Started: record,

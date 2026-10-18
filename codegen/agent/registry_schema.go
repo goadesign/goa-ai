@@ -58,10 +58,11 @@ func prepareRegistrySchema(tool *ToolData, entry *toolEntry) error {
 			Length: entry.Search.Length,
 			Terms:  entry.Search.Terms,
 		},
-		Payload:        registryTypeMetadata(entry.Payload),
-		Result:         registryTypeMetadata(entry.Result),
-		RequiredLabels: requiredLabels([]*ToolData{tool}),
-		ResultReminder: registryOptionalString(entry.ResultReminder),
+		Payload:         registryTypeMetadata(entry.Payload),
+		Result:          registryTypeMetadata(entry.Result),
+		RequiredLabels:  requiredLabels([]*ToolData{tool}),
+		ResultReminder:  registryOptionalString(entry.ResultReminder),
+		ReplanOnTimeout: entry.ReplanOnTimeout,
 	}
 	contract.RequiresUI = entry.RequiresUI
 	if entry.TextOnlyPayload != nil {

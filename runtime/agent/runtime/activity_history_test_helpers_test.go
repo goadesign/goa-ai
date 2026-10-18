@@ -113,8 +113,7 @@ func publishTestRunInput(t testing.TB, rt *Runtime, input *RunInput, messages []
 	if input.ParentRunID != "" {
 		origin = genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: input.ParentRunID, ToolCallID: input.ParentToolCallID})}
 	}
-	endID, err := publishLiteralHistory(t.Context(), rt.Store, storage.SeedDeclaration{
-		Origin:  origin,
+	endID, err := publishLiteralHistory(t.Context(), rt.Store, origin, storage.SeedDeclaration{
 		Subject: input.Subject, RunID: input.RunID, SessionID: input.SessionID,
 		Kind: storage.SeedLiteral,
 	}, messages)

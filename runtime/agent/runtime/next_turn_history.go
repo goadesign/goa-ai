@@ -31,11 +31,6 @@ func stageNextTurnHistory(ctx context.Context, store storage.Store, declaration 
 		}
 	}
 
-	// Saving supplied or retained history performs no provider work. The actual
-	// engine start checks any stop returned while binding this exact recipe.
-	if _, err := bindHistoryOperation(ctx, store, declaration); err != nil {
-		return nil, err
-	}
 	seed, err := store.BeginRunSeed(ctx, declaration)
 	if err != nil {
 		return nil, err

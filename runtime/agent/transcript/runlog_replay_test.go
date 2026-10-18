@@ -146,7 +146,6 @@ func newTranscriptTestStore(t *testing.T, ctx context.Context) *storageinmem.Sto
 	_, proceed := decision.State.AsProceed()
 	require.True(t, proceed)
 	_, err = store.BeginRunSeed(ctx, storage.SeedDeclaration{
-		Origin:  origin,
 		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("agent-1"))}, RunID: "run-1", SessionID: "session-1", CommandID: "run-1", AttemptID: "run-1", Kind: storage.SeedLiteral,
 	})
 	require.NoError(t, err)

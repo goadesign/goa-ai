@@ -58,8 +58,7 @@ func (r *Runtime) prepareAgentOperationActivity(ctx context.Context, input *api.
 			return nil, engine.MarkActivityErrorNonRetryable(err)
 		}
 	}
-	target := declaration.ConsumerContract.Agent
-	selected, err := providerOperationSpec(registration.Definition, declaration)
+	selected, err := r.providerOperationSpec(registration.Definition, declaration)
 	if err != nil {
 		return nil, engine.MarkActivityErrorNonRetryable(err)
 	}
@@ -99,7 +98,7 @@ func (r *Runtime) prepareAgentOperationActivity(ctx context.Context, input *api.
 		RunID: input.RunID, Subject: input.Subject, SessionID: input.SessionID,
 		TurnID: input.TurnID, Labels: cloneLabels(input.Labels),
 	}
-	config, err := r.resolveAgentConfiguration(ctx, origin, registration.Definition, target.Configuration, &call)
+	config, err := r.resolveAgentConfiguration(ctx, origin, registration.Definition, declaration, &call)
 	if err != nil {
 		return nil, err
 	}
@@ -120,7 +119,6 @@ func (r *Runtime) prepareAgentOperationActivity(ctx context.Context, input *api.
 		}
 	}
 	writer, err := stageAgentHistory(ctx, r.Store, storage.SeedDeclaration{
-		Origin:  origin,
 		Subject: operation.Subject, RunID: operation.RunID, SessionID: operation.SessionID,
 		CommandID: operation.CommandID, AttemptID: uuid.NewString(),
 		RenderedPrompts: config.RenderedPrompts,

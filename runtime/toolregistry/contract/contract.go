@@ -52,6 +52,9 @@ func Compile(declaration *genregistry.ToolSchema) (tools.ToolSpec, error) {
 	if contract.Kind != "service" && contract.Kind != agentKind {
 		return tools.ToolSpec{}, fmt.Errorf("tool %q requires compiled %s execution", declaration.Name, contract.Kind)
 	}
+	if contract.ReplanOnTimeout && contract.Kind != agentKind {
+		return tools.ToolSpec{}, fmt.Errorf("tool %q timeout recovery requires an agent tool", declaration.Name)
+	}
 	if contract.Kind == agentKind && contract.Agent == nil {
 		return tools.ToolSpec{}, fmt.Errorf("agent tool %q requires an executor and immutable configuration", declaration.Name)
 	}
@@ -80,6 +83,7 @@ func Compile(declaration *genregistry.ToolSchema) (tools.ToolSpec, error) {
 		Payload:                payload,
 		ExecutionPayloadSchema: slices.Clone(declaration.ExecutionPayloadSchema),
 		ExecutionPayloadCodec:  executionCodec,
+		ReplanOnTimeout:        contract.ReplanOnTimeout,
 	}
 	spec.RequiresUI = contract.RequiresUI
 	if contract.TextOnly != nil {
@@ -119,6 +123,12 @@ func Compile(declaration *genregistry.ToolSchema) (tools.ToolSpec, error) {
 		spec.Result, err = compileType(declaration.ResultSchema, contract.Result)
 		if err != nil {
 			return tools.ToolSpec{}, fmt.Errorf("tool %q result: %w", declaration.Name, err)
+		}
+		if contract.Bounds != nil {
+			spec.Result.Codec, err = compileBoundedResultCodec(declaration.ResultSchema, contract.Bounds)
+			if err != nil {
+				return tools.ToolSpec{}, fmt.Errorf("tool %q bounded result: %w", declaration.Name, err)
+			}
 		}
 	}
 	if contract.Bounds != nil {

@@ -1561,11 +1561,35 @@ does not merge a runtime catalog with generated static dispatch. Existing static
 tool declarations retain their behavior. A service with neither static tools
 nor `DynamicTools` does not advertise or generate tool operations.
 
-Both supported protocol revisions use these same generated endpoints. Runtime
-tool implementations must supply schemas and results valid for their supported
-clients; use object-valued output schemas and structured results when serving
-basic `2025-11-25` clients. Automatic scalar/array wrapping is available only
-for statically authored tools whose schemas are known during generation.
+Both supported protocol revisions use these same generated endpoints. Modern
+clients receive the application's original structured result and output schema.
+For basic `2025-11-25` clients, the generated transport wraps every present
+dynamic structured result in `{"value": ...}`, including objects, arrays, scalars,
+and JSON null. It wraps each advertised output schema to match and includes the
+wrapped result as text for hosts that read only content items. An absent output
+schema or structured result remains absent. Input schemas and arguments keep
+their existing contract; applications serving older clients must expose
+object-valued arguments.
+
+Legacy output-schema wrapping supports JSON Schema 2020-12, either the default
+when `$schema` is absent or an explicitly declared 2020-12 dialect. An older
+client listing a tool with another declared output-schema dialect receives a
+protocol error naming the unsupported dialect; no tool is invoked by listing.
+Modern schema handling is unchanged.
+
+The transport gives the wrapper its own content-derived identifier. It preserves
+an output schema's existing `$id`, except an absent or empty identifier or `#`
+receives a distinct identifier for the original schema. This keeps local references,
+including recursive references, attached to the original result schema inside
+`value`. It does not retrieve external schemas.
+
+Regenerate servers to apply this behavior. Older clients of previously generated
+`DynamicTools` servers must read the result from `structuredContent.value` after
+regeneration, including when the result is an object. Applications serving older
+clients must supply 2020-12 output schemas; other dialects now receive the explicit
+unsupported-dialect error during listing. Application service methods
+and modern clients do not change. Statically authored tools retain their existing
+older-client result shapes.
 
 ### Secured MCP methods
 

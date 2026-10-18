@@ -128,6 +128,10 @@ func TestRegistryDeclarations(t *testing.T) {
 		contract := declaration.ConsumerContract
 		require.NotNil(t, contract)
 		assert.Equal(t, "service", contract.Kind)
+		assert.False(t, contract.ReplanOnTimeout)
+		compiled, err := toolcontract.Compile(declaration)
+		require.NoError(t, err)
+		assert.False(t, compiled.ReplanOnTimeout)
 		meta, ok := genlookup.MetadataByName(spec.Name)
 		require.True(t, ok)
 		assert.Equal(t, meta.Title, contract.Title)

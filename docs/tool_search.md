@@ -148,6 +148,15 @@ JSON codecs for the received schemas. Numbers retain their exact JSON value.
 References must resolve inside the supplied schema; schema compilation does
 not fetch files or remote resources.
 
+For bounded results, providers return result data as JSON and send counts,
+truncation, and paging information separately in `Bounds`. Like generated typed
+codecs, the portable result codec accepts both provider data and finalized
+results. Fields supplied by the runtime are optional in the codec and checked
+when present; the runtime adds their authoritative values after encoding.
+Advertised schemas still require counts and truncation in finalized output,
+including `total` when the bound method guarantees it. Schema-only clients
+continue validating the advertised schema.
+
 Dynamic execution supports service tools and [native Agent tools](#register-agent-tools),
 including confirmation, bounded results, declared pagination partners, and
 server-only result data. Terminal/bookkeeping tools and planner control
@@ -244,8 +253,11 @@ existing lease lifecycle. Calling a native Agent through `CallTool` or
 ### Prepare the child configuration
 
 Before sealing the provider runtime, register an `AgentToolResolver` for each
-Agent it runs. Consumers do not register this resolver or load the provider
-definition. The callback receives the original generated execution invocation,
+Agent whose exports are generated. For exports owned by immutable saved revisions,
+use [RegisterAgentOperationProvider](runtime.md#revision-owned-operation-contracts)
+instead; that section defines the independent declaration check. Consumers do not
+register this resolver or load the provider definition. The callback receives the
+original generated execution invocation,
 the saved configuration reference and a copy of the validated tool call.
 `call.Name` identifies the original provider operation, including when a
 registered import derives a different model-visible name. `call.TranscriptName()` and
@@ -359,6 +371,89 @@ support tools for one session and operations tools for another. Goa-AI
 does not define namespaces or infer authorization from label names. Catalogs
 belong to individual planning activities, so concurrent sessions do not change
 one another's tool lists.
+
+## Bind generated service tools
+
+When an application selects a registration for tools already compiled into an
+Agent, call `catalog.BindStaticService(registry, expected, selected, names...)`
+from its `RegistryTools.Resolve` implementation. Supply the generated `Toolset()`
+as `expected`, the complete owner-authorized resolution as `selected`, and a
+nonempty list of original generated tool identifiers. There is no implicit
+"bind all" choice.
+
+The runtime compares the complete portable service declaration and version,
+allowing only the expected toolset name to become the selected route. It checks
+each named tool against the consuming Agent's generated contract and its
+`RegistryTools.Allows` predicate. Native Agent operations and tools with
+local-only execution semantics cannot use this binding. `IncludeResolved`
+continues to reject static name collisions; use the explicit binding method for
+this case.
+
+Register the generated toolsets with an executor constructed by
+`executor.NewResolved(registry, client, pulse, specs, options...)`, where `specs`
+is the generated specification lookup. Generated model names, deferred loading,
+input preparation, result codecs, hints, and materializers remain in use. The
+binding changes only which exact service registration receives execution.
+The complete static declaration and the Agent's executable tool list serve
+different purposes: binding validates the declaration, but only executable tools
+become planner choices. Binding an omitted operation does not advertise or permit
+new calls to it, on initial planning or resume. Separately discovered tools remain
+available under their imported names.
+Every call routed to `NewResolved` must have a saved binding. Selecting only some
+operations does not install a separate executor for each name. If a generated
+toolset also contains unbound operations, application executor composition must
+route those operations to their existing executor.
+`BindInput` may prepare generated inputs after the service binding is installed.
+The original model arguments remain separate from the completed execution input.
+
+The existing saved `ToolCall.Registry` retains the selected registration. Both
+initial execution and overload retries call `CallResolvedTool` with that route,
+original operation, token, and invocation identity. Replacing the current
+registration cannot redirect an accepted call. Dedicated pagination retains its
+saved partner and token without selecting a new source; the generated partner
+must belong to the same consuming definition. Finalization and synthesis skip
+catalog discovery while retaining existing static input preparation.
+
+`catalog.SelectedOperation()` returns a fresh copy of the native operation
+retained in the current run. It reads a direct operation or the saved registry
+selection, including an imported name, without consulting current registrations.
+A missing or malformed selection is an error. Continued runs retain the same
+operation. Applications may use this declaration to select its service
+requirements; the model does not repeat configuration or registration tokens.
+
+No wire or storage migration is required to add bindings to an unchanged
+generated service definition. Before replacing an existing executor with
+`NewResolved`, drain accepted unbound calls even when the generated definition
+is unchanged: those saved calls have no registration for the new executor.
+A direct saved registry selection has no marker
+that distinguishes dynamic execution from bound static execution: the consuming
+Agent's definition makes that distinction. Changing a tool between these forms,
+or removing its static declaration, requires draining affected runs before
+changing the definition. Reverting such a change requires the same care. A
+same-named static tool owned by another Agent never changes the call's executor.
+
+## Bind generated native Agent tools
+
+Call `catalog.BindStaticAgent(registry, expected, selected, names...)` with the
+complete generated unbound operation declarations, the owner's selected
+`ResolvedToolset`, and every original generated tool name. The runtime compares
+all operation schemas and policy and checks the provider executor, workflow and
+queue against the consuming definition's generated child route. Registration
+configuration may change between revisions; each accepted call retains its
+selected revision. Toolset discovery descriptions and tags do not alter the
+operation contract.
+
+Binding the complete native export set does not make every export executable by
+the consuming Agent. Its executable list still chooses the static planner tools,
+including on resume; the remaining declarations stay available for validation.
+
+The consumer keeps generated payload and result codecs and `BindInput`
+preparation. Native execution uses the existing durable child workflow path.
+Saved calls and pagination continuations validate the retained contract without
+reading a replacement registration. Direct static calls and dynamic registry
+Agent calls retain their existing behavior. No regeneration or wire migration is
+required to use this binding method with existing generated declarations.
+
 
 ## Upgrade for native Agent tools
 

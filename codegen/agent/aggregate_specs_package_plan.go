@@ -137,6 +137,11 @@ func (p *aggregateSpecsPackagesPlan) link(data *GeneratorData) error {
 
 // link builds one aggregate file without choosing or changing any Go names.
 func (p *aggregateSpecsPackagePlan) link(agent *AgentData) error {
+	selected, err := selectedAgentData(agent)
+	if err != nil {
+		return err
+	}
+	agent = selected
 	imports := make([]*goacodegen.ImportSpec, 0, 2+len(p.toolsetImports))
 	imports = append(imports,
 		p.pkg.Import(aggregatePolicyImportPath),

@@ -41,7 +41,7 @@ and an application-specific guide to the code they need to implement.
 | --- | --- |
 | **An AI agent** that calls typed tools, returns structured answers, and can pause for human input | [Agent quickstart](quickstart/README.md) |
 | **An MCP server** exposing Go service methods, resources, and prompts, or **an MCP client** consuming them | [MCP integration guide](https://goa.design/docs/2-goa-ai/mcp-integration/) |
-| **A tool registry** that publishes capabilities across services and lets agents discover independently implemented Agent operations without loading provider code | [Registries and tool search](docs/tool_search.md) |
+| **A tool registry** that publishes capabilities across services and lets agents discover independently implemented Agent operations without loading provider code, or binds generated native tools to selected registrations while retaining typed codecs and child routes | [Registries and tool search](docs/tool_search.md) |
 
 Low-level runtime and custom Store integrations use a required generated
 [run subject](docs/run-subjects.md) to identify the actual executor. Read its
@@ -163,8 +163,11 @@ service wiring, and connecting a model. For MCP, follow the
 - **Specialist agents.** Expose agents as tools and compose real child runs with
   linked progress and cancellation. Cancellation preserves completed results
   and waits for required cleanup before closing the run; cleanup failures remain errors.
+  Child workflow IDs stay bounded for long names and repeated nesting; see the
+  [identifier and worker upgrade contract](docs/runtime.md#child-run-identifiers-and-worker-upgrades).
 - **Human input and approvals.** Save a pending question or confirmation and
-  continue from the host's answer. Canceling a root question with no saved
+  continue from the host's answer. Direct and registered operations share durable
+  continuation submission and completion. Canceling a root question with no saved
   child or remote work closes its continuation while preserving the original
   suspended result. Text-only runs exclude interactive tools.
 - **Large results and images.** Bound model-visible results, continue paginated
@@ -183,6 +186,8 @@ service wiring, and connecting a model. For MCP, follow the
   [older-client contract](docs/runtime.md#older-http-clients).
 - **Runtime-defined tools.** Declare `DynamicTools()` to implement tool listing
   and invocation through generated protocol types without authored static tools.
+  Older clients receive dynamic structured results in a matching `value` object;
+  modern clients receive the original JSON value.
   See [runtime-defined tools](docs/dsl.md#runtime-defined-tools).
 - **Resources and prompts.** Serve fixed or parameterized text/binary resources,
   typed prompts, argument completion, and authenticated paginated catalogs.
@@ -209,6 +214,10 @@ live text and usage, and stops if compaction cannot shorten the input. This
 uses the existing recovery-turn budget. See
 [context-window recovery](docs/runtime.md#context-window-recovery).
 
+Initial-history writes reference the already bound preparation operation; seed
+reads return its original invocation without duplicating it in bounded commands.
+Custom stores must follow the [preparation ownership upgrade](docs/runtime.md#preparation-ownership-upgrade).
+
 ### Registries, search, and production execution
 
 - **Distributed tool registries.** Publish typed toolsets, discover changing
@@ -216,22 +225,38 @@ uses the existing recovery-turn budget. See
   Catalogs retain resource ownership; applications authorize discovery and use.
   Registered imports derive distinct names for equal operations from different
   owners and retain original declarations for execution and replay.
+  Portable bounded-result codecs accept provider result data; the runtime adds
+  counts and truncation before publishing results against the advertised schema.
+  Generated Agent declarations also retain each operation's authored timeout
+  recovery policy through registry transport; see the
+  [regeneration requirements](docs/runtime.md#agent-timeout-recovery).
+- **Bind generated tools to selected services.** Keep generated tool names,
+  input preparation, codecs, and executors while attaching an exact owner-selected
+  registration. Calls and retries retain the original route and token. See
+  [static service bindings](docs/tool_search.md#bind-generated-service-tools).
+  Binding validates complete generated declarations without expanding the
+  consuming Agent's executable tools; separately discovered tools remain available.
 - **Standalone service operations.** Execute a registered service tool without
-  creating a session; sessionful calls retain their existing session. Protocol 15
+  creating a session; sessionful calls retain their existing session. Direct calls
+  validate complete execution arguments, including retained query fields and
+  continuation cursors, while excluding provider-injected fields. Protocol 15
   requires coordinated registry, provider, and consumer upgrades; see
   [session metadata and upgrade](docs/runtime.md#session-metadata-and-upgrade).
 - **Direct Agent operations.** Start typed operations before tool publication,
-  using the same provider preparation and result contract as delegation. Providers
-  can select literal messages or exact completed-run history with retained privacy
-  exclusions; see the [resolver upgrade](docs/runtime.md#provider-owned-history).
+  using the same provider preparation and result contract as delegation.
+  [Revision-owned providers](docs/runtime.md#revision-owned-operation-contracts)
+  load and verify complete exports from the selected immutable configuration.
+  Providers can select literal messages or exact completed-run history with
+  retained privacy exclusions; see the [resolver upgrade](docs/runtime.md#provider-owned-history).
 - **Load tools when needed.** Use deferred tool search for whole toolsets or
   selected compiled tools, through supported OpenAI and Claude integrations.
 - **Durable execution.** Retain failures and cancellation even before the first
   Run is stored. Use Temporal and an application-owned durable store to
   retain accepted work, host continuations, remote Task identity, and cancellation
   across worker restarts. New turns preserve saved results completed by a later
-  run, including conversations stored as literal history. The in-memory engine
-  supports local development.
+  run, including conversations stored as literal history. Failed calls stay in
+  the transcript and do not block later turns by restoring old paging state.
+  The in-memory engine supports local development.
 - **Policies and context.** Control permitted tools, call and recovery budgets,
   timing, history compression, prompt caching, and prompt overrides.
 - **Evaluation and observability.** Generate typed evaluation suites; observe

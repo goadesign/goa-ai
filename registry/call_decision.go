@@ -233,7 +233,11 @@ local function prepared_state_error(key, expected_tool_use_id, expected_catalog_
   elseif dispatch_token ~= registration_token
   or dispatch_lease == ""
   or dispatch_request == ""
-  or dispatch_request ~= publication_event_id
+  -- A queued publication may gain ownership after a later retry publishes.
+  -- Require its own retained publication rather than the newest request.
+  or not stream_id(dispatch_request)
+  or redis.call("HEXISTS", key, "claim:" .. dispatch_request) == 0
+  or not stream_id_at_or_before(dispatch_request, publication_event_id)
   or not dispatch_expires_value
   or dispatch_expires_value == 0 then
     return "CALLDECISIONINVALID dispatch state"

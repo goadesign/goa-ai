@@ -33,6 +33,9 @@ func ({{ if or (eq .Kind "schema") (and (eq .Kind "metadata") .Value.Fields) }}d
         Terms: map[string]int{ {{ range $word, $count := .Search.Terms }}{{ printf "%q" $word }}: {{ $count }}, {{ end }} },
     },
     RequiresUI: {{ .RequiresUI }},
+    {{- if .ReplanOnTimeout }}
+    ReplanOnTimeout: true,
+    {{- end }}
     {{- with .TextOnly }}
     TextOnly: &genregistry.TextOnlyToolContract{
         ExecutionSchema: []byte({{ printf "%q" .ExecutionSchema }}),

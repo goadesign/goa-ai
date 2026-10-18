@@ -664,7 +664,13 @@ func (v *Value) planTransforms() error {
 		}
 	}
 	if v.direction.encodes() || v.direction == ValidateOnly {
-		encode, err := goacodegen.NewTransformPlan(v.service, v.transport, "encode", nil)
+		var encode *goacodegen.TransformPlan
+		var err error
+		if v.originalLayout != nil {
+			encode, err = v.plan.originals.encoder.Plan(v.service, v.transport, "encode")
+		} else {
+			encode, err = goacodegen.NewTransformPlan(v.service, v.transport, "encode", nil)
+		}
 		if err != nil {
 			return err
 		}

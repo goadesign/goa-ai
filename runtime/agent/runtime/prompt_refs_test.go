@@ -140,9 +140,8 @@ func TestResolvePromptRefsTraversesSessionlessChild(t *testing.T) {
 		RunID:     "parent",
 		StartedAt: startedAt,
 	}
-	seedEndID, err := publishLiteralHistory(t.Context(), store, storage.SeedDeclaration{
+	seedEndID, err := publishLiteralHistory(t.Context(), store, genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: parent.RunID})}, storage.SeedDeclaration{
 		Subject: parent.Subject, RunID: parent.RunID, Kind: storage.SeedLiteral,
-		Origin: genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: parent.RunID})},
 	}, nil)
 	require.NoError(t, err)
 	parent.SeedEndID = seedEndID
@@ -166,9 +165,8 @@ func TestResolvePromptRefsTraversesSessionlessChild(t *testing.T) {
 		ParentRunID: parent.RunID,
 		StartedAt:   startedAt,
 	}
-	child.SeedEndID, err = publishLiteralHistory(t.Context(), store, storage.SeedDeclaration{
+	child.SeedEndID, err = publishLiteralHistory(t.Context(), store, genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: parent.RunID, ToolCallID: "call-child"})}, storage.SeedDeclaration{
 		Subject: child.Subject, RunID: child.RunID, Kind: storage.SeedLiteral,
-		Origin: genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: parent.RunID, ToolCallID: "call-child"})},
 	}, nil)
 	require.NoError(t, err)
 	linked := testHookRecord(t, hooks.NewChildRunLinkedEvent(
@@ -754,12 +752,11 @@ func admitPromptChildContinuationForTest(t *testing.T, store storage.Store, meta
 	predecessor, err := store.LoadRun(t.Context(), predecessorRunID)
 	require.NoError(t, err)
 	declaration := storage.SeedDeclaration{
-		Origin:  predecessor.Origin,
 		Subject: meta.Subject, RunID: meta.RunID, SessionID: meta.SessionID,
 		CommandID: meta.RunID, AttemptID: meta.RunID, Kind: storage.SeedContinuation,
 		PredecessorRunID: predecessorRunID, SourceRunID: predecessorRunID, SourceEndID: page.Events[len(page.Events)-1].ID,
 	}
-	_, err = bindHistoryOperation(t.Context(), store, declaration)
+	_, err = bindHistoryOperation(t.Context(), store, declaration, predecessor.Origin)
 	require.NoError(t, err)
 	seed, err := store.BeginRunSeed(t.Context(), declaration)
 	require.NoError(t, err)
@@ -821,8 +818,7 @@ func startStoppedRunForTest(t *testing.T, store storage.Store, meta session.RunM
 	if meta.ParentRunID != "" {
 		origin = genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: meta.ParentRunID, ToolCallID: "call-" + meta.RunID})}
 	}
-	seedEndID, err := publishLiteralHistory(t.Context(), store, storage.SeedDeclaration{
-		Origin:  origin,
+	seedEndID, err := publishLiteralHistory(t.Context(), store, origin, storage.SeedDeclaration{
 		Subject: meta.Subject, RunID: meta.RunID, SessionID: meta.SessionID, Kind: storage.SeedLiteral,
 	}, nil)
 	require.NoError(t, err)

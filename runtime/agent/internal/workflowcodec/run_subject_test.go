@@ -4,7 +4,9 @@
 package workflowcodec
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -36,7 +38,7 @@ func TestWorkflowSubjectRoundTrip(t *testing.T) {
 			api.ToolInput{Subject: subject, RunID: "run", Invocation: genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: "issuer", ToolCallID: "call"})}},
 			api.ToolCall{Subject: subject, RunID: "run"},
 			runlog.ActivityInput{Subject: subject, RunID: "run"},
-			storage.SeedDeclaration{Subject: subject, RunID: "run", Origin: genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: "run"})}},
+			storage.SeedDeclaration{Subject: subject, RunID: "run"},
 			storage.PreparationOperation{Subject: subject, RunID: "run"},
 		} {
 			t.Run(reflect.TypeOf(input).String()+"/"+string(subject.Executor.Kind()), func(t *testing.T) {
@@ -179,5 +181,46 @@ func TestSavedRecordSubjectRoundTrip(t *testing.T) {
 				require.ErrorContains(t, DecodeJSON([]byte(invalid), decoded.Interface()), "saved run subject")
 			})
 		}
+	}
+}
+
+func TestWorkflowSeedOriginRoundTripWithoutDeclarationCopy(t *testing.T) {
+	codec := NewDataConverter()
+	for _, size := range []int{256 * 1024, 1_300_000, 4 * 1024 * 1024} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			origin := genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: "original-parent", ToolCallID: strings.Repeat("x", size)})}
+			declaration := storage.SeedDeclaration{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("worker")}, RunID: "child", CommandID: "command", AttemptID: "attempt", Kind: storage.SeedLiteral}
+			command := api.StorageActivityCommand{SeedBegin: &declaration}
+			encoded, err := codec.ToPayload(command)
+			require.NoError(t, err)
+			assert.NotContains(t, string(encoded.Data), `"Origin"`)
+			require.NoError(t, storage.ValidateSeedCommandSize(command))
+			var decoded api.StorageActivityCommand
+			require.NoError(t, codec.FromPayload(encoded, &decoded))
+			assert.Equal(t, command, decoded)
+			result := api.StorageActivityResult{SeedBegin: &storage.RunSeed{Origin: origin, Declaration: declaration, EndID: storage.EmptySeedEndID}}
+			encodedResult, resultErr := codec.ToPayload(result)
+			begin := storage.RunPreparationBegin{Operation: storage.PreparationOperation{Subject: declaration.Subject, RunID: declaration.RunID, CommandID: declaration.CommandID}, Origin: origin}
+			encodedBegin, beginErr := codec.ToPayload(api.StorageActivityCommand{PreparationBegin: &begin})
+			// Direct storage accepts these invocation values. Workflow transport has
+			// its own smaller budget, applied equally to binding and returned results.
+			if size > engine.MaxPayloadBytes {
+				require.ErrorContains(t, resultErr, "maximum aggregate size")
+				require.ErrorContains(t, beginErr, "maximum aggregate size")
+				return
+			}
+			require.NoError(t, resultErr)
+			var decodedResult api.StorageActivityResult
+			require.NoError(t, codec.FromPayload(encodedResult, &decodedResult))
+			assert.Equal(t, result, decodedResult)
+			originJSON, err := json.Marshal(origin)
+			require.NoError(t, err)
+			encodedResult.Data = bytes.Replace(encodedResult.Data, append(append([]byte(`"Origin":`), originJSON...), ','), nil, 1)
+			var missingOrigin api.StorageActivityResult
+			require.Error(t, codec.FromPayload(encodedResult, &missingOrigin))
+			require.NoError(t, beginErr)
+			require.NoError(t, codec.FromPayload(encodedBegin, &decoded))
+			assert.Equal(t, begin, *decoded.PreparationBegin)
+		})
 	}
 }

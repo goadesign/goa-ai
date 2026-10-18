@@ -1005,18 +1005,18 @@ func runningRootStore(t *testing.T) (*Store, session.RunStart) {
 // or the suspended predecessor's saved history before a fixture starts the run.
 func publishStartHistory(t *testing.T, store *Store, start session.RunStart, toolCallID string) session.RunStart {
 	t.Helper()
+	origin := rootExecutionOrigin(start.RunID)
 	declaration := storage.SeedDeclaration{
-		Origin:  rootExecutionOrigin(start.RunID),
 		Subject: start.Subject, RunID: start.RunID, SessionID: start.SessionID, CommandID: start.RunID, AttemptID: start.RunID, Kind: storage.SeedLiteral,
 	}
 	if start.ParentRunID != "" && start.PredecessorRunID == "" {
 		require.NotEmpty(t, toolCallID, "a fresh child must name its parent tool call")
-		declaration.Origin = genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: start.ParentRunID, ToolCallID: toolCallID})}
+		origin = genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: start.ParentRunID, ToolCallID: toolCallID})}
 	}
 	if start.PredecessorRunID != "" {
 		predecessor, err := store.LoadRun(t.Context(), start.PredecessorRunID)
 		require.NoError(t, err)
-		declaration.Origin = predecessor.Origin
+		origin = predecessor.Origin
 		declaration.Kind = storage.SeedContinuation
 		declaration.PredecessorRunID = start.PredecessorRunID
 		declaration.SourceRunID = start.PredecessorRunID
@@ -1024,7 +1024,7 @@ func publishStartHistory(t *testing.T, store *Store, start session.RunStart, too
 		require.NotEmpty(t, records)
 		declaration.SourceEndID = records[len(records)-1].ID
 	}
-	bindSeedTestOperation(t, store, declaration)
+	bindSeedTestOperation(t, store, declaration, origin)
 	seed, err := store.BeginRunSeed(t.Context(), declaration)
 	require.NoError(t, err)
 	start.SeedEndID = storage.EmptySeedEndID

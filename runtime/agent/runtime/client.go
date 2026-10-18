@@ -372,11 +372,14 @@ func (c *agentClient) PrepareOneShot(ctx context.Context, messages []*model.Mess
 
 func (c *agentClient) prepareLiteral(ctx context.Context, start *runStart, request engine.WorkflowStartRequest) (*PreparedRun, error) {
 	command, attempt := start.preparationIdentity()
-	writer, err := stageLiteralHistory(ctx, c.r.Store, storage.SeedDeclaration{
-		Origin:  genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: start.input.RunID})},
+	declaration := storage.SeedDeclaration{
 		Subject: start.input.Subject, RunID: start.input.RunID, SessionID: start.input.SessionID,
 		CommandID: command, AttemptID: attempt, Kind: storage.SeedLiteral, RenderedPrompts: start.renderedPrompts,
-	}, start.messages)
+	}
+	if _, err := bindHistoryOperation(ctx, c.r.Store, declaration, genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: start.input.RunID})}); err != nil {
+		return nil, err
+	}
+	writer, err := stageLiteralHistory(ctx, c.r.Store, declaration, start.messages)
 	if err != nil {
 		return nil, err
 	}
@@ -403,13 +406,16 @@ func (c *agentClient) PrepareNextTurn(ctx context.Context, sessionID, completedR
 		return nil, err
 	}
 	commandID, attemptID := start.preparationIdentity()
-	writer, err := stageNextTurnHistory(ctx, c.r.Store, storage.SeedDeclaration{
-		Origin:  genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: start.input.RunID})},
+	declaration := storage.SeedDeclaration{
 		Subject: start.input.Subject, RunID: start.input.RunID, SessionID: sessionID,
 		CommandID: commandID, AttemptID: attemptID,
 		Kind: storage.SeedNextTurn, SourceRunID: completedRunID,
 		ExcludeReasoning: start.withoutPriorReasoning, RenderedPrompts: start.renderedPrompts,
-	}, systemMessages, freshMessages)
+	}
+	if _, err := bindHistoryOperation(ctx, c.r.Store, declaration, genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: start.input.RunID})}); err != nil {
+		return nil, err
+	}
+	writer, err := stageNextTurnHistory(ctx, c.r.Store, declaration, systemMessages, freshMessages)
 	if err != nil {
 		return nil, err
 	}
@@ -611,14 +617,13 @@ func (r *Runtime) buildStoredContinuationRunInput(
 		return nil, nil, err
 	}
 	declaration := storage.SeedDeclaration{
-		Origin:  predecessor.Origin,
 		Subject: input.Subject, RunID: runID, SessionID: sessionID,
 		CommandID: commandID, AttemptID: attemptID,
 		Kind: storage.SeedContinuation, PredecessorRunID: predecessorRunID, SourceRunID: predecessorRunID, SourceEndID: checkpoint.HistoryEndID,
 	}
 	// Saving supplied or retained history performs no provider work. The actual
 	// engine start checks any stop returned while binding this exact recipe.
-	if _, err := bindHistoryOperation(ctx, r.Store, declaration); err != nil {
+	if _, err := bindHistoryOperation(ctx, r.Store, declaration, predecessor.Origin); err != nil {
 		return nil, nil, err
 	}
 	seed, err := r.Store.BeginRunSeed(ctx, declaration)

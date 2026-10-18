@@ -269,7 +269,7 @@ func routeInputImports(data *AdapterData) []*codegen.ImportSpec {
 		imports = append(imports, codegen.SimpleImport("strconv"))
 	}
 	if collection {
-		imports = append(imports, codegen.SimpleImport("strings"))
+		imports = append(imports, codegen.SimpleImport("net/url"), codegen.SimpleImport("strings"))
 	}
 	return imports
 }

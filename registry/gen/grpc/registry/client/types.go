@@ -33,9 +33,13 @@ func NewProtoListCatalogResourcesRequest(payload *registry.CatalogResourcesQuery
 	message := &registrypb.ListCatalogResourcesRequest{
 		Scope: &payload.Scope,
 		Kind:  &payload.Kind,
-		After: payload.After,
 		Limit: &payload.Limit,
-		Name:  payload.Name,
+	}
+	if payload.After != nil {
+		message.After = payload.After
+	}
+	if payload.Name != nil {
+		message.Name = payload.Name
 	}
 	return message
 }
@@ -75,7 +79,9 @@ func NewProtoRegisterAgentExportsRequest(payload *registry.AgentExportsDeclarati
 		Scope:        &payload.Scope,
 		ResourceName: &payload.ResourceName,
 		Name:         &payload.Name,
-		Description:  payload.Description,
+	}
+	if payload.Description != nil {
+		message.Description = payload.Description
 	}
 	if payload.Version != nil {
 		version := string(*payload.Version)
@@ -141,8 +147,10 @@ func NewProtoRetireAgentResourceRequest(payload *registry.CatalogResource) *regi
 // *registry.ServiceToolsetDeclaration.
 func NewProtoDeclareServiceToolsetRequest(payload *registry.ServiceToolsetDeclaration) *registrypb.DeclareServiceToolsetRequest {
 	message := &registrypb.DeclareServiceToolsetRequest{
-		Name:        &payload.Name,
-		Description: payload.Description,
+		Name: &payload.Name,
+	}
+	if payload.Description != nil {
+		message.Description = payload.Description
 	}
 	if payload.Version != nil {
 		version := string(*payload.Version)
@@ -183,7 +191,9 @@ func NewProtoReplaceServiceToolsetRequest(payload *registry.ReplaceServiceToolse
 		ExpectedRegistrationToken: &payload.ExpectedRegistrationToken,
 		ReplacementId:             &payload.ReplacementID,
 		Name:                      &payload.Name,
-		Description:               payload.Description,
+	}
+	if payload.Description != nil {
+		message.Description = payload.Description
 	}
 	if payload.Version != nil {
 		version := string(*payload.Version)
@@ -246,11 +256,13 @@ func NewAttachProviderResult(message *registrypb.AttachProviderResponse) *regist
 func NewProtoRegisterRequest(payload *registry.RegisterPayload) *registrypb.RegisterRequest {
 	message := &registrypb.RegisterRequest{
 		Name:                  &payload.Name,
-		Description:           payload.Description,
 		ProviderId:            &payload.ProviderID,
 		AdmissionRevision:     &payload.AdmissionRevision,
 		ProviderIncarnationId: &payload.ProviderIncarnationID,
 		SchemaFingerprint:     &payload.SchemaFingerprint,
+	}
+	if payload.Description != nil {
+		message.Description = payload.Description
 	}
 	if payload.Version != nil {
 		version := string(*payload.Version)
@@ -357,8 +369,10 @@ func NewProtoPongRequest(payload *registry.PongPayload) *registrypb.PongRequest 
 // *registry.AgentToolsetDeclaration.
 func NewProtoRegisterAgentToolsetRequest(payload *registry.AgentToolsetDeclaration) *registrypb.RegisterAgentToolsetRequest {
 	message := &registrypb.RegisterAgentToolsetRequest{
-		Name:        &payload.Name,
-		Description: payload.Description,
+		Name: &payload.Name,
+	}
+	if payload.Description != nil {
+		message.Description = payload.Description
 	}
 	if payload.Version != nil {
 		version := string(*payload.Version)
@@ -398,7 +412,9 @@ func NewProtoReplaceAgentToolsetRequest(payload *registry.ReplaceAgentToolsetPay
 	message := &registrypb.ReplaceAgentToolsetRequest{
 		ExpectedRegistrationToken: &payload.ExpectedRegistrationToken,
 		Name:                      &payload.Name,
-		Description:               payload.Description,
+	}
+	if payload.Description != nil {
+		message.Description = payload.Description
 	}
 	if payload.Version != nil {
 		version := string(*payload.Version)
@@ -471,8 +487,10 @@ func NewProtoGetToolsetRequest(payload *registry.GetToolsetPayload) *registrypb.
 func NewGetToolsetResult(message *registrypb.GetToolsetResponse) *registry.Toolset {
 	result := &registry.Toolset{
 		Name:         *message.Name,
-		Description:  message.Description,
 		RegisteredAt: *message.RegisteredAt,
+	}
+	if message.Description != nil {
+		result.Description = message.Description
 	}
 	if message.Version != nil {
 		version := registry.SemVer(*message.Version)
@@ -3086,11 +3104,13 @@ func transformProtoResourcePageMoreToResourcePageMore(v *registrypb.ResourcePage
 func transformToolSchemaToProtoToolSchema(v *registry.ToolSchema) *registrypb.ToolSchema {
 	res := &registrypb.ToolSchema{
 		Name:                   &v.Name,
-		Description:            v.Description,
 		PayloadSchema:          v.PayloadSchema,
 		ExecutionPayloadSchema: v.ExecutionPayloadSchema,
 		ResultSchema:           v.ResultSchema,
 		SidecarSchema:          v.SidecarSchema,
+	}
+	if v.Description != nil {
+		res.Description = v.Description
 	}
 	if v.Tags != nil {
 		res.Tags = make([]string, len(v.Tags))
@@ -3109,10 +3129,13 @@ func transformToolSchemaToProtoToolSchema(v *registry.ToolSchema) *registrypb.To
 // *registrypb.ConsumerContract from a value of type *registry.ConsumerContract.
 func transformConsumerContractToProtoConsumerContract(v *registry.ConsumerContract) *registrypb.ConsumerContract {
 	res := &registrypb.ConsumerContract{
-		Kind:           &v.Kind,
-		Title:          &v.Title,
-		ResultReminder: v.ResultReminder,
-		RequiresUi:     &v.RequiresUI,
+		Kind:            &v.Kind,
+		Title:           &v.Title,
+		RequiresUi:      &v.RequiresUI,
+		ReplanOnTimeout: &v.ReplanOnTimeout,
+	}
+	if v.ResultReminder != nil {
+		res.ResultReminder = v.ResultReminder
 	}
 	if v.Search != nil {
 		res.Search = transformToolSearchDocumentToProtoToolSearchDocument(v.Search)
@@ -3186,9 +3209,11 @@ func transformToolSearchDocumentToProtoToolSearchDocument(v *registry.ToolSearch
 // *registrypb.ToolTypeMetadata from a value of type *registry.ToolTypeMetadata.
 func transformToolTypeMetadataToProtoToolTypeMetadata(v *registry.ToolTypeMetadata) *registrypb.ToolTypeMetadata {
 	res := &registrypb.ToolTypeMetadata{
-		Name:                     v.Name,
 		SchemaWithoutRootExample: v.SchemaWithoutRootExample,
 		ExampleJson:              v.ExampleJSON,
+	}
+	if v.Name != nil {
+		res.Name = v.Name
 	}
 	if v.Fields != nil {
 		res.Fields = make([]*registrypb.ToolFieldMetadata, len(v.Fields))
@@ -3204,9 +3229,12 @@ func transformToolTypeMetadataToProtoToolTypeMetadata(v *registry.ToolTypeMetada
 // *registrypb.ToolFieldMetadata from a value of type
 // *registry.ToolFieldMetadata.
 func transformToolFieldMetadataToProtoToolFieldMetadata(v *registry.ToolFieldMetadata) *registrypb.ToolFieldMetadata {
-	res := &registrypb.ToolFieldMetadata{
-		JsonType:    v.JSONType,
-		Description: v.Description,
+	res := &registrypb.ToolFieldMetadata{}
+	if v.JSONType != nil {
+		res.JsonType = v.JSONType
+	}
+	if v.Description != nil {
+		res.Description = v.Description
 	}
 	if v.Path != nil {
 		res.Path = make([]*registrypb.ToolFieldPathSegment, len(v.Path))
@@ -3327,10 +3355,14 @@ func transformToolBoundsToProtoToolBounds(v *registry.ToolBounds) *registrypb.To
 // *registrypb.ToolPaging from a value of type *registry.ToolPaging.
 func transformToolPagingToProtoToolPaging(v *registry.ToolPaging) *registrypb.ToolPaging {
 	res := &registrypb.ToolPaging{
-		ContinueTool:    v.ContinueTool,
-		SourceTool:      v.SourceTool,
 		CursorField:     &v.CursorField,
 		NextCursorField: &v.NextCursorField,
+	}
+	if v.ContinueTool != nil {
+		res.ContinueTool = v.ContinueTool
+	}
+	if v.SourceTool != nil {
+		res.SourceTool = v.SourceTool
 	}
 	if v.RetainedFields != nil {
 		res.RetainedFields = make([]string, len(v.RetainedFields))
@@ -3346,9 +3378,11 @@ func transformToolPagingToProtoToolPaging(v *registry.ToolPaging) *registrypb.To
 // *registrypb.ToolConfirmation from a value of type *registry.ToolConfirmation.
 func transformToolConfirmationToProtoToolConfirmation(v *registry.ToolConfirmation) *registrypb.ToolConfirmation {
 	res := &registrypb.ToolConfirmation{
-		Title:                v.Title,
 		PromptTemplate:       &v.PromptTemplate,
 		DeniedResultTemplate: &v.DeniedResultTemplate,
+	}
+	if v.Title != nil {
+		res.Title = v.Title
 	}
 
 	return res
@@ -3360,9 +3394,11 @@ func transformToolServerDataToProtoToolServerData(v *registry.ToolServerData) *r
 	res := &registrypb.ToolServerData{
 		Kind:        &v.Kind,
 		Audience:    &v.Audience,
-		Description: v.Description,
 		Schema:      v.Schema,
 		NativeImage: &v.NativeImage,
+	}
+	if v.Description != nil {
+		res.Description = v.Description
 	}
 	if v.Type != nil {
 		res.Type = transformToolTypeMetadataToProtoToolTypeMetadata(v.Type)
@@ -3391,8 +3427,10 @@ func transformTextOnlyToolContractToProtoTextOnlyToolContract(v *registry.TextOn
 	res := &registrypb.TextOnlyToolContract{
 		Description:     &v.Description,
 		PayloadSchema:   v.PayloadSchema,
-		ResultReminder:  v.ResultReminder,
 		ExecutionSchema: v.ExecutionSchema,
+	}
+	if v.ResultReminder != nil {
+		res.ResultReminder = v.ResultReminder
 	}
 	if v.Search != nil {
 		res.Search = transformToolSearchDocumentToProtoToolSearchDocument(v.Search)
@@ -3409,11 +3447,13 @@ func transformTextOnlyToolContractToProtoTextOnlyToolContract(v *registry.TextOn
 func transformProtoToolSchemaToToolSchema(v *registrypb.ToolSchema) *registry.ToolSchema {
 	res := &registry.ToolSchema{
 		Name:                   *v.Name,
-		Description:            v.Description,
 		PayloadSchema:          v.PayloadSchema,
 		ExecutionPayloadSchema: v.ExecutionPayloadSchema,
 		ResultSchema:           v.ResultSchema,
 		SidecarSchema:          v.SidecarSchema,
+	}
+	if v.Description != nil {
+		res.Description = v.Description
 	}
 	if v.Tags != nil {
 		res.Tags = make([]string, len(v.Tags))
@@ -3432,12 +3472,17 @@ func transformProtoToolSchemaToToolSchema(v *registrypb.ToolSchema) *registry.To
 // *registry.ConsumerContract from a value of type *registrypb.ConsumerContract.
 func transformProtoConsumerContractToConsumerContract(v *registrypb.ConsumerContract) *registry.ConsumerContract {
 	res := &registry.ConsumerContract{
-		Kind:           *v.Kind,
-		Title:          *v.Title,
-		ResultReminder: v.ResultReminder,
+		Kind:  *v.Kind,
+		Title: *v.Title,
+	}
+	if v.ResultReminder != nil {
+		res.ResultReminder = v.ResultReminder
 	}
 	if v.RequiresUi != nil {
 		res.RequiresUI = *v.RequiresUi
+	}
+	if v.ReplanOnTimeout != nil {
+		res.ReplanOnTimeout = *v.ReplanOnTimeout
 	}
 	if v.Search != nil {
 		res.Search = transformProtoToolSearchDocumentToToolSearchDocument(v.Search)
@@ -3489,6 +3534,9 @@ func transformProtoConsumerContractToConsumerContract(v *registrypb.ConsumerCont
 	if v.TextOnly != nil {
 		res.TextOnly = transformProtoTextOnlyToolContractToTextOnlyToolContract(v.TextOnly)
 	}
+	if v.ReplanOnTimeout == nil {
+		res.ReplanOnTimeout = false
+	}
 
 	return res
 }
@@ -3514,9 +3562,11 @@ func transformProtoToolSearchDocumentToToolSearchDocument(v *registrypb.ToolSear
 // *registry.ToolTypeMetadata from a value of type *registrypb.ToolTypeMetadata.
 func transformProtoToolTypeMetadataToToolTypeMetadata(v *registrypb.ToolTypeMetadata) *registry.ToolTypeMetadata {
 	res := &registry.ToolTypeMetadata{
-		Name:                     v.Name,
 		SchemaWithoutRootExample: v.SchemaWithoutRootExample,
 		ExampleJSON:              v.ExampleJson,
+	}
+	if v.Name != nil {
+		res.Name = v.Name
 	}
 	if v.Fields != nil {
 		res.Fields = make([]*registry.ToolFieldMetadata, len(v.Fields))
@@ -3532,9 +3582,12 @@ func transformProtoToolTypeMetadataToToolTypeMetadata(v *registrypb.ToolTypeMeta
 // *registry.ToolFieldMetadata from a value of type
 // *registrypb.ToolFieldMetadata.
 func transformProtoToolFieldMetadataToToolFieldMetadata(v *registrypb.ToolFieldMetadata) *registry.ToolFieldMetadata {
-	res := &registry.ToolFieldMetadata{
-		JSONType:    v.JsonType,
-		Description: v.Description,
+	res := &registry.ToolFieldMetadata{}
+	if v.JsonType != nil {
+		res.JSONType = v.JsonType
+	}
+	if v.Description != nil {
+		res.Description = v.Description
 	}
 	if v.Path != nil {
 		res.Path = make([]*registry.ToolFieldPathSegment, len(v.Path))
@@ -3664,10 +3717,14 @@ func transformProtoToolBoundsToToolBounds(v *registrypb.ToolBounds) *registry.To
 // *registry.ToolPaging from a value of type *registrypb.ToolPaging.
 func transformProtoToolPagingToToolPaging(v *registrypb.ToolPaging) *registry.ToolPaging {
 	res := &registry.ToolPaging{
-		ContinueTool:    v.ContinueTool,
-		SourceTool:      v.SourceTool,
 		CursorField:     *v.CursorField,
 		NextCursorField: *v.NextCursorField,
+	}
+	if v.ContinueTool != nil {
+		res.ContinueTool = v.ContinueTool
+	}
+	if v.SourceTool != nil {
+		res.SourceTool = v.SourceTool
 	}
 	res.RetainedFields = make([]string, len(v.RetainedFields))
 	for i, val := range v.RetainedFields {
@@ -3681,9 +3738,11 @@ func transformProtoToolPagingToToolPaging(v *registrypb.ToolPaging) *registry.To
 // *registry.ToolConfirmation from a value of type *registrypb.ToolConfirmation.
 func transformProtoToolConfirmationToToolConfirmation(v *registrypb.ToolConfirmation) *registry.ToolConfirmation {
 	res := &registry.ToolConfirmation{
-		Title:                v.Title,
 		PromptTemplate:       *v.PromptTemplate,
 		DeniedResultTemplate: *v.DeniedResultTemplate,
+	}
+	if v.Title != nil {
+		res.Title = v.Title
 	}
 
 	return res
@@ -3693,10 +3752,12 @@ func transformProtoToolConfirmationToToolConfirmation(v *registrypb.ToolConfirma
 // *registry.ToolServerData from a value of type *registrypb.ToolServerData.
 func transformProtoToolServerDataToToolServerData(v *registrypb.ToolServerData) *registry.ToolServerData {
 	res := &registry.ToolServerData{
-		Kind:        *v.Kind,
-		Audience:    *v.Audience,
-		Description: v.Description,
-		Schema:      v.Schema,
+		Kind:     *v.Kind,
+		Audience: *v.Audience,
+		Schema:   v.Schema,
+	}
+	if v.Description != nil {
+		res.Description = v.Description
 	}
 	if v.NativeImage != nil {
 		res.NativeImage = *v.NativeImage
@@ -3731,8 +3792,10 @@ func transformProtoTextOnlyToolContractToTextOnlyToolContract(v *registrypb.Text
 	res := &registry.TextOnlyToolContract{
 		Description:     *v.Description,
 		PayloadSchema:   v.PayloadSchema,
-		ResultReminder:  v.ResultReminder,
 		ExecutionSchema: v.ExecutionSchema,
+	}
+	if v.ResultReminder != nil {
+		res.ResultReminder = v.ResultReminder
 	}
 	if v.Search != nil {
 		res.Search = transformProtoToolSearchDocumentToToolSearchDocument(v.Search)
@@ -3749,8 +3812,10 @@ func transformProtoTextOnlyToolContractToTextOnlyToolContract(v *registrypb.Text
 func transformProtoToolsetToToolset(v *registrypb.Toolset) *registry.Toolset {
 	res := &registry.Toolset{
 		Name:         *v.Name,
-		Description:  v.Description,
 		RegisteredAt: *v.RegisteredAt,
+	}
+	if v.Description != nil {
+		res.Description = v.Description
 	}
 	if v.Version != nil {
 		version := registry.SemVer(*v.Version)
@@ -3775,9 +3840,11 @@ func transformProtoToolsetToToolset(v *registrypb.Toolset) *registry.Toolset {
 func transformProtoToolsetInfoToToolsetInfo(v *registrypb.ToolsetInfo) *registry.ToolsetInfo {
 	res := &registry.ToolsetInfo{
 		Name:         *v.Name,
-		Description:  v.Description,
 		ToolCount:    int(*v.ToolCount),
 		RegisteredAt: *v.RegisteredAt,
+	}
+	if v.Description != nil {
+		res.Description = v.Description
 	}
 	if v.Version != nil {
 		version := registry.SemVer(*v.Version)
@@ -3798,12 +3865,18 @@ func transformProtoToolsetInfoToToolsetInfo(v *registrypb.ToolsetInfo) *registry
 func transformToolCallMetaToProtoToolCallMeta(v *registry.ToolCallMeta) *registrypb.ToolCallMeta {
 	res := &registrypb.ToolCallMeta{
 		RunId:             &v.RunID,
-		SessionId:         v.SessionID,
-		TurnId:            v.TurnID,
 		ToolCallId:        &v.ToolCallID,
-		ParentToolCallId:  v.ParentToolCallID,
 		TextOnly:          &v.TextOnly,
 		ExecutionSequence: &v.ExecutionSequence,
+	}
+	if v.SessionID != nil {
+		res.SessionId = v.SessionID
+	}
+	if v.TurnID != nil {
+		res.TurnId = v.TurnID
+	}
+	if v.ParentToolCallID != nil {
+		res.ParentToolCallId = v.ParentToolCallID
 	}
 	if v.Labels != nil {
 		res.Labels = make(map[string]string, len(v.Labels))
@@ -3849,8 +3922,9 @@ func transformToolOperationExecutionContinuationToProtoToolOperationExecutionCon
 // builds a value of type *registrypb.ToolOperationInputContinuation from a
 // value of type *tooloperations.ToolOperationInputContinuation.
 func transformToolOperationInputContinuationToProtoToolOperationInputContinuation(v *tooloperations.ToolOperationInputContinuation) *registrypb.ToolOperationInputContinuation {
-	res := &registrypb.ToolOperationInputContinuation{
-		State: v.State,
+	res := &registrypb.ToolOperationInputContinuation{}
+	if v.State != nil {
+		res.State = v.State
 	}
 	if v.Responses != nil {
 		res.Responses = make(map[string][]byte, len(v.Responses))
@@ -3887,11 +3961,17 @@ func transformToolOperationTaskAnswersToProtoToolOperationTaskAnswers(v *toolope
 // *registry.ToolCallMeta from a value of type *registrypb.ToolCallMeta.
 func transformProtoToolCallMetaToToolCallMeta(v *registrypb.ToolCallMeta) *registry.ToolCallMeta {
 	res := &registry.ToolCallMeta{
-		RunID:            *v.RunId,
-		SessionID:        v.SessionId,
-		TurnID:           v.TurnId,
-		ToolCallID:       *v.ToolCallId,
-		ParentToolCallID: v.ParentToolCallId,
+		RunID:      *v.RunId,
+		ToolCallID: *v.ToolCallId,
+	}
+	if v.SessionId != nil {
+		res.SessionID = v.SessionId
+	}
+	if v.TurnId != nil {
+		res.TurnID = v.TurnId
+	}
+	if v.ParentToolCallId != nil {
+		res.ParentToolCallID = v.ParentToolCallId
 	}
 	if v.TextOnly != nil {
 		res.TextOnly = *v.TextOnly
@@ -3961,8 +4041,9 @@ func transformProtoToolOperationExecutionContinuationToToolOperationExecutionCon
 // builds a value of type *tooloperations.ToolOperationInputContinuation from a
 // value of type *registrypb.ToolOperationInputContinuation.
 func transformProtoToolOperationInputContinuationToToolOperationInputContinuation(v *registrypb.ToolOperationInputContinuation) *tooloperations.ToolOperationInputContinuation {
-	res := &tooloperations.ToolOperationInputContinuation{
-		State: v.State,
+	res := &tooloperations.ToolOperationInputContinuation{}
+	if v.State != nil {
+		res.State = v.State
 	}
 	if v.Responses != nil {
 		res.Responses = make(map[string][]byte, len(v.Responses))

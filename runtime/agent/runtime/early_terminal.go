@@ -81,7 +81,7 @@ func (r *Runtime) storeUnstartedTerminal(ctx context.Context, input *api.Unstart
 		if seed.Declaration.RunID != input.RunID || seed.Declaration.SessionID != input.SessionID || !reflect.DeepEqual(seed.Declaration.Subject, input.Subject) {
 			return nil, malformedStorageCommand(errors.New("early terminal seed belongs to another execution"))
 		}
-		command.Origin = &seed.Declaration.Origin
+		command.Origin = &seed.Origin
 	}
 	result, err := r.Store.RecordUnstartedExecutionTerminal(ctx, command)
 	if err != nil {

@@ -16,7 +16,7 @@ import (
 // Specs returns fresh specifications for every tool available to this agent.
 func Specs() []tools.ToolSpec {
 	specs := make([]tools.ToolSpec, 0)
-	specs = append(specs, helpers.Specs()...)
+	specs = append(specs, helpers.SpecAnswer())
 	return specs
 }
 

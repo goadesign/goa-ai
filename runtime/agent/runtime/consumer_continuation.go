@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 
+	genregistry "goa.design/goa-ai/registry/gen/registry"
+	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 )
 
@@ -37,38 +39,43 @@ func decodeClientCheckpoint(suspension *api.RunSuspension, definition AgentDefin
 	if err != nil {
 		return nil, err
 	}
-	if checkpoint.Context.RegisteredInvocation != nil {
-		declaration, err := registeredCheckpointDeclaration(checkpoint)
-		if err != nil {
-			return nil, err
-		}
-		route := declaration.ConsumerContract.Agent
-		if checkpoint.AgentID != string(definition.route.ID) || route.Workflow != definition.route.WorkflowName || route.Queue != definition.route.DefaultTaskQueue {
-			return nil, errors.New("registered suspension differs from selected provider route")
-		}
-		return decodeProviderCheckpoint(suspension)
-	}
-	if checkpoint.Context.Operation == nil {
+	if checkpoint.Context.Operation == nil && checkpoint.Context.RegisteredInvocation == nil {
 		return decodeWorkflowCheckpoint(suspension, definition)
+	}
+	declaration, err := operationCheckpointDeclaration(checkpoint)
+	if err != nil {
+		return nil, err
+	}
+	route := declaration.ConsumerContract.Agent
+	if checkpoint.AgentID != string(definition.route.ID) || route.Workflow != definition.route.WorkflowName || route.Queue != definition.route.DefaultTaskQueue {
+		return nil, errors.New("operation suspension differs from selected provider route")
+	}
+	return decodeProviderCheckpoint(suspension)
+}
+
+// operationCheckpointDeclaration checks the saved direct or registered operation
+// against its original Agent, tool and arguments, then returns its worker route
+// and input contract. No provider-private tools are needed to validate it.
+func operationCheckpointDeclaration(checkpoint *workflowCheckpoint) (*genregistry.ToolSchema, error) {
+	if checkpoint.Context.RegisteredInvocation != nil {
+		return registeredCheckpointDeclaration(checkpoint)
 	}
 	operation := checkpoint.Context.Operation
 	if checkpoint.Context.ToolRegistry != nil || checkpoint.Context.ParentRunID != "" ||
 		checkpoint.Context.ParentAgentID != "" || checkpoint.Context.ParentToolCallID != "" {
 		return nil, errors.New("direct suspension cannot include publication or parent identity")
 	}
-	spec, err := compileAgentOperation(operation, definition.route.ID)
+	spec, err := compileAgentOperation(operation, agent.Ident(checkpoint.AgentID))
 	if err != nil {
 		return nil, err
 	}
-	target := operation.ConsumerContract.Agent
-	if checkpoint.AgentID != string(definition.route.ID) || spec.Name != checkpoint.Context.Tool ||
-		target.Workflow != definition.route.WorkflowName || target.Queue != definition.route.DefaultTaskQueue {
-		return nil, errors.New("direct suspension does not match its retained provider route")
+	if spec.Name != checkpoint.Context.Tool {
+		return nil, errors.New("direct suspension does not match its retained operation")
 	}
 	if _, err := spec.Payload.Codec.FromJSON(checkpoint.Context.ToolArgs); err != nil {
 		return nil, fmt.Errorf("direct suspension operation input: %w", err)
 	}
-	return decodeProviderCheckpoint(suspension)
+	return operation, nil
 }
 
 // validateClientContinuation checks the exact pending input or saved descendant

@@ -833,9 +833,10 @@ it does not extend support to arbitrary custom schemas. Required, disjoint
 string tags select each object union branch's own optional-null removal rules.
 Original response bytes remain available for provider replay while canonical
 arguments undergo the original schema and generated decoder validation.
-Bedrock's native structured-output restriction and local token estimate apply
-to this constructor too. Existing Bedrock constructors keep their complete-schema
-contract unchanged; strictness is never selected per tool or after a failure.
+Bedrock's unary structured-output support, streaming restriction and local token
+estimate apply to this constructor too. Existing Bedrock constructors keep their
+complete-schema contract unchanged; strictness is never selected per tool or
+after a failure.
 
 These constructors share full ordered transcript encoding, text and tool-call
 streaming, provider-issued tool IDs, reversible tool names, encrypted reasoning
@@ -862,13 +863,29 @@ Bedrock requests explicitly set `store:false`, `background:false`, disabled
 input truncation, and explicit prompt caching without checkpoints. They do not
 write prompt caches implicitly. Cache options or inline checkpoints are
 rejected before HTTP rather than silently moved or dropped. Provider-reported
-cache reads and writes are retained in usage. Native `StructuredOutput` is
-rejected with `model.ErrStructuredOutputUnsupported` before HTTP.
+cache reads and writes are retained in usage.
+
+Unary `Complete` supports native `StructuredOutput` on models that accept
+Responses JSON Schema output. The adapter sends `text.format` with
+`type:"json_schema"`, the supplied name, the shared strict schema projection,
+and `strict:true`, then validates returned JSON against the original schema.
+This is independent of the constructor's function-tool strictness. The same
+strict-schema subset and prohibition on combining structured output with tools
+apply as for direct OpenAI. Unsupported model or schema settings return errors;
+the adapter does not switch to a tool or an unconstrained text response.
+For example, the [Bedrock GPT-5.6 Terra contract](https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-56-terra.html)
+documents JSON Schema output for non-streaming Responses calls.
+
+`Stream` rejects `StructuredOutput` with `model.ErrStructuredOutputUnsupported`
+before HTTP, even when the request's `Stream` hint is false. Direct OpenAI
+structured-output streams and ordinary Bedrock text and tool streams retain
+their existing behavior.
 
 `CountTokens` prepares the request locally without HTTP and returns `Exact=false`.
-Text, tools, and opaque replay content use serialized bytes divided by three,
-rounded up, plus 500 framing tokens. Native image data URLs are excluded from
-that byte calculation. For GPT-5.6 Sol, Terra, and Luna, each image instead uses
+Text, tools, structured-output schemas, and opaque replay content use serialized
+bytes divided by three, rounded up, plus 500 framing tokens. Native image data
+URLs are excluded from that byte calculation. For GPT-5.6 Sol, Terra, and Luna,
+each image instead uses
 the [documented auto/original dimension rule](https://developers.openai.com/api/docs/guides/images-vision):
 fit within 65,535 pixels on each side, count 32-pixel patches, and round up the
 1.2 token multiplier. More than 30,000 patches rejects that individual image;
@@ -1244,7 +1261,17 @@ tools; generation reuses one implementation when the inputs are identical.
 For example, the model selects a dedicated continuation with `{}`. Its model
 codec accepts that object, while its execution codec requires the cursor and
 any retained query arguments. Runtime execution and saved-workflow restoration
-use the execution codec, never the smaller model codec. Fields declared with
+use the execution codec, never the smaller model codec. This includes standalone
+registered service operations: `StartToolOperation` and
+`StartOneShotToolOperation` accept complete execution arguments, including
+retained query fields and a continuation cursor. Submission, saved-checkpoint
+validation, and provider dispatch use the same execution contract. Native Agent
+roots continue to accept their declared model input. This service validation
+correction needs no regeneration or schema migration. Upgrade submitting and
+worker runtimes that handle these calls: older runtimes still reject execution
+inputs that differ from model inputs, including when restoring accepted work.
+Finish that work on the fixed runtime before rolling back its workers.
+Fields declared with
 `Inject` are absent from both JSON inputs and filled inside the provider.
 Generated typed payload codecs and typed tool descriptors remain execution
 codecs. Model decoding may return that same Go payload type with fields left
@@ -1370,8 +1397,22 @@ unknown external write. Do not apply it to an operation that may change a
 setting, send a message, or perform another write whose outcome is unknown.
 The promise belongs to the tool definition, not to a consumer's configuration.
 It is supported only on generated agent exports and their generated
-agent-as-tool consumers. Direct service, inline, MCP, registry, and `PublishTo`
-routes are rejected during generation rather than losing the declaration.
+agent-as-tool consumers, including generated native tools bound to a selected
+Agent registration. The generated registry declaration retains the same policy
+as the local specification. Direct service, inline, MCP, `FromRegistry`, and
+`PublishTo` routes are rejected during generation rather than losing the declaration.
+
+After upgrading for registry timeout-policy preservation, regenerate marked
+Agent exports and refresh their registrations. Upgrade the registry, providers,
+and consumers together before using those refreshed declarations: older binaries
+cannot preserve a `true` policy. Existing declarations without the policy still
+mean `false` and retain their fingerprints. Generated JSON encoders omit the
+false default, so unmarked saved registry selections remain readable by older
+binaries. Saved selections with a true policy require the upgraded readers;
+do not resume that work on older binaries. Before rolling back marked exports,
+finish or retire work that saved a true policy and restore the previous generated
+exports and matching registrations. The registry compiler rejects a true policy
+on an ordinary service tool.
 
 The runtime records a typed timeout as `ToolFailure{Kind: "timeout"}`. For the
 declared operation its action is `replan`; otherwise its action remains
@@ -3621,6 +3662,13 @@ The runtime enforces one strict contract across all result ingress paths
 - when `truncated=true`, bounds must include either `next_cursor` or
   `refinement_hint`.
 
+Historical paging restoration uses only successful saved calls. Failed calls
+remain in the exact saved transcript, but cannot provide another page and are
+not restored as current execution outputs. This applies to literal history and
+exact saved-result references. Current outputs and suspended executable state
+retain the full result contract above; successful historical calls still require
+valid ownership, call/result identities, byte counts, and paging metadata.
+
 When `tools.ToolSpec.Bounds.Paging` names a dedicated continuation, the runtime
 advances compatible zero-item results with a non-empty next cursor before
 invoking the planner. The continuation is fully determined until the chain
@@ -3735,9 +3783,13 @@ cannot describe the same invocation simultaneously.
 
 A service accepting an input answer must first save the predecessor, new run ID,
 and typed answer as an immutable dispatch obligation. Its durable worker calls
-`StartToolContinuation` and `EnsureToolContinuationCompletion`. Those methods
-recover the exact published successor request before reading saved suspension
-again, reject a changed answer, and derive authority and routing from saved data.
+`StartToolContinuation` and `EnsureToolContinuationCompletion` for direct Agent
+operations as well as registered native and service operations, with or without
+a Session. Those methods recover the exact published successor request before
+reading saved suspension again, reject a changed answer, and derive authority
+and routing from saved data.
+Retry identity uses the same encoded request digest as engine submission, so
+equivalent empty content lists do not cause false conflicts.
 They are worker submission and completion methods, not a client retry protocol.
 The existing cancellation job likewise owns cleanup of suspended service work.
 
@@ -3767,7 +3819,7 @@ continuation seeds are a new format; they cannot be executed by older workers.
 ## Direct Agent Operations
 
 Call an exported operation without first publishing it as a tool. The caller
-needs its generated portable declaration and an authorized immutable
+needs its complete portable declaration and an authorized immutable
 configuration, not the provider implementation or private Agent definition.
 
 ```go
@@ -3793,9 +3845,10 @@ facts instead belong in `AgentToolConfiguration.Metadata`, which is saved with
 the prepared input and restored without rerunning the provider.
 
 The engine owns the complete accepted request before preparation starts.
-The provider's typed preparation activity checks the operation against its own
-generated export and route, then invokes its registered configuration resolver.
-Direct calls and delegation use the same resolver and exported contract checks.
+The provider's typed preparation activity checks the worker route and input.
+Generated providers require their compiled export; providers whose saved
+configurations define exports require that exact revision's declaration.
+Direct calls and delegation use the same provider registration and contract checks.
 The runtime publishes the prepared input through its store, enters the common
 Agent execution loop, and validates `FinalToolResult` against that exact contract.
 `PlanInput.ParentTool` carries the selected result contract for direct calls as
@@ -3812,9 +3865,58 @@ Preparation can fail before the runtime store creates its run record. A host's
 public run owner must observe the accepted engine execution to report that
 failure; an absent runtime-store record alone does not mean no work was accepted.
 
+### Revision-Owned Operation Contracts
+
+Use `Runtime.RegisterAgentOperationProvider` when an immutable configuration
+owns the exported operation names and complete input and result contracts.
+For example, two saved revisions can export `reports.summarize` with different
+result schemas. Each accepted call keeps the declaration from its selected
+revision; neither changes the worker's generated executable tools.
+
+Register this callback before sealing the provider runtime:
+
+```go
+err := rt.RegisterAgentOperationProvider(executor,
+    func(ctx context.Context, origin genregistry.ExecutionInvocation, reference string, call *runtime.ToolCall) (*genregistry.ToolSchema, *runtime.AgentToolConfiguration, error) {
+        return revisions.PrepareOperation(ctx, origin, reference, call)
+    },
+)
+if err != nil {
+    return err
+}
+```
+
+The application-owned `PrepareOperation` loads the exact saved revision named by
+`reference`, selects its export using `call.Name`, and returns that independently
+owned declaration with the prepared configuration. `call.Name` is the original
+operation name even when a consumer uses a registry alias. `call.Registry` is
+absent: the selected caller schema cannot serve as the provider's proof of its
+own contract. The callback receives the accepted invocation identity and copied
+arguments, labels, and transcript name just as a generated-provider resolver does.
+
+Runtime validates the selected executor, workflow, queue and input before the
+callback. It then validates the returned declaration and compares it using the
+Registry's declaration fingerprint, including the configuration reference,
+schemas, descriptions, tags and consumer contract. A mismatch is not retried and
+fails before prepared history is published or model work begins. Provider
+preparation must not perform business side effects because failures before
+publication can cause the activity to retry.
+
+Generated providers continue using `RegisterAgentToolResolver`: the selected
+operation must match their generated export before their resolver runs. An
+executor can register exactly one of these provider kinds. Existing callers need
+no changes or regeneration, and stored runs need no migration.
+
+Both provider kinds use [the same history contract](#provider-owned-history).
+An accepted preparation, workflow replay or continuation retains the original
+operation and configuration without loading a newer revision. Planners still
+own result generation: use `ParentTool.Result` for the selected schema and return
+`planner.FinalToolResult`; this registration does not itself turn ordinary model
+text into a structured result.
+
 ### Provider-Owned History
 
-Every `AgentToolResolver` returns an explicit history selection in
+Every provider callback returns an explicit history selection in
 `AgentToolConfiguration.History`. This applies to direct operations and Registry
 Agent children:
 
@@ -3874,6 +3976,33 @@ identity and the selected parent contract come from the checkpoint. Its saved
 historical parent is not rewritten. When a child is continued directly through
 its public client under the same running parent, the client derives that parent
 from the checkpoint; callers do not supply a parent selector.
+
+### Child run identifiers and worker upgrades
+
+`NestedRunIDForToolCall` derives each agent-tool child workflow ID from the
+complete parent run ID, tool name, and runtime tool-call ID. It hashes a distinct
+`goa-ai-agent-child-run-v1` domain followed by the three strings, each preceded
+by its byte length, with SHA-256 and returns all 64 lowercase hexadecimal
+characters. Long registered tool names and repeated nesting therefore do not
+grow the child workflow ID.
+An empty parent still means `unknown`; an empty tool-call ID remains part of the
+hashed tuple. The separate `NestedRunID` helper keeps its hierarchical format.
+
+Treat child IDs as opaque. The child request, stored parent links, and returned
+`ToolResult.RunLink` retain the parent and tool-call IDs separately; the child
+request also retains the full tool name. Tool names and tool-call IDs are not
+shortened, and typed child results keep their existing contracts.
+
+This changes the per-call helper's previous joined-string output. Saved IDs,
+links, and workflow histories are not rewritten. Before replacing workers, stop
+new admissions and let existing executions finish on their matching workers,
+including any child workflows they need. Alternatively, use an already configured
+and verified worker-versioning deployment that keeps existing executions on their
+original build. Do not assume an unversioned execution can be pinned afterward.
+Keep retained histories with matching code for replay; do not reset old histories
+onto new workers. Rollback has the same restriction: new-format executions must
+finish on matching workers before old workers can replace them. No record schema
+or typed result migration is required by this identifier change.
 
 ### How It Works
 
@@ -7032,10 +7161,13 @@ resource templates, and argument completion. It keeps the same token checks,
 operation scopes, interceptors, middleware, typed argument validation, selected
 result views, domain errors and dynamic catalog endpoints as the modern path.
 The older wire replies omit modern `resultType`, `ttlMs` and `cacheScope` fields.
-Object results, including tagged unions, keep their existing shape. Scalar,
-array and untagged-union results use `{"value": ...}` with a corresponding
-object output schema. Structured results are also included as text content for
-hosts that consume only content items; authored content items are retained.
+For statically authored tools, object results, including tagged unions, keep
+their existing shape. Scalar, array and untagged-union results use `{"value": ...}`
+with a corresponding object output schema. Runtime-defined tools use that
+wrapper for every present structured result, including objects and JSON null;
+see the [runtime-defined tool contract](dsl.md#runtime-defined-tools) for schema
+references and regeneration requirements. Structured results are also included
+as text content for hosts that consume only content items; authored content items are retained.
 
 Tasks, change subscriptions and server-to-client input exchanges are unavailable
 on the older path and are not advertised during initialization. Modern task or
@@ -8448,8 +8580,12 @@ those runs to execute. See [the runtime ownership contract](../DESIGN.md).
 
 Custom stores now implement `BeginRunPreparationOperation` before accepting
 `BeginRunSeed`. The first method binds the destination's subject, Session,
-immutable command and original `genregistry.ExecutionInvocation`. Seed declarations
-retain that required invocation. Root continuations copy it from their exact
+immutable command and original `genregistry.ExecutionInvocation`. `SeedDeclaration`
+contains only history-upload intent and the matching operation identity; it no
+longer accepts `Origin`. The required `RunSeed.Origin` result comes from that
+existing preparation binding, including results returned by `BeginRunSeed`,
+`LoadRunSeed`, and `FindRunPreparation`. Stores must not persist a second invocation
+copy in seed state. Root continuations copy it from their exact
 predecessor; delegated calls retain the original issuing Run and tool-call pair,
 even after the current parent continues. Settlement closes one upload attempt
 without choosing an operation owner. Recovery still takes the existing operation
@@ -8462,3 +8598,34 @@ it is not an authorization credential. Hosts obtain current or accepted caller
 facts from their owning service. Resolver metadata is prepared once and retained
 with history. Existing persisted preparations require an explicit migration;
 missing invocation data must not be assigned a default root identity.
+
+
+#### Adopting the seed invocation result
+
+Update custom stores, transport schemas, wrappers, and test fixtures together:
+remove `SeedDeclaration.Origin`, continue binding the required invocation through
+`RunPreparationBegin.Origin`, and populate `RunSeed.Origin` from the existing
+preparation whose subject, run, session, and command match the declaration.
+Validate source ownership and continuation identity against that binding. A new
+turn can use another completed run's history while retaining its own invocation;
+a continuation must retain its predecessor's original invocation. Do not derive
+it from the current parent, which can change after suspension.
+
+Existing preparations that already have an invocation binding need no new stored
+field. Remove the redundant invocation field from persisted seed declarations
+using the store's explicit migration process, and update strict encoders and
+readers together. Preserve the binding until its preparation and run are removed;
+session purge removes all three together. An abandoned attempt does not erase or
+replace the operation's invocation. Records predating invocation binding still
+require the explicit migration described above; missing identity is an error.
+
+Storage activity inputs contain seed declarations. Saved workflow histories and
+pending activity inputs written with the removed field require their original
+workers to drain, or an explicitly verified conversion before adoption by new
+workers. Draining old workers also requires their matching store transport;
+retaining workers alone is insufficient after a shared store rejects their input
+shape. Coordinate custom-store clients and servers; old declaration writers and
+new strict decoders cannot share this contract. This change does not alter
+`UnstartedExecutionTerminal.Origin`: terminal writers obtain it from the returned
+`RunSeed.Origin`. The history-command byte limit is unchanged and applies only to
+the history command, not to the separately accepted original invocation.

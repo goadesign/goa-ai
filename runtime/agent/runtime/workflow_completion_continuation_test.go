@@ -77,12 +77,11 @@ func TestCompletionStatisticsIncludeContinuationHistory(t *testing.T) {
 	predecessor, err := rt.Store.LoadRun(t.Context(), checkpoint.PreviousRunID)
 	require.NoError(t, err)
 	declaration := storage.SeedDeclaration{
-		Origin:  predecessor.Origin,
 		Subject: secondInput.Subject, RunID: secondInput.RunID, SessionID: secondInput.SessionID,
 		CommandID: secondInput.RunID, AttemptID: secondInput.RunID,
 		Kind: storage.SeedContinuation, PredecessorRunID: checkpoint.PreviousRunID, SourceRunID: checkpoint.PreviousRunID, SourceEndID: checkpoint.HistoryEndID,
 	}
-	decision, err := bindHistoryOperation(t.Context(), rt.Store, declaration)
+	decision, err := bindHistoryOperation(t.Context(), rt.Store, declaration, predecessor.Origin)
 	require.NoError(t, err)
 	_, proceed := decision.State.AsProceed()
 	require.True(t, proceed)

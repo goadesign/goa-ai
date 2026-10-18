@@ -1,6 +1,6 @@
 // Package runtime stores the complete successor request before submitting a
-// registered continuation to the engine. Durable input and cancellation workers
-// recover the same request after a lost reply; clients do not retry completion.
+// direct or registered continuation to the engine. Durable input and cancellation
+// workers recover the same request after a lost reply; clients do not retry completion.
 package runtime
 
 import (
@@ -18,7 +18,7 @@ import (
 // StartToolContinuation submits an answer already durably owned by the calling
 // service. The saved predecessor supplies the original operation and identity.
 func (r *Runtime) StartToolContinuation(ctx context.Context, predecessorRunID, runID string, response *api.PendingInputResponse) (engine.WorkflowHandle, error) {
-	request, err := r.prepareRegisteredContinuationRequest(ctx, predecessorRunID, runID, &api.RunContinuationInput{Response: response})
+	request, err := r.prepareOperationContinuationRequest(ctx, predecessorRunID, runID, &api.RunContinuationInput{Response: response})
 	if err != nil {
 		return nil, err
 	}
@@ -28,16 +28,16 @@ func (r *Runtime) StartToolContinuation(ctx context.Context, predecessorRunID, r
 // EnsureToolContinuationCompletion delivers the engine outcome for the exact
 // saved successor. Durable workers call it until storage owns the terminal state.
 func (r *Runtime) EnsureToolContinuationCompletion(ctx context.Context, predecessorRunID, runID string, response *api.PendingInputResponse) error {
-	request, err := r.prepareRegisteredContinuationRequest(ctx, predecessorRunID, runID, &api.RunContinuationInput{Response: response})
+	request, err := r.prepareOperationContinuationRequest(ctx, predecessorRunID, runID, &api.RunContinuationInput{Response: response})
 	if err != nil {
 		return err
 	}
 	return r.ensureOperationCompletion(ctx, request)
 }
 
-// prepareRegisteredContinuationRequest recovers published bytes before reading
+// prepareOperationContinuationRequest recovers published bytes before reading
 // the suspended provider state, so retries cannot select new execution values.
-func (r *Runtime) prepareRegisteredContinuationRequest(ctx context.Context, predecessorRunID, runID string, continuation *api.RunContinuationInput) (engine.WorkflowStartRequest, error) {
+func (r *Runtime) prepareOperationContinuationRequest(ctx context.Context, predecessorRunID, runID string, continuation *api.RunContinuationInput) (engine.WorkflowStartRequest, error) {
 	owner, err := r.Store.LoadRun(ctx, predecessorRunID)
 	if err != nil {
 		return engine.WorkflowStartRequest{}, err
@@ -57,7 +57,23 @@ func (r *Runtime) prepareRegisteredContinuationRequest(ctx context.Context, pred
 			return engine.WorkflowStartRequest{}, err
 		}
 		input := prepared.Request.Input
-		if accepted.Seed.Declaration.PredecessorRunID != predecessorRunID || input.RunID != runID || !reflect.DeepEqual(input.Subject, owner.Subject) || input.SessionID != owner.SessionID || input.SeedEndID != accepted.Seed.EndID || input.Continuation == nil || !reflect.DeepEqual(input.Continuation.Response, continuation.Response) || !reflect.DeepEqual(input.Continuation.Cancellation, continuation.Cancellation) {
+		if accepted.Seed.Declaration.PredecessorRunID != predecessorRunID || input.RunID != runID || !reflect.DeepEqual(input.Subject, owner.Subject) || input.SessionID != owner.SessionID || input.SeedEndID != accepted.Seed.EndID || input.Continuation == nil {
+			return engine.WorkflowStartRequest{}, storage.ErrSeedConflict
+		}
+		// Compare the caller's answer using the engine's encoded request identity.
+		// Empty content lists may decode to a different Go slice representation.
+		candidate := prepared.Request
+		candidateInput := *input
+		candidateContinuation := *input.Continuation
+		candidateContinuation.Response = continuation.Response
+		candidateContinuation.Cancellation = continuation.Cancellation
+		candidateInput.Continuation = &candidateContinuation
+		candidate.Input = &candidateInput
+		snapshot, err := startrecipe.SnapshotRequest(candidate)
+		if err != nil {
+			return engine.WorkflowStartRequest{}, err
+		}
+		if snapshot.Digest != prepared.Digest {
 			return engine.WorkflowStartRequest{}, storage.ErrSeedConflict
 		}
 		if _, service := owner.Subject.Executor.AsServiceTool(); service {
@@ -69,7 +85,7 @@ func (r *Runtime) prepareRegisteredContinuationRequest(ctx context.Context, pred
 			if err != nil {
 				return engine.WorkflowStartRequest{}, err
 			}
-			if _, err := registeredCheckpointDeclaration(checkpoint); err != nil {
+			if _, err := operationCheckpointDeclaration(checkpoint); err != nil {
 				return engine.WorkflowStartRequest{}, err
 			}
 		}
@@ -88,7 +104,7 @@ func (r *Runtime) prepareRegisteredContinuationRequest(ctx context.Context, pred
 		if err != nil {
 			return engine.WorkflowStartRequest{}, err
 		}
-		declaration, err := registeredCheckpointDeclaration(checkpoint)
+		declaration, err := operationCheckpointDeclaration(checkpoint)
 		if err != nil {
 			return engine.WorkflowStartRequest{}, err
 		}
@@ -131,7 +147,10 @@ func (r *Runtime) prepareRegisteredContinuationRequest(ctx context.Context, pred
 	if err != nil {
 		return engine.WorkflowStartRequest{}, err
 	}
-	declaration := storage.SeedDeclaration{Origin: owner.Origin, Subject: owner.Subject, SessionID: owner.SessionID, RunID: runID, CommandID: runID, AttemptID: runID, Kind: storage.SeedLiteral, PredecessorRunID: predecessorRunID}
+	declaration := storage.SeedDeclaration{Subject: owner.Subject, SessionID: owner.SessionID, RunID: runID, CommandID: runID, AttemptID: runID, Kind: storage.SeedLiteral, PredecessorRunID: predecessorRunID}
+	if _, err := bindHistoryOperation(ctx, r.Store, declaration, owner.Origin); err != nil {
+		return engine.WorkflowStartRequest{}, err
+	}
 	writer, err := stageLiteralHistory(ctx, r.Store, declaration, nil)
 	if err != nil {
 		return engine.WorkflowStartRequest{}, err

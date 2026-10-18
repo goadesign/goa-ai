@@ -154,7 +154,7 @@ func (r *Runtime) appendUserToolRecordResults(
 	for _, record := range records {
 		call := record.call
 		tr := record.result
-		spec, hasSpec, err := lookupCallSpec(call, r.toolSpec)
+		spec, hasSpec, err := r.callSpec(call)
 		if err != nil {
 			return err
 		}

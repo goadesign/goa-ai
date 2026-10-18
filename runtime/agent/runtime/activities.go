@@ -334,7 +334,7 @@ func (r *Runtime) correctCallSpecs(outputs []*planner.ToolOutput, catalog *Regis
 	}
 	dynamic := make(map[tools.Ident]bool)
 	for _, output := range outputs {
-		if output.Registry != nil {
+		if _, static := catalog.definition.specByName[output.Name]; output.Registry != nil && !static {
 			dynamic[output.Name] = true
 		}
 	}
@@ -553,7 +553,9 @@ func (r *Runtime) preparePlannerActivity(
 	}
 	dynamicNames := make([]tools.Ident, 0, len(catalog.selections))
 	for name := range catalog.selections {
-		dynamicNames = append(dynamicNames, name)
+		if _, static := catalog.definition.specByName[name]; !static {
+			dynamicNames = append(dynamicNames, name)
+		}
 	}
 	slices.Sort(dynamicNames)
 	for _, name := range dynamicNames {
@@ -1494,7 +1496,16 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 		ToolCallID:       req.ToolCallID,
 	}
 
-	spec, hasSpec, err := lookupCallSpec(call, r.toolSpec)
+	if call.Registry != nil {
+		executor, isAgent := call.Subject.Executor.AsAgent()
+		if !isAgent {
+			return nil, errors.New("registry call requires an Agent workflow subject")
+		}
+		if _, err := r.resolveRegistryExecution(agent.Ident(executor), call); err != nil {
+			return nil, err
+		}
+	}
+	spec, hasSpec, err := r.callSpec(call)
 	if err != nil {
 		return nil, err
 	}
@@ -1515,7 +1526,7 @@ func (r *Runtime) ExecuteToolActivity(ctx context.Context, req *ToolInput) (*Too
 		return nil, fmt.Errorf("agent-as-tool %q must run in workflow context", req.ToolName)
 	}
 	var reg ToolsetRegistration
-	if req.Registry != nil {
+	if r.isDynamicRegistryCall(call) {
 		if req.ToolsetName != "" {
 			return nil, errors.New("registry tool activity derives its route from the saved registration")
 		}

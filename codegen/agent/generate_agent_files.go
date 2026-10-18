@@ -79,6 +79,12 @@ func agentFiles(agent *AgentData, aggregates *aggregateSpecsPackagesPlan) ([]*co
 // Schemas are emitted only when available; tools without payload, result, or
 // server data schemas still appear with their names.
 func agentSpecsJSONFile(agent *AgentData) (*codegen.File, error) {
+	selected, err := selectedAgentData(agent)
+	if err != nil {
+		return nil, err
+	}
+	agent = selected
+
 	type typeSchema struct {
 		Name   string          `json:"name"`
 		Schema json.RawMessage `json:"schema,omitempty"`
@@ -133,10 +139,12 @@ func agentSpecsJSONFile(agent *AgentData) (*codegen.File, error) {
 		if toolset.SourceServiceName == "" {
 			return nil, fmt.Errorf("agent %q toolset %q has no catalog service", agent.Name, toolset.QualifiedName)
 		}
-		for _, t := range toolset.specs.tools {
-			if t == nil {
-				continue
-			}
+		tools, err := buildToolRenderData(toolset)
+		if err != nil {
+			return nil, err
+		}
+		for _, tool := range tools {
+			t := tool.Spec
 
 			route := catalogRoute{
 				service: toolset.SourceServiceName,

@@ -21,7 +21,7 @@ import (
 // encodeToolEvent converts one result using its call's selected codec. The
 // returned event contains only JSON bytes and can cross a workflow boundary.
 func encodeToolEvent(event *planner.ToolResult, call ToolCall, lookup toolSpecLookup) (*api.ToolEvent, error) {
-	spec, ok, err := lookupCallSpec(call, lookup)
+	spec, ok, err := lookupOwnedCallSpec(call, lookup)
 	if err != nil {
 		return nil, err
 	}
@@ -75,7 +75,7 @@ func (r *Runtime) buildPlannerToolOutputRecords(records []stepToolRecord) ([]*pl
 			Telemetry:                  result.Telemetry,
 		}
 		if result.Failure == nil {
-			spec, ok, err := lookupCallSpec(call, r.toolSpec)
+			spec, ok, err := r.callSpec(call)
 			if err != nil {
 				return nil, err
 			}

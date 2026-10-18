@@ -30,11 +30,17 @@ var ConsumerContract = Type("ConsumerContract", func() {
 	})
 	Field(13, "requires_ui", Boolean, "Whether executing this tool requires rendering or an interactive client protocol.", func() { Default(false) })
 	Field(14, "text_only", TextOnlyToolContract, "Generated model contract for execution using ordinary messages only.")
+	Field(15, "replan_on_timeout", Boolean, "Whether the provider permits alternative work after this exported Agent operation times out. The failed operation remains failed and is not retried.", func() {
+		Default(false)
+		Meta("struct:tag:json", "ReplanOnTimeout,omitempty")
+		Example(true)
+	})
 	Required("kind", "title", "search", "payload")
 })
 
 // TextOnlyToolContract supplies the exact generated model contract without UI controls.
 var TextOnlyToolContract = Type("TextOnlyToolContract", func() {
+	Description("Generated tool instructions, argument schemas, and metadata for execution using ordinary messages without UI controls.")
 	Field(1, "description", String, "Domain instructions without optional UI guidance.")
 	Field(2, "search", ToolSearchDocument, "Generated word counts for these domain instructions.")
 	Field(3, "payload_schema", Bytes, "Exact model argument schema without UI-only controls.", func() { MinLength(1) })

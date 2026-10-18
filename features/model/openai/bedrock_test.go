@@ -202,11 +202,6 @@ func TestBedrockResponsesRejectUnsupportedBeforeHTTP(t *testing.T) {
 		{"after_system", func(r *model.Request) { r.Cache = &model.CacheOptions{AfterSystem: true} }, "caching is not supported"},
 		{"after_tools", func(r *model.Request) { r.Cache = &model.CacheOptions{AfterTools: true} }, "caching is not supported"},
 		{"inline_cache", func(r *model.Request) { r.Messages[0].Parts = append(r.Messages[0].Parts, model.CacheCheckpointPart{}) }, "cache checkpoints"},
-		{"structured_output", func(r *model.Request) {
-			r.Tools = nil
-			r.ToolChoice = nil
-			r.StructuredOutput = &model.StructuredOutput{Name: "answer", Schema: rawjson.Message(`{"type":"object"}`)}
-		}, "structured output not supported"},
 		{"thinking_budget", func(r *model.Request) { r.Thinking.BudgetTokens = 100 }, "thinking budgets are not supported"},
 		{"thinking_interleaved", func(r *model.Request) { r.Thinking.Interleaved = true }, "interleaved thinking is not supported"},
 	} {
@@ -219,9 +214,6 @@ func TestBedrockResponsesRejectUnsupportedBeforeHTTP(t *testing.T) {
 			require.ErrorContains(t, err, test.message)
 			_, err = client.CountTokens(t.Context(), request)
 			require.ErrorContains(t, err, test.message)
-			if test.name == "structured_output" {
-				assert.ErrorIs(t, err, model.ErrStructuredOutputUnsupported)
-			}
 		})
 	}
 	count, err := client.CountTokens(t.Context(), bedrockTestRequest())

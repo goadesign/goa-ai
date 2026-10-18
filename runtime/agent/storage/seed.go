@@ -27,8 +27,6 @@ type (
 	// source and let the store capture its terminal position. Continuations name
 	// the exact saved position in their suspended predecessor.
 	SeedDeclaration struct {
-		// Origin is the original invocation already bound before provider resolution.
-		Origin genregistry.ExecutionInvocation
 		// Subject identifies the Agent or service tool for the destination run.
 		Subject genrunidentity.RunSubject
 		// RunID is the destination workflow ID, including before submission.
@@ -72,6 +70,9 @@ type (
 	// RunSeed is the immutable declaration and current accepted end position.
 	// Begin returns it during preparation; LoadRunSeed returns only publication.
 	RunSeed struct {
+		// Origin is the original invocation read from the matching preparation binding.
+		// Stores return it without copying it into the saved seed declaration.
+		Origin genregistry.ExecutionInvocation
 		// Declaration contains the exact originally accepted owner and source.
 		Declaration SeedDeclaration
 		// Source is the store-resolved reference; literal seeds leave it nil.
@@ -156,9 +157,6 @@ var (
 // ValidateSeedDeclaration checks the cross-field source contract before a store
 // resolves source ownership and lifecycle state.
 func ValidateSeedDeclaration(d SeedDeclaration) error {
-	if _, err := genregistry.EncodeExecutionInvocation(&d.Origin); err != nil {
-		return fmt.Errorf("seed origin: %w", err)
-	}
 	if _, err := genrunidentity.EncodeRunSubject(&d.Subject); err != nil {
 		return fmt.Errorf("seed subject: %w", err)
 	}
@@ -270,7 +268,7 @@ func ValidateSeedPageSize(page SeedPage) error {
 // collections have the same meaning whether a transport decodes them as nil or
 // empty; prompt order and every actual scope value remain significant.
 func EqualSeedDeclarations(a, b SeedDeclaration) bool {
-	return reflect.DeepEqual(a.Origin, b.Origin) && reflect.DeepEqual(a.Subject, b.Subject) && a.RunID == b.RunID && a.SessionID == b.SessionID &&
+	return reflect.DeepEqual(a.Subject, b.Subject) && a.RunID == b.RunID && a.SessionID == b.SessionID &&
 		a.CommandID == b.CommandID && a.AttemptID == b.AttemptID &&
 		a.Kind == b.Kind && a.SourceRunID == b.SourceRunID && a.SourceEndID == b.SourceEndID &&
 		a.ExcludeReasoning == b.ExcludeReasoning &&

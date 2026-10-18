@@ -25,7 +25,7 @@ import (
 // supplied by the executor with data from the saved model call and registered
 // tool definition, and returns encoded result JSON.
 func (r *Runtime) materializeToolResult(ctx context.Context, call ToolCall, result *planner.ToolResult) (rawjson.Message, error) {
-	spec, ok, err := lookupCallSpec(call, r.toolSpec)
+	spec, ok, err := r.callSpec(call)
 	if err != nil {
 		return nil, err
 	}
@@ -46,7 +46,7 @@ func (r *Runtime) materializeToolResult(ctx context.Context, call ToolCall, resu
 // correction data for the model. The workflow retains the complete call and
 // adds that data after the activity returns.
 func (r *Runtime) materializeActivityToolResult(ctx context.Context, call ToolCall, result *planner.ToolResult) (rawjson.Message, error) {
-	spec, ok, err := lookupCallSpec(call, r.toolSpec)
+	spec, ok, err := r.callSpec(call)
 	if err != nil {
 		return nil, err
 	}
@@ -183,7 +183,7 @@ func (r *Runtime) materializeActivityToolExecutionResult(
 // applyResultMaterializer invokes the toolset-owned typed result materializer
 // when the toolset registered one.
 func (r *Runtime) applyResultMaterializer(ctx context.Context, spec tools.ToolSpec, call ToolCall, result *planner.ToolResult) error {
-	if call.Registry != nil {
+	if r.isDynamicRegistryCall(call) {
 		return nil
 	}
 	_, reg, ok := r.toolsetForTool(spec.Name)
@@ -211,7 +211,7 @@ func (r *Runtime) decodeProvidedToolRecords(ctx context.Context, allowed []ToolC
 		if item.Name != call.Name {
 			return nil, fmt.Errorf("await: result tool %q does not match awaited tool %q", item.Name, call.Name)
 		}
-		spec, ok, err := lookupCallSpec(call, r.toolSpec)
+		spec, ok, err := r.callSpec(call)
 		if err != nil {
 			return nil, err
 		}

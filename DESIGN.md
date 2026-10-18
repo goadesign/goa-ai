@@ -146,16 +146,17 @@ All toolsets are first-class citizens—agents use `Use(toolset)` uniformly rega
 
 An exported Agent operation can run before it is published as a tool.
 `Runtime.StartOperation` requires an existing session;
-`Runtime.StartOneShotOperation` creates no conversation. Both accept the generated
+`Runtime.StartOneShotOperation` creates no conversation. Both accept the complete
 operation declaration, input, run identity and labels.
 The host authorizes the selection before starting it. The declaration does not
 create an access grant.
 
 The engine accepts the request before the provider prepares messages. A typed
-activity on the selected provider queue checks its generated export and exact
-route, then uses that provider's configuration resolver. The existing Agent loop
-validates the result against the retained operation. A direct call has no parent;
-delegation keeps its real child relationship. Exact request replay observes the
+activity on the selected provider queue checks its exact route and validates the
+export against either the generated definition or the independently loaded saved
+revision. The provider registration identifies which component owns the contract.
+The existing Agent loop validates the result against the retained operation.
+A direct call has no parent; delegation keeps its real child relationship. Exact request replay observes the
 same work, while changed input conflicts. Continuations retain the original
 operation rather than accepting a replacement.
 
@@ -168,7 +169,8 @@ Direct and delegated operations publish this history with their accepted control
 values, and retries recover that publication without resolving configuration again.
 
 See [direct operations](docs/runtime.md#direct-agent-operations) for the caller
-and provider contracts. The [provider history upgrade](docs/runtime.md#provider-owned-history)
+and provider contracts, including [revision-owned exports](docs/runtime.md#revision-owned-operation-contracts).
+The [provider history upgrade](docs/runtime.md#provider-owned-history)
 replaces the public resolver's `Messages` field with required `History`.
 
 ## Service-Owned Typed Completions
@@ -568,8 +570,10 @@ See [upgrade and retention requirements](docs/runtime.md#rejected-call-recovery-
 When a new run restores paging actions from earlier turns, saved result bodies
 remain evidence rather than typed inputs to current work. The runtime verifies
 the saved events and paging metadata without decoding old result bodies or
-server data against today's tool contract. Active outputs, suspended work, and
-new page requests retain their current codec checks. See the
+server data against today's tool contract. Failed historical calls remain in
+the transcript but never supply paging state, so their old execution details
+are not restored or revalidated. Active outputs, suspended work, and new page
+requests retain their current codec checks. See the
 [historical paging contract](docs/runtime.md#bounded-results).
 
 When a completed model reply or planner result breaks its required shape, the
@@ -616,7 +620,9 @@ failure retains its SDK representation and full diagnostics. Other application,
 joined, and previously saved failures keep their existing conversion. A
 provider-authored `ReplanOnTimeout()` declaration on a generated agent export
 allows alternative work after that operation's typed timeout, without retrying
-it; unmarked operations still require finishing. See
+it; unmarked operations still require finishing. Generated registry declarations
+carry the same per-operation policy, and registry consumers restore it when
+checking a selected native registration against the local specification. See
 [agent timeout recovery](docs/runtime.md#agent-timeout-recovery).
 Other classification and retry settings are unchanged. Applications own
 capture, disclosure, and retention; arbitrary typed causes and custom Temporal
@@ -770,6 +776,10 @@ boundary rather than reopening execution.
 Each accepted user input starts one top-level workflow for that turn. The
 workflow ends with either that turn's final result or an external-input
 suspension. Nested agents retain their linked child workflows.
+Agent-tool child IDs hash the complete parent, tool, and call identity into a
+fixed-size string; parent links remain separate. See
+[child run identifiers and worker upgrades](docs/runtime.md#child-run-identifiers-and-worker-upgrades)
+for the encoding and replay restrictions.
 
 The workflow loop is the sole owner of run-duration enforcement. `TimeBudget`
 becomes the deterministic Budget deadline for active planner and tool work.
@@ -824,11 +834,14 @@ its request is accepted, while retaining the original tool-call ID, call run,
 arguments, selected contract, actor and resource context. The old checkpoint
 keeps its historical parent unchanged. Standalone runs use
 `PrepareOneShotContinuation` and `StartPrepared` to answer the exact saved request
-without creating a Session. Registered standalone operations use their existing
-`StartToolContinuation` entry point. Standalone parents and children preserve the
-original invocation and exact history position; the store admits only one
-successor for each suspended run. Conversation continuation and next-turn APIs
-still require a Session.
+without creating a Session. Durable host workers can use
+`StartToolContinuation` and `EnsureToolContinuationCompletion` for direct or
+registered operations, with or without a Session. Both methods recover the exact
+published successor request; direct operations retain their saved declaration
+while registered operations retain their original registered invocation.
+Standalone parents and children preserve the original invocation and exact
+history position; the store admits only one successor for each suspended run.
+Conversation continuation and next-turn APIs still require a Session.
 
 Initial sessionful runs use the same command. `Prepare(ctx, sessionID, messages,
 options...)` validates the generated agent contract and publishes the exact
@@ -887,6 +900,12 @@ copies full engine control into an application row. `StartPrepared` reads and
 validates the exact accepted body through bounded Store pages, then submits its
 original engine request. Child preparation uses the same acceptance lifecycle
 and recovers its saved result before resolving mutable prompts again.
+
+The preparation operation owns the original invocation. History declarations
+reference that operation without copying its invocation into bounded write
+commands. Stores return `RunSeed.Origin` from the matching preparation binding;
+continuations preserve that original value even when their current parent changes.
+See the [custom-store upgrade](docs/runtime.md#preparation-ownership-upgrade).
 
 Planner and child-preparation activity commands identify the exact committed
 end of the current run's transcript instead of carrying its message array.
@@ -1312,6 +1331,12 @@ returns bounded permanent identities for one owner without duplicating revisions
 `CheckCatalogResource` checks registration and retirement. No sharing grants or
 per-invocation permission records are stored by Registry.
 
+Resource listing reads its bounded index candidates once, then checks their
+registration and permanent retirement together in one Redis transaction.
+Unrelated catalog writes do not invalidate the page. Retirement between selection
+and checking may leave an empty page with a continuation; insertions can appear
+on a later read. Pages do not retain a snapshot across requests.
+
 `RegisteredInvocation` retains only the original invocation identity, exact
 selected target, and validated original arguments. These values survive workflow
 continuations; actor attribution stays with the host's execution records.
@@ -1426,8 +1451,33 @@ Planner inputs expose its result contract as `ParentTool`; completion validates
 against that contract, even after replacement. No shared application storage,
 per-configuration worker registration, or additional model loop is introduced.
 
+`RegistryCatalog.BindStaticService` attaches an exact service registration to
+explicitly named tools already owned by the consuming generated definition. It
+compares the complete generated declaration, replacing only its toolset route
+name, and preserves generated codecs, input preparation, loading, hints, and
+execution. `executor.NewResolved` admits and retries through `CallResolvedTool`
+using the saved route, operation, and token. The existing `ToolCall.Registry`
+retains that selection; no new saved field or model argument is introduced.
+The complete static declaration supplies validation contracts, while the Agent's
+executable list chooses its planner tools. Binding a static declaration never
+adds an omitted operation to that list, on initial planning or resume. Separately
+discovered tools remain additional planner choices.
+Classification uses the consuming Agent definition, never process-wide tool
+names. Changing that definition between direct dynamic and bound static usage,
+including removing a static tool, requires draining affected runs before the
+change. The existing saved direct selection cannot distinguish those histories.
+See the [binding contract](docs/tool_search.md#bind-generated-service-tools).
+
+`RegistryCatalog.BindStaticAgent` binds the complete generated native export set
+from unbound operation declarations and explicit original tool names. It checks
+every operation contract and the generated child's executor, workflow and queue.
+The selected registration owns configuration revisions; discovery descriptions
+and tags do not replace generated operation contracts. Saved calls and paging
+continuations retain that selection and use consumer-owned codecs. Native calls
+still run as durable child workflows, with no new wire fields or execution mode.
+
 `RegistryCatalog.IncludeResolved` imports original operation names from an exact
-registration. `IncludeRegistered` instead requires the owner-selected
+registration and continues to reject collisions with generated static tools. `IncludeRegistered` instead requires the owner-selected
 `CatalogSource` and exact registration. It validates the route, registration token
 and operation kind, then derives names from registry, owner, resource kind,
 logical resource name and original operation. Revision routes and tokens do not
@@ -1445,9 +1495,11 @@ without discovery or a saved alias table. Deployments upgrading from protobuf
 variant before starting the new reader; see the [upgrade contract](docs/tool_search.md#generation-and-upgrades).
 
 Generated `Toolset()` declarations and the public portable contract compiler
-support SDK integration. Applications can use `RegistryCatalog.RunLabels()` to
-select per-run sources; product namespaces and authorization remain application
-concerns.
+support SDK integration. Portable bounded-result codecs accept provider result
+data before the runtime adds counts, truncation, and paging information from
+separate `Bounds`; advertised schemas still describe the final output. Applications can use
+`RegistryCatalog.RunLabels()` to select per-run sources; product namespaces and
+authorization remain application concerns.
 
 [Tool search and dynamic registries](docs/tool_search.md) describes consumer
 loading and execution. The [runtime provider guide](docs/runtime.md#registry-routed-provider-execution-service-side)
@@ -1647,6 +1699,13 @@ Existing identity-free records need no migration. After identity-bearing records
 exist, downgrading those readers requires an application-owned data conversion;
 reverting the library alone is not a safe rollback. Provider wire messages and
 stored declaration JSON remain unchanged.
+
+`ReadCatalogIdentity` reads only the exact route's compact saved state and
+returns its immutable application owner, including after retirement. It neither
+loads declarations nor checks provider health or active status. Missing routes
+return `not_found`, identity-free records return `ErrCatalogIdentityMissing`, and
+corrupt state returns a validation error. Applications authorize the returned
+owner; existing admission decides whether work may reconnect or start.
 
 `CatalogRoutesAfter` reads bounded exclusive lexical positions from one scope;
 `CatalogContains` checks one exact membership. `ReadCatalogToolset` requires a
@@ -1961,9 +2020,11 @@ The official OpenAI Go SDK v3 owns Bedrock authentication and endpoint
 resolution. The adapter accepts only the configuration it consumes: region,
 refreshable credentials, model options and SDK request options. Bedrock requests
 disable storage, background execution, input truncation and implicit prompt
-cache writes. Unsupported structured output and cache-bearing requests fail
-before transport. Bedrock Responses exposes a declared local token estimate;
-direct OpenAI counting remains unsupported. The Bedrock estimator counts
+cache writes. Unary structured output uses the shared strict schema compiler
+and original-schema validation on supporting models. Streaming structured output
+and cache-bearing requests fail before transport. Bedrock Responses exposes a
+declared local token estimate; direct OpenAI counting remains unsupported.
+The Bedrock estimator counts
 GPT-5.6, GPT-6 Sol, and GPT-6.1 Sol images from dimensions rather than their base64 transfer
 size, retaining the byte approximation for text, tools, and opaque reasoning.
 GPT-6 Sol and GPT-6.1 Sol use an explicit local patch estimate; it does not claim the GPT-5.6
@@ -2216,7 +2277,10 @@ when no static tool is declared. The application implements those methods on
 the generated service interface and can embed `MCPAdapter` for discovery and
 other declared capabilities. Resource authorization and both HTTP protocol
 revisions remain owned by the generated transport. The application owns runtime
-schemas, argument validation, pagination, and per-tool authorization.
+schemas, argument validation, pagination, and per-tool authorization. The legacy
+transport uniformly wraps present dynamic results and their output schemas in a
+`value` object, preserving schema reference identity. It does not reread the catalog
+during invocation or require the application to adapt results for each client.
 
 Static `Tool` and `ToolCatalog` cannot be combined with `DynamicTools` in one
 service: one implementation owns the complete catalog and dispatch. Existing
@@ -2889,7 +2953,10 @@ cursor or correlation identifier.
 Each generated input schema has a matching generated codec. `Payload.Codec`
 accepts model-authored arguments, including the empty object for a dedicated
 continuation. `ExecutionPayloadCodec` accepts the restored execution payload
-and is used when running tools or restoring saved work. These codec functions
+and is used when running tools or restoring saved work. Standalone registered
+service operations use this execution codec during submission, workflow
+restoration, and provider dispatch; direct callers supply the complete query
+and cursor, while provider-injected fields remain excluded. These codec functions
 are shared when both inputs have the same shape. The generator derives cursor
 presence and hidden fields before creating the schema and decoder, so adding
 an authored example cannot make a valid continuation fail registration.

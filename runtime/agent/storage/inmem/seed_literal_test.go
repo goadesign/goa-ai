@@ -35,8 +35,8 @@ func (s *literalPageStore) ListRunSeedRecords(ctx context.Context, runID, endID,
 
 func TestSeedLiteralClosureAndExactRetry(t *testing.T) {
 	store, start := activeRunStore(t)
-	d := storage.SeedDeclaration{Origin: rootExecutionOrigin(start.RunID), Subject: start.Subject, RunID: start.RunID, SessionID: start.SessionID, CommandID: "command", AttemptID: "attempt", Kind: storage.SeedLiteral}
-	bindSeedTestOperation(t, store, d)
+	d := storage.SeedDeclaration{Subject: start.Subject, RunID: start.RunID, SessionID: start.SessionID, CommandID: "command", AttemptID: "attempt", Kind: storage.SeedLiteral}
+	bindSeedTestOperation(t, store, d, rootExecutionOrigin(start.RunID))
 	_, err := store.BeginRunSeed(t.Context(), d)
 	require.NoError(t, err)
 	first := storage.SeedAppend{RunID: d.RunID, AttemptID: d.AttemptID, Record: storage.SeedRecord{
@@ -125,8 +125,8 @@ func TestSeedLiteralSettlementAndPurge(t *testing.T) {
 	for _, operation := range []string{"settle", "purge"} {
 		t.Run(operation, func(t *testing.T) {
 			store, start := activeRunStore(t)
-			d := storage.SeedDeclaration{Origin: rootExecutionOrigin(start.RunID), Subject: start.Subject, RunID: start.RunID, SessionID: start.SessionID, CommandID: "command", AttemptID: "attempt", Kind: storage.SeedLiteral}
-			bindSeedTestOperation(t, store, d)
+			d := storage.SeedDeclaration{Subject: start.Subject, RunID: start.RunID, SessionID: start.SessionID, CommandID: "command", AttemptID: "attempt", Kind: storage.SeedLiteral}
+			bindSeedTestOperation(t, store, d, rootExecutionOrigin(start.RunID))
 			_, err := store.BeginRunSeed(t.Context(), d)
 			require.NoError(t, err)
 			command := storage.SeedAppend{RunID: d.RunID, AttemptID: d.AttemptID, Record: storage.SeedRecord{
@@ -167,8 +167,8 @@ func TestSeedLiteralReaderAcrossRealPages(t *testing.T) {
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			store, start := activeRunStore(t)
-			d := storage.SeedDeclaration{Origin: rootExecutionOrigin(start.RunID), Subject: start.Subject, RunID: start.RunID, SessionID: start.SessionID, CommandID: "command", AttemptID: "attempt", Kind: storage.SeedLiteral}
-			bindSeedTestOperation(t, store, d)
+			d := storage.SeedDeclaration{Subject: start.Subject, RunID: start.RunID, SessionID: start.SessionID, CommandID: "command", AttemptID: "attempt", Kind: storage.SeedLiteral}
+			bindSeedTestOperation(t, store, d, rootExecutionOrigin(start.RunID))
 			_, err := store.BeginRunSeed(ctx, d)
 			require.NoError(t, err)
 			messages := []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "before 雪 after"}}}}

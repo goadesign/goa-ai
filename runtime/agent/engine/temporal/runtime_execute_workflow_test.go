@@ -81,7 +81,6 @@ func publishTemporalTestSeed(t *testing.T, store storage.Store, agentID agent.Id
 	_, proceed := decision.State.AsProceed()
 	require.True(t, proceed)
 	_, err = store.BeginRunSeed(t.Context(), storage.SeedDeclaration{
-		Origin:  origin,
 		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(string(agentID)))}, RunID: runID, SessionID: sessionID, CommandID: runID, AttemptID: runID, Kind: storage.SeedLiteral,
 	})
 	require.NoError(t, err)

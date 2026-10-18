@@ -292,6 +292,9 @@ func TestRegistryAgentConcurrentChildrenKeepIndependentConfigurations(t *testing
 		return &AgentToolConfiguration{Labels: map[string]string{"revision": revision}, History: LiteralAgentHistory(nil)}, nil
 	}))
 	calls := []ToolCall{testNativeRegistryCall(t, "revision/1"), testNativeRegistryCall(t, "revision/2")}
+	for i := range calls {
+		calls[i].RunID = strings.Repeat("parent/agent/", 19)
+	}
 	calls[1].ToolCallID = "call-other"
 	children := make(chan *controlledChildHandle, 2)
 	wf := &testWorkflowContext{ctx: t.Context(), hookRuntime: rt, controlledChildHandles: children}
@@ -310,6 +313,14 @@ func TestRegistryAgentConcurrentChildrenKeepIndependentConfigurations(t *testing
 	first := waitForChildHandle(t, children, "first native child")
 	second := waitForChildHandle(t, children, "second native child")
 	assert.NotEqual(t, wf.childRequests[0].Input.RunID, wf.childRequests[1].Input.RunID)
+	for i, request := range wf.childRequests {
+		assert.Regexp(t, `^[0-9a-f]{64}$`, request.ID)
+		assert.Equal(t, NestedRunIDForToolCall(calls[i].RunID, calls[i].Name, calls[i].ToolCallID), request.ID)
+		assert.Equal(t, request.ID, request.Input.RunID)
+		assert.Equal(t, calls[i].RunID, request.Input.ParentRunID)
+		assert.Equal(t, calls[i].ToolCallID, request.Input.ParentToolCallID)
+		assert.Equal(t, calls[i].Name, request.Input.Tool)
+	}
 	assert.Equal(t, "revision/1", wf.childRequests[0].Input.Labels["revision"])
 	assert.Equal(t, "revision/2", wf.childRequests[1].Input.Labels["revision"])
 	second.out = &RunOutput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(child.route.ID))}, RunID: wf.childRequests[1].Input.RunID,
@@ -325,6 +336,10 @@ func TestRegistryAgentConcurrentChildrenKeepIndependentConfigurations(t *testing
 		require.Nil(t, result.results[i].ToolResult.Failure)
 		assert.Equal(t, calls[i].ToolCallID, result.results[i].ToolResult.ToolCallID)
 		assert.Equal(t, json.Number(expected), result.results[i].ToolResult.Result.(map[string]any)["value"])
+		require.NotNil(t, result.results[i].ToolResult.RunLink)
+		assert.Equal(t, wf.childRequests[i].ID, result.results[i].ToolResult.RunLink.RunID)
+		assert.Equal(t, calls[i].RunID, result.results[i].ToolResult.RunLink.ParentRunID)
+		assert.Equal(t, calls[i].ToolCallID, result.results[i].ToolResult.RunLink.ParentToolCallID)
 	}
 }
 

@@ -4,6 +4,7 @@
 package registry
 
 import (
+	"context"
 	"errors"
 	"fmt"
 
@@ -18,6 +19,27 @@ type CatalogIdentity struct {
 	Scope string `json:"scope"`
 	// Name is the original resource name, independently of its registry route.
 	Name string `json:"name"`
+}
+
+// ReadCatalogIdentity returns the immutable owner saved for an exact route,
+// including a retired route. It reads only compact state and grants no authority
+// to execute the toolset; callers authorize access and admission checks activity.
+func (s *Service) ReadCatalogIdentity(ctx context.Context, name string) (CatalogIdentity, error) {
+	raw, exists, err := s.catalog.exactRaw(ctx, toolsetCatalogKey(name))
+	if err != nil {
+		return CatalogIdentity{}, err
+	}
+	if !exists {
+		return CatalogIdentity{}, genregistry.MakeNotFound(errToolsetNotFound)
+	}
+	state, err := parseCatalogState(name, raw)
+	if err != nil {
+		return CatalogIdentity{}, genregistry.MakeValidationError(err)
+	}
+	if state.Identity == nil {
+		return CatalogIdentity{}, ErrCatalogIdentityMissing
+	}
+	return *state.Identity, nil
 }
 
 func (i CatalogIdentity) validate() error {

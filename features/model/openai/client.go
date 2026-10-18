@@ -237,6 +237,9 @@ func (c *provider) Stream(ctx context.Context, req *model.Request) (model.Stream
 	if err != nil {
 		return nil, err
 	}
+	if c.bedrock && req.StructuredOutput != nil {
+		return nil, fmt.Errorf("openai: Bedrock Responses streaming: %w", model.ErrStructuredOutputUnsupported)
+	}
 	prepared, err := c.prepareRequest(req)
 	if err != nil {
 		return nil, err
@@ -300,9 +303,6 @@ func (c *provider) prepareRequest(req *model.Request) (*preparedRequest, error) 
 	}
 	if err := validateRequestBoundary(req); err != nil {
 		return nil, err
-	}
-	if c.bedrock && req.StructuredOutput != nil {
-		return nil, fmt.Errorf("openai: Bedrock Responses: %w", model.ErrStructuredOutputUnsupported)
 	}
 	if len(req.Messages) == 0 {
 		return nil, errors.New("openai: messages are required")

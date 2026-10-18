@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"strconv"
 
+	genregistry "goa.design/goa-ai/registry/gen/registry"
 	genrunterminal "goa.design/goa-ai/registry/gen/runterminal"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/internal/workflowcodec"
@@ -54,11 +55,6 @@ func stageLiteralHistory(ctx context.Context, store seedWriter, declaration stor
 		return nil, fmt.Errorf("runtime: invalid initial transcript: %w", err)
 	}
 	if err := validateSeedPromptFacts(declaration.SessionID, declaration.RenderedPrompts); err != nil {
-		return nil, err
-	}
-	// This writes only supplied history. A stopped decision still permits saving
-	// the exact recipe; the actual engine start checks the stop before execution.
-	if _, err := bindHistoryOperation(ctx, store, declaration); err != nil {
 		return nil, err
 	}
 	if _, err := store.BeginRunSeed(ctx, declaration); err != nil {
@@ -303,12 +299,12 @@ func validateSeedPromptFacts(sessionID string, events []prompt.RenderEvent) erro
 	return nil
 }
 
-// bindHistoryOperation binds the declared invocation before history writes.
+// bindHistoryOperation binds the original invocation before history writes.
 // Repeating an earlier provider binding verifies the same immutable owner.
-func bindHistoryOperation(ctx context.Context, store seedWriter, declaration storage.SeedDeclaration) (genrunterminal.PreparationDecision, error) {
+func bindHistoryOperation(ctx context.Context, store seedWriter, declaration storage.SeedDeclaration, origin genregistry.ExecutionInvocation) (genrunterminal.PreparationDecision, error) {
 	return store.BeginRunPreparationOperation(ctx, storage.RunPreparationBegin{
 		Operation: storage.PreparationOperation{Subject: declaration.Subject, RunID: declaration.RunID, SessionID: declaration.SessionID, CommandID: declaration.CommandID},
-		Origin:    declaration.Origin,
+		Origin:    origin,
 	})
 }
 

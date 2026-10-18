@@ -203,23 +203,26 @@ func TestProviderHistoryRejectsInvalidSourceOwnership(t *testing.T) {
 
 func TestProviderHistoryRequiresExplicitChoiceAndCopiesMessages(t *testing.T) {
 	rt := New(newTestStore())
-	definition, _ := providerHistoryDefinition(t)
+	definition, operation := providerHistoryDefinition(t)
 	config := &AgentToolConfiguration{}
 	require.NoError(t, rt.RegisterAgentToolResolver(definition.route.ID, func(context.Context, genregistry.ExecutionInvocation, string, *ToolCall) (*AgentToolConfiguration, error) {
 		return config, nil
 	}))
-	_, err := rt.resolveAgentConfiguration(t.Context(), genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: "literal"})}, definition, "revision/1", &ToolCall{})
+	_, err := rt.resolveAgentConfiguration(t.Context(), genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: "literal"})}, definition, operation, &ToolCall{})
 	require.ErrorContains(t, err, "explicit history selection")
 	config.History = LiteralAgentHistory(nil)
-	_, err = rt.resolveAgentConfiguration(t.Context(), genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: "literal"})}, definition, "revision/1", &ToolCall{})
+	_, err = rt.resolveAgentConfiguration(t.Context(), genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: "literal"})}, definition, operation, &ToolCall{})
 	require.NoError(t, err)
 	original := priorReasoningFixture()
 	config.History = LiteralAgentHistory(original).WithoutPriorReasoning()
-	owned, err := rt.resolveAgentConfiguration(t.Context(), genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: "literal"})}, definition, "revision/1", &ToolCall{})
+	owned, err := rt.resolveAgentConfiguration(t.Context(), genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: "literal"})}, definition, operation, &ToolCall{})
 	require.NoError(t, err)
 	original[0].Parts[0] = model.TextPart{Text: "mutated"}
-	writer, err := stageAgentHistory(t.Context(), rt.Store, storage.SeedDeclaration{Origin: genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: "literal"})}, Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
-		RunExecutorBranchAgent(string(definition.route.ID)))}, RunID: "literal", CommandID: "literal", AttemptID: "literal"}, owned.History)
+	declaration := storage.SeedDeclaration{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
+		RunExecutorBranchAgent(string(definition.route.ID)))}, RunID: "literal", CommandID: "literal", AttemptID: "literal"}
+	_, err = bindHistoryOperation(t.Context(), rt.Store, declaration, genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindRoot(&genregistry.RootInvocation{RunID: "literal"})})
+	require.NoError(t, err)
+	writer, err := stageAgentHistory(t.Context(), rt.Store, declaration, owned.History)
 	require.NoError(t, err)
 	require.NoError(t, writer.publish(t.Context(), []byte("prepared")))
 	input := &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
