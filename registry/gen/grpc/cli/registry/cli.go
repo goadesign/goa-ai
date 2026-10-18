@@ -22,7 +22,7 @@ import (
 //	command (subcommand1|subcommand2|...)
 func UsageCommands() []string {
 	return []string{
-		"registry (check-catalog-resource|list-catalog-resources|register-agent-exports|validate-agent-exports|retire-agent-resource|declare-service-toolset|replace-service-toolset|attach-provider|register|renew-provider|release-provider|drain-provider|unregister|pong|register-agent-toolset|replace-agent-toolset|list-toolsets|get-toolset|resolve-toolset|check-admission|search|call-tool|call-resolved-tool|retry-tool|complete-tool-call|publish-tool-output-delta|report-tool-call-overload|claim-tool-call)",
+		"registry (check-catalog-resource|list-catalog-resources|register-agent-exports|validate-agent-exports|retire-agent-resource|declare-service-toolset|replace-service-toolset|attach-provider|register|renew-provider|release-provider|drain-provider|unregister|pong|register-agent-toolset|replace-agent-toolset|list-toolsets|get-toolset|resolve-toolset|get-toolset-schemas|check-admission|search|call-tool|call-resolved-tool|retry-tool|complete-tool-call|publish-tool-output-delta|report-tool-call-overload|claim-tool-call)",
 	}
 }
 
@@ -117,6 +117,9 @@ func ParseEndpoint(
 		registryResolveToolsetFlags       = flag.NewFlagSet("resolve-toolset", flag.ExitOnError)
 		registryResolveToolsetMessageFlag = new(cliStringFlag)
 
+		registryGetToolsetSchemasFlags       = flag.NewFlagSet("get-toolset-schemas", flag.ExitOnError)
+		registryGetToolsetSchemasMessageFlag = new(cliStringFlag)
+
 		registryCheckAdmissionFlags       = flag.NewFlagSet("check-admission", flag.ExitOnError)
 		registryCheckAdmissionMessageFlag = new(cliStringFlag)
 
@@ -163,6 +166,7 @@ func ParseEndpoint(
 	registryListToolsetsFlags.Var(registryListToolsetsMessageFlag, "message", "")
 	registryGetToolsetFlags.Var(registryGetToolsetMessageFlag, "message", "")
 	registryResolveToolsetFlags.Var(registryResolveToolsetMessageFlag, "message", "")
+	registryGetToolsetSchemasFlags.Var(registryGetToolsetSchemasMessageFlag, "message", "")
 	registryCheckAdmissionFlags.Var(registryCheckAdmissionMessageFlag, "message", "")
 	registrySearchFlags.Var(registrySearchMessageFlag, "message", "")
 	registryCallToolFlags.Var(registryCallToolMessageFlag, "message", "")
@@ -193,6 +197,7 @@ func ParseEndpoint(
 	registryListToolsetsFlags.Usage = registryListToolsetsUsage
 	registryGetToolsetFlags.Usage = registryGetToolsetUsage
 	registryResolveToolsetFlags.Usage = registryResolveToolsetUsage
+	registryGetToolsetSchemasFlags.Usage = registryGetToolsetSchemasUsage
 	registryCheckAdmissionFlags.Usage = registryCheckAdmissionUsage
 	registrySearchFlags.Usage = registrySearchUsage
 	registryCallToolFlags.Usage = registryCallToolUsage
@@ -293,6 +298,9 @@ func ParseEndpoint(
 
 			case "resolve-toolset":
 				epf = registryResolveToolsetFlags
+
+			case "get-toolset-schemas":
+				epf = registryGetToolsetSchemasFlags
 
 			case "check-admission":
 				epf = registryCheckAdmissionFlags
@@ -403,6 +411,9 @@ func ParseEndpoint(
 			case "resolve-toolset":
 				endpoint = c.ResolveToolset()
 				data, err = registryc.BuildResolveToolsetPayload(registryResolveToolsetMessageFlag.value)
+			case "get-toolset-schemas":
+				endpoint = c.GetToolsetSchemas()
+				data, err = registryc.BuildGetToolsetSchemasPayload(registryGetToolsetSchemasMessageFlag.value)
 			case "check-admission":
 				endpoint = c.CheckAdmission()
 				data, err = registryc.BuildCheckAdmissionPayload(registryCheckAdmissionMessageFlag.value)
@@ -464,6 +475,7 @@ func registryUsage() {
 	fmt.Fprintln(os.Stderr, `    list-toolsets: List all registered toolsets with optional tag filtering`)
 	fmt.Fprintln(os.Stderr, `    get-toolset: Get a specific toolset by name including all tool schemas`)
 	fmt.Fprintln(os.Stderr, `    resolve-toolset: Return a toolset definition and its exact registration token from one active catalog read. Consumers retain the token with accepted calls so a later provider replacement cannot change the contract selected by the model. Resolution describes registered tools; it does not guarantee provider health.`)
+	fmt.Fprintln(os.Stderr, `    get-toolset-schemas: Inspect an active toolset's descriptive fields and argument, result, and sidecar schemas without requesting executable consumer metadata or a registration token. Historical registrations remain inspectable when their consumer metadata cannot be represented by the current executable contract. This read does not grant execution authority or promise provider readiness.`)
 	fmt.Fprintln(os.Stderr, `    check-admission: Report whether the exact registration token derived from a deployed provider's generated tool schemas is active and currently has an unexpired, non-draining provider lease plus a fresh authenticated pong. Release verification calls this after workload rollout because Kubernetes proves the intended pods are running while the registry proves their exact tool contract is routable. A missing or different active admission returns ready=false rather than an error.`)
 	fmt.Fprintln(os.Stderr, `    search: Search toolsets by keyword matching name, description, or tags`)
 	fmt.Fprintln(os.Stderr, `    call-tool: Reject consumers whose required runtime-owned wire protocol version differs from the registry, then attach or create one run-scoped tool-call record. A valid unpublished call waits for a healthy provider within its original execution deadline. Request publication atomically verifies that the selected registration remains current and non-draining; if it changed, the unpublished call selects the replacement and tries again without extending its deadline. The provider assignment becomes immutable when publication commits. Certain pre-publication failures commit call_not_admitted so exact retries cannot execute, while published calls never transfer because an external effect may have begun. The record retains the full canonical terminal through its absolute expiration and restores it when bounded result-stream history was trimmed. Before returning a published admission, the registry establishes the result stream so the caller can create a reader immediately.`)
@@ -817,6 +829,24 @@ func registryResolveToolsetUsage() {
 	fmt.Fprintln(os.Stderr)
 	fmt.Fprintln(os.Stderr, "Example:")
 	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "registry resolve-toolset --message '{\n      \"name\": \"data-tools\"\n   }'")
+}
+
+func registryGetToolsetSchemasUsage() {
+	// Header with flags
+	fmt.Fprintf(os.Stderr, "%s [flags] registry get-toolset-schemas", os.Args[0])
+	fmt.Fprint(os.Stderr, " -message JSON")
+	fmt.Fprintln(os.Stderr)
+
+	// Description
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, `Inspect an active toolset's descriptive fields and argument, result, and sidecar schemas without requesting executable consumer metadata or a registration token. Historical registrations remain inspectable when their consumer metadata cannot be represented by the current executable contract. This read does not grant execution authority or promise provider readiness.`)
+
+	// Flags list
+	fmt.Fprintln(os.Stderr, `    -message JSON: `)
+
+	fmt.Fprintln(os.Stderr)
+	fmt.Fprintln(os.Stderr, "Example:")
+	fmt.Fprintf(os.Stderr, "    %s %s\n", os.Args[0], "registry get-toolset-schemas --message '{\n      \"name\": \"data-tools\"\n   }'")
 }
 
 func registryCheckAdmissionUsage() {

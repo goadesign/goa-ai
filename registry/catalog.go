@@ -103,8 +103,8 @@ func newToolsetCatalog(store catalogStore, clock registryTimeSource) *toolsetCat
 }
 
 // validatePersistedEntries checks all definition/state pairs and permanent
-// retired tokens before the registry begins serving. Old combined records are
-// rejected by the new strict decoder and require the offline conversion.
+// retired tokens before serving. Historical service contracts retain their
+// original identity without requiring today's executable metadata shape.
 func (c *toolsetCatalog) validatePersistedEntries(ctx context.Context) error {
 	keys, err := c.store.Keys(ctx)
 	if err != nil {
@@ -142,7 +142,7 @@ func (c *toolsetCatalog) validatePersistedEntries(ctx context.Context) error {
 			invalid = append(invalid, fmt.Errorf("catalog key %q has invalid prefix", key))
 			continue
 		}
-		_, err := c.snapshot(ctx, strings.TrimPrefix(key, toolsetCatalogKeyPrefix))
+		err := c.validatePersistedEntry(ctx, strings.TrimPrefix(key, toolsetCatalogKeyPrefix))
 		if err != nil {
 			invalid = append(invalid, fmt.Errorf("catalog key %q: %w", key, err))
 			continue

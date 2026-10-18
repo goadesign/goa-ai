@@ -4104,6 +4104,233 @@ func (x *ResolveToolsetResponse) GetRegistrationToken() string {
 	return ""
 }
 
+type GetToolsetSchemasRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Name of the toolset to retrieve
+	Name          *string `protobuf:"bytes,1,opt,name=name,proto3,oneof" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetToolsetSchemasRequest) Reset() {
+	*x = GetToolsetSchemasRequest{}
+	mi := &file_goagen_registry_registry_proto_msgTypes[60]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetToolsetSchemasRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetToolsetSchemasRequest) ProtoMessage() {}
+
+func (x *GetToolsetSchemasRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_goagen_registry_registry_proto_msgTypes[60]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetToolsetSchemasRequest.ProtoReflect.Descriptor instead.
+func (*GetToolsetSchemasRequest) Descriptor() ([]byte, []int) {
+	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{60}
+}
+
+func (x *GetToolsetSchemasRequest) GetName() string {
+	if x != nil && x.Name != nil {
+		return *x.Name
+	}
+	return ""
+}
+
+type GetToolsetSchemasResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Unique name of the saved toolset.
+	Name *string `protobuf:"bytes,1,opt,name=name,proto3,oneof" json:"name,omitempty"`
+	// Human-readable description.
+	Description *string `protobuf:"bytes,2,opt,name=description,proto3,oneof" json:"description,omitempty"`
+	// Semantic version of the toolset.
+	Version *string `protobuf:"bytes,3,opt,name=version,proto3,oneof" json:"version,omitempty"`
+	// Tags for categorization.
+	Tags []string `protobuf:"bytes,4,rep,name=tags,proto3" json:"tags,omitempty"`
+	// Saved schemas and descriptive fields for each tool.
+	Tools []*ToolSchemas `protobuf:"bytes,5,rep,name=tools,proto3" json:"tools,omitempty"`
+	// Time the active registration was saved.
+	RegisteredAt  *string `protobuf:"bytes,6,opt,name=registered_at,json=registeredAt,proto3,oneof" json:"registered_at,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetToolsetSchemasResponse) Reset() {
+	*x = GetToolsetSchemasResponse{}
+	mi := &file_goagen_registry_registry_proto_msgTypes[61]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetToolsetSchemasResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetToolsetSchemasResponse) ProtoMessage() {}
+
+func (x *GetToolsetSchemasResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_goagen_registry_registry_proto_msgTypes[61]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetToolsetSchemasResponse.ProtoReflect.Descriptor instead.
+func (*GetToolsetSchemasResponse) Descriptor() ([]byte, []int) {
+	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{61}
+}
+
+func (x *GetToolsetSchemasResponse) GetName() string {
+	if x != nil && x.Name != nil {
+		return *x.Name
+	}
+	return ""
+}
+
+func (x *GetToolsetSchemasResponse) GetDescription() string {
+	if x != nil && x.Description != nil {
+		return *x.Description
+	}
+	return ""
+}
+
+func (x *GetToolsetSchemasResponse) GetVersion() string {
+	if x != nil && x.Version != nil {
+		return *x.Version
+	}
+	return ""
+}
+
+func (x *GetToolsetSchemasResponse) GetTags() []string {
+	if x != nil {
+		return x.Tags
+	}
+	return nil
+}
+
+func (x *GetToolsetSchemasResponse) GetTools() []*ToolSchemas {
+	if x != nil {
+		return x.Tools
+	}
+	return nil
+}
+
+func (x *GetToolsetSchemasResponse) GetRegisteredAt() string {
+	if x != nil && x.RegisteredAt != nil {
+		return *x.RegisteredAt
+	}
+	return ""
+}
+
+// Saved argument, result, and optional sidecar schemas with their original
+// descriptive fields. This type is not an executable tool declaration.
+type ToolSchemas struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Original full tool identifier.
+	Name *string `protobuf:"bytes,1,opt,name=name,proto3,oneof" json:"name,omitempty"`
+	// Human-readable description of the tool.
+	Description *string `protobuf:"bytes,2,opt,name=description,proto3,oneof" json:"description,omitempty"`
+	// Tool categorization tags.
+	Tags []string `protobuf:"bytes,3,rep,name=tags,proto3" json:"tags,omitempty"`
+	// Original JSON schema for model-supplied arguments.
+	PayloadSchema []byte `protobuf:"bytes,4,opt,name=payload_schema,json=payloadSchema,proto3,oneof" json:"payload_schema,omitempty"`
+	// Original JSON schema for the result.
+	ResultSchema []byte `protobuf:"bytes,5,opt,name=result_schema,json=resultSchema,proto3,oneof" json:"result_schema,omitempty"`
+	// Original JSON schema for optional sidecar output.
+	SidecarSchema []byte `protobuf:"bytes,6,opt,name=sidecar_schema,json=sidecarSchema,proto3,oneof" json:"sidecar_schema,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ToolSchemas) Reset() {
+	*x = ToolSchemas{}
+	mi := &file_goagen_registry_registry_proto_msgTypes[62]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ToolSchemas) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ToolSchemas) ProtoMessage() {}
+
+func (x *ToolSchemas) ProtoReflect() protoreflect.Message {
+	mi := &file_goagen_registry_registry_proto_msgTypes[62]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ToolSchemas.ProtoReflect.Descriptor instead.
+func (*ToolSchemas) Descriptor() ([]byte, []int) {
+	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{62}
+}
+
+func (x *ToolSchemas) GetName() string {
+	if x != nil && x.Name != nil {
+		return *x.Name
+	}
+	return ""
+}
+
+func (x *ToolSchemas) GetDescription() string {
+	if x != nil && x.Description != nil {
+		return *x.Description
+	}
+	return ""
+}
+
+func (x *ToolSchemas) GetTags() []string {
+	if x != nil {
+		return x.Tags
+	}
+	return nil
+}
+
+func (x *ToolSchemas) GetPayloadSchema() []byte {
+	if x != nil {
+		return x.PayloadSchema
+	}
+	return nil
+}
+
+func (x *ToolSchemas) GetResultSchema() []byte {
+	if x != nil {
+		return x.ResultSchema
+	}
+	return nil
+}
+
+func (x *ToolSchemas) GetSidecarSchema() []byte {
+	if x != nil {
+		return x.SidecarSchema
+	}
+	return nil
+}
+
 type CheckAdmissionRequest struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Name of the toolset whose admission must be checked.
@@ -4117,7 +4344,7 @@ type CheckAdmissionRequest struct {
 
 func (x *CheckAdmissionRequest) Reset() {
 	*x = CheckAdmissionRequest{}
-	mi := &file_goagen_registry_registry_proto_msgTypes[60]
+	mi := &file_goagen_registry_registry_proto_msgTypes[63]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4129,7 +4356,7 @@ func (x *CheckAdmissionRequest) String() string {
 func (*CheckAdmissionRequest) ProtoMessage() {}
 
 func (x *CheckAdmissionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_registry_registry_proto_msgTypes[60]
+	mi := &file_goagen_registry_registry_proto_msgTypes[63]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4142,7 +4369,7 @@ func (x *CheckAdmissionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckAdmissionRequest.ProtoReflect.Descriptor instead.
 func (*CheckAdmissionRequest) Descriptor() ([]byte, []int) {
-	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{60}
+	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{63}
 }
 
 func (x *CheckAdmissionRequest) GetName() string {
@@ -4170,7 +4397,7 @@ type CheckAdmissionResponse struct {
 
 func (x *CheckAdmissionResponse) Reset() {
 	*x = CheckAdmissionResponse{}
-	mi := &file_goagen_registry_registry_proto_msgTypes[61]
+	mi := &file_goagen_registry_registry_proto_msgTypes[64]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4182,7 +4409,7 @@ func (x *CheckAdmissionResponse) String() string {
 func (*CheckAdmissionResponse) ProtoMessage() {}
 
 func (x *CheckAdmissionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_registry_registry_proto_msgTypes[61]
+	mi := &file_goagen_registry_registry_proto_msgTypes[64]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4195,7 +4422,7 @@ func (x *CheckAdmissionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CheckAdmissionResponse.ProtoReflect.Descriptor instead.
 func (*CheckAdmissionResponse) Descriptor() ([]byte, []int) {
-	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{61}
+	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{64}
 }
 
 func (x *CheckAdmissionResponse) GetReady() bool {
@@ -4215,7 +4442,7 @@ type SearchRequest struct {
 
 func (x *SearchRequest) Reset() {
 	*x = SearchRequest{}
-	mi := &file_goagen_registry_registry_proto_msgTypes[62]
+	mi := &file_goagen_registry_registry_proto_msgTypes[65]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4227,7 +4454,7 @@ func (x *SearchRequest) String() string {
 func (*SearchRequest) ProtoMessage() {}
 
 func (x *SearchRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_registry_registry_proto_msgTypes[62]
+	mi := &file_goagen_registry_registry_proto_msgTypes[65]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4240,7 +4467,7 @@ func (x *SearchRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SearchRequest.ProtoReflect.Descriptor instead.
 func (*SearchRequest) Descriptor() ([]byte, []int) {
-	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{62}
+	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{65}
 }
 
 func (x *SearchRequest) GetQuery() string {
@@ -4260,7 +4487,7 @@ type SearchResponse struct {
 
 func (x *SearchResponse) Reset() {
 	*x = SearchResponse{}
-	mi := &file_goagen_registry_registry_proto_msgTypes[63]
+	mi := &file_goagen_registry_registry_proto_msgTypes[66]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4272,7 +4499,7 @@ func (x *SearchResponse) String() string {
 func (*SearchResponse) ProtoMessage() {}
 
 func (x *SearchResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_registry_registry_proto_msgTypes[63]
+	mi := &file_goagen_registry_registry_proto_msgTypes[66]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4285,7 +4512,7 @@ func (x *SearchResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SearchResponse.ProtoReflect.Descriptor instead.
 func (*SearchResponse) Descriptor() ([]byte, []int) {
-	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{63}
+	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{66}
 }
 
 func (x *SearchResponse) GetToolsets() []*ToolsetInfo {
@@ -4317,7 +4544,7 @@ type CallToolRequest struct {
 
 func (x *CallToolRequest) Reset() {
 	*x = CallToolRequest{}
-	mi := &file_goagen_registry_registry_proto_msgTypes[64]
+	mi := &file_goagen_registry_registry_proto_msgTypes[67]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4329,7 +4556,7 @@ func (x *CallToolRequest) String() string {
 func (*CallToolRequest) ProtoMessage() {}
 
 func (x *CallToolRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_registry_registry_proto_msgTypes[64]
+	mi := &file_goagen_registry_registry_proto_msgTypes[67]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4342,7 +4569,7 @@ func (x *CallToolRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CallToolRequest.ProtoReflect.Descriptor instead.
 func (*CallToolRequest) Descriptor() ([]byte, []int) {
-	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{64}
+	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{67}
 }
 
 func (x *CallToolRequest) GetToolset() string {
@@ -4413,7 +4640,7 @@ type ToolCallMeta struct {
 
 func (x *ToolCallMeta) Reset() {
 	*x = ToolCallMeta{}
-	mi := &file_goagen_registry_registry_proto_msgTypes[65]
+	mi := &file_goagen_registry_registry_proto_msgTypes[68]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4425,7 +4652,7 @@ func (x *ToolCallMeta) String() string {
 func (*ToolCallMeta) ProtoMessage() {}
 
 func (x *ToolCallMeta) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_registry_registry_proto_msgTypes[65]
+	mi := &file_goagen_registry_registry_proto_msgTypes[68]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4438,7 +4665,7 @@ func (x *ToolCallMeta) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ToolCallMeta.ProtoReflect.Descriptor instead.
 func (*ToolCallMeta) Descriptor() ([]byte, []int) {
-	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{65}
+	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{68}
 }
 
 func (x *ToolCallMeta) GetRunId() string {
@@ -4522,7 +4749,7 @@ type ToolOperationExecutionContinuation struct {
 
 func (x *ToolOperationExecutionContinuation) Reset() {
 	*x = ToolOperationExecutionContinuation{}
-	mi := &file_goagen_registry_registry_proto_msgTypes[66]
+	mi := &file_goagen_registry_registry_proto_msgTypes[69]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4534,7 +4761,7 @@ func (x *ToolOperationExecutionContinuation) String() string {
 func (*ToolOperationExecutionContinuation) ProtoMessage() {}
 
 func (x *ToolOperationExecutionContinuation) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_registry_registry_proto_msgTypes[66]
+	mi := &file_goagen_registry_registry_proto_msgTypes[69]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4547,7 +4774,7 @@ func (x *ToolOperationExecutionContinuation) ProtoReflect() protoreflect.Message
 
 // Deprecated: Use ToolOperationExecutionContinuation.ProtoReflect.Descriptor instead.
 func (*ToolOperationExecutionContinuation) Descriptor() ([]byte, []int) {
-	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{66}
+	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{69}
 }
 
 func (x *ToolOperationExecutionContinuation) GetOperation() isToolOperationExecutionContinuation_Operation {
@@ -4643,7 +4870,7 @@ type ToolOperationInputContinuation struct {
 
 func (x *ToolOperationInputContinuation) Reset() {
 	*x = ToolOperationInputContinuation{}
-	mi := &file_goagen_registry_registry_proto_msgTypes[67]
+	mi := &file_goagen_registry_registry_proto_msgTypes[70]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4655,7 +4882,7 @@ func (x *ToolOperationInputContinuation) String() string {
 func (*ToolOperationInputContinuation) ProtoMessage() {}
 
 func (x *ToolOperationInputContinuation) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_registry_registry_proto_msgTypes[67]
+	mi := &file_goagen_registry_registry_proto_msgTypes[70]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4668,7 +4895,7 @@ func (x *ToolOperationInputContinuation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ToolOperationInputContinuation.ProtoReflect.Descriptor instead.
 func (*ToolOperationInputContinuation) Descriptor() ([]byte, []int) {
-	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{67}
+	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{70}
 }
 
 func (x *ToolOperationInputContinuation) GetState() string {
@@ -4699,7 +4926,7 @@ type ToolOperationTaskAnswers struct {
 
 func (x *ToolOperationTaskAnswers) Reset() {
 	*x = ToolOperationTaskAnswers{}
-	mi := &file_goagen_registry_registry_proto_msgTypes[68]
+	mi := &file_goagen_registry_registry_proto_msgTypes[71]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4711,7 +4938,7 @@ func (x *ToolOperationTaskAnswers) String() string {
 func (*ToolOperationTaskAnswers) ProtoMessage() {}
 
 func (x *ToolOperationTaskAnswers) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_registry_registry_proto_msgTypes[68]
+	mi := &file_goagen_registry_registry_proto_msgTypes[71]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4724,7 +4951,7 @@ func (x *ToolOperationTaskAnswers) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ToolOperationTaskAnswers.ProtoReflect.Descriptor instead.
 func (*ToolOperationTaskAnswers) Descriptor() ([]byte, []int) {
-	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{68}
+	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{71}
 }
 
 func (x *ToolOperationTaskAnswers) GetTaskId() string {
@@ -4759,7 +4986,7 @@ type CallToolResponse struct {
 
 func (x *CallToolResponse) Reset() {
 	*x = CallToolResponse{}
-	mi := &file_goagen_registry_registry_proto_msgTypes[69]
+	mi := &file_goagen_registry_registry_proto_msgTypes[72]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4771,7 +4998,7 @@ func (x *CallToolResponse) String() string {
 func (*CallToolResponse) ProtoMessage() {}
 
 func (x *CallToolResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_registry_registry_proto_msgTypes[69]
+	mi := &file_goagen_registry_registry_proto_msgTypes[72]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4784,7 +5011,7 @@ func (x *CallToolResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CallToolResponse.ProtoReflect.Descriptor instead.
 func (*CallToolResponse) Descriptor() ([]byte, []int) {
-	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{69}
+	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{72}
 }
 
 func (x *CallToolResponse) GetToolUseId() string {
@@ -4839,7 +5066,7 @@ type CallResolvedToolRequest struct {
 
 func (x *CallResolvedToolRequest) Reset() {
 	*x = CallResolvedToolRequest{}
-	mi := &file_goagen_registry_registry_proto_msgTypes[70]
+	mi := &file_goagen_registry_registry_proto_msgTypes[73]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4851,7 +5078,7 @@ func (x *CallResolvedToolRequest) String() string {
 func (*CallResolvedToolRequest) ProtoMessage() {}
 
 func (x *CallResolvedToolRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_registry_registry_proto_msgTypes[70]
+	mi := &file_goagen_registry_registry_proto_msgTypes[73]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4864,7 +5091,7 @@ func (x *CallResolvedToolRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CallResolvedToolRequest.ProtoReflect.Descriptor instead.
 func (*CallResolvedToolRequest) Descriptor() ([]byte, []int) {
-	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{70}
+	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{73}
 }
 
 func (x *CallResolvedToolRequest) GetExpectedRegistrationToken() string {
@@ -4927,7 +5154,7 @@ type CallResolvedToolResponse struct {
 
 func (x *CallResolvedToolResponse) Reset() {
 	*x = CallResolvedToolResponse{}
-	mi := &file_goagen_registry_registry_proto_msgTypes[71]
+	mi := &file_goagen_registry_registry_proto_msgTypes[74]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -4939,7 +5166,7 @@ func (x *CallResolvedToolResponse) String() string {
 func (*CallResolvedToolResponse) ProtoMessage() {}
 
 func (x *CallResolvedToolResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_registry_registry_proto_msgTypes[71]
+	mi := &file_goagen_registry_registry_proto_msgTypes[74]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4952,7 +5179,7 @@ func (x *CallResolvedToolResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CallResolvedToolResponse.ProtoReflect.Descriptor instead.
 func (*CallResolvedToolResponse) Descriptor() ([]byte, []int) {
-	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{71}
+	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{74}
 }
 
 func (x *CallResolvedToolResponse) GetToolUseId() string {
@@ -5007,7 +5234,7 @@ type RetryToolRequest struct {
 
 func (x *RetryToolRequest) Reset() {
 	*x = RetryToolRequest{}
-	mi := &file_goagen_registry_registry_proto_msgTypes[72]
+	mi := &file_goagen_registry_registry_proto_msgTypes[75]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5019,7 +5246,7 @@ func (x *RetryToolRequest) String() string {
 func (*RetryToolRequest) ProtoMessage() {}
 
 func (x *RetryToolRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_registry_registry_proto_msgTypes[72]
+	mi := &file_goagen_registry_registry_proto_msgTypes[75]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5032,7 +5259,7 @@ func (x *RetryToolRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RetryToolRequest.ProtoReflect.Descriptor instead.
 func (*RetryToolRequest) Descriptor() ([]byte, []int) {
-	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{72}
+	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{75}
 }
 
 func (x *RetryToolRequest) GetExpectedRegistrationToken() string {
@@ -5095,7 +5322,7 @@ type RetryToolResponse struct {
 
 func (x *RetryToolResponse) Reset() {
 	*x = RetryToolResponse{}
-	mi := &file_goagen_registry_registry_proto_msgTypes[73]
+	mi := &file_goagen_registry_registry_proto_msgTypes[76]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5107,7 +5334,7 @@ func (x *RetryToolResponse) String() string {
 func (*RetryToolResponse) ProtoMessage() {}
 
 func (x *RetryToolResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_registry_registry_proto_msgTypes[73]
+	mi := &file_goagen_registry_registry_proto_msgTypes[76]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5120,7 +5347,7 @@ func (x *RetryToolResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RetryToolResponse.ProtoReflect.Descriptor instead.
 func (*RetryToolResponse) Descriptor() ([]byte, []int) {
-	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{73}
+	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{76}
 }
 
 func (x *RetryToolResponse) GetToolUseId() string {
@@ -5175,7 +5402,7 @@ type CompleteToolCallRequest struct {
 
 func (x *CompleteToolCallRequest) Reset() {
 	*x = CompleteToolCallRequest{}
-	mi := &file_goagen_registry_registry_proto_msgTypes[74]
+	mi := &file_goagen_registry_registry_proto_msgTypes[77]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5187,7 +5414,7 @@ func (x *CompleteToolCallRequest) String() string {
 func (*CompleteToolCallRequest) ProtoMessage() {}
 
 func (x *CompleteToolCallRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_registry_registry_proto_msgTypes[74]
+	mi := &file_goagen_registry_registry_proto_msgTypes[77]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5200,7 +5427,7 @@ func (x *CompleteToolCallRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CompleteToolCallRequest.ProtoReflect.Descriptor instead.
 func (*CompleteToolCallRequest) Descriptor() ([]byte, []int) {
-	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{74}
+	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{77}
 }
 
 func (x *CompleteToolCallRequest) GetToolset() string {
@@ -5270,7 +5497,7 @@ type CompleteToolCallResponse struct {
 
 func (x *CompleteToolCallResponse) Reset() {
 	*x = CompleteToolCallResponse{}
-	mi := &file_goagen_registry_registry_proto_msgTypes[75]
+	mi := &file_goagen_registry_registry_proto_msgTypes[78]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5282,7 +5509,7 @@ func (x *CompleteToolCallResponse) String() string {
 func (*CompleteToolCallResponse) ProtoMessage() {}
 
 func (x *CompleteToolCallResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_registry_registry_proto_msgTypes[75]
+	mi := &file_goagen_registry_registry_proto_msgTypes[78]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5295,7 +5522,7 @@ func (x *CompleteToolCallResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CompleteToolCallResponse.ProtoReflect.Descriptor instead.
 func (*CompleteToolCallResponse) Descriptor() ([]byte, []int) {
-	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{75}
+	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{78}
 }
 
 func (x *CompleteToolCallResponse) GetAccepted() bool {
@@ -5331,7 +5558,7 @@ type PublishToolOutputDeltaRequest struct {
 
 func (x *PublishToolOutputDeltaRequest) Reset() {
 	*x = PublishToolOutputDeltaRequest{}
-	mi := &file_goagen_registry_registry_proto_msgTypes[76]
+	mi := &file_goagen_registry_registry_proto_msgTypes[79]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5343,7 +5570,7 @@ func (x *PublishToolOutputDeltaRequest) String() string {
 func (*PublishToolOutputDeltaRequest) ProtoMessage() {}
 
 func (x *PublishToolOutputDeltaRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_registry_registry_proto_msgTypes[76]
+	mi := &file_goagen_registry_registry_proto_msgTypes[79]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5356,7 +5583,7 @@ func (x *PublishToolOutputDeltaRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PublishToolOutputDeltaRequest.ProtoReflect.Descriptor instead.
 func (*PublishToolOutputDeltaRequest) Descriptor() ([]byte, []int) {
-	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{76}
+	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{79}
 }
 
 func (x *PublishToolOutputDeltaRequest) GetStream() string {
@@ -5430,7 +5657,7 @@ type PublishToolOutputDeltaResponse struct {
 
 func (x *PublishToolOutputDeltaResponse) Reset() {
 	*x = PublishToolOutputDeltaResponse{}
-	mi := &file_goagen_registry_registry_proto_msgTypes[77]
+	mi := &file_goagen_registry_registry_proto_msgTypes[80]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5442,7 +5669,7 @@ func (x *PublishToolOutputDeltaResponse) String() string {
 func (*PublishToolOutputDeltaResponse) ProtoMessage() {}
 
 func (x *PublishToolOutputDeltaResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_registry_registry_proto_msgTypes[77]
+	mi := &file_goagen_registry_registry_proto_msgTypes[80]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5455,7 +5682,7 @@ func (x *PublishToolOutputDeltaResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PublishToolOutputDeltaResponse.ProtoReflect.Descriptor instead.
 func (*PublishToolOutputDeltaResponse) Descriptor() ([]byte, []int) {
-	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{77}
+	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{80}
 }
 
 type ReportToolCallOverloadRequest struct {
@@ -5480,7 +5707,7 @@ type ReportToolCallOverloadRequest struct {
 
 func (x *ReportToolCallOverloadRequest) Reset() {
 	*x = ReportToolCallOverloadRequest{}
-	mi := &file_goagen_registry_registry_proto_msgTypes[78]
+	mi := &file_goagen_registry_registry_proto_msgTypes[81]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5492,7 +5719,7 @@ func (x *ReportToolCallOverloadRequest) String() string {
 func (*ReportToolCallOverloadRequest) ProtoMessage() {}
 
 func (x *ReportToolCallOverloadRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_registry_registry_proto_msgTypes[78]
+	mi := &file_goagen_registry_registry_proto_msgTypes[81]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5505,7 +5732,7 @@ func (x *ReportToolCallOverloadRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportToolCallOverloadRequest.ProtoReflect.Descriptor instead.
 func (*ReportToolCallOverloadRequest) Descriptor() ([]byte, []int) {
-	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{78}
+	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{81}
 }
 
 func (x *ReportToolCallOverloadRequest) GetToolset() string {
@@ -5565,7 +5792,7 @@ type ReportToolCallOverloadResponse struct {
 
 func (x *ReportToolCallOverloadResponse) Reset() {
 	*x = ReportToolCallOverloadResponse{}
-	mi := &file_goagen_registry_registry_proto_msgTypes[79]
+	mi := &file_goagen_registry_registry_proto_msgTypes[82]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5577,7 +5804,7 @@ func (x *ReportToolCallOverloadResponse) String() string {
 func (*ReportToolCallOverloadResponse) ProtoMessage() {}
 
 func (x *ReportToolCallOverloadResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_registry_registry_proto_msgTypes[79]
+	mi := &file_goagen_registry_registry_proto_msgTypes[82]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5590,7 +5817,7 @@ func (x *ReportToolCallOverloadResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportToolCallOverloadResponse.ProtoReflect.Descriptor instead.
 func (*ReportToolCallOverloadResponse) Descriptor() ([]byte, []int) {
-	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{79}
+	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{82}
 }
 
 type ClaimToolCallRequest struct {
@@ -5618,7 +5845,7 @@ type ClaimToolCallRequest struct {
 
 func (x *ClaimToolCallRequest) Reset() {
 	*x = ClaimToolCallRequest{}
-	mi := &file_goagen_registry_registry_proto_msgTypes[80]
+	mi := &file_goagen_registry_registry_proto_msgTypes[83]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5630,7 +5857,7 @@ func (x *ClaimToolCallRequest) String() string {
 func (*ClaimToolCallRequest) ProtoMessage() {}
 
 func (x *ClaimToolCallRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_registry_registry_proto_msgTypes[80]
+	mi := &file_goagen_registry_registry_proto_msgTypes[83]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5643,7 +5870,7 @@ func (x *ClaimToolCallRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClaimToolCallRequest.ProtoReflect.Descriptor instead.
 func (*ClaimToolCallRequest) Descriptor() ([]byte, []int) {
-	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{80}
+	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{83}
 }
 
 func (x *ClaimToolCallRequest) GetClaimOperationId() string {
@@ -5715,7 +5942,7 @@ type ClaimToolCallResponse struct {
 
 func (x *ClaimToolCallResponse) Reset() {
 	*x = ClaimToolCallResponse{}
-	mi := &file_goagen_registry_registry_proto_msgTypes[81]
+	mi := &file_goagen_registry_registry_proto_msgTypes[84]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -5727,7 +5954,7 @@ func (x *ClaimToolCallResponse) String() string {
 func (*ClaimToolCallResponse) ProtoMessage() {}
 
 func (x *ClaimToolCallResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_registry_registry_proto_msgTypes[81]
+	mi := &file_goagen_registry_registry_proto_msgTypes[84]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5740,7 +5967,7 @@ func (x *ClaimToolCallResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ClaimToolCallResponse.ProtoReflect.Descriptor instead.
 func (*ClaimToolCallResponse) Descriptor() ([]byte, []int) {
-	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{81}
+	return file_goagen_registry_registry_proto_rawDescGZIP(), []int{84}
 }
 
 func (x *ClaimToolCallResponse) GetDisposition() string {
@@ -6184,7 +6411,34 @@ const file_goagen_registry_registry_proto_rawDesc = "" +
 	"\x16ResolveToolsetResponse\x122\n" +
 	"\atoolset\x18\x01 \x01(\v2\x18.goa_ai_registry.ToolsetR\atoolset\x122\n" +
 	"\x12registration_token\x18\x02 \x01(\tH\x00R\x11registrationToken\x88\x01\x01B\x15\n" +
-	"\x13_registration_token\"\x9e\x01\n" +
+	"\x13_registration_token\"<\n" +
+	"\x18GetToolsetSchemasRequest\x12\x17\n" +
+	"\x04name\x18\x01 \x01(\tH\x00R\x04name\x88\x01\x01B\a\n" +
+	"\x05_name\"\xa3\x02\n" +
+	"\x19GetToolsetSchemasResponse\x12\x17\n" +
+	"\x04name\x18\x01 \x01(\tH\x00R\x04name\x88\x01\x01\x12%\n" +
+	"\vdescription\x18\x02 \x01(\tH\x01R\vdescription\x88\x01\x01\x12\x1d\n" +
+	"\aversion\x18\x03 \x01(\tH\x02R\aversion\x88\x01\x01\x12\x12\n" +
+	"\x04tags\x18\x04 \x03(\tR\x04tags\x122\n" +
+	"\x05tools\x18\x05 \x03(\v2\x1c.goa_ai_registry.ToolSchemasR\x05tools\x12(\n" +
+	"\rregistered_at\x18\x06 \x01(\tH\x03R\fregisteredAt\x88\x01\x01B\a\n" +
+	"\x05_nameB\x0e\n" +
+	"\f_descriptionB\n" +
+	"\n" +
+	"\b_versionB\x10\n" +
+	"\x0e_registered_at\"\xb4\x02\n" +
+	"\vToolSchemas\x12\x17\n" +
+	"\x04name\x18\x01 \x01(\tH\x00R\x04name\x88\x01\x01\x12%\n" +
+	"\vdescription\x18\x02 \x01(\tH\x01R\vdescription\x88\x01\x01\x12\x12\n" +
+	"\x04tags\x18\x03 \x03(\tR\x04tags\x12*\n" +
+	"\x0epayload_schema\x18\x04 \x01(\fH\x02R\rpayloadSchema\x88\x01\x01\x12(\n" +
+	"\rresult_schema\x18\x05 \x01(\fH\x03R\fresultSchema\x88\x01\x01\x12*\n" +
+	"\x0esidecar_schema\x18\x06 \x01(\fH\x04R\rsidecarSchema\x88\x01\x01B\a\n" +
+	"\x05_nameB\x0e\n" +
+	"\f_descriptionB\x11\n" +
+	"\x0f_payload_schemaB\x10\n" +
+	"\x0e_result_schemaB\x11\n" +
+	"\x0f_sidecar_schema\"\x9e\x01\n" +
 	"\x15CheckAdmissionRequest\x12\x17\n" +
 	"\x04name\x18\x01 \x01(\tH\x00R\x04name\x88\x01\x01\x12C\n" +
 	"\x1bexpected_registration_token\x18\x02 \x01(\tH\x01R\x19expectedRegistrationToken\x88\x01\x01B\a\n" +
@@ -6393,7 +6647,7 @@ const file_goagen_registry_registry_proto_rawDesc = "" +
 	"\x11_request_event_id\"N\n" +
 	"\x15ClaimToolCallResponse\x12%\n" +
 	"\vdisposition\x18\x01 \x01(\tH\x00R\vdisposition\x88\x01\x01B\x0e\n" +
-	"\f_disposition2\xb4\x16\n" +
+	"\f_disposition2\xa0\x17\n" +
 	"\bRegistry\x12s\n" +
 	"\x14CheckCatalogResource\x12,.goa_ai_registry.CheckCatalogResourceRequest\x1a-.goa_ai_registry.CheckCatalogResourceResponse\x12s\n" +
 	"\x14ListCatalogResources\x12,.goa_ai_registry.ListCatalogResourcesRequest\x1a-.goa_ai_registry.ListCatalogResourcesResponse\x12s\n" +
@@ -6415,7 +6669,8 @@ const file_goagen_registry_registry_proto_rawDesc = "" +
 	"\fListToolsets\x12$.goa_ai_registry.ListToolsetsRequest\x1a%.goa_ai_registry.ListToolsetsResponse\x12U\n" +
 	"\n" +
 	"GetToolset\x12\".goa_ai_registry.GetToolsetRequest\x1a#.goa_ai_registry.GetToolsetResponse\x12a\n" +
-	"\x0eResolveToolset\x12&.goa_ai_registry.ResolveToolsetRequest\x1a'.goa_ai_registry.ResolveToolsetResponse\x12a\n" +
+	"\x0eResolveToolset\x12&.goa_ai_registry.ResolveToolsetRequest\x1a'.goa_ai_registry.ResolveToolsetResponse\x12j\n" +
+	"\x11GetToolsetSchemas\x12).goa_ai_registry.GetToolsetSchemasRequest\x1a*.goa_ai_registry.GetToolsetSchemasResponse\x12a\n" +
 	"\x0eCheckAdmission\x12&.goa_ai_registry.CheckAdmissionRequest\x1a'.goa_ai_registry.CheckAdmissionResponse\x12I\n" +
 	"\x06Search\x12\x1e.goa_ai_registry.SearchRequest\x1a\x1f.goa_ai_registry.SearchResponse\x12O\n" +
 	"\bCallTool\x12 .goa_ai_registry.CallToolRequest\x1a!.goa_ai_registry.CallToolResponse\x12g\n" +
@@ -6438,7 +6693,7 @@ func file_goagen_registry_registry_proto_rawDescGZIP() []byte {
 	return file_goagen_registry_registry_proto_rawDescData
 }
 
-var file_goagen_registry_registry_proto_msgTypes = make([]protoimpl.MessageInfo, 87)
+var file_goagen_registry_registry_proto_msgTypes = make([]protoimpl.MessageInfo, 90)
 var file_goagen_registry_registry_proto_goTypes = []any{
 	(*CheckCatalogResourceRequest)(nil),        // 0: goa_ai_registry.CheckCatalogResourceRequest
 	(*CheckCatalogResourceResponse)(nil),       // 1: goa_ai_registry.CheckCatalogResourceResponse
@@ -6500,33 +6755,36 @@ var file_goagen_registry_registry_proto_goTypes = []any{
 	(*GetToolsetResponse)(nil),                 // 57: goa_ai_registry.GetToolsetResponse
 	(*ResolveToolsetRequest)(nil),              // 58: goa_ai_registry.ResolveToolsetRequest
 	(*ResolveToolsetResponse)(nil),             // 59: goa_ai_registry.ResolveToolsetResponse
-	(*CheckAdmissionRequest)(nil),              // 60: goa_ai_registry.CheckAdmissionRequest
-	(*CheckAdmissionResponse)(nil),             // 61: goa_ai_registry.CheckAdmissionResponse
-	(*SearchRequest)(nil),                      // 62: goa_ai_registry.SearchRequest
-	(*SearchResponse)(nil),                     // 63: goa_ai_registry.SearchResponse
-	(*CallToolRequest)(nil),                    // 64: goa_ai_registry.CallToolRequest
-	(*ToolCallMeta)(nil),                       // 65: goa_ai_registry.ToolCallMeta
-	(*ToolOperationExecutionContinuation)(nil), // 66: goa_ai_registry.ToolOperationExecutionContinuation
-	(*ToolOperationInputContinuation)(nil),     // 67: goa_ai_registry.ToolOperationInputContinuation
-	(*ToolOperationTaskAnswers)(nil),           // 68: goa_ai_registry.ToolOperationTaskAnswers
-	(*CallToolResponse)(nil),                   // 69: goa_ai_registry.CallToolResponse
-	(*CallResolvedToolRequest)(nil),            // 70: goa_ai_registry.CallResolvedToolRequest
-	(*CallResolvedToolResponse)(nil),           // 71: goa_ai_registry.CallResolvedToolResponse
-	(*RetryToolRequest)(nil),                   // 72: goa_ai_registry.RetryToolRequest
-	(*RetryToolResponse)(nil),                  // 73: goa_ai_registry.RetryToolResponse
-	(*CompleteToolCallRequest)(nil),            // 74: goa_ai_registry.CompleteToolCallRequest
-	(*CompleteToolCallResponse)(nil),           // 75: goa_ai_registry.CompleteToolCallResponse
-	(*PublishToolOutputDeltaRequest)(nil),      // 76: goa_ai_registry.PublishToolOutputDeltaRequest
-	(*PublishToolOutputDeltaResponse)(nil),     // 77: goa_ai_registry.PublishToolOutputDeltaResponse
-	(*ReportToolCallOverloadRequest)(nil),      // 78: goa_ai_registry.ReportToolCallOverloadRequest
-	(*ReportToolCallOverloadResponse)(nil),     // 79: goa_ai_registry.ReportToolCallOverloadResponse
-	(*ClaimToolCallRequest)(nil),               // 80: goa_ai_registry.ClaimToolCallRequest
-	(*ClaimToolCallResponse)(nil),              // 81: goa_ai_registry.ClaimToolCallResponse
-	nil,                                        // 82: goa_ai_registry.ConsumerContract.MetaEntry
-	nil,                                        // 83: goa_ai_registry.ToolSearchDocument.TermsEntry
-	nil,                                        // 84: goa_ai_registry.ToolCallMeta.LabelsEntry
-	nil,                                        // 85: goa_ai_registry.ToolOperationInputContinuation.ResponsesEntry
-	nil,                                        // 86: goa_ai_registry.ToolOperationTaskAnswers.ResponsesEntry
+	(*GetToolsetSchemasRequest)(nil),           // 60: goa_ai_registry.GetToolsetSchemasRequest
+	(*GetToolsetSchemasResponse)(nil),          // 61: goa_ai_registry.GetToolsetSchemasResponse
+	(*ToolSchemas)(nil),                        // 62: goa_ai_registry.ToolSchemas
+	(*CheckAdmissionRequest)(nil),              // 63: goa_ai_registry.CheckAdmissionRequest
+	(*CheckAdmissionResponse)(nil),             // 64: goa_ai_registry.CheckAdmissionResponse
+	(*SearchRequest)(nil),                      // 65: goa_ai_registry.SearchRequest
+	(*SearchResponse)(nil),                     // 66: goa_ai_registry.SearchResponse
+	(*CallToolRequest)(nil),                    // 67: goa_ai_registry.CallToolRequest
+	(*ToolCallMeta)(nil),                       // 68: goa_ai_registry.ToolCallMeta
+	(*ToolOperationExecutionContinuation)(nil), // 69: goa_ai_registry.ToolOperationExecutionContinuation
+	(*ToolOperationInputContinuation)(nil),     // 70: goa_ai_registry.ToolOperationInputContinuation
+	(*ToolOperationTaskAnswers)(nil),           // 71: goa_ai_registry.ToolOperationTaskAnswers
+	(*CallToolResponse)(nil),                   // 72: goa_ai_registry.CallToolResponse
+	(*CallResolvedToolRequest)(nil),            // 73: goa_ai_registry.CallResolvedToolRequest
+	(*CallResolvedToolResponse)(nil),           // 74: goa_ai_registry.CallResolvedToolResponse
+	(*RetryToolRequest)(nil),                   // 75: goa_ai_registry.RetryToolRequest
+	(*RetryToolResponse)(nil),                  // 76: goa_ai_registry.RetryToolResponse
+	(*CompleteToolCallRequest)(nil),            // 77: goa_ai_registry.CompleteToolCallRequest
+	(*CompleteToolCallResponse)(nil),           // 78: goa_ai_registry.CompleteToolCallResponse
+	(*PublishToolOutputDeltaRequest)(nil),      // 79: goa_ai_registry.PublishToolOutputDeltaRequest
+	(*PublishToolOutputDeltaResponse)(nil),     // 80: goa_ai_registry.PublishToolOutputDeltaResponse
+	(*ReportToolCallOverloadRequest)(nil),      // 81: goa_ai_registry.ReportToolCallOverloadRequest
+	(*ReportToolCallOverloadResponse)(nil),     // 82: goa_ai_registry.ReportToolCallOverloadResponse
+	(*ClaimToolCallRequest)(nil),               // 83: goa_ai_registry.ClaimToolCallRequest
+	(*ClaimToolCallResponse)(nil),              // 84: goa_ai_registry.ClaimToolCallResponse
+	nil,                                        // 85: goa_ai_registry.ConsumerContract.MetaEntry
+	nil,                                        // 86: goa_ai_registry.ToolSearchDocument.TermsEntry
+	nil,                                        // 87: goa_ai_registry.ToolCallMeta.LabelsEntry
+	nil,                                        // 88: goa_ai_registry.ToolOperationInputContinuation.ResponsesEntry
+	nil,                                        // 89: goa_ai_registry.ToolOperationTaskAnswers.ResponsesEntry
 }
 var file_goagen_registry_registry_proto_depIdxs = []int32{
 	4,  // 0: goa_ai_registry.ListCatalogResourcesResponse.resources:type_name -> goa_ai_registry.CatalogResource
@@ -6537,13 +6795,13 @@ var file_goagen_registry_registry_proto_depIdxs = []int32{
 	10, // 5: goa_ai_registry.ConsumerContract.search:type_name -> goa_ai_registry.ToolSearchDocument
 	11, // 6: goa_ai_registry.ConsumerContract.payload:type_name -> goa_ai_registry.ToolTypeMetadata
 	11, // 7: goa_ai_registry.ConsumerContract.result:type_name -> goa_ai_registry.ToolTypeMetadata
-	82, // 8: goa_ai_registry.ConsumerContract.meta:type_name -> goa_ai_registry.ConsumerContract.MetaEntry
+	85, // 8: goa_ai_registry.ConsumerContract.meta:type_name -> goa_ai_registry.ConsumerContract.MetaEntry
 	19, // 9: goa_ai_registry.ConsumerContract.bounds:type_name -> goa_ai_registry.ToolBounds
 	21, // 10: goa_ai_registry.ConsumerContract.confirmation:type_name -> goa_ai_registry.ToolConfirmation
 	22, // 11: goa_ai_registry.ConsumerContract.server_data:type_name -> goa_ai_registry.ToolServerData
 	23, // 12: goa_ai_registry.ConsumerContract.agent:type_name -> goa_ai_registry.AgentToolTarget
 	24, // 13: goa_ai_registry.ConsumerContract.text_only:type_name -> goa_ai_registry.TextOnlyToolContract
-	83, // 14: goa_ai_registry.ToolSearchDocument.terms:type_name -> goa_ai_registry.ToolSearchDocument.TermsEntry
+	86, // 14: goa_ai_registry.ToolSearchDocument.terms:type_name -> goa_ai_registry.ToolSearchDocument.TermsEntry
 	12, // 15: goa_ai_registry.ToolTypeMetadata.fields:type_name -> goa_ai_registry.ToolFieldMetadata
 	13, // 16: goa_ai_registry.ToolFieldMetadata.path:type_name -> goa_ai_registry.ToolFieldPathSegment
 	15, // 17: goa_ai_registry.ToolFieldMetadata.branches:type_name -> goa_ai_registry.ToolUnionBranch
@@ -6571,78 +6829,81 @@ var file_goagen_registry_registry_proto_depIdxs = []int32{
 	55, // 39: goa_ai_registry.ListToolsetsResponse.toolsets:type_name -> goa_ai_registry.ToolsetInfo
 	8,  // 40: goa_ai_registry.GetToolsetResponse.tools:type_name -> goa_ai_registry.ToolSchema
 	26, // 41: goa_ai_registry.ResolveToolsetResponse.toolset:type_name -> goa_ai_registry.Toolset
-	55, // 42: goa_ai_registry.SearchResponse.toolsets:type_name -> goa_ai_registry.ToolsetInfo
-	65, // 43: goa_ai_registry.CallToolRequest.meta:type_name -> goa_ai_registry.ToolCallMeta
-	84, // 44: goa_ai_registry.ToolCallMeta.labels:type_name -> goa_ai_registry.ToolCallMeta.LabelsEntry
-	66, // 45: goa_ai_registry.ToolCallMeta.execution_continuation:type_name -> goa_ai_registry.ToolOperationExecutionContinuation
-	67, // 46: goa_ai_registry.ToolOperationExecutionContinuation.input:type_name -> goa_ai_registry.ToolOperationInputContinuation
-	68, // 47: goa_ai_registry.ToolOperationExecutionContinuation.task_update:type_name -> goa_ai_registry.ToolOperationTaskAnswers
-	85, // 48: goa_ai_registry.ToolOperationInputContinuation.responses:type_name -> goa_ai_registry.ToolOperationInputContinuation.ResponsesEntry
-	86, // 49: goa_ai_registry.ToolOperationTaskAnswers.responses:type_name -> goa_ai_registry.ToolOperationTaskAnswers.ResponsesEntry
-	65, // 50: goa_ai_registry.CallResolvedToolRequest.meta:type_name -> goa_ai_registry.ToolCallMeta
-	65, // 51: goa_ai_registry.RetryToolRequest.meta:type_name -> goa_ai_registry.ToolCallMeta
-	18, // 52: goa_ai_registry.ConsumerContract.MetaEntry.value:type_name -> goa_ai_registry.ArrayOfString
-	0,  // 53: goa_ai_registry.Registry.CheckCatalogResource:input_type -> goa_ai_registry.CheckCatalogResourceRequest
-	2,  // 54: goa_ai_registry.Registry.ListCatalogResources:input_type -> goa_ai_registry.ListCatalogResourcesRequest
-	7,  // 55: goa_ai_registry.Registry.RegisterAgentExports:input_type -> goa_ai_registry.RegisterAgentExportsRequest
-	27, // 56: goa_ai_registry.Registry.ValidateAgentExports:input_type -> goa_ai_registry.ValidateAgentExportsRequest
-	29, // 57: goa_ai_registry.Registry.RetireAgentResource:input_type -> goa_ai_registry.RetireAgentResourceRequest
-	31, // 58: goa_ai_registry.Registry.DeclareServiceToolset:input_type -> goa_ai_registry.DeclareServiceToolsetRequest
-	33, // 59: goa_ai_registry.Registry.ReplaceServiceToolset:input_type -> goa_ai_registry.ReplaceServiceToolsetRequest
-	35, // 60: goa_ai_registry.Registry.AttachProvider:input_type -> goa_ai_registry.AttachProviderRequest
-	37, // 61: goa_ai_registry.Registry.Register:input_type -> goa_ai_registry.RegisterRequest
-	39, // 62: goa_ai_registry.Registry.RenewProvider:input_type -> goa_ai_registry.RenewProviderRequest
-	41, // 63: goa_ai_registry.Registry.ReleaseProvider:input_type -> goa_ai_registry.ReleaseProviderRequest
-	43, // 64: goa_ai_registry.Registry.DrainProvider:input_type -> goa_ai_registry.DrainProviderRequest
-	45, // 65: goa_ai_registry.Registry.Unregister:input_type -> goa_ai_registry.UnregisterRequest
-	47, // 66: goa_ai_registry.Registry.Pong:input_type -> goa_ai_registry.PongRequest
-	49, // 67: goa_ai_registry.Registry.RegisterAgentToolset:input_type -> goa_ai_registry.RegisterAgentToolsetRequest
-	51, // 68: goa_ai_registry.Registry.ReplaceAgentToolset:input_type -> goa_ai_registry.ReplaceAgentToolsetRequest
-	53, // 69: goa_ai_registry.Registry.ListToolsets:input_type -> goa_ai_registry.ListToolsetsRequest
-	56, // 70: goa_ai_registry.Registry.GetToolset:input_type -> goa_ai_registry.GetToolsetRequest
-	58, // 71: goa_ai_registry.Registry.ResolveToolset:input_type -> goa_ai_registry.ResolveToolsetRequest
-	60, // 72: goa_ai_registry.Registry.CheckAdmission:input_type -> goa_ai_registry.CheckAdmissionRequest
-	62, // 73: goa_ai_registry.Registry.Search:input_type -> goa_ai_registry.SearchRequest
-	64, // 74: goa_ai_registry.Registry.CallTool:input_type -> goa_ai_registry.CallToolRequest
-	70, // 75: goa_ai_registry.Registry.CallResolvedTool:input_type -> goa_ai_registry.CallResolvedToolRequest
-	72, // 76: goa_ai_registry.Registry.RetryTool:input_type -> goa_ai_registry.RetryToolRequest
-	74, // 77: goa_ai_registry.Registry.CompleteToolCall:input_type -> goa_ai_registry.CompleteToolCallRequest
-	76, // 78: goa_ai_registry.Registry.PublishToolOutputDelta:input_type -> goa_ai_registry.PublishToolOutputDeltaRequest
-	78, // 79: goa_ai_registry.Registry.ReportToolCallOverload:input_type -> goa_ai_registry.ReportToolCallOverloadRequest
-	80, // 80: goa_ai_registry.Registry.ClaimToolCall:input_type -> goa_ai_registry.ClaimToolCallRequest
-	1,  // 81: goa_ai_registry.Registry.CheckCatalogResource:output_type -> goa_ai_registry.CheckCatalogResourceResponse
-	3,  // 82: goa_ai_registry.Registry.ListCatalogResources:output_type -> goa_ai_registry.ListCatalogResourcesResponse
-	25, // 83: goa_ai_registry.Registry.RegisterAgentExports:output_type -> goa_ai_registry.RegisterAgentExportsResponse
-	28, // 84: goa_ai_registry.Registry.ValidateAgentExports:output_type -> goa_ai_registry.ValidateAgentExportsResponse
-	30, // 85: goa_ai_registry.Registry.RetireAgentResource:output_type -> goa_ai_registry.RetireAgentResourceResponse
-	32, // 86: goa_ai_registry.Registry.DeclareServiceToolset:output_type -> goa_ai_registry.DeclareServiceToolsetResponse
-	34, // 87: goa_ai_registry.Registry.ReplaceServiceToolset:output_type -> goa_ai_registry.ReplaceServiceToolsetResponse
-	36, // 88: goa_ai_registry.Registry.AttachProvider:output_type -> goa_ai_registry.AttachProviderResponse
-	38, // 89: goa_ai_registry.Registry.Register:output_type -> goa_ai_registry.RegisterResponse
-	40, // 90: goa_ai_registry.Registry.RenewProvider:output_type -> goa_ai_registry.RenewProviderResponse
-	42, // 91: goa_ai_registry.Registry.ReleaseProvider:output_type -> goa_ai_registry.ReleaseProviderResponse
-	44, // 92: goa_ai_registry.Registry.DrainProvider:output_type -> goa_ai_registry.DrainProviderResponse
-	46, // 93: goa_ai_registry.Registry.Unregister:output_type -> goa_ai_registry.UnregisterResponse
-	48, // 94: goa_ai_registry.Registry.Pong:output_type -> goa_ai_registry.PongResponse
-	50, // 95: goa_ai_registry.Registry.RegisterAgentToolset:output_type -> goa_ai_registry.RegisterAgentToolsetResponse
-	52, // 96: goa_ai_registry.Registry.ReplaceAgentToolset:output_type -> goa_ai_registry.ReplaceAgentToolsetResponse
-	54, // 97: goa_ai_registry.Registry.ListToolsets:output_type -> goa_ai_registry.ListToolsetsResponse
-	57, // 98: goa_ai_registry.Registry.GetToolset:output_type -> goa_ai_registry.GetToolsetResponse
-	59, // 99: goa_ai_registry.Registry.ResolveToolset:output_type -> goa_ai_registry.ResolveToolsetResponse
-	61, // 100: goa_ai_registry.Registry.CheckAdmission:output_type -> goa_ai_registry.CheckAdmissionResponse
-	63, // 101: goa_ai_registry.Registry.Search:output_type -> goa_ai_registry.SearchResponse
-	69, // 102: goa_ai_registry.Registry.CallTool:output_type -> goa_ai_registry.CallToolResponse
-	71, // 103: goa_ai_registry.Registry.CallResolvedTool:output_type -> goa_ai_registry.CallResolvedToolResponse
-	73, // 104: goa_ai_registry.Registry.RetryTool:output_type -> goa_ai_registry.RetryToolResponse
-	75, // 105: goa_ai_registry.Registry.CompleteToolCall:output_type -> goa_ai_registry.CompleteToolCallResponse
-	77, // 106: goa_ai_registry.Registry.PublishToolOutputDelta:output_type -> goa_ai_registry.PublishToolOutputDeltaResponse
-	79, // 107: goa_ai_registry.Registry.ReportToolCallOverload:output_type -> goa_ai_registry.ReportToolCallOverloadResponse
-	81, // 108: goa_ai_registry.Registry.ClaimToolCall:output_type -> goa_ai_registry.ClaimToolCallResponse
-	81, // [81:109] is the sub-list for method output_type
-	53, // [53:81] is the sub-list for method input_type
-	53, // [53:53] is the sub-list for extension type_name
-	53, // [53:53] is the sub-list for extension extendee
-	0,  // [0:53] is the sub-list for field type_name
+	62, // 42: goa_ai_registry.GetToolsetSchemasResponse.tools:type_name -> goa_ai_registry.ToolSchemas
+	55, // 43: goa_ai_registry.SearchResponse.toolsets:type_name -> goa_ai_registry.ToolsetInfo
+	68, // 44: goa_ai_registry.CallToolRequest.meta:type_name -> goa_ai_registry.ToolCallMeta
+	87, // 45: goa_ai_registry.ToolCallMeta.labels:type_name -> goa_ai_registry.ToolCallMeta.LabelsEntry
+	69, // 46: goa_ai_registry.ToolCallMeta.execution_continuation:type_name -> goa_ai_registry.ToolOperationExecutionContinuation
+	70, // 47: goa_ai_registry.ToolOperationExecutionContinuation.input:type_name -> goa_ai_registry.ToolOperationInputContinuation
+	71, // 48: goa_ai_registry.ToolOperationExecutionContinuation.task_update:type_name -> goa_ai_registry.ToolOperationTaskAnswers
+	88, // 49: goa_ai_registry.ToolOperationInputContinuation.responses:type_name -> goa_ai_registry.ToolOperationInputContinuation.ResponsesEntry
+	89, // 50: goa_ai_registry.ToolOperationTaskAnswers.responses:type_name -> goa_ai_registry.ToolOperationTaskAnswers.ResponsesEntry
+	68, // 51: goa_ai_registry.CallResolvedToolRequest.meta:type_name -> goa_ai_registry.ToolCallMeta
+	68, // 52: goa_ai_registry.RetryToolRequest.meta:type_name -> goa_ai_registry.ToolCallMeta
+	18, // 53: goa_ai_registry.ConsumerContract.MetaEntry.value:type_name -> goa_ai_registry.ArrayOfString
+	0,  // 54: goa_ai_registry.Registry.CheckCatalogResource:input_type -> goa_ai_registry.CheckCatalogResourceRequest
+	2,  // 55: goa_ai_registry.Registry.ListCatalogResources:input_type -> goa_ai_registry.ListCatalogResourcesRequest
+	7,  // 56: goa_ai_registry.Registry.RegisterAgentExports:input_type -> goa_ai_registry.RegisterAgentExportsRequest
+	27, // 57: goa_ai_registry.Registry.ValidateAgentExports:input_type -> goa_ai_registry.ValidateAgentExportsRequest
+	29, // 58: goa_ai_registry.Registry.RetireAgentResource:input_type -> goa_ai_registry.RetireAgentResourceRequest
+	31, // 59: goa_ai_registry.Registry.DeclareServiceToolset:input_type -> goa_ai_registry.DeclareServiceToolsetRequest
+	33, // 60: goa_ai_registry.Registry.ReplaceServiceToolset:input_type -> goa_ai_registry.ReplaceServiceToolsetRequest
+	35, // 61: goa_ai_registry.Registry.AttachProvider:input_type -> goa_ai_registry.AttachProviderRequest
+	37, // 62: goa_ai_registry.Registry.Register:input_type -> goa_ai_registry.RegisterRequest
+	39, // 63: goa_ai_registry.Registry.RenewProvider:input_type -> goa_ai_registry.RenewProviderRequest
+	41, // 64: goa_ai_registry.Registry.ReleaseProvider:input_type -> goa_ai_registry.ReleaseProviderRequest
+	43, // 65: goa_ai_registry.Registry.DrainProvider:input_type -> goa_ai_registry.DrainProviderRequest
+	45, // 66: goa_ai_registry.Registry.Unregister:input_type -> goa_ai_registry.UnregisterRequest
+	47, // 67: goa_ai_registry.Registry.Pong:input_type -> goa_ai_registry.PongRequest
+	49, // 68: goa_ai_registry.Registry.RegisterAgentToolset:input_type -> goa_ai_registry.RegisterAgentToolsetRequest
+	51, // 69: goa_ai_registry.Registry.ReplaceAgentToolset:input_type -> goa_ai_registry.ReplaceAgentToolsetRequest
+	53, // 70: goa_ai_registry.Registry.ListToolsets:input_type -> goa_ai_registry.ListToolsetsRequest
+	56, // 71: goa_ai_registry.Registry.GetToolset:input_type -> goa_ai_registry.GetToolsetRequest
+	58, // 72: goa_ai_registry.Registry.ResolveToolset:input_type -> goa_ai_registry.ResolveToolsetRequest
+	60, // 73: goa_ai_registry.Registry.GetToolsetSchemas:input_type -> goa_ai_registry.GetToolsetSchemasRequest
+	63, // 74: goa_ai_registry.Registry.CheckAdmission:input_type -> goa_ai_registry.CheckAdmissionRequest
+	65, // 75: goa_ai_registry.Registry.Search:input_type -> goa_ai_registry.SearchRequest
+	67, // 76: goa_ai_registry.Registry.CallTool:input_type -> goa_ai_registry.CallToolRequest
+	73, // 77: goa_ai_registry.Registry.CallResolvedTool:input_type -> goa_ai_registry.CallResolvedToolRequest
+	75, // 78: goa_ai_registry.Registry.RetryTool:input_type -> goa_ai_registry.RetryToolRequest
+	77, // 79: goa_ai_registry.Registry.CompleteToolCall:input_type -> goa_ai_registry.CompleteToolCallRequest
+	79, // 80: goa_ai_registry.Registry.PublishToolOutputDelta:input_type -> goa_ai_registry.PublishToolOutputDeltaRequest
+	81, // 81: goa_ai_registry.Registry.ReportToolCallOverload:input_type -> goa_ai_registry.ReportToolCallOverloadRequest
+	83, // 82: goa_ai_registry.Registry.ClaimToolCall:input_type -> goa_ai_registry.ClaimToolCallRequest
+	1,  // 83: goa_ai_registry.Registry.CheckCatalogResource:output_type -> goa_ai_registry.CheckCatalogResourceResponse
+	3,  // 84: goa_ai_registry.Registry.ListCatalogResources:output_type -> goa_ai_registry.ListCatalogResourcesResponse
+	25, // 85: goa_ai_registry.Registry.RegisterAgentExports:output_type -> goa_ai_registry.RegisterAgentExportsResponse
+	28, // 86: goa_ai_registry.Registry.ValidateAgentExports:output_type -> goa_ai_registry.ValidateAgentExportsResponse
+	30, // 87: goa_ai_registry.Registry.RetireAgentResource:output_type -> goa_ai_registry.RetireAgentResourceResponse
+	32, // 88: goa_ai_registry.Registry.DeclareServiceToolset:output_type -> goa_ai_registry.DeclareServiceToolsetResponse
+	34, // 89: goa_ai_registry.Registry.ReplaceServiceToolset:output_type -> goa_ai_registry.ReplaceServiceToolsetResponse
+	36, // 90: goa_ai_registry.Registry.AttachProvider:output_type -> goa_ai_registry.AttachProviderResponse
+	38, // 91: goa_ai_registry.Registry.Register:output_type -> goa_ai_registry.RegisterResponse
+	40, // 92: goa_ai_registry.Registry.RenewProvider:output_type -> goa_ai_registry.RenewProviderResponse
+	42, // 93: goa_ai_registry.Registry.ReleaseProvider:output_type -> goa_ai_registry.ReleaseProviderResponse
+	44, // 94: goa_ai_registry.Registry.DrainProvider:output_type -> goa_ai_registry.DrainProviderResponse
+	46, // 95: goa_ai_registry.Registry.Unregister:output_type -> goa_ai_registry.UnregisterResponse
+	48, // 96: goa_ai_registry.Registry.Pong:output_type -> goa_ai_registry.PongResponse
+	50, // 97: goa_ai_registry.Registry.RegisterAgentToolset:output_type -> goa_ai_registry.RegisterAgentToolsetResponse
+	52, // 98: goa_ai_registry.Registry.ReplaceAgentToolset:output_type -> goa_ai_registry.ReplaceAgentToolsetResponse
+	54, // 99: goa_ai_registry.Registry.ListToolsets:output_type -> goa_ai_registry.ListToolsetsResponse
+	57, // 100: goa_ai_registry.Registry.GetToolset:output_type -> goa_ai_registry.GetToolsetResponse
+	59, // 101: goa_ai_registry.Registry.ResolveToolset:output_type -> goa_ai_registry.ResolveToolsetResponse
+	61, // 102: goa_ai_registry.Registry.GetToolsetSchemas:output_type -> goa_ai_registry.GetToolsetSchemasResponse
+	64, // 103: goa_ai_registry.Registry.CheckAdmission:output_type -> goa_ai_registry.CheckAdmissionResponse
+	66, // 104: goa_ai_registry.Registry.Search:output_type -> goa_ai_registry.SearchResponse
+	72, // 105: goa_ai_registry.Registry.CallTool:output_type -> goa_ai_registry.CallToolResponse
+	74, // 106: goa_ai_registry.Registry.CallResolvedTool:output_type -> goa_ai_registry.CallResolvedToolResponse
+	76, // 107: goa_ai_registry.Registry.RetryTool:output_type -> goa_ai_registry.RetryToolResponse
+	78, // 108: goa_ai_registry.Registry.CompleteToolCall:output_type -> goa_ai_registry.CompleteToolCallResponse
+	80, // 109: goa_ai_registry.Registry.PublishToolOutputDelta:output_type -> goa_ai_registry.PublishToolOutputDeltaResponse
+	82, // 110: goa_ai_registry.Registry.ReportToolCallOverload:output_type -> goa_ai_registry.ReportToolCallOverloadResponse
+	84, // 111: goa_ai_registry.Registry.ClaimToolCall:output_type -> goa_ai_registry.ClaimToolCallResponse
+	83, // [83:112] is the sub-list for method output_type
+	54, // [54:83] is the sub-list for method input_type
+	54, // [54:54] is the sub-list for extension type_name
+	54, // [54:54] is the sub-list for extension extendee
+	0,  // [0:54] is the sub-list for field type_name
 }
 
 func init() { file_goagen_registry_registry_proto_init() }
@@ -6709,17 +6970,17 @@ func file_goagen_registry_registry_proto_init() {
 	file_goagen_registry_registry_proto_msgTypes[60].OneofWrappers = []any{}
 	file_goagen_registry_registry_proto_msgTypes[61].OneofWrappers = []any{}
 	file_goagen_registry_registry_proto_msgTypes[62].OneofWrappers = []any{}
+	file_goagen_registry_registry_proto_msgTypes[63].OneofWrappers = []any{}
 	file_goagen_registry_registry_proto_msgTypes[64].OneofWrappers = []any{}
 	file_goagen_registry_registry_proto_msgTypes[65].OneofWrappers = []any{}
-	file_goagen_registry_registry_proto_msgTypes[66].OneofWrappers = []any{
+	file_goagen_registry_registry_proto_msgTypes[67].OneofWrappers = []any{}
+	file_goagen_registry_registry_proto_msgTypes[68].OneofWrappers = []any{}
+	file_goagen_registry_registry_proto_msgTypes[69].OneofWrappers = []any{
 		(*ToolOperationExecutionContinuation_Input)(nil),
 		(*ToolOperationExecutionContinuation_TaskGet)(nil),
 		(*ToolOperationExecutionContinuation_TaskUpdate)(nil),
 		(*ToolOperationExecutionContinuation_TaskCancel)(nil),
 	}
-	file_goagen_registry_registry_proto_msgTypes[67].OneofWrappers = []any{}
-	file_goagen_registry_registry_proto_msgTypes[68].OneofWrappers = []any{}
-	file_goagen_registry_registry_proto_msgTypes[69].OneofWrappers = []any{}
 	file_goagen_registry_registry_proto_msgTypes[70].OneofWrappers = []any{}
 	file_goagen_registry_registry_proto_msgTypes[71].OneofWrappers = []any{}
 	file_goagen_registry_registry_proto_msgTypes[72].OneofWrappers = []any{}
@@ -6727,16 +6988,19 @@ func file_goagen_registry_registry_proto_init() {
 	file_goagen_registry_registry_proto_msgTypes[74].OneofWrappers = []any{}
 	file_goagen_registry_registry_proto_msgTypes[75].OneofWrappers = []any{}
 	file_goagen_registry_registry_proto_msgTypes[76].OneofWrappers = []any{}
+	file_goagen_registry_registry_proto_msgTypes[77].OneofWrappers = []any{}
 	file_goagen_registry_registry_proto_msgTypes[78].OneofWrappers = []any{}
-	file_goagen_registry_registry_proto_msgTypes[80].OneofWrappers = []any{}
+	file_goagen_registry_registry_proto_msgTypes[79].OneofWrappers = []any{}
 	file_goagen_registry_registry_proto_msgTypes[81].OneofWrappers = []any{}
+	file_goagen_registry_registry_proto_msgTypes[83].OneofWrappers = []any{}
+	file_goagen_registry_registry_proto_msgTypes[84].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_goagen_registry_registry_proto_rawDesc), len(file_goagen_registry_registry_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   87,
+			NumMessages:   90,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

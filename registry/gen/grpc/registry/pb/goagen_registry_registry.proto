@@ -125,6 +125,12 @@ service Registry {
 // provider replacement cannot change the contract selected by the model.
 // Resolution describes registered tools; it does not guarantee provider health.
 	rpc ResolveToolset (.goa_ai_registry.ResolveToolsetRequest) returns (.goa_ai_registry.ResolveToolsetResponse);
+	// Inspect an active toolset's descriptive fields and argument, result, and
+// sidecar schemas without requesting executable consumer metadata or a
+// registration token. Historical registrations remain inspectable when their
+// consumer metadata cannot be represented by the current executable contract.
+// This read does not grant execution authority or promise provider readiness.
+	rpc GetToolsetSchemas (.goa_ai_registry.GetToolsetSchemasRequest) returns (.goa_ai_registry.GetToolsetSchemasResponse);
 	// Report whether the exact registration token derived from a deployed
 // provider's generated tool schemas is active and currently has an unexpired,
 // non-draining provider lease plus a fresh authenticated pong. Release
@@ -828,6 +834,42 @@ message ResolveToolsetResponse {
 	// Exact registration required when executing a call selected from this
 // definition.
 	optional string registration_token = 2;
+}
+
+message GetToolsetSchemasRequest {
+	// Name of the toolset to retrieve
+	optional string name = 1;
+}
+
+message GetToolsetSchemasResponse {
+	// Unique name of the saved toolset.
+	optional string name = 1;
+	// Human-readable description.
+	optional string description = 2;
+	// Semantic version of the toolset.
+	optional string version = 3;
+	// Tags for categorization.
+	repeated string tags = 4;
+	// Saved schemas and descriptive fields for each tool.
+	repeated ToolSchemas tools = 5;
+	// Time the active registration was saved.
+	optional string registered_at = 6;
+}
+// Saved argument, result, and optional sidecar schemas with their original
+// descriptive fields. This type is not an executable tool declaration.
+message ToolSchemas {
+	// Original full tool identifier.
+	optional string name = 1;
+	// Human-readable description of the tool.
+	optional string description = 2;
+	// Tool categorization tags.
+	repeated string tags = 3;
+	// Original JSON schema for model-supplied arguments.
+	optional bytes payload_schema = 4;
+	// Original JSON schema for the result.
+	optional bytes result_schema = 5;
+	// Original JSON schema for optional sidecar output.
+	optional bytes sidecar_schema = 6;
 }
 
 message CheckAdmissionRequest {

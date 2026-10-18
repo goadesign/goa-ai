@@ -40,6 +40,7 @@ type Server struct {
 	ListToolsetsH           goagrpc.UnaryHandler
 	GetToolsetH             goagrpc.UnaryHandler
 	ResolveToolsetH         goagrpc.UnaryHandler
+	GetToolsetSchemasH      goagrpc.UnaryHandler
 	CheckAdmissionH         goagrpc.UnaryHandler
 	SearchH                 goagrpc.UnaryHandler
 	CallToolH               goagrpc.UnaryHandler
@@ -74,6 +75,7 @@ func New(e *registry.Endpoints, uh goagrpc.UnaryHandler) *Server {
 		ListToolsetsH:           NewListToolsetsHandler(e.ListToolsets, uh),
 		GetToolsetH:             NewGetToolsetHandler(e.GetToolset, uh),
 		ResolveToolsetH:         NewResolveToolsetHandler(e.ResolveToolset, uh),
+		GetToolsetSchemasH:      NewGetToolsetSchemasHandler(e.GetToolsetSchemas, uh),
 		CheckAdmissionH:         NewCheckAdmissionHandler(e.CheckAdmission, uh),
 		SearchH:                 NewSearchHandler(e.Search, uh),
 		CallToolH:               NewCallToolHandler(e.CallTool, uh),
@@ -680,6 +682,38 @@ func (s *Server) ResolveToolset(ctx context.Context, message *registrypb.Resolve
 		return nil, goagrpc.EncodeError(err)
 	}
 	return resp.(*registrypb.ResolveToolsetResponse), nil
+}
+
+// NewGetToolsetSchemasHandler creates a gRPC handler which serves the
+// "registry" service "GetToolsetSchemas" endpoint.
+func NewGetToolsetSchemasHandler(endpoint goa.Endpoint, h goagrpc.UnaryHandler) goagrpc.UnaryHandler {
+	if h == nil {
+		h = goagrpc.NewUnaryHandler(endpoint, DecodeGetToolsetSchemasRequest, EncodeGetToolsetSchemasResponse)
+	}
+	return h
+}
+
+// GetToolsetSchemas implements the "GetToolsetSchemas" method in
+// registrypb.RegistryServer interface.
+func (s *Server) GetToolsetSchemas(ctx context.Context, message *registrypb.GetToolsetSchemasRequest) (*registrypb.GetToolsetSchemasResponse, error) {
+	ctx = context.WithValue(ctx, goa.MethodKey, "GetToolsetSchemas")
+	ctx = context.WithValue(ctx, goa.ServiceKey, "registry")
+	resp, err := s.GetToolsetSchemasH.Handle(ctx, message)
+	if err != nil {
+		en, _, _ := errorOwner(err)
+		if en != nil {
+			switch en.GoaErrorName() {
+			case "not_found":
+				return nil, goagrpc.NewStatusError(codes.NotFound, err, goagrpc.NewErrorResponse(err))
+			case "forbidden":
+				return nil, goagrpc.NewStatusError(codes.PermissionDenied, err, goagrpc.NewErrorResponse(err))
+			case "service_unavailable":
+				return nil, goagrpc.NewStatusError(codes.Unavailable, err, goagrpc.NewErrorResponse(err))
+			}
+		}
+		return nil, goagrpc.EncodeError(err)
+	}
+	return resp.(*registrypb.GetToolsetSchemasResponse), nil
 }
 
 // NewCheckAdmissionHandler creates a gRPC handler which serves the "registry"
