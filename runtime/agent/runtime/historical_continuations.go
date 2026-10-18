@@ -171,7 +171,8 @@ func (r *Runtime) loadLiteralContinuationOutputs(
 
 // validateHistoricalContinuationBounds checks the paging facts of a saved
 // successful call. Historical failures supply no paging state and are excluded
-// by the readers; current execution outputs retain their complete validation.
+// by the readers. A saved result without bounds supplies no next page; current
+// execution outputs retain their complete validation.
 func (r *Runtime) validateHistoricalContinuationBounds(output *planner.ToolOutput, subject genrunidentity.RunSubject) error {
 	call := ToolCall{Name: output.Name, ToolCallID: output.ToolCallID, Registry: output.Registry, Subject: subject}
 	spec, ok, err := r.callSpec(call)
@@ -180,6 +181,9 @@ func (r *Runtime) validateHistoricalContinuationBounds(output *planner.ToolOutpu
 	}
 	if !ok {
 		return fmt.Errorf("runtime: historical continuation references unregistered tool %q", output.Name)
+	}
+	if output.Bounds == nil {
+		return nil
 	}
 	if err := validateToolBoundsContract(spec, call, false, output.Bounds); err != nil {
 		return fmt.Errorf("runtime: invalid historical continuation metadata (tool_call_id=%s): %w", output.ToolCallID, err)

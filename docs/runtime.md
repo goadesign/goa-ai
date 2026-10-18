@@ -3672,7 +3672,10 @@ remain in the exact saved transcript, but cannot provide another page and are
 not restored as current execution outputs. This applies to literal history and
 exact saved-result references. Current outputs and suspended executable state
 retain the full result contract above; successful historical calls still require
-valid ownership, call/result identities, byte counts, and paging metadata.
+valid ownership, call/result identities, and byte counts. Absent historical
+bounds supply no next page and retire an earlier live cursor in the same chain.
+Present bounds must satisfy the paging contract above. The runtime preserves
+the saved result bytes and chronological order without inventing bounds.
 
 When `tools.ToolSpec.Bounds.Paging` names a dedicated continuation, the runtime
 advances compatible zero-item results with a non-empty next cursor before

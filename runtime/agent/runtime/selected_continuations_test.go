@@ -164,7 +164,6 @@ func testSelectedContinuationNextTurnFromLiteralRun(t *testing.T, failed bool) {
 	appendHistoricalHookEvent(t, store, call, "call", 1)
 	result := hooks.NewToolResultReceivedEvent("literal-completed", subject, "session-1", "literal-predecessor",
 		spec.Name, "saved-call", "", rawjson.Message(`{"approved":true}`), nil, nil, "Approved", nil, time.Second, nil, nil)
-	result.Bounds = &agent.Bounds{Returned: 1}
 	if failed {
 		result.ResultJSON = nil
 		result.ResultBytes = 0
@@ -188,6 +187,7 @@ func testSelectedContinuationNextTurnFromLiteralRun(t *testing.T, failed bool) {
 		WorkflowHandler: rt.ExecuteWorkflow, PlanActivityName: "svc.plan", ResumeActivityName: "svc.resume", ExecuteToolActivity: "svc.execute",
 		Planner: &stubPlanner{start: func(_ context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
 			starts++
+			assert.Empty(t, historicalActions(input.Agent))
 			expected := append(append([]*model.Message(nil), oldMessages...), userMsg("Reply with a new answer."))
 			expectedBytes, err := transcript.EncodeRunLogDelta(expected)
 			require.NoError(t, err)

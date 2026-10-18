@@ -262,6 +262,8 @@ Custom stores must follow the [preparation ownership upgrade](docs/runtime.md#pr
   across worker restarts. New turns preserve saved results completed by a later
   run, including conversations stored as literal history. Failed calls stay in
   the transcript and do not block later turns by restoring old paging state.
+  Saved results without bounds remain evidence and supply no next page;
+  current bounded results still require bounds.
   The in-memory engine supports local development.
 - **Policies and context.** Control permitted tools, call and recovery budgets,
   timing, history compression, prompt caching, and prompt overrides.

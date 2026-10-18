@@ -1,9 +1,15 @@
 package runtime
 
+// These tests restore saved tool results as evidence for later turns. They
+// verify that paging actions use validated metadata without rewriting history
+// or relaxing validation for outputs used by current work.
+
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -12,6 +18,7 @@ import (
 
 	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -25,6 +32,7 @@ func TestPlanStartPreservesHistoricalResultAfterContractChange(t *testing.T) {
 		name   string
 		bounds *agent.Bounds
 	}{
+		{name: "without bounds"},
 		{name: "complete", bounds: &agent.Bounds{Returned: 1}},
 		{name: "refinement only", bounds: &agent.Bounds{
 			Returned: 1, Truncated: true, RefinementHint: "Narrow the query.",
@@ -83,7 +91,7 @@ func TestPlanStartPreservesHistoricalResultAfterContractChange(t *testing.T) {
 			require.NoError(t, err)
 			afterBytes, err := json.Marshal(after)
 			require.NoError(t, err)
-			assert.Equal(t, recordBytes, afterBytes)
+			assert.Equal(t, sha256.Sum256(recordBytes), sha256.Sum256(afterBytes))
 			// The same old bytes are still rejected when actual work needs a typed result.
 			events := &canonicalToolEvents{scheduled: call, result: result}
 			_, err = rt.plannerToolOutputFromCanonicalEvents("run-1", "run-1", "source-1", events, events)
@@ -93,41 +101,11 @@ func TestPlanStartPreservesHistoricalResultAfterContractChange(t *testing.T) {
 }
 
 func TestHistoricalContinuationRetiresCompletedChainAfterContractChange(t *testing.T) {
-	rt, search, continuation := continuationTestRuntime()
-	store := newTestStore()
-	rt.Store = store
-	continuation.Result.Codec.FromJSON = func([]byte) (any, error) {
-		return nil, errors.New("old page shape")
+	for _, bounds := range []*agent.Bounds{nil, {Returned: 1}} {
+		t.Run(fmt.Sprintf("bounds=%v", bounds), func(t *testing.T) {
+			testHistoricalContinuationRetiresCompletedChain(t, bounds)
+		})
 	}
-	rt.toolSpecs[continuation.Name] = continuation
-	for index, callID := range []string{"source-1", "last-page"} {
-		name := search.Name
-		payload := rawjson.Message(`{"query":"records"}`)
-		bounds := &agent.Bounds{Returned: 1, Truncated: true, NextCursor: pointer("page-2")}
-		if index == 1 {
-			name = continuation.Name
-			payload = rawjson.Message(`{"cursor":"page-2"}`)
-			bounds = &agent.Bounds{Returned: 1}
-		}
-		call := hooks.NewToolCallScheduledEvent("run-1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, "session-1", name,
-			callID, payload, "", "", 0)
-		if index == 1 {
-			call.ContinuationRootToolCallID = "source-1"
-		}
-		appendHistoricalHookEvent(t, store, call, callID, int64(index*2+1))
-		result := hooks.NewToolResultReceivedEvent("run-1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, "session-1", "run-1",
-			name, callID, "", rawjson.Message(`{"old_items":["evidence"]}`), nil, nil, "Page", bounds, time.Second, nil, nil)
-		appendHistoricalHookEvent(t, store, result, callID+"-result", int64(index*2+2))
-	}
-	outputs, err := rt.loadHistoricalContinuationOutputs(t.Context(), testResolvedPlanInput(t, rt, seedTestPlanInput(t, rt, PlanActivityInput{AgentID: "svc.agent", RunContext: run.Context{SessionID: "session-1"}}, []*model.Message{{Role: model.ConversationRoleAssistant, Parts: []model.Part{
-		model.ToolUsePart{ID: "source-1", Name: search.Name.String(), Input: rawjson.Message(`{}`)},
-		model.ToolUsePart{ID: "last-page", Name: continuationActionName(continuation.Name, "source-1").String(), Input: rawjson.Message(`{}`)},
-	}}})), rt.toolSpecs)
-	require.NoError(t, err)
-	require.Len(t, outputs, 2)
-	actions, err := rt.availableContinuationActions("svc.agent", outputs, false)
-	require.NoError(t, err)
-	assert.Empty(t, actions)
 }
 
 func TestHistoricalContinuationValidatesOnlySuccessfulMetadata(t *testing.T) {
@@ -149,9 +127,6 @@ func TestHistoricalContinuationValidatesOnlySuccessfulMetadata(t *testing.T) {
 		{name: "byte count", mutate: func(result *hooks.ToolResultReceivedEvent) {
 			result.ResultBytes++
 		}, wantErr: "size mismatch"},
-		{name: "missing bounds", mutate: func(result *hooks.ToolResultReceivedEvent) {
-			result.Bounds = nil
-		}, wantErr: "without bounds"},
 		{name: "empty cursor", mutate: func(result *hooks.ToolResultReceivedEvent) {
 			result.Bounds.NextCursor = pointer("")
 		}, wantErr: "empty next_cursor"},
@@ -188,4 +163,95 @@ func TestHistoricalContinuationValidatesOnlySuccessfulMetadata(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHistoricalContinuationBoundsRetainsRegisteredContract(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		registered bool
+		bounds     *agent.Bounds
+		wantErr    string
+	}{
+		{name: "unbounded without bounds", registered: true},
+		{name: "unbounded with bounds", registered: true, bounds: &agent.Bounds{Returned: 1}, wantErr: "unexpected bounds"},
+		{name: "unregistered without bounds", wantErr: "unregistered tool"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rt, _, _ := continuationTestRuntime()
+			spec := newAnyJSONSpec("tools.unbounded")
+			if tc.registered {
+				seedTestToolSpecs(rt, spec)
+			}
+			err := rt.validateHistoricalContinuationBounds(&planner.ToolOutput{
+				Name: spec.Name, ToolCallID: "saved-call", Bounds: tc.bounds,
+			}, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))})
+			if tc.wantErr != "" {
+				assert.ErrorContains(t, err, tc.wantErr)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
+
+// testHistoricalContinuationRetiresCompletedChain reads a source and its final
+// saved page, then checks that both results remain ordered and no action remains.
+func testHistoricalContinuationRetiresCompletedChain(t *testing.T, terminalBounds *agent.Bounds) {
+	t.Helper()
+	rt, search, continuation := continuationTestRuntime()
+	store := newTestStore()
+	rt.Store = store
+	continuation.Result.Codec.FromJSON = func([]byte) (any, error) {
+		return nil, errors.New("old page shape")
+	}
+	rt.toolSpecs[continuation.Name] = continuation
+	for index, callID := range []string{"source-1", "last-page"} {
+		name := search.Name
+		payload := rawjson.Message(`{"query":"records"}`)
+		bounds := &agent.Bounds{Returned: 1, Truncated: true, NextCursor: pointer("page-2")}
+		if index == 1 {
+			name = continuation.Name
+			payload = rawjson.Message(`{"cursor":"page-2"}`)
+			bounds = terminalBounds
+		}
+		call := hooks.NewToolCallScheduledEvent("run-1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, "session-1", name,
+			callID, payload, "", "", 0)
+		if index == 1 {
+			call.ContinuationRootToolCallID = "source-1"
+		}
+		appendHistoricalHookEvent(t, store, call, callID, int64(index*2+1))
+		result := hooks.NewToolResultReceivedEvent("run-1", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))}, "session-1", "run-1",
+			name, callID, "", rawjson.Message(`{"old_items":["evidence"]}`), nil, nil, "Page", bounds, time.Second, nil, nil)
+		appendHistoricalHookEvent(t, store, result, callID+"-result", int64(index*2+2))
+	}
+	outputs, err := rt.loadHistoricalContinuationOutputs(t.Context(), testResolvedPlanInput(t, rt, seedTestPlanInput(t, rt, PlanActivityInput{AgentID: "svc.agent", RunContext: run.Context{SessionID: "session-1"}}, []*model.Message{{Role: model.ConversationRoleAssistant, Parts: []model.Part{
+		model.ToolUsePart{ID: "source-1", Name: search.Name.String(), Input: rawjson.Message(`{}`)},
+		model.ToolUsePart{ID: "last-page", Name: continuationActionName(continuation.Name, "source-1").String(), Input: rawjson.Message(`{}`)},
+	}}})), rt.toolSpecs)
+	require.NoError(t, err)
+	require.Len(t, outputs, 2)
+	assert.Equal(t, "source-1", outputs[0].ToolCallID)
+	assert.Equal(t, "last-page", outputs[1].ToolCallID)
+	assert.Equal(t, terminalBounds, outputs[1].Bounds)
+	assert.Equal(t, rawjson.Message(`{"old_items":["evidence"]}`), outputs[1].Result)
+	actions, err := rt.availableContinuationActions("svc.agent", outputs, false)
+	require.NoError(t, err)
+	assert.Empty(t, actions)
+	reader := selectedContinuationReader{
+		runtime: rt,
+		input: &resolvedPlanActivityInput{PlanActivityInput: &PlanActivityInput{
+			AgentID: "svc.agent", RunContext: run.Context{SessionID: "session-1"},
+		}},
+		specs: rt.toolSpecs, runs: map[string]struct{}{"run-1": {}},
+		events: make(map[string]map[string]*canonicalToolEvents), seen: make(map[continuationOutputKey]struct{}),
+	}
+	for _, callID := range []string{"source-1", "last-page"} {
+		require.NoError(t, reader.addReference(t.Context(), &api.ToolOutputRef{
+			CallRunID: "run-1", ResultRunID: "run-1", ToolCallID: callID,
+		}))
+	}
+	assert.Equal(t, outputs, reader.outputs)
+	actions, err = rt.availableContinuationActions("svc.agent", reader.outputs, false)
+	require.NoError(t, err)
+	assert.Empty(t, actions)
 }
