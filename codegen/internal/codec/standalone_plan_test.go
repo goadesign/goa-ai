@@ -217,7 +217,7 @@ func standaloneTestType(name string, dataType expr.DataType) *expr.UserTypeExpr 
 	return &expr.UserTypeExpr{TypeName: name, UID: "standalone-test:" + name, AttributeExpr: &expr.AttributeExpr{Type: dataType}}
 }
 
-func standaloneTestPlan(t *testing.T, types ...expr.UserType) (*codegen.Generation, *codegen.GeneratedPackage, *Plan) {
+func standaloneTestPlan(t testing.TB, types ...expr.UserType) (*codegen.Generation, *codegen.GeneratedPackage, *Plan) {
 	t.Helper()
 	generation, err := codegen.NewGeneration("example.com/gen", nil)
 	require.NoError(t, err)
@@ -245,7 +245,7 @@ func standaloneTestPlan(t *testing.T, types ...expr.UserType) (*codegen.Generati
 	return generation, owner, plan
 }
 
-func addStandaloneTestValue(t *testing.T, generation *codegen.Generation, owner *codegen.GeneratedPackage, plan *Plan, userType expr.UserType) *Value {
+func addStandaloneTestValue(t testing.TB, generation *codegen.Generation, owner *codegen.GeneratedPackage, plan *Plan, userType expr.UserType) *Value {
 	t.Helper()
 	attribute := &expr.AttributeExpr{Type: userType}
 	require.True(t, SupportsStandalone(attribute))

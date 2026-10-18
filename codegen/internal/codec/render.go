@@ -134,6 +134,7 @@ func (p *Plan) Files(packageName string) ([]*goacodegen.File, error) {
 // link formats every retained plan with the final Goa names and import aliases.
 func (p *Plan) link() (*fileData, []*goacodegen.ImportSpec, error) {
 	data := &fileData{Imports: p.importNames()}
+	var preflights strings.Builder
 	if p.jsonHelpers != nil {
 		data.JSONNames = p.jsonNames(data.Imports)
 		data.ReadStrictJSON = p.jsonHelpers.read.Name()
@@ -150,7 +151,7 @@ func (p *Plan) link() (*fileData, []*goacodegen.ImportSpec, error) {
 			if err != nil {
 				return nil, nil, err
 			}
-			data.Preflights += preflight
+			preflights.WriteString(preflight)
 			validators, err := value.originalValidationData()
 			if err != nil {
 				return nil, nil, err
@@ -227,6 +228,7 @@ func (p *Plan) link() (*fileData, []*goacodegen.ImportSpec, error) {
 			data.Helpers = append(data.Helpers, helper)
 		}
 	}
+	data.Preflights = preflights.String()
 	sort.Slice(data.Types, func(i, j int) bool { return data.Types[i].Name < data.Types[j].Name })
 	sort.Slice(data.Unions, func(i, j int) bool { return data.Unions[i].Name < data.Unions[j].Name })
 	sort.Slice(data.Values, func(i, j int) bool { return data.Values[i].Name < data.Values[j].Name })
