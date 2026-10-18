@@ -136,6 +136,12 @@ type Service interface {
 	// provider replacement cannot change the contract selected by the model.
 	// Resolution describes registered tools; it does not guarantee provider health.
 	ResolveToolset(context.Context, *GetToolsetPayload) (res *ResolvedToolset, err error)
+	// Inspect an active toolset's descriptive fields and argument, result, and
+	// sidecar schemas without requesting executable consumer metadata or a
+	// registration token. Historical registrations remain inspectable when their
+	// consumer metadata cannot be represented by the current executable contract.
+	// This read does not grant execution authority or promise provider readiness.
+	GetToolsetSchemas(context.Context, *GetToolsetPayload) (res *ToolsetSchemas, err error)
 	// Report whether the exact registration token derived from a deployed
 	// provider's generated tool schemas is active and currently has an unexpired,
 	// non-draining provider lease plus a fresh authenticated pong. Release
@@ -223,7 +229,7 @@ const ServiceName = "registry"
 // MethodNames lists the service method names as defined in the design. These
 // are the same values that are set in the endpoint request contexts under the
 // MethodKey key.
-var MethodNames = [28]string{"CheckCatalogResource", "ListCatalogResources", "RegisterAgentExports", "ValidateAgentExports", "RetireAgentResource", "DeclareServiceToolset", "ReplaceServiceToolset", "AttachProvider", "Register", "RenewProvider", "ReleaseProvider", "DrainProvider", "Unregister", "Pong", "RegisterAgentToolset", "ReplaceAgentToolset", "ListToolsets", "GetToolset", "ResolveToolset", "CheckAdmission", "Search", "CallTool", "CallResolvedTool", "RetryTool", "CompleteToolCall", "PublishToolOutputDelta", "ReportToolCallOverload", "ClaimToolCall"}
+var MethodNames = [29]string{"CheckCatalogResource", "ListCatalogResources", "RegisterAgentExports", "ValidateAgentExports", "RetireAgentResource", "DeclareServiceToolset", "ReplaceServiceToolset", "AttachProvider", "Register", "RenewProvider", "ReleaseProvider", "DrainProvider", "Unregister", "Pong", "RegisterAgentToolset", "ReplaceAgentToolset", "ListToolsets", "GetToolset", "ResolveToolset", "GetToolsetSchemas", "CheckAdmission", "Search", "CallTool", "CallResolvedTool", "RetryTool", "CompleteToolCall", "PublishToolOutputDelta", "ReportToolCallOverload", "ClaimToolCall"}
 
 // AdmissionStatus is the result type of the registry service CheckAdmission
 // method.
@@ -929,6 +935,23 @@ type ToolSchema struct {
 	ConsumerContract *ConsumerContract
 }
 
+// Saved argument, result, and optional sidecar schemas with their original
+// descriptive fields. This type is not an executable tool declaration.
+type ToolSchemas struct {
+	// Original full tool identifier.
+	Name string
+	// Human-readable description of the tool.
+	Description *string
+	// Tool categorization tags.
+	Tags []string
+	// Original JSON schema for model-supplied arguments.
+	PayloadSchema []byte
+	// Original JSON schema for the result.
+	ResultSchema []byte
+	// Original JSON schema for optional sidecar output.
+	SidecarSchema []byte
+}
+
 // Precomputed word frequencies for local tool retrieval.
 type ToolSearchDocument struct {
 	// Total number of words in this document, including repeats.
@@ -1024,6 +1047,23 @@ type ToolsetInfo struct {
 	// Number of tools in the toolset
 	ToolCount int
 	// ISO 8601 registration timestamp
+	RegisteredAt string
+}
+
+// ToolsetSchemas is the result type of the registry service GetToolsetSchemas
+// method.
+type ToolsetSchemas struct {
+	// Unique name of the saved toolset.
+	Name string
+	// Human-readable description.
+	Description *string
+	// Semantic version of the toolset.
+	Version *SemVer
+	// Tags for categorization.
+	Tags []string
+	// Saved schemas and descriptive fields for each tool.
+	Tools []*ToolSchemas
+	// Time the active registration was saved.
 	RegisteredAt string
 }
 
@@ -4069,6 +4109,57 @@ func validatejsonToolSchemaTransport(value *jsonToolSchemaTransport) (err error)
 	return err
 }
 
+// jsonToolSchemasTransport stores JSON fields until they have been validated.
+type jsonToolSchemasTransport struct {
+	// Original full tool identifier.
+	Name *string `json:"name"`
+	// Human-readable description of the tool.
+	Description *string `json:"description,omitempty"`
+	// Tool categorization tags.
+	Tags []string `json:"tags,omitempty"`
+	// Original JSON schema for model-supplied arguments.
+	PayloadSchema []byte `json:"payload_schema"`
+	// Original JSON schema for the result.
+	ResultSchema []byte `json:"result_schema"`
+	// Original JSON schema for optional sidecar output.
+	SidecarSchema []byte `json:"sidecar_schema,omitempty"`
+}
+
+// validatejsonToolSchemasTransport checks decoded JSON before it becomes a service value.
+func validatejsonToolSchemasTransport(value *jsonToolSchemasTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if value.PayloadSchema == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("payload_schema", "body"))
+	}
+	if value.ResultSchema == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("result_schema", "body"))
+	}
+	if value.Name != nil {
+		if utf8.RuneCountInString(*value.Name) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.name", *value.Name, utf8.RuneCountInString(*value.Name), 1, true))
+		}
+		if utf8.RuneCountInString(*value.Name) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.name", *value.Name, utf8.RuneCountInString(*value.Name), 256, false))
+		}
+	}
+	if value.PayloadSchema != nil {
+		if len(value.PayloadSchema) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.payload_schema", value.PayloadSchema, len(value.PayloadSchema), 1, true))
+		}
+	}
+	if value.ResultSchema != nil {
+		if len(value.ResultSchema) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.result_schema", value.ResultSchema, len(value.ResultSchema), 1, true))
+		}
+	}
+	return err
+}
+
 // jsonToolSearchDocumentTransport stores JSON fields until they have been validated.
 type jsonToolSearchDocumentTransport struct {
 	// Total number of words in this document, including repeats.
@@ -4357,6 +4448,60 @@ func validatejsonToolsetInfoTransport(value *jsonToolsetInfoTransport) (err erro
 	if value.ToolCount != nil {
 		if int(*value.ToolCount) < 0 {
 			err = goa.MergeErrors(err, goa.InvalidRangeError("body.tool_count", int(*value.ToolCount), 0, true))
+		}
+	}
+	if value.RegisteredAt != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.registered_at", *value.RegisteredAt, goa.FormatDateTime))
+	}
+	return err
+}
+
+// jsonToolsetSchemasTransport stores JSON fields until they have been validated.
+type jsonToolsetSchemasTransport struct {
+	// Unique name of the saved toolset.
+	Name *string `json:"name"`
+	// Human-readable description.
+	Description *string `json:"description,omitempty"`
+	// Semantic version of the toolset.
+	Version *jsonSemVerTransport `json:"version,omitempty"`
+	// Tags for categorization.
+	Tags []string `json:"tags,omitempty"`
+	// Saved schemas and descriptive fields for each tool.
+	Tools []*jsonToolSchemasTransport `json:"tools"`
+	// Time the active registration was saved.
+	RegisteredAt *string `json:"registered_at"`
+}
+
+// validatejsonToolsetSchemasTransport checks decoded JSON before it becomes a service value.
+func validatejsonToolsetSchemasTransport(value *jsonToolsetSchemasTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if value.Tools == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("tools", "body"))
+	}
+	if value.RegisteredAt == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("registered_at", "body"))
+	}
+	if value.Name != nil {
+		if utf8.RuneCountInString(*value.Name) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.name", *value.Name, utf8.RuneCountInString(*value.Name), 1, true))
+		}
+		if utf8.RuneCountInString(*value.Name) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.name", *value.Name, utf8.RuneCountInString(*value.Name), 256, false))
+		}
+	}
+	if value.Version != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.version", string(*value.Version), "^v?\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?$"))
+	}
+	for _, e := range value.Tools {
+		if e != nil {
+			if err2 := validatejsonToolSchemasTransport(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
 		}
 	}
 	if value.RegisteredAt != nil {
@@ -9860,6 +10005,29 @@ func validateTextOnlyToolContractOriginal11(value *TextOnlyToolContract) (err er
 	return err
 }
 
+// validateToolSchemasOriginal checks the original typed value before JSON conversion.
+func validateToolSchemasOriginal(value *ToolSchemas) (err error) {
+	if value.PayloadSchema == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("payload_schema", "value"))
+	}
+	if value.ResultSchema == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("result_schema", "value"))
+	}
+	if utf8.RuneCountInString(value.Name) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("value.name", value.Name, utf8.RuneCountInString(value.Name), 1, true))
+	}
+	if utf8.RuneCountInString(value.Name) > 256 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("value.name", value.Name, utf8.RuneCountInString(value.Name), 256, false))
+	}
+	if len(value.PayloadSchema) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("value.payload_schema", value.PayloadSchema, len(value.PayloadSchema), 1, true))
+	}
+	if len(value.ResultSchema) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("value.result_schema", value.ResultSchema, len(value.ResultSchema), 1, true))
+	}
+	return err
+}
+
 // validateToolSearchDocumentOriginal12 checks the original typed value before JSON conversion.
 func validateToolSearchDocumentOriginal12(value *ToolSearchDocument) (err error) {
 	if value.Terms == nil {
@@ -10635,6 +10803,54 @@ func validateToolsetInfoOriginal3(value *ToolsetInfo) (err error) {
 		err = goa.MergeErrors(err, goa.InvalidRangeError("value.tool_count", value.ToolCount, 0, true))
 	}
 	err = goa.MergeErrors(err, goa.ValidateFormat("value.registered_at", value.RegisteredAt, goa.FormatDateTime))
+	return err
+}
+
+// validateToolsetSchemasOriginal checks the original typed value before JSON conversion.
+func validateToolsetSchemasOriginal(value *ToolsetSchemas) (err error) {
+	if value.Tools == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("tools", "value"))
+	}
+	if utf8.RuneCountInString(value.Name) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("value.name", value.Name, utf8.RuneCountInString(value.Name), 1, true))
+	}
+	if utf8.RuneCountInString(value.Name) > 256 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("value.name", value.Name, utf8.RuneCountInString(value.Name), 256, false))
+	}
+	if value.Version != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("value.version", string(*value.Version), "^v?\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?$"))
+	}
+	for _, e := range value.Tools {
+		if e != nil {
+			if err2 := validateToolSchemasOriginal2(e); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	}
+	err = goa.MergeErrors(err, goa.ValidateFormat("value.registered_at", value.RegisteredAt, goa.FormatDateTime))
+	return err
+}
+
+// validateToolSchemasOriginal2 checks the original typed value before JSON conversion.
+func validateToolSchemasOriginal2(value *ToolSchemas) (err error) {
+	if value.PayloadSchema == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("payload_schema", "value"))
+	}
+	if value.ResultSchema == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("result_schema", "value"))
+	}
+	if utf8.RuneCountInString(value.Name) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("value.name", value.Name, utf8.RuneCountInString(value.Name), 1, true))
+	}
+	if utf8.RuneCountInString(value.Name) > 256 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("value.name", value.Name, utf8.RuneCountInString(value.Name), 256, false))
+	}
+	if len(value.PayloadSchema) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("value.payload_schema", value.PayloadSchema, len(value.PayloadSchema), 1, true))
+	}
+	if len(value.ResultSchema) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("value.result_schema", value.ResultSchema, len(value.ResultSchema), 1, true))
+	}
 	return err
 }
 
@@ -16102,6 +16318,82 @@ func DecodeToolSchema(data []byte) (out *ToolSchema, err error) {
 	return out, nil
 }
 
+// EncodeToolSchemas turns a service value into JSON using the field names in the Goa design.
+func EncodeToolSchemas(in *ToolSchemas) ([]byte, error) {
+	if err := checkToolSchemasValue(in); err != nil {
+		return nil, fmt.Errorf("encode ToolSchemas JSON: %w", err)
+	}
+	if err := validateToolSchemasOriginal(in); err != nil {
+		return nil, fmt.Errorf("validate ToolSchemas value: %w", err)
+	}
+	var body *jsonToolSchemasTransport
+	{
+		body = &jsonToolSchemasTransport{
+			Name:          &in.Name,
+			Description:   in.Description,
+			PayloadSchema: in.PayloadSchema,
+			ResultSchema:  in.ResultSchema,
+			SidecarSchema: in.SidecarSchema,
+		}
+		if in.Tags != nil {
+			body.Tags = make([]string, len(in.Tags))
+			for i, val := range in.Tags {
+				body.Tags[i] = val
+			}
+		}
+	}
+	if err := validatejsonToolSchemasTransport(body); err != nil {
+		return nil, fmt.Errorf("validate ToolSchemas JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode ToolSchemas JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeToolSchemas checks JSON field names from the Goa design and returns a service value.
+func DecodeToolSchemas(data []byte) (out *ToolSchemas, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode ToolSchemas JSON: %w", err)
+	}
+	if err := validateToolSchemasJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode ToolSchemas JSON: %w", err)
+	}
+	var body *jsonToolSchemasTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode ToolSchemas JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode ToolSchemas JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode ToolSchemas JSON after first value: %w", err)
+	}
+	if err := validatejsonToolSchemasTransport(body); err != nil {
+		return out, fmt.Errorf("validate ToolSchemas JSON: %w", err)
+	}
+	{
+		out = &ToolSchemas{
+			Name:          *body.Name,
+			Description:   body.Description,
+			PayloadSchema: body.PayloadSchema,
+			ResultSchema:  body.ResultSchema,
+			SidecarSchema: body.SidecarSchema,
+		}
+		if body.Tags != nil {
+			out.Tags = make([]string, len(body.Tags))
+			for i, val := range body.Tags {
+				out.Tags[i] = val
+			}
+		}
+	}
+	return out, nil
+}
+
 // EncodeToolSearchDocument turns a service value into JSON using the field names in the Goa design.
 func EncodeToolSearchDocument(in *ToolSearchDocument) ([]byte, error) {
 	if err := checkToolSearchDocumentValue(in); err != nil {
@@ -16742,6 +17034,102 @@ func DecodeToolsetInfo(data []byte) (out *ToolsetInfo, err error) {
 			for i, val := range body.Tags {
 				out.Tags[i] = val
 			}
+		}
+	}
+	return out, nil
+}
+
+// EncodeToolsetSchemas turns a service value into JSON using the field names in the Goa design.
+func EncodeToolsetSchemas(in *ToolsetSchemas) ([]byte, error) {
+	if err := checkToolsetSchemasValue(in); err != nil {
+		return nil, fmt.Errorf("encode ToolsetSchemas JSON: %w", err)
+	}
+	if err := validateToolsetSchemasOriginal(in); err != nil {
+		return nil, fmt.Errorf("validate ToolsetSchemas value: %w", err)
+	}
+	var body *jsonToolsetSchemasTransport
+	{
+		body = &jsonToolsetSchemasTransport{
+			Name:         &in.Name,
+			Description:  in.Description,
+			RegisteredAt: &in.RegisteredAt,
+		}
+		if in.Version != nil {
+			version := jsonSemVerTransport(*in.Version)
+			body.Version = &version
+		}
+		if in.Tags != nil {
+			body.Tags = make([]string, len(in.Tags))
+			for i, val := range in.Tags {
+				body.Tags[i] = val
+			}
+		}
+		body.Tools = make([]*jsonToolSchemasTransport, len(in.Tools))
+		for i, val := range in.Tools {
+			if val == nil {
+				body.Tools[i] = nil
+				continue
+			}
+			body.Tools[i] = encodeToolSchemasToToolSchemasTransport(val)
+		}
+	}
+	if err := validatejsonToolsetSchemasTransport(body); err != nil {
+		return nil, fmt.Errorf("validate ToolsetSchemas JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode ToolsetSchemas JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeToolsetSchemas checks JSON field names from the Goa design and returns a service value.
+func DecodeToolsetSchemas(data []byte) (out *ToolsetSchemas, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode ToolsetSchemas JSON: %w", err)
+	}
+	if err := validateToolsetSchemasJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode ToolsetSchemas JSON: %w", err)
+	}
+	var body *jsonToolsetSchemasTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode ToolsetSchemas JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode ToolsetSchemas JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode ToolsetSchemas JSON after first value: %w", err)
+	}
+	if err := validatejsonToolsetSchemasTransport(body); err != nil {
+		return out, fmt.Errorf("validate ToolsetSchemas JSON: %w", err)
+	}
+	{
+		out = &ToolsetSchemas{
+			Name:         *body.Name,
+			Description:  body.Description,
+			RegisteredAt: *body.RegisteredAt,
+		}
+		if body.Version != nil {
+			version := SemVer(*body.Version)
+			out.Version = &version
+		}
+		if body.Tags != nil {
+			out.Tags = make([]string, len(body.Tags))
+			for i, val := range body.Tags {
+				out.Tags[i] = val
+			}
+		}
+		out.Tools = make([]*ToolSchemas, len(body.Tools))
+		for i, val := range body.Tools {
+			if val == nil {
+				out.Tools[i] = nil
+				continue
+			}
+			out.Tools[i] = decodeToolSchemasTransportToToolSchemas(val)
 		}
 	}
 	return out, nil
@@ -25772,6 +26160,24 @@ func decodeToolSchemaTransportToToolSchema9(v *jsonToolSchemaTransport) *ToolSch
 	}
 	if v.ConsumerContract != nil {
 		res.ConsumerContract = decodeConsumerContractTransportToConsumerContract9(v.ConsumerContract)
+	}
+
+	return res
+}
+
+func decodeToolSchemasTransportToToolSchemas(v *jsonToolSchemasTransport) *ToolSchemas {
+	res := &ToolSchemas{
+		Name:          *v.Name,
+		Description:   v.Description,
+		PayloadSchema: v.PayloadSchema,
+		ResultSchema:  v.ResultSchema,
+		SidecarSchema: v.SidecarSchema,
+	}
+	if v.Tags != nil {
+		res.Tags = make([]string, len(v.Tags))
+		for i, val := range v.Tags {
+			res.Tags[i] = val
+		}
 	}
 
 	return res
@@ -39892,6 +40298,24 @@ func encodeToolSchemaToToolSchemaTransport9(v *ToolSchema) *jsonToolSchemaTransp
 	}
 	if v.ConsumerContract != nil {
 		res.ConsumerContract = encodeConsumerContractToConsumerContractTransport9(v.ConsumerContract)
+	}
+
+	return res
+}
+
+func encodeToolSchemasToToolSchemasTransport(v *ToolSchemas) *jsonToolSchemasTransport {
+	res := &jsonToolSchemasTransport{
+		Name:          &v.Name,
+		Description:   v.Description,
+		PayloadSchema: v.PayloadSchema,
+		ResultSchema:  v.ResultSchema,
+		SidecarSchema: v.SidecarSchema,
+	}
+	if v.Tags != nil {
+		res.Tags = make([]string, len(v.Tags))
+		for i, val := range v.Tags {
+			res.Tags[i] = val
+		}
 	}
 
 	return res
@@ -78773,6 +79197,202 @@ func validateToolSchemaJSONValue76(path string, value any, description string) e
 	return nil
 }
 
+// validateToolSchemasJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemasJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "description":
+			if err := validateToolSchemasJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Human-readable description of the tool.",
+			); err != nil {
+				return err
+			}
+		case "name":
+			if err := validateToolSchemasJSONValue3(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Original full tool identifier.",
+			); err != nil {
+				return err
+			}
+		case "payload_schema":
+			if err := validateToolSchemasJSONValue4(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Original JSON schema for model-supplied arguments.",
+			); err != nil {
+				return err
+			}
+		case "result_schema":
+			if err := validateToolSchemasJSONValue5(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Original JSON schema for the result.",
+			); err != nil {
+				return err
+			}
+		case "sidecar_schema":
+			if err := validateToolSchemasJSONValue6(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Original JSON schema for optional sidecar output.",
+			); err != nil {
+				return err
+			}
+		case "tags":
+			if err := validateToolSchemasJSONValue7(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Tool categorization tags.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"description",
+				"name",
+				"payload_schema",
+				"result_schema",
+				"sidecar_schema",
+				"tags",
+			})
+		}
+	}
+	return nil
+}
+
+// validateToolSchemasJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemasJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolSchemasJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemasJSONValue3(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolSchemasJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemasJSONValue4(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolSchemasJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemasJSONValue5(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolSchemasJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemasJSONValue6(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolSchemasJSONValue7 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemasJSONValue7(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if err := validateToolSchemasJSONValue8(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateToolSchemasJSONValue8 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolSchemasJSONValue8(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
 // validateToolSearchDocumentJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
 func validateToolSearchDocumentJSONValue(path string, value any, description string) error {
 	field := path
@@ -83806,6 +84426,409 @@ func validateToolsetInfoJSONValue7(path string, value any, description string) e
 
 // validateToolsetInfoJSONValue8 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateToolsetInfoJSONValue8(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolsetSchemasJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetSchemasJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "description":
+			if err := validateToolsetSchemasJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Human-readable description.",
+			); err != nil {
+				return err
+			}
+		case "name":
+			if err := validateToolsetSchemasJSONValue9(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Unique name of the saved toolset.",
+			); err != nil {
+				return err
+			}
+		case "registered_at":
+			if err := validateToolsetSchemasJSONValue10(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Time the active registration was saved.",
+			); err != nil {
+				return err
+			}
+		case "tags":
+			if err := validateToolsetSchemasJSONValue11(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Tags for categorization.",
+			); err != nil {
+				return err
+			}
+		case "tools":
+			if err := validateToolsetSchemasJSONValue13(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Saved schemas and descriptive fields for each tool.",
+			); err != nil {
+				return err
+			}
+		case "version":
+			if err := validateToolsetSchemasJSONValue8(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Semantic version of the toolset.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"description",
+				"name",
+				"registered_at",
+				"tags",
+				"tools",
+				"version",
+			})
+		}
+	}
+	return nil
+}
+
+// validateToolsetSchemasJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetSchemasJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolsetSchemasJSONValue9 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetSchemasJSONValue9(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolsetSchemasJSONValue10 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetSchemasJSONValue10(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolsetSchemasJSONValue11 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetSchemasJSONValue11(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if err := validateToolsetSchemasJSONValue12(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateToolsetSchemasJSONValue12 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetSchemasJSONValue12(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolsetSchemasJSONValue13 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetSchemasJSONValue13(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if item == nil {
+			continue
+		}
+		if err := validateToolsetSchemasJSONValue14(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateToolsetSchemasJSONValue14 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetSchemasJSONValue14(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "description":
+			if err := validateToolsetSchemasJSONValue15(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Human-readable description of the tool.",
+			); err != nil {
+				return err
+			}
+		case "name":
+			if err := validateToolsetSchemasJSONValue16(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Original full tool identifier.",
+			); err != nil {
+				return err
+			}
+		case "payload_schema":
+			if err := validateToolsetSchemasJSONValue3(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Original JSON schema for model-supplied arguments.",
+			); err != nil {
+				return err
+			}
+		case "result_schema":
+			if err := validateToolsetSchemasJSONValue4(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Original JSON schema for the result.",
+			); err != nil {
+				return err
+			}
+		case "sidecar_schema":
+			if err := validateToolsetSchemasJSONValue5(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Original JSON schema for optional sidecar output.",
+			); err != nil {
+				return err
+			}
+		case "tags":
+			if err := validateToolsetSchemasJSONValue6(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Tool categorization tags.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"description",
+				"name",
+				"payload_schema",
+				"result_schema",
+				"sidecar_schema",
+				"tags",
+			})
+		}
+	}
+	return nil
+}
+
+// validateToolsetSchemasJSONValue15 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetSchemasJSONValue15(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolsetSchemasJSONValue16 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetSchemasJSONValue16(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolsetSchemasJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetSchemasJSONValue3(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolsetSchemasJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetSchemasJSONValue4(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolsetSchemasJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetSchemasJSONValue5(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolsetSchemasJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetSchemasJSONValue6(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if err := validateToolsetSchemasJSONValue7(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateToolsetSchemasJSONValue7 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetSchemasJSONValue7(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolsetSchemasJSONValue8 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolsetSchemasJSONValue8(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -92986,6 +94009,48 @@ func checkToolSchemaTextOnlyToolContractValue(in *TextOnlyToolContract, field st
 	return nil
 }
 
+// checkToolSchemasValue checks text and cycles before conversion.
+func checkToolSchemasValue(in *ToolSchemas) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkToolSchemasToolSchemasValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkToolSchemasToolSchemasValue checks one generated value on the active path.
+func checkToolSchemasToolSchemasValue(in *ToolSchemas, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.Name)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "name", false))
+		}
+		if in.Description != nil {
+			if !utf8.ValidString(string(*in.Description)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "description", false))
+			}
+		}
+		for index1, item1 := range in.Tags {
+			_ = index1
+			_ = item1
+			if !utf8.ValidString(string(item1)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(generatedJSONChildPath(field, "tags", false), strconv.Itoa(index1), true))
+			}
+		}
+	}
+	return nil
+}
+
 // checkToolSearchDocumentValue checks text and cycles before conversion.
 func checkToolSearchDocumentValue(in *ToolSearchDocument) error {
 	if in == nil {
@@ -94399,6 +95464,101 @@ func checkToolsetInfoToolsetInfoValue(in *ToolsetInfo, field string, active map[
 func checkToolsetInfoSemVerValue(in SemVer, field string, active map[any]bool) error {
 	if !utf8.ValidString(string(in)) {
 		return fmt.Errorf("%s: invalid UTF-8", field)
+	}
+	return nil
+}
+
+// checkToolsetSchemasValue checks text and cycles before conversion.
+func checkToolsetSchemasValue(in *ToolsetSchemas) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkToolsetSchemasToolsetSchemasValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkToolsetSchemasToolsetSchemasValue checks one generated value on the active path.
+func checkToolsetSchemasToolsetSchemasValue(in *ToolsetSchemas, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.Name)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "name", false))
+		}
+		if in.Description != nil {
+			if !utf8.ValidString(string(*in.Description)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "description", false))
+			}
+		}
+		if in.Version != nil {
+			if err := checkToolsetSchemasSemVerValue(*in.Version, generatedJSONChildPath(field, "version", false), active); err != nil {
+				return err
+			}
+		}
+		for index1, item1 := range in.Tags {
+			_ = index1
+			_ = item1
+			if !utf8.ValidString(string(item1)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(generatedJSONChildPath(field, "tags", false), strconv.Itoa(index1), true))
+			}
+		}
+		for index1, item1 := range in.Tools {
+			_ = index1
+			_ = item1
+			if err := checkToolsetSchemasToolSchemasValue(item1, generatedJSONChildPath(generatedJSONChildPath(field, "tools", false), strconv.Itoa(index1), true), active); err != nil {
+				return err
+			}
+		}
+		if !utf8.ValidString(string(in.RegisteredAt)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "registered_at", false))
+		}
+	}
+	return nil
+}
+
+// checkToolsetSchemasSemVerValue checks one generated value on the active path.
+func checkToolsetSchemasSemVerValue(in SemVer, field string, active map[any]bool) error {
+	if !utf8.ValidString(string(in)) {
+		return fmt.Errorf("%s: invalid UTF-8", field)
+	}
+	return nil
+}
+
+// checkToolsetSchemasToolSchemasValue checks one generated value on the active path.
+func checkToolsetSchemasToolSchemasValue(in *ToolSchemas, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.Name)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "name", false))
+		}
+		if in.Description != nil {
+			if !utf8.ValidString(string(*in.Description)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "description", false))
+			}
+		}
+		for index1, item1 := range in.Tags {
+			_ = index1
+			_ = item1
+			if !utf8.ValidString(string(item1)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(generatedJSONChildPath(field, "tags", false), strconv.Itoa(index1), true))
+			}
+		}
 	}
 	return nil
 }

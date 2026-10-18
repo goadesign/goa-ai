@@ -34,6 +34,7 @@ type Client struct {
 	ListToolsetsEndpoint           goa.Endpoint
 	GetToolsetEndpoint             goa.Endpoint
 	ResolveToolsetEndpoint         goa.Endpoint
+	GetToolsetSchemasEndpoint      goa.Endpoint
 	CheckAdmissionEndpoint         goa.Endpoint
 	SearchEndpoint                 goa.Endpoint
 	CallToolEndpoint               goa.Endpoint
@@ -46,7 +47,7 @@ type Client struct {
 }
 
 // NewClient initializes a "registry" service client given the endpoints.
-func NewClient(checkCatalogResource, listCatalogResources, registerAgentExports, validateAgentExports, retireAgentResource, declareServiceToolset, replaceServiceToolset, attachProvider, register, renewProvider, releaseProvider, drainProvider, unregister, pong, registerAgentToolset, replaceAgentToolset, listToolsets, getToolset, resolveToolset, checkAdmission, search, callTool, callResolvedTool, retryTool, completeToolCall, publishToolOutputDelta, reportToolCallOverload, claimToolCall goa.Endpoint) *Client {
+func NewClient(checkCatalogResource, listCatalogResources, registerAgentExports, validateAgentExports, retireAgentResource, declareServiceToolset, replaceServiceToolset, attachProvider, register, renewProvider, releaseProvider, drainProvider, unregister, pong, registerAgentToolset, replaceAgentToolset, listToolsets, getToolset, resolveToolset, getToolsetSchemas, checkAdmission, search, callTool, callResolvedTool, retryTool, completeToolCall, publishToolOutputDelta, reportToolCallOverload, claimToolCall goa.Endpoint) *Client {
 	return &Client{
 		CheckCatalogResourceEndpoint:   checkCatalogResource,
 		ListCatalogResourcesEndpoint:   listCatalogResources,
@@ -67,6 +68,7 @@ func NewClient(checkCatalogResource, listCatalogResources, registerAgentExports,
 		ListToolsetsEndpoint:           listToolsets,
 		GetToolsetEndpoint:             getToolset,
 		ResolveToolsetEndpoint:         resolveToolset,
+		GetToolsetSchemasEndpoint:      getToolsetSchemas,
 		CheckAdmissionEndpoint:         checkAdmission,
 		SearchEndpoint:                 search,
 		CallToolEndpoint:               callTool,
@@ -339,6 +341,22 @@ func (c *Client) ResolveToolset(ctx context.Context, p *GetToolsetPayload) (res 
 		return
 	}
 	return ires.(*ResolvedToolset), nil
+}
+
+// GetToolsetSchemas calls the "GetToolsetSchemas" endpoint of the "registry"
+// service.
+// GetToolsetSchemas may return the following errors:
+//   - "not_found" (type *goa.ServiceError): Toolset or tool not found
+//   - "forbidden" (type *goa.ServiceError): The host denied access to this operation
+//   - "service_unavailable" (type *goa.ServiceError): Registry routing infrastructure or healthy providers are unavailable
+//   - error: internal error
+func (c *Client) GetToolsetSchemas(ctx context.Context, p *GetToolsetPayload) (res *ToolsetSchemas, err error) {
+	var ires any
+	ires, err = c.GetToolsetSchemasEndpoint(ctx, p)
+	if err != nil {
+		return
+	}
+	return ires.(*ToolsetSchemas), nil
 }
 
 // CheckAdmission calls the "CheckAdmission" endpoint of the "registry" service.

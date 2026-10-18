@@ -242,6 +242,12 @@ Custom stores must follow the [preparation ownership upgrade](docs/runtime.md#pr
   continuation cursors, while excluding provider-injected fields. Protocol 15
   requires coordinated registry, provider, and consumer upgrades; see
   [session metadata and upgrade](docs/runtime.md#session-metadata-and-upgrade).
+  Registry startup preserves historical declaration identities without decoding
+  old consumer metadata as today's executable contract, allowing saved-result
+  recovery before provider replacement. This does not change typed historical
+  resolution when removed metadata fields cannot fit the current response.
+  `GetToolsetSchemas` returns original descriptive fields and input/output schemas
+  for inspection without executable metadata or registration authority.
 - **Direct Agent operations.** Start typed operations before tool publication,
   using the same provider preparation and result contract as delegation.
   [Revision-owned providers](docs/runtime.md#revision-owned-operation-contracts)

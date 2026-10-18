@@ -213,6 +213,16 @@ var _ = Service("registry", func() {
 		GRPC(func() {})
 	})
 
+	Method("GetToolsetSchemas", func() {
+		Description("Inspect an active toolset's descriptive fields and argument, result, and sidecar schemas without requesting executable consumer metadata or a registration token. Historical registrations remain inspectable when their consumer metadata cannot be represented by the current executable contract. This read does not grant execution authority or promise provider readiness.")
+		Payload(GetToolsetPayload)
+		Result(ToolsetSchemas)
+		Error("not_found")
+		Error("forbidden")
+		Error("service_unavailable")
+		GRPC(func() {})
+	})
+
 	Method("CheckAdmission", func() {
 		Description("Report whether the exact registration token derived from a deployed provider's generated tool schemas is active and currently has an unexpired, non-draining provider lease plus a fresh authenticated pong. Release verification calls this after workload rollout because Kubernetes proves the intended pods are running while the registry proves their exact tool contract is routable. A missing or different active admission returns ready=false rather than an error.")
 		Payload(CheckAdmissionPayload)

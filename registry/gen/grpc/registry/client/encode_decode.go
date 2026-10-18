@@ -638,6 +638,44 @@ func DecodeResolveToolsetResponse(ctx context.Context, v any, hdr, trlr metadata
 	return res, nil
 }
 
+// BuildGetToolsetSchemasFunc builds the remote method to invoke for "registry"
+// service "GetToolsetSchemas" endpoint.
+func BuildGetToolsetSchemasFunc(grpccli registrypb.RegistryClient, cliopts ...grpc.CallOption) goagrpc.RemoteFunc {
+	return func(ctx context.Context, reqpb any, opts ...grpc.CallOption) (any, error) {
+		for _, opt := range cliopts {
+			opts = append(opts, opt)
+		}
+		if reqpb != nil {
+			return grpccli.GetToolsetSchemas(ctx, reqpb.(*registrypb.GetToolsetSchemasRequest), opts...)
+		}
+		return grpccli.GetToolsetSchemas(ctx, &registrypb.GetToolsetSchemasRequest{}, opts...)
+	}
+}
+
+// EncodeGetToolsetSchemasRequest encodes requests sent to registry
+// GetToolsetSchemas endpoint.
+func EncodeGetToolsetSchemasRequest(ctx context.Context, v any, md *metadata.MD) (any, error) {
+	payload, ok := v.(*registry.GetToolsetPayload)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "GetToolsetSchemas", "*registry.GetToolsetPayload", v)
+	}
+	return NewProtoGetToolsetSchemasRequest(payload), nil
+}
+
+// DecodeGetToolsetSchemasResponse decodes responses from the registry
+// GetToolsetSchemas endpoint.
+func DecodeGetToolsetSchemasResponse(ctx context.Context, v any, hdr, trlr metadata.MD) (any, error) {
+	message, ok := v.(*registrypb.GetToolsetSchemasResponse)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "GetToolsetSchemas", "*registrypb.GetToolsetSchemasResponse", v)
+	}
+	if err := ValidateGetToolsetSchemasResponse(message); err != nil {
+		return nil, err
+	}
+	res := NewGetToolsetSchemasResult(message)
+	return res, nil
+}
+
 // BuildCheckAdmissionFunc builds the remote method to invoke for "registry"
 // service "CheckAdmission" endpoint.
 func BuildCheckAdmissionFunc(grpccli registrypb.RegistryClient, cliopts ...grpc.CallOption) goagrpc.RemoteFunc {

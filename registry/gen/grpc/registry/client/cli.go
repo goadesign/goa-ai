@@ -618,6 +618,30 @@ func BuildResolveToolsetPayload(registryResolveToolsetMessage *string) (*registr
 	return v, nil
 }
 
+// BuildGetToolsetSchemasPayload builds the payload for the registry
+// GetToolsetSchemas endpoint from CLI flags.
+func BuildGetToolsetSchemasPayload(registryGetToolsetSchemasMessage *string) (*registry.GetToolsetPayload, error) {
+	var err error
+	var message registrypb.GetToolsetSchemasRequest
+	{
+		if registryGetToolsetSchemasMessage != nil {
+			err = protojson.Unmarshal([]byte(*registryGetToolsetSchemasMessage), &message)
+			if err != nil {
+				return nil, fmt.Errorf("invalid JSON for message, \nerror: %s, \nexample of valid JSON:\n%s", err, "'{\n      \"name\": \"data-tools\"\n   }'")
+			}
+		}
+	}
+	if err := ValidateGetToolsetSchemasRequest(&message); err != nil {
+		var zero *registry.GetToolsetPayload
+		return zero, err
+	}
+	v := &registry.GetToolsetPayload{
+		Name: *message.Name,
+	}
+
+	return v, nil
+}
+
 // BuildCheckAdmissionPayload builds the payload for the registry
 // CheckAdmission endpoint from CLI flags.
 func BuildCheckAdmissionPayload(registryCheckAdmissionMessage *string) (*registry.CheckAdmissionPayload, error) {

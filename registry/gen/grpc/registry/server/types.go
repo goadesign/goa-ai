@@ -554,6 +554,44 @@ func NewProtoResolveToolsetResponse(result *registry.ResolvedToolset) *registryp
 	return message
 }
 
+// NewGetToolsetSchemasPayload builds *registry.GetToolsetPayload from
+// *registrypb.GetToolsetSchemasRequest.
+func NewGetToolsetSchemasPayload(message *registrypb.GetToolsetSchemasRequest) *registry.GetToolsetPayload {
+	v := &registry.GetToolsetPayload{
+		Name: *message.Name,
+	}
+	return v
+}
+
+// NewProtoGetToolsetSchemasResponse builds
+// *registrypb.GetToolsetSchemasResponse from *registry.ToolsetSchemas.
+func NewProtoGetToolsetSchemasResponse(result *registry.ToolsetSchemas) *registrypb.GetToolsetSchemasResponse {
+	message := &registrypb.GetToolsetSchemasResponse{
+		Name:         &result.Name,
+		RegisteredAt: &result.RegisteredAt,
+	}
+	if result.Description != nil {
+		message.Description = result.Description
+	}
+	if result.Version != nil {
+		version := string(*result.Version)
+		message.Version = &version
+	}
+	if result.Tags != nil {
+		message.Tags = make([]string, len(result.Tags))
+		for i, val := range result.Tags {
+			message.Tags[i] = val
+		}
+	}
+	if result.Tools != nil {
+		message.Tools = make([]*registrypb.ToolSchemas, len(result.Tools))
+		for i, val := range result.Tools {
+			message.Tools[i] = transformToolSchemasToProtoToolSchemas(val)
+		}
+	}
+	return message
+}
+
 // NewCheckAdmissionPayload builds *registry.CheckAdmissionPayload from
 // *registrypb.CheckAdmissionRequest.
 func NewCheckAdmissionPayload(message *registrypb.CheckAdmissionRequest) *registry.CheckAdmissionPayload {
@@ -1962,6 +2000,20 @@ func ValidateResolveToolsetRequest(message *registrypb.ResolveToolsetRequest) (e
 	return
 }
 
+// ValidateGetToolsetSchemasRequest runs the validations defined on
+// GetToolsetSchemasRequest.
+func ValidateGetToolsetSchemasRequest(message *registrypb.GetToolsetSchemasRequest) (err error) {
+	if message.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "message"))
+	}
+	if message.Name != nil {
+		if utf8.RuneCountInString(*message.Name) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("message.name", *message.Name, utf8.RuneCountInString(*message.Name), 1, true))
+		}
+	}
+	return
+}
+
 // ValidateCheckAdmissionRequest runs the validations defined on
 // CheckAdmissionRequest.
 func ValidateCheckAdmissionRequest(message *registrypb.CheckAdmissionRequest) (err error) {
@@ -3344,6 +3396,28 @@ func transformToolsetInfoToProtoToolsetInfo(v *registry.ToolsetInfo) *registrypb
 	}
 	toolCount := int32(v.ToolCount)
 	res.ToolCount = &toolCount
+	if v.Tags != nil {
+		res.Tags = make([]string, len(v.Tags))
+		for i, val := range v.Tags {
+			res.Tags[i] = val
+		}
+	}
+
+	return res
+}
+
+// transformToolSchemasToProtoToolSchemas builds a value of type
+// *registrypb.ToolSchemas from a value of type *registry.ToolSchemas.
+func transformToolSchemasToProtoToolSchemas(v *registry.ToolSchemas) *registrypb.ToolSchemas {
+	res := &registrypb.ToolSchemas{
+		Name:          &v.Name,
+		PayloadSchema: v.PayloadSchema,
+		ResultSchema:  v.ResultSchema,
+		SidecarSchema: v.SidecarSchema,
+	}
+	if v.Description != nil {
+		res.Description = v.Description
+	}
 	if v.Tags != nil {
 		res.Tags = make([]string, len(v.Tags))
 		for i, val := range v.Tags {

@@ -1662,9 +1662,26 @@ carry no session. See [session metadata and upgrade](docs/runtime.md#session-met
 for generated source changes and coordinated cutover.
 Catalog loading validates the saved structure and original token independently
 from current execution compatibility. Historical registrations retain their exact
-version, definition, and retirement history. They remain readable and replaceable;
-only current-protocol registrations can acquire provider authority or receive
-new work. Completed results replay without reopening that authority.
+version, definition, and retirement history. Schema-only inspection remains
+available; full typed reads and explicit replacement require metadata that the
+current executable contract can represent. Ordinary provider registration can
+replace an older admission after its leases end. Only current-protocol
+registrations can acquire provider authority or receive new work. Completed
+results replay without reopening that authority.
+Startup verifies historical service declarations against their saved summary
+and fingerprint using the original consumer-contract JSON. It validates their
+argument and result schemas without interpreting historical consumer metadata
+as today's executable contract. Current services and native Agents still require
+full current metadata validation. Exact typed resolution is unchanged: historical
+definitions with removed metadata fields cannot be represented by the current
+response type and continue to fail that read; startup integrity does not repair
+or discard those fields.
+`GetToolsetSchemas` supplies schema-only inspection of active registrations:
+original names, descriptions, tags, version, registration time, and argument,
+result, and sidecar schemas. It returns neither consumer metadata nor an
+admission token. It verifies original declaration integrity and schema validity;
+current services and native Agents additionally retain full executable validation.
+Missing or retired registrations return `not_found`.
 
 The registry rejects a missing or mismatched wire version with
 `validation_error` before creating streams, mutating catalog state, admitting a
@@ -1750,9 +1767,11 @@ independent of admission, so a changed-token rolling update cannot deadlock.
 
 Registry construction validates every stored state/definition pair and all
 permanent retired tokens before starting health tracking. It rejects unknown
-fields, old combined records, missing pairs, invalid schemas or wire versions,
+stable declaration fields, old combined records, missing pairs, invalid schemas or wire versions,
 inconsistent fingerprints or summaries, and disagreement with retirement
-history. Startup reports invalid data without rewriting or reconstructing it.
+history. Historical service consumer metadata retains its original JSON and
+fingerprint rather than requiring current typed decoding; current services and
+native Agents remain strict. Startup reports invalid data without rewriting it.
 
 Definition-dependent reads fetch current state, definition and retirement
 membership in one Redis snapshot and validate the complete pair. Declaration
@@ -1780,7 +1799,8 @@ read compact state only. Every consequential call operation checks current
 authority. This optimization changes no API, saved encoding, or migration.
 
 Saved consumer-contract JSON enters the fingerprint calculation in its original
-encoding, after strict decoding. Reads retain the complete saved definition
+encoding, after duplicate-member and declaration checks. Current executable
+reads also strictly decode consumer metadata. Reads retain the complete saved definition
 instead of serializing it with today's generated types. This preserves existing
 identity when new optional fields are added, while mismatched definitions still
 fail validation. The [saved declaration identity contract](docs/runtime.md#saved-declaration-identity)

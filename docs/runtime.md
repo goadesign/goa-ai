@@ -2845,11 +2845,14 @@ retirement together. Renewal, health, pong, drain, release, and the atomic
 checks for call publication, claim, and completion use compact state without
 reading or copying full definitions. Pulse still carries requests and results.
 
-Startup strictly validates every state/definition pair and retirement history
-before serving. Unknown fields, old combined records, missing pairs, malformed
+Startup validates every state/definition pair and retirement history before
+serving. Unknown stable declaration fields, old combined records, missing pairs, malformed
 schemas, invalid identities, mismatched fingerprints or summaries, and
 inconsistent retirement membership fail startup. It does not convert or repair
-stored data. Existing installations require the [offline storage
+stored data. Historical service consumer metadata is checked as original JSON
+for duplicate members and fingerprint integrity, while current services and
+native Agents require current typed metadata. See [protocol upgrades](#session-metadata-and-upgrade).
+Installations using the older combined storage layout require the [offline storage
 upgrade](#registry-storage-upgrade).
 
 Every definition-dependent read fetches state, definition, and retirement
@@ -2879,15 +2882,18 @@ per-planning-activity catalog lifetime.
 
 ##### Saved declaration identity
 
-When loading a saved definition, Registry strictly decodes its fields and
-validates its schemas, state, routing token, and retirement history. The shared
+When loading a saved definition, Registry strictly decodes its stable declaration
+fields and validates its schemas, state, routing token, and retirement history. The shared
 fingerprint calculation uses each consumer contract's original saved JSON bytes,
 including member order and escaping. A missing or JSON-null consumer contract
-contributes no bytes, as it does during registration. Duplicate members,
-conflicting field-name spellings, unknown fields, and trailing JSON values are
-rejected rather than interpreted differently by the decoder and hash calculation.
-Generated fields use their exact saved names; application metadata map keys
-remain case-sensitive data.
+contributes no bytes, as it does during registration. Duplicate members
+and trailing JSON values are rejected. Stable declaration fields use exact saved
+names and reject unknown members. Executable reads, current services, and native
+Agents also enforce current generated consumer-metadata names. Historical
+consumer metadata remains opaque during startup and schema-only inspection;
+its original bytes still determine identity. Application metadata map keys
+remain case-sensitive data. See [protocol upgrades](#session-metadata-and-upgrade)
+for historical typed-read limitations.
 
 Registry retains the original complete definition after validation. It does not
 serialize it again using the current generated Go types to establish identity.
@@ -2897,9 +2903,8 @@ newer saved encodings retain their existing fingerprint and token; changed
 contract bytes must still match the saved fingerprint.
 
 New declarations continue to use the current generated representation and the
-same fingerprint and token algorithms. This read correction changes no public
-API or wire protocol and requires no stored-data conversion or provider
-regeneration. It does not make declaration retries independent of serializer
+same fingerprint and token algorithms. Identity checking requires no stored-data
+conversion, provider regeneration, or wire-protocol change. It does not make declaration retries independent of serializer
 changes: resending an older declaration through newer generated types can
 produce a different fingerprint and remains subject to existing admission
 conflict and retirement checks.
@@ -4448,10 +4453,34 @@ string fields; the shared executor performs the transport conversion.
 The catalog reloads historical registrations using their original positive wire
 version and exact token. It still rejects unknown future versions, malformed
 records, changed fingerprints, and mismatched tokens. Historical definitions
-remain available for discovery, resolution, retirement, and replacement, but
-cannot receive new calls, attach or renew providers, claim queued calls, or
+remain available for inventory, schema-only inspection, and retirement. Full
+typed resolution and explicit replacement require consumer metadata that the
+current response can represent; ordinary provider registration can replace an
+older admission after its leases end. Historical admissions cannot receive new
+calls, attach or renew providers, claim queued calls, or
 publish provider output. Their health is not ready. Completed call records may
 still replay their saved result through a current client without executing again.
+
+Startup checks historical service declarations using their stable declaration
+fields and original consumer-contract JSON, including its exact bytes in the
+saved fingerprint. Argument and result schemas retain their validation, while
+current services and native Agents also require current executable metadata.
+No records are rewritten. Exact `GetToolset` and `ResolveToolset` responses remain
+strict: an older definition whose consumer metadata no longer fits the current
+generated response cannot be returned as a complete typed declaration. Startup
+integrity allows recovery and replacement without pretending that inspection
+gap has been resolved.
+Use `GetToolsetSchemas` for schema-only inspection of an active registration.
+It returns original toolset and tool descriptions, names, tags, version,
+registration time, and argument, result, and sidecar schemas without a consumer
+contract or registration token. It verifies the saved fingerprint and schemas;
+missing or retired registrations return `not_found`, and corrupt saved data
+returns `service_unavailable`. Execution consumers continue to use the complete
+typed `GetToolset` or `ResolveToolset` contract.
+Hosts implementing the generated Registry service interface must implement the
+new inspection method under their existing inspection authorization. Callers
+constructing a generated Registry client with endpoint arguments must supply
+the new endpoint. No saved-data conversion or provider protocol change is needed.
 
 The protocol version participates in registration-token derivation. After old
 executable work and providers drain, use `ReplaceServiceToolset` with the saved

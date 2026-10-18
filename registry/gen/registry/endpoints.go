@@ -34,6 +34,7 @@ type Endpoints struct {
 	ListToolsets           goa.Endpoint
 	GetToolset             goa.Endpoint
 	ResolveToolset         goa.Endpoint
+	GetToolsetSchemas      goa.Endpoint
 	CheckAdmission         goa.Endpoint
 	Search                 goa.Endpoint
 	CallTool               goa.Endpoint
@@ -67,6 +68,7 @@ func NewEndpoints(s Service) *Endpoints {
 		ListToolsets:           NewListToolsetsEndpoint(s),
 		GetToolset:             NewGetToolsetEndpoint(s),
 		ResolveToolset:         NewResolveToolsetEndpoint(s),
+		GetToolsetSchemas:      NewGetToolsetSchemasEndpoint(s),
 		CheckAdmission:         NewCheckAdmissionEndpoint(s),
 		Search:                 NewSearchEndpoint(s),
 		CallTool:               NewCallToolEndpoint(s),
@@ -100,6 +102,7 @@ func (e *Endpoints) Use(m func(goa.Endpoint) goa.Endpoint) {
 	e.ListToolsets = m(e.ListToolsets)
 	e.GetToolset = m(e.GetToolset)
 	e.ResolveToolset = m(e.ResolveToolset)
+	e.GetToolsetSchemas = m(e.GetToolsetSchemas)
 	e.CheckAdmission = m(e.CheckAdmission)
 	e.Search = m(e.Search)
 	e.CallTool = m(e.CallTool)
@@ -279,6 +282,15 @@ func NewResolveToolsetEndpoint(s Service) goa.Endpoint {
 	return func(ctx context.Context, req any) (any, error) {
 		p := req.(*GetToolsetPayload)
 		return s.ResolveToolset(ctx, p)
+	}
+}
+
+// NewGetToolsetSchemasEndpoint returns an endpoint function that calls the
+// method "GetToolsetSchemas" of service "registry".
+func NewGetToolsetSchemasEndpoint(s Service) goa.Endpoint {
+	return func(ctx context.Context, req any) (any, error) {
+		p := req.(*GetToolsetPayload)
+		return s.GetToolsetSchemas(ctx, p)
 	}
 }
 

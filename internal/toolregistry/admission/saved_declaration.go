@@ -121,6 +121,14 @@ func (r *savedDeclarationReader) readValue(target reflect.Type, contract *json.R
 // readTokenValue checks the value whose opening token has already been read.
 // Object offsets begin at that token, excluding surrounding colons and commas.
 func (r *savedDeclarationReader) readTokenValue(target reflect.Type, contract *json.RawMessage, token json.Token) error {
+	if target == reflect.TypeFor[json.RawMessage]() {
+		if token != nil && token != json.Delim('{') {
+			return fmt.Errorf("saved consumer contract must be an object or null")
+		}
+		// Historical contract members remain opaque, but duplicate names at any
+		// depth would make their saved meaning ambiguous and are still rejected.
+		target = nil
+	}
 	delimiter, ok := token.(json.Delim)
 	if !ok {
 		return nil

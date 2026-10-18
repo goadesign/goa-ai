@@ -45,6 +45,7 @@ const (
 	Registry_ListToolsets_FullMethodName           = "/goa_ai_registry.Registry/ListToolsets"
 	Registry_GetToolset_FullMethodName             = "/goa_ai_registry.Registry/GetToolset"
 	Registry_ResolveToolset_FullMethodName         = "/goa_ai_registry.Registry/ResolveToolset"
+	Registry_GetToolsetSchemas_FullMethodName      = "/goa_ai_registry.Registry/GetToolsetSchemas"
 	Registry_CheckAdmission_FullMethodName         = "/goa_ai_registry.Registry/CheckAdmission"
 	Registry_Search_FullMethodName                 = "/goa_ai_registry.Registry/Search"
 	Registry_CallTool_FullMethodName               = "/goa_ai_registry.Registry/CallTool"
@@ -174,6 +175,12 @@ type RegistryClient interface {
 	// provider replacement cannot change the contract selected by the model.
 	// Resolution describes registered tools; it does not guarantee provider health.
 	ResolveToolset(ctx context.Context, in *ResolveToolsetRequest, opts ...grpc.CallOption) (*ResolveToolsetResponse, error)
+	// Inspect an active toolset's descriptive fields and argument, result, and
+	// sidecar schemas without requesting executable consumer metadata or a
+	// registration token. Historical registrations remain inspectable when their
+	// consumer metadata cannot be represented by the current executable contract.
+	// This read does not grant execution authority or promise provider readiness.
+	GetToolsetSchemas(ctx context.Context, in *GetToolsetSchemasRequest, opts ...grpc.CallOption) (*GetToolsetSchemasResponse, error)
 	// Report whether the exact registration token derived from a deployed
 	// provider's generated tool schemas is active and currently has an unexpired,
 	// non-draining provider lease plus a fresh authenticated pong. Release
@@ -445,6 +452,16 @@ func (c *registryClient) ResolveToolset(ctx context.Context, in *ResolveToolsetR
 	return out, nil
 }
 
+func (c *registryClient) GetToolsetSchemas(ctx context.Context, in *GetToolsetSchemasRequest, opts ...grpc.CallOption) (*GetToolsetSchemasResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(GetToolsetSchemasResponse)
+	err := c.cc.Invoke(ctx, Registry_GetToolsetSchemas_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *registryClient) CheckAdmission(ctx context.Context, in *CheckAdmissionRequest, opts ...grpc.CallOption) (*CheckAdmissionResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(CheckAdmissionResponse)
@@ -653,6 +670,12 @@ type RegistryServer interface {
 	// provider replacement cannot change the contract selected by the model.
 	// Resolution describes registered tools; it does not guarantee provider health.
 	ResolveToolset(context.Context, *ResolveToolsetRequest) (*ResolveToolsetResponse, error)
+	// Inspect an active toolset's descriptive fields and argument, result, and
+	// sidecar schemas without requesting executable consumer metadata or a
+	// registration token. Historical registrations remain inspectable when their
+	// consumer metadata cannot be represented by the current executable contract.
+	// This read does not grant execution authority or promise provider readiness.
+	GetToolsetSchemas(context.Context, *GetToolsetSchemasRequest) (*GetToolsetSchemasResponse, error)
 	// Report whether the exact registration token derived from a deployed
 	// provider's generated tool schemas is active and currently has an unexpired,
 	// non-draining provider lease plus a fresh authenticated pong. Release
@@ -790,6 +813,9 @@ func (UnimplementedRegistryServer) GetToolset(context.Context, *GetToolsetReques
 }
 func (UnimplementedRegistryServer) ResolveToolset(context.Context, *ResolveToolsetRequest) (*ResolveToolsetResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ResolveToolset not implemented")
+}
+func (UnimplementedRegistryServer) GetToolsetSchemas(context.Context, *GetToolsetSchemasRequest) (*GetToolsetSchemasResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method GetToolsetSchemas not implemented")
 }
 func (UnimplementedRegistryServer) CheckAdmission(context.Context, *CheckAdmissionRequest) (*CheckAdmissionResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method CheckAdmission not implemented")
@@ -1181,6 +1207,24 @@ func _Registry_ResolveToolset_Handler(srv interface{}, ctx context.Context, dec 
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Registry_GetToolsetSchemas_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetToolsetSchemasRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RegistryServer).GetToolsetSchemas(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Registry_GetToolsetSchemas_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RegistryServer).GetToolsetSchemas(ctx, req.(*GetToolsetSchemasRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Registry_CheckAdmission_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(CheckAdmissionRequest)
 	if err := dec(in); err != nil {
@@ -1425,6 +1469,10 @@ var Registry_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ResolveToolset",
 			Handler:    _Registry_ResolveToolset_Handler,
+		},
+		{
+			MethodName: "GetToolsetSchemas",
+			Handler:    _Registry_GetToolsetSchemas_Handler,
 		},
 		{
 			MethodName: "CheckAdmission",

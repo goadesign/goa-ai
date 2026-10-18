@@ -612,6 +612,39 @@ func DecodeResolveToolsetRequest(ctx context.Context, v any, md metadata.MD) (an
 	return payload, nil
 }
 
+// EncodeGetToolsetSchemasResponse encodes responses from the "registry"
+// service "GetToolsetSchemas" endpoint.
+func EncodeGetToolsetSchemasResponse(ctx context.Context, v any, hdr, trlr *metadata.MD) (any, error) {
+	result, ok := v.(*registry.ToolsetSchemas)
+	if !ok {
+		return nil, goagrpc.ErrInvalidType("registry", "GetToolsetSchemas", "*registry.ToolsetSchemas", v)
+	}
+	resp := NewProtoGetToolsetSchemasResponse(result)
+	return resp, nil
+}
+
+// DecodeGetToolsetSchemasRequest decodes requests sent to "registry" service
+// "GetToolsetSchemas" endpoint.
+func DecodeGetToolsetSchemasRequest(ctx context.Context, v any, md metadata.MD) (any, error) {
+	var (
+		message *registrypb.GetToolsetSchemasRequest
+		ok      bool
+	)
+	{
+		if message, ok = v.(*registrypb.GetToolsetSchemasRequest); !ok {
+			return nil, goagrpc.ErrInvalidType("registry", "GetToolsetSchemas", "*registrypb.GetToolsetSchemasRequest", v)
+		}
+		if err := ValidateGetToolsetSchemasRequest(message); err != nil {
+			return nil, err
+		}
+	}
+	var payload *registry.GetToolsetPayload
+	{
+		payload = NewGetToolsetSchemasPayload(message)
+	}
+	return payload, nil
+}
+
 // EncodeCheckAdmissionResponse encodes responses from the "registry" service
 // "CheckAdmission" endpoint.
 func EncodeCheckAdmissionResponse(ctx context.Context, v any, hdr, trlr *metadata.MD) (any, error) {
