@@ -149,7 +149,13 @@ An exported Agent operation can run before it is published as a tool.
 `Runtime.StartOneShotOperation` creates no conversation. Both accept the complete
 operation declaration, input, run identity and labels.
 The host authorizes the selection before starting it. The declaration does not
-create an access grant.
+create an access grant. The start and completion-repair methods accept
+`WithTextOnly(true)` after the memo argument. This is their only supported run
+option: the host can restrict interaction, while provider configuration still owns
+planner policy. The restriction selects generated text-only argument contracts
+before validation and cannot be removed by provider preparation or child runs.
+Registered native and service operations use the same restriction, retained with
+their original request through dispatch and recovery.
 
 The engine accepts the request before the provider prepares messages. A typed
 activity on the selected provider queue checks its exact route and validates the

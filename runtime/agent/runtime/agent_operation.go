@@ -22,24 +22,26 @@ import (
 // StartOperation accepts one sessionful call to a declared Agent operation.
 // The host must already own the session and authorize the selected declaration.
 // Provider preparation and effects belong to the accepted workflow; callers only
-// observe its handle. The selected configuration owns planner policy.
+// observe its handle. The selected configuration owns planner policy. Only
+// WithTextOnly is accepted in opts; other options fail before submission.
 func (r *Runtime) StartOperation(
 	ctx context.Context, sessionID, runID string, operation *genregistry.ToolSchema,
-	arguments rawjson.Message, labels map[string]string, memo map[string]any,
+	arguments rawjson.Message, labels map[string]string, memo map[string]any, opts ...RunOption,
 ) (engine.WorkflowHandle, error) {
 	if sessionID == "" {
 		return nil, ErrMissingSessionID
 	}
-	return r.startOperation(ctx, sessionID, runID, operation, arguments, labels, memo)
+	return r.startOperation(ctx, sessionID, runID, operation, arguments, labels, memo, opts...)
 }
 
 // StartOneShotOperation accepts one sessionless call without creating a hidden
 // conversation. Exact retries observe the same workflow; changed input conflicts.
+// Only WithTextOnly is accepted in opts.
 func (r *Runtime) StartOneShotOperation(
 	ctx context.Context, runID string, operation *genregistry.ToolSchema,
-	arguments rawjson.Message, labels map[string]string, memo map[string]any,
+	arguments rawjson.Message, labels map[string]string, memo map[string]any, opts ...RunOption,
 ) (engine.WorkflowHandle, error) {
-	return r.startOperation(ctx, "", runID, operation, arguments, labels, memo)
+	return r.startOperation(ctx, "", runID, operation, arguments, labels, memo, opts...)
 }
 
 // selectedRunTool returns the retained direct operation or delegated tool
@@ -103,9 +105,9 @@ func (r *Runtime) providerOperationSpec(definition AgentDefinition, declaration 
 // declaration. It neither publishes messages nor calls a provider in the caller.
 func (r *Runtime) startOperation(
 	ctx context.Context, sessionID, runID string, operation *genregistry.ToolSchema,
-	arguments rawjson.Message, labels map[string]string, memo map[string]any,
+	arguments rawjson.Message, labels map[string]string, memo map[string]any, opts ...RunOption,
 ) (engine.WorkflowHandle, error) {
-	request, err := prepareOperationRequest(sessionID, runID, operation, arguments, labels, memo)
+	request, err := prepareOperationRequest(sessionID, runID, operation, arguments, labels, memo, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +116,11 @@ func (r *Runtime) startOperation(
 
 // prepareOperationRequest builds the complete immutable engine request for
 // both initial submission and exact completion repair. It performs no I/O.
-func prepareOperationRequest(sessionID, runID string, operation *genregistry.ToolSchema, arguments rawjson.Message, labels map[string]string, memo map[string]any) (engine.WorkflowStartRequest, error) {
+func prepareOperationRequest(sessionID, runID string, operation *genregistry.ToolSchema, arguments rawjson.Message, labels map[string]string, memo map[string]any, opts ...RunOption) (engine.WorkflowStartRequest, error) {
+	policy, err := exactOperationPolicy(opts)
+	if err != nil {
+		return engine.WorkflowStartRequest{}, err
+	}
 	if runID == "" {
 		return engine.WorkflowStartRequest{}, errors.New("operation run id is required")
 	}
@@ -127,6 +133,10 @@ func prepareOperationRequest(sessionID, runID string, operation *genregistry.Too
 	if err != nil {
 		return engine.WorkflowStartRequest{}, err
 	}
+	spec, err = exactOperationSpec(spec, policy)
+	if err != nil {
+		return engine.WorkflowStartRequest{}, err
+	}
 	if _, err := spec.Payload.Codec.FromJSON(arguments); err != nil {
 		return engine.WorkflowStartRequest{}, fmt.Errorf("operation %q input: %w", spec.Name, err)
 	}
@@ -134,6 +144,7 @@ func prepareOperationRequest(sessionID, runID string, operation *genregistry.Too
 		ID: executor, WorkflowName: target.Workflow, DefaultTaskQueue: target.Queue,
 	}, nil, nil, nil, nil, nil, nil)
 	start := runStart{input: RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(executor))}, SessionID: sessionID, RunID: runID, Labels: cloneLabels(labels)}}
+	start.input.Policy = policy
 	start.input.Tool = spec.Name
 	start.input.ToolArgs = append(rawjson.Message(nil), arguments...)
 	start.input.Operation = operation
@@ -171,6 +182,10 @@ func validateDirectOperationInput(input *api.RunInput) error {
 	}
 	if spec.Name != input.Tool {
 		return errors.New("direct operation name differs from the selected contract")
+	}
+	spec, err = exactOperationSpec(spec, input.Policy)
+	if err != nil {
+		return err
 	}
 	if _, err := spec.Payload.Codec.FromJSON(input.ToolArgs); err != nil {
 		return fmt.Errorf("operation %q input: %w", spec.Name, err)

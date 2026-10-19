@@ -80,8 +80,11 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		if err := validateDirectOperationInput(input); err != nil {
 			return nil, err
 		}
-		if input.Policy != nil || input.Continuation != nil {
-			return nil, errors.New("fresh operation cannot supply prepared policy or continuation")
+		if input.Continuation != nil {
+			return nil, errors.New("fresh operation cannot supply continuation")
+		}
+		if err := validateExactOperationPolicy(input.Policy); err != nil {
+			return nil, err
 		}
 		earlyTerminal.Root = &struct{}{}
 	}
@@ -220,8 +223,8 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		if err := wfCtx.SetCancellationHandler(cancellationHandler); err != nil {
 			return nil, fmt.Errorf("register cancellation handler: %w", err)
 		}
-		if input.SeedEndID != "" || input.Policy != nil {
-			return nil, errors.New("direct operation cannot supply prepared history or provider policy")
+		if input.SeedEndID != "" {
+			return nil, errors.New("direct operation cannot supply prepared history")
 		}
 		prepared, stopped, err := r.prepareAgentOperation(wfCtx, input)
 		if err != nil {

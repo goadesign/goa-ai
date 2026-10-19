@@ -424,13 +424,17 @@ type (
 	// RunOption configures one run and the settings used to launch its workflow.
 	// Only options returned by this package can implement this interface, which
 	// keeps the option contract stable when private preparation details change.
-	// Passing a nil option to a run method panics.
+	// Exact-operation methods accept only WithTextOnly and reject other options,
+	// including nil. Passing nil to ordinary Agent run methods panics.
 	RunOption interface {
 		apply(*runStart)
 	}
 
 	// runOption adapts the package's option functions to RunOption.
 	runOption func(*runStart)
+
+	// textOnlyOption identifies the one caller restriction accepted by exact operations.
+	textOnlyOption bool
 
 	// preparationOption cannot change checkpoint-owned continuation values.
 	preparationOption struct{ commandID, attemptID string }
@@ -749,13 +753,7 @@ func WithRestrictToTool(id tools.Ident) RunOption {
 // WithTextOnly accepts an immutable restriction to ordinary messages and domain
 // data for this run. The runtime propagates it to every child and continuation.
 func WithTextOnly(enabled bool) RunOption {
-	return runOption(func(start *runStart) {
-		in := &start.input
-		if in.Policy == nil {
-			in.Policy = &PolicyOverrides{}
-		}
-		in.Policy.TextOnly = enabled
-	})
+	return textOnlyOption(enabled)
 }
 
 // WithTagPolicyClauses sets explicit tag-policy clauses on the run policy.
@@ -773,6 +771,14 @@ func WithTagPolicyClauses(clauses []TagPolicyClause) RunOption {
 func (option preparationOption) apply(start *runStart) {
 	start.preparationCommand = option.commandID
 	start.preparationAttempt = option.attemptID
+}
+
+// apply stores the caller restriction in the run input used by ordinary Agent runs.
+func (option textOnlyOption) apply(start *runStart) {
+	if start.input.Policy == nil {
+		start.input.Policy = &PolicyOverrides{}
+	}
+	start.input.Policy.TextOnly = bool(option)
 }
 
 func (option runOption) apply(start *runStart) {

@@ -22,6 +22,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"text/template"
 
@@ -76,6 +77,7 @@ type confirmationPlan struct {
 //
 // Contract:
 //   - Runtime overrides take precedence over design-time specs.
+//   - Text-only calls reject required confirmation before rendering a host question.
 //   - When confirmation is not required, the returned plan is nil and needs is false.
 //   - Template rendering uses missingkey=error; a missing field is a bug and must
 //     fail loudly to surface incorrect tool schemas/templates.
@@ -84,6 +86,9 @@ func (r *Runtime) confirmationPlan(ctx context.Context, call *ToolCall) (*confir
 	// do not declare design-time Confirmation.
 	if r.toolConfirmation != nil && len(r.toolConfirmation.Confirm) > 0 {
 		if h, ok := r.toolConfirmation.Confirm[call.Name]; ok {
+			if call.TextOnly {
+				return nil, false, errors.New("text-only tools cannot require confirmation")
+			}
 			prompt, err := h.Prompt(ctx, call)
 			if err != nil {
 				return nil, false, err
@@ -106,6 +111,9 @@ func (r *Runtime) confirmationPlan(ctx context.Context, call *ToolCall) (*confir
 	}
 	if !ok || spec.Confirmation == nil {
 		return nil, false, nil
+	}
+	if call.TextOnly {
+		return nil, false, errors.New("text-only tools cannot require confirmation")
 	}
 	c := spec.Confirmation
 	var payloadVal any

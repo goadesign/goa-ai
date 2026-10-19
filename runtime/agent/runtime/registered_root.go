@@ -30,11 +30,12 @@ func WithToolWorkflowQueue(queue string) RuntimeOption {
 
 // StartToolOperation durably submits one exact registered operation in
 // an existing Session. The engine owns the request before provider work starts.
-func (r *Runtime) StartToolOperation(ctx context.Context, sessionID, registry string, resolved *genregistry.ResolvedToolset, invocation *genregistry.RegisteredInvocation, labels map[string]string, memo map[string]any) (engine.WorkflowHandle, error) {
+// Only WithTextOnly is accepted in opts; other options fail before submission.
+func (r *Runtime) StartToolOperation(ctx context.Context, sessionID, registry string, resolved *genregistry.ResolvedToolset, invocation *genregistry.RegisteredInvocation, labels map[string]string, memo map[string]any, opts ...RunOption) (engine.WorkflowHandle, error) {
 	if sessionID == "" {
 		return nil, ErrMissingSessionID
 	}
-	request, err := r.prepareRegisteredRootRequest(sessionID, registry, resolved, invocation, labels, memo)
+	request, err := r.prepareRegisteredRootRequest(sessionID, registry, resolved, invocation, labels, memo, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -42,9 +43,10 @@ func (r *Runtime) StartToolOperation(ctx context.Context, sessionID, registry st
 }
 
 // StartOneShotToolOperation submits one registered operation without a
-// Session. Exact retries attach to the original engine request.
-func (r *Runtime) StartOneShotToolOperation(ctx context.Context, registry string, resolved *genregistry.ResolvedToolset, invocation *genregistry.RegisteredInvocation, labels map[string]string, memo map[string]any) (engine.WorkflowHandle, error) {
-	request, err := r.prepareRegisteredRootRequest("", registry, resolved, invocation, labels, memo)
+// Session. Exact retries attach to the original engine request. Only
+// WithTextOnly is accepted in opts.
+func (r *Runtime) StartOneShotToolOperation(ctx context.Context, registry string, resolved *genregistry.ResolvedToolset, invocation *genregistry.RegisteredInvocation, labels map[string]string, memo map[string]any, opts ...RunOption) (engine.WorkflowHandle, error) {
+	request, err := r.prepareRegisteredRootRequest("", registry, resolved, invocation, labels, memo, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -53,11 +55,12 @@ func (r *Runtime) StartOneShotToolOperation(ctx context.Context, registry string
 
 // EnsureToolOperationCompletion delivers the engine's outcome for the exact
 // sessionful input, including failure before the workflow recorded its start.
-func (r *Runtime) EnsureToolOperationCompletion(ctx context.Context, sessionID, registry string, resolved *genregistry.ResolvedToolset, invocation *genregistry.RegisteredInvocation, labels map[string]string, memo map[string]any) error {
+// Pass the same WithTextOnly option used at start; other options are rejected.
+func (r *Runtime) EnsureToolOperationCompletion(ctx context.Context, sessionID, registry string, resolved *genregistry.ResolvedToolset, invocation *genregistry.RegisteredInvocation, labels map[string]string, memo map[string]any, opts ...RunOption) error {
 	if sessionID == "" {
 		return ErrMissingSessionID
 	}
-	request, err := r.prepareRegisteredRootRequest(sessionID, registry, resolved, invocation, labels, memo)
+	request, err := r.prepareRegisteredRootRequest(sessionID, registry, resolved, invocation, labels, memo, opts...)
 	if err != nil {
 		return err
 	}
@@ -66,8 +69,9 @@ func (r *Runtime) EnsureToolOperationCompletion(ctx context.Context, sessionID, 
 
 // EnsureOneShotToolOperationCompletion repairs the exact sessionless execution;
 // it never starts work or treats missing engine history as successful completion.
-func (r *Runtime) EnsureOneShotToolOperationCompletion(ctx context.Context, registry string, resolved *genregistry.ResolvedToolset, invocation *genregistry.RegisteredInvocation, labels map[string]string, memo map[string]any) error {
-	request, err := r.prepareRegisteredRootRequest("", registry, resolved, invocation, labels, memo)
+// Pass the same WithTextOnly option used at start; other options are rejected.
+func (r *Runtime) EnsureOneShotToolOperationCompletion(ctx context.Context, registry string, resolved *genregistry.ResolvedToolset, invocation *genregistry.RegisteredInvocation, labels map[string]string, memo map[string]any, opts ...RunOption) error {
+	request, err := r.prepareRegisteredRootRequest("", registry, resolved, invocation, labels, memo, opts...)
 	if err != nil {
 		return err
 	}
@@ -76,7 +80,11 @@ func (r *Runtime) EnsureOneShotToolOperationCompletion(ctx context.Context, regi
 
 // prepareRegisteredRootRequest copies the generated operation request and binds
 // its exact service registration to the schema used to validate original input.
-func (r *Runtime) prepareRegisteredRootRequest(sessionID, registry string, resolved *genregistry.ResolvedToolset, invocation *genregistry.RegisteredInvocation, labels map[string]string, memo map[string]any) (engine.WorkflowStartRequest, error) {
+func (r *Runtime) prepareRegisteredRootRequest(sessionID, registry string, resolved *genregistry.ResolvedToolset, invocation *genregistry.RegisteredInvocation, labels map[string]string, memo map[string]any, opts ...RunOption) (engine.WorkflowStartRequest, error) {
+	policy, err := exactOperationPolicy(opts)
+	if err != nil {
+		return engine.WorkflowStartRequest{}, err
+	}
 	encoded, err := genregistry.EncodeRegisteredInvocation(invocation)
 	if err != nil {
 		return engine.WorkflowStartRequest{}, err
@@ -109,7 +117,7 @@ func (r *Runtime) prepareRegisteredRootRequest(sessionID, registry string, resol
 				return engine.WorkflowStartRequest{}, errors.New("native target requires Agent declaration")
 			}
 			route := declaration.ConsumerContract.Agent
-			input := &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(route.Executor))}, RunID: root.RunID, SessionID: sessionID, RegisteredInvocation: retained, ToolRegistry: binding, Labels: cloneLabels(labels)}
+			input := &api.RunInput{Policy: policy, Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(route.Executor))}, RunID: root.RunID, SessionID: sessionID, RegisteredInvocation: retained, ToolRegistry: binding, Labels: cloneLabels(labels)}
 			input.TurnID, err = lifecycle.RegisteredRunTurnID(input.Subject, input.RunID, "")
 			if err != nil {
 				return engine.WorkflowStartRequest{}, err
@@ -143,7 +151,7 @@ func (r *Runtime) prepareRegisteredRootRequest(sessionID, registry string, resol
 	if err != nil {
 		return engine.WorkflowStartRequest{}, err
 	}
-	input := &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorServiceTool(&genrunidentity.ServiceToolSubject{Registry: registry, Tool: source.Tool})}, RunID: root.RunID, SessionID: sessionID, RegisteredInvocation: retained, ToolRegistry: binding, Labels: cloneLabels(labels)}
+	input := &api.RunInput{Policy: policy, Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorServiceTool(&genrunidentity.ServiceToolSubject{Registry: registry, Tool: source.Tool})}, RunID: root.RunID, SessionID: sessionID, RegisteredInvocation: retained, ToolRegistry: binding, Labels: cloneLabels(labels)}
 	input.TurnID, err = lifecycle.RegisteredRunTurnID(input.Subject, input.RunID, "")
 	if err != nil {
 		return engine.WorkflowStartRequest{}, err
@@ -166,11 +174,14 @@ func validateRegisteredRootInput(input *api.RunInput) (*registrycontract.Resolut
 	if input == nil {
 		return nil, errors.New("registered input is required")
 	}
+	if err := validateExactOperationPolicy(input.Policy); err != nil {
+		return nil, err
+	}
 	subject, ok := input.Subject.Executor.AsServiceTool()
 	if !ok {
 		return nil, errors.New("registered service root requires service subject")
 	}
-	if input.Operation != nil || input.Policy != nil || input.Continuation != nil || input.TurnID != "" || input.ParentRunID != "" || input.ParentAgentID != "" || input.ParentToolCallID != "" || input.Tool != "" || len(input.ToolArgs) != 0 || len(input.Metadata) != 0 {
+	if input.Operation != nil || input.Continuation != nil || input.TurnID != "" || input.ParentRunID != "" || input.ParentAgentID != "" || input.ParentToolCallID != "" || input.Tool != "" || len(input.ToolArgs) != 0 || len(input.Metadata) != 0 {
 		return nil, errors.New("registered service root cannot include Agent or duplicate operation state")
 	}
 	if _, err := genregistry.EncodeRegisteredInvocation(input.RegisteredInvocation); err != nil {
@@ -195,6 +206,10 @@ func validateRegisteredRootInput(input *api.RunInput) (*registrycontract.Resolut
 	spec, ok := resolution.Specs[tools.Ident(subject.Tool)]
 	if !ok || spec.IsAgentTool {
 		return nil, errors.New("registered selection is not a service operation")
+	}
+	spec, err = exactOperationSpec(spec, input.Policy)
+	if err != nil {
+		return nil, err
 	}
 	if _, err := spec.ExecutionPayloadCodec.FromJSON(request.Arguments); err != nil {
 		return nil, fmt.Errorf("registered arguments: %w", err)
