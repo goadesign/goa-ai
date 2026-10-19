@@ -150,6 +150,7 @@ func TestServeRejectsUnsafeCapacityConfiguration(t *testing.T) {
 		{name: "negative queue", options: Options{MaxQueuedToolCalls: -1}},
 		{name: "excessive queue", options: Options{MaxQueuedToolCalls: MaxQueuedToolCalls + 1}},
 		{name: "negative shutdown timeout", options: Options{ShutdownTimeout: -1}},
+		{name: "negative operation timeout", options: Options{OperationTimeout: -1}},
 		{
 			name: "shutdown exceeds settlement",
 			options: Options{

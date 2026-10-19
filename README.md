@@ -225,6 +225,9 @@ Custom stores must follow the [preparation ownership upgrade](docs/runtime.md#pr
 
 - **Distributed tool registries.** Publish typed toolsets, discover changing
   catalogs, and route calls to providers with exact contracts and renewable leases.
+  Providers can bound individual Registry operations independently of accepted-call
+  shutdown; omitted options retain existing behavior. See
+  [provider lifecycle](docs/runtime.md#registry-routed-provider-execution-service-side).
   Catalogs retain resource ownership; applications authorize discovery and use.
   Registered imports derive distinct names for equal operations from different
   owners and retain original declarations for execution and replay.

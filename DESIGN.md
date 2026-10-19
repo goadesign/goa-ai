@@ -1577,6 +1577,11 @@ internally for all invocation-owned work, including the original sink Close,
 before returning the already-decided result. It may outlast the settlement
 deadline while dependencies finish. That later join never permits release after
 incomplete settlement. `Serve` retains its published bounded-return behavior.
+Provider `Options.OperationTimeout` can bound each claim, result publication
+and acknowledgement separately from that shutdown wait. Its zero value keeps
+the existing `ShutdownTimeout`-derived operation allowance. This permits longer
+accepted-call drainage without changing individual operation waits, handler
+deadlines or the separately bounded lease release.
 Neither entry point can join resources a sink leaves active after Close returns;
 the sink owns that local cleanup contract.
 Shutdown classification follows the returned error's own `Unwrap` causes, not
