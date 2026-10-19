@@ -13,6 +13,8 @@ import (
 	toolcontract "goa.design/goa-ai/runtime/toolregistry/contract"
 )
 
+const staticServiceKind = "service"
+
 // BindStaticService attaches an owner-selected registration to explicitly named
 // generated service tools. The complete expected declaration must match, except
 // its toolset name may be replaced by the selected route. No catalog is read.
@@ -59,7 +61,7 @@ func (c *RegistryCatalog) BindStaticService(registry string, expected *genregist
 		return fmt.Errorf("registry %q toolset %q is outside this agent's declared consumption", registry, selected.Toolset.Name)
 	}
 	for _, declaration := range selected.Toolset.Tools {
-		if declaration.ConsumerContract.Kind != "service" {
+		if declaration.ConsumerContract.Kind != staticServiceKind {
 			return fmt.Errorf("static service binding cannot include %s tool %q", declaration.ConsumerContract.Kind, declaration.Name)
 		}
 	}
@@ -131,7 +133,7 @@ func validateStaticServiceSpec(spec tools.ToolSpec, resolved *registrycontract.R
 	if err != nil {
 		return err
 	}
-	if resolved.Source != nil || declaration.ConsumerContract.Kind != "service" || !equivalentToolSpec(spec, resolved.Specs[spec.Name]) {
+	if resolved.Source != nil || declaration.ConsumerContract.Kind != staticServiceKind || !equivalentToolSpec(spec, resolved.Specs[spec.Name]) {
 		return fmt.Errorf("saved service tool %q differs from this agent's static contract", spec.Name)
 	}
 	return nil

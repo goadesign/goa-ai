@@ -90,6 +90,22 @@ func (r *Runtime) availableContinuationActions(agentID agent.Ident, outputs []*p
 		return nil, err
 	}
 	for _, group := range groups {
+		// Read every saved page before checking today's tools. A final page
+		// closes its earlier cursor even when its old tool cannot execute now.
+		states, err := continuationStates(group.spec, group.source, group.outputs)
+		if err != nil {
+			return nil, err
+		}
+		if len(states) == 0 {
+			continue
+		}
+		available, err := r.selectContinuationExecution(agentID, &group)
+		if err != nil {
+			return nil, err
+		}
+		if !available {
+			continue
+		}
 		spec := group.spec
 		source := group.source
 		if textOnly {
@@ -105,11 +121,13 @@ func (r *Runtime) availableContinuationActions(agentID agent.Ident, outputs []*p
 			spec = spec.ForTextOnly()
 			source = source.ForTextOnly()
 		}
-		states, err := continuationStates(spec, source, group.outputs)
-		if err != nil {
-			return nil, err
-		}
 		for _, state := range states {
+			if textOnly {
+				state.query, err = modelVisibleContinuationQuery(source, state.query)
+				if err != nil {
+					return nil, err
+				}
+			}
 			action, err := newContinuationAction(spec, state)
 			if err != nil {
 				return nil, err
@@ -160,10 +178,6 @@ func (r *Runtime) continuationGroups(agentID agent.Ident, outputs []*planner.Too
 		}
 		groups = append(groups, continuationGroup{spec: spec, source: source, outputs: staticOutputs})
 	}
-	registration, ok := r.agentByID(agentID)
-	if !ok || registration.Definition.registryTools == nil {
-		return groups, nil
-	}
 	type groupKey struct {
 		registry, token string
 		tool            tools.Ident
@@ -177,13 +191,6 @@ func (r *Runtime) continuationGroups(agentID agent.Ident, outputs []*planner.Too
 		if err != nil {
 			return nil, err
 		}
-		version := ""
-		if resolved.Registered.Toolset.Version != nil {
-			version = string(*resolved.Registered.Toolset.Version)
-		}
-		if !registration.Definition.registryTools.Allows(output.Registry.Registry, resolved.Registered.Toolset.Name, version) {
-			continue
-		}
 		spec, ok := resolved.Specs[output.Name]
 		if !ok {
 			return nil, fmt.Errorf("saved continuation has no contract for %q", output.Name)
@@ -196,30 +203,6 @@ func (r *Runtime) continuationGroups(agentID agent.Ident, outputs []*planner.Too
 			continue
 		}
 		source := resolved.Specs[continuation.Bounds.Paging.SourceTool]
-		if _, static := registration.Definition.specByName[output.Name]; static {
-			call := ToolCall{Name: output.Name, Registry: output.Registry}
-			if _, err := validateRegistrySource(registration.Definition, call); err != nil {
-				return nil, err
-			}
-			var exists bool
-			continuation, exists = registration.Definition.spec(continuation.Name)
-			if !exists {
-				return nil, fmt.Errorf("static continuation %q is not in this agent's definition", spec.Bounds.Paging.ContinueTool)
-			}
-			if err := validateStaticRegistrySpec(continuation, resolved); err != nil {
-				return nil, err
-			}
-			if err := validateStaticAgentRoute(registration.Definition, continuation, resolved); err != nil {
-				return nil, err
-			}
-			source = registration.Definition.specByName[continuation.Bounds.Paging.SourceTool]
-			if err := validateStaticRegistrySpec(source, resolved); err != nil {
-				return nil, err
-			}
-			if err := validateStaticAgentRoute(registration.Definition, source, resolved); err != nil {
-				return nil, err
-			}
-		}
 		key := groupKey{registry: output.Registry.Registry, token: resolved.Registered.RegistrationToken, tool: continuation.Name}
 		index, exists := indices[key]
 		if !exists {
@@ -236,6 +219,65 @@ func (r *Runtime) continuationGroups(agentID agent.Ident, outputs []*planner.Too
 		groups[index].outputs = append(groups[index].outputs, output)
 	}
 	return groups, nil
+}
+
+// selectContinuationExecution checks an unfinished saved query against the
+// consuming agent's current tools. Valid history with an unavailable tool pair
+// contributes no action; malformed saved declarations remain errors. Matching
+// static pairs use their current generated codecs and input preparation.
+func (r *Runtime) selectContinuationExecution(agentID agent.Ident, group *continuationGroup) (bool, error) {
+	if group.registry == nil {
+		return true, nil
+	}
+	resolved, err := registrycontract.Read(group.registry)
+	if err != nil {
+		return false, err
+	}
+	registration, ok := r.agentByID(agentID)
+	if !ok || registration.Definition.registryTools == nil {
+		return false, nil
+	}
+	definition := registration.Definition
+	version := ""
+	if resolved.Registered.Toolset.Version != nil {
+		version = string(*resolved.Registered.Toolset.Version)
+	}
+	if !definition.registryTools.Allows(group.registry.Registry, resolved.Registered.Toolset.Name, version) {
+		return false, nil
+	}
+	source, sourceStatic := definition.spec(group.source.Name)
+	continuation, continuationStatic := definition.spec(group.spec.Name)
+	if !sourceStatic && !continuationStatic {
+		return true, nil
+	}
+	if !sourceStatic || !continuationStatic || resolved.Source != nil {
+		return false, nil
+	}
+	for _, spec := range []tools.ToolSpec{source, continuation} {
+		declaration, err := resolved.Declaration(spec.Name)
+		if err != nil {
+			return false, err
+		}
+		kind := staticServiceKind
+		if spec.IsAgentTool {
+			kind = staticAgentKind
+		}
+		if declaration.ConsumerContract.Kind != kind || !equivalentToolSpec(spec, resolved.Specs[spec.Name]) {
+			return false, nil
+		}
+		if spec.IsAgentTool {
+			child, exists := definition.agents[agent.Ident(spec.AgentID)]
+			if !exists {
+				return false, nil
+			}
+			target := declaration.ConsumerContract.Agent
+			if target.Executor != string(child.route.ID) || target.Workflow != child.route.WorkflowName || target.Queue != child.route.DefaultTaskQueue {
+				return false, nil
+			}
+		}
+	}
+	group.source, group.spec = source, continuation
+	return true, nil
 }
 
 // compilePlannerToolCalls converts validated planner intent into runtime-owned

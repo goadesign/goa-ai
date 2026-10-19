@@ -1,0 +1,165 @@
+package runtime
+
+// Saved registered results describe the contract used by their original call.
+// These tests keep completed history readable while current tool execution
+// continues to require the complete current declaration.
+
+import (
+	"context"
+	"strings"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"goa.design/goa-ai/internal/registrycontract"
+	genregistry "goa.design/goa-ai/registry/gen/registry"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
+	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/run"
+	"goa.design/goa-ai/runtime/agent/tools"
+)
+
+type historicalStaticSources struct{ selected *genregistry.ResolvedToolset }
+
+func TestHistoricalStaticRegistryBoundsUseSavedDeclaration(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		bounds *agent.Bounds
+		want   string
+	}{
+		{name: "complete", bounds: &agent.Bounds{Returned: 1}},
+		{name: "without bounds"},
+		{name: "unfinished", bounds: &agent.Bounds{Returned: 1, Truncated: true, NextCursor: pointer("next")}},
+		{name: "invalid empty cursor", bounds: &agent.Bounds{Returned: 1, Truncated: true, NextCursor: pointer("")}, want: "empty next_cursor"},
+		{name: "invalid untruncated cursor", bounds: &agent.Bounds{Returned: 1, NextCursor: pointer("next")}, want: "without truncation"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rt, def, binding := historicalStaticFixture(t, "metadata")
+			output := sourceContinuationOutput("records.find", "saved-query", `{"value":1}`, "next")
+			output.Registry = binding
+			output.Bounds = tc.bounds
+			subject := genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(def.route.ID))}
+			err := rt.validateHistoricalContinuationBounds(output)
+			if tc.want != "" {
+				require.ErrorContains(t, err, tc.want)
+			} else {
+				require.NoError(t, err)
+			}
+			_, _, err = rt.callSpec(ToolCall{Name: output.Name, Registry: binding, Subject: subject})
+			assert.ErrorContains(t, err, "differs from this agent's static contract")
+		})
+	}
+}
+
+func TestHistoricalStaticRegistryActionsRequireLiveCompatiblePair(t *testing.T) {
+	for _, tc := range []struct {
+		name, change      string
+		complete, closing bool
+		want              int
+	}{
+		{name: "completed annotation change", change: "metadata", complete: true},
+		{name: "closing page annotation change", change: "metadata", closing: true},
+		{name: "unfinished annotation change", change: "metadata"},
+		{name: "unfinished payload change", change: "payload"},
+		{name: "removed continuation", change: "remove continuation"},
+		{name: "unchanged unfinished", want: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rt, def, binding := historicalStaticFixture(t, tc.change)
+			output := sourceContinuationOutput("records.find", "saved-query", `{"value":1}`, "next")
+			output.Registry = binding
+			if tc.complete {
+				output.Bounds = &agent.Bounds{Returned: 1}
+			}
+			outputs := []*planner.ToolOutput{output}
+			if tc.closing {
+				resolved, err := registrycontract.Read(binding)
+				require.NoError(t, err)
+				next, err := resolved.Select("company", "records.continue")
+				require.NoError(t, err)
+				outputs = append(outputs, &planner.ToolOutput{Name: "records.continue", ToolCallID: "saved-page", ContinuationRootToolCallID: "saved-query", Payload: rawjson.Message(`{"cursor":"next"}`), Registry: next, Bounds: &agent.Bounds{Returned: 1}})
+			}
+			actions, err := rt.availableContinuationActions(def.route.ID, outputs, false)
+			require.NoError(t, err)
+			assert.Len(t, actions, tc.want)
+		})
+	}
+}
+
+func TestPlanStartPreservesRegisteredHistoryAfterContractChange(t *testing.T) {
+	for _, tc := range []struct {
+		name, change string
+		bounds       *agent.Bounds
+	}{
+		{name: "completed metadata change", change: "metadata", bounds: &agent.Bounds{Returned: 1}},
+		{name: "unfinished metadata change", change: "metadata", bounds: &agent.Bounds{Returned: 1, Truncated: true, NextCursor: pointer("next")}},
+		{name: "unfinished payload change", change: "payload", bounds: &agent.Bounds{Returned: 1, Truncated: true, NextCursor: pointer("next")}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rt, def, binding := historicalStaticFixture(t, tc.change)
+			called := false
+			registration := rt.agents[def.route.ID]
+			registration.Planner = &stubPlanner{start: func(_ context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
+				called = true
+				assert.Empty(t, historicalActions(input.Agent))
+				assert.Len(t, input.Messages, 3)
+				return finalPlannerResult("New answer."), nil
+			}}
+			rt.agents[def.route.ID] = registration
+			subject := genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(def.route.ID))}
+			call := ToolCall{Name: "records.find", ToolCallID: "saved-query", Registry: binding, Payload: rawjson.Message(`{"value":1}`)}
+			appendHistoricalHookEvent(t, rt.Store, newToolCallScheduledEvent("saved", subject, "session-1", call, "", "", 0), "call", 1)
+			appendHistoricalHookEvent(t, rt.Store, hooks.NewToolResultReceivedEvent("saved", subject, "session-1", "saved", call.Name, call.ToolCallID, "", rawjson.Message(`{"value":1}`), nil, nil, "Saved result", tc.bounds, 0, nil, nil), "result", 2)
+			messages := []*model.Message{{Role: model.ConversationRoleAssistant, Parts: []model.Part{model.ToolUsePart{ID: "saved-query", Name: "records.find", Input: call.Payload}}}, {Role: model.ConversationRoleUser, Parts: []model.Part{model.ToolResultPart{ToolUseID: "saved-query", Content: rawjson.Message(`{"value":1}`)}}}, userMsg("Answer the new question.")}
+			input := seedTestPlanInput(t, rt, PlanActivityInput{AgentID: def.route.ID, RunID: "next", RunContext: run.Context{RunID: "next", SessionID: "session-1"}}, messages)
+			_, err := rt.PlanStartActivity(t.Context(), input)
+			require.NoError(t, err)
+			assert.True(t, called)
+		})
+	}
+}
+
+// historicalStaticFixture retains one earlier declaration and registers the
+// current synthetic tool pair so tests can change either contract independently.
+func historicalStaticFixture(t *testing.T, change string) (*Runtime, AgentDefinition, *tools.RegistryBinding) {
+	t.Helper()
+	saved, err := registrycontract.Resolve(testRegistryPagingResolution(strings.Repeat("a", 64)))
+	require.NoError(t, err)
+	binding, err := saved.Select("company", "records.find")
+	require.NoError(t, err)
+	current := testRegistryPagingResolution(strings.Repeat("b", 64))
+	switch change {
+	case "metadata":
+		current.Toolset.Tools[0].ConsumerContract.Meta = map[string][]string{"mcp:readOnlyHint": {"true"}}
+	case "payload":
+		current.Toolset.Tools[0].PayloadSchema = []byte(`{"type":"object","properties":{"value":{"type":"string"}},"required":["value"],"additionalProperties":false}`)
+		current.Toolset.Tools[0].ConsumerContract.Payload.SchemaWithoutRootExample = current.Toolset.Tools[0].PayloadSchema
+	}
+	resolved, err := registrycontract.Resolve(current)
+	require.NoError(t, err)
+	specs := []tools.ToolSpec{resolved.Specs["records.find"], resolved.Specs["records.continue"]}
+	if change == "remove continuation" {
+		specs = specs[:1]
+	}
+	rt := newTestRuntimeWithPlanner("records.agent", &stubPlanner{})
+	def := testAgentDefinition("records.agent", "records.workflow", "records.queue", specs, nil).WithRegistryTools(historicalStaticSources{current})
+	reg := rt.agents[def.route.ID]
+	reg.Definition = def
+	rt.agents[def.route.ID] = reg
+	seedTestToolSpecs(rt, specs...)
+	seedTestToolDefinitions(rt, specs...)
+	rt.agentToolSpecs = map[agent.Ident][]tools.ToolSpec{def.route.ID: specs}
+	require.NoError(t, rt.RegisterRegistry("company", &genregistry.Client{}, unusedRegistryPulse{}))
+	return rt, def, binding
+}
+
+func (s historicalStaticSources) Resolve(_ context.Context, catalog *RegistryCatalog) error {
+	return catalog.BindStaticService("company", s.selected.Toolset, s.selected, "records.find", "records.continue")
+}
+func (s historicalStaticSources) Allows(registry, toolset, version string) bool {
+	return registry == "company" && toolset == "provider.records" && version == "1.0.0"
+}
