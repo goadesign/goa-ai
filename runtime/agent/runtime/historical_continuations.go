@@ -30,7 +30,10 @@ func (r *Runtime) loadLiteralContinuationOutputs(
 	input *resolvedPlanActivityInput,
 	specs map[tools.Ident]tools.ToolSpec,
 ) ([]*planner.ToolOutput, error) {
-	names := historicalContinuationToolNames(specs)
+	names, err := historicalContinuationToolNames(specs)
+	if err != nil {
+		return nil, err
+	}
 	if len(names) == 0 {
 		registration, ok := r.agentByID(input.AgentID)
 		if !ok || registration.Definition.registryTools == nil {
@@ -132,7 +135,10 @@ func (r *Runtime) loadLiteralContinuationOutputs(
 				if err != nil {
 					return nil, err
 				}
-				callNames = historicalContinuationToolNames(resolved.Specs)
+				callNames, err = historicalContinuationToolNames(resolved.Specs)
+				if err != nil {
+					return nil, err
+				}
 			}
 			if _, relevant := callNames[call.ToolName.String()]; !relevant {
 				continue
@@ -193,16 +199,22 @@ func (r *Runtime) validateHistoricalContinuationBounds(output *planner.ToolOutpu
 
 // historicalContinuationToolNames returns the canonical source and continuation
 // tool names that can contribute live actions for one agent.
-func historicalContinuationToolNames(specs map[tools.Ident]tools.ToolSpec) map[string]struct{} {
+func historicalContinuationToolNames(specs map[tools.Ident]tools.ToolSpec) (map[string]struct{}, error) {
 	names := make(map[string]struct{})
 	for _, spec := range specs {
-		if !isDedicatedContinuationSpec(spec) {
+		composed, err := isComposedContinuationSpec(spec)
+		if err != nil {
+			return nil, err
+		}
+		if !composed && !isDedicatedContinuationSpec(spec) {
 			continue
 		}
 		names[spec.Name.String()] = struct{}{}
-		names[spec.Bounds.Paging.SourceTool.String()] = struct{}{}
+		if !composed {
+			names[spec.Bounds.Paging.SourceTool.String()] = struct{}{}
+		}
 	}
-	return names
+	return names, nil
 }
 
 // historicalContinuationToolCallIDs reads literal execution identities in

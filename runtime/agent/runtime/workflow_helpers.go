@@ -182,7 +182,14 @@ func (r *Runtime) appendUserToolRecordResults(
 			reminders = append(reminders, spec.ResultReminder)
 		}
 		if hasSpec {
-			if isDedicatedContinuationSpec(spec) &&
+			page := false
+			if tr.Failure == nil {
+				page, err = continuationPageInput(spec, call.Payload)
+				if err != nil {
+					return err
+				}
+			}
+			if page &&
 				call.ModelToolCallID == "" &&
 				call.ContinuationRootToolCallID == "" {
 				// A direct planner call has no saved source query to continue.
@@ -196,7 +203,7 @@ func (r *Runtime) appendUserToolRecordResults(
 				if spec.Bounds.Paging.ContinueTool != "" &&
 					tr.Bounds != nil && tr.Bounds.NextCursor != nil {
 					rootToolCallID := call.ToolCallID
-					if isDedicatedContinuationSpec(spec) {
+					if page {
 						rootToolCallID = call.ContinuationRootToolCallID
 					}
 					continueTool = continuationActionName(

@@ -1265,9 +1265,12 @@ use the execution codec, never the smaller model codec. This includes standalone
 registered service operations: `StartToolOperation` and
 `StartOneShotToolOperation` accept complete execution arguments, including
 retained query fields and a continuation cursor. Submission, saved-checkpoint
-validation, and provider dispatch use the same execution contract. Native Agent
-roots continue to accept their declared model input. This service validation
-correction needs no regeneration or schema migration. Upgrade submitting and
+validation, and provider dispatch use the same execution contract. Direct and
+registered native Agent operations also accept complete execution input. For a
+composed paging operation, the same public name accepts either the first query
+or a page with its cursor and retained query fields. Existing custom, unpaged
+Agent inputs retain their declared shape. This validation correction needs no
+schema migration. Upgrade submitting and
 worker runtimes that handle these calls: older runtimes still reject execution
 inputs that differ from model inputs, including when restoring accepted work.
 Finish that work on the fixed runtime before rolling back its workers.
@@ -8626,7 +8629,11 @@ the execution decoder allows only its disabled value. Both decoders initialize
 omitted UI controls to false, including optional pointer fields, so execution
 JSON includes the disabled value. Generated Registry providers pass these
 false controls to bound service methods and continue supplying `Inject` fields
-from call metadata. Other execution arguments, such as paging inputs, retain
+from call metadata. Direct native and service operations accept an explicitly
+false control or its omission; they reject true. Model calls still cannot supply
+the hidden control. For composed paging, the portable execution decoder validates
+the complete first or page input, then fills only that branch's declared disabled
+controls. Other execution arguments, such as paging inputs, retain
 their ordinary contract. Domain results and internal/provenance server data
 remain available.
 

@@ -56,9 +56,15 @@ func (r *Runtime) validateToolSpecRegistrations(
 			if spec.ExecutionPayloadCodec.FromJSON == nil || spec.ExecutionPayloadCodec.ToJSON == nil {
 				return nil, fmt.Errorf("%w: tool %q execution payload codec must define both ToJSON and FromJSON", ErrInvalidConfig, spec.Name)
 			}
+			if _, err := isComposedContinuationSpec(spec); err != nil {
+				return nil, fmt.Errorf("%w: tool %q paging execution: %w", ErrInvalidConfig, spec.Name, err)
+			}
 			if spec.TextOnly != nil {
 				if spec.TextOnly.Payload.Codec.FromJSON == nil || spec.TextOnly.Payload.Codec.ToJSON == nil || spec.TextOnly.ExecutionCodec.FromJSON == nil || spec.TextOnly.ExecutionCodec.ToJSON == nil {
 					return nil, fmt.Errorf("%w: tool %q text-only codecs are required", ErrInvalidConfig, spec.Name)
+				}
+				if _, err := isComposedContinuationSpec(spec.ForTextOnly()); err != nil {
+					return nil, fmt.Errorf("%w: tool %q text-only paging execution: %w", ErrInvalidConfig, spec.Name, err)
 				}
 				if _, err := model.NewToolDefinitionFromSpec(spec.ForTextOnly()); err != nil {
 					return nil, fmt.Errorf("%w: tool %q text-only model contract: %w", ErrInvalidConfig, spec.Name, err)

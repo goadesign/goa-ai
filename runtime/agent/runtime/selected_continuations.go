@@ -273,7 +273,10 @@ func (r *selectedContinuationReader) addReference(ctx context.Context, ref *api.
 		}
 		specs = resolved.Specs
 	}
-	names := historicalContinuationToolNames(specs)
+	names, err := historicalContinuationToolNames(specs)
+	if err != nil {
+		return err
+	}
 	if _, relevant := names[call.ToolName.String()]; !relevant {
 		return nil
 	}

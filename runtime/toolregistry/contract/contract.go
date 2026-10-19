@@ -97,7 +97,20 @@ func Compile(declaration *genregistry.ToolSchema) (tools.ToolSpec, error) {
 		if err := search.Validate(); err != nil {
 			return tools.ToolSpec{}, err
 		}
-		execution, err := compileTextOnlyExecutionCodec(text.ExecutionSchema)
+		cursorField := ""
+		if contract.Bounds != nil && contract.Bounds.Paging != nil {
+			paging := contract.Bounds.Paging
+			if paging.ContinueTool != nil && *paging.ContinueTool == declaration.Name && (paging.SourceTool == nil || *paging.SourceTool == "") {
+				composed, err := schema.PagingComposition(text.ExecutionSchema, paging.CursorField)
+				if err != nil {
+					return tools.ToolSpec{}, fmt.Errorf("tool %q text-only paging execution: %w", spec.Name, err)
+				}
+				if composed {
+					cursorField = paging.CursorField
+				}
+			}
+		}
+		execution, err := compileTextOnlyExecutionCodec(text.ExecutionSchema, cursorField)
 		if err != nil {
 			return tools.ToolSpec{}, fmt.Errorf("text-only execution schema: %w", err)
 		}
@@ -145,6 +158,11 @@ func Compile(declaration *genregistry.ToolSchema) (tools.ToolSpec, error) {
 			if paging.SourceTool != nil {
 				spec.Bounds.Paging.SourceTool = tools.Ident(*paging.SourceTool)
 			}
+		}
+	}
+	if spec.Bounds != nil && spec.Bounds.Paging != nil && spec.Bounds.Paging.SourceTool == "" && spec.Bounds.Paging.ContinueTool == spec.Name {
+		if _, err := schema.PagingComposition(spec.ExecutionPayloadSchema, spec.Bounds.Paging.CursorField); err != nil {
+			return tools.ToolSpec{}, fmt.Errorf("tool %q paging execution: %w", spec.Name, err)
 		}
 	}
 	if confirmation := contract.Confirmation; confirmation != nil {

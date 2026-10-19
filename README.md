@@ -50,6 +50,12 @@ upgrade requirements before changing a deployment with saved runs.
 These capabilities compose. You can also use MCP servers and clients independently
 of the agent runtime.
 
+Paged agent tools declared with `ContinueWith` publish one operation for both
+the initial query and subsequent pages. Direct callers supply the declared page
+arguments; agents receive temporary no-argument actions tied to the exact query.
+See [pagination ownership](DESIGN.md#pagination-ownership) for the generated
+input and execution contracts.
+
 ## One design, several ways to use it
 
 A product lookup can be an HTTP endpoint, a gRPC method, an MCP tool, and a local

@@ -188,10 +188,9 @@ func TestBoundedResultGeneratesBoundsSpec(t *testing.T) {
 	require.NotContains(t, specs, "BoundedResult: true")
 }
 
-// TestBoundedResultGeneratesDedicatedContinuation verifies that a query tool
-// can delegate paging to a cursor-only sibling without adding a cursor mode to
-// its own semantic payload.
-func TestBoundedResultGeneratesDedicatedContinuation(t *testing.T) {
+// TestBoundedResultGeneratesComposedContinuation keeps the first semantic input
+// while publishing one operation for both the query and its typed page.
+func TestBoundedResultGeneratesComposedContinuation(t *testing.T) {
 	eval.Reset()
 	goaexpr.Root = new(goaexpr.RootExpr)
 	goaexpr.GeneratedResultTypes = new(goaexpr.ResultTypesRoot)
@@ -334,7 +333,7 @@ func TestBoundedResultGeneratesReplayContinuation(t *testing.T) {
 	require.NotEmpty(t, specs, "expected generated specs.go at %s", expectedPath)
 	require.Contains(t, specs, `SourceTool: tools.Ident("tools.search")`)
 	require.Contains(t, specs, `RetainedFields: []string{ "query",  }`)
-	require.Contains(t, specs, `ExecutionPayloadSchema:tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"query\":{\"type\":\"string\"}},\"required\":[\"query\"],\"type\":\"object\"}")`)
+	require.Contains(t, specs, `ExecutionPayloadSchema:tools.RawJSON("{\"oneOf\":[`)
 	require.Contains(t, specs, `ExecutionPayloadSchema:tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"cursor\":{\"type\":\"string\"},\"query\":{\"type\":\"string\"}},\"required\":[\"query\",\"cursor\"],\"type\":\"object\"}")`)
 	require.Contains(t, specs, `Schema:tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"type\":\"object\"}")`)
 }

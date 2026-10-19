@@ -149,7 +149,25 @@ func {{ .Constructor }}(opts ...{{ .Names.OptionType }}) runtime.ToolCallExecuto
         if meta == nil {
             return runtime.Executed({{ .Names.FailedToolResult }}(call.Name, errors.New("tool call meta is nil"))), nil
         }
+        executionName := call.Name
         switch call.Name {
+        {{- range .Tools }}
+        {{- if .PrivatePage }}
+        case tools.Ident({{ printf "%q" .QualifiedName }}):
+            return runtime.Executed({{ $.Names.InvalidToolCall }}(call, errors.New("page implementation is not a public operation"))), nil
+        {{- else if .Page }}
+        case tools.Ident({{ printf "%q" .QualifiedName }}):
+            value, err := {{ $.Toolset.SpecsPackageName }}.{{ .SpecVar }}().ExecutionPayloadCodec.FromJSON(call.Payload)
+            if err != nil {
+                return runtime.Executed({{ $.Names.InvalidToolCall }}(call, err)), nil
+            }
+            if _, page := value.({{ if .Page.PayloadPointer }}*{{ end }}{{ $.Toolset.SpecsPackageName }}.{{ .Page.PayloadTypeName }}); page {
+                executionName = tools.Ident({{ printf "%q" .Page.QualifiedName }})
+            }
+        {{- end }}
+        {{- end }}
+        }
+        switch executionName {
         {{- range .Tools }}
         {{- if .IsMethodBacked }}
             {{- $toolHasSource := false }}

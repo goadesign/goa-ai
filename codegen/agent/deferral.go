@@ -18,13 +18,16 @@ func agentDeferral(agent *AgentData) ([]string, error) {
 		}
 		if toolset.Deferred {
 			for _, tool := range toolset.Tools {
+				if tool.PrivatePage {
+					continue
+				}
 				names = append(names, tool.QualifiedName)
 			}
 			continue
 		}
 		for _, name := range toolset.Expr.DeferredTools {
 			index := slices.IndexFunc(toolset.Tools, func(tool *ToolData) bool {
-				return tool.Name == name
+				return tool.Name == name && !tool.PrivatePage
 			})
 			if index == -1 {
 				return nil, fmt.Errorf("agent %q toolset %q: Deferred selects unknown tool %q", agent.ID, toolset.Name, name)

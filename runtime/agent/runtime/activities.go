@@ -214,6 +214,16 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, wireInput *PlanActivit
 		}
 	}
 	unavailableTools := r.recoveryUnavailableTools(input.AgentID, recoveryOutputs)
+	// A rejected operation also excludes its page actions during replanning.
+	// Finishing instead closes only new queries: pages already started remain
+	// available under their separate action names.
+	if !finishing {
+		for _, action := range continuationActions {
+			if slices.Contains(unavailableTools, action.spec.Name) {
+				unavailableTools = append(unavailableTools, action.modelName)
+			}
+		}
+	}
 	if finishing {
 		for name := range catalog.selections {
 			if !isDedicatedContinuationSpec(catalog.specs[name]) {
@@ -669,11 +679,17 @@ func (a *plannerActivityInvocation) output(
 	}
 	for index := range toolCalls {
 		call := &toolCalls[index]
-		// Code-authored dedicated pagination already contains the retained query
+		// Code-authored pagination already contains the retained query
 		// and cursor. Validation checked its execution codec, so preserve those
 		// bytes instead of treating them as model arguments.
 		spec, registered := a.catalog.spec(call.Name)
-		codeContinuation := call.ModelToolCallID == "" && registered && isDedicatedContinuationSpec(spec)
+		codeContinuation := false
+		if call.ModelToolCallID == "" && registered {
+			codeContinuation, err = plannerContinuationInput(spec, call.Payload)
+			if err != nil {
+				return nil, err
+			}
+		}
 		if call.ContinuationRootToolCallID == "" && !codeContinuation {
 			complete, err := prepareConsumerInput(a.catalog.spec, call.Name, call.Payload)
 			if err != nil {
@@ -1363,7 +1379,7 @@ func validatePlannerToolPayload(payload rawjson.Message) error {
 }
 
 // validatePlannerResultPayloadCodecs checks planner requests before acceptance.
-// Code-authored dedicated pagination supplies a complete query and cursor, so
+// Code-authored pagination supplies a complete query and cursor, so
 // it uses the execution codec; model arguments keep their narrower codec.
 func validatePlannerResultPayloadCodecs(
 	lookup toolSpecLookup,
@@ -1371,11 +1387,14 @@ func validatePlannerResultPayloadCodecs(
 	continuations []continuationAction,
 ) error {
 	for index, call := range result.ToolCalls {
-		if spec, ok := lookup(call.Name); ok && call.ModelToolCallID == "" && isDedicatedContinuationSpec(spec) {
-			if _, err := spec.ExecutionPayloadCodec.FromJSON(call.Payload); err != nil {
+		if spec, ok := lookup(call.Name); ok && call.ModelToolCallID == "" {
+			page, err := plannerContinuationInput(spec, call.Payload)
+			if err != nil {
 				return fmt.Errorf("planner tool call %d execution payload: %w", index, err)
 			}
-			continue
+			if page {
+				continue
+			}
 		}
 		if err := validatePlannerToolPayloadWithCodec(lookup, continuations, call.Name, call.Payload); err != nil {
 			return fmt.Errorf("planner tool call %d payload: %w", index, err)

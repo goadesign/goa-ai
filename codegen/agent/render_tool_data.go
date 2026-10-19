@@ -31,6 +31,9 @@ func buildToolRenderData(toolset *ToolsetData) ([]*toolRenderData, error) {
 
 	tools := make([]*toolRenderData, 0, len(toolset.Tools))
 	for _, tool := range toolset.Tools {
+		if tool.PrivatePage {
+			continue
+		}
 		entry := entries[tool.QualifiedName]
 		if entry == nil {
 			return nil, fmt.Errorf(

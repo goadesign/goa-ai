@@ -11,6 +11,13 @@ import (
 )
 
 type (
+	// executionContractData combines existing typed codecs without introducing a wire wrapper.
+	executionContractData struct {
+		Schema []byte
+		Query  *typeData
+		Page   *typeData
+	}
+
 	// toolSpecsData stores the tool names, types, schemas, and JSON functions
 	// written for one generated tool package.
 	toolSpecsData struct {
@@ -61,6 +68,13 @@ type (
 	// Each entry represents one tool that will be generated in the tool_specs
 	// package with its associated type definitions and codecs.
 	toolEntry struct {
+		// PrivatePage excludes the implementation branch from public lookup and registration.
+		PrivatePage bool
+		// Execution keeps the accepted wire schema separate from the first-query model schema.
+		Execution *executionContractData
+		// TextOnlyExecutionContract preserves each branch's UI-free execution validation.
+		TextOnlyExecutionContract *executionContractData
+
 		// Qualified tool name used in runtime lookups (e.g., "toolset.tool").
 		Name string
 		// GoName is the Go-friendly identifier for this tool (e.g., "GetTimeSeries").

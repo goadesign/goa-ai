@@ -114,6 +114,8 @@ func buildToolSpecsDataForPackage(genpkg string, svc *service.Data, tools []*Too
 			resultReminder += tool.UIResultReminder
 		}
 		entry := &toolEntry{
+			PrivatePage: tool.PrivatePage,
+			Execution:   &executionContractData{Schema: payload.ExecutionSchemaJSON, Query: payload},
 			// Name is the qualified tool ID used at runtime (toolset.tool).
 			Name:                   tool.QualifiedName,
 			GoName:                 goName,
@@ -142,8 +144,8 @@ func buildToolSpecsDataForPackage(genpkg string, svc *service.Data, tools []*Too
 			TextOnlyResultReminder: tool.ResultReminder,
 			Confirmation:           tool.Confirmation,
 		}
-		if err := prepareRegistrySchema(tool, entry); err != nil {
-			return nil, err
+		if textOnlyExecution != nil {
+			entry.TextOnlyExecutionContract = &executionContractData{Schema: textOnlyExecution.ExecutionSchemaJSON, Query: textOnlyExecution}
 		}
 		entry.ConstructorFunc = names.constructor.Name()
 		entry.SpecVar = names.spec.Name()
@@ -169,6 +171,14 @@ func buildToolSpecsDataForPackage(genpkg string, svc *service.Data, tools []*Too
 			entry.CanonicalizeServerDataItemFunc = names.canonicalizeServerDataItem.Name()
 		}
 		data.addTool(entry)
+	}
+	if err := composePagingEntries(tools, data.tools); err != nil {
+		return nil, err
+	}
+	for index, tool := range tools {
+		if err := prepareRegistrySchema(tool, data.tools[index]); err != nil {
+			return nil, err
+		}
 	}
 	data.Scope = builder.helperScope
 	data.Unions = builder.unionTypes()

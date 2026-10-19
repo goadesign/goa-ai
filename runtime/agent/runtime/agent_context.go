@@ -149,18 +149,11 @@ func (c *simplePlannerContext) AdvertisedToolDefinitions() []*model.ToolDefiniti
 		_, definition.Deferred = registration.Definition.deferredTools[tools.Ident(definition.Name)]
 	}
 	for _, action := range c.continuationActions {
-		if slices.Contains(c.unavailableTools, action.spec.Name) ||
+		if slices.Contains(c.unavailableTools, action.modelName) ||
 			!c.policy.allowsTool(action.spec.Name, toolPolicyFactsFromSpec(action.spec)) {
 			continue
 		}
 		selected := action.definition
-		if c.policy.textOnly {
-			var err error
-			selected, err = model.NewToolDefinitionFromSpec(action.spec.ForTextOnly())
-			if err != nil {
-				panic(err)
-			}
-		}
 		definition := *selected
 		definition.Search.Terms = maps.Clone(selected.Search.Terms)
 		definition.Name = action.modelName.String()
