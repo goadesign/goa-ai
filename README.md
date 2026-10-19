@@ -192,7 +192,10 @@ service wiring, and connecting a model. For MCP, follow the
 - **Resources and prompts.** Serve fixed or parameterized text/binary resources,
   typed prompts, argument completion, and authenticated paginated catalogs.
 - **Progress and subscriptions.** Report progress from ordinary service methods;
-  observe catalog changes, resource updates, and full Task state.
+  observe catalog changes, resource updates, and full Task state. Silent HTTP
+  responses use transport keepalive comments without requiring service progress.
+  **Regenerate MCP servers when upgrading:** a dependency-only update leaves
+  streaming before middleware. Follow the [required upgrade](docs/runtime.md#request-scoped-mcp-progress).
 - **Additional input and durable Tasks.** Collect form input or URL consent;
   preserve additional protocol members without changing declared fields;
   expose existing durable jobs with creation, observation, answers, and

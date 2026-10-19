@@ -114,6 +114,7 @@ func applyMCPHTTPRules(plan *goagenerator.Plan, files []*codegen.File, services 
 				s.Source = mcpTemplates.Read("jsonrpc_server_use")
 			case "jsonrpc-server-handler":
 				s.Source = mcpTemplates.Read("jsonrpc_server_handler")
+				s.Data = mcpTransportData{Transport: s.Data, SubscriptionSource: service.adapterData.SubscriptionSource}
 			case "jsonrpc-server-encode-error":
 				s.Source = mcpTemplates.Read("jsonrpc_server_encode_error")
 			}

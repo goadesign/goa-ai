@@ -15,7 +15,7 @@ func (s *{{ .Transport.ServerStructDeclaration.Name }}) {{ .Transport.MountServe
     {{ .Transport.MountServerDeclaration.Name }}(mux, s)
 }
 
-// mcpResponseWriter records whether the JSON-RPC handler wrote a response.
+// mcpResponseWriter records whether middleware or the JSON-RPC handler wrote a response.
 type mcpResponseWriter struct {
 	http.ResponseWriter
 	written bool
@@ -183,33 +183,11 @@ func withMCPTransport(h *{{ .Transport.ServerStructDeclaration.Name }}, {{ if an
             return
         }
 
-		response := &mcpResponseWriter{ResponseWriter: w}
-        {{- if .SubscriptionSource }}
-        if request.Method == "subscriptions/listen" {
-            id, err := json.Marshal(request.ID)
-            if err != nil {
-                h.errhandler(r.Context(), response, err)
-                return
-            }
-            if err := mcpruntime.ServeSubscriptions(response, r, id, request.Params, next); err != nil {
-                var failure *mcpruntime.Error
-                if !response.written && errors.As(err, &failure) {
-                    if err := mcpruntime.WriteProtocolError(response, body, failure); err != nil {
-                        h.errhandler(r.Context(), response, err)
-                    }
-                } else {
-                    h.errhandler(r.Context(), response, err)
-                }
-            }
-            return
+        response := &mcpResponseWriter{ResponseWriter: w}
+        next(response, r)
+        if !response.written {
+            w.WriteHeader(http.StatusAccepted)
         }
-        {{- end }}
-		if err := mcpruntime.ServeProgress(response, r, request.Params, next); err != nil {
-			h.errhandler(r.Context(), response, err)
-		}
-		if !response.written {
-			w.WriteHeader(http.StatusAccepted)
-		}
 	}
 }
 

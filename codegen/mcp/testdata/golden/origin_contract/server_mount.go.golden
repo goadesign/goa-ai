@@ -10,7 +10,7 @@ func (s *Server) Mount(mux goahttp.Muxer) {
 	Mount(mux, s)
 }
 
-// mcpResponseWriter records whether the JSON-RPC handler wrote a response.
+// mcpResponseWriter records whether middleware or the JSON-RPC handler wrote a response.
 type mcpResponseWriter struct {
 	http.ResponseWriter
 	written bool
@@ -99,9 +99,7 @@ func withMCPTransport(h *Server, origins []string, next http.HandlerFunc) http.H
 		}
 
 		response := &mcpResponseWriter{ResponseWriter: w}
-		if err := mcpruntime.ServeProgress(response, r, request.Params, next); err != nil {
-			h.errhandler(r.Context(), response, err)
-		}
+		next(response, r)
 		if !response.written {
 			w.WriteHeader(http.StatusAccepted)
 		}

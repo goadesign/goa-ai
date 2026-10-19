@@ -1,4 +1,4 @@
-// Package mcp writes request-scoped progress before a unary generated result.
+// Package mcp keeps HTTP requests active while unary service methods work.
 // Generated handlers retain responsibility for result encoding and validation;
 // this transport owns event framing, the client token, and stream termination.
 package mcp
@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -24,28 +25,41 @@ import (
 
 type (
 	progressHTTPResponse struct {
-		writer  http.ResponseWriter
-		header  http.Header
-		body    bytes.Buffer
-		status  int
-		token   json.RawMessage
-		mu      sync.Mutex
-		started bool
-		closed  bool
-		seen    bool
-		last    float64
-		failure error
+		writer          http.ResponseWriter
+		header          http.Header
+		committedHeader http.Header
+		body            bytes.Buffer
+		status          int
+		token           json.RawMessage
+		mu              sync.Mutex
+		started         bool
+		closed          bool
+		seen            bool
+		last            float64
+		failure         error
+
+		writeMu      sync.Mutex
+		writing      bool
+		terminated   bool
+		interruptErr error
 	}
 )
 
-// ServeProgress lets a generated unary handler report request-scoped progress.
-// params must already have passed ValidateHTTPRequest. Without a token or an
-// accepted event-stream response, next writes its normal JSON response. With
-// updates, this function frames the generated final response as the last event.
-// Task operations always use the normal response, even if a client sends a token.
-// It returns transport errors instead of dropping notifications or final data.
-func ServeProgress(w http.ResponseWriter, r *http.Request, params json.RawMessage, next http.HandlerFunc) (err error) {
-	if isTaskOperation(r.Header.Get("Mcp-Method")) {
+// ServeProgress keeps an eligible MCP response open while its handler works.
+// Fast handlers retain their ordinary JSON response. Slower handlers send SSE
+// comments every 15 seconds, followed by the generated final response. Comments
+// carry no progress; service updates still require the client's progress token.
+// JSON-only requests and Task operations retain their ordinary responses.
+// Call this after authentication, protocol validation and HTTP middleware have
+// accepted the request and chosen its response headers.
+func ServeProgress(w http.ResponseWriter, r *http.Request, params json.RawMessage, next http.HandlerFunc) error {
+	return serveProgress(w, r, params, next, 15*time.Second)
+}
+
+// serveProgress owns one response's timer and joins it before returning. The
+// interval controls connection activity, never the duration of service work.
+func serveProgress(w http.ResponseWriter, r *http.Request, params json.RawMessage, next http.HandlerFunc, interval time.Duration) (err error) {
+	if isTaskOperation(r.Header.Get("Mcp-Method")) || !acceptsEventStream(r.Header.Values("Accept")) {
 		next(w, r)
 		return nil
 	}
@@ -56,10 +70,6 @@ func ServeProgress(w http.ResponseWriter, r *http.Request, params json.RawMessag
 		return err
 	}
 	token, present := fields.Meta["progressToken"]
-	if !present || !acceptsEventStream(r.Header.Values("Accept")) {
-		next(w, r)
-		return nil
-	}
 	ctx, span := otel.Tracer("goa-ai/mcp").Start(r.Context(), "mcp.progress.response")
 	defer span.End()
 	defer func() {
@@ -68,26 +78,160 @@ func ServeProgress(w http.ResponseWriter, r *http.Request, params json.RawMessag
 			span.SetStatus(codes.Error, err.Error())
 		}
 	}()
+	ctx, cancel := context.WithCancelCause(ctx)
+	defer cancel(nil)
 	response := &progressHTTPResponse{writer: w, header: w.Header().Clone(), token: cloneRaw(token)}
-	defer response.close()
-	ctx = context.WithValue(ctx, progressSenderKey{}, progressSender(response.send))
+	stopped, done := make(chan struct{}), make(chan struct{})
+	interrupted := make(chan struct{})
+	stopInterrupt := context.AfterFunc(ctx, func() {
+		response.interrupt()
+		close(interrupted)
+	})
+	completed := false
+	joined := false
+	defer func() {
+		// A panic must release a blocked comment write before joining its worker.
+		// Ordinary completion retains the HTTP server's existing write deadline.
+		if !completed {
+			response.interrupt()
+		}
+		if !joined {
+			close(stopped)
+			<-done
+		}
+		if !stopInterrupt() {
+			<-interrupted
+		}
+		response.close()
+		err = errors.Join(err, response.interruptErr)
+	}()
+	go response.keepalive(ctx, interval, stopped, done, cancel)
+	if present {
+		ctx = context.WithValue(ctx, progressSenderKey{}, progressSender(response.send))
+	}
 	next(response, r.WithContext(ctx))
-	return response.finish()
+	close(stopped)
+	<-done
+	joined = true
+	err = response.finish()
+	completed = true
+	return err
+}
+
+// keepalive sends transport comments while service work is silent. A failed
+// write cancels only this HTTP request context so its handler can stop waiting.
+func (r *progressHTTPResponse) keepalive(ctx context.Context, interval time.Duration, stopped <-chan struct{}, done chan<- struct{}, cancel context.CancelCauseFunc) {
+	defer close(done)
+	timer := time.NewTicker(interval)
+	defer timer.Stop()
+	for {
+		select {
+		case <-stopped:
+			return
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			if err := r.comment(ctx); err != nil {
+				cancel(err)
+				return
+			}
+		}
+	}
+}
+
+// comment shares the progress/final write lock so bytes from separate messages
+// cannot interleave. Colon lines are ignored by SSE clients, not tool updates.
+func (r *progressHTTPResponse) comment(ctx context.Context) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.failure != nil {
+		return r.failure
+	}
+	if r.closed {
+		return nil
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := r.beginWrite(); err != nil {
+		return err
+	}
+	defer r.endWrite()
+	r.startStream()
+	if _, err := r.writer.Write([]byte(":\n\n")); err != nil {
+		r.failure = err
+		return err
+	}
+	r.failure = http.NewResponseController(r.writer).Flush()
+	if r.failure == nil {
+		trace.SpanFromContext(ctx).AddEvent("mcp.keepalive.sent")
+	}
+	return r.failure
+}
+
+// beginWrite marks the network write before cancellation can interrupt it.
+// The separate lock lets cancellation release a writer holding the message lock.
+func (r *progressHTTPResponse) beginWrite() error {
+	r.writeMu.Lock()
+	defer r.writeMu.Unlock()
+	if r.terminated {
+		return context.Canceled
+	}
+	r.writing = true
+	return nil
+}
+
+func (r *progressHTTPResponse) endWrite() {
+	r.writeMu.Lock()
+	r.writing = false
+	r.writeMu.Unlock()
+}
+
+// interrupt expires only an active terminal write. It never changes a healthy
+// response's deadline or restores a deadline chosen by the HTTP server. Custom
+// writers must support write deadlines to interrupt a blocked network write.
+func (r *progressHTTPResponse) interrupt() {
+	r.writeMu.Lock()
+	defer r.writeMu.Unlock()
+	if r.terminated {
+		return
+	}
+	r.terminated = true
+	if r.writing {
+		r.interruptErr = http.NewResponseController(r.writer).SetWriteDeadline(time.Now())
+	}
+}
+
+// startStream changes framing only when the first comment or progress update
+// is written. The generated handler still owns the final JSON-RPC response.
+func (r *progressHTTPResponse) startStream() {
+	if r.started {
+		return
+	}
+	r.writer.Header().Del("Content-Length")
+	r.writer.Header().Set("Content-Type", "text/event-stream")
+	r.writer.Header().Set("Cache-Control", "no-store")
+	r.writer.Header().Set("X-Accel-Buffering", "no")
+	r.writer.WriteHeader(http.StatusOK)
+	r.started = true
 }
 
 func (r *progressHTTPResponse) Header() http.Header {
 	return r.header
 }
 
+// WriteHeader saves the headers when the handler commits its response. Later
+// header changes stay private, as they do after a normal HTTP response starts.
 func (r *progressHTTPResponse) WriteHeader(status int) {
 	if r.status == 0 {
+		r.committedHeader = r.header.Clone()
 		r.status = status
 	}
 }
 
 func (r *progressHTTPResponse) Write(data []byte) (int, error) {
 	if r.status == 0 {
-		r.status = http.StatusOK
+		r.WriteHeader(http.StatusOK)
 	}
 	return r.body.Write(data)
 }
@@ -170,13 +314,11 @@ func (r *progressHTTPResponse) send(ctx context.Context, value float64, total *f
 	if err != nil {
 		return err
 	}
-	if !r.started {
-		r.writer.Header().Del("Content-Length")
-		r.writer.Header().Set("Content-Type", "text/event-stream")
-		r.writer.Header().Set("Cache-Control", "no-store")
-		r.writer.WriteHeader(http.StatusOK)
-		r.started = true
+	if err := r.beginWrite(); err != nil {
+		return err
 	}
+	defer r.endWrite()
+	r.startStream()
 	if err := writeSSEMessage(r.writer, data); err != nil {
 		r.failure = err
 		return err
@@ -187,7 +329,7 @@ func (r *progressHTTPResponse) send(ctx context.Context, value float64, total *f
 }
 
 // finish writes the generated response once and prevents later service reports.
-// A handler that produced no progress keeps its original HTTP status and body.
+// A handler that finishes before streaming starts keeps its HTTP status and body.
 func (r *progressHTTPResponse) finish() error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -195,12 +337,17 @@ func (r *progressHTTPResponse) finish() error {
 	if r.failure != nil {
 		return r.failure
 	}
+	if err := r.beginWrite(); err != nil {
+		return err
+	}
+	defer r.endWrite()
 	if !r.started {
-		for name, values := range r.header {
-			r.writer.Header()[name] = values
-		}
 		if r.status == 0 {
-			r.status = http.StatusAccepted
+			r.WriteHeader(http.StatusAccepted)
+		}
+		clear(r.writer.Header())
+		for name, values := range r.committedHeader {
+			r.writer.Header()[name] = values
 		}
 		r.writer.WriteHeader(r.status)
 		_, err := r.writer.Write(r.body.Bytes())

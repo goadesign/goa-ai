@@ -3570,3 +3570,17 @@ copy using Goa's own attribute finalizer. Already resolved inputs retain their
 original field declarations. The shared argument reader then removes annotated
 credentials, URL inputs and typed continuation fields; authored method types
 remain untouched. This avoids interpreting `Extend` separately in each binding.
+
+### Silent MCP HTTP responses
+
+This transport change requires regenerating MCP servers and deploying the
+generated code with its matching runtime. Updating only the dependency retains
+the old wrapper placement and is unsafe. Rollback also restores both together.
+
+Generated MCP servers validate authentication and protocol rules before application
+HTTP middleware. After middleware enters the decoded request handler, the shared
+response writer owns progress, subscription framing, and transport keepalive
+comments. Middleware can reject a request or choose its headers before streaming
+starts. Slow ordinary requests accepting SSE receive comments without a progress
+token; fast responses keep JSON framing. This does not add an execution deadline
+or change Task state observations. See the [response contract](docs/runtime.md#request-scoped-mcp-progress).

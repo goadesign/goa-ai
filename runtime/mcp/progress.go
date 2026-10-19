@@ -72,14 +72,10 @@ func WithProgress(ctx context.Context, handler func(context.Context, Progress) e
 // reporting is a no-op. A closed stream, invalid value, or delivery failure
 // returns an error that the service must handle.
 func ReportProgress(ctx context.Context, value float64, total *float64, message *string) error {
-	if err := ctx.Err(); err != nil {
-		return err
+	if sender, ok := ctx.Value(progressSenderKey{}).(progressSender); ok {
+		return sender(ctx, value, total, message)
 	}
-	sender, ok := ctx.Value(progressSenderKey{}).(progressSender)
-	if !ok {
-		return nil
-	}
-	return sender(ctx, value, total, message)
+	return ctx.Err()
 }
 
 // newProgressReceiver gives one request its own token and increasing-value
