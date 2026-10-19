@@ -173,7 +173,8 @@ service wiring, and connecting a model. For MCP, follow the
   same restriction to exact direct and registered operations with `WithTextOnly(true)`.
 - **Large results and images.** Bound model-visible results, continue paginated
   queries, retain native image evidence, and keep rich host data outside model
-  requests.
+  requests. Saved history remains readable after tool changes; only compatible
+  current tools can supply another page.
 
 [Agent DSL](docs/dsl.md#agent-use-and-export) · [Runtime and composition](docs/runtime.md) · [Native images](docs/native_images.md)
 

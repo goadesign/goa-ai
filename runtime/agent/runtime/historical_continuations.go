@@ -9,7 +9,6 @@ import (
 	"fmt"
 
 	"goa.design/goa-ai/internal/registrycontract"
-	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -161,7 +160,7 @@ func (r *Runtime) loadLiteralContinuationOutputs(
 		if output.Failure != nil {
 			continue
 		}
-		if err := r.validateHistoricalContinuationBounds(output, entry.events.scheduled.Subject()); err != nil {
+		if err := r.validateHistoricalContinuationBounds(output); err != nil {
 			return nil, err
 		}
 		outputs = append(outputs, output)
@@ -170,12 +169,13 @@ func (r *Runtime) loadLiteralContinuationOutputs(
 }
 
 // validateHistoricalContinuationBounds checks the paging facts of a saved
-// successful call. Historical failures supply no paging state and are excluded
-// by the readers. A saved result without bounds supplies no next page; current
-// execution outputs retain their complete validation.
-func (r *Runtime) validateHistoricalContinuationBounds(output *planner.ToolOutput, subject genrunidentity.RunSubject) error {
-	call := ToolCall{Name: output.Name, ToolCallID: output.ToolCallID, Registry: output.Registry, Subject: subject}
-	spec, ok, err := r.callSpec(call)
+// successful call against its saved registration. This reads evidence; it does
+// not authorize the current agent to execute that old tool. Historical failures
+// supply no paging state and are excluded by the readers. A saved result without
+// bounds supplies no next page; current outputs retain their complete validation.
+func (r *Runtime) validateHistoricalContinuationBounds(output *planner.ToolOutput) error {
+	call := ToolCall{Name: output.Name, ToolCallID: output.ToolCallID, Registry: output.Registry}
+	spec, ok, err := lookupCallSpec(call, r.toolSpec)
 	if err != nil {
 		return err
 	}

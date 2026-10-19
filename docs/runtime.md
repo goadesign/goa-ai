@@ -3687,6 +3687,14 @@ valid ownership, call/result identities, and byte counts. Absent historical
 bounds supply no next page and retire an earlier live cursor in the same chain.
 Present bounds must satisfy the paging contract above. The runtime preserves
 the saved result bytes and chronological order without inventing bounds.
+Registered calls use their saved declarations for this validation, including
+completed pages that close earlier cursors. After reconstructing each full chain,
+the runtime checks whether its unfinished query can still execute: both static
+tools must match their current full declarations and routes, and the current
+agent must still allow the registered toolset. An unavailable or incompatible
+pair supplies no next-page action but does not block a new turn. Dynamically
+consumed toolsets retain their saved registration and current consumption checks.
+Malformed saved declarations, bounds, or call/result relationships remain errors.
 
 When `tools.ToolSpec.Bounds.Paging` names a dedicated continuation, the runtime
 advances compatible zero-item results with a non-empty next cursor before

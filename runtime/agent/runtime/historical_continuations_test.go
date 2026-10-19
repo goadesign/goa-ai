@@ -184,7 +184,7 @@ func TestHistoricalContinuationBoundsRetainsRegisteredContract(t *testing.T) {
 			}
 			err := rt.validateHistoricalContinuationBounds(&planner.ToolOutput{
 				Name: spec.Name, ToolCallID: "saved-call", Bounds: tc.bounds,
-			}, genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("svc.agent"))})
+			})
 			if tc.wantErr != "" {
 				assert.ErrorContains(t, err, tc.wantErr)
 			} else {

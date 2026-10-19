@@ -580,6 +580,11 @@ server data against today's tool contract. Failed historical calls remain in
 the transcript but never supply paging state, so their old execution details
 are not restored or revalidated. Absent historical bounds supply no next page
 and retire any earlier cursor in the same chain; present bounds remain validated.
+Registered historical calls use their saved declarations to validate bounds and
+finish ordered page chains. Only unfinished chains need current execution
+authorization: an unavailable or changed static tool pair supplies no action,
+without blocking the new turn. Current static execution still requires the full
+matching declaration, including metadata and injected context.
 Saved result bytes and chronological order remain unchanged. Active outputs,
 suspended work, and new page requests retain their current codec checks. See the
 [historical paging contract](docs/runtime.md#bounded-results).
