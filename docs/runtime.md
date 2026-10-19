@@ -7936,6 +7936,32 @@ and its [identity authorization grant contract](https://www.ietf.org/archive/id/
 
 ### Request-scoped MCP progress
 
+**Required upgrade:** regenerate MCP servers with the updated Goa-AI generator
+and rebuild them with the matching runtime before deployment. A dependency-only
+update is unsafe: older generated servers place response streaming before HTTP
+middleware, so a keepalive could commit headers before middleware accepts the
+request. Verify the regenerated `handleHTTP` owns `ServeProgress` and, when
+applicable, `ServeSubscriptions`; the outer guard must run before middleware.
+Deploy generated servers and runtime together. Roll back both together. Direct
+`ServeProgress` callers must likewise invoke it after authentication, protocol
+validation and HTTP middleware have accepted the request and chosen its headers.
+
+
+HTTP responses that accept `text/event-stream` send a flushed SSE comment every
+15 seconds while waiting for service work, even without a progress token. These
+comments keep an otherwise silent response active through idle intermediaries;
+clients ignore them. This interval is not an execution deadline. If the handler
+finishes before the first comment or progress update, its ordinary JSON response
+is preserved. JSON-only requests and Task operations retain ordinary responses.
+The generated final JSON-RPC response remains the last message in an event stream.
+
+The response worker is stopped and joined before the handler returns. Cancellation
+or a handler panic interrupts an active write using a terminal write deadline;
+healthy responses retain the HTTP server's existing write deadlines and backpressure.
+Custom response writers must expose write-deadline support to interrupt blocked
+writes. No bounded completion is promised for a connected peer that stops reading.
+
+
 A unary service method can call `mcp.ReportProgress(ctx, value, total, message)`
 and check its error. The generated HTTP adapter supplies the client's token and
 sends updates before the final result. Reporting without a requested token is a

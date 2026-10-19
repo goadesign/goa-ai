@@ -31,7 +31,7 @@ func {{ $t.ServerInitDeclaration.Name }}(
         errhandler: errhandler,
     }
     // The MCP protocol uses one ordinary request decoder. Subscriptions and
-    // progress select their response stream inside the outer request guard.
+    // progress select their response stream after application HTTP middleware.
     s.handler = http.HandlerFunc(s.handleHTTP)
     s.processRequest = withMCPTransport(s, {{ if and .ResourcePolicy .ResourcePolicy.Operations }}mux, {{ end }}origins, s.serveHTTP)
     return s

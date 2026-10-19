@@ -36,6 +36,7 @@ import (
  "net/url"
  "strings"
  "testing"
+ "time"
  genmcpfmt "generated.local/gen/mcp_fmt"
  genmcpfmtsrv "generated.local/gen/jsonrpc/mcp_fmt/server"
  genfmt "generated.local/gen/fmt_"
@@ -49,8 +50,8 @@ var _ mcpruntime.Caller = (*Caller)(nil)
 type retryDoer func(*http.Request) (*http.Response,error)
 func (f retryDoer) Do(r *http.Request) (*http.Response,error) { return f(r) }
 
-type echoService struct { calls int }
-func (s *echoService) Echo(context.Context) (string,error) {s.calls++;return "hello",nil}
+type echoService struct { calls int; delay time.Duration }
+func (s *echoService) Echo(ctx context.Context) (string,error) {s.calls++;if s.delay>0 {select{case <-time.After(s.delay):case <-ctx.Done():return "",ctx.Err()}};return "hello",nil}
 func (s *echoService) Health(context.Context) (string,error) {return "ready",nil}
 
 func TestGeneratedStatelessProtocol(t *testing.T) {
@@ -182,6 +183,41 @@ func TestGeneratedMCPServingUsesOneGuard(t *testing.T) {
    if tc.work>0&&!strings.Contains(writer.Body.String(),"\"structuredContent\":\"hello\""){t.Fatalf("accepted result changed: %s",writer.Body.String())}
    if writer.Header().Get("WWW-Authenticate")!=""{t.Fatal("protocol or domain response became an OAuth challenge")}
   })}
+ })}
+}
+
+
+func TestGeneratedMiddlewareBeforeResponseStream(t *testing.T) {
+ for _,tc:=range []struct{name,version,accept string;slow,reject bool}{
+  {name:"modern slow",version:mcpruntime.ProtocolVersion,accept:"application/json, text/event-stream",slow:true},
+  {name:"older slow",version:mcpruntime.LegacyProtocolVersion,accept:"application/json, text/event-stream",slow:true},
+  {name:"delayed rejection",version:mcpruntime.ProtocolVersion,accept:"text/event-stream",reject:true},
+  {name:"fast",version:mcpruntime.ProtocolVersion,accept:"application/json, text/event-stream"},
+  {name:"JSON only",version:mcpruntime.ProtocolVersion,accept:"application/json"},
+ } {t.Run(tc.name,func(t *testing.T){
+  t.Parallel()
+  service:=&echoService{};if tc.slow{service.delay=16*time.Second}
+  adapter:=genmcpfmt.NewMCPAdapter(genfmt.NewEndpoints(service),nil)
+  mux:=goahttp.NewMuxer()
+  server:=genmcpfmtsrv.New(genmcpfmt.NewEndpoints(adapter),mux,goahttp.RequestDecoder,goahttp.ResponseEncoder,nil)
+  server.Use(func(next http.Handler)http.Handler{return http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
+   w.Header().Set("X-Request-ID","kept");w.Header().Del("X-Remove")
+   if tc.reject{time.Sleep(16*time.Second);http.Error(w,"denied",http.StatusUnauthorized);return}
+   next.ServeHTTP(w,r)
+  })})
+  endpoint:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){w.Header().Set("X-Remove","remove me");server.ServeHTTP(w,r)}));defer endpoint.Close()
+  body:="{\"jsonrpc\":\"2.0\",\"id\":\"keepalive\",\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{},\"_meta\":{\"io.modelcontextprotocol/protocolVersion\":\""+tc.version+"\",\"io.modelcontextprotocol/clientCapabilities\":{}}}}"
+  if tc.version==mcpruntime.LegacyProtocolVersion{body="{\"jsonrpc\":\"2.0\",\"id\":\"keepalive\",\"method\":\"tools/call\",\"params\":{\"name\":\"echo\",\"arguments\":{}}}"}
+  request,err:=http.NewRequestWithContext(t.Context(),http.MethodPost,endpoint.URL,strings.NewReader(body));if err!=nil{t.Fatal(err)}
+  request.Header.Set("Content-Type","application/json");request.Header.Set("Accept",tc.accept)
+  request.Header.Set("MCP-Protocol-Version",tc.version);request.Header.Set("Mcp-Method","tools/call");request.Header.Set("Mcp-Name","echo")
+  response,err:=endpoint.Client().Do(request);if err!=nil{t.Fatal(err)}
+  encoded,readErr:=io.ReadAll(response.Body);closeErr:=response.Body.Close();if readErr!=nil||closeErr!=nil{t.Fatalf("read=%v close=%v",readErr,closeErr)}
+  if response.Header.Get("X-Request-ID")!="kept"||response.Header.Get("X-Remove")!=""{t.Fatalf("middleware headers=%v",response.Header)}
+  if tc.reject{if response.StatusCode!=401||strings.Contains(response.Header.Get("Content-Type"),"event-stream")||service.calls!=0{t.Fatalf("rejection status=%d calls=%d body=%s",response.StatusCode,service.calls,encoded)};return}
+  if response.StatusCode!=200||service.calls!=1{t.Fatalf("status=%d calls=%d body=%s",response.StatusCode,service.calls,encoded)}
+  if tc.slow{if response.Header.Get("Content-Type")!="text/event-stream"||!strings.Contains(string(encoded),":\n\n")||strings.Count(string(encoded),"data: ")!=1{t.Fatalf("slow response=%s",encoded)}}else{if strings.Contains(response.Header.Get("Content-Type"),"event-stream"){t.Fatal("fast response changed framing")}}
+  if strings.Count(string(encoded),"keepalive")!=1{t.Fatalf("final request ID=%s",encoded)}
  })}
 }
 
