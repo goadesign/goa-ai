@@ -25,17 +25,18 @@ import (
 
 type (
 	progressHTTPResponse struct {
-		writer  http.ResponseWriter
-		header  http.Header
-		body    bytes.Buffer
-		status  int
-		token   json.RawMessage
-		mu      sync.Mutex
-		started bool
-		closed  bool
-		seen    bool
-		last    float64
-		failure error
+		writer          http.ResponseWriter
+		header          http.Header
+		committedHeader http.Header
+		body            bytes.Buffer
+		status          int
+		token           json.RawMessage
+		mu              sync.Mutex
+		started         bool
+		closed          bool
+		seen            bool
+		last            float64
+		failure         error
 
 		writeMu      sync.Mutex
 		writing      bool
@@ -219,15 +220,18 @@ func (r *progressHTTPResponse) Header() http.Header {
 	return r.header
 }
 
+// WriteHeader saves the headers when the handler commits its response. Later
+// header changes stay private, as they do after a normal HTTP response starts.
 func (r *progressHTTPResponse) WriteHeader(status int) {
 	if r.status == 0 {
+		r.committedHeader = r.header.Clone()
 		r.status = status
 	}
 }
 
 func (r *progressHTTPResponse) Write(data []byte) (int, error) {
 	if r.status == 0 {
-		r.status = http.StatusOK
+		r.WriteHeader(http.StatusOK)
 	}
 	return r.body.Write(data)
 }
@@ -338,11 +342,12 @@ func (r *progressHTTPResponse) finish() error {
 	}
 	defer r.endWrite()
 	if !r.started {
-		for name, values := range r.header {
-			r.writer.Header()[name] = values
-		}
 		if r.status == 0 {
-			r.status = http.StatusAccepted
+			r.WriteHeader(http.StatusAccepted)
+		}
+		clear(r.writer.Header())
+		for name, values := range r.committedHeader {
+			r.writer.Header()[name] = values
 		}
 		r.writer.WriteHeader(r.status)
 		_, err := r.writer.Write(r.body.Bytes())

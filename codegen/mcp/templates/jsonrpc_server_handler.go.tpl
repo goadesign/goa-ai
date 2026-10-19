@@ -32,9 +32,9 @@ func (s *{{ .Transport.ServerStructDeclaration.Name }}) handleHTTP(w http.Respon
         s.encodeJSONRPCError(r.Context(), w, &request, jsonrpc.MethodNotFound, "Method not found", nil)
     }
     }
-		response := &mcpResponseWriter{ResponseWriter: w}
         {{- if .SubscriptionSource }}
         if request.Method == "subscriptions/listen" {
+            response := &mcpResponseWriter{ResponseWriter: w}
             id, err := json.Marshal(request.ID)
             if err != nil {
                 s.errhandler(r.Context(), response, err)
@@ -58,10 +58,7 @@ func (s *{{ .Transport.ServerStructDeclaration.Name }}) handleHTTP(w http.Respon
             return
         }
         {{- end }}
-		if err := mcpruntime.ServeProgress(response, r, request.Params, dispatch); err != nil {
-			s.errhandler(r.Context(), response, err)
-		}
-		if !response.written {
-			w.WriteHeader(http.StatusAccepted)
+		if err := mcpruntime.ServeProgress(w, r, request.Params, dispatch); err != nil {
+			s.errhandler(r.Context(), w, err)
 		}
 }

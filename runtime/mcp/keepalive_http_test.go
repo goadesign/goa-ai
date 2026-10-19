@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -21,6 +22,11 @@ import (
 )
 
 type (
+	// idleResponseReader applies the intermediary idle window to each network read.
+	idleResponseReader struct {
+		net.Conn
+	}
+
 	// deadlineRecordingWriter retains the deadline installed by its caller and
 	// records any replacement attempted by the response transport.
 	deadlineRecordingWriter struct {
@@ -40,6 +46,14 @@ type (
 		deadlineErr error
 	}
 )
+
+// Read renews the idle deadline before receiving more response bytes.
+func (r idleResponseReader) Read(data []byte) (int, error) {
+	if err := r.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+		return 0, err
+	}
+	return r.Conn.Read(data)
+}
 
 func (w *blockedCommentWriter) Header() http.Header { return w.header }
 func (w *blockedCommentWriter) WriteHeader(int)     {}
@@ -70,7 +84,7 @@ func TestSilentResponseSurvivesIdleIntermediary(t *testing.T) {
 		}, 10*time.Millisecond)
 	}))
 	defer server.Close()
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	listener, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	proxyDone := make(chan error, 1)
 	go func() {
@@ -79,7 +93,7 @@ func TestSilentResponseSurvivesIdleIntermediary(t *testing.T) {
 			proxyDone <- err
 			return
 		}
-		upstream, err := net.Dial("tcp", strings.TrimPrefix(server.URL, "http://"))
+		upstream, err := (&net.Dialer{}).DialContext(t.Context(), "tcp", strings.TrimPrefix(server.URL, "http://"))
 		if err != nil {
 			proxyDone <- errors.Join(err, downstream.Close())
 			return
@@ -92,26 +106,15 @@ func TestSilentResponseSurvivesIdleIntermediary(t *testing.T) {
 			err = request.Body.Close()
 		}
 		if err == nil {
-			buffer := make([]byte, 4096)
-			for {
-				if err = upstream.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
-					break
-				}
-				var n int
-				n, err = upstream.Read(buffer)
-				if n > 0 {
-					if _, writeErr := downstream.Write(buffer[:n]); writeErr != nil {
-						err = writeErr
-						break
-					}
-				}
-				if err != nil {
-					break
-				}
+			// Copy network bytes as they arrive, but stop at the complete HTTP body.
+			// A later socket close is not part of this response's delivery.
+			reader := bufio.NewReader(io.TeeReader(idleResponseReader{upstream}, downstream))
+			var response *http.Response
+			response, err = http.ReadResponse(reader, request)
+			if err == nil {
+				_, copyErr := io.Copy(io.Discard, response.Body)
+				err = errors.Join(copyErr, response.Body.Close())
 			}
-		}
-		if errors.Is(err, io.EOF) {
-			err = nil
 		}
 		proxyDone <- errors.Join(err, upstream.Close(), downstream.Close())
 	}()
@@ -145,7 +148,7 @@ func TestKeepalivePreservesOrdinaryResponses(t *testing.T) {
 		{name: "task", accept: "application/json, text/event-stream", method: methodTasksGet, slow: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodPost, "/mcp", nil)
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", nil)
 			request.Header.Set("Accept", tc.accept)
 			request.Header.Set("Mcp-Method", tc.method)
 			writer := httptest.NewRecorder()
@@ -216,7 +219,7 @@ func TestKeepaliveWriteFailureCancelsWaitingHandler(t *testing.T) {
 		<-r.Context().Done()
 		assert.ErrorIs(t, context.Cause(r.Context()), io.ErrClosedPipe)
 	}, time.Millisecond)
-	assert.ErrorIs(t, err, io.ErrClosedPipe)
+	require.ErrorIs(t, err, io.ErrClosedPipe)
 	assert.Equal(t, 1, writer.writes)
 }
 
@@ -251,7 +254,7 @@ func TestKeepalivePreservesDeadlineFailure(t *testing.T) {
 		cancel()
 		<-r.Context().Done()
 	}, time.Millisecond)
-	assert.ErrorIs(t, err, io.ErrClosedPipe)
+	require.ErrorIs(t, err, io.ErrClosedPipe)
 	assert.ErrorIs(t, err, deadlineErr)
 }
 
@@ -286,7 +289,7 @@ func TestProgressSenderOwnsTerminalError(t *testing.T) {
 	assert.ErrorIs(t, ReportProgress(ctx, 1, nil, nil), context.Canceled)
 }
 
-func (w *deadlineRecordingWriter) SetWriteDeadline(deadline time.Time) error {
+func (w *deadlineRecordingWriter) SetWriteDeadline(deadline time.Time) error { //nolint:unparam // ResponseController requires this error return.
 	w.deadline = deadline
 	w.replacements++
 	return nil
@@ -306,4 +309,29 @@ func TestKeepalivePreservesHealthyWriteDeadline(t *testing.T) {
 	assert.Contains(t, writer.Body.String(), ":\n\n")
 	assert.Equal(t, original, writer.deadline)
 	assert.Zero(t, writer.replacements)
+}
+
+// A buffered fast response must commit headers at the same point as net/http.
+func TestFastResponseCommitsHeaders(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		t.Run(strconv.FormatBool(explicit), func(t *testing.T) {
+			request := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/", nil)
+			request.Header.Set("Accept", "application/json, text/event-stream")
+			writer := httptest.NewRecorder()
+			writer.Header().Set("X-Removed", "old")
+			err := serveProgress(writer, request, json.RawMessage(`{}`), func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Del("X-Removed")
+				if explicit {
+					w.WriteHeader(http.StatusBadRequest)
+				}
+				_, err := io.WriteString(w, `{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"Invalid params"}}`)
+				assert.NoError(t, err)
+				w.Header().Set("Content-Type", "application/json+json")
+			}, time.Hour)
+			require.NoError(t, err)
+			assert.Equal(t, "application/json", writer.Result().Header.Get("Content-Type"))
+			assert.Empty(t, writer.Result().Header.Get("X-Removed"))
+		})
+	}
 }

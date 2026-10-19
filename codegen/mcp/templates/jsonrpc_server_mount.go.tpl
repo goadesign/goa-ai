@@ -15,7 +15,7 @@ func (s *{{ .Transport.ServerStructDeclaration.Name }}) {{ .Transport.MountServe
     {{ .Transport.MountServerDeclaration.Name }}(mux, s)
 }
 
-// mcpResponseWriter records whether the JSON-RPC handler wrote a response.
+// mcpResponseWriter records whether middleware or the JSON-RPC handler wrote a response.
 type mcpResponseWriter struct {
 	http.ResponseWriter
 	written bool
@@ -183,7 +183,11 @@ func withMCPTransport(h *{{ .Transport.ServerStructDeclaration.Name }}, {{ if an
             return
         }
 
-        next(w, r)
+        response := &mcpResponseWriter{ResponseWriter: w}
+        next(response, r)
+        if !response.written {
+            w.WriteHeader(http.StatusAccepted)
+        }
 	}
 }
 

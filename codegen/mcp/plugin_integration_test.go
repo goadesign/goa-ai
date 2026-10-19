@@ -188,10 +188,11 @@ func TestGeneratedMCPServingUsesOneGuard(t *testing.T) {
 
 
 func TestGeneratedMiddlewareBeforeResponseStream(t *testing.T) {
- for _,tc:=range []struct{name,version,accept string;slow,reject bool}{
+ for _,tc:=range []struct{name,version,accept string;slow,reject,silent bool}{
   {name:"modern slow",version:mcpruntime.ProtocolVersion,accept:"application/json, text/event-stream",slow:true},
   {name:"older slow",version:mcpruntime.LegacyProtocolVersion,accept:"application/json, text/event-stream",slow:true},
   {name:"delayed rejection",version:mcpruntime.ProtocolVersion,accept:"text/event-stream",reject:true},
+  {name:"silent middleware",version:mcpruntime.ProtocolVersion,accept:"text/event-stream",silent:true},
   {name:"fast",version:mcpruntime.ProtocolVersion,accept:"application/json, text/event-stream"},
   {name:"JSON only",version:mcpruntime.ProtocolVersion,accept:"application/json"},
  } {t.Run(tc.name,func(t *testing.T){
@@ -203,6 +204,7 @@ func TestGeneratedMiddlewareBeforeResponseStream(t *testing.T) {
   server.Use(func(next http.Handler)http.Handler{return http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){
    w.Header().Set("X-Request-ID","kept");w.Header().Del("X-Remove")
    if tc.reject{time.Sleep(16*time.Second);http.Error(w,"denied",http.StatusUnauthorized);return}
+   if tc.silent{return}
    next.ServeHTTP(w,r)
   })})
   endpoint:=httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){w.Header().Set("X-Remove","remove me");server.ServeHTTP(w,r)}));defer endpoint.Close()
@@ -215,6 +217,7 @@ func TestGeneratedMiddlewareBeforeResponseStream(t *testing.T) {
   encoded,readErr:=io.ReadAll(response.Body);closeErr:=response.Body.Close();if readErr!=nil||closeErr!=nil{t.Fatalf("read=%v close=%v",readErr,closeErr)}
   if response.Header.Get("X-Request-ID")!="kept"||response.Header.Get("X-Remove")!=""{t.Fatalf("middleware headers=%v",response.Header)}
   if tc.reject{if response.StatusCode!=401||strings.Contains(response.Header.Get("Content-Type"),"event-stream")||service.calls!=0{t.Fatalf("rejection status=%d calls=%d body=%s",response.StatusCode,service.calls,encoded)};return}
+  if tc.silent{if response.StatusCode!=202||len(encoded)!=0||service.calls!=0||strings.Contains(response.Header.Get("Content-Type"),"event-stream"){t.Fatalf("silent status=%d calls=%d body=%s",response.StatusCode,service.calls,encoded)};return}
   if response.StatusCode!=200||service.calls!=1{t.Fatalf("status=%d calls=%d body=%s",response.StatusCode,service.calls,encoded)}
   if tc.slow{if response.Header.Get("Content-Type")!="text/event-stream"||!strings.Contains(string(encoded),":\n\n")||strings.Count(string(encoded),"data: ")!=1{t.Fatalf("slow response=%s",encoded)}}else{if strings.Contains(response.Header.Get("Content-Type"),"event-stream"){t.Fatal("fast response changed framing")}}
   if strings.Count(string(encoded),"keepalive")!=1{t.Fatalf("final request ID=%s",encoded)}
