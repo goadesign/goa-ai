@@ -63,6 +63,7 @@ func TestGeneratedIntegerJSONValues(t *testing.T) {
 	require.NoError(t, err)
 	original, err := plan.AddStandalone("original", "OriginalNumbers", attribute, ordinary.serviceLayout)
 	require.NoError(t, err)
+	require.NoError(t, plan.FinalizeOriginals())
 	require.NoError(t, generation.Freeze())
 	for _, definition := range original.types {
 		assert.NotEqual(t, codegen.Goify(definition.declaration.Name(), true), definition.declaration.Name(), "original transport types must remain private: %s", definition.declaration.Name())

@@ -262,7 +262,7 @@ func validateAskPayloadJSONValue(path string, value any, description string) err
 	for _, key := range keys {
 		switch key {
 		case "question":
-			if err := validateAskPayloadJSONValue2(
+			if err := validateAnswerJSONValue2(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "User question to answer",
 			); err != nil {
@@ -273,22 +273,6 @@ func validateAskPayloadJSONValue(path string, value any, description string) err
 				"question",
 			})
 		}
-	}
-	return nil
-}
-
-// validateAskPayloadJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateAskPayloadJSONValue2(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }

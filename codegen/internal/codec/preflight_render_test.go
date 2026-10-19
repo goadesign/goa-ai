@@ -110,6 +110,7 @@ func preflightRenderTestPlan(t testing.TB, count int) *Plan {
 	for _, userType := range types {
 		addStandaloneTestValue(t, generation, owner, plan, userType)
 	}
+	require.NoError(t, plan.FinalizeOriginals())
 	require.NoError(t, generation.Freeze())
 	for _, value := range plan.values {
 		context := &codegen.AttributeContext{UseDefault: true, Scope: codegen.NewAttributeScope(owner.Scope())}

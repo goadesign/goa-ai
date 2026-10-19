@@ -71,6 +71,11 @@ func NewPlan(generation *codegen.Generation, services *service.Plan) (*Plan, err
 		}
 		pkg.values = append(pkg.values, &valuePlan{layout: layout, codec: value})
 	}
+	for _, pkg := range plan.packages {
+		if err := pkg.codecs.FinalizeOriginals(); err != nil {
+			return nil, err
+		}
+	}
 	return plan, nil
 }
 

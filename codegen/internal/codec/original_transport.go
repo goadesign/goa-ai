@@ -1,6 +1,6 @@
-// Package codec shares complete-original transport definitions within one output
-// package. Occurrence attributes remain separate; named definitions are keyed by
-// the actual Goa declaration, including its original owner.
+// Package codec shares complete-original transport types and private helpers
+// within one output package. Field occurrences retain their own rules; sharing
+// uses authored definitions and generated Go declarations and layouts.
 package codec
 
 import (
@@ -12,8 +12,13 @@ import (
 	"goa.design/goa/v3/expr"
 )
 
-type originalTransportGraph struct {
+// originalCodecGraph owns reusable original-value declarations in one package.
+// Protocol codecs keep their separate transport and helper plans.
+type originalCodecGraph struct {
 	encoder       *codegen.TransformProgram
+	shapes        map[originalShapeKey]*codegen.NameDeclaration
+	typedChecks   map[typedCheckKey][]*typedCheckPlan
+	validators    map[originalValidatorKey][]*originalValidatorPlan
 	types         map[*codegen.TypeDeclaration]*plannedType
 	typesByLocal  map[expr.UserType]*plannedType
 	unions        map[*codegen.UnionDeclaration]*plannedUnion
@@ -37,8 +42,11 @@ func (p *Plan) addOriginal(key, preferredName string, attribute *expr.AttributeE
 		if err != nil {
 			return nil, err
 		}
-		p.originals = &originalTransportGraph{
+		p.originals = &originalCodecGraph{
 			encoder:       encoder,
+			shapes:        make(map[originalShapeKey]*codegen.NameDeclaration),
+			typedChecks:   make(map[typedCheckKey][]*typedCheckPlan),
+			validators:    make(map[originalValidatorKey][]*originalValidatorPlan),
 			types:         make(map[*codegen.TypeDeclaration]*plannedType),
 			typesByLocal:  make(map[expr.UserType]*plannedType),
 			unions:        make(map[*codegen.UnionDeclaration]*plannedUnion),

@@ -38,6 +38,9 @@ func (v *Value) renderPreflight() (string, error) {
 	}
 	source.WriteString("return nil\n}\n")
 	for _, check := range v.standalone.orderedTypedChecks {
+		if check.owner != v {
+			continue
+		}
 		attribute := check.attribute
 		named := attribute.Type.(expr.UserType)
 		linked := check.layout.Link(v.plan.pkg.ImportPath(), v.plan.pkg.ImportName)
