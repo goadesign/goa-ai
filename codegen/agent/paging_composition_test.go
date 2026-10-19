@@ -49,9 +49,13 @@ func TestPagingExecutionSchemaKeepsBranchReferences(t *testing.T) {
 	page := []byte(`{"type":"object","additionalProperties":false,"properties":{"cursor":{"type":"string"},"filter":{"$ref":"#/$defs/Filter"}},"required":["cursor"],"$defs":{"Filter":{"type":"integer"}}}`)
 	combined, err := pagingExecutionSchema(query, page)
 	require.NoError(t, err)
-	var document map[string][]map[string]any
+	var document struct {
+		Type  string            `json:"type"`
+		OneOf []json.RawMessage `json:"oneOf"` //nolint:tagliatelle // The JSON Schema standard names this field oneOf.
+	}
 	require.NoError(t, json.Unmarshal(combined, &document))
-	require.Len(t, document["oneOf"], 2)
+	assert.Equal(t, "object", document.Type)
+	require.Len(t, document.OneOf, 2)
 	assert.Contains(t, string(combined), `#/oneOf/0/$defs/Filter`)
 	assert.Contains(t, string(combined), `#/oneOf/1/$defs/Filter`)
 	assert.NotContains(t, string(query), "oneOf")
