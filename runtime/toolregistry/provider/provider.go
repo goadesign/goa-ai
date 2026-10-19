@@ -133,6 +133,12 @@ type (
 		// but transport cleanup can remain incomplete. Zero uses DefaultShutdownTimeout.
 		ShutdownTimeout time.Duration
 
+		// OperationTimeout bounds each claim, terminal-result publication and
+		// acknowledgement independently of the time allowed to drain accepted
+		// calls. Zero uses ShutdownTimeout, including its default, preserving
+		// existing callers. It does not change handler deadlines or lease release.
+		OperationTimeout time.Duration
+
 		// Logger is used for provider internal logging. When nil, defaults to a noop logger.
 		Logger telemetry.Logger
 
@@ -318,6 +324,13 @@ func (run *providerRun) serve(
 			MaxShutdownTimeout,
 		)
 	}
+	operationTimeout := opts.OperationTimeout
+	if operationTimeout < 0 {
+		return fmt.Errorf("operation timeout must not be negative")
+	}
+	if operationTimeout == 0 {
+		operationTimeout = shutdownTimeout
+	}
 
 	streamID := toolregistry.ToolsetStreamID(toolset)
 	stream, err := pulse.Stream(streamID)
@@ -418,8 +431,11 @@ func (run *providerRun) serve(
 		close(workerDone)
 	})
 
-	signalSettleFailure := func(err error) bool {
-		if cancelCtx.Err() != nil && containsOnlyCancellation(err) {
+	// Intake stops before accepted workers and acknowledgements finish. Only
+	// cancellation of the operation's owning lifecycle makes its cancellation
+	// expected; its own deadline still prevents a successful lease release.
+	signalSettleFailure := func(lifecycleCtx context.Context, err error) bool {
+		if lifecycleCtx.Err() != nil && containsOnlyCancellation(err) {
 			return false
 		}
 		settleErrMu.Lock()
@@ -465,14 +481,14 @@ func (run *providerRun) serve(
 				}
 				ev = next
 			}
-			ackCtx, ackCancel := context.WithTimeout(ackLifecycleCtx, shutdownTimeout)
+			ackCtx, ackCancel := context.WithTimeout(ackLifecycleCtx, operationTimeout)
 			err := sink.Ack(ackCtx, ev)
 			ackCancel()
 			if err != nil {
 				if ackLifecycleCtx.Err() != nil && containsOnlyCancellation(err) {
 					return
 				}
-				signalSettleFailure(fmt.Errorf("ack toolset event %s: %w", ev.ID, err))
+				signalSettleFailure(ackLifecycleCtx, fmt.Errorf("ack toolset event %s: %w", ev.ID, err))
 			}
 		}
 	})
@@ -528,7 +544,7 @@ func (run *providerRun) serve(
 				disposition, claimErr := claimToolCall(
 					callCtx,
 					registrationConfig,
-					shutdownTimeout,
+					operationTimeout,
 					toolset,
 					opts.ProviderID,
 					incarnationID,
@@ -540,7 +556,7 @@ func (run *providerRun) serve(
 					span.RecordError(claimErr)
 					span.SetStatus(codes.Error, "claim tool call")
 					span.End()
-					signalSettleFailure(fmt.Errorf(
+					signalSettleFailure(handlerCtx, fmt.Errorf(
 						"claim tool call %q: %w",
 						item.msg.ToolUseID,
 						claimErr,
@@ -629,7 +645,7 @@ func (run *providerRun) serve(
 					span.RecordError(resultErr)
 					span.SetStatus(codes.Error, "validate tool result")
 					span.End()
-					signalSettleFailure(fmt.Errorf(
+					signalSettleFailure(handlerCtx, fmt.Errorf(
 						"tool call handler returned invalid result for %q: %w",
 						item.msg.Tool,
 						resultErr,
@@ -638,7 +654,7 @@ func (run *providerRun) serve(
 					continue
 				}
 
-				publishCtx, publishCancel := context.WithTimeout(context.WithoutCancel(callCtx), shutdownTimeout)
+				publishCtx, publishCancel := context.WithTimeout(context.WithoutCancel(callCtx), operationTimeout)
 				// The cancellation callback can finish after the worker.
 				// Join it whether it runs or is stopped before starting.
 				run.goroutines.Add(1)
@@ -674,7 +690,7 @@ func (run *providerRun) serve(
 						"err", addErr,
 					)
 					span.End()
-					signalSettleFailure(fmt.Errorf("publish tool result to %q: %w", resultStreamID, addErr))
+					signalSettleFailure(handlerCtx, fmt.Errorf("publish tool result to %q: %w", resultStreamID, addErr))
 					cancelCall()
 					continue
 				}
@@ -705,7 +721,7 @@ func (run *providerRun) serve(
 	}
 
 	ackImmediate := func(ev *streaming.Event, description string) error {
-		ackCtx, ackCancel := context.WithTimeout(cancelCtx, shutdownTimeout)
+		ackCtx, ackCancel := context.WithTimeout(cancelCtx, operationTimeout)
 		err := sink.Ack(ackCtx, ev)
 		ackCancel()
 		if err != nil {
@@ -794,7 +810,7 @@ func (run *providerRun) serve(
 			if err := reportOverload(
 				cancelCtx,
 				registrationConfig,
-				shutdownTimeout,
+				operationTimeout,
 				toolset,
 				opts.ProviderID,
 				incarnationID,
@@ -909,7 +925,7 @@ func (run *providerRun) serve(
 				return finish(errors.New("toolset stream subscription closed"), nil)
 			}
 			if err := acceptEvent(ev); err != nil {
-				if signalSettleFailure(err) {
+				if signalSettleFailure(cancelCtx, err) {
 					return finish(err, nil)
 				}
 				runErr, renewalErr, _ := pollProviderStop(cancelCtx, registrationResult, errc)
