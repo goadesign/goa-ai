@@ -150,7 +150,13 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 		// children still held by unfinished records must settle before this run.
 		if executionLoop != nil && executionLoop.unfinishedBatch != nil && workflowErr != nil {
 			if !cancellationAccepted && !cancellationRecorded {
-				if err := r.publishRunCancellation(wfCtx, input, engine.CancellationRequest{RunID: input.RunID, Reason: cleanupRequest.Reason}); err != nil {
+				reason := cleanupRequest.Reason
+				// A continuation targeting a saved descendant preserves that child's
+				// reason during cleanup, while this parent records engine cancellation.
+				if checkpoint != nil && input.Continuation.Cancellation != nil && cleanupRequest.RunID != checkpoint.PreviousRunID {
+					reason = run.CancellationReasonEngineCanceled
+				}
+				if err := r.publishRunCancellation(wfCtx, input, engine.CancellationRequest{RunID: input.RunID, Reason: reason}); err != nil {
 					workflowErr = errors.Join(workflowErr, fmt.Errorf("record unfinished work cancellation: %w", err))
 				}
 			}
@@ -377,14 +383,6 @@ func (r *Runtime) ExecuteWorkflow(wfCtx engine.WorkflowContext, input *RunInput)
 			cleanupRequest.Reason = startResult.CancellationReason
 		} else {
 			cleanupRequest = *input.Continuation.Cancellation
-			reason := cleanupRequest.Reason
-			if cleanupRequest.RunID != checkpoint.PreviousRunID {
-				reason = run.CancellationReasonEngineCanceled
-			}
-			if err := r.publishRunCancellation(wfCtx, input, engine.CancellationRequest{RunID: input.RunID, Reason: reason}); err != nil {
-				return nil, err
-			}
-			cancellationRecorded = true
 		}
 		return nil, context.Canceled
 	}

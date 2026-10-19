@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -33,8 +34,9 @@ type (
 	// after start storage, before the workflow restores or publishes prompts.
 	admissionCancellationWorkflowContext struct {
 		*testWorkflowContext
-		triggered  *bool
-		afterStart func()
+		triggered     *bool
+		afterStart    func()
+		cancellations *[]*api.RunCancellationCommand
 	}
 
 	// questionCancellationBus cancels the named run after its question is
@@ -54,11 +56,14 @@ func (w *admissionCancellationWorkflowContext) Context() context.Context {
 func (w *admissionCancellationWorkflowContext) Detached() engine.WorkflowContext {
 	return &admissionCancellationWorkflowContext{
 		testWorkflowContext: w.testWorkflowContext.Detached().(*testWorkflowContext),
-		triggered:           w.triggered, afterStart: w.afterStart,
+		triggered:           w.triggered, afterStart: w.afterStart, cancellations: w.cancellations,
 	}
 }
 
 func (w *admissionCancellationWorkflowContext) ExecuteStorageActivity(call engine.StorageActivityCall) (*api.StorageActivityResult, error) {
+	if call.Command.Cancellation != nil && w.cancellations != nil {
+		*w.cancellations = append(*w.cancellations, call.Command.Cancellation)
+	}
 	out, err := w.testWorkflowContext.ExecuteStorageActivity(call)
 	if err == nil && call.Command.RootStart != nil && !*w.triggered {
 		*w.triggered = true
@@ -169,7 +174,7 @@ func TestEndedSessionWorkflowStoresItsOwnTerminalResult(t *testing.T) {
 func TestContinuationCancellationSettlesSavedTaskAfterWorkerReplacement(t *testing.T) {
 	for _, ended := range []bool{true, false} {
 		t.Run(fmt.Sprintf("ended_session=%t", ended), func(t *testing.T) {
-			testContinuationCancellationAfterWorkerReplacement(t, "session", ended, false)
+			testContinuationCancellationAfterWorkerReplacement(t, "session", ended, false, false)
 		})
 	}
 }
@@ -177,12 +182,16 @@ func TestContinuationCancellationSettlesSavedTaskAfterWorkerReplacement(t *testi
 func TestCancelRunSettlesSuspendedTaskAfterWorkerReplacement(t *testing.T) {
 	for _, sessionID := range []string{"session", ""} {
 		t.Run("session="+sessionID, func(t *testing.T) {
-			testContinuationCancellationAfterWorkerReplacement(t, sessionID, false, true)
+			testContinuationCancellationAfterWorkerReplacement(t, sessionID, false, true, false)
 		})
 	}
 }
 
-func testContinuationCancellationAfterWorkerReplacement(t *testing.T, sessionID string, ended, useJob bool) {
+func TestContinuationCancellationAndCallbackStoreOneIntent(t *testing.T) {
+	testContinuationCancellationAfterWorkerReplacement(t, "session", false, false, true)
+}
+
+func testContinuationCancellationAfterWorkerReplacement(t *testing.T, sessionID string, ended, useJob, cancellationContinuation bool) {
 	spec := newAnyJSONSpec("remote.tools.lookup")
 	definition := NewAgentDefinition(AgentRoute{ID: "test.agent", WorkflowName: "test.workflow", DefaultTaskQueue: "test.queue"},
 		[]tools.ToolSpec{spec}, nil, nil, []tools.Ident{spec.Name}, nil, nil)
@@ -272,7 +281,11 @@ func testContinuationCancellationAfterWorkerReplacement(t *testing.T, sessionID 
 	case ended:
 		_, err = rt.MustClient(definition.route.ID).Continue(t.Context(), "session", "source", "cleanup", "turn-2", response, WorkflowOptions{})
 	default:
-		input, writer, buildErr := rt.buildStoredContinuationRunInput(t.Context(), definition, "session", "source", "cleanup", "turn-2", &api.RunContinuationInput{Response: response}, "cleanup", "cleanup")
+		continuation := &api.RunContinuationInput{Response: response}
+		if cancellationContinuation {
+			continuation = &api.RunContinuationInput{Cancellation: &api.CancellationRequest{RunID: "source", Reason: reason}}
+		}
+		input, writer, buildErr := rt.buildStoredContinuationRunInput(t.Context(), definition, "session", "source", "cleanup", "turn-2", continuation, "cleanup", "cleanup")
 		require.NoError(t, buildErr)
 		compiled, encodeErr := json.Marshal(input)
 		require.NoError(t, encodeErr)
@@ -280,13 +293,20 @@ func testContinuationCancellationAfterWorkerReplacement(t *testing.T, sessionID 
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		base := &testWorkflowContext{ctx: ctx, runtime: rt, hookRuntime: rt}
+		var cancellationCommands []*api.RunCancellationCommand
+		var clock atomic.Int64
+		base.now = func() time.Time { return time.UnixMilli(clock.Add(1)) }
 		triggered := false
-		wfCtx := &admissionCancellationWorkflowContext{testWorkflowContext: base, triggered: &triggered}
+		wfCtx := &admissionCancellationWorkflowContext{testWorkflowContext: base, triggered: &triggered, cancellations: &cancellationCommands}
 		wfCtx.afterStart = func() {
 			require.NoError(t, base.cancellationHandler(wfCtx, engine.CancellationRequest{RunID: "cleanup", Reason: reason}))
 			cancel()
 		}
 		_, err = rt.ExecuteWorkflow(wfCtx, input)
+		for _, command := range cancellationCommands {
+			t.Logf("cancellation write: run=%s time=%d payload=%s", command.Record.RunID, command.Record.TimestampMS, command.Record.Payload)
+		}
+		assert.Len(t, cancellationCommands, 1)
 	}
 	require.ErrorIs(t, err, context.Canceled)
 	assert.EqualValues(t, 1, creates.Load())
@@ -457,5 +477,54 @@ func TestPermanentTaskCleanupFailureClosesRunAsFailed(t *testing.T) {
 			assert.Equal(t, engine.RunStatusFailed, completion.Status)
 			assert.ErrorContains(t, completion.WorkflowError, cleanupError.Error())
 		})
+	}
+}
+
+// A service waiting for confirmation has no accepted Task to clean up. Its
+// cancellation continuation must still store one reason before terminal status.
+func TestRegisteredContinuationCancellationStoresOneIntent(t *testing.T) {
+	for _, callback := range []bool{false, true} {
+		for _, reason := range []string{run.CancellationReasonUserRequested, run.CancellationReasonSessionEnded} {
+			t.Run(fmt.Sprintf("callback=%t/reason=%s", callback, reason), func(t *testing.T) {
+				resolution, invocation := registeredRootFixture()
+				resolution.Toolset.Tools[0].ConsumerContract.Confirmation = testRuntimeRegistryResolution("records.find", strings.Repeat("a", 64)).Toolset.Tools[0].ConsumerContract.Confirmation
+				store := newTestStore()
+				_, err := store.CreateSession(t.Context(), "session", time.Now().UTC())
+				require.NoError(t, err)
+				rt := New(store, WithEngine(engineinmem.New()), WithToolWorkflowQueue("service-worker"))
+				require.NoError(t, rt.RegisterToolWorkflow(t.Context()))
+				handle, err := rt.StartToolOperation(t.Context(), "session", "registry", resolution, invocation, nil, nil)
+				require.NoError(t, err)
+				output, err := handle.Wait(t.Context())
+				require.NoError(t, err)
+				require.NotNil(t, output.Suspension)
+				request, err := rt.prepareOperationContinuationRequest(t.Context(), "service-root", "cleanup", &api.RunContinuationInput{Cancellation: &api.CancellationRequest{RunID: "service-root", Reason: reason}})
+				require.NoError(t, err)
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				var clock atomic.Int64
+				base := &testWorkflowContext{ctx: ctx, runtime: rt, hookRuntime: rt, now: func() time.Time { return time.UnixMilli(clock.Add(1)) }}
+				triggered := false
+				var commands []*api.RunCancellationCommand
+				wf := &admissionCancellationWorkflowContext{testWorkflowContext: base, triggered: &triggered, cancellations: &commands}
+				wf.afterStart = func() {
+					if callback {
+						require.NoError(t, base.cancellationHandler(wf, engine.CancellationRequest{RunID: "cleanup", Reason: reason}))
+						cancel()
+					}
+				}
+				_, err = rt.executeRegisteredRootWorkflow(wf, request.Input)
+				require.ErrorIs(t, err, context.Canceled)
+				assert.Len(t, commands, 1)
+				meta, err := store.LoadRun(t.Context(), "cleanup")
+				require.NoError(t, err)
+				assert.Equal(t, session.RunStatusCanceled, meta.Status)
+				assert.Equal(t, reason, meta.CancellationReason)
+				page, err := rt.ListRunEvents(t.Context(), "cleanup", "", 20)
+				require.NoError(t, err)
+				assert.Equal(t, 1, countRunEventsByType(page, hooks.RunCompleted))
+				assert.Zero(t, countRunEventsByType(page, hooks.ToolCallScheduled))
+			})
+		}
 	}
 }

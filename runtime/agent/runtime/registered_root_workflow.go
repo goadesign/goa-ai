@@ -73,6 +73,7 @@ func (r *Runtime) executeRegisteredRootWorkflow(wf engine.WorkflowContext, submi
 	finalization := &workflowFinalizationState{}
 	var startCommand *api.StorageActivityCommand
 	started := false
+	cancellationRecorded := false
 	cancelReason := run.CancellationReasonEngineCanceled
 	defer func() {
 		canceled, closeErr := finalization.beginFinalization(wf.Detached())
@@ -84,6 +85,11 @@ func (r *Runtime) executeRegisteredRootWorkflow(wf engine.WorkflowContext, submi
 		if canceled {
 			workflowErr = context.Canceled
 			output = nil
+		}
+		// A resumed service cancellation waits for any engine callback already
+		// running, then keeps the cancellation record if that callback wrote it.
+		if started && !canceled && !cancellationRecorded && submitted.Continuation != nil && submitted.Continuation.Cancellation != nil {
+			workflowErr = errors.Join(workflowErr, r.publishRunCancellation(wf, input, *submitted.Continuation.Cancellation))
 		}
 		if workflowErr != nil && state.pending != nil {
 			workflowErr = errors.Join(workflowErr, r.cancelRegisteredTask(wf.Detached(), state))
@@ -186,14 +192,12 @@ func (r *Runtime) executeRegisteredRootWorkflow(wf engine.WorkflowContext, submi
 	}
 	started = true
 	if start.Outcome == session.RunStartStop {
+		cancellationRecorded = true
 		cancelReason = start.CancellationReason
 		return nil, context.Canceled
 	}
 	if submitted.Continuation != nil && submitted.Continuation.Cancellation != nil {
 		cancelReason = submitted.Continuation.Cancellation.Reason
-		if err := r.publishRunCancellation(wf, input, *submitted.Continuation.Cancellation); err != nil {
-			return nil, err
-		}
 		return nil, context.Canceled
 	}
 	if state.predecessor == "" {
