@@ -83,7 +83,7 @@ func pagingExecutionSchema(query, page []byte) ([]byte, error) {
 		}
 		rebasePagingReferences(branches[index], fmt.Sprintf("#/oneOf/%d", index))
 	}
-	return json.Marshal(map[string]any{"oneOf": branches})
+	return json.Marshal(map[string]any{"type": "object", "oneOf": branches})
 }
 
 // rebasePagingReferences keeps each embedded schema reference pointed at its

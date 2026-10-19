@@ -26,6 +26,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/toolregistry"
 	"goa.design/goa-ai/runtime/toolregistry/contract"
+	"goa.design/goa-ai/runtime/toolregistry/schema"
 )
 
 type pagingService struct {
@@ -96,6 +97,20 @@ func TestPublishedPaging(t *testing.T) {
 			require.True(t, ok)
 			assert.Equal(t, test.name, spec.Bounds.Paging.ContinueTool)
 			assert.Empty(t, spec.Bounds.Paging.SourceTool)
+			for _, executionSchema := range [][]byte{spec.ExecutionPayloadSchema, spec.TextOnly.ExecutionSchema} {
+				var document struct {
+					Type string `+"`json:\"type\"`"+`
+				}
+				require.NoError(t, json.Unmarshal(executionSchema, &document))
+				assert.Equal(t, "object", document.Type)
+				composed, err := schema.PagingComposition(executionSchema, spec.Bounds.Paging.CursorField)
+				require.NoError(t, err)
+				assert.True(t, composed)
+				for _, input := range []string{test.query, test.page} {
+					assert.NoError(t, schema.Validate(executionSchema, json.RawMessage(input), "input"))
+				}
+				assert.Error(t, schema.Validate(executionSchema, json.RawMessage(test.bad), "input"))
+			}
 			_, err := spec.Payload.Codec.FromJSON([]byte(test.query))
 			require.NoError(t, err)
 			_, err = spec.Payload.Codec.FromJSON([]byte(test.page))
