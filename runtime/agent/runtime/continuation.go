@@ -431,12 +431,27 @@ func continuationStates(spec, sourceSpec tools.ToolSpec, outputs []*planner.Tool
 		var rootToolCallID string
 		var query rawjson.Message
 		var consumedCursor string
+		hasNextCursor := output.Bounds != nil && output.Bounds.NextCursor != nil && *output.Bounds.NextCursor != ""
 		page := output.Name != sourceSpec.Name
 		if spec.Name == sourceSpec.Name {
-			var err error
-			page, err = continuationPageInput(spec, output.Payload)
-			if err != nil {
-				return nil, fmt.Errorf("runtime: paging tool %q history input: %w", spec.Name, err)
+			completedSource := false
+			if !hasNextCursor && output.ContinuationRootToolCallID == "" {
+				// A saved first-page result with no next page needs no decoding
+				// against today's tool input. Check for the cursor field so a final
+				// continuation page still receives the usual validation.
+				var fields map[string]json.RawMessage
+				if err := json.Unmarshal(output.Payload, &fields); err != nil {
+					return nil, fmt.Errorf("runtime: paging tool %q history input: %w", spec.Name, err)
+				}
+				_, page = fields[spec.Bounds.Paging.CursorField]
+				completedSource = !page
+			}
+			if !completedSource {
+				var err error
+				page, err = continuationPageInput(spec, output.Payload)
+				if err != nil {
+					return nil, fmt.Errorf("runtime: paging tool %q history input: %w", spec.Name, err)
+				}
 			}
 		}
 		if !page {
@@ -447,6 +462,10 @@ func continuationStates(spec, sourceSpec tools.ToolSpec, outputs []*planner.Tool
 				return nil, fmt.Errorf("runtime: continuation source tool %q history has an empty tool call id", output.Name)
 			}
 			rootToolCallID = output.ToolCallID
+			if !hasNextCursor {
+				delete(states, rootToolCallID)
+				continue
+			}
 			var err error
 			query, err = modelVisibleContinuationQuery(sourceSpec, output.Payload)
 			if err != nil {
@@ -488,7 +507,7 @@ func continuationStates(spec, sourceSpec tools.ToolSpec, outputs []*planner.Tool
 			query = previous.query
 		}
 
-		if output.Bounds == nil || output.Bounds.NextCursor == nil || *output.Bounds.NextCursor == "" {
+		if !hasNextCursor {
 			delete(states, rootToolCallID)
 			continue
 		}
