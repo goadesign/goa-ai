@@ -2844,8 +2844,13 @@ the codec does not repeat that classification or traversal. Final aliases still
 belong to each output package.
 
 Each original package receives public encode/decode functions and private JSON
-helpers. Complete-original transport declarations are shared within that
-package, while field-occurrence rules remain attached to their actual fields.
+helpers. Complete-original transport declarations and equivalent private checks
+and conversions are shared within that package. Sharing retains the exact Goa
+declaration, authored definition, generated layout, and conversion rules; a
+matching type name or original alone is insufficient. Field-occurrence rules
+remain attached to their actual fields, and each public root keeps its own
+entry checks and error context. The existing original-codec constructor finishes
+package-wide conversion planning before Goa fixes generated names.
 No codec subdirectory or public transport representation is introduced. Types
 containing untyped `Any`, other custom Go representations, or non-string map keys have their
 complete codecs skipped; their original types remain valid and supported peers

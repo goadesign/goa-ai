@@ -24,14 +24,25 @@ type (
 		originalValidators []*originalValidatorPlan
 	}
 
+	// originalShapeKey shares checks for the same authored JSON value. Primitive
+	// checks only read their concrete kind; field descriptions remain call inputs.
+	originalShapeKey struct {
+		attribute *expr.AttributeExpr
+		primitive expr.Primitive
+		kind      string
+	}
+
 	// typedCheckKey keeps separate helpers when one schema has different Go declarations.
 	typedCheckKey struct {
 		declaration *codegen.TypeDeclaration
 		policy      codegen.GoLayoutPolicy
 	}
 
-	// typedCheckPlan retains one generated Go type and its collection identity needs.
+	// typedCheckPlan retains one generated Go type and the first root that emits
+	// its text and cycle checks. Other roots call that same private function.
 	typedCheckPlan struct {
+		owner               *Value
+		definition          *codegen.GoTypePlan
 		attribute           *expr.AttributeExpr
 		layout              *codegen.GoTypePlan
 		name                *codegen.NameDeclaration
@@ -68,7 +79,8 @@ type (
 
 // AddStandalone plans an always-strict, bidirectional value codec. Add retains
 // its existing contract and output for protocol generators. The caller first
-// checks SupportsStandalone, before creating this plan or reserving names.
+// checks SupportsStandalone, before creating this plan or reserving names, and
+// completes all original helper declarations with FinalizeOriginals before freeze.
 func (p *Plan) AddStandalone(key, preferredName string, attribute *expr.AttributeExpr, layout *codegen.GoTypePlan) (*Value, error) {
 	value, err := p.addOriginal(key, preferredName, attribute, layout)
 	if err != nil {
@@ -106,11 +118,25 @@ func (p *Plan) AddStandalone(key, preferredName string, attribute *expr.Attribut
 			if plan.typedChecks[key] != nil {
 				continue
 			}
+			definition, err := originalDefinitionLayout(selected, named.Attribute())
+			if err != nil {
+				return err
+			}
+			for _, shared := range p.originals.typedChecks[key] {
+				if shared.attribute.Type.(expr.UserType).Attribute() == named.Attribute() && shared.definition.Equivalent(definition) {
+					plan.typedChecks[key] = shared
+					plan.orderedTypedChecks = append(plan.orderedTypedChecks, shared)
+					break
+				}
+			}
+			if plan.typedChecks[key] != nil {
+				continue
+			}
 			name, err := value.strictName("check"+preferredName+named.Name()+"Value", "typed:"+strconv.Itoa(len(plan.orderedTypedChecks)))
 			if err != nil {
 				return err
 			}
-			check := &typedCheckPlan{attribute: current, layout: selected, name: name}
+			check := &typedCheckPlan{owner: value, definition: definition, attribute: current, layout: selected, name: name}
 			if expr.IsArray(named) || expr.IsMap(named) {
 				if err := walkAttribute(named.Attribute(), make(map[expr.UserType]struct{}), func(child *expr.AttributeExpr) error {
 					if nested, ok := child.Type.(expr.UserType); ok && nested.Origin() == named.Origin() {
@@ -126,6 +152,7 @@ func (p *Plan) AddStandalone(key, preferredName string, attribute *expr.Attribut
 					}
 				}
 			}
+			p.originals.typedChecks[key] = append(p.originals.typedChecks[key], check)
 			plan.typedChecks[key] = check
 			plan.orderedTypedChecks = append(plan.orderedTypedChecks, check)
 		}
@@ -156,15 +183,25 @@ func (v *Value) strictName(preferred, role string) (*codegen.NameDeclaration, er
 	return name, nil
 }
 
-// planShape records a node before its children to terminate recursive graphs.
+// planShape reuses checks for the same authored node or primitive kind. New
+// nodes are saved before their children so recursive values call an existing check.
 func (v *Value) planShape(node *jsonshape.Node) error {
 	if v.standalone.names[node] != nil {
+		return nil
+	}
+	key := originalShapeKey{attribute: node.Attribute}
+	if node.Kind == "primitive" || node.Kind == "any" {
+		key = originalShapeKey{primitive: node.Primitive, kind: node.Kind}
+	}
+	if shared := v.plan.originals.shapes[key]; shared != nil {
+		v.standalone.names[node] = shared
 		return nil
 	}
 	name, err := v.strictName("validate"+v.preferredName+"JSONValue", "shape:"+strconv.Itoa(len(v.standalone.nodes)))
 	if err != nil {
 		return err
 	}
+	v.plan.originals.shapes[key] = name
 	v.standalone.names[node] = name
 	v.standalone.nodes = append(v.standalone.nodes, node)
 	for _, fields := range [][]*jsonshape.Field{node.Fields, node.Branches} {

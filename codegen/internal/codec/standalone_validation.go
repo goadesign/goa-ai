@@ -12,25 +12,27 @@ import (
 
 type (
 	// originalValidatorKey distinguishes definitions that share an origin but
-	// have different declarations or field representations.
+	// have different occurrence constraints, declarations, or field representations.
 	originalValidatorKey struct {
 		definition  *expr.AttributeExpr
+		validation  *expr.ValidationExpr
 		declaration *codegen.TypeDeclaration
 		policy      codegen.GoLayoutPolicy
 	}
 
 	// originalValidatorPlan uses one retained type for its parameter and checks.
 	originalValidatorPlan struct {
+		definition  *codegen.GoTypePlan
 		layout      *codegen.GoTypePlan
 		declaration *codegen.NameDeclaration
 		validation  *codegen.ValidationPlan
 	}
 
-	// originalValidatorPlanner lives only while one selected value is planned.
-	// Recursive requests reuse a declaration reserved before its body is read.
+	// originalValidatorPlanner adds checks needed by one selected root to the
+	// package-owned definitions. Recursive requests reuse declarations saved
+	// before their checks are planned.
 	originalValidatorPlanner struct {
-		value       *Value
-		definitions map[originalValidatorKey]*originalValidatorPlan
+		value *Value
 	}
 
 	// originalValidatorData contains only linked names and retained Go checks.
@@ -46,10 +48,7 @@ func (v *Value) planOriginalValidation(layout *codegen.GoTypePlan) error {
 	if !codegen.NeedsValidation(userType.Attribute(), layout.Policy()) {
 		return nil
 	}
-	planner := originalValidatorPlanner{
-		value:       v,
-		definitions: make(map[originalValidatorKey]*originalValidatorPlan),
-	}
+	planner := originalValidatorPlanner{value: v}
 	root, err := planner.add(v.service, layout)
 	if err != nil {
 		return err
@@ -62,9 +61,15 @@ func (v *Value) planOriginalValidation(layout *codegen.GoTypePlan) error {
 // enclosing occurrence keeps requiredness and element-nullability checks.
 func (p *originalValidatorPlanner) add(attribute *expr.AttributeExpr, layout *codegen.GoTypePlan) (*originalValidatorPlan, error) {
 	userType := attribute.Type.(expr.UserType)
-	key := originalValidatorKey{userType.Attribute(), layout.TypeDeclaration(), layout.Policy()}
-	if planned := p.definitions[key]; planned != nil {
-		return planned, nil
+	key := originalValidatorKey{userType.Attribute(), attribute.Validation, layout.TypeDeclaration(), layout.Policy()}
+	definition, err := originalDefinitionLayout(layout, userType.Attribute())
+	if err != nil {
+		return nil, err
+	}
+	for _, planned := range p.value.plan.originals.validators[key] {
+		if planned.definition.Equivalent(definition) {
+			return planned, nil
+		}
 	}
 	pkg := p.value.plan.pkg
 	declaration, err := pkg.DeclareDependentName(codegen.NameFunction, layout.TypeDeclaration().Declaration(),
@@ -75,8 +80,8 @@ func (p *originalValidatorPlanner) add(attribute *expr.AttributeExpr, layout *co
 	if err != nil {
 		return nil, err
 	}
-	planned := &originalValidatorPlan{layout: layout, declaration: declaration}
-	p.definitions[key] = planned
+	planned := &originalValidatorPlan{definition: definition, layout: layout, declaration: declaration}
+	p.value.plan.originals.validators[key] = append(p.value.plan.originals.validators[key], planned)
 	p.value.standalone.originalValidators = append(p.value.standalone.originalValidators, planned)
 	planned.validation, err = codegen.NewValidationPlan(attribute, layout, codegen.ValidationPlanOptions{
 		Required: true,

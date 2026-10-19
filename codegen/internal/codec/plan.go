@@ -22,7 +22,7 @@ type (
 		valuesByKey        map[string]*Value
 		importPaths        map[string]struct{}
 		locatedImportPaths map[string]struct{}
-		originals          *originalTransportGraph
+		originals          *originalCodecGraph
 		jsonHelpers        *jsonHelperPlan
 	}
 
@@ -721,8 +721,12 @@ func (v *Value) planDecodeTransform() error {
 	return nil
 }
 
-// bindTransformHelpers gives every recursive conversion one exact function name.
+// bindTransformHelpers names protocol conversion helpers immediately. Original
+// values wait until FinalizeOriginals can compare every root in their package.
 func (v *Value) bindTransformHelpers(prefix string, transform *goacodegen.TransformPlan) error {
+	if v.originalLayout != nil {
+		return nil
+	}
 	for _, helper := range transform.Helpers() {
 		declaration := goacodegen.NewPreferredName(
 			goacodegen.NameFunction,
