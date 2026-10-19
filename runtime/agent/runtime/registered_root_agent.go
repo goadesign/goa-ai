@@ -56,7 +56,7 @@ func registeredAgentDeclaration(input *api.RunInput) (*genregistry.ToolSchema, e
 		if err != nil {
 			return nil, err
 		}
-		if _, err := spec.Payload.Codec.FromJSON(request.Arguments); err != nil {
+		if _, err := spec.ExecutionPayloadCodec.FromJSON(request.Arguments); err != nil {
 			return nil, err
 		}
 		for _, label := range declaration.ConsumerContract.RequiredLabels {

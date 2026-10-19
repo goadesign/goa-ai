@@ -51,6 +51,10 @@ func prepareRegistrySchema(tool *ToolData, entry *toolEntry) error {
 	} else if entry.Bookkeeping || entry.TerminalRun || entry.ReplanOnTimeout {
 		kind = "control"
 	}
+	dependencies := []*ToolData{tool}
+	if tool.Page != nil {
+		dependencies = append(dependencies, tool.Page)
+	}
 	contract := &genregistry.ConsumerContract{
 		Kind:  kind,
 		Title: entry.Title,
@@ -60,7 +64,7 @@ func prepareRegistrySchema(tool *ToolData, entry *toolEntry) error {
 		},
 		Payload:         registryTypeMetadata(entry.Payload),
 		Result:          registryTypeMetadata(entry.Result),
-		RequiredLabels:  requiredLabels([]*ToolData{tool}),
+		RequiredLabels:  requiredLabels(dependencies),
 		ResultReminder:  registryOptionalString(entry.ResultReminder),
 		ReplanOnTimeout: entry.ReplanOnTimeout,
 	}
@@ -70,7 +74,7 @@ func prepareRegistrySchema(tool *ToolData, entry *toolEntry) error {
 			Description:     entry.TextOnlyDescription,
 			Search:          &genregistry.ToolSearchDocument{Length: entry.TextOnlySearch.Length, Terms: entry.TextOnlySearch.Terms},
 			PayloadSchema:   entry.TextOnlyPayload.SchemaJSON,
-			ExecutionSchema: entry.TextOnlyExecution.ExecutionSchemaJSON,
+			ExecutionSchema: entry.TextOnlyExecutionContract.Schema,
 			ResultReminder:  registryOptionalString(entry.TextOnlyResultReminder),
 			Payload:         registryTypeMetadata(entry.TextOnlyPayload),
 		}
@@ -120,7 +124,7 @@ func prepareRegistrySchema(tool *ToolData, entry *toolEntry) error {
 		Description:            &entry.Description,
 		Tags:                   entry.Tags,
 		PayloadSchema:          entry.Payload.SchemaJSON,
-		ExecutionPayloadSchema: entry.Payload.ExecutionSchemaJSON,
+		ExecutionPayloadSchema: entry.Execution.Schema,
 		ResultSchema:           resultSchema,
 		ConsumerContract:       contract,
 	}
@@ -206,6 +210,9 @@ func toolRegistrySchemasFile(ts *ToolsetData, entries []*toolEntry) *codegen.Fil
 		methods: make(map[any]string),
 	}
 	for _, entry := range entries {
+		if entry.PrivatePage {
+			continue
+		}
 		data.Schemas = append(data.Schemas, data.add("schema", entry.RegistrySchema))
 	}
 	sections := make([]*codegen.SectionTemplate, 0, 2+len(data.Functions))

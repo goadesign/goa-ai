@@ -137,7 +137,7 @@ func prepareOperationRequest(sessionID, runID string, operation *genregistry.Too
 	if err != nil {
 		return engine.WorkflowStartRequest{}, err
 	}
-	if _, err := spec.Payload.Codec.FromJSON(arguments); err != nil {
+	if _, err := spec.ExecutionPayloadCodec.FromJSON(arguments); err != nil {
 		return engine.WorkflowStartRequest{}, fmt.Errorf("operation %q input: %w", spec.Name, err)
 	}
 	definition := NewAgentDefinition(AgentRoute{
@@ -187,7 +187,7 @@ func validateDirectOperationInput(input *api.RunInput) error {
 	if err != nil {
 		return err
 	}
-	if _, err := spec.Payload.Codec.FromJSON(input.ToolArgs); err != nil {
+	if _, err := spec.ExecutionPayloadCodec.FromJSON(input.ToolArgs); err != nil {
 		return fmt.Errorf("operation %q input: %w", spec.Name, err)
 	}
 	return nil

@@ -22,7 +22,9 @@ func SchemaFingerprint(toolset string) (string, error) {
 func Specs() []tools.ToolSpec {
     return []tools.ToolSpec{
 {{- range .Tools }}
+{{- if not .PrivatePage }}
         {{ .ConstructorFunc }}(),
+{{- end }}
 {{- end }}
     }
 }
@@ -79,8 +81,8 @@ func {{ .ConstructorFunc }}() tools.ToolSpec {
         RequiresUI: {{ .RequiresUI }},
         {{- if .TextOnlyPayload }}
         TextOnly: &tools.ModelContract{
-            ExecutionSchema: tools.RawJSON({{ printf "%q" .TextOnlyExecution.ExecutionSchemaJSON }}),
-            ExecutionCodec: {{ .TextOnlyExecution.GenericCodec }},
+            ExecutionSchema: tools.RawJSON({{ printf "%q" .TextOnlyExecutionContract.Schema }}),
+            ExecutionCodec: {{ template "execution-codec" .TextOnlyExecutionContract }},
             ResultReminder: {{ printf "%q" .TextOnlyResultReminder }},
             Description: {{ printf "%q" .TextOnlyDescription }},
             Search: tools.SearchDocument{Length: {{ .TextOnlySearch.Length }}, Terms: map[string]int{
@@ -185,8 +187,8 @@ func {{ .ConstructorFunc }}() tools.ToolSpec {
             DeniedResultTemplate: {{ printf "%q" .Confirmation.DeniedResultTemplate }},
         },
         {{- end }}
-		ExecutionPayloadSchema: {{- if and .Payload (gt (len .Payload.ExecutionSchemaJSON) 0) }}tools.RawJSON({{ printf "%q" .Payload.ExecutionSchemaJSON }}){{ else }}nil{{ end }},
-		ExecutionPayloadCodec: {{ .Payload.GenericCodec }},
+		ExecutionPayloadSchema: {{- if and .Execution (gt (len .Execution.Schema) 0) }}tools.RawJSON({{ printf "%q" .Execution.Schema }}){{ else }}nil{{ end }},
+		ExecutionPayloadCodec: {{ template "execution-codec" .Execution }},
         Payload: tools.TypeSpec{
             Name: {{ if .Payload }}{{ printf "%q" .Payload.TypeName }}{{ else }}""{{ end }},
             {{- if .Payload }}
@@ -226,7 +228,7 @@ func {{ .SpecVar }}() tools.ToolSpec {
 {{- end }}
 
 {{- range .Tools }}
-{{- if .TypedToolVar }}
+{{- if and .TypedToolVar (not .PrivatePage) }}
 
 // {{ .TypedToolVar }} pairs the {{ .Name }} identifier with its generated
 // typed payload and result codecs so consumers decode tool JSON without
@@ -290,6 +292,7 @@ func {{ .CanonicalizeServerDataItemFunc }}(kind, audience string, data tools.Raw
 func Metadata() []policy.ToolMetadata {
     return []policy.ToolMetadata{
 {{- range .Tools }}
+{{- if not .PrivatePage }}
         {
             ID:          {{ .ConstName }},
             Title:       {{ printf "%q" .Title }},
@@ -302,6 +305,7 @@ func Metadata() []policy.ToolMetadata {
             BudgetClass: policy.ToolBudgetClass{{ if .Bookkeeping }}Bookkeeping{{ else }}Budgeted{{ end }},
         },
 {{- end }}
+{{- end }}
     }
 }
 
@@ -309,7 +313,9 @@ func Metadata() []policy.ToolMetadata {
 func Names() []tools.Ident {
     return []tools.Ident{
 {{- range .Tools }}
+{{- if not .PrivatePage }}
         {{ .ConstName }},
+{{- end }}
 {{- end }}
     }
 }
@@ -331,8 +337,10 @@ func RequiredLabels() []string {
 func Spec(name tools.Ident) (tools.ToolSpec, bool) {
     switch name {
     {{- range .Tools }}
+{{- if not .PrivatePage }}
     case {{ .ConstName }}:
         return {{ .ConstructorFunc }}(), true
+    {{- end }}
     {{- end }}
     default:
         return tools.ToolSpec{}, false
@@ -343,6 +351,7 @@ func Spec(name tools.Ident) (tools.ToolSpec, bool) {
 func MetadataByName(name tools.Ident) (policy.ToolMetadata, bool) {
     switch name {
     {{- range $tool := .Tools }}
+{{- if not .PrivatePage }}
     case {{ $tool.ConstName }}:
         return policy.ToolMetadata{
             ID:          {{ $tool.ConstName }},
@@ -355,6 +364,7 @@ func MetadataByName(name tools.Ident) (policy.ToolMetadata, bool) {
             },
             BudgetClass: policy.ToolBudgetClass{{ if $tool.Bookkeeping }}Bookkeeping{{ else }}Budgeted{{ end }},
         }, true
+    {{- end }}
     {{- end }}
     default:
         return policy.ToolMetadata{}, false
@@ -373,3 +383,41 @@ func cloneStringMap(source map[string]string) map[string]string {
     }
     return cloned
 }
+
+{{- define "execution-codec" -}}
+{{- if .Page -}}
+tools.JSONCodec[any]{
+    FromJSON: func(data []byte) (any, error) {
+        query, queryErr := {{ .Query.GenericCodec }}.FromJSON(data)
+        if queryErr == nil {
+            return query, nil
+        }
+        page, pageErr := {{ .Page.GenericCodec }}.FromJSON(data)
+        if pageErr == nil {
+            return page, nil
+        }
+        return nil, fmt.Errorf("input must match query or page: query: %v; page: %w", queryErr, pageErr)
+    },
+    ToJSON: func(value any) ([]byte, error) {
+        selected := {{ .Query.GenericCodec }}
+        switch value.(type) {
+        case {{ if .Query.Pointer }}*{{ end }}{{ .Query.FullRef }}:
+        case {{ if .Page.Pointer }}*{{ end }}{{ .Page.FullRef }}:
+            selected = {{ .Page.GenericCodec }}
+        default:
+            return nil, fmt.Errorf("unexpected paged input type %T", value)
+        }
+        encoded, err := selected.ToJSON(value)
+        if err != nil {
+            return nil, err
+        }
+        if _, err := selected.FromJSON(encoded); err != nil {
+            return nil, err
+        }
+        return encoded, nil
+    },
+}
+{{- else -}}
+{{ .Query.GenericCodec }}
+{{- end -}}
+{{- end -}}

@@ -520,6 +520,11 @@ type (
 	//
 	// Created by newToolData during toolset data construction; immutable afterward.
 	ToolData struct {
+		// PrivatePage keeps this declaration available to provider code without publishing an operation.
+		PrivatePage bool
+		// Page is the typed continuation implementation of this public query.
+		Page *ToolData
+
 		// Name is the DSL-provided tool identifier.
 		Name string
 		// ConstName is a Go-safe exported identifier for referencing this tool
@@ -1077,6 +1082,9 @@ func newAgentData(
 	// deterministic forwarding to a Goa service method.
 	for _, ts := range agent.ExportedToolsets {
 		for _, t := range ts.Tools {
+			if t.PrivatePage {
+				continue
+			}
 			md := &MethodData{
 				Name: t.Name,
 			}

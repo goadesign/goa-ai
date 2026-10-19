@@ -33,6 +33,8 @@ func TestTextOnlyCursorRulesMatchOrdinaryExecution(t *testing.T) {
 		require.NoError(t, err)
 		remote[spec.Name] = spec
 	}
+	_, published := remote[ContinueRead]
+	require.False(t, published)
 	for _, test := range []struct {
 		name string
 		spec tools.ToolSpec
@@ -45,14 +47,14 @@ func TestTextOnlyCursorRulesMatchOrdinaryExecution(t *testing.T) {
 			spec: SpecRead(),
 			valid: "{\"query\":\"records\"}",
 			textJSON: "{\"query\":\"records\",\"render_ui\":false}",
-			invalid: []string{"{\"query\":\"records\",\"cursor\":\"page\"}"},
+			invalid: []string{"{}", "{\"cursor\":\"page\"}", "{\"query\":\"records\",\"cursor\":null}"},
 		},
 		{
-			name: "continuation",
-			spec: SpecContinueRead(),
+			name: "page",
+			spec: SpecRead(),
 			valid: "{\"query\":\"records\",\"cursor\":\"page\"}",
 			textJSON: "{\"query\":\"records\",\"cursor\":\"page\",\"render_ui\":false}",
-			invalid: []string{"{}", "{\"query\":\"records\"}"},
+			invalid: []string{"{}", "{\"query\":\"records\",\"cursor\":1}"},
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {

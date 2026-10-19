@@ -2963,22 +2963,30 @@ disclosing an incomplete view from supporting claims about omitted items: a part
 disclaimer supplies no missing evidence. This guidance leaves the original
 result, counts, refinement hint, and the model's next-action choice unchanged.
 
-Pagination metadata names both the result cursor and, when appropriate, a
-dedicated continuation tool. `ContinueWith` is the canonical contract when an
-opaque cursor already contains the resolved query: the originating tool has no
-cursor mode, the continuation tool accepts one required cursor, and generated
-runtime metadata routes the next page. `Cursor` on the originating tool remains
-available only for APIs where callers must intentionally repeat the original
-query. This keeps correlation state in the issuing system instead of asking a
-model to reproduce it. Parallel source invocations are valid. When a live page
+`ContinueWith` declares the first-query and next-page implementations of one
+public operation. The generator publishes only the first tool name. Its model
+schema accepts the initial semantic arguments; its execution schema accepts
+exactly one of two flat objects: the initial arguments without a cursor, or the
+page arguments with a required cursor. Each branch retains its own typed codec
+and original service method. Direct service and native Agent callers send either object under
+the same operation name. The page specification remains available to provider
+code, but its name is not registered or callable.
+
+Both declarations must agree on their public result and execution policies.
+Their planning tags remain separate for native planners; the generator does not
+combine permissions or broaden the result. Generated `ToolPaging` identifies
+the public operation itself as `ContinueTool`, with no `SourceTool`. Plain
+`Cursor` declarations retain their existing repeated-query behavior.
+
+Parallel source invocations are valid. When a live page
 returns zero items and a next cursor, the runtime advances that chain before
 planning because no semantic evidence exists for the model to judge. Once a
 page returns items with a next cursor, the runtime derives one temporary
 no-argument action for that live source invocation. A truncated result without
 a cursor exposes its refinement hint instead. Each action has a stable
-model-facing name and describes the original model-visible query, while execution retains the
-canonical continuation tool name. The bounded-result reminder names that same
-temporary action, never the hidden canonical tool, so the prompt and advertised
+model-facing name and describes the original model-visible query, while execution
+uses the public operation name. The bounded-result reminder names that same
+temporary action, so the prompt and advertised
 catalog cannot disagree. Selecting an action binds the exact source
 tool-call identity and cursor into the executable request. Successful
 continuation results carry that source identity through the durable tool-call
@@ -2989,17 +2997,19 @@ which semantic query with returned evidence to continue but never reproduces a
 cursor or correlation identifier.
 
 Each generated input schema has a matching generated codec. `Payload.Codec`
-accepts model-authored arguments, including the empty object for a dedicated
-continuation. `ExecutionPayloadCodec` accepts the restored execution payload
+accepts the initial model-authored arguments. Temporary continuation actions
+accept an empty object. `ExecutionPayloadCodec` accepts the restored execution payload
 and is used when running tools or restoring saved work. Standalone registered
-service operations use this execution codec during submission, workflow
+service and native Agent operations use this execution codec during submission, workflow
 restoration, and provider dispatch; direct callers supply the complete query
 and cursor, while provider-injected fields remain excluded. These codec functions
 are shared when both inputs have the same shape. The generator derives cursor
 presence and hidden fields before creating the schema and decoder, so adding
 an authored example cannot make a valid continuation fail registration.
-The existing typed payload and typed tool descriptors keep their execution
-meaning; no new model-visible fields or persisted representations are added.
+Paired payload declarations use distinct named Go types, even when both reuse
+the same authored argument type. Decoding preserves the accepted branch, and
+encoding selects its matching codec by that type. No new model-visible fields
+or persisted representations are added.
 
 A new run reconstructs still-live continuation actions from structured
 transcript tool-call IDs and canonical scheduled/result events in the session

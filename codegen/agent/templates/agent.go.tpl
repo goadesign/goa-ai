@@ -6,7 +6,9 @@
     []{{ .ToolsAlias }}.Ident{
 {{- range .UsedToolsets }}
 {{- range .Tools }}
+{{- if not .PrivatePage }}
         {{ $.ToolsAlias }}.Ident({{ printf "%q" .QualifiedName }}),
+{{- end }}
 {{- end }}
 {{- end }}
     },

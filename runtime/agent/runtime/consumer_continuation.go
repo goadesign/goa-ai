@@ -72,7 +72,11 @@ func operationCheckpointDeclaration(checkpoint *workflowCheckpoint) (*genregistr
 	if spec.Name != checkpoint.Context.Tool {
 		return nil, errors.New("direct suspension does not match its retained operation")
 	}
-	if _, err := spec.Payload.Codec.FromJSON(checkpoint.Context.ToolArgs); err != nil {
+	spec, err = exactOperationSpec(spec, &PolicyOverrides{TextOnly: checkpoint.Context.TextOnly})
+	if err != nil {
+		return nil, err
+	}
+	if _, err := spec.ExecutionPayloadCodec.FromJSON(checkpoint.Context.ToolArgs); err != nil {
 		return nil, fmt.Errorf("direct suspension operation input: %w", err)
 	}
 	return operation, nil

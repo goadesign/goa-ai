@@ -64,7 +64,31 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 	}
 {{- end }}
 
-	switch msg.Tool {
+    {{- $hasPaging := false }}
+    {{- range .Tools }}
+    {{- if .Page }}{{- $hasPaging = true }}{{- end }}
+    {{- end }}
+    {{- if $hasPaging }}
+    executionName := msg.Tool
+    switch msg.Tool {
+    {{- range .Tools }}
+    {{- if .PrivatePage }}
+    case {{ .ConstName }}:
+        return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "unknown_tool", "page implementation is not a public operation"), nil
+    {{- else if .Page }}
+    case {{ .ConstName }}:
+        value, err := {{ .SpecVar }}().ExecutionPayloadCodec.FromJSON(msg.Payload)
+        if err != nil {
+            return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_arguments", err.Error()), nil
+        }
+        if _, page := value.({{ if .Page.PayloadPointer }}*{{ end }}{{ .Page.PayloadTypeName }}); page {
+            executionName = {{ .Page.ConstName }}
+        }
+    {{- end }}
+    {{- end }}
+    }
+    {{- end }}
+    switch {{ if $hasPaging }}executionName{{ else }}msg.Tool{{ end }} {
 {{- range .Tools }}
 {{- $tool := . }}
 {{- if .IsMethodBacked }}
@@ -80,10 +104,7 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
         }
 {{- else }}
         if msg.Meta.TextOnly {
-            spec, ok := Spec({{ .ConstName }})
-            if !ok {
-                return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_contract", "generated tool contract is missing"), nil
-            }
+            spec := {{ .SpecVar }}()
             decoded, err := spec.TextOnly.ExecutionCodec.FromJSON(msg.Payload)
             if err != nil {
                 return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_arguments", err.Error()), nil

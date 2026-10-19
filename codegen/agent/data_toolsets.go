@@ -177,6 +177,18 @@ func buildToolsetData(
 		ts.RequiredLabels = requiredLabels(ts.Tools)
 	}
 
+	for _, source := range ts.Tools {
+		if source.Bounds == nil || source.Bounds.Paging == nil || source.Bounds.Paging.SourceTool != "" || source.Bounds.Paging.ContinueTool == "" {
+			continue
+		}
+		for _, page := range ts.Tools {
+			if page.QualifiedName == source.Bounds.Paging.ContinueTool && page != source {
+				source.Page = page
+				page.PrivatePage = true
+				break
+			}
+		}
+	}
 	return ts, nil
 }
 

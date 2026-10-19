@@ -53,7 +53,9 @@ func TestExecutionInputRemainsComplete(t *testing.T) {
 	}{
 		{SpecContinueSearch(), "{\"query\":\"records\",\"cursor\":\"page\"}", []string{"{}", "{\"query\":\"records\"}", "{\"cursor\":\"page\"}"}},
 		{SpecContinueList(), "{\"next_position\":\"page\"}", []string{"{}", "{\"next_position\":1}", "{\"nextPosition\":\"page\"}"}},
-		{SpecSearch(), "{\"query\":\"records\"}", []string{"{}", "{\"query\":\"records\",\"cursor\":\"page\"}", "{\"query\":\"records\",\"session_id\":\"session\"}"}},
+		{SpecSearch(), "{\"query\":\"records\"}", []string{"{}", "{\"cursor\":\"page\"}", "{\"query\":\"records\",\"session_id\":\"session\"}"}},
+        {SpecSearch(), "{\"query\":\"records\",\"cursor\":\"page\"}", []string{"{\"query\":\"records\",\"cursor\":null}", "{\"query\":\"records\",\"cursor\":1}"}},
+        {SpecList(), "{\"next_position\":\"page\"}", []string{"{\"kind\":\"notes\",\"next_position\":\"page\"}"}},
 	} {
 		value, err := test.spec.ExecutionPayloadCodec.FromJSON([]byte(test.valid))
 		require.NoError(t, err)

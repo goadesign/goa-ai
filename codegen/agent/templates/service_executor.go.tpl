@@ -149,7 +149,31 @@ func {{ .Constructor }}(opts ...{{ .Names.OptionType }}) runtime.ToolCallExecuto
         if meta == nil {
             return runtime.Executed({{ .Names.FailedToolResult }}(call.Name, errors.New("tool call meta is nil"))), nil
         }
+        {{- $hasPaging := false }}
+        {{- range .Tools }}
+        {{- if .Page }}{{- $hasPaging = true }}{{- end }}
+        {{- end }}
+        {{- if $hasPaging }}
+        executionName := call.Name
         switch call.Name {
+        {{- range .Tools }}
+        {{- if .PrivatePage }}
+        case tools.Ident({{ printf "%q" .QualifiedName }}):
+            return runtime.Executed({{ $.Names.InvalidToolCall }}(call, errors.New("page implementation is not a public operation"))), nil
+        {{- else if .Page }}
+        case tools.Ident({{ printf "%q" .QualifiedName }}):
+            value, err := {{ $.Toolset.SpecsPackageName }}.{{ .SpecVar }}().ExecutionPayloadCodec.FromJSON(call.Payload)
+            if err != nil {
+                return runtime.Executed({{ $.Names.InvalidToolCall }}(call, err)), nil
+            }
+            if _, page := value.({{ if .Page.PayloadPointer }}*{{ end }}{{ $.Toolset.SpecsPackageName }}.{{ .Page.PayloadTypeName }}); page {
+                executionName = tools.Ident({{ printf "%q" .Page.QualifiedName }})
+            }
+        {{- end }}
+        {{- end }}
+        }
+        {{- end }}
+        switch {{ if $hasPaging }}executionName{{ else }}call.Name{{ end }} {
         {{- range .Tools }}
         {{- if .IsMethodBacked }}
             {{- $toolHasSource := false }}

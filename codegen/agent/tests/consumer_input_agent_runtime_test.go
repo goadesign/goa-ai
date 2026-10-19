@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -50,9 +49,16 @@ func TestConsumerInputGeneratedAgentIntegration(t *testing.T) {
 	assert.NotContains(t, provider, "worker.specialist")
 	root := writeGeneratedModuleKeepingGen(t, files)
 	writeGeneratedPackageTest(t, root, "bindingintegration/agent_binding_test.go", consumerAgentRuntimeSource)
-	ctx, cancel := context.WithTimeout(t.Context(), 120*time.Second)
-	defer cancel()
-	runGeneratedGoTestCommand(t, root, exec.CommandContext(ctx, "go", "test", "-mod=mod", "-race", "-count=1", "-v", "./bindingintegration"))
+	// The generated package may need to compile uncached race dependencies.
+	// Use the owning test's deadline for compilation and the command, and give
+	// the generated tests their own execution limit once compilation finishes.
+	ctx := t.Context()
+	if deadline, ok := t.Deadline(); ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithDeadline(ctx, deadline)
+		defer cancel()
+	}
+	runGeneratedGoTestCommand(t, root, exec.CommandContext(ctx, "go", "test", "-mod=mod", "-race", "-count=1", "-timeout=120s", "-v", "./bindingintegration"))
 }
 
 const consumerAgentRuntimeSource = `package bindingintegration

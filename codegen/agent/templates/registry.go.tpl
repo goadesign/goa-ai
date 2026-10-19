@@ -199,8 +199,8 @@ func {{ .PackageNames.RegisterUsedToolsets }}(ctx {{ .ContextAlias }}.Context, r
         {{- $hasCallHints := false -}}
         {{- $hasResultHints := false -}}
         {{- range .Tools }}
-        {{- if .CallHintTemplate }}{{- $hasCallHints = true -}}{{- end }}
-        {{- if .ResultHintTemplate }}{{- $hasResultHints = true -}}{{- end }}
+        {{- if and .CallHintTemplate (not .PrivatePage) }}{{- $hasCallHints = true -}}{{- end }}
+        {{- if and .ResultHintTemplate (not .PrivatePage) }}{{- $hasResultHints = true -}}{{- end }}
         {{- end }}
         {{- if or $hasCallHints $hasResultHints }}
         if err := {{ .GeneratedHintsInstaller }}(&reg); err != nil {
@@ -236,15 +236,15 @@ func {{ .ResultMaterializerOption }}(materializer {{ $.RuntimeAlias }}.ResultMat
 {{- $hasCallHints := false -}}
 {{- $hasResultHints := false -}}
 {{- range .Tools }}
-{{- if .CallHintTemplate }}{{- $hasCallHints = true -}}{{- end }}
-{{- if .ResultHintTemplate }}{{- $hasResultHints = true -}}{{- end }}
+{{- if and .CallHintTemplate (not .PrivatePage) }}{{- $hasCallHints = true -}}{{- end }}
+{{- if and .ResultHintTemplate (not .PrivatePage) }}{{- $hasResultHints = true -}}{{- end }}
 {{- end }}
 {{- if or $hasCallHints $hasResultHints }}
 func {{ .GeneratedHintsInstaller }}(reg *{{ $.RuntimeAlias }}.ToolsetRegistration) error {
     {{- if $hasCallHints }}
     callHints, err := {{ $.HintsAlias }}.CompileHintTemplates(map[{{ $.ToolsAlias }}.Ident]string{
     {{- range .Tools }}
-    {{- if .CallHintTemplate }}
+    {{- if and .CallHintTemplate (not .PrivatePage) }}
         {{ $.ToolsAlias }}.Ident({{ printf "%q" .QualifiedName }}): {{ printf "%q" .CallHintTemplate }},
     {{- end }}
     {{- end }}
@@ -257,7 +257,7 @@ func {{ .GeneratedHintsInstaller }}(reg *{{ $.RuntimeAlias }}.ToolsetRegistratio
     {{- if $hasResultHints }}
     resultHints, err := {{ $.HintsAlias }}.CompileHintTemplates(map[{{ $.ToolsAlias }}.Ident]string{
     {{- range .Tools }}
-    {{- if .ResultHintTemplate }}
+    {{- if and .ResultHintTemplate (not .PrivatePage) }}
         {{ $.ToolsAlias }}.Ident({{ printf "%q" .QualifiedName }}): {{ printf "%q" .ResultHintTemplate }},
     {{- end }}
     {{- end }}

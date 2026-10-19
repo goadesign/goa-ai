@@ -293,25 +293,53 @@ func TestExactOperationPreparationCannotRemoveTextOnly(t *testing.T) {
 	require.ErrorContains(t, err, "only the text-only caller restriction")
 }
 
-func TestExactOperationUsesProjectedArguments(t *testing.T) {
+func TestExactOperationUsesCompleteTextOnlyArguments(t *testing.T) {
 	resolved, invocation := textOnlyOperationFixture(true)
-	invocation.Arguments = []byte(`{"query":"active","render_ui":false}`)
-	_, err := prepareOperationRequest("", "service-root", resolved.Toolset.Tools[0], invocation.Arguments, nil, nil)
-	require.NoError(t, err)
-	_, err = prepareOperationRequest("", "service-root", resolved.Toolset.Tools[0], invocation.Arguments, nil, nil, WithTextOnly(true))
-	require.Error(t, err)
 	rt := New(newTestStore())
-	_, err = rt.prepareRegisteredRootRequest("", "registry", resolved, invocation, nil, nil, WithTextOnly(true))
+	for _, arguments := range []string{`{"query":"active"}`, `{"query":"active","render_ui":false}`} {
+		invocation.Arguments = []byte(arguments)
+		direct, err := prepareOperationRequest("", "service-root", resolved.Toolset.Tools[0], invocation.Arguments, nil, nil, WithTextOnly(true))
+		require.NoError(t, err)
+		require.NoError(t, validateDirectOperationInput(direct.Input))
+		directCheckpoint := &workflowCheckpoint{
+			AgentID: "generic.agent",
+			Context: checkpointRunContext{
+				TextOnly:  true,
+				Operation: direct.Input.Operation,
+				Tool:      direct.Input.Tool,
+				ToolArgs:  direct.Input.ToolArgs,
+			},
+		}
+		_, err = operationCheckpointDeclaration(directCheckpoint)
+		require.NoError(t, err)
+		request, err := rt.prepareRegisteredRootRequest("", "registry", resolved, invocation, nil, nil, WithTextOnly(true))
+		require.NoError(t, err)
+		checkpoint := &workflowCheckpoint{
+			AgentID: "generic.agent",
+			Context: checkpointRunContext{
+				TextOnly:             true,
+				RegisteredInvocation: request.Input.RegisteredInvocation,
+				ToolRegistry:         request.Input.ToolRegistry,
+				Tool:                 genrecords.Read,
+				ToolArgs:             invocation.Arguments,
+			},
+		}
+		_, err = registeredCheckpointDeclaration(checkpoint)
+		require.NoError(t, err)
+		checkpoint.Context.RegisteredInvocation.Arguments = []byte(`{"query":"active","render_ui":true}`)
+		checkpoint.Context.ToolArgs = checkpoint.Context.RegisteredInvocation.Arguments
+		_, err = registeredCheckpointDeclaration(checkpoint)
+		require.Error(t, err)
+		direct.Input.ToolArgs = checkpoint.Context.ToolArgs
+		require.Error(t, validateDirectOperationInput(direct.Input))
+		directCheckpoint.Context.ToolArgs = checkpoint.Context.ToolArgs
+		_, err = operationCheckpointDeclaration(directCheckpoint)
+		require.Error(t, err)
+	}
+	invocation.Arguments = []byte(`{"query":"active","render_ui":true}`)
+	_, err := prepareOperationRequest("", "service-root", resolved.Toolset.Tools[0], invocation.Arguments, nil, nil, WithTextOnly(true))
 	require.Error(t, err)
-	invocation.Arguments = []byte(`{"query":"active"}`)
-	request, err := rt.prepareRegisteredRootRequest("", "registry", resolved, invocation, nil, nil, WithTextOnly(true))
-	require.NoError(t, err)
-	checkpoint := &workflowCheckpoint{AgentID: "generic.agent", Context: checkpointRunContext{TextOnly: true, RegisteredInvocation: request.Input.RegisteredInvocation, ToolRegistry: request.Input.ToolRegistry, Tool: genrecords.Read, ToolArgs: invocation.Arguments}}
-	_, err = registeredCheckpointDeclaration(checkpoint)
-	require.NoError(t, err)
-	checkpoint.Context.RegisteredInvocation.Arguments = []byte(`{"query":"active","render_ui":false}`)
-	checkpoint.Context.ToolArgs = checkpoint.Context.RegisteredInvocation.Arguments
-	_, err = registeredCheckpointDeclaration(checkpoint)
+	_, err = rt.prepareRegisteredRootRequest("", "registry", resolved, invocation, nil, nil, WithTextOnly(true))
 	require.Error(t, err)
 }
 

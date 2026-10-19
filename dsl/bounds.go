@@ -26,9 +26,12 @@ func Cursor(field string) {
 	bounds.Paging.CursorField = field
 }
 
-// ContinueWith declares a sibling tool that accepts the cursor for the next
-// page. It separates the initial semantic query from cursor-only continuation.
-// ContinueWith must be used inside BoundedResult.
+// ContinueWith names the sibling implementation that accepts the next-page
+// cursor. Generation publishes only the source operation, accepting either its
+// initial arguments or the page arguments. The model sees only initial arguments
+// and runtime-created empty-input continuation actions. Both declarations must
+// agree on their public result and execution policies. ContinueWith must be used
+// inside BoundedResult.
 func ContinueWith(tool, cursorField string) {
 	bounds, ok := eval.Current().(*agentsexpr.ToolBoundsExpr)
 	if !ok {

@@ -109,10 +109,11 @@ func TestGeneratedRetainedSubsetInConcurrentBoundRuns(t *testing.T){
    execute:=runtime.ToolCallExecutorFunc(func(_ context.Context,_ *runtime.ToolCallMeta,call *runtime.ToolCall)(*runtime.ToolExecutionResult,error){
     executions.Add(1)
     result:=&planner.ToolResult{Name:call.Name,ToolCallID:call.ToolCallID}
-    switch call.Name {
-    case source.Name:
-     payload,err:=genrecords.SearchPayloadCodec().FromJSON(call.Payload)
-     if err!=nil{return nil,err}
+    assert.Equal(t,source.Name,call.Name)
+    decoded,err:=source.ExecutionPayloadCodec.FromJSON(call.Payload)
+    if err!=nil{return nil,err}
+    switch payload:=decoded.(type) {
+    case *genrecords.SearchPayload:
      assert.Equal(t,scope,payload.Workspace.Name)
      assert.Equal(t,7,payload.Workspace.Revision)
      assert.Equal(t,"active",payload.Query)
@@ -122,19 +123,17 @@ func TestGeneratedRetainedSubsetInConcurrentBoundRuns(t *testing.T){
      result.Result=value
      cursor:=scope+"-next"
      result.Bounds=&agent.Bounds{Returned:0,Truncated:true,NextCursor:&cursor}
-    case continuation.Name:
-     value,err:=continuation.ExecutionPayloadCodec.FromJSON(call.Payload)
-     if err!=nil{return nil,err}
-     encoded,err:=continuation.ExecutionPayloadCodec.ToJSON(value)
+    case *genrecords.ContinueSearchPayload:
+     encoded,err:=source.ExecutionPayloadCodec.ToJSON(payload)
      if err!=nil{return nil,err}
      want:=fmt.Sprintf("{\"workspace\":{\"name\":%q,\"revision\":7},\"cursor\":%q}",scope,scope+"-next")
      if optional {want=fmt.Sprintf("{\"workspace\":{\"name\":%q,\"revision\":7},\"cursor\":%q,\"optional\":false}",scope,scope+"-next")}
      assert.JSONEq(t,want,string(encoded))
      assert.NotContains(t,string(encoded),"query")
-     result.Result,err=continuation.Result.Codec.FromJSON([]byte("{\"items\":[\"match\"]}"))
+     result.Result,err=source.Result.Codec.FromJSON([]byte("{\"items\":[\"match\"]}"))
      if err!=nil{return nil,err}
      result.Bounds=&agent.Bounds{Returned:1}
-    default:return nil,fmt.Errorf("unexpected tool %s",call.Name)
+    default:return nil,fmt.Errorf("unexpected input type %T",decoded)
     }
     return runtime.Executed(result),nil
    })

@@ -338,7 +338,11 @@ func (r *Runtime) cancellationLaunch(ctx context.Context, owner session.RunMeta)
 				checkpoint.Context.ParentRunID != "" || checkpoint.Context.ParentAgentID != "" || checkpoint.Context.ParentToolCallID != "" {
 				return AgentRoute{}, workflowLaunchSettings{}, storage.NewContractError(storage.ErrRunRecordOwnerMismatch)
 			}
-			if _, err := spec.Payload.Codec.FromJSON(checkpoint.Context.ToolArgs); err != nil {
+			spec, err = exactOperationSpec(spec, &PolicyOverrides{TextOnly: checkpoint.Context.TextOnly})
+			if err != nil {
+				return AgentRoute{}, workflowLaunchSettings{}, storage.NewContractError(err)
+			}
+			if _, err := spec.ExecutionPayloadCodec.FromJSON(checkpoint.Context.ToolArgs); err != nil {
 				return AgentRoute{}, workflowLaunchSettings{}, storage.NewContractError(err)
 			}
 			target := checkpoint.Context.Operation.ConsumerContract.Agent

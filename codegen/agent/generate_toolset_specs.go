@@ -199,10 +199,13 @@ func toolsetSpecsFiles(plan *toolSpecsPlan) []*codegen.File {
 // generatedToolsetSchemaFingerprints computes every registration schema
 // identity during generation. Runtime code only selects the route it serves.
 func generatedToolsetSchemaFingerprints(routes []string, entries []*toolEntry) []*toolsetSchemaFingerprintData {
-	tools := make([]internaladmission.ToolSchema, len(entries))
-	for i, entry := range entries {
+	tools := make([]internaladmission.ToolSchema, 0, len(entries))
+	for _, entry := range entries {
+		if entry.PrivatePage {
+			continue
+		}
 		schema := entry.RegistrySchema
-		tools[i] = internaladmission.ToolSchema{
+		tools = append(tools, internaladmission.ToolSchema{
 			Name:                   schema.Name,
 			Description:            schema.Description,
 			Tags:                   schema.Tags,
@@ -210,7 +213,7 @@ func generatedToolsetSchemaFingerprints(routes []string, entries []*toolEntry) [
 			ExecutionPayloadSchema: schema.ExecutionPayloadSchema,
 			ResultSchema:           schema.ResultSchema,
 			ConsumerContract:       entry.ConsumerContractJSON,
-		}
+		})
 	}
 	fingerprints := make([]*toolsetSchemaFingerprintData, len(routes))
 	for i, route := range routes {

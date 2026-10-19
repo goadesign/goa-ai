@@ -21,6 +21,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/runtime/toolregistry/schema"
 )
 
 const (
@@ -152,6 +153,14 @@ func (r *Runtime) availableContinuationActions(agentID agent.Ident, outputs []*p
 			} else {
 				action.definition = r.advertisedToolDefinitions([]tools.ToolSpec{spec}, compiledToolPolicy{})[0]
 			}
+			// Choosing an unfinished query supplies every page argument. Replace
+			// the source's input contract without changing its cached definition.
+			definition := *action.definition
+			definition.Input, err = model.AdvertisedToolInputFromSchema(rawjson.Message(`{"type":"object","properties":{},"additionalProperties":false}`))
+			if err != nil {
+				return nil, err
+			}
+			action.definition = &definition
 			actions = append(actions, action)
 		}
 	}
@@ -169,10 +178,18 @@ func (r *Runtime) continuationGroups(agentID agent.Ident, outputs []*planner.Too
 		}
 	}
 	for _, spec := range r.ToolSpecsForAgent(agentID) {
-		if !isDedicatedContinuationSpec(spec) {
+		composed, err := isComposedContinuationSpec(spec)
+		if err != nil {
+			return nil, err
+		}
+		if !composed && !isDedicatedContinuationSpec(spec) {
 			continue
 		}
-		source, ok := r.toolSpec(spec.Bounds.Paging.SourceTool)
+		sourceName := spec.Name
+		if !composed {
+			sourceName = spec.Bounds.Paging.SourceTool
+		}
+		source, ok := r.toolSpec(sourceName)
 		if !ok {
 			return nil, fmt.Errorf("continuation tool %q has no source contract", spec.Name)
 		}
@@ -199,10 +216,17 @@ func (r *Runtime) continuationGroups(agentID agent.Ident, outputs []*planner.Too
 			continue
 		}
 		continuation := resolved.Specs[spec.Bounds.Paging.ContinueTool]
-		if !isDedicatedContinuationSpec(continuation) {
+		composed, err := isComposedContinuationSpec(continuation)
+		if err != nil {
+			return nil, err
+		}
+		if !composed && !isDedicatedContinuationSpec(continuation) {
 			continue
 		}
-		source := resolved.Specs[continuation.Bounds.Paging.SourceTool]
+		source := continuation
+		if !composed {
+			source = resolved.Specs[continuation.Bounds.Paging.SourceTool]
+		}
 		key := groupKey{registry: output.Registry.Registry, token: resolved.Registered.RegistrationToken, tool: continuation.Name}
 		index, exists := indices[key]
 		if !exists {
@@ -407,7 +431,18 @@ func continuationStates(spec, sourceSpec tools.ToolSpec, outputs []*planner.Tool
 		var rootToolCallID string
 		var query rawjson.Message
 		var consumedCursor string
-		if output.Name == spec.Bounds.Paging.SourceTool {
+		page := output.Name != sourceSpec.Name
+		if spec.Name == sourceSpec.Name {
+			var err error
+			page, err = continuationPageInput(spec, output.Payload)
+			if err != nil {
+				return nil, fmt.Errorf("runtime: paging tool %q history input: %w", spec.Name, err)
+			}
+		}
+		if !page {
+			if output.ContinuationRootToolCallID != "" {
+				return nil, fmt.Errorf("runtime: continuation source tool %q history unexpectedly names a prior source call", output.Name)
+			}
 			if output.ToolCallID == "" {
 				return nil, fmt.Errorf("runtime: continuation source tool %q history has an empty tool call id", output.Name)
 			}
@@ -489,11 +524,15 @@ func newContinuationAction(spec tools.ToolSpec, state continuationState) (contin
 		return continuationAction{}, fmt.Errorf("runtime: continuation tool %q state has an empty source tool call id", spec.Name)
 	}
 	name := continuationActionName(spec.Name, state.rootToolCallID)
+	sourceName := spec.Name
+	if spec.Bounds.Paging.SourceTool != "" {
+		sourceName = spec.Bounds.Paging.SourceTool
+	}
 	return continuationAction{
 		modelName: name,
 		description: fmt.Sprintf(
 			"Continue the unfinished %s query with original input %s. The latest page returned %d items.",
-			spec.Bounds.Paging.SourceTool,
+			sourceName,
 			state.query,
 			state.returned,
 		),
@@ -603,6 +642,60 @@ func continuationPayload(spec tools.ToolSpec, state continuationState) (rawjson.
 		return nil, fmt.Errorf("encode retained query with generated codec: %w", err)
 	}
 	return canonical, nil
+}
+
+// plannerContinuationInput distinguishes a complete code-authored page from a
+// first input that still needs runtime-injected fields. Ordinary tools do not
+// enter either paging codec; their usual input preparation remains unchanged.
+func plannerContinuationInput(spec tools.ToolSpec, payload rawjson.Message) (bool, error) {
+	if isDedicatedContinuationSpec(spec) {
+		return continuationPageInput(spec, payload)
+	}
+	composed, err := isComposedContinuationSpec(spec)
+	if err != nil || !composed {
+		return false, err
+	}
+	if _, err := spec.Payload.Codec.FromJSON(payload); err == nil {
+		return false, nil
+	}
+	return continuationPageInput(spec, payload)
+}
+
+// continuationPageInput validates a complete page input before identifying its
+// branch. Separate continuation tools always use their execution codec; composed
+// operations require the checked two-branch contract before cursor presence has
+// meaning. Ordinary tools and older flat self references are not page inputs.
+func continuationPageInput(spec tools.ToolSpec, payload rawjson.Message) (bool, error) {
+	composed, err := isComposedContinuationSpec(spec)
+	if err != nil {
+		return false, err
+	}
+	if !composed && !isDedicatedContinuationSpec(spec) {
+		return false, nil
+	}
+	if _, err := spec.ExecutionPayloadCodec.FromJSON(payload); err != nil {
+		return false, err
+	}
+	if !composed {
+		return true, nil
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		return false, err
+	}
+	_, page := fields[spec.Bounds.Paging.CursorField]
+	return page, nil
+}
+
+// isComposedContinuationSpec checks the declared execution contract before
+// a self reference can create page actions. Older flat self references therefore
+// keep their original behavior and never acquire inferred input branches.
+func isComposedContinuationSpec(spec tools.ToolSpec) (bool, error) {
+	if spec.Bounds == nil || spec.Bounds.Paging == nil ||
+		spec.Bounds.Paging.ContinueTool != spec.Name || spec.Bounds.Paging.SourceTool != "" {
+		return false, nil
+	}
+	return schema.PagingComposition(spec.ExecutionPayloadSchema, spec.Bounds.Paging.CursorField)
 }
 
 // isDedicatedContinuationSpec identifies the no-argument action generated for

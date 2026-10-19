@@ -3,6 +3,8 @@ package tests
 import (
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	. "goa.design/goa-ai/dsl"
 	. "goa.design/goa/v3/dsl"
 )
@@ -38,6 +40,7 @@ func TestGolden_ServiceAlias_Consistency(t *testing.T) {
 	})
 
 	provider := renderedFileContent(t, files, "gen/catalog_agent/toolsets/docs/provider.go")
+	assert.NotContains(t, provider, "executionName")
 	transforms := renderedFileContent(t, files, "gen/catalog_agent/toolsets/docs/transforms.go")
 	codecs := fileContent(t, files, "gen/catalog_agent/toolsets/docs/codecs.go")
 	root := writeCompleteGeneratedModule(t, files)

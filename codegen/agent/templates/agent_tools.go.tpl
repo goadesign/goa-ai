@@ -43,15 +43,15 @@ type {{ .ResultAlias }}  = {{ $.SpecsAlias }}.{{ .Result.TypeName }}
 {{- $hasCallHints := false -}}
 {{- $hasResultHints := false -}}
 {{- range .Toolset.Tools }}
-{{- if .CallHintTemplate }}{{- $hasCallHints = true -}}{{- end }}
-{{- if .ResultHintTemplate }}{{- $hasResultHints = true -}}{{- end }}
+{{- if and .CallHintTemplate (not .PrivatePage) }}{{- $hasCallHints = true -}}{{- end }}
+{{- if and .ResultHintTemplate (not .PrivatePage) }}{{- $hasResultHints = true -}}{{- end }}
 {{- end }}
 {{- if or $hasCallHints $hasResultHints }}
 func {{ .HintsInstaller }}(reg *{{ .RuntimeAlias }}.ToolsetRegistration) error {
     {{- if $hasCallHints }}
     callHints, err := {{ .HintsAlias }}.CompileHintTemplates(map[{{ .ToolsAlias }}.Ident]string{
     {{- range .Toolset.Tools }}
-    {{- if .CallHintTemplate }}
+    {{- if and .CallHintTemplate (not .PrivatePage) }}
         {{ .ConstName }}: {{ printf "%q" .CallHintTemplate }},
     {{- end }}
     {{- end }}
@@ -64,7 +64,7 @@ func {{ .HintsInstaller }}(reg *{{ .RuntimeAlias }}.ToolsetRegistration) error {
     {{- if $hasResultHints }}
     resultHints, err := {{ .HintsAlias }}.CompileHintTemplates(map[{{ .ToolsAlias }}.Ident]string{
     {{- range .Toolset.Tools }}
-    {{- if .ResultHintTemplate }}
+    {{- if and .ResultHintTemplate (not .PrivatePage) }}
         {{ .ConstName }}: {{ printf "%q" .ResultHintTemplate }},
     {{- end }}
     {{- end }}

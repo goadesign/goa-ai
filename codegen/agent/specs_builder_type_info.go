@@ -71,7 +71,9 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		key += ":" + string(usage) + ":" + planned.marshal.Name()
 	}
 
-	defineType := false
+	// Paired inputs keep distinct Go types even when both declarations reuse the
+	// same Goa object. The execution encoder can then retain the decoded branch.
+	defineType := usage == usagePayload && owner.Bounds != nil && owner.Bounds.Paging != nil && owner.Bounds.Paging.ContinueTool != ""
 	// Public tool types keep required fields as values and apply Goa defaults.
 	const (
 		publicPtr      = false

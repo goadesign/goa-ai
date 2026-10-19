@@ -209,6 +209,9 @@ func (p *agentToolsPackagesPlan) link(data *GeneratorData) error {
 func (p *agentToolsPackagePlan) renderData(toolset *ToolsetData) *agentToolsetFileData {
 	tools := make([]*agentToolRenderData, 0, len(toolset.specs.tools))
 	for _, tool := range toolset.specs.tools {
+		if tool.PrivatePage {
+			continue
+		}
 		names := p.tools[tool.Name]
 		if names == nil {
 			panic(fmt.Sprintf("agent codegen: exported tool %q has no package name plan", tool.Name))
