@@ -2965,6 +2965,17 @@ A sink-close, worker, result-publication, or acknowledgement failure is
 returned and suppresses release so lease expiry can converge safely. A stale
 release token or missing lease is an idempotent success.
 
+`Options.OperationTimeout` independently bounds each claim, terminal-result
+publication and acknowledgement. Overload publication keeps its existing
+two-second ceiling and uses the shorter operation allowance. Zero preserves
+the prior behavior by using the resolved `ShutdownTimeout`, including its
+default. For example, a provider can keep a short Registry-operation wait while
+allowing a longer shutdown for calls it already accepted. Neither setting
+extends those calls' original absolute deadlines or limits a session's lifetime.
+An operation still stops earlier if its owning lifecycle is canceled; a longer
+operation allowance cannot extend the whole shutdown deadline. Existing callers
+need no changes, regeneration or wire upgrade to retain their current behavior.
+
 `toolprovider.ServeAndWait` takes the same arguments as `Serve` and runs the
 same provider lifecycle, but joins all invocation-owned work before returning:
 tool workers, renewal, consumer-group repair, acknowledgements, cancellation
