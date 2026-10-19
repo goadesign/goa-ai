@@ -169,7 +169,8 @@ service wiring, and connecting a model. For MCP, follow the
   continue from the host's answer. Direct and registered operations share durable
   continuation submission and completion. Canceling a root question with no saved
   child or remote work closes its continuation while preserving the original
-  suspended result. Text-only runs exclude interactive tools.
+  suspended result. Text-only runs exclude interactive tools. Hosts can apply the
+  same restriction to exact direct and registered operations with `WithTextOnly(true)`.
 - **Large results and images.** Bound model-visible results, continue paginated
   queries, retain native image evidence, and keep rich host data outside model
   requests.

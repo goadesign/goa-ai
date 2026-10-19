@@ -71,7 +71,7 @@ func restoreRegisteredRoot(submitted *api.RunInput) (*api.RunInput, *registeredR
 		}
 		input := *submitted
 		subject, _ := input.Subject.Executor.AsServiceTool()
-		state := &registeredRootState{call: api.ToolInput{Invocation: *input.RegisteredInvocation.Invocation, OriginalArguments: input.RegisteredInvocation.Arguments, Registry: input.ToolRegistry.Clone(), RunID: root.RunID, Subject: input.Subject, ToolName: tools.Ident(subject.Tool), ToolCallID: root.RunID, Payload: input.RegisteredInvocation.Arguments, SessionID: input.SessionID, Labels: cloneLabels(input.Labels)}}
+		state := &registeredRootState{call: api.ToolInput{TextOnly: input.Policy != nil && input.Policy.TextOnly, Invocation: *input.RegisteredInvocation.Invocation, OriginalArguments: input.RegisteredInvocation.Arguments, Registry: input.ToolRegistry.Clone(), RunID: root.RunID, Subject: input.Subject, ToolName: tools.Ident(subject.Tool), ToolCallID: root.RunID, Payload: input.RegisteredInvocation.Arguments, SessionID: input.SessionID, Labels: cloneLabels(input.Labels)}}
 		return &input, state, nil
 	}
 	if submitted.TurnID != "" || submitted.RegisteredInvocation != nil || submitted.ToolRegistry != nil || submitted.Operation != nil || submitted.Policy != nil || submitted.Tool != "" || len(submitted.ToolArgs) != 0 || len(submitted.Labels) != 0 || len(submitted.Metadata) != 0 || submitted.SeedEndID != storage.EmptySeedEndID || submitted.ParentRunID != "" || submitted.ParentAgentID != "" || submitted.ParentToolCallID != "" {
@@ -208,10 +208,13 @@ func decodeRegisteredRootCheckpoint(suspension *api.RunSuspension) (*registeredR
 			return nil, err
 		}
 	}
+	if checkpoint.Call.TextOnly && (checkpoint.Confirmation != nil || pendingHostInput(checkpoint.Pending) != nil) {
+		return nil, errors.New("text-only operation checkpoint cannot retain host input")
+	}
 	root, _ := checkpoint.Input.RegisteredInvocation.Invocation.Invocation.AsRoot()
 	subject, _ := checkpoint.Input.Subject.Executor.AsServiceTool()
 	call := checkpoint.Call
-	if call.RunID != root.RunID || call.ToolCallID != root.RunID || call.ToolName.String() != subject.Tool || call.SessionID != checkpoint.Input.SessionID || !reflect.DeepEqual(call.Subject, checkpoint.Input.Subject) || !reflect.DeepEqual(call.Invocation, *checkpoint.Input.RegisteredInvocation.Invocation) || !reflect.DeepEqual(call.Registry, checkpoint.Input.ToolRegistry) || !reflect.DeepEqual(call.Labels, checkpoint.Input.Labels) || !bytes.Equal(call.OriginalArguments, checkpoint.Input.RegisteredInvocation.Arguments) || !bytes.Equal(call.Payload, checkpoint.Input.RegisteredInvocation.Arguments) {
+	if call.TextOnly != (checkpoint.Input.Policy != nil && checkpoint.Input.Policy.TextOnly) || call.RunID != root.RunID || call.ToolCallID != root.RunID || call.ToolName.String() != subject.Tool || call.SessionID != checkpoint.Input.SessionID || !reflect.DeepEqual(call.Subject, checkpoint.Input.Subject) || !reflect.DeepEqual(call.Invocation, *checkpoint.Input.RegisteredInvocation.Invocation) || !reflect.DeepEqual(call.Registry, checkpoint.Input.ToolRegistry) || !reflect.DeepEqual(call.Labels, checkpoint.Input.Labels) || !bytes.Equal(call.OriginalArguments, checkpoint.Input.RegisteredInvocation.Arguments) || !bytes.Equal(call.Payload, checkpoint.Input.RegisteredInvocation.Arguments) {
 		return nil, errors.New("registered checkpoint call differs from original request")
 	}
 	expected, err := registeredRootSuspension(&checkpoint.Input, &registeredRootState{queue: checkpoint.Queue, call: call, pending: checkpoint.Pending, confirmation: checkpoint.Confirmation, denied: checkpoint.Denied, task: checkpoint.Task})

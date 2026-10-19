@@ -3784,7 +3784,12 @@ helpers separately.
 `RegisteredInvocation` together with its exact `ResolvedToolset`. The invocation
 retains the root run identity, selected target and original arguments.
 The resolved toolset supplies the executable schema and provider route; the
-runtime checks that they match the selected target.
+runtime checks that they match the selected target. Pass `WithTextOnly(true)`
+after the memo argument to use the generated text-only argument contract and
+prohibit UI output or host-input requests. This is the only supported run option;
+other run options fail before submission. Service calls retain the restriction in
+their saved request and provider metadata. Native calls preserve it through
+provider preparation, children and continuation.
 
 The host checks the caller's access before submitting work. The engine owns the
 request before a provider starts. Native Agent operations use their
@@ -3856,6 +3861,22 @@ for an existing host-owned session. The host must authorize the application and
 actor before calling either method. The selected configuration owns planner
 policy. A caller cannot redirect the selected worker queue or supply prepared
 history, provider policy, a Registry publication or a synthetic parent.
+The optional arguments after `memo` accept only `WithTextOnly`; every other
+`RunOption` is rejected before any option changes input or launch settings.
+`WithTextOnly(true)` selects the generated text-only model argument contract
+before decoding the operation input. Rendering controls are omitted from those
+arguments. Provider configuration can also enable text-only behavior; neither
+caller nor provider can disable a restriction enabled by the other.
+
+Use the same options for `EnsureOperationCompletion`,
+`EnsureOneShotOperationCompletion`, `EnsureToolOperationCompletion` and
+`EnsureOneShotToolOperationCompletion` as for their matching start method.
+The restriction belongs to the immutable engine request, so repair with a
+different restriction conflicts instead of completing another request.
+Omitting options preserves unrestricted caller behavior and existing saved
+requests. Update submitters and the selected operation workers before enabling
+this option; older workers reject the new caller policy. No schema regeneration
+or stored-data migration is required.
 
 The final required argument is the existing engine memo map; pass `nil` when
 there is no memo. Its values belong to the accepted launch request and are part

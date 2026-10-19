@@ -22,11 +22,12 @@ import (
 // sessionful operation originally passed to StartOperation. The host retains
 // the original declaration, arguments, labels and memo until completion. An
 // open engine returns ErrRunCompletionNotReady; unavailable history is an error.
-func (r *Runtime) EnsureOperationCompletion(ctx context.Context, sessionID, runID string, operation *genregistry.ToolSchema, arguments rawjson.Message, labels map[string]string, memo map[string]any) error {
+// Pass the same WithTextOnly option used at start; other options are rejected.
+func (r *Runtime) EnsureOperationCompletion(ctx context.Context, sessionID, runID string, operation *genregistry.ToolSchema, arguments rawjson.Message, labels map[string]string, memo map[string]any, opts ...RunOption) error {
 	if sessionID == "" {
 		return ErrMissingSessionID
 	}
-	request, err := prepareOperationRequest(sessionID, runID, operation, arguments, labels, memo)
+	request, err := prepareOperationRequest(sessionID, runID, operation, arguments, labels, memo, opts...)
 	if err != nil {
 		return err
 	}
@@ -36,8 +37,9 @@ func (r *Runtime) EnsureOperationCompletion(ctx context.Context, sessionID, runI
 // EnsureOneShotOperationCompletion delivers authoritative completion for the
 // exact sessionless operation originally passed to StartOneShotOperation. It
 // creates no Session and never resubmits a workflow whose history is missing.
-func (r *Runtime) EnsureOneShotOperationCompletion(ctx context.Context, runID string, operation *genregistry.ToolSchema, arguments rawjson.Message, labels map[string]string, memo map[string]any) error {
-	request, err := prepareOperationRequest("", runID, operation, arguments, labels, memo)
+// Pass the same WithTextOnly option used at start; other options are rejected.
+func (r *Runtime) EnsureOneShotOperationCompletion(ctx context.Context, runID string, operation *genregistry.ToolSchema, arguments rawjson.Message, labels map[string]string, memo map[string]any, opts ...RunOption) error {
+	request, err := prepareOperationRequest("", runID, operation, arguments, labels, memo, opts...)
 	if err != nil {
 		return err
 	}

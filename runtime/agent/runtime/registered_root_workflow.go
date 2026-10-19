@@ -197,13 +197,13 @@ func (r *Runtime) executeRegisteredRootWorkflow(wf engine.WorkflowContext, submi
 		return nil, context.Canceled
 	}
 	if state.predecessor == "" {
-		scheduled := newToolCallScheduledEvent(input.RunID, input.Subject, input.SessionID, ToolCall{Name: state.call.ToolName, ToolCallID: state.call.ToolCallID, Payload: state.call.Payload, Registry: state.call.Registry}, r.toolWorkflowQueue, "", 0)
+		scheduled := newToolCallScheduledEvent(input.RunID, input.Subject, input.SessionID, ToolCall{TextOnly: state.call.TextOnly, Name: state.call.ToolName, ToolCallID: state.call.ToolCallID, Payload: state.call.Payload, Registry: state.call.Registry}, r.toolWorkflowQueue, "", 0)
 		if err := r.publishHook(wf.Context(), scheduled, ""); err != nil {
 			return nil, err
 		}
 	}
 	if state.predecessor == "" {
-		call := ToolCall{Name: state.call.ToolName, ToolCallID: state.call.ToolCallID, Payload: state.call.Payload, Registry: state.call.Registry}
+		call := ToolCall{TextOnly: state.call.TextOnly, Name: state.call.ToolName, ToolCallID: state.call.ToolCallID, Payload: state.call.Payload, Registry: state.call.Registry}
 		plan, required, err := r.confirmationPlan(wf.Context(), &call)
 		if err != nil {
 			return nil, err
@@ -250,6 +250,11 @@ func (r *Runtime) runRegisteredRoot(wf engine.WorkflowContext, input *api.RunInp
 		}
 		if err != nil {
 			return nil, err
+		}
+		if state.call.TextOnly {
+			if err := validateTextOnlyOperationOutput(result); err != nil {
+				return nil, err
+			}
 		}
 		if result.PendingExecution == nil {
 			state.pending = nil

@@ -39,8 +39,11 @@ func (r *Runtime) prepareAgentOperationActivity(ctx context.Context, input *api.
 	if input == nil {
 		return nil, engine.MarkActivityErrorNonRetryable(errors.New("operation input is required"))
 	}
-	if input.SeedEndID != "" || input.Policy != nil {
-		return nil, engine.MarkActivityErrorNonRetryable(errors.New("direct operation preparation cannot include caller-prepared history or policy"))
+	if input.SeedEndID != "" {
+		return nil, engine.MarkActivityErrorNonRetryable(errors.New("direct operation preparation cannot include caller-prepared history"))
+	}
+	if err := validateExactOperationPolicy(input.Policy); err != nil {
+		return nil, engine.MarkActivityErrorNonRetryable(err)
 	}
 	if err := validateDirectOperationInput(input); err != nil {
 		return nil, engine.MarkActivityErrorNonRetryable(err)
@@ -94,7 +97,8 @@ func (r *Runtime) prepareAgentOperationActivity(ctx context.Context, input *api.
 	// The provider receives a root call with no parent or tool-call identity.
 	// Its existing resolver owns prompt rendering, labels and planner policy.
 	call := ToolCall{
-		Name: selected.Name, Payload: append(rawjson.Message(nil), arguments...),
+		TextOnly: input.Policy != nil && input.Policy.TextOnly,
+		Name:     selected.Name, Payload: append(rawjson.Message(nil), arguments...),
 		RunID: input.RunID, Subject: input.Subject, SessionID: input.SessionID,
 		TurnID: input.TurnID, Labels: cloneLabels(input.Labels),
 	}
@@ -196,6 +200,9 @@ func (r *Runtime) prepareAgentOperation(wfCtx engine.WorkflowContext, input *api
 	prepared := result.Prepared
 	if prepared == nil || prepared.SeedEndID == "" {
 		return nil, nil, errors.New("operation preparation returned no published history")
+	}
+	if input.Policy != nil && input.Policy.TextOnly && (prepared.Policy == nil || !prepared.Policy.TextOnly) {
+		return nil, nil, errors.New("operation preparation removed the accepted text-only restriction")
 	}
 	// Preparation may add only history, provider labels, metadata and policy.
 	// The accepted operation, input and execution relationships cannot change.

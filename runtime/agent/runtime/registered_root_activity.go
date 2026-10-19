@@ -62,7 +62,7 @@ func (r *Runtime) executeRegisteredRootActivity(ctx context.Context, input *api.
 	}
 	request := accepted.RegisteredInvocation
 	subject, _ := accepted.Subject.Executor.AsServiceTool()
-	if input.RunID != root.RunID || input.ToolName.String() != subject.Tool || input.SessionID != accepted.SessionID || !reflect.DeepEqual(input.Subject, accepted.Subject) || !reflect.DeepEqual(input.Invocation, *request.Invocation) || !reflect.DeepEqual(input.Registry, accepted.ToolRegistry) || !reflect.DeepEqual(input.Labels, accepted.Labels) || !bytes.Equal(input.OriginalArguments, request.Arguments) || !bytes.Equal(input.Payload, request.Arguments) {
+	if input.TextOnly != (accepted.Policy != nil && accepted.Policy.TextOnly) || input.RunID != root.RunID || input.ToolName.String() != subject.Tool || input.SessionID != accepted.SessionID || !reflect.DeepEqual(input.Subject, accepted.Subject) || !reflect.DeepEqual(input.Invocation, *request.Invocation) || !reflect.DeepEqual(input.Registry, accepted.ToolRegistry) || !reflect.DeepEqual(input.Labels, accepted.Labels) || !bytes.Equal(input.OriginalArguments, request.Arguments) || !bytes.Equal(input.Payload, request.Arguments) {
 		return nil, engine.MarkActivityErrorNonRetryable(errors.New("registered activity changed original execution identity or input"))
 	}
 	if err := toolregistry.ValidateExecution(input.ExecutionSequence, input.ExecutionContinuation, input.TextOnly); err != nil {
@@ -76,11 +76,16 @@ func (r *Runtime) executeRegisteredRootActivity(ctx context.Context, input *api.
 	if err != nil {
 		return nil, err
 	}
-	call := &ToolCall{Name: input.ToolName, Payload: input.Payload, ModelPayload: input.OriginalArguments, Registry: input.Registry, RunID: root.RunID, Subject: input.Subject, SessionID: input.SessionID, ToolCallID: input.ToolCallID, Labels: input.Labels, ExecutionSequence: input.ExecutionSequence, ExecutionContinuation: input.ExecutionContinuation}
-	meta := &toolregistry.ToolCallMeta{RunID: root.RunID, SessionID: input.SessionID, ToolCallID: input.ToolCallID, Labels: cloneLabels(input.Labels)}
+	call := &ToolCall{TextOnly: input.TextOnly, Name: input.ToolName, Payload: input.Payload, ModelPayload: input.OriginalArguments, Registry: input.Registry, RunID: root.RunID, Subject: input.Subject, SessionID: input.SessionID, ToolCallID: input.ToolCallID, Labels: input.Labels, ExecutionSequence: input.ExecutionSequence, ExecutionContinuation: input.ExecutionContinuation}
+	meta := &toolregistry.ToolCallMeta{TextOnly: input.TextOnly, RunID: root.RunID, SessionID: input.SessionID, ToolCallID: input.ToolCallID, Labels: cloneLabels(input.Labels)}
 	output, err := executor.Execute(ctx, meta, call)
 	if err != nil {
 		return nil, err
+	}
+	if input.TextOnly {
+		if err := validateTextOnlyOperationOutput(output); err != nil {
+			return nil, engine.MarkActivityErrorNonRetryable(err)
+		}
 	}
 	if output.PendingExecution != nil {
 		return output, nil

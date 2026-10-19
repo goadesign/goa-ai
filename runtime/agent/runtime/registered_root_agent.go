@@ -52,6 +52,10 @@ func registeredAgentDeclaration(input *api.RunInput) (*genregistry.ToolSchema, e
 		if err != nil {
 			return nil, err
 		}
+		spec, err = exactOperationSpec(spec, input.Policy)
+		if err != nil {
+			return nil, err
+		}
 		if _, err := spec.Payload.Codec.FromJSON(request.Arguments); err != nil {
 			return nil, err
 		}
@@ -80,6 +84,7 @@ func registeredCheckpointDeclaration(checkpoint *workflowCheckpoint) (*genregist
 		return nil, errors.New("registered checkpoint requires original root invocation")
 	}
 	input := &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(checkpoint.AgentID))}, RunID: root.RunID, SessionID: checkpoint.SessionID, RegisteredInvocation: request, Operation: checkpoint.Context.Operation, ToolRegistry: checkpoint.Context.ToolRegistry, Labels: checkpoint.Context.Labels, ParentRunID: checkpoint.Context.ParentRunID, ParentAgentID: checkpoint.Context.ParentAgentID, ParentToolCallID: checkpoint.Context.ParentToolCallID}
+	input.Policy = &PolicyOverrides{TextOnly: checkpoint.Context.TextOnly}
 	declaration, err := registeredAgentDeclaration(input)
 	if err != nil {
 		return nil, err
