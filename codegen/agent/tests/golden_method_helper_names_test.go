@@ -30,6 +30,7 @@ func TestGoldenMethodHelperNameCollisions(t *testing.T) {
 	require.Contains(t, executor, "func WithClient2(")
 	require.Contains(t, executor, "methodOut, err := cfg.execOptCaller(ctx, methodIn)")
 	require.NotContains(t, executor, "map[tools.Ident]func(context.Context, any) (any, error)")
+	require.NotContains(t, executor, "executionName")
 
 	assertGoldenGo(t, "method_helper_name_collisions", "used_tools.go.golden", used)
 	assertGoldenGo(t, "method_helper_name_collisions", "service_executor.go.golden", executor)

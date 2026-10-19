@@ -8,14 +8,21 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+	agentcodegen "goa.design/goa-ai/codegen/agent"
+	"goa.design/goa-ai/codegen/testhelpers"
 	. "goa.design/goa-ai/dsl"
+	goacodegen "goa.design/goa/v3/codegen"
+	goaservice "goa.design/goa/v3/codegen/service"
 	. "goa.design/goa/v3/dsl"
+	"goa.design/goa/v3/eval"
+	goaexpr "goa.design/goa/v3/expr"
 )
 
 func TestGeneratedDeferredContinuation(t *testing.T) {
-	for _, selection := range []string{"query", "continuation", "both", "all"} {
+	for _, selection := range []string{"none", "query", "continuation", "both", "all"} {
 		t.Run(selection, func(t *testing.T) {
-			files := buildCompleteGeneratedFiles(t, func() {
+			design := func() {
 				API("discovery", func() {})
 				page := Type("Page", func() {
 					Attribute("items", ArrayOf(String), "Matching records.")
@@ -60,9 +67,26 @@ func TestGeneratedDeferredContinuation(t *testing.T) {
 						})
 					})
 				})
-			})
+			}
+			if selection == "continuation" || selection == "both" {
+				roots := testhelpers.SetupEvalRoots(t)
+				require.True(t, eval.Execute(design, nil), eval.Context.Error())
+				require.NoError(t, eval.RunDSL())
+				require.NoError(t, agentcodegen.Prepare("generated.local/gen", roots))
+				generation, err := goacodegen.NewGeneration("generated.local/gen", roots)
+				require.NoError(t, err)
+				servicePlan, err := goaservice.NewPlan(goaexpr.Root, generation, goaexpr.NewExampleGenerator(goaexpr.Root.API.RandomizerFactory))
+				require.NoError(t, err)
+				agentPlan, err := agentcodegen.NewPlan(generation, servicePlan)
+				require.NoError(t, err)
+				require.NoError(t, generation.Freeze())
+				require.NoError(t, servicePlan.Link())
+				require.ErrorContains(t, agentPlan.Link(), `Deferred selects unknown tool "continue_search"`)
+				return
+			}
+			files := buildCompleteGeneratedFiles(t, design)
 			root := writeCompleteGeneratedModule(t, files)
-			source := strings.ReplaceAll(deferredContinuationTestSource, "QUERY_DEFERRED", strconv.FormatBool(selection != "continuation"))
+			source := strings.ReplaceAll(deferredContinuationTestSource, "QUERY_DEFERRED", strconv.FormatBool(selection != "none"))
 			writeGeneratedPackageTest(t, root, "discovery/continuation_test.go", source)
 			runGeneratedGoTestCommand(t, root, exec.CommandContext(t.Context(), "go", "test", "-mod=mod", "./..."))
 		})

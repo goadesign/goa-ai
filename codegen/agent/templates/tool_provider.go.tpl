@@ -64,6 +64,11 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 	}
 {{- end }}
 
+    {{- $hasPaging := false }}
+    {{- range .Tools }}
+    {{- if .Page }}{{- $hasPaging = true }}{{- end }}
+    {{- end }}
+    {{- if $hasPaging }}
     executionName := msg.Tool
     switch msg.Tool {
     {{- range .Tools }}
@@ -82,7 +87,8 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
     {{- end }}
     {{- end }}
     }
-    switch executionName {
+    {{- end }}
+    switch {{ if $hasPaging }}executionName{{ else }}msg.Tool{{ end }} {
 {{- range .Tools }}
 {{- $tool := . }}
 {{- if .IsMethodBacked }}

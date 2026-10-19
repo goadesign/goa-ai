@@ -149,6 +149,11 @@ func {{ .Constructor }}(opts ...{{ .Names.OptionType }}) runtime.ToolCallExecuto
         if meta == nil {
             return runtime.Executed({{ .Names.FailedToolResult }}(call.Name, errors.New("tool call meta is nil"))), nil
         }
+        {{- $hasPaging := false }}
+        {{- range .Tools }}
+        {{- if .Page }}{{- $hasPaging = true }}{{- end }}
+        {{- end }}
+        {{- if $hasPaging }}
         executionName := call.Name
         switch call.Name {
         {{- range .Tools }}
@@ -167,7 +172,8 @@ func {{ .Constructor }}(opts ...{{ .Names.OptionType }}) runtime.ToolCallExecuto
         {{- end }}
         {{- end }}
         }
-        switch executionName {
+        {{- end }}
+        switch {{ if $hasPaging }}executionName{{ else }}call.Name{{ end }} {
         {{- range .Tools }}
         {{- if .IsMethodBacked }}
             {{- $toolHasSource := false }}
