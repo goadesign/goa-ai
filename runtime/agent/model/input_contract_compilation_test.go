@@ -97,12 +97,12 @@ func TestToolInputContractCompilationPreservesValidation(t *testing.T) {
 			}
 			input, err := ToolInputFromContract("sample", contract)
 			if test.wantError != "" {
-				assert.ErrorContains(t, err, test.wantError)
+				require.ErrorContains(t, err, test.wantError)
 				return
 			}
 			require.NoError(t, err)
-			assert.NoError(t, input.validate(rawjson.Message(`{"value":"ok"}`)))
-			assert.Error(t, input.validate(rawjson.Message(`{"value":1}`)))
+			require.NoError(t, input.validate(rawjson.Message(`{"value":"ok"}`)))
+			require.Error(t, input.validate(rawjson.Message(`{"value":1}`)))
 			assert.Equal(t, contract, input.Contract())
 		})
 	}
@@ -114,16 +114,18 @@ func TestToolInputIdenticalSchemaOwnsDocuments(t *testing.T) {
 	contract := ToolInputContract{Schema: shared, SchemaWithoutRootExample: shared}
 	input, err := ToolInputFromContract("sample", contract)
 	require.NoError(t, err)
+	want := ToolInputContract{
+		Schema:                   rawjson.Message(schema),
+		SchemaWithoutRootExample: rawjson.Message(schema),
+	}
 	shared[0] = '['
-	assert.Equal(t, schema, string(input.Contract().Schema))
-	assert.Equal(t, schema, string(input.Contract().SchemaWithoutRootExample))
-	assert.NoError(t, input.validate(rawjson.Message(`{"value":"ok"}`)))
-	assert.Error(t, input.validate(rawjson.Message(`{"value":1}`)))
+	assert.Equal(t, want, input.Contract())
+	require.NoError(t, input.validate(rawjson.Message(`{"value":"ok"}`)))
+	require.Error(t, input.validate(rawjson.Message(`{"value":1}`)))
 	returned := input.Contract()
 	returned.Schema[0] = '['
 	returned.SchemaWithoutRootExample[0] = '['
-	assert.Equal(t, schema, string(input.Contract().Schema))
-	assert.Equal(t, schema, string(input.Contract().SchemaWithoutRootExample))
+	assert.Equal(t, want, input.Contract())
 }
 
 func BenchmarkToolInputSchemaCompilation(b *testing.B) {
