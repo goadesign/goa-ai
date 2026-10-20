@@ -588,6 +588,13 @@ Only unfinished chains need current execution
 authorization: an unavailable or changed static tool pair supplies no action,
 without blocking the new turn. Current static execution still requires the full
 matching declaration, including metadata and injected context.
+
+Generated paging registrations select call and result hints from the decoded
+query or page payload type. A page's template receives its own arguments; it
+never reads the query's fields. A branch without authored hint text remains
+absent, while invalid templates still return errors. This selection adds no
+model-visible input or saved execution state.
+
 Saved result bytes and chronological order remain unchanged. Active outputs,
 suspended work, and new page requests retain their current codec checks. See the
 [historical paging contract](docs/runtime.md#bounded-results).

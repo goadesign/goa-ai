@@ -280,6 +280,9 @@ Custom stores must follow the [preparation ownership upgrade](docs/runtime.md#pr
   completed page chains remain readable after their tool inputs change.
   Obsolete unfinished queries offer no page action but do not block new turns;
   current bounded results still require bounds and valid arguments.
+  Paged operations retain each query and page branch's declared progress labels
+  and result previews under the same public tool name. Regenerate callers after
+  upgrading to install the matching templates.
   The in-memory engine supports local development.
 - **Policies and context.** Control permitted tools, call and recovery budgets,
   timing, history compression, prompt caching, and prompt overrides.

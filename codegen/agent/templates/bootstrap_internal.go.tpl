@@ -44,28 +44,45 @@ func New(ctx {{ .ContextAlias }}.Context, store {{ .StorageAlias }}.Store) (*{{ 
         {{- $hasCallHints := false -}}
         {{- $hasResultHints := false -}}
         {{- range .Toolset.Tools }}
-        {{- if .CallHintTemplate }}{{- $hasCallHints = true -}}{{- end }}
-        {{- if .ResultHintTemplate }}{{- $hasResultHints = true -}}{{- end }}
+        {{- if and (callHintTemplate .) (not .PrivatePage) }}{{- $hasCallHints = true -}}{{- end }}
+        {{- if and (resultHintTemplate .) (not .PrivatePage) }}{{- $hasResultHints = true -}}{{- end }}
+        {{- end }}
+        {{- $hintSpecs := .SpecsAlias }}
+        {{- $hasPagingHints := false }}
+        {{- range .Toolset.Tools }}
+        {{- if and .Page (or (callHintTemplate .) (resultHintTemplate .)) }}{{- $hasPagingHints = true }}{{- end }}
+        {{- end }}
+        {{- if $hasPagingHints }}
+        hintFunctions := map[string]any{
+        {{- range .Toolset.Tools }}
+        {{- if and .Page (or (callHintTemplate .) (resultHintTemplate .)) }}
+            "isPage{{ .ConstName }}": func(payload any) bool {
+                _, page := payload.({{ if .Page.PayloadPointer }}*{{ end }}{{ $hintSpecs }}.{{ .Page.PayloadTypeName }})
+                return page
+            },
+        {{- end }}
+        {{- end }}
+        }
         {{- end }}
         {{- if $hasCallHints }}
         callHints, err := {{ $.HintsAlias }}.CompileHintTemplates(map[{{ $.ToolsAlias }}.Ident]string{
             {{- range .Toolset.Tools }}
-            {{- if .CallHintTemplate }}
-            {{ printf "%q" .QualifiedName }}: {{ printf "%q" .CallHintTemplate }},
+            {{- if and (callHintTemplate .) (not .PrivatePage) }}
+            {{ printf "%q" .QualifiedName }}: {{ printf "%q" (callHintTemplate .) }},
             {{- end }}
             {{- end }}
-        }, nil)
+        }, {{ if $hasPagingHints }}hintFunctions{{ else }}nil{{ end }})
         if err != nil { return nil, nil, err }
         registration.CallHints = callHints
         {{- end }}
         {{- if $hasResultHints }}
         resultHints, err := {{ $.HintsAlias }}.CompileHintTemplates(map[{{ $.ToolsAlias }}.Ident]string{
             {{- range .Toolset.Tools }}
-            {{- if .ResultHintTemplate }}
-            {{ printf "%q" .QualifiedName }}: {{ printf "%q" .ResultHintTemplate }},
+            {{- if and (resultHintTemplate .) (not .PrivatePage) }}
+            {{ printf "%q" .QualifiedName }}: {{ printf "%q" (resultHintTemplate .) }},
             {{- end }}
             {{- end }}
-        }, nil)
+        }, {{ if $hasPagingHints }}hintFunctions{{ else }}nil{{ end }})
         if err != nil { return nil, nil, err }
         registration.ResultHints = resultHints
         {{- end }}

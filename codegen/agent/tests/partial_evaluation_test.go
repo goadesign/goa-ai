@@ -42,8 +42,8 @@ func TestAgentToolsTemplateSpecializesHintMaps(t *testing.T) {
 	require.NotContains(t, helpers, "if callRaw == nil")
 	require.NotContains(t, helpers, "if resultRaw == nil")
 	require.Contains(t, helpers, "hints.CompileHintTemplates(map[tools.Ident]string{")
-	require.Contains(t, helpers, `Find: "Searching for {{ .Query }}"`)
-	require.Contains(t, helpers, `Find: "Found {{ .Result.Count }}"`)
+	require.Contains(t, helpers, `tools.Ident("search.find"): "Searching for {{ .Query }}"`)
+	require.Contains(t, helpers, `tools.Ident("search.find"): "Found {{ .Result.Count }}"`)
 }
 
 // TestRegistryTemplateOmitsHintMapsWhenAbsent ensures used toolset

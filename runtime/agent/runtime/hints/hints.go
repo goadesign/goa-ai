@@ -4,6 +4,7 @@
 package hints
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -15,6 +16,9 @@ import (
 )
 
 var (
+	// errNoHint marks a generated branch with no authored template. The renderer
+	// returns absence for that branch while keeping other template errors visible.
+	errNoHint   = errors.New("no authored hint for this input")
 	mu          sync.RWMutex
 	callHints   = make(map[tools.Ident]*template.Template)
 	resultHints = make(map[tools.Ident]*template.Template)
@@ -70,9 +74,9 @@ func RegisterResultHints(m map[tools.Ident]*template.Template) {
 
 // RenderCallHint renders the registered call hint template for id.
 //
-// The boolean return reports whether a template was registered. A registered
-// template must render a non-empty string; render errors and empty output are
-// returned as contract violations.
+// The boolean return reports whether this input has an authored hint. A generated
+// paging branch without a template reports false. Other template errors and
+// unexpected empty output are returned as contract violations.
 func RenderCallHint(id tools.Ident, payload any) (string, bool, error) {
 	mu.RLock()
 	tmpl := callHints[id]
@@ -82,9 +86,9 @@ func RenderCallHint(id tools.Ident, payload any) (string, bool, error) {
 
 // RenderResultHint renders the registered result hint template for id.
 //
-// The boolean return reports whether a template was registered. A registered
-// template must render a non-empty string; render errors and empty output are
-// returned as contract violations.
+// The boolean return reports whether this input has an authored hint. A generated
+// paging branch without a template reports false. Other template errors and
+// unexpected empty output are returned as contract violations.
 func RenderResultHint(id tools.Ident, result any) (string, bool, error) {
 	mu.RLock()
 	tmpl := resultHints[id]
@@ -99,6 +103,9 @@ func CompileHintTemplates(raw map[tools.Ident]string, extra template.FuncMap) (m
 		return nil, nil
 	}
 	funcs := template.FuncMap{
+		"noHint": func() (string, error) {
+			return "", errNoHint
+		},
 		"join": strings.Join,
 		"count": func(v any) int {
 			if xs, ok := v.([]any); ok {
@@ -174,6 +181,9 @@ func renderHint(kind string, id tools.Ident, tmpl *template.Template, data any) 
 	}
 	var b strings.Builder
 	if err := tmpl.Execute(&b, data); err != nil {
+		if errors.Is(err, errNoHint) {
+			return "", false, nil
+		}
 		return "", true, fmt.Errorf("render %s hint for %s: %w", kind, id, err)
 	}
 	out := b.String()

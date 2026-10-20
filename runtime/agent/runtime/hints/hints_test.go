@@ -309,3 +309,32 @@ func TestParseTimestamp(t *testing.T) {
 		})
 	}
 }
+
+// TestRenderHintsOmittedBranch keeps explicit absence separate from an invalid
+// template. Callers receive no hint when generation selected an unconfigured branch.
+func TestRenderHintsOmittedBranch(t *testing.T) {
+	id := tools.Ident("test.omitted_branch")
+	compiled, err := CompileHintTemplates(map[tools.Ident]string{
+		id: "{{if .Omit}}discarded{{noHint}}{{else}}Rendered{{end}}",
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	RegisterCallHints(compiled)
+	RegisterResultHints(compiled)
+	for _, render := range []func(tools.Ident, any) (string, bool, error){RenderCallHint, RenderResultHint} {
+		for _, omit := range []bool{false, true} {
+			got, present, err := render(id, struct{ Omit bool }{omit})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "Rendered"
+			if omit {
+				want = ""
+			}
+			if got != want || present == omit {
+				t.Errorf("omit=%v: got (%q, %v), want (%q, %v)", omit, got, present, want, !omit)
+			}
+		}
+	}
+}

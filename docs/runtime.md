@@ -2438,6 +2438,12 @@ Contract:
   registered, the runtime uses that title as the display hint. Malformed payloads still fail at the tool
   boundary; the metadata title only keeps the attempted work renderable. Hints are never rendered against raw
   JSON bytes.
+- A composed paging operation selects its query or page template from the typed
+  execution payload. Result previews make the same selection using `.Args`.
+  Each branch retains its own declared text. If that branch has no template,
+  call display uses the registered title and result preview remains absent.
+  Generated templates use `noHint` to report that deliberate absence; other
+  template errors and unexpected empty output remain contract violations.
 - If a producer explicitly sets `DisplayHint` (non-empty) before publishing the hook event, the runtime treats
   it as authoritative and does not overwrite it.
 
