@@ -1737,13 +1737,14 @@ func TestServeUsesRegistryExpirationForDeliveredCall(t *testing.T) {
 	}
 }
 
-func TestServeDuplicateDeliveryPublishesAndAcknowledgesExactResult(t *testing.T) {
+func TestServeDistinctDeliveriesPreserveCallIdentityAndAskRegistryForClaims(t *testing.T) {
 	t.Parallel()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	events := make(chan *streaming.Event, 2)
 	acks := make(chan *streaming.Event, 2)
 	results := make(chan toolregistry.ToolResultMessage, 2)
+	claims := make(chan string, 2)
 	sink := mockpulse.NewSink(t)
 	sink.SetSubscribe(func() <-chan *streaming.Event { return events })
 	sink.SetClose(func(context.Context) error { return nil })
@@ -1770,25 +1771,39 @@ func TestServeDuplicateDeliveryPublishesAndAcknowledgesExactResult(t *testing.T)
 		return resultStream, nil
 	})
 	handler := &recordingHandler{}
+	registration := successfulRegistration(func(result toolregistry.ToolResultMessage) error {
+		results <- result
+		return nil
+	})
+	registration.Claim = func(_ context.Context, request ClaimRequest) (ClaimDisposition, error) {
+		claims <- request.RequestEventID
+		return ClaimExecute, nil
+	}
 	errc := make(chan error, 1)
 	go func() {
-		errc <- Serve(ctx, client, "test.toolset", handler, successfulRegistration(func(result toolregistry.ToolResultMessage) error {
-			results <- result
-			return nil
-		}), Options{
+		errc <- Serve(ctx, client, "test.toolset", handler, registration, Options{
 			ProviderID: testProviderID,
 			Pong:       func(context.Context, string, string, string) error { return nil },
 		})
 	}()
 
-	events <- testToolCallEvent(t, "reused-transport-id")
-	events <- testToolCallEvent(t, "reused-transport-id")
+	// Separate request events can identify the same call. Registry decides
+	// whether each may execute; this mock grants both and checks their results.
+	first := testToolCallEvent(t, "shared-call")
+	second := testToolCallEvent(t, "shared-call")
+	first.ID, second.ID = "request-one", "request-two"
+	events <- first
+	events <- second
+	var acknowledgedIDs, claimedIDs []string
 	for range 2 {
 		result := <-results
-		assert.Equal(t, "reused-transport-id", result.ToolUseID)
+		assert.Equal(t, "shared-call", result.ToolUseID)
 		assert.Equal(t, testRegistrationTokenA, result.RegistrationToken)
-		<-acks
+		acknowledgedIDs = append(acknowledgedIDs, (<-acks).ID)
+		claimedIDs = append(claimedIDs, <-claims)
 	}
+	assert.ElementsMatch(t, []string{"request-one", "request-two"}, acknowledgedIDs)
+	assert.ElementsMatch(t, []string{"request-one", "request-two"}, claimedIDs)
 	assert.Equal(t, int64(2), handler.calls.Load())
 	cancel()
 	require.ErrorIs(t, <-errc, context.Canceled)

@@ -1934,8 +1934,15 @@ execution deadline. Delta bytes and count are bounded. Overload notices are
 idempotent per request event and accepted only before dispatch; stale overload
 observations become the canonical stale terminal atomically. Preserved retired
 or draining exact leases may
-settle calls they already claimed. The waiting queue is exact and bounded. A provider that claims
-a call after that queue fills reports transient retry intent with reason
+settle calls they already claimed. The waiting queue is exact and bounded.
+Within one `Serve` invocation, a repeated stream name, stream generation, and
+event ID already queued, running, or waiting for acknowledgement consumes no
+additional queue slot and produces no overload notice. The provider does not
+acknowledge that repeated delivery early: Redis must retain the original event
+for recovery until its normal acknowledgement succeeds. A different event or
+another provider invocation still follows the existing registry ownership and
+overload decisions. A provider receiving a new call when its queue is full
+reports transient retry intent with reason
 `provider_overloaded` before acknowledging it. Retry control has
 no planner failure; terminal `ToolError` is the single authority for planner
 classification and recovery. The executor submits `RetryTool` with the original
