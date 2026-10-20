@@ -129,15 +129,6 @@ func validateServiceToolSubjectOriginal(value *ServiceToolSubject) (err error) {
 	return err
 }
 
-// validateServiceToolSubjectOriginal2 checks the original typed value before JSON conversion.
-func validateServiceToolSubjectOriginal2(value *ServiceToolSubject) (err error) {
-	if utf8.RuneCountInString(value.Registry) < 1 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("value.registry", value.Registry, utf8.RuneCountInString(value.Registry), 1, true))
-	}
-	err = goa.MergeErrors(err, goa.ValidatePattern("value.tool", value.Tool, "^[\\s\\S]+\\.[^.]+$"))
-	return err
-}
-
 // jsonRunExecutorTransport stores exactly one selected Goa OneOf branch.
 type jsonRunExecutorTransport struct {
 	kind        jsonRunExecutorTransportKind
@@ -379,7 +370,7 @@ func EncodeServiceToolSubject(in *ServiceToolSubject) ([]byte, error) {
 	if err := checkServiceToolSubjectValue(in); err != nil {
 		return nil, fmt.Errorf("encode ServiceToolSubject JSON: %w", err)
 	}
-	if err := validateServiceToolSubjectOriginal2(in); err != nil {
+	if err := validateServiceToolSubjectOriginal(in); err != nil {
 		return nil, fmt.Errorf("validate ServiceToolSubject value: %w", err)
 	}
 	var body *jsonServiceToolSubjectTransport
@@ -405,7 +396,7 @@ func DecodeServiceToolSubject(data []byte) (out *ServiceToolSubject, err error) 
 	if err != nil {
 		return out, fmt.Errorf("decode ServiceToolSubject JSON: %w", err)
 	}
-	if err := validateServiceToolSubjectJSONValue("", root, ""); err != nil {
+	if err := validateRunSubjectJSONValue4("", root, ""); err != nil {
 		return out, fmt.Errorf("decode ServiceToolSubject JSON: %w", err)
 	}
 	var body *jsonServiceToolSubjectTransport
@@ -559,14 +550,14 @@ func validateRunSubjectJSONValue4(path string, value any, description string) er
 	for _, key := range keys {
 		switch key {
 		case "registry":
-			if err := validateRunSubjectJSONValue5(
+			if err := validateRunSubjectJSONValue3(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Configured Registry source that owns the selected tool.",
 			); err != nil {
 				return err
 			}
 		case "tool":
-			if err := validateRunSubjectJSONValue6(
+			if err := validateRunSubjectJSONValue3(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Qualified tool name in that Registry source, with nonempty text before and after the final dot.",
 			); err != nil {
@@ -578,114 +569,6 @@ func validateRunSubjectJSONValue4(path string, value any, description string) er
 				"tool",
 			})
 		}
-	}
-	return nil
-}
-
-// validateRunSubjectJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRunSubjectJSONValue5(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateRunSubjectJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRunSubjectJSONValue6(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateServiceToolSubjectJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolSubjectJSONValue(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "registry":
-			if err := validateServiceToolSubjectJSONValue2(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Configured Registry source that owns the selected tool.",
-			); err != nil {
-				return err
-			}
-		case "tool":
-			if err := validateServiceToolSubjectJSONValue3(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Qualified tool name in that Registry source, with nonempty text before and after the final dot.",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"registry",
-				"tool",
-			})
-		}
-	}
-	return nil
-}
-
-// validateServiceToolSubjectJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolSubjectJSONValue2(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateServiceToolSubjectJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateServiceToolSubjectJSONValue3(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -921,29 +804,8 @@ func checkServiceToolSubjectValue(in *ServiceToolSubject) error {
 		return fmt.Errorf("missing root value")
 	}
 	active := make(map[any]bool)
-	if err := checkServiceToolSubjectServiceToolSubjectValue(in, "$", active); err != nil {
+	if err := checkRunSubjectServiceToolSubjectValue(in, "$", active); err != nil {
 		return err
-	}
-	return nil
-}
-
-// checkServiceToolSubjectServiceToolSubjectValue checks one generated value on the active path.
-func checkServiceToolSubjectServiceToolSubjectValue(in *ServiceToolSubject, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if !utf8.ValidString(string(in.Registry)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "registry", false))
-		}
-		if !utf8.ValidString(string(in.Tool)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "tool", false))
-		}
 	}
 	return nil
 }

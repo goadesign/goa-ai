@@ -333,18 +333,10 @@ func validateToolOperationPendingExecutionOriginal(value *ToolOperationPendingEx
 func validateToolOperationPendingInputOriginal(value *ToolOperationPendingInput) (err error) {
 	for _, v := range value.Requests {
 		if v != nil {
-			if err2 := validateToolOperationHostRequestOriginal2(v); err2 != nil {
+			if err2 := validateToolOperationHostRequestOriginal(v); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
-	}
-	return err
-}
-
-// validateToolOperationHostRequestOriginal2 checks the original typed value before JSON conversion.
-func validateToolOperationHostRequestOriginal2(value *ToolOperationHostRequest) (err error) {
-	if value.Params == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("params", "value"))
 	}
 	return err
 }
@@ -356,61 +348,10 @@ func validateToolOperationTaskInputOriginal(value *ToolOperationTaskInput) (err 
 	}
 	for _, v := range value.Requests {
 		if v != nil {
-			if err2 := validateToolOperationHostRequestOriginal2(v); err2 != nil {
+			if err2 := validateToolOperationHostRequestOriginal(v); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
-	}
-	return err
-}
-
-// validateToolOperationPendingInputOriginal2 checks the original typed value before JSON conversion.
-func validateToolOperationPendingInputOriginal2(value *ToolOperationPendingInput) (err error) {
-	for _, v := range value.Requests {
-		if v != nil {
-			if err2 := validateToolOperationHostRequestOriginal3(v); err2 != nil {
-				err = goa.MergeErrors(err, err2)
-			}
-		}
-	}
-	return err
-}
-
-// validateToolOperationHostRequestOriginal3 checks the original typed value before JSON conversion.
-func validateToolOperationHostRequestOriginal3(value *ToolOperationHostRequest) (err error) {
-	if value.Params == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("params", "value"))
-	}
-	return err
-}
-
-// validateToolOperationTaskAnswersOriginal2 checks the original typed value before JSON conversion.
-func validateToolOperationTaskAnswersOriginal2(value *ToolOperationTaskAnswers) (err error) {
-	if value.Responses == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("responses", "value"))
-	}
-	return err
-}
-
-// validateToolOperationTaskInputOriginal2 checks the original typed value before JSON conversion.
-func validateToolOperationTaskInputOriginal2(value *ToolOperationTaskInput) (err error) {
-	if value.Requests == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("requests", "value"))
-	}
-	for _, v := range value.Requests {
-		if v != nil {
-			if err2 := validateToolOperationHostRequestOriginal4(v); err2 != nil {
-				err = goa.MergeErrors(err, err2)
-			}
-		}
-	}
-	return err
-}
-
-// validateToolOperationHostRequestOriginal4 checks the original typed value before JSON conversion.
-func validateToolOperationHostRequestOriginal4(value *ToolOperationHostRequest) (err error) {
-	if value.Params == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("params", "value"))
 	}
 	return err
 }
@@ -1033,7 +974,7 @@ func DecodeToolOperationInputContinuation(data []byte) (out *ToolOperationInputC
 	if err != nil {
 		return out, fmt.Errorf("decode ToolOperationInputContinuation JSON: %w", err)
 	}
-	if err := validateToolOperationInputContinuationJSONValue("", root, ""); err != nil {
+	if err := validateToolOperationExecutionContinuationJSONValue3("", root, ""); err != nil {
 		return out, fmt.Errorf("decode ToolOperationInputContinuation JSON: %w", err)
 	}
 	var body *jsonToolOperationInputContinuationTransport
@@ -1184,7 +1125,7 @@ func EncodeToolOperationPendingInput(in *ToolOperationPendingInput) ([]byte, err
 	if err := checkToolOperationPendingInputValue(in); err != nil {
 		return nil, fmt.Errorf("encode ToolOperationPendingInput JSON: %w", err)
 	}
-	if err := validateToolOperationPendingInputOriginal2(in); err != nil {
+	if err := validateToolOperationPendingInputOriginal(in); err != nil {
 		return nil, fmt.Errorf("validate ToolOperationPendingInput value: %w", err)
 	}
 	var body *jsonToolOperationPendingInputTransport
@@ -1200,7 +1141,7 @@ func EncodeToolOperationPendingInput(in *ToolOperationPendingInput) ([]byte, err
 					body.Requests[tk] = nil
 					continue
 				}
-				body.Requests[tk] = encodeToolOperationHostRequestToToolOperationHostRequestTransport3(val)
+				body.Requests[tk] = encodeToolOperationHostRequestToToolOperationHostRequestTransport(val)
 			}
 		}
 	}
@@ -1220,7 +1161,7 @@ func DecodeToolOperationPendingInput(data []byte) (out *ToolOperationPendingInpu
 	if err != nil {
 		return out, fmt.Errorf("decode ToolOperationPendingInput JSON: %w", err)
 	}
-	if err := validateToolOperationPendingInputJSONValue("", root, ""); err != nil {
+	if err := validateToolOperationPendingExecutionJSONValue3("", root, ""); err != nil {
 		return out, fmt.Errorf("decode ToolOperationPendingInput JSON: %w", err)
 	}
 	var body *jsonToolOperationPendingInputTransport
@@ -1250,7 +1191,7 @@ func DecodeToolOperationPendingInput(data []byte) (out *ToolOperationPendingInpu
 					out.Requests[tk] = nil
 					continue
 				}
-				out.Requests[tk] = decodeToolOperationHostRequestTransportToToolOperationHostRequest3(val)
+				out.Requests[tk] = decodeToolOperationHostRequestTransportToToolOperationHostRequest(val)
 			}
 		}
 	}
@@ -1262,7 +1203,7 @@ func EncodeToolOperationTaskAnswers(in *ToolOperationTaskAnswers) ([]byte, error
 	if err := checkToolOperationTaskAnswersValue(in); err != nil {
 		return nil, fmt.Errorf("encode ToolOperationTaskAnswers JSON: %w", err)
 	}
-	if err := validateToolOperationTaskAnswersOriginal2(in); err != nil {
+	if err := validateToolOperationTaskAnswersOriginal(in); err != nil {
 		return nil, fmt.Errorf("validate ToolOperationTaskAnswers value: %w", err)
 	}
 	var body *jsonToolOperationTaskAnswersTransport
@@ -1293,7 +1234,7 @@ func DecodeToolOperationTaskAnswers(data []byte) (out *ToolOperationTaskAnswers,
 	if err != nil {
 		return out, fmt.Errorf("decode ToolOperationTaskAnswers JSON: %w", err)
 	}
-	if err := validateToolOperationTaskAnswersJSONValue("", root, ""); err != nil {
+	if err := validateToolOperationExecutionContinuationJSONValue7("", root, ""); err != nil {
 		return out, fmt.Errorf("decode ToolOperationTaskAnswers JSON: %w", err)
 	}
 	var body *jsonToolOperationTaskAnswersTransport
@@ -1330,7 +1271,7 @@ func EncodeToolOperationTaskInput(in *ToolOperationTaskInput) ([]byte, error) {
 	if err := checkToolOperationTaskInputValue(in); err != nil {
 		return nil, fmt.Errorf("encode ToolOperationTaskInput JSON: %w", err)
 	}
-	if err := validateToolOperationTaskInputOriginal2(in); err != nil {
+	if err := validateToolOperationTaskInputOriginal(in); err != nil {
 		return nil, fmt.Errorf("validate ToolOperationTaskInput value: %w", err)
 	}
 	var body *jsonToolOperationTaskInputTransport
@@ -1349,7 +1290,7 @@ func EncodeToolOperationTaskInput(in *ToolOperationTaskInput) ([]byte, error) {
 				body.Requests[tk] = nil
 				continue
 			}
-			body.Requests[tk] = encodeToolOperationHostRequestToToolOperationHostRequestTransport4(val)
+			body.Requests[tk] = encodeToolOperationHostRequestToToolOperationHostRequestTransport(val)
 		}
 	}
 	if err := validatejsonToolOperationTaskInputTransport(body); err != nil {
@@ -1368,7 +1309,7 @@ func DecodeToolOperationTaskInput(data []byte) (out *ToolOperationTaskInput, err
 	if err != nil {
 		return out, fmt.Errorf("decode ToolOperationTaskInput JSON: %w", err)
 	}
-	if err := validateToolOperationTaskInputJSONValue("", root, ""); err != nil {
+	if err := validateToolOperationPendingExecutionJSONValue7("", root, ""); err != nil {
 		return out, fmt.Errorf("decode ToolOperationTaskInput JSON: %w", err)
 	}
 	var body *jsonToolOperationTaskInputTransport
@@ -1401,7 +1342,7 @@ func DecodeToolOperationTaskInput(data []byte) (out *ToolOperationTaskInput, err
 				out.Requests[tk] = nil
 				continue
 			}
-			out.Requests[tk] = decodeToolOperationHostRequestTransportToToolOperationHostRequest4(val)
+			out.Requests[tk] = decodeToolOperationHostRequestTransportToToolOperationHostRequest(val)
 		}
 	}
 	return out, nil
@@ -1438,7 +1379,7 @@ func DecodeToolOperationTaskWait(data []byte) (out *ToolOperationTaskWait, err e
 	if err != nil {
 		return out, fmt.Errorf("decode ToolOperationTaskWait JSON: %w", err)
 	}
-	if err := validateToolOperationTaskWaitJSONValue("", root, ""); err != nil {
+	if err := validateToolOperationPendingExecutionJSONValue5("", root, ""); err != nil {
 		return out, fmt.Errorf("decode ToolOperationTaskWait JSON: %w", err)
 	}
 	var body *jsonToolOperationTaskWaitTransport
@@ -1469,33 +1410,6 @@ func DecodeToolOperationTaskWait(data []byte) (out *ToolOperationTaskWait, err e
 }
 
 func decodeToolOperationHostRequestTransportToToolOperationHostRequest(v *jsonToolOperationHostRequestTransport) *ToolOperationHostRequest {
-	res := &ToolOperationHostRequest{
-		Method: *v.Method,
-		Params: v.Params,
-	}
-
-	return res
-}
-
-func decodeToolOperationHostRequestTransportToToolOperationHostRequest2(v *jsonToolOperationHostRequestTransport) *ToolOperationHostRequest {
-	res := &ToolOperationHostRequest{
-		Method: *v.Method,
-		Params: v.Params,
-	}
-
-	return res
-}
-
-func decodeToolOperationHostRequestTransportToToolOperationHostRequest3(v *jsonToolOperationHostRequestTransport) *ToolOperationHostRequest {
-	res := &ToolOperationHostRequest{
-		Method: *v.Method,
-		Params: v.Params,
-	}
-
-	return res
-}
-
-func decodeToolOperationHostRequestTransportToToolOperationHostRequest4(v *jsonToolOperationHostRequestTransport) *ToolOperationHostRequest {
 	res := &ToolOperationHostRequest{
 		Method: *v.Method,
 		Params: v.Params,
@@ -1568,7 +1482,7 @@ func decodeToolOperationTaskInputTransportToToolOperationTaskInput(v *jsonToolOp
 			res.Requests[tk] = nil
 			continue
 		}
-		res.Requests[tk] = decodeToolOperationHostRequestTransportToToolOperationHostRequest2(val)
+		res.Requests[tk] = decodeToolOperationHostRequestTransportToToolOperationHostRequest(val)
 	}
 
 	return res
@@ -1587,33 +1501,6 @@ func decodeToolOperationTaskWaitTransportToToolOperationTaskWait(v *jsonToolOper
 }
 
 func encodeToolOperationHostRequestToToolOperationHostRequestTransport(v *ToolOperationHostRequest) *jsonToolOperationHostRequestTransport {
-	res := &jsonToolOperationHostRequestTransport{
-		Method: &v.Method,
-		Params: v.Params,
-	}
-
-	return res
-}
-
-func encodeToolOperationHostRequestToToolOperationHostRequestTransport2(v *ToolOperationHostRequest) *jsonToolOperationHostRequestTransport {
-	res := &jsonToolOperationHostRequestTransport{
-		Method: &v.Method,
-		Params: v.Params,
-	}
-
-	return res
-}
-
-func encodeToolOperationHostRequestToToolOperationHostRequestTransport3(v *ToolOperationHostRequest) *jsonToolOperationHostRequestTransport {
-	res := &jsonToolOperationHostRequestTransport{
-		Method: &v.Method,
-		Params: v.Params,
-	}
-
-	return res
-}
-
-func encodeToolOperationHostRequestToToolOperationHostRequestTransport4(v *ToolOperationHostRequest) *jsonToolOperationHostRequestTransport {
 	res := &jsonToolOperationHostRequestTransport{
 		Method: &v.Method,
 		Params: v.Params,
@@ -1686,7 +1573,7 @@ func encodeToolOperationTaskInputToToolOperationTaskInputTransport(v *ToolOperat
 			res.Requests[tk] = nil
 			continue
 		}
-		res.Requests[tk] = encodeToolOperationHostRequestToToolOperationHostRequestTransport2(val)
+		res.Requests[tk] = encodeToolOperationHostRequestToToolOperationHostRequestTransport(val)
 	}
 
 	return res
@@ -1768,20 +1655,20 @@ func validateToolOperationExecutionContinuationJSONValue2(path string, value any
 	}
 	switch discriminator {
 	case "input":
-		return validateToolOperationExecutionContinuationJSONValue5(generatedJSONChildPath(path, "value", false), branch, "Continue the original tool invocation with accepted host answers and saved service state.")
+		return validateToolOperationExecutionContinuationJSONValue3(generatedJSONChildPath(path, "value", false), branch, "Continue the original tool invocation with accepted host answers and saved service state.")
 	case "task_get":
-		return validateToolOperationExecutionContinuationJSONValue9(generatedJSONChildPath(path, "value", false), branch, "Read one existing Task by its exact server-owned identifier.")
+		return validateToolOperationExecutionContinuationJSONValue6(generatedJSONChildPath(path, "value", false), branch, "Read one existing Task by its exact server-owned identifier.")
 	case "task_update":
-		return validateToolOperationExecutionContinuationJSONValue10(generatedJSONChildPath(path, "value", false), branch, "Submit accepted host answers to one existing Task.")
+		return validateToolOperationExecutionContinuationJSONValue7(generatedJSONChildPath(path, "value", false), branch, "Submit accepted host answers to one existing Task.")
 	case "task_cancel":
-		return validateToolOperationExecutionContinuationJSONValue4(generatedJSONChildPath(path, "value", false), branch, "Request cancellation of one existing Task without repeating the original tool call.")
+		return validateToolOperationExecutionContinuationJSONValue6(generatedJSONChildPath(path, "value", false), branch, "Request cancellation of one existing Task without repeating the original tool call.")
 	default:
 		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
 	}
 }
 
-// validateToolOperationExecutionContinuationJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationExecutionContinuationJSONValue5(path string, value any, description string) error {
+// validateToolOperationExecutionContinuationJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolOperationExecutionContinuationJSONValue3(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -1801,14 +1688,14 @@ func validateToolOperationExecutionContinuationJSONValue5(path string, value any
 	for _, key := range keys {
 		switch key {
 		case "responses":
-			if err := validateToolOperationExecutionContinuationJSONValue6(
+			if err := validateToolOperationExecutionContinuationJSONValue4(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Host answer JSON bytes keyed by the exact server request identifiers.",
 			); err != nil {
 				return err
 			}
 		case "state":
-			if err := validateToolOperationExecutionContinuationJSONValue8(
+			if err := validateToolOperationExecutionContinuationJSONValue6(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Opaque state returned by the service, including an explicitly empty string.",
 			); err != nil {
@@ -1824,8 +1711,8 @@ func validateToolOperationExecutionContinuationJSONValue5(path string, value any
 	return nil
 }
 
-// validateToolOperationExecutionContinuationJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationExecutionContinuationJSONValue6(path string, value any, description string) error {
+// validateToolOperationExecutionContinuationJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolOperationExecutionContinuationJSONValue4(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -1846,7 +1733,7 @@ func validateToolOperationExecutionContinuationJSONValue6(path string, value any
 		if typed[key] == nil {
 			continue
 		}
-		if err := validateToolOperationExecutionContinuationJSONValue7(
+		if err := validateToolOperationExecutionContinuationJSONValue5(
 			generatedJSONChildPath(path, key, true),
 			typed[key], description,
 		); err != nil {
@@ -1856,56 +1743,40 @@ func validateToolOperationExecutionContinuationJSONValue6(path string, value any
 	return nil
 }
 
+// validateToolOperationExecutionContinuationJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolOperationExecutionContinuationJSONValue5(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateToolOperationExecutionContinuationJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolOperationExecutionContinuationJSONValue6(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
 // validateToolOperationExecutionContinuationJSONValue7 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateToolOperationExecutionContinuationJSONValue7(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolOperationExecutionContinuationJSONValue8 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationExecutionContinuationJSONValue8(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolOperationExecutionContinuationJSONValue9 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationExecutionContinuationJSONValue9(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolOperationExecutionContinuationJSONValue10 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationExecutionContinuationJSONValue10(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -1925,14 +1796,14 @@ func validateToolOperationExecutionContinuationJSONValue10(path string, value an
 	for _, key := range keys {
 		switch key {
 		case "responses":
-			if err := validateToolOperationExecutionContinuationJSONValue11(
+			if err := validateToolOperationExecutionContinuationJSONValue8(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Host answer JSON bytes for outstanding Task input requests.",
 			); err != nil {
 				return err
 			}
 		case "task_id":
-			if err := validateToolOperationExecutionContinuationJSONValue3(
+			if err := validateToolOperationExecutionContinuationJSONValue6(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Exact server-owned Task identifier, including an empty string.",
 			); err != nil {
@@ -1948,8 +1819,8 @@ func validateToolOperationExecutionContinuationJSONValue10(path string, value an
 	return nil
 }
 
-// validateToolOperationExecutionContinuationJSONValue11 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationExecutionContinuationJSONValue11(path string, value any, description string) error {
+// validateToolOperationExecutionContinuationJSONValue8 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolOperationExecutionContinuationJSONValue8(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -1970,60 +1841,12 @@ func validateToolOperationExecutionContinuationJSONValue11(path string, value an
 		if typed[key] == nil {
 			continue
 		}
-		if err := validateToolOperationExecutionContinuationJSONValue12(
+		if err := validateToolOperationExecutionContinuationJSONValue5(
 			generatedJSONChildPath(path, key, true),
 			typed[key], description,
 		); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-// validateToolOperationExecutionContinuationJSONValue12 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationExecutionContinuationJSONValue12(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolOperationExecutionContinuationJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationExecutionContinuationJSONValue3(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolOperationExecutionContinuationJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationExecutionContinuationJSONValue4(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -2049,14 +1872,14 @@ func validateToolOperationHostRequestJSONValue(path string, value any, descripti
 	for _, key := range keys {
 		switch key {
 		case "method":
-			if err := validateToolOperationHostRequestJSONValue2(
+			if err := validateToolOperationExecutionContinuationJSONValue6(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Exact MCP interaction method.",
 			); err != nil {
 				return err
 			}
 		case "params":
-			if err := validateToolOperationHostRequestJSONValue3(
+			if err := validateToolOperationExecutionContinuationJSONValue5(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Original JSON object describing the host interaction.",
 			); err != nil {
@@ -2068,146 +1891,6 @@ func validateToolOperationHostRequestJSONValue(path string, value any, descripti
 				"params",
 			})
 		}
-	}
-	return nil
-}
-
-// validateToolOperationHostRequestJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationHostRequestJSONValue2(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolOperationHostRequestJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationHostRequestJSONValue3(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolOperationInputContinuationJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationInputContinuationJSONValue(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "responses":
-			if err := validateToolOperationInputContinuationJSONValue2(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Host answer JSON bytes keyed by the exact server request identifiers.",
-			); err != nil {
-				return err
-			}
-		case "state":
-			if err := validateToolOperationInputContinuationJSONValue4(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Opaque state returned by the service, including an explicitly empty string.",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"responses",
-				"state",
-			})
-		}
-	}
-	return nil
-}
-
-// validateToolOperationInputContinuationJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationInputContinuationJSONValue2(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		if typed[key] == nil {
-			continue
-		}
-		if err := validateToolOperationInputContinuationJSONValue3(
-			generatedJSONChildPath(path, key, true),
-			typed[key], description,
-		); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// validateToolOperationInputContinuationJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationInputContinuationJSONValue3(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolOperationInputContinuationJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationInputContinuationJSONValue4(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -2276,18 +1959,18 @@ func validateToolOperationPendingExecutionJSONValue2(path string, value any, des
 	}
 	switch discriminator {
 	case "input":
-		return validateToolOperationPendingExecutionJSONValue8(generatedJSONChildPath(path, "value", false), branch, "Ask the host to continue the original non-Task tool call.")
+		return validateToolOperationPendingExecutionJSONValue3(generatedJSONChildPath(path, "value", false), branch, "Ask the host to continue the original non-Task tool call.")
 	case "task_wait":
-		return validateToolOperationPendingExecutionJSONValue14(generatedJSONChildPath(path, "value", false), branch, "Wait before observing the existing Task.")
+		return validateToolOperationPendingExecutionJSONValue5(generatedJSONChildPath(path, "value", false), branch, "Wait before observing the existing Task.")
 	case "task_input":
-		return validateToolOperationPendingExecutionJSONValue4(generatedJSONChildPath(path, "value", false), branch, "Ask the host for outstanding Task answers.")
+		return validateToolOperationPendingExecutionJSONValue7(generatedJSONChildPath(path, "value", false), branch, "Ask the host for outstanding Task answers.")
 	default:
 		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
 	}
 }
 
-// validateToolOperationPendingExecutionJSONValue8 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationPendingExecutionJSONValue8(path string, value any, description string) error {
+// validateToolOperationPendingExecutionJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolOperationPendingExecutionJSONValue3(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -2307,14 +1990,14 @@ func validateToolOperationPendingExecutionJSONValue8(path string, value any, des
 	for _, key := range keys {
 		switch key {
 		case "requests":
-			if err := validateToolOperationPendingExecutionJSONValue9(
+			if err := validateToolOperationPendingExecutionJSONValue4(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Host questions keyed by exact server identifiers. An explicit empty object is valid.",
 			); err != nil {
 				return err
 			}
 		case "state":
-			if err := validateToolOperationPendingExecutionJSONValue13(
+			if err := validateToolOperationExecutionContinuationJSONValue6(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Exact optional service state, including an explicitly empty string.",
 			); err != nil {
@@ -2326,206 +2009,6 @@ func validateToolOperationPendingExecutionJSONValue8(path string, value any, des
 				"state",
 			})
 		}
-	}
-	return nil
-}
-
-// validateToolOperationPendingExecutionJSONValue9 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationPendingExecutionJSONValue9(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		if typed[key] == nil {
-			continue
-		}
-		if err := validateToolOperationPendingExecutionJSONValue10(
-			generatedJSONChildPath(path, key, true),
-			typed[key], description,
-		); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// validateToolOperationPendingExecutionJSONValue10 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationPendingExecutionJSONValue10(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "method":
-			if err := validateToolOperationPendingExecutionJSONValue11(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Exact MCP interaction method.",
-			); err != nil {
-				return err
-			}
-		case "params":
-			if err := validateToolOperationPendingExecutionJSONValue12(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Original JSON object describing the host interaction.",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"method",
-				"params",
-			})
-		}
-	}
-	return nil
-}
-
-// validateToolOperationPendingExecutionJSONValue11 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationPendingExecutionJSONValue11(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolOperationPendingExecutionJSONValue12 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationPendingExecutionJSONValue12(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolOperationPendingExecutionJSONValue13 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationPendingExecutionJSONValue13(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolOperationPendingExecutionJSONValue14 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationPendingExecutionJSONValue14(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "poll_interval_ms":
-			if err := validateToolOperationPendingExecutionJSONValue15(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Optional server guidance for the next observation in integer milliseconds; this is not a Task lifetime limit.",
-			); err != nil {
-				return err
-			}
-		case "task_id":
-			if err := validateToolOperationPendingExecutionJSONValue3(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Exact server-owned Task identifier, including an empty string.",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"poll_interval_ms",
-				"task_id",
-			})
-		}
-	}
-	return nil
-}
-
-// validateToolOperationPendingExecutionJSONValue15 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationPendingExecutionJSONValue15(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
-	}
-	_, ok := value.(json.Number)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolOperationPendingExecutionJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationPendingExecutionJSONValue3(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -2549,34 +2032,14 @@ func validateToolOperationPendingExecutionJSONValue4(path string, value any, des
 	}
 	sort.Strings(keys)
 	for _, key := range keys {
-		switch key {
-		case "poll_interval_ms":
-			if err := validateToolOperationPendingExecutionJSONValue5(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Optional server guidance for observing the Task after host answers are acknowledged.",
-			); err != nil {
-				return err
-			}
-		case "requests":
-			if err := validateToolOperationPendingExecutionJSONValue6(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Outstanding host questions keyed by exact identifiers unique over this Task's lifetime. An empty object is valid.",
-			); err != nil {
-				return err
-			}
-		case "task_id":
-			if err := validateToolOperationPendingExecutionJSONValue7(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Exact server-owned Task identifier, including an empty string.",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"poll_interval_ms",
-				"requests",
-				"task_id",
-			})
+		if typed[key] == nil {
+			continue
+		}
+		if err := validateToolOperationHostRequestJSONValue(
+			generatedJSONChildPath(path, key, true),
+			typed[key], description,
+		); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -2589,11 +2052,39 @@ func validateToolOperationPendingExecutionJSONValue5(path string, value any, des
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
-	_, ok := value.(json.Number)
+	typed, ok := value.(map[string]any)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "poll_interval_ms":
+			if err := validateToolOperationPendingExecutionJSONValue6(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Optional server guidance for the next observation in integer milliseconds; this is not a Task lifetime limit.",
+			); err != nil {
+				return err
+			}
+		case "task_id":
+			if err := validateToolOperationExecutionContinuationJSONValue6(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Exact server-owned Task identifier, including an empty string.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"poll_interval_ms",
+				"task_id",
+			})
+		}
 	}
 	return nil
 }
@@ -2605,27 +2096,11 @@ func validateToolOperationPendingExecutionJSONValue6(path string, value any, des
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
 	}
-	typed, ok := value.(map[string]any)
+	_, ok := value.(json.Number)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		if typed[key] == nil {
-			continue
-		}
-		if err := validateToolOperationPendingExecutionJSONValue10(
-			generatedJSONChildPath(path, key, true),
-			typed[key], description,
-		); err != nil {
-			return err
-		}
+		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -2637,298 +2112,6 @@ func validateToolOperationPendingExecutionJSONValue7(path string, value any, des
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolOperationPendingInputJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationPendingInputJSONValue(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "requests":
-			if err := validateToolOperationPendingInputJSONValue2(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Host questions keyed by exact server identifiers. An explicit empty object is valid.",
-			); err != nil {
-				return err
-			}
-		case "state":
-			if err := validateToolOperationPendingInputJSONValue6(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Exact optional service state, including an explicitly empty string.",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"requests",
-				"state",
-			})
-		}
-	}
-	return nil
-}
-
-// validateToolOperationPendingInputJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationPendingInputJSONValue2(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		if typed[key] == nil {
-			continue
-		}
-		if err := validateToolOperationPendingInputJSONValue3(
-			generatedJSONChildPath(path, key, true),
-			typed[key], description,
-		); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// validateToolOperationPendingInputJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationPendingInputJSONValue3(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "method":
-			if err := validateToolOperationPendingInputJSONValue4(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Exact MCP interaction method.",
-			); err != nil {
-				return err
-			}
-		case "params":
-			if err := validateToolOperationPendingInputJSONValue5(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Original JSON object describing the host interaction.",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"method",
-				"params",
-			})
-		}
-	}
-	return nil
-}
-
-// validateToolOperationPendingInputJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationPendingInputJSONValue4(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolOperationPendingInputJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationPendingInputJSONValue5(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolOperationPendingInputJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationPendingInputJSONValue6(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolOperationTaskAnswersJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationTaskAnswersJSONValue(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "responses":
-			if err := validateToolOperationTaskAnswersJSONValue2(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Host answer JSON bytes for outstanding Task input requests.",
-			); err != nil {
-				return err
-			}
-		case "task_id":
-			if err := validateToolOperationTaskAnswersJSONValue4(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Exact server-owned Task identifier, including an empty string.",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"responses",
-				"task_id",
-			})
-		}
-	}
-	return nil
-}
-
-// validateToolOperationTaskAnswersJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationTaskAnswersJSONValue2(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		if typed[key] == nil {
-			continue
-		}
-		if err := validateToolOperationTaskAnswersJSONValue3(
-			generatedJSONChildPath(path, key, true),
-			typed[key], description,
-		); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// validateToolOperationTaskAnswersJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationTaskAnswersJSONValue3(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolOperationTaskAnswersJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationTaskAnswersJSONValue4(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolOperationTaskInputJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationTaskInputJSONValue(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
 	typed, ok := value.(map[string]any)
@@ -2943,21 +2126,21 @@ func validateToolOperationTaskInputJSONValue(path string, value any, description
 	for _, key := range keys {
 		switch key {
 		case "poll_interval_ms":
-			if err := validateToolOperationTaskInputJSONValue2(
+			if err := validateToolOperationPendingExecutionJSONValue6(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Optional server guidance for observing the Task after host answers are acknowledged.",
 			); err != nil {
 				return err
 			}
 		case "requests":
-			if err := validateToolOperationTaskInputJSONValue3(
+			if err := validateToolOperationPendingExecutionJSONValue8(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Outstanding host questions keyed by exact identifiers unique over this Task's lifetime. An empty object is valid.",
 			); err != nil {
 				return err
 			}
 		case "task_id":
-			if err := validateToolOperationTaskInputJSONValue7(
+			if err := validateToolOperationExecutionContinuationJSONValue6(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Exact server-owned Task identifier, including an empty string.",
 			); err != nil {
@@ -2974,24 +2157,8 @@ func validateToolOperationTaskInputJSONValue(path string, value any, description
 	return nil
 }
 
-// validateToolOperationTaskInputJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationTaskInputJSONValue2(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
-	}
-	_, ok := value.(json.Number)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolOperationTaskInputJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationTaskInputJSONValue3(path string, value any, description string) error {
+// validateToolOperationPendingExecutionJSONValue8 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateToolOperationPendingExecutionJSONValue8(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -3012,180 +2179,12 @@ func validateToolOperationTaskInputJSONValue3(path string, value any, descriptio
 		if typed[key] == nil {
 			continue
 		}
-		if err := validateToolOperationTaskInputJSONValue4(
+		if err := validateToolOperationHostRequestJSONValue(
 			generatedJSONChildPath(path, key, true),
 			typed[key], description,
 		); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-// validateToolOperationTaskInputJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationTaskInputJSONValue4(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "method":
-			if err := validateToolOperationTaskInputJSONValue5(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Exact MCP interaction method.",
-			); err != nil {
-				return err
-			}
-		case "params":
-			if err := validateToolOperationTaskInputJSONValue6(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Original JSON object describing the host interaction.",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"method",
-				"params",
-			})
-		}
-	}
-	return nil
-}
-
-// validateToolOperationTaskInputJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationTaskInputJSONValue5(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolOperationTaskInputJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationTaskInputJSONValue6(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolOperationTaskInputJSONValue7 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationTaskInputJSONValue7(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolOperationTaskWaitJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationTaskWaitJSONValue(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "poll_interval_ms":
-			if err := validateToolOperationTaskWaitJSONValue2(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Optional server guidance for the next observation in integer milliseconds; this is not a Task lifetime limit.",
-			); err != nil {
-				return err
-			}
-		case "task_id":
-			if err := validateToolOperationTaskWaitJSONValue3(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Exact server-owned Task identifier, including an empty string.",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"poll_interval_ms",
-				"task_id",
-			})
-		}
-	}
-	return nil
-}
-
-// validateToolOperationTaskWaitJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationTaskWaitJSONValue2(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
-	}
-	_, ok := value.(json.Number)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateToolOperationTaskWaitJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateToolOperationTaskWaitJSONValue3(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -3500,34 +2499,8 @@ func checkToolOperationInputContinuationValue(in *ToolOperationInputContinuation
 		return fmt.Errorf("missing root value")
 	}
 	active := make(map[any]bool)
-	if err := checkToolOperationInputContinuationToolOperationInputContinuationValue(in, "$", active); err != nil {
+	if err := checkToolOperationExecutionContinuationToolOperationInputContinuationValue(in, "$", active); err != nil {
 		return err
-	}
-	return nil
-}
-
-// checkToolOperationInputContinuationToolOperationInputContinuationValue checks one generated value on the active path.
-func checkToolOperationInputContinuationToolOperationInputContinuationValue(in *ToolOperationInputContinuation, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if in.State != nil {
-			if !utf8.ValidString(string(*in.State)) {
-				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "state", false))
-			}
-		}
-		for key1, item1 := range in.Responses {
-			_ = item1
-			if !utf8.ValidString(string(key1)) {
-				return fmt.Errorf("%s: invalid UTF-8 map key", generatedJSONChildPath(field, "responses", false))
-			}
-		}
 	}
 	return nil
 }
@@ -3598,27 +2571,9 @@ func checkToolOperationPendingExecutionToolOperationPendingInputValue(in *ToolOp
 			if !utf8.ValidString(string(key1)) {
 				return fmt.Errorf("%s: invalid UTF-8 map key", generatedJSONChildPath(field, "requests", false))
 			}
-			if err := checkToolOperationPendingExecutionToolOperationHostRequestValue(item1, generatedJSONChildPath(generatedJSONChildPath(field, "requests", false), string(key1), true), active); err != nil {
+			if err := checkToolOperationHostRequestToolOperationHostRequestValue(item1, generatedJSONChildPath(generatedJSONChildPath(field, "requests", false), string(key1), true), active); err != nil {
 				return err
 			}
-		}
-	}
-	return nil
-}
-
-// checkToolOperationPendingExecutionToolOperationHostRequestValue checks one generated value on the active path.
-func checkToolOperationPendingExecutionToolOperationHostRequestValue(in *ToolOperationHostRequest, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if !utf8.ValidString(string(in.Method)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "method", false))
 		}
 	}
 	return nil
@@ -3661,7 +2616,7 @@ func checkToolOperationPendingExecutionToolOperationTaskInputValue(in *ToolOpera
 			if !utf8.ValidString(string(key1)) {
 				return fmt.Errorf("%s: invalid UTF-8 map key", generatedJSONChildPath(field, "requests", false))
 			}
-			if err := checkToolOperationPendingExecutionToolOperationHostRequestValue(item1, generatedJSONChildPath(generatedJSONChildPath(field, "requests", false), string(key1), true), active); err != nil {
+			if err := checkToolOperationHostRequestToolOperationHostRequestValue(item1, generatedJSONChildPath(generatedJSONChildPath(field, "requests", false), string(key1), true), active); err != nil {
 				return err
 			}
 		}
@@ -3675,55 +2630,8 @@ func checkToolOperationPendingInputValue(in *ToolOperationPendingInput) error {
 		return fmt.Errorf("missing root value")
 	}
 	active := make(map[any]bool)
-	if err := checkToolOperationPendingInputToolOperationPendingInputValue(in, "$", active); err != nil {
+	if err := checkToolOperationPendingExecutionToolOperationPendingInputValue(in, "$", active); err != nil {
 		return err
-	}
-	return nil
-}
-
-// checkToolOperationPendingInputToolOperationPendingInputValue checks one generated value on the active path.
-func checkToolOperationPendingInputToolOperationPendingInputValue(in *ToolOperationPendingInput, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if in.State != nil {
-			if !utf8.ValidString(string(*in.State)) {
-				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "state", false))
-			}
-		}
-		for key1, item1 := range in.Requests {
-			_ = item1
-			if !utf8.ValidString(string(key1)) {
-				return fmt.Errorf("%s: invalid UTF-8 map key", generatedJSONChildPath(field, "requests", false))
-			}
-			if err := checkToolOperationPendingInputToolOperationHostRequestValue(item1, generatedJSONChildPath(generatedJSONChildPath(field, "requests", false), string(key1), true), active); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-// checkToolOperationPendingInputToolOperationHostRequestValue checks one generated value on the active path.
-func checkToolOperationPendingInputToolOperationHostRequestValue(in *ToolOperationHostRequest, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if !utf8.ValidString(string(in.Method)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "method", false))
-		}
 	}
 	return nil
 }
@@ -3734,32 +2642,8 @@ func checkToolOperationTaskAnswersValue(in *ToolOperationTaskAnswers) error {
 		return fmt.Errorf("missing root value")
 	}
 	active := make(map[any]bool)
-	if err := checkToolOperationTaskAnswersToolOperationTaskAnswersValue(in, "$", active); err != nil {
+	if err := checkToolOperationExecutionContinuationToolOperationTaskAnswersValue(in, "$", active); err != nil {
 		return err
-	}
-	return nil
-}
-
-// checkToolOperationTaskAnswersToolOperationTaskAnswersValue checks one generated value on the active path.
-func checkToolOperationTaskAnswersToolOperationTaskAnswersValue(in *ToolOperationTaskAnswers, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if !utf8.ValidString(string(in.TaskID)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "task_id", false))
-		}
-		for key1, item1 := range in.Responses {
-			_ = item1
-			if !utf8.ValidString(string(key1)) {
-				return fmt.Errorf("%s: invalid UTF-8 map key", generatedJSONChildPath(field, "responses", false))
-			}
-		}
 	}
 	return nil
 }
@@ -3770,53 +2654,8 @@ func checkToolOperationTaskInputValue(in *ToolOperationTaskInput) error {
 		return fmt.Errorf("missing root value")
 	}
 	active := make(map[any]bool)
-	if err := checkToolOperationTaskInputToolOperationTaskInputValue(in, "$", active); err != nil {
+	if err := checkToolOperationPendingExecutionToolOperationTaskInputValue(in, "$", active); err != nil {
 		return err
-	}
-	return nil
-}
-
-// checkToolOperationTaskInputToolOperationTaskInputValue checks one generated value on the active path.
-func checkToolOperationTaskInputToolOperationTaskInputValue(in *ToolOperationTaskInput, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if !utf8.ValidString(string(in.TaskID)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "task_id", false))
-		}
-		for key1, item1 := range in.Requests {
-			_ = item1
-			if !utf8.ValidString(string(key1)) {
-				return fmt.Errorf("%s: invalid UTF-8 map key", generatedJSONChildPath(field, "requests", false))
-			}
-			if err := checkToolOperationTaskInputToolOperationHostRequestValue(item1, generatedJSONChildPath(generatedJSONChildPath(field, "requests", false), string(key1), true), active); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-// checkToolOperationTaskInputToolOperationHostRequestValue checks one generated value on the active path.
-func checkToolOperationTaskInputToolOperationHostRequestValue(in *ToolOperationHostRequest, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if !utf8.ValidString(string(in.Method)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "method", false))
-		}
 	}
 	return nil
 }
@@ -3827,26 +2666,8 @@ func checkToolOperationTaskWaitValue(in *ToolOperationTaskWait) error {
 		return fmt.Errorf("missing root value")
 	}
 	active := make(map[any]bool)
-	if err := checkToolOperationTaskWaitToolOperationTaskWaitValue(in, "$", active); err != nil {
+	if err := checkToolOperationPendingExecutionToolOperationTaskWaitValue(in, "$", active); err != nil {
 		return err
-	}
-	return nil
-}
-
-// checkToolOperationTaskWaitToolOperationTaskWaitValue checks one generated value on the active path.
-func checkToolOperationTaskWaitToolOperationTaskWaitValue(in *ToolOperationTaskWait, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if !utf8.ValidString(string(in.TaskID)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "task_id", false))
-		}
 	}
 	return nil
 }

@@ -129,7 +129,7 @@ func validateHostInputRequestOriginal(value *HostInputRequest) (err error) {
 	case "form":
 		actual, _ := value.Question.AsForm()
 		if actual != nil {
-			if err2 := validateHostFormParamsOriginal2(actual); err2 != nil {
+			if err2 := validateHostFormParamsOriginal(actual); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -145,22 +145,8 @@ func validateHostInputRequestOriginal(value *HostInputRequest) (err error) {
 	return err
 }
 
-// validateHostFormParamsOriginal2 checks the original typed value before JSON conversion.
-func validateHostFormParamsOriginal2(value *HostFormParams) (err error) {
-	if value.RequestedSchema == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("requestedSchema", "value"))
-	}
-	return err
-}
-
 // validateHostURLParamsOriginal checks the original typed value before JSON conversion.
 func validateHostURLParamsOriginal(value *HostURLParams) (err error) {
-	err = goa.MergeErrors(err, goa.ValidateFormat("value.url", value.URL, goa.FormatURI))
-	return err
-}
-
-// validateHostURLParamsOriginal2 checks the original typed value before JSON conversion.
-func validateHostURLParamsOriginal2(value *HostURLParams) (err error) {
 	err = goa.MergeErrors(err, goa.ValidateFormat("value.url", value.URL, goa.FormatURI))
 	return err
 }
@@ -487,7 +473,7 @@ func EncodeHostURLParams(in *HostURLParams) ([]byte, error) {
 	if err := checkHostURLParamsValue(in); err != nil {
 		return nil, fmt.Errorf("encode HostURLParams JSON: %w", err)
 	}
-	if err := validateHostURLParamsOriginal2(in); err != nil {
+	if err := validateHostURLParamsOriginal(in); err != nil {
 		return nil, fmt.Errorf("validate HostURLParams value: %w", err)
 	}
 	var body *jsonHostURLParamsTransport
@@ -513,7 +499,7 @@ func DecodeHostURLParams(data []byte) (out *HostURLParams, err error) {
 	if err != nil {
 		return out, fmt.Errorf("decode HostURLParams JSON: %w", err)
 	}
-	if err := validateHostURLParamsJSONValue("", root, ""); err != nil {
+	if err := validateHostInputRequestJSONValue4("", root, ""); err != nil {
 		return out, fmt.Errorf("decode HostURLParams JSON: %w", err)
 	}
 	var body *jsonHostURLParamsTransport
@@ -680,7 +666,7 @@ func validateHostInputRequestJSONValue(path string, value any, description strin
 				return err
 			}
 		case "question":
-			if err := validateHostInputRequestJSONValue4(
+			if err := validateHostInputRequestJSONValue3(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "",
 			); err != nil {
@@ -718,7 +704,7 @@ func validateHostInputRequestJSONValue2(path string, value any, description stri
 		if typed[key] == nil {
 			continue
 		}
-		if err := validateHostInputRequestJSONValue3(
+		if err := validateHostFormParamsJSONValue3(
 			generatedJSONChildPath(path, key, true),
 			typed[key], description,
 		); err != nil {
@@ -730,22 +716,6 @@ func validateHostInputRequestJSONValue2(path string, value any, description stri
 
 // validateHostInputRequestJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateHostInputRequestJSONValue3(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateHostInputRequestJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateHostInputRequestJSONValue4(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -772,16 +742,16 @@ func validateHostInputRequestJSONValue4(path string, value any, description stri
 	}
 	switch discriminator {
 	case "form":
-		return validateHostInputRequestJSONValue5(generatedJSONChildPath(path, "value", false), branch, "Form input requested by the service.")
+		return validateHostFormParamsJSONValue(generatedJSONChildPath(path, "value", false), branch, "Form input requested by the service.")
 	case "url":
-		return validateHostInputRequestJSONValue8(generatedJSONChildPath(path, "value", false), branch, "External consent requested by the service.")
+		return validateHostInputRequestJSONValue4(generatedJSONChildPath(path, "value", false), branch, "External consent requested by the service.")
 	default:
 		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
 	}
 }
 
-// validateHostInputRequestJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateHostInputRequestJSONValue5(path string, value any, description string) error {
+// validateHostInputRequestJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateHostInputRequestJSONValue4(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -801,90 +771,14 @@ func validateHostInputRequestJSONValue5(path string, value any, description stri
 	for _, key := range keys {
 		switch key {
 		case "message":
-			if err := validateHostInputRequestJSONValue6(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Non-sensitive information requested from the user",
-			); err != nil {
-				return err
-			}
-		case "requestedSchema":
-			if err := validateHostInputRequestJSONValue7(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Exact JSON-object bytes of the original flat form schema.",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"message",
-				"requestedSchema",
-			})
-		}
-	}
-	return nil
-}
-
-// validateHostInputRequestJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateHostInputRequestJSONValue6(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateHostInputRequestJSONValue7 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateHostInputRequestJSONValue7(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateHostInputRequestJSONValue8 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateHostInputRequestJSONValue8(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "message":
-			if err := validateHostInputRequestJSONValue9(
+			if err := validateHostFormParamsJSONValue2(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "The external interaction the user is asked to approve",
 			); err != nil {
 				return err
 			}
 		case "url":
-			if err := validateHostInputRequestJSONValue10(
+			if err := validateHostFormParamsJSONValue2(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Absolute URL opened by the consenting host",
 			); err != nil {
@@ -896,114 +790,6 @@ func validateHostInputRequestJSONValue8(path string, value any, description stri
 				"url",
 			})
 		}
-	}
-	return nil
-}
-
-// validateHostInputRequestJSONValue9 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateHostInputRequestJSONValue9(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateHostInputRequestJSONValue10 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateHostInputRequestJSONValue10(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateHostURLParamsJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
-func validateHostURLParamsJSONValue(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "message":
-			if err := validateHostURLParamsJSONValue2(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "The external interaction the user is asked to approve",
-			); err != nil {
-				return err
-			}
-		case "url":
-			if err := validateHostURLParamsJSONValue3(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Absolute URL opened by the consenting host",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"message",
-				"url",
-			})
-		}
-	}
-	return nil
-}
-
-// validateHostURLParamsJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateHostURLParamsJSONValue2(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateHostURLParamsJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateHostURLParamsJSONValue3(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -1220,7 +1006,7 @@ func checkHostInputRequestHostInputRequestValue(in *HostInputRequest, field stri
 	if in != nil {
 		if branch1, ok := in.Question.AsForm(); ok {
 			_ = branch1
-			if err := checkHostInputRequestHostFormParamsValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "question", false), "value", false), active); err != nil {
+			if err := checkHostFormParamsHostFormParamsValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "question", false), "value", false), active); err != nil {
 				return err
 			}
 		}
@@ -1235,24 +1021,6 @@ func checkHostInputRequestHostInputRequestValue(in *HostInputRequest, field stri
 			if !utf8.ValidString(string(key1)) {
 				return fmt.Errorf("%s: invalid UTF-8 map key", generatedJSONChildPath(field, "extensions", false))
 			}
-		}
-	}
-	return nil
-}
-
-// checkHostInputRequestHostFormParamsValue checks one generated value on the active path.
-func checkHostInputRequestHostFormParamsValue(in *HostFormParams, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if !utf8.ValidString(string(in.Message)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "message", false))
 		}
 	}
 	return nil
@@ -1285,29 +1053,8 @@ func checkHostURLParamsValue(in *HostURLParams) error {
 		return fmt.Errorf("missing root value")
 	}
 	active := make(map[any]bool)
-	if err := checkHostURLParamsHostURLParamsValue(in, "$", active); err != nil {
+	if err := checkHostInputRequestHostURLParamsValue(in, "$", active); err != nil {
 		return err
-	}
-	return nil
-}
-
-// checkHostURLParamsHostURLParamsValue checks one generated value on the active path.
-func checkHostURLParamsHostURLParamsValue(in *HostURLParams, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if !utf8.ValidString(string(in.Message)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "message", false))
-		}
-		if !utf8.ValidString(string(in.URL)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "url", false))
-		}
 	}
 	return nil
 }
