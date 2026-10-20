@@ -1,5 +1,5 @@
 // These tests reject incompatible promises before a paging pair becomes one
-// public operation and preserve references inside its two input schemas.
+// public operation and preserve the dialect and references of its input schemas.
 package codegen
 
 import (
@@ -45,17 +45,22 @@ func TestPagingCompositionRejectsDifferentPublicPromises(t *testing.T) {
 }
 
 func TestPagingExecutionSchemaKeepsBranchReferences(t *testing.T) {
-	query := []byte(`{"type":"object","additionalProperties":false,"properties":{"filter":{"$ref":"#/$defs/Filter"}},"$defs":{"Filter":{"type":"string"}}}`)
-	page := []byte(`{"type":"object","additionalProperties":false,"properties":{"cursor":{"type":"string"},"filter":{"$ref":"#/$defs/Filter"}},"required":["cursor"],"$defs":{"Filter":{"type":"integer"}}}`)
+	query := []byte(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false,"properties":{"filter":{"$ref":"#/$defs/Filter"}},"$defs":{"Filter":{"type":"string"}}}`)
+	page := []byte(`{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","additionalProperties":false,"properties":{"cursor":{"type":"string"},"filter":{"$ref":"#/$defs/Filter"}},"required":["cursor"],"$defs":{"Filter":{"type":"integer"}}}`)
 	combined, err := pagingExecutionSchema(query, page)
 	require.NoError(t, err)
 	var document struct {
-		Type  string            `json:"type"`
-		OneOf []json.RawMessage `json:"oneOf"` //nolint:tagliatelle // The JSON Schema standard names this field oneOf.
+		Schema string           `json:"$schema"`
+		Type   string           `json:"type"`
+		OneOf  []map[string]any `json:"oneOf"` //nolint:tagliatelle // The JSON Schema standard names this field oneOf.
 	}
 	require.NoError(t, json.Unmarshal(combined, &document))
+	assert.Equal(t, "https://json-schema.org/draft/2020-12/schema", document.Schema)
 	assert.Equal(t, "object", document.Type)
 	require.Len(t, document.OneOf, 2)
+	for _, branch := range document.OneOf {
+		assert.NotContains(t, branch, "$schema")
+	}
 	assert.Contains(t, string(combined), `#/oneOf/0/$defs/Filter`)
 	assert.Contains(t, string(combined), `#/oneOf/1/$defs/Filter`)
 	assert.NotContains(t, string(query), "oneOf")
