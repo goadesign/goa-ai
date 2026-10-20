@@ -144,25 +144,58 @@ func equivalentToolSpec(a, b tools.ToolSpec) bool {
 	return reflect.DeepEqual(toolSpecShape(a), toolSpecShape(b))
 }
 
-// toolSpecShape removes function values from an owned copy so reflect.DeepEqual
-// compares only the generated schema and runtime policy contract.
+// toolSpecShape prepares one tool declaration for read-only comparison. It
+// removes functions without copying schema bytes or changing the caller's
+// codecs, and keeps the empty-metadata rules used by cloneToolSpec. Only
+// reflect.DeepEqual reads the returned value.
 func toolSpecShape(spec tools.ToolSpec) tools.ToolSpec {
-	spec = cloneToolSpec(spec)
-	spec.Payload.Codec = tools.JSONCodec[any]{}
+	spec.Tags = append([]string(nil), spec.Tags...)
+	spec.Meta = maps.Clone(spec.Meta)
+	for key, values := range spec.Meta {
+		spec.Meta[key] = append([]string(nil), values...)
+	}
+	if len(spec.ExecutionPayloadSchema) == 0 {
+		spec.ExecutionPayloadSchema = nil
+	}
+	spec.Payload = toolTypeShape(spec.Payload)
 	if spec.TextOnly != nil {
-		spec.TextOnly.Payload.Codec = tools.JSONCodec[any]{}
-		spec.TextOnly.ExecutionCodec = tools.JSONCodec[any]{}
+		contract := *spec.TextOnly
+		contract.Payload = toolTypeShape(contract.Payload)
+		contract.ExecutionCodec = tools.JSONCodec[any]{}
+		spec.TextOnly = &contract
 	}
 	spec.ExecutionPayloadCodec = tools.JSONCodec[any]{}
-	spec.Result.Codec = tools.JSONCodec[any]{}
+	spec.Result = toolTypeShape(spec.Result)
 	spec.CanonicalizeServerData = nil
 	spec.PrepareInput = nil
-	for _, item := range spec.ServerData {
+	serverData := make([]*tools.ServerDataSpec, len(spec.ServerData))
+	for index, item := range spec.ServerData {
 		if item == nil {
 			continue
 		}
-		item.Type.Codec = tools.JSONCodec[any]{}
+		declaration := *item
+		declaration.Type = toolTypeShape(declaration.Type)
+		serverData[index] = &declaration
 	}
+	spec.ServerData = serverData
+	return spec
+}
+
+// toolTypeShape prepares one type for comparison without changing its codec.
+// It keeps nil and empty schemas equivalent and copies field metadata with the
+// existing empty-slice rules. Comparison only reads the large schema documents.
+func toolTypeShape(spec tools.TypeSpec) tools.TypeSpec {
+	spec.Codec = tools.JSONCodec[any]{}
+	if len(spec.Schema) == 0 {
+		spec.Schema = nil
+	}
+	if len(spec.SchemaWithoutRootExample) == 0 {
+		spec.SchemaWithoutRootExample = nil
+	}
+	if len(spec.ExampleJSON) == 0 {
+		spec.ExampleJSON = nil
+	}
+	spec.Fields = tools.CloneFieldMetadata(spec.Fields)
 	return spec
 }
 
