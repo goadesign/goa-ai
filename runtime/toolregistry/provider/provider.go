@@ -411,13 +411,25 @@ func (run *providerRun) serve(
 		)
 	})
 
-	type workItem struct {
-		ev  *streaming.Event
-		msg toolregistry.ToolCallMessage
-	}
+	type (
+		workItem struct {
+			ev  *streaming.Event
+			msg toolregistry.ToolCallMessage
+		}
+		// A delivered event belongs to one stream generation. Recreated streams
+		// may reuse an event ID without referring to the same queued work.
+		deliveryKey struct {
+			stream, generation, id string
+		}
+	)
 
 	work := make(chan workItem, maxQueued)
 	acks := make(chan *streaming.Event, maxConcurrent+maxQueued)
+	// Intake records events before queueing them; successful acknowledgement
+	// removes them. Repeated deliveries remain recoverable in Redis while the
+	// original is queued, running, or waiting for acknowledgement here.
+	var deliveriesMu sync.Mutex
+	deliveries := make(map[deliveryKey]struct{})
 	handlerCtx, cancelHandlers := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancelHandlers()
 	ackLifecycleCtx, cancelAcks := context.WithCancel(context.WithoutCancel(ctx))
@@ -489,6 +501,10 @@ func (run *providerRun) serve(
 					return
 				}
 				signalSettleFailure(ackLifecycleCtx, fmt.Errorf("ack toolset event %s: %w", ev.ID, err))
+			} else {
+				deliveriesMu.Lock()
+				delete(deliveries, deliveryKey{ev.StreamName, ev.StreamGeneration, ev.ID})
+				deliveriesMu.Unlock()
 			}
 		}
 	})
@@ -730,6 +746,16 @@ func (run *providerRun) serve(
 		return nil
 	}
 	acceptEvent := func(ev *streaming.Event) error {
+		key := deliveryKey{ev.StreamName, ev.StreamGeneration, ev.ID}
+		deliveriesMu.Lock()
+		_, retained := deliveries[key]
+		deliveriesMu.Unlock()
+		if retained {
+			// The original delivery already passed decoding and validation. Do not
+			// acknowledge its duplicate: that would also acknowledge queued work
+			// that Redis must retain if this provider stops before completion.
+			return nil
+		}
 		var msg toolregistry.ToolCallMessage
 		if err := json.Unmarshal(ev.Payload, &msg); err != nil {
 			logger.Error(
@@ -790,10 +816,18 @@ func (run *providerRun) serve(
 		// observers of the delivered event still receive its original payload.
 		queuedEvent := *ev
 		queuedEvent.Payload = nil
+		// Record the event before sending it so a fast worker cannot acknowledge
+		// and remove it before intake has recorded ownership of the delivery.
+		deliveriesMu.Lock()
+		deliveries[key] = struct{}{}
+		deliveriesMu.Unlock()
 		select {
 		case work <- workItem{ev: &queuedEvent, msg: msg}:
 			return nil
 		default:
+			deliveriesMu.Lock()
+			delete(deliveries, key)
+			deliveriesMu.Unlock()
 			logger.Error(
 				ctx,
 				"tool call queue full; completing as provider overloaded",
