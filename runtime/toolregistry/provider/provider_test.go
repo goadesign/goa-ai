@@ -1794,7 +1794,8 @@ func TestServeDistinctDeliveriesPreserveCallIdentityAndAskRegistryForClaims(t *t
 	first.ID, second.ID = "request-one", "request-two"
 	events <- first
 	events <- second
-	var acknowledgedIDs, claimedIDs []string
+	acknowledgedIDs := make([]string, 0, 2)
+	claimedIDs := make([]string, 0, 2)
 	for range 2 {
 		result := <-results
 		assert.Equal(t, "shared-call", result.ToolUseID)
