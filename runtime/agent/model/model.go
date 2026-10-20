@@ -1252,21 +1252,30 @@ func ToolInputFromContract(toolName string, contract ToolInputContract) (ToolInp
 	if err != nil {
 		return ToolInput{}, err
 	}
+	var validate func(rawjson.Message) error
 	if len(schemaWithoutRootExample) > 0 {
-		if _, err := compileToolSchemaValidator(schemaWithoutRootExample); err != nil {
+		alternateValidator, err := compileToolSchemaValidator(schemaWithoutRootExample)
+		if err != nil {
 			return ToolInput{}, fmt.Errorf("model: tool %q schema without root example: %w", toolName, err)
 		}
 		if err := validateSchemaWithoutRootExample(schema, schemaWithoutRootExample); err != nil {
 			return ToolInput{}, fmt.Errorf("model: tool %q schema without root example: %w", toolName, err)
+		}
+		// Identical schema documents use the validator already compiled above,
+		// so callers receive the same checks without compiling those bytes twice.
+		if bytes.Equal(schema, schemaWithoutRootExample) {
+			validate = alternateValidator
 		}
 	}
 	exampleJSON, err := validateContractJSON(toolName, "example JSON", contract.ExampleJSON)
 	if err != nil {
 		return ToolInput{}, err
 	}
-	validate, err := compileToolSchemaValidator(schema)
-	if err != nil {
-		return ToolInput{}, fmt.Errorf("model: tool %q input schema: %w", toolName, err)
+	if validate == nil {
+		validate, err = compileToolSchemaValidator(schema)
+		if err != nil {
+			return ToolInput{}, fmt.Errorf("model: tool %q input schema: %w", toolName, err)
+		}
 	}
 	if len(exampleJSON) > 0 {
 		if err := validate(exampleJSON); err != nil {
