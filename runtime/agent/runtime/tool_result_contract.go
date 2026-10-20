@@ -207,14 +207,20 @@ func validateToolBoundsContract(spec tools.ToolSpec, call ToolCall, failed bool,
 	if bounds == nil {
 		return fmt.Errorf("bounded tool %q returned result without bounds (tool_call_id=%s)", call.Name, call.ToolCallID)
 	}
+	if spec.Bounds.Paging == nil && bounds.NextCursor != nil {
+		return fmt.Errorf("bounded tool %q returned next_cursor but paging is not configured (tool_call_id=%s)", call.Name, call.ToolCallID)
+	}
+	return validateToolBoundsMetadata(call, bounds)
+}
+
+// validateToolBoundsMetadata checks saved result continuation flags
+// without interpreting a tool's arguments or requiring its current declaration.
+func validateToolBoundsMetadata(call ToolCall, bounds *agent.Bounds) error {
 	if bounds.NextCursor != nil && *bounds.NextCursor == "" {
 		return fmt.Errorf("bounded tool %q returned an empty next_cursor (tool_call_id=%s)", call.Name, call.ToolCallID)
 	}
 	if bounds.Truncated && !boundedresult.HasContinuation(bounds.NextCursor, bounds.RefinementHint) {
 		return fmt.Errorf("bounded tool %q returned truncated result without next_cursor or refinement_hint (tool_call_id=%s)", call.Name, call.ToolCallID)
-	}
-	if spec.Bounds.Paging == nil && bounds.NextCursor != nil {
-		return fmt.Errorf("bounded tool %q returned next_cursor but paging is not configured (tool_call_id=%s)", call.Name, call.ToolCallID)
 	}
 	if bounds.NextCursor != nil && !bounds.Truncated {
 		return fmt.Errorf("bounded tool %q returned next_cursor without truncation (tool_call_id=%s)", call.Name, call.ToolCallID)

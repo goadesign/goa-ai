@@ -135,6 +135,10 @@ func (r *Runtime) continuationActionsForHistory(ctx context.Context, input *reso
 			seen[key] = struct{}{}
 		}
 	}
+	outputs, err = r.selectHistoricalContinuations(input, outputs, current, specs)
+	if err != nil {
+		return nil, err
+	}
 	actions, err := r.availableContinuationActions(input.AgentID, outputs, input.RunContext.TextOnly)
 	if err != nil {
 		return nil, err
@@ -277,7 +281,9 @@ func (r *selectedContinuationReader) addReference(ctx context.Context, ref *api.
 	if err != nil {
 		return err
 	}
-	if _, relevant := names[call.ToolName.String()]; !relevant {
+	_, relevant := names[call.ToolName.String()]
+	savedPaging := call.ContinuationRootToolCallID != "" || result.result.Bounds != nil
+	if !relevant && !savedPaging {
 		return nil
 	}
 	output, err := toolOutputFromStoredEvents(ref.CallRunID, ref.ResultRunID, ref.ToolCallID, r.entry(ref.CallRunID, ref.ToolCallID), result)
