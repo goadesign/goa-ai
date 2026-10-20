@@ -28,14 +28,14 @@ func TestEquivalentToolSpecPreservesNestedCodecs(t *testing.T) {
 	} {
 		require.NotNil(t, codec.FromJSON)
 		decoded, err := codec.FromJSON([]byte(`{"value":"original"}`))
-		assert.NoError(t, err)
+		require.NoError(t, err)
 		assert.Equal(t, map[string]any{"value": "original"}, decoded)
 	}
 	decoded, err := other.TextOnly.Payload.Codec.FromJSON(nil)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, "other", decoded)
 	decoded, err = other.ServerData[0].Type.Codec.FromJSON(nil)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	assert.Equal(t, "other", decoded)
 }
 
