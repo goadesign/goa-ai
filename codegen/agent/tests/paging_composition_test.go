@@ -99,10 +99,17 @@ func TestPublishedPaging(t *testing.T) {
 			assert.Empty(t, spec.Bounds.Paging.SourceTool)
 			for _, executionSchema := range [][]byte{spec.ExecutionPayloadSchema, spec.TextOnly.ExecutionSchema} {
 				var document struct {
+					Schema string `+"`json:\"$schema\"`"+`
 					Type string `+"`json:\"type\"`"+`
+					OneOf []map[string]any `+"`json:\"oneOf\"`"+`
 				}
 				require.NoError(t, json.Unmarshal(executionSchema, &document))
+				assert.Equal(t, "https://json-schema.org/draft/2020-12/schema", document.Schema)
 				assert.Equal(t, "object", document.Type)
+				require.Len(t, document.OneOf, 2)
+				for _, branch := range document.OneOf {
+					assert.NotContains(t, branch, "$schema")
+				}
 				composed, err := schema.PagingComposition(executionSchema, spec.Bounds.Paging.CursorField)
 				require.NoError(t, err)
 				assert.True(t, composed)

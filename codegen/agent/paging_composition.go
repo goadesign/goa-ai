@@ -73,17 +73,24 @@ func validatePagingComposition(source, page *toolEntry) error {
 	return nil
 }
 
-// pagingExecutionSchema embeds each closed schema and rebases local references
-// so nested types still resolve inside their original query or page branch.
+// pagingExecutionSchema receives query and page schemas from the same JSON
+// Schema builder, declares their shared schema version at the combined root,
+// and updates local references so callers keep both original input shapes.
 func pagingExecutionSchema(query, page []byte) ([]byte, error) {
-	branches := make([]any, 2)
+	branches := make([]map[string]any, 2)
 	for index, document := range [][]byte{query, page} {
 		if err := json.Unmarshal(document, &branches[index]); err != nil {
 			return nil, err
 		}
 		rebasePagingReferences(branches[index], fmt.Sprintf("#/oneOf/%d", index))
 	}
-	return json.Marshal(map[string]any{"type": "object", "oneOf": branches})
+	dialect := branches[0]["$schema"]
+	for _, branch := range branches {
+		// The query and page now sit under one document root. Declare their
+		// schema version there instead of repeating it in these two branches.
+		delete(branch, "$schema")
+	}
+	return json.Marshal(map[string]any{"$schema": dialect, "type": "object", "oneOf": branches})
 }
 
 // rebasePagingReferences keeps each embedded schema reference pointed at its
