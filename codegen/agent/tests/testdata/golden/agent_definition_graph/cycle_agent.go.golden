@@ -73,7 +73,7 @@ var agentDefinition = runtime.NewAgentDefinition(
 			},
 			nil,
 			nil,
-		),
+		).WithRegistryDeclarations(specs2.ToolSchema),
 	},
 	nil,
 ).WithRegistryDeclarations(specs.ToolSchema)

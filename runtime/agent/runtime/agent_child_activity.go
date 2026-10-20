@@ -97,9 +97,10 @@ func (r *Runtime) prepareAgentChildActivity(ctx context.Context, input *api.Agen
 		request.policy.TextOnly = true
 	}
 	// A selected child can require ordinary messages even when its parent allows
-	// UI output. Check that child's invocation before saving its model input.
+	// UI output. Use this worker's declarations after its provider route check;
+	// the consuming parent can run on a separate worker.
 	if request.policy != nil && request.policy.TextOnly {
-		spec, exists, err := r.callSpec(input.Call)
+		spec, exists, err := lookupCallSpec(input.Call, r)
 		if err != nil {
 			return nil, engine.MarkActivityErrorNonRetryable(err)
 		}

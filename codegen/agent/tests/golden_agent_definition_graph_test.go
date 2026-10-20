@@ -22,6 +22,8 @@ func TestGoldenAgentDefinitionGrandchild(t *testing.T) {
 	require.Equal(t, 1, strings.Count(agent, `"leaf.grandchild"`))
 	require.NotContains(t, agent, "/agents/child\"")
 	require.NotContains(t, agent, "/agents/grandchild\"")
+	require.Contains(t, agent, ").WithRegistryDeclarations(specs2.ToolSchema)")
+	require.Contains(t, agent, ").WithRegistryDeclarations(specs3.ToolSchema)")
 	assertGoldenGo(t, "agent_definition_graph", "grandchild_agent.go.golden", agent)
 	runCompleteGeneratedPackageTest(t, files, "./gen/...")
 }
@@ -34,6 +36,7 @@ func TestGoldenAgentDefinitionCycle(t *testing.T) {
 
 	require.Equal(t, 1, strings.Count(agent, `"beta.worker"`))
 	require.Equal(t, 1, strings.Count(agent, `"alpha.worker"`))
+	require.Contains(t, agent, ").WithRegistryDeclarations(specs2.ToolSchema)")
 	assertGoldenGo(t, "agent_definition_graph", "cycle_agent.go.golden", agent)
 	runCompleteGeneratedPackageTest(t, files, "./gen/...")
 }

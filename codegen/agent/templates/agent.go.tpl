@@ -81,7 +81,7 @@ var {{ .PackageNames.DefinitionValue }} = {{ .RuntimeAlias }}.NewAgentDefinition
 {{- template "agentDefinitionTools" . }}
             nil,
 {{- template "agentDefinitionDeferral" . }}
-        ){{ if .RegistrySources }}.WithRegistryTools({{ .RegistrySources.TypeName }}{}){{ end }},
+        ){{ if .RegistrySources }}.WithRegistryTools({{ .RegistrySources.TypeName }}{}){{ end }}{{ if .Tools }}.WithRegistryDeclarations({{ .ToolSpecsAlias }}.ToolSchema){{ end }},
 {{- end }}
     },
 {{- else }}

@@ -72,7 +72,7 @@ var agentDefinition = runtime.NewAgentDefinition(
 			[]tools.Ident{},
 			nil,
 			nil,
-		),
+		).WithRegistryDeclarations(specs2.ToolSchema),
 		runtime.NewAgentDefinition(
 			runtime.AgentRoute{
 				ID:               agent.Ident("middle.child"),
@@ -87,7 +87,7 @@ var agentDefinition = runtime.NewAgentDefinition(
 			},
 			nil,
 			nil,
-		),
+		).WithRegistryDeclarations(specs3.ToolSchema),
 	},
 	nil,
 ).WithRegistryDeclarations(specs.ToolSchema)
