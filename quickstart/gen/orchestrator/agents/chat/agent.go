@@ -61,7 +61,7 @@ var agentDefinition = agentsruntime.NewAgentDefinition(
 	[]tools.Ident{
 		"helpers.answer",
 	},
-)
+).WithRegistryDeclarations(specs.ToolSchema)
 
 // Definition returns the immutable generated contract shared by callers and workers.
 func Definition() agentsruntime.AgentDefinition {

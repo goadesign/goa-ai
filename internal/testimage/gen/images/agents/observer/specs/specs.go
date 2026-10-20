@@ -9,6 +9,7 @@ package specs
 
 import (
 	pictures "goa.design/goa-ai/internal/testimage/gen/images/toolsets/pictures"
+	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent/policy"
 	tools "goa.design/goa-ai/runtime/agent/tools"
 )
@@ -40,6 +41,18 @@ func Spec(name tools.Ident) (tools.ToolSpec, bool) {
 		return pictures.Spec(pictures.View)
 	default:
 		return tools.ToolSpec{}, false
+	}
+}
+
+// ToolSchema returns the generated registry declaration of one tool
+// available to this agent, with fresh owned values. It returns false for tools
+// without a declaration, such as private page operations.
+func ToolSchema(name tools.Ident) (*genregistry.ToolSchema, bool) {
+	switch name {
+	case tools.Ident("pictures.view"):
+		return pictures.ToolSchema(name)
+	default:
+		return nil, false
 	}
 }
 

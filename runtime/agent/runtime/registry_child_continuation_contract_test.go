@@ -100,7 +100,7 @@ func TestRetainPendingResponseContractsUsesOnlyRequestedTools(t *testing.T) {
 	suspension := externalResultsSuspensionFixture(t, spec.Name)
 	checkpoint, err := decodeWorkflowCheckpointState(suspension)
 	require.NoError(t, err)
-	require.NoError(t, retainPendingResponseContracts(checkpoint.Pending, definition.spec))
+	require.NoError(t, retainPendingResponseContracts(checkpoint.Pending, definition))
 	assert.Len(t, checkpoint.Pending[0].ResponseContracts, 1)
 	assert.Equal(t, spec.Result.Schema, checkpoint.Pending[0].ResponseContracts[spec.Name].ResultSchema)
 	spec.Result.Schema[0] = 'X'

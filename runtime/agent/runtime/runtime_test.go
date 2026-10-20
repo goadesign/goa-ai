@@ -526,7 +526,7 @@ func TestExecuteWorkflowReferencesRestoredContinuationTranscript(t *testing.T) {
 			Question:        "Which facility?",
 		}),
 	)}
-	preparedAwait, err := prepareConsumerAwait(rt.toolSpec, initial.Await)
+	preparedAwait, err := prepareConsumerAwait(rt, initial.Await)
 	require.NoError(t, err)
 	initial.Await = preparedAwait
 	first, err := rt.runLoop(

@@ -9,6 +9,7 @@ package specs
 import (
 	math "goa.design/goa-ai/gen/alpha/toolsets/math"
 	ops "goa.design/goa-ai/gen/alpha/toolsets/ops"
+	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent/policy"
 	tools "goa.design/goa-ai/runtime/agent/tools"
 )
@@ -44,6 +45,20 @@ func Spec(name tools.Ident) (tools.ToolSpec, bool) {
 		return ops.Spec(ops.Echo)
 	default:
 		return tools.ToolSpec{}, false
+	}
+}
+
+// ToolSchema returns the generated registry declaration of one tool
+// available to this agent, with fresh owned values. It returns false for tools
+// without a declaration, such as private page operations.
+func ToolSchema(name tools.Ident) (*genregistry.ToolSchema, bool) {
+	switch name {
+	case tools.Ident("math.add"):
+		return math.ToolSchema(name)
+	case tools.Ident("ops.echo"):
+		return ops.ToolSchema(name)
+	default:
+		return nil, false
 	}
 }
 

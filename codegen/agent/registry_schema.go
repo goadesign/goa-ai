@@ -200,10 +200,51 @@ func registryOptionalString(value string) *string {
 	return &value
 }
 
+// toolRegistrySchemasFiles emits the literal declaration constructors and the
+// lookup that returns one tool's declaration by name. The lookup lives in its
+// own file so the constructor file stays free of branches and loops.
+func toolRegistrySchemasFiles(ts *ToolsetData, entries []*toolEntry) []*codegen.File {
+	literals, data := toolRegistrySchemasFile(ts, entries)
+	return []*codegen.File{literals, toolRegistrySchemaLookupFile(ts, data)}
+}
+
+// toolRegistrySchemaLookupFile emits ToolSchema, which maps each declared tool
+// name to its private constructor. Consuming agents pass their aggregate of
+// these lookups to the runtime so saved calls can omit the declaration.
+func toolRegistrySchemaLookupFile(ts *ToolsetData, data *registrySchemaFileData) *codegen.File {
+	sections := []*codegen.SectionTemplate{
+		codegen.Header(ts.Name+" registry declaration lookup", ts.SpecsPackageName, []*codegen.ImportSpec{
+			codegen.NewImport("genregistry", "goa.design/goa-ai/registry/gen/registry"),
+			codegen.NewImport("tools", "goa.design/goa-ai/runtime/agent/tools"),
+		}),
+		{
+			Name: "tool-registry-schema-lookup",
+			Source: `// ToolSchema returns the generated declaration of one tool with fresh owned
+// values. It returns false for names this toolset does not declare.
+func ToolSchema(name tools.Ident) (*genregistry.ToolSchema, bool) {
+{{- if .Schemas }}
+    declarations := registryDeclarations{}
+{{- end }}
+    switch name {
+{{- range .Schemas }}
+    case {{ printf "%q" .Value.Name }}:
+        return declarations.{{ .Name }}(), true
+{{- end }}
+    default:
+        return nil, false
+    }
+}`,
+			Data: data,
+		},
+	}
+	return &codegen.File{Path: filepath.Join(ts.SpecsDir, "registry_schema_lookup.go"), SectionTemplates: sections}
+}
+
 // toolRegistrySchemasFile emits literal constructors for tools, type metadata,
 // and individual fields. Smaller functions keep large catalogs practical to
 // compile without parsing schemas or interpreting metadata at provider startup.
-func toolRegistrySchemasFile(ts *ToolsetData, entries []*toolEntry) *codegen.File {
+// It also returns the planned constructors so the lookup file can call them.
+func toolRegistrySchemasFile(ts *ToolsetData, entries []*toolEntry) (*codegen.File, *registrySchemaFileData) {
 	owner := ts.definition.Owner.Ref
 	data := &registrySchemaFileData{
 		Name: owner.QualifiedName, Description: owner.Description, Tags: owner.Tags,
@@ -282,7 +323,7 @@ func ToolSchemas() []*genregistry.ToolSchema {
 			},
 		})
 	}
-	return &codegen.File{Path: filepath.Join(ts.SpecsDir, "registry_schemas.go"), SectionTemplates: sections}
+	return &codegen.File{Path: filepath.Join(ts.SpecsDir, "registry_schemas.go"), SectionTemplates: sections}, data
 }
 
 // add reserves a method before visiting its children. The method calls below it

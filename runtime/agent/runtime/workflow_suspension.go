@@ -254,9 +254,9 @@ func (l *workflowLoop) buildWorkflowCheckpoint(batch stepBatch, confirmations []
 		}
 		// Unbound calls keep runtime-registered codecs. Saved registry calls use
 		// only this consuming Agent's definition to select generated codecs.
-		lookup := l.r.toolSpec
+		var lookup toolSpecLookup = l.r
 		if call.Registry != nil {
-			lookup = l.reg.Definition.spec
+			lookup = l.reg.Definition
 		}
 		encoded, err := encodeToolEvent(event, call, lookup)
 		if err != nil {
@@ -335,7 +335,7 @@ func (l *workflowLoop) buildWorkflowCheckpoint(batch stepBatch, confirmations []
 			checkpointPending = append(checkpointPending, checkpointPendingInput{Await: &item, CallRunID: l.input.RunID})
 		}
 	}
-	if err := retainPendingResponseContracts(checkpointPending, l.r.toolSpec); err != nil {
+	if err := retainPendingResponseContracts(checkpointPending, l.r); err != nil {
 		return nil, nil, nil, err
 	}
 	publicPending, err := publicPendingInputs(checkpointPending)
@@ -557,7 +557,7 @@ func (r *Runtime) restoreSuspendedWorkflow(wfCtx *providerRecoveryWorkflowContex
 	}
 	base.providerRecovery = checkpoint.ProviderRecovery
 	base.providerControl = wfCtx.actor
-	state, err := r.restoreCheckpointState(checkpoint.State, reg.Definition.spec)
+	state, err := r.restoreCheckpointState(checkpoint.State, reg.Definition)
 	if err != nil {
 		return nil, err
 	}
@@ -745,7 +745,7 @@ func (r *Runtime) restoreCheckpointState(
 		if err != nil {
 			return nil, err
 		}
-		eventLookup := r.toolSpec
+		var eventLookup toolSpecLookup = r
 		if call.Registry != nil {
 			eventLookup = lookup
 		}
@@ -1049,7 +1049,7 @@ func retainPendingResponseContracts(pending []checkpointPendingInput, lookup too
 		}
 		input.ResponseContracts = make(map[tools.Ident]checkpointResponseContract)
 		for _, call := range awaitToolRequests([]planner.AwaitItem{*input.Await}) {
-			spec, ok := lookup(call.Name)
+			spec, ok := lookup.spec(call.Name)
 			if !ok {
 				return fmt.Errorf("pending result tool %q has no generated contract", call.Name)
 			}

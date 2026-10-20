@@ -36,8 +36,10 @@ const (
 	aggregateSpecFuncName           = "Spec"
 	aggregateMetadataFuncName       = "Metadata"
 	aggregateMetadataByNameFuncName = "MetadataByName"
+	aggregateToolSchemaFuncName     = "ToolSchema"
 	aggregatePolicyImportPath       = "goa.design/goa-ai/runtime/agent/policy"
 	aggregateToolsImportPath        = "goa.design/goa-ai/runtime/agent/tools"
+	aggregateRegistryImportPath     = "goa.design/goa-ai/registry/gen/registry"
 )
 
 // planAggregateSpecsPackages claims every emitted aggregate package and records
@@ -91,6 +93,7 @@ func planAggregateSpecsPackage(generation *goacodegen.Generation, agent *agentir
 		aggregateSpecFuncName,
 		aggregateMetadataFuncName,
 		aggregateMetadataByNameFuncName,
+		aggregateToolSchemaFuncName,
 	} {
 		declaration := goacodegen.NewExactName(goacodegen.NameFunction, name)
 		if err := pkg.DeclareName(declaration); err != nil {
@@ -101,6 +104,7 @@ func planAggregateSpecsPackage(generation *goacodegen.Generation, agent *agentir
 	if err := requirePackageImports(pkg, []*goacodegen.ImportSpec{
 		goacodegen.SimpleImport(aggregatePolicyImportPath),
 		goacodegen.NewImport("tools", aggregateToolsImportPath),
+		goacodegen.NewImport("genregistry", aggregateRegistryImportPath),
 	}); err != nil {
 		return nil, err
 	}
@@ -142,10 +146,11 @@ func (p *aggregateSpecsPackagePlan) link(agent *AgentData) error {
 		return err
 	}
 	agent = selected
-	imports := make([]*goacodegen.ImportSpec, 0, 2+len(p.toolsetImports))
+	imports := make([]*goacodegen.ImportSpec, 0, 3+len(p.toolsetImports))
 	imports = append(imports,
 		p.pkg.Import(aggregatePolicyImportPath),
 		p.pkg.Import(aggregateToolsImportPath),
+		p.pkg.Import(aggregateRegistryImportPath),
 	)
 	for _, importPath := range p.toolsetImports {
 		imports = append(imports, p.pkg.Import(importPath))
@@ -179,16 +184,18 @@ func (p *aggregateSpecsPackagePlan) link(agent *AgentData) error {
 		PackageName: agent.ToolSpecsPackage,
 		Imports:     imports,
 		Template: toolSpecsAggregateData{
-			SpecsFunc:          p.functions[aggregateSpecsFuncName].Name(),
-			NamesFunc:          p.functions[aggregateNamesFuncName].Name(),
-			RequiredLabelsFunc: p.functions[aggregateRequiredLabelsFuncName].Name(),
-			SpecFunc:           p.functions[aggregateSpecFuncName].Name(),
-			MetadataFunc:       p.functions[aggregateMetadataFuncName].Name(),
-			MetadataByNameFunc: p.functions[aggregateMetadataByNameFuncName].Name(),
-			PolicyPackageName:  p.pkg.ImportName(aggregatePolicyImportPath),
-			ToolsPackageName:   p.pkg.ImportName(aggregateToolsImportPath),
-			Toolsets:           toolsets,
-			RequiredLabels:     unionRequiredLabels(labelToolsets),
+			SpecsFunc:           p.functions[aggregateSpecsFuncName].Name(),
+			NamesFunc:           p.functions[aggregateNamesFuncName].Name(),
+			RequiredLabelsFunc:  p.functions[aggregateRequiredLabelsFuncName].Name(),
+			SpecFunc:            p.functions[aggregateSpecFuncName].Name(),
+			MetadataFunc:        p.functions[aggregateMetadataFuncName].Name(),
+			MetadataByNameFunc:  p.functions[aggregateMetadataByNameFuncName].Name(),
+			ToolSchemaFunc:      p.functions[aggregateToolSchemaFuncName].Name(),
+			PolicyPackageName:   p.pkg.ImportName(aggregatePolicyImportPath),
+			ToolsPackageName:    p.pkg.ImportName(aggregateToolsImportPath),
+			RegistryPackageName: p.pkg.ImportName(aggregateRegistryImportPath),
+			Toolsets:            toolsets,
+			RequiredLabels:      unionRequiredLabels(labelToolsets),
 		},
 	}
 	return nil

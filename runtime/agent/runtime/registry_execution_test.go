@@ -164,7 +164,7 @@ func TestRegistryCorrectionUsesNewlyResolvedContract(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, output.OutputContractFailure)
 	require.NotNil(t, output.Result)
-	selected, err := registrycontract.Read(output.Result.ToolCalls[0].Registry)
+	selected, err := registrycontract.Read(output.Result.ToolCalls[0].Registry, nil)
 	require.NoError(t, err)
 	assert.Equal(t, strings.Repeat("b", 64), selected.Registered.RegistrationToken)
 	assert.Equal(t, 1, reads)

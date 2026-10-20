@@ -100,13 +100,13 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, wireInput *PlanActivity
 	if err != nil {
 		return act.failureOutput(ctx, err)
 	}
-	if err := validatePlannerActivityResult(r, act.catalog.spec, result, act.parentTool, false); err != nil {
+	if err := validatePlannerActivityResult(r, act.catalog, result, act.parentTool, false); err != nil {
 		return act.failureOutput(ctx, err)
 	}
 	if err := validatePlannerToolCatalogs(result, act.agentCtx.AdvertisedToolDefinitions(), act.plannerAuthoredTools); err != nil {
 		return act.failureOutput(ctx, planner.NewOutputContractError(err))
 	}
-	if err := validatePlannerResultPayloadCodecs(act.catalog.spec, result, continuationActions); err != nil {
+	if err := validatePlannerResultPayloadCodecs(act.catalog, result, continuationActions); err != nil {
 		return act.failureOutput(ctx, planner.NewOutputContractError(err))
 	}
 	output, err := act.output(ctx, r, result, false, continuationActions)
@@ -310,13 +310,13 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, wireInput *PlanActivit
 	if err != nil {
 		return act.failureOutput(ctx, err)
 	}
-	if err := validatePlannerActivityResult(r, act.catalog.spec, result, act.parentTool, synthesisOnly); err != nil {
+	if err := validatePlannerActivityResult(r, act.catalog, result, act.parentTool, synthesisOnly); err != nil {
 		return act.failureOutput(ctx, err)
 	}
 	if err := validatePlannerToolCatalogs(result, act.agentCtx.AdvertisedToolDefinitions(), act.plannerAuthoredTools); err != nil {
 		return act.failureOutput(ctx, planner.NewOutputContractError(err))
 	}
-	if err := validatePlannerResultPayloadCodecs(act.catalog.spec, result, continuationActions); err != nil {
+	if err := validatePlannerResultPayloadCodecs(act.catalog, result, continuationActions); err != nil {
 		return act.failureOutput(ctx, planner.NewOutputContractError(err))
 	}
 	output, err := act.output(ctx, r, result, synthesisOnly, continuationActions)
@@ -547,7 +547,7 @@ func (r *Runtime) preparePlannerActivity(
 	unavailableTools []tools.Ident,
 	advertisedSpecs []tools.ToolSpec,
 ) (*plannerActivityInvocation, error) {
-	parentTool, err := selectedRunTool(input.RunContext, input.AgentID, r.toolSpec)
+	parentTool, err := selectedRunTool(input.RunContext, input.AgentID, r)
 	if err != nil {
 		return nil, err
 	}
@@ -653,7 +653,7 @@ func (a *plannerActivityInvocation) output(
 	synthesisOnly bool,
 	continuationActions []continuationAction,
 ) (*PlanActivityOutput, error) {
-	if err := validatePlannerActivityResult(r, a.catalog.spec, result, a.parentTool, synthesisOnly); err != nil {
+	if err := validatePlannerActivityResult(r, a.catalog, result, a.parentTool, synthesisOnly); err != nil {
 		return nil, err
 	}
 	transcript, err := a.invocations.exportModelInvocation(result)
@@ -691,7 +691,7 @@ func (a *plannerActivityInvocation) output(
 			}
 		}
 		if call.ContinuationRootToolCallID == "" && !codeContinuation {
-			complete, err := prepareConsumerInput(a.catalog.spec, call.Name, call.Payload)
+			complete, err := prepareConsumerInput(a.catalog, call.Name, call.Payload)
 			if err != nil {
 				return nil, err
 			}
@@ -707,7 +707,7 @@ func (a *plannerActivityInvocation) output(
 			}
 		}
 	}
-	await, err := prepareConsumerAwait(a.catalog.spec, result.Await)
+	await, err := prepareConsumerAwait(a.catalog, result.Await)
 	if err != nil {
 		return nil, err
 	}
@@ -1111,7 +1111,7 @@ func validatePlannerActivityResult(r *Runtime, lookup toolSpecLookup, result *pl
 	}
 	if result.SynthesizeAfterTools {
 		for _, call := range result.ToolCalls {
-			spec, ok := lookup(call.Name)
+			spec, ok := lookup.spec(call.Name)
 			if !ok {
 				return planner.NewOutputContractError(fmt.Errorf("planner synthesis-after-tools references unknown tool %q", call.Name))
 			}
@@ -1125,7 +1125,7 @@ func validatePlannerActivityResult(r *Runtime, lookup toolSpecLookup, result *pl
 	}
 	if hasTerminal && hasCalls {
 		for _, call := range result.ToolCalls {
-			spec, ok := lookup(call.Name)
+			spec, ok := lookup.spec(call.Name)
 			if !ok {
 				return planner.NewOutputContractError(fmt.Errorf("planner terminal result references unknown tool %q", call.Name))
 			}
@@ -1387,7 +1387,7 @@ func validatePlannerResultPayloadCodecs(
 	continuations []continuationAction,
 ) error {
 	for index, call := range result.ToolCalls {
-		if spec, ok := lookup(call.Name); ok && call.ModelToolCallID == "" {
+		if spec, ok := lookup.spec(call.Name); ok && call.ModelToolCallID == "" {
 			page, err := plannerContinuationInput(spec, call.Payload)
 			if err != nil {
 				return fmt.Errorf("planner tool call %d execution payload: %w", index, err)
@@ -1447,7 +1447,7 @@ func validatePlannerToolPayloadWithCodec(
 	name tools.Ident,
 	payload rawjson.Message,
 ) error {
-	if spec, ok := lookup(name); ok {
+	if spec, ok := lookup.spec(name); ok {
 		if _, err := spec.Payload.Codec.FromJSON(payload); err != nil {
 			return fmt.Errorf("tool %q payload does not satisfy its generated contract: %w", name, err)
 		}

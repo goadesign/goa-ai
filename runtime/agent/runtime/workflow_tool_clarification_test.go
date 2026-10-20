@@ -60,7 +60,7 @@ func TestRunLoopToolClarificationPreservesCallAndReturnsAnswer(t *testing.T) {
 		}),
 	)}
 
-	preparedAwait, err := prepareConsumerAwait(rt.toolSpec, initial.Await)
+	preparedAwait, err := prepareConsumerAwait(rt, initial.Await)
 	require.NoError(t, err)
 	initial.Await = preparedAwait
 
@@ -229,7 +229,7 @@ func TestRunLoopQuestionsPreservesProviderAndRuntimeIdentityAcrossResume(t *test
 		Questions:       []planner.AwaitQuestion{{ID: "record_group", Prompt: "Which record group?"}},
 	}))}
 
-	preparedAwait, err := prepareConsumerAwait(rt.toolSpec, initial.Await)
+	preparedAwait, err := prepareConsumerAwait(rt, initial.Await)
 	require.NoError(t, err)
 	initial.Await = preparedAwait
 
@@ -363,7 +363,7 @@ func testExternalToolsInputPreservation(t *testing.T, bound bool) {
 	}))}
 
 	preparations := 0
-	lookup := rt.toolSpec
+	var lookup toolSpecLookup = rt
 	if bound {
 		local := consumerBoundSpec(t, firstTool, consumerScopeRef{ID: "accepted"})
 		prepare := local.PrepareInput
@@ -371,12 +371,12 @@ func testExternalToolsInputPreservation(t *testing.T, bound bool) {
 			preparations++
 			return prepare(input)
 		}
-		lookup = func(name tools.Ident) (tools.ToolSpec, bool) {
+		lookup = specLookupFunc(func(name tools.Ident) (tools.ToolSpec, bool) {
 			if name == local.Name {
 				return local, true
 			}
 			return rt.toolSpec(name)
-		}
+		})
 	}
 	preparedAwait, err := prepareConsumerAwait(lookup, initial.Await)
 	require.NoError(t, err)

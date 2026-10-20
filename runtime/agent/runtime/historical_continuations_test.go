@@ -186,7 +186,7 @@ func TestHistoricalStaticBoundsDoNotRequireCurrentDeclaration(t *testing.T) {
 			}
 			err := rt.validateHistoricalContinuationBounds(&planner.ToolOutput{
 				Name: spec.Name, ToolCallID: "saved-call", Bounds: tc.bounds,
-			})
+			}, rt)
 			if tc.wantErr != "" {
 				assert.ErrorContains(t, err, tc.wantErr)
 			} else {

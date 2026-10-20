@@ -173,7 +173,7 @@ func (r *Runtime) prepareAgentChild(wfCtx engine.WorkflowContext, call ToolCall,
 	}
 	preparer := agent.Ident(executor)
 	if call.Registry != nil {
-		declaration, err := registryAgentDeclaration(call)
+		declaration, err := registryAgentDeclaration(call, r)
 		if err != nil {
 			return agentChildRequest{}, nil, err
 		}

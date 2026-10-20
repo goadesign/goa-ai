@@ -41,7 +41,7 @@ func TestRegistryIncludeResolvedRetainsCompleteContractWithoutRemoteRead(t *test
 	selection := catalog.selections["records.find"]
 	binding, err := selection.resolution.Select(selection.registry, "records.find")
 	require.NoError(t, err)
-	retained, err := registrycontract.Read(binding)
+	retained, err := registrycontract.Read(binding, nil)
 	require.NoError(t, err)
 	require.Equal(t, selected, retained.Registered)
 	_, static := rt.toolSpec("records.find")
@@ -122,7 +122,7 @@ func TestRegistryIncludeResolvedNativeUsesConfiguredTarget(t *testing.T) {
 	require.Equal(t, "records.agent", spec.AgentID)
 	binding, err := catalog.selections["specialist.inspect"].resolution.Select(testRegistryName, "specialist.inspect")
 	require.NoError(t, err)
-	retained, err := registrycontract.Read(binding)
+	retained, err := registrycontract.Read(binding, nil)
 	require.NoError(t, err)
 	require.Equal(t, selected, retained.Registered)
 }

@@ -311,6 +311,15 @@ func (c *RegistryCatalog) spec(name tools.Ident) (tools.ToolSpec, bool) {
 	return c.runtime.toolSpec(name)
 }
 
+// registryDeclaration returns the generated declaration of a statically
+// declared tool, preferring the consuming definition over other agents.
+func (c *RegistryCatalog) registryDeclaration(name tools.Ident) (*genregistry.ToolSchema, bool) {
+	if declaration, ok := c.definition.registryDeclaration(name); ok {
+		return declaration, true
+	}
+	return c.runtime.registryDeclaration(name)
+}
+
 // RunLabels returns a copy of the trusted labels for this planning activity.
 // Applications may use them to select product-specific registry sources; model
 // arguments do not provide these labels or authorize catalog membership.

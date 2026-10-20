@@ -169,7 +169,7 @@ func toolsetSpecsFiles(plan *toolSpecsPlan) []*codegen.File {
 				},
 			}
 			out = append(out, &codegen.File{Path: filepath.Join(ts.SpecsDir, "specs.go"), SectionTemplates: specSections})
-			out = append(out, toolRegistrySchemasFile(ts, specsData.tools))
+			out = append(out, toolRegistrySchemasFiles(ts, specsData.tools)...)
 			// inject.go fills fields supplied by the server.
 			if toolsNeedInject(ts.Tools) {
 				injectSections := []*codegen.SectionTemplate{

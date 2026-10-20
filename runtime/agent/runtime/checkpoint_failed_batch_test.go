@@ -64,7 +64,7 @@ func TestCheckpointFailedBatchInputs(t *testing.T) {
 	record.ResultPublished, record.ResultRecord = false, nil
 	saved.Batch.Records[0] = record
 	require.NoError(t, validateCheckpointToolValues(saved, definition))
-	result, err := decodeCheckpointToolEvent(record.Result, record.Call, definition.spec)
+	result, err := decodeCheckpointToolEvent(record.Result, record.Call, definition)
 	require.NoError(t, err)
 	content, err := current.materializeToolResult(t.Context(), record.Call, result)
 	require.NoError(t, err)

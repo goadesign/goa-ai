@@ -435,7 +435,7 @@ func TestCompleteToolInputRecoveryEndsBeforeClarificationCheckpoint(t *testing.T
 	assert.NotContains(t, string(out.Suspension.Checkpoint), "ModelInvocationRecovery")
 	checkpoint, err := h.runtime.decodeWorkflowCheckpoint(out.Suspension)
 	require.NoError(t, err)
-	state, err := h.runtime.restoreCheckpointState(checkpoint.State, h.runtime.toolSpec)
+	state, err := h.runtime.restoreCheckpointState(checkpoint.State, h.runtime)
 	require.NoError(t, err)
 	assert.Nil(t, state.PendingCorrection)
 }

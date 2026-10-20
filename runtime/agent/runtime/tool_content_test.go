@@ -183,7 +183,7 @@ func TestCheckpointRejectsContentDisagreementForAcceptedResult(t *testing.T) {
 	call := ToolCall{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("service.agent")}, Name: spec.Name, ToolCallID: "call-1"}
 	result := &planner.ToolResult{Name: call.Name, ToolCallID: call.ToolCallID, Result: map[string]any{"value": "accepted"}, Blocks: richToolContentForTest()}
 	accepted := materializedToolRecordForTest(t, rt, "service.agent", base, call, result)
-	event, err := encodeToolEvent(result, accepted.call, rt.toolSpec)
+	event, err := encodeToolEvent(result, accepted.call, rt)
 	require.NoError(t, err)
 	record := checkpointToolRecord{Call: accepted.call, Result: event, CallRunID: accepted.callRunID, ResultRunID: accepted.resultRunID, ResultJSON: accepted.resultJSON, ResultPublished: true, ResultRecord: accepted.resultRecord}
 	checkpoint := &workflowCheckpoint{AgentID: "service.agent", SessionID: "session-1"}

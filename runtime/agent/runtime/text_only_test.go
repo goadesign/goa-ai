@@ -90,9 +90,9 @@ func TestTextOnlyCatalogAndExecution(t *testing.T) {
 	}
 	for _, value := range []string{"true", "false"} {
 		payload := []byte(`{"query":"active","render_ui":` + value + `}`)
-		_, err := prepareConsumerInput(func(name tools.Ident) (tools.ToolSpec, bool) {
+		_, err := prepareConsumerInput(specLookupFunc(func(name tools.Ident) (tools.ToolSpec, bool) {
 			return genrecords.SpecRead().ForTextOnly(), name == genrecords.Read
-		}, genrecords.Read, payload)
+		}), genrecords.Read, payload)
 		require.Error(t, err)
 	}
 	err := rt.normalizePlanResultForExecution(&PlanResult{ToolCalls: []ToolCall{{Name: genrecords.Read, Payload: []byte(`{"query":"active","render_ui":false}`), ToolCallID: "compiled"}}}, textRun, "service.agent")

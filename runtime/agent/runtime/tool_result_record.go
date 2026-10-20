@@ -58,11 +58,11 @@ func validateCheckpointResultRecord(record checkpointToolRecord, checkpoint *wor
 	saved, err := decodeCheckpointToolEvent(&api.ToolEvent{
 		Name: event.ToolName, ToolCallID: event.ToolCallID, Result: event.ResultJSON,
 		ServerData: event.ServerData, Blocks: event.Blocks, Bounds: event.Bounds, Failure: event.Failure,
-	}, record.Call, definition.spec)
+	}, record.Call, definition)
 	if err != nil {
 		return err
 	}
-	result, err := decodeCheckpointToolEvent(record.Result, record.Call, definition.spec)
+	result, err := decodeCheckpointToolEvent(record.Result, record.Call, definition)
 	if err != nil {
 		return err
 	}

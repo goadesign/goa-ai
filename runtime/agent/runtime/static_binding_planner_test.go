@@ -79,7 +79,7 @@ func TestStaticBindingPreservesExecutablePlannerTools(t *testing.T) {
 					call := output.Result.ToolCalls[0]
 					assert.Equal(t, chosen, call.Name)
 					require.NotNil(t, call.Registry)
-					retained, err := registrycontract.Read(call.Registry)
+					retained, err := registrycontract.Read(call.Registry, definition.registryDeclaration)
 					require.NoError(t, err)
 					declaration, err := retained.Declaration(call.Name)
 					require.NoError(t, err)
@@ -136,6 +136,7 @@ func staticBindingPlannerRuntime(t *testing.T, kind string) (*Runtime, AgentDefi
 	selected.Toolset.RegisteredAt = "2026-09-17T00:00:00Z"
 	source := staticBindingPlannerSource{selected: selected}
 	var children []AgentDefinition
+	declarations := genrecords.ToolSchema
 	if kind == "native" {
 		specs = []tools.ToolSpec{genrecords.SpecRead(), genrecords.SpecErase()}
 		children = []AgentDefinition{testAgentDefinition("generic.agent", "generic.workflow", "generic.queue", nil, nil)}
@@ -153,6 +154,7 @@ func staticBindingPlannerRuntime(t *testing.T, kind string) (*Runtime, AgentDefi
 			operations = append(operations, operation)
 		}
 		selected.Toolset.Tools = operations
+		declarations = testDeclarations(source.native)
 		for index := range specs {
 			specs[index].IsAgentTool = true
 			specs[index].AgentID = "generic.agent"
@@ -174,7 +176,7 @@ func staticBindingPlannerRuntime(t *testing.T, kind string) (*Runtime, AgentDefi
 		Resolved: &genregistry.ResolvedToolset{Toolset: foreign, RegistrationToken: strings.Repeat("b", 64)},
 		Source:   &genregistry.CatalogSource{Scope: "other-owner", Name: "records", Target: genregistry.NewCatalogSourceTargetService(&genregistry.ServiceCatalogSource{Toolset: foreign.Name, RegistrationToken: strings.Repeat("b", 64)})},
 	}
-	definition := NewAgentDefinition(AgentRoute{ID: "records.agent", WorkflowName: "records.workflow", DefaultTaskQueue: "records.queue"}, specs, nil, nil, []tools.Ident{genrecords.Read}, children, nil).WithRegistryTools(source)
+	definition := NewAgentDefinition(AgentRoute{ID: "records.agent", WorkflowName: "records.workflow", DefaultTaskQueue: "records.queue"}, specs, nil, nil, []tools.Ident{genrecords.Read}, children, nil).WithRegistryTools(source).WithRegistryDeclarations(declarations)
 	seedTestToolSpecs(rt, specs...)
 	seedTestToolDefinitions(rt, specs...)
 	rt.agentToolSpecs[definition.route.ID] = []tools.ToolSpec{definition.specByName[genrecords.Read]}

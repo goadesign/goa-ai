@@ -88,7 +88,7 @@ var {{ .PackageNames.DefinitionValue }} = {{ .RuntimeAlias }}.NewAgentDefinition
     nil,
 {{- end }}
 {{- template "agentDefinitionDeferral" .RootDefinition }}
-){{ if .RootDefinition.RegistrySources }}.WithRegistryTools({{ .RootDefinition.RegistrySources.TypeName }}{}){{ end }}
+){{ if .RootDefinition.RegistrySources }}.WithRegistryTools({{ .RootDefinition.RegistrySources.TypeName }}{}){{ end }}{{ if .RootDefinition.Tools }}.WithRegistryDeclarations({{ .RootDefinition.ToolSpecsAlias }}.ToolSchema){{ end }}
 
 // {{ .PackageNames.Definition }} returns the immutable generated contract shared by callers and workers.
 func {{ .PackageNames.Definition }}() {{ .RuntimeAlias }}.AgentDefinition {

@@ -194,7 +194,7 @@ func (r *Runtime) finishAfterSuccessfulToolCompletion(
 // retainCompletionToolResult validates the completed call against the selected
 // operation and keeps an independent copy before reporting can fail.
 func (r *Runtime) retainCompletionToolResult(base *workflowConversation, executor agent.Ident, finalToolResult *api.ToolEvent) error {
-	selected, err := selectedRunTool(base.RunContext, executor, r.toolSpec)
+	selected, err := selectedRunTool(base.RunContext, executor, r)
 	if err != nil {
 		return err
 	}
@@ -250,7 +250,7 @@ func (r *Runtime) successfulCompletionToolEvent(input *RunInput, events []*plann
 	if final == nil {
 		return nil, errors.New("completed run is missing its successful terminal tool result")
 	}
-	return encodeToolEvent(final, ToolCall{Name: final.Name, ToolCallID: final.ToolCallID}, r.toolSpec)
+	return encodeToolEvent(final, ToolCall{Name: final.Name, ToolCallID: final.ToolCallID}, r)
 }
 
 // finalToolResultEvent converts the planner-owned final tool-result envelope

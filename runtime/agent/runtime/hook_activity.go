@@ -943,7 +943,7 @@ func (r *Runtime) enrichToolCallScheduledHint(ctx context.Context, evt *hooks.To
 		return false, nil
 	}
 	if r.isDynamicRegistryCall(ToolCall{Name: evt.ToolName, Registry: evt.Registry, Subject: evt.Subject()}) {
-		metadata, err := registryCallMetadata(ToolCall{Name: evt.ToolName, Registry: evt.Registry})
+		metadata, err := registryCallMetadata(ToolCall{Name: evt.ToolName, Registry: evt.Registry}, r)
 		if err != nil {
 			return false, err
 		}

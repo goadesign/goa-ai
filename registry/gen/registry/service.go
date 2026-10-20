@@ -455,6 +455,36 @@ type ClaimToolCallResult struct {
 	Disposition string
 }
 
+// Registration and provider target selected for a call to a compiled Agent
+// tool.
+type CompiledAgentToolSelection struct {
+	// Registration selected for the call.
+	Selection *CompiledToolSelection
+	// Provider worker route and configuration selected for the call.
+	Agent *AgentToolTarget
+}
+
+// Registration selected for a call to a tool compiled into the consumer.
+type CompiledToolSelection struct {
+	// Exact registration selected for the call.
+	RegistrationToken string
+	// Registered toolset name.
+	Name string
+	// Registered toolset description.
+	Description *string
+	// Registered toolset version.
+	Version *SemVer
+	// Registered toolset tags.
+	Tags []string
+	// ISO 8601 time the registry accepted the registration.
+	RegisteredAt string
+	// Names of the called operation and its paging partner, sorted.
+	Operations []string
+	// SHA-256 of the generated declarations of the listed operations, without
+	// provider Agent targets.
+	DeclarationFingerprint string
+}
+
 // CompleteToolCallPayload is the payload type of the registry service
 // CompleteToolCall method.
 type CompleteToolCallPayload struct {
@@ -2169,6 +2199,105 @@ func validatejsonClaimToolCallResultTransport(value *jsonClaimToolCallResultTran
 	return err
 }
 
+// jsonCompiledAgentToolSelectionTransport stores JSON fields until they have been validated.
+type jsonCompiledAgentToolSelectionTransport struct {
+	// Registration selected for the call.
+	Selection *jsonCompiledToolSelectionTransport `json:"selection"`
+	// Provider worker route and configuration selected for the call.
+	Agent *jsonAgentToolTargetTransport `json:"agent"`
+}
+
+// validatejsonCompiledAgentToolSelectionTransport checks decoded JSON before it becomes a service value.
+func validatejsonCompiledAgentToolSelectionTransport(value *jsonCompiledAgentToolSelectionTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.Selection == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("selection", "body"))
+	}
+	if value.Agent == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("agent", "body"))
+	}
+	if value.Selection != nil {
+		if err2 := validatejsonCompiledToolSelectionTransport(value.Selection); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if value.Agent != nil {
+		if err2 := validatejsonAgentToolTargetTransport(value.Agent); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return err
+}
+
+// jsonCompiledToolSelectionTransport stores JSON fields until they have been validated.
+type jsonCompiledToolSelectionTransport struct {
+	// Exact registration selected for the call.
+	RegistrationToken *string `json:"registration_token"`
+	// Registered toolset name.
+	Name *string `json:"name"`
+	// Registered toolset description.
+	Description *string `json:"description,omitempty"`
+	// Registered toolset version.
+	Version *jsonSemVerTransport `json:"version,omitempty"`
+	// Registered toolset tags.
+	Tags []string `json:"tags,omitempty"`
+	// ISO 8601 time the registry accepted the registration.
+	RegisteredAt *string `json:"registered_at"`
+	// Names of the called operation and its paging partner, sorted.
+	Operations []string `json:"operations"`
+	// SHA-256 of the generated declarations of the listed operations, without
+	// provider Agent targets.
+	DeclarationFingerprint *string `json:"declaration_fingerprint"`
+}
+
+// validatejsonCompiledToolSelectionTransport checks decoded JSON before it becomes a service value.
+func validatejsonCompiledToolSelectionTransport(value *jsonCompiledToolSelectionTransport) (err error) {
+	if value == nil {
+		return goa.MissingFieldError("body", "JSON value")
+	}
+	if value.RegistrationToken == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("registration_token", "body"))
+	}
+	if value.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "body"))
+	}
+	if value.RegisteredAt == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("registered_at", "body"))
+	}
+	if value.Operations == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("operations", "body"))
+	}
+	if value.DeclarationFingerprint == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("declaration_fingerprint", "body"))
+	}
+	if value.RegistrationToken != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.registration_token", *value.RegistrationToken, "^[0-9a-f]{64}$"))
+	}
+	if value.Name != nil {
+		if utf8.RuneCountInString(*value.Name) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.name", *value.Name, utf8.RuneCountInString(*value.Name), 1, true))
+		}
+		if utf8.RuneCountInString(*value.Name) > 256 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("body.name", *value.Name, utf8.RuneCountInString(*value.Name), 256, false))
+		}
+	}
+	if value.Version != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.version", string(*value.Version), "^v?\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?$"))
+	}
+	if value.RegisteredAt != nil {
+		err = goa.MergeErrors(err, goa.ValidateFormat("body.registered_at", *value.RegisteredAt, goa.FormatDateTime))
+	}
+	if len(value.Operations) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("body.operations", value.Operations, len(value.Operations), 1, true))
+	}
+	if value.DeclarationFingerprint != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("body.declaration_fingerprint", *value.DeclarationFingerprint, "^[0-9a-f]{64}$"))
+	}
+	return err
+}
+
 // jsonCompleteToolCallPayloadTransport stores JSON fields until they have been validated.
 type jsonCompleteToolCallPayloadTransport struct {
 	// Toolset whose provider completed the call.
@@ -3117,6 +3246,20 @@ func validatejsonRegistrySelectionTransport(value *jsonRegistrySelectionTranspor
 			actual, _ := value.Selection.AsRegistered()
 			if actual != nil {
 				if err2 := validatejsonRegisteredToolsetSelectionTransport(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		case "compiled_service":
+			actual, _ := value.Selection.AsCompiledService()
+			if actual != nil {
+				if err2 := validatejsonCompiledToolSelectionTransport(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
+			}
+		case "compiled_agent":
+			actual, _ := value.Selection.AsCompiledAgent()
+			if actual != nil {
+				if err2 := validatejsonCompiledAgentToolSelectionTransport(actual); err2 != nil {
 					err = goa.MergeErrors(err, err2)
 				}
 			}
@@ -5521,6 +5664,50 @@ func validateClaimToolCallResultOriginal(value *ClaimToolCallResult) (err error)
 	return err
 }
 
+// validateCompiledAgentToolSelectionOriginal checks the original typed value before JSON conversion.
+func validateCompiledAgentToolSelectionOriginal(value *CompiledAgentToolSelection) (err error) {
+	if value.Selection == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("selection", "value"))
+	}
+	if value.Agent == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("agent", "value"))
+	}
+	if value.Selection != nil {
+		if err2 := validateCompiledToolSelectionOriginal(value.Selection); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if value.Agent != nil {
+		if err2 := validateAgentToolTargetOriginal(value.Agent); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+	}
+	return err
+}
+
+// validateCompiledToolSelectionOriginal checks the original typed value before JSON conversion.
+func validateCompiledToolSelectionOriginal(value *CompiledToolSelection) (err error) {
+	if value.Operations == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("operations", "value"))
+	}
+	err = goa.MergeErrors(err, goa.ValidatePattern("value.registration_token", value.RegistrationToken, "^[0-9a-f]{64}$"))
+	if utf8.RuneCountInString(value.Name) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("value.name", value.Name, utf8.RuneCountInString(value.Name), 1, true))
+	}
+	if utf8.RuneCountInString(value.Name) > 256 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("value.name", value.Name, utf8.RuneCountInString(value.Name), 256, false))
+	}
+	if value.Version != nil {
+		err = goa.MergeErrors(err, goa.ValidatePattern("value.version", string(*value.Version), "^v?\\d+\\.\\d+\\.\\d+(-[a-zA-Z0-9.]+)?$"))
+	}
+	err = goa.MergeErrors(err, goa.ValidateFormat("value.registered_at", value.RegisteredAt, goa.FormatDateTime))
+	if len(value.Operations) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("value.operations", value.Operations, len(value.Operations), 1, true))
+	}
+	err = goa.MergeErrors(err, goa.ValidatePattern("value.declaration_fingerprint", value.DeclarationFingerprint, "^[0-9a-f]{64}$"))
+	return err
+}
+
 // validateCompleteToolCallPayloadOriginal checks the original typed value before JSON conversion.
 func validateCompleteToolCallPayloadOriginal(value *CompleteToolCallPayload) (err error) {
 	if value.ResultJSON == nil {
@@ -5901,6 +6088,20 @@ func validateRegistrySelectionOriginal(value *RegistrySelection) (err error) {
 		actual, _ := value.Selection.AsRegistered()
 		if actual != nil {
 			if err2 := validateRegisteredToolsetSelectionOriginal(actual); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	case "compiled_service":
+		actual, _ := value.Selection.AsCompiledService()
+		if actual != nil {
+			if err2 := validateCompiledToolSelectionOriginal(actual); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+	case "compiled_agent":
+		actual, _ := value.Selection.AsCompiledAgent()
+		if actual != nil {
+			if err2 := validateCompiledAgentToolSelectionOriginal(actual); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -6779,17 +6980,21 @@ func (u *jsonOperationTransport) UnmarshalJSON(data []byte) error {
 
 // jsonRegistrySelectionKindTransport stores exactly one selected Goa OneOf branch.
 type jsonRegistrySelectionKindTransport struct {
-	kind       jsonRegistrySelectionKindTransportKind
-	Direct     *jsonResolvedToolsetTransport
-	Registered *jsonRegisteredToolsetSelectionTransport
+	kind            jsonRegistrySelectionKindTransportKind
+	Direct          *jsonResolvedToolsetTransport
+	Registered      *jsonRegisteredToolsetSelectionTransport
+	CompiledService *jsonCompiledToolSelectionTransport
+	CompiledAgent   *jsonCompiledAgentToolSelectionTransport
 }
 
 // jsonRegistrySelectionKindTransportKind identifies the selected branch of jsonRegistrySelectionKindTransport.
 type jsonRegistrySelectionKindTransportKind string
 
 const (
-	jsonRegistrySelectionKindTransportKindDirect     jsonRegistrySelectionKindTransportKind = "direct"
-	jsonRegistrySelectionKindTransportKindRegistered jsonRegistrySelectionKindTransportKind = "registered"
+	jsonRegistrySelectionKindTransportKindDirect          jsonRegistrySelectionKindTransportKind = "direct"
+	jsonRegistrySelectionKindTransportKindRegistered      jsonRegistrySelectionKindTransportKind = "registered"
+	jsonRegistrySelectionKindTransportKindCompiledService jsonRegistrySelectionKindTransportKind = "compiled_service"
+	jsonRegistrySelectionKindTransportKindCompiledAgent   jsonRegistrySelectionKindTransportKind = "compiled_agent"
 )
 
 // Kind returns the selected branch.
@@ -6835,6 +7040,44 @@ func (u *jsonRegistrySelectionKindTransport) SetRegistered(value *jsonRegistered
 	u.Registered = value
 }
 
+// newjsonRegistrySelectionKindTransportCompiledService creates jsonRegistrySelectionKindTransport with its compiled_service branch selected.
+func newjsonRegistrySelectionKindTransportCompiledService(value *jsonCompiledToolSelectionTransport) jsonRegistrySelectionKindTransport {
+	return jsonRegistrySelectionKindTransport{kind: jsonRegistrySelectionKindTransportKindCompiledService, CompiledService: value}
+}
+
+// AsCompiledService returns the compiled_service branch when it is selected.
+func (u jsonRegistrySelectionKindTransport) AsCompiledService() (_ *jsonCompiledToolSelectionTransport, ok bool) {
+	if u.kind != jsonRegistrySelectionKindTransportKindCompiledService {
+		return
+	}
+	return u.CompiledService, true
+}
+
+// SetCompiledService selects the compiled_service branch.
+func (u *jsonRegistrySelectionKindTransport) SetCompiledService(value *jsonCompiledToolSelectionTransport) {
+	u.kind = jsonRegistrySelectionKindTransportKindCompiledService
+	u.CompiledService = value
+}
+
+// newjsonRegistrySelectionKindTransportCompiledAgent creates jsonRegistrySelectionKindTransport with its compiled_agent branch selected.
+func newjsonRegistrySelectionKindTransportCompiledAgent(value *jsonCompiledAgentToolSelectionTransport) jsonRegistrySelectionKindTransport {
+	return jsonRegistrySelectionKindTransport{kind: jsonRegistrySelectionKindTransportKindCompiledAgent, CompiledAgent: value}
+}
+
+// AsCompiledAgent returns the compiled_agent branch when it is selected.
+func (u jsonRegistrySelectionKindTransport) AsCompiledAgent() (_ *jsonCompiledAgentToolSelectionTransport, ok bool) {
+	if u.kind != jsonRegistrySelectionKindTransportKindCompiledAgent {
+		return
+	}
+	return u.CompiledAgent, true
+}
+
+// SetCompiledAgent selects the compiled_agent branch.
+func (u *jsonRegistrySelectionKindTransport) SetCompiledAgent(value *jsonCompiledAgentToolSelectionTransport) {
+	u.kind = jsonRegistrySelectionKindTransportKindCompiledAgent
+	u.CompiledAgent = value
+}
+
 // Validate checks that one complete branch is selected.
 func (u jsonRegistrySelectionKindTransport) Validate() error {
 	switch u.kind {
@@ -6848,10 +7091,20 @@ func (u jsonRegistrySelectionKindTransport) Validate() error {
 			return goa.MissingFieldError("value", "jsonRegistrySelectionKindTransport")
 		}
 		return nil
+	case jsonRegistrySelectionKindTransportKindCompiledService:
+		if u.CompiledService == nil {
+			return goa.MissingFieldError("value", "jsonRegistrySelectionKindTransport")
+		}
+		return nil
+	case jsonRegistrySelectionKindTransportKindCompiledAgent:
+		if u.CompiledAgent == nil {
+			return goa.MissingFieldError("value", "jsonRegistrySelectionKindTransport")
+		}
+		return nil
 	case "":
 		return goa.MissingFieldError("type", "jsonRegistrySelectionKindTransport")
 	default:
-		return goa.InvalidEnumValueError("type", u.kind, []any{string(jsonRegistrySelectionKindTransportKindDirect), string(jsonRegistrySelectionKindTransportKindRegistered)})
+		return goa.InvalidEnumValueError("type", u.kind, []any{string(jsonRegistrySelectionKindTransportKindDirect), string(jsonRegistrySelectionKindTransportKindRegistered), string(jsonRegistrySelectionKindTransportKindCompiledService), string(jsonRegistrySelectionKindTransportKindCompiledAgent)})
 	}
 }
 
@@ -6866,6 +7119,10 @@ func (u jsonRegistrySelectionKindTransport) MarshalJSON() ([]byte, error) {
 		value = u.Direct
 	case jsonRegistrySelectionKindTransportKindRegistered:
 		value = u.Registered
+	case jsonRegistrySelectionKindTransportKindCompiledService:
+		value = u.CompiledService
+	case jsonRegistrySelectionKindTransportKindCompiledAgent:
+		value = u.CompiledAgent
 	default:
 		return nil, fmt.Errorf("unexpected jsonRegistrySelectionKindTransport branch %q", u.kind)
 	}
@@ -6920,8 +7177,26 @@ func (u *jsonRegistrySelectionKindTransport) UnmarshalJSON(data []byte) error {
 		}
 		u.kind = jsonRegistrySelectionKindTransportKindRegistered
 		u.Registered = value
+	case string(jsonRegistrySelectionKindTransportKindCompiledService):
+		var value *jsonCompiledToolSelectionTransport
+		decoder := json.NewDecoder(bytes.NewReader(raw.Value))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&value); err != nil {
+			return err
+		}
+		u.kind = jsonRegistrySelectionKindTransportKindCompiledService
+		u.CompiledService = value
+	case string(jsonRegistrySelectionKindTransportKindCompiledAgent):
+		var value *jsonCompiledAgentToolSelectionTransport
+		decoder := json.NewDecoder(bytes.NewReader(raw.Value))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&value); err != nil {
+			return err
+		}
+		u.kind = jsonRegistrySelectionKindTransportKindCompiledAgent
+		u.CompiledAgent = value
 	default:
-		return goa.InvalidEnumValueError("type", raw.Type, []any{string(jsonRegistrySelectionKindTransportKindDirect), string(jsonRegistrySelectionKindTransportKindRegistered)})
+		return goa.InvalidEnumValueError("type", raw.Type, []any{string(jsonRegistrySelectionKindTransportKindDirect), string(jsonRegistrySelectionKindTransportKindRegistered), string(jsonRegistrySelectionKindTransportKindCompiledService), string(jsonRegistrySelectionKindTransportKindCompiledAgent)})
 	}
 	return u.Validate()
 }
@@ -8629,6 +8904,154 @@ func DecodeClaimToolCallResult(data []byte) (out *ClaimToolCallResult, err error
 	return out, nil
 }
 
+// EncodeCompiledAgentToolSelection turns a service value into JSON using the field names in the Goa design.
+func EncodeCompiledAgentToolSelection(in *CompiledAgentToolSelection) ([]byte, error) {
+	if err := checkCompiledAgentToolSelectionValue(in); err != nil {
+		return nil, fmt.Errorf("encode CompiledAgentToolSelection JSON: %w", err)
+	}
+	if err := validateCompiledAgentToolSelectionOriginal(in); err != nil {
+		return nil, fmt.Errorf("validate CompiledAgentToolSelection value: %w", err)
+	}
+	var body *jsonCompiledAgentToolSelectionTransport
+	{
+		body = &jsonCompiledAgentToolSelectionTransport{}
+		body.Selection = encodeCompiledToolSelectionToCompiledToolSelectionTransport(in.Selection)
+		body.Agent = encodeAgentToolTargetToAgentToolTargetTransport2(in.Agent)
+	}
+	if err := validatejsonCompiledAgentToolSelectionTransport(body); err != nil {
+		return nil, fmt.Errorf("validate CompiledAgentToolSelection JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode CompiledAgentToolSelection JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeCompiledAgentToolSelection checks JSON field names from the Goa design and returns a service value.
+func DecodeCompiledAgentToolSelection(data []byte) (out *CompiledAgentToolSelection, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode CompiledAgentToolSelection JSON: %w", err)
+	}
+	if err := validateCompiledAgentToolSelectionJSONValue("", root, ""); err != nil {
+		return out, fmt.Errorf("decode CompiledAgentToolSelection JSON: %w", err)
+	}
+	var body *jsonCompiledAgentToolSelectionTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode CompiledAgentToolSelection JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode CompiledAgentToolSelection JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode CompiledAgentToolSelection JSON after first value: %w", err)
+	}
+	if err := validatejsonCompiledAgentToolSelectionTransport(body); err != nil {
+		return out, fmt.Errorf("validate CompiledAgentToolSelection JSON: %w", err)
+	}
+	{
+		out = &CompiledAgentToolSelection{}
+		out.Selection = decodeCompiledToolSelectionTransportToCompiledToolSelection(body.Selection)
+		out.Agent = decodeAgentToolTargetTransportToAgentToolTarget(body.Agent)
+	}
+	return out, nil
+}
+
+// EncodeCompiledToolSelection turns a service value into JSON using the field names in the Goa design.
+func EncodeCompiledToolSelection(in *CompiledToolSelection) ([]byte, error) {
+	if err := checkCompiledToolSelectionValue(in); err != nil {
+		return nil, fmt.Errorf("encode CompiledToolSelection JSON: %w", err)
+	}
+	if err := validateCompiledToolSelectionOriginal(in); err != nil {
+		return nil, fmt.Errorf("validate CompiledToolSelection value: %w", err)
+	}
+	var body *jsonCompiledToolSelectionTransport
+	{
+		body = &jsonCompiledToolSelectionTransport{
+			RegistrationToken:      &in.RegistrationToken,
+			Name:                   &in.Name,
+			Description:            in.Description,
+			RegisteredAt:           &in.RegisteredAt,
+			DeclarationFingerprint: &in.DeclarationFingerprint,
+		}
+		if in.Version != nil {
+			version := jsonSemVerTransport(*in.Version)
+			body.Version = &version
+		}
+		if in.Tags != nil {
+			body.Tags = make([]string, len(in.Tags))
+			for i, val := range in.Tags {
+				body.Tags[i] = val
+			}
+		}
+		body.Operations = make([]string, len(in.Operations))
+		for i, val := range in.Operations {
+			body.Operations[i] = val
+		}
+	}
+	if err := validatejsonCompiledToolSelectionTransport(body); err != nil {
+		return nil, fmt.Errorf("validate CompiledToolSelection JSON: %w", err)
+	}
+	data, err := json.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("encode CompiledToolSelection JSON: %w", err)
+	}
+	return data, nil
+}
+
+// DecodeCompiledToolSelection checks JSON field names from the Goa design and returns a service value.
+func DecodeCompiledToolSelection(data []byte) (out *CompiledToolSelection, err error) {
+	root, err := readStrictJSON(data)
+	if err != nil {
+		return out, fmt.Errorf("decode CompiledToolSelection JSON: %w", err)
+	}
+	if err := validateCompiledAgentToolSelectionJSONValue2("", root, ""); err != nil {
+		return out, fmt.Errorf("decode CompiledToolSelection JSON: %w", err)
+	}
+	var body *jsonCompiledToolSelectionTransport
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		return out, fmt.Errorf("decode CompiledToolSelection JSON: %w", err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return out, fmt.Errorf("decode CompiledToolSelection JSON: multiple JSON values")
+		}
+		return out, fmt.Errorf("decode CompiledToolSelection JSON after first value: %w", err)
+	}
+	if err := validatejsonCompiledToolSelectionTransport(body); err != nil {
+		return out, fmt.Errorf("validate CompiledToolSelection JSON: %w", err)
+	}
+	{
+		out = &CompiledToolSelection{
+			RegistrationToken:      *body.RegistrationToken,
+			Name:                   *body.Name,
+			Description:            body.Description,
+			RegisteredAt:           *body.RegisteredAt,
+			DeclarationFingerprint: *body.DeclarationFingerprint,
+		}
+		if body.Version != nil {
+			version := SemVer(*body.Version)
+			out.Version = &version
+		}
+		if body.Tags != nil {
+			out.Tags = make([]string, len(body.Tags))
+			for i, val := range body.Tags {
+				out.Tags[i] = val
+			}
+		}
+		out.Operations = make([]string, len(body.Operations))
+		for i, val := range body.Operations {
+			out.Operations[i] = val
+		}
+	}
+	return out, nil
+}
+
 // EncodeCompleteToolCallPayload turns a service value into JSON using the field names in the Goa design.
 func EncodeCompleteToolCallPayload(in *CompleteToolCallPayload) ([]byte, error) {
 	if err := checkCompleteToolCallPayloadValue(in); err != nil {
@@ -9901,6 +10324,24 @@ func EncodeRegistrySelection(in *RegistrySelection) ([]byte, error) {
 			u := selectionValue
 			u.SetRegistered((*jsonRegisteredToolsetSelectionTransport)(obj))
 			selectionValue = u
+		case "compiled_service":
+			actual, _ := in.Selection.AsCompiledService()
+			var obj *jsonCompiledToolSelectionTransport
+			if actual != nil {
+				obj = encodeCompiledToolSelectionToCompiledToolSelectionTransport2(actual)
+			}
+			u := selectionValue
+			u.SetCompiledService((*jsonCompiledToolSelectionTransport)(obj))
+			selectionValue = u
+		case "compiled_agent":
+			actual, _ := in.Selection.AsCompiledAgent()
+			var obj *jsonCompiledAgentToolSelectionTransport
+			if actual != nil {
+				obj = encodeCompiledAgentToolSelectionToCompiledAgentToolSelectionTransport(actual)
+			}
+			u := selectionValue
+			u.SetCompiledAgent((*jsonCompiledAgentToolSelectionTransport)(obj))
+			selectionValue = u
 		}
 		body.Selection = &selectionValue
 	}
@@ -9958,6 +10399,24 @@ func DecodeRegistrySelection(data []byte) (out *RegistrySelection, err error) {
 			}
 			u := out.Selection
 			u.SetRegistered((*RegisteredToolsetSelection)(obj))
+			out.Selection = u
+		case "compiled_service":
+			actual, _ := body.Selection.AsCompiledService()
+			var obj *CompiledToolSelection
+			if actual != nil {
+				obj = decodeCompiledToolSelectionTransportToCompiledToolSelection(actual)
+			}
+			u := out.Selection
+			u.SetCompiledService((*CompiledToolSelection)(obj))
+			out.Selection = u
+		case "compiled_agent":
+			actual, _ := body.Selection.AsCompiledAgent()
+			var obj *CompiledAgentToolSelection
+			if actual != nil {
+				obj = decodeCompiledAgentToolSelectionTransportToCompiledAgentToolSelection(actual)
+			}
+			u := out.Selection
+			u.SetCompiledAgent((*CompiledAgentToolSelection)(obj))
 			out.Selection = u
 		}
 	}
@@ -12522,6 +12981,40 @@ func decodeCatalogSourceTransportToCatalogSource(v *jsonCatalogSourceTransport) 
 	return res
 }
 
+func decodeCompiledAgentToolSelectionTransportToCompiledAgentToolSelection(v *jsonCompiledAgentToolSelectionTransport) *CompiledAgentToolSelection {
+	res := &CompiledAgentToolSelection{}
+	res.Selection = decodeCompiledToolSelectionTransportToCompiledToolSelection(v.Selection)
+	res.Agent = decodeAgentToolTargetTransportToAgentToolTarget(v.Agent)
+
+	return res
+}
+
+func decodeCompiledToolSelectionTransportToCompiledToolSelection(v *jsonCompiledToolSelectionTransport) *CompiledToolSelection {
+	res := &CompiledToolSelection{
+		RegistrationToken:      *v.RegistrationToken,
+		Name:                   *v.Name,
+		Description:            v.Description,
+		RegisteredAt:           *v.RegisteredAt,
+		DeclarationFingerprint: *v.DeclarationFingerprint,
+	}
+	if v.Version != nil {
+		version := SemVer(*v.Version)
+		res.Version = &version
+	}
+	if v.Tags != nil {
+		res.Tags = make([]string, len(v.Tags))
+		for i, val := range v.Tags {
+			res.Tags[i] = val
+		}
+	}
+	res.Operations = make([]string, len(v.Operations))
+	for i, val := range v.Operations {
+		res.Operations[i] = val
+	}
+
+	return res
+}
+
 func decodeConsumerContractTransportToConsumerContract(v *jsonConsumerContractTransport) *ConsumerContract {
 	res := &ConsumerContract{
 		Kind:           *v.Kind,
@@ -13132,6 +13625,17 @@ func encodeAgentToolTargetToAgentToolTargetTransport(v *AgentToolTarget) *jsonAg
 	return res
 }
 
+func encodeAgentToolTargetToAgentToolTargetTransport2(v *AgentToolTarget) *jsonAgentToolTargetTransport {
+	res := &jsonAgentToolTargetTransport{
+		Executor:      &v.Executor,
+		Configuration: &v.Configuration,
+		Workflow:      &v.Workflow,
+		Queue:         &v.Queue,
+	}
+
+	return res
+}
+
 func encodeCatalogOperationToCatalogOperationTransport(v *CatalogOperation) *jsonCatalogOperationTransport {
 	res := &jsonCatalogOperationTransport{
 		Scope: &v.Scope,
@@ -13200,6 +13704,66 @@ func encodeCatalogSourceToCatalogSourceTransport(v *CatalogSource) *jsonCatalogS
 		targetValue = u
 	}
 	res.Target = &targetValue
+
+	return res
+}
+
+func encodeCompiledAgentToolSelectionToCompiledAgentToolSelectionTransport(v *CompiledAgentToolSelection) *jsonCompiledAgentToolSelectionTransport {
+	res := &jsonCompiledAgentToolSelectionTransport{}
+	res.Selection = encodeCompiledToolSelectionToCompiledToolSelectionTransport(v.Selection)
+	res.Agent = encodeAgentToolTargetToAgentToolTargetTransport2(v.Agent)
+
+	return res
+}
+
+func encodeCompiledToolSelectionToCompiledToolSelectionTransport(v *CompiledToolSelection) *jsonCompiledToolSelectionTransport {
+	res := &jsonCompiledToolSelectionTransport{
+		RegistrationToken:      &v.RegistrationToken,
+		Name:                   &v.Name,
+		Description:            v.Description,
+		RegisteredAt:           &v.RegisteredAt,
+		DeclarationFingerprint: &v.DeclarationFingerprint,
+	}
+	if v.Version != nil {
+		version := jsonSemVerTransport(*v.Version)
+		res.Version = &version
+	}
+	if v.Tags != nil {
+		res.Tags = make([]string, len(v.Tags))
+		for i, val := range v.Tags {
+			res.Tags[i] = val
+		}
+	}
+	res.Operations = make([]string, len(v.Operations))
+	for i, val := range v.Operations {
+		res.Operations[i] = val
+	}
+
+	return res
+}
+
+func encodeCompiledToolSelectionToCompiledToolSelectionTransport2(v *CompiledToolSelection) *jsonCompiledToolSelectionTransport {
+	res := &jsonCompiledToolSelectionTransport{
+		RegistrationToken:      &v.RegistrationToken,
+		Name:                   &v.Name,
+		Description:            v.Description,
+		RegisteredAt:           &v.RegisteredAt,
+		DeclarationFingerprint: &v.DeclarationFingerprint,
+	}
+	if v.Version != nil {
+		version := jsonSemVerTransport(*v.Version)
+		res.Version = &version
+	}
+	if v.Tags != nil {
+		res.Tags = make([]string, len(v.Tags))
+		for i, val := range v.Tags {
+			res.Tags[i] = val
+		}
+	}
+	res.Operations = make([]string, len(v.Operations))
+	for i, val := range v.Operations {
+		res.Operations[i] = val
+	}
 
 	return res
 }
@@ -17165,6 +17729,190 @@ func validateClaimToolCallResultJSONValue(path string, value any, description st
 	return nil
 }
 
+// validateCompiledAgentToolSelectionJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateCompiledAgentToolSelectionJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "agent":
+			if err := validateAgentExportsDeclarationJSONValue33(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Provider worker route and configuration selected for the call.",
+			); err != nil {
+				return err
+			}
+		case "selection":
+			if err := validateCompiledAgentToolSelectionJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Registration selected for the call.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"agent",
+				"selection",
+			})
+		}
+	}
+	return nil
+}
+
+// validateCompiledAgentToolSelectionJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateCompiledAgentToolSelectionJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "declaration_fingerprint":
+			if err := validateAgentExportsDeclarationJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "SHA-256 of the generated declarations of the listed operations, without provider Agent targets.",
+			); err != nil {
+				return err
+			}
+		case "description":
+			if err := validateAgentExportsDeclarationJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Registered toolset description.",
+			); err != nil {
+				return err
+			}
+		case "name":
+			if err := validateAgentExportsDeclarationJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Registered toolset name.",
+			); err != nil {
+				return err
+			}
+		case "operations":
+			if err := validateCompiledAgentToolSelectionJSONValue3(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Names of the called operation and its paging partner, sorted.",
+			); err != nil {
+				return err
+			}
+		case "registered_at":
+			if err := validateAgentExportsDeclarationJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "ISO 8601 time the registry accepted the registration.",
+			); err != nil {
+				return err
+			}
+		case "registration_token":
+			if err := validateAgentExportsDeclarationJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Exact registration selected for the call.",
+			); err != nil {
+				return err
+			}
+		case "tags":
+			if err := validateCompiledAgentToolSelectionJSONValue4(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Registered toolset tags.",
+			); err != nil {
+				return err
+			}
+		case "version":
+			if err := validateAgentExportsDeclarationJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Registered toolset version.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"declaration_fingerprint",
+				"description",
+				"name",
+				"operations",
+				"registered_at",
+				"registration_token",
+				"tags",
+				"version",
+			})
+		}
+	}
+	return nil
+}
+
+// validateCompiledAgentToolSelectionJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateCompiledAgentToolSelectionJSONValue3(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if err := validateAgentExportsDeclarationJSONValue2(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateCompiledAgentToolSelectionJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateCompiledAgentToolSelectionJSONValue4(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "array", "null", description)
+	}
+	typed, ok := value.([]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
+	}
+	for index, item := range typed {
+		if err := validateAgentExportsDeclarationJSONValue2(
+			generatedJSONChildPath(path, strconv.Itoa(index), true),
+			item, description,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // validateCompleteToolCallPayloadJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
 func validateCompleteToolCallPayloadJSONValue(path string, value any, description string) error {
 	field := path
@@ -18577,6 +19325,10 @@ func validateRegistrySelectionJSONValue2(path string, value any, description str
 		return validateRegisteredToolsetSelectionJSONValue2(generatedJSONChildPath(path, "value", false), branch, "Direct import using original operation names.")
 	case "registered":
 		return validateRegisteredToolsetSelectionJSONValue(generatedJSONChildPath(path, "value", false), branch, "Owner-selected resource with derived operation names.")
+	case "compiled_service":
+		return validateCompiledAgentToolSelectionJSONValue2(generatedJSONChildPath(path, "value", false), branch, "Service tool compiled into the consumer.")
+	case "compiled_agent":
+		return validateCompiledAgentToolSelectionJSONValue(generatedJSONChildPath(path, "value", false), branch, "Native Agent tool compiled into the consumer.")
 	default:
 		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
 	}
@@ -20908,6 +21660,102 @@ func checkClaimToolCallResultClaimToolCallResultValue(in *ClaimToolCallResult, f
 	return nil
 }
 
+// checkCompiledAgentToolSelectionValue checks text and cycles before conversion.
+func checkCompiledAgentToolSelectionValue(in *CompiledAgentToolSelection) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkCompiledAgentToolSelectionCompiledAgentToolSelectionValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkCompiledAgentToolSelectionCompiledAgentToolSelectionValue checks one generated value on the active path.
+func checkCompiledAgentToolSelectionCompiledAgentToolSelectionValue(in *CompiledAgentToolSelection, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if err := checkCompiledAgentToolSelectionCompiledToolSelectionValue(in.Selection, generatedJSONChildPath(field, "selection", false), active); err != nil {
+			return err
+		}
+		if err := checkAgentExportsDeclarationAgentToolTargetValue(in.Agent, generatedJSONChildPath(field, "agent", false), active); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// checkCompiledAgentToolSelectionCompiledToolSelectionValue checks one generated value on the active path.
+func checkCompiledAgentToolSelectionCompiledToolSelectionValue(in *CompiledToolSelection, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if !utf8.ValidString(string(in.RegistrationToken)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "registration_token", false))
+		}
+		if !utf8.ValidString(string(in.Name)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "name", false))
+		}
+		if in.Description != nil {
+			if !utf8.ValidString(string(*in.Description)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "description", false))
+			}
+		}
+		if in.Version != nil {
+			if err := checkAgentExportsDeclarationSemVerValue(*in.Version, generatedJSONChildPath(field, "version", false), active); err != nil {
+				return err
+			}
+		}
+		for index1, item1 := range in.Tags {
+			_ = index1
+			_ = item1
+			if !utf8.ValidString(string(item1)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(generatedJSONChildPath(field, "tags", false), strconv.Itoa(index1), true))
+			}
+		}
+		if !utf8.ValidString(string(in.RegisteredAt)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "registered_at", false))
+		}
+		for index1, item1 := range in.Operations {
+			_ = index1
+			_ = item1
+			if !utf8.ValidString(string(item1)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(generatedJSONChildPath(field, "operations", false), strconv.Itoa(index1), true))
+			}
+		}
+		if !utf8.ValidString(string(in.DeclarationFingerprint)) {
+			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "declaration_fingerprint", false))
+		}
+	}
+	return nil
+}
+
+// checkCompiledToolSelectionValue checks text and cycles before conversion.
+func checkCompiledToolSelectionValue(in *CompiledToolSelection) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkCompiledAgentToolSelectionCompiledToolSelectionValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
 // checkCompleteToolCallPayloadValue checks text and cycles before conversion.
 func checkCompleteToolCallPayloadValue(in *CompleteToolCallPayload) error {
 	if in == nil {
@@ -21676,6 +22524,18 @@ func checkRegistrySelectionRegistrySelectionValue(in *RegistrySelection, field s
 		if branch1, ok := in.Selection.AsRegistered(); ok {
 			_ = branch1
 			if err := checkRegisteredToolsetSelectionRegisteredToolsetSelectionValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "selection", false), "value", false), active); err != nil {
+				return err
+			}
+		}
+		if branch1, ok := in.Selection.AsCompiledService(); ok {
+			_ = branch1
+			if err := checkCompiledAgentToolSelectionCompiledToolSelectionValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "selection", false), "value", false), active); err != nil {
+				return err
+			}
+		}
+		if branch1, ok := in.Selection.AsCompiledAgent(); ok {
+			_ = branch1
+			if err := checkCompiledAgentToolSelectionCompiledAgentToolSelectionValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "selection", false), "value", false), active); err != nil {
 				return err
 			}
 		}

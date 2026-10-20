@@ -213,7 +213,7 @@ func TestHistoricalPagingSelectionRetainsRegistrationAndRejectsBrokenRelationshi
 	require.NoError(t, err)
 	require.Len(t, actions, 1)
 	assert.Equal(t, "second", actions[0].state.rootToolCallID)
-	retained, err := registrycontract.Read(actions[0].registry)
+	retained, err := registrycontract.Read(actions[0].registry, nil)
 	require.NoError(t, err)
 	assert.Equal(t, strings.Repeat("b", 64), retained.Registered.RegistrationToken)
 

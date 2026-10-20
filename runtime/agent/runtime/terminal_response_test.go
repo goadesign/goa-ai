@@ -108,14 +108,14 @@ func TestTypedTerminalObserverKeepsExclusiveAndTypedContracts(t *testing.T) {
 			case "invalid message":
 				result.FinalToolResult.FinalResponse.Message = nil
 			}
-			err := validatePlannerActivityResult(rt, rt.toolSpec, result, &spec, false)
+			err := validatePlannerActivityResult(rt, rt, result, &spec, false)
 			if variant == "typed only" || variant == "observer" {
 				require.NoError(t, err)
 			} else {
 				require.Error(t, err)
 			}
 			if variant == "both terminal branches" {
-				_, err := normalizeStepWithSpecs(&PlanResult{FinalResponse: result.FinalResponse, FinalToolResult: result.FinalToolResult}, rt.toolSpec)
+				_, err := normalizeStepWithSpecs(&PlanResult{FinalResponse: result.FinalResponse, FinalToolResult: result.FinalToolResult}, rt)
 				require.Error(t, err)
 				var contractError *planner.OutputContractError
 				require.ErrorAs(t, err, &contractError)

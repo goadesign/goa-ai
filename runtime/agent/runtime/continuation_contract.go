@@ -83,11 +83,11 @@ func decodeWorkflowCheckpoint(suspension *api.RunSuspension, definition AgentDef
 	if err := validateCompletionToolPlanResultWithSpecs(
 		checkpoint.Batch.Result,
 		completionToolFromPolicy(checkpoint.Policy),
-		definition.spec,
+		definition,
 	); err != nil {
 		return nil, fmt.Errorf("validate suspended completion plan: %w", err)
 	}
-	parentSpec, err := selectedRunTool(run.Context{Tool: checkpoint.Context.Tool, ToolRegistry: checkpoint.Context.ToolRegistry, Operation: checkpoint.Context.Operation}, definition.route.ID, definition.spec)
+	parentSpec, err := selectedRunTool(run.Context{Tool: checkpoint.Context.Tool, ToolRegistry: checkpoint.Context.ToolRegistry, Operation: checkpoint.Context.Operation}, definition.route.ID, definition)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +101,7 @@ func decodeWorkflowCheckpoint(suspension *api.RunSuspension, definition AgentDef
 	if err := validatePlanResultToolCallIDs(checkpoint.Batch.Result); err != nil {
 		return nil, fmt.Errorf("validate suspended planner result: %w", err)
 	}
-	program, err := normalizeStepWithSpecs(checkpoint.Batch.Result, definition.spec)
+	program, err := normalizeStepWithSpecs(checkpoint.Batch.Result, definition)
 	if err != nil {
 		return nil, fmt.Errorf("validate suspended planner result: %w", err)
 	}
@@ -220,16 +220,11 @@ func validateCheckpointChildIdentity(call ToolCall, checkpoint *workflowCheckpoi
 		return fmt.Errorf("child suspension changed the selected contract for %q", call.Name)
 	}
 	if call.Registry != nil {
-		selected, err := registrycontract.Read(call.Registry)
+		same, err := registrycontract.SameSelection(call.Registry, checkpoint.Context.ToolRegistry)
 		if err != nil {
 			return err
 		}
-		saved, err := registrycontract.Read(checkpoint.Context.ToolRegistry)
-		if err != nil {
-			return err
-		}
-		if checkpoint.Context.Tool != call.Name || call.Registry.Registry != checkpoint.Context.ToolRegistry.Registry ||
-			!reflect.DeepEqual(selected.Registered, saved.Registered) {
+		if checkpoint.Context.Tool != call.Name || !same {
 			return fmt.Errorf("child suspension changed the selected contract for %q", call.Name)
 		}
 	}
@@ -242,7 +237,7 @@ func childDefinitionForCall(call ToolCall, definition AgentDefinition) (AgentDef
 	if call.Registry != nil {
 		return registeredChildDefinition(call, definition)
 	}
-	spec, ok, err := lookupOwnedCallSpec(call, definition.spec)
+	spec, ok, err := lookupOwnedCallSpec(call, definition)
 	if err != nil {
 		return AgentDefinition{}, err
 	}
@@ -282,7 +277,7 @@ func validateCheckpointToolValues(checkpoint *workflowCheckpoint, definition Age
 		if err != nil {
 			return err
 		}
-		if _, err := decodeCheckpointToolEvent(event, call, definition.spec); err != nil {
+		if _, err := decodeCheckpointToolEvent(event, call, definition); err != nil {
 			return err
 		}
 	}
@@ -299,7 +294,7 @@ func validateCheckpointToolValues(checkpoint *workflowCheckpoint, definition Age
 			}
 			continue
 		}
-		if _, err := decodeCheckpointToolEvent(record.Result, record.Call, definition.spec); err != nil {
+		if _, err := decodeCheckpointToolEvent(record.Result, record.Call, definition); err != nil {
 			return err
 		}
 		if record.ResultPublished && i >= checkpoint.Batch.Recorded {
@@ -339,7 +334,7 @@ func validateCheckpointToolOutput(output *planner.ToolOutput, definition AgentDe
 	call := ToolCall{Name: output.Name, ToolCallID: output.ToolCallID, Payload: output.Payload, Registry: output.Registry}
 	var spec *tools.ToolSpec
 	if output.Failure == nil {
-		registered, ok, err := lookupOwnedCallSpec(call, definition.spec)
+		registered, ok, err := lookupOwnedCallSpec(call, definition)
 		if err != nil {
 			return err
 		}
@@ -364,7 +359,7 @@ func validateCheckpointToolOutput(output *planner.ToolOutput, definition AgentDe
 
 // decodeToolValue validates a saved value against the selected contract.
 func decodeToolValue(definition AgentDefinition, call ToolCall, data []byte, payload bool) error {
-	spec, ok, err := lookupOwnedCallSpec(call, definition.spec)
+	spec, ok, err := lookupOwnedCallSpec(call, definition)
 	if err != nil {
 		return err
 	}
@@ -944,7 +939,7 @@ func validateContinuationResponse(
 	if pending.Await == nil || response.ToolResults == nil {
 		return nil
 	}
-	return validateProvidedToolResults(*pending.Await, response.ToolResults, definition.spec)
+	return validateProvidedToolResults(*pending.Await, response.ToolResults, definition)
 }
 
 // validateProvidedToolResults proves that one external result exists for each
@@ -999,7 +994,7 @@ func validateProvidedToolResults(
 		if (result.Success == nil) == (result.Failure == nil) {
 			return fmt.Errorf("tool result %q must contain exactly one success or failure", call.ToolCallID)
 		}
-		spec, ok := lookup(call.Name)
+		spec, ok := lookup.spec(call.Name)
 		if !ok {
 			return fmt.Errorf("tool result %q references tool %q removed from the current agent definition", call.ToolCallID, call.Name)
 		}

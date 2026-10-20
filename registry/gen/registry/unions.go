@@ -490,9 +490,11 @@ func (u *ExecutionInvocationKind) UnmarshalJSON(data []byte) error {
 
 // RegistrySelectionKind holds exactly one of its branch values.
 type RegistrySelectionKind struct {
-	kind       RegistrySelectionKindKind
-	direct     *ResolvedToolset
-	registered *RegisteredToolsetSelection
+	kind            RegistrySelectionKindKind
+	direct          *ResolvedToolset
+	registered      *RegisteredToolsetSelection
+	compiledService *CompiledToolSelection
+	compiledAgent   *CompiledAgentToolSelection
 }
 
 // RegistrySelectionKindKind records which RegistrySelectionKind branch is selected.
@@ -503,6 +505,10 @@ const (
 	RegistrySelectionKindKindDirect RegistrySelectionKindKind = "direct"
 	// RegistrySelectionKindKindRegistered identifies the registered branch.
 	RegistrySelectionKindKindRegistered RegistrySelectionKindKind = "registered"
+	// RegistrySelectionKindKindCompiledService identifies the compiled_service branch.
+	RegistrySelectionKindKindCompiledService RegistrySelectionKindKind = "compiled_service"
+	// RegistrySelectionKindKindCompiledAgent identifies the compiled_agent branch.
+	RegistrySelectionKindKindCompiledAgent RegistrySelectionKindKind = "compiled_agent"
 )
 
 // Kind returns the selected branch.
@@ -558,6 +564,54 @@ func (u *RegistrySelectionKind) SetRegistered(v *RegisteredToolsetSelection) {
 	}
 }
 
+// NewRegistrySelectionKindCompiledService constructs RegistrySelectionKind with the compiled_service branch set.
+func NewRegistrySelectionKindCompiledService(v *CompiledToolSelection) RegistrySelectionKind {
+	return RegistrySelectionKind{
+		kind:            RegistrySelectionKindKindCompiledService,
+		compiledService: v,
+	}
+}
+
+// AsCompiledService returns the value when the compiled_service branch is selected.
+func (u RegistrySelectionKind) AsCompiledService() (_ *CompiledToolSelection, ok bool) {
+	if u.kind != RegistrySelectionKindKindCompiledService {
+		return
+	}
+	return u.compiledService, true
+}
+
+// SetCompiledService selects the compiled_service branch and stores v.
+func (u *RegistrySelectionKind) SetCompiledService(v *CompiledToolSelection) {
+	*u = RegistrySelectionKind{
+		kind:            RegistrySelectionKindKindCompiledService,
+		compiledService: v,
+	}
+}
+
+// NewRegistrySelectionKindCompiledAgent constructs RegistrySelectionKind with the compiled_agent branch set.
+func NewRegistrySelectionKindCompiledAgent(v *CompiledAgentToolSelection) RegistrySelectionKind {
+	return RegistrySelectionKind{
+		kind:          RegistrySelectionKindKindCompiledAgent,
+		compiledAgent: v,
+	}
+}
+
+// AsCompiledAgent returns the value when the compiled_agent branch is selected.
+func (u RegistrySelectionKind) AsCompiledAgent() (_ *CompiledAgentToolSelection, ok bool) {
+	if u.kind != RegistrySelectionKindKindCompiledAgent {
+		return
+	}
+	return u.compiledAgent, true
+}
+
+// SetCompiledAgent selects the compiled_agent branch and stores v.
+func (u *RegistrySelectionKind) SetCompiledAgent(v *CompiledAgentToolSelection) {
+	*u = RegistrySelectionKind{
+		kind:          RegistrySelectionKindKindCompiledAgent,
+		compiledAgent: v,
+	}
+}
+
 // Validate ensures exactly one valid branch is selected.
 func (u RegistrySelectionKind) Validate() error {
 	_, err := u.Value()
@@ -572,6 +626,8 @@ func (u RegistrySelectionKind) Value() (any, error) {
 		return nil, goa.InvalidEnumValueError("type", "", []any{
 			string(RegistrySelectionKindKindDirect),
 			string(RegistrySelectionKindKindRegistered),
+			string(RegistrySelectionKindKindCompiledService),
+			string(RegistrySelectionKindKindCompiledAgent),
 		})
 	case RegistrySelectionKindKindDirect:
 		if u.direct == nil {
@@ -583,10 +639,22 @@ func (u RegistrySelectionKind) Value() (any, error) {
 			return nil, goa.MissingFieldError("value", "RegistrySelectionKind")
 		}
 		return u.registered, nil
+	case RegistrySelectionKindKindCompiledService:
+		if u.compiledService == nil {
+			return nil, goa.MissingFieldError("value", "RegistrySelectionKind")
+		}
+		return u.compiledService, nil
+	case RegistrySelectionKindKindCompiledAgent:
+		if u.compiledAgent == nil {
+			return nil, goa.MissingFieldError("value", "RegistrySelectionKind")
+		}
+		return u.compiledAgent, nil
 	default:
 		return nil, goa.InvalidEnumValueError("type", u.kind, []any{
 			string(RegistrySelectionKindKindDirect),
 			string(RegistrySelectionKindKindRegistered),
+			string(RegistrySelectionKindKindCompiledService),
+			string(RegistrySelectionKindKindCompiledAgent),
 		})
 	}
 }
@@ -634,6 +702,18 @@ func (u *RegistrySelectionKind) UnmarshalJSON(data []byte) error {
 			return err
 		}
 		u.SetRegistered(v)
+	case string(RegistrySelectionKindKindCompiledService):
+		var v *CompiledToolSelection
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetCompiledService(v)
+	case string(RegistrySelectionKindKindCompiledAgent):
+		var v *CompiledAgentToolSelection
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetCompiledAgent(v)
 	default:
 		if raw.Type == "" {
 			return goa.MissingFieldError("type", "RegistrySelectionKind")
@@ -641,6 +721,8 @@ func (u *RegistrySelectionKind) UnmarshalJSON(data []byte) error {
 		return goa.InvalidEnumValueError("type", raw.Type, []any{
 			string(RegistrySelectionKindKindDirect),
 			string(RegistrySelectionKindKindRegistered),
+			string(RegistrySelectionKindKindCompiledService),
+			string(RegistrySelectionKindKindCompiledAgent),
 		})
 	}
 	return nil

@@ -470,6 +470,16 @@ func (r *Runtime) runLoop(
 	)
 }
 
+// seedTestRegistryDeclarations records generated declarations as RegisterAgent
+// would, for tests that install agents without registering workers.
+func seedTestRegistryDeclarations(rt *Runtime, definitions ...AgentDefinition) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	for _, definition := range definitions {
+		rt.addRegistryDeclarationsLocked(definition)
+	}
+}
+
 func seedTestToolSpecs(rt *Runtime, specs ...tools.ToolSpec) {
 	if rt.toolSpecs == nil {
 		rt.toolSpecs = make(map[tools.Ident]tools.ToolSpec)

@@ -7,16 +7,24 @@ import (
 	"fmt"
 
 	"goa.design/goa-ai/internal/registrycontract"
+	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
+type (
+	// noStaticTools is the lookup for a dynamic call whose consuming Agent is
+	// not registered here; it owns no static contracts or declarations.
+	noStaticTools struct{}
+)
+
 // registryCallMetadata reads policy facts from the exact selected declaration.
 // Historical names alone cannot borrow another agent's static policy metadata.
-func registryCallMetadata(call ToolCall) (policy.ToolMetadata, error) {
-	resolved, err := registrycontract.Read(call.Registry)
+// lookup supplies generated declarations for calls to compiled tools.
+func registryCallMetadata(call ToolCall, lookup toolSpecLookup) (policy.ToolMetadata, error) {
+	resolved, err := registrycontract.Read(call.Registry, lookup.registryDeclaration)
 	if err != nil {
 		return policy.ToolMetadata{}, err
 	}
@@ -41,10 +49,10 @@ func registryCallMetadata(call ToolCall) (policy.ToolMetadata, error) {
 // in their validated saved definition.
 func lookupCallSpec(call ToolCall, lookup toolSpecLookup) (tools.ToolSpec, bool, error) {
 	if call.Registry == nil {
-		spec, ok := lookup(call.Name)
+		spec, ok := lookup.spec(call.Name)
 		return spec, ok, nil
 	}
-	resolved, err := registrycontract.Read(call.Registry)
+	resolved, err := registrycontract.Read(call.Registry, lookup.registryDeclaration)
 	if err != nil {
 		return tools.ToolSpec{}, false, err
 	}
@@ -85,7 +93,7 @@ func validateRegistrySource(definition AgentDefinition, call ToolCall) (*registr
 	if definition.registryTools == nil {
 		return nil, fmt.Errorf("agent %q does not consume registry tools", definition.route.ID)
 	}
-	resolved, err := registrycontract.Read(call.Registry)
+	resolved, err := registrycontract.Read(call.Registry, definition.registryDeclaration)
 	if err != nil {
 		return nil, err
 	}
@@ -148,19 +156,34 @@ func recordedResultCall(name tools.Ident, id string, calls map[string]ToolCall) 
 // tools. A static name in another Agent never changes a dynamic call's codec.
 func (r *Runtime) callSpecLookup(call ToolCall) toolSpecLookup {
 	if call.Registry == nil {
-		return r.toolSpec
+		return r
 	}
 	executor, isAgent := call.Subject.Executor.AsAgent()
 	if isAgent {
 		if registration, exists := r.agentByID(agent.Ident(executor)); exists {
-			return registration.Definition.spec
+			return registration.Definition
 		}
 	}
-	return noStaticCallSpec
+	return noStaticTools{}
 }
 
-func noStaticCallSpec(tools.Ident) (tools.ToolSpec, bool) {
+// agentTools returns the static contracts and declarations of one consuming
+// agent registered on this worker, or none when it is not registered here.
+func (r *Runtime) agentTools(agentID agent.Ident) toolSpecLookup {
+	if registration, exists := r.agentByID(agentID); exists {
+		return registration.Definition
+	}
+	return noStaticTools{}
+}
+
+// spec reports that a dynamic call has no static contract.
+func (noStaticTools) spec(tools.Ident) (tools.ToolSpec, bool) {
 	return tools.ToolSpec{}, false
+}
+
+// registryDeclaration reports that a dynamic call has no generated declaration.
+func (noStaticTools) registryDeclaration(tools.Ident) (*genregistry.ToolSchema, bool) {
+	return nil, false
 }
 
 // isDynamicRegistryCall selects remote decoding only when this consuming Agent
@@ -169,7 +192,7 @@ func (r *Runtime) isDynamicRegistryCall(call ToolCall) bool {
 	if call.Registry == nil {
 		return false
 	}
-	_, static := r.callSpecLookup(call)(call.Name)
+	_, static := r.callSpecLookup(call).spec(call.Name)
 	return !static
 }
 
@@ -183,8 +206,8 @@ func (r *Runtime) callSpec(call ToolCall) (tools.ToolSpec, bool, error) {
 // Bound static tools retain generated codecs after their saved declaration is checked.
 func lookupOwnedCallSpec(call ToolCall, lookup toolSpecLookup) (tools.ToolSpec, bool, error) {
 	if call.Registry != nil {
-		if spec, exists := lookup(call.Name); exists {
-			resolved, err := registrycontract.Read(call.Registry)
+		if spec, exists := lookup.spec(call.Name); exists {
+			resolved, err := registrycontract.Read(call.Registry, lookup.registryDeclaration)
 			if err != nil {
 				return tools.ToolSpec{}, false, err
 			}

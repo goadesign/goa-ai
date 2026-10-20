@@ -217,7 +217,12 @@ func (r *Runtime) continuationGroups(agentID agent.Ident, outputs []*planner.Too
 		if output == nil || output.Registry == nil {
 			continue
 		}
-		resolved, err := registrycontract.Read(output.Registry)
+		resolved, err := registrycontract.Read(output.Registry, r.agentTools(agentID).registryDeclaration)
+		if errors.Is(err, registrycontract.ErrCompiledContractChanged) {
+			// This build declares the compiled tool differently, so its saved
+			// page cannot be continued. Valid history contributes no action.
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -266,7 +271,7 @@ func (r *Runtime) selectContinuationExecution(agentID agent.Ident, group *contin
 	if group.registry == nil {
 		return true, nil
 	}
-	resolved, err := registrycontract.Read(group.registry)
+	resolved, err := registrycontract.Read(group.registry, r.agentTools(agentID).registryDeclaration)
 	if err != nil {
 		return false, err
 	}

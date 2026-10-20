@@ -68,6 +68,23 @@ func {{ .SpecFunc }}(name {{ .ToolsPackageName }}.Ident) ({{ .ToolsPackageName }
     }
 }
 
+// {{ .ToolSchemaFunc }} returns the generated registry declaration of one tool
+// available to this agent, with fresh owned values. It returns false for tools
+// without a declaration, such as private page operations.
+func {{ .ToolSchemaFunc }}(name {{ .ToolsPackageName }}.Ident) (*{{ .RegistryPackageName }}.ToolSchema, bool) {
+    switch name {
+    {{- range .Toolsets }}
+        {{- $pkg := .SpecsPackageName }}
+        {{- range .Tools }}
+    case {{ $.ToolsPackageName }}.Ident({{ printf "%q" .Tool.QualifiedName }}):
+        return {{ $pkg }}.ToolSchema(name)
+        {{- end }}
+    {{- end }}
+    default:
+        return nil, false
+    }
+}
+
 // {{ .MetadataFunc }} returns policy details for every available tool.
 func {{ .MetadataFunc }}() []{{ .PolicyPackageName }}.ToolMetadata {
     return []{{ .PolicyPackageName }}.ToolMetadata{

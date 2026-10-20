@@ -23,11 +23,28 @@ import (
 	"goa.design/pulse/streaming"
 )
 
+// The executor runs calls saved with the full declaration by earlier releases
+// and calls saved with only their compiled registration.
 func TestResolvedExecutorKeepsGeneratedResultAndExactAdmissionOnRetry(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		resolve func(*genregistry.ResolvedToolset) (*registrycontract.Resolution, error)
+	}{
+		{name: "direct", resolve: registrycontract.Resolve},
+		{name: "compiled", resolve: registrycontract.ResolveCompiled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			testResolvedExecutorAdmission(t, tc.resolve)
+		})
+	}
+}
+
+func testResolvedExecutorAdmission(t *testing.T, resolve func(*genregistry.ResolvedToolset) (*registrycontract.Resolution, error)) {
+	t.Helper()
 	selected := &genregistry.ResolvedToolset{Toolset: genrecords.Toolset(), RegistrationToken: testRegistrationTokenA}
 	selected.Toolset.Name = "owner.records"
 	selected.Toolset.RegisteredAt = "2026-09-17T00:00:00Z"
-	resolved, err := registrycontract.Resolve(selected)
+	resolved, err := resolve(selected)
 	require.NoError(t, err)
 	binding, err := resolved.Select("company", genrecords.Read)
 	require.NoError(t, err)

@@ -165,7 +165,7 @@ func TestDirectAgentPreparationRecoversOriginalInput(t *testing.T) {
 	context := run.Context{Tool: input.Tool, ToolArgs: input.ToolArgs, Operation: input.Operation}
 	saved := checkpointContextFromRun(context)
 	restored := restoreCheckpointRunContext(saved, &api.RunInput{Subject: input.Subject, RunID: "successor"})
-	selected, err := selectedRunTool(restored, definition.route.ID, nil)
+	selected, err := selectedRunTool(restored, definition.route.ID, noStaticTools{})
 	require.NoError(t, err)
 	assert.Equal(t, spec.Name, selected.Name)
 	assert.Equal(t, input.Operation, restored.Operation)

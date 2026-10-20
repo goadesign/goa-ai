@@ -3697,7 +3697,10 @@ bounds supply no next page and retire an earlier live cursor in the same chain.
 Present bounds must satisfy the paging contract above. The runtime preserves
 the saved result bytes and chronological order without inventing bounds.
 Registered calls use their saved declarations for this validation, including
-completed pages that close earlier cursors. Static historical calls have no
+completed pages that close earlier cursors. A call to a compiled tool saved
+without its declaration uses the current generated declaration when the saved
+fingerprint still matches. When it no longer matches, only its result metadata is
+validated, it still closes completed chains, and it supplies no next-page action. Static historical calls have no
 retained declaration: their explicit source-call IDs and result metadata close
 completed chains before today's input codecs are consulted. Renaming or removing
 a page tool does not erase its recorded completion. After reconstructing each full chain,
