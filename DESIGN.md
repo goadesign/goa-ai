@@ -581,7 +581,10 @@ the transcript but never supply paging state, so their old execution details
 are not restored or revalidated. Absent historical bounds supply no next page
 and retire any earlier cursor in the same chain; present bounds remain validated.
 Registered historical calls use their saved declarations to validate bounds and
-finish ordered page chains. Only unfinished chains need current execution
+finish ordered page chains. Static historical calls use their saved source-call
+identities and result metadata to close completed chains before reading today's
+input contracts, including when a continuation tool was removed or renamed.
+Only unfinished chains need current execution
 authorization: an unavailable or changed static tool pair supplies no action,
 without blocking the new turn. Current static execution still requires the full
 matching declaration, including metadata and injected context.
@@ -1030,7 +1033,10 @@ while recovery is pending: exact recorded failure data and call identity must
 agree, and every fresh correction is validated against its current input contract.
 Failure materialization, previews and paging do not decode failed arguments.
 Pending execution, confirmation, external input, unfinished children and
-successful paging reconstruction retain current input validation.
+current paging outputs retain current input validation. Completed historical
+page chains do not decode their old arguments. An unfinished historical static
+query whose arguments no longer fit its current tools offers no continuation
+action, while its saved evidence remains available to the new turn.
 Current result and server-data contracts,
 required tools, registry admission, checkpoint digests and ownership remain
 mandatory. This changes no stored format, accepted request bytes or provider

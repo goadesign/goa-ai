@@ -3691,11 +3691,15 @@ bounds supply no next page and retire an earlier live cursor in the same chain.
 Present bounds must satisfy the paging contract above. The runtime preserves
 the saved result bytes and chronological order without inventing bounds.
 Registered calls use their saved declarations for this validation, including
-completed pages that close earlier cursors. After reconstructing each full chain,
+completed pages that close earlier cursors. Static historical calls have no
+retained declaration: their explicit source-call IDs and result metadata close
+completed chains before today's input codecs are consulted. Renaming or removing
+a page tool does not erase its recorded completion. After reconstructing each full chain,
 the runtime checks whether its unfinished query can still execute: both static
 tools must match their current full declarations and routes, and the current
 agent must still allow the registered toolset. An unavailable or incompatible
-pair supplies no next-page action but does not block a new turn. Dynamically
+pair, or static historical arguments that no longer fit the current input
+contract, supplies no next-page action but does not block a new turn. Dynamically
 consumed toolsets retain their saved registration and current consumption checks.
 Malformed saved declarations, bounds, or call/result relationships remain errors.
 
@@ -4379,9 +4383,12 @@ arguments:
 - Pending execution, confirmation, external input and unfinished children
   still require current input codecs. Missing replies and unresolved
   calls cannot borrow another call's successful outcome.
-- Successful paging inputs remain current because the runtime reconstructs
-  queries and consumes cursors from previous calls, including earlier pages
-  of a chain. Failed outputs are excluded from paging reconstruction.
+- Completed historical page chains retain their old input bytes without
+  decoding them through current input codecs. An unfinished historical query
+  must still fit the current tools to supply a page action; otherwise it remains
+  transcript evidence only. Current-run paging outputs and explicitly selected
+  active outputs retain strict validation, including when they refer to a
+  call scheduled in an earlier run. Failed outputs supply no paging state.
 
 All restored results, server data and bounds still satisfy their selected
 contracts. Required tools, current registry admission, exact call/result

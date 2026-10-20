@@ -31,6 +31,13 @@ const (
 )
 
 type (
+	// continuationInputMismatch identifies arguments that cannot execute under
+	// a continuation's current codec. Historical actions may become unavailable;
+	// current work still returns this error to its caller.
+	continuationInputMismatch struct {
+		error
+	}
+
 	// continuationAction is one model-visible action bound to one unfinished
 	// bounded query. The executable tool and cursor remain runtime-owned.
 	continuationAction struct {
@@ -78,6 +85,12 @@ func IsGeneratedContinuationToolName(name tools.Ident) bool {
 		}
 	}
 	return true
+}
+
+// Unwrap returns the generated codec's rejection so current callers can inspect
+// the original input error while historical selection recognizes its category.
+func (e continuationInputMismatch) Unwrap() error {
+	return e.error
 }
 
 // availableContinuationActions returns one empty-input model action for every
@@ -654,7 +667,7 @@ func continuationPayload(spec tools.ToolSpec, state continuationState) (rawjson.
 	}
 	value, err := spec.ExecutionPayloadCodec.FromJSON(payload)
 	if err != nil {
-		return nil, fmt.Errorf("decode retained query with generated codec: %w", err)
+		return nil, continuationInputMismatch{fmt.Errorf("decode retained query with generated codec: %w", err)}
 	}
 	canonical, err := spec.ExecutionPayloadCodec.ToJSON(value)
 	if err != nil {

@@ -165,7 +165,7 @@ func TestHistoricalContinuationValidatesOnlySuccessfulMetadata(t *testing.T) {
 	}
 }
 
-func TestHistoricalContinuationBoundsRetainsRegisteredContract(t *testing.T) {
+func TestHistoricalStaticBoundsDoNotRequireCurrentDeclaration(t *testing.T) {
 	for _, tc := range []struct {
 		name       string
 		registered bool
@@ -173,8 +173,10 @@ func TestHistoricalContinuationBoundsRetainsRegisteredContract(t *testing.T) {
 		wantErr    string
 	}{
 		{name: "unbounded without bounds", registered: true},
-		{name: "unbounded with bounds", registered: true, bounds: &agent.Bounds{Returned: 1}, wantErr: "unexpected bounds"},
-		{name: "unregistered without bounds", wantErr: "unregistered tool"},
+		{name: "changed to unbounded", registered: true, bounds: &agent.Bounds{Returned: 1}},
+		{name: "removed without bounds"},
+		{name: "empty cursor", bounds: &agent.Bounds{NextCursor: pointer("")}, wantErr: "empty next_cursor"},
+		{name: "cursor without truncation", bounds: &agent.Bounds{NextCursor: pointer("next")}, wantErr: "without truncation"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rt, _, _ := continuationTestRuntime()

@@ -34,9 +34,11 @@ func (r *Runtime) loadLiteralContinuationOutputs(
 	if err != nil {
 		return nil, err
 	}
-	if len(names) == 0 {
+	if len(names) == 0 && input.RunContext.SessionID == "" {
 		registration, ok := r.agentByID(input.AgentID)
 		if !ok || registration.Definition.registryTools == nil {
+			// A sessionless request with no paging tools has no saved pages to
+			// restore. Its ordinary literal tool exchanges remain model evidence.
 			return nil, nil
 		}
 	}
@@ -140,13 +142,17 @@ func (r *Runtime) loadLiteralContinuationOutputs(
 					return nil, err
 				}
 			}
-			if _, relevant := callNames[call.ToolName.String()]; !relevant {
+			_, relevant := callNames[call.ToolName.String()]
+			savedPaging := call.ContinuationRootToolCallID != "" ||
+				entry.events.result != nil && entry.events.result.Bounds != nil
+			if !relevant && !savedPaging {
 				continue
 			}
 			recognized := false
 			for _, name := range literalNames[toolCallID] {
 				_, canonical := callNames[name]
-				recognized = recognized || canonical || IsGeneratedContinuationToolName(tools.Ident(name))
+				recognized = recognized || canonical || name == call.ToolName.String() ||
+					IsGeneratedContinuationToolName(tools.Ident(name))
 			}
 			if !recognized {
 				continue
@@ -174,22 +180,27 @@ func (r *Runtime) loadLiteralContinuationOutputs(
 	return outputs, nil
 }
 
-// validateHistoricalContinuationBounds checks the paging facts of a saved
-// successful call against its saved registration. This reads evidence; it does
+// validateHistoricalContinuationBounds checks saved paging facts, using the
+// call's saved registration when it has one. This reads evidence; it does
 // not authorize the current agent to execute that old tool. Historical failures
 // supply no paging state and are excluded by the readers. A saved result without
 // bounds supplies no next page; current outputs retain their complete validation.
 func (r *Runtime) validateHistoricalContinuationBounds(output *planner.ToolOutput) error {
 	call := ToolCall{Name: output.Name, ToolCallID: output.ToolCallID, Registry: output.Registry}
+	if output.Bounds == nil {
+		return nil
+	}
+	// A saved static call has no retained tool declaration. Its result metadata
+	// still has to be consistent, but today's tool cannot describe its old input.
+	if output.Registry == nil {
+		return validateToolBoundsMetadata(call, output.Bounds)
+	}
 	spec, ok, err := lookupCallSpec(call, r.toolSpec)
 	if err != nil {
 		return err
 	}
 	if !ok {
 		return fmt.Errorf("runtime: historical continuation references unregistered tool %q", output.Name)
-	}
-	if output.Bounds == nil {
-		return nil
 	}
 	if err := validateToolBoundsContract(spec, call, false, output.Bounds); err != nil {
 		return fmt.Errorf("runtime: invalid historical continuation metadata (tool_call_id=%s): %w", output.ToolCallID, err)
