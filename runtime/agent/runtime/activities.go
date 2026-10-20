@@ -202,7 +202,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, wireInput *PlanActivit
 			}
 		}
 	}
-	recoveryReminders, err := r.recoveryReminders(recoveryOutputs)
+	recoveryReminders, err := r.recoveryReminders(input.AgentID, recoveryOutputs)
 	if err != nil {
 		return nil, err
 	}

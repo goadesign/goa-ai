@@ -14,6 +14,8 @@ import (
 	"text/template"
 
 	"goa.design/goa-ai/features/model/toolname"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
+	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/reminder"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -133,12 +135,17 @@ func selectRecoveryOutputs(outputs []*planner.ToolOutput, callIDs []string) ([]*
 }
 
 // recoveryReminders renders selected failure evidence as ephemeral planner
-// guidance attached only to the recovery activity invocation.
-func (r *Runtime) recoveryReminders(outputs []*planner.ToolOutput) ([]reminder.Reminder, error) {
+// guidance attached only to the recovery activity invocation. agentID is the
+// agent whose run made the failed calls. A saved call to a compiled registry
+// tool keeps only a reference to its declaration, so the spec lookup must
+// read that agent's generated declarations; without the agent it finds none
+// and reports the tool as undeclared.
+func (r *Runtime) recoveryReminders(agentID agent.Ident, outputs []*planner.ToolOutput) ([]reminder.Reminder, error) {
+	subject := genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(agentID))}
 	reminders := make([]reminder.Reminder, 0, len(outputs))
 	for _, output := range outputs {
 		var fields []tools.FieldMetadata
-		spec, ok, err := r.callSpec(ToolCall{Name: output.Name, Registry: output.Registry})
+		spec, ok, err := r.callSpec(ToolCall{Name: output.Name, Registry: output.Registry, Subject: subject})
 		if err != nil {
 			return nil, err
 		}
