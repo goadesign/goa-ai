@@ -301,6 +301,8 @@ func pagingCompositionCursorDesign(required, defaulted bool) {
 	})
 	shared := Toolset("records", func() {
 		Tool("same", "Read selected records.", func() {
+			CallHintTemplate("Reading {{.Selection.Kind}}")
+			ResultHintTemplate("Read {{.Args.Selection.Kind}}")
 			Args(query)
 			Inject("session_id")
 			UIOnly("render")
@@ -312,6 +314,8 @@ func pagingCompositionCursorDesign(required, defaulted bool) {
 			})
 		})
 		Tool("same_next", "Read the next records.", func() {
+			CallHintTemplate("Reading page {{.Cursor}}")
+			ResultHintTemplate("Read page {{.Args.Cursor}}")
 			Args(query)
 			Inject("session_id")
 			UIOnly("render")
@@ -323,6 +327,8 @@ func pagingCompositionCursorDesign(required, defaulted bool) {
 			})
 		})
 		Tool("different", "Start a record query.", func() {
+			CallHintTemplate("Finding {{.Selection.Kind}}")
+			ResultHintTemplate("Found {{.Args.Selection.Kind}}")
 			Args(first)
 			Return(result)
 			BindTo("provider", "start")
@@ -332,6 +338,7 @@ func pagingCompositionCursorDesign(required, defaulted bool) {
 			})
 		})
 		Tool("different_next", "Read its next records.", func() {
+			CallHintTemplate("Finding page {{.Cursor}}")
 			Args(next)
 			Return(result)
 			BindTo("provider", "next")
@@ -349,6 +356,8 @@ func pagingCompositionCursorDesign(required, defaulted bool) {
 			})
 		})
 		Tool("empty_next", "Read remaining records.", func() {
+			CallHintTemplate("Continuing {{.Cursor}}")
+			ResultHintTemplate("Continued {{.Args.Cursor}}")
 			Args(next)
 			Return(result)
 			BoundedResult(func() {
@@ -379,15 +388,19 @@ func pagingCompositionCursorDesign(required, defaulted bool) {
 		})
 	})
 	operations := Toolset("operations", func() {
-		Tool("search", "Search records.", func() {
+		Tool("specs", "Search records.", func() {
+			CallHintTemplate("Searching {{.Selection.Kind}}")
+			ResultHintTemplate("Searched {{.Args.Selection.Kind}}")
 			Args(first)
 			Return(result)
 			BoundedResult(func() {
-				ContinueWith("search_next", "cursor")
+				ContinueWith("specs_next", "cursor")
 				NextCursor("next_cursor")
 			})
 		})
-		Tool("search_next", "Read remaining records.", func() {
+		Tool("specs_next", "Read remaining records.", func() {
+			CallHintTemplate("Searching page {{.Cursor}}")
+			ResultHintTemplate("Searched page {{.Args.Cursor}}")
 			Args(next)
 			Return(result)
 			BoundedResult(func() {

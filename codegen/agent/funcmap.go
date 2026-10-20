@@ -1,3 +1,5 @@
+// Package codegen supplies the shared template helpers used to write tool
+// registrations, schemas and service adapters from the evaluated design.
 package codegen
 
 import (
@@ -12,6 +14,8 @@ import (
 // share the same helpers (e.g., goify for consistent identifier casing).
 func templateFuncMap() map[string]any {
 	return map[string]any{
+		"callHintTemplate":   callHintTemplate,
+		"resultHintTemplate": resultHintTemplate,
 		"goify":              goacodegen.Goify,
 		"nativeTaskDispatch": nativeTaskDispatchSource,
 		"trimPrefix":         strings.TrimPrefix,

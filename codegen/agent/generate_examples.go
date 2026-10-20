@@ -331,9 +331,10 @@ func emitInternalBootstrap(svc *ServiceAgentsData, bootstraps *exampleBootstrapP
 			imports,
 		),
 		{
-			Name:   "bootstrap-internal",
-			Source: agentsTemplates.Read(bootstrapInternalT),
-			Data:   data,
+			Name:    "bootstrap-internal",
+			Source:  agentsTemplates.Read(bootstrapInternalT),
+			Data:    data,
+			FuncMap: templateFuncMap(),
 		},
 	}
 	return &codegen.File{Path: path, SectionTemplates: sections, SkipExist: true}, nil
