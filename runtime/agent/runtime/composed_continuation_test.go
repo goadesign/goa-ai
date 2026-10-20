@@ -84,7 +84,7 @@ func TestComposedContinuationCodeAuthoredPageAndFailedSibling(t *testing.T) {
 	var err error
 	spec.Payload.Codec, err = schema.Codec(spec.Payload.Schema)
 	require.NoError(t, err)
-	lookup := func(name tools.Ident) (tools.ToolSpec, bool) { return spec, name == spec.Name }
+	lookup := specLookupFunc(func(name tools.Ident) (tools.ToolSpec, bool) { return spec, name == spec.Name })
 	for _, input := range []string{`{"query":"active"}`, `{"query":"active","cursor":"next"}`} {
 		require.NoError(t, validatePlannerResultPayloadCodecs(lookup, &planner.PlanResult{ToolCalls: []planner.ToolRequest{{Name: spec.Name, Payload: rawjson.Message(input)}}}, nil))
 	}

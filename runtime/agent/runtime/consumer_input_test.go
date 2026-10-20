@@ -126,7 +126,7 @@ func TestConsumerBindingIsolatesAliasesAndActivities(t *testing.T) {
 					require.NoError(t, catalog.BindSourceInput(testRegistryName, second.Source, original, bound))
 				}
 				modelInput := rawjson.Message(`{ "query": "active" }`)
-				complete, err := prepareConsumerInput(catalog.spec, alias, modelInput)
+				complete, err := prepareConsumerInput(catalog, alias, modelInput)
 				require.NoError(t, err)
 				assert.JSONEq(t, `{"scope":{"id":"`+scope+`"},"query":"active"}`, string(complete))
 				assert.Equal(t, []byte(`{ "query": "active" }`), []byte(modelInput)) //nolint:testifylint // Binding must preserve the original model input bytes, including spaces.
@@ -134,13 +134,13 @@ func TestConsumerBindingIsolatesAliasesAndActivities(t *testing.T) {
 				require.NoError(t, err)
 				selected, err := catalog.selections[alias].resolution.Select(testRegistryName, alias)
 				require.NoError(t, err)
-				restored, err := registrycontract.Read(selected)
+				restored, err := registrycontract.Read(selected, nil)
 				require.NoError(t, err)
 				declaration, err := restored.Declaration(alias)
 				require.NoError(t, err)
 				assert.Equal(t, "records.find", declaration.Name)
 				assert.Equal(t, providerHash, sha256.Sum256(declaration.PayloadSchema))
-				_, err = prepareConsumerInput(catalog.spec, alias, rawjson.Message(`{"query":"active","scope":{"id":"other"}}`))
+				_, err = prepareConsumerInput(catalog, alias, rawjson.Message(`{"query":"active","scope":{"id":"other"}}`))
 				require.Error(t, err)
 			}
 			assert.Nil(t, original.PrepareInput)
@@ -159,12 +159,12 @@ func TestConsumerBindingRejectsSchemaDriftAndInvalidOwnerInput(t *testing.T) {
 	require.NoError(t, err)
 	bound := consumerBoundSpec(t, original, consumerScopeRef{})
 	require.NoError(t, catalog.BindSourceInput(testRegistryName, resource.Source, original, bound))
-	_, err = prepareConsumerInput(catalog.spec, registeredTestName(t, resource, "records.find"), rawjson.Message(`{"query":"active"}`))
+	_, err = prepareConsumerInput(catalog, registeredTestName(t, resource, "records.find"), rawjson.Message(`{"query":"active"}`))
 	require.ErrorContains(t, err, "execution input")
 	assert.True(t, engine.IsActivityErrorNonRetryable(err))
 	var modelFailure *planner.OutputContractError
 	assert.NotErrorAs(t, err, &modelFailure)
-	_, err = prepareConsumerInput(catalog.spec, registeredTestName(t, resource, "records.find"), rawjson.Message(`{"query":"active","scope":{"id":"model"}}`))
+	_, err = prepareConsumerInput(catalog, registeredTestName(t, resource, "records.find"), rawjson.Message(`{"query":"active","scope":{"id":"model"}}`))
 	require.ErrorAs(t, err, &modelFailure)
 	require.ErrorContains(t, catalog.BindSourceInput(testRegistryName, resource.Source, original, bound), "already bound")
 	changed := cloneToolSpec(original)
@@ -180,7 +180,7 @@ func TestConsumerAwaitPreservesBothInputs(t *testing.T) {
 	original, err := contract.Compile(consumerResource("unused.alias").Resolved.Toolset.Tools[0])
 	require.NoError(t, err)
 	bound := consumerBoundSpec(t, original, consumerScopeRef{ID: "north"})
-	lookup := func(name tools.Ident) (tools.ToolSpec, bool) { return bound, name == bound.Name }
+	lookup := specLookupFunc(func(name tools.Ident) (tools.ToolSpec, bool) { return bound, name == bound.Name })
 	modelInput := rawjson.Message(`{ "query": "active" }`)
 	for _, item := range []planner.AwaitItem{
 		planner.AwaitToolClarificationItem(&planner.AwaitToolClarification{ID: "clarify", ToolName: original.Name, ModelToolCallID: "model", Payload: modelInput, Question: "Continue?"}),

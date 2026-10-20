@@ -581,7 +581,9 @@ the transcript but never supply paging state, so their old execution details
 are not restored or revalidated. Absent historical bounds supply no next page
 and retire any earlier cursor in the same chain; present bounds remain validated.
 Registered historical calls use their saved declarations to validate bounds and
-finish ordered page chains. Static historical calls use their saved source-call
+finish ordered page chains. A historical call to a compiled tool, saved without
+its declaration, uses the current generated declaration when its fingerprint still
+matches; otherwise it is treated like a static historical call whose tool changed. Static historical calls use their saved source-call
 identities and result metadata to close completed chains before reading today's
 input contracts, including when a continuation tool was removed or renamed.
 Only unfinished chains need current execution
@@ -1483,7 +1485,9 @@ compares the complete generated declaration, replacing only its toolset route
 name, and preserves generated codecs, input preparation, loading, hints, and
 execution. `executor.NewResolved` admits and retries through `CallResolvedTool`
 using the saved route, operation, and token. The existing `ToolCall.Registry`
-retains that selection; no new saved field or model argument is introduced.
+retains that selection without copying the operation declarations: readers
+restore them from the consuming definition's generated declarations and compare
+a saved fingerprint first. No model argument is introduced.
 The complete static declaration supplies validation contracts, while the Agent's
 executable list chooses its planner tools. Binding a static declaration never
 adds an omitted operation to that list, on initial planning or resume. Separately
@@ -1499,8 +1503,8 @@ from unbound operation declarations and explicit original tool names. It checks
 every operation contract and the generated child's executor, workflow and queue.
 The selected registration owns configuration revisions; discovery descriptions
 and tags do not replace generated operation contracts. Saved calls and paging
-continuations retain that selection and use consumer-owned codecs. Native calls
-still run as durable child workflows, with no new wire fields or execution mode.
+continuations retain that selection, without the operation declarations, and use
+consumer-owned codecs. Native calls still run as durable child workflows.
 
 `RegistryCatalog.IncludeResolved` imports original operation names from an exact
 registration and continues to reject collisions with generated static tools. `IncludeRegistered` instead requires the owner-selected

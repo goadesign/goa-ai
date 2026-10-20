@@ -59,9 +59,14 @@ type (
 		SpecFunc           string
 		MetadataFunc       string
 		MetadataByNameFunc string
-		PolicyPackageName  string
-		ToolsPackageName   string
-		Toolsets           []*aggregateToolsetRenderData
+		// ToolSchemaFunc names the lookup that returns each aggregated tool's
+		// generated registry declaration.
+		ToolSchemaFunc    string
+		PolicyPackageName string
+		ToolsPackageName  string
+		// RegistryPackageName is the import name of the generated registry types.
+		RegistryPackageName string
+		Toolsets            []*aggregateToolsetRenderData
 		// RequiredLabels lists, sorted and deduplicated, the union of every
 		// aggregated toolset's RequiredLabels. Runtime.Start/OneShotRun
 		// validates a run's supplied labels against this set before scheduling

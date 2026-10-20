@@ -248,13 +248,13 @@ func TestRegistryAgentContextSurvivesCheckpointRoundTrip(t *testing.T) {
 	restored := restoreCheckpointRunContext(saved, &RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("generic.agent"))}, RunID: "continued", SessionID: call.SessionID, ParentRunID: nested.ParentRunID})
 	assert.Equal(t, call.Registry.Registry, restored.ToolRegistry.Registry)
 	assert.JSONEq(t, string(call.Registry.Resolution), string(restored.ToolRegistry.Resolution))
-	spec, err := selectedParentTool(restored.Tool, restored.ToolRegistry, "generic.agent", func(tools.Ident) (tools.ToolSpec, bool) {
+	spec, err := selectedParentTool(restored.Tool, restored.ToolRegistry, "generic.agent", specLookupFunc(func(tools.Ident) (tools.ToolSpec, bool) {
 		t.Fatal("restoring a registry contract must not consult static tools")
 		return tools.ToolSpec{}, false
-	})
+	}))
 	require.NoError(t, err)
 	assert.Equal(t, call.Name, spec.Name)
-	_, err = selectedParentTool(restored.Tool, restored.ToolRegistry, "wrong.agent", nil)
+	_, err = selectedParentTool(restored.Tool, restored.ToolRegistry, "wrong.agent", noStaticTools{})
 	require.ErrorContains(t, err, "does not target")
 }
 
@@ -392,7 +392,7 @@ func TestRegistryAgentDiscoveryReadsReplacementWithoutRestart(t *testing.T) {
 	second, err := rt.resolveRegistryCatalog(t.Context(), parent)
 	require.NoError(t, err)
 	assert.Equal(t, "revision/2", second.selections["records.find"].resolution.Registered.Toolset.Tools[0].ConsumerContract.Agent.Configuration)
-	retained, err := registrycontract.Read(saved)
+	retained, err := registrycontract.Read(saved, nil)
 	require.NoError(t, err)
 	assert.Equal(t, "revision/1", retained.Registered.Toolset.Tools[0].ConsumerContract.Agent.Configuration)
 	_, err = rt.resolveRegistryCatalog(t.Context(), testRegistryAgentDefinition(testRegistrySources{}))

@@ -41,7 +41,7 @@ func materializedToolRecordForTest(t *testing.T, rt *Runtime, agentID agent.Iden
 	}
 	var resultJSON rawjson.Message
 	if result.Failure == nil {
-		spec, ok, err := lookupCallSpec(call, rt.toolSpec)
+		spec, ok, err := lookupCallSpec(call, rt)
 		require.NoError(t, err)
 		require.True(t, ok)
 		resultJSON, err = EncodeCanonicalToolResult(spec, result.Result, result.Bounds)

@@ -33,7 +33,7 @@ func (c *RegistryCatalog) BindStaticService(registry string, expected *genregist
 	if err != nil {
 		return err
 	}
-	resolved, err := registrycontract.Resolve(selected)
+	resolved, err := registrycontract.ResolveCompiled(selected)
 	if err != nil {
 		return err
 	}
@@ -80,6 +80,9 @@ func (c *RegistryCatalog) BindStaticService(registry string, expected *genregist
 			return err
 		}
 	}
+	if err := c.requireCompiledRestore(registry, resolved, names); err != nil {
+		return err
+	}
 	for _, name := range names {
 		declaration, err := resolved.Declaration(name)
 		if err != nil {
@@ -87,6 +90,24 @@ func (c *RegistryCatalog) BindStaticService(registry string, expected *genregist
 		}
 		c.selections[name] = registrySelection{registry: registry, resolution: resolved}
 		c.labels[name] = slices.Clone(declaration.ConsumerContract.RequiredLabels)
+	}
+	return nil
+}
+
+// requireCompiledRestore checks that a call to each bound tool can be saved
+// without its declaration and restored from this definition's generated
+// declarations. Later workflow steps, paused runs, child agents, and later
+// turns restore saved calls the same way, so a definition generated without
+// registry declarations is rejected here, before any call is planned.
+func (c *RegistryCatalog) requireCompiledRestore(registry string, resolved *registrycontract.Resolution, names []tools.Ident) error {
+	for _, name := range names {
+		binding, err := resolved.Select(registry, name)
+		if err != nil {
+			return err
+		}
+		if _, err := registrycontract.Read(binding, c.definition.registryDeclaration); err != nil {
+			return fmt.Errorf("tool %q cannot be restored from this agent's generated registry declarations; regenerate the agent: %w", name, err)
+		}
 	}
 	return nil
 }
@@ -100,7 +121,7 @@ func (c *RegistryCatalog) SelectedOperation() (*genregistry.ToolSchema, error) {
 		return nil, fmt.Errorf("selected operation cannot include both direct and registered declarations")
 	}
 	if c.runContext.ToolRegistry != nil {
-		resolved, err := registrycontract.Read(c.runContext.ToolRegistry)
+		resolved, err := registrycontract.Read(c.runContext.ToolRegistry, c.registryDeclaration)
 		if err != nil {
 			return nil, err
 		}

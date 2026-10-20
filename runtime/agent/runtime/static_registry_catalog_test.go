@@ -22,7 +22,7 @@ import (
 func staticServiceCatalog(t *testing.T) (*Runtime, *RegistryCatalog, *genregistry.ResolvedToolset) {
 	t.Helper()
 	rt := New(newTestStore())
-	definition := NewAgentDefinition(AgentRoute{ID: "records.agent", WorkflowName: "records.workflow", DefaultTaskQueue: "records.queue"}, genrecords.Specs(), nil, nil, []tools.Ident{genrecords.Read, genrecords.Erase, genrecords.Show}, nil, []tools.Ident{genrecords.Read}).WithRegistryTools(testRegistrySources{whole: true})
+	definition := NewAgentDefinition(AgentRoute{ID: "records.agent", WorkflowName: "records.workflow", DefaultTaskQueue: "records.queue"}, genrecords.Specs(), nil, nil, []tools.Ident{genrecords.Read, genrecords.Erase, genrecords.Show}, nil, []tools.Ident{genrecords.Read}).WithRegistryTools(testRegistrySources{whole: true}).WithRegistryDeclarations(genrecords.ToolSchema)
 	rt.agents[definition.route.ID] = AgentRegistration{Definition: definition}
 	for _, spec := range genrecords.Specs() {
 		rt.toolSpecs[spec.Name] = spec
@@ -48,7 +48,7 @@ func TestStaticServiceBindingRetainsGeneratedCodecsAndInputPreparation(t *testin
 		return original.ExecutionPayloadCodec.ToJSON(payload)
 	}
 	require.NoError(t, catalog.BindInput(original, bound))
-	payload, err := prepareConsumerInput(catalog.spec, genrecords.Read, rawjson.Message(`{"query":"selected"}`))
+	payload, err := prepareConsumerInput(catalog, genrecords.Read, rawjson.Message(`{"query":"selected"}`))
 	require.NoError(t, err)
 	assert.Contains(t, string(payload), "authorized:selected")
 	binding, err := catalog.selections[genrecords.Read].resolution.Select(testRegistryName, genrecords.Read)
@@ -111,12 +111,16 @@ func TestBoundStaticAndUnboundStaticDoNotCaptureOtherAgentDynamicCalls(t *testin
 	rt, catalog, selected := staticServiceCatalog(t)
 	require.ErrorContains(t, catalog.IncludeResolved(testRegistryName, selected, false), "repeats tool")
 	require.NoError(t, catalog.BindStaticService(testRegistryName, genrecords.Toolset(), selected, genrecords.Read))
-	resolved := catalog.selections[genrecords.Read].resolution
-	binding, err := resolved.Select(testRegistryName, genrecords.Read)
+	compiled, err := catalog.selections[genrecords.Read].resolution.Select(testRegistryName, genrecords.Read)
 	require.NoError(t, err)
 	other := testRegistryAgentDefinition(testRegistrySources{whole: true})
 	other.route.ID = "other.agent"
 	rt.agents[other.route.ID] = AgentRegistration{Definition: other}
+	// An agent that does not compile the tool cannot interpret a compiled
+	// selection; a full saved declaration stays a dynamic call for it.
+	_, _, err = rt.callSpec(ToolCall{Name: genrecords.Read, Registry: compiled, Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("other.agent")}})
+	require.ErrorIs(t, err, registrycontract.ErrCompiledContractChanged)
+	binding := testDirectSelection(t, selected, genrecords.Read)
 	call := ToolCall{Name: genrecords.Read, Registry: binding, Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("other.agent")}}
 	assert.True(t, rt.isDynamicRegistryCall(call))
 	spec, _, err := rt.callSpec(call)
@@ -139,7 +143,7 @@ func TestBoundServiceCheckpointUsesGeneratedCodecWithoutDiscovery(t *testing.T) 
 	require.NoError(t, err)
 	call := ToolCall{Name: genrecords.Read, Registry: binding, Payload: rawjson.Message(`{"query":"all"}`)}
 	state := checkpointRunState{ToolOutputs: []*planner.ToolOutput{{Name: call.Name, ToolCallID: "call-1", Registry: binding}}, ToolEvents: []*api.ToolEvent{{Name: call.Name, ToolCallID: "call-1", Result: rawjson.Message(`{"count":4}`)}}}
-	restored, err := rt.restoreCheckpointState(state, catalog.definition.spec)
+	restored, err := rt.restoreCheckpointState(state, catalog.definition)
 	require.NoError(t, err)
 	assert.IsType(t, &genrecords.ReadResult{}, restored.ToolEvents[0].Result)
 	require.NoError(t, validateCheckpointToolRequest(call, catalog.definition))
@@ -248,7 +252,7 @@ func TestBoundStaticPagingKeepsSavedTokenAndOwnedContinuationCodec(t *testing.T)
 	continuationDecoded := false
 	originalCodec := specs[1].ExecutionPayloadCodec.FromJSON
 	specs[1].ExecutionPayloadCodec.FromJSON = func(data []byte) (any, error) { continuationDecoded = true; return originalCodec(data) }
-	definition := NewAgentDefinition(AgentRoute{ID: "records.agent", WorkflowName: "records.workflow", DefaultTaskQueue: "records.queue"}, specs, nil, nil, []tools.Ident{"records.find", "records.continue"}, nil, nil).WithRegistryTools(testRegistrySources{})
+	definition := NewAgentDefinition(AgentRoute{ID: "records.agent", WorkflowName: "records.workflow", DefaultTaskQueue: "records.queue"}, specs, nil, nil, []tools.Ident{"records.find", "records.continue"}, nil, nil).WithRegistryTools(testRegistrySources{}).WithRegistryDeclarations(testDeclarations(selected.Toolset.Tools))
 	rt.agents[definition.route.ID] = AgentRegistration{Definition: definition}
 	require.NoError(t, rt.RegisterRegistry(testRegistryName, &genregistry.Client{}, unusedRegistryPulse{}))
 	catalog := rt.newRegistryCatalog(definition)
@@ -261,7 +265,7 @@ func TestBoundStaticPagingKeepsSavedTokenAndOwnedContinuationCodec(t *testing.T)
 	require.NoError(t, err)
 	require.Len(t, actions, 1)
 	assert.True(t, continuationDecoded)
-	retained, err := registrycontract.Read(actions[0].registry)
+	retained, err := registrycontract.Read(actions[0].registry, definition.registryDeclaration)
 	require.NoError(t, err)
 	assert.Equal(t, strings.Repeat("a", 64), retained.Registered.RegistrationToken)
 	assert.Equal(t, tools.Ident("records.continue"), actions[0].spec.Name)

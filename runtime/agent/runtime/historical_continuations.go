@@ -6,6 +6,7 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"goa.design/goa-ai/internal/registrycontract"
@@ -133,11 +134,8 @@ func (r *Runtime) loadLiteralContinuationOutputs(
 		if call := entry.events.scheduled; call != nil {
 			callNames := names
 			if call.Registry != nil {
-				resolved, err := registrycontract.Read(call.Registry)
-				if err != nil {
-					return nil, err
-				}
-				callNames, err = historicalContinuationToolNames(resolved.Specs)
+				var err error
+				callNames, err = savedRegistryPagingNames(call.Registry, r.agentTools(input.AgentID))
 				if err != nil {
 					return nil, err
 				}
@@ -172,7 +170,7 @@ func (r *Runtime) loadLiteralContinuationOutputs(
 		if output.Failure != nil {
 			continue
 		}
-		if err := r.validateHistoricalContinuationBounds(output); err != nil {
+		if err := r.validateHistoricalContinuationBounds(output, r.agentTools(input.AgentID)); err != nil {
 			return nil, err
 		}
 		outputs = append(outputs, output)
@@ -185,7 +183,7 @@ func (r *Runtime) loadLiteralContinuationOutputs(
 // not authorize the current agent to execute that old tool. Historical failures
 // supply no paging state and are excluded by the readers. A saved result without
 // bounds supplies no next page; current outputs retain their complete validation.
-func (r *Runtime) validateHistoricalContinuationBounds(output *planner.ToolOutput) error {
+func (r *Runtime) validateHistoricalContinuationBounds(output *planner.ToolOutput, lookup toolSpecLookup) error {
 	call := ToolCall{Name: output.Name, ToolCallID: output.ToolCallID, Registry: output.Registry}
 	if output.Bounds == nil {
 		return nil
@@ -195,7 +193,12 @@ func (r *Runtime) validateHistoricalContinuationBounds(output *planner.ToolOutpu
 	if output.Registry == nil {
 		return validateToolBoundsMetadata(call, output.Bounds)
 	}
-	spec, ok, err := lookupCallSpec(call, r.toolSpec)
+	spec, ok, err := lookupCallSpec(call, lookup)
+	if errors.Is(err, registrycontract.ErrCompiledContractChanged) {
+		// This build declares the compiled tool differently, so, as for a
+		// saved static call, only the result metadata itself can be checked.
+		return validateToolBoundsMetadata(call, output.Bounds)
+	}
 	if err != nil {
 		return err
 	}
@@ -206,6 +209,22 @@ func (r *Runtime) validateHistoricalContinuationBounds(output *planner.ToolOutpu
 		return fmt.Errorf("runtime: invalid historical continuation metadata (tool_call_id=%s): %w", output.ToolCallID, err)
 	}
 	return nil
+}
+
+// savedRegistryPagingNames returns the paging tool names in a saved call's
+// registration, using lookup for the consuming agent's generated declarations.
+// A compiled call whose tool this build declares differently returns no names:
+// it can offer no page action, but callers still keep it when it saved paging
+// data, so its old chain can be closed.
+func savedRegistryPagingNames(binding *tools.RegistryBinding, lookup toolSpecLookup) (map[string]struct{}, error) {
+	resolved, err := registrycontract.Read(binding, lookup.registryDeclaration)
+	if errors.Is(err, registrycontract.ErrCompiledContractChanged) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return historicalContinuationToolNames(resolved.Specs)
 }
 
 // historicalContinuationToolNames returns the canonical source and continuation

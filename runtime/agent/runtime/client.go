@@ -154,6 +154,9 @@ type (
 		prepareInputs         func(context.Context, *RegistryCatalog) error
 		requiredInputBindings []tools.Ident
 		agents                map[agent.Ident]AgentDefinition
+		// declarations holds the generated registry declaration of each tool
+		// that has one, so saved calls can omit it. See registry_declarations.go.
+		declarations map[tools.Ident]*genregistry.ToolSchema
 	}
 
 	// agentClient binds execution to one generated agent definition.

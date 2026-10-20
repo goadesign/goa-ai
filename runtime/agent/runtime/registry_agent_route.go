@@ -15,8 +15,9 @@ import (
 
 // registryAgentDeclaration reads the retained registration and requires the
 // named operation to target an Agent. A same-name replacement cannot change it.
-func registryAgentDeclaration(call ToolCall) (*genregistry.ToolSchema, error) {
-	resolved, err := registrycontract.Read(call.Registry)
+// lookup supplies generated declarations for calls to compiled tools.
+func registryAgentDeclaration(call ToolCall, lookup toolSpecLookup) (*genregistry.ToolSchema, error) {
+	resolved, err := registrycontract.Read(call.Registry, lookup.registryDeclaration)
 	if err != nil {
 		return nil, err
 	}
@@ -36,7 +37,7 @@ func registeredChildDefinition(call ToolCall, parent AgentDefinition) (AgentDefi
 	if _, err := validateRegistrySource(parent, call); err != nil {
 		return AgentDefinition{}, err
 	}
-	declaration, err := registryAgentDeclaration(call)
+	declaration, err := registryAgentDeclaration(call, parent)
 	if err != nil {
 		return AgentDefinition{}, err
 	}
@@ -50,7 +51,7 @@ func registeredChildDefinition(call ToolCall, parent AgentDefinition) (AgentDefi
 // providerAgentToolConfig checks that a retained registry operation selects
 // this worker's exact route. Only that worker's resolver can prepare its input.
 func (r *Runtime) providerAgentToolConfig(call ToolCall) (*AgentToolConfig, error) {
-	declaration, err := registryAgentDeclaration(call)
+	declaration, err := registryAgentDeclaration(call, r)
 	if err != nil {
 		return nil, err
 	}

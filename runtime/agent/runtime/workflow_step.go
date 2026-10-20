@@ -17,6 +17,7 @@ import (
 	"slices"
 	"time"
 
+	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -30,7 +31,13 @@ import (
 )
 
 type (
-	toolSpecLookup func(tools.Ident) (tools.ToolSpec, bool)
+	// toolSpecLookup finds the generated contract and registry declaration of
+	// a statically declared tool, for one consuming definition, one planning
+	// catalog, or every agent registered on the runtime.
+	toolSpecLookup interface {
+		spec(tools.Ident) (tools.ToolSpec, bool)
+		registryDeclaration(tools.Ident) (*genregistry.ToolSchema, bool)
+	}
 
 	stepKind uint8
 
@@ -114,7 +121,7 @@ func (k stepKind) String() string {
 // normalizeStep converts a planner result into the runtime's single-step
 // execution model.
 func (r *Runtime) normalizeStep(result *PlanResult) (stepProgram, error) {
-	return normalizeStepWithSpecs(result, r.toolSpec)
+	return normalizeStepWithSpecs(result, r)
 }
 
 // normalizeStepWithSpecs validates one saved or current planner result against
@@ -218,7 +225,7 @@ func (r *Runtime) normalizePlanResultContract(result *PlanResult, runContext run
 	if err := validatePlanResultToolCallIDs(result); err != nil {
 		return stepProgram{}, planner.NewOutputContractError(err)
 	}
-	parentTool, err := selectedRunTool(runContext, executor, r.toolSpec)
+	parentTool, err := selectedRunTool(runContext, executor, r)
 	if err != nil {
 		return stepProgram{}, planner.NewOutputContractError(err)
 	}
@@ -312,12 +319,12 @@ func (r *Runtime) normalizePlanResultForExecution(result *PlanResult, runContext
 // validateAwaitTools requires every tool named by an await request to exist and
 // remain available after the user responds.
 func (r *Runtime) validateAwaitTools(items []planner.AwaitItem) error {
-	return validateAwaitToolsWithSpecs(items, r.toolSpec)
+	return validateAwaitToolsWithSpecs(items, r)
 }
 
 func validateAwaitToolsWithSpecs(items []planner.AwaitItem, lookup toolSpecLookup) error {
 	for _, call := range awaitToolRequests(items) {
-		spec, ok := lookup(call.Name)
+		spec, ok := lookup.spec(call.Name)
 		if !ok {
 			return fmt.Errorf("planner await references unknown tool %q", call.Name)
 		}
@@ -538,7 +545,7 @@ func hasBudgetedToolCallsWithSpecs(calls []ToolCall, lookup toolSpecLookup) bool
 		if call.Registry != nil {
 			return true
 		}
-		spec, ok := lookup(call.Name)
+		spec, ok := lookup.spec(call.Name)
 		if !ok || !spec.Bookkeeping {
 			return true
 		}
@@ -666,7 +673,7 @@ func validatePlanResultToolCallIDs(result *PlanResult) error {
 // shape: non-resuming bookkeeping side effects followed by a terminal planner
 // payload in the same step.
 func (r *Runtime) validateToolTerminalProgram(calls []ToolCall) error {
-	return validateToolTerminalProgramWithSpecs(calls, r.toolSpec)
+	return validateToolTerminalProgramWithSpecs(calls, r)
 }
 
 func validateToolTerminalProgramWithSpecs(calls []ToolCall, lookup toolSpecLookup) error {

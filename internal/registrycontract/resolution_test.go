@@ -34,7 +34,7 @@ func TestSelectionRetainsOnlyRequiredContracts(t *testing.T) {
 
 	registration.RegistrationToken = strings.Repeat("b", 64)
 	source.PayloadSchema = []byte(`{"type":"string"}`)
-	restored, err := Read(binding)
+	restored, err := Read(binding, nil)
 	require.NoError(t, err)
 	assert.Equal(t, strings.Repeat("a", 64), restored.Registered.RegistrationToken)
 	assert.Len(t, restored.Specs, 2)
@@ -43,7 +43,7 @@ func TestSelectionRetainsOnlyRequiredContracts(t *testing.T) {
 
 	next, err := restored.Select("company", continuationToolName)
 	require.NoError(t, err)
-	continued, err := Read(next)
+	continued, err := Read(next, nil)
 	require.NoError(t, err)
 	assert.Len(t, continued.Specs, 2)
 }
@@ -71,11 +71,11 @@ func TestReadRejectsMalformedSavedBindings(t *testing.T) {
 		`{} {}`,
 	} {
 		t.Run(document, func(t *testing.T) {
-			_, err := Read(&tools.RegistryBinding{Registry: "company", Resolution: rawjson.Message(document)})
+			_, err := Read(&tools.RegistryBinding{Registry: "company", Resolution: rawjson.Message(document)}, nil)
 			require.Error(t, err)
 		})
 	}
-	_, err := Read(&tools.RegistryBinding{Resolution: rawjson.Message(`{}`)})
+	_, err := Read(&tools.RegistryBinding{Resolution: rawjson.Message(`{}`)}, nil)
 	require.ErrorContains(t, err, "registry is required")
 }
 

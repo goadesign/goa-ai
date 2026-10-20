@@ -32,7 +32,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"maps"
 	"reflect"
 	"strings"
@@ -40,6 +39,8 @@ import (
 	"sync/atomic"
 	"text/template"
 	"time"
+
+	genregistry "goa.design/goa-ai/registry/gen/registry"
 
 	"github.com/aws/aws-sdk-go-v2/service/bedrockruntime"
 	openaisdk "github.com/openai/openai-go/v3"
@@ -139,10 +140,13 @@ type (
 		// model spans when enabled via WithCaptureGenAIMessages.
 		captureGenAIMessages bool
 
-		mu                      sync.RWMutex
-		agents                  map[agent.Ident]AgentRegistration
-		toolsets                map[string]ToolsetRegistration
-		toolSpecs               map[tools.Ident]tools.ToolSpec
+		mu        sync.RWMutex
+		agents    map[agent.Ident]AgentRegistration
+		toolsets  map[string]ToolsetRegistration
+		toolSpecs map[tools.Ident]tools.ToolSpec
+		// registryDeclarations holds the generated registry declaration that
+		// registered agents supplied for each tool name.
+		registryDeclarations    map[tools.Ident]*genregistry.ToolSchema
 		imageSources            *imageSourceRegistry
 		registries              map[string]registryConnection
 		agentToolResolvers      map[agent.Ident]AgentToolResolver
@@ -1117,6 +1121,9 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 	if err != nil {
 		return err
 	}
+	if err := r.validateRegistryDeclarations(reg.Definition); err != nil {
+		return err
+	}
 	if r.Engine == nil {
 		return ErrEngineNotConfigured
 	}
@@ -1199,6 +1206,7 @@ func (r *Runtime) RegisterAgent(ctx context.Context, reg AgentRegistration) erro
 	r.mu.Lock()
 	r.agents[reg.Definition.route.ID] = reg
 	r.addToolSpecsLocked(reg.Definition.specs, reg.Definition.metadataFor, definitions)
+	r.addRegistryDeclarationsLocked(reg.Definition)
 	// Store only tools this agent may execute. Exported tools describe how
 	// other agents call this one and must not enter its planner catalog.
 	specs := make([]tools.ToolSpec, 0, len(reg.Definition.executableTools))
@@ -2116,6 +2124,12 @@ func (r *Runtime) addToolSpecsLocked(
 		r.toolDefinitions[spec.Name] = definition
 		r.policyToolMetadata[spec.Name] = canonicalToolMetadata(spec, lookup)
 	}
+}
+
+// spec lets the runtime serve as the lookup for code that has no consuming
+// definition. It returns the same value as toolSpec.
+func (r *Runtime) spec(name tools.Ident) (tools.ToolSpec, bool) {
+	return r.toolSpec(name)
 }
 
 // toolSpec retrieves a tool spec by fully qualified name. Thread-safe.

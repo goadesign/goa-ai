@@ -42,10 +42,6 @@ type (
 	ReadTextOnlyInputTransport struct {
 		// Record selection.
 		Query *string `json:"query"`
-		// Show an interactive card.
-		RenderUI *bool `json:"-"`
-		// Show an interactive summary.
-		RenderSummary *bool `json:"-"`
 	}
 	// ReadResultTransport is the internal JSON transport type for ReadResult.
 	// It lives in the toolset-local http package and is used only for JSON

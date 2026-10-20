@@ -34,7 +34,7 @@ func registeredAgentDeclaration(input *api.RunInput) (*genregistry.ToolSchema, e
 	if !ok {
 		return nil, errors.New("registered native root requires Agent subject")
 	}
-	resolution, err := registrycontract.Read(input.ToolRegistry)
+	resolution, err := registrycontract.Read(input.ToolRegistry, nil)
 	if err != nil {
 		return nil, err
 	}

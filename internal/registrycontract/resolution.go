@@ -27,6 +27,9 @@ type (
 		// Specs contains the validated contracts under their consumer names.
 		Specs  map[tools.Ident]tools.ToolSpec
 		byName map[tools.Ident]*genregistry.ToolSchema
+		// compiled is true when the consumer's generated code declares these
+		// operations, so Select saves only the registration chosen for a call.
+		compiled bool
 	}
 )
 
@@ -80,24 +83,33 @@ func Compile(declarations []*genregistry.ToolSchema) (map[tools.Ident]tools.Tool
 }
 
 // Read validates a saved binding without consulting the current remote catalog.
-// The caller separately checks that the agent still consumes this source.
-func Read(binding *tools.RegistryBinding) (*Resolution, error) {
-	if binding == nil || binding.Registry == "" {
-		return nil, errors.New("selected tool registry is required")
-	}
-	selected, err := genregistry.DecodeRegistrySelection(binding.Resolution)
+// Direct and registered selections contain their declarations. Compiled
+// selections take them from compiled, the reader's generated declarations, and
+// return ErrCompiledContractChanged when those differ from the saved
+// fingerprint. The caller separately checks that the agent still consumes this
+// source.
+func Read(binding *tools.RegistryBinding, compiled CompiledDeclarations) (*Resolution, error) {
+	selected, err := decodeSelection(binding)
 	if err != nil {
-		return nil, fmt.Errorf("decode selected registry tool: %w", err)
+		return nil, err
 	}
 	if direct, ok := selected.Selection.AsDirect(); ok {
 		return Resolve(direct)
 	}
-	registered, _ := selected.Selection.AsRegistered()
-	return ResolveRegistered(binding.Registry, registered.Source, registered.Resolved)
+	if registered, ok := selected.Selection.AsRegistered(); ok {
+		return ResolveRegistered(binding.Registry, registered.Source, registered.Resolved)
+	}
+	if service, ok := selected.Selection.AsCompiledService(); ok {
+		return readCompiled(service, nil, compiled)
+	}
+	agent, _ := selected.Selection.AsCompiledAgent()
+	return readCompiled(agent.Selection, agent.Agent, compiled)
 }
 
 // Select retains just the chosen definition and its fixed pagination partner.
 // The token still identifies the complete registration from which they came.
+// For a compiled resolution it saves only the registration chosen for those
+// operations; the reader supplies their declarations from generated code.
 func (r *Resolution) Select(registry string, name tools.Ident) (*tools.RegistryBinding, error) {
 	spec, ok := r.Specs[name]
 	if !ok {
@@ -112,6 +124,13 @@ func (r *Resolution) Select(registry string, name tools.Ident) (*tools.RegistryB
 		}
 	}
 	slices.Sort(names)
+	if r.compiled {
+		selection, err := r.selectCompiled(names)
+		if err != nil {
+			return nil, err
+		}
+		return encodeBinding(registry, selection)
+	}
 	toolset := *r.Registered.Toolset
 	toolset.Tools = make([]*genregistry.ToolSchema, len(names))
 	for index, selected := range names {
@@ -126,13 +145,16 @@ func (r *Resolution) Select(registry string, name tools.Ident) (*tools.RegistryB
 			Source: r.Source, Resolved: retained,
 		})
 	}
+	return encodeBinding(registry, selection)
+}
+
+// encodeBinding saves one selection under the registry connection that owns it.
+func encodeBinding(registry string, selection genregistry.RegistrySelectionKind) (*tools.RegistryBinding, error) {
 	encoded, err := genregistry.EncodeRegistrySelection(&genregistry.RegistrySelection{Selection: selection})
 	if err != nil {
 		return nil, fmt.Errorf("encode selected registry tool: %w", err)
 	}
-	binding := &tools.RegistryBinding{Registry: registry, Resolution: encoded}
-
-	return binding, nil
+	return &tools.RegistryBinding{Registry: registry, Resolution: encoded}, nil
 }
 
 // validatePaging rejects incomplete or contradictory source/continuation

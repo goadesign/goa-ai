@@ -8,10 +8,17 @@ import (
 	"fmt"
 	"reflect"
 
+	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/toolregistry/schema"
+)
+
+type (
+	// providedToolSpecs holds the pending result contracts a provider supplied
+	// for one paused run, keyed by tool name.
+	providedToolSpecs map[tools.Ident]tools.ToolSpec
 )
 
 // decodeProviderChildCheckpoint checks the owner-written child relationship
@@ -96,7 +103,7 @@ func validateProviderContinuationResponse(checkpoint *workflowCheckpoint, respon
 	if len(contracts) == 0 {
 		return fmt.Errorf("%w: provider suspension is missing the requested result contracts", ErrRunSuspensionCorrupt)
 	}
-	specs := make(map[tools.Ident]tools.ToolSpec, len(contracts))
+	specs := make(providedToolSpecs, len(contracts))
 	for _, call := range calls {
 		contract, ok := contracts[call.Name]
 		if !ok {
@@ -115,8 +122,17 @@ func validateProviderContinuationResponse(checkpoint *workflowCheckpoint, respon
 		}
 		specs[call.Name] = spec
 	}
-	return validateProvidedToolResults(*pending.Await, response.ToolResults, func(name tools.Ident) (tools.ToolSpec, bool) {
-		spec, ok := specs[name]
-		return spec, ok
-	})
+	return validateProvidedToolResults(*pending.Await, response.ToolResults, specs)
+}
+
+// spec returns a pending result contract that the provider supplied.
+func (s providedToolSpecs) spec(name tools.Ident) (tools.ToolSpec, bool) {
+	spec, ok := s[name]
+	return spec, ok
+}
+
+// registryDeclaration reports that provider-supplied contracts never carry
+// generated registry declarations.
+func (providedToolSpecs) registryDeclaration(tools.Ident) (*genregistry.ToolSchema, bool) {
+	return nil, false
 }

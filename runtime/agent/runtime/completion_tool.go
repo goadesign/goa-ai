@@ -51,7 +51,7 @@ func validateCompletionToolPolicyForDefinition(definition AgentDefinition, runPo
 // attempt must be the sole action in its planner result, while terminal output
 // is never a substitute for the required successful tool result.
 func (r *Runtime) validateCompletionToolPlanResult(result *PlanResult, completion tools.Ident) error {
-	return validateCompletionToolPlanResultWithSpecs(result, completion, r.toolSpec)
+	return validateCompletionToolPlanResultWithSpecs(result, completion, r)
 }
 
 func validateCompletionToolPlanResultWithSpecs(result *PlanResult, completion tools.Ident, lookup toolSpecLookup) error {

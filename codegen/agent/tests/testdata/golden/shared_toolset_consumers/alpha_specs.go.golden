@@ -8,6 +8,7 @@ package specs
 
 import (
 	shared "goa.design/goa-ai/gen/alpha/toolsets/shared"
+	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent/policy"
 	tools "goa.design/goa-ai/runtime/agent/tools"
 )
@@ -39,6 +40,18 @@ func Spec(name tools.Ident) (tools.ToolSpec, bool) {
 		return shared.Spec(shared.Ping)
 	default:
 		return tools.ToolSpec{}, false
+	}
+}
+
+// ToolSchema returns the generated registry declaration of one tool
+// available to this agent, with fresh owned values. It returns false for tools
+// without a declaration, such as private page operations.
+func ToolSchema(name tools.Ident) (*genregistry.ToolSchema, bool) {
+	switch name {
+	case tools.Ident("shared.ping"):
+		return shared.ToolSchema(name)
+	default:
+		return nil, false
 	}
 }
 

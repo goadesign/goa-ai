@@ -32,28 +32,22 @@ func NewResolved(registry string, client *genregistry.Client, pulse pulsec.Clien
 	return &resolvedExecutor{registry: registry, client: client, pulse: pulse, specs: specs, options: slices.Clone(opts)}, nil
 }
 
-// Execute reads only the saved selection and sends the unchanged invocation
-// through the shared admission and result-stream implementation.
+// Execute reads only the saved selection's registration token and toolset,
+// then sends the unchanged invocation through the shared admission and
+// result-stream implementation. Generated code supplies the tool's codecs.
 func (e *resolvedExecutor) Execute(ctx context.Context, meta *runtime.ToolCallMeta, call *runtime.ToolCall) (*runtime.ToolExecutionResult, error) {
 	if call == nil || call.Registry == nil || call.Registry.Registry != e.registry {
 		return nil, fmt.Errorf("resolved executor requires a saved binding for registry %q", e.registry)
 	}
-	resolved, err := registrycontract.Read(call.Registry)
+	token, toolset, err := registrycontract.ServiceRoute(call.Registry, call.Name)
 	if err != nil {
-		return nil, err
-	}
-	declaration, err := resolved.Declaration(call.Name)
-	if err != nil {
-		return nil, err
-	}
-	if resolved.Source != nil || declaration.ConsumerContract.Kind != "service" {
-		return nil, fmt.Errorf("resolved executor requires a generated service binding")
+		return nil, fmt.Errorf("resolved executor requires a generated service binding: %w", err)
 	}
 	if _, exists := e.specs.Spec(call.Name); !exists {
 		return nil, fmt.Errorf("resolved executor has no generated contract for %q", call.Name)
 	}
-	client := registrycall.NewResolvedClient(e.client, resolved.Registered.RegistrationToken, declaration.Name)
-	executor, err := New(client, e.pulse, resolved.Registered.Toolset.Name, e.specs, e.options...)
+	client := registrycall.NewResolvedClient(e.client, token, string(call.Name))
+	executor, err := New(client, e.pulse, toolset, e.specs, e.options...)
 	if err != nil {
 		return nil, err
 	}

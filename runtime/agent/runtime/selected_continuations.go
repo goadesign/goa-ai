@@ -11,7 +11,6 @@ import (
 	"reflect"
 	"slices"
 
-	"goa.design/goa-ai/internal/registrycontract"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -269,15 +268,13 @@ func (r *selectedContinuationReader) addReference(ctx context.Context, ref *api.
 	if err := hooks.ValidateToolResultCorrelation(call, result.result); err != nil {
 		return storage.NewContractError(err)
 	}
-	specs := r.specs
+	var names map[string]struct{}
+	var err error
 	if call.Registry != nil {
-		resolved, err := registrycontract.Read(call.Registry)
-		if err != nil {
-			return err
-		}
-		specs = resolved.Specs
+		names, err = savedRegistryPagingNames(call.Registry, r.runtime.agentTools(r.input.AgentID))
+	} else {
+		names, err = historicalContinuationToolNames(r.specs)
 	}
-	names, err := historicalContinuationToolNames(specs)
 	if err != nil {
 		return err
 	}
@@ -296,7 +293,7 @@ func (r *selectedContinuationReader) addReference(ctx context.Context, ref *api.
 		r.seen[key] = struct{}{}
 		return nil
 	}
-	if err := r.runtime.validateHistoricalContinuationBounds(output); err != nil {
+	if err := r.runtime.validateHistoricalContinuationBounds(output, r.runtime.agentTools(r.input.AgentID)); err != nil {
 		return err
 	}
 	r.outputs = append(r.outputs, output)

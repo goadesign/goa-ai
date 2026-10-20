@@ -35,7 +35,7 @@ func (c *RegistryCatalog) BindStaticAgent(registry string, expected []*genregist
 	if err != nil {
 		return err
 	}
-	resolved, err := registrycontract.Resolve(selected)
+	resolved, err := registrycontract.ResolveCompiled(selected)
 	if err != nil {
 		return err
 	}
@@ -110,6 +110,9 @@ func (c *RegistryCatalog) BindStaticAgent(registry string, expected []*genregist
 		if err := validateStaticAgentRoute(c.definition, spec, resolved); err != nil {
 			return err
 		}
+	}
+	if err := c.requireCompiledRestore(registry, resolved, names); err != nil {
+		return err
 	}
 	for _, name := range names {
 		c.selections[name] = registrySelection{registry: registry, resolution: resolved}

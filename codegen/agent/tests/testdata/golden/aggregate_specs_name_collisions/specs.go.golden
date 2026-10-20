@@ -10,6 +10,7 @@ package specs
 import (
 	policy2 "goa.design/goa-ai/gen/alpha/toolsets/policy"
 	tools2 "goa.design/goa-ai/gen/alpha/toolsets/tools"
+	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent/policy"
 	tools "goa.design/goa-ai/runtime/agent/tools"
 )
@@ -45,6 +46,20 @@ func Spec(name tools.Ident) (tools.ToolSpec, bool) {
 		return tools2.Spec(tools2.Write)
 	default:
 		return tools.ToolSpec{}, false
+	}
+}
+
+// ToolSchema returns the generated registry declaration of one tool
+// available to this agent, with fresh owned values. It returns false for tools
+// without a declaration, such as private page operations.
+func ToolSchema(name tools.Ident) (*genregistry.ToolSchema, bool) {
+	switch name {
+	case tools.Ident("policy.review"):
+		return policy2.ToolSchema(name)
+	case tools.Ident("tools.write"):
+		return tools2.ToolSchema(name)
+	default:
+		return nil, false
 	}
 }
 

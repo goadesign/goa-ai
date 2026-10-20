@@ -48,7 +48,7 @@ func (r *Runtime) selectHistoricalContinuations(input *resolvedPlanActivityInput
 		isCurrent := explicitCurrent || output.CallRunID == input.RunID || output.ResultRunID == input.RunID
 		if isCurrent {
 			call := ToolCall{Name: output.Name, ToolCallID: output.ToolCallID, Registry: output.Registry}
-			spec, exists, err := lookupCallSpec(call, r.toolSpec)
+			spec, exists, err := lookupCallSpec(call, r)
 			if err != nil {
 				return nil, err
 			}
@@ -61,12 +61,12 @@ func (r *Runtime) selectHistoricalContinuations(input *resolvedPlanActivityInput
 		}
 		key := historicalPagingKey{call: output.ToolCallID}
 		if output.Registry != nil {
-			resolved, err := registrycontract.Read(output.Registry)
+			token, err := registrycontract.RegistrationToken(output.Registry)
 			if err != nil {
 				return nil, err
 			}
 			key.registry = output.Registry.Registry
-			key.token = resolved.Registered.RegistrationToken
+			key.token = token
 		}
 		if key.call == "" {
 			return nil, fmt.Errorf("runtime: historical paging call has an empty tool call id")

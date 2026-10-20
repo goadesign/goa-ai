@@ -196,7 +196,7 @@ func validateRegisteredRootInput(input *api.RunInput) (*registrycontract.Resolut
 	if !ok {
 		return nil, errors.New("registered service operation requires service target")
 	}
-	resolution, err := registrycontract.Read(input.ToolRegistry)
+	resolution, err := registrycontract.Read(input.ToolRegistry, nil)
 	if err != nil {
 		return nil, err
 	}

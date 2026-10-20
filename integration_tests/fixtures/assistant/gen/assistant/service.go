@@ -627,42 +627,12 @@ func validateRefereePromptResourceOriginal(value *RefereePromptResource) (err er
 	case "text":
 		actual, _ := value.Resource.AsText()
 		if actual != nil {
-			if err2 := validateRefereeEmbeddedTextOriginal2(actual); err2 != nil {
+			if err2 := validateRefereeEmbeddedTextOriginal(actual); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
 	}
 
-	return err
-}
-
-// validateRefereeEmbeddedTextOriginal2 checks the original typed value before JSON conversion.
-func validateRefereeEmbeddedTextOriginal2(value *RefereeEmbeddedText) (err error) {
-	err = goa.MergeErrors(err, goa.ValidateFormat("value.uri", value.URI, goa.FormatURI))
-	return err
-}
-
-// validateRefereePromptResourceOriginal2 checks the original typed value before JSON conversion.
-func validateRefereePromptResourceOriginal2(value *RefereePromptResource) (err error) {
-	if value.Resource.Kind() == "" {
-		err = goa.MergeErrors(err, goa.MissingFieldError("resource", "value"))
-	}
-	switch string(value.Resource.Kind()) {
-	case "text":
-		actual, _ := value.Resource.AsText()
-		if actual != nil {
-			if err2 := validateRefereeEmbeddedTextOriginal3(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
-			}
-		}
-	}
-
-	return err
-}
-
-// validateRefereeEmbeddedTextOriginal3 checks the original typed value before JSON conversion.
-func validateRefereeEmbeddedTextOriginal3(value *RefereeEmbeddedText) (err error) {
-	err = goa.MergeErrors(err, goa.ValidateFormat("value.uri", value.URI, goa.FormatURI))
 	return err
 }
 
@@ -679,56 +649,11 @@ func validateRefereePromptResultOriginal(value *RefereePromptResult) (err error)
 			err = goa.MergeErrors(err, goa.MissingFieldError("value.messages", "[*]"))
 		}
 		if e != nil {
-			if err2 := validateRefereePromptMessageOriginal2(e); err2 != nil {
+			if err2 := validateRefereePromptMessageOriginal(e); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
 	}
-	return err
-}
-
-// validateRefereePromptMessageOriginal2 checks the original typed value before JSON conversion.
-func validateRefereePromptMessageOriginal2(value *RefereePromptMessage) (err error) {
-	if value.Content.Kind() == "" {
-		err = goa.MergeErrors(err, goa.MissingFieldError("content", "value"))
-	}
-	if !(value.Role == "user") {
-		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.role", value.Role, []any{"user"}))
-	}
-	switch string(value.Content.Kind()) {
-	case "resource":
-		actual, _ := value.Content.AsResource()
-		if actual != nil {
-			if err2 := validateRefereePromptResourceOriginal3(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
-			}
-		}
-	}
-
-	return err
-}
-
-// validateRefereePromptResourceOriginal3 checks the original typed value before JSON conversion.
-func validateRefereePromptResourceOriginal3(value *RefereePromptResource) (err error) {
-	if value.Resource.Kind() == "" {
-		err = goa.MergeErrors(err, goa.MissingFieldError("resource", "value"))
-	}
-	switch string(value.Resource.Kind()) {
-	case "text":
-		actual, _ := value.Resource.AsText()
-		if actual != nil {
-			if err2 := validateRefereeEmbeddedTextOriginal4(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
-			}
-		}
-	}
-
-	return err
-}
-
-// validateRefereeEmbeddedTextOriginal4 checks the original typed value before JSON conversion.
-func validateRefereeEmbeddedTextOriginal4(value *RefereeEmbeddedText) (err error) {
-	err = goa.MergeErrors(err, goa.ValidateFormat("value.uri", value.URI, goa.FormatURI))
 	return err
 }
 
@@ -754,7 +679,7 @@ func validateTemplateItemOriginal(value *TemplateItem) (err error) {
 	case "blob":
 		actual, _ := value.Selected.AsBlob()
 		if actual != nil {
-			if err2 := validateTemplateBlobOriginal2(actual); err2 != nil {
+			if err2 := validateTemplateBlobOriginal(actual); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -765,18 +690,6 @@ func validateTemplateItemOriginal(value *TemplateItem) (err error) {
 
 // validateTemplateTextOriginal checks the original typed value before JSON conversion.
 func validateTemplateTextOriginal(value *TemplateText) (err error) {
-	err = goa.MergeErrors(err, goa.ValidateFormat("value.uri", value.URI, goa.FormatURI))
-	return err
-}
-
-// validateTemplateBlobOriginal2 checks the original typed value before JSON conversion.
-func validateTemplateBlobOriginal2(value *TemplateBlob) (err error) {
-	err = goa.MergeErrors(err, goa.ValidateFormat("value.uri", value.URI, goa.FormatURI))
-	return err
-}
-
-// validateTemplateTextOriginal2 checks the original typed value before JSON conversion.
-func validateTemplateTextOriginal2(value *TemplateText) (err error) {
 	err = goa.MergeErrors(err, goa.ValidateFormat("value.uri", value.URI, goa.FormatURI))
 	return err
 }
@@ -1571,7 +1484,7 @@ func EncodeRefereePromptResource(in *RefereePromptResource) ([]byte, error) {
 	if err := checkRefereePromptResourceValue(in); err != nil {
 		return nil, fmt.Errorf("encode RefereePromptResource JSON: %w", err)
 	}
-	if err := validateRefereePromptResourceOriginal2(in); err != nil {
+	if err := validateRefereePromptResourceOriginal(in); err != nil {
 		return nil, fmt.Errorf("validate RefereePromptResource value: %w", err)
 	}
 	var body *jsonRefereePromptResourceTransport
@@ -1583,7 +1496,7 @@ func EncodeRefereePromptResource(in *RefereePromptResource) ([]byte, error) {
 			actual, _ := in.Resource.AsText()
 			var obj *jsonRefereeEmbeddedTextTransport
 			if actual != nil {
-				obj = encodeRefereeEmbeddedTextToRefereeEmbeddedTextTransport2(actual)
+				obj = encodeRefereeEmbeddedTextToRefereeEmbeddedTextTransport(actual)
 			}
 			u := resourceValue
 			u.SetText((*jsonRefereeEmbeddedTextTransport)(obj))
@@ -1607,7 +1520,7 @@ func DecodeRefereePromptResource(data []byte) (out *RefereePromptResource, err e
 	if err != nil {
 		return out, fmt.Errorf("decode RefereePromptResource JSON: %w", err)
 	}
-	if err := validateRefereePromptResourceJSONValue("", root, ""); err != nil {
+	if err := validateRefereePromptMessageJSONValue4("", root, ""); err != nil {
 		return out, fmt.Errorf("decode RefereePromptResource JSON: %w", err)
 	}
 	var body *jsonRefereePromptResourceTransport
@@ -1632,7 +1545,7 @@ func DecodeRefereePromptResource(data []byte) (out *RefereePromptResource, err e
 			actual, _ := body.Resource.AsText()
 			var obj *RefereeEmbeddedText
 			if actual != nil {
-				obj = decodeRefereeEmbeddedTextTransportToRefereeEmbeddedText2(actual)
+				obj = decodeRefereeEmbeddedTextTransportToRefereeEmbeddedText(actual)
 			}
 			u := out.Resource
 			u.SetText((*RefereeEmbeddedText)(obj))
@@ -1737,7 +1650,7 @@ func DecodeRefereePromptText(data []byte) (out *RefereePromptText, err error) {
 	if err != nil {
 		return out, fmt.Errorf("decode RefereePromptText JSON: %w", err)
 	}
-	if err := validateRefereePromptTextJSONValue("", root, ""); err != nil {
+	if err := validateRefereePromptMessageJSONValue3("", root, ""); err != nil {
 		return out, fmt.Errorf("decode RefereePromptText JSON: %w", err)
 	}
 	var body *jsonRefereePromptTextTransport
@@ -1922,7 +1835,7 @@ func EncodeTemplateText(in *TemplateText) ([]byte, error) {
 	if err := checkTemplateTextValue(in); err != nil {
 		return nil, fmt.Errorf("encode TemplateText JSON: %w", err)
 	}
-	if err := validateTemplateTextOriginal2(in); err != nil {
+	if err := validateTemplateTextOriginal(in); err != nil {
 		return nil, fmt.Errorf("validate TemplateText value: %w", err)
 	}
 	var body *jsonTemplateTextTransport
@@ -1949,7 +1862,7 @@ func DecodeTemplateText(data []byte) (out *TemplateText, err error) {
 	if err != nil {
 		return out, fmt.Errorf("decode TemplateText JSON: %w", err)
 	}
-	if err := validateTemplateTextJSONValue("", root, ""); err != nil {
+	if err := validateTemplateItemJSONValue3("", root, ""); err != nil {
 		return out, fmt.Errorf("decode TemplateText JSON: %w", err)
 	}
 	var body *jsonTemplateTextTransport
@@ -1986,34 +1899,7 @@ func decodeRefereeEmbeddedTextTransportToRefereeEmbeddedText(v *jsonRefereeEmbed
 	return res
 }
 
-func decodeRefereeEmbeddedTextTransportToRefereeEmbeddedText2(v *jsonRefereeEmbeddedTextTransport) *RefereeEmbeddedText {
-	res := &RefereeEmbeddedText{
-		URI:  *v.URI,
-		Text: *v.Text,
-	}
-
-	return res
-}
-
-func decodeRefereeEmbeddedTextTransportToRefereeEmbeddedText3(v *jsonRefereeEmbeddedTextTransport) *RefereeEmbeddedText {
-	res := &RefereeEmbeddedText{
-		URI:  *v.URI,
-		Text: *v.Text,
-	}
-
-	return res
-}
-
 func decodeRefereePromptImageTransportToRefereePromptImage(v *jsonRefereePromptImageTransport) *RefereePromptImage {
-	res := &RefereePromptImage{
-		Data:     v.Data,
-		MimeType: *v.MimeType,
-	}
-
-	return res
-}
-
-func decodeRefereePromptImageTransportToRefereePromptImage2(v *jsonRefereePromptImageTransport) *RefereePromptImage {
 	res := &RefereePromptImage{
 		Data:     v.Data,
 		MimeType: *v.MimeType,
@@ -2031,7 +1917,7 @@ func decodeRefereePromptMessageTransportToRefereePromptMessage(v *jsonRefereePro
 		actual, _ := v.Content.AsText()
 		var obj *RefereePromptText
 		if actual != nil {
-			obj = decodeRefereePromptTextTransportToRefereePromptText2(actual)
+			obj = decodeRefereePromptTextTransportToRefereePromptText(actual)
 		}
 		u := res.Content
 		u.SetText((*RefereePromptText)(obj))
@@ -2040,7 +1926,7 @@ func decodeRefereePromptMessageTransportToRefereePromptMessage(v *jsonRefereePro
 		actual, _ := v.Content.AsImage()
 		var obj *RefereePromptImage
 		if actual != nil {
-			obj = decodeRefereePromptImageTransportToRefereePromptImage2(actual)
+			obj = decodeRefereePromptImageTransportToRefereePromptImage(actual)
 		}
 		u := res.Content
 		u.SetImage((*RefereePromptImage)(obj))
@@ -2049,7 +1935,7 @@ func decodeRefereePromptMessageTransportToRefereePromptMessage(v *jsonRefereePro
 		actual, _ := v.Content.AsResource()
 		var obj *RefereePromptResource
 		if actual != nil {
-			obj = decodeRefereePromptResourceTransportToRefereePromptResource2(actual)
+			obj = decodeRefereePromptResourceTransportToRefereePromptResource(actual)
 		}
 		u := res.Content
 		u.SetResource((*RefereePromptResource)(obj))
@@ -2076,32 +1962,7 @@ func decodeRefereePromptResourceTransportToRefereePromptResource(v *jsonRefereeP
 	return res
 }
 
-func decodeRefereePromptResourceTransportToRefereePromptResource2(v *jsonRefereePromptResourceTransport) *RefereePromptResource {
-	res := &RefereePromptResource{}
-	switch string(v.Resource.Kind()) {
-	case "text":
-		actual, _ := v.Resource.AsText()
-		var obj *RefereeEmbeddedText
-		if actual != nil {
-			obj = decodeRefereeEmbeddedTextTransportToRefereeEmbeddedText3(actual)
-		}
-		u := res.Resource
-		u.SetText((*RefereeEmbeddedText)(obj))
-		res.Resource = u
-	}
-
-	return res
-}
-
 func decodeRefereePromptTextTransportToRefereePromptText(v *jsonRefereePromptTextTransport) *RefereePromptText {
-	res := &RefereePromptText{
-		Text: *v.Text,
-	}
-
-	return res
-}
-
-func decodeRefereePromptTextTransportToRefereePromptText2(v *jsonRefereePromptTextTransport) *RefereePromptText {
 	res := &RefereePromptText{
 		Text: *v.Text,
 	}
@@ -2138,34 +1999,7 @@ func encodeRefereeEmbeddedTextToRefereeEmbeddedTextTransport(v *RefereeEmbeddedT
 	return res
 }
 
-func encodeRefereeEmbeddedTextToRefereeEmbeddedTextTransport2(v *RefereeEmbeddedText) *jsonRefereeEmbeddedTextTransport {
-	res := &jsonRefereeEmbeddedTextTransport{
-		URI:  &v.URI,
-		Text: &v.Text,
-	}
-
-	return res
-}
-
-func encodeRefereeEmbeddedTextToRefereeEmbeddedTextTransport3(v *RefereeEmbeddedText) *jsonRefereeEmbeddedTextTransport {
-	res := &jsonRefereeEmbeddedTextTransport{
-		URI:  &v.URI,
-		Text: &v.Text,
-	}
-
-	return res
-}
-
 func encodeRefereePromptImageToRefereePromptImageTransport(v *RefereePromptImage) *jsonRefereePromptImageTransport {
-	res := &jsonRefereePromptImageTransport{
-		Data:     v.Data,
-		MimeType: &v.MimeType,
-	}
-
-	return res
-}
-
-func encodeRefereePromptImageToRefereePromptImageTransport2(v *RefereePromptImage) *jsonRefereePromptImageTransport {
 	res := &jsonRefereePromptImageTransport{
 		Data:     v.Data,
 		MimeType: &v.MimeType,
@@ -2184,7 +2018,7 @@ func encodeRefereePromptMessageToRefereePromptMessageTransport(v *RefereePromptM
 		actual, _ := v.Content.AsText()
 		var obj *jsonRefereePromptTextTransport
 		if actual != nil {
-			obj = encodeRefereePromptTextToRefereePromptTextTransport2(actual)
+			obj = encodeRefereePromptTextToRefereePromptTextTransport(actual)
 		}
 		u := contentValue
 		u.SetText((*jsonRefereePromptTextTransport)(obj))
@@ -2193,7 +2027,7 @@ func encodeRefereePromptMessageToRefereePromptMessageTransport(v *RefereePromptM
 		actual, _ := v.Content.AsImage()
 		var obj *jsonRefereePromptImageTransport
 		if actual != nil {
-			obj = encodeRefereePromptImageToRefereePromptImageTransport2(actual)
+			obj = encodeRefereePromptImageToRefereePromptImageTransport(actual)
 		}
 		u := contentValue
 		u.SetImage((*jsonRefereePromptImageTransport)(obj))
@@ -2202,7 +2036,7 @@ func encodeRefereePromptMessageToRefereePromptMessageTransport(v *RefereePromptM
 		actual, _ := v.Content.AsResource()
 		var obj *jsonRefereePromptResourceTransport
 		if actual != nil {
-			obj = encodeRefereePromptResourceToRefereePromptResourceTransport2(actual)
+			obj = encodeRefereePromptResourceToRefereePromptResourceTransport(actual)
 		}
 		u := contentValue
 		u.SetResource((*jsonRefereePromptResourceTransport)(obj))
@@ -2232,34 +2066,7 @@ func encodeRefereePromptResourceToRefereePromptResourceTransport(v *RefereePromp
 	return res
 }
 
-func encodeRefereePromptResourceToRefereePromptResourceTransport2(v *RefereePromptResource) *jsonRefereePromptResourceTransport {
-	res := &jsonRefereePromptResourceTransport{}
-	var resourceValue jsonResourceTransport
-	switch string(v.Resource.Kind()) {
-	case "text":
-		actual, _ := v.Resource.AsText()
-		var obj *jsonRefereeEmbeddedTextTransport
-		if actual != nil {
-			obj = encodeRefereeEmbeddedTextToRefereeEmbeddedTextTransport3(actual)
-		}
-		u := resourceValue
-		u.SetText((*jsonRefereeEmbeddedTextTransport)(obj))
-		resourceValue = u
-	}
-	res.Resource = &resourceValue
-
-	return res
-}
-
 func encodeRefereePromptTextToRefereePromptTextTransport(v *RefereePromptText) *jsonRefereePromptTextTransport {
-	res := &jsonRefereePromptTextTransport{
-		Text: &v.Text,
-	}
-
-	return res
-}
-
-func encodeRefereePromptTextToRefereePromptTextTransport2(v *RefereePromptText) *jsonRefereePromptTextTransport {
 	res := &jsonRefereePromptTextTransport{
 		Text: &v.Text,
 	}
@@ -2400,14 +2207,14 @@ func validateRefereeEmbeddedTextJSONValue(path string, value any, description st
 	for _, key := range keys {
 		switch key {
 		case "text":
-			if err := validateRefereeEmbeddedTextJSONValue2(
+			if err := validateDocumentsJSONValue3(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Embedded resource contents",
 			); err != nil {
 				return err
 			}
 		case "uri":
-			if err := validateRefereeEmbeddedTextJSONValue3(
+			if err := validateDocumentsJSONValue3(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Embedded resource identifier",
 			); err != nil {
@@ -2419,38 +2226,6 @@ func validateRefereeEmbeddedTextJSONValue(path string, value any, description st
 				"uri",
 			})
 		}
-	}
-	return nil
-}
-
-// validateRefereeEmbeddedTextJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRefereeEmbeddedTextJSONValue2(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateRefereeEmbeddedTextJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRefereeEmbeddedTextJSONValue3(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -2476,14 +2251,14 @@ func validateRefereePromptImageJSONValue(path string, value any, description str
 	for _, key := range keys {
 		switch key {
 		case "data":
-			if err := validateRefereePromptImageJSONValue2(
+			if err := validateImageJSONValue(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Encoded synthetic PNG bytes",
 			); err != nil {
 				return err
 			}
 		case "mimeType":
-			if err := validateRefereePromptImageJSONValue3(
+			if err := validateDocumentsJSONValue3(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Image media type",
 			); err != nil {
@@ -2495,38 +2270,6 @@ func validateRefereePromptImageJSONValue(path string, value any, description str
 				"mimeType",
 			})
 		}
-	}
-	return nil
-}
-
-// validateRefereePromptImageJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRefereePromptImageJSONValue2(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateRefereePromptImageJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRefereePromptImageJSONValue3(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -2559,7 +2302,7 @@ func validateRefereePromptMessageJSONValue(path string, value any, description s
 				return err
 			}
 		case "role":
-			if err := validateRefereePromptMessageJSONValue5(
+			if err := validateDocumentsJSONValue3(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Message author",
 			); err != nil {
@@ -2598,23 +2341,23 @@ func validateRefereePromptMessageJSONValue2(path string, value any, description 
 		return fmt.Errorf("%s: missing or invalid union discriminator", field)
 	}
 	branch, exists := typed["value"]
-	if !exists || branch == nil {
+	if !exists {
 		return fmt.Errorf("%s: missing union value", field)
 	}
 	switch discriminator {
 	case "text":
-		return validateRefereePromptMessageJSONValue6(generatedJSONChildPath(path, "value", false), branch, "Text instructions")
+		return validateRefereePromptMessageJSONValue3(generatedJSONChildPath(path, "value", false), branch, "Text instructions")
 	case "image":
-		return validateRefereePromptMessageJSONValue8(generatedJSONChildPath(path, "value", false), branch, "Synthetic image")
+		return validateRefereePromptImageJSONValue(generatedJSONChildPath(path, "value", false), branch, "Synthetic image")
 	case "resource":
-		return validateRefereePromptMessageJSONValue11(generatedJSONChildPath(path, "value", false), branch, "Embedded text resource")
+		return validateRefereePromptMessageJSONValue4(generatedJSONChildPath(path, "value", false), branch, "Embedded text resource")
 	default:
 		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
 	}
 }
 
-// validateRefereePromptMessageJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRefereePromptMessageJSONValue6(path string, value any, description string) error {
+// validateRefereePromptMessageJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRefereePromptMessageJSONValue3(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -2634,7 +2377,7 @@ func validateRefereePromptMessageJSONValue6(path string, value any, description 
 	for _, key := range keys {
 		switch key {
 		case "text":
-			if err := validateRefereePromptMessageJSONValue7(
+			if err := validateDocumentsJSONValue3(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Message text",
 			); err != nil {
@@ -2649,100 +2392,8 @@ func validateRefereePromptMessageJSONValue6(path string, value any, description 
 	return nil
 }
 
-// validateRefereePromptMessageJSONValue7 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRefereePromptMessageJSONValue7(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateRefereePromptMessageJSONValue8 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRefereePromptMessageJSONValue8(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "data":
-			if err := validateRefereePromptMessageJSONValue9(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Encoded synthetic PNG bytes",
-			); err != nil {
-				return err
-			}
-		case "mimeType":
-			if err := validateRefereePromptMessageJSONValue10(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Image media type",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"data",
-				"mimeType",
-			})
-		}
-	}
-	return nil
-}
-
-// validateRefereePromptMessageJSONValue9 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRefereePromptMessageJSONValue9(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateRefereePromptMessageJSONValue10 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRefereePromptMessageJSONValue10(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateRefereePromptMessageJSONValue11 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRefereePromptMessageJSONValue11(path string, value any, description string) error {
+// validateRefereePromptMessageJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateRefereePromptMessageJSONValue4(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -2762,7 +2413,7 @@ func validateRefereePromptMessageJSONValue11(path string, value any, description
 	for _, key := range keys {
 		switch key {
 		case "resource":
-			if err := validateRefereePromptMessageJSONValue12(
+			if err := validateRefereePromptMessageJSONValue5(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Embedded resource representation",
 			); err != nil {
@@ -2773,116 +2424,6 @@ func validateRefereePromptMessageJSONValue11(path string, value any, description
 				"resource",
 			})
 		}
-	}
-	return nil
-}
-
-// validateRefereePromptMessageJSONValue12 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRefereePromptMessageJSONValue12(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	for key := range typed {
-		if key != "type" && key != "value" {
-			return unknownJSONFieldError(path, key, []string{"type", "value"})
-		}
-	}
-	discriminator, ok := typed["type"].(string)
-	if !ok {
-		return fmt.Errorf("%s: missing or invalid union discriminator", field)
-	}
-	branch, exists := typed["value"]
-	if !exists || branch == nil {
-		return fmt.Errorf("%s: missing union value", field)
-	}
-	switch discriminator {
-	case "text":
-		return validateRefereePromptMessageJSONValue13(generatedJSONChildPath(path, "value", false), branch, "Text resource")
-	default:
-		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
-	}
-}
-
-// validateRefereePromptMessageJSONValue13 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRefereePromptMessageJSONValue13(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "text":
-			if err := validateRefereePromptMessageJSONValue3(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Embedded resource contents",
-			); err != nil {
-				return err
-			}
-		case "uri":
-			if err := validateRefereePromptMessageJSONValue4(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Embedded resource identifier",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"text",
-				"uri",
-			})
-		}
-	}
-	return nil
-}
-
-// validateRefereePromptMessageJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRefereePromptMessageJSONValue3(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateRefereePromptMessageJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRefereePromptMessageJSONValue4(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -2894,58 +2435,6 @@ func validateRefereePromptMessageJSONValue5(path string, value any, description 
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateRefereePromptResourceJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRefereePromptResourceJSONValue(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "resource":
-			if err := validateRefereePromptResourceJSONValue2(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Embedded resource representation",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"resource",
-			})
-		}
-	}
-	return nil
-}
-
-// validateRefereePromptResourceJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRefereePromptResourceJSONValue2(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
 	typed, ok := value.(map[string]any)
@@ -2962,91 +2451,15 @@ func validateRefereePromptResourceJSONValue2(path string, value any, description
 		return fmt.Errorf("%s: missing or invalid union discriminator", field)
 	}
 	branch, exists := typed["value"]
-	if !exists || branch == nil {
+	if !exists {
 		return fmt.Errorf("%s: missing union value", field)
 	}
 	switch discriminator {
 	case "text":
-		return validateRefereePromptResourceJSONValue3(generatedJSONChildPath(path, "value", false), branch, "Text resource")
+		return validateRefereeEmbeddedTextJSONValue(generatedJSONChildPath(path, "value", false), branch, "Text resource")
 	default:
 		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
 	}
-}
-
-// validateRefereePromptResourceJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRefereePromptResourceJSONValue3(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "text":
-			if err := validateRefereePromptResourceJSONValue4(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Embedded resource contents",
-			); err != nil {
-				return err
-			}
-		case "uri":
-			if err := validateRefereePromptResourceJSONValue5(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Embedded resource identifier",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"text",
-				"uri",
-			})
-		}
-	}
-	return nil
-}
-
-// validateRefereePromptResourceJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRefereePromptResourceJSONValue4(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateRefereePromptResourceJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRefereePromptResourceJSONValue5(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
 }
 
 // validateRefereePromptResultJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
@@ -3099,436 +2512,12 @@ func validateRefereePromptResultJSONValue2(path string, value any, description s
 		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
 	}
 	for index, item := range typed {
-		if err := validateRefereePromptResultJSONValue8(
+		if err := validateRefereePromptMessageJSONValue(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-// validateRefereePromptResultJSONValue8 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRefereePromptResultJSONValue8(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "content":
-			if err := validateRefereePromptResultJSONValue9(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Selected message content",
-			); err != nil {
-				return err
-			}
-		case "role":
-			if err := validateRefereePromptResultJSONValue7(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Message author",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"content",
-				"role",
-			})
-		}
-	}
-	return nil
-}
-
-// validateRefereePromptResultJSONValue9 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRefereePromptResultJSONValue9(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	for key := range typed {
-		if key != "type" && key != "value" {
-			return unknownJSONFieldError(path, key, []string{"type", "value"})
-		}
-	}
-	discriminator, ok := typed["type"].(string)
-	if !ok {
-		return fmt.Errorf("%s: missing or invalid union discriminator", field)
-	}
-	branch, exists := typed["value"]
-	if !exists || branch == nil {
-		return fmt.Errorf("%s: missing union value", field)
-	}
-	switch discriminator {
-	case "text":
-		return validateRefereePromptResultJSONValue10(generatedJSONChildPath(path, "value", false), branch, "Text instructions")
-	case "image":
-		return validateRefereePromptResultJSONValue12(generatedJSONChildPath(path, "value", false), branch, "Synthetic image")
-	case "resource":
-		return validateRefereePromptResultJSONValue15(generatedJSONChildPath(path, "value", false), branch, "Embedded text resource")
-	default:
-		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
-	}
-}
-
-// validateRefereePromptResultJSONValue10 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRefereePromptResultJSONValue10(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "text":
-			if err := validateRefereePromptResultJSONValue11(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Message text",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"text",
-			})
-		}
-	}
-	return nil
-}
-
-// validateRefereePromptResultJSONValue11 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRefereePromptResultJSONValue11(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateRefereePromptResultJSONValue12 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRefereePromptResultJSONValue12(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "data":
-			if err := validateRefereePromptResultJSONValue13(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Encoded synthetic PNG bytes",
-			); err != nil {
-				return err
-			}
-		case "mimeType":
-			if err := validateRefereePromptResultJSONValue14(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Image media type",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"data",
-				"mimeType",
-			})
-		}
-	}
-	return nil
-}
-
-// validateRefereePromptResultJSONValue13 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRefereePromptResultJSONValue13(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateRefereePromptResultJSONValue14 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRefereePromptResultJSONValue14(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateRefereePromptResultJSONValue15 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRefereePromptResultJSONValue15(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "resource":
-			if err := validateRefereePromptResultJSONValue3(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Embedded resource representation",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"resource",
-			})
-		}
-	}
-	return nil
-}
-
-// validateRefereePromptResultJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRefereePromptResultJSONValue3(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	for key := range typed {
-		if key != "type" && key != "value" {
-			return unknownJSONFieldError(path, key, []string{"type", "value"})
-		}
-	}
-	discriminator, ok := typed["type"].(string)
-	if !ok {
-		return fmt.Errorf("%s: missing or invalid union discriminator", field)
-	}
-	branch, exists := typed["value"]
-	if !exists || branch == nil {
-		return fmt.Errorf("%s: missing union value", field)
-	}
-	switch discriminator {
-	case "text":
-		return validateRefereePromptResultJSONValue4(generatedJSONChildPath(path, "value", false), branch, "Text resource")
-	default:
-		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
-	}
-}
-
-// validateRefereePromptResultJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRefereePromptResultJSONValue4(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "text":
-			if err := validateRefereePromptResultJSONValue5(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Embedded resource contents",
-			); err != nil {
-				return err
-			}
-		case "uri":
-			if err := validateRefereePromptResultJSONValue6(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Embedded resource identifier",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"text",
-				"uri",
-			})
-		}
-	}
-	return nil
-}
-
-// validateRefereePromptResultJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRefereePromptResultJSONValue5(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateRefereePromptResultJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRefereePromptResultJSONValue6(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateRefereePromptResultJSONValue7 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRefereePromptResultJSONValue7(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateRefereePromptTextJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRefereePromptTextJSONValue(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "text":
-			if err := validateRefereePromptTextJSONValue2(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Message text",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"text",
-			})
-		}
-	}
-	return nil
-}
-
-// validateRefereePromptTextJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateRefereePromptTextJSONValue2(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -3554,21 +2543,21 @@ func validateTemplateBlobJSONValue(path string, value any, description string) e
 	for _, key := range keys {
 		switch key {
 		case "blob":
-			if err := validateTemplateBlobJSONValue2(
+			if err := validateImageJSONValue(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Binary resource contents",
 			); err != nil {
 				return err
 			}
 		case "mimeType":
-			if err := validateTemplateBlobJSONValue3(
+			if err := validateDocumentsJSONValue3(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Content media type",
 			); err != nil {
 				return err
 			}
 		case "uri":
-			if err := validateTemplateBlobJSONValue4(
+			if err := validateDocumentsJSONValue3(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Resource identifier",
 			); err != nil {
@@ -3581,54 +2570,6 @@ func validateTemplateBlobJSONValue(path string, value any, description string) e
 				"uri",
 			})
 		}
-	}
-	return nil
-}
-
-// validateTemplateBlobJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateTemplateBlobJSONValue2(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateTemplateBlobJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateTemplateBlobJSONValue3(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateTemplateBlobJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateTemplateBlobJSONValue4(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
 	}
 	return nil
 }
@@ -3692,14 +2633,14 @@ func validateTemplateItemJSONValue2(path string, value any, description string) 
 		return fmt.Errorf("%s: missing or invalid union discriminator", field)
 	}
 	branch, exists := typed["value"]
-	if !exists || branch == nil {
+	if !exists {
 		return fmt.Errorf("%s: missing union value", field)
 	}
 	switch discriminator {
 	case "text":
 		return validateTemplateItemJSONValue3(generatedJSONChildPath(path, "value", false), branch, "Text resource")
 	case "blob":
-		return validateTemplateItemJSONValue7(generatedJSONChildPath(path, "value", false), branch, "Binary resource")
+		return validateTemplateBlobJSONValue(generatedJSONChildPath(path, "value", false), branch, "Binary resource")
 	default:
 		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
 	}
@@ -3726,21 +2667,21 @@ func validateTemplateItemJSONValue3(path string, value any, description string) 
 	for _, key := range keys {
 		switch key {
 		case "mimeType":
-			if err := validateTemplateItemJSONValue4(
+			if err := validateDocumentsJSONValue3(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Content media type",
 			); err != nil {
 				return err
 			}
 		case "text":
-			if err := validateTemplateItemJSONValue5(
+			if err := validateDocumentsJSONValue3(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Resource contents",
 			); err != nil {
 				return err
 			}
 		case "uri":
-			if err := validateTemplateItemJSONValue6(
+			if err := validateDocumentsJSONValue3(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Resource identifier",
 			); err != nil {
@@ -3757,261 +2698,22 @@ func validateTemplateItemJSONValue3(path string, value any, description string) 
 	return nil
 }
 
-// validateTemplateItemJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateTemplateItemJSONValue4(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateTemplateItemJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateTemplateItemJSONValue5(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateTemplateItemJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateTemplateItemJSONValue6(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateTemplateItemJSONValue7 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateTemplateItemJSONValue7(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "blob":
-			if err := validateTemplateItemJSONValue8(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Binary resource contents",
-			); err != nil {
-				return err
-			}
-		case "mimeType":
-			if err := validateTemplateItemJSONValue9(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Content media type",
-			); err != nil {
-				return err
-			}
-		case "uri":
-			if err := validateTemplateItemJSONValue10(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Resource identifier",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"blob",
-				"mimeType",
-				"uri",
-			})
-		}
-	}
-	return nil
-}
-
-// validateTemplateItemJSONValue8 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateTemplateItemJSONValue8(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateTemplateItemJSONValue9 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateTemplateItemJSONValue9(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateTemplateItemJSONValue10 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateTemplateItemJSONValue10(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateTemplateTextJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
-func validateTemplateTextJSONValue(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "mimeType":
-			if err := validateTemplateTextJSONValue2(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Content media type",
-			); err != nil {
-				return err
-			}
-		case "text":
-			if err := validateTemplateTextJSONValue3(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Resource contents",
-			); err != nil {
-				return err
-			}
-		case "uri":
-			if err := validateTemplateTextJSONValue4(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Resource identifier",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"mimeType",
-				"text",
-				"uri",
-			})
-		}
-	}
-	return nil
-}
-
-// validateTemplateTextJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateTemplateTextJSONValue2(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateTemplateTextJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateTemplateTextJSONValue3(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateTemplateTextJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateTemplateTextJSONValue4(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// readStrictJSON checks syntax and nesting before walking for duplicate keys,
-// and preserves integer text for the generated type checks.
+// readStrictJSON checks the complete JSON document for malformed text and
+// duplicate members, then returns values with their original number text.
 func readStrictJSON(data []byte) (any, error) {
 	if err := validateJSONText(data); err != nil {
 		return nil, err
 	}
 	if !json.Valid(data) {
+		// When two complete JSON values arrive, keep the caller's distinct
+		// multiple-document error instead of reporting malformed syntax.
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		var document json.RawMessage
+		if err := decoder.Decode(&document); err == nil {
+			if err := decoder.Decode(&document); err == nil {
+				return nil, fmt.Errorf("multiple JSON documents")
+			}
+		}
 		return nil, fmt.Errorf("invalid JSON syntax or nesting")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -4019,7 +2721,8 @@ func readStrictJSON(data []byte) (any, error) {
 	return readJSONValue(decoder)
 }
 
-// readJSONValue checks duplicate decoded keys before storing any object member.
+// readJSONValue reads one JSON value and rejects repeated object member
+// names, returning the value without replacing earlier members.
 func readJSONValue(decoder *json.Decoder) (any, error) {
 	token, err := decoder.Token()
 	if err != nil {
@@ -4071,8 +2774,8 @@ func readJSONValue(decoder *json.Decoder) (any, error) {
 	}
 }
 
-// validateJSONText rejects invalid UTF-8 and unpaired UTF-16 escapes before
-// encoding/json can silently replace them. JSON grammar remains decoder-owned.
+// validateJSONText checks JSON bytes for invalid text and unpaired Unicode
+// escapes, returning an error before encoding/json can replace those characters.
 func validateJSONText(data []byte) error {
 	if !utf8.Valid(data) {
 		return fmt.Errorf("invalid UTF-8 in JSON")
@@ -4300,7 +3003,7 @@ func checkRefereePromptMessageRefereePromptMessageValue(in *RefereePromptMessage
 		}
 		if branch1, ok := in.Content.AsImage(); ok {
 			_ = branch1
-			if err := checkRefereePromptMessageRefereePromptImageValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "content", false), "value", false), active); err != nil {
+			if err := checkRefereePromptImageRefereePromptImageValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "content", false), "value", false), active); err != nil {
 				return err
 			}
 		}
@@ -4332,24 +3035,6 @@ func checkRefereePromptMessageRefereePromptTextValue(in *RefereePromptText, fiel
 	return nil
 }
 
-// checkRefereePromptMessageRefereePromptImageValue checks one generated value on the active path.
-func checkRefereePromptMessageRefereePromptImageValue(in *RefereePromptImage, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if !utf8.ValidString(string(in.MimeType)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "mimeType", false))
-		}
-	}
-	return nil
-}
-
 // checkRefereePromptMessageRefereePromptResourceValue checks one generated value on the active path.
 func checkRefereePromptMessageRefereePromptResourceValue(in *RefereePromptResource, field string, active map[any]bool) error {
 	if in == nil {
@@ -4363,30 +3048,9 @@ func checkRefereePromptMessageRefereePromptResourceValue(in *RefereePromptResour
 	if in != nil {
 		if branch1, ok := in.Resource.AsText(); ok {
 			_ = branch1
-			if err := checkRefereePromptMessageRefereeEmbeddedTextValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "resource", false), "value", false), active); err != nil {
+			if err := checkRefereeEmbeddedTextRefereeEmbeddedTextValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "resource", false), "value", false), active); err != nil {
 				return err
 			}
-		}
-	}
-	return nil
-}
-
-// checkRefereePromptMessageRefereeEmbeddedTextValue checks one generated value on the active path.
-func checkRefereePromptMessageRefereeEmbeddedTextValue(in *RefereeEmbeddedText, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if !utf8.ValidString(string(in.URI)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "uri", false))
-		}
-		if !utf8.ValidString(string(in.Text)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "text", false))
 		}
 	}
 	return nil
@@ -4398,50 +3062,8 @@ func checkRefereePromptResourceValue(in *RefereePromptResource) error {
 		return fmt.Errorf("missing root value")
 	}
 	active := make(map[any]bool)
-	if err := checkRefereePromptResourceRefereePromptResourceValue(in, "$", active); err != nil {
+	if err := checkRefereePromptMessageRefereePromptResourceValue(in, "$", active); err != nil {
 		return err
-	}
-	return nil
-}
-
-// checkRefereePromptResourceRefereePromptResourceValue checks one generated value on the active path.
-func checkRefereePromptResourceRefereePromptResourceValue(in *RefereePromptResource, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if branch1, ok := in.Resource.AsText(); ok {
-			_ = branch1
-			if err := checkRefereePromptResourceRefereeEmbeddedTextValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "resource", false), "value", false), active); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-// checkRefereePromptResourceRefereeEmbeddedTextValue checks one generated value on the active path.
-func checkRefereePromptResourceRefereeEmbeddedTextValue(in *RefereeEmbeddedText, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if !utf8.ValidString(string(in.URI)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "uri", false))
-		}
-		if !utf8.ValidString(string(in.Text)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "text", false))
-		}
 	}
 	return nil
 }
@@ -4472,123 +3094,9 @@ func checkRefereePromptResultRefereePromptResultValue(in *RefereePromptResult, f
 		for index1, item1 := range in.Messages {
 			_ = index1
 			_ = item1
-			if err := checkRefereePromptResultRefereePromptMessageValue(item1, generatedJSONChildPath(generatedJSONChildPath(field, "messages", false), strconv.Itoa(index1), true), active); err != nil {
+			if err := checkRefereePromptMessageRefereePromptMessageValue(item1, generatedJSONChildPath(generatedJSONChildPath(field, "messages", false), strconv.Itoa(index1), true), active); err != nil {
 				return err
 			}
-		}
-	}
-	return nil
-}
-
-// checkRefereePromptResultRefereePromptMessageValue checks one generated value on the active path.
-func checkRefereePromptResultRefereePromptMessageValue(in *RefereePromptMessage, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if !utf8.ValidString(string(in.Role)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "role", false))
-		}
-		if branch1, ok := in.Content.AsText(); ok {
-			_ = branch1
-			if err := checkRefereePromptResultRefereePromptTextValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "content", false), "value", false), active); err != nil {
-				return err
-			}
-		}
-		if branch1, ok := in.Content.AsImage(); ok {
-			_ = branch1
-			if err := checkRefereePromptResultRefereePromptImageValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "content", false), "value", false), active); err != nil {
-				return err
-			}
-		}
-		if branch1, ok := in.Content.AsResource(); ok {
-			_ = branch1
-			if err := checkRefereePromptResultRefereePromptResourceValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "content", false), "value", false), active); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-// checkRefereePromptResultRefereePromptTextValue checks one generated value on the active path.
-func checkRefereePromptResultRefereePromptTextValue(in *RefereePromptText, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if !utf8.ValidString(string(in.Text)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "text", false))
-		}
-	}
-	return nil
-}
-
-// checkRefereePromptResultRefereePromptImageValue checks one generated value on the active path.
-func checkRefereePromptResultRefereePromptImageValue(in *RefereePromptImage, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if !utf8.ValidString(string(in.MimeType)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "mimeType", false))
-		}
-	}
-	return nil
-}
-
-// checkRefereePromptResultRefereePromptResourceValue checks one generated value on the active path.
-func checkRefereePromptResultRefereePromptResourceValue(in *RefereePromptResource, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if branch1, ok := in.Resource.AsText(); ok {
-			_ = branch1
-			if err := checkRefereePromptResultRefereeEmbeddedTextValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "resource", false), "value", false), active); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-// checkRefereePromptResultRefereeEmbeddedTextValue checks one generated value on the active path.
-func checkRefereePromptResultRefereeEmbeddedTextValue(in *RefereeEmbeddedText, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if !utf8.ValidString(string(in.URI)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "uri", false))
-		}
-		if !utf8.ValidString(string(in.Text)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "text", false))
 		}
 	}
 	return nil
@@ -4600,26 +3108,8 @@ func checkRefereePromptTextValue(in *RefereePromptText) error {
 		return fmt.Errorf("missing root value")
 	}
 	active := make(map[any]bool)
-	if err := checkRefereePromptTextRefereePromptTextValue(in, "$", active); err != nil {
+	if err := checkRefereePromptMessageRefereePromptTextValue(in, "$", active); err != nil {
 		return err
-	}
-	return nil
-}
-
-// checkRefereePromptTextRefereePromptTextValue checks one generated value on the active path.
-func checkRefereePromptTextRefereePromptTextValue(in *RefereePromptText, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if !utf8.ValidString(string(in.Text)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "text", false))
-		}
 	}
 	return nil
 }
@@ -4690,7 +3180,7 @@ func checkTemplateItemTemplateItemValue(in *TemplateItem, field string, active m
 		}
 		if branch1, ok := in.Selected.AsBlob(); ok {
 			_ = branch1
-			if err := checkTemplateItemTemplateBlobValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "content", false), "value", false), active); err != nil {
+			if err := checkTemplateBlobTemplateBlobValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "content", false), "value", false), active); err != nil {
 				return err
 			}
 		}
@@ -4724,63 +3214,14 @@ func checkTemplateItemTemplateTextValue(in *TemplateText, field string, active m
 	return nil
 }
 
-// checkTemplateItemTemplateBlobValue checks one generated value on the active path.
-func checkTemplateItemTemplateBlobValue(in *TemplateBlob, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if !utf8.ValidString(string(in.URI)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "uri", false))
-		}
-		if in.MimeType != nil {
-			if !utf8.ValidString(string(*in.MimeType)) {
-				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "mimeType", false))
-			}
-		}
-	}
-	return nil
-}
-
 // checkTemplateTextValue checks text and cycles before conversion.
 func checkTemplateTextValue(in *TemplateText) error {
 	if in == nil {
 		return fmt.Errorf("missing root value")
 	}
 	active := make(map[any]bool)
-	if err := checkTemplateTextTemplateTextValue(in, "$", active); err != nil {
+	if err := checkTemplateItemTemplateTextValue(in, "$", active); err != nil {
 		return err
-	}
-	return nil
-}
-
-// checkTemplateTextTemplateTextValue checks one generated value on the active path.
-func checkTemplateTextTemplateTextValue(in *TemplateText, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if !utf8.ValidString(string(in.URI)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "uri", false))
-		}
-		if in.MimeType != nil {
-			if !utf8.ValidString(string(*in.MimeType)) {
-				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "mimeType", false))
-			}
-		}
-		if !utf8.ValidString(string(in.Text)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "text", false))
-		}
 	}
 	return nil
 }

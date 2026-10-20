@@ -96,9 +96,9 @@ func TestConsumerRegisteredBindingRequiresExactSource(t *testing.T) {
 			require.ErrorContains(t, catalog.BindSourceInput(testRegistryName, expected.Source, original, consumerBoundSpec(t, original, consumerScopeRef{ID: "accepted"})), "not selected")
 			for name, spec := range catalog.specs {
 				assert.Nil(t, spec.PrepareInput)
-				_, err = prepareConsumerInput(catalog.spec, name, rawjson.Message(`{"query":"active"}`))
+				_, err = prepareConsumerInput(catalog, name, rawjson.Message(`{"query":"active"}`))
 				require.Error(t, err)
-				_, err = prepareConsumerInput(catalog.spec, name, rawjson.Message(`{"scope":{"id":"chosen"},"query":"active"}`))
+				_, err = prepareConsumerInput(catalog, name, rawjson.Message(`{"scope":{"id":"chosen"},"query":"active"}`))
 				require.NoError(t, err)
 			}
 			require.NoError(t, catalog.BindSourceInput(registry, foreign.Source, original, consumerBoundSpec(t, original, consumerScopeRef{ID: "accepted"})))

@@ -47,7 +47,7 @@ func TestRegistryContinuationsKeepIndependentRegistrations(t *testing.T) {
 		})
 		require.NoError(t, err)
 		require.Len(t, calls, 1)
-		retained, err := registrycontract.Read(calls[0].Registry)
+		retained, err := registrycontract.Read(calls[0].Registry, nil)
 		require.NoError(t, err)
 		assert.Equal(t, []string{strings.Repeat("a", 64), strings.Repeat("b", 64)}[index],
 			retained.Registered.RegistrationToken)

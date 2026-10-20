@@ -50,11 +50,11 @@ func TestRegistrySuspensionUsesSavedContractAndCurrentSource(t *testing.T) {
 	checkpoint, err := decodeWorkflowCheckpoint(suspension, definition)
 	require.NoError(t, err)
 	assert.Empty(t, checkpoint.RequiredTools, "dynamic contracts are already retained with their calls")
-	state, err := rt.restoreCheckpointState(checkpoint.State, rt.toolSpec)
+	state, err := rt.restoreCheckpointState(checkpoint.State, rt)
 	require.NoError(t, err)
 	require.Len(t, state.ToolEvents, 1)
 	call := ToolCall{Name: "records.find", ToolCallID: "previous", Registry: binding}
-	encoded, err := encodeToolEvent(state.ToolEvents[0], call, rt.toolSpec)
+	encoded, err := encodeToolEvent(state.ToolEvents[0], call, rt)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{"value":9007199254740993}`, string(encoded.Result))
 	plan, required, err := rt.confirmationPlan(t.Context(), &checkpoint.Pending[0].Confirmation.Call)

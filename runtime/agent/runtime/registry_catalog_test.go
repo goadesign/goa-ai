@@ -74,7 +74,7 @@ func TestRegistryCatalogChangesOnlyAtNextResolution(t *testing.T) {
 	assert.NotContains(t, first.definitions, tools.Ident("records.replace"))
 	assert.Contains(t, second.definitions, tools.Ident("records.replace"))
 	assert.NotContains(t, second.definitions, tools.Ident("records.find"))
-	restored, err := registrycontract.Read(binding)
+	restored, err := registrycontract.Read(binding, nil)
 	require.NoError(t, err)
 	assert.Equal(t, strings.Repeat("a", 64), restored.Registered.RegistrationToken)
 	_, exists := rt.toolSpec("records.find")
@@ -132,7 +132,7 @@ func TestRegistryPlanningAdvertisesCurrentToolsAndSavesOnlySelections(t *testing
 	require.Len(t, output.Result.ToolCalls, 1)
 	call := output.Result.ToolCalls[0]
 	require.NotNil(t, call.Registry)
-	saved, err := registrycontract.Read(call.Registry)
+	saved, err := registrycontract.Read(call.Registry, nil)
 	require.NoError(t, err)
 	assert.Equal(t, strings.Repeat("a", 64), saved.Registered.RegistrationToken)
 	assert.Len(t, saved.Specs, 1)
@@ -183,7 +183,7 @@ func TestSavedRegistryContractOwnsConfirmationAndResultValidation(t *testing.T) 
 	require.NoError(t, err)
 	require.True(t, needed)
 	assert.Equal(t, "Change value 9007199254740993?", plan.Prompt)
-	spec, exists, err := lookupCallSpec(call, rt.toolSpec)
+	spec, exists, err := lookupCallSpec(call, rt)
 	require.NoError(t, err)
 	require.True(t, exists)
 	denied, err := spec.Result.Codec.ToJSON(plan.DeniedResult)
@@ -192,9 +192,9 @@ func TestSavedRegistryContractOwnsConfirmationAndResultValidation(t *testing.T) 
 
 	copy := cloneToolCall(call)
 	copy.Registry.Resolution[0] = '!'
-	_, _, err = lookupCallSpec(call, rt.toolSpec)
+	_, _, err = lookupCallSpec(call, rt)
 	require.NoError(t, err)
-	_, _, err = lookupCallSpec(copy, rt.toolSpec)
+	_, _, err = lookupCallSpec(copy, rt)
 	require.Error(t, err)
 }
 

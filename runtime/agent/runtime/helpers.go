@@ -691,7 +691,7 @@ func (r *Runtime) toolMetadata(calls []ToolCall) ([]policy.ToolMetadata, error) 
 	metas := make([]policy.ToolMetadata, 0, len(calls))
 	for _, call := range calls {
 		if r.isDynamicRegistryCall(call) {
-			meta, err := registryCallMetadata(call)
+			meta, err := registryCallMetadata(call, r)
 			if err != nil {
 				return nil, err
 			}

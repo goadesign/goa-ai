@@ -178,28 +178,28 @@ func validateResultBoundsJSONValue(path string, value any, description string) e
 				return err
 			}
 		case "refinement_hint":
-			if err := validateResultBoundsJSONValue3(
+			if err := validateResultBoundsJSONValue2(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Provider guidance for refining the query.",
 			); err != nil {
 				return err
 			}
 		case "returned":
-			if err := validateResultBoundsJSONValue4(
+			if err := validateResultBoundsJSONValue3(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Number of items included in this result.",
 			); err != nil {
 				return err
 			}
 		case "total":
-			if err := validateResultBoundsJSONValue5(
+			if err := validateResultBoundsJSONValue3(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Provider-owned total, when known.",
 			); err != nil {
 				return err
 			}
 		case "truncated":
-			if err := validateResultBoundsJSONValue6(
+			if err := validateResultBoundsJSONValue4(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Whether the result was bounded before exhausting the selected data.",
 			); err != nil {
@@ -241,49 +241,17 @@ func validateResultBoundsJSONValue3(path string, value any, description string) 
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
 	}
-	_, ok := value.(string)
+	_, ok := value.(json.Number)
 	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
 	}
 	return nil
 }
 
 // validateResultBoundsJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
 func validateResultBoundsJSONValue4(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
-	}
-	_, ok := value.(json.Number)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateResultBoundsJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResultBoundsJSONValue5(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
-	}
-	_, ok := value.(json.Number)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateResultBoundsJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateResultBoundsJSONValue6(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"

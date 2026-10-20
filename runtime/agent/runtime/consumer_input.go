@@ -16,7 +16,7 @@ import (
 // prepareConsumerInput validates one activity's model input, adds generated typed
 // values, and validates the complete provider input before it can be accepted.
 func prepareConsumerInput(lookup toolSpecLookup, name tools.Ident, input rawjson.Message) (rawjson.Message, error) {
-	spec, ok := lookup(name)
+	spec, ok := lookup.spec(name)
 	if !ok {
 		return nil, fmt.Errorf("tool %q has no input contract", name)
 	}

@@ -130,7 +130,7 @@ func (r *Runtime) prepareRegistryAgentChild(ctx context.Context, origin genregis
 	if err != nil {
 		return nil, err
 	}
-	declaration, err := registryAgentDeclaration(call)
+	declaration, err := registryAgentDeclaration(call, r)
 	if err != nil {
 		return nil, err
 	}
@@ -224,7 +224,7 @@ func selectedParentTool(name tools.Ident, binding *tools.RegistryBinding, execut
 		return nil, nil
 	}
 	if binding != nil {
-		resolved, err := registrycontract.Read(binding)
+		resolved, err := registrycontract.Read(binding, lookup.registryDeclaration)
 		if err != nil {
 			return nil, err
 		}
@@ -238,7 +238,7 @@ func selectedParentTool(name tools.Ident, binding *tools.RegistryBinding, execut
 		}
 		return &spec, nil
 	}
-	spec, exists := lookup(name)
+	spec, exists := lookup.spec(name)
 	if !exists {
 		return nil, nil
 	}

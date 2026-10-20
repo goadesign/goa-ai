@@ -652,163 +652,26 @@ func validateUnstartedExecutionTerminalResultOriginal(value *UnstartedExecutionT
 	case "stored":
 		actual, _ := value.Result.AsStored()
 		if actual != nil {
-			if err2 := validateUnstartedExecutionTerminalOriginal2(actual); err2 != nil {
+			if err2 := validateUnstartedExecutionTerminalOriginal(actual); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
 	case "replayed":
 		actual, _ := value.Result.AsReplayed()
 		if actual != nil {
-			if err2 := validateUnstartedExecutionTerminalOriginal2(actual); err2 != nil {
+			if err2 := validateUnstartedExecutionTerminalOriginal(actual); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
 	case "existing":
 		actual, _ := value.Result.AsExisting()
 		if actual != nil {
-			if err2 := validateUnstartedExecutionTerminalOriginal2(actual); err2 != nil {
+			if err2 := validateUnstartedExecutionTerminalOriginal(actual); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
 	}
 
-	return err
-}
-
-// validateUnstartedExecutionTerminalOriginal2 checks the original typed value before JSON conversion.
-func validateUnstartedExecutionTerminalOriginal2(value *UnstartedExecutionTerminal) (err error) {
-	if value.Subject == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("subject", "value"))
-	}
-	if value.RequestDigest == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("request_digest", "value"))
-	}
-	if value.Origin == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("origin", "value"))
-	}
-	if value.Time.Kind() == "" {
-		err = goa.MergeErrors(err, goa.MissingFieldError("time", "value"))
-	}
-	if value.Outcome.Kind() == "" {
-		err = goa.MergeErrors(err, goa.MissingFieldError("outcome", "value"))
-	}
-	if utf8.RuneCountInString(value.RunID) < 1 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("value.run_id", value.RunID, utf8.RuneCountInString(value.RunID), 1, true))
-	}
-	if value.Subject != nil {
-		if err2 := validateRunSubjectOriginal2(value.Subject); err2 != nil {
-			err = goa.MergeErrors(err, err2)
-		}
-	}
-	if value.SessionID != nil {
-		if utf8.RuneCountInString(*value.SessionID) < 1 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("value.session_id", *value.SessionID, utf8.RuneCountInString(*value.SessionID), 1, true))
-		}
-	}
-	if len(value.RequestDigest) < 32 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("value.request_digest", value.RequestDigest, len(value.RequestDigest), 32, true))
-	}
-	if len(value.RequestDigest) > 32 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("value.request_digest", value.RequestDigest, len(value.RequestDigest), 32, false))
-	}
-	if value.Origin != nil {
-		if err2 := validateExecutionInvocationOriginal2(value.Origin); err2 != nil {
-			err = goa.MergeErrors(err, err2)
-		}
-	}
-	switch string(value.Time.Kind()) {
-	case "workflow_decision":
-		actual, _ := value.Time.AsWorkflowDecision()
-		err = goa.MergeErrors(err, goa.ValidateFormat("value.time.value", string(actual), goa.FormatDateTime))
-	case "engine_closure":
-		actual, _ := value.Time.AsEngineClosure()
-		err = goa.MergeErrors(err, goa.ValidateFormat("value.time.value", string(actual), goa.FormatDateTime))
-	}
-
-	switch string(value.Outcome.Kind()) {
-	case "canceled":
-		actual, _ := value.Outcome.AsCanceled()
-		if utf8.RuneCountInString(string(actual)) < 1 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("value.outcome.value", string(actual), utf8.RuneCountInString(string(actual)), 1, true))
-		}
-	}
-
-	return err
-}
-
-// validateRunSubjectOriginal2 checks the original typed value before JSON conversion.
-func validateRunSubjectOriginal2(value *runidentity.RunSubject) (err error) {
-	if value.Executor.Kind() == "" {
-		err = goa.MergeErrors(err, goa.MissingFieldError("executor", "value"))
-	}
-	switch string(value.Executor.Kind()) {
-	case "agent":
-		actual, _ := value.Executor.AsAgent()
-		if utf8.RuneCountInString(string(actual)) < 1 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("value.executor.value", string(actual), utf8.RuneCountInString(string(actual)), 1, true))
-		}
-	case "service_tool":
-		actual, _ := value.Executor.AsServiceTool()
-		if actual != nil {
-			if err2 := validateServiceToolSubjectOriginal2(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
-			}
-		}
-	}
-
-	return err
-}
-
-// validateServiceToolSubjectOriginal2 checks the original typed value before JSON conversion.
-func validateServiceToolSubjectOriginal2(value *runidentity.ServiceToolSubject) (err error) {
-	if utf8.RuneCountInString(value.Registry) < 1 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("value.registry", value.Registry, utf8.RuneCountInString(value.Registry), 1, true))
-	}
-	err = goa.MergeErrors(err, goa.ValidatePattern("value.tool", value.Tool, "^[\\s\\S]+\\.[^.]+$"))
-	return err
-}
-
-// validateExecutionInvocationOriginal2 checks the original typed value before JSON conversion.
-func validateExecutionInvocationOriginal2(value *registry.ExecutionInvocation) (err error) {
-	if value.Invocation.Kind() == "" {
-		err = goa.MergeErrors(err, goa.MissingFieldError("invocation", "value"))
-	}
-	switch string(value.Invocation.Kind()) {
-	case "root":
-		actual, _ := value.Invocation.AsRoot()
-		if actual != nil {
-			if err2 := validateRootInvocationOriginal2(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
-			}
-		}
-	case "tool":
-		actual, _ := value.Invocation.AsTool()
-		if actual != nil {
-			if err2 := validateToolInvocationOriginal2(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
-			}
-		}
-	}
-
-	return err
-}
-
-// validateRootInvocationOriginal2 checks the original typed value before JSON conversion.
-func validateRootInvocationOriginal2(value *registry.RootInvocation) (err error) {
-	if utf8.RuneCountInString(value.RunID) < 1 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("value.run_id", value.RunID, utf8.RuneCountInString(value.RunID), 1, true))
-	}
-	return err
-}
-
-// validateToolInvocationOriginal2 checks the original typed value before JSON conversion.
-func validateToolInvocationOriginal2(value *registry.ToolInvocation) (err error) {
-	if utf8.RuneCountInString(value.RunID) < 1 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("value.run_id", value.RunID, utf8.RuneCountInString(value.RunID), 1, true))
-	}
-	if utf8.RuneCountInString(value.ToolCallID) < 1 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("value.tool_call_id", value.ToolCallID, utf8.RuneCountInString(value.ToolCallID), 1, true))
-	}
 	return err
 }
 
@@ -1953,7 +1816,7 @@ func DecodePreparationProceed(data []byte) (out *PreparationProceed, err error) 
 	if err != nil {
 		return out, fmt.Errorf("decode PreparationProceed JSON: %w", err)
 	}
-	if err := validatePreparationProceedJSONValue("", root, ""); err != nil {
+	if err := validatePreparationDecisionJSONValue3("", root, ""); err != nil {
 		return out, fmt.Errorf("decode PreparationProceed JSON: %w", err)
 	}
 	var body *jsonPreparationProceedTransport
@@ -2179,7 +2042,7 @@ func EncodeUnstartedExecutionTerminalResult(in *UnstartedExecutionTerminalResult
 			actual, _ := in.Result.AsStored()
 			var obj *jsonUnstartedExecutionTerminalTransport
 			if actual != nil {
-				obj = encodeUnstartedExecutionTerminalToUnstartedExecutionTerminalTransport(actual)
+				obj = encodeUnstartedExecutionTerminalToUnstartedExecutionTerminalTransport3(actual)
 			}
 			u := resultValue
 			u.SetStored((*jsonUnstartedExecutionTerminalTransport)(obj))
@@ -2197,7 +2060,7 @@ func EncodeUnstartedExecutionTerminalResult(in *UnstartedExecutionTerminalResult
 			actual, _ := in.Result.AsExisting()
 			var obj *jsonUnstartedExecutionTerminalTransport
 			if actual != nil {
-				obj = encodeUnstartedExecutionTerminalToUnstartedExecutionTerminalTransport3(actual)
+				obj = encodeUnstartedExecutionTerminalToUnstartedExecutionTerminalTransport(actual)
 			}
 			u := resultValue
 			u.SetExisting((*jsonUnstartedExecutionTerminalTransport)(obj))
@@ -2264,7 +2127,7 @@ func DecodeUnstartedExecutionTerminalResult(data []byte) (out *UnstartedExecutio
 			actual, _ := body.Result.AsReplayed()
 			var obj *UnstartedExecutionTerminal
 			if actual != nil {
-				obj = decodeUnstartedExecutionTerminalTransportToUnstartedExecutionTerminal2(actual)
+				obj = decodeUnstartedExecutionTerminalTransportToUnstartedExecutionTerminal(actual)
 			}
 			u := out.Result
 			u.SetReplayed((*UnstartedExecutionTerminal)(obj))
@@ -2273,7 +2136,7 @@ func DecodeUnstartedExecutionTerminalResult(data []byte) (out *UnstartedExecutio
 			actual, _ := body.Result.AsExisting()
 			var obj *UnstartedExecutionTerminal
 			if actual != nil {
-				obj = decodeUnstartedExecutionTerminalTransportToUnstartedExecutionTerminal3(actual)
+				obj = decodeUnstartedExecutionTerminalTransportToUnstartedExecutionTerminal(actual)
 			}
 			u := out.Result
 			u.SetExisting((*UnstartedExecutionTerminal)(obj))
@@ -2293,60 +2156,6 @@ func DecodeUnstartedExecutionTerminalResult(data []byte) (out *UnstartedExecutio
 }
 
 func decodeExecutionFailureTransportToExecutionFailure(v *jsonExecutionFailureTransport) *ExecutionFailure {
-	res := &ExecutionFailure{
-		Message:      v.Message,
-		DebugMessage: v.DebugMessage,
-		Provider:     v.Provider,
-		Operation:    v.Operation,
-		Kind:         v.Kind,
-		Code:         v.Code,
-		Retryable:    *v.Retryable,
-	}
-	if v.HTTPStatus != nil {
-		httpStatus := int(*v.HTTPStatus)
-		res.HTTPStatus = &httpStatus
-	}
-
-	return res
-}
-
-func decodeExecutionFailureTransportToExecutionFailure2(v *jsonExecutionFailureTransport) *ExecutionFailure {
-	res := &ExecutionFailure{
-		Message:      v.Message,
-		DebugMessage: v.DebugMessage,
-		Provider:     v.Provider,
-		Operation:    v.Operation,
-		Kind:         v.Kind,
-		Code:         v.Code,
-		Retryable:    *v.Retryable,
-	}
-	if v.HTTPStatus != nil {
-		httpStatus := int(*v.HTTPStatus)
-		res.HTTPStatus = &httpStatus
-	}
-
-	return res
-}
-
-func decodeExecutionFailureTransportToExecutionFailure3(v *jsonExecutionFailureTransport) *ExecutionFailure {
-	res := &ExecutionFailure{
-		Message:      v.Message,
-		DebugMessage: v.DebugMessage,
-		Provider:     v.Provider,
-		Operation:    v.Operation,
-		Kind:         v.Kind,
-		Code:         v.Code,
-		Retryable:    *v.Retryable,
-	}
-	if v.HTTPStatus != nil {
-		httpStatus := int(*v.HTTPStatus)
-		res.HTTPStatus = &httpStatus
-	}
-
-	return res
-}
-
-func decodeExecutionFailureTransportToExecutionFailure4(v *jsonExecutionFailureTransport) *ExecutionFailure {
 	res := &ExecutionFailure{
 		Message:      v.Message,
 		DebugMessage: v.DebugMessage,
@@ -2390,84 +2199,6 @@ func decodeExecutionInvocationTransportToExecutionInvocation(v *jsonExecutionInv
 	return res
 }
 
-func decodeExecutionInvocationTransportToExecutionInvocation2(v *jsonExecutionInvocationTransport) *registry.ExecutionInvocation {
-	res := &registry.ExecutionInvocation{}
-	switch string(v.Invocation.Kind()) {
-	case "root":
-		actual, _ := v.Invocation.AsRoot()
-		var obj *registry.RootInvocation
-		if actual != nil {
-			obj = decodeRootInvocationTransportToRootInvocation2(actual)
-		}
-		u := res.Invocation
-		u.SetRoot((*registry.RootInvocation)(obj))
-		res.Invocation = u
-	case "tool":
-		actual, _ := v.Invocation.AsTool()
-		var obj *registry.ToolInvocation
-		if actual != nil {
-			obj = decodeToolInvocationTransportToToolInvocation2(actual)
-		}
-		u := res.Invocation
-		u.SetTool((*registry.ToolInvocation)(obj))
-		res.Invocation = u
-	}
-
-	return res
-}
-
-func decodeExecutionInvocationTransportToExecutionInvocation3(v *jsonExecutionInvocationTransport) *registry.ExecutionInvocation {
-	res := &registry.ExecutionInvocation{}
-	switch string(v.Invocation.Kind()) {
-	case "root":
-		actual, _ := v.Invocation.AsRoot()
-		var obj *registry.RootInvocation
-		if actual != nil {
-			obj = decodeRootInvocationTransportToRootInvocation3(actual)
-		}
-		u := res.Invocation
-		u.SetRoot((*registry.RootInvocation)(obj))
-		res.Invocation = u
-	case "tool":
-		actual, _ := v.Invocation.AsTool()
-		var obj *registry.ToolInvocation
-		if actual != nil {
-			obj = decodeToolInvocationTransportToToolInvocation3(actual)
-		}
-		u := res.Invocation
-		u.SetTool((*registry.ToolInvocation)(obj))
-		res.Invocation = u
-	}
-
-	return res
-}
-
-func decodeExecutionInvocationTransportToExecutionInvocation4(v *jsonExecutionInvocationTransport) *registry.ExecutionInvocation {
-	res := &registry.ExecutionInvocation{}
-	switch string(v.Invocation.Kind()) {
-	case "root":
-		actual, _ := v.Invocation.AsRoot()
-		var obj *registry.RootInvocation
-		if actual != nil {
-			obj = decodeRootInvocationTransportToRootInvocation4(actual)
-		}
-		u := res.Invocation
-		u.SetRoot((*registry.RootInvocation)(obj))
-		res.Invocation = u
-	case "tool":
-		actual, _ := v.Invocation.AsTool()
-		var obj *registry.ToolInvocation
-		if actual != nil {
-			obj = decodeToolInvocationTransportToToolInvocation4(actual)
-		}
-		u := res.Invocation
-		u.SetTool((*registry.ToolInvocation)(obj))
-		res.Invocation = u
-	}
-
-	return res
-}
-
 func decodePreparationProceedTransportToPreparationProceed(v *jsonPreparationProceedTransport) *PreparationProceed {
 	res := &PreparationProceed{}
 
@@ -2475,30 +2206,6 @@ func decodePreparationProceedTransportToPreparationProceed(v *jsonPreparationPro
 }
 
 func decodeRootInvocationTransportToRootInvocation(v *jsonRootInvocationTransport) *registry.RootInvocation {
-	res := &registry.RootInvocation{
-		RunID: *v.RunID,
-	}
-
-	return res
-}
-
-func decodeRootInvocationTransportToRootInvocation2(v *jsonRootInvocationTransport) *registry.RootInvocation {
-	res := &registry.RootInvocation{
-		RunID: *v.RunID,
-	}
-
-	return res
-}
-
-func decodeRootInvocationTransportToRootInvocation3(v *jsonRootInvocationTransport) *registry.RootInvocation {
-	res := &registry.RootInvocation{
-		RunID: *v.RunID,
-	}
-
-	return res
-}
-
-func decodeRootInvocationTransportToRootInvocation4(v *jsonRootInvocationTransport) *registry.RootInvocation {
 	res := &registry.RootInvocation{
 		RunID: *v.RunID,
 	}
@@ -2530,106 +2237,7 @@ func decodeRunSubjectTransportToRunSubject(v *jsonRunSubjectTransport) *runident
 	return res
 }
 
-func decodeRunSubjectTransportToRunSubject2(v *jsonRunSubjectTransport) *runidentity.RunSubject {
-	res := &runidentity.RunSubject{}
-	switch string(v.Executor.Kind()) {
-	case "agent":
-		actual, _ := v.Executor.AsAgent()
-		obj := runidentity.RunExecutorBranchAgent(actual)
-
-		u := res.Executor
-		u.SetAgent((runidentity.RunExecutorBranchAgent)(obj))
-		res.Executor = u
-	case "service_tool":
-		actual, _ := v.Executor.AsServiceTool()
-		var obj *runidentity.ServiceToolSubject
-		if actual != nil {
-			obj = decodeServiceToolSubjectTransportToServiceToolSubject2(actual)
-		}
-		u := res.Executor
-		u.SetServiceTool((*runidentity.ServiceToolSubject)(obj))
-		res.Executor = u
-	}
-
-	return res
-}
-
-func decodeRunSubjectTransportToRunSubject3(v *jsonRunSubjectTransport) *runidentity.RunSubject {
-	res := &runidentity.RunSubject{}
-	switch string(v.Executor.Kind()) {
-	case "agent":
-		actual, _ := v.Executor.AsAgent()
-		obj := runidentity.RunExecutorBranchAgent(actual)
-
-		u := res.Executor
-		u.SetAgent((runidentity.RunExecutorBranchAgent)(obj))
-		res.Executor = u
-	case "service_tool":
-		actual, _ := v.Executor.AsServiceTool()
-		var obj *runidentity.ServiceToolSubject
-		if actual != nil {
-			obj = decodeServiceToolSubjectTransportToServiceToolSubject3(actual)
-		}
-		u := res.Executor
-		u.SetServiceTool((*runidentity.ServiceToolSubject)(obj))
-		res.Executor = u
-	}
-
-	return res
-}
-
-func decodeRunSubjectTransportToRunSubject4(v *jsonRunSubjectTransport) *runidentity.RunSubject {
-	res := &runidentity.RunSubject{}
-	switch string(v.Executor.Kind()) {
-	case "agent":
-		actual, _ := v.Executor.AsAgent()
-		obj := runidentity.RunExecutorBranchAgent(actual)
-
-		u := res.Executor
-		u.SetAgent((runidentity.RunExecutorBranchAgent)(obj))
-		res.Executor = u
-	case "service_tool":
-		actual, _ := v.Executor.AsServiceTool()
-		var obj *runidentity.ServiceToolSubject
-		if actual != nil {
-			obj = decodeServiceToolSubjectTransportToServiceToolSubject4(actual)
-		}
-		u := res.Executor
-		u.SetServiceTool((*runidentity.ServiceToolSubject)(obj))
-		res.Executor = u
-	}
-
-	return res
-}
-
 func decodeServiceToolSubjectTransportToServiceToolSubject(v *jsonServiceToolSubjectTransport) *runidentity.ServiceToolSubject {
-	res := &runidentity.ServiceToolSubject{
-		Registry: *v.Registry,
-		Tool:     *v.Tool,
-	}
-
-	return res
-}
-
-func decodeServiceToolSubjectTransportToServiceToolSubject2(v *jsonServiceToolSubjectTransport) *runidentity.ServiceToolSubject {
-	res := &runidentity.ServiceToolSubject{
-		Registry: *v.Registry,
-		Tool:     *v.Tool,
-	}
-
-	return res
-}
-
-func decodeServiceToolSubjectTransportToServiceToolSubject3(v *jsonServiceToolSubjectTransport) *runidentity.ServiceToolSubject {
-	res := &runidentity.ServiceToolSubject{
-		Registry: *v.Registry,
-		Tool:     *v.Tool,
-	}
-
-	return res
-}
-
-func decodeServiceToolSubjectTransportToServiceToolSubject4(v *jsonServiceToolSubjectTransport) *runidentity.ServiceToolSubject {
 	res := &runidentity.ServiceToolSubject{
 		Registry: *v.Registry,
 		Tool:     *v.Tool,
@@ -2653,41 +2261,14 @@ func decodeToolInvocationTransportToToolInvocation(v *jsonToolInvocationTranspor
 	return res
 }
 
-func decodeToolInvocationTransportToToolInvocation2(v *jsonToolInvocationTransport) *registry.ToolInvocation {
-	res := &registry.ToolInvocation{
-		RunID:      *v.RunID,
-		ToolCallID: *v.ToolCallID,
-	}
-
-	return res
-}
-
-func decodeToolInvocationTransportToToolInvocation3(v *jsonToolInvocationTransport) *registry.ToolInvocation {
-	res := &registry.ToolInvocation{
-		RunID:      *v.RunID,
-		ToolCallID: *v.ToolCallID,
-	}
-
-	return res
-}
-
-func decodeToolInvocationTransportToToolInvocation4(v *jsonToolInvocationTransport) *registry.ToolInvocation {
-	res := &registry.ToolInvocation{
-		RunID:      *v.RunID,
-		ToolCallID: *v.ToolCallID,
-	}
-
-	return res
-}
-
 func decodeUnstartedExecutionTerminalTransportToUnstartedExecutionTerminal(v *jsonUnstartedExecutionTerminalTransport) *UnstartedExecutionTerminal {
 	res := &UnstartedExecutionTerminal{
 		RunID:         *v.RunID,
 		SessionID:     v.SessionID,
 		RequestDigest: v.RequestDigest,
 	}
-	res.Subject = decodeRunSubjectTransportToRunSubject2(v.Subject)
-	res.Origin = decodeExecutionInvocationTransportToExecutionInvocation2(v.Origin)
+	res.Subject = decodeRunSubjectTransportToRunSubject(v.Subject)
+	res.Origin = decodeExecutionInvocationTransportToExecutionInvocation(v.Origin)
 	switch string(v.Time.Kind()) {
 	case "workflow_decision":
 		actual, _ := v.Time.AsWorkflowDecision()
@@ -2709,99 +2290,7 @@ func decodeUnstartedExecutionTerminalTransportToUnstartedExecutionTerminal(v *js
 		actual, _ := v.Outcome.AsFailed()
 		var obj *ExecutionFailure
 		if actual != nil {
-			obj = decodeExecutionFailureTransportToExecutionFailure2(actual)
-		}
-		u := res.Outcome
-		u.SetFailed((*ExecutionFailure)(obj))
-		res.Outcome = u
-	case "canceled":
-		actual, _ := v.Outcome.AsCanceled()
-		obj := UnstartedExecutionOutcomeBranchCanceled(actual)
-
-		u := res.Outcome
-		u.SetCanceled((UnstartedExecutionOutcomeBranchCanceled)(obj))
-		res.Outcome = u
-	}
-
-	return res
-}
-
-func decodeUnstartedExecutionTerminalTransportToUnstartedExecutionTerminal2(v *jsonUnstartedExecutionTerminalTransport) *UnstartedExecutionTerminal {
-	res := &UnstartedExecutionTerminal{
-		RunID:         *v.RunID,
-		SessionID:     v.SessionID,
-		RequestDigest: v.RequestDigest,
-	}
-	res.Subject = decodeRunSubjectTransportToRunSubject3(v.Subject)
-	res.Origin = decodeExecutionInvocationTransportToExecutionInvocation3(v.Origin)
-	switch string(v.Time.Kind()) {
-	case "workflow_decision":
-		actual, _ := v.Time.AsWorkflowDecision()
-		obj := ExecutionTerminalTimeBranchWorkflowDecision(actual)
-
-		u := res.Time
-		u.SetWorkflowDecision((ExecutionTerminalTimeBranchWorkflowDecision)(obj))
-		res.Time = u
-	case "engine_closure":
-		actual, _ := v.Time.AsEngineClosure()
-		obj := ExecutionTerminalTimeBranchEngineClosure(actual)
-
-		u := res.Time
-		u.SetEngineClosure((ExecutionTerminalTimeBranchEngineClosure)(obj))
-		res.Time = u
-	}
-	switch string(v.Outcome.Kind()) {
-	case "failed":
-		actual, _ := v.Outcome.AsFailed()
-		var obj *ExecutionFailure
-		if actual != nil {
-			obj = decodeExecutionFailureTransportToExecutionFailure3(actual)
-		}
-		u := res.Outcome
-		u.SetFailed((*ExecutionFailure)(obj))
-		res.Outcome = u
-	case "canceled":
-		actual, _ := v.Outcome.AsCanceled()
-		obj := UnstartedExecutionOutcomeBranchCanceled(actual)
-
-		u := res.Outcome
-		u.SetCanceled((UnstartedExecutionOutcomeBranchCanceled)(obj))
-		res.Outcome = u
-	}
-
-	return res
-}
-
-func decodeUnstartedExecutionTerminalTransportToUnstartedExecutionTerminal3(v *jsonUnstartedExecutionTerminalTransport) *UnstartedExecutionTerminal {
-	res := &UnstartedExecutionTerminal{
-		RunID:         *v.RunID,
-		SessionID:     v.SessionID,
-		RequestDigest: v.RequestDigest,
-	}
-	res.Subject = decodeRunSubjectTransportToRunSubject4(v.Subject)
-	res.Origin = decodeExecutionInvocationTransportToExecutionInvocation4(v.Origin)
-	switch string(v.Time.Kind()) {
-	case "workflow_decision":
-		actual, _ := v.Time.AsWorkflowDecision()
-		obj := ExecutionTerminalTimeBranchWorkflowDecision(actual)
-
-		u := res.Time
-		u.SetWorkflowDecision((ExecutionTerminalTimeBranchWorkflowDecision)(obj))
-		res.Time = u
-	case "engine_closure":
-		actual, _ := v.Time.AsEngineClosure()
-		obj := ExecutionTerminalTimeBranchEngineClosure(actual)
-
-		u := res.Time
-		u.SetEngineClosure((ExecutionTerminalTimeBranchEngineClosure)(obj))
-		res.Time = u
-	}
-	switch string(v.Outcome.Kind()) {
-	case "failed":
-		actual, _ := v.Outcome.AsFailed()
-		var obj *ExecutionFailure
-		if actual != nil {
-			obj = decodeExecutionFailureTransportToExecutionFailure4(actual)
+			obj = decodeExecutionFailureTransportToExecutionFailure(actual)
 		}
 		u := res.Outcome
 		u.SetFailed((*ExecutionFailure)(obj))
@@ -2819,60 +2308,6 @@ func decodeUnstartedExecutionTerminalTransportToUnstartedExecutionTerminal3(v *j
 }
 
 func encodeExecutionFailureToExecutionFailureTransport(v *ExecutionFailure) *jsonExecutionFailureTransport {
-	res := &jsonExecutionFailureTransport{
-		Message:      v.Message,
-		DebugMessage: v.DebugMessage,
-		Provider:     v.Provider,
-		Operation:    v.Operation,
-		Kind:         v.Kind,
-		Code:         v.Code,
-		Retryable:    &v.Retryable,
-	}
-	if v.HTTPStatus != nil {
-		httpStatus := executionFailureIntTransport(*v.HTTPStatus)
-		res.HTTPStatus = &httpStatus
-	}
-
-	return res
-}
-
-func encodeExecutionFailureToExecutionFailureTransport2(v *ExecutionFailure) *jsonExecutionFailureTransport {
-	res := &jsonExecutionFailureTransport{
-		Message:      v.Message,
-		DebugMessage: v.DebugMessage,
-		Provider:     v.Provider,
-		Operation:    v.Operation,
-		Kind:         v.Kind,
-		Code:         v.Code,
-		Retryable:    &v.Retryable,
-	}
-	if v.HTTPStatus != nil {
-		httpStatus := executionFailureIntTransport(*v.HTTPStatus)
-		res.HTTPStatus = &httpStatus
-	}
-
-	return res
-}
-
-func encodeExecutionFailureToExecutionFailureTransport3(v *ExecutionFailure) *jsonExecutionFailureTransport {
-	res := &jsonExecutionFailureTransport{
-		Message:      v.Message,
-		DebugMessage: v.DebugMessage,
-		Provider:     v.Provider,
-		Operation:    v.Operation,
-		Kind:         v.Kind,
-		Code:         v.Code,
-		Retryable:    &v.Retryable,
-	}
-	if v.HTTPStatus != nil {
-		httpStatus := executionFailureIntTransport(*v.HTTPStatus)
-		res.HTTPStatus = &httpStatus
-	}
-
-	return res
-}
-
-func encodeExecutionFailureToExecutionFailureTransport4(v *ExecutionFailure) *jsonExecutionFailureTransport {
 	res := &jsonExecutionFailureTransport{
 		Message:      v.Message,
 		DebugMessage: v.DebugMessage,
@@ -2918,90 +2353,6 @@ func encodeExecutionInvocationToExecutionInvocationTransport(v *registry.Executi
 	return res
 }
 
-func encodeExecutionInvocationToExecutionInvocationTransport2(v *registry.ExecutionInvocation) *jsonExecutionInvocationTransport {
-	res := &jsonExecutionInvocationTransport{}
-	var invocationValue jsonExecutionInvocationKindTransport
-	switch string(v.Invocation.Kind()) {
-	case "root":
-		actual, _ := v.Invocation.AsRoot()
-		var obj *jsonRootInvocationTransport
-		if actual != nil {
-			obj = encodeRootInvocationToRootInvocationTransport2(actual)
-		}
-		u := invocationValue
-		u.SetRoot((*jsonRootInvocationTransport)(obj))
-		invocationValue = u
-	case "tool":
-		actual, _ := v.Invocation.AsTool()
-		var obj *jsonToolInvocationTransport
-		if actual != nil {
-			obj = encodeToolInvocationToToolInvocationTransport2(actual)
-		}
-		u := invocationValue
-		u.SetTool((*jsonToolInvocationTransport)(obj))
-		invocationValue = u
-	}
-	res.Invocation = &invocationValue
-
-	return res
-}
-
-func encodeExecutionInvocationToExecutionInvocationTransport3(v *registry.ExecutionInvocation) *jsonExecutionInvocationTransport {
-	res := &jsonExecutionInvocationTransport{}
-	var invocationValue jsonExecutionInvocationKindTransport
-	switch string(v.Invocation.Kind()) {
-	case "root":
-		actual, _ := v.Invocation.AsRoot()
-		var obj *jsonRootInvocationTransport
-		if actual != nil {
-			obj = encodeRootInvocationToRootInvocationTransport3(actual)
-		}
-		u := invocationValue
-		u.SetRoot((*jsonRootInvocationTransport)(obj))
-		invocationValue = u
-	case "tool":
-		actual, _ := v.Invocation.AsTool()
-		var obj *jsonToolInvocationTransport
-		if actual != nil {
-			obj = encodeToolInvocationToToolInvocationTransport3(actual)
-		}
-		u := invocationValue
-		u.SetTool((*jsonToolInvocationTransport)(obj))
-		invocationValue = u
-	}
-	res.Invocation = &invocationValue
-
-	return res
-}
-
-func encodeExecutionInvocationToExecutionInvocationTransport4(v *registry.ExecutionInvocation) *jsonExecutionInvocationTransport {
-	res := &jsonExecutionInvocationTransport{}
-	var invocationValue jsonExecutionInvocationKindTransport
-	switch string(v.Invocation.Kind()) {
-	case "root":
-		actual, _ := v.Invocation.AsRoot()
-		var obj *jsonRootInvocationTransport
-		if actual != nil {
-			obj = encodeRootInvocationToRootInvocationTransport4(actual)
-		}
-		u := invocationValue
-		u.SetRoot((*jsonRootInvocationTransport)(obj))
-		invocationValue = u
-	case "tool":
-		actual, _ := v.Invocation.AsTool()
-		var obj *jsonToolInvocationTransport
-		if actual != nil {
-			obj = encodeToolInvocationToToolInvocationTransport4(actual)
-		}
-		u := invocationValue
-		u.SetTool((*jsonToolInvocationTransport)(obj))
-		invocationValue = u
-	}
-	res.Invocation = &invocationValue
-
-	return res
-}
-
 func encodePreparationProceedToPreparationProceedTransport(v *PreparationProceed) *jsonPreparationProceedTransport {
 	res := &jsonPreparationProceedTransport{}
 
@@ -3009,30 +2360,6 @@ func encodePreparationProceedToPreparationProceedTransport(v *PreparationProceed
 }
 
 func encodeRootInvocationToRootInvocationTransport(v *registry.RootInvocation) *jsonRootInvocationTransport {
-	res := &jsonRootInvocationTransport{
-		RunID: &v.RunID,
-	}
-
-	return res
-}
-
-func encodeRootInvocationToRootInvocationTransport2(v *registry.RootInvocation) *jsonRootInvocationTransport {
-	res := &jsonRootInvocationTransport{
-		RunID: &v.RunID,
-	}
-
-	return res
-}
-
-func encodeRootInvocationToRootInvocationTransport3(v *registry.RootInvocation) *jsonRootInvocationTransport {
-	res := &jsonRootInvocationTransport{
-		RunID: &v.RunID,
-	}
-
-	return res
-}
-
-func encodeRootInvocationToRootInvocationTransport4(v *registry.RootInvocation) *jsonRootInvocationTransport {
 	res := &jsonRootInvocationTransport{
 		RunID: &v.RunID,
 	}
@@ -3066,112 +2393,7 @@ func encodeRunSubjectToRunSubjectTransport(v *runidentity.RunSubject) *jsonRunSu
 	return res
 }
 
-func encodeRunSubjectToRunSubjectTransport2(v *runidentity.RunSubject) *jsonRunSubjectTransport {
-	res := &jsonRunSubjectTransport{}
-	var executorValue jsonRunExecutorTransport
-	switch string(v.Executor.Kind()) {
-	case "agent":
-		actual, _ := v.Executor.AsAgent()
-		obj := jsonRunExecutorBranchAgentTransport(actual)
-
-		u := executorValue
-		u.SetAgent((jsonRunExecutorBranchAgentTransport)(obj))
-		executorValue = u
-	case "service_tool":
-		actual, _ := v.Executor.AsServiceTool()
-		var obj *jsonServiceToolSubjectTransport
-		if actual != nil {
-			obj = encodeServiceToolSubjectToServiceToolSubjectTransport2(actual)
-		}
-		u := executorValue
-		u.SetServiceTool((*jsonServiceToolSubjectTransport)(obj))
-		executorValue = u
-	}
-	res.Executor = &executorValue
-
-	return res
-}
-
-func encodeRunSubjectToRunSubjectTransport3(v *runidentity.RunSubject) *jsonRunSubjectTransport {
-	res := &jsonRunSubjectTransport{}
-	var executorValue jsonRunExecutorTransport
-	switch string(v.Executor.Kind()) {
-	case "agent":
-		actual, _ := v.Executor.AsAgent()
-		obj := jsonRunExecutorBranchAgentTransport(actual)
-
-		u := executorValue
-		u.SetAgent((jsonRunExecutorBranchAgentTransport)(obj))
-		executorValue = u
-	case "service_tool":
-		actual, _ := v.Executor.AsServiceTool()
-		var obj *jsonServiceToolSubjectTransport
-		if actual != nil {
-			obj = encodeServiceToolSubjectToServiceToolSubjectTransport3(actual)
-		}
-		u := executorValue
-		u.SetServiceTool((*jsonServiceToolSubjectTransport)(obj))
-		executorValue = u
-	}
-	res.Executor = &executorValue
-
-	return res
-}
-
-func encodeRunSubjectToRunSubjectTransport4(v *runidentity.RunSubject) *jsonRunSubjectTransport {
-	res := &jsonRunSubjectTransport{}
-	var executorValue jsonRunExecutorTransport
-	switch string(v.Executor.Kind()) {
-	case "agent":
-		actual, _ := v.Executor.AsAgent()
-		obj := jsonRunExecutorBranchAgentTransport(actual)
-
-		u := executorValue
-		u.SetAgent((jsonRunExecutorBranchAgentTransport)(obj))
-		executorValue = u
-	case "service_tool":
-		actual, _ := v.Executor.AsServiceTool()
-		var obj *jsonServiceToolSubjectTransport
-		if actual != nil {
-			obj = encodeServiceToolSubjectToServiceToolSubjectTransport4(actual)
-		}
-		u := executorValue
-		u.SetServiceTool((*jsonServiceToolSubjectTransport)(obj))
-		executorValue = u
-	}
-	res.Executor = &executorValue
-
-	return res
-}
-
 func encodeServiceToolSubjectToServiceToolSubjectTransport(v *runidentity.ServiceToolSubject) *jsonServiceToolSubjectTransport {
-	res := &jsonServiceToolSubjectTransport{
-		Registry: &v.Registry,
-		Tool:     &v.Tool,
-	}
-
-	return res
-}
-
-func encodeServiceToolSubjectToServiceToolSubjectTransport2(v *runidentity.ServiceToolSubject) *jsonServiceToolSubjectTransport {
-	res := &jsonServiceToolSubjectTransport{
-		Registry: &v.Registry,
-		Tool:     &v.Tool,
-	}
-
-	return res
-}
-
-func encodeServiceToolSubjectToServiceToolSubjectTransport3(v *runidentity.ServiceToolSubject) *jsonServiceToolSubjectTransport {
-	res := &jsonServiceToolSubjectTransport{
-		Registry: &v.Registry,
-		Tool:     &v.Tool,
-	}
-
-	return res
-}
-
-func encodeServiceToolSubjectToServiceToolSubjectTransport4(v *runidentity.ServiceToolSubject) *jsonServiceToolSubjectTransport {
 	res := &jsonServiceToolSubjectTransport{
 		Registry: &v.Registry,
 		Tool:     &v.Tool,
@@ -3195,41 +2417,14 @@ func encodeToolInvocationToToolInvocationTransport(v *registry.ToolInvocation) *
 	return res
 }
 
-func encodeToolInvocationToToolInvocationTransport2(v *registry.ToolInvocation) *jsonToolInvocationTransport {
-	res := &jsonToolInvocationTransport{
-		RunID:      &v.RunID,
-		ToolCallID: &v.ToolCallID,
-	}
-
-	return res
-}
-
-func encodeToolInvocationToToolInvocationTransport3(v *registry.ToolInvocation) *jsonToolInvocationTransport {
-	res := &jsonToolInvocationTransport{
-		RunID:      &v.RunID,
-		ToolCallID: &v.ToolCallID,
-	}
-
-	return res
-}
-
-func encodeToolInvocationToToolInvocationTransport4(v *registry.ToolInvocation) *jsonToolInvocationTransport {
-	res := &jsonToolInvocationTransport{
-		RunID:      &v.RunID,
-		ToolCallID: &v.ToolCallID,
-	}
-
-	return res
-}
-
 func encodeUnstartedExecutionTerminalToUnstartedExecutionTerminalTransport(v *UnstartedExecutionTerminal) *jsonUnstartedExecutionTerminalTransport {
 	res := &jsonUnstartedExecutionTerminalTransport{
 		RunID:         &v.RunID,
 		SessionID:     v.SessionID,
 		RequestDigest: v.RequestDigest,
 	}
-	res.Subject = encodeRunSubjectToRunSubjectTransport2(v.Subject)
-	res.Origin = encodeExecutionInvocationToExecutionInvocationTransport2(v.Origin)
+	res.Subject = encodeRunSubjectToRunSubjectTransport(v.Subject)
+	res.Origin = encodeExecutionInvocationToExecutionInvocationTransport(v.Origin)
 	var time_Value jsonExecutionTerminalTimeTransport
 	switch string(v.Time.Kind()) {
 	case "workflow_decision":
@@ -3254,7 +2449,7 @@ func encodeUnstartedExecutionTerminalToUnstartedExecutionTerminalTransport(v *Un
 		actual, _ := v.Outcome.AsFailed()
 		var obj *jsonExecutionFailureTransport
 		if actual != nil {
-			obj = encodeExecutionFailureToExecutionFailureTransport2(actual)
+			obj = encodeExecutionFailureToExecutionFailureTransport(actual)
 		}
 		u := outcomeValue
 		u.SetFailed((*jsonExecutionFailureTransport)(obj))
@@ -3278,8 +2473,8 @@ func encodeUnstartedExecutionTerminalToUnstartedExecutionTerminalTransport2(v *U
 		SessionID:     v.SessionID,
 		RequestDigest: v.RequestDigest,
 	}
-	res.Subject = encodeRunSubjectToRunSubjectTransport3(v.Subject)
-	res.Origin = encodeExecutionInvocationToExecutionInvocationTransport3(v.Origin)
+	res.Subject = encodeRunSubjectToRunSubjectTransport(v.Subject)
+	res.Origin = encodeExecutionInvocationToExecutionInvocationTransport(v.Origin)
 	var time_Value jsonExecutionTerminalTimeTransport
 	switch string(v.Time.Kind()) {
 	case "workflow_decision":
@@ -3304,7 +2499,7 @@ func encodeUnstartedExecutionTerminalToUnstartedExecutionTerminalTransport2(v *U
 		actual, _ := v.Outcome.AsFailed()
 		var obj *jsonExecutionFailureTransport
 		if actual != nil {
-			obj = encodeExecutionFailureToExecutionFailureTransport3(actual)
+			obj = encodeExecutionFailureToExecutionFailureTransport(actual)
 		}
 		u := outcomeValue
 		u.SetFailed((*jsonExecutionFailureTransport)(obj))
@@ -3328,8 +2523,8 @@ func encodeUnstartedExecutionTerminalToUnstartedExecutionTerminalTransport3(v *U
 		SessionID:     v.SessionID,
 		RequestDigest: v.RequestDigest,
 	}
-	res.Subject = encodeRunSubjectToRunSubjectTransport4(v.Subject)
-	res.Origin = encodeExecutionInvocationToExecutionInvocationTransport4(v.Origin)
+	res.Subject = encodeRunSubjectToRunSubjectTransport(v.Subject)
+	res.Origin = encodeExecutionInvocationToExecutionInvocationTransport(v.Origin)
 	var time_Value jsonExecutionTerminalTimeTransport
 	switch string(v.Time.Kind()) {
 	case "workflow_decision":
@@ -3354,7 +2549,7 @@ func encodeUnstartedExecutionTerminalToUnstartedExecutionTerminalTransport3(v *U
 		actual, _ := v.Outcome.AsFailed()
 		var obj *jsonExecutionFailureTransport
 		if actual != nil {
-			obj = encodeExecutionFailureToExecutionFailureTransport4(actual)
+			obj = encodeExecutionFailureToExecutionFailureTransport(actual)
 		}
 		u := outcomeValue
 		u.SetFailed((*jsonExecutionFailureTransport)(obj))
@@ -3400,49 +2595,49 @@ func validateExecutionFailureJSONValue(path string, value any, description strin
 				return err
 			}
 		case "debug_message":
-			if err := validateExecutionFailureJSONValue3(
+			if err := validateExecutionFailureJSONValue2(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Internal diagnostic text; never render as the caller-safe message.",
 			); err != nil {
 				return err
 			}
 		case "http_status":
-			if err := validateExecutionFailureJSONValue4(
+			if err := validateExecutionFailureJSONValue3(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Provider HTTP status, when available.",
 			); err != nil {
 				return err
 			}
 		case "kind":
-			if err := validateExecutionFailureJSONValue5(
+			if err := validateExecutionFailureJSONValue2(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Canonical failure category.",
 			); err != nil {
 				return err
 			}
 		case "message":
-			if err := validateExecutionFailureJSONValue6(
+			if err := validateExecutionFailureJSONValue2(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Caller-safe failure summary.",
 			); err != nil {
 				return err
 			}
 		case "operation":
-			if err := validateExecutionFailureJSONValue7(
+			if err := validateExecutionFailureJSONValue2(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Provider operation that failed, when known.",
 			); err != nil {
 				return err
 			}
 		case "provider":
-			if err := validateExecutionFailureJSONValue8(
+			if err := validateExecutionFailureJSONValue2(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Provider that produced the failure, when known.",
 			); err != nil {
 				return err
 			}
 		case "retryable":
-			if err := validateExecutionFailureJSONValue9(
+			if err := validateExecutionFailureJSONValue4(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Whether another operation may succeed without changing its input.",
 			); err != nil {
@@ -3487,22 +2682,6 @@ func validateExecutionFailureJSONValue3(path string, value any, description stri
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateExecutionFailureJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateExecutionFailureJSONValue4(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
 	}
 	_, ok := value.(json.Number)
@@ -3512,72 +2691,8 @@ func validateExecutionFailureJSONValue4(path string, value any, description stri
 	return nil
 }
 
-// validateExecutionFailureJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateExecutionFailureJSONValue5(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateExecutionFailureJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateExecutionFailureJSONValue6(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateExecutionFailureJSONValue7 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateExecutionFailureJSONValue7(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateExecutionFailureJSONValue8 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateExecutionFailureJSONValue8(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateExecutionFailureJSONValue9 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateExecutionFailureJSONValue9(path string, value any, description string) error {
+// validateExecutionFailureJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateExecutionFailureJSONValue4(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -3658,7 +2773,7 @@ func validatePreparationDecisionJSONValue2(path string, value any, description s
 	case "proceed":
 		return validatePreparationDecisionJSONValue3(generatedJSONChildPath(path, "value", false), branch, "The invocation may prepare its input.")
 	case "stop":
-		return validatePreparationDecisionJSONValue4(generatedJSONChildPath(path, "value", false), branch, "The saved cancellation reason that prevents preparation.")
+		return validateExecutionFailureJSONValue2(generatedJSONChildPath(path, "value", false), branch, "The saved cancellation reason that prevents preparation.")
 	default:
 		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
 	}
@@ -3666,49 +2781,6 @@ func validatePreparationDecisionJSONValue2(path string, value any, description s
 
 // validatePreparationDecisionJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
 func validatePreparationDecisionJSONValue3(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		default:
-			return unknownJSONFieldError(path, key, []string{})
-		}
-	}
-	return nil
-}
-
-// validatePreparationDecisionJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
-func validatePreparationDecisionJSONValue4(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validatePreparationProceedJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
-func validatePreparationProceedJSONValue(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -3789,42 +2861,42 @@ func validateUnstartedExecutionTerminalJSONValue(path string, value any, descrip
 				return err
 			}
 		case "outcome":
-			if err := validateUnstartedExecutionTerminalJSONValue30(
+			if err := validateUnstartedExecutionTerminalJSONValue7(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "",
 			); err != nil {
 				return err
 			}
 		case "request_digest":
-			if err := validateUnstartedExecutionTerminalJSONValue12(
+			if err := validateUnstartedExecutionTerminalJSONValue8(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Digest supplied by the engine for its actual accepted request.",
 			); err != nil {
 				return err
 			}
 		case "run_id":
-			if err := validateUnstartedExecutionTerminalJSONValue14(
+			if err := validateExecutionFailureJSONValue2(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Exact Run identifier accepted by the engine.",
 			); err != nil {
 				return err
 			}
 		case "session_id":
-			if err := validateUnstartedExecutionTerminalJSONValue15(
+			if err := validateExecutionFailureJSONValue2(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Owning Session, omitted only for sessionless execution.",
 			); err != nil {
 				return err
 			}
 		case "subject":
-			if err := validateUnstartedExecutionTerminalJSONValue16(
+			if err := validateUnstartedExecutionTerminalJSONValue9(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Executor selected in the accepted engine request.",
 			); err != nil {
 				return err
 			}
 		case "time":
-			if err := validateUnstartedExecutionTerminalJSONValue22(
+			if err := validateUnstartedExecutionTerminalJSONValue3(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "",
 			); err != nil {
@@ -3866,7 +2938,7 @@ func validateUnstartedExecutionTerminalJSONValue2(path string, value any, descri
 	for _, key := range keys {
 		switch key {
 		case "invocation":
-			if err := validateUnstartedExecutionTerminalJSONValue13(
+			if err := validateUnstartedExecutionTerminalJSONValue4(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "",
 			); err != nil {
@@ -3881,8 +2953,8 @@ func validateUnstartedExecutionTerminalJSONValue2(path string, value any, descri
 	return nil
 }
 
-// validateUnstartedExecutionTerminalJSONValue13 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalJSONValue13(path string, value any, description string) error {
+// validateUnstartedExecutionTerminalJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateUnstartedExecutionTerminalJSONValue4(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -3909,16 +2981,16 @@ func validateUnstartedExecutionTerminalJSONValue13(path string, value any, descr
 	}
 	switch discriminator {
 	case "root":
-		return validateUnstartedExecutionTerminalJSONValue24(generatedJSONChildPath(path, "value", false), branch, "Independent accepted root.")
+		return validateUnstartedExecutionTerminalJSONValue5(generatedJSONChildPath(path, "value", false), branch, "Independent accepted root.")
 	case "tool":
-		return validateUnstartedExecutionTerminalJSONValue27(generatedJSONChildPath(path, "value", false), branch, "Original saved tool invocation.")
+		return validateUnstartedExecutionTerminalJSONValue6(generatedJSONChildPath(path, "value", false), branch, "Original saved tool invocation.")
 	default:
 		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
 	}
 }
 
-// validateUnstartedExecutionTerminalJSONValue24 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalJSONValue24(path string, value any, description string) error {
+// validateUnstartedExecutionTerminalJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateUnstartedExecutionTerminalJSONValue5(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -3938,7 +3010,7 @@ func validateUnstartedExecutionTerminalJSONValue24(path string, value any, descr
 	for _, key := range keys {
 		switch key {
 		case "run_id":
-			if err := validateUnstartedExecutionTerminalJSONValue26(
+			if err := validateExecutionFailureJSONValue2(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Original globally unique accepted root Run ID.",
 			); err != nil {
@@ -3953,24 +3025,8 @@ func validateUnstartedExecutionTerminalJSONValue24(path string, value any, descr
 	return nil
 }
 
-// validateUnstartedExecutionTerminalJSONValue26 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalJSONValue26(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalJSONValue27 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalJSONValue27(path string, value any, description string) error {
+// validateUnstartedExecutionTerminalJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateUnstartedExecutionTerminalJSONValue6(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -3990,14 +3046,14 @@ func validateUnstartedExecutionTerminalJSONValue27(path string, value any, descr
 	for _, key := range keys {
 		switch key {
 		case "run_id":
-			if err := validateUnstartedExecutionTerminalJSONValue28(
+			if err := validateExecutionFailureJSONValue2(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Run that originally issued this invocation.",
 			); err != nil {
 				return err
 			}
 		case "tool_call_id":
-			if err := validateUnstartedExecutionTerminalJSONValue29(
+			if err := validateExecutionFailureJSONValue2(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Runtime-owned original tool call ID; result paging creates another ID.",
 			); err != nil {
@@ -4013,40 +3069,8 @@ func validateUnstartedExecutionTerminalJSONValue27(path string, value any, descr
 	return nil
 }
 
-// validateUnstartedExecutionTerminalJSONValue28 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalJSONValue28(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalJSONValue29 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalJSONValue29(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalJSONValue30 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalJSONValue30(path string, value any, description string) error {
+// validateUnstartedExecutionTerminalJSONValue7 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateUnstartedExecutionTerminalJSONValue7(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -4073,184 +3097,12 @@ func validateUnstartedExecutionTerminalJSONValue30(path string, value any, descr
 	}
 	switch discriminator {
 	case "failed":
-		return validateUnstartedExecutionTerminalJSONValue31(generatedJSONChildPath(path, "value", false), branch, "Canonical failure decided by the execution owner.")
+		return validateExecutionFailureJSONValue(generatedJSONChildPath(path, "value", false), branch, "Canonical failure decided by the execution owner.")
 	case "canceled":
-		return validateUnstartedExecutionTerminalJSONValue11(generatedJSONChildPath(path, "value", false), branch, "Accepted cancellation provenance.")
+		return validateExecutionFailureJSONValue2(generatedJSONChildPath(path, "value", false), branch, "Accepted cancellation provenance.")
 	default:
 		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
 	}
-}
-
-// validateUnstartedExecutionTerminalJSONValue31 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalJSONValue31(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "code":
-			if err := validateUnstartedExecutionTerminalJSONValue3(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Provider error code, when available.",
-			); err != nil {
-				return err
-			}
-		case "debug_message":
-			if err := validateUnstartedExecutionTerminalJSONValue4(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Internal diagnostic text; never render as the caller-safe message.",
-			); err != nil {
-				return err
-			}
-		case "http_status":
-			if err := validateUnstartedExecutionTerminalJSONValue5(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Provider HTTP status, when available.",
-			); err != nil {
-				return err
-			}
-		case "kind":
-			if err := validateUnstartedExecutionTerminalJSONValue6(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Canonical failure category.",
-			); err != nil {
-				return err
-			}
-		case "message":
-			if err := validateUnstartedExecutionTerminalJSONValue7(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Caller-safe failure summary.",
-			); err != nil {
-				return err
-			}
-		case "operation":
-			if err := validateUnstartedExecutionTerminalJSONValue8(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Provider operation that failed, when known.",
-			); err != nil {
-				return err
-			}
-		case "provider":
-			if err := validateUnstartedExecutionTerminalJSONValue9(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Provider that produced the failure, when known.",
-			); err != nil {
-				return err
-			}
-		case "retryable":
-			if err := validateUnstartedExecutionTerminalJSONValue10(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Whether another operation may succeed without changing its input.",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"code",
-				"debug_message",
-				"http_status",
-				"kind",
-				"message",
-				"operation",
-				"provider",
-				"retryable",
-			})
-		}
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalJSONValue3(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalJSONValue4(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalJSONValue5(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
-	}
-	_, ok := value.(json.Number)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalJSONValue6(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalJSONValue7 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalJSONValue7(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
 }
 
 // validateUnstartedExecutionTerminalJSONValue8 checks one value whose JSON shape is fixed by the generated Goa type.
@@ -4276,102 +3128,6 @@ func validateUnstartedExecutionTerminalJSONValue9(path string, value any, descri
 		field = "$payload"
 	}
 	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalJSONValue10 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalJSONValue10(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
-	}
-	_, ok := value.(bool)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalJSONValue11 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalJSONValue11(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalJSONValue12 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalJSONValue12(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalJSONValue14 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalJSONValue14(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalJSONValue15 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalJSONValue15(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalJSONValue16 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalJSONValue16(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
 		return invalidGeneratedFieldTypeError(field, "object", "null", description)
 	}
 	typed, ok := value.(map[string]any)
@@ -4386,7 +3142,7 @@ func validateUnstartedExecutionTerminalJSONValue16(path string, value any, descr
 	for _, key := range keys {
 		switch key {
 		case "executor":
-			if err := validateUnstartedExecutionTerminalJSONValue17(
+			if err := validateUnstartedExecutionTerminalJSONValue10(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "",
 			); err != nil {
@@ -4401,8 +3157,8 @@ func validateUnstartedExecutionTerminalJSONValue16(path string, value any, descr
 	return nil
 }
 
-// validateUnstartedExecutionTerminalJSONValue17 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalJSONValue17(path string, value any, description string) error {
+// validateUnstartedExecutionTerminalJSONValue10 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateUnstartedExecutionTerminalJSONValue10(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -4429,32 +3185,16 @@ func validateUnstartedExecutionTerminalJSONValue17(path string, value any, descr
 	}
 	switch discriminator {
 	case "agent":
-		return validateUnstartedExecutionTerminalJSONValue18(generatedJSONChildPath(path, "value", false), branch, "Agent executor that processes the run.")
+		return validateExecutionFailureJSONValue2(generatedJSONChildPath(path, "value", false), branch, "Agent executor that processes the run.")
 	case "service_tool":
-		return validateUnstartedExecutionTerminalJSONValue19(generatedJSONChildPath(path, "value", false), branch, "Service tool directly executed by the run.")
+		return validateUnstartedExecutionTerminalJSONValue11(generatedJSONChildPath(path, "value", false), branch, "Service tool directly executed by the run.")
 	default:
 		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
 	}
 }
 
-// validateUnstartedExecutionTerminalJSONValue18 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalJSONValue18(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalJSONValue19 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalJSONValue19(path string, value any, description string) error {
+// validateUnstartedExecutionTerminalJSONValue11 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateUnstartedExecutionTerminalJSONValue11(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -4474,14 +3214,14 @@ func validateUnstartedExecutionTerminalJSONValue19(path string, value any, descr
 	for _, key := range keys {
 		switch key {
 		case "registry":
-			if err := validateUnstartedExecutionTerminalJSONValue20(
+			if err := validateExecutionFailureJSONValue2(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Configured Registry source that owns the selected tool.",
 			); err != nil {
 				return err
 			}
 		case "tool":
-			if err := validateUnstartedExecutionTerminalJSONValue21(
+			if err := validateExecutionFailureJSONValue2(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Qualified tool name in that Registry source, with nonempty text before and after the final dot.",
 			); err != nil {
@@ -4497,40 +3237,8 @@ func validateUnstartedExecutionTerminalJSONValue19(path string, value any, descr
 	return nil
 }
 
-// validateUnstartedExecutionTerminalJSONValue20 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalJSONValue20(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalJSONValue21 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalJSONValue21(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalJSONValue22 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalJSONValue22(path string, value any, description string) error {
+// validateUnstartedExecutionTerminalJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateUnstartedExecutionTerminalJSONValue3(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -4557,44 +3265,12 @@ func validateUnstartedExecutionTerminalJSONValue22(path string, value any, descr
 	}
 	switch discriminator {
 	case "workflow_decision":
-		return validateUnstartedExecutionTerminalJSONValue23(generatedJSONChildPath(path, "value", false), branch, "Frozen time when workflow code selected this outcome.")
+		return validateExecutionFailureJSONValue2(generatedJSONChildPath(path, "value", false), branch, "Frozen time when workflow code selected this outcome.")
 	case "engine_closure":
-		return validateUnstartedExecutionTerminalJSONValue25(generatedJSONChildPath(path, "value", false), branch, "Engine-observed close time used only for repair after external closure.")
+		return validateExecutionFailureJSONValue2(generatedJSONChildPath(path, "value", false), branch, "Engine-observed close time used only for repair after external closure.")
 	default:
 		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
 	}
-}
-
-// validateUnstartedExecutionTerminalJSONValue23 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalJSONValue23(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalJSONValue25 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalJSONValue25(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
 }
 
 // validateUnstartedExecutionTerminalResultJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
@@ -4661,879 +3337,16 @@ func validateUnstartedExecutionTerminalResultJSONValue2(path string, value any, 
 	}
 	switch discriminator {
 	case "stored":
-		return validateUnstartedExecutionTerminalResultJSONValue13(generatedJSONChildPath(path, "value", false), branch, "The newly stored terminal outcome.")
+		return validateUnstartedExecutionTerminalJSONValue(generatedJSONChildPath(path, "value", false), branch, "The newly stored terminal outcome.")
 	case "replayed":
-		return validateUnstartedExecutionTerminalResultJSONValue13(generatedJSONChildPath(path, "value", false), branch, "The unchanged outcome from an exact command replay.")
+		return validateUnstartedExecutionTerminalJSONValue(generatedJSONChildPath(path, "value", false), branch, "The unchanged outcome from an exact command replay.")
 	case "existing":
-		return validateUnstartedExecutionTerminalResultJSONValue13(generatedJSONChildPath(path, "value", false), branch, "The earlier terminal outcome that remains authoritative.")
+		return validateUnstartedExecutionTerminalJSONValue(generatedJSONChildPath(path, "value", false), branch, "The earlier terminal outcome that remains authoritative.")
 	case "started":
-		return validateUnstartedExecutionTerminalResultJSONValue28(generatedJSONChildPath(path, "value", false), branch, "The same accepted request already owns a started Run.")
+		return validateStartedExecutionJSONValue(generatedJSONChildPath(path, "value", false), branch, "The same accepted request already owns a started Run.")
 	default:
 		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
 	}
-}
-
-// validateUnstartedExecutionTerminalResultJSONValue13 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalResultJSONValue13(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "origin":
-			if err := validateUnstartedExecutionTerminalResultJSONValue24(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Original root or issuing tool call retained by the preparation owner.",
-			); err != nil {
-				return err
-			}
-		case "outcome":
-			if err := validateUnstartedExecutionTerminalResultJSONValue3(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "",
-			); err != nil {
-				return err
-			}
-		case "request_digest":
-			if err := validateUnstartedExecutionTerminalResultJSONValue15(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Digest supplied by the engine for its actual accepted request.",
-			); err != nil {
-				return err
-			}
-		case "run_id":
-			if err := validateUnstartedExecutionTerminalResultJSONValue16(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Exact Run identifier accepted by the engine.",
-			); err != nil {
-				return err
-			}
-		case "session_id":
-			if err := validateUnstartedExecutionTerminalResultJSONValue17(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Owning Session, omitted only for sessionless execution.",
-			); err != nil {
-				return err
-			}
-		case "subject":
-			if err := validateUnstartedExecutionTerminalResultJSONValue18(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Executor selected in the accepted engine request.",
-			); err != nil {
-				return err
-			}
-		case "time":
-			if err := validateUnstartedExecutionTerminalResultJSONValue25(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"origin",
-				"outcome",
-				"request_digest",
-				"run_id",
-				"session_id",
-				"subject",
-				"time",
-			})
-		}
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalResultJSONValue24 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalResultJSONValue24(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "invocation":
-			if err := validateUnstartedExecutionTerminalResultJSONValue29(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"invocation",
-			})
-		}
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalResultJSONValue29 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalResultJSONValue29(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	for key := range typed {
-		if key != "type" && key != "value" {
-			return unknownJSONFieldError(path, key, []string{"type", "value"})
-		}
-	}
-	discriminator, ok := typed["type"].(string)
-	if !ok {
-		return fmt.Errorf("%s: missing or invalid union discriminator", field)
-	}
-	branch, exists := typed["value"]
-	if !exists {
-		return fmt.Errorf("%s: missing union value", field)
-	}
-	switch discriminator {
-	case "root":
-		return validateUnstartedExecutionTerminalResultJSONValue30(generatedJSONChildPath(path, "value", false), branch, "Independent accepted root.")
-	case "tool":
-		return validateUnstartedExecutionTerminalResultJSONValue32(generatedJSONChildPath(path, "value", false), branch, "Original saved tool invocation.")
-	default:
-		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
-	}
-}
-
-// validateUnstartedExecutionTerminalResultJSONValue30 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalResultJSONValue30(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "run_id":
-			if err := validateUnstartedExecutionTerminalResultJSONValue31(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Original globally unique accepted root Run ID.",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"run_id",
-			})
-		}
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalResultJSONValue31 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalResultJSONValue31(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalResultJSONValue32 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalResultJSONValue32(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "run_id":
-			if err := validateUnstartedExecutionTerminalResultJSONValue33(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Run that originally issued this invocation.",
-			); err != nil {
-				return err
-			}
-		case "tool_call_id":
-			if err := validateUnstartedExecutionTerminalResultJSONValue34(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Runtime-owned original tool call ID; result paging creates another ID.",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"run_id",
-				"tool_call_id",
-			})
-		}
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalResultJSONValue33 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalResultJSONValue33(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalResultJSONValue34 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalResultJSONValue34(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalResultJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalResultJSONValue3(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	for key := range typed {
-		if key != "type" && key != "value" {
-			return unknownJSONFieldError(path, key, []string{"type", "value"})
-		}
-	}
-	discriminator, ok := typed["type"].(string)
-	if !ok {
-		return fmt.Errorf("%s: missing or invalid union discriminator", field)
-	}
-	branch, exists := typed["value"]
-	if !exists {
-		return fmt.Errorf("%s: missing union value", field)
-	}
-	switch discriminator {
-	case "failed":
-		return validateUnstartedExecutionTerminalResultJSONValue4(generatedJSONChildPath(path, "value", false), branch, "Canonical failure decided by the execution owner.")
-	case "canceled":
-		return validateUnstartedExecutionTerminalResultJSONValue14(generatedJSONChildPath(path, "value", false), branch, "Accepted cancellation provenance.")
-	default:
-		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
-	}
-}
-
-// validateUnstartedExecutionTerminalResultJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalResultJSONValue4(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "code":
-			if err := validateUnstartedExecutionTerminalResultJSONValue5(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Provider error code, when available.",
-			); err != nil {
-				return err
-			}
-		case "debug_message":
-			if err := validateUnstartedExecutionTerminalResultJSONValue6(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Internal diagnostic text; never render as the caller-safe message.",
-			); err != nil {
-				return err
-			}
-		case "http_status":
-			if err := validateUnstartedExecutionTerminalResultJSONValue7(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Provider HTTP status, when available.",
-			); err != nil {
-				return err
-			}
-		case "kind":
-			if err := validateUnstartedExecutionTerminalResultJSONValue8(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Canonical failure category.",
-			); err != nil {
-				return err
-			}
-		case "message":
-			if err := validateUnstartedExecutionTerminalResultJSONValue9(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Caller-safe failure summary.",
-			); err != nil {
-				return err
-			}
-		case "operation":
-			if err := validateUnstartedExecutionTerminalResultJSONValue10(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Provider operation that failed, when known.",
-			); err != nil {
-				return err
-			}
-		case "provider":
-			if err := validateUnstartedExecutionTerminalResultJSONValue11(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Provider that produced the failure, when known.",
-			); err != nil {
-				return err
-			}
-		case "retryable":
-			if err := validateUnstartedExecutionTerminalResultJSONValue12(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Whether another operation may succeed without changing its input.",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"code",
-				"debug_message",
-				"http_status",
-				"kind",
-				"message",
-				"operation",
-				"provider",
-				"retryable",
-			})
-		}
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalResultJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalResultJSONValue5(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalResultJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalResultJSONValue6(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalResultJSONValue7 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalResultJSONValue7(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
-	}
-	_, ok := value.(json.Number)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalResultJSONValue8 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalResultJSONValue8(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalResultJSONValue9 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalResultJSONValue9(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalResultJSONValue10 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalResultJSONValue10(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalResultJSONValue11 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalResultJSONValue11(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalResultJSONValue12 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalResultJSONValue12(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
-	}
-	_, ok := value.(bool)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalResultJSONValue14 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalResultJSONValue14(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalResultJSONValue15 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalResultJSONValue15(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalResultJSONValue16 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalResultJSONValue16(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalResultJSONValue17 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalResultJSONValue17(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalResultJSONValue18 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalResultJSONValue18(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "executor":
-			if err := validateUnstartedExecutionTerminalResultJSONValue19(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"executor",
-			})
-		}
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalResultJSONValue19 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalResultJSONValue19(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	for key := range typed {
-		if key != "type" && key != "value" {
-			return unknownJSONFieldError(path, key, []string{"type", "value"})
-		}
-	}
-	discriminator, ok := typed["type"].(string)
-	if !ok {
-		return fmt.Errorf("%s: missing or invalid union discriminator", field)
-	}
-	branch, exists := typed["value"]
-	if !exists {
-		return fmt.Errorf("%s: missing union value", field)
-	}
-	switch discriminator {
-	case "agent":
-		return validateUnstartedExecutionTerminalResultJSONValue20(generatedJSONChildPath(path, "value", false), branch, "Agent executor that processes the run.")
-	case "service_tool":
-		return validateUnstartedExecutionTerminalResultJSONValue21(generatedJSONChildPath(path, "value", false), branch, "Service tool directly executed by the run.")
-	default:
-		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
-	}
-}
-
-// validateUnstartedExecutionTerminalResultJSONValue20 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalResultJSONValue20(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalResultJSONValue21 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalResultJSONValue21(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "registry":
-			if err := validateUnstartedExecutionTerminalResultJSONValue22(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Configured Registry source that owns the selected tool.",
-			); err != nil {
-				return err
-			}
-		case "tool":
-			if err := validateUnstartedExecutionTerminalResultJSONValue23(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Qualified tool name in that Registry source, with nonempty text before and after the final dot.",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"registry",
-				"tool",
-			})
-		}
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalResultJSONValue22 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalResultJSONValue22(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalResultJSONValue23 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalResultJSONValue23(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalResultJSONValue25 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalResultJSONValue25(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	for key := range typed {
-		if key != "type" && key != "value" {
-			return unknownJSONFieldError(path, key, []string{"type", "value"})
-		}
-	}
-	discriminator, ok := typed["type"].(string)
-	if !ok {
-		return fmt.Errorf("%s: missing or invalid union discriminator", field)
-	}
-	branch, exists := typed["value"]
-	if !exists {
-		return fmt.Errorf("%s: missing union value", field)
-	}
-	switch discriminator {
-	case "workflow_decision":
-		return validateUnstartedExecutionTerminalResultJSONValue26(generatedJSONChildPath(path, "value", false), branch, "Frozen time when workflow code selected this outcome.")
-	case "engine_closure":
-		return validateUnstartedExecutionTerminalResultJSONValue27(generatedJSONChildPath(path, "value", false), branch, "Engine-observed close time used only for repair after external closure.")
-	default:
-		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
-	}
-}
-
-// validateUnstartedExecutionTerminalResultJSONValue26 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalResultJSONValue26(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalResultJSONValue27 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalResultJSONValue27(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateUnstartedExecutionTerminalResultJSONValue28 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateUnstartedExecutionTerminalResultJSONValue28(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		default:
-			return unknownJSONFieldError(path, key, []string{})
-		}
-	}
-	return nil
 }
 
 // readStrictJSON checks the complete JSON document for malformed text and
@@ -5818,23 +3631,8 @@ func checkPreparationProceedValue(in *PreparationProceed) error {
 		return fmt.Errorf("missing root value")
 	}
 	active := make(map[any]bool)
-	if err := checkPreparationProceedPreparationProceedValue(in, "$", active); err != nil {
+	if err := checkPreparationDecisionPreparationProceedValue(in, "$", active); err != nil {
 		return err
-	}
-	return nil
-}
-
-// checkPreparationProceedPreparationProceedValue checks one generated value on the active path.
-func checkPreparationProceedPreparationProceedValue(in *PreparationProceed, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
 	}
 	return nil
 }
@@ -5917,7 +3715,7 @@ func checkUnstartedExecutionTerminalUnstartedExecutionTerminalValue(in *Unstarte
 		}
 		if branch1, ok := in.Outcome.AsFailed(); ok {
 			_ = branch1
-			if err := checkUnstartedExecutionTerminalExecutionFailureValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "outcome", false), "value", false), active); err != nil {
+			if err := checkExecutionFailureExecutionFailureValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "outcome", false), "value", false), active); err != nil {
 				return err
 			}
 		}
@@ -6069,51 +3867,6 @@ func checkUnstartedExecutionTerminalExecutionTerminalTimeEngineClosureValue(in E
 	return nil
 }
 
-// checkUnstartedExecutionTerminalExecutionFailureValue checks one generated value on the active path.
-func checkUnstartedExecutionTerminalExecutionFailureValue(in *ExecutionFailure, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if in.Message != nil {
-			if !utf8.ValidString(string(*in.Message)) {
-				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "message", false))
-			}
-		}
-		if in.DebugMessage != nil {
-			if !utf8.ValidString(string(*in.DebugMessage)) {
-				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "debug_message", false))
-			}
-		}
-		if in.Provider != nil {
-			if !utf8.ValidString(string(*in.Provider)) {
-				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "provider", false))
-			}
-		}
-		if in.Operation != nil {
-			if !utf8.ValidString(string(*in.Operation)) {
-				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "operation", false))
-			}
-		}
-		if in.Kind != nil {
-			if !utf8.ValidString(string(*in.Kind)) {
-				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "kind", false))
-			}
-		}
-		if in.Code != nil {
-			if !utf8.ValidString(string(*in.Code)) {
-				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "code", false))
-			}
-		}
-	}
-	return nil
-}
-
 // checkUnstartedExecutionTerminalUnstartedExecutionOutcomeCanceledValue checks one generated value on the active path.
 func checkUnstartedExecutionTerminalUnstartedExecutionOutcomeCanceledValue(in UnstartedExecutionOutcomeBranchCanceled, field string, active map[any]bool) error {
 	if !utf8.ValidString(string(in)) {
@@ -6147,287 +3900,28 @@ func checkUnstartedExecutionTerminalResultUnstartedExecutionTerminalResultValue(
 	if in != nil {
 		if branch1, ok := in.Result.AsStored(); ok {
 			_ = branch1
-			if err := checkUnstartedExecutionTerminalResultUnstartedExecutionTerminalValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "result", false), "value", false), active); err != nil {
+			if err := checkUnstartedExecutionTerminalUnstartedExecutionTerminalValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "result", false), "value", false), active); err != nil {
 				return err
 			}
 		}
 		if branch1, ok := in.Result.AsReplayed(); ok {
 			_ = branch1
-			if err := checkUnstartedExecutionTerminalResultUnstartedExecutionTerminalValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "result", false), "value", false), active); err != nil {
+			if err := checkUnstartedExecutionTerminalUnstartedExecutionTerminalValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "result", false), "value", false), active); err != nil {
 				return err
 			}
 		}
 		if branch1, ok := in.Result.AsExisting(); ok {
 			_ = branch1
-			if err := checkUnstartedExecutionTerminalResultUnstartedExecutionTerminalValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "result", false), "value", false), active); err != nil {
+			if err := checkUnstartedExecutionTerminalUnstartedExecutionTerminalValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "result", false), "value", false), active); err != nil {
 				return err
 			}
 		}
 		if branch1, ok := in.Result.AsStarted(); ok {
 			_ = branch1
-			if err := checkUnstartedExecutionTerminalResultStartedExecutionValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "result", false), "value", false), active); err != nil {
+			if err := checkStartedExecutionStartedExecutionValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "result", false), "value", false), active); err != nil {
 				return err
 			}
 		}
-	}
-	return nil
-}
-
-// checkUnstartedExecutionTerminalResultUnstartedExecutionTerminalValue checks one generated value on the active path.
-func checkUnstartedExecutionTerminalResultUnstartedExecutionTerminalValue(in *UnstartedExecutionTerminal, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if !utf8.ValidString(string(in.RunID)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "run_id", false))
-		}
-		if err := checkUnstartedExecutionTerminalResultRunSubjectValue(in.Subject, generatedJSONChildPath(field, "subject", false), active); err != nil {
-			return err
-		}
-		if in.SessionID != nil {
-			if !utf8.ValidString(string(*in.SessionID)) {
-				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "session_id", false))
-			}
-		}
-		if err := checkUnstartedExecutionTerminalResultExecutionInvocationValue(in.Origin, generatedJSONChildPath(field, "origin", false), active); err != nil {
-			return err
-		}
-		if branch1, ok := in.Time.AsWorkflowDecision(); ok {
-			_ = branch1
-			if err := checkUnstartedExecutionTerminalResultExecutionTerminalTimeWorkflowDecisionValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "time", false), "value", false), active); err != nil {
-				return err
-			}
-		}
-		if branch1, ok := in.Time.AsEngineClosure(); ok {
-			_ = branch1
-			if err := checkUnstartedExecutionTerminalResultExecutionTerminalTimeEngineClosureValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "time", false), "value", false), active); err != nil {
-				return err
-			}
-		}
-		if branch1, ok := in.Outcome.AsFailed(); ok {
-			_ = branch1
-			if err := checkUnstartedExecutionTerminalResultExecutionFailureValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "outcome", false), "value", false), active); err != nil {
-				return err
-			}
-		}
-		if branch1, ok := in.Outcome.AsCanceled(); ok {
-			_ = branch1
-			if err := checkUnstartedExecutionTerminalResultUnstartedExecutionOutcomeCanceledValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "outcome", false), "value", false), active); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-// checkUnstartedExecutionTerminalResultRunSubjectValue checks one generated value on the active path.
-func checkUnstartedExecutionTerminalResultRunSubjectValue(in *runidentity.RunSubject, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if branch1, ok := in.Executor.AsAgent(); ok {
-			_ = branch1
-			if err := checkUnstartedExecutionTerminalResultRunExecutorAgentValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "executor", false), "value", false), active); err != nil {
-				return err
-			}
-		}
-		if branch1, ok := in.Executor.AsServiceTool(); ok {
-			_ = branch1
-			if err := checkUnstartedExecutionTerminalResultServiceToolSubjectValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "executor", false), "value", false), active); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-// checkUnstartedExecutionTerminalResultRunExecutorAgentValue checks one generated value on the active path.
-func checkUnstartedExecutionTerminalResultRunExecutorAgentValue(in runidentity.RunExecutorBranchAgent, field string, active map[any]bool) error {
-	if !utf8.ValidString(string(in)) {
-		return fmt.Errorf("%s: invalid UTF-8", field)
-	}
-	return nil
-}
-
-// checkUnstartedExecutionTerminalResultServiceToolSubjectValue checks one generated value on the active path.
-func checkUnstartedExecutionTerminalResultServiceToolSubjectValue(in *runidentity.ServiceToolSubject, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if !utf8.ValidString(string(in.Registry)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "registry", false))
-		}
-		if !utf8.ValidString(string(in.Tool)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "tool", false))
-		}
-	}
-	return nil
-}
-
-// checkUnstartedExecutionTerminalResultExecutionInvocationValue checks one generated value on the active path.
-func checkUnstartedExecutionTerminalResultExecutionInvocationValue(in *registry.ExecutionInvocation, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if branch1, ok := in.Invocation.AsRoot(); ok {
-			_ = branch1
-			if err := checkUnstartedExecutionTerminalResultRootInvocationValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "invocation", false), "value", false), active); err != nil {
-				return err
-			}
-		}
-		if branch1, ok := in.Invocation.AsTool(); ok {
-			_ = branch1
-			if err := checkUnstartedExecutionTerminalResultToolInvocationValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "invocation", false), "value", false), active); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-// checkUnstartedExecutionTerminalResultRootInvocationValue checks one generated value on the active path.
-func checkUnstartedExecutionTerminalResultRootInvocationValue(in *registry.RootInvocation, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if !utf8.ValidString(string(in.RunID)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "run_id", false))
-		}
-	}
-	return nil
-}
-
-// checkUnstartedExecutionTerminalResultToolInvocationValue checks one generated value on the active path.
-func checkUnstartedExecutionTerminalResultToolInvocationValue(in *registry.ToolInvocation, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if !utf8.ValidString(string(in.RunID)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "run_id", false))
-		}
-		if !utf8.ValidString(string(in.ToolCallID)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "tool_call_id", false))
-		}
-	}
-	return nil
-}
-
-// checkUnstartedExecutionTerminalResultExecutionTerminalTimeWorkflowDecisionValue checks one generated value on the active path.
-func checkUnstartedExecutionTerminalResultExecutionTerminalTimeWorkflowDecisionValue(in ExecutionTerminalTimeBranchWorkflowDecision, field string, active map[any]bool) error {
-	if !utf8.ValidString(string(in)) {
-		return fmt.Errorf("%s: invalid UTF-8", field)
-	}
-	return nil
-}
-
-// checkUnstartedExecutionTerminalResultExecutionTerminalTimeEngineClosureValue checks one generated value on the active path.
-func checkUnstartedExecutionTerminalResultExecutionTerminalTimeEngineClosureValue(in ExecutionTerminalTimeBranchEngineClosure, field string, active map[any]bool) error {
-	if !utf8.ValidString(string(in)) {
-		return fmt.Errorf("%s: invalid UTF-8", field)
-	}
-	return nil
-}
-
-// checkUnstartedExecutionTerminalResultExecutionFailureValue checks one generated value on the active path.
-func checkUnstartedExecutionTerminalResultExecutionFailureValue(in *ExecutionFailure, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if in.Message != nil {
-			if !utf8.ValidString(string(*in.Message)) {
-				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "message", false))
-			}
-		}
-		if in.DebugMessage != nil {
-			if !utf8.ValidString(string(*in.DebugMessage)) {
-				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "debug_message", false))
-			}
-		}
-		if in.Provider != nil {
-			if !utf8.ValidString(string(*in.Provider)) {
-				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "provider", false))
-			}
-		}
-		if in.Operation != nil {
-			if !utf8.ValidString(string(*in.Operation)) {
-				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "operation", false))
-			}
-		}
-		if in.Kind != nil {
-			if !utf8.ValidString(string(*in.Kind)) {
-				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "kind", false))
-			}
-		}
-		if in.Code != nil {
-			if !utf8.ValidString(string(*in.Code)) {
-				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "code", false))
-			}
-		}
-	}
-	return nil
-}
-
-// checkUnstartedExecutionTerminalResultUnstartedExecutionOutcomeCanceledValue checks one generated value on the active path.
-func checkUnstartedExecutionTerminalResultUnstartedExecutionOutcomeCanceledValue(in UnstartedExecutionOutcomeBranchCanceled, field string, active map[any]bool) error {
-	if !utf8.ValidString(string(in)) {
-		return fmt.Errorf("%s: invalid UTF-8", field)
-	}
-	return nil
-}
-
-// checkUnstartedExecutionTerminalResultStartedExecutionValue checks one generated value on the active path.
-func checkUnstartedExecutionTerminalResultStartedExecutionValue(in *StartedExecution, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
 	}
 	return nil
 }

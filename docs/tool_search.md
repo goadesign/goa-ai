@@ -406,13 +406,35 @@ route those operations to their existing executor.
 `BindInput` may prepare generated inputs after the service binding is installed.
 The original model arguments remain separate from the completed execution input.
 
-The existing saved `ToolCall.Registry` retains the selected registration. Both
-initial execution and overload retries call `CallResolvedTool` with that route,
-original operation, token, and invocation identity. Replacing the current
-registration cannot redirect an accepted call. Dedicated pagination retains its
-saved partner and token without selecting a new source; the generated partner
-must belong to the same consuming definition. Finalization and synthesis skip
-catalog discovery while retaining existing static input preparation.
+The existing saved `ToolCall.Registry` retains the selected registration without
+copying the tool's declaration. For a bound tool it saves the registration token,
+the registered toolset name, description, version, tags, and registration time,
+the sorted names of the called operation and its paging partner, a SHA-256
+fingerprint of their generated declarations without provider Agent targets, and,
+for a native Agent operation, the selected worker route and configuration. A
+saved call therefore stays a few hundred bytes however large the tool's schemas
+are. Every reader restores the complete selection from the consuming agent's
+generated declarations, which generated definitions supply with
+`WithRegistryDeclarations`. Both initial execution and overload retries call
+`CallResolvedTool` with that route, original operation, token, and invocation
+identity. Replacing the current registration cannot redirect an accepted call.
+Dedicated pagination retains its saved partner and token without selecting a new
+source; the generated partner must belong to the same consuming definition.
+Finalization and synthesis skip catalog discovery while retaining existing static
+input preparation.
+
+When the reading build declares the saved operations differently, or no longer
+declares them, the saved call cannot be interpreted with the current generated
+code. Current work rejects it, a paused run cannot resume, and an unfinished page
+from an earlier turn supplies no next-page action without blocking the new turn.
+These are the same outcomes as for a call whose saved full declaration differs
+from the current generated contract. Calls saved with their full declaration by
+earlier releases keep their existing behavior. An agent that does not compile the
+tool cannot interpret a call saved this way.
+
+Binding requires agents generated with registry declarations. `BindStaticService`
+and `BindStaticAgent` reject a tool whose saved call cannot be restored from the
+consuming definition's generated declarations; regenerate the agent to fix it.
 
 `catalog.SelectedOperation()` returns a fresh copy of the native operation
 retained in the current run. It reads a direct operation or the saved registry
