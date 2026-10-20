@@ -70,14 +70,16 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 	if msg.Meta == nil {
 		return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_call", "meta is required"), nil
 	}
-
+	if err := toolregistry.ValidateExecution(msg.Meta.ExecutionSequence, msg.Meta.ExecutionContinuation, msg.Meta.TextOnly); err != nil {
+		return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_call", err.Error()), nil
+	}
 	switch msg.Tool {
 	case Inspect:
+		if msg.Meta.ExecutionContinuation != nil || msg.Meta.ExecutionSequence != 0 {
+			return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_call", "tool does not accept input continuation"), nil
+		}
 		if msg.Meta.TextOnly {
-			spec, ok := Spec(Inspect)
-			if !ok {
-				return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_contract", "generated tool contract is missing"), nil
-			}
+			spec := SpecInspect()
 			decoded, err := spec.TextOnly.ExecutionCodec.FromJSON(msg.Payload)
 			if err != nil {
 				return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_arguments", err.Error()), nil
@@ -140,11 +142,11 @@ func (p *Provider) HandleToolCall(ctx context.Context, msg toolregistry.ToolCall
 			Result:            resultJSON,
 		}, nil
 	case View:
+		if msg.Meta.ExecutionContinuation != nil || msg.Meta.ExecutionSequence != 0 {
+			return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_call", "tool does not accept input continuation"), nil
+		}
 		if msg.Meta.TextOnly {
-			spec, ok := Spec(View)
-			if !ok {
-				return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_contract", "generated tool contract is missing"), nil
-			}
+			spec := SpecView()
 			decoded, err := spec.TextOnly.ExecutionCodec.FromJSON(msg.Payload)
 			if err != nil {
 				return toolregistry.NewToolResultErrorMessage(msg.RegistrationToken, msg.ToolUseID, "invalid_arguments", err.Error()), nil

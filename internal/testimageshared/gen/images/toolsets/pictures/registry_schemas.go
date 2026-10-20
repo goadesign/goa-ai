@@ -38,7 +38,7 @@ func (declarations registryDeclarations) schema1() *genregistry.ToolSchema {
 		Description:            &registryText1,
 		PayloadSchema:          []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"id\":{\"description\":\"Selected image.\",\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}"),
 		ExecutionPayloadSchema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"id\":{\"description\":\"Selected image.\",\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}"),
-		ResultSchema:           []byte("{\"$defs\":{\"RetainedImage\":{\"additionalProperties\":false,\"description\":\"Exact retained image descriptor.\",\"properties\":{\"id\":{\"description\":\"Exact retained image.\",\"minLength\":1,\"type\":\"string\"}},\"required\":[\"id\"],\"title\":\"RetainedImage\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"source\":{\"$ref\":\"#/$defs/RetainedImage\"}},\"required\":[\"source\"],\"type\":\"object\"}"),
+		ResultSchema:           []byte("{\"$defs\":{\"RetainedImage\":{\"additionalProperties\":false,\"description\":\"Exact retained image descriptor.\",\"properties\":{\"id\":{\"description\":\"Exact retained image.\",\"minLength\":1,\"type\":\"string\"}},\"required\":[\"id\"],\"title\":\"RetainedImage\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"source\":{\"$ref\":\"#/$defs/RetainedImage\",\"description\":\"Exact selected image.\"}},\"required\":[\"source\"],\"type\":\"object\"}"),
 		ConsumerContract: &genregistry.ConsumerContract{
 			Kind:  "service",
 			Title: "Inspect",
@@ -65,7 +65,7 @@ func (declarations registryDeclarations) schema1() *genregistry.ToolSchema {
 					Audience:    "evidence",
 					NativeImage: true,
 					Description: &registryText2,
-					Schema:      []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"id\":{\"description\":\"Exact retained image.\",\"minLength\":1,\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}"),
+					Schema:      []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"description\":\"Exact retained image descriptor.\",\"properties\":{\"id\":{\"description\":\"Exact retained image.\",\"minLength\":1,\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}"),
 					Type:        declarations.metadata9(),
 				},
 			},
@@ -112,7 +112,7 @@ func (declarations registryDeclarations) metadata5() *genregistry.ToolTypeMetada
 	registryText1 := "InspectResult"
 	return &genregistry.ToolTypeMetadata{
 		Name:                     &registryText1,
-		SchemaWithoutRootExample: []byte("{\"$defs\":{\"RetainedImage\":{\"additionalProperties\":false,\"description\":\"Exact retained image descriptor.\",\"properties\":{\"id\":{\"description\":\"Exact retained image.\",\"minLength\":1,\"type\":\"string\"}},\"required\":[\"id\"],\"title\":\"RetainedImage\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"source\":{\"$ref\":\"#/$defs/RetainedImage\"}},\"required\":[\"source\"],\"type\":\"object\"}"),
+		SchemaWithoutRootExample: []byte("{\"$defs\":{\"RetainedImage\":{\"additionalProperties\":false,\"description\":\"Exact retained image descriptor.\",\"properties\":{\"id\":{\"description\":\"Exact retained image.\",\"minLength\":1,\"type\":\"string\"}},\"required\":[\"id\"],\"title\":\"RetainedImage\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"source\":{\"$ref\":\"#/$defs/RetainedImage\",\"description\":\"Exact selected image.\"}},\"required\":[\"source\"],\"type\":\"object\"}"),
 		Fields: []*genregistry.ToolFieldMetadata{
 			declarations.field6(),
 			declarations.field7(),
@@ -161,7 +161,7 @@ func (declarations registryDeclarations) metadata9() *genregistry.ToolTypeMetada
 	registryText1 := "InspectFixtureSharedV1ServerData"
 	return &genregistry.ToolTypeMetadata{
 		Name:                     &registryText1,
-		SchemaWithoutRootExample: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"id\":{\"description\":\"Exact retained image.\",\"minLength\":1,\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}"),
+		SchemaWithoutRootExample: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"description\":\"Exact retained image descriptor.\",\"properties\":{\"id\":{\"description\":\"Exact retained image.\",\"minLength\":1,\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}"),
 		Fields: []*genregistry.ToolFieldMetadata{
 			declarations.field10(),
 			declarations.field11(),
@@ -235,7 +235,7 @@ func (declarations registryDeclarations) schema15() *genregistry.ToolSchema {
 		Description:            &registryText1,
 		PayloadSchema:          []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"id\":{\"description\":\"Selected image.\",\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}"),
 		ExecutionPayloadSchema: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"id\":{\"description\":\"Selected image.\",\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}"),
-		ResultSchema:           []byte("{\"$defs\":{\"RetainedImage\":{\"additionalProperties\":false,\"description\":\"Exact retained image descriptor.\",\"properties\":{\"id\":{\"description\":\"Exact retained image.\",\"minLength\":1,\"type\":\"string\"}},\"required\":[\"id\"],\"title\":\"RetainedImage\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"source\":{\"$ref\":\"#/$defs/RetainedImage\"}},\"required\":[\"source\"],\"type\":\"object\"}"),
+		ResultSchema:           []byte("{\"$defs\":{\"RetainedImage\":{\"additionalProperties\":false,\"description\":\"Exact retained image descriptor.\",\"properties\":{\"id\":{\"description\":\"Exact retained image.\",\"minLength\":1,\"type\":\"string\"}},\"required\":[\"id\"],\"title\":\"RetainedImage\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"source\":{\"$ref\":\"#/$defs/RetainedImage\",\"description\":\"Exact selected image.\"}},\"required\":[\"source\"],\"type\":\"object\"}"),
 		ConsumerContract: &genregistry.ConsumerContract{
 			Kind:  "service",
 			Title: "View",
@@ -262,7 +262,7 @@ func (declarations registryDeclarations) schema15() *genregistry.ToolSchema {
 					Audience:    "evidence",
 					NativeImage: true,
 					Description: &registryText2,
-					Schema:      []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"id\":{\"description\":\"Exact retained image.\",\"minLength\":1,\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}"),
+					Schema:      []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"description\":\"Exact retained image descriptor.\",\"properties\":{\"id\":{\"description\":\"Exact retained image.\",\"minLength\":1,\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}"),
 					Type:        declarations.metadata23(),
 				},
 			},
@@ -309,7 +309,7 @@ func (declarations registryDeclarations) metadata19() *genregistry.ToolTypeMetad
 	registryText1 := "ViewResult"
 	return &genregistry.ToolTypeMetadata{
 		Name:                     &registryText1,
-		SchemaWithoutRootExample: []byte("{\"$defs\":{\"RetainedImage\":{\"additionalProperties\":false,\"description\":\"Exact retained image descriptor.\",\"properties\":{\"id\":{\"description\":\"Exact retained image.\",\"minLength\":1,\"type\":\"string\"}},\"required\":[\"id\"],\"title\":\"RetainedImage\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"source\":{\"$ref\":\"#/$defs/RetainedImage\"}},\"required\":[\"source\"],\"type\":\"object\"}"),
+		SchemaWithoutRootExample: []byte("{\"$defs\":{\"RetainedImage\":{\"additionalProperties\":false,\"description\":\"Exact retained image descriptor.\",\"properties\":{\"id\":{\"description\":\"Exact retained image.\",\"minLength\":1,\"type\":\"string\"}},\"required\":[\"id\"],\"title\":\"RetainedImage\",\"type\":\"object\"}},\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"source\":{\"$ref\":\"#/$defs/RetainedImage\",\"description\":\"Exact selected image.\"}},\"required\":[\"source\"],\"type\":\"object\"}"),
 		Fields: []*genregistry.ToolFieldMetadata{
 			declarations.field20(),
 			declarations.field21(),
@@ -358,7 +358,7 @@ func (declarations registryDeclarations) metadata23() *genregistry.ToolTypeMetad
 	registryText1 := "ViewFixtureSharedV1ServerData"
 	return &genregistry.ToolTypeMetadata{
 		Name:                     &registryText1,
-		SchemaWithoutRootExample: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"id\":{\"description\":\"Exact retained image.\",\"minLength\":1,\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}"),
+		SchemaWithoutRootExample: []byte("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"description\":\"Exact retained image descriptor.\",\"properties\":{\"id\":{\"description\":\"Exact retained image.\",\"minLength\":1,\"type\":\"string\"}},\"required\":[\"id\"],\"type\":\"object\"}"),
 		Fields: []*genregistry.ToolFieldMetadata{
 			declarations.field24(),
 			declarations.field25(),

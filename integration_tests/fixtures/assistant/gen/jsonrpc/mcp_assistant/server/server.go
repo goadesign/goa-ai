@@ -124,7 +124,7 @@ func New(
 		errhandler:             errhandler,
 	}
 	// The MCP protocol uses one ordinary request decoder. Subscriptions and
-	// progress select their response stream inside the outer request guard.
+	// progress select their response stream after application HTTP middleware.
 	s.handler = http.HandlerFunc(s.handleHTTP)
 	s.processRequest = withMCPTransport(s, origins, s.serveHTTP)
 	return s
@@ -162,61 +162,67 @@ func (s *Server) serveHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Server) MethodNames() []string { return mcpassistant.MethodNames[:] }
 
 // handleHTTP decodes one MCP request and dispatches its generated protocol method.
-// ServeHTTP validates metadata and headers before configured middleware calls it.
+// ServeHTTP validates authentication and protocol rules first. Application
+// middleware then chooses response headers before this handler starts streaming.
 func (s *Server) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	var request jsonrpc.RawRequest
 	if err := s.decoder(r).Decode(&request); err != nil {
 		s.encodeJSONRPCError(r.Context(), w, &request, jsonrpc.ParseError, "Parse error", nil)
 		return
 	}
-	switch request.Method {
-	case "initialize":
-		request.Method = "server/discover"
-		if err := s.ServerDiscover(r.Context(), r, &request, w); err != nil {
-			s.errhandler(r.Context(), w, fmt.Errorf("MCP initialize: %w", err))
+	dispatch := func(w http.ResponseWriter, r *http.Request) {
+		switch request.Method {
+		case "initialize":
+			request.Method = "server/discover"
+			if err := s.ServerDiscover(r.Context(), r, &request, w); err != nil {
+				s.errhandler(r.Context(), w, fmt.Errorf("MCP initialize: %w", err))
+			}
+		case "ping":
+			if err := s.encoder(r.Context(), w).Encode(jsonrpc.MakeSuccessResponse(request.ID, struct{}{})); err != nil {
+				s.errhandler(r.Context(), w, fmt.Errorf("MCP ping: %w", err))
+			}
+		case "server/discover":
+			if err := s.ServerDiscover(r.Context(), r, &request, w); err != nil {
+				s.errhandler(r.Context(), w, fmt.Errorf("MCP handler %s: %w", "server/discover", err))
+			}
+		case "tools/list":
+			if err := s.ToolsList(r.Context(), r, &request, w); err != nil {
+				s.errhandler(r.Context(), w, fmt.Errorf("MCP handler %s: %w", "tools/list", err))
+			}
+		case "tools/call":
+			if err := s.ToolsCall(r.Context(), r, &request, w); err != nil {
+				s.errhandler(r.Context(), w, fmt.Errorf("MCP handler %s: %w", "tools/call", err))
+			}
+		case "resources/list":
+			if err := s.ResourcesList(r.Context(), r, &request, w); err != nil {
+				s.errhandler(r.Context(), w, fmt.Errorf("MCP handler %s: %w", "resources/list", err))
+			}
+		case "resources/read":
+			if err := s.ResourcesRead(r.Context(), r, &request, w); err != nil {
+				s.errhandler(r.Context(), w, fmt.Errorf("MCP handler %s: %w", "resources/read", err))
+			}
+		case "resources/templates/list":
+			if err := s.ResourcesTemplatesList(r.Context(), r, &request, w); err != nil {
+				s.errhandler(r.Context(), w, fmt.Errorf("MCP handler %s: %w", "resources/templates/list", err))
+			}
+		case "prompts/list":
+			if err := s.PromptsList(r.Context(), r, &request, w); err != nil {
+				s.errhandler(r.Context(), w, fmt.Errorf("MCP handler %s: %w", "prompts/list", err))
+			}
+		case "prompts/get":
+			if err := s.PromptsGet(r.Context(), r, &request, w); err != nil {
+				s.errhandler(r.Context(), w, fmt.Errorf("MCP handler %s: %w", "prompts/get", err))
+			}
+		case "completion/complete":
+			if err := s.CompletionComplete(r.Context(), r, &request, w); err != nil {
+				s.errhandler(r.Context(), w, fmt.Errorf("MCP handler %s: %w", "completion/complete", err))
+			}
+		default:
+			s.encodeJSONRPCError(r.Context(), w, &request, jsonrpc.MethodNotFound, "Method not found", nil)
 		}
-	case "ping":
-		if err := s.encoder(r.Context(), w).Encode(jsonrpc.MakeSuccessResponse(request.ID, struct{}{})); err != nil {
-			s.errhandler(r.Context(), w, fmt.Errorf("MCP ping: %w", err))
-		}
-	case "server/discover":
-		if err := s.ServerDiscover(r.Context(), r, &request, w); err != nil {
-			s.errhandler(r.Context(), w, fmt.Errorf("MCP handler %s: %w", "server/discover", err))
-		}
-	case "tools/list":
-		if err := s.ToolsList(r.Context(), r, &request, w); err != nil {
-			s.errhandler(r.Context(), w, fmt.Errorf("MCP handler %s: %w", "tools/list", err))
-		}
-	case "tools/call":
-		if err := s.ToolsCall(r.Context(), r, &request, w); err != nil {
-			s.errhandler(r.Context(), w, fmt.Errorf("MCP handler %s: %w", "tools/call", err))
-		}
-	case "resources/list":
-		if err := s.ResourcesList(r.Context(), r, &request, w); err != nil {
-			s.errhandler(r.Context(), w, fmt.Errorf("MCP handler %s: %w", "resources/list", err))
-		}
-	case "resources/read":
-		if err := s.ResourcesRead(r.Context(), r, &request, w); err != nil {
-			s.errhandler(r.Context(), w, fmt.Errorf("MCP handler %s: %w", "resources/read", err))
-		}
-	case "resources/templates/list":
-		if err := s.ResourcesTemplatesList(r.Context(), r, &request, w); err != nil {
-			s.errhandler(r.Context(), w, fmt.Errorf("MCP handler %s: %w", "resources/templates/list", err))
-		}
-	case "prompts/list":
-		if err := s.PromptsList(r.Context(), r, &request, w); err != nil {
-			s.errhandler(r.Context(), w, fmt.Errorf("MCP handler %s: %w", "prompts/list", err))
-		}
-	case "prompts/get":
-		if err := s.PromptsGet(r.Context(), r, &request, w); err != nil {
-			s.errhandler(r.Context(), w, fmt.Errorf("MCP handler %s: %w", "prompts/get", err))
-		}
-	case "completion/complete":
-		if err := s.CompletionComplete(r.Context(), r, &request, w); err != nil {
-			s.errhandler(r.Context(), w, fmt.Errorf("MCP handler %s: %w", "completion/complete", err))
-		}
-	default:
-		s.encodeJSONRPCError(r.Context(), w, &request, jsonrpc.MethodNotFound, "Method not found", nil)
+	}
+	if err := mcpruntime.ServeProgress(w, r, request.Params, dispatch); err != nil {
+		s.errhandler(r.Context(), w, err)
 	}
 }
 
@@ -232,7 +238,7 @@ func (s *Server) Mount(mux goahttp.Muxer) {
 	Mount(mux, s)
 }
 
-// mcpResponseWriter records whether the JSON-RPC handler wrote a response.
+// mcpResponseWriter records whether middleware or the JSON-RPC handler wrote a response.
 type mcpResponseWriter struct {
 	http.ResponseWriter
 	written bool
@@ -342,9 +348,7 @@ func withMCPTransport(h *Server, origins []string, next http.HandlerFunc) http.H
 		}
 
 		response := &mcpResponseWriter{ResponseWriter: w}
-		if err := mcpruntime.ServeProgress(response, r, request.Params, next); err != nil {
-			h.errhandler(r.Context(), response, err)
-		}
+		next(response, r)
 		if !response.written {
 			w.WriteHeader(http.StatusAccepted)
 		}
@@ -1052,7 +1056,7 @@ func (e *mcpLegacyEncoder) Encode(value any) error {
 }
 
 // mcpLegacyResult reuses each planned HTTP body. It removes modern result
-// markers and converts non-object tool results to the older advertised object.
+// markers and converts tool results to the older advertised object.
 func mcpLegacyResult(value any, mode mcpLegacyMode) (any, error) {
 	switch body := value.(type) {
 	case *ServerDiscoverResponseBody:

@@ -12,10 +12,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"sort"
 	"strconv"
 	"strings"
+	utf8 "unicode/utf8"
 
 	toolhttp "example.com/assistant/gen/assistant/toolsets/assistant_mcp/http"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -1610,14 +1610,9 @@ func UnmarshalTestToolWithProgressResult(data []byte) (TestToolWithProgressResul
 // validateTestToolWithProgressPayloadJSON parses one JSON document and checks the exact value
 // shapes known from this generated Goa type.
 func validateTestToolWithProgressPayloadJSON(data []byte) error {
-	var root any
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	if err := dec.Decode(&root); err != nil {
+	root, err := readStrictToolJSON(data)
+	if err != nil {
 		return err
-	}
-	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		return fmt.Errorf("multiple JSON documents")
 	}
 	return validateTestToolWithProgressPayloadJSONValue("", root, "")
 }
@@ -1625,14 +1620,9 @@ func validateTestToolWithProgressPayloadJSON(data []byte) error {
 // validateTestToolWithProgressResultJSON parses one JSON document and checks the exact value
 // shapes known from this generated Goa type.
 func validateTestToolWithProgressResultJSON(data []byte) error {
-	var root any
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	if err := dec.Decode(&root); err != nil {
+	root, err := readStrictToolJSON(data)
+	if err != nil {
 		return err
-	}
-	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		return fmt.Errorf("multiple JSON documents")
 	}
 	return validateStringJSONValue("", root, "")
 }
@@ -1640,14 +1630,9 @@ func validateTestToolWithProgressResultJSON(data []byte) error {
 // validateAnalyzeSentimentPayloadJSON parses one JSON document and checks the exact value
 // shapes known from this generated Goa type.
 func validateAnalyzeSentimentPayloadJSON(data []byte) error {
-	var root any
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	if err := dec.Decode(&root); err != nil {
+	root, err := readStrictToolJSON(data)
+	if err != nil {
 		return err
-	}
-	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		return fmt.Errorf("multiple JSON documents")
 	}
 	return validateAnalyzeSentimentPayloadJSONValue("", root, "")
 }
@@ -1655,14 +1640,9 @@ func validateAnalyzeSentimentPayloadJSON(data []byte) error {
 // validateAnalyzeSentimentResultJSON parses one JSON document and checks the exact value
 // shapes known from this generated Goa type.
 func validateAnalyzeSentimentResultJSON(data []byte) error {
-	var root any
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	if err := dec.Decode(&root); err != nil {
+	root, err := readStrictToolJSON(data)
+	if err != nil {
 		return err
-	}
-	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		return fmt.Errorf("multiple JSON documents")
 	}
 	return validateAnalyzeSentimentResultJSONValue("", root, "")
 }
@@ -1670,14 +1650,9 @@ func validateAnalyzeSentimentResultJSON(data []byte) error {
 // validateExtractKeywordsPayloadJSON parses one JSON document and checks the exact value
 // shapes known from this generated Goa type.
 func validateExtractKeywordsPayloadJSON(data []byte) error {
-	var root any
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	if err := dec.Decode(&root); err != nil {
+	root, err := readStrictToolJSON(data)
+	if err != nil {
 		return err
-	}
-	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		return fmt.Errorf("multiple JSON documents")
 	}
 	return validateExtractKeywordsPayloadJSONValue("", root, "")
 }
@@ -1685,14 +1660,9 @@ func validateExtractKeywordsPayloadJSON(data []byte) error {
 // validateExtractKeywordsResultJSON parses one JSON document and checks the exact value
 // shapes known from this generated Goa type.
 func validateExtractKeywordsResultJSON(data []byte) error {
-	var root any
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	if err := dec.Decode(&root); err != nil {
+	root, err := readStrictToolJSON(data)
+	if err != nil {
 		return err
-	}
-	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		return fmt.Errorf("multiple JSON documents")
 	}
 	return validateExtractKeywordsResultJSONValue("", root, "")
 }
@@ -1700,14 +1670,9 @@ func validateExtractKeywordsResultJSON(data []byte) error {
 // validateSummarizeTextPayloadJSON parses one JSON document and checks the exact value
 // shapes known from this generated Goa type.
 func validateSummarizeTextPayloadJSON(data []byte) error {
-	var root any
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	if err := dec.Decode(&root); err != nil {
+	root, err := readStrictToolJSON(data)
+	if err != nil {
 		return err
-	}
-	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		return fmt.Errorf("multiple JSON documents")
 	}
 	return validateSummarizeTextPayloadJSONValue("", root, "")
 }
@@ -1715,14 +1680,9 @@ func validateSummarizeTextPayloadJSON(data []byte) error {
 // validateSummarizeTextResultJSON parses one JSON document and checks the exact value
 // shapes known from this generated Goa type.
 func validateSummarizeTextResultJSON(data []byte) error {
-	var root any
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	if err := dec.Decode(&root); err != nil {
+	root, err := readStrictToolJSON(data)
+	if err != nil {
 		return err
-	}
-	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		return fmt.Errorf("multiple JSON documents")
 	}
 	return validateSummarizeTextResultJSONValue("", root, "")
 }
@@ -1730,14 +1690,9 @@ func validateSummarizeTextResultJSON(data []byte) error {
 // validateSearchPayloadJSON parses one JSON document and checks the exact value
 // shapes known from this generated Goa type.
 func validateSearchPayloadJSON(data []byte) error {
-	var root any
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	if err := dec.Decode(&root); err != nil {
+	root, err := readStrictToolJSON(data)
+	if err != nil {
 		return err
-	}
-	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		return fmt.Errorf("multiple JSON documents")
 	}
 	return validateSearchPayloadJSONValue("", root, "")
 }
@@ -1745,14 +1700,9 @@ func validateSearchPayloadJSON(data []byte) error {
 // validateSearchResultJSON parses one JSON document and checks the exact value
 // shapes known from this generated Goa type.
 func validateSearchResultJSON(data []byte) error {
-	var root any
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	if err := dec.Decode(&root); err != nil {
+	root, err := readStrictToolJSON(data)
+	if err != nil {
 		return err
-	}
-	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		return fmt.Errorf("multiple JSON documents")
 	}
 	return validateSearchResultJSONValue("", root, "")
 }
@@ -1760,14 +1710,9 @@ func validateSearchResultJSON(data []byte) error {
 // validateExecuteCodePayloadJSON parses one JSON document and checks the exact value
 // shapes known from this generated Goa type.
 func validateExecuteCodePayloadJSON(data []byte) error {
-	var root any
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	if err := dec.Decode(&root); err != nil {
+	root, err := readStrictToolJSON(data)
+	if err != nil {
 		return err
-	}
-	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		return fmt.Errorf("multiple JSON documents")
 	}
 	return validateExecuteCodePayloadJSONValue("", root, "")
 }
@@ -1775,14 +1720,9 @@ func validateExecuteCodePayloadJSON(data []byte) error {
 // validateExecuteCodeResultJSON parses one JSON document and checks the exact value
 // shapes known from this generated Goa type.
 func validateExecuteCodeResultJSON(data []byte) error {
-	var root any
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	if err := dec.Decode(&root); err != nil {
+	root, err := readStrictToolJSON(data)
+	if err != nil {
 		return err
-	}
-	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		return fmt.Errorf("multiple JSON documents")
 	}
 	return validateExecuteCodeResultJSONValue("", root, "")
 }
@@ -1790,14 +1730,9 @@ func validateExecuteCodeResultJSON(data []byte) error {
 // validateProcessBatchPayloadJSON parses one JSON document and checks the exact value
 // shapes known from this generated Goa type.
 func validateProcessBatchPayloadJSON(data []byte) error {
-	var root any
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	if err := dec.Decode(&root); err != nil {
+	root, err := readStrictToolJSON(data)
+	if err != nil {
 		return err
-	}
-	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		return fmt.Errorf("multiple JSON documents")
 	}
 	return validateProcessBatchPayloadJSONValue("", root, "")
 }
@@ -1805,16 +1740,133 @@ func validateProcessBatchPayloadJSON(data []byte) error {
 // validateProcessBatchResultJSON parses one JSON document and checks the exact value
 // shapes known from this generated Goa type.
 func validateProcessBatchResultJSON(data []byte) error {
-	var root any
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	if err := dec.Decode(&root); err != nil {
+	root, err := readStrictToolJSON(data)
+	if err != nil {
 		return err
 	}
-	if err := dec.Decode(&struct{}{}); err != io.EOF {
-		return fmt.Errorf("multiple JSON documents")
-	}
 	return validateProcessBatchResultJSONValue("", root, "")
+}
+
+// readStrictToolJSON checks the complete JSON document for malformed text and
+// duplicate members, then returns values with their original number text.
+func readStrictToolJSON(data []byte) (any, error) {
+	if err := validateToolJSONText(data); err != nil {
+		return nil, err
+	}
+	if !json.Valid(data) {
+		// When two complete JSON values arrive, keep the caller's distinct
+		// multiple-document error instead of reporting malformed syntax.
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		var document json.RawMessage
+		if err := decoder.Decode(&document); err == nil {
+			if err := decoder.Decode(&document); err == nil {
+				return nil, fmt.Errorf("multiple JSON documents")
+			}
+		}
+		return nil, fmt.Errorf("invalid JSON syntax or nesting")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	return readToolJSONValue(decoder)
+}
+
+// readToolJSONValue reads one JSON value and rejects repeated object member
+// names, returning the value without replacing earlier members.
+func readToolJSONValue(decoder *json.Decoder) (any, error) {
+	token, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+	switch token {
+	case json.Delim('{'):
+		object := make(map[string]any)
+		for decoder.More() {
+			token, err := decoder.Token()
+			if err != nil {
+				return nil, err
+			}
+			key, ok := token.(string)
+			if !ok {
+				return nil, fmt.Errorf("object member name must be a string")
+			}
+			if _, exists := object[key]; exists {
+				return nil, fmt.Errorf("duplicate JSON member %q", key)
+			}
+			value, err := readToolJSONValue(decoder)
+			if err != nil {
+				return nil, err
+			}
+			object[key] = value
+		}
+		if _, err := decoder.Token(); err != nil {
+			return nil, err
+		}
+		return object, nil
+	case json.Delim('['):
+		array := make([]any, 0)
+		for decoder.More() {
+			value, err := readToolJSONValue(decoder)
+			if err != nil {
+				return nil, err
+			}
+			array = append(array, value)
+		}
+		if _, err := decoder.Token(); err != nil {
+			return nil, err
+		}
+		return array, nil
+	default:
+		if _, delimiter := token.(json.Delim); delimiter {
+			return nil, fmt.Errorf("unexpected JSON delimiter %v", token)
+		}
+		return token, nil
+	}
+}
+
+// validateToolJSONText checks JSON bytes for invalid text and unpaired Unicode
+// escapes, returning an error before encoding/json can replace those characters.
+func validateToolJSONText(data []byte) error {
+	if !utf8.Valid(data) {
+		return fmt.Errorf("invalid UTF-8 in JSON")
+	}
+	for i := 0; i < len(data); i++ {
+		if data[i] != '"' {
+			continue
+		}
+		i++
+		for ; i < len(data) && data[i] != '"'; i++ {
+			if data[i] != '\\' {
+				continue
+			}
+			i++
+			if i >= len(data) || data[i] != 'u' {
+				continue
+			}
+			if i+4 >= len(data) {
+				return fmt.Errorf("incomplete Unicode escape")
+			}
+			code, err := strconv.ParseUint(string(data[i+1:i+5]), 16, 16)
+			if err != nil {
+				return fmt.Errorf("invalid Unicode escape: %w", err)
+			}
+			i += 4
+			if code >= 0xdc00 && code <= 0xdfff {
+				return fmt.Errorf("unpaired low Unicode surrogate")
+			}
+			if code < 0xd800 || code > 0xdbff {
+				continue
+			}
+			if i+6 >= len(data) || data[i+1] != '\\' || data[i+2] != 'u' {
+				return fmt.Errorf("unpaired high Unicode surrogate")
+			}
+			low, err := strconv.ParseUint(string(data[i+3:i+7]), 16, 16)
+			if err != nil || low < 0xdc00 || low > 0xdfff {
+				return fmt.Errorf("unpaired high Unicode surrogate")
+			}
+			i += 6
+		}
+	}
+	return nil
 }
 
 // validateTestToolWithProgressPayloadJSONValue checks one value whose JSON shape is fixed by the generated Goa type.

@@ -132,6 +132,9 @@ func NewReaderPicturesExec(opts ...ExecOpt) runtime.ToolCallExecutor {
 		}
 		switch call.Name {
 		case tools.Ident("pictures.inspect"):
+			if call.ExecutionContinuation != nil || call.ExecutionSequence != 0 {
+				return runtime.Executed(invalidServiceToolCall(call, errors.New("tool does not accept input continuation"))), nil
+			}
 			var toolArgs any
 			{
 				val, err := picturesspecs.InspectPayloadCodec().FromJSON(call.Payload)
@@ -226,6 +229,9 @@ func NewReaderPicturesExec(opts ...ExecOpt) runtime.ToolCallExecutor {
 				ServerData: serverData,
 			}), nil
 		case tools.Ident("pictures.view"):
+			if call.ExecutionContinuation != nil || call.ExecutionSequence != 0 {
+				return runtime.Executed(invalidServiceToolCall(call, errors.New("tool does not accept input continuation"))), nil
+			}
 			var toolArgs any
 			{
 				val, err := picturesspecs.ViewPayloadCodec().FromJSON(call.Payload)

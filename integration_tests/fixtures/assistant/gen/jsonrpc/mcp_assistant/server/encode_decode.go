@@ -9,6 +9,7 @@ package server
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -461,7 +462,7 @@ func marshalMcpassistantContentItemToContentItemResponse(v *mcpassistant.Content
 func marshalMcpassistantContentIconToContentIcon(v *mcpassistant.ContentIcon) *ContentIcon {
 	res := &ContentIcon{
 		Src:      v.Src,
-		MimeType: v.MimeType,
+		MIMEType: v.MIMEType,
 		Theme:    v.Theme,
 	}
 	if v.Sizes != nil {
@@ -570,6 +571,14 @@ func marshalMcpassistantElicitationFormParamsToElicitationFormParamsResponse(v *
 		Message:         v.Message,
 		RequestedSchema: v.RequestedSchema,
 	}
+	if v.Extensions != nil {
+		res.Extensions = make(map[string]json.RawMessage, len(v.Extensions))
+		for key, val := range v.Extensions {
+			tk := key
+			tv := val
+			res.Extensions[tk] = tv
+		}
+	}
 
 	return res
 }
@@ -581,6 +590,14 @@ func marshalMcpassistantElicitationURLParamsToElicitationURLParamsResponse(v *mc
 	res := &ElicitationURLParamsResponse{
 		Message: v.Message,
 		URL:     v.URL,
+	}
+	if v.Extensions != nil {
+		res.Extensions = make(map[string]json.RawMessage, len(v.Extensions))
+		for key, val := range v.Extensions {
+			tk := key
+			tv := val
+			res.Extensions[tk] = tv
+		}
 	}
 
 	return res

@@ -588,10 +588,10 @@ type ContentIcon struct {
 	// URI of the icon; decoding does not fetch it
 	Src *string `form:"src,omitempty" json:"src,omitempty" xml:"src,omitempty"`
 	// Optional image MIME type
-	MimeType *string `form:"mimeType,omitempty" json:"mimeType,omitempty" xml:"mimeType,omitempty"`
+	MIMEType *string `form:"mimeType,omitempty" json:"mimeType,omitempty" xml:"mimeType,omitempty"`
 	// Suggested dimensions or any for scalable icons
 	Sizes []string `form:"sizes,omitempty" json:"sizes,omitempty" xml:"sizes,omitempty"`
-	// Optional light or dark theme
+	// Optional light or dark display theme
 	Theme *string `form:"theme,omitempty" json:"theme,omitempty" xml:"theme,omitempty"`
 }
 
@@ -641,17 +641,21 @@ type InputRequestResponse struct {
 // types.
 type ElicitationFormParamsResponse struct {
 	// Non-sensitive information requested from the user
-	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	Message *string `json:"message,case:strict"`
 	// The flat form schema generated from accepted answer content
-	RequestedSchema json.RawMessage `form:"requestedSchema,omitempty" json:"requestedSchema,omitempty" xml:"requestedSchema,omitempty"`
+	RequestedSchema json.RawMessage `json:"requestedSchema,case:strict"`
+	// Additional protocol members preserved as JSON values
+	Extensions map[string]json.RawMessage `json:",embed"`
 }
 
 // ElicitationURLParamsResponse is used to define fields on response body types.
 type ElicitationURLParamsResponse struct {
 	// The external interaction the user is asked to approve
-	Message *string `form:"message,omitempty" json:"message,omitempty" xml:"message,omitempty"`
+	Message *string `json:"message,case:strict"`
 	// Absolute URL opened by the consenting host
-	URL *string `form:"url,omitempty" json:"url,omitempty" xml:"url,omitempty"`
+	URL *string `json:"url,case:strict"`
+	// Additional protocol members preserved as JSON values
+	Extensions map[string]json.RawMessage `json:",embed"`
 }
 
 // TaskCreatedResponse is used to define fields on response body types.

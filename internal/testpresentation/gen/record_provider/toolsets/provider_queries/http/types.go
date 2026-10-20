@@ -20,8 +20,6 @@ type (
 		RenderUI *bool `json:"render_ui,omitempty"`
 		// Show an interactive summary.
 		RenderSummary *bool `json:"render_summary,omitempty"`
-		// Session supplied by the caller metadata.
-		SessionID *string `json:"-"`
 		// Page selected by the execution caller.
 		PageToken *string `json:"page_token,omitempty"`
 	}
@@ -32,12 +30,6 @@ type (
 	ReadTextOnlyInputTransport struct {
 		// Record selection.
 		Query *string `json:"query"`
-		// Show an interactive card.
-		RenderUI *bool `json:"-"`
-		// Show an interactive summary.
-		RenderSummary *bool `json:"-"`
-		// Session supplied by the caller metadata.
-		SessionID *string `json:"-"`
 		// Page selected by the execution caller.
 		PageToken *string `json:"page_token,omitempty"`
 	}
@@ -65,8 +57,6 @@ type (
 		RenderUI *bool `json:"render_ui,omitempty"`
 		// Show an interactive summary.
 		RenderSummary *bool `json:"render_summary,omitempty"`
-		// Session supplied by the caller metadata.
-		SessionID *string `json:"-"`
 		// Page selected by the execution caller.
 		PageToken *string `json:"page_token,omitempty"`
 	}
