@@ -3,9 +3,14 @@ package codegen_test
 import (
 	"bytes"
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"path/filepath"
+	"strconv"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	codegen "goa.design/goa-ai/codegen/agent"
 	. "goa.design/goa-ai/dsl"
@@ -333,7 +338,46 @@ func TestBoundedResultGeneratesReplayContinuation(t *testing.T) {
 	require.NotEmpty(t, specs, "expected generated specs.go at %s", expectedPath)
 	require.Contains(t, specs, `SourceTool: tools.Ident("tools.search")`)
 	require.Contains(t, specs, `RetainedFields: []string{ "query",  }`)
-	require.Contains(t, specs, `ExecutionPayloadSchema:tools.RawJSON("{\"oneOf\":[`)
+	// Read the generated schema as JSON so field order cannot change which
+	// query and page contract this test checks.
+	generated, err := parser.ParseFile(token.NewFileSet(), expectedPath, specs, 0)
+	require.NoError(t, err)
+	composedSchemas := 0
+	ast.Inspect(generated, func(node ast.Node) bool {
+		field, ok := node.(*ast.KeyValueExpr)
+		if !ok {
+			return true
+		}
+		name, ok := field.Key.(*ast.Ident)
+		if !ok || name.Name != "ExecutionPayloadSchema" {
+			return true
+		}
+		call, ok := field.Value.(*ast.CallExpr)
+		require.True(t, ok)
+		require.Len(t, call.Args, 1)
+		literal, ok := call.Args[0].(*ast.BasicLit)
+		require.True(t, ok)
+		encoded, err := strconv.Unquote(literal.Value)
+		require.NoError(t, err)
+		var document struct {
+			Schema string           `json:"$schema"`
+			Type   string           `json:"type"`
+			OneOf  []map[string]any `json:"oneOf"` //nolint:tagliatelle // JSON Schema names this field oneOf.
+		}
+		require.NoError(t, json.Unmarshal([]byte(encoded), &document))
+		if len(document.OneOf) == 0 {
+			return false
+		}
+		composedSchemas++
+		assert.Equal(t, "https://json-schema.org/draft/2020-12/schema", document.Schema)
+		assert.Equal(t, "object", document.Type)
+		assert.Len(t, document.OneOf, 2)
+		for _, branch := range document.OneOf {
+			assert.NotContains(t, branch, "$schema")
+		}
+		return false
+	})
+	assert.Equal(t, 1, composedSchemas)
 	require.Contains(t, specs, `ExecutionPayloadSchema:tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"properties\":{\"cursor\":{\"type\":\"string\"},\"query\":{\"type\":\"string\"}},\"required\":[\"query\",\"cursor\"],\"type\":\"object\"}")`)
 	require.Contains(t, specs, `Schema:tools.RawJSON("{\"$schema\":\"https://json-schema.org/draft/2020-12/schema\",\"additionalProperties\":false,\"type\":\"object\"}")`)
 }
