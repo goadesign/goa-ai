@@ -97,10 +97,21 @@ func TestPublishedPaging(t *testing.T) {
 			require.True(t, ok)
 			assert.Equal(t, test.name, spec.Bounds.Paging.ContinueTool)
 			assert.Empty(t, spec.Bounds.Paging.SourceTool)
+			for _, payload := range []tools.TypeSpec{spec.Payload, spec.TextOnly.Payload} {
+				var modelSchema map[string]any
+				require.NoError(t, json.Unmarshal(payload.Schema, &modelSchema))
+				assert.NotContains(t, modelSchema, "oneOf")
+				if test.name != Empty {
+					properties := modelSchema["properties"].(map[string]any)
+					assert.Equal(t, "#/$defs/Selection", properties["selection"].(map[string]any)["$ref"])
+					assert.Contains(t, modelSchema["$defs"], "Selection")
+				}
+			}
 			for _, executionSchema := range [][]byte{spec.ExecutionPayloadSchema, spec.TextOnly.ExecutionSchema} {
 				var document struct {
 					Schema string `+"`json:\"$schema\"`"+`
 					Type string `+"`json:\"type\"`"+`
+					Definitions map[string]any `+"`json:\"$defs\"`"+`
 					OneOf []map[string]any `+"`json:\"oneOf\"`"+`
 				}
 				require.NoError(t, json.Unmarshal(executionSchema, &document))
@@ -109,6 +120,12 @@ func TestPublishedPaging(t *testing.T) {
 				require.Len(t, document.OneOf, 2)
 				for _, branch := range document.OneOf {
 					assert.NotContains(t, branch, "$schema")
+					assert.NotContains(t, branch, "$defs")
+				}
+				if test.name != Empty {
+					properties := document.OneOf[0]["properties"].(map[string]any)
+					assert.Equal(t, "#/$defs/query__Selection", properties["selection"].(map[string]any)["$ref"])
+					require.Contains(t, document.Definitions, "query__Selection")
 				}
 				composed, err := schema.PagingComposition(executionSchema, spec.Bounds.Paging.CursorField)
 				require.NoError(t, err)

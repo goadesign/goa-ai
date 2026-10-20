@@ -73,43 +73,63 @@ func validatePagingComposition(source, page *toolEntry) error {
 	return nil
 }
 
-// pagingExecutionSchema receives query and page schemas from the same JSON
-// Schema builder, declares their shared schema version at the combined root,
-// and updates local references so callers keep both original input shapes.
+// pagingExecutionSchema receives query and page schemas from the same builder.
+// It keeps their closed input branches and places named definitions at the shared
+// root. Separate name prefixes keep each branch's references and rules intact.
 func pagingExecutionSchema(query, page []byte) ([]byte, error) {
 	branches := make([]map[string]any, 2)
+	definitions := make(map[string]any)
 	for index, document := range [][]byte{query, page} {
 		if err := json.Unmarshal(document, &branches[index]); err != nil {
 			return nil, err
 		}
-		rebasePagingReferences(branches[index], fmt.Sprintf("#/oneOf/%d", index))
+		prefix := []string{"query__", "page__"}[index]
+		rebasePagingReferences(branches[index], prefix, fmt.Sprintf("#/oneOf/%d", index))
+		if branchDefinitions, exists := branches[index]["$defs"]; exists {
+			for name, definition := range branchDefinitions.(map[string]any) {
+				definitions[prefix+name] = definition
+			}
+		}
+		delete(branches[index], "$defs")
 	}
 	dialect := branches[0]["$schema"]
 	for _, branch := range branches {
-		// The query and page now sit under one document root. Declare their
-		// schema version there instead of repeating it in these two branches.
 		delete(branch, "$schema")
 	}
-	return json.Marshal(map[string]any{"$schema": dialect, "type": "object", "oneOf": branches})
+	combined := map[string]any{"$schema": dialect, "type": "object", "oneOf": branches}
+	if len(definitions) > 0 {
+		combined["$defs"] = definitions
+	}
+	return json.Marshal(combined)
 }
 
-// rebasePagingReferences keeps each embedded schema reference pointed at its
-// original branch after the two schemas share one root document.
-func rebasePagingReferences(value any, prefix string) {
-	switch typed := value.(type) {
-	case map[string]any:
-		for key, child := range typed {
-			if key == "$ref" {
-				if ref, ok := child.(string); ok && strings.HasPrefix(ref, "#/") {
-					typed[key] = prefix + ref[1:]
-				}
-			} else {
-				rebasePagingReferences(child, prefix)
+// rebasePagingReferences updates schema references after a branch moves into the
+// combined document. Only schema children are visited; authored examples and
+// default values remain data even when they contain a member named "$ref".
+func rebasePagingReferences(value any, definitionPrefix, branchPrefix string) {
+	schema, ok := value.(map[string]any)
+	if !ok {
+		return
+	}
+	for key, child := range schema {
+		switch key {
+		case "$ref":
+			ref := child.(string)
+			if strings.HasPrefix(ref, "#/$defs/") {
+				schema[key] = "#/$defs/" + definitionPrefix + strings.TrimPrefix(ref, "#/$defs/")
+			} else if strings.HasPrefix(ref, "#/") {
+				schema[key] = branchPrefix + ref[1:]
 			}
-		}
-	case []any:
-		for _, child := range typed {
-			rebasePagingReferences(child, prefix)
+		case "$defs", "properties":
+			for _, nested := range child.(map[string]any) {
+				rebasePagingReferences(nested, definitionPrefix, branchPrefix)
+			}
+		case "items", "additionalProperties":
+			rebasePagingReferences(child, definitionPrefix, branchPrefix)
+		case "oneOf", "anyOf", "allOf":
+			for _, nested := range child.([]any) {
+				rebasePagingReferences(nested, definitionPrefix, branchPrefix)
+			}
 		}
 	}
 }
