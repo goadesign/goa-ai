@@ -5,6 +5,7 @@ package registry
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -91,6 +92,54 @@ func BenchmarkCatalogDefinitionRead(b *testing.B) {
 				require.NoError(b, validatePayload(entry.Toolset.executionSchemas["tools.lookup"], []byte(`{}`)))
 			}
 			b.ReportMetric(float64(store.snapshotReads*len(definition.raw))/float64(b.N), "definition-B/op")
+		})
+	}
+}
+
+// BenchmarkReadCatalogToolset measures a warm bounded read through the public
+// service method, including fresh state checks, exact-byte hashing, and strict
+// decoding into an independent result. The in-memory store excludes Redis and
+// network time; all declarations and schema descriptions are synthetic.
+func BenchmarkReadCatalogToolset(b *testing.B) {
+	for _, test := range []struct {
+		name             string
+		tools            int
+		descriptionWords int
+	}{
+		{name: "small", tools: 1},
+		{name: "large", tools: 24, descriptionWords: 2048},
+	} {
+		b.Run(test.name, func(b *testing.B) {
+			input := testDefinitionToolset()
+			input.Tools = make([]*genregistry.ToolSchema, test.tools)
+			schema, err := json.Marshal(map[string]any{
+				"type": "object", "description": strings.Repeat("synthetic schema description ", test.descriptionWords),
+			})
+			require.NoError(b, err)
+			for i := range input.Tools {
+				tool := testDefinitionToolset().Tools[0]
+				tool.Name = fmt.Sprintf("tools.lookup_%d", i)
+				tool.PayloadSchema = schema
+				tool.ExecutionPayloadSchema = schema
+				tool.ResultSchema = schema
+				input.Tools[i] = tool
+			}
+			service, store := testBoundedCatalogService(b, input)
+			key := toolsetCatalogKey(input.Name)
+			stateBytes, definitionBytes := len(store.content[key]), len(store.definitions[key])
+			budget := int64(stateBytes + definitionBytes)
+			_, err = service.ReadCatalogToolset(b.Context(), input.Name, budget)
+			require.NoError(b, err)
+			b.ReportAllocs()
+			b.SetBytes(budget)
+			b.ResetTimer()
+			for b.Loop() {
+				result, err := service.ReadCatalogToolset(b.Context(), input.Name, budget)
+				require.NoError(b, err)
+				require.Len(b, result.Registration.Toolset.Tools, test.tools)
+			}
+			b.ReportMetric(float64(stateBytes), "state-B/op")
+			b.ReportMetric(float64(definitionBytes), "definition-B/op")
 		})
 	}
 }

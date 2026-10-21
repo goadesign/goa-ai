@@ -255,7 +255,10 @@ func (c *toolsetCatalog) snapshot(ctx context.Context, name string) (entry catal
 
 // decodeSnapshot validates the state/definition pair for both ordinary and
 // bounded reads. Neither path changes the persisted definition's encoding.
-func (c *toolsetCatalog) decodeSnapshot(ctx context.Context, name, raw, definitionRaw string, tokenRetired bool) (catalogEntry, error) {
+func (c *toolsetCatalog) decodeSnapshot(ctx context.Context, name, raw, definitionRaw string, tokenRetired bool) (_ catalogEntry, err error) {
+	ctx, span := otel.Tracer("goa.design/goa-ai/registry").Start(ctx, "toolregistry.catalog.snapshot.validate",
+		trace.WithAttributes(attribute.String("toolregistry.toolset", name)))
+	defer finishCatalogSpan(ctx, span, &err)
 	state, err := parseCatalogState(name, raw)
 	if err != nil {
 		return catalogEntry{}, err

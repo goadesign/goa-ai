@@ -11,6 +11,9 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 )
@@ -74,11 +77,25 @@ return {state, definition, tostring(retired), now[1], now[2]}
 // ReadCatalogToolset reads one record within a positive raw-byte budget and
 // returns its exact service health observation. It never supplies Agent-worker
 // availability or infers ownership for historical records.
-func (s *Service) ReadCatalogToolset(ctx context.Context, name string, rawByteBudget int64) (*CatalogToolset, error) {
+func (s *Service) ReadCatalogToolset(ctx context.Context, name string, rawByteBudget int64) (_ *CatalogToolset, err error) {
+	ctx, span := otel.Tracer("goa.design/goa-ai/registry").Start(ctx, "toolregistry.catalog.read",
+		trace.WithAttributes(attribute.String("toolregistry.toolset", name)))
+	defer finishCatalogSpan(ctx, span, &err)
 	if rawByteBudget <= 0 {
 		return nil, errors.New("catalog read requires a positive raw-byte budget")
 	}
-	snapshot, err := s.catalog.store.BoundedSnapshot(ctx, toolsetCatalogKey(name), rawByteBudget)
+	// Read fresh state, definition bytes, retirement history, and the clock
+	// together before using any retained validation.
+	snapshotCtx, snapshotSpan := otel.Tracer("goa.design/goa-ai/registry").Start(ctx, "toolregistry.catalog.snapshot.read",
+		trace.WithAttributes(attribute.String("toolregistry.toolset", name)))
+	snapshot, err := s.catalog.store.BoundedSnapshot(snapshotCtx, toolsetCatalogKey(name), rawByteBudget)
+	if err == nil {
+		snapshotSpan.SetAttributes(
+			attribute.Int("toolregistry.catalog.state_read_bytes", len(snapshot.state)),
+			attribute.Int("toolregistry.catalog.definition_read_bytes", len(snapshot.definition)),
+		)
+	}
+	finishCatalogSpan(snapshotCtx, snapshotSpan, &err)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +113,12 @@ func (s *Service) ReadCatalogToolset(ctx context.Context, name string, rawByteBu
 	if entry.Identity == nil {
 		return nil, ErrCatalogIdentityMissing
 	}
+	// Decode the checked bytes into a separate object so the caller can change
+	// its returned toolset without changing another read.
+	decodeCtx, decodeSpan := otel.Tracer("goa.design/goa-ai/registry").Start(ctx, "toolregistry.catalog.definition.decode",
+		trace.WithAttributes(attribute.String("toolregistry.toolset", name)))
 	toolset, err := entry.Toolset.decode(entry.RegisteredAt)
+	finishCatalogSpan(decodeCtx, decodeSpan, &err)
 	if err != nil {
 		return nil, err
 	}
