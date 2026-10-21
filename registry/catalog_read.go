@@ -113,15 +113,12 @@ func (s *Service) ReadCatalogToolset(ctx context.Context, name string, rawByteBu
 	if entry.Identity == nil {
 		return nil, ErrCatalogIdentityMissing
 	}
-	// Decode the checked bytes into a separate object so the caller can change
-	// its returned toolset without changing another read.
+	// Copy the prepared saved declaration so this reader owns its returned data.
+	// Fresh registration state and health still come from the current snapshot.
 	decodeCtx, decodeSpan := otel.Tracer("goa.design/goa-ai/registry").Start(ctx, "toolregistry.catalog.definition.decode",
 		trace.WithAttributes(attribute.String("toolregistry.toolset", name)))
-	toolset, err := entry.Toolset.decode(entry.RegisteredAt)
+	toolset := entry.Toolset.copyDeclaration(entry.RegisteredAt)
 	finishCatalogSpan(decodeCtx, decodeSpan, &err)
-	if err != nil {
-		return nil, err
-	}
 	result := &CatalogToolset{
 		Identity: *entry.Identity, NativeAgent: entry.NativeAgent,
 		Registration: &genregistry.ResolvedToolset{

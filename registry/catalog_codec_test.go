@@ -449,10 +449,8 @@ func TestCatalogDefinitionReadsObserveReplacement(t *testing.T) {
 	retired, err := store.Retired(ctx, first.RegistrationToken)
 	require.NoError(t, err)
 	assert.True(t, retired)
-	currentDefinition, err := current.Toolset.decode(current.RegisteredAt)
-	require.NoError(t, err)
-	firstDefinition, err := first.Toolset.decode(first.RegisteredAt)
-	require.NoError(t, err)
+	currentDefinition := current.Toolset.copyDeclaration(current.RegisteredAt)
+	firstDefinition := first.Toolset.copyDeclaration(first.RegisteredAt)
 	assert.Equal(t, replacementDefinitionTitle, currentDefinition.Tools[0].ConsumerContract.Title)
 	assert.Equal(t, "original", firstDefinition.Tools[0].ConsumerContract.Title)
 	assert.Equal(t, 2, store.definitionWrites)
@@ -475,8 +473,7 @@ func TestCatalogSameDefinitionNewAdmissionKeepsCurrentMetadata(t *testing.T) {
 	assert.NotEqual(t, first.RegistrationToken, current.RegistrationToken)
 	assert.NotEqual(t, first.RegisteredAt, current.RegisteredAt)
 	assert.Equal(t, next.RegisteredAt, current.RegisteredAt)
-	decoded, err := current.Toolset.decode(current.RegisteredAt)
-	require.NoError(t, err)
+	decoded := current.Toolset.copyDeclaration(current.RegisteredAt)
 	assert.Equal(t, next.RegisteredAt, decoded.RegisteredAt)
 	assert.Empty(t, current.Toolset.info.RegisteredAt)
 	assert.Equal(t, 1, store.definitionWrites)
@@ -684,8 +681,7 @@ func TestCatalogDefinitionConcurrentReadersAndPongs(t *testing.T) {
 		assert.Same(t, first.catalogDefinition, definition.catalogDefinition)
 		assert.Same(t, first.executionSchemas["tools.lookup"], definition.executionSchemas["tools.lookup"])
 	}
-	definition, err := first.decode("")
-	require.NoError(t, err)
+	definition := first.copyDeclaration("")
 	assert.Equal(t, "original", definition.Tools[0].ConsumerContract.Title)
 }
 
