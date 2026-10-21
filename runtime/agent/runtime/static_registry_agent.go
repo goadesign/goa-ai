@@ -111,7 +111,7 @@ func (c *RegistryCatalog) BindStaticAgent(registry string, expected []*genregist
 			return err
 		}
 	}
-	if err := c.requireCompiledRestore(registry, resolved, names); err != nil {
+	if _, err := c.restoreCompiledSelections(registry, resolved, names); err != nil {
 		return err
 	}
 	for _, name := range names {

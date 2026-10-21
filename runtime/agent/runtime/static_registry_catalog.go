@@ -80,36 +80,44 @@ func (c *RegistryCatalog) BindStaticService(registry string, expected *genregist
 			return err
 		}
 	}
-	if err := c.requireCompiledRestore(registry, resolved, names); err != nil {
+	// Read every saved selection before storing any of them, so a later failure
+	// leaves this activity's selected registrations and labels unchanged.
+	restored, err := c.restoreCompiledSelections(registry, resolved, names)
+	if err != nil {
 		return err
 	}
-	for _, name := range names {
-		declaration, err := resolved.Declaration(name)
+	for index, name := range names {
+		declaration, err := restored[index].Declaration(name)
 		if err != nil {
 			return err
 		}
-		c.selections[name] = registrySelection{registry: registry, resolution: resolved}
+		c.selections[name] = registrySelection{registry: registry, resolution: restored[index]}
 		c.labels[name] = slices.Clone(declaration.ConsumerContract.RequiredLabels)
 	}
 	return nil
 }
 
-// requireCompiledRestore checks that a call to each bound tool can be saved
-// without its declaration and restored from this definition's generated
-// declarations. Later workflow steps, paused runs, child agents, and later
-// turns restore saved calls the same way, so a definition generated without
-// registry declarations is rejected here, before any call is planned.
-func (c *RegistryCatalog) requireCompiledRestore(registry string, resolved *registrycontract.Resolution, names []tools.Ident) error {
-	for _, name := range names {
+// restoreCompiledSelections saves each bound tool's registration and reads it
+// with this definition's generated declarations. Missing or changed declarations
+// return an error before the caller changes its catalog. Results follow names
+// order, and each contains the called operation and its fixed paging partner.
+func (c *RegistryCatalog) restoreCompiledSelections(
+	registry string,
+	resolved *registrycontract.Resolution,
+	names []tools.Ident,
+) ([]*registrycontract.Resolution, error) {
+	restored := make([]*registrycontract.Resolution, len(names))
+	for index, name := range names {
 		binding, err := resolved.Select(registry, name)
 		if err != nil {
-			return err
+			return nil, err
 		}
-		if _, err := registrycontract.Read(binding, c.definition.registryDeclaration); err != nil {
-			return fmt.Errorf("tool %q cannot be restored from this agent's generated registry declarations; regenerate the agent: %w", name, err)
+		restored[index], err = registrycontract.Read(binding, c.definition.registryDeclaration)
+		if err != nil {
+			return nil, fmt.Errorf("tool %q cannot be restored from this agent's generated registry declarations; regenerate the agent: %w", name, err)
 		}
 	}
-	return nil
+	return restored, nil
 }
 
 // SelectedOperation returns an owned copy of the native operation retained by
