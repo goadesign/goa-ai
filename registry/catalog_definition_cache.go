@@ -8,6 +8,10 @@ import (
 	"crypto/sha256"
 	"fmt"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	internaladmission "goa.design/goa-ai/internal/toolregistry/admission"
 )
 
@@ -35,12 +39,19 @@ func catalogDefinitionDigest(raw string) [sha256.Size]byte {
 // Only one cold definition is decoded at a time, so concurrent requests cannot
 // create many large temporary parsing trees. Warm reads do not wait for it.
 // Canceled waiting reads return immediately.
-func (c *toolsetCatalog) validatedDefinition(ctx context.Context, name, raw string, nativeAgent bool) (*catalogDefinition, error) {
+func (c *toolsetCatalog) validatedDefinition(ctx context.Context, name, raw string, nativeAgent bool) (_ *catalogDefinition, err error) {
+	ctx, span := otel.Tracer("goa.design/goa-ai/registry").Start(ctx, "toolregistry.catalog.definition.validate",
+		trace.WithAttributes(
+			attribute.String("toolregistry.toolset", name),
+			attribute.Bool("toolregistry.catalog.definition_cache_hit", false),
+		))
+	defer finishCatalogSpan(ctx, span, &err)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	digest := catalogDefinitionDigest(raw)
 	if definition := c.cachedDefinition(name, digest, nativeAgent); definition != nil {
+		span.SetAttributes(attribute.Bool("toolregistry.catalog.definition_cache_hit", true))
 		return definition, nil
 	}
 	select {
@@ -53,6 +64,7 @@ func (c *toolsetCatalog) validatedDefinition(ctx context.Context, name, raw stri
 		return nil, err
 	}
 	if definition := c.cachedDefinition(name, digest, nativeAgent); definition != nil {
+		span.SetAttributes(attribute.Bool("toolregistry.catalog.definition_cache_hit", true))
 		return definition, nil
 	}
 	toolset, fingerprint, err := internaladmission.SavedToolsetFingerprint([]byte(raw))
