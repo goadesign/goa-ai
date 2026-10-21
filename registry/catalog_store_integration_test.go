@@ -17,6 +17,8 @@ import (
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 )
 
@@ -202,13 +204,24 @@ func TestRedisCatalogReportsBoundedOperationSizes(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, cold.RenewProvider(ctx, definition.info.Name, "provider", testIncarnationA, first.RegistrationToken, time.Minute))
 	seen := make(map[string]int)
+	spansByName := make(map[string]sdktrace.ReadOnlySpan)
 	for _, span := range recorder.Ended() {
 		seen[span.Name()]++
+		spansByName[span.Name()] = span
 		attributes := healthSpanAttributes(span)
 		assert.Equal(t, definition.info.Name, attributes["toolregistry.toolset"].AsString())
 		switch span.Name() {
 		case "toolregistry.catalog.definition.load":
 			assert.EqualValues(t, len(definition.raw), attributes["toolregistry.catalog.definition_read_bytes"].AsInt64())
+		case "toolregistry.catalog.snapshot.validate":
+			assert.Equal(t, codes.Ok, span.Status().Code)
+			assert.Empty(t, span.Events())
+		case "toolregistry.catalog.definition.validate":
+			cacheHit, present := attributes["toolregistry.catalog.definition_cache_hit"]
+			assert.True(t, present)
+			assert.False(t, cacheHit.AsBool())
+			assert.Equal(t, codes.Ok, span.Status().Code)
+			assert.Empty(t, span.Events())
 		case "toolregistry.catalog.state.update":
 			assert.Positive(t, attributes["toolregistry.catalog.state_write_bytes"].AsInt64())
 			assert.False(t, attributes["toolregistry.catalog.conditional_retry"].AsBool())
@@ -224,6 +237,17 @@ func TestRedisCatalogReportsBoundedOperationSizes(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 1, seen["toolregistry.catalog.definition.load"])
+	assert.Equal(t, 1, seen["toolregistry.catalog.snapshot.validate"])
+	assert.Equal(t, 1, seen["toolregistry.catalog.definition.validate"])
+	for child, parent := range map[string]string{
+		"toolregistry.catalog.snapshot.validate":   "toolregistry.catalog.definition.load",
+		"toolregistry.catalog.definition.validate": "toolregistry.catalog.snapshot.validate",
+	} {
+		require.Contains(t, spansByName, child)
+		require.Contains(t, spansByName, parent)
+		assert.Equal(t, spansByName[parent].SpanContext().SpanID(), spansByName[child].Parent().SpanID())
+		assert.Equal(t, spansByName[parent].SpanContext().TraceID(), spansByName[child].SpanContext().TraceID())
+	}
 	assert.Equal(t, 2, seen["toolregistry.catalog.state.update"])
 	assert.Equal(t, 2, seen["toolregistry.catalog.state.read"])
 }
