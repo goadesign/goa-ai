@@ -661,3 +661,51 @@ func TestEncodeMessages_AppendsSystemCacheCheckpoint(t *testing.T) {
 		t.Fatalf("second system block is not cache checkpoint")
 	}
 }
+
+func TestPrepareRequestPreservesMixedCallThinkingRestrictions(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		modelID string
+		wantErr string
+	}{
+		{name: "adaptive", modelID: "us.anthropic.claude-opus-4-7"},
+		{name: "manual", modelID: "anthropic.claude-3-7-sonnet", wantErr: "must start with thinking"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			messages := []*model.Message{
+				{Role: model.ConversationRoleAssistant, Parts: []model.Part{
+					model.ThinkingPart{Text: "Read the requested record.", Signature: "synthetic-signature", Final: true},
+					model.ToolUsePart{ID: "provider-call", Name: "records.lookup", Input: rawjson.Message(`{"query":"requested"}`)},
+				}},
+				{Role: model.ConversationRoleAssistant, Parts: []model.Part{
+					model.ToolUsePart{ID: "execution-call", Name: "records.lookup", Input: rawjson.Message(`{"query":"additional"}`)},
+				}},
+				{Role: model.ConversationRoleUser, Parts: []model.Part{
+					model.ToolResultPart{ToolUseID: "provider-call", Content: "first result"},
+					model.ToolResultPart{ToolUseID: "execution-call", Content: "second result"},
+				}},
+			}
+			require.NoError(t, transcript.ValidatePlannerTranscript(messages))
+			before, err := transcript.EncodeRunLogDelta(messages)
+			require.NoError(t, err)
+			client := &provider{defaultModel: test.modelID, maxTok: 8192}
+			parts, err := client.prepareRequest(&model.Request{
+				Messages: messages,
+				Tools: []*model.ToolDefinition{{
+					Name: "records.lookup", Description: "Look up a record.",
+					Input: mustBedrockToolInput(t, rawjson.Message(`{"type":"object"}`)),
+				}},
+				Thinking: &model.ThinkingOptions{Enable: true, BudgetTokens: 4096},
+			})
+			if test.wantErr != "" {
+				require.ErrorContains(t, err, test.wantErr)
+			} else {
+				require.NoError(t, err)
+				require.True(t, parts.thinking.adaptive)
+			}
+			after, err := transcript.EncodeRunLogDelta(messages)
+			require.NoError(t, err)
+			assert.Equal(t, before, after)
+		})
+	}
+}

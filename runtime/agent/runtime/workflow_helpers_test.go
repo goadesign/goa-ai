@@ -930,9 +930,10 @@ func TestAppendUserToolResults_ReplaysRetryableBookkeepingFailures(t *testing.T)
 	agentID := agent.Ident("agent-1")
 
 	call := ToolCall{
-		Name:       "workflow.progress.complete",
-		ToolCallID: "call-1",
-		Payload:    rawjson.Message(`{"title":"Final report"}`),
+		Name:            "workflow.progress.complete",
+		ToolCallID:      "call-1",
+		ModelToolCallID: "call-1",
+		Payload:         rawjson.Message(`{"title":"Final report"}`),
 	}
 	tr := &planner.ToolResult{
 		Name:       call.Name,
