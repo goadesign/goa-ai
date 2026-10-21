@@ -283,6 +283,9 @@ Custom stores must follow the [preparation ownership upgrade](docs/runtime.md#pr
   Paged operations retain each query and page branch's declared progress labels
   and result previews under the same public tool name. Regenerate callers after
   upgrading to install the matching templates.
+  Steps that combine provider-selected calls with extra planner-created calls
+  retain every call and result for the next planner activity, including after
+  suspension. Original provider messages and reasoning signatures stay unchanged.
   The in-memory engine supports local development.
 - **Policies and context.** Control permitted tools, call and recovery budgets,
   timing, history compression, prompt caching, and prompt overrides.

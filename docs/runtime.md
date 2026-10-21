@@ -2317,10 +2317,19 @@ code receives them. Caller-authored tools built with
 `model.AdvertisedToolInputFromSchema` compile their JSON Schema once and apply
 it at the same point. Requests reject tool definitions that carry schema bytes
 without an input validator.
-When `PlanResult` contains tool calls, the runtime
+When `PlanResult` contains calls from a provider response, the runtime
 matches their model-facing IDs, names, and payload bytes to exactly one
-candidate and persists only that response's assistant transcript. Mixed,
-copied, incomplete, or ambiguous provider outputs fail the planner activity.
+candidate and persists that response's unchanged assistant transcript. Calls
+from mixed, copied, incomplete, or ambiguous provider outputs fail the planner
+activity.
+A step may also contain additional planner-authored calls with no
+`ModelToolCallID`. The workflow appends declarations for those calls after the
+unchanged selected provider messages, using each call's execution ID for its
+`tool_use` / `tool_result` pair. It preserves every result, including bookkeeping
+results, without duplicating provider call IDs or inventing reasoning signatures.
+This uses the existing transcript records and suspension format; it does not
+repair previously failed runs. Provider-specific thinking restrictions still
+apply to planner-authored declarations.
 Selecting a provider message as `FinalResponse` also requires the result to
 preserve that response's complete tool-call set; a terminal result cannot
 silently discard a provider-requested action.

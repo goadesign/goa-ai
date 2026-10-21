@@ -51,8 +51,9 @@ func (r *Runtime) appendTranscriptMessages(
 }
 
 // appendSelectedModelResponse persists one accepted planner turn. Captured
-// provider responses are appended unchanged; planner-authored turns are built
-// once from the result's domain values. responseID becomes the stable identity
+// provider responses are appended unchanged, followed by declarations for any
+// additional planner-authored calls. Turns without a provider response are built
+// from the result's domain values. responseID becomes the stable identity
 // of the exact assistant messages emitted after the append succeeds.
 func (r *Runtime) appendSelectedModelResponse(
 	ctx context.Context,
@@ -73,6 +74,21 @@ func (r *Runtime) appendSelectedModelResponse(
 		if err != nil {
 			return err
 		}
+	} else {
+		// Captured provider messages already declare model-authored calls.
+		// Declare only the additional calls from planner code so every result
+		// has its own matching call without changing signed provider content.
+		additional := &PlanResult{}
+		for _, call := range result.ToolCalls {
+			if call.ModelToolCallID == "" {
+				additional.ToolCalls = append(additional.ToolCalls, call)
+			}
+		}
+		declarations, err := plannerAuthoredResponseMessages(additional)
+		if err != nil {
+			return err
+		}
+		messages = append(messages, declarations...)
 	}
 	if len(messages) == 0 {
 		return nil
@@ -119,8 +135,8 @@ func (l *workflowLoop) commitSelectedModelResponse(result *PlanResult) error {
 	return nil
 }
 
-// plannerAuthoredResponseMessages builds the transcript shape for a result
-// that did not select a provider response.
+// plannerAuthoredResponseMessages builds assistant messages from planner-authored
+// results, including additional calls that follow a captured provider response.
 func plannerAuthoredResponseMessages(result *PlanResult) ([]*model.Message, error) {
 	if result == nil {
 		return nil, nil

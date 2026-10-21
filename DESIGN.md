@@ -498,7 +498,10 @@ request a deterministic execution ID from the run, turn, attempt, tool, and
 batch position. It rejects a provider ID that does not belong to the selected
 model response. When planner code compiles model output into different
 executable intent, the runtime retains the original model name and payload
-separately for the transcript.
+separately for the transcript. When the same step also contains planner-authored
+calls, the runtime appends their declarations after the unchanged provider
+messages. Their execution IDs identify their matching results; they never
+reuse a provider call ID or copy provider reasoning or signatures.
 The [tool-call ID upgrade requirements](docs/runtime.md#tool-call-id-upgrade)
 describe worker replacement when the execution-ID encoding changes.
 
