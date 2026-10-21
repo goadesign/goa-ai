@@ -354,7 +354,7 @@ func TestRecoveryCatalogAndMixedFailureContracts(t *testing.T) {
 	rt := New(newTestStore())
 	seedTestToolSpecs(rt, search, list)
 	assert.Equal(t, []tools.Ident{list.Name}, rt.recoveryUnavailableTools("", outputs))
-	reminders, err := rt.recoveryReminders(outputs)
+	reminders, err := rt.recoveryReminders("", outputs)
 	require.NoError(t, err)
 	require.Len(t, reminders, 3)
 	assert.Contains(t, reminders[0].Text, "remains available")

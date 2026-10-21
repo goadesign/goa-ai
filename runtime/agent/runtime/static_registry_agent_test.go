@@ -237,6 +237,34 @@ func TestStaticAgentCheckpointRetainsConcreteResultsAfterReplacement(t *testing.
 	assert.Equal(t, "revision/1", retained.Registered.Toolset.Tools[0].ConsumerContract.Agent.Configuration)
 }
 
+// TestStaticAgentRecoveryRemindersReadConsumerDeclarations covers a resumed
+// turn after a compiled Agent tool failed. The saved call keeps only a
+// reference to its declaration, so the failure reminder must read the
+// consuming agent's generated declarations and list the tool's input fields.
+func TestStaticAgentRecoveryRemindersReadConsumerDeclarations(t *testing.T) {
+	rt, catalog, expected, selected := staticAgentCatalog(t)
+	require.NoError(t, catalog.BindStaticAgent(testRegistryName, expected, selected, genrecords.Read))
+	binding, err := catalog.selections[genrecords.Read].resolution.Select(testRegistryName, genrecords.Read)
+	require.NoError(t, err)
+	failed := &planner.ToolOutput{
+		Name:       genrecords.Read,
+		ToolCallID: "call-1",
+		Registry:   binding,
+		Failure: &planner.ToolFailure{
+			Kind:     planner.FailureInternal,
+			Error:    planner.NewToolError("agent tool execution failed"),
+			Recovery: planner.RecoveryDirective{Action: planner.RecoveryFinish},
+		},
+	}
+
+	reminders, err := rt.recoveryReminders(catalog.definition.route.ID, []*planner.ToolOutput{failed})
+
+	require.NoError(t, err)
+	require.Len(t, reminders, 1)
+	assert.Equal(t, "tool_recovery.call-1", reminders[0].ID)
+	assert.Contains(t, reminders[0].Text, "query")
+}
+
 func TestStaticAgentBindingDoesNotCaptureAnotherAgentsDynamicCall(t *testing.T) {
 	rt, catalog, expected, selected := staticAgentCatalog(t)
 	require.NoError(t, catalog.BindStaticAgent(testRegistryName, expected, selected, genrecords.Read))
