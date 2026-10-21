@@ -224,7 +224,7 @@ func TestGetRunSnapshotAcrossStoredContinuations(t *testing.T) {
 	admitRunForTest(t, store, session.RunMeta{RunID: "original", Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.
 		RunExecutorBranchAgent("worker"))}, SessionID: "session", Status: session.RunStatusRunning})
 	base := workflowConversation{RunContext: run.Context{RunID: "original", SessionID: "session"}}
-	require.NoError(t, rt.appendSelectedModelResponse(ctx, "worker", &base, "turn", "response-original", nil, []*model.Message{assistantTextMsg("Accepted work")}))
+	require.NoError(t, rt.appendSelectedModelResponse(ctx, "worker", &base, "turn", "response-original", &PlanResult{}, []*model.Message{assistantTextMsg("Accepted work")}))
 	_, err := store.AppendRunRecord(ctx, snapshotEvents(t, hooks.NewToolCallScheduledEvent("original", genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("worker"))}, "session", "records.lookup", "pending", nil, "", "", 0))[0])
 	require.NoError(t, err)
 	for _, pair := range [][2]string{{"original", "middle"}, {"middle", "current"}} {
@@ -258,7 +258,7 @@ func TestGetRunSnapshotAcrossStoredContinuations(t *testing.T) {
 			Status: session.RunStatusRunning, Labels: map[string]string{"generation": pair[1]},
 		}, pair[0])
 		base = workflowConversation{RunContext: run.Context{RunID: pair[1], SessionID: "session"}}
-		require.NoError(t, rt.appendSelectedModelResponse(ctx, "worker", &base, "turn", "response-"+pair[1], nil, []*model.Message{assistantTextMsg("Continuing work")}))
+		require.NoError(t, rt.appendSelectedModelResponse(ctx, "worker", &base, "turn", "response-"+pair[1], &PlanResult{}, []*model.Message{assistantTextMsg("Continuing work")}))
 		_, err = store.AppendRunRecord(ctx, snapshotEvents(t, hooks.NewToolCallUpdatedEvent(pair[1], genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("worker"))}, "session", "pending", 2))[0])
 		require.NoError(t, err)
 	}
