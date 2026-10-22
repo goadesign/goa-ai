@@ -920,9 +920,15 @@ continuations restore their native checkpoint without this transformation.
 
 Initial and one-shot calls express each launch setting through `WithTaskQueue`,
 `WithMemo`, or `WithSearchAttributes`. Continuations take one
-`runtime.WorkflowOptions` value because their other arguments identify the
-saved run and its typed answer. The value configures only the new engine start;
-it never becomes workflow input or changes the saved continuation state.
+`runtime.WorkflowOptions` value on Client preparation methods because their
+other arguments identify the saved run and its typed answer. Runtime
+`StartToolContinuation` and `EnsureToolContinuationCompletion` instead require
+an explicit `map[string]any` Memo argument. Each caller chooses metadata for
+that successor workflow; the runtime does not copy predecessor Memo. These
+settings configure only the new engine start and never become workflow input.
+The published request includes the encoded Memo, and a retry with a changed
+answer or Memo returns `storage.ErrSeedConflict` without replacing saved bytes.
+Passing `nil` retains empty Memo, including for requests published without it.
 
 Preparation requires the owning Store in caller processes. It uploads bounded,
 ordered history records followed by the complete compiled engine request. One

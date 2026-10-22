@@ -140,7 +140,7 @@ func TestOneShotContinuationCompletesExactNativeInvocation(t *testing.T) {
 				require.NoError(t, prepareErr)
 				successor, err = client.StartPrepared(t.Context(), prepared)
 			} else {
-				successor, err = rt.StartToolContinuation(t.Context(), originalID, "successor", response)
+				successor, err = rt.StartToolContinuation(t.Context(), originalID, "successor", response, nil)
 			}
 			require.NoError(t, err)
 			output, err := successor.Wait(t.Context())
@@ -156,7 +156,7 @@ func TestOneShotContinuationCompletesExactNativeInvocation(t *testing.T) {
 			prior, err := rt.Store.LoadRun(t.Context(), originalID)
 			require.NoError(t, err)
 			assert.Equal(t, session.ContinuedSuspension{RunID: "successor"}, prior.SuspensionResolution)
-			duplicate, err := rt.StartToolContinuation(t.Context(), originalID, "duplicate", response)
+			duplicate, err := rt.StartToolContinuation(t.Context(), originalID, "duplicate", response, nil)
 			if err == nil {
 				_, err = duplicate.Wait(t.Context())
 			}
@@ -177,16 +177,16 @@ func TestOneShotContinuationCompletesExactNativeInvocation(t *testing.T) {
 			beforeRecords, err := rt.Store.ListRunRecords(t.Context(), "successor", "", 100)
 			require.NoError(t, err)
 			for range 2 {
-				_, err = rt.StartToolContinuation(t.Context(), originalID, "successor", response)
+				_, err = rt.StartToolContinuation(t.Context(), originalID, "successor", response, nil)
 				require.NoError(t, err)
-				require.NoError(t, rt.EnsureToolContinuationCompletion(t.Context(), originalID, "successor", response))
+				require.NoError(t, rt.EnsureToolContinuationCompletion(t.Context(), originalID, "successor", response, nil))
 			}
 			afterRecords, err := rt.Store.ListRunRecords(t.Context(), "successor", "", 100)
 			require.NoError(t, err)
 			assert.Equal(t, beforeRecords, afterRecords)
-			_, err = rt.StartToolContinuation(t.Context(), originalID, "successor", &api.PendingInputResponse{Clarification: &api.ClarificationAnswer{ID: "question", Answer: "changed answer"}})
+			_, err = rt.StartToolContinuation(t.Context(), originalID, "successor", &api.PendingInputResponse{Clarification: &api.ClarificationAnswer{ID: "question", Answer: "changed answer"}}, nil)
 			require.ErrorIs(t, err, storage.ErrSeedConflict)
-			_, err = rt.StartToolContinuation(t.Context(), originalID, "successor", &api.PendingInputResponse{Clarification: &api.ClarificationAnswer{ID: "question", Answer: "record A", Labels: map[string]string{"responder": "operator-2"}}})
+			_, err = rt.StartToolContinuation(t.Context(), originalID, "successor", &api.PendingInputResponse{Clarification: &api.ClarificationAnswer{ID: "question", Answer: "record A", Labels: map[string]string{"responder": "operator-2"}}}, nil)
 			require.ErrorIs(t, err, storage.ErrSeedConflict)
 			assert.Equal(t, 1, starts)
 			assert.Equal(t, 1, resumes)

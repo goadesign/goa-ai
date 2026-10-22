@@ -498,7 +498,7 @@ func TestRegisteredContinuationCancellationStoresOneIntent(t *testing.T) {
 				output, err := handle.Wait(t.Context())
 				require.NoError(t, err)
 				require.NotNil(t, output.Suspension)
-				request, err := rt.prepareOperationContinuationRequest(t.Context(), "service-root", "cleanup", &api.RunContinuationInput{Cancellation: &api.CancellationRequest{RunID: "service-root", Reason: reason}})
+				request, err := rt.prepareOperationContinuationRequest(t.Context(), "service-root", "cleanup", &api.RunContinuationInput{Cancellation: &api.CancellationRequest{RunID: "service-root", Reason: reason}}, nil)
 				require.NoError(t, err)
 				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()

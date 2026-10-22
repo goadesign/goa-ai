@@ -15,10 +15,12 @@ import (
 	"goa.design/goa-ai/runtime/agent/storage/lifecycle"
 )
 
-// StartToolContinuation submits an answer already durably owned by the calling
-// service. The saved predecessor supplies the original operation and identity.
-func (r *Runtime) StartToolContinuation(ctx context.Context, predecessorRunID, runID string, response *api.PendingInputResponse) (engine.WorkflowHandle, error) {
-	request, err := r.prepareOperationContinuationRequest(ctx, predecessorRunID, runID, &api.RunContinuationInput{Response: response})
+// StartToolContinuation submits an answer and the successor workflow Memo
+// already durably owned by the calling service. The saved predecessor supplies
+// the original operation and identity; Memo is chosen separately for each successor.
+// Passing nil stores empty Memo. A changed answer or Memo is rejected on recovery.
+func (r *Runtime) StartToolContinuation(ctx context.Context, predecessorRunID, runID string, response *api.PendingInputResponse, memo map[string]any) (engine.WorkflowHandle, error) {
+	request, err := r.prepareOperationContinuationRequest(ctx, predecessorRunID, runID, &api.RunContinuationInput{Response: response}, memo)
 	if err != nil {
 		return nil, err
 	}
@@ -26,9 +28,10 @@ func (r *Runtime) StartToolContinuation(ctx context.Context, predecessorRunID, r
 }
 
 // EnsureToolContinuationCompletion delivers the engine outcome for the exact
-// saved successor. Durable workers call it until storage owns the terminal state.
-func (r *Runtime) EnsureToolContinuationCompletion(ctx context.Context, predecessorRunID, runID string, response *api.PendingInputResponse) error {
-	request, err := r.prepareOperationContinuationRequest(ctx, predecessorRunID, runID, &api.RunContinuationInput{Response: response})
+// saved successor, including its caller-supplied Memo. Durable workers call it
+// until storage owns the terminal state. A changed answer or Memo is rejected.
+func (r *Runtime) EnsureToolContinuationCompletion(ctx context.Context, predecessorRunID, runID string, response *api.PendingInputResponse, memo map[string]any) error {
+	request, err := r.prepareOperationContinuationRequest(ctx, predecessorRunID, runID, &api.RunContinuationInput{Response: response}, memo)
 	if err != nil {
 		return err
 	}
@@ -37,7 +40,11 @@ func (r *Runtime) EnsureToolContinuationCompletion(ctx context.Context, predeces
 
 // prepareOperationContinuationRequest recovers published bytes before reading
 // the suspended provider state, so retries cannot select new execution values.
-func (r *Runtime) prepareOperationContinuationRequest(ctx context.Context, predecessorRunID, runID string, continuation *api.RunContinuationInput) (engine.WorkflowStartRequest, error) {
+func (r *Runtime) prepareOperationContinuationRequest(ctx context.Context, predecessorRunID, runID string, continuation *api.RunContinuationInput, memo map[string]any) (engine.WorkflowStartRequest, error) {
+	launch, err := encodeWorkflowLaunch(WorkflowOptions{Memo: memo})
+	if err != nil {
+		return engine.WorkflowStartRequest{}, err
+	}
 	owner, err := r.Store.LoadRun(ctx, predecessorRunID)
 	if err != nil {
 		return engine.WorkflowStartRequest{}, err
@@ -60,7 +67,9 @@ func (r *Runtime) prepareOperationContinuationRequest(ctx context.Context, prede
 		if accepted.Seed.Declaration.PredecessorRunID != predecessorRunID || input.RunID != runID || !reflect.DeepEqual(input.Subject, owner.Subject) || input.SessionID != owner.SessionID || input.SeedEndID != accepted.Seed.EndID || input.Continuation == nil {
 			return engine.WorkflowStartRequest{}, storage.ErrSeedConflict
 		}
-		if err := comparePreparedContinuation(prepared, continuation); err != nil {
+		candidate := prepared
+		candidate.Request.Memo = launch.memo
+		if err := comparePreparedContinuation(candidate, continuation); err != nil {
 			return engine.WorkflowStartRequest{}, err
 		}
 		if _, service := owner.Subject.Executor.AsServiceTool(); service {
@@ -105,7 +114,8 @@ func (r *Runtime) prepareOperationContinuationRequest(ctx context.Context, prede
 		if err != nil {
 			return engine.WorkflowStartRequest{}, err
 		}
-		request, err := prepareRunWithDefinition(input, workflowLaunchSettings{rootExecutionTarget: target}, definition, owner.SessionID != "")
+		launch.rootExecutionTarget = target
+		request, err := prepareRunWithDefinition(input, launch, definition, owner.SessionID != "")
 		if err != nil {
 			return engine.WorkflowStartRequest{}, err
 		}
@@ -129,7 +139,7 @@ func (r *Runtime) prepareOperationContinuationRequest(ctx context.Context, prede
 	if _, _, err := restoreRegisteredRoot(input); err != nil {
 		return engine.WorkflowStartRequest{}, err
 	}
-	request := engine.WorkflowStartRequest{ID: runID, Workflow: registeredRootWorkflow, TaskQueue: checkpoint.Queue, Input: input, RootExecutionTarget: target}
+	request := engine.WorkflowStartRequest{ID: runID, Workflow: registeredRootWorkflow, TaskQueue: checkpoint.Queue, Input: input, Memo: launch.memo, RootExecutionTarget: target}
 	prepared, err := startrecipe.NewPreparedRequest("", request, "")
 	if err != nil {
 		return engine.WorkflowStartRequest{}, err

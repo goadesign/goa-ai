@@ -47,19 +47,21 @@ func TestAcceptedRootTargetRetainsNativeContinuationAndPublicPreparation(t *test
 			}
 			rt := New(store, WithEngine(backend), WithAcceptedRootWorkflowTarget(read))
 			response := directConsumerResponse(rawjson.Message(`1`))
+			memo := map[string]any{"step": "answer"}
 			if publicClient {
 				client := rt.MustClientFor(definition)
-				prepared, err := client.PrepareContinuation(t.Context(), "session-1", "run-1", "run-2", "turn-2", response, WorkflowOptions{})
+				prepared, err := client.PrepareContinuation(t.Context(), "session-1", "run-1", "run-2", "turn-2", response, WorkflowOptions{Memo: memo})
 				require.NoError(t, err)
 				_, err = client.StartPrepared(t.Context(), prepared)
 				require.NoError(t, err)
 			} else {
-				_, err := rt.StartToolContinuation(t.Context(), "run-1", "run-2", response)
+				_, err := rt.StartToolContinuation(t.Context(), "run-1", "run-2", response, memo)
 				require.NoError(t, err)
 			}
 			first, err := startrecipe.SnapshotRequest(backend.last)
 			require.NoError(t, err)
 			assert.Equal(t, selected, first.Request.RootExecutionTarget)
+			assert.Equal(t, "answer", decodePreparedMemo[string](t, first.Request.Memo, "step"))
 			assert.Equal(t, 1, reads)
 			selected.BuildID = "build-b"
 			unavailable := errors.New("accepted root owner unavailable")
@@ -69,18 +71,18 @@ func TestAcceptedRootTargetRetainsNativeContinuationAndPublicPreparation(t *test
 			}))
 			if publicClient {
 				client := restarted.MustClientFor(definition)
-				prepared, err := client.PrepareContinuation(t.Context(), "session-1", "run-1", "run-2", "turn-2", response, WorkflowOptions{})
+				prepared, err := client.PrepareContinuation(t.Context(), "session-1", "run-1", "run-2", "turn-2", response, WorkflowOptions{Memo: memo})
 				require.NoError(t, err)
 				_, err = client.StartPrepared(t.Context(), prepared)
 				require.NoError(t, err)
-				_, err = client.PrepareContinuation(t.Context(), "session-1", "run-1", "run-2", "turn-2", directConsumerResponse(rawjson.Message(`2`)), WorkflowOptions{})
+				_, err = client.PrepareContinuation(t.Context(), "session-1", "run-1", "run-2", "turn-2", directConsumerResponse(rawjson.Message(`2`)), WorkflowOptions{Memo: memo})
 				require.ErrorIs(t, err, storage.ErrSeedConflict)
 			} else {
-				_, err := restarted.StartToolContinuation(t.Context(), "run-1", "run-2", response)
+				_, err := restarted.StartToolContinuation(t.Context(), "run-1", "run-2", response, memo)
 				require.NoError(t, err)
 				completion := &completionOnlyEngine{completion: engine.RunCompletion{Status: engine.RunStatusRunning, StartRequestDigest: first.Digest}}
 				restarted.Engine = completion
-				require.ErrorIs(t, restarted.EnsureToolContinuationCompletion(t.Context(), "run-1", "run-2", response), ErrRunCompletionNotReady)
+				require.ErrorIs(t, restarted.EnsureToolContinuationCompletion(t.Context(), "run-1", "run-2", response, memo), ErrRunCompletionNotReady)
 			}
 			again, err := startrecipe.SnapshotRequest(backend.last)
 			require.NoError(t, err)
@@ -105,7 +107,7 @@ func TestAcceptedRootTargetNativeCancellationUsesOriginalDeclaration(t *testing.
 	assert.Equal(t, target, launch.rootExecutionTarget)
 	request, err := rt.prepareOperationContinuationRequest(t.Context(), "run-1", "cancel-run", &api.RunContinuationInput{
 		Cancellation: &api.CancellationRequest{RunID: "run-1", Reason: "user_requested"},
-	})
+	}, nil)
 	require.NoError(t, err)
 	assert.Equal(t, target, request.RootExecutionTarget)
 }
@@ -122,7 +124,7 @@ func TestAcceptedRootTargetOwnerFailureAndExplicitUnversioned(t *testing.T) {
 				}
 				return nil, nil
 			}))
-			_, err := rt.StartToolContinuation(t.Context(), "run-1", "run-2", directConsumerResponse(rawjson.Message(`1`)))
+			_, err := rt.StartToolContinuation(t.Context(), "run-1", "run-2", directConsumerResponse(rawjson.Message(`1`)), nil)
 			if fail {
 				require.ErrorIs(t, err, unavailable)
 				assert.Zero(t, backend.startCalls)

@@ -142,7 +142,7 @@ func TestRuntimeDirectContinuationRecoversExactRequest(t *testing.T) {
 			response := directConsumerResponse(rawjson.Message(`9007199254740993`))
 			backend := &stubEngine{}
 			rt := New(store, WithEngine(backend))
-			_, err = rt.StartToolContinuation(t.Context(), "run-1", "run-2", response)
+			_, err = rt.StartToolContinuation(t.Context(), "run-1", "run-2", response, nil)
 			require.NoError(t, err)
 			first, err := startrecipe.SnapshotRequest(backend.last)
 			require.NoError(t, err)
@@ -158,25 +158,25 @@ func TestRuntimeDirectContinuationRecoversExactRequest(t *testing.T) {
 			assert.Empty(t, actual.Results[0].Blocks)
 			assert.Equal(t, suspension, first.Request.Input.Continuation.Suspension)
 			restarted := New(store, WithEngine(backend))
-			_, err = restarted.StartToolContinuation(t.Context(), "run-1", "run-2", response)
+			_, err = restarted.StartToolContinuation(t.Context(), "run-1", "run-2", response, nil)
 			require.NoError(t, err)
 			again, err := startrecipe.SnapshotRequest(backend.last)
 			require.NoError(t, err)
 			assert.Equal(t, first, again)
-			_, err = restarted.StartToolContinuation(t.Context(), "run-1", "run-2", directConsumerResponse(rawjson.Message(`2`)))
+			_, err = restarted.StartToolContinuation(t.Context(), "run-1", "run-2", directConsumerResponse(rawjson.Message(`2`)), nil)
 			require.ErrorIs(t, err, storage.ErrSeedConflict)
 			assert.Equal(t, 2, backend.startCalls)
 			cancel := &api.RunContinuationInput{Cancellation: &api.CancellationRequest{RunID: "run-1", Reason: "owner-requested-stop"}}
-			cancellation, err := restarted.prepareOperationContinuationRequest(t.Context(), "run-1", "cancel-run", cancel)
+			cancellation, err := restarted.prepareOperationContinuationRequest(t.Context(), "run-1", "cancel-run", cancel, nil)
 			require.NoError(t, err)
-			replayedCancellation, err := restarted.prepareOperationContinuationRequest(t.Context(), "run-1", "cancel-run", cancel)
+			replayedCancellation, err := restarted.prepareOperationContinuationRequest(t.Context(), "run-1", "cancel-run", cancel, nil)
 			require.NoError(t, err)
 			assert.Equal(t, cancellation, replayedCancellation)
 			for _, changed := range []*api.CancellationRequest{
 				{RunID: "different-run", Reason: "owner-requested-stop"},
 				{RunID: "run-1", Reason: "different-reason"},
 			} {
-				_, err = restarted.prepareOperationContinuationRequest(t.Context(), "run-1", "cancel-run", &api.RunContinuationInput{Cancellation: changed})
+				_, err = restarted.prepareOperationContinuationRequest(t.Context(), "run-1", "cancel-run", &api.RunContinuationInput{Cancellation: changed}, nil)
 				require.ErrorIs(t, err, storage.ErrSeedConflict)
 			}
 
@@ -193,7 +193,7 @@ func TestRuntimeDirectContinuationRecoversExactRequest(t *testing.T) {
 			captured := &earlyTerminalCaptureStore{Store: store.Store}
 			repair := New(captured, WithEngine(completion))
 			for range 2 {
-				require.NoError(t, repair.EnsureToolContinuationCompletion(t.Context(), "run-1", "run-2", response))
+				require.NoError(t, repair.EnsureToolContinuationCompletion(t.Context(), "run-1", "run-2", response, nil))
 			}
 			assert.Zero(t, completion.starts)
 			require.NotNil(t, captured.terminal)

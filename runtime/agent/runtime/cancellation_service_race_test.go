@@ -101,7 +101,7 @@ func TestServiceCancellationFollowsAnswerAfterLosingAttemptCloses(t *testing.T) 
 					return nil
 				}
 				var err error
-				answer, err = runtime.StartToolContinuation(ctx, "service-root", "answer", &api.PendingInputResponse{MCP: &api.MCPInputResponse{ToolCallID: "service-root", Responses: map[string]json.RawMessage{"choice": json.RawMessage(`{"action":"accept","content":{}}`)}}})
+				answer, err = runtime.StartToolContinuation(ctx, "service-root", "answer", &api.PendingInputResponse{MCP: &api.MCPInputResponse{ToolCallID: "service-root", Responses: map[string]json.RawMessage{"choice": json.RawMessage(`{"action":"accept","content":{}}`)}}}, nil)
 				if err != nil {
 					return err
 				}
