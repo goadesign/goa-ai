@@ -5,6 +5,7 @@ package jsoncodec
 
 import (
 	"fmt"
+	"path/filepath"
 
 	"goa.design/goa-ai/codegen/internal/codec"
 	"goa.design/goa-ai/codegen/internal/jsonshape"
@@ -79,12 +80,16 @@ func NewPlan(generation *codegen.Generation, services *service.Plan) (*Plan, err
 	return plan, nil
 }
 
-// Files adds codec declarations to an existing file in each original package.
-// Its header supplies the actual package name and receives the planned imports;
-// no codec directory or filename is reserved.
+// Files adds codec declarations to existing files in each original package.
+// Each recipient file's header supplies the actual package name and receives the
+// planned imports; no codec directory or filename is reserved.
 func (p *Plan) Files(files []*codegen.File) ([]*codegen.File, error) {
-	owners := make(map[*codegen.GeneratedPackage]*codegen.File)
-	headers := make(map[*codegen.GeneratedPackage]*codegen.SectionTemplate)
+	type fileTarget struct {
+		file   *codegen.File
+		header *codegen.SectionTemplate
+	}
+	const maxCodecShards = 16
+	owners := make(map[*codegen.GeneratedPackage][]fileTarget)
 	for _, file := range files {
 		// Earlier plugins may return empty entries; Goa omits them when it
 		// assembles the final files.
@@ -92,24 +97,28 @@ func (p *Plan) Files(files []*codegen.File) ([]*codegen.File, error) {
 			continue
 		}
 		owner, ok := p.generation.PackageForFile(file.Path)
-		if !ok || owners[owner] != nil {
+		if !ok {
 			continue
 		}
 		for _, section := range file.SectionTemplates {
 			if section.Name != sourceHeader {
 				continue
 			}
-			owners[owner], headers[owner] = file, section
+			owners[owner] = append(owners[owner], fileTarget{file: file, header: section})
 			break
 		}
 	}
 	for _, pkg := range p.packages {
-		file, exists := owners[pkg.owner]
-		if !exists {
+		targets := owners[pkg.owner]
+		if len(targets) == 0 {
 			return nil, fmt.Errorf("JSON codec owner %q has no generated Go file", pkg.owner.ImportPath())
 		}
-		header := headers[pkg.owner]
-		packageName := header.Data.(map[string]any)["Pkg"].(string)
+		if filepath.Base(targets[0].file.Path) == "service.go" {
+			targets = targets[:1]
+		} else if len(targets) > maxCodecShards {
+			targets = targets[:maxCodecShards]
+		}
+		packageName := targets[0].header.Data.(map[string]any)["Pkg"].(string)
 		for _, value := range pkg.values {
 			layout := value.layout.Link(pkg.owner.ImportPath(), pkg.owner.ImportName)
 			context := &codegen.AttributeContext{
@@ -128,15 +137,30 @@ func (p *Plan) Files(files []*codegen.File) ([]*codegen.File, error) {
 		if err != nil {
 			return nil, err
 		}
+		var (
+			plannedImports []*codegen.ImportSpec
+			codecSections  []*codegen.SectionTemplate
+		)
 		for _, contribution := range generated {
 			for _, section := range contribution.SectionTemplates {
 				if section.Name == sourceHeader {
 					imports := section.Data.(map[string]any)["Imports"].([]*codegen.ImportSpec)
-					codegen.AddImport(header, imports...)
+					plannedImports = append(plannedImports, imports...)
 					continue
 				}
-				file.SectionTemplates = append(file.SectionTemplates, section)
+				codecSections = append(codecSections, section)
 			}
+		}
+		if len(codecSections) == 0 {
+			continue
+		}
+		shardCount := min(len(targets), len(codecSections))
+		for i := range shardCount {
+			codegen.AddImport(targets[i].header, plannedImports...)
+		}
+		for i, section := range codecSections {
+			target := targets[i%shardCount].file
+			target.SectionTemplates = append(target.SectionTemplates, section)
 		}
 	}
 	return files, nil

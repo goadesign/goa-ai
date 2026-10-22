@@ -1,10 +1,10 @@
 module example.com/evalconsumer
 
-go 1.27.0
+go 1.27.3
 
 require (
 	goa.design/goa-ai v0.0.0
-	goa.design/goa/v3 v3.34.1-0.20261009061557-9fd65ad2c943
+	goa.design/goa/v3 v3.34.1-0.20261022055955-1bb6a018011f
 )
 
 require (

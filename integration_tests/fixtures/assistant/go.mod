@@ -1,6 +1,6 @@
 module example.com/assistant
 
-go 1.27.0
+go 1.27.3
 
 require (
 	github.com/google/uuid v1.6.0
@@ -9,7 +9,7 @@ require (
 	go.opentelemetry.io/otel v1.47.0
 	goa.design/clue v1.3.0
 	goa.design/goa-ai v0.0.0
-	goa.design/goa/v3 v3.34.1-0.20261016002247-a8d86e35aa23
+	goa.design/goa/v3 v3.34.1-0.20261022055955-1bb6a018011f
 )
 
 require (

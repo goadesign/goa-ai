@@ -7,7 +7,16 @@
 
 package toolbounds
 
-import agent "goa.design/goa-ai/runtime/agent"
+import (
+	bytes "bytes"
+	json "encoding/json"
+	fmt "fmt"
+	sort "sort"
+	strconv "strconv"
+	utf8 "unicode/utf8"
+
+	agent "goa.design/goa-ai/runtime/agent"
+)
 
 // ConvertToBounds creates an instance of Bounds initialized from t.
 func (t *ResultBounds) ConvertToBounds() *agent.Bounds {
@@ -33,4 +42,314 @@ func (t *ResultBounds) CreateFromBounds(v *agent.Bounds) {
 		RefinementHint: &v.RefinementHint,
 	}
 	*t = *temp
+}
+
+// validateResultBoundsJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResultBoundsJSONValue(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "object", "null", description)
+	}
+	typed, ok := value.(map[string]any)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
+	}
+	keys := make([]string, 0, len(typed))
+	for key := range typed {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "next_cursor":
+			if err := validateResultBoundsJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Exact provider cursor for additional results, when present.",
+			); err != nil {
+				return err
+			}
+		case "refinement_hint":
+			if err := validateResultBoundsJSONValue2(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Provider guidance for refining the query.",
+			); err != nil {
+				return err
+			}
+		case "returned":
+			if err := validateResultBoundsJSONValue3(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Number of items included in this result.",
+			); err != nil {
+				return err
+			}
+		case "total":
+			if err := validateResultBoundsJSONValue3(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Provider-owned total, when known.",
+			); err != nil {
+				return err
+			}
+		case "truncated":
+			if err := validateResultBoundsJSONValue4(
+				generatedJSONChildPath(path, key, false),
+				typed[key], "Whether the result was bounded before exhausting the selected data.",
+			); err != nil {
+				return err
+			}
+		default:
+			return unknownJSONFieldError(path, key, []string{
+				"next_cursor",
+				"refinement_hint",
+				"returned",
+				"total",
+				"truncated",
+			})
+		}
+	}
+	return nil
+}
+
+// validateResultBoundsJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResultBoundsJSONValue2(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "string", "null", description)
+	}
+	_, ok := value.(string)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateResultBoundsJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResultBoundsJSONValue3(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
+	}
+	_, ok := value.(json.Number)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// validateResultBoundsJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateResultBoundsJSONValue4(path string, value any, description string) error {
+	field := path
+	if field == "" {
+		field = "$payload"
+	}
+	if value == nil {
+		return invalidGeneratedFieldTypeError(field, "boolean", "null", description)
+	}
+	_, ok := value.(bool)
+	if !ok {
+		return invalidGeneratedFieldTypeError(field, "boolean", decodedJSONType(value), description)
+	}
+	return nil
+}
+
+// readStrictJSON checks the complete JSON document for malformed text and
+// duplicate members, then returns values with their original number text.
+func readStrictJSON(data []byte) (any, error) {
+	if err := validateJSONText(data); err != nil {
+		return nil, err
+	}
+	if !json.Valid(data) {
+		// When two complete JSON values arrive, keep the caller's distinct
+		// multiple-document error instead of reporting malformed syntax.
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		var document json.RawMessage
+		if err := decoder.Decode(&document); err == nil {
+			if err := decoder.Decode(&document); err == nil {
+				return nil, fmt.Errorf("multiple JSON documents")
+			}
+		}
+		return nil, fmt.Errorf("invalid JSON syntax or nesting")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	return readJSONValue(decoder)
+}
+
+// readJSONValue reads one JSON value and rejects repeated object member
+// names, returning the value without replacing earlier members.
+func readJSONValue(decoder *json.Decoder) (any, error) {
+	token, err := decoder.Token()
+	if err != nil {
+		return nil, err
+	}
+	switch token {
+	case json.Delim('{'):
+		object := make(map[string]any)
+		for decoder.More() {
+			token, err := decoder.Token()
+			if err != nil {
+				return nil, err
+			}
+			key, ok := token.(string)
+			if !ok {
+				return nil, fmt.Errorf("object member name must be a string")
+			}
+			if _, exists := object[key]; exists {
+				return nil, fmt.Errorf("duplicate JSON member %q", key)
+			}
+			value, err := readJSONValue(decoder)
+			if err != nil {
+				return nil, err
+			}
+			object[key] = value
+		}
+		if _, err := decoder.Token(); err != nil {
+			return nil, err
+		}
+		return object, nil
+	case json.Delim('['):
+		array := make([]any, 0)
+		for decoder.More() {
+			value, err := readJSONValue(decoder)
+			if err != nil {
+				return nil, err
+			}
+			array = append(array, value)
+		}
+		if _, err := decoder.Token(); err != nil {
+			return nil, err
+		}
+		return array, nil
+	default:
+		if _, delimiter := token.(json.Delim); delimiter {
+			return nil, fmt.Errorf("unexpected JSON delimiter %v", token)
+		}
+		return token, nil
+	}
+}
+
+// validateJSONText checks JSON bytes for invalid text and unpaired Unicode
+// escapes, returning an error before encoding/json can replace those characters.
+func validateJSONText(data []byte) error {
+	if !utf8.Valid(data) {
+		return fmt.Errorf("invalid UTF-8 in JSON")
+	}
+	for i := 0; i < len(data); i++ {
+		if data[i] != '"' {
+			continue
+		}
+		i++
+		for ; i < len(data) && data[i] != '"'; i++ {
+			if data[i] != '\\' {
+				continue
+			}
+			i++
+			if i >= len(data) || data[i] != 'u' {
+				continue
+			}
+			if i+4 >= len(data) {
+				return fmt.Errorf("incomplete Unicode escape")
+			}
+			code, err := strconv.ParseUint(string(data[i+1:i+5]), 16, 16)
+			if err != nil {
+				return fmt.Errorf("invalid Unicode escape: %w", err)
+			}
+			i += 4
+			if code >= 0xdc00 && code <= 0xdfff {
+				return fmt.Errorf("unpaired low Unicode surrogate")
+			}
+			if code < 0xd800 || code > 0xdbff {
+				continue
+			}
+			if i+6 >= len(data) || data[i+1] != '\\' || data[i+2] != 'u' {
+				return fmt.Errorf("unpaired high Unicode surrogate")
+			}
+			low, err := strconv.ParseUint(string(data[i+3:i+7]), 16, 16)
+			if err != nil || low < 0xdc00 || low > 0xdfff {
+				return fmt.Errorf("unpaired high Unicode surrogate")
+			}
+			i += 6
+		}
+	}
+	return nil
+}
+
+// invalidGeneratedFieldTypeError is the value-codec adapter for shared checks.
+func invalidGeneratedFieldTypeError(field, expected, actual, _ string) error {
+	return fmt.Errorf("%s: expected %s, got %s", field, expected, actual)
+}
+
+// unknownJSONFieldError reports exact authored names, without case folding.
+func unknownJSONFieldError(path, key string, _ []string) error {
+	return fmt.Errorf("%s: unknown JSON field %q", path, key)
+}
+
+// decodedJSONType describes values produced only by the strict JSON reader.
+func decodedJSONType(value any) string {
+	switch value.(type) {
+	case nil:
+		return "null"
+	case bool:
+		return "boolean"
+	case string:
+		return "string"
+	case json.Number:
+		return "number"
+	case []any:
+		return "array"
+	case map[string]any:
+		return "object"
+	default:
+		return "invalid JSON value"
+	}
+}
+
+// generatedJSONChildPath appends an unambiguous quoted member or array index.
+func generatedJSONChildPath(path, key string, _ bool) string {
+	return path + "[" + strconv.Quote(key) + "]"
+}
+
+// checkResultBoundsValue checks text and cycles before conversion.
+func checkResultBoundsValue(in *ResultBounds) error {
+	if in == nil {
+		return fmt.Errorf("missing root value")
+	}
+	active := make(map[any]bool)
+	if err := checkResultBoundsResultBoundsValue(in, "$", active); err != nil {
+		return err
+	}
+	return nil
+}
+
+// checkResultBoundsResultBoundsValue checks one generated value on the active path.
+func checkResultBoundsResultBoundsValue(in *ResultBounds, field string, active map[any]bool) error {
+	if in == nil {
+		return nil
+	}
+	if active[in] {
+		return fmt.Errorf("%s: cyclic Go value", field)
+	}
+	active[in] = true
+	defer delete(active, in)
+	if in != nil {
+		if in.NextCursor != nil {
+			if !utf8.ValidString(string(*in.NextCursor)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "next_cursor", false))
+			}
+		}
+		if in.RefinementHint != nil {
+			if !utf8.ValidString(string(*in.RefinementHint)) {
+				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "refinement_hint", false))
+			}
+		}
+	}
+	return nil
 }
