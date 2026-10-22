@@ -10,6 +10,7 @@ import (
 	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/converter"
+	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -29,13 +30,13 @@ func (e *Engine) RegisterCancellationWorkflow(_ context.Context, name string, op
 	if name == "" || opts.Queue == "" || fn == nil || opts.RetryPolicy.InitialInterval <= 0 {
 		return errors.New("cancellation workflow requires name, queue, handler and positive observation interval")
 	}
-	if err := e.beginWorkflowRegistration(name); err != nil {
+	if err := e.beginWorkflowRegistration(name, opts.Queue, false); err != nil {
 		return err
 	}
 	registered := false
 	defer func() {
 		if !registered {
-			e.abortWorkflowRegistration(name)
+			e.abortWorkflowRegistration(name, opts.Queue)
 		}
 	}()
 	activityName := name + ".observe"
@@ -49,8 +50,8 @@ func (e *Engine) RegisterCancellationWorkflow(_ context.Context, name string, op
 		return err
 	}
 
-	e.workerForQueue(opts.Queue).registerWorkflow(name, e.cancellationWorkflowHandler(name, activityName, opts))
-	e.finishWorkflowRegistration(name)
+	e.workerForQueue(opts.Queue).worker.RegisterWorkflowWithOptions(e.cancellationWorkflowHandler(name, activityName, opts), workflow.RegisterOptions{Name: name})
+	e.finishWorkflowRegistration(name, opts.Queue, false)
 	registered = true
 	return nil
 }
@@ -58,7 +59,7 @@ func (e *Engine) RegisterCancellationWorkflow(_ context.Context, name string, op
 // StartActiveCancellationWorkflow reads the accepted workflow type, queue and
 // status in one Temporal description. Once observed active, its cleanup job can
 // follow a later saved transition even if the owner closes during job admission.
-func (e *Engine) StartActiveCancellationWorkflow(ctx context.Context, ownerRunID string, request engine.CancellationRequest) error {
+func (e *Engine) StartActiveCancellationWorkflow(ctx context.Context, ownerRunID string, request engine.CancellationRequest, target *engine.WorkerDeploymentVersion) error {
 	description, err := e.client.DescribeWorkflowExecution(ctx, ownerRunID, "")
 	if err != nil {
 		return mapDescribeWorkflowExecutionError(err)
@@ -70,13 +71,13 @@ func (e *Engine) StartActiveCancellationWorkflow(ctx context.Context, ownerRunID
 	if info.GetStatus() != enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING && info.GetStatus() != enumspb.WORKFLOW_EXECUTION_STATUS_PAUSED {
 		return engine.ErrWorkflowCompleted
 	}
-	return e.StartCancellationWorkflow(ctx, info.GetType().GetName()+".cancel", info.GetTaskQueue(), request)
+	return e.StartCancellationWorkflow(ctx, info.GetType().GetName()+".cancel", info.GetTaskQueue(), request, target)
 }
 
 // StartCancellationWorkflow acknowledges Temporal acceptance without waiting
 // for cleanup. Duplicate delivery verifies routing and the original reason.
-func (e *Engine) StartCancellationWorkflow(ctx context.Context, name, queue string, request engine.CancellationRequest) error {
-	id, digest, err := startrecipe.CancellationRecipe(name, queue, request)
+func (e *Engine) StartCancellationWorkflow(ctx context.Context, name, queue string, request engine.CancellationRequest, target *engine.WorkerDeploymentVersion) error {
+	id, digest, err := startrecipe.CancellationRecipe(name, queue, request, target)
 	if err != nil {
 		return err
 	}
@@ -90,6 +91,11 @@ func (e *Engine) StartCancellationWorkflow(ctx context.Context, name, queue stri
 		WorkflowIDReusePolicy:                    enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
 		WorkflowExecutionErrorWhenAlreadyStarted: true,
 		Memo:                                     map[string]any{workflowStartRecipeMemoKey: digest[:], cancellationReasonMemoKey: request.Reason},
+	}
+	if target != nil {
+		opts.VersioningOverride = &client.PinnedVersioningOverride{Version: worker.WorkerDeploymentVersion{
+			DeploymentName: target.DeploymentName, BuildID: target.BuildID,
+		}}
 	}
 	_, err = e.startWorkflowWithDigest(ctx, opts, name, converter.NewRawValue(input), digest)
 	var conflict *engine.WorkflowStartConflictError

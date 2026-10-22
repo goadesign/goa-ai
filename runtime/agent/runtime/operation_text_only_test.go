@@ -155,28 +155,30 @@ func TestExactOperationStartAndRepairHaveSameTextOnlyRequest(t *testing.T) {
 				rt := New(newTestStore(), WithEngine(backend), WithToolWorkflowQueue("worker"))
 				declaration := resolved.Toolset.Tools[0]
 				memo := map[string]any{"owner": "original"}
+				target := engine.WorkerDeploymentVersion{DeploymentName: "execution", BuildID: "build-a"}
 				var err error
 				switch {
 				case kind == "direct" && sessionful:
-					_, err = rt.StartOperation(t.Context(), "session", "service-root", declaration, invocation.Arguments, nil, memo, WithTextOnly(true))
+					_, err = rt.StartOperation(t.Context(), "session", "service-root", declaration, invocation.Arguments, nil, memo, WithTextOnly(true), WithRootExecutionTarget(target))
 				case kind == "direct":
-					_, err = rt.StartOneShotOperation(t.Context(), "service-root", declaration, invocation.Arguments, nil, memo, WithTextOnly(true))
+					_, err = rt.StartOneShotOperation(t.Context(), "service-root", declaration, invocation.Arguments, nil, memo, WithTextOnly(true), WithRootExecutionTarget(target))
 				case sessionful:
-					_, err = rt.StartToolOperation(t.Context(), "session", "registry", resolved, invocation, nil, memo, WithTextOnly(true))
+					_, err = rt.StartToolOperation(t.Context(), "session", "registry", resolved, invocation, nil, memo, WithTextOnly(true), WithRootExecutionTarget(target))
 				default:
-					_, err = rt.StartOneShotToolOperation(t.Context(), "registry", resolved, invocation, nil, memo, WithTextOnly(true))
+					_, err = rt.StartOneShotToolOperation(t.Context(), "registry", resolved, invocation, nil, memo, WithTextOnly(true), WithRootExecutionTarget(target))
 				}
 				require.NoError(t, err)
+				assert.Equal(t, &target, backend.request.RootExecutionTarget)
 				for _, restricted := range []bool{true, false} {
 					switch {
 					case kind == "direct" && sessionful:
-						err = rt.EnsureOperationCompletion(t.Context(), "session", "service-root", declaration, invocation.Arguments, nil, memo, WithTextOnly(restricted))
+						err = rt.EnsureOperationCompletion(t.Context(), "session", "service-root", declaration, invocation.Arguments, nil, memo, WithTextOnly(restricted), WithRootExecutionTarget(target))
 					case kind == "direct":
-						err = rt.EnsureOneShotOperationCompletion(t.Context(), "service-root", declaration, invocation.Arguments, nil, memo, WithTextOnly(restricted))
+						err = rt.EnsureOneShotOperationCompletion(t.Context(), "service-root", declaration, invocation.Arguments, nil, memo, WithTextOnly(restricted), WithRootExecutionTarget(target))
 					case sessionful:
-						err = rt.EnsureToolOperationCompletion(t.Context(), "session", "registry", resolved, invocation, nil, memo, WithTextOnly(restricted))
+						err = rt.EnsureToolOperationCompletion(t.Context(), "session", "registry", resolved, invocation, nil, memo, WithTextOnly(restricted), WithRootExecutionTarget(target))
 					default:
-						err = rt.EnsureOneShotToolOperationCompletion(t.Context(), "registry", resolved, invocation, nil, memo, WithTextOnly(restricted))
+						err = rt.EnsureOneShotToolOperationCompletion(t.Context(), "registry", resolved, invocation, nil, memo, WithTextOnly(restricted), WithRootExecutionTarget(target))
 					}
 					if restricted {
 						require.ErrorIs(t, err, ErrRunCompletionNotReady)

@@ -205,16 +205,17 @@ type (
 		RegisterCancellationWorkflow(ctx context.Context, name string, opts ActivityOptions, fn func(context.Context, CancellationRequest) (bool, error)) error
 
 		// StartCancellationWorkflow accepts one durable cancellation job. Exact
-		// retries succeed; a changed reason returns CancellationConflictError.
+		// retries compare the same worker target; a changed reason returns CancellationConflictError.
 		// Successful acceptance does not claim that cleanup has completed.
-		StartCancellationWorkflow(ctx context.Context, name, queue string, request CancellationRequest) error
+		StartCancellationWorkflow(ctx context.Context, name, queue string, request CancellationRequest, target *WorkerDeploymentVersion) error
 
 		// StartActiveCancellationWorkflow accepts a durable cancellation job on
 		// the route already accepted for ownerRunID: the accepted workflow name
 		// plus ".cancel", on its accepted task queue. The adapter observes an
-		// active owner and its route together. A closed or missing owner returns
+		// active owner and its route together; target selects the accepted root build.
+		// A closed or missing owner returns
 		// ErrWorkflowCompleted or ErrWorkflowNotFound without accepting a job.
-		StartActiveCancellationWorkflow(ctx context.Context, ownerRunID string, request CancellationRequest) error
+		StartActiveCancellationWorkflow(ctx context.Context, ownerRunID string, request CancellationRequest, target *WorkerDeploymentVersion) error
 
 		// RegisterStorageActivity registers the one typed activity that applies
 		// runtime storage commands outside the deterministic workflow thread.
@@ -584,6 +585,15 @@ type (
 		Data []byte
 	}
 
+	// WorkerDeploymentVersion identifies one build of a named worker deployment.
+	// Root workflow starts use it to select the exact workers for accepted work.
+	WorkerDeploymentVersion struct {
+		// DeploymentName is the worker deployment that owns the build.
+		DeploymentName string `json:"deployment_name"`
+		// BuildID is the exact build within that deployment.
+		BuildID string `json:"build_id"`
+	}
+
 	// WorkflowStartRequest describes how to launch a workflow execution. Generated
 	// code constructs these when agents are invoked.
 	WorkflowStartRequest struct {
@@ -596,6 +606,9 @@ type (
 		// TaskQueue is the required queue that receives the workflow task. A worker
 		// listening on this queue will execute the workflow.
 		TaskQueue string
+		// RootExecutionTarget pins this root execution to an exact worker build.
+		// Nil leaves routing to the workflow engine's deployment configuration.
+		RootExecutionTarget *WorkerDeploymentVersion
 		// Input is the required typed payload passed to the workflow handler.
 		Input *api.RunInput
 		// RunTimeout bounds one workflow execution attempt. A retry starts a fresh
@@ -722,6 +735,9 @@ func ValidateWorkflowStartRequest(req WorkflowStartRequest) error {
 	}
 	if req.ID != req.Input.RunID {
 		return errors.New("workflow id must match input run id")
+	}
+	if target := req.RootExecutionTarget; target != nil && (target.DeploymentName == "" || target.BuildID == "") {
+		return errors.New("root execution target requires deployment name and build id")
 	}
 	return ValidateWorkflowLaunchSettings(req.RunTimeout, req.RetryPolicy)
 }

@@ -568,6 +568,14 @@ rolled back to an older decoder. Histories without this recovery value and
 ordinary accepted suspension checkpoints keep their existing contracts.
 No Goa or client generation is required.
 
+Continuation-availability activity requests now carry the workflow's complete
+`run.Context` instead of separate run, session and text-only fields. This lets a
+catalog read the accepted native operation and labels before selecting a new
+page provider. An unfinished request written with the old fields must execute
+with its matching old handler; the new handler does not reconstruct missing
+context. Completed boolean decisions remain replayable. If no unfinished query
+exists, availability returns without reading the current provider catalog.
+
 Use the application's verified worker-build routing to keep existing pinned
 work on its old build and start new work on the new build. Applications using
 unversioned workers must drain affected work before replacement or isolate the
@@ -2898,6 +2906,35 @@ continue to read compact state only. Current authority is checked every time.
 There is no API or storage change, migration, or change to the consumer's
 per-planning-activity catalog lifetime.
 
+##### Read-only catalog inspection
+
+Local maintenance tools can construct `registry.NewCatalogReader(redisClient,
+registryName)` without starting a Registry server. The name selects the same
+catalog as `registry.Config.Name`; an empty name selects `"registry"`.
+Construction makes no Redis requests, starts no background workers and requires
+no `Close` call. The caller owns authorization and the borrowed Redis client's
+lifetime.
+
+`CatalogReader.ListToolsets` returns active saved summaries with the service's
+existing tag filtering. `CatalogReader.ReadCatalogToolset` applies the same
+positive raw-byte budget, atomic state/definition snapshot and saved-record
+validation as `Service.ReadCatalogToolset`. It returns the saved resource owner,
+complete declaration, exact registration token and native-Agent marker. Each
+returned declaration belongs to its caller. Missing and retired routes return
+`not_found`; identity-free records return `ErrCatalogIdentityMissing`; malformed
+records and budget failures remain errors. A reader does not repair records,
+prune expired provider leases, create settlement state or change retirement
+history.
+
+The reader leaves `CatalogToolset.ServiceHealth` absent for every record.
+Provider health depends on the running Registry's configured ping settings,
+which saved catalog data does not contain. Use the running service when that
+health observation is required. Native-Agent worker readiness still belongs to
+the application. The reader adds no RPC, saved-data format, registration limit,
+default read budget or migration requirement. It uses `HKEYS` for listing and
+finite Lua scripts containing only `HGET`, `HEXISTS`, `HSTRLEN`, `SISMEMBER` and
+`TIME` for selected records; a Redis account can deny all write commands.
+
 ##### Saved declaration identity
 
 When loading a saved definition, Registry strictly decodes its stable declaration
@@ -3918,8 +3955,14 @@ for an existing host-owned session. The host must authorize the application and
 actor before calling either method. The selected configuration owns planner
 policy. A caller cannot redirect the selected worker queue or supply prepared
 history, provider policy, a Registry publication or a synthetic parent.
-The optional arguments after `memo` accept only `WithTextOnly`; every other
-`RunOption` is rejected before any option changes input or launch settings.
+The optional arguments after `memo` accept `WithTextOnly` and
+`WithRootExecutionTarget`; every other `RunOption` is rejected. To bind an
+accepted root operation to one exact worker build, pass
+`WithRootExecutionTarget(engine.WorkerDeploymentVersion{DeploymentName: "execution", BuildID: "build-a"})`.
+The engine request, prepared bytes, and duplicate-start digest retain that
+selection. Temporal submits a pinned deployment override for the root; child
+workflow requests do not receive an override. Omitting the target preserves
+engine-managed routing and existing prepared request bytes.
 `WithTextOnly(true)` selects the generated text-only model argument contract
 before decoding the operation input. Rendering controls are omitted from those
 arguments. Provider configuration can also enable text-only behavior; neither
@@ -3928,8 +3971,9 @@ caller nor provider can disable a restriction enabled by the other.
 Use the same options for `EnsureOperationCompletion`,
 `EnsureOneShotOperationCompletion`, `EnsureToolOperationCompletion` and
 `EnsureOneShotToolOperationCompletion` as for their matching start method.
-The restriction belongs to the immutable engine request, so repair with a
-different restriction conflicts instead of completing another request.
+The restriction and root execution target belong to the immutable engine
+request, so repair with a different restriction or target conflicts instead of
+completing another request.
 Omitting options preserves unrestricted caller behavior and existing saved
 requests. Update submitters and the selected operation workers before enabling
 this option; older workers reject the new caller policy. No schema regeneration
@@ -4236,7 +4280,15 @@ untrusted client.
 Before claiming an answer, the owning service prepares the continuation. This
 loads the exact saved suspension, checks the response and every nested child
 checkpoint against the current generated agent definitions, and takes an
-immutable copy of the complete workflow input. It does not write runtime state
+immutable copy of the complete workflow input. Completed tool history keeps
+its accepted arguments, result JSON, server data, media, and rendered preview
+across generated result changes and tool removal. Checkpoint decoding and planner
+resume validate its stored identity and envelopes without reconstructing today's
+Go result type. Pending calls, confirmations, child runs, external results,
+unmaterialized successful results, and executable paging still require their
+current generated contracts. The saved required-tool inventory is checked for
+integrity; it does not make completed ordinary tools executable dependencies.
+Preparation does not write runtime state
 or call the workflow engine. A rejected response therefore leaves the requested
 run ID unused.
 
@@ -4425,20 +4477,25 @@ arguments:
 - Pending execution, confirmation, external input and unfinished children
   still require current input codecs. Missing replies and unresolved
   calls cannot borrow another call's successful outcome.
-- Completed historical page chains retain their old input bytes without
-  decoding them through current input codecs. An unfinished historical query
+- Completed page chains retain their old input and result bytes without
+  decoding them through current codecs, including inside a checkpoint. The
+  saved successful final page closes its exact source and registration when
+  it has no next cursor. Its result must already be recorded or materialized;
+  an unfinished result cannot close an earlier accepted cursor. An unfinished
+  historical query
   must still fit the current tools to supply a page action; otherwise it remains
   transcript evidence only. Current-run paging outputs and explicitly selected
   active outputs retain strict validation, including when they refer to a
   call scheduled in an earlier run. Failed outputs supply no paging state.
 
-All restored results, server data and bounds still satisfy their selected
-contracts. Required tools, current registry admission, exact call/result
-provenance, nested ownership, pending-response correlation and content digests
+Completed history still validates stored JSON and server-data envelopes,
+media, failure shape and bounds metadata. Work with a current consumer also
+validates its current generated contract. Required tools, current registry
+admission for executable work, exact call/result provenance, nested ownership, pending-response correlation and content digests
 remain enforced. Removing a required tool or changing a codec used by a
 remaining consumer can still make a suspension incompatible. For example, a
-removed input field may survive in a completed non-paging lookup's history,
-but the same field in a call awaiting approval is rejected before a new workflow
+removed input field may survive in a completed lookup or closed page chain's
+history, but the same field in a call awaiting approval is rejected before a new workflow
 starts.
 
 Preparation, submission of an existing prepared continuation and worker
@@ -7088,6 +7145,38 @@ if err != nil {
     log.Fatal(err)
 }
 ```
+
+The Temporal adapter also accepts SDK handlers through
+`RegisterNativeWorkflow(ctx, queue, handler, workflow.RegisterOptions)` and
+`RegisterNativeActivity(ctx, queue, handler, activity.RegisterOptions)`. Set
+`Name` in the SDK options; an empty queue uses the worker's default queue. These
+methods each register one named function. Activity structs that register many
+methods at once are rejected before any worker or name reservation is created.
+SDK function signatures and validation apply, so a workflow can receive
+`workflow.Context` with no agent `RunInput` or start-recipe requirement. The
+adapter's data converter and workflow control still apply.
+
+Native names can repeat on distinct queues, but duplicate names on one queue
+and collisions with typed agent handler names are rejected. Register all
+handlers before `SealRegistration`; client-only engines reject registration.
+SDK function-signature validation panics retain SDK behavior and release the
+failed name reservation.
+
+`RegisteredTaskQueues()` returns sorted `RegisteredTaskQueue` values with
+`Name` and `Kinds` using Temporal's `TaskQueueType` values. It derives workflow
+and activity kinds from successful registrations, including activity-only
+queues. It excludes failed attempts and returns independent slices. Hosts can
+construct a worker, run their real registration code, and read this inventory
+before sealing, without starting pollers or contacting the server.
+
+`CurrentWorkflowTarget(ctx, queue)` reads the worker deployment and build
+selected for new workflows on that queue through the same Temporal client.
+It returns `*engine.WorkerDeploymentVersion`, or nil when Temporal reports
+unversioned routing or no current version. The saved routing remains readable
+without active pollers; service failures and incomplete responses return errors.
+This read does not establish worker health or change an already accepted root
+target. A host can retain the returned value when accepting work and pass it
+through `WithRootExecutionTarget` for the eventual start.
 
 **Temporal client** — Start/query/cancel without local polling:
 

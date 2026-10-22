@@ -67,22 +67,10 @@ func (r *Runtime) prepareOperationContinuationRequest(ctx context.Context, prede
 		if accepted.Seed.Declaration.PredecessorRunID != predecessorRunID || input.RunID != runID || !reflect.DeepEqual(input.Subject, owner.Subject) || input.SessionID != owner.SessionID || input.SeedEndID != accepted.Seed.EndID || input.Continuation == nil {
 			return engine.WorkflowStartRequest{}, storage.ErrSeedConflict
 		}
-		// Compare the supplied answer and Memo with the saved engine request.
-		// Encoding keeps equivalent empty content lists from causing conflicts.
-		candidate := prepared.Request
-		candidateInput := *input
-		candidateContinuation := *input.Continuation
-		candidateContinuation.Response = continuation.Response
-		candidateContinuation.Cancellation = continuation.Cancellation
-		candidateInput.Continuation = &candidateContinuation
-		candidate.Input = &candidateInput
-		candidate.Memo = launch.memo
-		snapshot, err := startrecipe.SnapshotRequest(candidate)
-		if err != nil {
+		candidate := prepared
+		candidate.Request.Memo = launch.memo
+		if err := comparePreparedContinuation(candidate, continuation); err != nil {
 			return engine.WorkflowStartRequest{}, err
-		}
-		if snapshot.Digest != prepared.Digest {
-			return engine.WorkflowStartRequest{}, storage.ErrSeedConflict
 		}
 		if _, service := owner.Subject.Executor.AsServiceTool(); service {
 			if _, _, err := restoreRegisteredRoot(input); err != nil {
@@ -98,6 +86,10 @@ func (r *Runtime) prepareOperationContinuationRequest(ctx context.Context, prede
 			}
 		}
 		return prepared.Request, nil
+	}
+	target, err := r.acceptedWorkflowTarget(ctx, owner)
+	if err != nil {
+		return engine.WorkflowStartRequest{}, err
 	}
 	turnID, err := lifecycle.RegisteredRunTurnID(owner.Subject, runID, predecessorRunID)
 	if err != nil {
@@ -122,6 +114,7 @@ func (r *Runtime) prepareOperationContinuationRequest(ctx context.Context, prede
 		if err != nil {
 			return engine.WorkflowStartRequest{}, err
 		}
+		launch.rootExecutionTarget = target
 		request, err := prepareRunWithDefinition(input, launch, definition, owner.SessionID != "")
 		if err != nil {
 			return engine.WorkflowStartRequest{}, err
@@ -146,7 +139,7 @@ func (r *Runtime) prepareOperationContinuationRequest(ctx context.Context, prede
 	if _, _, err := restoreRegisteredRoot(input); err != nil {
 		return engine.WorkflowStartRequest{}, err
 	}
-	request := engine.WorkflowStartRequest{ID: runID, Workflow: registeredRootWorkflow, TaskQueue: checkpoint.Queue, Input: input, Memo: launch.memo}
+	request := engine.WorkflowStartRequest{ID: runID, Workflow: registeredRootWorkflow, TaskQueue: checkpoint.Queue, Input: input, Memo: launch.memo, RootExecutionTarget: target}
 	prepared, err := startrecipe.NewPreparedRequest("", request, "")
 	if err != nil {
 		return engine.WorkflowStartRequest{}, err
@@ -167,4 +160,25 @@ func (r *Runtime) prepareOperationContinuationRequest(ctx context.Context, prede
 		return engine.WorkflowStartRequest{}, err
 	}
 	return prepared.Request, nil
+}
+
+// comparePreparedContinuation compares only the caller's answer or cancellation
+// against the saved request. The stored checkpoint and worker target remain
+// unchanged, including when an encoded empty list has a different Go shape.
+func comparePreparedContinuation(prepared startrecipe.PreparedRequest, continuation *api.RunContinuationInput) error {
+	candidate := prepared.Request
+	input := *candidate.Input
+	selected := *input.Continuation
+	selected.Response = continuation.Response
+	selected.Cancellation = continuation.Cancellation
+	input.Continuation = &selected
+	candidate.Input = &input
+	snapshot, err := startrecipe.SnapshotRequest(candidate)
+	if err != nil {
+		return err
+	}
+	if snapshot.Digest != prepared.Digest {
+		return storage.ErrSeedConflict
+	}
+	return nil
 }

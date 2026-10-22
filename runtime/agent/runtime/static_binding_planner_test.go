@@ -185,10 +185,10 @@ func staticBindingPlannerRuntime(t *testing.T, kind string) (*Runtime, AgentDefi
 
 func (s staticBindingPlannerSource) Resolve(_ context.Context, catalog *RegistryCatalog) error {
 	if len(s.native) > 0 {
-		if err := catalog.BindStaticAgent(testRegistryName, s.native, s.selected, s.names...); err != nil {
+		if err := catalog.BindStaticAgent(testRegistryName, s.native, s.selected, verifyTestStaticAgentResource, s.names...); err != nil {
 			return err
 		}
-	} else if err := catalog.BindStaticService(testRegistryName, genrecords.Toolset(), s.selected, s.names...); err != nil {
+	} else if err := catalog.BindStaticService(testRegistryName, genrecords.Toolset(), s.selected, verifyTestStaticResource, s.names...); err != nil {
 		return err
 	}
 	for _, name := range s.names {

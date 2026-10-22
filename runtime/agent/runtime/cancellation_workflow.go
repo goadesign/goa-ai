@@ -61,7 +61,11 @@ func (r *Runtime) startSuspendedCancellation(ctx context.Context, request Cancel
 		}
 		switch owner.Status {
 		case session.RunStatusRunning:
-			err = r.Engine.StartActiveCancellationWorkflow(ctx, owner.RunID, request)
+			workflowTarget, targetErr := r.acceptedWorkflowTarget(ctx, owner)
+			if targetErr != nil {
+				return targetErr
+			}
+			err = r.Engine.StartActiveCancellationWorkflow(ctx, owner.RunID, request, workflowTarget)
 			if errors.Is(err, engine.ErrWorkflowCompleted) || errors.Is(err, engine.ErrWorkflowNotFound) {
 				if err := r.observeClosedCancellationOwner(ctx, owner); err != nil {
 					return err
@@ -89,14 +93,18 @@ func (r *Runtime) startSuspendedCancellation(ctx context.Context, request Cancel
 				if decodeErr != nil {
 					return decodeErr
 				}
-				err = r.Engine.StartCancellationWorkflow(ctx, registeredRootWorkflow+".cancel", checkpoint.Queue, request)
+				workflowTarget, targetErr := r.acceptedWorkflowTarget(ctx, owner)
+				if targetErr != nil {
+					return targetErr
+				}
+				err = r.Engine.StartCancellationWorkflow(ctx, registeredRootWorkflow+".cancel", checkpoint.Queue, request, workflowTarget)
 				break
 			}
-			route, _, routeErr := r.cancellationLaunch(ctx, owner)
+			route, launch, routeErr := r.cancellationLaunch(ctx, owner)
 			if routeErr != nil {
 				return routeErr
 			}
-			err = r.Engine.StartCancellationWorkflow(ctx, route.WorkflowName+".cancel", route.DefaultTaskQueue, request)
+			err = r.Engine.StartCancellationWorkflow(ctx, route.WorkflowName+".cancel", route.DefaultTaskQueue, request, launch.rootExecutionTarget)
 		case session.RunStatusCompleted, session.RunStatusFailed, session.RunStatusCanceled:
 			fallthrough
 		default:
@@ -235,7 +243,7 @@ func (r *Runtime) selectedCancellationRun(ctx context.Context, current session.R
 		if err != nil {
 			return session.RunMeta{}, err
 		}
-		if current.Status != session.RunStatusSuspended || next.RunID != resolution.RunID || !reflect.DeepEqual(next.Subject, current.Subject) || next.SessionID != current.SessionID {
+		if current.Status != session.RunStatusSuspended || next.RunID != resolution.RunID || !reflect.DeepEqual(next.Subject, current.Subject) || !reflect.DeepEqual(next.Origin, current.Origin) || next.SessionID != current.SessionID {
 			return session.RunMeta{}, storage.NewContractError(errors.New("admitted successor does not match its predecessor"))
 		}
 		current = next
@@ -315,8 +323,12 @@ func (r *Runtime) cancellationLaunch(ctx context.Context, owner session.RunMeta)
 			if err != nil {
 				return AgentRoute{}, workflowLaunchSettings{}, storage.NewContractError(err)
 			}
-			target := selected.ConsumerContract.Agent
-			return AgentRoute{ID: agent.Ident(executor), WorkflowName: target.Workflow, DefaultTaskQueue: target.Queue}, workflowLaunchSettings{}, nil
+			route := selected.ConsumerContract.Agent
+			target, err := r.acceptedWorkflowTarget(ctx, owner)
+			if err != nil {
+				return AgentRoute{}, workflowLaunchSettings{}, err
+			}
+			return AgentRoute{ID: agent.Ident(executor), WorkflowName: route.Workflow, DefaultTaskQueue: route.Queue}, workflowLaunchSettings{rootExecutionTarget: target}, nil
 		}
 		if checkpoint.Context.Operation != nil {
 			if err := storage.ValidateSeedDeclaration(declaration); err != nil {
@@ -345,8 +357,12 @@ func (r *Runtime) cancellationLaunch(ctx context.Context, owner session.RunMeta)
 			if _, err := spec.ExecutionPayloadCodec.FromJSON(checkpoint.Context.ToolArgs); err != nil {
 				return AgentRoute{}, workflowLaunchSettings{}, storage.NewContractError(err)
 			}
-			target := checkpoint.Context.Operation.ConsumerContract.Agent
-			return AgentRoute{ID: agent.Ident(executor), WorkflowName: target.Workflow, DefaultTaskQueue: target.Queue}, workflowLaunchSettings{}, nil
+			route := checkpoint.Context.Operation.ConsumerContract.Agent
+			target, err := r.acceptedWorkflowTarget(ctx, owner)
+			if err != nil {
+				return AgentRoute{}, workflowLaunchSettings{}, err
+			}
+			return AgentRoute{ID: agent.Ident(executor), WorkflowName: route.Workflow, DefaultTaskQueue: route.Queue}, workflowLaunchSettings{rootExecutionTarget: target}, nil
 		}
 	}
 	accepted, found, err := r.Store.FindRunPreparation(ctx, storage.PreparationOperation{
@@ -384,7 +400,7 @@ func (r *Runtime) cancellationLaunch(ctx context.Context, owner session.RunMeta)
 		return AgentRoute{}, workflowLaunchSettings{}, storage.NewContractError(storage.ErrSeedConflict)
 	}
 	return AgentRoute{ID: agent.Ident(executor), WorkflowName: prepared.Request.Workflow, DefaultTaskQueue: prepared.Request.TaskQueue},
-		workflowLaunchSettings{taskQueue: prepared.TaskQueueOverride, memo: prepared.Request.Memo, searchAttributes: prepared.Request.SearchAttributes}, nil
+		workflowLaunchSettings{rootExecutionTarget: prepared.Request.RootExecutionTarget, taskQueue: prepared.TaskQueueOverride, memo: prepared.Request.Memo, searchAttributes: prepared.Request.SearchAttributes}, nil
 }
 
 // startCancellationContinuation publishes an ordinary root continuation with

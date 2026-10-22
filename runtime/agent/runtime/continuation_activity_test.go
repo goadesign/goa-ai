@@ -56,6 +56,8 @@ func TestContinuationDecisionPreservesRecoveryAndFinalizer(t *testing.T) {
 					return deadlineTestFinalOutput(), nil
 				})
 			loop.base.HistoryEndID = "selected-end"
+			loop.base.RunContext.Labels = map[string]string{"resource": "selected"}
+			loop.base.RunContext.Tool = "records.find"
 			loop.st.Caps.RemainingRecoveryTurns = tc.remaining
 			failure := testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "failed")
 			loop.st.ToolOutputs = []*planner.ToolOutput{{
@@ -65,6 +67,7 @@ func TestContinuationDecisionPreservesRecoveryAndFinalizer(t *testing.T) {
 			sentinel := errors.New("history store unavailable")
 			wf.continuationRead = func(input *api.ContinuationActivityInput) (bool, error) {
 				assert.Equal(t, "selected-end", input.HistoryEndID)
+				assert.Equal(t, loop.base.RunContext, input.RunContext)
 				require.Len(t, input.ToolOutputs, 1)
 				assert.Equal(t, "failed-call", input.ToolOutputs[0].ToolCallID)
 				// Account for time actually spent reading. No path may move the

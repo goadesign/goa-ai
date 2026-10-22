@@ -100,9 +100,9 @@ func TestTemporalServerProviderRecoveryRelayAndReplay(t *testing.T) {
 		return &api.RunOutput{Subject: input.Subject, RunID: input.RunID}, nil
 	})
 	bundle := eng.workerForQueue(queue)
-	bundle.registerWorkflow("recovery-root", root)
-	bundle.registerWorkflow("recovery-wrapper", wrapper)
-	bundle.registerWorkflow("recovery-leaf", leaf)
+	bundle.worker.RegisterWorkflowWithOptions(root, workflow.RegisterOptions{Name: "recovery-root"})
+	bundle.worker.RegisterWorkflowWithOptions(wrapper, workflow.RegisterOptions{Name: "recovery-wrapper"})
+	bundle.worker.RegisterWorkflowWithOptions(leaf, workflow.RegisterOptions{Name: "recovery-leaf"})
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	require.NoError(t, eng.SealRegistration(ctx))
@@ -214,7 +214,7 @@ func TestTemporalServerProviderRecoveryAfterUnpolledAttempts(t *testing.T) {
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, childEngine.Close()) })
-	childEngine.workerForQueue(queue+"-late").registerWorkflow("late-child", recoveryTestLeaf(childEngine))
+	childEngine.workerForQueue(queue+"-late").worker.RegisterWorkflowWithOptions(recoveryTestLeaf(childEngine), workflow.RegisterOptions{Name: "late-child"})
 	root := eng.temporalWorkflowHandler(func(w engine.WorkflowContext, input *api.RunInput) (*api.RunOutput, error) {
 		var opened, pauses int
 		if err := w.ProviderRecovery().RegisterPauseHandler(func(engine.WorkflowContext, string, engine.ProviderRecoveryPaused) error {
@@ -254,7 +254,7 @@ func TestTemporalServerProviderRecoveryAfterUnpolledAttempts(t *testing.T) {
 		}
 		return &api.RunOutput{Subject: input.Subject, RunID: input.RunID}, nil
 	})
-	eng.workerForQueue(queue).registerWorkflow("late-parent", root)
+	eng.workerForQueue(queue).worker.RegisterWorkflowWithOptions(root, workflow.RegisterOptions{Name: "late-parent"})
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 	require.NoError(t, eng.SealRegistration(ctx))
@@ -354,8 +354,8 @@ func TestTemporalServerProviderRecoveryContinuationAndDelayedDuplicate(t *testin
 		return &api.RunOutput{Subject: input.Subject, RunID: input.RunID}, nil
 	})
 	bundle := eng.workerForQueue(queue)
-	bundle.registerWorkflow("continuing-root", root)
-	bundle.registerWorkflow("continuing-child", leaf)
+	bundle.worker.RegisterWorkflowWithOptions(root, workflow.RegisterOptions{Name: "continuing-root"})
+	bundle.worker.RegisterWorkflowWithOptions(leaf, workflow.RegisterOptions{Name: "continuing-child"})
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	require.NoError(t, eng.SealRegistration(ctx))

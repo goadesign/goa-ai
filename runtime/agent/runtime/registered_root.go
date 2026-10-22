@@ -30,7 +30,7 @@ func WithToolWorkflowQueue(queue string) RuntimeOption {
 
 // StartToolOperation durably submits one exact registered operation in
 // an existing Session. The engine owns the request before provider work starts.
-// Only WithTextOnly is accepted in opts; other options fail before submission.
+// WithTextOnly and WithRootExecutionTarget are accepted; other options fail before submission.
 func (r *Runtime) StartToolOperation(ctx context.Context, sessionID, registry string, resolved *genregistry.ResolvedToolset, invocation *genregistry.RegisteredInvocation, labels map[string]string, memo map[string]any, opts ...RunOption) (engine.WorkflowHandle, error) {
 	if sessionID == "" {
 		return nil, ErrMissingSessionID
@@ -43,8 +43,8 @@ func (r *Runtime) StartToolOperation(ctx context.Context, sessionID, registry st
 }
 
 // StartOneShotToolOperation submits one registered operation without a
-// Session. Exact retries attach to the original engine request. Only
-// WithTextOnly is accepted in opts.
+// Session. Exact retries attach to the original engine request. WithTextOnly and
+// WithRootExecutionTarget are accepted in opts.
 func (r *Runtime) StartOneShotToolOperation(ctx context.Context, registry string, resolved *genregistry.ResolvedToolset, invocation *genregistry.RegisteredInvocation, labels map[string]string, memo map[string]any, opts ...RunOption) (engine.WorkflowHandle, error) {
 	request, err := r.prepareRegisteredRootRequest("", registry, resolved, invocation, labels, memo, opts...)
 	if err != nil {
@@ -55,7 +55,7 @@ func (r *Runtime) StartOneShotToolOperation(ctx context.Context, registry string
 
 // EnsureToolOperationCompletion delivers the engine's outcome for the exact
 // sessionful input, including failure before the workflow recorded its start.
-// Pass the same WithTextOnly option used at start; other options are rejected.
+// Pass the same text-only restriction and root execution target used at start.
 func (r *Runtime) EnsureToolOperationCompletion(ctx context.Context, sessionID, registry string, resolved *genregistry.ResolvedToolset, invocation *genregistry.RegisteredInvocation, labels map[string]string, memo map[string]any, opts ...RunOption) error {
 	if sessionID == "" {
 		return ErrMissingSessionID
@@ -69,7 +69,7 @@ func (r *Runtime) EnsureToolOperationCompletion(ctx context.Context, sessionID, 
 
 // EnsureOneShotToolOperationCompletion repairs the exact sessionless execution;
 // it never starts work or treats missing engine history as successful completion.
-// Pass the same WithTextOnly option used at start; other options are rejected.
+// Pass the same text-only restriction and root execution target used at start.
 func (r *Runtime) EnsureOneShotToolOperationCompletion(ctx context.Context, registry string, resolved *genregistry.ResolvedToolset, invocation *genregistry.RegisteredInvocation, labels map[string]string, memo map[string]any, opts ...RunOption) error {
 	request, err := r.prepareRegisteredRootRequest("", registry, resolved, invocation, labels, memo, opts...)
 	if err != nil {
@@ -81,10 +81,11 @@ func (r *Runtime) EnsureOneShotToolOperationCompletion(ctx context.Context, regi
 // prepareRegisteredRootRequest copies the generated operation request and binds
 // its exact service registration to the schema used to validate original input.
 func (r *Runtime) prepareRegisteredRootRequest(sessionID, registry string, resolved *genregistry.ResolvedToolset, invocation *genregistry.RegisteredInvocation, labels map[string]string, memo map[string]any, opts ...RunOption) (engine.WorkflowStartRequest, error) {
-	policy, err := exactOperationPolicy(opts)
+	settings, err := exactOperationOptions(opts)
 	if err != nil {
 		return engine.WorkflowStartRequest{}, err
 	}
+	policy := settings.input.Policy
 	encoded, err := genregistry.EncodeRegisteredInvocation(invocation)
 	if err != nil {
 		return engine.WorkflowStartRequest{}, err
@@ -129,7 +130,7 @@ func (r *Runtime) prepareRegisteredRootRequest(sessionID, registry string, resol
 			if err != nil {
 				return engine.WorkflowStartRequest{}, err
 			}
-			return engine.WorkflowStartRequest{ID: root.RunID, Workflow: route.Workflow, TaskQueue: route.Queue, Input: input, Memo: launch.memo}, nil
+			return engine.WorkflowStartRequest{ID: root.RunID, Workflow: route.Workflow, TaskQueue: route.Queue, Input: input, Memo: launch.memo, RootExecutionTarget: settings.launch.rootExecutionTarget}, nil
 		}
 		return engine.WorkflowStartRequest{}, errors.New("native operation absent from retained revision")
 	}
@@ -163,7 +164,7 @@ func (r *Runtime) prepareRegisteredRootRequest(sessionID, registry string, resol
 	if err != nil {
 		return engine.WorkflowStartRequest{}, err
 	}
-	return engine.WorkflowStartRequest{ID: root.RunID, Workflow: registeredRootWorkflow, TaskQueue: r.toolWorkflowQueue, Input: input, Memo: launch.memo}, nil
+	return engine.WorkflowStartRequest{ID: root.RunID, Workflow: registeredRootWorkflow, TaskQueue: r.toolWorkflowQueue, Input: input, Memo: launch.memo, RootExecutionTarget: settings.launch.rootExecutionTarget}, nil
 }
 
 // validateRegisteredRootInput rejects mixed Agent state and checks the exact

@@ -185,7 +185,7 @@ func historicalSavedBinding(t *testing.T, form, name string) *tools.RegistryBind
 }
 
 func (s historicalStaticSources) Resolve(_ context.Context, catalog *RegistryCatalog) error {
-	return catalog.BindStaticService("company", s.selected.Toolset, s.selected, "records.find", "records.continue")
+	return catalog.BindStaticService("company", s.selected.Toolset, s.selected, verifyTestStaticResource, "records.find", "records.continue")
 }
 func (s historicalStaticSources) Allows(registry, toolset, version string) bool {
 	return registry == "company" && toolset == "provider.records" && version == "1.0.0"

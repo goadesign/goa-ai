@@ -240,8 +240,8 @@ func TestActivityOptionsForUsesExplicitTimeoutFields(t *testing.T) {
 	wf := &temporalWorkflowContext{
 		engine: &Engine{
 			defaultQueue: "default.queue",
-			activityOptions: map[string]engine.ActivityOptions{
-				"planner": {
+			activityOptions: map[string]activityRegistration{
+				"planner": {options: engine.ActivityOptions{
 					Queue:                  "planner.queue",
 					ScheduleToStartTimeout: 12 * time.Second,
 					ScheduleToCloseTimeout: 2 * time.Minute,
@@ -252,8 +252,7 @@ func TestActivityOptionsForUsesExplicitTimeoutFields(t *testing.T) {
 						InitialInterval:    time.Second,
 						BackoffCoefficient: 2,
 					},
-				},
-			},
+				}}},
 		},
 	}
 
@@ -278,9 +277,8 @@ func TestActivityOptionsForUsesExplicitTimeoutFields(t *testing.T) {
 func TestActivityOptionsForAllowsExplicitUnlimitedRetries(t *testing.T) {
 	wf := &temporalWorkflowContext{
 		engine: &Engine{
-			activityOptions: map[string]engine.ActivityOptions{
-				"record": {RetryPolicy: engine.RetryPolicy{MaxAttempts: 3}},
-			},
+			activityOptions: map[string]activityRegistration{
+				"record": {options: engine.ActivityOptions{RetryPolicy: engine.RetryPolicy{MaxAttempts: 3}}}},
 		},
 	}
 
@@ -559,7 +557,7 @@ func TestActivityOptionsForLeavesQueueWaitUnsetWithoutTemporalDefault(t *testing
 	wf := &temporalWorkflowContext{
 		engine: &Engine{
 			defaultQueue:    "default.queue",
-			activityOptions: make(map[string]engine.ActivityOptions),
+			activityOptions: make(map[string]activityRegistration),
 		},
 	}
 
@@ -579,12 +577,11 @@ func TestActivityOptionsForCapsHeartbeatToAttemptBudget(t *testing.T) {
 	wf := &temporalWorkflowContext{
 		engine: &Engine{
 			defaultQueue: "default.queue",
-			activityOptions: map[string]engine.ActivityOptions{
-				"planner": {
+			activityOptions: map[string]activityRegistration{
+				"planner": {options: engine.ActivityOptions{
 					StartToCloseTimeout: time.Minute,
 					HeartbeatTimeout:    20 * time.Second,
-				},
-			},
+				}}},
 		},
 	}
 

@@ -17,7 +17,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/runlog"
-	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type canonicalToolEvents struct {
@@ -84,41 +83,18 @@ func (r *Runtime) loadPlannerToolOutputs(ctx context.Context, refs []*api.ToolOu
 	return outputs, nil
 }
 
-// plannerToolOutputFromCanonicalEvents loads an output for active work and
-// checks its result and server data against the selected contract. Static tools
-// use the registered codec; registry tools use the saved scheduled definition.
+// plannerToolOutputFromCanonicalEvents loads accepted planner history and
+// validates its stored envelopes and metadata without decoding newer Go types.
 func (r *Runtime) plannerToolOutputFromCanonicalEvents(callRunID, resultRunID, toolCallID string, callEvents, resultEvents *canonicalToolEvents) (*planner.ToolOutput, error) {
 	output, err := toolOutputFromStoredEvents(callRunID, resultRunID, toolCallID, callEvents, resultEvents)
 	if err != nil {
 		return nil, err
 	}
-	var spec *tools.ToolSpec
-	if output.Failure == nil {
-		registered, ok, err := r.callSpec(ToolCall{Name: output.Name, Registry: output.Registry, Subject: callEvents.scheduled.Subject()})
-		if err != nil {
-			return nil, err
-		}
-		if !ok {
-			return nil, fmt.Errorf("runtime: canonical tool history references unregistered tool %q", output.Name)
-		}
-		spec = &registered
-	}
-	if _, err := validatePersistedToolResult(
-		spec,
-		ToolCall{Name: output.Name, ToolCallID: output.ToolCallID},
-		resultEvents.result.ResultJSON,
-		output.ServerData,
-		output.Blocks,
-		output.Bounds,
-		output.Failure,
-	); err != nil {
-		return nil, fmt.Errorf(
-			"runtime: canonical tool result is invalid (run_id=%s tool_call_id=%s tool=%s): %w",
-			resultRunID,
-			toolCallID,
-			output.Name,
-			err,
-		)
+	if err := validateHistoricalToolEvent(&api.ToolEvent{
+		Name: output.Name, ToolCallID: output.ToolCallID, Result: resultEvents.result.ResultJSON,
+		ServerData: output.ServerData, Blocks: output.Blocks, Bounds: output.Bounds, Failure: output.Failure,
+	}, ToolCall{Name: output.Name, ToolCallID: output.ToolCallID, Registry: output.Registry}); err != nil {
+		return nil, fmt.Errorf("runtime: canonical tool result is invalid (run_id=%s tool_call_id=%s tool=%s): %w", resultRunID, toolCallID, output.Name, err)
 	}
 	return output, nil
 }

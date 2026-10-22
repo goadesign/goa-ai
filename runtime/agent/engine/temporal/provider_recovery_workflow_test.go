@@ -105,10 +105,9 @@ func TestProviderRecoveryWorkflowDoesNotRepeatCompletedTool(t *testing.T) {
 			return &agentruntime.ToolExecutionResult{ToolResult: &planner.ToolResult{Result: map[string]any{"reading": 42}}}, nil
 		},
 	}))
-	eng := &Engine{defaultQueue: queue, activityOptions: map[string]engine.ActivityOptions{
-		planName:   {StartToCloseTimeout: time.Minute, RetryPolicy: engine.RetryPolicy{MaxAttempts: 1}},
-		resumeName: {StartToCloseTimeout: time.Minute, RetryPolicy: engine.RetryPolicy{MaxAttempts: 1}},
-	}}
+	eng := &Engine{defaultQueue: queue, activityOptions: map[string]activityRegistration{
+		planName:   {options: engine.ActivityOptions{StartToCloseTimeout: time.Minute, RetryPolicy: engine.RetryPolicy{MaxAttempts: 1}}},
+		resumeName: {options: engine.ActivityOptions{StartToCloseTimeout: time.Minute, RetryPolicy: engine.RetryPolicy{MaxAttempts: 1}}}}}
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
 	env.SetDataConverter(NewAgentDataConverter())
@@ -177,7 +176,7 @@ func TestProviderCertificateCrossesBothPlannerActivityAdapters(t *testing.T) {
 				require.NoError(t, err)
 				return
 			}
-			eng := &Engine{defaultQueue: queue, activityOptions: map[string]engine.ActivityOptions{}}
+			eng := &Engine{defaultQueue: queue, activityOptions: map[string]activityRegistration{}}
 			var suite testsuite.WorkflowTestSuite
 			env := suite.NewTestWorkflowEnvironment()
 			env.SetDataConverter(NewAgentDataConverter())

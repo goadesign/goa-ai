@@ -3124,7 +3124,7 @@ func TestPlanResumeActivityPassesToolOutputs(t *testing.T) {
 	called := false
 	toolName := tools.Ident("svc.ts.tool")
 	resultJSON := rawjson.Message([]byte(`{"status":"ok"}`))
-	serverData := rawjson.Message([]byte(`[{"kind":"evidence"}]`))
+	serverData := rawjson.Message([]byte(`[{"kind":"evidence","audience":"evidence","data":{}}]`))
 	total := 17
 	bounds := &agent.Bounds{Returned: 10, Total: &total, Truncated: true, RefinementHint: "narrow the window"}
 	toolOutputs := []*api.ToolOutputRef{{CallRunID: "run-123", ResultRunID: "run-123", ToolCallID: "call-1"}}
@@ -3137,7 +3137,7 @@ func TestPlanResumeActivityPassesToolOutputs(t *testing.T) {
 		require.Equal(t, "call-1", input.ToolOutputs[0].ToolCallID)
 		require.JSONEq(t, `{"from":"test"}`, string(input.ToolOutputs[0].Payload))
 		require.JSONEq(t, `{"status":"ok"}`, string(input.ToolOutputs[0].Result))
-		require.JSONEq(t, `[{"kind":"evidence"}]`, string(input.ToolOutputs[0].ServerData))
+		require.JSONEq(t, `[{"kind":"evidence","audience":"evidence","data":{}}]`, string(input.ToolOutputs[0].ServerData))
 		require.NotNil(t, input.ToolOutputs[0].Bounds)
 		require.True(t, input.ToolOutputs[0].Bounds.Truncated)
 		require.Equal(t, "narrow the window", input.ToolOutputs[0].Bounds.RefinementHint)
@@ -3437,7 +3437,7 @@ func TestPlanResumeActivityHydratesSuccessfulResultFromCanonicalRunlog(t *testin
 		require.Len(t, input.ToolOutputs, 1)
 		require.Equal(t, "call-1", input.ToolOutputs[0].ToolCallID)
 		require.JSONEq(t, string(resultJSON), string(input.ToolOutputs[0].Result))
-		require.JSONEq(t, `[{"kind":"evidence"}]`, string(input.ToolOutputs[0].ServerData))
+		require.JSONEq(t, `[{"kind":"evidence","audience":"evidence","data":{}}]`, string(input.ToolOutputs[0].ServerData))
 		return &planner.PlanResult{ToolCalls: []planner.ToolRequest{{
 			Name:            "svc.other.tool",
 			ModelToolCallID: "other-1",
@@ -3479,7 +3479,7 @@ func TestPlanResumeActivityHydratesSuccessfulResultFromCanonicalRunlog(t *testin
 			"call-1",
 			"",
 			resultJSON,
-			rawjson.Message([]byte(`[{"kind":"evidence"}]`)),
+			rawjson.Message([]byte(`[{"kind":"evidence","audience":"evidence","data":{}}]`)),
 			nil, "preview",
 			nil,
 			0,

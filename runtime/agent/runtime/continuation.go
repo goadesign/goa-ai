@@ -48,9 +48,10 @@ type (
 		executablePayload rawjson.Message
 		registry          *tools.RegistryBinding
 		definition        *model.ToolDefinition
+		outputs           []*planner.ToolOutput
 	}
 
-	// continuationGroup keeps pages of one tool pair and registration together.
+	// continuationGroup keeps the ordered pages of one saved query together.
 	continuationGroup struct {
 		spec     tools.ToolSpec
 		source   tools.ToolSpec
@@ -158,6 +159,7 @@ func (r *Runtime) availableContinuationActions(agentID agent.Ident, outputs []*p
 			}
 			names[action.modelName] = struct{}{}
 			action.registry = group.registry
+			action.outputs = group.outputs
 			if group.registry != nil {
 				action.definition, err = model.NewToolDefinitionFromSpec(spec)
 				if err != nil {
@@ -180,8 +182,9 @@ func (r *Runtime) availableContinuationActions(agentID agent.Ident, outputs []*p
 	return actions, nil
 }
 
-// continuationGroups reads each dynamic pair from its retained registration.
-// Pages under another token never share cursor state, even for identical names.
+// continuationGroups reads each query from its original registration and joins
+// its pages by the runtime-owned source call ID. Different queries remain
+// separate even when their names, registrations and cursor bytes are equal.
 func (r *Runtime) continuationGroups(agentID agent.Ident, outputs []*planner.ToolOutput) ([]continuationGroup, error) {
 	var groups []continuationGroup
 	var staticOutputs []*planner.ToolOutput
@@ -208,19 +211,21 @@ func (r *Runtime) continuationGroups(agentID agent.Ident, outputs []*planner.Too
 		}
 		groups = append(groups, continuationGroup{spec: spec, source: source, outputs: staticOutputs})
 	}
-	type groupKey struct {
-		registry, token string
-		tool            tools.Ident
+	chains, _, err := historicalPagingChains(outputs)
+	if err != nil {
+		return nil, err
 	}
-	indices := make(map[groupKey]int)
 	for _, output := range outputs {
-		if output == nil || output.Registry == nil {
+		if output == nil || output.Registry == nil || output.ContinuationRootToolCallID != "" || output.Failure != nil {
+			continue
+		}
+		chain := chains[output.ToolCallID]
+		head := chain[len(chain)-1]
+		if head.Bounds == nil || head.Bounds.NextCursor == nil {
 			continue
 		}
 		resolved, err := registrycontract.Read(output.Registry, r.agentTools(agentID).registryDeclaration)
 		if errors.Is(err, registrycontract.ErrCompiledContractChanged) {
-			// This build declares the compiled tool differently, so its saved
-			// page cannot be continued. Valid history contributes no action.
 			continue
 		}
 		if err != nil {
@@ -245,20 +250,11 @@ func (r *Runtime) continuationGroups(agentID agent.Ident, outputs []*planner.Too
 		if !composed {
 			source = resolved.Specs[continuation.Bounds.Paging.SourceTool]
 		}
-		key := groupKey{registry: output.Registry.Registry, token: resolved.Registered.RegistrationToken, tool: continuation.Name}
-		index, exists := indices[key]
-		if !exists {
-			binding, err := resolved.Select(output.Registry.Registry, continuation.Name)
-			if err != nil {
-				return nil, err
-			}
-			index = len(groups)
-			indices[key] = index
-			groups = append(groups, continuationGroup{
-				spec: continuation, source: source, registry: binding,
-			})
+		binding, err := resolved.Select(output.Registry.Registry, continuation.Name)
+		if err != nil {
+			return nil, err
 		}
-		groups[index].outputs = append(groups[index].outputs, output)
+		groups = append(groups, continuationGroup{spec: continuation, source: source, registry: binding, outputs: chain})
 	}
 	return groups, nil
 }

@@ -10,9 +10,7 @@ import (
 	"sync"
 	"time"
 
-	"go.temporal.io/sdk/activity"
 	"go.temporal.io/sdk/worker"
-	"go.temporal.io/sdk/workflow"
 
 	"goa.design/goa-ai/runtime/agent/telemetry"
 )
@@ -105,16 +103,6 @@ func (e *Engine) workerOptionsForQueue(bundle *workerBundle) worker.Options {
 		}
 	}
 	return opts
-}
-
-func (b *workerBundle) registerWorkflow(name string, fn any) {
-	b.worker.RegisterWorkflowWithOptions(fn, workflow.RegisterOptions{Name: name})
-}
-
-// typed registration reuses the same underlying RegisterWorkflowWithOptions
-// since Temporal infers payload type from the function signature.
-func (b *workerBundle) registerActivity(name string, fn any) {
-	b.worker.RegisterActivityWithOptions(fn, activity.RegisterOptions{Name: name})
 }
 
 // start activates the queue-local SDK worker. Once this returns nil, the worker

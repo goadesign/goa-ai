@@ -150,9 +150,17 @@ An exported Agent operation can run before it is published as a tool.
 operation declaration, input, run identity and labels.
 The host authorizes the selection before starting it. The declaration does not
 create an access grant. The start and completion-repair methods accept
-`WithTextOnly(true)` after the memo argument. This is their only supported run
-option: the host can restrict interaction, while provider configuration still owns
-planner policy. The restriction selects generated text-only argument contracts
+`WithTextOnly(true)` and `WithRootExecutionTarget(engine.WorkerDeploymentVersion{
+DeploymentName: "execution", BuildID: "build-a"})` after the memo argument.
+The host can restrict interaction and select an exact root worker build; provider
+configuration still owns planner policy and generated workflow routing. The root
+target is copied into the accepted engine request and its digest, so delayed
+starts, retries, stored prepared requests, and completion repair retain the same
+build. A changed target conflicts with the accepted workflow ID. Omitting the
+target preserves engine-managed routing and existing request identities. Child
+workflow requests have no target override.
+
+The restriction selects generated text-only argument contracts
 before validation and cannot be removed by provider preparation or child runs.
 Registered native and service operations use the same restriction, retained with
 their original request through dispatch and recovery.
@@ -849,9 +857,18 @@ checkpoint and validates it and the supplied response against that complete
 definition before the workflow engine receives the successor ID. It returns an
 opaque `PreparedRun`. `StartPrepared` submits that exact stored request, so a
 retry cannot silently load or construct a different request. The
-workflow validates the same stored input again before restoring it. A saved
-payload, result, child suspension, or policy value that the current generated
-contract does not accept rejects the continuation. A tool call created in an earlier workflow
+workflow validates the same stored input again before restoring it. Completed
+history retains its accepted input and result JSON, server data, media, bounds,
+and rendered previews without decoding them through a newer generated result
+type. Changing or removing a completed tool does not prevent answering
+a later clarification. The runtime still validates the saved identities, JSON
+and server-data envelopes, media, failure shape, and bounds metadata. The saved
+required-tool list remains an exact inventory of referenced tools; current tool
+availability is required only for unfinished executable work and saved policy.
+Pending execution, unmaterialized successful results, confirmations, child
+suspensions, external results, and unfinished paging consumers retain current generated
+contract checks. A value rejected by one of those current consumers rejects the
+continuation. A tool call created in an earlier workflow
 retains that workflow's run ID while its result records the new workflow's run
 ID. The tool-result hook and `tool_end` stream payload carry the original call
 run ID explicitly; the result event's own run ID identifies the workflow that
@@ -1051,8 +1068,11 @@ while recovery is pending: exact recorded failure data and call identity must
 agree, and every fresh correction is validated against its current input contract.
 Failure materialization, previews and paging do not decode failed arguments.
 Pending execution, confirmation, external input, unfinished children and
-current paging outputs retain current input validation. Completed historical
-page chains do not decode their old arguments. An unfinished historical static
+live paging outputs retain current input validation. A saved successful final
+page closes its exact source call and registration, including inside a
+checkpoint. Recorded or materialized closed chains do not decode their old
+arguments or results through current codecs. An unmaterialized final result
+cannot close an earlier cursor. An unfinished historical static
 query whose arguments no longer fit its current tools offers no continuation
 action, while its saved evidence remains available to the new turn.
 Current result and server-data contracts,
@@ -1497,6 +1517,14 @@ using the saved route, operation, and token. The existing `ToolCall.Registry`
 retains that selection without copying the operation declarations: readers
 restore them from the consuming definition's generated declarations and compare
 a saved fingerprint first. No model argument is introduced.
+New service pages select today's catalog registration before acceptance. The
+required `BindStaticService` callback verifies each prior private route and token
+against the current resource's owner and permanent name. Registered imports use
+their retained owner, kind, and resource name; direct imports keep their declared
+registry route identity. Runtime source-call IDs correlate ordered pages across
+registrations, while every accepted call keeps its own exact execution selection.
+Saved arguments, cursor bytes, and completed results remain unchanged. No worker
+retention record or additional checkpoint field is needed.
 The complete static declaration supplies validation contracts, while the Agent's
 executable list chooses its planner tools. Binding a static declaration never
 adds an omitted operation to that list, on initial planning or resume. Separately
@@ -1511,9 +1539,12 @@ See the [binding contract](docs/tool_search.md#bind-generated-service-tools).
 from unbound operation declarations and explicit original tool names. It checks
 every operation contract and the generated child's executor, workflow and queue.
 The selected registration owns configuration revisions; discovery descriptions
-and tags do not replace generated operation contracts. Saved calls and paging
-continuations retain that selection, without the operation declarations, and use
-consumer-owned codecs. Native calls still run as durable child workflows.
+and tags do not replace generated operation contracts. Accepted calls retain
+that selection, without the operation declarations, and use consumer-owned codecs.
+New pages select the current native registration and configuration only after
+the required owner callback verifies prior routes, tokens and Agent targets.
+The callback uses existing owner APIs; no new saved record is needed. Native
+calls still run as durable child workflows.
 
 `RegistryCatalog.IncludeResolved` imports original operation names from an exact
 registration and continues to reject collisions with generated static tools. `IncludeRegistered` instead requires the owner-selected
@@ -1760,6 +1791,16 @@ Existing identity-free records need no migration. After identity-bearing records
 exist, downgrading those readers requires an application-owned data conversion;
 reverting the library alone is not a safe rollback. Provider wire messages and
 stored declaration JSON remain unchanged.
+
+`NewCatalogReader(redisClient, registryName)` gives local maintenance code only
+`ListToolsets` and `ReadCatalogToolset`, using the same saved-record validation
+as the running service. Construction does not contact Redis or start workers;
+the caller owns the borrowed client. Reads do not mutate Redis or prune leases.
+The reader returns saved ownership, exact registration and native-Agent status,
+but no `ServiceHealth`: provider health requires the running Registry's configured
+ping settings. The service retains that health observation. No RPC, saved-data
+format, registration rule or migration changes. See
+[read-only catalog inspection](docs/runtime.md#read-only-catalog-inspection).
 
 `ReadCatalogIdentity` reads only the exact route's compact saved state and
 returns its immutable application owner, including after retirement. It neither
@@ -2840,6 +2881,22 @@ side effect:
   Seal call without canceling the operation already running. Engine sealing stays
   synchronous and serialized; errors permit another call, and success is cached.
   See [registration and sealing](docs/runtime.md#registration-and-sealing).
+- The Temporal adapter accepts SDK workflow and activity handlers through
+  `RegisterNativeWorkflow` and `RegisterNativeActivity`, using SDK registration
+  options with an explicit name for one function. Activity struct groups are
+  rejected before creating workers or reserving names. These methods share the
+  same registration seal and
+  worker lifecycle without acquiring the agent input or start-recipe contract.
+  Native names may repeat across queues; typed agent names remain globally
+  unique and cannot collide with native names.
+- `RegisteredTaskQueues` derives a sorted queue inventory from successful
+  workflow and activity registrations, including activity-only queues. Reading
+  it before sealing requires no server connection or active poller.
+- The adapter's `CurrentWorkflowTarget` reads saved queue routing through its
+  existing SDK client and returns the same `engine.WorkerDeploymentVersion`
+  used by root starts. Nil means unversioned routing or no current version.
+  This read requires no active poller, reports owner failures, and never changes
+  a root target that a caller already accepted.
 - In the Temporal engine, sealing is the activation boundary. It starts every
   registered worker with `worker.Start()`, retries startup failures until `ctx`
   ends, and returns an error when activation fails. SDK `Start` accepts no context,

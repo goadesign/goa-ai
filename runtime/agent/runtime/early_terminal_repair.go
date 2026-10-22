@@ -22,7 +22,7 @@ import (
 // sessionful operation originally passed to StartOperation. The host retains
 // the original declaration, arguments, labels and memo until completion. An
 // open engine returns ErrRunCompletionNotReady; unavailable history is an error.
-// Pass the same WithTextOnly option used at start; other options are rejected.
+// Pass the same text-only restriction and root execution target used at start.
 func (r *Runtime) EnsureOperationCompletion(ctx context.Context, sessionID, runID string, operation *genregistry.ToolSchema, arguments rawjson.Message, labels map[string]string, memo map[string]any, opts ...RunOption) error {
 	if sessionID == "" {
 		return ErrMissingSessionID
@@ -37,7 +37,7 @@ func (r *Runtime) EnsureOperationCompletion(ctx context.Context, sessionID, runI
 // EnsureOneShotOperationCompletion delivers authoritative completion for the
 // exact sessionless operation originally passed to StartOneShotOperation. It
 // creates no Session and never resubmits a workflow whose history is missing.
-// Pass the same WithTextOnly option used at start; other options are rejected.
+// Pass the same text-only restriction and root execution target used at start.
 func (r *Runtime) EnsureOneShotOperationCompletion(ctx context.Context, runID string, operation *genregistry.ToolSchema, arguments rawjson.Message, labels map[string]string, memo map[string]any, opts ...RunOption) error {
 	request, err := prepareOperationRequest("", runID, operation, arguments, labels, memo, opts...)
 	if err != nil {

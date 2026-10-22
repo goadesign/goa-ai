@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
+	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -91,14 +92,22 @@ func testMaterializedCheckpointIntegrity(t *testing.T, suspension *api.RunSuspen
 				}
 				if paging {
 					specs[i].Bounds = &tools.BoundsSpec{Paging: &tools.PagingSpec{CursorField: "cursor"}}
+					specs[i].Result.Codec.FromJSON = func([]byte) (any, error) {
+						return nil, errors.New("current paging result required")
+					}
 				}
 			}
-			if !paging {
+			if paging {
+				copy.Batch.Records[0].Result.Bounds = &agent.Bounds{Truncated: true, NextCursor: new("next")}
+			} else {
 				copy.Batch.Records[0].ResultPublished = false
 				copy.Batch.Records[0].ResultRecord = nil
 			}
 			strict := NewAgentDefinition(definition.route, specs, nil, nil, nil, nil, nil)
 			require.ErrorContains(t, validateCheckpointInputs(copy, strict), "current consumer needs original input")
+			if paging {
+				require.ErrorContains(t, validateCheckpointToolValues(copy, strict), "current paging result required")
+			}
 		})
 	}
 }

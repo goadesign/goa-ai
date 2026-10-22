@@ -280,20 +280,19 @@ func productionReplayWorkflow(
 	}))
 	eng := &Engine{
 		defaultQueue: productionReplayTaskQueue,
-		activityOptions: map[string]engine.ActivityOptions{
-			productionReplayRecord: {
+		activityOptions: map[string]activityRegistration{
+			productionReplayRecord: {options: engine.ActivityOptions{
 				StartToCloseTimeout: time.Minute,
-			},
-			productionReplayPlanActivity: {
+			}},
+			productionReplayPlanActivity: {options: engine.ActivityOptions{
 				StartToCloseTimeout: time.Minute,
-			},
-			productionReplayResume: {
+			}},
+			productionReplayResume: {options: engine.ActivityOptions{
 				StartToCloseTimeout: time.Minute,
-			},
-			productionReplayExecute: {
+			}},
+			productionReplayExecute: {options: engine.ActivityOptions{
 				StartToCloseTimeout: time.Minute,
-			},
-		},
+			}}},
 	}
 	return plannerStub, eng, eng.temporalWorkflowHandler(rt.ExecuteWorkflow)
 }

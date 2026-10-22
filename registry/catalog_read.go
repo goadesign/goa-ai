@@ -28,9 +28,17 @@ type (
 		Registration *genregistry.ResolvedToolset
 		// NativeAgent means the application must observe its configured worker.
 		NativeAgent bool
-		// ServiceHealth is populated only for service declarations. A native
-		// declaration deliberately has no service-provider health value.
+		// ServiceHealth is populated for service declarations read through Service.
+		// CatalogReader reads saved records without observing provider health.
 		ServiceHealth *ToolsetHealth
+	}
+
+	// catalogToolsetRead keeps the selected state and clock with its decoded
+	// result so Service can add health using its configured ping settings.
+	catalogToolsetRead struct {
+		toolset *CatalogToolset
+		state   catalogState
+		now     time.Time
 	}
 
 	catalogSnapshot struct {
@@ -77,7 +85,41 @@ return {state, definition, tostring(retired), now[1], now[2]}
 // ReadCatalogToolset reads one record within a positive raw-byte budget and
 // returns its exact service health observation. It never supplies Agent-worker
 // availability or infers ownership for historical records.
-func (s *Service) ReadCatalogToolset(ctx context.Context, name string, rawByteBudget int64) (_ *CatalogToolset, err error) {
+func (s *Service) ReadCatalogToolset(ctx context.Context, name string, rawByteBudget int64) (*CatalogToolset, error) {
+	read, err := s.catalog.readCatalogToolset(ctx, name, rawByteBudget)
+	if err != nil {
+		return nil, err
+	}
+	if !read.toolset.NativeAgent {
+		health := s.catalogHealth(read.state, read.now)
+		read.toolset.ServiceHealth = &health
+	}
+	return read.toolset, nil
+}
+
+// CatalogRoutesAfter returns at most count currently indexed routes after the
+// exclusive lexical position. It reads no declarations; the application owns
+// page size, scope authorization, and its complete response budget.
+func (s *Service) CatalogRoutesAfter(ctx context.Context, scope, after string, count int) ([]string, error) {
+	if scope == "" || count <= 0 {
+		return nil, errors.New("catalog range requires a scope and positive count")
+	}
+	return s.catalog.store.After(ctx, scope, after, count)
+}
+
+// CatalogContains reports whether one exact route is currently indexed in a
+// scope. It reads no definition and grants no authority to use that route.
+func (s *Service) CatalogContains(ctx context.Context, scope, name string) (bool, error) {
+	if scope == "" || name == "" {
+		return false, errors.New("catalog membership requires a scope and route")
+	}
+	return s.catalog.store.Contains(ctx, scope, name)
+}
+
+// readCatalogToolset reads and validates one saved record before constructing
+// an independent result. It returns the selected health inputs for Service;
+// maintenance readers do not need a running provider-health tracker.
+func (c *toolsetCatalog) readCatalogToolset(ctx context.Context, name string, rawByteBudget int64) (_ *catalogToolsetRead, err error) {
 	ctx, span := otel.Tracer("goa.design/goa-ai/registry").Start(ctx, "toolregistry.catalog.read",
 		trace.WithAttributes(attribute.String("toolregistry.toolset", name)))
 	defer finishCatalogSpan(ctx, span, &err)
@@ -88,7 +130,7 @@ func (s *Service) ReadCatalogToolset(ctx context.Context, name string, rawByteBu
 	// together before using any retained validation.
 	snapshotCtx, snapshotSpan := otel.Tracer("goa.design/goa-ai/registry").Start(ctx, "toolregistry.catalog.snapshot.read",
 		trace.WithAttributes(attribute.String("toolregistry.toolset", name)))
-	snapshot, err := s.catalog.store.BoundedSnapshot(snapshotCtx, toolsetCatalogKey(name), rawByteBudget)
+	snapshot, err := c.store.BoundedSnapshot(snapshotCtx, toolsetCatalogKey(name), rawByteBudget)
 	if err == nil {
 		snapshotSpan.SetAttributes(
 			attribute.Int("toolregistry.catalog.state_read_bytes", len(snapshot.state)),
@@ -100,10 +142,10 @@ func (s *Service) ReadCatalogToolset(ctx context.Context, name string, rawByteBu
 		return nil, err
 	}
 	if !snapshot.exists {
-		s.catalog.forgetDefinition(name)
+		c.forgetDefinition(name)
 		return nil, genregistry.MakeNotFound(errToolsetNotFound)
 	}
-	entry, err := s.catalog.decodeSnapshot(ctx, name, snapshot.state, snapshot.definition, snapshot.retired)
+	entry, err := c.decodeSnapshot(ctx, name, snapshot.state, snapshot.definition, snapshot.retired)
 	if err != nil {
 		return nil, err
 	}
@@ -125,30 +167,7 @@ func (s *Service) ReadCatalogToolset(ctx context.Context, name string, rawByteBu
 			Toolset: toolset, RegistrationToken: entry.RegistrationToken,
 		},
 	}
-	if !entry.NativeAgent {
-		health := s.catalogHealth(entry.catalogState, snapshot.now)
-		result.ServiceHealth = &health
-	}
-	return result, nil
-}
-
-// CatalogRoutesAfter returns at most count currently indexed routes after the
-// exclusive lexical position. It reads no declarations; the application owns
-// page size, scope authorization, and its complete response budget.
-func (s *Service) CatalogRoutesAfter(ctx context.Context, scope, after string, count int) ([]string, error) {
-	if scope == "" || count <= 0 {
-		return nil, errors.New("catalog range requires a scope and positive count")
-	}
-	return s.catalog.store.After(ctx, scope, after, count)
-}
-
-// CatalogContains reports whether one exact route is currently indexed in a
-// scope. It reads no definition and grants no authority to use that route.
-func (s *Service) CatalogContains(ctx context.Context, scope, name string) (bool, error) {
-	if scope == "" || name == "" {
-		return false, errors.New("catalog membership requires a scope and route")
-	}
-	return s.catalog.store.Contains(ctx, scope, name)
+	return &catalogToolsetRead{toolset: result, state: entry.catalogState, now: snapshot.now}, nil
 }
 
 func (s *redisCatalogStore) BoundedSnapshot(ctx context.Context, key string, budget int64) (catalogSnapshot, error) {

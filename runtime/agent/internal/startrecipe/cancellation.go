@@ -10,22 +10,27 @@ import (
 	"unicode/utf8"
 
 	"goa.design/goa-ai/runtime/agent/api"
+	"goa.design/goa-ai/runtime/agent/engine"
 )
 
 // CancellationRecipe validates one engine job request and returns its stable ID
 // and exact request digest. A different reason keeps the ID and changes the digest.
-func CancellationRecipe(name, queue string, request api.CancellationRequest) (string, [sha256.Size]byte, error) {
+func CancellationRecipe(name, queue string, request api.CancellationRequest, target *engine.WorkerDeploymentVersion) (string, [sha256.Size]byte, error) {
 	if name == "" || queue == "" || request.RunID == "" || request.Reason == "" {
 		return "", [sha256.Size]byte{}, errors.New("cancellation job requires workflow name, queue, run id and reason")
 	}
 	if !utf8.ValidString(name) || !utf8.ValidString(queue) || !utf8.ValidString(request.RunID) || !utf8.ValidString(request.Reason) {
 		return "", [sha256.Size]byte{}, errors.New("cancellation job contains invalid UTF-8")
 	}
+	if target != nil && (target.DeploymentName == "" || target.BuildID == "" || !utf8.ValidString(target.DeploymentName) || !utf8.ValidString(target.BuildID)) {
+		return "", [sha256.Size]byte{}, errors.New("cancellation workflow target requires valid deployment and build names")
+	}
 	data, err := json.Marshal(struct {
-		Name    string
-		Queue   string
-		Request api.CancellationRequest
-	}{Name: name, Queue: queue, Request: request})
+		Name                string
+		Queue               string
+		Request             api.CancellationRequest
+		RootExecutionTarget *engine.WorkerDeploymentVersion `json:"root_execution_target,omitempty"`
+	}{Name: name, Queue: queue, Request: request, RootExecutionTarget: target})
 	if err != nil {
 		return "", [sha256.Size]byte{}, err
 	}
