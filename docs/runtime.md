@@ -8460,6 +8460,15 @@ Code that deliberately calls a `model.Provider` directly may use
 Normal planners, completions, and runtimes should receive an opaque
 `model.Client` instead.
 
+Runtime-managed model clients preserve the provider's optional token counter
+through response recording, tracing, and request preparation. `CountTokens`
+validates and counts the request supplied by the caller. It does not apply cache
+defaults or history selection, create a saved inference, or open an inference
+span. A provider without counting support returns
+`model.ErrTokenCountingUnsupported`; provider errors remain errors. Custom
+`model.WrapClient` middleware must forward `model.TokenCounter` when it should
+preserve that provider capability.
+
 ### Adaptive Rate Limiter
 
 Apply adaptive rate limiting to handle provider throttling:
