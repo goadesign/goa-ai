@@ -213,6 +213,17 @@ func (c *modelInvocationProvider) Stream(ctx context.Context, req *model.Request
 	return c.inner.Stream(ctx, req)
 }
 
+// CountTokens forwards the request to the provider's optional counter without
+// creating a saved model invocation. Providers without a counter return
+// the same unsupported error as an unwrapped model client.
+func (c *modelInvocationProvider) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
+	counter, ok := c.inner.(model.TokenCounter)
+	if !ok {
+		return model.TokenCount{}, model.ErrTokenCountingUnsupported
+	}
+	return counter.CountTokens(ctx, req)
+}
+
 // PrepareClientCall creates the durable invocation before provider execution.
 func (c *modelInvocationProvider) PrepareClientCall(
 	ctx context.Context,
