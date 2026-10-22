@@ -12,5 +12,5 @@ Goa version and never edit generated files directly.
 Start with [the framework overview](docs/overview.md), then consult the
 [DSL reference](docs/dsl.md) and [runtime reference](docs/runtime.md) for the
 contract being changed. [The test guide](codegen/agent/tests/README.md) describes
-focused generator checks. Follow the [release upgrade instructions](docs/releases/v0.88.0.md)
+focused generator checks. Follow the [release upgrade instructions](docs/releases/v0.89.0.md)
 when changing deployed generated systems.

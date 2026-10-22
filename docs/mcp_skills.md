@@ -122,7 +122,7 @@ both in memory and requires a fresh context and approval for a changed version
 or a restarted host. Applications that persist context must retain its entries
 with it and define their consent lifetime. The shared verifier makes no storage
 or approval decisions. Existing applications must follow the
-[release upgrade instructions](releases/v0.88.0.md#required-upgrade-actions).
+[release upgrade instructions](releases/v0.89.0.md#required-upgrade-actions).
 
 The authoritative contracts are the [MCP Skills extension](https://modelcontextprotocol.io/extensions/skills/overview)
 and [Agent Skills format](https://agentskills.io/specification).

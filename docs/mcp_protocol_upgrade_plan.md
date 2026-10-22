@@ -4,7 +4,7 @@ The agreed upgrade is implemented and merged in [PR #409](https://github.com/goa
 This document retains the research, architectural decisions and dated acceptance
 records from 2026-10-02 through 2026-10-09. Baseline descriptions and milestone
 statements about unfinished work describe their recorded point in time; they are
-not instructions for the current release. Use the [release upgrade guide](releases/v0.88.0.md)
+not instructions for the current release. Use the [release upgrade guide](releases/v0.89.0.md)
 and the [runtime reference](runtime.md) for current application requirements.
 
 ## Current completion gates

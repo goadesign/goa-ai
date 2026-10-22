@@ -387,4 +387,4 @@ catalog, retired-token history, calls, streams, and their expiry during
 conversion. The layout change alone preserves existing identity; the current
 release also requires registry wire protocol 13 and regenerated declarations.
 Compare fingerprints and re-admit providers under the current wire contract.
-No general-purpose converter is shipped. See the [release upgrade instructions](../docs/releases/v0.88.0.md#required-upgrade-actions).
+No general-purpose converter is shipped. See the [release upgrade instructions](../docs/releases/v0.89.0.md#required-upgrade-actions).

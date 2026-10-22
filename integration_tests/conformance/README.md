@@ -17,7 +17,7 @@ released-requirement-set claim.
 
 The results below are dated evidence, including failures and later targeted
 improvements. Statements about absent fixture operations do not describe the
-current framework capability inventory. See the [current release](../../docs/releases/v0.88.0.md)
+current framework capability inventory. See the [current release](../../docs/releases/v0.89.0.md)
 and [completed upgrade inventory](../../docs/mcp_protocol_upgrade_plan.md#current-completion-gates).
 
 ## Run

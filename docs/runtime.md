@@ -4663,7 +4663,7 @@ The procedure below preserves data during the layout conversion. Before admittin
 work on the current release, settle old executable calls, regenerate complete
 declarations, and re-admit providers under wire protocol 15. Compare generated
 fingerprints and preserve historical identity; a version-derived old token cannot
-serve as a new admission. See [current release actions](releases/v0.88.0.md#required-upgrade-actions).
+serve as a new admission. See [current release actions](releases/v0.89.0.md#required-upgrade-actions).
 
 Source changes are also required:
 
@@ -8384,7 +8384,7 @@ before installing the new runtime. Only `goa-ai.run-suspension.v14` is accepted;
 earlier checkpoints have no legacy reader or conversion path. Rollback requires
 compatible binaries, generated contracts and stored data; current suspensions
 cannot be resumed by the previous runtime. See the
-[complete release upgrade instructions](releases/v0.88.0.md#required-upgrade-actions).
+[complete release upgrade instructions](releases/v0.89.0.md#required-upgrade-actions).
 
 Registry wire protocol 15 carries a workflow-owned execution sequence and one
 typed operation separately from tool arguments. The original tool call uses
@@ -8425,7 +8425,7 @@ resource reads do not use the parser. See
 [the resource contract](dsl.md#parameterized-mcp-resources).
 Additional declarations enable subscriptions, Tasks, and additional input;
 the server advertises only authored capabilities. Host credential handling
-remains application-owned. Follow the [release upgrade actions](releases/v0.88.0.md#required-upgrade-actions)
+remains application-owned. Follow the [release upgrade actions](releases/v0.89.0.md#required-upgrade-actions)
 when replacing an older generated server.
 
 ## Stream Profiles
