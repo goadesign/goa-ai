@@ -249,7 +249,9 @@ Custom stores must follow the [preparation ownership upgrade](docs/runtime.md#pr
   [regeneration requirements](docs/runtime.md#agent-timeout-recovery).
 - **Bind generated tools to selected services.** Keep generated tool names,
   input preparation, codecs, and executors while attaching an exact owner-selected
-  registration. Calls and retries retain the original route and token. See
+  registration. Calls and retries retain the original route and token. New pages
+  select today's provider after the resource owner verifies prior registrations;
+  saved queries and completed results remain unchanged. See
   [static service bindings](docs/tool_search.md#bind-generated-service-tools).
   Binding validates complete generated declarations without expanding the
   consuming Agent's executable tools; separately discovered tools remain available.

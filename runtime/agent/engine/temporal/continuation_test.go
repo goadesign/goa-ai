@@ -23,6 +23,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/internal/temporalerrors"
+	"goa.design/goa-ai/runtime/agent/run"
 )
 
 func TestContinuationActivityRecordedDecisionReplay(t *testing.T) {
@@ -31,13 +32,13 @@ func TestContinuationActivityRecordedDecisionReplay(t *testing.T) {
 		handler := func(ctx workflow.Context) error {
 			wf := &temporalWorkflowContext{engine: &Engine{}, ctx: ctx}
 			answer, err := wf.ExecuteContinuationActivity(engine.ContinuationActivityCall{
-				Name: "pages", Input: &api.ContinuationActivityInput{RunID: "run", HistoryEndID: "end"},
+				Name: "pages", Input: &api.ContinuationActivityInput{RunContext: run.Context{RunID: "run"}, HistoryEndID: "end"},
 				Options: engine.ActivityOptions{Queue: productionReplayTaskQueue, StartToCloseTimeout: time.Minute},
 			})
 			observed = answer
 			return err
 		}
-		input, err := NewAgentDataConverter().ToPayloads(&api.ContinuationActivityInput{RunID: "run", HistoryEndID: "end"})
+		input, err := NewAgentDataConverter().ToPayloads(struct{ RunID, HistoryEndID string }{RunID: "run", HistoryEndID: "end"})
 		require.NoError(t, err)
 		result, err := NewAgentDataConverter().ToPayloads(available)
 		require.NoError(t, err)
@@ -96,7 +97,7 @@ func TestContinuationActivityRegistrationRetainsContractFailure(t *testing.T) {
 	env := suite.NewTestActivityEnvironment()
 	env.SetDataConverter(NewAgentDataConverter())
 	env.RegisterActivityWithOptions(captured.activities["pages"], activity.RegisterOptions{Name: "pages"})
-	_, err := env.ExecuteActivity("pages", &api.ContinuationActivityInput{RunID: "run"})
+	_, err := env.ExecuteActivity("pages", &api.ContinuationActivityInput{RunContext: run.Context{RunID: "run"}})
 	require.Error(t, err)
 	var failure *temporal.ApplicationError
 	require.ErrorAs(t, err, &failure)

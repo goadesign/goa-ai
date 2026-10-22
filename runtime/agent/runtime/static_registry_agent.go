@@ -4,6 +4,7 @@
 package runtime
 
 import (
+	"context"
 	"fmt"
 	"slices"
 
@@ -20,7 +21,14 @@ const staticAgentKind = "agent"
 // generated export set. Expected declarations must be unbound native operations;
 // the selected provider supplies configuration while generated children own routes.
 // Generated names, codecs and input preparation remain owned by the consumer.
-func (c *RegistryCatalog) BindStaticAgent(registry string, expected []*genregistry.ToolSchema, selected *genregistry.ResolvedToolset, names ...tools.Ident) error {
+// Before a new page uses this registration, verifyPrevious receives the saved
+// private toolset route, exact token and Agent target, in that order. It must
+// verify that they belong to this same logical resource. Accepted calls keep
+// their original target and never call verifyPrevious.
+func (c *RegistryCatalog) BindStaticAgent(registry string, expected []*genregistry.ToolSchema, selected *genregistry.ResolvedToolset, verifyPrevious func(context.Context, string, string, *genregistry.AgentToolTarget) error, names ...tools.Ident) error {
+	if verifyPrevious == nil {
+		return fmt.Errorf("static agent binding requires verification of previous registrations")
+	}
 	if len(expected) == 0 || len(names) != len(expected) {
 		return fmt.Errorf("static agent binding requires the complete generated export set and explicit tool names")
 	}
@@ -115,7 +123,7 @@ func (c *RegistryCatalog) BindStaticAgent(registry string, expected []*genregist
 		return err
 	}
 	for _, name := range names {
-		c.selections[name] = registrySelection{registry: registry, resolution: resolved}
+		c.selections[name] = registrySelection{registry: registry, resolution: resolved, verifyPreviousAgent: verifyPrevious}
 		c.labels[name] = slices.Clone(seen[name].ConsumerContract.RequiredLabels)
 	}
 	return nil

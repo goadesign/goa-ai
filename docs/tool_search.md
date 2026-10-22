@@ -375,11 +375,20 @@ one another's tool lists.
 ## Bind generated service tools
 
 When an application selects a registration for tools already compiled into an
-Agent, call `catalog.BindStaticService(registry, expected, selected, names...)`
+Agent, call `catalog.BindStaticService(registry, expected, selected, verifyPrevious, names...)`
 from its `RegistryTools.Resolve` implementation. Supply the generated `Toolset()`
 as `expected`, the complete owner-authorized resolution as `selected`, and a
 nonempty list of original generated tool identifiers. There is no implicit
 "bind all" choice.
+
+`verifyPrevious` is required and has type
+`func(context.Context, string, string) error`. Its string arguments are the saved
+private toolset route and exact registration token, in that order. Capture the
+current resource's owner and permanent name in this callback. Use the resource
+owner's API to verify that the saved route and token belong to that same resource;
+return an error for another resource or a failed read. Matching operation names
+or schemas do not establish resource ownership. The callback runs in the current
+planning activity and is not stored in calls or checkpoints.
 
 The runtime compares the complete portable service declaration and version,
 allowing only the expected toolset name to become the selected route. It checks
@@ -418,15 +427,25 @@ generated declarations, which generated definitions supply with
 `WithRegistryDeclarations`. Both initial execution and overload retries call
 `CallResolvedTool` with that route, original operation, token, and invocation
 identity. Replacing the current registration cannot redirect an accepted call.
-Dedicated pagination retains its saved partner and token without selecting a new
-source; the generated partner must belong to the same consuming definition.
+A new page request selects the current catalog registration after verifying
+that every prior page belongs to the same resource. Its original query arguments,
+next cursor, and runtime source-call ID stay unchanged. Independent source calls
+remain separate even when their query and cursor bytes are equal. Accepted page
+requests and their retries retain their own exact registration. Removed paging
+partners, changed cursor or retained-field declarations, or incompatible current
+arguments supply no action; owner-read failures
+stop planning and remain errors. Availability checks use the same current catalog
+selection as planning. New native Agent pages likewise select the current
+registration and configuration; accepted child calls retain their own selection.
 Finalization and synthesis skip catalog discovery while retaining existing static
 input preparation.
 
-When the reading build declares the saved operations differently, or no longer
-declares them, the saved call cannot be interpreted with the current generated
-code. Current work rejects it, a paused run cannot resume, and an unfinished page
-from an earlier turn supplies no next-page action without blocking the new turn.
+Unfinished compiled paging still requires an exact match to the saved generated
+declaration fingerprint, including result schemas and metadata. Selecting a new
+provider does not migrate a changed declaration, even when its input alone still
+matches. Such current work rejects the changed contract; a suspension that still
+consumes it cannot resume, and unfinished history from an earlier turn supplies
+no next-page action. Completed results and closed queries remain raw history.
 These are the same outcomes as for a call whose saved full declaration differs
 from the current generated contract. Calls saved with their full declaration by
 earlier releases keep their existing behavior. An agent that does not compile the
@@ -456,7 +475,7 @@ same-named static tool owned by another Agent never changes the call's executor.
 
 ## Bind generated native Agent tools
 
-Call `catalog.BindStaticAgent(registry, expected, selected, names...)` with the
+Call `catalog.BindStaticAgent(registry, expected, selected, verifyPrevious, names...)` with the
 complete generated unbound operation declarations, the owner's selected
 `ResolvedToolset`, and every original generated tool name. The runtime compares
 all operation schemas and policy and checks the provider executor, workflow and
@@ -464,6 +483,16 @@ queue against the consuming definition's generated child route. Registration
 configuration may change between revisions; each accepted call retains its
 selected revision. Toolset discovery descriptions and tags do not alter the
 operation contract.
+
+The required `verifyPrevious` has type
+`func(context.Context, string, string, *genregistry.AgentToolTarget) error`.
+Its arguments are the prior private toolset route, exact registration token,
+and selected Agent target. Use the target's saved configuration reference and
+existing owner APIs to prove that the old registration belongs to the same
+owner and permanent resource as the current selection. Failed reads and another
+resource remain errors. For a newly selected page, the current registration
+supplies the new child configuration; the original query and cursor stay intact.
+Accepted child calls keep their saved configuration and do not run this check.
 
 Binding the complete native export set does not make every export executable by
 the consuming Agent. Its executable list still chooses the static planner tools,

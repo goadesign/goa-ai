@@ -1511,6 +1511,14 @@ using the saved route, operation, and token. The existing `ToolCall.Registry`
 retains that selection without copying the operation declarations: readers
 restore them from the consuming definition's generated declarations and compare
 a saved fingerprint first. No model argument is introduced.
+New service pages select today's catalog registration before acceptance. The
+required `BindStaticService` callback verifies each prior private route and token
+against the current resource's owner and permanent name. Registered imports use
+their retained owner, kind, and resource name; direct imports keep their declared
+registry route identity. Runtime source-call IDs correlate ordered pages across
+registrations, while every accepted call keeps its own exact execution selection.
+Saved arguments, cursor bytes, and completed results remain unchanged. No worker
+retention record or additional checkpoint field is needed.
 The complete static declaration supplies validation contracts, while the Agent's
 executable list chooses its planner tools. Binding a static declaration never
 adds an omitted operation to that list, on initial planning or resume. Separately
@@ -1525,9 +1533,12 @@ See the [binding contract](docs/tool_search.md#bind-generated-service-tools).
 from unbound operation declarations and explicit original tool names. It checks
 every operation contract and the generated child's executor, workflow and queue.
 The selected registration owns configuration revisions; discovery descriptions
-and tags do not replace generated operation contracts. Saved calls and paging
-continuations retain that selection, without the operation declarations, and use
-consumer-owned codecs. Native calls still run as durable child workflows.
+and tags do not replace generated operation contracts. Accepted calls retain
+that selection, without the operation declarations, and use consumer-owned codecs.
+New pages select the current native registration and configuration only after
+the required owner callback verifies prior routes, tokens and Agent targets.
+The callback uses existing owner APIs; no new saved record is needed. Native
+calls still run as durable child workflows.
 
 `RegistryCatalog.IncludeResolved` imports original operation names from an exact
 registration and continues to reject collisions with generated static tools. `IncludeRegistered` instead requires the owner-selected

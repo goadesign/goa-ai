@@ -568,6 +568,14 @@ rolled back to an older decoder. Histories without this recovery value and
 ordinary accepted suspension checkpoints keep their existing contracts.
 No Goa or client generation is required.
 
+Continuation-availability activity requests now carry the workflow's complete
+`run.Context` instead of separate run, session and text-only fields. This lets a
+catalog read the accepted native operation and labels before selecting a new
+page provider. An unfinished request written with the old fields must execute
+with its matching old handler; the new handler does not reconstruct missing
+context. Completed boolean decisions remain replayable. If no unfinished query
+exists, availability returns without reading the current provider catalog.
+
 Use the application's verified worker-build routing to keep existing pinned
 work on its old build and start new work on the new build. Applications using
 unversioned workers must drain affected work before replacement or isolate the

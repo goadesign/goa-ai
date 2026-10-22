@@ -86,9 +86,9 @@ func TestRegistryDeclarationsRejectConflictingRegistrations(t *testing.T) {
 func TestStaticBindingRequiresGeneratedRegistryDeclarations(t *testing.T) {
 	rt, catalog, selected := staticServiceCatalog(t)
 	withoutDeclarations := NewAgentDefinition(catalog.definition.route, genrecords.Specs(), nil, nil, []tools.Ident{genrecords.Read}, nil, nil).WithRegistryTools(testRegistrySources{whole: true})
-	err := rt.newRegistryCatalog(withoutDeclarations).BindStaticService(testRegistryName, genrecords.Toolset(), selected, genrecords.Read)
+	err := rt.newRegistryCatalog(withoutDeclarations).BindStaticService(testRegistryName, genrecords.Toolset(), selected, verifyTestStaticResource, genrecords.Read)
 	require.ErrorContains(t, err, "regenerate the agent")
-	require.NoError(t, catalog.BindStaticService(testRegistryName, genrecords.Toolset(), selected, genrecords.Read))
+	require.NoError(t, catalog.BindStaticService(testRegistryName, genrecords.Toolset(), selected, verifyTestStaticResource, genrecords.Read))
 	binding, err := catalog.selections[genrecords.Read].resolution.Select(testRegistryName, genrecords.Read)
 	require.NoError(t, err)
 	assert.Less(t, len(binding.Resolution), 1024)
@@ -97,7 +97,7 @@ func TestStaticBindingRequiresGeneratedRegistryDeclarations(t *testing.T) {
 
 func TestCheckpointRestoresDirectAndCompiledStaticSelections(t *testing.T) {
 	rt, catalog, selected := staticServiceCatalog(t)
-	require.NoError(t, catalog.BindStaticService(testRegistryName, genrecords.Toolset(), selected, genrecords.Read))
+	require.NoError(t, catalog.BindStaticService(testRegistryName, genrecords.Toolset(), selected, verifyTestStaticResource, genrecords.Read))
 	compiled, err := catalog.selections[genrecords.Read].resolution.Select(testRegistryName, genrecords.Read)
 	require.NoError(t, err)
 	for _, tc := range []struct {

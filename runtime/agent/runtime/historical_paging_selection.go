@@ -24,7 +24,7 @@ func (r *Runtime) selectHistoricalContinuations(input *resolvedPlanActivityInput
 	for _, output := range current {
 		currentKeys[continuationOutputKey{output.CallRunID, output.ResultRunID, output.ToolCallID}] = true
 	}
-	eligible := make(map[historicalPagingKey]bool, len(chains))
+	eligible := make(map[string]bool, len(chains))
 	for key, chain := range chains {
 		head := chain[len(chain)-1]
 		open := head.Bounds != nil && head.Bounds.NextCursor != nil
