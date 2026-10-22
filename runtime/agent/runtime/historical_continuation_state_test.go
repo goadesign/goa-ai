@@ -22,6 +22,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/runlog"
 	"goa.design/goa-ai/runtime/agent/storage"
 	storageinmem "goa.design/goa-ai/runtime/agent/storage/inmem"
@@ -254,12 +255,12 @@ func testHistoricalContinuationChains(t *testing.T, checkpointed bool) {
 	require.NoError(t, err)
 	require.Len(t, startPage.Events, 1)
 	available, err := rt.continuationAvailableActivity(t.Context(), &api.ContinuationActivityInput{
-		AgentID: "chains.agent", RunID: "finish-pages", SessionID: "chains", HistoryEndID: startPage.Events[0].ID,
+		AgentID: "chains.agent", RunContext: run.Context{RunID: "finish-pages", SessionID: "chains"}, HistoryEndID: startPage.Events[0].ID,
 	})
 	require.NoError(t, err)
 	assert.True(t, available)
 	_, err = rt.continuationAvailableActivity(t.Context(), &api.ContinuationActivityInput{
-		AgentID: "chains.agent", RunID: "finish-pages", SessionID: "foreign", HistoryEndID: startPage.Events[0].ID,
+		AgentID: "chains.agent", RunContext: run.Context{RunID: "finish-pages", SessionID: "foreign"}, HistoryEndID: startPage.Events[0].ID,
 	})
 	assert.True(t, engine.IsActivityErrorNonRetryable(err))
 	prepared, err = client.PrepareNextTurn(t.Context(), "chains", "finish-pages", nil, nil, WithRunID("closed"), WithTurnID("closed"))

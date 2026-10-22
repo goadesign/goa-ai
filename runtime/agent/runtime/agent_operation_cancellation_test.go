@@ -234,12 +234,12 @@ func (e *expiredOwnerEngine) QueryRunCompletion(ctx context.Context, id string) 
 	return e.Engine.QueryRunCompletion(ctx, id)
 }
 
-func (e *expiredOwnerEngine) StartActiveCancellationWorkflow(ctx context.Context, id string, request engine.CancellationRequest) error {
+func (e *expiredOwnerEngine) StartActiveCancellationWorkflow(ctx context.Context, id string, request engine.CancellationRequest, target *engine.WorkerDeploymentVersion) error {
 	if id == e.expiredRun {
 		e.expiredReads.Add(1)
 		return engine.ErrWorkflowNotFound
 	}
-	return e.Engine.StartActiveCancellationWorkflow(ctx, id, request)
+	return e.Engine.StartActiveCancellationWorkflow(ctx, id, request, target)
 }
 
 func (e *expiredOwnerEngine) RequestCancellation(ctx context.Context, id string, request engine.CancellationRequest) error {

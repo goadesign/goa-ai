@@ -501,7 +501,7 @@ func (c *toolsetCatalog) GetToolset(ctx context.Context, name string) (*genregis
 	if err != nil {
 		return nil, err
 	}
-	return entry.Toolset.decode(entry.RegisteredAt)
+	return entry.Toolset.copyDeclaration(entry.RegisteredAt), nil
 }
 
 // ActiveRegistration returns one coherent definition and active admission.

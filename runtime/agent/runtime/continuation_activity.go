@@ -15,7 +15,6 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
-	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -46,10 +45,10 @@ func (r *Runtime) continuationAvailableActivity(ctx context.Context, request *ap
 		return false, engine.MarkActivityErrorNonRetryable(ErrAgentNotFound)
 	}
 	input, err := r.resolvePlanActivityInput(ctx, &PlanActivityInput{
-		AgentID: request.AgentID, RunID: request.RunID, HistoryEndID: request.HistoryEndID,
+		AgentID: request.AgentID, RunID: request.RunContext.RunID, HistoryEndID: request.HistoryEndID,
 		ToolOutputs: request.ToolOutputs,
-		RunContext:  run.Context{RunID: request.RunID, SessionID: request.SessionID, TextOnly: request.TextOnly},
-		Policy:      &PolicyOverrides{TextOnly: request.TextOnly, RestrictToTool: request.RestrictToTool, TagClauses: request.TagClauses},
+		RunContext:  request.RunContext,
+		Policy:      &PolicyOverrides{TextOnly: request.RunContext.TextOnly, RestrictToTool: request.RestrictToTool, TagClauses: request.TagClauses},
 	})
 	if err != nil {
 		return false, err
@@ -75,7 +74,7 @@ func (r *Runtime) continuationAvailableActivity(ctx context.Context, request *ap
 				return false, activityHistoryError(err)
 			}
 			executor, isAgent := meta.Subject.Executor.AsAgent()
-			if meta.RunID != runID || !isAgent || string(executor) != string(request.AgentID) || meta.SessionID != request.SessionID {
+			if meta.RunID != runID || !isAgent || string(executor) != string(request.AgentID) || meta.SessionID != request.RunContext.SessionID {
 				return false, engine.MarkActivityErrorNonRetryable(errors.New("continuation output owner mismatch"))
 			}
 			owners[runID] = struct{}{}
@@ -85,11 +84,24 @@ func (r *Runtime) continuationAvailableActivity(ctx context.Context, request *ap
 	if err != nil {
 		return false, activityHistoryError(err)
 	}
+	// A finalizer needs no provider when selected history has no unfinished
+	// query. Keep dependency reads out of this already completed branch.
 	specs := make(map[tools.Ident]tools.ToolSpec)
 	for _, spec := range r.ToolSpecsForAgent(request.AgentID) {
 		specs[spec.Name] = spec
 	}
-	actions, err := r.continuationActionsForHistory(ctx, input, specs, outputs)
+	actions, err := r.continuationCandidatesForHistory(ctx, input, specs, outputs)
+	if err != nil {
+		return false, activityHistoryError(err)
+	}
+	if len(actions) == 0 {
+		return false, nil
+	}
+	catalog, err := r.planningCatalog(ctx, input.PlanActivityInput)
+	if err != nil {
+		return false, err
+	}
+	actions, err = r.bindContinuationCandidates(ctx, input, catalog, actions)
 	if err != nil {
 		return false, activityHistoryError(err)
 	}
@@ -128,9 +140,8 @@ func (l *workflowLoop) continuationAvailable() (bool, error) {
 		return false, err
 	}
 	request := &api.ContinuationActivityInput{
-		AgentID: l.reg.Definition.route.ID, RunID: l.base.RunContext.RunID,
-		SessionID: l.base.RunContext.SessionID, HistoryEndID: l.base.HistoryEndID,
-		ToolOutputs: refs, TextOnly: l.base.RunContext.TextOnly,
+		AgentID: l.reg.Definition.route.ID, RunContext: l.base.RunContext,
+		HistoryEndID: l.base.HistoryEndID, ToolOutputs: refs,
 	}
 	if l.input.Policy != nil {
 		request.RestrictToTool = l.input.Policy.RestrictToTool

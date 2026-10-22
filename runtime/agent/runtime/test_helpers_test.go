@@ -598,7 +598,7 @@ func (r *Runtime) decodeWorkflowCheckpoint(suspension *api.RunSuspension) (*work
 
 func (r *Runtime) validateCheckpointToolOutput(ctx context.Context, output *planner.ToolOutput) error {
 	_ = ctx
-	return validateCheckpointToolOutput(output, testRuntimeDefinition(r, "svc.agent"))
+	return validateCheckpointToolOutput(output, testRuntimeDefinition(r, "svc.agent"), true)
 }
 
 // buildAndSubmitWorkflowForTest uses the production request builder, replaces
@@ -1289,11 +1289,11 @@ func (s *stubEngine) RegisterCancellationWorkflow(context.Context, string, engin
 	return nil
 }
 
-func (s *stubEngine) StartActiveCancellationWorkflow(context.Context, string, engine.CancellationRequest) error {
+func (s *stubEngine) StartActiveCancellationWorkflow(context.Context, string, engine.CancellationRequest, *engine.WorkerDeploymentVersion) error {
 	return nil
 }
 
-func (s *stubEngine) StartCancellationWorkflow(context.Context, string, string, engine.CancellationRequest) error {
+func (s *stubEngine) StartCancellationWorkflow(context.Context, string, string, engine.CancellationRequest, *engine.WorkerDeploymentVersion) error {
 	return errors.New("cancellation workflow start is not implemented by this test stub")
 }
 

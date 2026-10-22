@@ -21,16 +21,21 @@ import (
 // encodeToolEvent converts one result using its call's selected codec. The
 // returned event contains only JSON bytes and can cross a workflow boundary.
 func encodeToolEvent(event *planner.ToolResult, call ToolCall, lookup toolSpecLookup) (*api.ToolEvent, error) {
-	spec, ok, err := lookupOwnedCallSpec(call, lookup)
-	if err != nil {
-		return nil, err
-	}
-	if !ok {
-		return nil, fmt.Errorf("encode tool result: no contract for %q", call.Name)
-	}
-	result, err := EncodeCanonicalToolResult(spec, event.Result, event.Bounds)
-	if err != nil {
-		return nil, fmt.Errorf("encode tool result for %s: %w", event.Name, err)
+	var result rawjson.Message
+	if historical, ok := event.Result.(historicalToolResult); ok {
+		result = append(rawjson.Message(nil), historical.result...)
+	} else {
+		spec, ok, err := lookupOwnedCallSpec(call, lookup)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, fmt.Errorf("encode tool result: no contract for %q", call.Name)
+		}
+		result, err = EncodeCanonicalToolResult(spec, event.Result, event.Bounds)
+		if err != nil {
+			return nil, fmt.Errorf("encode tool result for %s: %w", event.Name, err)
+		}
 	}
 	return &api.ToolEvent{
 		Name: event.Name, Result: result,
@@ -75,18 +80,11 @@ func (r *Runtime) buildPlannerToolOutputRecords(records []stepToolRecord) ([]*pl
 			Telemetry:                  result.Telemetry,
 		}
 		if result.Failure == nil {
-			spec, ok, err := r.callSpec(call)
-			if err != nil {
-				return nil, err
-			}
-			if !ok {
-				return nil, fmt.Errorf("build planner tool output: no contract for %q", call.Name)
-			}
-			resultJSON, err := EncodeCanonicalToolResult(spec, result.Result, result.Bounds)
+			encoded, err := encodeToolEvent(result, call, r.callSpecLookup(call))
 			if err != nil {
 				return nil, fmt.Errorf("build planner tool output result for %s: %w", call.Name, err)
 			}
-			output.Result = resultJSON
+			output.Result = encoded.Result
 		}
 		out = append(out, output)
 	}

@@ -45,7 +45,7 @@ func TestRegisteredRootTaskInputContinuation(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, output.Suspension)
 	response := &api.PendingInputResponse{MCP: &api.MCPInputResponse{ToolCallID: "service-root", Responses: map[string]json.RawMessage{"choice": json.RawMessage(`{"action":"accept","content":{}}`)}}}
-	handle, err = runtime.StartToolContinuation(t.Context(), "service-root", "successor", response)
+	handle, err = runtime.StartToolContinuation(t.Context(), "service-root", "successor", response, nil)
 	require.NoError(t, err)
 	output, err = handle.Wait(t.Context())
 	require.NoError(t, err)

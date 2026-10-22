@@ -184,10 +184,10 @@ type Engine struct {
 	registrationClosed bool
 	activationComplete bool
 	workers            map[string]*workerBundle
-	workflows          map[string]struct{}
-	pendingWorkflows   map[string]struct{}
-	activityOptions    map[string]engine.ActivityOptions
-	pendingActivities  map[string]struct{}
+	workflows          map[string]handlerRegistration
+	pendingWorkflows   map[string]handlerRegistration
+	activityOptions    map[string]activityRegistration
+	pendingActivities  map[string]handlerRegistration
 
 	workflowContexts sync.Map // runID -> engine.WorkflowContext
 }
@@ -257,10 +257,10 @@ func newEngine(opts Options, workerMode bool) (*Engine, error) {
 		workerFactory:           worker.New,
 		activationRetryInterval: defaultActivationRetryInterval,
 		workers:                 make(map[string]*workerBundle),
-		workflows:               make(map[string]struct{}),
-		pendingWorkflows:        make(map[string]struct{}),
-		activityOptions:         make(map[string]engine.ActivityOptions),
-		pendingActivities:       make(map[string]struct{}),
+		workflows:               make(map[string]handlerRegistration),
+		pendingWorkflows:        make(map[string]handlerRegistration),
+		activityOptions:         make(map[string]activityRegistration),
+		pendingActivities:       make(map[string]handlerRegistration),
 	}
 	if workerMode {
 		e.workerOpts.Interceptors = append(
@@ -293,19 +293,19 @@ func (e *Engine) RegisterWorkflow(_ context.Context, def engine.WorkflowDefiniti
 	if queue == "" {
 		queue = e.defaultQueue
 	}
-	if err := e.beginWorkflowRegistration(def.Name); err != nil {
+	if err := e.beginWorkflowRegistration(def.Name, queue, false); err != nil {
 		return err
 	}
 	registered := false
 	defer func() {
 		if !registered {
-			e.abortWorkflowRegistration(def.Name)
+			e.abortWorkflowRegistration(def.Name, queue)
 		}
 	}()
 	bundle := e.workerForQueue(queue)
 
-	bundle.registerWorkflow(def.Name, e.temporalWorkflowHandler(def.Handler))
-	e.finishWorkflowRegistration(def.Name)
+	bundle.worker.RegisterWorkflowWithOptions(e.temporalWorkflowHandler(def.Handler), workflow.RegisterOptions{Name: def.Name})
+	e.finishWorkflowRegistration(def.Name, queue, false)
 	registered = true
 	return nil
 }
@@ -487,6 +487,12 @@ func (e *Engine) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequ
 	}
 	req = snapshot.Request
 	fingerprint := snapshot.Digest
+	if target := req.RootExecutionTarget; target != nil {
+		opts.VersioningOverride = &client.PinnedVersioningOverride{Version: worker.WorkerDeploymentVersion{
+			DeploymentName: target.DeploymentName,
+			BuildID:        target.BuildID,
+		}}
+	}
 	opts.Memo = make(map[string]any, len(req.Memo)+1)
 	for key, value := range req.Memo {
 		opts.Memo[key] = converter.NewRawValue(startrecipe.MemoPayload(value))
@@ -635,18 +641,18 @@ func (e *Engine) registerActivityWithCtx(name string, opts engine.ActivityOption
 	if queue == "" {
 		queue = e.defaultQueue
 	}
-	if err := e.beginActivityRegistration(name); err != nil {
+	if err := e.beginActivityRegistration(name, queue, false); err != nil {
 		return err
 	}
 	registered := false
 	defer func() {
 		if !registered {
-			e.abortActivityRegistration(name)
+			e.abortActivityRegistration(name, queue)
 		}
 	}()
 	bundle := e.workerForQueue(queue)
-	bundle.registerActivity(name, fn)
-	e.finishActivityRegistration(name, opts)
+	bundle.worker.RegisterActivityWithOptions(fn, activity.RegisterOptions{Name: name})
+	e.finishActivityRegistration(name, queue, opts, false)
 	registered = true
 	return nil
 }
@@ -658,80 +664,88 @@ func (e *Engine) requireWorkerMode(action string) error {
 	return fmt.Errorf("temporal engine: client mode cannot %s; use temporal.NewWorker", action)
 }
 
-// beginWorkflowRegistration reserves a workflow name so duplicate concurrent
-// registrations fail before any worker or registry mutation occurs.
-func (e *Engine) beginWorkflowRegistration(name string) error {
+// beginWorkflowRegistration reserves a name before SDK registration. Agent
+// handlers keep global name uniqueness; native handlers may share a name on
+// separate queues, as the SDK's queue-local worker contract permits.
+func (e *Engine) beginWorkflowRegistration(name, queue string, native bool) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-
 	if e.registrationClosed {
-		return fmt.Errorf("temporal engine: registration is sealed")
+		return errors.New("temporal engine: registration is sealed")
 	}
-	if _, exists := e.workflows[name]; exists {
+	if registrationConflicts(e.workflows[name], queue, native) || registrationConflicts(e.pendingWorkflows[name], queue, native) {
 		return fmt.Errorf("temporal engine: workflow %q already registered", name)
 	}
-	if _, exists := e.pendingWorkflows[name]; exists {
-		return fmt.Errorf("temporal engine: workflow %q already registered", name)
+	pending := e.pendingWorkflows[name]
+	if pending.queues == nil {
+		pending = handlerRegistration{native: native, queues: make(map[string]bool)}
 	}
-	e.pendingWorkflows[name] = struct{}{}
+	pending.queues[queue] = true
+	e.pendingWorkflows[name] = pending
 	return nil
 }
 
-// finishWorkflowRegistration records a workflow name after worker
-// registration succeeds and clears the temporary reservation.
-func (e *Engine) finishWorkflowRegistration(name string) {
+// finishWorkflowRegistration records the queue only after SDK registration
+// succeeds, so inventory never claims that failed handlers can receive work.
+func (e *Engine) finishWorkflowRegistration(name, queue string, native bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-
-	delete(e.pendingWorkflows, name)
-	e.workflows[name] = struct{}{}
+	removePendingRegistration(e.pendingWorkflows, name, queue)
+	registered := e.workflows[name]
+	if registered.queues == nil {
+		registered = handlerRegistration{native: native, queues: make(map[string]bool)}
+	}
+	registered.queues[queue] = true
+	e.workflows[name] = registered
 }
 
-// abortWorkflowRegistration releases a reserved workflow name after a failed
-// registration attempt so later retries can proceed.
-func (e *Engine) abortWorkflowRegistration(name string) {
+// abortWorkflowRegistration releases a failed SDK reservation for this queue.
+func (e *Engine) abortWorkflowRegistration(name, queue string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-
-	delete(e.pendingWorkflows, name)
+	removePendingRegistration(e.pendingWorkflows, name, queue)
 }
 
-// beginActivityRegistration reserves an activity name so duplicate concurrent
-// registrations fail before any worker or option mutation occurs.
-func (e *Engine) beginActivityRegistration(name string) error {
+// beginActivityRegistration preserves globally unique typed activity names
+// while admitting one native SDK name on distinct queue-local workers.
+func (e *Engine) beginActivityRegistration(name, queue string, native bool) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-
 	if e.registrationClosed {
-		return fmt.Errorf("temporal engine: registration is sealed")
+		return errors.New("temporal engine: registration is sealed")
 	}
-	if _, exists := e.activityOptions[name]; exists {
+	if registrationConflicts(e.activityOptions[name].handlerRegistration, queue, native) || registrationConflicts(e.pendingActivities[name], queue, native) {
 		return fmt.Errorf("temporal engine: activity %q already registered", name)
 	}
-	if _, exists := e.pendingActivities[name]; exists {
-		return fmt.Errorf("temporal engine: activity %q already registered", name)
+	pending := e.pendingActivities[name]
+	if pending.queues == nil {
+		pending = handlerRegistration{native: native, queues: make(map[string]bool)}
 	}
-	e.pendingActivities[name] = struct{}{}
+	pending.queues[queue] = true
+	e.pendingActivities[name] = pending
 	return nil
 }
 
-// finishActivityRegistration commits activity defaults after worker registration
-// succeeds and clears the temporary reservation.
-func (e *Engine) finishActivityRegistration(name string, opts engine.ActivityOptions) {
+// finishActivityRegistration records accepted queues and keeps the typed
+// activity defaults used by agent workflow calls in the same owned record.
+func (e *Engine) finishActivityRegistration(name, queue string, opts engine.ActivityOptions, native bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-
-	delete(e.pendingActivities, name)
-	e.activityOptions[name] = opts
+	removePendingRegistration(e.pendingActivities, name, queue)
+	registered := e.activityOptions[name]
+	if registered.queues == nil {
+		registered.handlerRegistration = handlerRegistration{native: native, queues: make(map[string]bool)}
+	}
+	registered.queues[queue] = true
+	registered.options = opts
+	e.activityOptions[name] = registered
 }
 
-// abortActivityRegistration releases a reserved activity name after a failed
-// registration attempt so later retries can proceed.
-func (e *Engine) abortActivityRegistration(name string) {
+// abortActivityRegistration releases a failed SDK reservation for this queue.
+func (e *Engine) abortActivityRegistration(name, queue string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-
-	delete(e.pendingActivities, name)
+	removePendingRegistration(e.pendingActivities, name, queue)
 }
 
 func (e *Engine) trackWorkflowContext(runID string, wf engine.WorkflowContext) {

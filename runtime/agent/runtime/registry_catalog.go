@@ -53,8 +53,10 @@ type (
 	}
 
 	registrySelection struct {
-		registry   string
-		resolution *registrycontract.Resolution
+		registry            string
+		resolution          *registrycontract.Resolution
+		verifyPrevious      func(context.Context, string, string) error
+		verifyPreviousAgent func(context.Context, string, string, *genregistry.AgentToolTarget) error
 	}
 
 	registryConnection struct {

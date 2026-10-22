@@ -34,12 +34,12 @@ func BenchmarkStaticServiceBinding(b *testing.B) {
 			fixture := newStaticBindingFixture(b, 46)
 			names := fixture.namesFor(consumer)
 			warm := fixture.catalog()
-			require.NoError(b, warm.BindStaticService(testRegistryName, fixture.expected, fixture.selected, names...))
+			require.NoError(b, warm.BindStaticService(testRegistryName, fixture.expected, fixture.selected, verifyTestStaticResource, names...))
 			b.ReportAllocs()
 			b.ResetTimer()
 			for range b.N {
 				catalog := fixture.catalog()
-				if err := catalog.BindStaticService(testRegistryName, fixture.expected, fixture.selected, names...); err != nil {
+				if err := catalog.BindStaticService(testRegistryName, fixture.expected, fixture.selected, verifyTestStaticResource, names...); err != nil {
 					b.Fatal(err)
 				}
 				runtime.KeepAlive(catalog)
@@ -60,7 +60,7 @@ func BenchmarkStaticServiceBindingRetained(b *testing.B) {
 			fixture := newStaticBindingFixture(b, 46)
 			names := fixture.namesFor(consumer)
 			warm := fixture.catalog()
-			require.NoError(b, warm.BindStaticService(testRegistryName, fixture.expected, fixture.selected, names...))
+			require.NoError(b, warm.BindStaticService(testRegistryName, fixture.expected, fixture.selected, verifyTestStaticResource, names...))
 			runtime.KeepAlive(warm)
 			warm = nil
 			var totalLive uint64
@@ -73,7 +73,7 @@ func BenchmarkStaticServiceBindingRetained(b *testing.B) {
 				runtime.ReadMemStats(&before)
 				for index := range catalogs {
 					catalog := fixture.catalog()
-					if err := catalog.BindStaticService(testRegistryName, fixture.expected, fixture.selected, names...); err != nil {
+					if err := catalog.BindStaticService(testRegistryName, fixture.expected, fixture.selected, verifyTestStaticResource, names...); err != nil {
 						b.Fatal(err)
 					}
 					catalogs[index] = catalog

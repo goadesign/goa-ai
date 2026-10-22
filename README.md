@@ -33,7 +33,7 @@ For engineers, this means fewer contracts to maintain and compiler feedback when
 they change. For coding agents, it means explicit types, generated validation,
 and an application-specific guide to the code they need to implement.
 
-**[Run the quickstart](#quick-start)** · **[Explore the guides](https://goa.design/docs/2-goa-ai/)** · **[Upgrade to v0.88.0](docs/releases/v0.88.0.md#required-upgrade-actions)**
+**[Run the quickstart](#quick-start)** · **[Explore the guides](https://goa.design/docs/2-goa-ai/)** · **[Upgrade to v0.89.0](docs/releases/v0.89.0.md#required-upgrade-actions)**
 
 ## Choose what you want to build
 
@@ -173,8 +173,10 @@ service wiring, and connecting a model. For MCP, follow the
   [identifier and worker upgrade contract](docs/runtime.md#child-run-identifiers-and-worker-upgrades).
 - **Human input and approvals.** Save a pending question or confirmation and
   continue from the host's answer. Direct and registered operations share durable
-  continuation submission and completion. Canceling a root question with no saved
-  child or remote work closes its continuation while preserving the original
+  continuation submission and completion. Hosts supply each successor workflow's
+  Memo explicitly; recovery preserves it and rejects changed answers or metadata.
+  Canceling a root question with no saved child or remote work closes its
+  continuation while preserving the original
   suspended result. Text-only runs exclude interactive tools. Hosts can apply the
   same restriction to exact direct and registered operations with `WithTextOnly(true)`.
 - **Large results and images.** Bound model-visible results, continue paginated
@@ -237,6 +239,9 @@ Custom stores must follow the [preparation ownership upgrade](docs/runtime.md#pr
   shutdown; omitted options retain existing behavior. See
   [provider lifecycle](docs/runtime.md#registry-routed-provider-execution-service-side).
   Catalogs retain resource ownership; applications authorize discovery and use.
+  Local maintenance tools can use `registry.NewCatalogReader` to inspect saved
+  registrations without starting workers or writing Redis data; see
+  [read-only catalog inspection](docs/runtime.md#read-only-catalog-inspection).
   Registered imports derive distinct names for equal operations from different
   owners and retain original declarations for execution and replay.
   Portable bounded-result codecs accept provider result data; the runtime adds
@@ -246,7 +251,9 @@ Custom stores must follow the [preparation ownership upgrade](docs/runtime.md#pr
   [regeneration requirements](docs/runtime.md#agent-timeout-recovery).
 - **Bind generated tools to selected services.** Keep generated tool names,
   input preparation, codecs, and executors while attaching an exact owner-selected
-  registration. Calls and retries retain the original route and token. See
+  registration. Calls and retries retain the original route and token. New pages
+  select today's provider after the resource owner verifies prior registrations;
+  saved queries and completed results remain unchanged. See
   [static service bindings](docs/tool_search.md#bind-generated-service-tools).
   Binding validates complete generated declarations without expanding the
   consuming Agent's executable tools; separately discovered tools remain available.
@@ -283,9 +290,26 @@ Custom stores must follow the [preparation ownership upgrade](docs/runtime.md#pr
   Paged operations retain each query and page branch's declared progress labels
   and result previews under the same public tool name. Regenerate callers after
   upgrading to install the matching templates.
+  Steps that combine provider-selected calls with extra planner-created calls
+  retain every call and result for the next planner activity, including after
+  suspension. Completed tool results, accepted arguments, media, and rendered
+  previews remain readable through clarification resumes after their generated
+  result type changes or their tool is removed. Pending execution, result
+  materialization, confirmations, child runs, and unfinished paging still use current
+  generated contracts. Original provider messages and reasoning signatures stay
+  unchanged.
   The in-memory engine supports local development.
+- **Exact root worker builds.** `WithRootExecutionTarget` selects one worker
+  deployment and build for an accepted root request. Prepared starts, retries,
+  and completion repair preserve that target; child routing remains generated.
+  The Temporal adapter can read the current target before work is accepted.
+- **Native Temporal handlers.** Register SDK workflows and activities alongside
+  agent handlers, and read the exact workflow and activity queues from successful
+  registrations before starting workers.
 - **Policies and context.** Control permitted tools, call and recovery budgets,
-  timing, history compression, prompt caching, and prompt overrides.
+  timing, history compression, prompt caching, and prompt overrides. Runtime
+  model clients preserve provider token counting without creating an inference
+  record or span; see [model middleware](docs/runtime.md#model-middleware).
 - **Evaluation and observability.** Generate typed evaluation suites; observe
   assistant text, tool progress, child runs, usage, and OpenTelemetry traces.
 - **Standalone JSON codecs.** Generate strict encoders and decoders beside
@@ -325,10 +349,10 @@ idempotency, durable storage, and deployment. Configure the Temporal engine
 **and** a durable runtime store for restart-safe execution. A trusted host
 receives runtime events and decides what to expose to users.
 
-**v0.88.0 is a breaking upgrade.** Regenerate and coordinate servers, clients,
+**v0.89.0 is a breaking upgrade.** Regenerate and coordinate servers, clients,
 providers, runtime workers, and storage implementations. Older MCP revisions,
 registry wire versions, and suspension checkpoints are not interchangeable.
-Read the [release and upgrade instructions](docs/releases/v0.88.0.md) before
+Read the [release and upgrade instructions](docs/releases/v0.89.0.md) before
 replacing existing deployments; a source rollback alone cannot undo new stored
 work.
 

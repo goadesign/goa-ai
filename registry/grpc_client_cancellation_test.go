@@ -6,6 +6,7 @@ package registry
 
 import (
 	"context"
+	"errors"
 	"net"
 	"strings"
 	"sync"
@@ -210,7 +211,11 @@ func newGeneratedRegisterClient(
 	}()
 	t.Cleanup(func() {
 		server.Stop()
-		require.NoError(t, <-serverErr)
+		// An expired client context can finish before Serve starts. After Stop,
+		// Serve returns ErrServerStopped; every other serving error still fails.
+		if err := <-serverErr; !errors.Is(err, grpc.ErrServerStopped) {
+			require.NoError(t, err)
+		}
 	})
 
 	connection, err := grpc.NewClient(

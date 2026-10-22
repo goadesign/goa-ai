@@ -63,8 +63,31 @@ func decodeWorkflowCheckpoint(suspension *api.RunSuspension, definition AgentDef
 	if !reflect.DeepEqual(current, checkpoint.RequiredTools) {
 		return nil, errors.New("run suspension required tools do not match saved state")
 	}
+	uses, err := checkpointInputConsumers(checkpoint)
+	if err != nil {
+		return nil, err
+	}
+	executable := make(map[tools.Ident]bool)
+	for _, call := range uses.calls {
+		if call.Registry == nil && uses.current[call.ToolCallID] {
+			executable[call.Name] = true
+		}
+	}
+	for _, output := range checkpoint.State.PendingRecovery {
+		if output.Registry == nil && output.Failure.Recovery.Action == planner.RecoveryCorrectCall {
+			executable[output.Name] = true
+		}
+	}
+	if policy := checkpoint.Policy; policy != nil {
+		executable[policy.CompletionTool] = true
+		if plans := policy.LimitTerminalPlans; plans != nil {
+			executable[plans.TimeBudget.Name] = true
+			executable[plans.ToolCallCap.Name] = true
+			executable[plans.RecoveryCap.Name] = true
+		}
+	}
 	for _, name := range current {
-		if _, ok := definition.spec(name); !ok {
+		if _, ok := definition.spec(name); executable[name] && !ok {
 			return nil, fmt.Errorf("run suspension requires tool %q removed from the current agent definition", name)
 		}
 	}
@@ -80,10 +103,11 @@ func decodeWorkflowCheckpoint(suspension *api.RunSuspension, definition AgentDef
 			return nil, fmt.Errorf("validate suspended limit terminal plans: %w", err)
 		}
 	}
-	if err := validateCompletionToolPlanResultWithSpecs(
+	if err := validateCompletionToolPlanResultWithHistory(
 		checkpoint.Batch.Result,
 		completionToolFromPolicy(checkpoint.Policy),
 		definition,
+		uses.current,
 	); err != nil {
 		return nil, fmt.Errorf("validate suspended completion plan: %w", err)
 	}
@@ -101,7 +125,7 @@ func decodeWorkflowCheckpoint(suspension *api.RunSuspension, definition AgentDef
 	if err := validatePlanResultToolCallIDs(checkpoint.Batch.Result); err != nil {
 		return nil, fmt.Errorf("validate suspended planner result: %w", err)
 	}
-	program, err := normalizeStepWithSpecs(checkpoint.Batch.Result, definition)
+	program, err := normalizeStepWithHistory(checkpoint.Batch.Result, definition, uses.current)
 	if err != nil {
 		return nil, fmt.Errorf("validate suspended planner result: %w", err)
 	}
@@ -258,17 +282,21 @@ func childDefinitionForCall(call ToolCall, definition AgentDefinition) (AgentDef
 // validateCheckpointToolValues checks current result consumers before deciding
 // which saved inputs still have an executable or typed consumer.
 func validateCheckpointToolValues(checkpoint *workflowCheckpoint, definition AgentDefinition) error {
+	uses, err := checkpointInputConsumers(checkpoint)
+	if err != nil {
+		return err
+	}
 	calls, err := recordedToolCalls(checkpoint.State.ToolOutputs)
 	if err != nil {
 		return err
 	}
 	for _, output := range checkpoint.State.ToolOutputs {
-		if err := validateCheckpointToolOutput(output, definition); err != nil {
+		if err := validateCheckpointToolOutput(output, definition, uses.current[output.ToolCallID]); err != nil {
 			return err
 		}
 	}
 	for _, output := range checkpoint.State.PendingRecovery {
-		if err := validateCheckpointToolOutput(output, definition); err != nil {
+		if err := validateCheckpointToolOutput(output, definition, uses.current[output.ToolCallID]); err != nil {
 			return err
 		}
 	}
@@ -277,7 +305,11 @@ func validateCheckpointToolValues(checkpoint *workflowCheckpoint, definition Age
 		if err != nil {
 			return err
 		}
-		if _, err := decodeCheckpointToolEvent(event, call, definition); err != nil {
+		if uses.current[call.ToolCallID] {
+			if _, err := decodeCheckpointToolEvent(event, call, definition); err != nil {
+				return err
+			}
+		} else if err := validateHistoricalToolEvent(event, call); err != nil {
 			return err
 		}
 	}
@@ -288,8 +320,19 @@ func validateCheckpointToolValues(checkpoint *workflowCheckpoint, definition Age
 			}
 			continue
 		}
+		if uses.current[record.Call.ToolCallID] && (record.ResultRecord != nil || i < checkpoint.Batch.Recorded) {
+			if _, err := decodeCheckpointToolEvent(record.Result, record.Call, definition); err != nil {
+				return err
+			}
+		}
 		if record.ResultRecord != nil {
-			if err := validateCheckpointResultRecord(record, checkpoint, definition); err != nil {
+			if err := validateCheckpointResultRecord(record, checkpoint); err != nil {
+				return err
+			}
+			continue
+		}
+		if i < checkpoint.Batch.Recorded {
+			if err := validateHistoricalToolEvent(record.Result, record.Call); err != nil {
 				return err
 			}
 			continue
@@ -327,31 +370,20 @@ func validateCheckpointToolRequest(call ToolCall, definition AgentDefinition) er
 
 // validateCheckpointToolOutput validates result bytes retained for planner
 // resume. Input consumers are checked across the complete checkpoint separately.
-func validateCheckpointToolOutput(output *planner.ToolOutput, definition AgentDefinition) error {
+func validateCheckpointToolOutput(output *planner.ToolOutput, definition AgentDefinition, current bool) error {
 	if output == nil {
 		return errors.New("run suspension contains nil tool output")
 	}
 	call := ToolCall{Name: output.Name, ToolCallID: output.ToolCallID, Payload: output.Payload, Registry: output.Registry}
-	var spec *tools.ToolSpec
-	if output.Failure == nil {
-		registered, ok, err := lookupOwnedCallSpec(call, definition)
-		if err != nil {
-			return err
-		}
-		if !ok {
-			return fmt.Errorf("suspended tool result references unregistered tool %q", output.Name)
-		}
-		spec = &registered
+	event := &api.ToolEvent{
+		Name: output.Name, ToolCallID: output.ToolCallID, Result: output.Result,
+		ServerData: output.ServerData, Blocks: output.Blocks, Bounds: output.Bounds, Failure: output.Failure,
 	}
-	if _, err := validatePersistedToolResult(
-		spec,
-		call,
-		output.Result,
-		output.ServerData,
-		output.Blocks,
-		output.Bounds,
-		output.Failure,
-	); err != nil {
+	if current {
+		_, err := decodeCheckpointToolEvent(event, call, definition)
+		return err
+	}
+	if err := validateHistoricalToolEvent(event, call); err != nil {
 		return fmt.Errorf("decode suspended tool result for %s: %w", output.Name, err)
 	}
 	return nil

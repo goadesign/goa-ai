@@ -60,6 +60,8 @@ type (
 		Workflow string
 		// TaskQueue is the queue in the caller's request, including empty.
 		TaskQueue string
+		// RootExecutionTarget is the root's accepted exact worker build, if set.
+		RootExecutionTarget *engine.WorkerDeploymentVersion
 		// InputPayload is the accepted RunInput after boundary conversion.
 		InputPayload *commonpb.Payload
 		// RunTimeout is the timeout in the caller's request.
@@ -177,6 +179,11 @@ func SnapshotRequest(request engine.WorkflowStartRequest) (RequestSnapshot, erro
 	if err := budget.AddText(request.ID, request.Workflow, request.TaskQueue); err != nil {
 		return RequestSnapshot{}, fmt.Errorf("validate workflow start text: %w", err)
 	}
+	if target := request.RootExecutionTarget; target != nil {
+		if err := budget.AddText(target.DeploymentName, target.BuildID); err != nil {
+			return RequestSnapshot{}, fmt.Errorf("validate root execution target: %w", err)
+		}
+	}
 	if err := reserveRecipeMemo(dataConverter, budget); err != nil {
 		return RequestSnapshot{}, err
 	}
@@ -219,17 +226,22 @@ func SnapshotRequest(request engine.WorkflowStartRequest) (RequestSnapshot, erro
 	}
 
 	ownedRequest := request
+	if request.RootExecutionTarget != nil {
+		target := *request.RootExecutionTarget
+		ownedRequest.RootExecutionTarget = &target
+	}
 	ownedRequest.Input = input.Input
 	ownedRequest.Memo = ownedMemo
 	ownedRequest.SearchAttributes = searchAttributeValues(searchAttributes)
 	recipeDigest, err := digest(dataConverter, digestInput{
-		Workflow:         ownedRequest.Workflow,
-		TaskQueue:        ownedRequest.TaskQueue,
-		InputPayload:     input.Payload,
-		RunTimeout:       ownedRequest.RunTimeout,
-		RetryPolicy:      ownedRequest.RetryPolicy,
-		Memo:             ownedRequest.Memo,
-		SearchAttributes: searchAttributes,
+		RootExecutionTarget: ownedRequest.RootExecutionTarget,
+		Workflow:            ownedRequest.Workflow,
+		TaskQueue:           ownedRequest.TaskQueue,
+		InputPayload:        input.Payload,
+		RunTimeout:          ownedRequest.RunTimeout,
+		RetryPolicy:         ownedRequest.RetryPolicy,
+		Memo:                ownedRequest.Memo,
+		SearchAttributes:    searchAttributes,
 	})
 	if err != nil {
 		return RequestSnapshot{}, err
@@ -377,6 +389,11 @@ func digestRequest(dataConverter converter.DataConverter, input digestInput, ver
 	}
 	if err := writeValue(hashValue, dataConverter, "task_queue", input.TaskQueue); err != nil {
 		return [sha256.Size]byte{}, err
+	}
+	if input.RootExecutionTarget != nil {
+		if err := writeValue(hashValue, dataConverter, "root_execution_target", input.RootExecutionTarget); err != nil {
+			return [sha256.Size]byte{}, err
+		}
 	}
 	writePayload(hashValue, "input", input.InputPayload)
 	if err := writeValue(hashValue, dataConverter, "run_timeout", input.RunTimeout); err != nil {

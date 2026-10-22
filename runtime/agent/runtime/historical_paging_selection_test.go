@@ -187,7 +187,7 @@ func TestHistoricalPagingSelectionKeepsIndependentAndCurrentWork(t *testing.T) {
 	assert.ErrorContains(t, err, "wrong cursor")
 }
 
-func TestHistoricalPagingSelectionRetainsRegistrationAndRejectsBrokenRelationships(t *testing.T) {
+func TestHistoricalPagingSelectionCorrelatesRootsAndRejectsBrokenRelationships(t *testing.T) {
 	rt := New(newTestStore())
 	definition := testRegistryAgentDefinition(testRegistrySources{})
 	rt.agents[definition.route.ID] = AgentRegistration{Definition: definition}
@@ -220,8 +220,17 @@ func TestHistoricalPagingSelectionRetainsRegistrationAndRejectsBrokenRelationshi
 	t.Run("different registration", func(t *testing.T) {
 		other := *closed
 		other.Registry = outputs[1].Registry
+		selected, err := rt.selectHistoricalContinuations(input, append(outputs, &other), nil, nil)
+		require.NoError(t, err)
+		require.Len(t, selected, 1)
+		assert.Equal(t, "second", selected[0].ToolCallID)
+	})
+	t.Run("different registry", func(t *testing.T) {
+		other := *closed
+		other.Registry = closed.Registry.Clone()
+		other.Registry.Registry = "another-connection"
 		_, err := rt.selectHistoricalContinuations(input, append(outputs, &other), nil, nil)
-		assert.ErrorContains(t, err, "unknown source")
+		assert.ErrorContains(t, err, "changes registry")
 	})
 	t.Run("missing source", func(t *testing.T) {
 		_, err := rt.selectHistoricalContinuations(input, []*planner.ToolOutput{closed}, nil, nil)

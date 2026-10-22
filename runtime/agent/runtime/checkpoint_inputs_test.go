@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -165,7 +166,7 @@ func TestCheckpointInputsRejectInconsistentHistory(t *testing.T) {
 	}
 }
 
-func TestCheckpointInputsKeepPagingAndResultsCurrent(t *testing.T) {
+func TestCheckpointInputsKeepPagingCurrentAndResultsHistorical(t *testing.T) {
 	for _, test := range []struct {
 		name string
 		spec func(*tools.ToolSpec)
@@ -204,12 +205,18 @@ func TestCheckpointInputsKeepPagingAndResultsCurrent(t *testing.T) {
 			checkpoint, err := decodeWorkflowCheckpointState(recordedInputSuspension(t, spec.Name))
 			require.NoError(t, err)
 			if test.name == "paging" {
+				checkpoint.State.ToolOutputs[0].Bounds = &agent.Bounds{Truncated: true, NextCursor: new("next")}
+				checkpoint.State.ToolEvents[0].Bounds = checkpoint.State.ToolOutputs[0].Bounds
+				checkpoint.Batch.Records[0].Result.Bounds = checkpoint.State.ToolOutputs[0].Bounds
 				require.ErrorContains(t, validateCheckpointInputs(checkpoint, testRuntimeDefinition(rt, "svc.agent")), test.want)
 			} else {
 				if test.name == "server data" {
-					checkpoint.State.ToolOutputs[0].ServerData = rawjson.Message(`[]`)
+					data := rawjson.Message(`[{"kind":"old.card","audience":"timeline","data":{}}]`)
+					checkpoint.State.ToolOutputs[0].ServerData = data
+					checkpoint.State.ToolEvents[0].ServerData = data
+					checkpoint.Batch.Records[0].Result.ServerData = data
 				}
-				require.ErrorContains(t, validateCheckpointToolValues(checkpoint, testRuntimeDefinition(rt, "svc.agent")), test.want)
+				require.NoError(t, validateCheckpointToolValues(checkpoint, testRuntimeDefinition(rt, "svc.agent")))
 			}
 		})
 	}

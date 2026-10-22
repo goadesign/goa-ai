@@ -397,7 +397,7 @@ func TestLoadPlannerToolOutputsAcceptsCrossRunContinuationResult(t *testing.T) {
 	require.JSONEq(t, `{"value":"found"}`, string(outputs[0].Result))
 }
 
-func TestLoadPlannerToolOutputsRequiresRegisteredSpecOnlyForSuccess(t *testing.T) {
+func TestLoadPlannerToolOutputsPreservesHistoryWithoutRegistration(t *testing.T) {
 	t.Parallel()
 
 	toolName := tools.Ident("svc.tools.removed")
@@ -408,9 +408,8 @@ func TestLoadPlannerToolOutputsRequiresRegisteredSpecOnlyForSuccess(t *testing.T
 		wantErr string
 	}{
 		{
-			name:    "successful result",
-			result:  rawjson.Message(`{"value":"found"}`),
-			wantErr: `canonical tool history references unregistered tool "svc.tools.removed"`,
+			name:   "successful result",
+			result: rawjson.Message(`{"value":"found"}`),
 		},
 		{
 			name:    "failed result",
@@ -462,6 +461,10 @@ func TestLoadPlannerToolOutputsRequiresRegisteredSpecOnlyForSuccess(t *testing.T
 			}
 			require.NoError(t, err)
 			require.Len(t, outputs, 1)
+			if test.failure == nil {
+				require.Equal(t, test.result, outputs[0].Result)
+				return
+			}
 			require.Equal(t, test.failure.Kind, outputs[0].Failure.Kind)
 			require.Equal(t, test.failure.Error.Message, outputs[0].Failure.Error.Message)
 			require.Equal(t, test.failure.Recovery.Action, outputs[0].Failure.Recovery.Action)
@@ -499,7 +502,6 @@ func TestPlannerToolOutputFromCanonicalEventsValidatesResultContract(t *testing.
 				ToolName:   toolName,
 				ToolCallID: "call-1",
 			},
-			wantErr: "tool result is missing",
 		},
 		{
 			name: "no-result tool with empty result",
@@ -518,7 +520,6 @@ func TestPlannerToolOutputFromCanonicalEventsValidatesResultContract(t *testing.
 				ResultJSON:  rawjson.Message(`{}`),
 				ResultBytes: 2,
 			},
-			wantErr: "does not define a result but contains one",
 		},
 		{
 			name: "wrong byte count",
@@ -542,7 +543,6 @@ func TestPlannerToolOutputFromCanonicalEventsValidatesResultContract(t *testing.
 				ResultJSON:  rawjson.Message(`null`),
 				ResultBytes: len(`null`),
 			},
-			wantErr: "tool result decoded to nil",
 		},
 		{
 			name: "failed result with result JSON",
@@ -604,7 +604,7 @@ func TestPlannerToolOutputFromCanonicalEventsValidatesResultContract(t *testing.
 				ResultBytes: 2,
 				ServerData:  rawjson.Message(`{}`),
 			},
-			wantErr: "invalid server data: malformed server data",
+			wantErr: "invalid stored server data",
 		},
 		{
 			name: "bounded success without bounds",
@@ -619,7 +619,6 @@ func TestPlannerToolOutputFromCanonicalEventsValidatesResultContract(t *testing.
 				ResultJSON:  rawjson.Message(`{}`),
 				ResultBytes: 2,
 			},
-			wantErr: "returned result without bounds",
 		},
 		{
 			name: "unbounded success with bounds",
@@ -632,7 +631,6 @@ func TestPlannerToolOutputFromCanonicalEventsValidatesResultContract(t *testing.
 				ResultBytes: 2,
 				Bounds:      &agent.Bounds{Returned: 1},
 			},
-			wantErr: "returned unexpected bounds metadata",
 		},
 	}
 	for _, test := range tests {
@@ -675,7 +673,7 @@ func TestPlannerToolOutputFromCanonicalEventsValidatesResultContract(t *testing.
 			}
 			require.NoError(t, err)
 			require.NotNil(t, output)
-			require.Empty(t, output.Result)
+			require.Equal(t, test.result.ResultJSON, output.Result)
 		})
 	}
 }

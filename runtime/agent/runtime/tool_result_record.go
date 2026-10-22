@@ -12,6 +12,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
@@ -43,9 +44,9 @@ func decodeToolResultRecord(input *RecordActivityInput, call ToolCall, callRunID
 }
 
 // validateCheckpointResultRecord checks the materialized event before it can
-// replace input-dependent rendering. Both result representations must satisfy
-// the selected current result contract and describe the same typed result.
-func validateCheckpointResultRecord(record checkpointToolRecord, checkpoint *workflowCheckpoint, definition AgentDefinition) error {
+// replace input-dependent rendering. Both representations must contain the
+// same accepted result bytes and valid runtime-owned metadata.
+func validateCheckpointResultRecord(record checkpointToolRecord, checkpoint *workflowCheckpoint) error {
 	event, err := decodeToolResultRecord(record.ResultRecord, record.Call, record.CallRunID, record.ResultRunID)
 	if err != nil {
 		return fmt.Errorf("decode saved result record: %w", err)
@@ -55,19 +56,19 @@ func validateCheckpointResultRecord(record checkpointToolRecord, checkpoint *wor
 		event.ParentToolCallID != checkpoint.Context.ParentToolCallID {
 		return fmt.Errorf("saved result record owner does not match checkpoint for call %q", record.Call.ToolCallID)
 	}
-	saved, err := decodeCheckpointToolEvent(&api.ToolEvent{
+	saved := &api.ToolEvent{
 		Name: event.ToolName, ToolCallID: event.ToolCallID, Result: event.ResultJSON,
 		ServerData: event.ServerData, Blocks: event.Blocks, Bounds: event.Bounds, Failure: event.Failure,
-	}, record.Call, definition)
-	if err != nil {
+	}
+	if err := validateHistoricalToolEvent(saved, record.Call); err != nil {
 		return err
 	}
-	result, err := decodeCheckpointToolEvent(record.Result, record.Call, definition)
-	if err != nil {
+	result := record.Result
+	if err := validateHistoricalToolEvent(result, record.Call); err != nil {
 		return err
 	}
-	if !reflect.DeepEqual(saved.Result, result.Result) ||
-		!reflect.DeepEqual(saved.Failure, result.Failure) ||
+	if !bytes.Equal(saved.Result, result.Result) ||
+		!reflect.DeepEqual(planner.CloneToolFailure(saved.Failure), planner.CloneToolFailure(result.Failure)) ||
 		!reflect.DeepEqual(saved.Bounds, result.Bounds) ||
 		((len(saved.Blocks) != 0 || len(result.Blocks) != 0) && !reflect.DeepEqual(saved.Blocks, result.Blocks)) ||
 		!bytes.Equal(saved.ServerData, result.ServerData) {

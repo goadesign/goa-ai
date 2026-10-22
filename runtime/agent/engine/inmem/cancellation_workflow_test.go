@@ -36,10 +36,10 @@ func TestCancellationWorkflowOwnsPendingWorkAfterCallerLeaves(t *testing.T) {
 			return true, nil
 		}
 	}))
-	require.NoError(t, implementation.StartCancellationWorkflow(ctx, "cleanup", "queue", request))
+	require.NoError(t, implementation.StartCancellationWorkflow(ctx, "cleanup", "queue", request, nil))
 	cancel()
-	require.NoError(t, implementation.StartCancellationWorkflow(t.Context(), "cleanup", "queue", request))
-	id, _, err := startrecipe.CancellationRecipe("cleanup", "queue", request)
+	require.NoError(t, implementation.StartCancellationWorkflow(t.Context(), "cleanup", "queue", request, nil))
+	id, _, err := startrecipe.CancellationRecipe("cleanup", "queue", request, nil)
 	require.NoError(t, err)
 	implementation.mu.RLock()
 	job := implementation.cancellationJobs[id]
@@ -54,7 +54,7 @@ func TestCancellationWorkflowOwnsPendingWorkAfterCallerLeaves(t *testing.T) {
 	changed := request
 	changed.Reason = "session_ended"
 	var conflict *engine.CancellationConflictError
-	assert.ErrorAs(t, implementation.StartCancellationWorkflow(t.Context(), "cleanup", "queue", changed), &conflict)
+	assert.ErrorAs(t, implementation.StartCancellationWorkflow(t.Context(), "cleanup", "queue", changed, nil), &conflict)
 }
 
 func TestCancellationWorkflowKeepsPermanentFailure(t *testing.T) {
@@ -68,8 +68,8 @@ func TestCancellationWorkflowKeepsPermanentFailure(t *testing.T) {
 		observations.Add(1)
 		return false, rejection
 	}))
-	require.NoError(t, implementation.StartCancellationWorkflow(t.Context(), "cleanup", "queue", request))
-	id, _, err := startrecipe.CancellationRecipe("cleanup", "queue", request)
+	require.NoError(t, implementation.StartCancellationWorkflow(t.Context(), "cleanup", "queue", request, nil))
+	id, _, err := startrecipe.CancellationRecipe("cleanup", "queue", request, nil)
 	require.NoError(t, err)
 	implementation.mu.RLock()
 	job := implementation.cancellationJobs[id]
@@ -81,4 +81,19 @@ func TestCancellationWorkflowKeepsPermanentFailure(t *testing.T) {
 	}
 	require.ErrorIs(t, job.err, rejection)
 	assert.EqualValues(t, 1, observations.Load())
+}
+
+func TestCancellationWorkflowTargetBelongsToExactJobIdentity(t *testing.T) {
+	implementation := New().(*eng)
+	require.NoError(t, implementation.RegisterCancellationWorkflow(t.Context(), "cleanup", engine.ActivityOptions{
+		Queue: "queue", RetryPolicy: engine.RetryPolicy{InitialInterval: time.Millisecond},
+	}, func(context.Context, engine.CancellationRequest) (bool, error) {
+		return true, nil
+	}))
+	request := engine.CancellationRequest{RunID: "root", Reason: "user_requested"}
+	target := &engine.WorkerDeploymentVersion{DeploymentName: "workers", BuildID: "build-a"}
+	require.NoError(t, implementation.StartCancellationWorkflow(t.Context(), "cleanup", "queue", request, target))
+	require.NoError(t, implementation.StartCancellationWorkflow(t.Context(), "cleanup", "queue", request, target))
+	err := implementation.StartCancellationWorkflow(t.Context(), "cleanup", "queue", request, &engine.WorkerDeploymentVersion{DeploymentName: "workers", BuildID: "build-b"})
+	require.ErrorIs(t, err, engine.ErrWorkflowStartConflict)
 }

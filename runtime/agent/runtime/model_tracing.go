@@ -126,6 +126,17 @@ func (c *tracedProvider) Stream(ctx context.Context, req *model.Request) (model.
 	return c.inner.Stream(ctx, req)
 }
 
+// CountTokens forwards the request to the provider's optional counter without
+// starting an inference span. Providers without a counter return
+// the same unsupported error as an unwrapped model client.
+func (c *tracedProvider) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
+	counter, ok := c.inner.(model.TokenCounter)
+	if !ok {
+		return model.TokenCount{}, model.ErrTokenCountingUnsupported
+	}
+	return counter.CountTokens(ctx, req)
+}
+
 // ObserveClientComplete records one final validated unary result.
 func (c *tracedCall) ObserveClientComplete(resp *model.Response, err error) error {
 	if err != nil {

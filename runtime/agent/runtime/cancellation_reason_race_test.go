@@ -326,7 +326,7 @@ func (s *closureObservationStore) LoadRunSeed(context.Context, string, string) (
 	return storage.RunSeed{}, errors.New("unexpected cancellation preparation read")
 }
 
-func (e *closureObservationEngine) StartCancellationWorkflow(context.Context, string, string, engine.CancellationRequest) error {
+func (e *closureObservationEngine) StartCancellationWorkflow(context.Context, string, string, engine.CancellationRequest, *engine.WorkerDeploymentVersion) error {
 	e.jobs++
 	return errors.New("unexpected cancellation workflow")
 }

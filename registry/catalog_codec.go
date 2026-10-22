@@ -24,11 +24,13 @@ import (
 )
 
 type (
-	// catalogDefinition retains only immutable validation results. It never owns
-	// saved JSON, registration times, provider leases, or admission authority.
+	// catalogDefinition retains a frozen declaration and its schema validation.
+	// Fresh snapshots still supply saved JSON, registration times, provider
+	// leases, and admission authority for every read.
 	catalogDefinition struct {
 		digest           [sha256.Size]byte
 		nativeAgent      bool
+		declaration      *genregistry.Toolset
 		info             *genregistry.ToolsetInfo
 		fingerprint      string
 		executionSchemas map[string]*jsonschema.Schema
@@ -44,8 +46,8 @@ type (
 	}
 )
 
-// newCatalogToolset serializes registration inputs and copies their compact
-// information so later input changes cannot affect the saved definition.
+// newCatalogToolset saves registration inputs as JSON, then decodes those bytes
+// once. The retained value matches later saved reads and owns its mutable data.
 func newCatalogToolset(toolset *genregistry.Toolset, fingerprint string, validator *schemaValidator) (*catalogToolset, error) {
 	definition := *toolset
 	definition.RegisteredAt = ""
@@ -53,11 +55,17 @@ func newCatalogToolset(toolset *genregistry.Toolset, fingerprint string, validat
 	if err != nil {
 		return nil, fmt.Errorf("marshal toolset %q: %w", toolset.Name, err)
 	}
-	return compileCatalogToolset(&definition, string(raw), fingerprint, validator)
+	body := string(raw)
+	var saved *genregistry.Toolset
+	if err := decodeCatalogToolset(body, &saved); err != nil {
+		return nil, fmt.Errorf("decode toolset %q: %w", toolset.Name, err)
+	}
+	return compileCatalogToolset(saved, body, fingerprint, validator)
 }
 
-// compileCatalogToolset compiles a validated declaration and copies its summary.
-// The caller supplies the exact definition bytes retained for later reads.
+// compileCatalogToolset receives an independently decoded saved declaration and
+// retains it with its compiled schemas. Local registration decodes its saved JSON;
+// cold catalog reads supply the value already checked by SavedToolsetFingerprint.
 func compileCatalogToolset(toolset *genregistry.Toolset, raw string, fingerprint string, validator *schemaValidator) (*catalogToolset, error) {
 	schemas := make(map[string]*jsonschema.Schema, len(toolset.Tools))
 	textOnlySchemas := make(map[string]*jsonschema.Schema)
@@ -80,6 +88,7 @@ func compileCatalogToolset(toolset *genregistry.Toolset, raw string, fingerprint
 		raw: raw,
 		catalogDefinition: &catalogDefinition{
 			info: toolsetToInfo(toolset), fingerprint: fingerprint,
+			declaration:      toolset,
 			executionSchemas: schemas, textOnlySchemas: textOnlySchemas,
 		},
 	}, nil
@@ -112,9 +121,8 @@ func copyToolsetInfo(info *genregistry.ToolsetInfo) *genregistry.ToolsetInfo {
 	return &owned
 }
 
-// decodeCatalogToolset gives callers an independent typed copy of a definition
-// already checked when its snapshot loaded. Unknown fields and trailing JSON
-// are still rejected when producing that copy.
+// decodeCatalogToolset checks registration's saved JSON and returns the same
+// generated service value that later catalog readers would decode.
 func decodeCatalogToolset(raw string, toolset **genregistry.Toolset) error {
 	decoder := json.NewDecoder(strings.NewReader(raw))
 	decoder.DisallowUnknownFields()
@@ -127,14 +135,12 @@ func decodeCatalogToolset(raw string, toolset **genregistry.Toolset) error {
 	return nil
 }
 
-// decode gives a caller its own complete definition for schema-dependent work.
-func (t *catalogToolset) decode(registeredAt string) (*genregistry.Toolset, error) {
-	var result *genregistry.Toolset
-	if err := decodeCatalogToolset(t.raw, &result); err != nil {
-		return nil, fmt.Errorf("decode toolset %q: %w", t.info.Name, err)
-	}
+// copyDeclaration gives the reader ownership of every mutable declaration field.
+// The current snapshot supplies the registration time independently of preparation.
+func (t *catalogToolset) copyDeclaration(registeredAt string) *genregistry.Toolset {
+	result := copyToolsetDeclaration(t.declaration)
 	result.RegisteredAt = registeredAt
-	return result, nil
+	return result
 }
 
 // marshalCatalogState encodes only provider state and compact discovery fields.

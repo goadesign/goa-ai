@@ -46,17 +46,18 @@ type (
 	// values remain converter payloads so a later process does not need their
 	// original concrete Go types to submit the same engine request.
 	preparedRequestWire struct {
-		Version           string                    `json:"version"`
-		AgentID           string                    `json:"agent_id"`
-		ID                string                    `json:"id"`
-		Workflow          string                    `json:"workflow"`
-		TaskQueue         string                    `json:"task_queue"`
-		Input             preparedPayload           `json:"input"`
-		RunTimeout        time.Duration             `json:"run_timeout"`
-		RetryPolicy       engine.RetryPolicy        `json:"retry_policy"`
-		Memo              []preparedValue           `json:"memo"`
-		SearchAttributes  []preparedSearchAttribute `json:"search_attributes"`
-		TaskQueueOverride string                    `json:"task_queue_override,omitempty"`
+		Version             string                          `json:"version"`
+		AgentID             string                          `json:"agent_id"`
+		ID                  string                          `json:"id"`
+		Workflow            string                          `json:"workflow"`
+		RootExecutionTarget *engine.WorkerDeploymentVersion `json:"root_execution_target,omitempty"`
+		TaskQueue           string                          `json:"task_queue"`
+		Input               preparedPayload                 `json:"input"`
+		RunTimeout          time.Duration                   `json:"run_timeout"`
+		RetryPolicy         engine.RetryPolicy              `json:"retry_policy"`
+		Memo                []preparedValue                 `json:"memo"`
+		SearchAttributes    []preparedSearchAttribute       `json:"search_attributes"`
+		TaskQueueOverride   string                          `json:"task_queue_override,omitempty"`
 	}
 
 	// preparedValue stores one named engine value as an encoded payload.
@@ -105,7 +106,7 @@ func derivePreparedRequestByteLimit() int {
 		panic(err)
 	}
 	fixed, err := json.Marshal(preparedRequestWire{
-		Version: preparedRequestVersion, Input: payload, TaskQueueOverride: "x",
+		Version: preparedRequestVersion, Input: payload, TaskQueueOverride: "x", RootExecutionTarget: &engine.WorkerDeploymentVersion{DeploymentName: "x", BuildID: "x"},
 		RunTimeout:  time.Duration(math.MinInt64),
 		RetryPolicy: engine.RetryPolicy{MaxAttempts: -int(^uint(0)>>1) - 1, InitialInterval: time.Duration(math.MinInt64), BackoffCoefficient: -math.MaxFloat64},
 	})
@@ -114,9 +115,9 @@ func derivePreparedRequestByteLimit() int {
 	}
 	const maxJSONBytesPerTextByte = 6
 	const repeatedTextCopies = 2
-	// One separator is charged per entry. Remove the single placeholder byte
-	// whose only purpose is to include the optional queue field's framing.
-	return len(fixed) - 1 + (len(entry)+1+maxJSONBytesPerTextByte+repeatedTextCopies*maxJSONBytesPerTextByte)*engine.MaxPayloadBytes
+	// One separator is charged per entry. Remove the three placeholder bytes
+	// used to include optional queue and root-target framing.
+	return len(fixed) - 3 + (len(entry)+1+maxJSONBytesPerTextByte+repeatedTextCopies*maxJSONBytesPerTextByte)*engine.MaxPayloadBytes
 }
 
 // NewPreparedRequest validates and snapshots one complete engine request. The
@@ -178,14 +179,15 @@ func ParsePreparedRequest(data []byte) (PreparedRequest, error) {
 		return PreparedRequest{}, err
 	}
 	request := engine.WorkflowStartRequest{
-		ID:               wire.ID,
-		Workflow:         wire.Workflow,
-		TaskQueue:        wire.TaskQueue,
-		Input:            input,
-		RunTimeout:       wire.RunTimeout,
-		Memo:             memo,
-		SearchAttributes: searchAttributes,
-		RetryPolicy:      wire.RetryPolicy,
+		RootExecutionTarget: wire.RootExecutionTarget,
+		ID:                  wire.ID,
+		Workflow:            wire.Workflow,
+		TaskQueue:           wire.TaskQueue,
+		Input:               input,
+		RunTimeout:          wire.RunTimeout,
+		Memo:                memo,
+		SearchAttributes:    searchAttributes,
+		RetryPolicy:         wire.RetryPolicy,
 	}
 	if err := validatePreparedRequest(wire.AgentID, request, wire.TaskQueueOverride); err != nil {
 		return PreparedRequest{}, fmt.Errorf("decode prepared run: %w", err)
@@ -313,6 +315,11 @@ func validatePreparedWire(wire preparedRequestWire) error {
 	if err := budget.AddText(wire.ID, wire.Workflow, wire.TaskQueue); err != nil {
 		return fmt.Errorf("decode prepared run text: %w", err)
 	}
+	if target := wire.RootExecutionTarget; target != nil {
+		if err := budget.AddText(target.DeploymentName, target.BuildID); err != nil {
+			return fmt.Errorf("decode prepared root execution target: %w", err)
+		}
+	}
 	if err := reserveRecipeMemo(workflowcodec.NewDataConverter(), budget); err != nil {
 		return fmt.Errorf("decode prepared run: %w", err)
 	}
@@ -346,17 +353,18 @@ func marshalPreparedRequestWire(
 	taskQueueOverride string,
 ) preparedRequestWire {
 	return preparedRequestWire{
-		Version:           preparedRequestVersion,
-		AgentID:           agentID,
-		ID:                snapshot.Request.ID,
-		Workflow:          snapshot.Request.Workflow,
-		TaskQueue:         snapshot.Request.TaskQueue,
-		Input:             marshalPreparedPayload(snapshot.InputPayload),
-		RunTimeout:        snapshot.Request.RunTimeout,
-		RetryPolicy:       snapshot.Request.RetryPolicy,
-		Memo:              marshalPreparedValues(snapshot.Request.Memo),
-		SearchAttributes:  marshalPreparedSearchAttributes(snapshot.SearchAttributes),
-		TaskQueueOverride: taskQueueOverride,
+		RootExecutionTarget: snapshot.Request.RootExecutionTarget,
+		Version:             preparedRequestVersion,
+		AgentID:             agentID,
+		ID:                  snapshot.Request.ID,
+		Workflow:            snapshot.Request.Workflow,
+		TaskQueue:           snapshot.Request.TaskQueue,
+		Input:               marshalPreparedPayload(snapshot.InputPayload),
+		RunTimeout:          snapshot.Request.RunTimeout,
+		RetryPolicy:         snapshot.Request.RetryPolicy,
+		Memo:                marshalPreparedValues(snapshot.Request.Memo),
+		SearchAttributes:    marshalPreparedSearchAttributes(snapshot.SearchAttributes),
+		TaskQueueOverride:   taskQueueOverride,
 	}
 }
 

@@ -557,7 +557,7 @@ func (r *Runtime) restoreSuspendedWorkflow(wfCtx *providerRecoveryWorkflowContex
 	}
 	base.providerRecovery = checkpoint.ProviderRecovery
 	base.providerControl = wfCtx.actor
-	state, err := r.restoreCheckpointState(checkpoint.State, reg.Definition)
+	state, err := r.restoreCheckpointState(checkpoint.State)
 	if err != nil {
 		return nil, err
 	}
@@ -732,9 +732,7 @@ func restoreCheckpointRunContext(saved checkpointRunContext, input *RunInput) ru
 
 // restoreCheckpointState decodes saved tool results and reconstructs pending
 // recovery state from the current checkpoint contract.
-func (r *Runtime) restoreCheckpointState(
-	checkpoint checkpointRunState, lookup toolSpecLookup,
-) (*runLoopState, error) {
+func (r *Runtime) restoreCheckpointState(checkpoint checkpointRunState) (*runLoopState, error) {
 	toolEvents := make([]*planner.ToolResult, 0, len(checkpoint.ToolEvents))
 	calls, err := recordedToolCalls(checkpoint.ToolOutputs)
 	if err != nil {
@@ -745,11 +743,7 @@ func (r *Runtime) restoreCheckpointState(
 		if err != nil {
 			return nil, err
 		}
-		var eventLookup toolSpecLookup = r
-		if call.Registry != nil {
-			eventLookup = lookup
-		}
-		decoded, err := decodeCheckpointToolEvent(event, call, eventLookup)
+		decoded, err := restoreHistoricalToolEvent(event, call)
 		if err != nil {
 			return nil, err
 		}
@@ -777,11 +771,15 @@ func (r *Runtime) restoreCheckpointBatch(checkpoint checkpointStepBatch, input *
 	result := checkpoint.Result
 	retargetPlanResult(result, input, runContext)
 	records := make([]stepToolRecord, 0, len(checkpoint.Records))
-	for _, record := range checkpoint.Records {
+	for i, record := range checkpoint.Records {
 		var decoded *planner.ToolResult
 		if record.ChildSuspension == nil && record.MCPPending == nil {
 			var err error
-			decoded, err = decodeCheckpointToolEvent(record.Result, record.Call, r.callSpecLookup(record.Call))
+			if i < checkpoint.Recorded || record.ResultRecord != nil {
+				decoded, err = restoreHistoricalToolEvent(record.Result, record.Call)
+			} else {
+				decoded, err = decodeCheckpointToolEvent(record.Result, record.Call, r.callSpecLookup(record.Call))
+			}
 			if err != nil {
 				return stepBatch{}, err
 			}

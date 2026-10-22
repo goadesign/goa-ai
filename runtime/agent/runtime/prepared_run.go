@@ -170,9 +170,10 @@ func (c *agentClient) StartPrepared(ctx context.Context, prepared *PreparedRun) 
 		return nil, preparedRunContractError(storage.ErrSeedConflict)
 	}
 	launch := workflowLaunchSettings{
-		taskQueue:        request.TaskQueueOverride,
-		memo:             request.Request.Memo,
-		searchAttributes: request.Request.SearchAttributes,
+		rootExecutionTarget: request.Request.RootExecutionTarget,
+		taskQueue:           request.TaskQueueOverride,
+		memo:                request.Request.Memo,
+		searchAttributes:    request.Request.SearchAttributes,
 	}
 	expected, err := prepareRunWithDefinition(&input, launch, c.definition, input.SessionID != "")
 	if err != nil {

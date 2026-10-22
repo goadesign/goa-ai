@@ -404,19 +404,7 @@ func (s *Service) Pong(ctx context.Context, p *genregistry.PongPayload) error {
 // an empty list when the catalog is empty.
 // **Validates: Requirements 6.1, 6.2, 6.3**
 func (s *Service) ListToolsets(ctx context.Context, p *genregistry.ListToolsetsPayload) (*genregistry.ListToolsetsResult, error) {
-	toolsets, err := s.catalog.ListToolsets(ctx, p.Tags)
-	if err != nil {
-		return nil, fmt.Errorf("list toolsets: %w", err)
-	}
-
-	infos := make([]*genregistry.ToolsetInfo, len(toolsets))
-	for i, ts := range toolsets {
-		infos[i] = copyToolsetInfo(ts)
-	}
-
-	return &genregistry.ListToolsetsResult{
-		Toolsets: infos,
-	}, nil
+	return s.catalog.listToolsets(ctx, p)
 }
 
 // GetToolset returns a specific toolset by name including all tool schemas.

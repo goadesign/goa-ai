@@ -1,7 +1,7 @@
 package runtime
 
-// A new turn must use the registration retained by each saved query even when
-// the current catalog offers the same names under a different registration.
+// A new turn selects the current registration for each saved query while
+// preserving separate root identities, even when cursor bytes are equal.
 // This fixture saves synthetic events, then uses the normal next-turn client.
 
 import (
@@ -26,7 +26,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-func TestHistoricalRegistryContinuationRetainsEachRegistration(t *testing.T) {
+func TestHistoricalRegistryContinuationSelectsCurrentRegistration(t *testing.T) {
 	store := newTestStore()
 	rt := New(store)
 	resolutions := 0
@@ -92,7 +92,9 @@ func TestHistoricalRegistryContinuationRetainsEachRegistration(t *testing.T) {
 		RunContext: run.Context{RunID: "next", SessionID: "registry-history"}}
 	resolvedInput, err := rt.resolvePlanActivityInput(t.Context(), input)
 	require.NoError(t, err)
-	actions, err := rt.continuationActionsForHistory(t.Context(), resolvedInput, nil, nil)
+	catalog, err := rt.planningCatalog(t.Context(), input)
+	require.NoError(t, err)
+	actions, err := rt.continuationActionsForHistory(t.Context(), resolvedInput, catalog, nil)
 	require.NoError(t, err)
 	require.Len(t, actions, 2)
 	for index, action := range actions {
@@ -104,17 +106,17 @@ func TestHistoricalRegistryContinuationRetainsEachRegistration(t *testing.T) {
 		require.Len(t, calls, 1)
 		selected, err := registrycontract.Read(calls[0].Registry, nil)
 		require.NoError(t, err)
-		assert.Equal(t, []string{strings.Repeat("a", 64), strings.Repeat("b", 64)}[index], selected.Registered.RegistrationToken)
+		assert.Equal(t, strings.Repeat("c", 64), selected.Registered.RegistrationToken)
 		assert.Equal(t, tools.Ident("records.continue"), calls[0].Name)
 		assert.JSONEq(t, `{"cursor":"same-cursor"}`, string(calls[0].Payload))
 		assert.Equal(t, []string{"first-query", "second-query"}[index], calls[0].ContinuationRootToolCallID)
 	}
 	readsBefore := resolutions
-	request := &api.ContinuationActivityInput{AgentID: definition.route.ID, RunID: input.RunID, SessionID: "registry-history", HistoryEndID: input.HistoryEndID}
+	request := &api.ContinuationActivityInput{AgentID: definition.route.ID, RunContext: input.RunContext, HistoryEndID: input.HistoryEndID}
 	available, err := rt.continuationAvailableActivity(t.Context(), request)
 	require.NoError(t, err)
 	assert.True(t, available)
-	assert.Equal(t, readsBefore, resolutions, "availability must not resolve a replacement registry catalog")
+	assert.Equal(t, readsBefore+1, resolutions, "availability uses the same current provider selection as planning")
 	request.RestrictToTool = "records.find"
 	available, err = rt.continuationAvailableActivity(t.Context(), request)
 	require.NoError(t, err)
@@ -126,8 +128,8 @@ func TestHistoricalRegistryContinuationRetainsEachRegistration(t *testing.T) {
 	request.ToolOutputs = nil
 
 	// Legacy literal callers identify executions directly. A saved registration
-	// must supply their paging contract to the availability read as it does to
-	// Start, without fetching a replacement registry catalog.
+	// supplies its query contract; availability also checks the current provider
+	// selection before reporting that another page can start.
 	literalMessages := make([]*model.Message, 0, 4)
 	for _, callID := range []string{"first-query", "second-query"} {
 		literalMessages = append(literalMessages,
@@ -145,11 +147,11 @@ func TestHistoricalRegistryContinuationRetainsEachRegistration(t *testing.T) {
 	require.Len(t, literalPage.Events, 1)
 	readsBefore = resolutions
 	available, err = rt.continuationAvailableActivity(t.Context(), &api.ContinuationActivityInput{
-		AgentID: definition.route.ID, RunID: "literal", SessionID: "registry-history", HistoryEndID: literalPage.Events[0].ID,
+		AgentID: definition.route.ID, RunContext: run.Context{RunID: "literal", SessionID: "registry-history"}, HistoryEndID: literalPage.Events[0].ID,
 	})
 	require.NoError(t, err)
 	assert.True(t, available)
-	assert.Equal(t, readsBefore, resolutions)
+	assert.Equal(t, readsBefore+1, resolutions)
 	prepared, err = client.PrepareNextTurn(t.Context(), "registry-history", "literal", nil, nil,
 		WithRunID("literal-next"), WithTurnID("literal-next"))
 	require.NoError(t, err)

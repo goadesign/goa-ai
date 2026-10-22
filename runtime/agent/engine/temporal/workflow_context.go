@@ -627,5 +627,5 @@ func (f immediateFuture[T]) IsReady() bool {
 func (e *Engine) activityDefaultsFor(name string) engine.ActivityOptions {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return e.activityOptions[name]
+	return e.activityOptions[name].options
 }

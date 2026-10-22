@@ -55,6 +55,12 @@ func (r *Runtime) validateCompletionToolPlanResult(result *PlanResult, completio
 }
 
 func validateCompletionToolPlanResultWithSpecs(result *PlanResult, completion tools.Ident, lookup toolSpecLookup) error {
+	return validateCompletionToolPlanResultWithHistory(result, completion, lookup, nil)
+}
+
+// validateCompletionToolPlanResultWithHistory preserves accepted historical
+// calls while checking the current completion obligation and executable calls.
+func validateCompletionToolPlanResultWithHistory(result *PlanResult, completion tools.Ident, lookup toolSpecLookup, current map[string]bool) error {
 	if completion == "" {
 		return nil
 	}
@@ -72,7 +78,7 @@ func validateCompletionToolPlanResultWithSpecs(result *PlanResult, completion to
 			return fmt.Errorf("completion tool %q must be the only action in its planner response", completion)
 		}
 	}
-	for _, call := range result.ToolCalls {
+	for _, call := range currentToolCalls(result.ToolCalls, current) {
 		spec, ok, err := lookupCallSpec(call, lookup)
 		if err != nil {
 			return err

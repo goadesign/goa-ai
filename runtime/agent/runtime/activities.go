@@ -78,7 +78,7 @@ func (r *Runtime) PlanStartActivity(ctx context.Context, wireInput *PlanActivity
 	}
 	var continuationActions []continuationAction
 	if input.Finalize == nil && !input.SynthesisOnly {
-		continuationActions, err = r.continuationActionsForHistory(ctx, input, catalog.specs, nil)
+		continuationActions, err = r.continuationActionsForHistory(ctx, input, catalog, nil)
 		if err != nil {
 			return nil, err
 		}
@@ -208,7 +208,7 @@ func (r *Runtime) PlanResumeActivity(ctx context.Context, wireInput *PlanActivit
 	}
 	var continuationActions []continuationAction
 	if input.Finalize == nil && !synthesisOnly {
-		continuationActions, err = r.continuationActionsForHistory(ctx, input, catalog.specs, toolOutputs)
+		continuationActions, err = r.continuationActionsForHistory(ctx, input, catalog, toolOutputs)
 		if err != nil {
 			return nil, err
 		}

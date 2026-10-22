@@ -118,7 +118,7 @@ func (r *Runtime) loadHistoricalContinuationOutputs(ctx context.Context, input *
 // continuationActionsForHistory combines saved and current work once per exact
 // output identity. Active outputs stay separate from planner failure guidance
 // and counters; only the continuation catalog consumes this combined history.
-func (r *Runtime) continuationActionsForHistory(ctx context.Context, input *resolvedPlanActivityInput, specs map[tools.Ident]tools.ToolSpec, current []*planner.ToolOutput) ([]continuationAction, error) {
+func (r *Runtime) continuationCandidatesForHistory(ctx context.Context, input *resolvedPlanActivityInput, specs map[tools.Ident]tools.ToolSpec, current []*planner.ToolOutput) ([]continuationAction, error) {
 	outputs, err := r.loadHistoricalContinuationOutputs(ctx, input, specs)
 	if err != nil {
 		return nil, err
@@ -139,6 +139,26 @@ func (r *Runtime) continuationActionsForHistory(ctx context.Context, input *reso
 		return nil, err
 	}
 	actions, err := r.availableContinuationActions(input.AgentID, outputs, input.RunContext.TextOnly)
+	if err != nil {
+		return nil, err
+	}
+	return actions, nil
+}
+
+// continuationActionsForHistory selects today's provider only for valid saved
+// queries. Accepted calls remain untouched; the current policy limits new pages.
+func (r *Runtime) continuationActionsForHistory(ctx context.Context, input *resolvedPlanActivityInput, catalog *RegistryCatalog, current []*planner.ToolOutput) ([]continuationAction, error) {
+	actions, err := r.continuationCandidatesForHistory(ctx, input, catalog.specs, current)
+	if err != nil {
+		return nil, err
+	}
+	return r.bindContinuationCandidates(ctx, input, catalog, actions)
+}
+
+// bindContinuationCandidates applies the same provider and policy selection to
+// normal planning and to the workflow's recorded availability decision.
+func (r *Runtime) bindContinuationCandidates(ctx context.Context, input *resolvedPlanActivityInput, catalog *RegistryCatalog, actions []continuationAction) ([]continuationAction, error) {
+	actions, err := catalog.bindContinuationActions(ctx, actions)
 	if err != nil {
 		return nil, err
 	}

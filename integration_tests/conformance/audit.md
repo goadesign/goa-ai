@@ -3,7 +3,7 @@
 This records the synthetic HTTP referee runs on 2026-10-03 at commit
 `d2fa82fe19af5ea6d0ac7eba2908336ddce31f19`. It is a failing baseline, not a
 conformance claim. Capability gaps described below apply to that recorded commit.
-Later checks are recorded separately; use the [current release guide](../../docs/releases/v0.88.0.md)
+Later checks are recorded separately; use the [current release guide](../../docs/releases/v0.89.0.md)
 for implemented capabilities. The [driver instructions](README.md) name the pinned referee
 and generated fixture. Each role completed and returned exit status 1.
 

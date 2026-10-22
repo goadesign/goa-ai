@@ -110,7 +110,8 @@ type (
 	// The Runtime automatically subscribes to hooks for memory persistence and
 	// stream publishing when MemoryStore or WithStream are configured.
 	Runtime struct {
-		toolWorkflowQueue string
+		acceptedRootWorkflowTarget func(context.Context, string) (*engine.WorkerDeploymentVersion, error)
+		toolWorkflowQueue          string
 		// Engine is the workflow backend adapter (Temporal by default).
 		Engine engine.Engine
 		// MemoryStore persists run transcripts and annotations.
@@ -216,8 +217,9 @@ type (
 	// for production deployments. Noop implementations are substituted for nil Logger,
 	// Metrics, and Tracer. A default in-memory event bus is created if Hooks is nil.
 	Options struct {
-		toolWorkflowQueue string
-		imageSources      *imageSourceRegistry
+		acceptedRootWorkflowTarget func(context.Context, string) (*engine.WorkerDeploymentVersion, error)
+		toolWorkflowQueue          string
+		imageSources               *imageSourceRegistry
 		// Engine is the workflow backend adapter (Temporal by default).
 		Engine engine.Engine
 		// MemoryStore persists run transcripts and annotations.
@@ -428,8 +430,8 @@ type (
 	// RunOption configures one run and the settings used to launch its workflow.
 	// Only options returned by this package can implement this interface, which
 	// keeps the option contract stable when private preparation details change.
-	// Exact-operation methods accept only WithTextOnly and reject other options,
-	// including nil. Passing nil to ordinary Agent run methods panics.
+	// Exact-operation methods accept WithTextOnly and WithRootExecutionTarget.
+	// Other options, including nil, are rejected. Nil options panic for ordinary runs.
 	RunOption interface {
 		apply(*runStart)
 	}
@@ -440,15 +442,19 @@ type (
 	// textOnlyOption identifies the one caller restriction accepted by exact operations.
 	textOnlyOption bool
 
+	// rootExecutionTargetOption carries the exact worker build for a root start.
+	rootExecutionTargetOption engine.WorkerDeploymentVersion
+
 	// preparationOption cannot change checkpoint-owned continuation values.
 	preparationOption struct{ commandID, attemptID string }
 
 	// workflowLaunchSettings contains the queue and encoded metadata submitted
 	// to the workflow engine. These values never become workflow input.
 	workflowLaunchSettings struct {
-		taskQueue        string
-		memo             map[string]engine.EncodedValue
-		searchAttributes map[string]any
+		rootExecutionTarget *engine.WorkerDeploymentVersion
+		taskQueue           string
+		memo                map[string]engine.EncodedValue
+		searchAttributes    map[string]any
 	}
 
 	// runStart keeps engine launch settings separate from the workflow input.
@@ -584,6 +590,13 @@ func WithRenderedPrompts(events []prompt.RenderEvent) RunOption {
 	return runOption(func(start *runStart) {
 		start.renderedPrompts = clonePromptRenderEvents(events)
 	})
+}
+
+// WithRootExecutionTarget selects the exact worker deployment and build for
+// this root workflow start. Retries and completion repair must use the same value.
+// Child workflows continue to use their own generated routes.
+func WithRootExecutionTarget(target engine.WorkerDeploymentVersion) RunOption {
+	return rootExecutionTargetOption(target)
 }
 
 // WithTaskQueue sets the worker queue used to launch this run.
@@ -785,6 +798,12 @@ func (option textOnlyOption) apply(start *runStart) {
 	start.input.Policy.TextOnly = bool(option)
 }
 
+// apply retains an independent exact-build selection outside workflow input.
+func (option rootExecutionTargetOption) apply(start *runStart) {
+	target := engine.WorkerDeploymentVersion(option)
+	start.launch.rootExecutionTarget = &target
+}
+
 func (option runOption) apply(start *runStart) {
 	option(start)
 }
@@ -821,17 +840,18 @@ func newFromOptions(store storage.Store, opts Options) *Runtime {
 		tracer = telemetry.NoopTracer{}
 	}
 	rt := &Runtime{
-		Engine:                 eng,
-		toolWorkflowQueue:      opts.toolWorkflowQueue,
-		Memory:                 opts.MemoryStore,
-		PromptRegistry:         prompt.NewRegistry(opts.PromptStore),
-		Store:                  store,
-		Policy:                 opts.Policy,
-		Bus:                    bus,
-		storageActivityTimeout: opts.StorageActivityTimeout,
-		logger:                 logger,
-		metrics:                metrics,
-		tracer:                 tracer,
+		acceptedRootWorkflowTarget: opts.acceptedRootWorkflowTarget,
+		Engine:                     eng,
+		toolWorkflowQueue:          opts.toolWorkflowQueue,
+		Memory:                     opts.MemoryStore,
+		PromptRegistry:             prompt.NewRegistry(opts.PromptStore),
+		Store:                      store,
+		Policy:                     opts.Policy,
+		Bus:                        bus,
+		storageActivityTimeout:     opts.StorageActivityTimeout,
+		logger:                     logger,
+		metrics:                    metrics,
+		tracer:                     tracer,
 		registryCallOptions: []registrycall.Option{
 			registrycall.WithLogger(logger),
 			registrycall.WithTracer(tracer),
@@ -1890,10 +1910,11 @@ func prepareRunWithDefinition(input *RunInput, launch workflowLaunchSettings, de
 		}
 	}
 	req := engine.WorkflowStartRequest{
-		ID:        input.RunID,
-		Workflow:  definition.route.WorkflowName,
-		TaskQueue: definition.route.DefaultTaskQueue,
-		Input:     input,
+		ID:                  input.RunID,
+		Workflow:            definition.route.WorkflowName,
+		TaskQueue:           definition.route.DefaultTaskQueue,
+		RootExecutionTarget: launch.rootExecutionTarget,
+		Input:               input,
 		// RunTimeout is intentionally left zero (engine-unbounded): active-time
 		// enforcement is owned by the workflow's Budget and Hard deadlines
 		// (workflow_loop.go). External-input requests end the

@@ -28,9 +28,17 @@ type (
 		Registration *genregistry.ResolvedToolset
 		// NativeAgent means the application must observe its configured worker.
 		NativeAgent bool
-		// ServiceHealth is populated only for service declarations. A native
-		// declaration deliberately has no service-provider health value.
+		// ServiceHealth is populated for service declarations read through Service.
+		// CatalogReader reads saved records without observing provider health.
 		ServiceHealth *ToolsetHealth
+	}
+
+	// catalogToolsetRead keeps the selected state and clock with its decoded
+	// result so Service can add health using its configured ping settings.
+	catalogToolsetRead struct {
+		toolset *CatalogToolset
+		state   catalogState
+		now     time.Time
 	}
 
 	catalogSnapshot struct {
@@ -77,62 +85,16 @@ return {state, definition, tostring(retired), now[1], now[2]}
 // ReadCatalogToolset reads one record within a positive raw-byte budget and
 // returns its exact service health observation. It never supplies Agent-worker
 // availability or infers ownership for historical records.
-func (s *Service) ReadCatalogToolset(ctx context.Context, name string, rawByteBudget int64) (_ *CatalogToolset, err error) {
-	ctx, span := otel.Tracer("goa.design/goa-ai/registry").Start(ctx, "toolregistry.catalog.read",
-		trace.WithAttributes(attribute.String("toolregistry.toolset", name)))
-	defer finishCatalogSpan(ctx, span, &err)
-	if rawByteBudget <= 0 {
-		return nil, errors.New("catalog read requires a positive raw-byte budget")
-	}
-	// Read fresh state, definition bytes, retirement history, and the clock
-	// together before using any retained validation.
-	snapshotCtx, snapshotSpan := otel.Tracer("goa.design/goa-ai/registry").Start(ctx, "toolregistry.catalog.snapshot.read",
-		trace.WithAttributes(attribute.String("toolregistry.toolset", name)))
-	snapshot, err := s.catalog.store.BoundedSnapshot(snapshotCtx, toolsetCatalogKey(name), rawByteBudget)
-	if err == nil {
-		snapshotSpan.SetAttributes(
-			attribute.Int("toolregistry.catalog.state_read_bytes", len(snapshot.state)),
-			attribute.Int("toolregistry.catalog.definition_read_bytes", len(snapshot.definition)),
-		)
-	}
-	finishCatalogSpan(snapshotCtx, snapshotSpan, &err)
+func (s *Service) ReadCatalogToolset(ctx context.Context, name string, rawByteBudget int64) (*CatalogToolset, error) {
+	read, err := s.catalog.readCatalogToolset(ctx, name, rawByteBudget)
 	if err != nil {
 		return nil, err
 	}
-	if !snapshot.exists {
-		s.catalog.forgetDefinition(name)
-		return nil, genregistry.MakeNotFound(errToolsetNotFound)
+	if !read.toolset.NativeAgent {
+		health := s.catalogHealth(read.state, read.now)
+		read.toolset.ServiceHealth = &health
 	}
-	entry, err := s.catalog.decodeSnapshot(ctx, name, snapshot.state, snapshot.definition, snapshot.retired)
-	if err != nil {
-		return nil, err
-	}
-	if entry.State != catalogEntryActive {
-		return nil, genregistry.MakeNotFound(errToolsetNotFound)
-	}
-	if entry.Identity == nil {
-		return nil, ErrCatalogIdentityMissing
-	}
-	// Decode the checked bytes into a separate object so the caller can change
-	// its returned toolset without changing another read.
-	decodeCtx, decodeSpan := otel.Tracer("goa.design/goa-ai/registry").Start(ctx, "toolregistry.catalog.definition.decode",
-		trace.WithAttributes(attribute.String("toolregistry.toolset", name)))
-	toolset, err := entry.Toolset.decode(entry.RegisteredAt)
-	finishCatalogSpan(decodeCtx, decodeSpan, &err)
-	if err != nil {
-		return nil, err
-	}
-	result := &CatalogToolset{
-		Identity: *entry.Identity, NativeAgent: entry.NativeAgent,
-		Registration: &genregistry.ResolvedToolset{
-			Toolset: toolset, RegistrationToken: entry.RegistrationToken,
-		},
-	}
-	if !entry.NativeAgent {
-		health := s.catalogHealth(entry.catalogState, snapshot.now)
-		result.ServiceHealth = &health
-	}
-	return result, nil
+	return read.toolset, nil
 }
 
 // CatalogRoutesAfter returns at most count currently indexed routes after the
@@ -152,6 +114,60 @@ func (s *Service) CatalogContains(ctx context.Context, scope, name string) (bool
 		return false, errors.New("catalog membership requires a scope and route")
 	}
 	return s.catalog.store.Contains(ctx, scope, name)
+}
+
+// readCatalogToolset reads and validates one saved record before constructing
+// an independent result. It returns the selected health inputs for Service;
+// maintenance readers do not need a running provider-health tracker.
+func (c *toolsetCatalog) readCatalogToolset(ctx context.Context, name string, rawByteBudget int64) (_ *catalogToolsetRead, err error) {
+	ctx, span := otel.Tracer("goa.design/goa-ai/registry").Start(ctx, "toolregistry.catalog.read",
+		trace.WithAttributes(attribute.String("toolregistry.toolset", name)))
+	defer finishCatalogSpan(ctx, span, &err)
+	if rawByteBudget <= 0 {
+		return nil, errors.New("catalog read requires a positive raw-byte budget")
+	}
+	// Read fresh state, definition bytes, retirement history, and the clock
+	// together before using any retained validation.
+	snapshotCtx, snapshotSpan := otel.Tracer("goa.design/goa-ai/registry").Start(ctx, "toolregistry.catalog.snapshot.read",
+		trace.WithAttributes(attribute.String("toolregistry.toolset", name)))
+	snapshot, err := c.store.BoundedSnapshot(snapshotCtx, toolsetCatalogKey(name), rawByteBudget)
+	if err == nil {
+		snapshotSpan.SetAttributes(
+			attribute.Int("toolregistry.catalog.state_read_bytes", len(snapshot.state)),
+			attribute.Int("toolregistry.catalog.definition_read_bytes", len(snapshot.definition)),
+		)
+	}
+	finishCatalogSpan(snapshotCtx, snapshotSpan, &err)
+	if err != nil {
+		return nil, err
+	}
+	if !snapshot.exists {
+		c.forgetDefinition(name)
+		return nil, genregistry.MakeNotFound(errToolsetNotFound)
+	}
+	entry, err := c.decodeSnapshot(ctx, name, snapshot.state, snapshot.definition, snapshot.retired)
+	if err != nil {
+		return nil, err
+	}
+	if entry.State != catalogEntryActive {
+		return nil, genregistry.MakeNotFound(errToolsetNotFound)
+	}
+	if entry.Identity == nil {
+		return nil, ErrCatalogIdentityMissing
+	}
+	// Copy the prepared saved declaration so this reader owns its returned data.
+	// Fresh registration state and health still come from the current snapshot.
+	decodeCtx, decodeSpan := otel.Tracer("goa.design/goa-ai/registry").Start(ctx, "toolregistry.catalog.definition.decode",
+		trace.WithAttributes(attribute.String("toolregistry.toolset", name)))
+	toolset := entry.Toolset.copyDeclaration(entry.RegisteredAt)
+	finishCatalogSpan(decodeCtx, decodeSpan, &err)
+	result := &CatalogToolset{
+		Identity: *entry.Identity, NativeAgent: entry.NativeAgent,
+		Registration: &genregistry.ResolvedToolset{
+			Toolset: toolset, RegistrationToken: entry.RegistrationToken,
+		},
+	}
+	return &catalogToolsetRead{toolset: result, state: entry.catalogState, now: snapshot.now}, nil
 }
 
 func (s *redisCatalogStore) BoundedSnapshot(ctx context.Context, key string, budget int64) (catalogSnapshot, error) {
