@@ -2898,6 +2898,35 @@ continue to read compact state only. Current authority is checked every time.
 There is no API or storage change, migration, or change to the consumer's
 per-planning-activity catalog lifetime.
 
+##### Read-only catalog inspection
+
+Local maintenance tools can construct `registry.NewCatalogReader(redisClient,
+registryName)` without starting a Registry server. The name selects the same
+catalog as `registry.Config.Name`; an empty name selects `"registry"`.
+Construction makes no Redis requests, starts no background workers and requires
+no `Close` call. The caller owns authorization and the borrowed Redis client's
+lifetime.
+
+`CatalogReader.ListToolsets` returns active saved summaries with the service's
+existing tag filtering. `CatalogReader.ReadCatalogToolset` applies the same
+positive raw-byte budget, atomic state/definition snapshot and saved-record
+validation as `Service.ReadCatalogToolset`. It returns the saved resource owner,
+complete declaration, exact registration token and native-Agent marker. Each
+returned declaration belongs to its caller. Missing and retired routes return
+`not_found`; identity-free records return `ErrCatalogIdentityMissing`; malformed
+records and budget failures remain errors. A reader does not repair records,
+prune expired provider leases, create settlement state or change retirement
+history.
+
+The reader leaves `CatalogToolset.ServiceHealth` absent for every record.
+Provider health depends on the running Registry's configured ping settings,
+which saved catalog data does not contain. Use the running service when that
+health observation is required. Native-Agent worker readiness still belongs to
+the application. The reader adds no RPC, saved-data format, registration limit,
+default read budget or migration requirement. It uses `HKEYS` for listing and
+finite Lua scripts containing only `HGET`, `HEXISTS`, `HSTRLEN`, `SISMEMBER` and
+`TIME` for selected records; a Redis account can deny all write commands.
+
 ##### Saved declaration identity
 
 When loading a saved definition, Registry strictly decodes its stable declaration

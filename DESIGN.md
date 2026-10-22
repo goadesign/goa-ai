@@ -1775,6 +1775,16 @@ exist, downgrading those readers requires an application-owned data conversion;
 reverting the library alone is not a safe rollback. Provider wire messages and
 stored declaration JSON remain unchanged.
 
+`NewCatalogReader(redisClient, registryName)` gives local maintenance code only
+`ListToolsets` and `ReadCatalogToolset`, using the same saved-record validation
+as the running service. Construction does not contact Redis or start workers;
+the caller owns the borrowed client. Reads do not mutate Redis or prune leases.
+The reader returns saved ownership, exact registration and native-Agent status,
+but no `ServiceHealth`: provider health requires the running Registry's configured
+ping settings. The service retains that health observation. No RPC, saved-data
+format, registration rule or migration changes. See
+[read-only catalog inspection](docs/runtime.md#read-only-catalog-inspection).
+
 `ReadCatalogIdentity` reads only the exact route's compact saved state and
 returns its immutable application owner, including after retirement. It neither
 loads declarations nor checks provider health or active status. Missing routes

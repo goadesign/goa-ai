@@ -237,6 +237,9 @@ Custom stores must follow the [preparation ownership upgrade](docs/runtime.md#pr
   shutdown; omitted options retain existing behavior. See
   [provider lifecycle](docs/runtime.md#registry-routed-provider-execution-service-side).
   Catalogs retain resource ownership; applications authorize discovery and use.
+  Local maintenance tools can use `registry.NewCatalogReader` to inspect saved
+  registrations without starting workers or writing Redis data; see
+  [read-only catalog inspection](docs/runtime.md#read-only-catalog-inspection).
   Registered imports derive distinct names for equal operations from different
   owners and retain original declarations for execution and replay.
   Portable bounded-result codecs accept provider result data; the runtime adds
