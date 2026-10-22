@@ -307,7 +307,9 @@ Custom stores must follow the [preparation ownership upgrade](docs/runtime.md#pr
   agent handlers, and read the exact workflow and activity queues from successful
   registrations before starting workers.
 - **Policies and context.** Control permitted tools, call and recovery budgets,
-  timing, history compression, prompt caching, and prompt overrides.
+  timing, history compression, prompt caching, and prompt overrides. Runtime
+  model clients preserve provider token counting without creating an inference
+  record or span; see [model middleware](docs/runtime.md#model-middleware).
 - **Evaluation and observability.** Generate typed evaluation suites; observe
   assistant text, tool progress, child runs, usage, and OpenTelemetry traces.
 - **Standalone JSON codecs.** Generate strict encoders and decoders beside
