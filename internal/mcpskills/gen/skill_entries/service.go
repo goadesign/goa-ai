@@ -276,16 +276,6 @@ func validateSkillFileOriginal(value *SkillFile) (err error) {
 	return err
 }
 
-// validateSkillFileOriginal2 checks the original typed value before JSON conversion.
-func validateSkillFileOriginal2(value *SkillFile) (err error) {
-	err = goa.MergeErrors(err, goa.ValidateFormat("value.uri", value.URI, goa.FormatURI))
-	err = goa.MergeErrors(err, goa.ValidatePattern("value.digest", value.Digest, "^sha256:[0-9a-f]{64}$"))
-	if value.Size < 0 {
-		err = goa.MergeErrors(err, goa.InvalidRangeError("value.size", value.Size, 0, true))
-	}
-	return err
-}
-
 // jsonSkillResourcesTransport stores exactly one selected Goa OneOf branch.
 type jsonSkillResourcesTransport struct {
 	kind     jsonSkillResourcesTransportKind
@@ -526,7 +516,7 @@ func EncodeSkillFile(in *SkillFile) ([]byte, error) {
 	if err := checkSkillFileValue(in); err != nil {
 		return nil, fmt.Errorf("encode SkillFile JSON: %w", err)
 	}
-	if err := validateSkillFileOriginal2(in); err != nil {
+	if err := validateSkillFileOriginal(in); err != nil {
 		return nil, fmt.Errorf("validate SkillFile value: %w", err)
 	}
 	var body *jsonSkillFileTransport
@@ -554,7 +544,7 @@ func DecodeSkillFile(data []byte) (out *SkillFile, err error) {
 	if err != nil {
 		return out, fmt.Errorf("decode SkillFile JSON: %w", err)
 	}
-	if err := validateSkillFileJSONValue("", root, ""); err != nil {
+	if err := validateSkillEntryJSONValue5("", root, ""); err != nil {
 		return out, fmt.Errorf("decode SkillFile JSON: %w", err)
 	}
 	var body *jsonSkillFileTransport
@@ -664,7 +654,7 @@ func validateSkillEntryJSONValue(path string, value any, description string) err
 				return err
 			}
 		case "uri":
-			if err := validateSkillEntryJSONValue10(
+			if err := validateSkillEntryJSONValue6(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Full resource URI of this skill's SKILL.md",
 			); err != nil {
@@ -699,7 +689,7 @@ func validateSkillEntryJSONValue3(path string, value any, description string) er
 	case []any:
 		return validateSkillEntryJSONValue4(path, value, "Every file belonging to this skill")
 	case string:
-		return validateSkillEntryJSONValue9(path, value, "Generated content without stable digests")
+		return validateSkillEntryJSONValue6(path, value, "Generated content without stable digests")
 	default:
 		return invalidGeneratedFieldTypeError(field, "a declared union branch", decodedJSONType(value), description)
 	}
@@ -764,7 +754,7 @@ func validateSkillEntryJSONValue5(path string, value any, description string) er
 				return err
 			}
 		case "uri":
-			if err := validateSkillEntryJSONValue8(
+			if err := validateSkillEntryJSONValue6(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Full resource URI of the file",
 			); err != nil {
@@ -813,161 +803,22 @@ func validateSkillEntryJSONValue7(path string, value any, description string) er
 	return nil
 }
 
-// validateSkillEntryJSONValue8 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateSkillEntryJSONValue8(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateSkillEntryJSONValue9 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateSkillEntryJSONValue9(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateSkillEntryJSONValue10 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateSkillEntryJSONValue10(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateSkillFileJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
-func validateSkillFileJSONValue(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "digest":
-			if err := validateSkillFileJSONValue2(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "SHA-256 of the raw file bytes",
-			); err != nil {
-				return err
-			}
-		case "size":
-			if err := validateSkillFileJSONValue3(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Length of the raw file content in bytes",
-			); err != nil {
-				return err
-			}
-		case "uri":
-			if err := validateSkillFileJSONValue4(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Full resource URI of the file",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"digest",
-				"size",
-				"uri",
-			})
-		}
-	}
-	return nil
-}
-
-// validateSkillFileJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateSkillFileJSONValue2(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateSkillFileJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateSkillFileJSONValue3(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
-	}
-	_, ok := value.(json.Number)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateSkillFileJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateSkillFileJSONValue4(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// readStrictJSON checks syntax and nesting before walking for duplicate keys,
-// and preserves integer text for the generated type checks.
+// readStrictJSON checks the complete JSON document for malformed text and
+// duplicate members, then returns values with their original number text.
 func readStrictJSON(data []byte) (any, error) {
 	if err := validateJSONText(data); err != nil {
 		return nil, err
 	}
 	if !json.Valid(data) {
+		// When two complete JSON values arrive, keep the caller's distinct
+		// multiple-document error instead of reporting malformed syntax.
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		var document json.RawMessage
+		if err := decoder.Decode(&document); err == nil {
+			if err := decoder.Decode(&document); err == nil {
+				return nil, fmt.Errorf("multiple JSON documents")
+			}
+		}
 		return nil, fmt.Errorf("invalid JSON syntax or nesting")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -975,7 +826,8 @@ func readStrictJSON(data []byte) (any, error) {
 	return readJSONValue(decoder)
 }
 
-// readJSONValue checks duplicate decoded keys before storing any object member.
+// readJSONValue reads one JSON value and rejects repeated object member
+// names, returning the value without replacing earlier members.
 func readJSONValue(decoder *json.Decoder) (any, error) {
 	token, err := decoder.Token()
 	if err != nil {
@@ -1027,8 +879,8 @@ func readJSONValue(decoder *json.Decoder) (any, error) {
 	}
 }
 
-// validateJSONText rejects invalid UTF-8 and unpaired UTF-16 escapes before
-// encoding/json can silently replace them. JSON grammar remains decoder-owned.
+// validateJSONText checks JSON bytes for invalid text and unpaired Unicode
+// escapes, returning an error before encoding/json can replace those characters.
 func validateJSONText(data []byte) error {
 	if !utf8.Valid(data) {
 		return fmt.Errorf("invalid UTF-8 in JSON")
@@ -1202,29 +1054,8 @@ func checkSkillFileValue(in *SkillFile) error {
 		return fmt.Errorf("missing root value")
 	}
 	active := make(map[any]bool)
-	if err := checkSkillFileSkillFileValue(in, "$", active); err != nil {
+	if err := checkSkillEntrySkillFileValue(in, "$", active); err != nil {
 		return err
-	}
-	return nil
-}
-
-// checkSkillFileSkillFileValue checks one generated value on the active path.
-func checkSkillFileSkillFileValue(in *SkillFile, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if !utf8.ValidString(string(in.URI)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "uri", false))
-		}
-		if !utf8.ValidString(string(in.Digest)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "digest", false))
-		}
 	}
 	return nil
 }
