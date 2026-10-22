@@ -202,12 +202,11 @@ func TestPlannerPublicationRetriesImmutableBatchWithoutReplanning(t *testing.T) 
 	}
 	eng := &Engine{
 		defaultQueue: taskQueue,
-		activityOptions: map[string]engine.ActivityOptions{
-			"runtime.store": {
+		activityOptions: map[string]activityRegistration{
+			"runtime.store": {options: engine.ActivityOptions{
 				StartToCloseTimeout: time.Second,
 				RetryPolicy:         engine.RetryPolicy{MaxAttempts: 2},
-			},
-		},
+			}}},
 	}
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
@@ -275,7 +274,7 @@ func TestExecuteWorkflowSuspendsAwaitQuestions(t *testing.T) {
 	}))
 
 	recorder := &hookRecorder{}
-	eng := &Engine{defaultQueue: taskQueue, activityOptions: make(map[string]engine.ActivityOptions)}
+	eng := &Engine{defaultQueue: taskQueue, activityOptions: make(map[string]activityRegistration)}
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
 	env.RegisterActivityWithOptions(func(ctx context.Context, command *api.StorageActivityCommand) (*api.StorageActivityResult, error) {
@@ -370,7 +369,7 @@ func TestExecuteWorkflowServiceActivityCancellationClosesTemporalRunCanceled(t *
 	}))
 
 	recorder := &hookRecorder{}
-	eng := &Engine{defaultQueue: taskQueue, activityOptions: make(map[string]engine.ActivityOptions)}
+	eng := &Engine{defaultQueue: taskQueue, activityOptions: make(map[string]activityRegistration)}
 	var suite testsuite.WorkflowTestSuite
 	env := suite.NewTestWorkflowEnvironment()
 	env.RegisterActivityWithOptions(func(ctx context.Context, command *api.StorageActivityCommand) (*api.StorageActivityResult, error) {

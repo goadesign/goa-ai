@@ -225,9 +225,9 @@ func TestStaticAgentCheckpointRetainsConcreteResultsAfterReplacement(t *testing.
 	require.NoError(t, replacement.BindStaticAgent(testRegistryName, expected, selected, genrecords.Read))
 	call := ToolCall{Name: genrecords.Read, Registry: binding, Payload: rawjson.Message(`{"query":"all"}`)}
 	state := checkpointRunState{ToolOutputs: []*planner.ToolOutput{{Name: call.Name, ToolCallID: "call-1", Registry: binding}}, ToolEvents: []*api.ToolEvent{{Name: call.Name, ToolCallID: "call-1", Result: rawjson.Message(`{"count":4}`)}}}
-	restored, err := rt.restoreCheckpointState(state, catalog.definition)
+	restored, err := rt.restoreCheckpointState(state)
 	require.NoError(t, err)
-	assert.Equal(t, &genrecords.ReadResult{Count: 4}, restored.ToolEvents[0].Result)
+	assert.Equal(t, historicalToolResult{result: rawjson.Message(`{"count":4}`)}, restored.ToolEvents[0].Result)
 	require.NoError(t, validateCheckpointToolRequest(call, catalog.definition))
 	child, err := childDefinitionForCall(call, catalog.definition)
 	require.NoError(t, err)

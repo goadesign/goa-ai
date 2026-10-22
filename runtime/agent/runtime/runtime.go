@@ -428,8 +428,8 @@ type (
 	// RunOption configures one run and the settings used to launch its workflow.
 	// Only options returned by this package can implement this interface, which
 	// keeps the option contract stable when private preparation details change.
-	// Exact-operation methods accept only WithTextOnly and reject other options,
-	// including nil. Passing nil to ordinary Agent run methods panics.
+	// Exact-operation methods accept WithTextOnly and WithRootExecutionTarget.
+	// Other options, including nil, are rejected. Nil options panic for ordinary runs.
 	RunOption interface {
 		apply(*runStart)
 	}
@@ -440,15 +440,19 @@ type (
 	// textOnlyOption identifies the one caller restriction accepted by exact operations.
 	textOnlyOption bool
 
+	// rootExecutionTargetOption carries the exact worker build for a root start.
+	rootExecutionTargetOption engine.WorkerDeploymentVersion
+
 	// preparationOption cannot change checkpoint-owned continuation values.
 	preparationOption struct{ commandID, attemptID string }
 
 	// workflowLaunchSettings contains the queue and encoded metadata submitted
 	// to the workflow engine. These values never become workflow input.
 	workflowLaunchSettings struct {
-		taskQueue        string
-		memo             map[string]engine.EncodedValue
-		searchAttributes map[string]any
+		rootExecutionTarget *engine.WorkerDeploymentVersion
+		taskQueue           string
+		memo                map[string]engine.EncodedValue
+		searchAttributes    map[string]any
 	}
 
 	// runStart keeps engine launch settings separate from the workflow input.
@@ -584,6 +588,13 @@ func WithRenderedPrompts(events []prompt.RenderEvent) RunOption {
 	return runOption(func(start *runStart) {
 		start.renderedPrompts = clonePromptRenderEvents(events)
 	})
+}
+
+// WithRootExecutionTarget selects the exact worker deployment and build for
+// this root workflow start. Retries and completion repair must use the same value.
+// Child workflows continue to use their own generated routes.
+func WithRootExecutionTarget(target engine.WorkerDeploymentVersion) RunOption {
+	return rootExecutionTargetOption(target)
 }
 
 // WithTaskQueue sets the worker queue used to launch this run.
@@ -783,6 +794,12 @@ func (option textOnlyOption) apply(start *runStart) {
 		start.input.Policy = &PolicyOverrides{}
 	}
 	start.input.Policy.TextOnly = bool(option)
+}
+
+// apply retains an independent exact-build selection outside workflow input.
+func (option rootExecutionTargetOption) apply(start *runStart) {
+	target := engine.WorkerDeploymentVersion(option)
+	start.launch.rootExecutionTarget = &target
 }
 
 func (option runOption) apply(start *runStart) {
@@ -1890,10 +1907,11 @@ func prepareRunWithDefinition(input *RunInput, launch workflowLaunchSettings, de
 		}
 	}
 	req := engine.WorkflowStartRequest{
-		ID:        input.RunID,
-		Workflow:  definition.route.WorkflowName,
-		TaskQueue: definition.route.DefaultTaskQueue,
-		Input:     input,
+		ID:                  input.RunID,
+		Workflow:            definition.route.WorkflowName,
+		TaskQueue:           definition.route.DefaultTaskQueue,
+		RootExecutionTarget: launch.rootExecutionTarget,
+		Input:               input,
 		// RunTimeout is intentionally left zero (engine-unbounded): active-time
 		// enforcement is owned by the workflow's Budget and Hard deadlines
 		// (workflow_loop.go). External-input requests end the

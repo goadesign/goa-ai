@@ -14,7 +14,7 @@ func TestPreparedRequestByteBoundIncludesEntryFraming(t *testing.T) {
 	empty, err := json.Marshal(preparedValue{Payload: preparedPayload{Metadata: map[string][]byte{"": nil}}})
 	require.NoError(t, err)
 	require.Len(t, empty, 56)
-	require.Equal(t, 391+75*engine.MaxPayloadBytes, PreparedRequestByteLimit())
+	require.Equal(t, 452+75*engine.MaxPayloadBytes, PreparedRequestByteLimit())
 	for _, payload := range []preparedPayload{
 		{Metadata: map[string][]byte{"": nil, "\x01": nil}},
 		{Metadata: map[string][]byte{"": {1}}},

@@ -9,44 +9,33 @@ import (
 	"errors"
 	"fmt"
 
-	"goa.design/goa-ai/internal/registrycontract"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-type (
-	// historicalPagingKey keeps an exact source call within its saved registration.
-	historicalPagingKey struct {
-		call, registry, token string
-	}
-
-	// historicalPagingChain retains original outputs and whether current work
-	// depends on them. It never changes saved input, result, or cursor bytes.
-	historicalPagingChain struct {
-		outputs []*planner.ToolOutput
-		current bool
-	}
-)
-
-// selectHistoricalContinuations reads successful pages in their saved order.
-// Explicit source IDs close old chains even when their tool names have changed.
-// Only prior-run evidence may become ineligible; current calls and results keep
-// their existing validation, including pages that consume an earlier run's cursor.
+// selectHistoricalContinuations closes saved chains before checking current
+// contracts. Live calls still receive current validation, including a final page.
 func (r *Runtime) selectHistoricalContinuations(input *resolvedPlanActivityInput, outputs, current []*planner.ToolOutput, specs map[tools.Ident]tools.ToolSpec) ([]*planner.ToolOutput, error) {
-	currentKeys := make(map[continuationOutputKey]struct{}, len(current))
-	for _, output := range current {
-		currentKeys[continuationOutputKey{output.CallRunID, output.ResultRunID, output.ToolCallID}] = struct{}{}
+	chains, keys, err := historicalPagingChains(outputs)
+	if err != nil {
+		return nil, err
 	}
-	chains := make(map[historicalPagingKey]*historicalPagingChain)
-	seen := make(map[historicalPagingKey]struct{})
-	keys := make(map[*planner.ToolOutput]historicalPagingKey, len(outputs))
-	for _, output := range outputs {
-		if output.Failure != nil {
-			continue
-		}
-		_, explicitCurrent := currentKeys[continuationOutputKey{output.CallRunID, output.ResultRunID, output.ToolCallID}]
-		isCurrent := explicitCurrent || output.CallRunID == input.RunID || output.ResultRunID == input.RunID
-		if isCurrent {
+	currentKeys := make(map[continuationOutputKey]bool, len(current))
+	for _, output := range current {
+		currentKeys[continuationOutputKey{output.CallRunID, output.ResultRunID, output.ToolCallID}] = true
+	}
+	eligible := make(map[historicalPagingKey]bool, len(chains))
+	for key, chain := range chains {
+		head := chain[len(chain)-1]
+		open := head.Bounds != nil && head.Bounds.NextCursor != nil
+		var currentChain bool
+		for _, output := range chain {
+			live := output.CallRunID == input.RunID || output.ResultRunID == input.RunID
+			retained := currentKeys[continuationOutputKey{output.CallRunID, output.ResultRunID, output.ToolCallID}]
+			if !live && (!open || !retained) {
+				continue
+			}
+			currentChain = true
 			call := ToolCall{Name: output.Name, ToolCallID: output.ToolCallID, Registry: output.Registry}
 			spec, exists, err := lookupCallSpec(call, r)
 			if err != nil {
@@ -59,59 +48,20 @@ func (r *Runtime) selectHistoricalContinuations(input *resolvedPlanActivityInput
 				return nil, err
 			}
 		}
-		key := historicalPagingKey{call: output.ToolCallID}
-		if output.Registry != nil {
-			token, err := registrycontract.RegistrationToken(output.Registry)
-			if err != nil {
-				return nil, err
-			}
-			key.registry = output.Registry.Registry
-			key.token = token
-		}
-		if key.call == "" {
-			return nil, fmt.Errorf("runtime: historical paging call has an empty tool call id")
-		}
-		if _, duplicate := seen[key]; duplicate {
-			return nil, fmt.Errorf("runtime: duplicate historical paging call %q", key.call)
-		}
-		seen[key] = struct{}{}
-		if output.ContinuationRootToolCallID != "" {
-			key.call = output.ContinuationRootToolCallID
-			chain, exists := chains[key]
-			if !exists {
-				return nil, fmt.Errorf("runtime: historical continuation references unknown source tool call %q in its registration", key.call)
-			}
-			previous := chain.outputs[len(chain.outputs)-1]
-			if previous.Bounds == nil || previous.Bounds.NextCursor == nil {
-				return nil, fmt.Errorf("runtime: historical continuation advances completed source tool call %q", key.call)
-			}
-		} else {
-			chains[key] = &historicalPagingChain{}
-		}
-		chain := chains[key]
-		chain.outputs = append(chain.outputs, output)
-		chain.current = chain.current || isCurrent
-		keys[output] = key
-	}
-
-	eligible := make(map[historicalPagingKey]bool, len(chains))
-	for key, chain := range chains {
-		if chain.current {
+		if currentChain {
 			eligible[key] = true
 			continue
 		}
-		head := chain.outputs[len(chain.outputs)-1]
-		if head.Bounds == nil || head.Bounds.NextCursor == nil {
+		if !open {
 			continue
 		}
 		eligible[key] = true
 		if head.Registry != nil {
-			// Registered calls retain their exact old contracts. The ordinary
-			// action builder checks those contracts and current authorization.
+			// Registered calls retain their exact old contracts. The action
+			// builder checks those contracts and current authorization.
 			continue
 		}
-		var err error
-		eligible[key], err = historicalPagingExecutable(chain.outputs, specs)
+		eligible[key], err = historicalPagingExecutable(chain, specs)
 		if err != nil {
 			return nil, err
 		}

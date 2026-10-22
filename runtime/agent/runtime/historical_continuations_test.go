@@ -92,10 +92,10 @@ func TestPlanStartPreservesHistoricalResultAfterContractChange(t *testing.T) {
 			afterBytes, err := json.Marshal(after)
 			require.NoError(t, err)
 			assert.Equal(t, sha256.Sum256(recordBytes), sha256.Sum256(afterBytes))
-			// The same old bytes are still rejected when actual work needs a typed result.
+			// Planner hydration retains the same accepted historical result bytes.
 			events := &canonicalToolEvents{scheduled: call, result: result}
 			_, err = rt.plannerToolOutputFromCanonicalEvents("run-1", "run-1", "source-1", events, events)
-			assert.ErrorIs(t, err, codecErr)
+			assert.NoError(t, err)
 		})
 	}
 }

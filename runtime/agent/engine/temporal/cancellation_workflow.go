@@ -29,13 +29,13 @@ func (e *Engine) RegisterCancellationWorkflow(_ context.Context, name string, op
 	if name == "" || opts.Queue == "" || fn == nil || opts.RetryPolicy.InitialInterval <= 0 {
 		return errors.New("cancellation workflow requires name, queue, handler and positive observation interval")
 	}
-	if err := e.beginWorkflowRegistration(name); err != nil {
+	if err := e.beginWorkflowRegistration(name, opts.Queue, false); err != nil {
 		return err
 	}
 	registered := false
 	defer func() {
 		if !registered {
-			e.abortWorkflowRegistration(name)
+			e.abortWorkflowRegistration(name, opts.Queue)
 		}
 	}()
 	activityName := name + ".observe"
@@ -49,8 +49,8 @@ func (e *Engine) RegisterCancellationWorkflow(_ context.Context, name string, op
 		return err
 	}
 
-	e.workerForQueue(opts.Queue).registerWorkflow(name, e.cancellationWorkflowHandler(name, activityName, opts))
-	e.finishWorkflowRegistration(name)
+	e.workerForQueue(opts.Queue).worker.RegisterWorkflowWithOptions(e.cancellationWorkflowHandler(name, activityName, opts), workflow.RegisterOptions{Name: name})
+	e.finishWorkflowRegistration(name, opts.Queue, false)
 	registered = true
 	return nil
 }

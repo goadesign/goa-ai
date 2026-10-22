@@ -22,8 +22,8 @@ import (
 // StartOperation accepts one sessionful call to a declared Agent operation.
 // The host must already own the session and authorize the selected declaration.
 // Provider preparation and effects belong to the accepted workflow; callers only
-// observe its handle. The selected configuration owns planner policy. Only
-// WithTextOnly is accepted in opts; other options fail before submission.
+// observe its handle. The selected configuration owns planner policy. WithTextOnly and
+// WithRootExecutionTarget are accepted in opts; other options fail before submission.
 func (r *Runtime) StartOperation(
 	ctx context.Context, sessionID, runID string, operation *genregistry.ToolSchema,
 	arguments rawjson.Message, labels map[string]string, memo map[string]any, opts ...RunOption,
@@ -36,7 +36,7 @@ func (r *Runtime) StartOperation(
 
 // StartOneShotOperation accepts one sessionless call without creating a hidden
 // conversation. Exact retries observe the same workflow; changed input conflicts.
-// Only WithTextOnly is accepted in opts.
+// WithTextOnly and WithRootExecutionTarget are accepted in opts.
 func (r *Runtime) StartOneShotOperation(
 	ctx context.Context, runID string, operation *genregistry.ToolSchema,
 	arguments rawjson.Message, labels map[string]string, memo map[string]any, opts ...RunOption,
@@ -117,10 +117,11 @@ func (r *Runtime) startOperation(
 // prepareOperationRequest builds the complete immutable engine request for
 // both initial submission and exact completion repair. It performs no I/O.
 func prepareOperationRequest(sessionID, runID string, operation *genregistry.ToolSchema, arguments rawjson.Message, labels map[string]string, memo map[string]any, opts ...RunOption) (engine.WorkflowStartRequest, error) {
-	policy, err := exactOperationPolicy(opts)
+	settings, err := exactOperationOptions(opts)
 	if err != nil {
 		return engine.WorkflowStartRequest{}, err
 	}
+	policy := settings.input.Policy
 	if runID == "" {
 		return engine.WorkflowStartRequest{}, errors.New("operation run id is required")
 	}
@@ -152,6 +153,7 @@ func prepareOperationRequest(sessionID, runID string, operation *genregistry.Too
 	if err != nil {
 		return engine.WorkflowStartRequest{}, err
 	}
+	launch.rootExecutionTarget = settings.launch.rootExecutionTarget
 	request, err := prepareRunWithDefinition(&start.input, launch, definition, sessionID != "")
 	if err != nil {
 		return engine.WorkflowStartRequest{}, err

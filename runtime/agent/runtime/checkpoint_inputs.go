@@ -21,97 +21,126 @@ type checkpointInputUses struct {
 	current map[string]bool
 }
 
-// validateCheckpointInputs keeps accepted historical arguments intact. Pending
-// execution, successful result materialization and paging need current inputs.
-func validateCheckpointInputs(checkpoint *workflowCheckpoint, definition AgentDefinition) error {
+// checkpointInputConsumers joins saved call copies and identifies the inputs
+// still read by execution, result materialization, or paging after restoration.
+func checkpointInputConsumers(checkpoint *workflowCheckpoint) (*checkpointInputUses, error) {
 	uses := checkpointInputUses{byID: make(map[string]int), current: make(map[string]bool)}
 	events := make(map[string]*api.ToolEvent, len(checkpoint.State.ToolEvents))
 	outputs := make(map[string]*planner.ToolOutput, len(checkpoint.State.ToolOutputs))
-	failed := make(map[string]bool)
 	for _, event := range checkpoint.State.ToolEvents {
 		if _, exists := events[event.ToolCallID]; exists {
-			return fmt.Errorf("run suspension has duplicate result for call %q", event.ToolCallID)
+			return nil, fmt.Errorf("run suspension has duplicate result for call %q", event.ToolCallID)
 		}
 		events[event.ToolCallID] = event
 	}
 	for _, output := range checkpoint.State.ToolOutputs {
 		outputs[output.ToolCallID] = output
-		failed[output.ToolCallID] = output.Failure != nil
 		event, ok := events[output.ToolCallID]
 		if !ok || event.Name != output.Name ||
 			!reflect.DeepEqual(event.Failure, output.Failure) ||
 			!bytes.Equal(event.Result, output.Result) ||
 			!bytes.Equal(event.ServerData, output.ServerData) ||
-			!reflect.DeepEqual(event.Bounds, output.Bounds) {
-			return fmt.Errorf("saved output does not match recorded result for call %q", output.ToolCallID)
+			!reflect.DeepEqual(event.Bounds, output.Bounds) ||
+			!reflect.DeepEqual(event.Blocks, output.Blocks) {
+			return nil, fmt.Errorf("saved output does not match recorded result for call %q", output.ToolCallID)
 		}
 		if err := uses.add(checkpointOutputCall(output), false); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	historical := make(map[string]bool, len(checkpoint.Batch.Records))
 	for i, record := range checkpoint.Batch.Records {
 		id := record.Call.ToolCallID
 		if _, exists := historical[id]; exists {
-			return fmt.Errorf("run suspension has duplicate saved tool call id %q", id)
+			return nil, fmt.Errorf("run suspension has duplicate saved tool call id %q", id)
 		}
 		complete := i < checkpoint.Batch.Recorded
 		if event, exists := events[id]; exists && !reflect.DeepEqual(event, record.Result) {
-			return fmt.Errorf("saved batch result disagrees with recorded result for call %q", id)
+			return nil, fmt.Errorf("saved batch result disagrees with recorded result for call %q", id)
 		}
 		if complete {
 			if record.ChildSuspension != nil || !record.ResultPublished || record.ScheduleRequired ||
 				record.CallRunID == "" || record.ResultRunID == "" ||
 				!reflect.DeepEqual(events[id], record.Result) {
-				return fmt.Errorf("recorded batch call %q has unfinished or inconsistent result publication", id)
+				return nil, fmt.Errorf("recorded batch call %q has unfinished or inconsistent result publication", id)
 			}
 			if output, ok := outputs[id]; ok &&
 				(output.CallRunID != record.CallRunID || output.ResultRunID != record.ResultRunID) {
-				return fmt.Errorf("recorded batch call %q has inconsistent result provenance", id)
+				return nil, fmt.Errorf("recorded batch call %q has inconsistent result provenance", id)
 			}
 		}
 		// A validated materialized event already owns its preview. Publication
 		// retries and delayed transcript append consume that event, not Args.
 		// Failed outcomes skip typed success materialization and previews.
 		// Recovery gives the planner raw evidence, not another execution.
-		failed[id] = record.Result != nil && record.Result.Failure != nil
-		historical[id] = record.ChildSuspension == nil &&
-			(complete || record.ResultRecord != nil || failed[id])
+		failed := record.Result != nil && record.Result.Failure != nil
+		historical[id] = record.ChildSuspension == nil && record.MCPPending == nil &&
+			(complete || record.ResultRecord != nil || failed)
 		if err := uses.add(record.Call, !historical[id]); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	// Calls without recorded outcomes include unfinished children and lost
 	// replies. They cannot borrow a successful sibling's historical status.
 	for _, call := range checkpoint.Batch.Calls {
 		if err := uses.add(call, !historical[call.ToolCallID]); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	for _, call := range awaitToolRequests(checkpoint.Batch.AwaitItems) {
 		if err := uses.add(call, !historical[call.ToolCallID]); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	for _, pending := range checkpoint.Pending {
 		if pending.Confirmation != nil {
 			if err := uses.add(pending.Confirmation.Call, true); err != nil {
-				return err
+				return nil, err
 			}
 		}
 		if pending.Await != nil {
 			for _, call := range awaitToolRequests([]planner.AwaitItem{*pending.Await}) {
 				if err := uses.add(call, true); err != nil {
-					return err
+					return nil, err
 				}
 			}
+		}
+	}
+	// Accumulated outputs and already materialized batch records can close a
+	// query. An unfinished result cannot retire an earlier accepted cursor.
+	pagingOutputs := append([]*planner.ToolOutput(nil), checkpoint.State.ToolOutputs...)
+	for i, record := range checkpoint.Batch.Records {
+		if i < checkpoint.Batch.Recorded || record.ResultRecord == nil || record.ChildSuspension != nil || record.MCPPending != nil {
+			continue
+		}
+		call, result := record.Call, record.Result
+		if result == nil {
+			return nil, fmt.Errorf("materialized tool call %q has no saved result", call.ToolCallID)
+		}
+		pagingOutputs = append(pagingOutputs, &planner.ToolOutput{
+			Name: call.Name, ToolCallID: call.ToolCallID, Registry: call.Registry,
+			ContinuationRootToolCallID: call.ContinuationRootToolCallID,
+			Bounds:                     result.Bounds, Failure: result.Failure,
+		})
+	}
+	chains, _, err := historicalPagingChains(pagingOutputs)
+	if err != nil {
+		return nil, err
+	}
+	for _, chain := range chains {
+		head := chain[len(chain)-1]
+		if head.Bounds == nil || head.Bounds.NextCursor == nil {
+			continue
+		}
+		for _, output := range chain {
+			uses.current[output.ToolCallID] = true
 		}
 	}
 	// Recovery selects exact recorded failures. Its saved copy intentionally
 	// omits paging roots and run-log references; compare only retained facts.
 	selected, err := selectRecoveryOutputs(checkpoint.State.ToolOutputs, recoveryToolCallIDs(checkpoint.State.PendingRecovery))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	for i, output := range checkpoint.State.PendingRecovery {
 		previous := selected[i]
@@ -119,30 +148,25 @@ func validateCheckpointInputs(checkpoint *workflowCheckpoint, definition AgentDe
 			previous.ModelToolCallID != output.ModelToolCallID ||
 			!reflect.DeepEqual(previous.Registry, output.Registry) ||
 			!reflect.DeepEqual(previous.Failure, output.Failure) {
-			return fmt.Errorf("saved recovery input or failure disagrees for call %q", output.ToolCallID)
+			return nil, fmt.Errorf("saved recovery input or failure disagrees for call %q", output.ToolCallID)
 		}
 	}
+	return &uses, nil
+}
+
+// validateCheckpointInputs preserves completed inputs while checking every
+// call that still supplies execution, materialization, or paging arguments.
+func validateCheckpointInputs(checkpoint *workflowCheckpoint, definition AgentDefinition) error {
+	uses, err := checkpointInputConsumers(checkpoint)
+	if err != nil {
+		return err
+	}
 	for _, call := range uses.calls {
-		if call.Registry != nil {
-			if _, err := validateRegistrySource(definition, call); err != nil {
-				return err
-			}
+		if !uses.current[call.ToolCallID] {
+			continue
 		}
-		spec, ok, err := lookupOwnedCallSpec(call, definition)
-		if err != nil {
+		if err := validateCheckpointToolRequest(call, definition); err != nil {
 			return err
-		}
-		if !ok {
-			return fmt.Errorf("tool %q is not in the current agent definition", call.Name)
-		}
-		// Paging reconstructs queries and consumes cursors from saved inputs,
-		// including earlier successful pages of an exhausted chain. Failed
-		// outputs are skipped before paging reads any input.
-		if uses.current[call.ToolCallID] ||
-			(!failed[call.ToolCallID] && spec.Bounds != nil && spec.Bounds.Paging != nil) {
-			if err := validateCheckpointToolRequest(call, definition); err != nil {
-				return err
-			}
 		}
 	}
 	return nil

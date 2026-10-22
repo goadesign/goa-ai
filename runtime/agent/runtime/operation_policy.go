@@ -1,5 +1,5 @@
-// Package runtime accepts only the text-only caller restriction for exact
-// operations. The provider continues to own planner policy and workflow routing.
+// Package runtime accepts text-only restrictions and exact root worker builds
+// for operations. The provider owns planner policy and generated workflow routes.
 package runtime
 
 import (
@@ -11,22 +11,23 @@ import (
 	"goa.design/goa-ai/runtime/toolserverdata"
 )
 
-// exactOperationPolicy rejects unsupported options before any option can change
-// input, messages, preparation identity, or engine settings. False keeps the
-// original unrestricted request representation, including its replay identity.
-func exactOperationPolicy(options []RunOption) (*PolicyOverrides, error) {
-	var policy *PolicyOverrides
+// exactOperationOptions rejects unsupported options before any option can change
+// messages, preparation identity, or provider policy. A false text restriction
+// preserves the original nil policy and its existing request identity.
+func exactOperationOptions(options []RunOption) (runStart, error) {
+	var start runStart
 	for _, option := range options {
-		textOnly, ok := option.(textOnlyOption)
-		if !ok {
-			return nil, errors.New("exact operations accept only WithTextOnly")
-		}
-		policy = nil
-		if textOnly {
-			policy = &PolicyOverrides{TextOnly: true}
+		switch option.(type) {
+		case textOnlyOption, rootExecutionTargetOption:
+			option.apply(&start)
+		default:
+			return runStart{}, errors.New("exact operations accept only WithTextOnly and WithRootExecutionTarget")
 		}
 	}
-	return policy, nil
+	if start.input.Policy != nil && !start.input.Policy.TextOnly {
+		start.input.Policy = nil
+	}
+	return start, nil
 }
 
 // validateExactOperationPolicy checks accepted caller input before provider

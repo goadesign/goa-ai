@@ -29,7 +29,7 @@ func TestCancellationWorkflowRecordsPendingObservations(t *testing.T) {
 				Queue: "queue", StartToCloseTimeout: time.Minute,
 				RetryPolicy: engine.RetryPolicy{UnlimitedAttempts: true, InitialInterval: time.Second},
 			}
-			implementation := &Engine{activityOptions: map[string]engine.ActivityOptions{"cleanup.observe": options}}
+			implementation := &Engine{activityOptions: map[string]activityRegistration{"cleanup.observe": {options: options}}}
 			observations := 0
 			environment.RegisterActivityWithOptions(func(_ context.Context, got engine.CancellationRequest) (bool, error) {
 				assert.Equal(t, request, got)
@@ -89,7 +89,7 @@ func TestCancellationWorkflowContinuesWithFreshHistory(t *testing.T) {
 		Queue: "owner.queue", StartToCloseTimeout: time.Minute,
 		RetryPolicy: engine.RetryPolicy{UnlimitedAttempts: true, InitialInterval: time.Second},
 	}
-	implementation := &Engine{activityOptions: map[string]engine.ActivityOptions{"cleanup.observe": options}}
+	implementation := &Engine{activityOptions: map[string]activityRegistration{"cleanup.observe": {options: options}}}
 	environment.RegisterActivityWithOptions(func(context.Context, engine.CancellationRequest) (bool, error) {
 		return false, nil
 	}, activity.RegisterOptions{Name: "cleanup.observe"})

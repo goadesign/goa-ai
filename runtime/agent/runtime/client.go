@@ -530,6 +530,7 @@ func buildSessionRunStart(agentID agent.Ident, sessionID string, messages []*mod
 	if err != nil {
 		return runStart{}, err
 	}
+	launch.rootExecutionTarget = start.launch.rootExecutionTarget
 	start.launch = launch
 	return start, nil
 }
@@ -547,6 +548,7 @@ func buildOneShotRunStart(agentID agent.Ident, messages []*model.Message, opts [
 	if err != nil {
 		return runStart{}, err
 	}
+	launch.rootExecutionTarget = start.launch.rootExecutionTarget
 	start.launch = launch
 	return start, nil
 }

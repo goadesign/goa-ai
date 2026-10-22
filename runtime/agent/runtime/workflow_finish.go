@@ -227,6 +227,9 @@ func (r *Runtime) successfulCompletionToolEvent(input *RunInput, events []*plann
 	}
 	var final *planner.ToolResult
 	for _, event := range events {
+		if _, historical := event.Result.(historicalToolResult); historical {
+			continue
+		}
 		call, err := recordedResultCall(event.Name, event.ToolCallID, calls)
 		if err != nil {
 			return nil, err

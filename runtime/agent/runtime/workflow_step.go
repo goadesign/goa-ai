@@ -127,10 +127,17 @@ func (r *Runtime) normalizeStep(result *PlanResult) (stepProgram, error) {
 // normalizeStepWithSpecs validates one saved or current planner result against
 // the tool contracts supplied by its owning agent definition.
 func normalizeStepWithSpecs(result *PlanResult, lookup toolSpecLookup) (stepProgram, error) {
+	return normalizeStepWithHistory(result, lookup, nil)
+}
+
+// normalizeStepWithHistory checks saved step structure and resolves only calls
+// that still have a current consumer. A nil consumer map denotes new work.
+func normalizeStepWithHistory(result *PlanResult, lookup toolSpecLookup, current map[string]bool) (stepProgram, error) {
 	if result == nil {
 		return stepProgram{}, planner.NewOutputContractError(errors.New("workflow step received nil PlanResult"))
 	}
-	for _, call := range result.ToolCalls {
+	executableCalls := currentToolCalls(result.ToolCalls, current)
+	for _, call := range executableCalls {
 		if _, _, err := lookupCallSpec(call, lookup); err != nil {
 			return stepProgram{}, planner.NewOutputContractError(err)
 		}
@@ -160,7 +167,7 @@ func normalizeStepWithSpecs(result *PlanResult, lookup toolSpecLookup) (stepProg
 		if err := validateAwaitItems(awaitItems); err != nil {
 			return stepProgram{}, planner.NewOutputContractError(err)
 		}
-		if err := validateAwaitToolsWithSpecs(awaitItems, lookup); err != nil {
+		if err := validateAwaitToolCallsWithSpecs(currentToolCalls(awaitToolRequests(awaitItems), current), lookup); err != nil {
 			return stepProgram{}, planner.NewOutputContractError(err)
 		}
 	}
@@ -173,8 +180,13 @@ func normalizeStepWithSpecs(result *PlanResult, lookup toolSpecLookup) (stepProg
 		)
 	}
 	if result.SynthesizeAfterTools {
-		if err := validateSynthesisAfterToolsWithSpecs(result.ToolCalls, lookup); err != nil {
+		if err := validateSynthesisToolContracts(executableCalls, lookup); err != nil {
 			return stepProgram{}, planner.NewOutputContractError(err)
+		}
+		// Completed calls already established the original budgeted-work rule.
+		// Only a wholly current response needs today's budget classification.
+		if len(executableCalls) == len(result.ToolCalls) && !hasBudgetedToolCallsWithSpecs(executableCalls, lookup) {
+			return stepProgram{}, planner.NewOutputContractError(errors.New("workflow step synthesis-after-tools requires at least one budgeted tool"))
 		}
 	}
 
@@ -190,7 +202,7 @@ func normalizeStepWithSpecs(result *PlanResult, lookup toolSpecLookup) (stepProg
 		}, nil
 	}
 	if hasTerminal {
-		if err := validateToolTerminalProgramWithSpecs(result.ToolCalls, lookup); err != nil {
+		if err := validateToolTerminalProgramWithSpecs(executableCalls, lookup); err != nil {
 			return stepProgram{}, planner.NewOutputContractError(err)
 		}
 		return stepProgram{
@@ -319,11 +331,11 @@ func (r *Runtime) normalizePlanResultForExecution(result *PlanResult, runContext
 // validateAwaitTools requires every tool named by an await request to exist and
 // remain available after the user responds.
 func (r *Runtime) validateAwaitTools(items []planner.AwaitItem) error {
-	return validateAwaitToolsWithSpecs(items, r)
+	return validateAwaitToolCallsWithSpecs(awaitToolRequests(items), r)
 }
 
-func validateAwaitToolsWithSpecs(items []planner.AwaitItem, lookup toolSpecLookup) error {
-	for _, call := range awaitToolRequests(items) {
+func validateAwaitToolCallsWithSpecs(calls []ToolCall, lookup toolSpecLookup) error {
+	for _, call := range calls {
 		spec, ok := lookup.spec(call.Name)
 		if !ok {
 			return fmt.Errorf("planner await references unknown tool %q", call.Name)
@@ -524,7 +536,9 @@ func cloneAwaitQuestions(questions []planner.AwaitQuestion) []planner.AwaitQuest
 	return cloned
 }
 
-func validateSynthesisAfterToolsWithSpecs(calls []ToolCall, lookup toolSpecLookup) error {
+// validateSynthesisToolContracts rejects current terminal calls before a
+// planner response can request another reasoning turn after those calls finish.
+func validateSynthesisToolContracts(calls []ToolCall, lookup toolSpecLookup) error {
 	for _, call := range calls {
 		spec, ok, err := lookupCallSpec(call, lookup)
 		if err != nil {
@@ -534,10 +548,22 @@ func validateSynthesisAfterToolsWithSpecs(calls []ToolCall, lookup toolSpecLooku
 			return fmt.Errorf("workflow step synthesis-after-tools cannot include terminal tool %q", call.Name)
 		}
 	}
-	if !hasBudgetedToolCallsWithSpecs(calls, lookup) {
-		return errors.New("workflow step synthesis-after-tools requires at least one budgeted tool")
-	}
 	return nil
+}
+
+// currentToolCalls selects the calls whose saved inputs still have a consumer.
+// New planner responses pass no history map and validate every call.
+func currentToolCalls(calls []ToolCall, current map[string]bool) []ToolCall {
+	if current == nil {
+		return calls
+	}
+	selected := make([]ToolCall, 0, len(calls))
+	for _, call := range calls {
+		if current[call.ToolCallID] {
+			selected = append(selected, call)
+		}
+	}
+	return selected
 }
 
 func hasBudgetedToolCallsWithSpecs(calls []ToolCall, lookup toolSpecLookup) bool {

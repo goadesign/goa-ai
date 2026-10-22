@@ -34,12 +34,12 @@ func TestValidateContinuationRejectsSavedServerDataOutsideCurrentContract(t *tes
 	seedTestToolSpecs(runtime, spec)
 	suspension := suspensionContractFixture(t, spec.Name)
 	rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
-		checkpoint.State.ToolEvents = []*api.ToolEvent{{
+		checkpoint.Batch.Records = []checkpointToolRecord{{Call: checkpoint.Batch.Calls[0], Result: &api.ToolEvent{
 			Name:       spec.Name,
 			Result:     rawjson.Message(`{"value":"complete"}`),
 			ServerData: rawjson.Message(`[{"kind":"svc.chart","data":{"removed_field":true}}]`),
 			ToolCallID: "call-1",
-		}}
+		}}}
 	})
 
 	err := runtime.ValidateContinuation(suspension)
@@ -313,9 +313,9 @@ func TestValidateContinuationRejectsIncompatibleSavedResult(t *testing.T) {
 	seedTestToolSpecs(runtime, spec)
 	suspension := suspensionContractFixture(t, spec.Name)
 	rewriteSuspensionCheckpoint(t, suspension, func(checkpoint *workflowCheckpoint) {
-		checkpoint.State.ToolEvents = []*api.ToolEvent{{
-			Name: spec.Name, Result: rawjson.Message(`{"value":42}`),
-		}}
+		checkpoint.Batch.Records = []checkpointToolRecord{{Call: checkpoint.Batch.Calls[0], Result: &api.ToolEvent{
+			Name: spec.Name, ToolCallID: "call-1", Result: rawjson.Message(`{"value":42}`),
+		}}}
 	})
 
 	err := runtime.ValidateContinuation(suspension)
@@ -521,7 +521,7 @@ func TestValidateContinuationRecoveryCatalogVersions(t *testing.T) {
 		require.NoError(t, runtime.ValidateContinuation(suspension))
 		checkpoint, err := runtime.decodeWorkflowCheckpoint(suspension)
 		require.NoError(t, err)
-		state, err := runtime.restoreCheckpointState(checkpoint.State, runtime)
+		state, err := runtime.restoreCheckpointState(checkpoint.State)
 		require.NoError(t, err)
 		_, catalog := toolRecovery(state.PendingRecovery)
 		require.Equal(t, &RecoveryCatalog{Tools: []tools.Ident{spec.Name}}, catalog)
@@ -535,7 +535,7 @@ func TestValidateContinuationRecoveryCatalogVersions(t *testing.T) {
 		require.NoError(t, runtime.ValidateContinuation(suspension))
 		checkpoint, err := runtime.decodeWorkflowCheckpoint(suspension)
 		require.NoError(t, err)
-		state, err := runtime.restoreCheckpointState(checkpoint.State, runtime)
+		state, err := runtime.restoreCheckpointState(checkpoint.State)
 		require.NoError(t, err)
 		state.PendingCorrection = pendingModelInvocationRecovery{recovery: ModelInvocationRecovery{UnadvertisedToolName: "unavailable"}}
 		outputs, catalog := toolRecovery(state.PendingRecovery)

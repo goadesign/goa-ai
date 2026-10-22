@@ -187,10 +187,9 @@ func TestCheckpointRejectsContentDisagreementForAcceptedResult(t *testing.T) {
 	require.NoError(t, err)
 	record := checkpointToolRecord{Call: accepted.call, Result: event, CallRunID: accepted.callRunID, ResultRunID: accepted.resultRunID, ResultJSON: accepted.resultJSON, ResultPublished: true, ResultRecord: accepted.resultRecord}
 	checkpoint := &workflowCheckpoint{AgentID: "service.agent", SessionID: "session-1"}
-	definition := testAgentDefinition("service.agent", "service.workflow", "service.queue", []tools.ToolSpec{spec}, nil)
-	require.NoError(t, validateCheckpointResultRecord(record, checkpoint, definition))
+	require.NoError(t, validateCheckpointResultRecord(record, checkpoint))
 	event.Blocks[0].(*content.TextContent).Text = "different accepted content"
-	assert.ErrorContains(t, validateCheckpointResultRecord(record, checkpoint, definition), "disagrees with batch result")
+	assert.ErrorContains(t, validateCheckpointResultRecord(record, checkpoint), "disagrees with batch result")
 }
 
 func TestSavedToolContentReplaysInModelTranscript(t *testing.T) {

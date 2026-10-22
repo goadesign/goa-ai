@@ -285,8 +285,20 @@ Custom stores must follow the [preparation ownership upgrade](docs/runtime.md#pr
   upgrading to install the matching templates.
   Steps that combine provider-selected calls with extra planner-created calls
   retain every call and result for the next planner activity, including after
-  suspension. Original provider messages and reasoning signatures stay unchanged.
+  suspension. Completed tool results, accepted arguments, media, and rendered
+  previews remain readable through clarification resumes after their generated
+  result type changes or their tool is removed. Pending execution, result
+  materialization, confirmations, child runs, and unfinished paging still use current
+  generated contracts. Original provider messages and reasoning signatures stay
+  unchanged.
   The in-memory engine supports local development.
+- **Exact root worker builds.** `WithRootExecutionTarget` selects one worker
+  deployment and build for an accepted root request. Prepared starts, retries,
+  and completion repair preserve that target; child routing remains generated.
+  The Temporal adapter can read the current target before work is accepted.
+- **Native Temporal handlers.** Register SDK workflows and activities alongside
+  agent handlers, and read the exact workflow and activity queues from successful
+  registrations before starting workers.
 - **Policies and context.** Control permitted tools, call and recovery budgets,
   timing, history compression, prompt caching, and prompt overrides.
 - **Evaluation and observability.** Generate typed evaluation suites; observe

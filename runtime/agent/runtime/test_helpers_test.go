@@ -598,7 +598,7 @@ func (r *Runtime) decodeWorkflowCheckpoint(suspension *api.RunSuspension) (*work
 
 func (r *Runtime) validateCheckpointToolOutput(ctx context.Context, output *planner.ToolOutput) error {
 	_ = ctx
-	return validateCheckpointToolOutput(output, testRuntimeDefinition(r, "svc.agent"))
+	return validateCheckpointToolOutput(output, testRuntimeDefinition(r, "svc.agent"), true)
 }
 
 // buildAndSubmitWorkflowForTest uses the production request builder, replaces

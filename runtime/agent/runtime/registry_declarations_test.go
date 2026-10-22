@@ -114,9 +114,9 @@ func TestCheckpointRestoresDirectAndCompiledStaticSelections(t *testing.T) {
 				ToolOutputs: []*planner.ToolOutput{{Name: call.Name, ToolCallID: call.ToolCallID, Registry: tc.binding}},
 				ToolEvents:  []*api.ToolEvent{{Name: call.Name, ToolCallID: call.ToolCallID, Result: rawjson.Message(`{"count":4}`)}},
 			}
-			restored, err := rt.restoreCheckpointState(state, catalog.definition)
+			restored, err := rt.restoreCheckpointState(state)
 			require.NoError(t, err)
-			assert.Equal(t, &genrecords.ReadResult{Count: 4}, restored.ToolEvents[0].Result)
+			assert.Equal(t, historicalToolResult{result: rawjson.Message(`{"count":4}`)}, restored.ToolEvents[0].Result)
 			require.NoError(t, validateCheckpointToolRequest(call, catalog.definition))
 		})
 	}

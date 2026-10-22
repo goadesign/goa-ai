@@ -584,6 +584,15 @@ type (
 		Data []byte
 	}
 
+	// WorkerDeploymentVersion identifies one build of a named worker deployment.
+	// Root workflow starts use it to select the exact workers for accepted work.
+	WorkerDeploymentVersion struct {
+		// DeploymentName is the worker deployment that owns the build.
+		DeploymentName string `json:"deployment_name"`
+		// BuildID is the exact build within that deployment.
+		BuildID string `json:"build_id"`
+	}
+
 	// WorkflowStartRequest describes how to launch a workflow execution. Generated
 	// code constructs these when agents are invoked.
 	WorkflowStartRequest struct {
@@ -596,6 +605,9 @@ type (
 		// TaskQueue is the required queue that receives the workflow task. A worker
 		// listening on this queue will execute the workflow.
 		TaskQueue string
+		// RootExecutionTarget pins this root execution to an exact worker build.
+		// Nil leaves routing to the workflow engine's deployment configuration.
+		RootExecutionTarget *WorkerDeploymentVersion
 		// Input is the required typed payload passed to the workflow handler.
 		Input *api.RunInput
 		// RunTimeout bounds one workflow execution attempt. A retry starts a fresh
@@ -722,6 +734,9 @@ func ValidateWorkflowStartRequest(req WorkflowStartRequest) error {
 	}
 	if req.ID != req.Input.RunID {
 		return errors.New("workflow id must match input run id")
+	}
+	if target := req.RootExecutionTarget; target != nil && (target.DeploymentName == "" || target.BuildID == "") {
+		return errors.New("root execution target requires deployment name and build id")
 	}
 	return ValidateWorkflowLaunchSettings(req.RunTimeout, req.RetryPolicy)
 }

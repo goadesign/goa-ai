@@ -129,7 +129,7 @@ func TestTemporalServerCancellationKeepsRequestAfterHistoryRollover(t *testing.T
 	request := engine.CancellationRequest{RunID: queue + "-source", Reason: run.CancellationReasonUserRequested}
 	jobID, _, err := startrecipe.CancellationRecipe(name, queue, request)
 	require.NoError(t, err)
-	backend.workerForQueue(queue).registerWorkflow(name, func(ctx workflow.Context, got engine.CancellationRequest) error {
+	backend.workerForQueue(queue).worker.RegisterWorkflowWithOptions(func(ctx workflow.Context, got engine.CancellationRequest) error {
 		if got != request {
 			return errors.New("rollover changed the accepted cancellation request")
 		}
@@ -137,7 +137,7 @@ func TestTemporalServerCancellationKeepsRequestAfterHistoryRollover(t *testing.T
 			return workflow.NewContinueAsNewErrorWithOptions(ctx, workflow.ContinueAsNewErrorOptions{BackoffStartInterval: time.Millisecond}, name, got)
 		}
 		return nil
-	})
+	}, workflow.RegisterOptions{Name: name})
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
 	require.NoError(t, backend.SealRegistration(ctx))
