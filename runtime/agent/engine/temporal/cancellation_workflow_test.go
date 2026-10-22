@@ -59,7 +59,7 @@ func TestStartCancellationWorkflowRetainsAcceptedRequest(t *testing.T) {
 	implementation.client = newWorkflowServiceClient(t, service)
 	t.Cleanup(func() { require.NoError(t, implementation.Close()) })
 	request := engine.CancellationRequest{RunID: "saved-run", Reason: "user_requested"}
-	require.NoError(t, implementation.StartCancellationWorkflow(t.Context(), "cleanup.workflow", "owner.queue", request))
+	require.NoError(t, implementation.StartCancellationWorkflow(t.Context(), "cleanup.workflow", "owner.queue", request, nil))
 	accepted := service.startRequest()
 	assert.Equal(t, "owner.queue", accepted.TaskQueue.Name)
 	assert.Equal(t, "cleanup.workflow", accepted.WorkflowType.Name)
@@ -68,13 +68,13 @@ func TestStartCancellationWorkflowRetainsAcceptedRequest(t *testing.T) {
 	assert.Equal(t, request, decodePayload[engine.CancellationRequest](t, accepted.Input.Payloads[0]))
 	assert.Equal(t, request.Reason, decodePayload[string](t, accepted.Memo.Fields[cancellationReasonMemoKey]))
 	assert.Len(t, decodePayload[[]byte](t, accepted.Memo.Fields[workflowStartRecipeMemoKey]), 32)
-	require.NoError(t, implementation.StartCancellationWorkflow(t.Context(), "cleanup.workflow", "owner.queue", request))
+	require.NoError(t, implementation.StartCancellationWorkflow(t.Context(), "cleanup.workflow", "owner.queue", request, nil))
 	changed := request
 	changed.Reason = "session_ended"
-	err = implementation.StartCancellationWorkflow(t.Context(), "cleanup.workflow", "owner.queue", changed)
+	err = implementation.StartCancellationWorkflow(t.Context(), "cleanup.workflow", "owner.queue", changed, nil)
 	var conflict *engine.CancellationConflictError
 	require.ErrorAs(t, err, &conflict)
-	err = implementation.StartCancellationWorkflow(t.Context(), "cleanup.workflow", "different.queue", request)
+	err = implementation.StartCancellationWorkflow(t.Context(), "cleanup.workflow", "different.queue", request, nil)
 	assert.ErrorIs(t, err, engine.ErrWorkflowStartConflict)
 }
 

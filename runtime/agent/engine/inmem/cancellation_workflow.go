@@ -48,7 +48,7 @@ func (e *eng) RegisterCancellationWorkflow(_ context.Context, name string, opts 
 
 // StartActiveCancellationWorkflow reads an active owner's accepted route while
 // holding the admission lock, then accepts cleanup on that worker's queue.
-func (e *eng) StartActiveCancellationWorkflow(ctx context.Context, ownerRunID string, request engine.CancellationRequest) error {
+func (e *eng) StartActiveCancellationWorkflow(ctx context.Context, ownerRunID string, request engine.CancellationRequest, target *engine.WorkerDeploymentVersion) error {
 	e.mu.RLock()
 	recipe, found := e.recipes[ownerRunID]
 	status := e.statuses[ownerRunID]
@@ -59,13 +59,13 @@ func (e *eng) StartActiveCancellationWorkflow(ctx context.Context, ownerRunID st
 	if status != engine.RunStatusRunning && status != engine.RunStatusPending && status != engine.RunStatusPaused {
 		return engine.ErrWorkflowCompleted
 	}
-	return e.StartCancellationWorkflow(ctx, recipe.workflow+".cancel", recipe.queue, request)
+	return e.StartCancellationWorkflow(ctx, recipe.workflow+".cancel", recipe.queue, request, target)
 }
 
 // StartCancellationWorkflow retains the first exact request before starting an
 // independent job. The caller receives acceptance while cleanup continues.
-func (e *eng) StartCancellationWorkflow(ctx context.Context, name, queue string, request engine.CancellationRequest) error {
-	id, digest, err := startrecipe.CancellationRecipe(name, queue, request)
+func (e *eng) StartCancellationWorkflow(ctx context.Context, name, queue string, request engine.CancellationRequest, target *engine.WorkerDeploymentVersion) error {
+	id, digest, err := startrecipe.CancellationRecipe(name, queue, request, target)
 	if err != nil {
 		return err
 	}

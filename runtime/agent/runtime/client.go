@@ -484,6 +484,9 @@ func (c *agentClient) prepareStoredContinuation(
 		preparation.apply(&start)
 	}
 	commandID, attemptID := start.preparationIdentity()
+	if prepared, found, err := c.recoverPreparedContinuation(ctx, sessionID, predecessorRunID, runID, turnID, commandID, response, workflowOptions); err != nil || found {
+		return prepared, err
+	}
 	input, writer, err := c.r.buildStoredContinuationRunInput(ctx, c.definition, sessionID, predecessorRunID, runID, turnID, &api.RunContinuationInput{Response: response}, commandID, attemptID)
 	if err != nil {
 		return nil, err
@@ -491,6 +494,14 @@ func (c *agentClient) prepareStoredContinuation(
 	launch, err := encodeWorkflowLaunch(workflowOptions)
 	if err != nil {
 		return nil, continuationContractError(err)
+	}
+	owner, err := c.r.Store.LoadRun(ctx, predecessorRunID)
+	if err != nil {
+		return nil, err
+	}
+	launch.rootExecutionTarget, err = c.r.acceptedWorkflowTarget(ctx, owner)
+	if err != nil {
+		return nil, err
 	}
 	request, err := prepareRunWithDefinition(input, launch, c.definition, sessionID != "")
 	if err != nil {

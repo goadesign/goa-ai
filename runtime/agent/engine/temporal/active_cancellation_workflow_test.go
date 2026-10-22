@@ -51,7 +51,7 @@ func TestStartActiveCancellationWorkflowObservesAcceptedTemporalRoute(t *testing
 			implementation := &Engine{client: newWorkflowServiceClient(t, service)}
 			t.Cleanup(implementation.client.Close)
 			request := engine.CancellationRequest{RunID: "selected-child", Reason: "user_requested"}
-			err := implementation.StartActiveCancellationWorkflow(t.Context(), "owner", request)
+			err := implementation.StartActiveCancellationWorkflow(t.Context(), "owner", request, nil)
 			switch state {
 			case enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING, enumspb.WORKFLOW_EXECUTION_STATUS_PAUSED:
 				require.NoError(t, err)
@@ -59,7 +59,7 @@ func TestStartActiveCancellationWorkflowObservesAcceptedTemporalRoute(t *testing
 				assert.Equal(t, "accepted.workflow.cancel", accepted.WorkflowType.Name)
 				assert.Equal(t, "accepted.queue", accepted.TaskQueue.Name)
 				assert.Equal(t, request, decodePayload[engine.CancellationRequest](t, accepted.Input.Payloads[0]))
-				require.NoError(t, implementation.StartActiveCancellationWorkflow(t.Context(), "owner", request))
+				require.NoError(t, implementation.StartActiveCancellationWorkflow(t.Context(), "owner", request, nil))
 			case enumspb.WORKFLOW_EXECUTION_STATUS_COMPLETED, enumspb.WORKFLOW_EXECUTION_STATUS_FAILED,
 				enumspb.WORKFLOW_EXECUTION_STATUS_CANCELED, enumspb.WORKFLOW_EXECUTION_STATUS_TERMINATED,
 				enumspb.WORKFLOW_EXECUTION_STATUS_CONTINUED_AS_NEW, enumspb.WORKFLOW_EXECUTION_STATUS_TIMED_OUT:

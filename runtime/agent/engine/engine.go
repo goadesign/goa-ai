@@ -205,16 +205,17 @@ type (
 		RegisterCancellationWorkflow(ctx context.Context, name string, opts ActivityOptions, fn func(context.Context, CancellationRequest) (bool, error)) error
 
 		// StartCancellationWorkflow accepts one durable cancellation job. Exact
-		// retries succeed; a changed reason returns CancellationConflictError.
+		// retries compare the same worker target; a changed reason returns CancellationConflictError.
 		// Successful acceptance does not claim that cleanup has completed.
-		StartCancellationWorkflow(ctx context.Context, name, queue string, request CancellationRequest) error
+		StartCancellationWorkflow(ctx context.Context, name, queue string, request CancellationRequest, target *WorkerDeploymentVersion) error
 
 		// StartActiveCancellationWorkflow accepts a durable cancellation job on
 		// the route already accepted for ownerRunID: the accepted workflow name
 		// plus ".cancel", on its accepted task queue. The adapter observes an
-		// active owner and its route together. A closed or missing owner returns
+		// active owner and its route together; target selects the accepted root build.
+		// A closed or missing owner returns
 		// ErrWorkflowCompleted or ErrWorkflowNotFound without accepting a job.
-		StartActiveCancellationWorkflow(ctx context.Context, ownerRunID string, request CancellationRequest) error
+		StartActiveCancellationWorkflow(ctx context.Context, ownerRunID string, request CancellationRequest, target *WorkerDeploymentVersion) error
 
 		// RegisterStorageActivity registers the one typed activity that applies
 		// runtime storage commands outside the deterministic workflow thread.

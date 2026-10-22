@@ -103,7 +103,7 @@ func TestTemporalServerCancellationAfterWorkerReplacement(t *testing.T) {
 	t.Cleanup(func() { assert.NoError(t, replacement.Close()) })
 	resumed := install(replacement)
 	require.NoError(t, resumed.Seal(ctx))
-	jobID, _, err := startrecipe.CancellationRecipe("cancel.workflow.cancel", queue, request)
+	jobID, _, err := startrecipe.CancellationRecipe("cancel.workflow.cancel", queue, request, nil)
 	require.NoError(t, err)
 	require.NoError(t, replacement.client.GetWorkflow(ctx, jobID, "").Get(ctx, nil))
 	previous, err := store.LoadRun(ctx, runID)
@@ -127,7 +127,7 @@ func TestTemporalServerCancellationKeepsRequestAfterHistoryRollover(t *testing.T
 	backend, queue := localRequestEngine(t)
 	name := "cancellation-rollover"
 	request := engine.CancellationRequest{RunID: queue + "-source", Reason: run.CancellationReasonUserRequested}
-	jobID, _, err := startrecipe.CancellationRecipe(name, queue, request)
+	jobID, _, err := startrecipe.CancellationRecipe(name, queue, request, nil)
 	require.NoError(t, err)
 	backend.workerForQueue(queue).worker.RegisterWorkflowWithOptions(func(ctx workflow.Context, got engine.CancellationRequest) error {
 		if got != request {
@@ -141,12 +141,12 @@ func TestTemporalServerCancellationKeepsRequestAfterHistoryRollover(t *testing.T
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
 	require.NoError(t, backend.SealRegistration(ctx))
-	require.NoError(t, backend.StartCancellationWorkflow(ctx, name, queue, request))
+	require.NoError(t, backend.StartCancellationWorkflow(ctx, name, queue, request, nil))
 	require.NoError(t, backend.client.GetWorkflow(ctx, jobID, "").Get(ctx, nil))
-	require.NoError(t, backend.StartCancellationWorkflow(ctx, name, queue, request))
+	require.NoError(t, backend.StartCancellationWorkflow(ctx, name, queue, request, nil))
 	changed := request
 	changed.Reason = run.CancellationReasonSessionEnded
-	err = backend.StartCancellationWorkflow(ctx, name, queue, changed)
+	err = backend.StartCancellationWorkflow(ctx, name, queue, changed, nil)
 	var conflict *engine.CancellationConflictError
 	require.ErrorAs(t, err, &conflict)
 }
