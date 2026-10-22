@@ -2236,7 +2236,12 @@ for details and the SDK source-compatibility change.
   prose and exact history; this is not a guarantee of correct interpretation.
   With no total ceiling, the existing disjoint prefix and suffix are preserved.
   The runtime evaluates token budgets with the destination model client's
-  `model.TokenCounter`, not the separate summary model. A history policy receives
+  `model.TokenCounter`, not the separate summary model. Runtime response
+  recording and tracing preserve that counter, including when request
+  preparation is added. Explicit `CountTokens` calls validate the supplied
+  request without running inference preparation or observers; unsupported
+  providers and counting failures retain their original errors.
+  A history policy receives
   the actual request and its destination counter. Every candidate replaces only
   `Messages`; the selected model, tools, thinking, cache, output settings, and
   other request fields remain unchanged. Counts must be exact by default.
