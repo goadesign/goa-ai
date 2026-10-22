@@ -92,3 +92,62 @@ func TestBindInputRejectsProviderDeclaration(t *testing.T) {
 	})
 	require.ErrorContains(t, err, "must appear inside Use")
 }
+
+func TestBindFieldAndLookupBelongToConsumer(t *testing.T) {
+	runDSL(t, func() {
+		shared := Toolset("records", func() {
+			Tool("read", "Read a record.", func() {
+				Args(func() {
+					Attribute("scope", String)
+					Attribute("query", String)
+					Required("scope", "query")
+				})
+				Return(String)
+			})
+		})
+		Service("records", func() {
+			Agent("bound", "Read in a known or looked-up scope.", func() {
+				Use(shared, func() {
+					BindField("scope", func() {
+						Lookup(String, "Selected scope name.", func() {
+							MinLength(1)
+							Example("North")
+						})
+					})
+				})
+			})
+			Agent("direct", "Choose a scope.", func() { Use(shared) })
+		})
+	})
+	bound := agentsexpr.Root.Agents[0].Used.Toolsets[0]
+	require.Len(t, bound.FieldBindings, 1)
+	assert.Equal(t, "scope", bound.FieldBindings[0].Field)
+	require.NotNil(t, bound.FieldBindings[0].Lookup)
+	assert.Equal(t, "Selected scope name.", bound.FieldBindings[0].Lookup.Description)
+	assert.Empty(t, agentsexpr.Root.Agents[1].Used.Toolsets[0].FieldBindings)
+	assert.Empty(t, agentsexpr.Root.Toolsets[0].FieldBindings)
+}
+
+func TestBindFieldRejectsInvalidDeclarations(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		bind func()
+		want string
+	}{
+		{"empty field", func() { BindField("") }, "field name cannot be empty"},
+		{"duplicate field", func() { BindField("scope"); BindField("scope") }, "field \"scope\" is repeated"},
+		{"lookup outside BindField", func() { Lookup(String) }, "must appear inside BindField"},
+		{"duplicate lookup", func() { BindField("scope", func() { Lookup(String); Lookup(String) }) }, "can only be declared once per BindField"},
+		{"non-string lookup", func() { BindField("scope", func() { Lookup(Int) }) }, "Lookup key type must be String"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := runDSLWithError(t, func() {
+				shared := Toolset("records", func() { Tool("read", "Read a record.") })
+				Service("records", func() {
+					Agent("reader", "Read records.", func() { Use(shared, test.bind) })
+				})
+			})
+			require.ErrorContains(t, err, test.want)
+		})
+	}
+}

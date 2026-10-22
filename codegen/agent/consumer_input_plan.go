@@ -17,14 +17,29 @@ import (
 type (
 	// consumerInputPlan records the codecs owned by one consuming reference.
 	consumerInputPlan struct {
-		packages       *toolSpecsPackagePlan
-		provider       *toolSpecsPackagePlan
-		reference      *ir.ToolsetRef
-		dir            string
-		tools          []*consumerInputTool
-		specs          *toolSpecsData
-		validators     map[consumerValidatorKey]*consumerValidator
-		validatorOrder []*consumerValidator
+		packages              *toolSpecsPackagePlan
+		provider              *toolSpecsPackagePlan
+		reference             *ir.ToolsetRef
+		dir                   string
+		tools                 []*consumerInputTool
+		fieldBindings         []*consumerToolsetFieldBinding
+		unknownLookupKeyError *codegen.NameDeclaration
+		specs                 *toolSpecsData
+		validators            map[consumerValidatorKey]*consumerValidator
+		validatorOrder        []*consumerValidator
+	}
+
+	// consumerToolsetFieldBinding records a toolset-wide BindField declaration and
+	// the tools whose inputs include that field.
+	consumerToolsetFieldBinding struct {
+		field         string
+		goName        string
+		hasLookup     bool
+		tools         []*consumerInputTool
+		local         *codegen.NameDeclaration
+		published     *codegen.NameDeclaration
+		lookupLocal   *codegen.NameDeclaration
+		lookupPublish *codegen.NameDeclaration
 	}
 
 	// consumerInputTool retains the provider payload and fields supplied by the
@@ -35,10 +50,19 @@ type (
 		fields                                []string
 		model, textOnly                       *typeData
 		contextOwner                          *contractTypeOwner
+		contextArgs                           *goaexpr.AttributeExpr
 		context                               *typeData
 		local, published, prepare, modelCodec *codegen.NameDeclaration
 		fieldLayouts                          []*codegen.GoTypePlan
+		fieldPointers                         []bool
 		fieldValidators                       []*consumerValidator
+		lookupField                           string
+		lookupAttr                            *goaexpr.AttributeExpr
+		lookupOwner                           *contractTypeOwner
+		lookupModel, lookupTextOnly           *typeData
+		lookupModelCodec                      *codegen.NameDeclaration
+		lookupLocal, lookupPublished          *codegen.NameDeclaration
+		lookupPrepare                         *codegen.NameDeclaration
 	}
 )
 
@@ -47,7 +71,7 @@ type (
 func (p *toolSpecsPlan) planConsumerInputs(generation *codegen.Generation, design *ir.Design) error {
 	for _, consumer := range design.Agents {
 		for _, reference := range consumer.UsedToolsets {
-			if len(reference.Expr.InputBindings) == 0 {
+			if len(reference.Expr.InputBindings) == 0 && len(reference.Expr.FieldBindings) == 0 {
 				continue
 			}
 			provider := p.byDir[reference.SpecsDir]
@@ -66,6 +90,9 @@ func (p *toolSpecsPlan) planConsumerInputs(generation *codegen.Generation, desig
 				}
 				binding.tools = append(binding.tools, tool)
 			}
+			if err := resolveConsumerFieldBindings(binding, expressions, reference.Expr.FieldBindings); err != nil {
+				return fmt.Errorf("consumer %q toolset %q: %w", consumer.ID, reference.Name, err)
+			}
 			public, err := generation.ClaimPackage(path.Join(reference.PackageImportPath, "inputbinding"))
 			if err != nil {
 				return err
@@ -80,6 +107,62 @@ func (p *toolSpecsPlan) planConsumerInputs(generation *codegen.Generation, desig
 			}
 			p.consumerInputs = append(p.consumerInputs, binding)
 		}
+	}
+	return nil
+}
+
+// resolveConsumerFieldBindings expands toolset-level field bindings across every
+// public tool in the toolset whose input object declares the named field.
+func resolveConsumerFieldBindings(plan *consumerInputPlan, tools []*agentexpr.ToolExpr, bindings []*agentexpr.FieldBindingExpr) error {
+	seenFields := make(map[string]struct{}, len(bindings))
+	byTool := make(map[string]*consumerInputTool, len(plan.tools))
+	for _, existing := range plan.tools {
+		byTool[existing.expression.Name] = existing
+	}
+	for _, declaration := range bindings {
+		if _, ok := seenFields[declaration.Field]; ok {
+			return fmt.Errorf("BindField field %q is repeated", declaration.Field)
+		}
+		seenFields[declaration.Field] = struct{}{}
+		group := &consumerToolsetFieldBinding{
+			field:     declaration.Field,
+			goName:    codegen.Goify(declaration.Field, true),
+			hasLookup: declaration.Lookup != nil,
+		}
+		for _, selected := range tools {
+			if isDedicatedContinuation(selected) {
+				continue
+			}
+			object := effectiveObject(selected.Args)
+			if object == nil || object.Attribute(declaration.Field) == nil {
+				continue
+			}
+			hidden := modelHiddenPayloadFields(selected)
+			if slices.Contains(hidden, declaration.Field) {
+				return fmt.Errorf("BindField tool %q field %q is already supplied by execution", selected.Name, declaration.Field)
+			}
+			if slices.Contains(selected.UIOnlyFields, declaration.Field) {
+				return fmt.Errorf("BindField tool %q field %q is owned by the text-only policy", selected.Name, declaration.Field)
+			}
+			if existing := byTool[selected.Name]; existing != nil {
+				return fmt.Errorf("BindField %q conflicts with existing binding on tool %q", declaration.Field, selected.Name)
+			}
+			tool := &consumerInputTool{
+				expression: selected,
+				fields:     []string{declaration.Field},
+			}
+			if declaration.Lookup != nil {
+				tool.lookupField = declaration.Field
+				tool.lookupAttr = declaration.Lookup
+			}
+			plan.tools = append(plan.tools, tool)
+			byTool[selected.Name] = tool
+			group.tools = append(group.tools, tool)
+		}
+		if len(group.tools) == 0 {
+			return fmt.Errorf("BindField %q matches no tools in toolset", declaration.Field)
+		}
+		plan.fieldBindings = append(plan.fieldBindings, group)
 	}
 	return nil
 }
@@ -130,6 +213,7 @@ func (p *consumerInputPlan) plan() error {
 	if err := pkg.declareCompletionPackageNames(); err != nil {
 		return err
 	}
+	hasLookup := false
 	for _, tool := range p.tools {
 		expression := tool.expression
 		tool.owner = &contractTypeOwner{
@@ -163,8 +247,37 @@ func (p *consumerInputPlan) plan() error {
 			if len(layouts) != 1 {
 				return fmt.Errorf("bound field %q has %d Go layouts", name, len(layouts))
 			}
-			tool.fieldLayouts = append(tool.fieldLayouts, layouts[0])
-			validation, err := p.validator(field, layouts[0])
+			fieldLayout := layouts[0]
+			fieldPointer := false
+			if fieldLayout.IsPointer() && !goaexpr.IsObject(field.Type) {
+				savedValidation := original.publicShape.Validation
+				var savedRequired []string
+				if savedValidation != nil {
+					savedRequired = slices.Clone(savedValidation.Required)
+				} else {
+					original.publicShape.Validation = &goaexpr.ValidationExpr{}
+				}
+				if !original.publicShape.IsRequired(name) {
+					original.publicShape.Validation.Required = append(original.publicShape.Validation.Required, name)
+				}
+				requiredPlan, err := p.provider.planDeclaredTypeLayout(original.public, p.provider.public, codegen.GoLayoutPolicy{UseDefault: true, SumType: true})
+				original.publicShape.Validation = savedValidation
+				if savedValidation != nil {
+					savedValidation.Required = savedRequired
+				}
+				if err != nil {
+					return err
+				}
+				requiredLayouts := requiredPlan.PlansForOccurrence(field)
+				if len(requiredLayouts) != 1 {
+					return fmt.Errorf("required bound field %q has %d Go layouts", name, len(requiredLayouts))
+				}
+				fieldLayout = requiredLayouts[0]
+				fieldPointer = true
+			}
+			tool.fieldLayouts = append(tool.fieldLayouts, fieldLayout)
+			tool.fieldPointers = append(tool.fieldPointers, fieldPointer)
+			validation, err := p.validator(field, fieldLayout)
 			if err != nil {
 				return err
 			}
@@ -192,6 +305,62 @@ func (p *consumerInputPlan) plan() error {
 			typ := pkg.types[stableTypeKey(&owner, usage, "")]
 			typ.jsonValidator.render = true
 		}
+		if tool.lookupAttr != nil {
+			hasLookup = true
+			for _, entry := range []struct {
+				prefix, suffix string
+				target         **codegen.NameDeclaration
+			}{
+				{"", "LookupModelInputCodec", &tool.lookupModelCodec},
+				{"Bind", "Lookup", &tool.lookupLocal},
+				{"Bind", "SourceLookup", &tool.lookupPublished},
+				{"prepare", "Lookup", &tool.lookupPrepare},
+			} {
+				visibility := codegen.ExportedName
+				if entry.target == &tool.lookupPrepare {
+					visibility = codegen.UnexportedName
+				}
+				*entry.target = codegen.NewPreferredName(
+					codegen.NameFunction,
+					entry.prefix+codegen.Goify(expression.Name, true)+entry.suffix,
+					visibility,
+					specNameOrder{packagePath: pkg.public.ImportPath(), key: expression.Name + entry.suffix + entry.prefix},
+				)
+				if err := pkg.public.DeclareName(*entry.target); err != nil {
+					return err
+				}
+			}
+			lookupOwner := &contractTypeOwner{
+				Kind:                     contractTypeOwnerConsumerInput,
+				Name:                     expression.Name + "_lookup",
+				QualifiedName:            p.reference.Name + "." + expression.Name + ".lookup",
+				ScopeName:                p.reference.Name,
+				ModelHiddenPayloadFields: modelHiddenPayloadFields(expression),
+				LookupPayloadFields: map[string]*goaexpr.AttributeExpr{
+					tool.lookupField: tool.lookupAttr,
+				},
+				UIOnlyFields: slices.Clone(expression.UIOnlyFields),
+			}
+			tool.lookupOwner = lookupOwner
+			pkg.types[stableTypeKey(lookupOwner, usagePayload, "")] = original
+			for _, usage := range []typeUsage{usageModelPayload, usageTextOnlyPayload} {
+				if usage == usageTextOnlyPayload && (expression.RequiresUI || expression.Confirmation != nil || len(expression.UIOnlyFields) == 0) {
+					continue
+				}
+				owner := *lookupOwner
+				if usage == usageTextOnlyPayload {
+					owner.ModelHiddenPayloadFields = append(slices.Clone(owner.ModelHiddenPayloadFields), owner.UIOnlyFields...)
+				}
+				if err := pkg.declareTypeImports(&owner, expression.Args, usage, specJSONModel); err != nil {
+					return err
+				}
+				if err := pkg.declareType(&owner, expression.Args, usage, "", specJSONModel); err != nil {
+					return err
+				}
+				typ := pkg.types[stableTypeKey(&owner, usage, "")]
+				typ.jsonValidator.render = true
+			}
+		}
 		contextOwner := *tool.owner
 		contextOwner.Name += "_bound_values"
 		contextOwner.QualifiedName += ".bound_values"
@@ -201,16 +370,76 @@ func (p *consumerInputPlan) plan() error {
 				contextOwner.ModelHiddenPayloadFields = append(contextOwner.ModelHiddenPayloadFields, field.Name)
 			}
 		}
+		contextArgs := requiredFieldsShape(expression.Args, tool.fields)
 		tool.contextOwner = &contextOwner
+		tool.contextArgs = contextArgs
 		pkg.types[stableTypeKey(&contextOwner, usagePayload, "")] = original
-		if err := pkg.declareTypeImports(&contextOwner, expression.Args, usageModelPayload, specJSONModel); err != nil {
+		if err := pkg.declareTypeImports(&contextOwner, contextArgs, usageModelPayload, specJSONModel); err != nil {
 			return err
 		}
-		if err := pkg.declareType(&contextOwner, expression.Args, usageModelPayload, "", specJSONModel); err != nil {
+		if err := pkg.declareType(&contextOwner, contextArgs, usageModelPayload, "", specJSONModel); err != nil {
 			return err
 		}
 		contextType := pkg.types[stableTypeKey(&contextOwner, usageModelPayload, "")]
 		contextType.jsonValidator.render = true
+	}
+	for _, group := range p.fieldBindings {
+		for _, entry := range []struct {
+			suffix string
+			target **codegen.NameDeclaration
+		}{
+			{"Input", &group.local},
+			{"SourceInput", &group.published},
+		} {
+			*entry.target = codegen.NewPreferredName(
+				codegen.NameFunction,
+				"Bind"+group.goName+entry.suffix,
+				codegen.ExportedName,
+				specNameOrder{packagePath: pkg.public.ImportPath(), key: "field:" + group.field + ":" + entry.suffix},
+			)
+			if err := pkg.public.DeclareName(*entry.target); err != nil {
+				return err
+			}
+		}
+		if group.hasLookup {
+			for _, entry := range []struct {
+				suffix string
+				target **codegen.NameDeclaration
+			}{
+				{"Lookup", &group.lookupLocal},
+				{"SourceLookup", &group.lookupPublish},
+			} {
+				*entry.target = codegen.NewPreferredName(
+					codegen.NameFunction,
+					"Bind"+group.goName+entry.suffix,
+					codegen.ExportedName,
+					specNameOrder{packagePath: pkg.public.ImportPath(), key: "field:" + group.field + ":" + entry.suffix},
+				)
+				if err := pkg.public.DeclareName(*entry.target); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	if hasLookup {
+		p.unknownLookupKeyError = codegen.NewPreferredName(
+			codegen.NameFunction,
+			"unknownLookupKeyError",
+			codegen.UnexportedName,
+			specNameOrder{packagePath: pkg.public.ImportPath(), key: "helper:unknown-lookup-key-error"},
+		)
+		if err := pkg.public.DeclareName(p.unknownLookupKeyError); err != nil {
+			return err
+		}
+		for _, imp := range []*codegen.ImportSpec{
+			codegen.SimpleImport("encoding/json"),
+			codegen.SimpleImport("slices"),
+			codegen.SimpleImport("strings"),
+		} {
+			if err := pkg.fileImports.publicSpecs.Require(imp); err != nil {
+				return err
+			}
+		}
 	}
 	for _, imp := range []*codegen.ImportSpec{
 		codegen.SimpleImport("fmt"), codegen.NewImport("genregistry", "goa.design/goa-ai/registry/gen/registry"),
@@ -237,6 +466,41 @@ func (p *consumerInputPlan) plan() error {
 	return pkg.finalizeTransformHelpers()
 }
 
+// requiredFieldsShape returns a copy of att where all named fields are marked
+// required when any of them was optional on att.
+func requiredFieldsShape(att *goaexpr.AttributeExpr, fields []string) *goaexpr.AttributeExpr {
+	allRequired := true
+	for _, name := range fields {
+		if !att.IsRequired(name) {
+			allRequired = false
+			break
+		}
+	}
+	if allRequired {
+		return att
+	}
+	dup := goaexpr.DupAtt(att)
+	if ut, ok := dup.Type.(goaexpr.UserType); ok {
+		inner := goaexpr.DupAtt(ut.Attribute())
+		if len(dup.UserExamples) == 0 {
+			dup.UserExamples = inner.ExtractUserExamples()
+		}
+		dup.Type = inner.Type
+		if dup.Validation == nil {
+			dup.Validation = inner.Validation
+		}
+	}
+	if dup.Validation == nil {
+		dup.Validation = &goaexpr.ValidationExpr{}
+	}
+	for _, name := range fields {
+		if !dup.IsRequired(name) {
+			dup.Validation.Required = append(dup.Validation.Required, name)
+		}
+	}
+	return dup
+}
+
 // link builds reduced schema and codec data after Goa has chosen all package
 // names. It never adds the provider payload to the consumer's emitted types.
 func (p *consumerInputPlan) link(api *goaexpr.APIExpr) error {
@@ -252,7 +516,7 @@ func (p *consumerInputPlan) link(api *goaexpr.APIExpr) error {
 			return err
 		}
 		p.specs.addType(tool.model)
-		tool.context, err = builder.typeFor(tool.contextOwner, tool.expression.Args, usageModelPayload)
+		tool.context, err = builder.typeFor(tool.contextOwner, tool.contextArgs, usageModelPayload)
 		if err != nil {
 			return err
 		}
@@ -266,6 +530,23 @@ func (p *consumerInputPlan) link(api *goaexpr.APIExpr) error {
 				return err
 			}
 			p.specs.addType(tool.textOnly)
+		}
+		if tool.lookupOwner != nil {
+			tool.lookupModel, err = builder.typeFor(tool.lookupOwner, tool.expression.Args, usageModelPayload)
+			if err != nil {
+				return err
+			}
+			p.specs.addType(tool.lookupModel)
+			tool.lookupTextOnly = tool.lookupModel
+			if p.packages.types[stableTypeKey(tool.lookupOwner, usageTextOnlyPayload, "")] != nil {
+				owner := *tool.lookupOwner
+				owner.ModelHiddenPayloadFields = append(slices.Clone(owner.ModelHiddenPayloadFields), owner.UIOnlyFields...)
+				tool.lookupTextOnly, err = builder.typeFor(&owner, tool.expression.Args, usageTextOnlyPayload)
+				if err != nil {
+					return err
+				}
+				p.specs.addType(tool.lookupTextOnly)
+			}
 		}
 	}
 	keys := make([]string, 0, len(builder.types))

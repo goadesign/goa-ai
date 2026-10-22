@@ -246,6 +246,10 @@ type (
 		MethodResultAttr         *goaexpr.AttributeExpr
 		Bounds                   *ToolBoundsData
 		ModelHiddenPayloadFields []string
+		// LookupPayloadFields replaces top-level model payload fields with a string
+		// lookup key in the model schema and transport validator while keeping those
+		// fields out of the transport-to-public GoTransform.
+		LookupPayloadFields map[string]*goaexpr.AttributeExpr
 		// UIOnlyFields names optional Boolean inputs initialized false in text-only decoders.
 		UIOnlyFields []string
 	}

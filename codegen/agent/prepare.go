@@ -153,6 +153,43 @@ func modelTransportShape(att *goaexpr.AttributeExpr, hidden []string) *goaexpr.A
 	return newAtt
 }
 
+// modelLookupTransportShape copies a tool input and replaces each lookup field
+// with its string lookup attribute while preserving whether the field is required.
+func modelLookupTransportShape(att *goaexpr.AttributeExpr, lookups map[string]*goaexpr.AttributeExpr) *goaexpr.AttributeExpr {
+	if att == nil || len(lookups) == 0 {
+		return att
+	}
+	newAtt := goaexpr.DupAtt(att)
+
+	if ut, ok := newAtt.Type.(goaexpr.UserType); ok {
+		inner := goaexpr.DupAtt(ut.Attribute())
+		if len(newAtt.UserExamples) == 0 {
+			newAtt.UserExamples = inner.ExtractUserExamples()
+		}
+		newAtt.Type = inner.Type
+		if newAtt.Validation == nil {
+			newAtt.Validation = inner.Validation
+		}
+	}
+
+	obj := goaexpr.AsObject(newAtt.Type)
+	for fieldName, lookup := range lookups {
+		replaced := false
+		for _, named := range *obj {
+			if named.Name == fieldName {
+				named.Attribute = goaexpr.DupAtt(lookup)
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			panic(fmt.Sprintf("model-lookup field %q is missing from the tool input", fieldName))
+		}
+	}
+
+	return newAtt
+}
+
 // collectAndForceTypes marks design types reachable from one agent contract.
 // locatedOnly keeps completion-owned types in the completion package while
 // still finding explicitly located types nested inside them.

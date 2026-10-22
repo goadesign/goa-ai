@@ -189,7 +189,11 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		encTgtCtx := modelJSONTransportContext(transportScope, true, "toolhttp")
 		outputPath := b.publicPackage.ImportPath()
 		importName := b.publicPackage.ImportName
-		srcCtx, err = srcCtx.WithGoTypeLayout(planned.transportLayout.Link(outputPath, importName))
+		xformTransportLayout := planned.transportLayout
+		if planned.transformTransportLayout != nil {
+			xformTransportLayout = planned.transformTransportLayout
+		}
+		srcCtx, err = srcCtx.WithGoTypeLayout(xformTransportLayout.Link(outputPath, importName))
 		if err != nil {
 			return nil, err
 		}
@@ -201,7 +205,7 @@ func (b *toolSpecBuilder) buildTypeInfo(owner *contractTypeOwner, att *goaexpr.A
 		if err != nil {
 			return nil, err
 		}
-		encTgtCtx, err = encTgtCtx.WithGoTypeLayout(planned.transportLayout.Link(outputPath, importName))
+		encTgtCtx, err = encTgtCtx.WithGoTypeLayout(xformTransportLayout.Link(outputPath, importName))
 		if err != nil {
 			return nil, err
 		}

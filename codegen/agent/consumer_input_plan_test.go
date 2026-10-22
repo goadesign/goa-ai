@@ -74,3 +74,71 @@ func TestRequiredStaticInputBindingsUsesCompiledIdentities(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveConsumerFieldBindings(t *testing.T) {
+	scopeAttr := &expr.AttributeExpr{Type: expr.String}
+	readInput := &expr.AttributeExpr{Type: &expr.UserTypeExpr{TypeName: "ReadInput", AttributeExpr: &expr.AttributeExpr{
+		Type:       &expr.Object{{Name: "scope", Attribute: scopeAttr}, {Name: "query", Attribute: &expr.AttributeExpr{Type: expr.String}}},
+		Validation: &expr.ValidationExpr{Required: []string{"scope", "query"}},
+	}}}
+	optionalInput := &expr.AttributeExpr{Type: &expr.UserTypeExpr{TypeName: "OptionalInput", AttributeExpr: &expr.AttributeExpr{
+		Type: &expr.Object{{Name: "scope", Attribute: scopeAttr}, {Name: "cursor", Attribute: &expr.AttributeExpr{Type: expr.String}}},
+	}}}
+	otherInput := &expr.AttributeExpr{Type: &expr.UserTypeExpr{TypeName: "OtherInput", AttributeExpr: &expr.AttributeExpr{
+		Type: &expr.Object{{Name: "query", Attribute: &expr.AttributeExpr{Type: expr.String}}},
+	}}}
+
+	ts := &agentexpr.ToolsetExpr{Name: "records"}
+	readTool := &agentexpr.ToolExpr{
+		Name:    "read",
+		Toolset: ts,
+		Args:    readInput,
+		Bounds: &agentexpr.ToolBoundsExpr{
+			Paging: &agentexpr.ToolPagingExpr{
+				CursorField:  "cursor",
+				NextCursorField: "next_cursor",
+				ContinueTool: "continue_read",
+			},
+		},
+	}
+	continueReadTool := &agentexpr.ToolExpr{
+		Name:    "continue_read",
+		Toolset: ts,
+		Args:    optionalInput,
+		Bounds: &agentexpr.ToolBoundsExpr{
+			Paging: &agentexpr.ToolPagingExpr{
+				CursorField:     "cursor",
+				NextCursorField: "next_cursor",
+			},
+		},
+	}
+	optionalTool := &agentexpr.ToolExpr{
+		Name:    "search_optional",
+		Toolset: ts,
+		Args:    optionalInput,
+	}
+	otherTool := &agentexpr.ToolExpr{
+		Name:    "list_all",
+		Toolset: ts,
+		Args:    otherInput,
+	}
+	ts.Tools = []*agentexpr.ToolExpr{readTool, continueReadTool, optionalTool, otherTool}
+
+	plan := &consumerInputPlan{}
+	lookupAttr := &expr.AttributeExpr{Type: expr.String, Description: "Scope name."}
+	err := resolveConsumerFieldBindings(plan, ts.Tools, []*agentexpr.FieldBindingExpr{{
+		Field:  "scope",
+		Lookup: lookupAttr,
+	}})
+	require.NoError(t, err)
+	require.Len(t, plan.tools, 2)
+	assert.Equal(t, "read", plan.tools[0].expression.Name)
+	assert.Equal(t, "search_optional", plan.tools[1].expression.Name)
+	assert.Equal(t, lookupAttr, plan.tools[0].lookupAttr)
+	assert.Equal(t, lookupAttr, plan.tools[1].lookupAttr)
+
+	err = resolveConsumerFieldBindings(&consumerInputPlan{}, ts.Tools, []*agentexpr.FieldBindingExpr{{
+		Field: "missing",
+	}})
+	require.ErrorContains(t, err, "matches no tools")
+}

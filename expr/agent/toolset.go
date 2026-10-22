@@ -41,6 +41,10 @@ type (
 		// Generation resolves them without changing the provider's declaration.
 		InputBindings []*InputBindingExpr
 
+		// FieldBindings lists top-level provider fields supplied or resolved via a
+		// lookup table across every matching tool in this consumed toolset.
+		FieldBindings []*FieldBindingExpr
+
 		// Meta carries arbitrary design-time metadata attached to the toolset via DSL.
 		// Keys map to one or more values, matching Goa's Meta conventions.
 		Meta goaexpr.MetaExpr
@@ -72,7 +76,18 @@ type (
 		Tool   string
 		Fields []string
 	}
+	// FieldBindingExpr identifies a top-level field supplied or resolved by one
+	// consumer across every tool in a used toolset that declares the field.
+	FieldBindingExpr struct {
+		Field  string
+		Lookup *goaexpr.AttributeExpr
+	}
 )
+
+// EvalName describes a toolset-wide field binding in DSL error messages.
+func (b *FieldBindingExpr) EvalName() string {
+	return fmt.Sprintf("field binding %q", b.Field)
+}
 
 // AddMeta adds metadata to the toolset expression.
 //
