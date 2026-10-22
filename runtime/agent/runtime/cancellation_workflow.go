@@ -396,7 +396,7 @@ func (r *Runtime) startCancellationContinuation(ctx context.Context, owner sessi
 		identity = appendLengthDelimited(identity, request.RunID)
 		digest := sha256.Sum256(identity)
 		runID := hex.EncodeToString(digest[:])
-		prepared, err := r.prepareOperationContinuationRequest(ctx, owner.RunID, runID, &api.RunContinuationInput{Cancellation: &request})
+		prepared, err := r.prepareOperationContinuationRequest(ctx, owner.RunID, runID, &api.RunContinuationInput{Cancellation: &request}, nil)
 		if err != nil {
 			return err
 		}

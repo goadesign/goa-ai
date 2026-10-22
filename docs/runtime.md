@@ -3842,9 +3842,33 @@ A service accepting an input answer must first save the predecessor, new run ID,
 and typed answer as an immutable dispatch obligation. Its durable worker calls
 `StartToolContinuation` and `EnsureToolContinuationCompletion` for direct Agent
 operations as well as registered native and service operations, with or without
-a Session. Those methods recover the exact published successor request before
-reading saved suspension again, reject a changed answer, and derive authority
-and routing from saved data.
+a Session. Both methods require a final `memo map[string]any` argument for
+metadata attached to that successor workflow. The caller chooses it for each
+new workflow; predecessor Memo is not inherited. For example:
+
+```go
+memo := map[string]any{"operation": "record-selection", "step": "answer"}
+_, err := rt.StartToolContinuation(ctx, predecessorID, successorID, answer, memo)
+if err != nil {
+    return err
+}
+// The durable worker later uses the same answer and Memo for completion.
+return rt.EnsureToolContinuationCompletion(ctx, predecessorID, successorID, answer, memo)
+```
+
+Those methods encode Memo with the same encoder as initial workflow starts and
+publish it with the exact successor request before engine submission. Recovery
+reads that request before reading saved suspension again, rejects a changed
+answer or Memo with `storage.ErrSeedConflict`, and derives authority and routing
+from saved data. Passing `nil` means empty Memo. Published requests with empty
+Memo remain unchanged and must be retried with empty Memo; recovery never adds
+metadata or rewrites an accepted request.
+
+When upgrading source code, add this final argument to both Runtime methods.
+Use the same Memo for submission and completion; pass `nil` where workflow
+metadata is not needed. This Go API change does not alter stored recipe formats
+or require regeneration.
+
 Retry identity uses the same encoded request digest as engine submission, so
 equivalent empty content lists do not cause false conflicts.
 They are worker submission and completion methods, not a client retry protocol.
