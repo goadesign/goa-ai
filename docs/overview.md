@@ -179,7 +179,7 @@ Generated clients, servers, executors, runtime workers, and storage implementati
 must share the current contract. Older MCP revisions, registry wire versions,
 and executable suspension checkpoints are not interchangeable.
 
-Read the [v0.88.0 release and upgrade instructions](releases/v0.88.0.md) before
+Read the [v0.89.0 release and upgrade instructions](releases/v0.89.0.md) before
 replacing an existing deployment. The [architecture](../DESIGN.md) explains
 ownership for contributors, and the [runtime reference](runtime.md) describes
 storage, recovery, and provider-specific requirements.

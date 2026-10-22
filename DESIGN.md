@@ -98,7 +98,7 @@ existing response-decoder argument with the standard `encoding/json/v2` package.
 This preserves generated response validation while matching JSON names exactly
 and accepting metadata extensions. Closed tool codecs retain their stricter
 unknown-field rules. The [upgrade plan](docs/mcp_protocol_upgrade_plan.md#verified-metadata-decoding-and-toolchain-choice)
-records the compiled evidence; [the current release guide](docs/releases/v0.88.0.md)
+records the compiled evidence; [the current release guide](docs/releases/v0.89.0.md)
 describes the completed authorization paths and application upgrade requirements.
 
 ## Layout

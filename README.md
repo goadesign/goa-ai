@@ -33,7 +33,7 @@ For engineers, this means fewer contracts to maintain and compiler feedback when
 they change. For coding agents, it means explicit types, generated validation,
 and an application-specific guide to the code they need to implement.
 
-**[Run the quickstart](#quick-start)** · **[Explore the guides](https://goa.design/docs/2-goa-ai/)** · **[Upgrade to v0.88.0](docs/releases/v0.88.0.md#required-upgrade-actions)**
+**[Run the quickstart](#quick-start)** · **[Explore the guides](https://goa.design/docs/2-goa-ai/)** · **[Upgrade to v0.89.0](docs/releases/v0.89.0.md#required-upgrade-actions)**
 
 ## Choose what you want to build
 
@@ -347,10 +347,10 @@ idempotency, durable storage, and deployment. Configure the Temporal engine
 **and** a durable runtime store for restart-safe execution. A trusted host
 receives runtime events and decides what to expose to users.
 
-**v0.88.0 is a breaking upgrade.** Regenerate and coordinate servers, clients,
+**v0.89.0 is a breaking upgrade.** Regenerate and coordinate servers, clients,
 providers, runtime workers, and storage implementations. Older MCP revisions,
 registry wire versions, and suspension checkpoints are not interchangeable.
-Read the [release and upgrade instructions](docs/releases/v0.88.0.md) before
+Read the [release and upgrade instructions](docs/releases/v0.89.0.md) before
 replacing existing deployments; a source rollback alone cannot undo new stored
 work.
 
