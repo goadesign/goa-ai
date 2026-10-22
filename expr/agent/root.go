@@ -626,8 +626,28 @@ func (r *RootExpr) DefiningToolsets() []*ToolsetExpr {
 // provider-owned MCP toolsets first, then agent exports, then service exports,
 // then the first consumer service.
 func (r *RootExpr) toolsetOwnerNamespace(ts *ToolsetExpr, refs []toolsetOwnerRef) (string, bool) {
+	namespace, _, ok := r.selectToolsetOwner(ts, refs)
+	return namespace, ok
+}
+
+// ToolsetOwnerServices returns the selected owning Goa service name for each
+// defining toolset in the design.
+func (r *RootExpr) ToolsetOwnerServices() map[*ToolsetExpr]string {
+	refs := r.collectToolsetOwnerRefs()
+	owners := make(map[*ToolsetExpr]string)
+	for _, ts := range r.DefiningToolsets() {
+		if _, svc, ok := r.selectToolsetOwner(ts, refs[ts]); ok {
+			owners[ts] = svc
+		} else if ts.Agent != nil && ts.Agent.Service != nil {
+			owners[ts] = ts.Agent.Service.Name
+		}
+	}
+	return owners
+}
+
+func (r *RootExpr) selectToolsetOwner(ts *ToolsetExpr, refs []toolsetOwnerRef) (string, string, bool) {
 	if ts.Provider != nil && ts.Provider.Kind == ProviderMCP && ts.Provider.MCPService != "" {
-		return "service:" + ts.Provider.MCPService, true
+		return "service:" + ts.Provider.MCPService, ts.Provider.MCPService, true
 	}
 	exported := filterToolsetOwnerRefs(refs, toolsetOwnerRefExported)
 	if len(exported) > 0 {
@@ -638,22 +658,24 @@ func (r *RootExpr) toolsetOwnerNamespace(ts *ToolsetExpr, refs []toolsetOwnerRef
 			return exported[i].agentName < exported[j].agentName
 		})
 		ref := exported[0]
-		return "agent-export:" + ref.serviceName + ":" + ref.agentSlug, true
+		return "agent-export:" + ref.serviceName + ":" + ref.agentSlug, ref.serviceName, true
 	}
 	serviceExports := filterToolsetOwnerRefs(refs, toolsetOwnerRefServiceExport)
 	if len(serviceExports) > 0 {
 		sort.Slice(serviceExports, func(i, j int) bool {
 			return serviceExports[i].serviceName < serviceExports[j].serviceName
 		})
-		return "service:" + serviceExports[0].serviceName, true
+		svc := serviceExports[0].serviceName
+		return "service:" + svc, svc, true
 	}
 	if len(refs) == 0 {
-		return "", false
+		return "", "", false
 	}
 	sort.Slice(refs, func(i, j int) bool {
 		return refs[i].serviceName < refs[j].serviceName
 	})
-	return "service:" + refs[0].serviceName, true
+	svc := refs[0].serviceName
+	return "service:" + svc, svc, true
 }
 
 // filterToolsetOwnerRefs extracts one ref class while preserving the collected

@@ -1,11 +1,11 @@
 module example.com/quickstart
 
-go 1.27.0
+go 1.27.3
 
 require (
 	github.com/openai/openai-go/v3 v3.71.2
 	goa.design/goa-ai v0.42.0
-	goa.design/goa/v3 v3.34.1-0.20261016002247-a8d86e35aa23
+	goa.design/goa/v3 v3.34.1-0.20261022055955-1bb6a018011f
 )
 
 require (

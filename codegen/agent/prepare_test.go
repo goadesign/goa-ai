@@ -39,16 +39,14 @@ func TestPrepare_ForceGenerateToolTypesRecursively(t *testing.T) {
 	err := Prepare("example.com/mod", []eval.Root{goaexpr.Root, agentsExpr.Root})
 	require.NoError(t, err)
 
-	// Both types must be force-generated and present in Root.Types.
+	// Both types must be force-generated for the owning service and present in Root.Types.
 	gotA := goaexpr.Root.UserType("A")
 	gotB := goaexpr.Root.UserType("B")
 	require.NotNil(t, gotA)
 	require.NotNil(t, gotB)
-	_, ok := gotA.Attribute().Meta["type:generate:force"]
-	require.True(t, ok, "A must be marked type:generate:force")
+	require.Equal(t, []string{"svc"}, gotA.Attribute().Meta["type:generate:force"])
 	require.Equal(t, []string{"false"}, gotA.Attribute().Meta["openapi:generate"])
-	_, ok = gotB.Attribute().Meta["type:generate:force"]
-	require.True(t, ok, "B must be marked type:generate:force")
+	require.Equal(t, []string{"svc"}, gotB.Attribute().Meta["type:generate:force"])
 	require.Equal(t, []string{"false"}, gotB.Attribute().Meta["openapi:generate"])
 }
 

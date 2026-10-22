@@ -4,6 +4,7 @@ package codegen
 
 import (
 	"fmt"
+	"slices"
 
 	goacodegen "goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/eval"
@@ -19,6 +20,7 @@ type (
 	// types remain owned by the generated agent package.
 	contractTypeCollector struct {
 		root        *goaexpr.RootExpr
+		serviceName string
 		designTypes map[goaexpr.UserType]struct{}
 		rootTypes   map[goaexpr.UserType]struct{}
 		visited     map[goaexpr.UserType]struct{}
@@ -62,7 +64,9 @@ func Prepare(_ string, roots []eval.Root) error {
 		designTypes[rt.Origin()] = struct{}{}
 	}
 	designTypes[goaexpr.ErrorResult.Origin()] = struct{}{}
+	ownerServices := agentRoot.ToolsetOwnerServices()
 	for _, ts := range agentRoot.DefiningToolsets() {
+		serviceName := ownerServices[ts]
 		for _, t := range ts.Tools {
 			// Prepare the tool expression (inheritance from method)
 			if t.Method != nil {
@@ -84,12 +88,16 @@ func Prepare(_ string, roots []eval.Root) error {
 
 			// Walk Args and Return shapes only. Goa will generate method
 			// payloads and results as part of service generation.
-			collectAndForceTypes(goaRoot, t.Args, designTypes, rootTypes, false)
-			collectAndForceTypes(goaRoot, t.Return, designTypes, rootTypes, false)
+			collectAndForceTypes(goaRoot, serviceName, t.Args, designTypes, rootTypes, false)
+			collectAndForceTypes(goaRoot, serviceName, t.Return, designTypes, rootTypes, false)
 		}
 	}
 	for _, completion := range agentRoot.Completions {
-		collectAndForceTypes(goaRoot, completion.Return, designTypes, rootTypes, true)
+		var serviceName string
+		if completion != nil && completion.Service != nil {
+			serviceName = completion.Service.Name
+		}
+		collectAndForceTypes(goaRoot, serviceName, completion.Return, designTypes, rootTypes, true)
 	}
 	return nil
 }
@@ -150,6 +158,7 @@ func modelTransportShape(att *goaexpr.AttributeExpr, hidden []string) *goaexpr.A
 // still finding explicitly located types nested inside them.
 func collectAndForceTypes(
 	root *goaexpr.RootExpr,
+	serviceName string,
 	att *goaexpr.AttributeExpr,
 	designTypes, rootTypes map[goaexpr.UserType]struct{},
 	locatedOnly bool,
@@ -159,6 +168,7 @@ func collectAndForceTypes(
 	}
 	collector := &contractTypeCollector{
 		root:        root,
+		serviceName: serviceName,
 		designTypes: designTypes,
 		rootTypes:   rootTypes,
 		visited:     make(map[goaexpr.UserType]struct{}),
@@ -169,9 +179,15 @@ func collectAndForceTypes(
 
 // markTypeForGeneration asks Goa to emit a type without adding private agent
 // schemas to service OpenAPI documents. HTTP endpoints still include the type.
-func markTypeForGeneration(ut goaexpr.UserType) {
+// When serviceName is known, forcing is scoped to that service so unlocated
+// tool types are not duplicated into every service package in the design.
+func markTypeForGeneration(ut goaexpr.UserType, serviceName string) {
 	attr := ut.Attribute()
-	attr.AddMeta("type:generate:force")
+	if serviceName == "" {
+		attr.AddMeta("type:generate:force")
+	} else if !slices.Contains(attr.Meta["type:generate:force"], serviceName) {
+		attr.AddMeta("type:generate:force", serviceName)
+	}
 	if _, ok := attr.Meta["openapi:generate"]; !ok {
 		attr.AddMeta("openapi:generate", "false")
 	}
@@ -225,7 +241,7 @@ func (c *contractTypeCollector) walkUserType(userType goaexpr.UserType) {
 	}
 	c.visited[origin] = struct{}{}
 	if !c.locatedOnly || goacodegen.UserTypeLocation(userType) != nil {
-		markTypeForGeneration(userType)
+		markTypeForGeneration(userType, c.serviceName)
 		if _, exists := c.rootTypes[origin]; !exists {
 			c.root.Types = append(c.root.Types, userType)
 			c.rootTypes[origin] = struct{}{}

@@ -593,7 +593,7 @@ func validateIdentityCredentialStateOriginal(value *IdentityCredentialState) (er
 	case "ready":
 		actual, _ := value.State.AsReady()
 		if actual != nil {
-			if err2 := validateIdentityCredentialReadyOriginal2(actual); err2 != nil {
+			if err2 := validateIdentityCredentialReadyOriginal(actual); err2 != nil {
 				err = goa.MergeErrors(err, err2)
 			}
 		}
@@ -604,43 +604,6 @@ func validateIdentityCredentialStateOriginal(value *IdentityCredentialState) (er
 		}
 	}
 
-	return err
-}
-
-// validateIdentityCredentialReadyOriginal2 checks the original typed value before JSON conversion.
-func validateIdentityCredentialReadyOriginal2(value *IdentityCredentialReady) (err error) {
-	if value.Credential == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("credential", "value"))
-	}
-	if value.Credential != nil {
-		if err2 := validateIdentityRefreshOriginal2(value.Credential); err2 != nil {
-			err = goa.MergeErrors(err, err2)
-		}
-	}
-	err = goa.MergeErrors(err, goa.ValidateFormat("value.obtained", value.Obtained, goa.FormatDateTime))
-	return err
-}
-
-// validateIdentityRefreshOriginal2 checks the original typed value before JSON conversion.
-func validateIdentityRefreshOriginal2(value *IdentityRefresh) (err error) {
-	if !(value.IssuedTokenType == "urn:ietf:params:oauth:token-type:refresh_token") {
-		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.issued_token_type", value.IssuedTokenType, []any{"urn:ietf:params:oauth:token-type:refresh_token"}))
-	}
-	err = goa.MergeErrors(err, goa.ValidatePattern("value.access_token", value.AccessToken, "^[\\x20-\\x7e]+$"))
-	if utf8.RuneCountInString(value.AccessToken) < 1 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("value.access_token", value.AccessToken, utf8.RuneCountInString(value.AccessToken), 1, true))
-	}
-	if !(value.TokenType == "N_A") {
-		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.token_type", value.TokenType, []any{"N_A"}))
-	}
-	if value.Scope != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern("value.scope", *value.Scope, "^[\\x21\\x23-\\x5b\\x5d-\\x7e]+( [\\x21\\x23-\\x5b\\x5d-\\x7e]+)*$"))
-	}
-	if value.ExpiresIn != nil {
-		if *value.ExpiresIn < 0 {
-			err = goa.MergeErrors(err, goa.InvalidRangeError("value.expires_in", *value.ExpiresIn, 0, true))
-		}
-	}
 	return err
 }
 
@@ -665,29 +628,6 @@ func validateIdentityGrantOriginal(value *IdentityGrant) (err error) {
 		err = goa.MergeErrors(err, goa.ValidatePattern("value.refresh_token", *value.RefreshToken, "^[\\x20-\\x7e]+$"))
 		if utf8.RuneCountInString(*value.RefreshToken) < 1 {
 			err = goa.MergeErrors(err, goa.InvalidLengthError("value.refresh_token", *value.RefreshToken, utf8.RuneCountInString(*value.RefreshToken), 1, true))
-		}
-	}
-	return err
-}
-
-// validateIdentityRefreshOriginal3 checks the original typed value before JSON conversion.
-func validateIdentityRefreshOriginal3(value *IdentityRefresh) (err error) {
-	if !(value.IssuedTokenType == "urn:ietf:params:oauth:token-type:refresh_token") {
-		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.issued_token_type", value.IssuedTokenType, []any{"urn:ietf:params:oauth:token-type:refresh_token"}))
-	}
-	err = goa.MergeErrors(err, goa.ValidatePattern("value.access_token", value.AccessToken, "^[\\x20-\\x7e]+$"))
-	if utf8.RuneCountInString(value.AccessToken) < 1 {
-		err = goa.MergeErrors(err, goa.InvalidLengthError("value.access_token", value.AccessToken, utf8.RuneCountInString(value.AccessToken), 1, true))
-	}
-	if !(value.TokenType == "N_A") {
-		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.token_type", value.TokenType, []any{"N_A"}))
-	}
-	if value.Scope != nil {
-		err = goa.MergeErrors(err, goa.ValidatePattern("value.scope", *value.Scope, "^[\\x21\\x23-\\x5b\\x5d-\\x7e]+( [\\x21\\x23-\\x5b\\x5d-\\x7e]+)*$"))
-	}
-	if value.ExpiresIn != nil {
-		if *value.ExpiresIn < 0 {
-			err = goa.MergeErrors(err, goa.InvalidRangeError("value.expires_in", *value.ExpiresIn, 0, true))
 		}
 	}
 	return err
@@ -1072,7 +1012,7 @@ func EncodeIdentityRefresh(in *IdentityRefresh) ([]byte, error) {
 	if err := checkIdentityRefreshValue(in); err != nil {
 		return nil, fmt.Errorf("encode IdentityRefresh JSON: %w", err)
 	}
-	if err := validateIdentityRefreshOriginal3(in); err != nil {
+	if err := validateIdentityRefreshOriginal(in); err != nil {
 		return nil, fmt.Errorf("validate IdentityRefresh value: %w", err)
 	}
 	var body *jsonIdentityRefreshTransport
@@ -1104,7 +1044,7 @@ func DecodeIdentityRefresh(data []byte) (out *IdentityRefresh, err error) {
 	if err != nil {
 		return out, fmt.Errorf("decode IdentityRefresh JSON: %w", err)
 	}
-	if err := validateIdentityRefreshJSONValue("", root, ""); err != nil {
+	if err := validateIdentityCredentialReadyJSONValue2("", root, ""); err != nil {
 		return out, fmt.Errorf("decode IdentityRefresh JSON: %w", err)
 	}
 	var body *jsonIdentityRefreshTransport
@@ -1141,7 +1081,7 @@ func decodeIdentityCredentialReadyTransportToIdentityCredentialReady(v *jsonIden
 	res := &IdentityCredentialReady{
 		Obtained: *v.Obtained,
 	}
-	res.Credential = decodeIdentityRefreshTransportToIdentityRefresh2(v.Credential)
+	res.Credential = decodeIdentityRefreshTransportToIdentityRefresh(v.Credential)
 
 	return res
 }
@@ -1161,46 +1101,16 @@ func decodeIdentityRefreshTransportToIdentityRefresh(v *jsonIdentityRefreshTrans
 	return res
 }
 
-func decodeIdentityRefreshTransportToIdentityRefresh2(v *jsonIdentityRefreshTransport) *IdentityRefresh {
-	res := &IdentityRefresh{
-		IssuedTokenType: *v.IssuedTokenType,
-		AccessToken:     *v.AccessToken,
-		TokenType:       *v.TokenType,
-		Scope:           v.Scope,
-	}
-	if v.ExpiresIn != nil {
-		expiresIn := int64(*v.ExpiresIn)
-		res.ExpiresIn = &expiresIn
-	}
-
-	return res
-}
-
 func encodeIdentityCredentialReadyToIdentityCredentialReadyTransport(v *IdentityCredentialReady) *jsonIdentityCredentialReadyTransport {
 	res := &jsonIdentityCredentialReadyTransport{
 		Obtained: &v.Obtained,
 	}
-	res.Credential = encodeIdentityRefreshToIdentityRefreshTransport2(v.Credential)
+	res.Credential = encodeIdentityRefreshToIdentityRefreshTransport(v.Credential)
 
 	return res
 }
 
 func encodeIdentityRefreshToIdentityRefreshTransport(v *IdentityRefresh) *jsonIdentityRefreshTransport {
-	res := &jsonIdentityRefreshTransport{
-		IssuedTokenType: &v.IssuedTokenType,
-		AccessToken:     &v.AccessToken,
-		TokenType:       &v.TokenType,
-		Scope:           v.Scope,
-	}
-	if v.ExpiresIn != nil {
-		expiresIn := identityCredentialReadyInt64Transport(*v.ExpiresIn)
-		res.ExpiresIn = &expiresIn
-	}
-
-	return res
-}
-
-func encodeIdentityRefreshToIdentityRefreshTransport2(v *IdentityRefresh) *jsonIdentityRefreshTransport {
 	res := &jsonIdentityRefreshTransport{
 		IssuedTokenType: &v.IssuedTokenType,
 		AccessToken:     &v.AccessToken,
@@ -1243,7 +1153,7 @@ func validateIdentityCredentialReadyJSONValue(path string, value any, descriptio
 				return err
 			}
 		case "obtained":
-			if err := validateIdentityCredentialReadyJSONValue8(
+			if err := validateIdentityCredentialReadyJSONValue3(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Identity response time used with its reported exclusive lifetime",
 			); err != nil {
@@ -1294,21 +1204,21 @@ func validateIdentityCredentialReadyJSONValue2(path string, value any, descripti
 				return err
 			}
 		case "issued_token_type":
-			if err := validateIdentityCredentialReadyJSONValue5(
+			if err := validateIdentityCredentialReadyJSONValue3(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Required identity refresh credential purpose",
 			); err != nil {
 				return err
 			}
 		case "scope":
-			if err := validateIdentityCredentialReadyJSONValue6(
+			if err := validateIdentityCredentialReadyJSONValue3(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "SSO permissions issued for identity refresh, separate from MCP permissions",
 			); err != nil {
 				return err
 			}
 		case "token_type":
-			if err := validateIdentityCredentialReadyJSONValue7(
+			if err := validateIdentityCredentialReadyJSONValue3(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "No HTTP bearer usage is permitted for this identity credential",
 			); err != nil {
@@ -1359,70 +1269,6 @@ func validateIdentityCredentialReadyJSONValue4(path string, value any, descripti
 	return nil
 }
 
-// validateIdentityCredentialReadyJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateIdentityCredentialReadyJSONValue5(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateIdentityCredentialReadyJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateIdentityCredentialReadyJSONValue6(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateIdentityCredentialReadyJSONValue7 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateIdentityCredentialReadyJSONValue7(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateIdentityCredentialReadyJSONValue8 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateIdentityCredentialReadyJSONValue8(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
 // validateIdentityCredentialStateJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
 func validateIdentityCredentialStateJSONValue(path string, value any, description string) error {
 	field := path
@@ -1451,7 +1297,7 @@ func validateIdentityCredentialStateJSONValue(path string, value any, descriptio
 				return err
 			}
 		case "state":
-			if err := validateIdentityCredentialStateJSONValue7(
+			if err := validateIdentityCredentialStateJSONValue3(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "",
 			); err != nil {
@@ -1481,7 +1327,7 @@ func validateIdentityCredentialStateJSONValue2(path string, value any, descripti
 		return invalidGeneratedFieldTypeError(field, "array", decodedJSONType(value), description)
 	}
 	for index, item := range typed {
-		if err := validateIdentityCredentialStateJSONValue6(
+		if err := validateIdentityCredentialReadyJSONValue3(
 			generatedJSONChildPath(path, strconv.Itoa(index), true),
 			item, description,
 		); err != nil {
@@ -1491,24 +1337,8 @@ func validateIdentityCredentialStateJSONValue2(path string, value any, descripti
 	return nil
 }
 
-// validateIdentityCredentialStateJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateIdentityCredentialStateJSONValue6(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateIdentityCredentialStateJSONValue7 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateIdentityCredentialStateJSONValue7(path string, value any, description string) error {
+// validateIdentityCredentialStateJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
+func validateIdentityCredentialStateJSONValue3(path string, value any, description string) error {
 	field := path
 	if field == "" {
 		field = "$payload"
@@ -1530,241 +1360,17 @@ func validateIdentityCredentialStateJSONValue7(path string, value any, descripti
 		return fmt.Errorf("%s: missing or invalid union discriminator", field)
 	}
 	branch, exists := typed["value"]
-	if !exists || branch == nil {
+	if !exists {
 		return fmt.Errorf("%s: missing union value", field)
 	}
 	switch discriminator {
 	case "ready":
-		return validateIdentityCredentialStateJSONValue8(generatedJSONChildPath(path, "value", false), branch, "Completed identity refresh credential")
+		return validateIdentityCredentialReadyJSONValue(generatedJSONChildPath(path, "value", false), branch, "Completed identity refresh credential")
 	case "pending":
-		return validateIdentityCredentialStateJSONValue5(generatedJSONChildPath(path, "value", false), branch, "The preceding assertion may have been consumed")
+		return validateIdentityCredentialReadyJSONValue3(generatedJSONChildPath(path, "value", false), branch, "The preceding assertion may have been consumed")
 	default:
 		return fmt.Errorf("%s: unknown union discriminator %q", field, discriminator)
 	}
-}
-
-// validateIdentityCredentialStateJSONValue8 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateIdentityCredentialStateJSONValue8(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "credential":
-			if err := validateIdentityCredentialStateJSONValue9(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Validated identity refresh credential, never sent to MCP",
-			); err != nil {
-				return err
-			}
-		case "obtained":
-			if err := validateIdentityCredentialStateJSONValue4(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Identity response time used with its reported exclusive lifetime",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"credential",
-				"obtained",
-			})
-		}
-	}
-	return nil
-}
-
-// validateIdentityCredentialStateJSONValue9 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateIdentityCredentialStateJSONValue9(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "access_token":
-			if err := validateIdentityCredentialStateJSONValue10(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Opaque identity refresh credential carried in the token-exchange response field",
-			); err != nil {
-				return err
-			}
-		case "expires_in":
-			if err := validateIdentityCredentialStateJSONValue11(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Exclusive identity refresh lifetime in seconds when the issuer reports it",
-			); err != nil {
-				return err
-			}
-		case "issued_token_type":
-			if err := validateIdentityCredentialStateJSONValue12(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Required identity refresh credential purpose",
-			); err != nil {
-				return err
-			}
-		case "scope":
-			if err := validateIdentityCredentialStateJSONValue13(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "SSO permissions issued for identity refresh, separate from MCP permissions",
-			); err != nil {
-				return err
-			}
-		case "token_type":
-			if err := validateIdentityCredentialStateJSONValue3(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "No HTTP bearer usage is permitted for this identity credential",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"access_token",
-				"expires_in",
-				"issued_token_type",
-				"scope",
-				"token_type",
-			})
-		}
-	}
-	return nil
-}
-
-// validateIdentityCredentialStateJSONValue10 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateIdentityCredentialStateJSONValue10(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateIdentityCredentialStateJSONValue11 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateIdentityCredentialStateJSONValue11(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
-	}
-	_, ok := value.(json.Number)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateIdentityCredentialStateJSONValue12 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateIdentityCredentialStateJSONValue12(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateIdentityCredentialStateJSONValue13 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateIdentityCredentialStateJSONValue13(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateIdentityCredentialStateJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateIdentityCredentialStateJSONValue3(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateIdentityCredentialStateJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateIdentityCredentialStateJSONValue4(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateIdentityCredentialStateJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateIdentityCredentialStateJSONValue5(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
 }
 
 // validateIdentityGrantJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
@@ -1788,42 +1394,42 @@ func validateIdentityGrantJSONValue(path string, value any, description string) 
 	for _, key := range keys {
 		switch key {
 		case "access_token":
-			if err := validateIdentityGrantJSONValue2(
+			if err := validateIdentityCredentialReadyJSONValue3(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Signed compact identity authorization grant for the resource issuer",
 			); err != nil {
 				return err
 			}
 		case "expires_in":
-			if err := validateIdentityGrantJSONValue3(
+			if err := validateIdentityCredentialReadyJSONValue4(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Exclusive grant lifetime in seconds from its token exchange",
 			); err != nil {
 				return err
 			}
 		case "issued_token_type":
-			if err := validateIdentityGrantJSONValue4(
+			if err := validateIdentityCredentialReadyJSONValue3(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Required identity authorization grant purpose",
 			); err != nil {
 				return err
 			}
 		case "refresh_token":
-			if err := validateIdentityGrantJSONValue5(
+			if err := validateIdentityCredentialReadyJSONValue3(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Optional issuer credential that this identity-grant response does not retain",
 			); err != nil {
 				return err
 			}
 		case "scope":
-			if err := validateIdentityGrantJSONValue6(
+			if err := validateIdentityCredentialReadyJSONValue3(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "Permissions allowed by the identity provider for the requested MCP resource",
 			); err != nil {
 				return err
 			}
 		case "token_type":
-			if err := validateIdentityGrantJSONValue7(
+			if err := validateIdentityCredentialReadyJSONValue3(
 				generatedJSONChildPath(path, key, false),
 				typed[key], "No HTTP bearer usage is permitted for this grant",
 			); err != nil {
@@ -1843,257 +1449,22 @@ func validateIdentityGrantJSONValue(path string, value any, description string) 
 	return nil
 }
 
-// validateIdentityGrantJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateIdentityGrantJSONValue2(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateIdentityGrantJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateIdentityGrantJSONValue3(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
-	}
-	_, ok := value.(json.Number)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateIdentityGrantJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateIdentityGrantJSONValue4(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateIdentityGrantJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateIdentityGrantJSONValue5(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateIdentityGrantJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateIdentityGrantJSONValue6(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateIdentityGrantJSONValue7 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateIdentityGrantJSONValue7(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateIdentityRefreshJSONValue checks one value whose JSON shape is fixed by the generated Goa type.
-func validateIdentityRefreshJSONValue(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "object", "null", description)
-	}
-	typed, ok := value.(map[string]any)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "object", decodedJSONType(value), description)
-	}
-	keys := make([]string, 0, len(typed))
-	for key := range typed {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	for _, key := range keys {
-		switch key {
-		case "access_token":
-			if err := validateIdentityRefreshJSONValue2(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Opaque identity refresh credential carried in the token-exchange response field",
-			); err != nil {
-				return err
-			}
-		case "expires_in":
-			if err := validateIdentityRefreshJSONValue3(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Exclusive identity refresh lifetime in seconds when the issuer reports it",
-			); err != nil {
-				return err
-			}
-		case "issued_token_type":
-			if err := validateIdentityRefreshJSONValue4(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "Required identity refresh credential purpose",
-			); err != nil {
-				return err
-			}
-		case "scope":
-			if err := validateIdentityRefreshJSONValue5(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "SSO permissions issued for identity refresh, separate from MCP permissions",
-			); err != nil {
-				return err
-			}
-		case "token_type":
-			if err := validateIdentityRefreshJSONValue6(
-				generatedJSONChildPath(path, key, false),
-				typed[key], "No HTTP bearer usage is permitted for this identity credential",
-			); err != nil {
-				return err
-			}
-		default:
-			return unknownJSONFieldError(path, key, []string{
-				"access_token",
-				"expires_in",
-				"issued_token_type",
-				"scope",
-				"token_type",
-			})
-		}
-	}
-	return nil
-}
-
-// validateIdentityRefreshJSONValue2 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateIdentityRefreshJSONValue2(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateIdentityRefreshJSONValue3 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateIdentityRefreshJSONValue3(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "integer", "null", description)
-	}
-	_, ok := value.(json.Number)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "integer", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateIdentityRefreshJSONValue4 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateIdentityRefreshJSONValue4(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateIdentityRefreshJSONValue5 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateIdentityRefreshJSONValue5(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// validateIdentityRefreshJSONValue6 checks one value whose JSON shape is fixed by the generated Goa type.
-func validateIdentityRefreshJSONValue6(path string, value any, description string) error {
-	field := path
-	if field == "" {
-		field = "$payload"
-	}
-	if value == nil {
-		return invalidGeneratedFieldTypeError(field, "string", "null", description)
-	}
-	_, ok := value.(string)
-	if !ok {
-		return invalidGeneratedFieldTypeError(field, "string", decodedJSONType(value), description)
-	}
-	return nil
-}
-
-// readStrictJSON checks syntax and nesting before walking for duplicate keys,
-// and preserves integer text for the generated type checks.
+// readStrictJSON checks the complete JSON document for malformed text and
+// duplicate members, then returns values with their original number text.
 func readStrictJSON(data []byte) (any, error) {
 	if err := validateJSONText(data); err != nil {
 		return nil, err
 	}
 	if !json.Valid(data) {
+		// When two complete JSON values arrive, keep the caller's distinct
+		// multiple-document error instead of reporting malformed syntax.
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		var document json.RawMessage
+		if err := decoder.Decode(&document); err == nil {
+			if err := decoder.Decode(&document); err == nil {
+				return nil, fmt.Errorf("multiple JSON documents")
+			}
+		}
 		return nil, fmt.Errorf("invalid JSON syntax or nesting")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -2101,7 +1472,8 @@ func readStrictJSON(data []byte) (any, error) {
 	return readJSONValue(decoder)
 }
 
-// readJSONValue checks duplicate decoded keys before storing any object member.
+// readJSONValue reads one JSON value and rejects repeated object member
+// names, returning the value without replacing earlier members.
 func readJSONValue(decoder *json.Decoder) (any, error) {
 	token, err := decoder.Token()
 	if err != nil {
@@ -2153,8 +1525,8 @@ func readJSONValue(decoder *json.Decoder) (any, error) {
 	}
 }
 
-// validateJSONText rejects invalid UTF-8 and unpaired UTF-16 escapes before
-// encoding/json can silently replace them. JSON grammar remains decoder-owned.
+// validateJSONText checks JSON bytes for invalid text and unpaired Unicode
+// escapes, returning an error before encoding/json can replace those characters.
 func validateJSONText(data []byte) error {
 	if !utf8.Valid(data) {
 		return fmt.Errorf("invalid UTF-8 in JSON")
@@ -2328,7 +1700,7 @@ func checkIdentityCredentialStateIdentityCredentialStateValue(in *IdentityCreden
 		}
 		if branch1, ok := in.State.AsReady(); ok {
 			_ = branch1
-			if err := checkIdentityCredentialStateIdentityCredentialReadyValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "state", false), "value", false), active); err != nil {
+			if err := checkIdentityCredentialReadyIdentityCredentialReadyValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "state", false), "value", false), active); err != nil {
 				return err
 			}
 		}
@@ -2336,56 +1708,6 @@ func checkIdentityCredentialStateIdentityCredentialStateValue(in *IdentityCreden
 			_ = branch1
 			if err := checkIdentityCredentialStatestatePendingValue(branch1, generatedJSONChildPath(generatedJSONChildPath(field, "state", false), "value", false), active); err != nil {
 				return err
-			}
-		}
-	}
-	return nil
-}
-
-// checkIdentityCredentialStateIdentityCredentialReadyValue checks one generated value on the active path.
-func checkIdentityCredentialStateIdentityCredentialReadyValue(in *IdentityCredentialReady, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if err := checkIdentityCredentialStateIdentityRefreshValue(in.Credential, generatedJSONChildPath(field, "credential", false), active); err != nil {
-			return err
-		}
-		if !utf8.ValidString(string(in.Obtained)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "obtained", false))
-		}
-	}
-	return nil
-}
-
-// checkIdentityCredentialStateIdentityRefreshValue checks one generated value on the active path.
-func checkIdentityCredentialStateIdentityRefreshValue(in *IdentityRefresh, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if !utf8.ValidString(string(in.IssuedTokenType)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "issued_token_type", false))
-		}
-		if !utf8.ValidString(string(in.AccessToken)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "access_token", false))
-		}
-		if !utf8.ValidString(string(in.TokenType)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "token_type", false))
-		}
-		if in.Scope != nil {
-			if !utf8.ValidString(string(*in.Scope)) {
-				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "scope", false))
 			}
 		}
 	}
@@ -2452,37 +1774,8 @@ func checkIdentityRefreshValue(in *IdentityRefresh) error {
 		return fmt.Errorf("missing root value")
 	}
 	active := make(map[any]bool)
-	if err := checkIdentityRefreshIdentityRefreshValue(in, "$", active); err != nil {
+	if err := checkIdentityCredentialReadyIdentityRefreshValue(in, "$", active); err != nil {
 		return err
-	}
-	return nil
-}
-
-// checkIdentityRefreshIdentityRefreshValue checks one generated value on the active path.
-func checkIdentityRefreshIdentityRefreshValue(in *IdentityRefresh, field string, active map[any]bool) error {
-	if in == nil {
-		return nil
-	}
-	if active[in] {
-		return fmt.Errorf("%s: cyclic Go value", field)
-	}
-	active[in] = true
-	defer delete(active, in)
-	if in != nil {
-		if !utf8.ValidString(string(in.IssuedTokenType)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "issued_token_type", false))
-		}
-		if !utf8.ValidString(string(in.AccessToken)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "access_token", false))
-		}
-		if !utf8.ValidString(string(in.TokenType)) {
-			return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "token_type", false))
-		}
-		if in.Scope != nil {
-			if !utf8.ValidString(string(*in.Scope)) {
-				return fmt.Errorf("%s: invalid UTF-8", generatedJSONChildPath(field, "scope", false))
-			}
-		}
 	}
 	return nil
 }
