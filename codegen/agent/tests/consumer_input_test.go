@@ -197,3 +197,147 @@ func TestBoundInput(t *testing.T) {
  work.Wait()
 }
 `
+
+func TestConsumerFieldBindingAndLookup(t *testing.T) {
+	files := testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", func() {
+		API("records", func() {})
+		details := Type("DetailsRef", func() {
+			Attribute("code", String, "The selected detail code.", func() { MinLength(1) })
+			Required("code")
+		})
+		scope := Type("ScopeRef", func() {
+			Attribute("name", String, "The selected scope.", func() { MinLength(1) })
+			Attribute("details", details, "Additional scope details.")
+			Required("name")
+		})
+		provider := Toolset("records", func() {
+			Tool("read", "Read records in a required scope.", func() {
+				Args(func() {
+					Attribute("scope", scope, "The scope containing the records.")
+					Attribute("query", String, "The requested records.")
+					Attribute("render", Boolean, "Whether to render a card.")
+					Required("scope", "query")
+				})
+				Return(String)
+				UIOnly("render")
+			})
+			Tool("search_optional", "Search records with an optional scope.", func() {
+				Args(func() {
+					Attribute("scope", scope, "Optional scope filter.")
+					Attribute("query", String, "The search query.")
+					Required("query")
+				})
+				Return(String)
+			})
+			Tool("list_all", "List all scopes.", func() {
+				Args(func() {
+					Attribute("filter", String, "Optional filter.")
+				})
+				Return(String)
+			})
+		})
+		Service("reader", func() {
+			Agent("bound", "Reads one or more scopes.", func() {
+				Use(provider, func() {
+					BindField("scope", func() {
+						Lookup(String, "Selected scope name.", func() {
+							MinLength(1)
+							Example("North")
+						})
+					})
+				})
+			})
+		})
+	})
+
+	assert.Contains(t, fileContent(t, files, "gen/reader/agents/bound/registry.go"), `WithInputBinding([]tools.Ident{ "records.read", "records.search_optional", }, cfg.PrepareInputs)`)
+	root := writeGeneratedModuleKeepingGen(t, files)
+	require.NoError(t, os.WriteFile(filepath.Join(root, "gen/reader/agents/bound/records/inputbinding/field_binding_test.go"), []byte(consumerFieldBindingBehaviorTest), 0600))
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	defer cancel()
+	runGeneratedGoTestCommand(t, root, exec.CommandContext(ctx, "go", "test", "-mod=mod", "-race", "-count=1", "./gen/reader/agents/bound/records/inputbinding"))
+}
+
+const consumerFieldBindingBehaviorTest = `package inputbinding
+import (
+ "bytes"
+ "errors"
+ "testing"
+ "generated.local/gen/reader/toolsets/records"
+ "goa.design/goa-ai/runtime/agent/tools"
+)
+
+func TestLookupAndOptionalFieldBinding(t *testing.T) {
+ // 1. Static binding on optional field hides scope and injects the bound ScopeRef.
+ optBound, err := prepareSearchOptionalInput(records.SpecSearchOptional(), &records.ScopeRef{Name: "north", Details: &records.DetailsRef{Code: "n1"}})
+ if err != nil { t.Fatal(err) }
+ if bytes.Contains(optBound.Payload.Schema, []byte("\"scope\"")) {
+  t.Fatalf("static bound optional field exposed in schema: %s", optBound.Payload.Schema)
+ }
+ optDecoded, err := optBound.Payload.Codec.FromJSON([]byte("{\"query\":\"chillers\"}"))
+ if err != nil { t.Fatal(err) }
+ optComplete, err := optBound.PrepareInput(optDecoded)
+ if err != nil { t.Fatal(err) }
+ optValue, err := records.SearchOptionalPayloadCodec().FromJSON(optComplete)
+ if err != nil { t.Fatal(err) }
+ if optValue.Scope == nil || optValue.Scope.Name != "north" || optValue.Query != "chillers" {
+  t.Fatalf("unexpected static optional payload: %#v", optValue)
+ }
+
+ // 2. Lookup binding replaces ScopeRef with string key in schema and resolves via table.
+ table := map[string]*records.ScopeRef{
+  "South": {Name: "south-id", Details: &records.DetailsRef{Code: "s1"}},
+  "North": {Name: "north-id", Details: &records.DetailsRef{Code: "n1"}},
+ }
+ readLookup, err := prepareReadLookup(records.SpecRead(), table)
+ if err != nil { t.Fatal(err) }
+ table["North"].Name = "mutated"
+ if !bytes.Contains(readLookup.Payload.Schema, []byte("\"scope\":{\"description\":\"Selected scope name.\",\"example\":\"North\",\"minLength\":1,\"type\":\"string\"}")) {
+  t.Fatalf("lookup schema did not replace scope with string: %s", readLookup.Payload.Schema)
+ }
+ readDecoded, err := readLookup.Payload.Codec.FromJSON([]byte("{\"scope\":\"North\",\"query\":\"active\",\"render\":true}"))
+ if err != nil { t.Fatal(err) }
+ readComplete, err := readLookup.PrepareInput(readDecoded)
+ if err != nil { t.Fatal(err) }
+ readValue, err := records.ReadPayloadCodec().FromJSON(readComplete)
+ if err != nil { t.Fatal(err) }
+ if readValue.Scope == nil || readValue.Scope.Name != "north-id" || readValue.Scope.Details.Code != "n1" || readValue.Query != "active" {
+  t.Fatalf("unexpected lookup payload: %#v", readValue)
+ }
+
+ // 3. Unknown lookup key returns ValidationError with Constraint "enum" and sorted Allowed keys.
+ _, err = readLookup.Payload.Codec.FromJSON([]byte("{\"scope\":\"West\",\"query\":\"active\"}"))
+ if err == nil { t.Fatal("expected unknown lookup key error") }
+ var verr *tools.ValidationError
+ if !errors.As(err, &verr) { t.Fatalf("expected *tools.ValidationError, got %T: %v", err, err) }
+ issues := verr.Issues()
+ if len(issues) != 1 || issues[0].Field != "scope" || issues[0].Constraint != "invalid_enum_value" {
+  t.Fatalf("unexpected validation issues: %#v", issues)
+ }
+ if len(issues[0].Allowed) != 2 || issues[0].Allowed[0] != "North" || issues[0].Allowed[1] != "South" {
+  t.Fatalf("unexpected allowed keys: %#v", issues[0].Allowed)
+ }
+
+ // 4. Optional lookup field allows omitting scope or supplying a valid lookup key.
+ optLookup, err := prepareSearchOptionalLookup(records.SpecSearchOptional(), table)
+ if err != nil { t.Fatal(err) }
+ omittedDecoded, err := optLookup.Payload.Codec.FromJSON([]byte("{\"query\":\"chillers\"}"))
+ if err != nil { t.Fatal(err) }
+ omittedComplete, err := optLookup.PrepareInput(omittedDecoded)
+ if err != nil { t.Fatal(err) }
+ omittedValue, err := records.SearchOptionalPayloadCodec().FromJSON(omittedComplete)
+ if err != nil { t.Fatal(err) }
+ if omittedValue.Scope != nil || omittedValue.Query != "chillers" {
+  t.Fatalf("expected nil scope when omitted on optional lookup: %#v", omittedValue)
+ }
+ suppliedDecoded, err := optLookup.Payload.Codec.FromJSON([]byte("{\"scope\":\"South\",\"query\":\"chillers\"}"))
+ if err != nil { t.Fatal(err) }
+ suppliedComplete, err := optLookup.PrepareInput(suppliedDecoded)
+ if err != nil { t.Fatal(err) }
+ suppliedValue, err := records.SearchOptionalPayloadCodec().FromJSON(suppliedComplete)
+ if err != nil { t.Fatal(err) }
+ if suppliedValue.Scope == nil || suppliedValue.Scope.Name != "south-id" {
+  t.Fatalf("expected resolved scope when supplied on optional lookup: %#v", suppliedValue)
+ }
+}
+`

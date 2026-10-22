@@ -94,8 +94,9 @@ type (
 		schemaShape          *goaexpr.AttributeExpr
 		publicDeclaration    *goacodegen.NameDeclaration
 		transportDeclaration *goacodegen.NameDeclaration
-		publicLayout         *goacodegen.GoTypePlan
-		transportLayout      *goacodegen.GoTypePlan
+		publicLayout            *goacodegen.GoTypePlan
+		transportLayout         *goacodegen.GoTypePlan
+		transformTransportLayout *goacodegen.GoTypePlan
 		publicShape          *goaexpr.AttributeExpr
 		transportShape       *goaexpr.AttributeExpr
 		publicTypes          []*localizedType

@@ -452,10 +452,11 @@ func (p *toolSpecsPackagePlan) declareType(owner *contractTypeOwner, attribute *
 	}
 
 	var (
-		transportAttribute   *goaexpr.AttributeExpr
-		transportDeclaration *goacodegen.NameDeclaration
-		transportLayout      *goacodegen.GoTypePlan
-		decode, encode       *goacodegen.TransformPlan
+		transportAttribute       *goaexpr.AttributeExpr
+		transportDeclaration     *goacodegen.NameDeclaration
+		transportLayout          *goacodegen.GoTypePlan
+		transformTransportLayout *goacodegen.GoTypePlan
+		decode, encode           *goacodegen.TransformPlan
 	)
 	if shapes.usesTransport {
 		if err := p.declareLocalTypes(p.transport, p.transportTypes, p.transportTypeUses, shapes.transportTypes); err != nil {
@@ -494,6 +495,45 @@ func (p *toolSpecsPackagePlan) declareType(owner *contractTypeOwner, attribute *
 		if err != nil {
 			return err
 		}
+		var (
+			savedTransportFields   []*goaexpr.NamedAttributeExpr
+			savedTransportRequired []string
+			transportObject        *goaexpr.Object
+		)
+		if len(owner.LookupPayloadFields) > 0 {
+			transportObject = goaexpr.AsObject(shapes.transport.Type)
+			savedTransportFields = slices.Clone(*transportObject)
+			filtered := make([]*goaexpr.NamedAttributeExpr, 0, len(savedTransportFields))
+			for _, named := range savedTransportFields {
+				if _, ok := owner.LookupPayloadFields[named.Name]; !ok {
+					filtered = append(filtered, named)
+				}
+			}
+			*transportObject = filtered
+			if shapes.transport.Validation != nil {
+				savedTransportRequired = slices.Clone(shapes.transport.Validation.Required)
+				filteredRequired := make([]string, 0, len(savedTransportRequired))
+				for _, req := range savedTransportRequired {
+					if _, ok := owner.LookupPayloadFields[req]; !ok {
+						filteredRequired = append(filteredRequired, req)
+					}
+				}
+				shapes.transport.Validation.Required = filteredRequired
+			}
+			transformTransportLayout, err = p.planDeclaredTypeLayout(
+				transportAttribute,
+				p.transport,
+				goacodegen.GoLayoutPolicy{
+					Pointer:             true,
+					UnionPointer:        true,
+					ArrayElementPointer: true,
+					SumType:             true,
+				},
+			)
+			if err != nil {
+				return err
+			}
+		}
 		decode, err = p.declareTransform(key+":decode", transportAttribute, publicAttribute, "decode")
 		if err != nil {
 			return err
@@ -501,6 +541,12 @@ func (p *toolSpecsPackagePlan) declareType(owner *contractTypeOwner, attribute *
 		encode, err = p.declareTransform(key+":encode", publicAttribute, transportAttribute, "encode")
 		if err != nil {
 			return err
+		}
+		if transportObject != nil {
+			*transportObject = savedTransportFields
+			if shapes.transport.Validation != nil {
+				shapes.transport.Validation.Required = savedTransportRequired
+			}
 		}
 	}
 	names, err := p.declareTypeNames(
@@ -520,33 +566,38 @@ func (p *toolSpecsPackagePlan) declareType(owner *contractTypeOwner, attribute *
 		return err
 	}
 	p.types[identity] = &plannedSpecType{
-		jsonContract:         contract,
-		schemaShape:          schemaShape,
-		publicDeclaration:    publicDeclaration,
-		transportDeclaration: transportDeclaration,
-		publicLayout:         publicLayout,
-		transportLayout:      transportLayout,
-		publicShape:          public,
-		transportShape:       shapes.transport,
-		publicTypes:          publicTypes,
-		transportTypes:       shapes.transportTypes,
-		public:               publicAttribute,
-		transport:            transportAttribute,
-		decode:               decode,
-		encode:               encode,
-		exportedCodec:        names.exportedCodec,
-		genericCodec:         names.genericCodec,
-		marshal:              names.marshal,
-		unmarshal:            names.unmarshal,
-		transportValidator:   names.transportValidator,
-		fieldMetadata:        names.fieldMetadata,
-		enrichValidation:     names.enrichValidation,
-		invalidFieldType:     names.invalidFieldType,
-		jsonValidator:        jsonValidator,
+		jsonContract:             contract,
+		schemaShape:              schemaShape,
+		publicDeclaration:        publicDeclaration,
+		transportDeclaration:     transportDeclaration,
+		publicLayout:             publicLayout,
+		transportLayout:          transportLayout,
+		transformTransportLayout: transformTransportLayout,
+		publicShape:              public,
+		transportShape:           shapes.transport,
+		publicTypes:              publicTypes,
+		transportTypes:           shapes.transportTypes,
+		public:                   publicAttribute,
+		transport:                transportAttribute,
+		decode:                   decode,
+		encode:                   encode,
+		exportedCodec:            names.exportedCodec,
+		genericCodec:             names.genericCodec,
+		marshal:                  names.marshal,
+		unmarshal:                names.unmarshal,
+		transportValidator:       names.transportValidator,
+		fieldMetadata:            names.fieldMetadata,
+		enrichValidation:         names.enrichValidation,
+		invalidFieldType:         names.invalidFieldType,
+		jsonValidator:            jsonValidator,
 	}
 	if shapes.usesTransport {
-		p.setTransformLayouts(decode, transportLayout, publicLayout)
-		p.setTransformLayouts(encode, publicLayout, transportLayout)
+		xformLayout := transportLayout
+		if transformTransportLayout != nil {
+			xformLayout = transformTransportLayout
+		}
+		p.setTransformLayouts(decode, xformLayout, publicLayout)
+		p.setTransformLayouts(encode, publicLayout, xformLayout)
 	}
 	return nil
 }
@@ -595,6 +646,9 @@ func localizedSpecShapes(owner *contractTypeOwner, attribute *goaexpr.AttributeE
 	transportSource := public
 	if (usage == usagePayload || usage == usageModelPayload || usage == usageTextOnlyPayload || usage == usageTextOnlyExecution) && len(owner.ModelHiddenPayloadFields) > 0 {
 		transportSource = modelTransportShape(public, owner.ModelHiddenPayloadFields)
+	}
+	if (usage == usagePayload || usage == usageModelPayload || usage == usageTextOnlyPayload || usage == usageTextOnlyExecution) && len(owner.LookupPayloadFields) > 0 {
+		transportSource = modelLookupTransportShape(transportSource, owner.LookupPayloadFields)
 	}
 	if (usage == usagePayload || usage == usageTextOnlyExecution) && owner.Bounds != nil && owner.Bounds.Paging != nil && owner.Bounds.Paging.ContinueTool != "" {
 		paging := owner.Bounds.Paging

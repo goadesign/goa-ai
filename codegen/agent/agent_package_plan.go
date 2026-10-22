@@ -324,7 +324,7 @@ func (p *agentPackagePlan) declareFileImports(agent *agentir.Agent) error {
 	}
 	p.configPaths = []string{"errors", plannerImportPath}
 	for _, reference := range agent.UsedToolsets {
-		if len(reference.Expr.InputBindings) > 0 {
+		if len(reference.Expr.InputBindings) > 0 || len(reference.Expr.FieldBindings) > 0 {
 			p.requiresInputPreparation = true
 			p.configPaths = append(p.configPaths, "context", runtimeImportPath)
 			break
@@ -745,11 +745,12 @@ func (p *agentPackagePlan) linkFileData(agent *AgentData, agentsByID map[string]
 // Published aliases remain outside this list because discovery owns their names.
 func requiredStaticInputBindings(agent *AgentData) ([]string, error) {
 	var required []string
+	seen := make(map[string]struct{})
 	for _, toolset := range agent.UsedToolsets {
+		if (len(toolset.Expr.InputBindings) > 0 || len(toolset.Expr.FieldBindings) > 0) && toolset.IsRegistryBacked {
+			return nil, fmt.Errorf("agent %q cannot require input binding for registry toolset %q", agent.ID, toolset.Name)
+		}
 		for _, binding := range toolset.Expr.InputBindings {
-			if toolset.IsRegistryBacked {
-				return nil, fmt.Errorf("agent %q cannot require input binding for registry toolset %q", agent.ID, toolset.Name)
-			}
 			var selected *ToolData
 			for _, tool := range toolset.Tools {
 				if tool.Name == binding.Tool {
@@ -760,7 +761,30 @@ func requiredStaticInputBindings(agent *AgentData) ([]string, error) {
 			if selected == nil {
 				return nil, fmt.Errorf("agent %q input binding tool %q has no compiled declaration", agent.ID, binding.Tool)
 			}
-			required = append(required, selected.QualifiedName)
+			if _, ok := seen[selected.QualifiedName]; !ok {
+				seen[selected.QualifiedName] = struct{}{}
+				required = append(required, selected.QualifiedName)
+			}
+		}
+		for _, binding := range toolset.Expr.FieldBindings {
+			matched := false
+			for _, tool := range toolset.Tools {
+				if tool.PrivatePage {
+					continue
+				}
+				obj := effectiveObject(tool.Args)
+				if obj == nil || obj.Attribute(binding.Field) == nil {
+					continue
+				}
+				matched = true
+				if _, ok := seen[tool.QualifiedName]; !ok {
+					seen[tool.QualifiedName] = struct{}{}
+					required = append(required, tool.QualifiedName)
+				}
+			}
+			if !matched {
+				return nil, fmt.Errorf("agent %q field binding %q matches no compiled tools in toolset %q", agent.ID, binding.Field, toolset.Name)
+			}
 		}
 	}
 	slices.Sort(required)
