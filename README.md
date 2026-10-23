@@ -244,6 +244,9 @@ Custom stores must follow the [preparation ownership upgrade](docs/runtime.md#pr
   Newly committed native declarations retain an independently owned saved
   representation and its exact-byte digest for local reuse; cold reads strictly
   validate saved bytes. Reads still check current bytes, state and retirement.
+  `Service.ReadSavedCatalogToolset` reads an exact saved declaration after
+  retirement without reporting health or granting new execution; active catalog
+  reads and provider admission keep rejecting retired registrations.
   Local maintenance tools can use `registry.NewCatalogReader` to inspect saved
   registrations without starting workers or writing Redis data; see
   [read-only catalog inspection](docs/runtime.md#read-only-catalog-inspection).

@@ -1402,6 +1402,14 @@ leave any warm entry unchanged. Cold reads strictly validate the saved bytes.
 Reads still fetch current bytes, state and retirement information, and reuse
 validation only for the same bytes and native-agent rules.
 
+`Service.ReadSavedCatalogToolset` returns the exact saved declaration and owner
+for historical comparison, including a retired registration. It uses the same
+bounded snapshot and integrity checks as the active reader, returns independent
+data, and leaves provider health absent. `ReadCatalogToolset`, discovery and new
+provider/call admission still reject retired registrations. Reading a saved
+contract neither reopens its token nor grants resource access; the host continues
+to authorize the caller.
+
 Resource listing reads its bounded index candidates once, then checks their
 registration and permanent retirement together in one Redis transaction.
 Unrelated catalog writes do not invalidate the page. Retirement between selection
