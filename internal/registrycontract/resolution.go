@@ -1,5 +1,5 @@
 // Package registrycontract validates registry responses and saved selected-call definitions.
-// Generated transport validators own wire constraints. The checks here own
+// Generated value validators own declared constraints. The checks here own
 // tool identity, supported execution, and pagination relationships.
 package registrycontract
 
@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"slices"
 
-	genregistryclient "goa.design/goa-ai/registry/gen/grpc/registry/client"
-	genregistryserver "goa.design/goa-ai/registry/gen/grpc/registry/server"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent/tools"
 	toolcontract "goa.design/goa-ai/runtime/toolregistry/contract"
@@ -39,9 +37,7 @@ func Resolve(registered *genregistry.ResolvedToolset) (*Resolution, error) {
 	if registered == nil {
 		return nil, errors.New("registry resolution is required")
 	}
-	if err := genregistryclient.ValidateResolveToolsetResponse(
-		genregistryserver.NewProtoResolveToolsetResponse(registered),
-	); err != nil {
+	if err := genregistry.ValidateResolvedToolsetValue(registered); err != nil {
 		return nil, fmt.Errorf("registry resolution: %w", err)
 	}
 	specs, err := Compile(registered.Toolset.Tools)
@@ -60,17 +56,17 @@ func Resolve(registered *genregistry.ResolvedToolset) (*Resolution, error) {
 // must agree. No registration token or timestamp is needed to check definitions.
 func Compile(declarations []*genregistry.ToolSchema) (map[tools.Ident]tools.ToolSpec, error) {
 	specs := make(map[tools.Ident]tools.ToolSpec, len(declarations))
-	for _, declaration := range declarations {
-		name := tools.Ident(declaration.Name)
+	for index, declaration := range declarations {
+		spec, err := toolcontract.Compile(declaration)
+		if err != nil {
+			return nil, fmt.Errorf("registry tool[%d]: %w", index, err)
+		}
+		name := spec.Name
 		if name.Toolset() == "" || name.Tool() == "" {
 			return nil, fmt.Errorf("registry tool %q must be qualified", name)
 		}
 		if _, exists := specs[name]; exists {
 			return nil, fmt.Errorf("registry resolution repeats tool %q", name)
-		}
-		spec, err := toolcontract.Compile(declaration)
-		if err != nil {
-			return nil, err
 		}
 		specs[name] = spec
 	}

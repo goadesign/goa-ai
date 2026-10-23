@@ -28,8 +28,8 @@ func TestCompileBoundedResultPreservesPublicContract(t *testing.T) {
 	}{
 		{name: "bounded"},
 		{name: "exact total", exactTotal: true},
-		{name: "same tool paging", paging: &genregistry.ToolPaging{CursorField: "cursor", NextCursorField: "next_page"}},
-		{name: "dedicated continuation", paging: &genregistry.ToolPaging{CursorField: "cursor", NextCursorField: "next_page", ContinueTool: &continuation}},
+		{name: "same tool paging", paging: &genregistry.ToolPaging{CursorField: "cursor", NextCursorField: "next_page", RetainedFields: []string{}}},
+		{name: "dedicated continuation", paging: &genregistry.ToolPaging{CursorField: "cursor", NextCursorField: "next_page", RetainedFields: []string{}, ContinueTool: &continuation}},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			declaration := boundedDeclaration()

@@ -16,7 +16,7 @@ func TestComposedOperationAcceptsFirstAndPageInput(t *testing.T) {
 	operation.ExecutionPayloadSchema = []byte(composedExecutionSchema)
 	operation.PayloadSchema = []byte(`{"type":"object","additionalProperties":false,"properties":{"query":{"type":"string"}},"required":["query"]}`)
 	operation.ConsumerContract.Payload.SchemaWithoutRootExample = operation.PayloadSchema
-	operation.ConsumerContract.Bounds = &genregistry.ToolBounds{Paging: &genregistry.ToolPaging{ContinueTool: &operation.Name, CursorField: "cursor", NextCursorField: "next_cursor"}}
+	operation.ConsumerContract.Bounds = &genregistry.ToolBounds{Paging: &genregistry.ToolPaging{ContinueTool: &operation.Name, CursorField: "cursor", NextCursorField: "next_cursor", RetainedFields: []string{}}}
 	for _, input := range []string{`{"query":"active"}`, `{"query":"active","cursor":"next"}`} {
 		request, err := prepareOperationRequest("", "operation", operation, rawjson.Message(input), nil, nil)
 		require.NoError(t, err)

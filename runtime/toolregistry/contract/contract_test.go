@@ -6,6 +6,8 @@ package contract
 
 import (
 	"encoding/json"
+	"fmt"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -184,6 +186,7 @@ func testDeclaration() *genregistry.ToolSchema {
 			Result: &genregistry.ToolTypeMetadata{SchemaWithoutRootExample: document},
 			Bounds: &genregistry.ToolBounds{Paging: &genregistry.ToolPaging{
 				ContinueTool: &continuation, CursorField: "cursor", NextCursorField: "next_cursor",
+				RetainedFields: []string{},
 			}},
 			Confirmation: &genregistry.ToolConfirmation{
 				PromptTemplate:       "Confirm {{ json .value }}",
@@ -233,4 +236,209 @@ func TestCompileNativeEmptyResult(t *testing.T) {
 	assert.Nil(t, spec.Result.Codec.FromJSON)
 	assert.Nil(t, spec.Result.Codec.ToJSON)
 	assert.Equal(t, "records.agent", spec.AgentID)
+}
+
+func TestCompileRejectsNullExecutableMetadata(t *testing.T) {
+	for _, kind := range []string{"service", agentKind} {
+		for _, location := range []struct {
+			name string
+			set  func(*genregistry.ToolSchema, *genregistry.ToolTypeMetadata)
+		}{
+			{"payload", func(d *genregistry.ToolSchema, m *genregistry.ToolTypeMetadata) { d.ConsumerContract.Payload = m }},
+			{"result", func(d *genregistry.ToolSchema, m *genregistry.ToolTypeMetadata) { d.ConsumerContract.Result = m }},
+			{"server_data[0]", func(d *genregistry.ToolSchema, m *genregistry.ToolTypeMetadata) {
+				d.ConsumerContract.ServerData[0].Type = m
+			}},
+			{"text-only arguments", func(d *genregistry.ToolSchema, m *genregistry.ToolTypeMetadata) {
+				d.ConsumerContract.TextOnly = &genregistry.TextOnlyToolContract{
+					Description: "Read records", Search: d.ConsumerContract.Search,
+					PayloadSchema: d.PayloadSchema, ExecutionSchema: d.ExecutionPayloadSchema, Payload: m,
+				}
+			}},
+		} {
+			for _, test := range []struct {
+				name, want string
+				mutate     func(*genregistry.ToolTypeMetadata)
+			}{
+				{"field", "fields[1]: field metadata is required", func(m *genregistry.ToolTypeMetadata) {
+					m.Fields = append(m.Fields, nil)
+				}},
+				{"path", "fields[0].path: segment[3] is required", func(m *genregistry.ToolTypeMetadata) {
+					m.Fields[0].Path = append(m.Fields[0].Path, nil)
+				}},
+				{"branch", "fields[0].branches[1]: union branch is required", func(m *genregistry.ToolTypeMetadata) {
+					m.Fields[0].Branches = append(m.Fields[0].Branches, nil)
+				}},
+				{"discriminator", "fields[0].branches[0].discriminator: segment[2] is required", func(m *genregistry.ToolTypeMetadata) {
+					branch, ok := m.Fields[0].Branches[0].Selection.AsTagged()
+					if !ok {
+						panic("test fixture requires a tagged branch")
+					}
+					branch.Discriminator = append(branch.Discriminator, nil)
+				}},
+				{"untagged path", "fields[0].branches[0].path: segment[1] is required", func(m *genregistry.ToolTypeMetadata) {
+					m.Fields[0].Branches = []*genregistry.ToolUnionBranch{{
+						Selection: genregistry.NewToolUnionSelectionUntagged(&genregistry.ToolUntaggedUnionBranch{
+							JSONKind: "object", Index: 0,
+							Path: []*genregistry.ToolFieldPathSegment{{Segment: genregistry.NewToolFieldSegmentField("items")}, nil},
+						}),
+					}}
+				}},
+			} {
+				t.Run(kind+"/"+location.name+"/"+test.name, func(t *testing.T) {
+					declaration := testExecutionDeclaration(kind)
+					metadata := testDeclaration().ConsumerContract.Payload
+					location.set(declaration, metadata)
+					require.NoError(t, genregistry.ValidateToolSchemaValue(declaration))
+					test.mutate(metadata)
+					require.NoError(t, genregistry.ValidateToolSchemaValue(declaration))
+					_, err := Compile(declaration)
+					require.ErrorContains(t, err, location.name)
+					assert.ErrorContains(t, err, test.want)
+				})
+			}
+		}
+		t.Run(kind+"/server data item", func(t *testing.T) {
+			declaration := testExecutionDeclaration(kind)
+			declaration.ConsumerContract.ServerData = append(declaration.ConsumerContract.ServerData, nil)
+			require.NoError(t, genregistry.ValidateToolSchemaValue(declaration))
+			_, err := Compile(declaration)
+			assert.ErrorContains(t, err, "server_data[1]: item is required")
+		})
+	}
+}
+
+func TestCompileValidatesOriginalIntegers(t *testing.T) {
+	for _, kind := range []string{"service", agentKind} {
+		for _, value := range []int64{-4294967295, -1, 0, 1, 2147483647, 2147483648, 4294967297} {
+			t.Run(fmt.Sprintf("%s/index/%d", kind, value), func(t *testing.T) {
+				if strconv.IntSize < 64 && (value < -1<<31 || value >= 1<<31) {
+					t.Skip("the original Go int cannot represent this value")
+				}
+				number := int(value)
+				declaration := testExecutionDeclaration(kind)
+				declaration.ConsumerContract.Payload.Fields[0].Branches = []*genregistry.ToolUnionBranch{{
+					Selection: genregistry.NewToolUnionSelectionUntagged(&genregistry.ToolUntaggedUnionBranch{JSONKind: "object", Index: number}),
+				}}
+				spec, err := Compile(declaration)
+				if number < 0 {
+					assert.ErrorContains(t, err, "value.index")
+					return
+				}
+				require.NoError(t, err)
+				assert.Equal(t, number, spec.Payload.Fields[0].Branches[0].(tools.UntaggedUnionBranch).Index)
+			})
+			for _, textOnly := range []bool{false, true} {
+				t.Run(fmt.Sprintf("%s/search/%d/text-only=%t", kind, value, textOnly), func(t *testing.T) {
+					if strconv.IntSize < 64 && (value < -1<<31 || value >= 1<<31) {
+						t.Skip("the original Go int cannot represent this value")
+					}
+					number := int(value)
+					declaration := testExecutionDeclaration(kind)
+					search := &genregistry.ToolSearchDocument{Length: number, Terms: map[string]int{"records": number}}
+					if textOnly {
+						declaration.ConsumerContract.TextOnly = &genregistry.TextOnlyToolContract{
+							Description: "Read records", Search: search,
+							PayloadSchema: declaration.PayloadSchema, ExecutionSchema: declaration.ExecutionPayloadSchema,
+							Payload: declaration.ConsumerContract.Payload,
+						}
+					} else {
+						declaration.ConsumerContract.Search = search
+					}
+					spec, err := Compile(declaration)
+					if number < 1 {
+						require.ErrorContains(t, err, "value.length")
+						assert.ErrorContains(t, err, "value.terms[key]")
+						return
+					}
+					require.NoError(t, err)
+					actual := spec.Search
+					if textOnly {
+						actual = spec.TextOnly.Search
+					}
+					assert.Equal(t, number, actual.Length)
+					assert.Equal(t, number, actual.Terms["records"])
+				})
+			}
+		}
+	}
+}
+
+func TestCompileRejectsInvalidOriginalText(t *testing.T) {
+	invalid := string([]byte{0xff})
+	for _, test := range []struct {
+		name   string
+		mutate func(*genregistry.ToolSchema)
+	}{
+		{"title", func(d *genregistry.ToolSchema) { d.ConsumerContract.Title = invalid }},
+		{"annotation key", func(d *genregistry.ToolSchema) { d.ConsumerContract.Meta[invalid] = []string{"value"} }},
+		{"path property", func(d *genregistry.ToolSchema) {
+			d.ConsumerContract.Payload.Fields[0].Path[0].Segment = genregistry.NewToolFieldSegmentField(genregistry.ToolFieldSegmentBranchField(invalid))
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			declaration := testDeclaration()
+			test.mutate(declaration)
+			_, err := Compile(declaration)
+			assert.ErrorContains(t, err, "invalid UTF-8")
+		})
+	}
+}
+
+func TestCompilePreservesEmptyPathsAndSharedMetadata(t *testing.T) {
+	for _, kind := range []string{"service", agentKind} {
+		t.Run(kind, func(t *testing.T) {
+			declaration := testExecutionDeclaration(kind)
+			metadata := declaration.ConsumerContract.Payload
+			metadata.Fields = append(metadata.Fields, &genregistry.ToolFieldMetadata{})
+			metadata.Fields[0].Path = []*genregistry.ToolFieldPathSegment{
+				{Segment: genregistry.NewToolFieldSegmentField("")},
+				{Segment: genregistry.NewToolFieldSegmentField("a.b[*]")},
+				{Segment: genregistry.NewToolFieldSegmentElement(&genregistry.ToolCollectionElement{})},
+			}
+			metadata.Fields[0].Branches = append(metadata.Fields[0].Branches, &genregistry.ToolUnionBranch{
+				Selection: genregistry.NewToolUnionSelectionUntagged(&genregistry.ToolUntaggedUnionBranch{JSONKind: "object", Index: 0}),
+			})
+			declaration.ConsumerContract.Result = metadata
+			declaration.ConsumerContract.ServerData[0].Type = metadata
+			spec, err := Compile(declaration)
+			require.NoError(t, err)
+			assert.Equal(t, []tools.FieldPathSegment{tools.FixedField(""), tools.FixedField("a.b[*]"), tools.DynamicField{}}, spec.Payload.Fields[0].Path)
+			assert.Len(t, spec.Payload.Fields[0].Branches, 2)
+			assert.Empty(t, spec.Payload.Fields[0].Branches[1].(tools.UntaggedUnionBranch).Path)
+			assert.Empty(t, spec.Payload.Fields[1].Path)
+			assert.Equal(t, spec.Payload.Fields, spec.Result.Fields)
+			assert.Equal(t, spec.Payload.Fields, spec.ServerData[0].Type.Fields)
+			assert.NotNil(t, spec.Bounds.Paging.RetainedFields)
+			assert.Empty(t, spec.Bounds.Paging.RetainedFields)
+
+			declaration.ConsumerContract.Payload.Fields = nil
+			declaration.ConsumerContract.Result = nil
+			declaration.ConsumerContract.ServerData = nil
+			declaration.ConsumerContract.Bounds = nil
+			_, err = Compile(declaration)
+			assert.NoError(t, err)
+		})
+	}
+}
+
+func TestCompileRequiresDeclaredPagingList(t *testing.T) {
+	declaration := testDeclaration()
+	declaration.ConsumerContract.Bounds.Paging.RetainedFields = nil
+	_, err := Compile(declaration)
+	assert.ErrorContains(t, err, "retained_fields")
+}
+
+// testExecutionDeclaration returns a complete service or Agent declaration so
+// the same compiler checks exercise both supported execution kinds.
+func testExecutionDeclaration(kind string) *genregistry.ToolSchema {
+	declaration := testDeclaration()
+	declaration.ConsumerContract.Kind = kind
+	if kind == agentKind {
+		declaration.ConsumerContract.Agent = &genregistry.AgentToolTarget{
+			Executor: "records.agent", Configuration: "revision/1",
+			Workflow: "records.workflow", Queue: "records.queue",
+		}
+	}
+	return declaration
 }
