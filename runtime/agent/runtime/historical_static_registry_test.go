@@ -95,7 +95,11 @@ func TestHistoricalStaticRegistryActionsRequireLiveCompatiblePair(t *testing.T) 
 				}
 				actions, err := rt.availableContinuationActions(def.route.ID, outputs, false)
 				require.NoError(t, err)
-				assert.Len(t, actions, tc.want)
+				want := tc.want
+				if tc.name == "unfinished annotation change" && form == "direct" {
+					want = 1
+				}
+				assert.Len(t, actions, want)
 			})
 		}
 	}
@@ -117,7 +121,11 @@ func TestPlanStartPreservesRegisteredHistoryAfterContractChange(t *testing.T) {
 				registration := rt.agents[def.route.ID]
 				registration.Planner = &stubPlanner{start: func(_ context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
 					called = true
-					assert.Empty(t, historicalActions(input.Agent))
+					wantActions := 0
+					if tc.change == "metadata" && tc.bounds.Truncated {
+						wantActions = 1
+					}
+					assert.Len(t, historicalActions(input.Agent), wantActions)
 					assert.Len(t, input.Messages, 3)
 					return finalPlannerResult("New answer."), nil
 				}}
@@ -149,6 +157,7 @@ func historicalStaticFixture(t *testing.T, change, form string) (*Runtime, Agent
 	case "payload":
 		current.Toolset.Tools[0].PayloadSchema = []byte(`{"type":"object","properties":{"value":{"type":"string"}},"required":["value"],"additionalProperties":false}`)
 		current.Toolset.Tools[0].ConsumerContract.Payload.SchemaWithoutRootExample = current.Toolset.Tools[0].PayloadSchema
+		current.Toolset.Tools[0].ExecutionPayloadSchema = current.Toolset.Tools[0].PayloadSchema
 	}
 	resolved, err := registrycontract.Resolve(current)
 	require.NoError(t, err)
@@ -185,7 +194,7 @@ func historicalSavedBinding(t *testing.T, form, name string) *tools.RegistryBind
 }
 
 func (s historicalStaticSources) Resolve(_ context.Context, catalog *RegistryCatalog) error {
-	return catalog.BindStaticService("company", s.selected.Toolset, s.selected, verifyTestStaticResource, "records.find", "records.continue")
+	return catalog.BindStaticService("company", s.selected.Toolset, s.selected, readTestStaticResource, "records.find", "records.continue")
 }
 func (s historicalStaticSources) Allows(registry, toolset, version string) bool {
 	return registry == "company" && toolset == "provider.records" && version == "1.0.0"

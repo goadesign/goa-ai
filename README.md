@@ -357,6 +357,11 @@ Read the [release and upgrade instructions](docs/releases/v0.89.0.md) before
 replacing existing deployments; a source rollback alone cannot undo new stored
 work.
 
+When binding generated service or Agent tools, the previous-registration reader
+returns the owner's exact `ResolvedToolset` along with its error. New pages can
+then verify their saved declarations while using current input and paging rules,
+including after a tool description changes. See [static tool binding](docs/tool_search.md#bind-generated-service-tools).
+
 ## Learn more
 
 - [Guided documentation](https://goa.design/docs/2-goa-ai/) — start with agents, MCP, or registries.

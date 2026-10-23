@@ -31,7 +31,7 @@ import (
 type (
 	pagingReleaseSources struct {
 		selected *genregistry.ResolvedToolset
-		verify   func(context.Context, string, string) error
+		verify   func(context.Context, string, string) (*genregistry.ResolvedToolset, error)
 	}
 )
 
@@ -47,13 +47,13 @@ func TestPausedPagingSelectsCurrentProviderAcrossReleases(t *testing.T) {
 		resolved, err := registrycontract.Resolve(selected)
 		require.NoError(t, err)
 		specs := []tools.ToolSpec{resolved.Specs["records.find"], resolved.Specs["records.continue"]}
-		sources := pagingReleaseSources{selected: selected, verify: func(_ context.Context, route, token string) error {
+		sources := pagingReleaseSources{selected: selected, verify: func(_ context.Context, route, token string) (*genregistry.ResolvedToolset, error) {
 			for _, previous := range []string{"a", "b", "c"} {
 				if route == "private.records."+previous && token == strings.Repeat(previous, 64) {
-					return nil
+					return pagingReleaseRegistration(previous), nil
 				}
 			}
-			return errors.New("registration belongs to another resource")
+			return nil, errors.New("registration belongs to another resource")
 		}}
 		definition := NewAgentDefinition(AgentRoute{ID: "records.agent", WorkflowName: "records.workflow", DefaultTaskQueue: "test"}, specs, nil, nil, []tools.Ident{"records.find", "records.continue"}, nil, nil).
 			WithRegistryTools(sources).WithRegistryDeclarations(testDeclarations(selected.Toolset.Tools))
@@ -185,22 +185,22 @@ func TestPagingOwnerVerificationAndIndependentRoots(t *testing.T) {
 			catalog := rt.newRegistryCatalog(definition)
 			ownerFailure := errors.New("owner read unavailable")
 			verified := 0
-			verify := func(ctx context.Context, route, token string) error {
-				assert.Equal(t, t.Context(), ctx)
+			verify := func(ctx context.Context, route, token string) (*genregistry.ResolvedToolset, error) {
+				require.NoError(t, ctx.Err(), "owner reads keep the live activity context")
 				assert.Equal(t, old.Toolset.Name, route)
 				assert.Equal(t, old.RegistrationToken, token)
 				verified++
 				if scenario == "owner failure" {
-					return ownerFailure
+					return nil, ownerFailure
 				}
-				return nil
+				return old, nil
 			}
 			if scenario == "missing verifier" {
 				verify = nil
 			}
 			err = catalog.BindStaticService(testRegistryName, current.Toolset, current, verify, "records.find", "records.continue")
 			if scenario == "missing verifier" {
-				require.ErrorContains(t, err, "verification")
+				require.ErrorContains(t, err, "reader")
 				assert.Empty(t, catalog.selections)
 				return
 			}
@@ -244,7 +244,7 @@ func TestPagingOwnerVerificationAndIndependentRoots(t *testing.T) {
 						assert.Equal(t, current.Toolset.Name, route)
 						assert.JSONEq(t, `{"cursor":"same-cursor"}`, string(action.executablePayload))
 					}
-					assert.Equal(t, 2, verified)
+					assert.Equal(t, 1, verified, "one activity reads one exact selection once for its independent roots")
 				}
 			}
 			after, err := json.Marshal(outputs)

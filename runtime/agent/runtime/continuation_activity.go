@@ -90,18 +90,22 @@ func (r *Runtime) continuationAvailableActivity(ctx context.Context, request *ap
 	for _, spec := range r.ToolSpecsForAgent(request.AgentID) {
 		specs[spec.Name] = spec
 	}
-	actions, err := r.continuationCandidatesForHistory(ctx, input, specs, outputs)
+	outputs, err = r.continuationOutputsForHistory(ctx, input, specs, outputs)
 	if err != nil {
 		return false, activityHistoryError(err)
 	}
-	if len(actions) == 0 {
+	pending, err := r.hasCurrentPagingPair(input.AgentID, outputs)
+	if err != nil {
+		return false, activityHistoryError(err)
+	}
+	if !pending {
 		return false, nil
 	}
 	catalog, err := r.planningCatalog(ctx, input.PlanActivityInput)
 	if err != nil {
 		return false, err
 	}
-	actions, err = r.bindContinuationCandidates(ctx, input, catalog, actions)
+	actions, err := catalog.continuationActions(ctx, input, outputs)
 	if err != nil {
 		return false, activityHistoryError(err)
 	}

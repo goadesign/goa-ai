@@ -66,7 +66,7 @@ func TestCompiledRegistryBatchRoundTrip(t *testing.T) {
 
 func TestCompiledRegistryCallResumesFromParentChildDefinition(t *testing.T) {
 	_, catalog, selected := staticServiceCatalog(t)
-	require.NoError(t, catalog.BindStaticService(testRegistryName, genrecords.Toolset(), selected, verifyTestStaticResource, genrecords.Read))
+	require.NoError(t, catalog.BindStaticService(testRegistryName, genrecords.Toolset(), selected, readTestStaticResource, genrecords.Read))
 	binding, err := catalog.selections[genrecords.Read].resolution.Select(testRegistryName, genrecords.Read)
 	require.NoError(t, err)
 	standalone := catalog.definition

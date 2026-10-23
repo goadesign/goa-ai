@@ -6,10 +6,8 @@ package runtime
 
 import (
 	"context"
-	"fmt"
 	"slices"
 
-	"goa.design/goa-ai/internal/registrycontract"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -46,7 +44,7 @@ func (c *RegistryCatalog) bindContinuationActions(ctx context.Context, actions [
 		}
 		compatible := true
 		for _, output := range action.outputs {
-			previous, err := registrycontract.Read(output.Registry, c.registryDeclaration)
+			previous, err := c.previousContinuationSelection(ctx, output)
 			if err != nil {
 				return nil, err
 			}
@@ -67,20 +65,8 @@ func (c *RegistryCatalog) bindContinuationActions(ctx context.Context, actions [
 					compatible = false
 					break
 				}
-			} else if _, static := c.definition.specByName[sourceName]; static {
-				if source.IsAgentTool {
-					declaration, err := previous.Declaration(output.Name)
-					if err != nil {
-						return nil, err
-					}
-					target := *declaration.ConsumerContract.Agent
-					if err := current.verifyPreviousAgent(ctx, previous.Registered.Toolset.Name, previous.Registered.RegistrationToken, &target); err != nil {
-						return nil, fmt.Errorf("verify previous agent registration for continuation %q: %w", continuation.Name, err)
-					}
-				} else if err := current.verifyPrevious(ctx, previous.Registered.Toolset.Name, previous.Registered.RegistrationToken); err != nil {
-					return nil, fmt.Errorf("verify previous registration for continuation %q: %w", continuation.Name, err)
-				}
-			} else if current.resolution.Source != nil || current.resolution.Registered.Toolset.Name != previous.Registered.Toolset.Name {
+			} else if _, static := c.definition.specByName[sourceName]; !static &&
+				(current.resolution.Source != nil || current.resolution.Registered.Toolset.Name != previous.Registered.Toolset.Name) {
 				// Direct imports use their declared registry route as resource identity.
 				// Registered resources instead require their explicit owner and name.
 				compatible = false

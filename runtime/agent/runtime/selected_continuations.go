@@ -115,10 +115,10 @@ func (r *Runtime) loadHistoricalContinuationOutputs(ctx context.Context, input *
 	return reader.outputs, nil
 }
 
-// continuationActionsForHistory combines saved and current work once per exact
+// continuationOutputsForHistory combines saved and current work once per exact
 // output identity. Active outputs stay separate from planner failure guidance
 // and counters; only the continuation catalog consumes this combined history.
-func (r *Runtime) continuationCandidatesForHistory(ctx context.Context, input *resolvedPlanActivityInput, specs map[tools.Ident]tools.ToolSpec, current []*planner.ToolOutput) ([]continuationAction, error) {
+func (r *Runtime) continuationOutputsForHistory(ctx context.Context, input *resolvedPlanActivityInput, specs map[tools.Ident]tools.ToolSpec, current []*planner.ToolOutput) ([]*planner.ToolOutput, error) {
 	outputs, err := r.loadHistoricalContinuationOutputs(ctx, input, specs)
 	if err != nil {
 		return nil, err
@@ -138,21 +138,17 @@ func (r *Runtime) continuationCandidatesForHistory(ctx context.Context, input *r
 	if err != nil {
 		return nil, err
 	}
-	actions, err := r.availableContinuationActions(input.AgentID, outputs, input.RunContext.TextOnly)
-	if err != nil {
-		return nil, err
-	}
-	return actions, nil
+	return outputs, nil
 }
 
 // continuationActionsForHistory selects today's provider only for valid saved
 // queries. Accepted calls remain untouched; the current policy limits new pages.
 func (r *Runtime) continuationActionsForHistory(ctx context.Context, input *resolvedPlanActivityInput, catalog *RegistryCatalog, current []*planner.ToolOutput) ([]continuationAction, error) {
-	actions, err := r.continuationCandidatesForHistory(ctx, input, catalog.specs, current)
+	outputs, err := r.continuationOutputsForHistory(ctx, input, catalog.specs, current)
 	if err != nil {
 		return nil, err
 	}
-	return r.bindContinuationCandidates(ctx, input, catalog, actions)
+	return catalog.continuationActions(ctx, input, outputs)
 }
 
 // bindContinuationCandidates applies the same provider and policy selection to

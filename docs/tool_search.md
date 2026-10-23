@@ -375,19 +375,24 @@ one another's tool lists.
 ## Bind generated service tools
 
 When an application selects a registration for tools already compiled into an
-Agent, call `catalog.BindStaticService(registry, expected, selected, verifyPrevious, names...)`
+Agent, call `catalog.BindStaticService(registry, expected, selected, readPrevious, names...)`
 from its `RegistryTools.Resolve` implementation. Supply the generated `Toolset()`
 as `expected`, the complete owner-authorized resolution as `selected`, and a
 nonempty list of original generated tool identifiers. There is no implicit
 "bind all" choice.
 
-`verifyPrevious` is required and has type
-`func(context.Context, string, string) error`. Its string arguments are the saved
+`readPrevious` is required and has type
+`func(context.Context, string, string) (*genregistry.ResolvedToolset, error)`. Its string arguments are the saved
 private toolset route and exact registration token, in that order. Capture the
 current resource's owner and permanent name in this callback. Use the resource
 owner's API to verify that the saved route and token belong to that same resource;
 return an error for another resource or a failed read. Matching operation names
-or schemas do not establish resource ownership. The callback runs in the current
+or schemas do not establish resource ownership. The callback returns `(*genregistry.ResolvedToolset, error)`: the exact old
+registration already fetched from the owner. The runtime verifies the saved
+selected-operation fingerprint with those declarations, then checks the new
+page with current inputs, paging rules and policy. Description changes alone
+do not remove an otherwise valid page. Accepted calls and retries keep their
+original selection. The callback runs in the current
 planning activity and is not stored in calls or checkpoints.
 
 The runtime compares the complete portable service declaration and version,
@@ -475,7 +480,7 @@ same-named static tool owned by another Agent never changes the call's executor.
 
 ## Bind generated native Agent tools
 
-Call `catalog.BindStaticAgent(registry, expected, selected, verifyPrevious, names...)` with the
+Call `catalog.BindStaticAgent(registry, expected, selected, readPrevious, names...)` with the
 complete generated unbound operation declarations, the owner's selected
 `ResolvedToolset`, and every original generated tool name. The runtime compares
 all operation schemas and policy and checks the provider executor, workflow and
@@ -484,13 +489,15 @@ configuration may change between revisions; each accepted call retains its
 selected revision. Toolset discovery descriptions and tags do not alter the
 operation contract.
 
-The required `verifyPrevious` has type
-`func(context.Context, string, string, *genregistry.AgentToolTarget) error`.
+The required `readPrevious` has type
+`func(context.Context, string, string, *genregistry.AgentToolTarget) (*genregistry.ResolvedToolset, error)`.
 Its arguments are the prior private toolset route, exact registration token,
 and selected Agent target. Use the target's saved configuration reference and
 existing owner APIs to prove that the old registration belongs to the same
 owner and permanent resource as the current selection. Failed reads and another
-resource remain errors. For a newly selected page, the current registration
+resource remain errors. Return the exact old registration already fetched by
+that proof; the runtime verifies its saved selected-operation fingerprint.
+For a newly selected page, the current registration
 supplies the new child configuration; the original query and cursor stay intact.
 Accepted child calls keep their saved configuration and do not run this check.
 
@@ -500,9 +507,11 @@ including on resume; the remaining declarations stay available for validation.
 
 The consumer keeps generated payload and result codecs and `BindInput`
 preparation. Native execution uses the existing durable child workflow path.
-Saved calls and pagination continuations validate the retained contract without
-reading a replacement registration. Direct static calls and dynamic registry
-Agent calls retain their existing behavior. No regeneration or wire migration is
+Accepted calls and retries validate their retained contract. New pages read
+previous owner metadata and use the current registration only after current
+input and paging checks. Direct static calls and dynamic registry Agent calls
+retain their existing behavior. Update existing prior-reader callbacks to return
+the exact `ResolvedToolset` they fetched along with their error. No regeneration or wire migration is
 required to use this binding method with existing generated declarations.
 
 

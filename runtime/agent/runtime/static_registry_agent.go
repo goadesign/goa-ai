@@ -21,13 +21,15 @@ const staticAgentKind = "agent"
 // generated export set. Expected declarations must be unbound native operations;
 // the selected provider supplies configuration while generated children own routes.
 // Generated names, codecs and input preparation remain owned by the consumer.
-// Before a new page uses this registration, verifyPrevious receives the saved
+// Before a new page uses this registration, readPrevious receives the saved
 // private toolset route, exact token and Agent target, in that order. It must
-// verify that they belong to this same logical resource. Accepted calls keep
-// their original target and never call verifyPrevious.
-func (c *RegistryCatalog) BindStaticAgent(registry string, expected []*genregistry.ToolSchema, selected *genregistry.ResolvedToolset, verifyPrevious func(context.Context, string, string, *genregistry.AgentToolTarget) error, names ...tools.Ident) error {
-	if verifyPrevious == nil {
-		return fmt.Errorf("static agent binding requires verification of previous registrations")
+// read declarations proving that they belong to this same logical resource.
+// Accepted calls keep their original target and never call readPrevious.
+// The reader returns the owner's exact ResolvedToolset so saved fingerprints use
+// the old declarations.
+func (c *RegistryCatalog) BindStaticAgent(registry string, expected []*genregistry.ToolSchema, selected *genregistry.ResolvedToolset, readPrevious func(context.Context, string, string, *genregistry.AgentToolTarget) (*genregistry.ResolvedToolset, error), names ...tools.Ident) error {
+	if readPrevious == nil {
+		return fmt.Errorf("static agent binding requires a reader for previous registrations")
 	}
 	if len(expected) == 0 || len(names) != len(expected) {
 		return fmt.Errorf("static agent binding requires the complete generated export set and explicit tool names")
@@ -123,7 +125,7 @@ func (c *RegistryCatalog) BindStaticAgent(registry string, expected []*genregist
 		return err
 	}
 	for _, name := range names {
-		c.selections[name] = registrySelection{registry: registry, resolution: resolved, verifyPreviousAgent: verifyPrevious}
+		c.selections[name] = registrySelection{registry: registry, resolution: resolved, readPreviousAgent: readPrevious}
 		c.labels[name] = slices.Clone(seen[name].ConsumerContract.RequiredLabels)
 	}
 	return nil

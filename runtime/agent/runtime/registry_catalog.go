@@ -39,24 +39,25 @@ type (
 	// Applications do not construct or retain it. Runtime planning owns its
 	// lifetime and applies run policy before exposing any definition.
 	RegistryCatalog struct {
-		runtime     *Runtime
-		definition  AgentDefinition
-		runLabels   map[string]string
-		runID       string
-		runContext  run.Context
-		textOnly    bool
-		sources     RegistryTools
-		specs       map[tools.Ident]tools.ToolSpec
-		definitions map[tools.Ident]compiledToolDefinition
-		selections  map[tools.Ident]registrySelection
-		labels      map[tools.Ident][]string
+		runtime            *Runtime
+		definition         AgentDefinition
+		runLabels          map[string]string
+		runID              string
+		runContext         run.Context
+		textOnly           bool
+		sources            RegistryTools
+		specs              map[tools.Ident]tools.ToolSpec
+		definitions        map[tools.Ident]compiledToolDefinition
+		selections         map[tools.Ident]registrySelection
+		previousSelections map[string]*registrycontract.Resolution
+		labels             map[tools.Ident][]string
 	}
 
 	registrySelection struct {
-		registry            string
-		resolution          *registrycontract.Resolution
-		verifyPrevious      func(context.Context, string, string) error
-		verifyPreviousAgent func(context.Context, string, string, *genregistry.AgentToolTarget) error
+		registry          string
+		resolution        *registrycontract.Resolution
+		readPrevious      func(context.Context, string, string) (*genregistry.ResolvedToolset, error)
+		readPreviousAgent func(context.Context, string, string, *genregistry.AgentToolTarget) (*genregistry.ResolvedToolset, error)
 	}
 
 	registryConnection struct {
@@ -297,10 +298,11 @@ func (r *Runtime) newRegistryCatalog(definition AgentDefinition) *RegistryCatalo
 	r.mu.RUnlock()
 	return &RegistryCatalog{
 		runtime: r, sources: definition.registryTools, definition: definition,
-		specs:       maps.Clone(definition.specByName),
-		definitions: definitions,
-		selections:  make(map[tools.Ident]registrySelection),
-		labels:      make(map[tools.Ident][]string),
+		specs:              maps.Clone(definition.specByName),
+		definitions:        definitions,
+		selections:         make(map[tools.Ident]registrySelection),
+		previousSelections: make(map[string]*registrycontract.Resolution),
+		labels:             make(map[tools.Ident][]string),
 	}
 }
 

@@ -172,7 +172,7 @@ func TestCompletedHistoryAcrossGeneratedToolReleases(t *testing.T) {
 
 func TestCompletedCompiledHistoryDoesNotNeedCurrentDeclaration(t *testing.T) {
 	rt, catalog, selected := staticServiceCatalog(t)
-	require.NoError(t, catalog.BindStaticService(testRegistryName, genrecords.Toolset(), selected, verifyTestStaticResource, genrecords.Read))
+	require.NoError(t, catalog.BindStaticService(testRegistryName, genrecords.Toolset(), selected, readTestStaticResource, genrecords.Read))
 	binding, err := catalog.selections[genrecords.Read].resolution.Select(testRegistryName, genrecords.Read)
 	require.NoError(t, err)
 	saved := recordedInputSuspension(t, genrecords.Read)

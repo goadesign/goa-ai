@@ -179,8 +179,8 @@ type selectedNativeSource struct{ selected *genregistry.ResolvedToolset }
 type unusedNativePulse struct{ pulse.Client }
 
 func (source selectedNativeSource) Resolve(_ context.Context, catalog *runtime.RegistryCatalog) error {
-	return catalog.BindStaticAgent("native", genrecords.ToolSchemas(), source.selected, func(context.Context, string, string, *genregistry.AgentToolTarget) error {
-		return nil
+	return catalog.BindStaticAgent("native", genrecords.ToolSchemas(), source.selected, func(context.Context, string, string, *genregistry.AgentToolTarget) (*genregistry.ResolvedToolset, error) {
+		return source.selected, nil
 	}, genrecords.Read)
 }
 
