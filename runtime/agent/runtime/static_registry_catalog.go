@@ -34,34 +34,11 @@ func (c *RegistryCatalog) BindStaticService(registry string, expected *genregist
 	if _, err := c.runtime.registryConnection(registry); err != nil {
 		return err
 	}
-	encoded, err := genregistry.EncodeResolvedToolset(selected)
+	resolved, err := compileStaticServiceDeclarations(expected, selected)
 	if err != nil {
 		return err
 	}
-	selected, err = genregistry.DecodeResolvedToolset(encoded)
-	if err != nil {
-		return err
-	}
-	resolved, err := registrycontract.ResolveCompiled(selected)
-	if err != nil {
-		return err
-	}
-	if expected == nil {
-		return fmt.Errorf("static service binding requires the generated toolset declaration")
-	}
-	declaration := *expected
-	declaration.Name = selected.Toolset.Name
-	expectedFingerprint, err := toolcontract.Fingerprint(&declaration)
-	if err != nil {
-		return err
-	}
-	selectedFingerprint, err := toolcontract.Fingerprint(selected.Toolset)
-	if err != nil {
-		return err
-	}
-	if expectedFingerprint != selectedFingerprint {
-		return fmt.Errorf("static service binding differs from the complete generated declaration")
-	}
+	selected = resolved.Registered
 	version := ""
 	if selected.Toolset.Version != nil {
 		version = string(*selected.Toolset.Version)
@@ -69,10 +46,8 @@ func (c *RegistryCatalog) BindStaticService(registry string, expected *genregist
 	if c.sources == nil || !c.sources.Allows(registry, selected.Toolset.Name, version) {
 		return fmt.Errorf("registry %q toolset %q is outside this agent's declared consumption", registry, selected.Toolset.Name)
 	}
-	for _, declaration := range selected.Toolset.Tools {
-		if declaration.ConsumerContract.Kind != staticServiceKind {
-			return fmt.Errorf("static service binding cannot include %s tool %q", declaration.ConsumerContract.Kind, declaration.Name)
-		}
+	if err := validateStaticServiceKinds(resolved); err != nil {
+		return err
 	}
 	for index, name := range names {
 		if slices.Contains(names[:index], name) {
@@ -95,15 +70,7 @@ func (c *RegistryCatalog) BindStaticService(registry string, expected *genregist
 	if err != nil {
 		return err
 	}
-	for index, name := range names {
-		declaration, err := restored[index].Declaration(name)
-		if err != nil {
-			return err
-		}
-		c.selections[name] = registrySelection{registry: registry, resolution: restored[index], readPrevious: readPrevious}
-		c.labels[name] = slices.Clone(declaration.ConsumerContract.RequiredLabels)
-	}
-	return nil
+	return c.installStaticServiceSelections(registry, restored, readPrevious, names)
 }
 
 // restoreCompiledSelections saves each bound tool's registration and reads it
@@ -173,6 +140,67 @@ func validateStaticServiceSpec(spec tools.ToolSpec, resolved *registrycontract.R
 	}
 	if resolved.Source != nil || declaration.ConsumerContract.Kind != staticServiceKind || !equivalentToolSpec(spec, resolved.Specs[spec.Name]) {
 		return fmt.Errorf("saved service tool %q differs from this agent's static contract", spec.Name)
+	}
+	return nil
+}
+
+// compileStaticServiceDeclarations checks the complete raw inputs using the
+// generated JSON copy and existing fingerprint rules. Callers receive an owned
+// selected declaration only when every operation passed those checks.
+func compileStaticServiceDeclarations(expected *genregistry.Toolset, selected *genregistry.ResolvedToolset) (*registrycontract.Resolution, error) {
+	encoded, err := genregistry.EncodeResolvedToolset(selected)
+	if err != nil {
+		return nil, err
+	}
+	selected, err = genregistry.DecodeResolvedToolset(encoded)
+	if err != nil {
+		return nil, err
+	}
+	resolved, err := registrycontract.ResolveCompiled(selected)
+	if err != nil {
+		return nil, err
+	}
+	if expected == nil {
+		return nil, fmt.Errorf("static service binding requires the generated toolset declaration")
+	}
+	declaration := *expected
+	declaration.Name = selected.Toolset.Name
+	expectedFingerprint, err := toolcontract.Fingerprint(&declaration)
+	if err != nil {
+		return nil, err
+	}
+	selectedFingerprint, err := toolcontract.Fingerprint(selected.Toolset)
+	if err != nil {
+		return nil, err
+	}
+	if expectedFingerprint != selectedFingerprint {
+		return nil, fmt.Errorf("static service binding differs from the complete generated declaration")
+	}
+	return resolved, nil
+}
+
+// validateStaticServiceKinds rejects a complete checked declaration containing
+// another execution kind, so a service binding cannot select an Agent provider.
+func validateStaticServiceKinds(resolved *registrycontract.Resolution) error {
+	for _, declaration := range resolved.Registered.Toolset.Tools {
+		if declaration.ConsumerContract.Kind != staticServiceKind {
+			return fmt.Errorf("static service binding cannot include %s tool %q", declaration.ConsumerContract.Kind, declaration.Name)
+		}
+	}
+	return nil
+}
+
+// installStaticServiceSelections receives all restored operations after their
+// checks succeed. It stores each selection and its copied labels on this
+// activity's catalog with the reader supplied for this activity.
+func (c *RegistryCatalog) installStaticServiceSelections(registry string, restored []*registrycontract.Resolution, readPrevious func(context.Context, string, string) (*genregistry.ResolvedToolset, error), names []tools.Ident) error {
+	for index, name := range names {
+		declaration, err := restored[index].Declaration(name)
+		if err != nil {
+			return err
+		}
+		c.selections[name] = registrySelection{registry: registry, resolution: restored[index], readPrevious: readPrevious}
+		c.labels[name] = slices.Clone(declaration.ConsumerContract.RequiredLabels)
 	}
 	return nil
 }

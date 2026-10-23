@@ -265,6 +265,10 @@ Custom stores must follow the [preparation ownership upgrade](docs/runtime.md#pr
   [static service bindings](docs/tool_search.md#bind-generated-service-tools).
   Binding validates complete generated declarations without expanding the
   consuming Agent's executable tools; separately discovered tools remain available.
+  When the selected declarations remain fixed, compile their complete match once
+  with `CompileStaticService`, then use `BindCompiledStaticService` for each
+  activity. The immutable value retains compact call selections, not full
+  catalogs or authority; current selection and admission remain caller-owned.
 - **Standalone service operations.** Execute a registered service tool without
   creating a session; sessionful calls retain their existing session. Direct calls
   validate complete execution arguments, including retained query fields and
