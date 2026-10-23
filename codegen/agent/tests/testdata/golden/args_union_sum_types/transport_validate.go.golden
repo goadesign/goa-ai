@@ -18,14 +18,26 @@ func ValidateEchoPayloadTransport(body *EchoPayloadTransport) (err error) {
 		err = goa.MergeErrors(err, goa.MissingFieldError("value", "body"))
 	}
 	if body.Value != nil {
-		switch string(body.Value.Kind()) {
-		case "structured":
-			actual, _ := body.Value.AsStructured()
-			if actual != nil {
-				if err2 := ValidateStructuredValueTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := body.Value.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(body.Value.Kind()) {
+			case "structured":
+				actual, _ := body.Value.AsStructured()
+				if actual != nil {
+					if err2 := ValidateStructuredValueTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
+		}
+
+	}
+	if body.OptionalValue != nil {
+
+		if err2 := body.OptionalValue.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
 		}
 
 	}
@@ -41,14 +53,26 @@ func ValidateEchoResultTransport(body *EchoResultTransport) (err error) {
 		err = goa.MergeErrors(err, goa.MissingFieldError("value", "body"))
 	}
 	if body.Value != nil {
-		switch string(body.Value.Kind()) {
-		case "structured":
-			actual, _ := body.Value.AsStructured()
-			if actual != nil {
-				if err2 := ValidateStructuredValueTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := body.Value.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(body.Value.Kind()) {
+			case "structured":
+				actual, _ := body.Value.AsStructured()
+				if actual != nil {
+					if err2 := ValidateStructuredValueTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
+		}
+
+	}
+	if body.OptionalValue != nil {
+
+		if err2 := body.OptionalValue.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
 		}
 
 	}
