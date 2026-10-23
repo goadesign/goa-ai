@@ -97,3 +97,31 @@ func TestCancellationWorkflowTargetBelongsToExactJobIdentity(t *testing.T) {
 	err := implementation.StartCancellationWorkflow(t.Context(), "cleanup", "queue", request, &engine.WorkerDeploymentVersion{DeploymentName: "workers", BuildID: "build-b"})
 	require.ErrorIs(t, err, engine.ErrWorkflowStartConflict)
 }
+
+func TestCancellationWorkflowWithoutTargetKeepsAcceptedRecipe(t *testing.T) {
+	implementation := New().(*eng)
+	for _, route := range []struct{ name, queue string }{
+		{name: "cleanup", queue: "queue"},
+		{name: "other", queue: "queue"},
+		{name: "other-queue", queue: "other"},
+	} {
+		require.NoError(t, implementation.RegisterCancellationWorkflow(t.Context(), route.name, engine.ActivityOptions{
+			Queue: route.queue, RetryPolicy: engine.RetryPolicy{InitialInterval: time.Millisecond},
+		}, func(context.Context, engine.CancellationRequest) (bool, error) {
+			return true, nil
+		}))
+	}
+	request := engine.CancellationRequest{RunID: "root", Reason: "user_requested"}
+	target := &engine.WorkerDeploymentVersion{DeploymentName: "workers", BuildID: "build-a"}
+	require.NoError(t, implementation.StartCancellationWorkflow(t.Context(), "cleanup", "queue", request, target))
+	target.BuildID = "caller-mutated"
+	require.NoError(t, implementation.StartCancellationWorkflow(t.Context(), "cleanup", "queue", request, nil))
+	require.NoError(t, implementation.StartCancellationWorkflow(t.Context(), "cleanup", "queue", request, nil))
+	require.NoError(t, implementation.StartCancellationWorkflow(t.Context(), "cleanup", "queue", request, &engine.WorkerDeploymentVersion{DeploymentName: "workers", BuildID: "build-a"}))
+	assert.ErrorIs(t, implementation.StartCancellationWorkflow(t.Context(), "cleanup", "queue", request, target), engine.ErrWorkflowStartConflict)
+	assert.ErrorIs(t, implementation.StartCancellationWorkflow(t.Context(), "other", "queue", request, nil), engine.ErrWorkflowStartConflict)
+	assert.ErrorIs(t, implementation.StartCancellationWorkflow(t.Context(), "other-queue", "other", request, nil), engine.ErrWorkflowStartConflict)
+	request.Reason = "session_ended"
+	var conflict *engine.CancellationConflictError
+	assert.ErrorAs(t, implementation.StartCancellationWorkflow(t.Context(), "cleanup", "queue", request, nil), &conflict)
+}

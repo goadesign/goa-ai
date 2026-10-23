@@ -1289,7 +1289,7 @@ func (s *stubEngine) RegisterCancellationWorkflow(context.Context, string, engin
 	return nil
 }
 
-func (s *stubEngine) StartActiveCancellationWorkflow(context.Context, string, engine.CancellationRequest, *engine.WorkerDeploymentVersion) error {
+func (s *stubEngine) StartActiveCancellationWorkflow(context.Context, string, engine.CancellationRequest) error {
 	return nil
 }
 

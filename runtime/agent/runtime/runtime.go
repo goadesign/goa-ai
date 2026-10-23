@@ -110,8 +110,7 @@ type (
 	// The Runtime automatically subscribes to hooks for memory persistence and
 	// stream publishing when MemoryStore or WithStream are configured.
 	Runtime struct {
-		acceptedRootWorkflowTarget func(context.Context, string) (*engine.WorkerDeploymentVersion, error)
-		toolWorkflowQueue          string
+		toolWorkflowQueue string
 		// Engine is the workflow backend adapter (Temporal by default).
 		Engine engine.Engine
 		// MemoryStore persists run transcripts and annotations.
@@ -217,9 +216,8 @@ type (
 	// for production deployments. Noop implementations are substituted for nil Logger,
 	// Metrics, and Tracer. A default in-memory event bus is created if Hooks is nil.
 	Options struct {
-		acceptedRootWorkflowTarget func(context.Context, string) (*engine.WorkerDeploymentVersion, error)
-		toolWorkflowQueue          string
-		imageSources               *imageSourceRegistry
+		toolWorkflowQueue string
+		imageSources      *imageSourceRegistry
 		// Engine is the workflow backend adapter (Temporal by default).
 		Engine engine.Engine
 		// MemoryStore persists run transcripts and annotations.
@@ -840,18 +838,17 @@ func newFromOptions(store storage.Store, opts Options) *Runtime {
 		tracer = telemetry.NoopTracer{}
 	}
 	rt := &Runtime{
-		acceptedRootWorkflowTarget: opts.acceptedRootWorkflowTarget,
-		Engine:                     eng,
-		toolWorkflowQueue:          opts.toolWorkflowQueue,
-		Memory:                     opts.MemoryStore,
-		PromptRegistry:             prompt.NewRegistry(opts.PromptStore),
-		Store:                      store,
-		Policy:                     opts.Policy,
-		Bus:                        bus,
-		storageActivityTimeout:     opts.StorageActivityTimeout,
-		logger:                     logger,
-		metrics:                    metrics,
-		tracer:                     tracer,
+		Engine:                 eng,
+		toolWorkflowQueue:      opts.toolWorkflowQueue,
+		Memory:                 opts.MemoryStore,
+		PromptRegistry:         prompt.NewRegistry(opts.PromptStore),
+		Store:                  store,
+		Policy:                 opts.Policy,
+		Bus:                    bus,
+		storageActivityTimeout: opts.StorageActivityTimeout,
+		logger:                 logger,
+		metrics:                metrics,
+		tracer:                 tracer,
 		registryCallOptions: []registrycall.Option{
 			registrycall.WithLogger(logger),
 			registrycall.WithTracer(tracer),

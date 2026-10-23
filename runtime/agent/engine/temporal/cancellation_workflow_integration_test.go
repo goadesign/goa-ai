@@ -15,7 +15,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	enumspb "go.temporal.io/api/enums/v1"
+	"go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
+	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 
 	"goa.design/goa-ai/internal/tooloperation"
@@ -28,6 +31,14 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa-ai/runtime/mcp"
 )
+
+// cancellationOwnerCloseClient finishes the described owner before allowing
+// the caller to submit its observer, reproducing worker retirement during admission.
+type cancellationOwnerCloseClient struct {
+	client.Client
+	ownerID          string
+	afterDescription func() error
+}
 
 func TestTemporalServerCancellationAfterWorkerReplacement(t *testing.T) {
 	original, queue := localRequestEngine(t)
@@ -149,4 +160,133 @@ func TestTemporalServerCancellationKeepsRequestAfterHistoryRollover(t *testing.T
 	err = backend.StartCancellationWorkflow(ctx, name, queue, changed, nil)
 	var conflict *engine.CancellationConflictError
 	require.ErrorAs(t, err, &conflict)
+}
+
+// Cancellation observations can move to the current worker without redoing
+// accepted agent work. Explicitly pinned jobs still retain their original build.
+func TestTemporalServerCancellationObserverFollowsCurrentVersion(t *testing.T) {
+	caller, queue := localRequestEngine(t)
+	deploymentName := queue + "-workers"
+	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	defer cancel()
+	var observedA atomic.Int32
+	var observedB atomic.Int32
+	var first *Engine
+	for _, buildID := range []string{"build-a", "build-b"} {
+		backend, err := NewWorker(Options{
+			ClientOptions: &client.Options{HostPort: os.Getenv("GOA_AI_START_TEST_TEMPORAL_ADDRESS"), Namespace: "default"},
+			WorkerOptions: WorkerOptions{
+				TaskQueue: queue,
+				Options: worker.Options{DeploymentOptions: worker.DeploymentOptions{
+					UseVersioning:             true,
+					Version:                   worker.WorkerDeploymentVersion{DeploymentName: deploymentName, BuildID: buildID},
+					DefaultVersioningBehavior: workflow.VersioningBehaviorPinned,
+				}},
+			},
+			Instrumentation: InstrumentationOptions{DisableTracing: true, DisableMetrics: true},
+		})
+		require.NoError(t, err)
+		t.Cleanup(func() { assert.NoError(t, backend.Close()) })
+		if buildID == "build-a" {
+			first = backend
+		}
+		require.NoError(t, backend.RegisterCancellationWorkflow(ctx, "cleanup.owner.cancel", engine.ActivityOptions{
+			Queue: queue, StartToCloseTimeout: time.Minute,
+			RetryPolicy: engine.RetryPolicy{InitialInterval: 100 * time.Millisecond},
+		}, func(_ context.Context, request engine.CancellationRequest) (bool, error) {
+			if request.RunID == queue+"-pinned" {
+				return true, nil
+			}
+			if buildID == "build-a" {
+				observedA.Add(1)
+				return false, nil
+			}
+			observedB.Add(1)
+			return true, nil
+		}))
+		require.NoError(t, backend.RegisterNativeWorkflow(ctx, queue, func(workflowContext workflow.Context) error {
+			workflow.GetSignalChannel(workflowContext, "finish").Receive(workflowContext, nil)
+			return nil
+		}, workflow.RegisterOptions{Name: "cleanup.owner"}))
+		require.NoError(t, backend.SealRegistration(ctx))
+	}
+	deployment := caller.client.WorkerDeploymentClient().GetHandle(deploymentName)
+	for _, buildID := range []string{"build-a", "build-b"} {
+		require.EventuallyWithT(t, func(collect *assert.CollectT) {
+			description, err := deployment.DescribeVersion(ctx, client.WorkerDeploymentDescribeVersionOptions{BuildID: buildID})
+			require.NoError(collect, err)
+			assert.Contains(collect, description.Info.TaskQueuesInfos, client.WorkerDeploymentTaskQueueInfo{Name: queue, Type: client.TaskQueueTypeWorkflow})
+		}, 10*time.Second, 100*time.Millisecond)
+	}
+	_, err := deployment.SetCurrentVersion(ctx, client.WorkerDeploymentSetCurrentVersionOptions{BuildID: "build-a"})
+	require.NoError(t, err)
+	pinnedRequest := engine.CancellationRequest{RunID: queue + "-pinned", Reason: run.CancellationReasonUserRequested}
+	pinnedTarget := &engine.WorkerDeploymentVersion{DeploymentName: deploymentName, BuildID: "build-a"}
+	require.NoError(t, caller.StartCancellationWorkflow(ctx, "cleanup.owner.cancel", queue, pinnedRequest, pinnedTarget))
+	pinnedID, _, err := startrecipe.CancellationRecipe("cleanup.owner.cancel", queue, pinnedRequest, pinnedTarget)
+	require.NoError(t, err)
+	require.NoError(t, caller.client.GetWorkflow(ctx, pinnedID, "").Get(ctx, nil))
+
+	request := engine.CancellationRequest{RunID: queue + "-follows", Reason: run.CancellationReasonUserRequested}
+	require.NoError(t, caller.StartCancellationWorkflow(ctx, "cleanup.owner.cancel", queue, request, nil))
+	require.Eventually(t, func() bool { return observedA.Load() > 0 }, 10*time.Second, 10*time.Millisecond)
+	jobID, _, err := startrecipe.CancellationRecipe("cleanup.owner.cancel", queue, request, nil)
+	require.NoError(t, err)
+	description, err := caller.client.DescribeWorkflowExecution(ctx, jobID, "")
+	require.NoError(t, err)
+	assert.Equal(t, enumspb.VERSIONING_BEHAVIOR_AUTO_UPGRADE, description.GetWorkflowExecutionInfo().GetVersioningInfo().GetBehavior())
+	assert.Nil(t, description.GetWorkflowExecutionInfo().GetVersioningInfo().GetVersioningOverride())
+
+	ownerID := queue + "-owner"
+	owner, err := caller.client.ExecuteWorkflow(ctx, client.StartWorkflowOptions{
+		ID: ownerID, TaskQueue: queue,
+		VersioningOverride: &client.PinnedVersioningOverride{Version: worker.WorkerDeploymentVersion{DeploymentName: deploymentName, BuildID: "build-a"}},
+	}, "cleanup.owner")
+	require.NoError(t, err)
+	observerCaller := &Engine{client: &cancellationOwnerCloseClient{
+		Client: caller.client, ownerID: ownerID,
+		afterDescription: func() error {
+			if err := caller.client.SignalWorkflow(ctx, ownerID, "", "finish", nil); err != nil {
+				return err
+			}
+			if err := owner.Get(ctx, nil); err != nil {
+				return err
+			}
+			if _, err := deployment.SetCurrentVersion(ctx, client.WorkerDeploymentSetCurrentVersionOptions{BuildID: "build-b"}); err != nil {
+				return err
+			}
+			first.stopWorkers()
+			return nil
+		},
+	}}
+	activeRequest := engine.CancellationRequest{RunID: queue + "-active", Reason: run.CancellationReasonUserRequested}
+	require.NoError(t, observerCaller.StartActiveCancellationWorkflow(ctx, ownerID, activeRequest))
+	activeJobID, _, err := startrecipe.CancellationRecipe("cleanup.owner.cancel", queue, activeRequest, nil)
+	require.NoError(t, err)
+	require.NoError(t, caller.client.GetWorkflow(ctx, activeJobID, "").Get(ctx, nil))
+	description, err = caller.client.DescribeWorkflowExecution(ctx, activeJobID, "")
+	require.NoError(t, err)
+	activeVersion := description.GetWorkflowExecutionInfo().GetVersioningInfo()
+	assert.Nil(t, activeVersion.GetVersioningOverride())
+	assert.Equal(t, "build-b", activeVersion.GetDeploymentVersion().GetBuildId())
+	require.NoError(t, caller.client.GetWorkflow(ctx, jobID, "").Get(ctx, nil))
+	assert.Positive(t, observedB.Load())
+	require.NoError(t, caller.StartCancellationWorkflow(ctx, "cleanup.owner.cancel", queue, request, nil))
+	require.NoError(t, caller.StartCancellationWorkflow(ctx, "cleanup.owner.cancel", queue, pinnedRequest, nil))
+	description, err = caller.client.DescribeWorkflowExecution(ctx, pinnedID, "")
+	require.NoError(t, err)
+	assert.Equal(t, "build-a", description.GetWorkflowExecutionInfo().GetVersioningInfo().GetVersioningOverride().GetPinned().GetVersion().GetBuildId())
+}
+
+func (c *cancellationOwnerCloseClient) DescribeWorkflowExecution(ctx context.Context, workflowID, runID string) (*workflowservice.DescribeWorkflowExecutionResponse, error) {
+	description, err := c.Client.DescribeWorkflowExecution(ctx, workflowID, runID)
+	if err != nil {
+		return nil, err
+	}
+	if workflowID == c.ownerID {
+		if err := c.afterDescription(); err != nil {
+			return nil, err
+		}
+	}
+	return description, nil
 }

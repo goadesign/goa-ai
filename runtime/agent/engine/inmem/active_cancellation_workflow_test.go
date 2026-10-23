@@ -15,7 +15,7 @@ import (
 )
 
 func TestStartActiveCancellationWorkflowUsesAcceptedRootAndChildRoutes(t *testing.T) {
-	e := New()
+	e := New().(*eng)
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 	release := make(chan struct{})
@@ -48,7 +48,7 @@ func TestStartActiveCancellationWorkflowUsesAcceptedRootAndChildRoutes(t *testin
 		}
 		return &api.RunOutput{Subject: input.Subject, RunID: input.RunID}, nil
 	}}))
-	handle, err := e.StartWorkflow(ctx, engine.WorkflowStartRequest{ID: "parent-run", Workflow: "parent", TaskQueue: "parent.queue", Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "parent-run"}})
+	handle, err := e.StartWorkflow(ctx, engine.WorkflowStartRequest{ID: "parent-run", Workflow: "parent", TaskQueue: "parent.queue", RootExecutionTarget: &engine.WorkerDeploymentVersion{DeploymentName: "workers", BuildID: "build-a"}, Input: &api.RunInput{Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}, RunID: "parent-run"}})
 	require.NoError(t, err)
 	select {
 	case <-ready:
@@ -57,8 +57,8 @@ func TestStartActiveCancellationWorkflowUsesAcceptedRootAndChildRoutes(t *testin
 	}
 	for _, id := range []string{"parent-run", "child-run"} {
 		request := engine.CancellationRequest{RunID: id, Reason: "user_requested"}
-		require.NoError(t, e.StartActiveCancellationWorkflow(ctx, id, request, nil))
-		require.NoError(t, e.StartActiveCancellationWorkflow(ctx, id, request, nil))
+		require.NoError(t, e.StartActiveCancellationWorkflow(ctx, id, request))
+		require.NoError(t, e.StartActiveCancellationWorkflow(ctx, id, request))
 		select {
 		case got := <-seen:
 			assert.Equal(t, id, got)
@@ -66,11 +66,16 @@ func TestStartActiveCancellationWorkflowUsesAcceptedRootAndChildRoutes(t *testin
 			t.Fatal("cleanup was not accepted on owner route")
 		}
 		var conflict *engine.CancellationConflictError
-		require.ErrorAs(t, e.StartActiveCancellationWorkflow(ctx, id, engine.CancellationRequest{RunID: id, Reason: "session_ended"}, nil), &conflict)
+		require.ErrorAs(t, e.StartActiveCancellationWorkflow(ctx, id, engine.CancellationRequest{RunID: id, Reason: "session_ended"}), &conflict)
 	}
+	e.mu.RLock()
+	for _, job := range e.cancellationJobs {
+		assert.Nil(t, job.target)
+	}
+	e.mu.RUnlock()
 	close(release)
 	_, err = handle.Wait(ctx)
 	require.NoError(t, err)
-	require.ErrorIs(t, e.StartActiveCancellationWorkflow(ctx, "parent-run", engine.CancellationRequest{RunID: "another", Reason: "user_requested"}, nil), engine.ErrWorkflowCompleted)
-	require.ErrorIs(t, e.StartActiveCancellationWorkflow(ctx, "missing", engine.CancellationRequest{RunID: "another", Reason: "user_requested"}, nil), engine.ErrWorkflowNotFound)
+	require.ErrorIs(t, e.StartActiveCancellationWorkflow(ctx, "parent-run", engine.CancellationRequest{RunID: "another", Reason: "user_requested"}), engine.ErrWorkflowCompleted)
+	require.ErrorIs(t, e.StartActiveCancellationWorkflow(ctx, "missing", engine.CancellationRequest{RunID: "another", Reason: "user_requested"}), engine.ErrWorkflowNotFound)
 }

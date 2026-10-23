@@ -305,7 +305,10 @@ Custom stores must follow the [preparation ownership upgrade](docs/runtime.md#pr
 - **Exact root worker builds.** `WithRootExecutionTarget` selects one worker
   deployment and build for an accepted root request. Prepared starts, retries,
   and completion repair preserve that target; child routing remains generated.
-  The Temporal adapter can read the current target before work is accepted.
+  Each new answer or cancellation continuation leaves worker selection to the
+  engine. Temporal chooses current workers and uses their configured versioning
+  behavior; default pinned versioning keeps that execution on its assigned build.
+  Retrying an already published request preserves its original launch settings.
 - **Native Temporal handlers.** Register SDK workflows and activities alongside
   agent handlers, and read the exact workflow and activity queues from successful
   registrations before starting workers.

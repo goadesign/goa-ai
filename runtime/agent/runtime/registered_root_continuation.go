@@ -87,10 +87,6 @@ func (r *Runtime) prepareOperationContinuationRequest(ctx context.Context, prede
 		}
 		return prepared.Request, nil
 	}
-	target, err := r.acceptedWorkflowTarget(ctx, owner)
-	if err != nil {
-		return engine.WorkflowStartRequest{}, err
-	}
 	turnID, err := lifecycle.RegisteredRunTurnID(owner.Subject, runID, predecessorRunID)
 	if err != nil {
 		return engine.WorkflowStartRequest{}, err
@@ -114,7 +110,6 @@ func (r *Runtime) prepareOperationContinuationRequest(ctx context.Context, prede
 		if err != nil {
 			return engine.WorkflowStartRequest{}, err
 		}
-		launch.rootExecutionTarget = target
 		request, err := prepareRunWithDefinition(input, launch, definition, owner.SessionID != "")
 		if err != nil {
 			return engine.WorkflowStartRequest{}, err
@@ -139,7 +134,7 @@ func (r *Runtime) prepareOperationContinuationRequest(ctx context.Context, prede
 	if _, _, err := restoreRegisteredRoot(input); err != nil {
 		return engine.WorkflowStartRequest{}, err
 	}
-	request := engine.WorkflowStartRequest{ID: runID, Workflow: registeredRootWorkflow, TaskQueue: checkpoint.Queue, Input: input, Memo: launch.memo, RootExecutionTarget: target}
+	request := engine.WorkflowStartRequest{ID: runID, Workflow: registeredRootWorkflow, TaskQueue: checkpoint.Queue, Input: input, Memo: launch.memo}
 	prepared, err := startrecipe.NewPreparedRequest("", request, "")
 	if err != nil {
 		return engine.WorkflowStartRequest{}, err

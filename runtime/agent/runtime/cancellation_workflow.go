@@ -22,9 +22,10 @@ import (
 	"goa.design/goa-ai/runtime/agent/storage"
 )
 
-// startSuspendedCancellation places cleanup on the highest parent's worker.
-// Active parents obtain routing from engine admission; saved parents use their
-// retained preparation or suspension without requiring old engine metadata.
+// startSuspendedCancellation accepts a supervisor for the highest parent's
+// cleanup. Parents supply their saved workflow name and queue. The supervisor
+// follows current workers and submits an ordinary cleanup workflow, which
+// Temporal keeps on the worker version that begins executing it.
 func (r *Runtime) startSuspendedCancellation(ctx context.Context, request CancelRequest, target session.RunMeta) (startErr error) {
 	defer func() {
 		var conflict *engine.CancellationConflictError
@@ -61,11 +62,7 @@ func (r *Runtime) startSuspendedCancellation(ctx context.Context, request Cancel
 		}
 		switch owner.Status {
 		case session.RunStatusRunning:
-			workflowTarget, targetErr := r.acceptedWorkflowTarget(ctx, owner)
-			if targetErr != nil {
-				return targetErr
-			}
-			err = r.Engine.StartActiveCancellationWorkflow(ctx, owner.RunID, request, workflowTarget)
+			err = r.Engine.StartActiveCancellationWorkflow(ctx, owner.RunID, request)
 			if errors.Is(err, engine.ErrWorkflowCompleted) || errors.Is(err, engine.ErrWorkflowNotFound) {
 				if err := r.observeClosedCancellationOwner(ctx, owner); err != nil {
 					return err
@@ -93,18 +90,14 @@ func (r *Runtime) startSuspendedCancellation(ctx context.Context, request Cancel
 				if decodeErr != nil {
 					return decodeErr
 				}
-				workflowTarget, targetErr := r.acceptedWorkflowTarget(ctx, owner)
-				if targetErr != nil {
-					return targetErr
-				}
-				err = r.Engine.StartCancellationWorkflow(ctx, registeredRootWorkflow+".cancel", checkpoint.Queue, request, workflowTarget)
+				err = r.Engine.StartCancellationWorkflow(ctx, registeredRootWorkflow+".cancel", checkpoint.Queue, request, nil)
 				break
 			}
-			route, launch, routeErr := r.cancellationLaunch(ctx, owner)
+			route, _, routeErr := r.cancellationLaunch(ctx, owner)
 			if routeErr != nil {
 				return routeErr
 			}
-			err = r.Engine.StartCancellationWorkflow(ctx, route.WorkflowName+".cancel", route.DefaultTaskQueue, request, launch.rootExecutionTarget)
+			err = r.Engine.StartCancellationWorkflow(ctx, route.WorkflowName+".cancel", route.DefaultTaskQueue, request, nil)
 		case session.RunStatusCompleted, session.RunStatusFailed, session.RunStatusCanceled:
 			fallthrough
 		default:
@@ -290,9 +283,9 @@ func (r *Runtime) cancellationOwners(ctx context.Context, current session.RunMet
 	return owners, nil
 }
 
-// cancellationLaunch derives an initial direct operation's route from its saved
-// declaration. Other roots and every published continuation retain the complete
-// submitted request, including the caller's memo and search attributes.
+// cancellationLaunch reads a suspended owner's saved workflow name, queue and
+// caller settings without selecting a worker release. A supervisor needs only
+// the route; an ordinary cleanup request also keeps the saved caller settings.
 func (r *Runtime) cancellationLaunch(ctx context.Context, owner session.RunMeta) (AgentRoute, workflowLaunchSettings, error) {
 	executor, ok := owner.Subject.Executor.AsAgent()
 	if !ok {
@@ -324,11 +317,7 @@ func (r *Runtime) cancellationLaunch(ctx context.Context, owner session.RunMeta)
 				return AgentRoute{}, workflowLaunchSettings{}, storage.NewContractError(err)
 			}
 			route := selected.ConsumerContract.Agent
-			target, err := r.acceptedWorkflowTarget(ctx, owner)
-			if err != nil {
-				return AgentRoute{}, workflowLaunchSettings{}, err
-			}
-			return AgentRoute{ID: agent.Ident(executor), WorkflowName: route.Workflow, DefaultTaskQueue: route.Queue}, workflowLaunchSettings{rootExecutionTarget: target}, nil
+			return AgentRoute{ID: agent.Ident(executor), WorkflowName: route.Workflow, DefaultTaskQueue: route.Queue}, workflowLaunchSettings{}, nil
 		}
 		if checkpoint.Context.Operation != nil {
 			if err := storage.ValidateSeedDeclaration(declaration); err != nil {
@@ -358,11 +347,7 @@ func (r *Runtime) cancellationLaunch(ctx context.Context, owner session.RunMeta)
 				return AgentRoute{}, workflowLaunchSettings{}, storage.NewContractError(err)
 			}
 			route := checkpoint.Context.Operation.ConsumerContract.Agent
-			target, err := r.acceptedWorkflowTarget(ctx, owner)
-			if err != nil {
-				return AgentRoute{}, workflowLaunchSettings{}, err
-			}
-			return AgentRoute{ID: agent.Ident(executor), WorkflowName: route.Workflow, DefaultTaskQueue: route.Queue}, workflowLaunchSettings{rootExecutionTarget: target}, nil
+			return AgentRoute{ID: agent.Ident(executor), WorkflowName: route.Workflow, DefaultTaskQueue: route.Queue}, workflowLaunchSettings{}, nil
 		}
 	}
 	accepted, found, err := r.Store.FindRunPreparation(ctx, storage.PreparationOperation{
@@ -400,7 +385,7 @@ func (r *Runtime) cancellationLaunch(ctx context.Context, owner session.RunMeta)
 		return AgentRoute{}, workflowLaunchSettings{}, storage.NewContractError(storage.ErrSeedConflict)
 	}
 	return AgentRoute{ID: agent.Ident(executor), WorkflowName: prepared.Request.Workflow, DefaultTaskQueue: prepared.Request.TaskQueue},
-		workflowLaunchSettings{rootExecutionTarget: prepared.Request.RootExecutionTarget, taskQueue: prepared.TaskQueueOverride, memo: prepared.Request.Memo, searchAttributes: prepared.Request.SearchAttributes}, nil
+		workflowLaunchSettings{taskQueue: prepared.TaskQueueOverride, memo: prepared.Request.Memo, searchAttributes: prepared.Request.SearchAttributes}, nil
 }
 
 // startCancellationContinuation publishes an ordinary root continuation with
@@ -485,14 +470,14 @@ func (r *Runtime) startCancellationContinuation(ctx context.Context, owner sessi
 		return err
 	}
 	if !found {
+		_, launch, err := r.cancellationLaunch(ctx, owner)
+		if err != nil {
+			return err
+		}
 		input, writer, err := r.buildStoredContinuationRunInput(ctx, registration.Definition, owner.SessionID, owner.RunID, runID, runID,
 			&api.RunContinuationInput{Cancellation: &request}, runID, runID)
 		if err != nil {
 			return engine.MarkActivityErrorNonRetryable(err)
-		}
-		_, launch, err := r.cancellationLaunch(ctx, owner)
-		if err != nil {
-			return err
 		}
 		compiled, err := prepareRunWithDefinition(input, launch, registration.Definition, owner.SessionID != "")
 		if err != nil {
