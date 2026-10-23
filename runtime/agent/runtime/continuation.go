@@ -300,19 +300,13 @@ func (r *Runtime) selectContinuationExecution(agentID agent.Ident, group *contin
 		if spec.IsAgentTool {
 			kind = staticAgentKind
 		}
-		if declaration.ConsumerContract.Kind != kind || !equivalentToolSpec(spec, resolved.Specs[spec.Name]) {
+		if declaration.ConsumerContract.Kind != kind {
 			return false, nil
 		}
-		if spec.IsAgentTool {
-			child, exists := definition.agents[agent.Ident(spec.AgentID)]
-			if !exists {
-				return false, nil
-			}
-			target := declaration.ConsumerContract.Agent
-			if target.Executor != string(child.route.ID) || target.Workflow != child.route.WorkflowName || target.Queue != child.route.DefaultTaskQueue {
-				return false, nil
-			}
-		}
+	}
+	available, err := historicalPagingExecutable(group.outputs, map[tools.Ident]tools.ToolSpec{source.Name: source, continuation.Name: continuation})
+	if err != nil || !available {
+		return false, err
 	}
 	group.source, group.spec = source, continuation
 	return true, nil

@@ -34,7 +34,7 @@ func TestStaticServiceRestoredSelectionsPreserveSavedBindings(t *testing.T) {
 			fixture.selected.Toolset.Tools[0].ConsumerContract.Payload.Fields[0].DiscriminatorValues = []string{}
 			expected := staticBindingExpectedBindings(t, fixture.selected, names)
 			catalog := fixture.catalog()
-			require.NoError(t, catalog.BindStaticService(testRegistryName, fixture.expected, fixture.selected, verifyTestStaticResource, names...))
+			require.NoError(t, catalog.BindStaticService(testRegistryName, fixture.expected, fixture.selected, readTestStaticResource, names...))
 			for _, name := range names {
 				selection := catalog.selections[name]
 				saved, err := selection.resolution.Select(selection.registry, name)
@@ -64,7 +64,7 @@ func TestStaticServiceRestoredSelectionsKeepMutationIsolation(t *testing.T) {
 	names := []tools.Ident{"records.extra_002", "records.find"}
 	expected := staticBindingExpectedBindings(t, fixture.selected, names)
 	catalog := fixture.catalog()
-	require.NoError(t, catalog.BindStaticService(testRegistryName, fixture.expected, fixture.selected, verifyTestStaticResource, names...))
+	require.NoError(t, catalog.BindStaticService(testRegistryName, fixture.expected, fixture.selected, readTestStaticResource, names...))
 	original := fixture.selected.Toolset.Tools[0]
 	fixture.selected.RegistrationToken = strings.Repeat("b", 64)
 	fixture.selected.Toolset.Name = "replacement.records"
@@ -106,7 +106,7 @@ func TestStaticServiceRestoredSelectionsRejectUnboundChanges(t *testing.T) {
 				unselected.ConsumerContract.Kind = "unsupported"
 			}
 			catalog := fixture.catalog()
-			err := catalog.BindStaticService(testRegistryName, fixture.expected, fixture.selected, verifyTestStaticResource, "records.find")
+			err := catalog.BindStaticService(testRegistryName, fixture.expected, fixture.selected, readTestStaticResource, "records.find")
 			require.Error(t, err)
 			if change == "description" {
 				require.ErrorContains(t, err, "complete generated declaration")
@@ -129,15 +129,19 @@ func TestStaticServiceRestoredSelectionsVerifyPreviousResourceForNewPages(t *tes
 			catalog := fixture.catalog()
 			ownerFailure := errors.New("previous registration belongs to another resource")
 			verified := 0
-			verify := func(ctx context.Context, route, token string) error {
+			verify := func(ctx context.Context, route, token string) (*genregistry.ResolvedToolset, error) {
 				assert.Equal(t, t.Context(), ctx)
 				assert.Equal(t, previousRoute, route)
 				assert.Equal(t, previousToken, token)
 				verified++
 				if scenario == "owner rejects previous registration" {
-					return ownerFailure
+					return nil, ownerFailure
 				}
-				return nil
+				prior, err := registrycontract.Read(previous, fixture.definition.registryDeclaration)
+				if err != nil {
+					return nil, err
+				}
+				return prior.Registered, nil
 			}
 			require.NoError(t, catalog.BindStaticService(testRegistryName, fixture.expected, fixture.selected, verify, "records.find"))
 			assert.Zero(t, verified, "binding does not reauthorize accepted calls")
@@ -173,19 +177,20 @@ func TestStaticServiceRestoredSelectionsVerifyPreviousResourceForNewPages(t *tes
 func TestStaticServiceRestoreFailureLeavesExistingCatalogUntouched(t *testing.T) {
 	fixture := newStaticBindingFixture(t, 4)
 	catalog := fixture.catalog()
-	require.NoError(t, catalog.BindStaticService(testRegistryName, fixture.expected, fixture.selected, verifyTestStaticResource, "records.extra_000"))
+	require.NoError(t, catalog.BindStaticService(testRegistryName, fixture.expected, fixture.selected, readTestStaticResource, "records.extra_000"))
 	beforeSelections := maps.Clone(catalog.selections)
 	beforeLabels := maps.Clone(catalog.labels)
 	catalog.definition.declarations = maps.Clone(catalog.definition.declarations)
 	delete(catalog.definition.declarations, "records.extra_001")
-	err := catalog.BindStaticService(testRegistryName, fixture.expected, fixture.selected, verifyTestStaticResource, "records.find", "records.extra_001")
+	err := catalog.BindStaticService(testRegistryName, fixture.expected, fixture.selected, readTestStaticResource, "records.find", "records.extra_001")
 	require.ErrorContains(t, err, "cannot be restored")
 	assert.Len(t, catalog.selections, len(beforeSelections))
 	for name, before := range beforeSelections {
 		after := catalog.selections[name]
 		assert.Equal(t, before.registry, after.registry)
 		assert.Same(t, before.resolution, after.resolution)
-		require.NoError(t, after.verifyPrevious(t.Context(), fixture.selected.Toolset.Name, fixture.selected.RegistrationToken))
+		_, readErr := after.readPrevious(t.Context(), fixture.selected.Toolset.Name, fixture.selected.RegistrationToken)
+		require.NoError(t, readErr)
 	}
 	assert.Equal(t, beforeLabels, catalog.labels)
 }
@@ -200,7 +205,7 @@ func TestStaticServiceRestoredSelectionsKeepConcurrentCatalogsIndependent(t *tes
 	for index := range catalogs {
 		workers.Go(func() {
 			catalog := fixture.catalog()
-			if err := catalog.BindStaticService(testRegistryName, fixture.expected, fixture.selected, verifyTestStaticResource, names...); err != nil {
+			if err := catalog.BindStaticService(testRegistryName, fixture.expected, fixture.selected, readTestStaticResource, names...); err != nil {
 				failures <- err
 				return
 			}

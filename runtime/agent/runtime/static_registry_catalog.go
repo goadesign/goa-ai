@@ -19,13 +19,14 @@ const staticServiceKind = "service"
 // BindStaticService attaches an owner-selected registration to explicitly named
 // generated service tools. The complete expected declaration must match, except
 // its toolset name may be replaced by the selected route. No catalog is read.
-// Before a new page uses this registration, verifyPrevious must verify that the
-// saved private toolset route and exact token belong to this same logical
-// resource. An owner read failure stops planning; accepted calls keep their
-// original registration and never call verifyPrevious.
-func (c *RegistryCatalog) BindStaticService(registry string, expected *genregistry.Toolset, selected *genregistry.ResolvedToolset, verifyPrevious func(context.Context, string, string) error, names ...tools.Ident) error {
-	if verifyPrevious == nil {
-		return fmt.Errorf("static service binding requires verification of previous registrations")
+// Before a new page uses this registration, readPrevious returns the exact old
+// declarations and proves that the saved route and token belong to this same
+// logical resource. An owner read failure stops planning; accepted calls keep their
+// original registration and never call readPrevious. The reader returns the
+// exact owner's ResolvedToolset so saved fingerprints use the old declarations.
+func (c *RegistryCatalog) BindStaticService(registry string, expected *genregistry.Toolset, selected *genregistry.ResolvedToolset, readPrevious func(context.Context, string, string) (*genregistry.ResolvedToolset, error), names ...tools.Ident) error {
+	if readPrevious == nil {
+		return fmt.Errorf("static service binding requires a reader for previous registrations")
 	}
 	if len(names) == 0 {
 		return fmt.Errorf("static service binding requires explicit tool names")
@@ -99,7 +100,7 @@ func (c *RegistryCatalog) BindStaticService(registry string, expected *genregist
 		if err != nil {
 			return err
 		}
-		c.selections[name] = registrySelection{registry: registry, resolution: restored[index], verifyPrevious: verifyPrevious}
+		c.selections[name] = registrySelection{registry: registry, resolution: restored[index], readPrevious: readPrevious}
 		c.labels[name] = slices.Clone(declaration.ConsumerContract.RequiredLabels)
 	}
 	return nil

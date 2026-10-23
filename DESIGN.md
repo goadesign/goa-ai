@@ -1523,8 +1523,12 @@ retains that selection without copying the operation declarations: readers
 restore them from the consuming definition's generated declarations and compare
 a saved fingerprint first. No model argument is introduced.
 New service pages select today's catalog registration before acceptance. The
-required `BindStaticService` callback verifies each prior private route and token
-against the current resource's owner and permanent name. Registered imports use
+required `BindStaticService` callback reads each prior private route and token
+from the current resource's owner and permanent name and returns its exact
+`ResolvedToolset`. Saved compiled fingerprints are checked against those old
+selected operations; current input, paging and policy checks govern the new call.
+A changed description alone does not remove a valid page action. Proven previous
+selections belong only to that activity's accepted actor and invocation. Registered imports use
 their retained owner, kind, and resource name; direct imports keep their declared
 registry route identity. Runtime source-call IDs correlate ordered pages across
 registrations, while every accepted call keeps its own exact execution selection.
@@ -1547,8 +1551,11 @@ The selected registration owns configuration revisions; discovery descriptions
 and tags do not replace generated operation contracts. Accepted calls retain
 that selection, without the operation declarations, and use consumer-owned codecs.
 New pages select the current native registration and configuration only after
-the required owner callback verifies prior routes, tokens and Agent targets.
-The callback uses existing owner APIs; no new saved record is needed. Native
+the required owner callback reads the exact prior declarations and verifies
+routes, tokens and Agent targets. It returns the existing generated
+`ResolvedToolset`; old selected-operation fingerprints remain exact even when
+current descriptions differ. The callback uses existing owner APIs; no new saved
+record is needed. Native
 calls still run as durable child workflows.
 
 `RegistryCatalog.IncludeResolved` imports original operation names from an exact

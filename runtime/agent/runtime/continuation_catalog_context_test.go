@@ -58,7 +58,7 @@ func TestContinuationAvailabilityPreservesNativeContextAndSkipsUnusedCatalog(t *
 				if scenario != "open query" {
 					return dependency
 				}
-				return catalog.BindStaticService(testRegistryName, current.Toolset, current, verifyTestStaticResource, "records.find", "records.continue")
+				return catalog.BindStaticService(testRegistryName, current.Toolset, current, func(context.Context, string, string) (*genregistry.ResolvedToolset, error) { return old, nil }, "records.find", "records.continue")
 			}}
 			definition := testAgentDefinition("generic.agent", "generic.workflow", "test", specs, nil).
 				WithRegistryTools(sources).WithRegistryDeclarations(testDeclarations(current.Toolset.Tools))

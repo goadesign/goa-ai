@@ -36,7 +36,7 @@ func staticServiceCatalog(t *testing.T) (*Runtime, *RegistryCatalog, *genregistr
 
 func TestStaticServiceBindingRetainsGeneratedCodecsAndInputPreparation(t *testing.T) {
 	rt, catalog, selected := staticServiceCatalog(t)
-	require.NoError(t, catalog.BindStaticService(testRegistryName, genrecords.Toolset(), selected, verifyTestStaticResource, genrecords.Read))
+	require.NoError(t, catalog.BindStaticService(testRegistryName, genrecords.Toolset(), selected, readTestStaticResource, genrecords.Read))
 	original := genrecords.SpecRead()
 	bound := genrecords.SpecRead()
 	bound.PrepareInput = func(value any) (rawjson.Message, error) {
@@ -98,7 +98,7 @@ func TestStaticServiceBindingRejectsMismatches(t *testing.T) {
 			case "complete declaration":
 				selected.Toolset.Tools = selected.Toolset.Tools[:2]
 			}
-			require.Error(t, catalog.BindStaticService(registry, expected, selected, verifyTestStaticResource, names...))
+			require.Error(t, catalog.BindStaticService(registry, expected, selected, readTestStaticResource, names...))
 			assert.Empty(t, catalog.selections)
 		})
 	}
@@ -107,7 +107,7 @@ func TestStaticServiceBindingRejectsMismatches(t *testing.T) {
 func TestBoundStaticAndUnboundStaticDoNotCaptureOtherAgentDynamicCalls(t *testing.T) {
 	rt, catalog, selected := staticServiceCatalog(t)
 	require.ErrorContains(t, catalog.IncludeResolved(testRegistryName, selected, false), "repeats tool")
-	require.NoError(t, catalog.BindStaticService(testRegistryName, genrecords.Toolset(), selected, verifyTestStaticResource, genrecords.Read))
+	require.NoError(t, catalog.BindStaticService(testRegistryName, genrecords.Toolset(), selected, readTestStaticResource, genrecords.Read))
 	compiled, err := catalog.selections[genrecords.Read].resolution.Select(testRegistryName, genrecords.Read)
 	require.NoError(t, err)
 	other := testRegistryAgentDefinition(testRegistrySources{whole: true})
@@ -135,7 +135,7 @@ func TestBoundStaticAndUnboundStaticDoNotCaptureOtherAgentDynamicCalls(t *testin
 
 func TestBoundServiceCheckpointUsesGeneratedCodecWithoutDiscovery(t *testing.T) {
 	rt, catalog, selected := staticServiceCatalog(t)
-	require.NoError(t, catalog.BindStaticService(testRegistryName, genrecords.Toolset(), selected, verifyTestStaticResource, genrecords.Read))
+	require.NoError(t, catalog.BindStaticService(testRegistryName, genrecords.Toolset(), selected, readTestStaticResource, genrecords.Read))
 	binding, err := catalog.selections[genrecords.Read].resolution.Select(testRegistryName, genrecords.Read)
 	require.NoError(t, err)
 	call := ToolCall{Name: genrecords.Read, Registry: binding, Payload: rawjson.Message(`{"query":"all"}`)}
@@ -155,7 +155,7 @@ func TestBoundServiceCheckpointUsesGeneratedCodecWithoutDiscovery(t *testing.T) 
 
 func TestBoundStaticConfirmationAndProvidedResultKeepGeneratedTypes(t *testing.T) {
 	rt, catalog, selected := staticServiceCatalog(t)
-	require.NoError(t, catalog.BindStaticService(testRegistryName, genrecords.Toolset(), selected, verifyTestStaticResource, genrecords.Erase))
+	require.NoError(t, catalog.BindStaticService(testRegistryName, genrecords.Toolset(), selected, readTestStaticResource, genrecords.Erase))
 	binding, err := catalog.selections[genrecords.Erase].resolution.Select(testRegistryName, genrecords.Erase)
 	require.NoError(t, err)
 	call := ToolCall{Name: genrecords.Erase, ToolCallID: "erase-call", RunID: "original-run", Registry: binding, Payload: rawjson.Message(`{}`), Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("records.agent")}}
@@ -253,7 +253,7 @@ func TestBoundStaticPagingSelectsCurrentTokenAndOwnedContinuationCodec(t *testin
 	rt.agents[definition.route.ID] = AgentRegistration{Definition: definition}
 	require.NoError(t, rt.RegisterRegistry(testRegistryName, &genregistry.Client{}, unusedRegistryPulse{}))
 	catalog := rt.newRegistryCatalog(definition)
-	require.NoError(t, catalog.BindStaticService(testRegistryName, selected.Toolset, selected, verifyTestStaticResource, "records.find"))
+	require.NoError(t, catalog.BindStaticService(testRegistryName, selected.Toolset, selected, readTestStaticResource, "records.find"))
 	binding, err := catalog.selections["records.find"].resolution.Select(testRegistryName, "records.find")
 	require.NoError(t, err)
 	output := sourceContinuationOutput("records.find", "query", `{"value":1}`, "cursor")
@@ -263,7 +263,7 @@ func TestBoundStaticPagingSelectsCurrentTokenAndOwnedContinuationCodec(t *testin
 	require.Len(t, actions, 1)
 	current := testRegistryPagingResolution(strings.Repeat("b", 64))
 	catalog = rt.newRegistryCatalog(definition)
-	require.NoError(t, catalog.BindStaticService(testRegistryName, current.Toolset, current, verifyTestStaticResource, "records.find"))
+	require.NoError(t, catalog.BindStaticService(testRegistryName, current.Toolset, current, readTestStaticResource, "records.find"))
 	continuationDecoded = false
 	actions, err = catalog.bindContinuationActions(t.Context(), actions)
 	require.NoError(t, err)
@@ -297,8 +297,10 @@ func TestSelectedOperationRestoresRegisteredAlias(t *testing.T) {
 	assert.Equal(t, "revision/original", operation.ConsumerContract.Agent.Configuration)
 }
 
-// verifyTestStaticResource stands for the synthetic owner's successful exact
+// readTestStaticResource stands for the synthetic owner's successful exact
 // resource read. Tests of rejected and failed reads install their own checks.
-func verifyTestStaticResource(context.Context, string, string) error {
-	return nil
+func readTestStaticResource(_ context.Context, route, token string) (*genregistry.ResolvedToolset, error) {
+	selected := testRegistryPagingResolution(token)
+	selected.Toolset.Name = route
+	return selected, nil
 }
