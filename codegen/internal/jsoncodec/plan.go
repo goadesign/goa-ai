@@ -1,4 +1,4 @@
-// Package jsoncodec adds complete-value JSON functions to the original Go
+// Package jsoncodec adds typed validation and JSON functions to the original Go
 // packages already selected by Goa. It neither selects new types nor changes
 // service, tool, or completion representations.
 package jsoncodec
@@ -37,7 +37,7 @@ type (
 
 const sourceHeader = "source-header"
 
-// NewPlan adds codecs only for supported original declarations already chosen
+// NewPlan adds validation and codecs for supported original declarations chosen
 // by Goa. Unsupported complete values do not claim names, imports, or packages.
 func NewPlan(generation *codegen.Generation, services *service.Plan) (*Plan, error) {
 	plan := &Plan{generation: generation}
@@ -68,6 +68,9 @@ func NewPlan(generation *codegen.Generation, services *service.Plan) (*Plan, err
 		}
 		value, err := pkg.codecs.AddStandalone(userType.Name(), userType.Name(), attribute, layout)
 		if err != nil {
+			return nil, err
+		}
+		if err := value.PlanValidation(); err != nil {
 			return nil, err
 		}
 		pkg.values = append(pkg.values, &valuePlan{layout: layout, codec: value})

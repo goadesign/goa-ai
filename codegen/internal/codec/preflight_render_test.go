@@ -59,6 +59,7 @@ func TestPlanOrdinaryCodecHasNoPreflights(t *testing.T) {
 	require.NoError(t, err)
 	value, err := addCodecTestValue(t, plan, "message", "Message", &expr.AttributeExpr{Type: expr.String}, EncodeAndDecode)
 	require.NoError(t, err)
+	require.NoError(t, value.PlanValidation())
 	require.NoError(t, generation.Freeze())
 	context := codegen.NewAttributeContext(false, false, true, "", codegen.NewNameScope())
 	require.NoError(t, value.BindService(context.Scope))
@@ -66,7 +67,12 @@ func TestPlanOrdinaryCodecHasNoPreflights(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, files, 1)
 	assert.Len(t, files[0].SectionTemplates, 2)
-	assert.Empty(t, files[0].SectionTemplates[1].Data.(*fileData).Preflights)
+	data := files[0].SectionTemplates[1].Data.(*fileData)
+	assert.Empty(t, data.Preflights)
+	require.Len(t, data.Values, 1)
+	assert.NotEmpty(t, data.Values[0].Validate)
+	assert.Empty(t, data.Values[0].Preflight)
+	assert.Empty(t, data.Values[0].OriginalValidator)
 }
 
 func BenchmarkPlanLinkStandalonePreflights(b *testing.B) {

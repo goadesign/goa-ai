@@ -1,7 +1,8 @@
 # Standalone JSON codecs
 
-Generate strict JSON encoding and decoding for an existing named Goa type
-without declaring a tool, completion, or service method for serialization.
+Generate typed field validation and strict JSON encoding and decoding for an
+existing named Goa type without declaring a tool, completion, or service method
+for serialization.
 With the Goa-AI DSL imported, normal `goa gen` adds typed functions beside each
 supported original type. Goa continues to own type discovery, package placement,
 and the type's Go representation.
@@ -46,6 +47,7 @@ Run the application's normal `goa gen` command. For the example above, generatio
 adds these functions to `gen/types`:
 
 ```go
+func ValidateSettingsValue(value *Settings) error
 func EncodeSettings(value *Settings) ([]byte, error)
 func DecodeSettings(data []byte) (*Settings, error)
 ```
@@ -56,11 +58,25 @@ representation. Other root shapes use their corresponding Go references.
 Function names use Goa's normal collision resolution. JSON helper types and
 functions remain private within the original package.
 
-Each supported original declaration receives its own pair, including reachable
-nested types. A declaration shared by several services gets one pair in its
-owning package; an original generated into separate service packages gets a
-pair in each. Shared nested JSON helper declarations are reused within each
+Each supported original declaration receives these functions, including reachable
+nested types. A declaration shared by several services gets these functions in its
+owning package; an original generated into separate service packages gets them
+in each. Shared nested JSON helper declarations are reused within each
 package. No codec subdirectory is reserved.
+
+## Validate a typed value
+
+`ValidateSettingsValue` checks the original Go fields against their declared
+constraints without encoding JSON. It checks text and cycles, validates required
+objects and field constraints before conversion, then validates the private
+transport value. Original Go integer values are checked before a later transport
+can narrow them. Validation leaves the input unchanged and rejects a nil object
+root.
+
+Use this function when you need the declared field checks but no JSON bytes.
+It does not guarantee that JSON encoding will succeed; use `EncodeSettings`
+when you need a JSON document. Regenerate to receive the new function; existing
+encoding and decoding callers do not need to change.
 
 ## Encoding and decoding
 
@@ -137,7 +153,7 @@ different representations.
 
 The generated functions do not add JSON methods to original types or change
 existing serialization automatically. Applications adopt them by calling the
-typed encode and decode functions.
+typed validation, encode and decode functions.
 
 The codec does not migrate previously stored application data. Before replacing
 an existing serializer, verify that retained documents satisfy the declared Goa
