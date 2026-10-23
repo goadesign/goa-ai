@@ -126,6 +126,42 @@ func TestOriginalNilContractIsUnchanged(t *testing.T) {
 	}
 }
 
+// TestNullableNestedCollectionsKeepEntries checks the generated request and
+// response conversions before protobuf serialization changes nil messages.
+func TestNullableNestedCollectionsKeepEntries(t *testing.T) {
+	in := record("empty")
+	in.Node = &gen.Node{
+		Items: []*gen.Item{}, Labels: map[string]string{},
+		Children: []*gen.Node{nil, {Items: []*gen.Item{}, Labels: map[string]string{"entry": "last"}}},
+		ByName: map[string]*gen.Node{
+			"absent":  nil,
+			"present": {Items: []*gen.Item{}, Labels: map[string]string{"entry": "present"}},
+		},
+	}
+	for _, direction := range []string{"request", "response"} {
+		t.Run(direction, func(t *testing.T) {
+			var out *gen.Record
+			if direction == "request" {
+				out = genserver.NewExchangePayload(genclient.NewProtoExchangeRequest(in))
+			} else {
+				out = genclient.NewExchangeResult(genserver.NewProtoExchangeResponse(in))
+			}
+			if out.Node == nil || len(out.Node.Children) != 2 || len(out.Node.ByName) != 2 {
+				t.Fatal("nullable collections changed size or lost their parent")
+			}
+			if out.Node.Children[0] != nil || out.Node.Children[1] == nil || out.Node.Children[1].Labels["entry"] != "last" {
+				t.Error("nullable array changed entry positions or values")
+			}
+			if value, ok := out.Node.ByName["absent"]; !ok || value != nil {
+				t.Error("nullable map lost its key or changed its nil value")
+			}
+			if value := out.Node.ByName["present"]; value == nil || value.Labels["entry"] != "present" {
+				t.Error("nullable map changed its populated value")
+			}
+		})
+	}
+}
+
 // record supplies explicitly empty collections before any transport conversion.
 func record(shape string) *gen.Record {
 	value := &gen.Record{
