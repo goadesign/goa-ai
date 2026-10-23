@@ -118,9 +118,9 @@ func TestCancellationWorkflowWithoutTargetKeepsAcceptedRecipe(t *testing.T) {
 	require.NoError(t, implementation.StartCancellationWorkflow(t.Context(), "cleanup", "queue", request, nil))
 	require.NoError(t, implementation.StartCancellationWorkflow(t.Context(), "cleanup", "queue", request, nil))
 	require.NoError(t, implementation.StartCancellationWorkflow(t.Context(), "cleanup", "queue", request, &engine.WorkerDeploymentVersion{DeploymentName: "workers", BuildID: "build-a"}))
-	assert.ErrorIs(t, implementation.StartCancellationWorkflow(t.Context(), "cleanup", "queue", request, target), engine.ErrWorkflowStartConflict)
-	assert.ErrorIs(t, implementation.StartCancellationWorkflow(t.Context(), "other", "queue", request, nil), engine.ErrWorkflowStartConflict)
-	assert.ErrorIs(t, implementation.StartCancellationWorkflow(t.Context(), "other-queue", "other", request, nil), engine.ErrWorkflowStartConflict)
+	require.ErrorIs(t, implementation.StartCancellationWorkflow(t.Context(), "cleanup", "queue", request, target), engine.ErrWorkflowStartConflict)
+	require.ErrorIs(t, implementation.StartCancellationWorkflow(t.Context(), "other", "queue", request, nil), engine.ErrWorkflowStartConflict)
+	require.ErrorIs(t, implementation.StartCancellationWorkflow(t.Context(), "other-queue", "other", request, nil), engine.ErrWorkflowStartConflict)
 	request.Reason = "session_ended"
 	var conflict *engine.CancellationConflictError
 	assert.ErrorAs(t, implementation.StartCancellationWorkflow(t.Context(), "cleanup", "queue", request, nil), &conflict)
