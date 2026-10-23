@@ -87,9 +87,9 @@ func TestCancellationWorkflowWithoutTargetReusesExactAcceptedPin(t *testing.T) {
 			if test.conflict {
 				if test.reason != "user_requested" {
 					var conflict *engine.CancellationConflictError
-					assert.ErrorAs(t, err, &conflict)
+					require.ErrorAs(t, err, &conflict)
 				} else {
-					assert.ErrorIs(t, err, engine.ErrWorkflowStartConflict)
+					require.ErrorIs(t, err, engine.ErrWorkflowStartConflict)
 				}
 				return
 			}
