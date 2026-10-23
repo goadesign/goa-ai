@@ -1,3 +1,6 @@
+// Package runtime gives each planning activity its run context, model clients,
+// prompts, and permitted tool definitions. Supplied tool specifications are copied
+// when the context is built; advertising reads them without changing saved data.
 package runtime
 
 import (
@@ -114,8 +117,9 @@ func (c *simplePlannerContext) AdvertisedToolDefinitions() []*model.ToolDefiniti
 	if specs == nil {
 		specs = c.rt.ToolSpecsForAgent(c.agent)
 	}
-	specs = cloneToolSpecs(specs)
-	visible := specs[:0]
+	// Keep filtered entries separate so repeated and concurrent calls read the
+	// complete saved specifications without overwriting any entries.
+	visible := make([]tools.ToolSpec, 0, len(specs))
 	for _, spec := range specs {
 		if slices.Contains(c.unavailableTools, spec.Name) {
 			continue
