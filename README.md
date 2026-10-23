@@ -239,6 +239,8 @@ Custom stores must follow the [preparation ownership upgrade](docs/runtime.md#pr
   shutdown; omitted options retain existing behavior. See
   [provider lifecycle](docs/runtime.md#registry-routed-provider-execution-service-side).
   Catalogs retain resource ownership; applications authorize discovery and use.
+  Newly committed native declarations retain validation of their saved bytes
+  for local reuse; reads still check current bytes, state and retirement.
   Local maintenance tools can use `registry.NewCatalogReader` to inspect saved
   registrations without starting workers or writing Redis data; see
   [read-only catalog inspection](docs/runtime.md#read-only-catalog-inspection).

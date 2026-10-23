@@ -1,10 +1,12 @@
 // Package registry saves the generated operation declarations for one immutable
-// native revision. The host authorizes requests and validates dependencies before
-// delivering an accepted revision.
+// native revision. Admission checks the exact bytes later readers will load. A
+// new committed registration retains that preparation; repeats keep the existing
+// cache entry. The host authorizes requests and validates dependencies first.
 package registry
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -16,13 +18,23 @@ import (
 // Identical delivery survives stable resource retirement, while
 // changed content and an independently retired exact registration conflict.
 func (s *Service) RegisterAgentExports(ctx context.Context, p *genregistry.AgentExportsDeclaration) (*genregistry.ResolvedToolset, error) {
-	definition, err := s.prepareAgentToolset(&genregistry.Toolset{Name: p.Name, Description: p.Description, Version: p.Version, Tags: p.Tags, Tools: p.Exports}, &CatalogIdentity{Scope: p.Scope, Name: p.ResourceName})
-	if err != nil {
-		return nil, err
+	if _, err := genregistry.EncodeAgentExportsDeclaration(p); err != nil {
+		return nil, genregistry.MakeValidationError(err)
 	}
-	_, err = genregistry.EncodeAgentExportsDeclaration(p)
+	body, err := json.Marshal(&genregistry.Toolset{Name: p.Name, Description: p.Description, Version: p.Version, Tags: p.Tags, Tools: p.Exports})
 	if err != nil {
 		return nil, genregistry.MakeValidationError(err)
+	}
+	raw := string(body)
+	compiled, err := s.catalog.prepareDefinition(p.Name, raw, true)
+	if err != nil {
+		return nil, genregistry.MakeValidationError(err)
+	}
+	compiled.digest = catalogDefinitionDigest(raw)
+	definition := &catalogToolset{
+		catalogDefinition: compiled,
+		identity:          &CatalogIdentity{Scope: p.Scope, Name: p.ResourceName},
+		raw:               raw,
 	}
 	var result *genregistry.ResolvedToolset
 	err = s.updateCatalog(ctx, "register_exports", func(tx *catalogTransaction) error {

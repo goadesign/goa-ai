@@ -67,6 +67,21 @@ func (c *toolsetCatalog) validatedDefinition(ctx context.Context, name, raw stri
 		span.SetAttributes(attribute.Bool("toolregistry.catalog.definition_cache_hit", true))
 		return definition, nil
 	}
+	definition, err := c.prepareDefinition(name, raw, nativeAgent)
+	if err != nil {
+		return nil, err
+	}
+	definition.digest = digest
+	c.definitionsMu.Lock()
+	c.definitions[name] = definition
+	c.definitionsMu.Unlock()
+	return definition, nil
+}
+
+// prepareDefinition receives exact saved JSON, checks its original member names
+// and fingerprint, and returns an owned declaration with compiled schemas. Native
+// admission and cold reads use these same rules before retaining the result.
+func (c *toolsetCatalog) prepareDefinition(name, raw string, nativeAgent bool) (*catalogDefinition, error) {
 	toolset, fingerprint, err := internaladmission.SavedToolsetFingerprint([]byte(raw))
 	if err != nil {
 		return nil, fmt.Errorf("decode definition %q: %w", name, err)
@@ -87,11 +102,7 @@ func (c *toolsetCatalog) validatedDefinition(ctx context.Context, name, raw stri
 		return nil, err
 	}
 	definition := compiled.catalogDefinition
-	definition.digest = digest
 	definition.nativeAgent = nativeAgent
-	c.definitionsMu.Lock()
-	c.definitions[name] = definition
-	c.definitionsMu.Unlock()
 	return definition, nil
 }
 

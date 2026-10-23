@@ -136,7 +136,19 @@ func (s *Service) catalogAttempt(ctx context.Context, apply func(*catalogTransac
 			pipe.Exists(ctx, store.state)
 			return nil
 		})
-		return err
+		if err != nil {
+			return err
+		}
+		// A newly committed native declaration reuses its exact-byte preparation
+		// on this process's first read. Repeated admissions have no staged
+		// registration, so they cannot replace a warm saved-byte cache entry.
+		if p.registration != nil {
+			definition := p.registration.definition
+			s.catalog.definitionsMu.Lock()
+			s.catalog.definitions[definition.info.Name] = definition.catalogDefinition
+			s.catalog.definitionsMu.Unlock()
+		}
+		return nil
 	}, store.state, store.definitions, store.retired, store.catalogRecords())
 }
 
