@@ -63,19 +63,24 @@ func validatejsonHostInputRequestTransport(value *jsonHostInputRequestTransport)
 		err = goa.MergeErrors(err, goa.MissingFieldError("question", "body"))
 	}
 	if value.Question != nil {
-		switch string(value.Question.Kind()) {
-		case "form":
-			actual, _ := value.Question.AsForm()
-			if actual != nil {
-				if err2 := validatejsonHostFormParamsTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Question.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Question.Kind()) {
+			case "form":
+				actual, _ := value.Question.AsForm()
+				if actual != nil {
+					if err2 := validatejsonHostFormParamsTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "url":
-			actual, _ := value.Question.AsURL()
-			if actual != nil {
-				if err2 := validatejsonHostURLParamsTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "url":
+				actual, _ := value.Question.AsURL()
+				if actual != nil {
+					if err2 := validatejsonHostURLParamsTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -122,19 +127,24 @@ func validateHostInputRequestOriginal(value *HostInputRequest) (err error) {
 	if value.Question.Kind() == "" {
 		err = goa.MergeErrors(err, goa.MissingFieldError("question", "value"))
 	}
-	switch string(value.Question.Kind()) {
-	case "form":
-		actual, _ := value.Question.AsForm()
-		if actual != nil {
-			if err2 := validateHostFormParamsOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+
+	if err2 := value.Question.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.Question.Kind()) {
+		case "form":
+			actual, _ := value.Question.AsForm()
+			if actual != nil {
+				if err2 := validateHostFormParamsOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "url":
-		actual, _ := value.Question.AsURL()
-		if actual != nil {
-			if err2 := validateHostURLParamsOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "url":
+			actual, _ := value.Question.AsURL()
+			if actual != nil {
+				if err2 := validateHostURLParamsOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
 		}
 	}
@@ -322,6 +332,34 @@ func EncodeHostFormParams(in *HostFormParams) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateHostFormParamsValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateHostFormParamsValue(in *HostFormParams) error {
+	if err := checkHostFormParamsValue(in); err != nil {
+		return fmt.Errorf("validate HostFormParams value: %w", err)
+	}
+	if err := validateHostFormParamsOriginal(in); err != nil {
+		return fmt.Errorf("validate HostFormParams value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "HostFormParams")
+	}
+
+	var body *jsonHostFormParamsTransport
+	{
+		body = &jsonHostFormParamsTransport{
+			Message:         &in.Message,
+			RequestedSchema: in.RequestedSchema,
+		}
+	}
+	if err := validatejsonHostFormParamsTransport(body); err != nil {
+		return fmt.Errorf("validate HostFormParams value: %w", err)
+	}
+	return nil
+}
+
 // DecodeHostFormParams checks JSON field names from the Goa design and returns a service value.
 func DecodeHostFormParams(data []byte) (out *HostFormParams, err error) {
 	root, err := readStrictJSON(data)
@@ -407,6 +445,61 @@ func EncodeHostInputRequest(in *HostInputRequest) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateHostInputRequestValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateHostInputRequestValue(in *HostInputRequest) error {
+	if err := checkHostInputRequestValue(in); err != nil {
+		return fmt.Errorf("validate HostInputRequest value: %w", err)
+	}
+	if err := validateHostInputRequestOriginal(in); err != nil {
+		return fmt.Errorf("validate HostInputRequest value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "HostInputRequest")
+	}
+
+	var body *jsonHostInputRequestTransport
+	{
+		body = &jsonHostInputRequestTransport{}
+		var questionValue jsonHostQuestionTransport
+		switch string(in.Question.Kind()) {
+		case "form":
+			actual, _ := in.Question.AsForm()
+			var obj *jsonHostFormParamsTransport
+			if actual != nil {
+				obj = encodeHostFormParamsToHostFormParamsTransport(actual)
+			}
+			u := questionValue
+			u.SetForm((*jsonHostFormParamsTransport)(obj))
+			questionValue = u
+		case "url":
+			actual, _ := in.Question.AsURL()
+			var obj *jsonHostURLParamsTransport
+			if actual != nil {
+				obj = encodeHostURLParamsToHostURLParamsTransport(actual)
+			}
+			u := questionValue
+			u.SetURL((*jsonHostURLParamsTransport)(obj))
+			questionValue = u
+		}
+		body.Question = &questionValue
+		if in.Extensions != nil {
+			body.Extensions = make(map[string][]byte, len(in.Extensions))
+			for key, val := range in.Extensions {
+				tk := key
+				tv := val
+				body.Extensions[tk] = tv
+			}
+		}
+	}
+	if err := validatejsonHostInputRequestTransport(body); err != nil {
+		return fmt.Errorf("validate HostInputRequest value: %w", err)
+	}
+	return nil
+}
+
 // DecodeHostInputRequest checks JSON field names from the Goa design and returns a service value.
 func DecodeHostInputRequest(data []byte) (out *HostInputRequest, err error) {
 	root, err := readStrictJSON(data)
@@ -488,6 +581,34 @@ func EncodeHostURLParams(in *HostURLParams) ([]byte, error) {
 		return nil, fmt.Errorf("encode HostURLParams JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateHostURLParamsValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateHostURLParamsValue(in *HostURLParams) error {
+	if err := checkHostURLParamsValue(in); err != nil {
+		return fmt.Errorf("validate HostURLParams value: %w", err)
+	}
+	if err := validateHostURLParamsOriginal(in); err != nil {
+		return fmt.Errorf("validate HostURLParams value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "HostURLParams")
+	}
+
+	var body *jsonHostURLParamsTransport
+	{
+		body = &jsonHostURLParamsTransport{
+			Message: &in.Message,
+			URL:     &in.URL,
+		}
+	}
+	if err := validatejsonHostURLParamsTransport(body); err != nil {
+		return fmt.Errorf("validate HostURLParams value: %w", err)
+	}
+	return nil
 }
 
 // DecodeHostURLParams checks JSON field names from the Goa design and returns a service value.

@@ -45,17 +45,22 @@ func validatejsonRunSubjectTransport(value *jsonRunSubjectTransport) (err error)
 		err = goa.MergeErrors(err, goa.MissingFieldError("executor", "body"))
 	}
 	if value.Executor != nil {
-		switch string(value.Executor.Kind()) {
-		case "agent":
-			actual, _ := value.Executor.AsAgent()
-			if utf8.RuneCountInString(string(actual)) < 1 {
-				err = goa.MergeErrors(err, goa.InvalidLengthError("body.executor.value", string(actual), utf8.RuneCountInString(string(actual)), 1, true))
-			}
-		case "service_tool":
-			actual, _ := value.Executor.AsServiceTool()
-			if actual != nil {
-				if err2 := validatejsonServiceToolSubjectTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Executor.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Executor.Kind()) {
+			case "agent":
+				actual, _ := value.Executor.AsAgent()
+				if utf8.RuneCountInString(string(actual)) < 1 {
+					err = goa.MergeErrors(err, goa.InvalidLengthError("body.executor.value", string(actual), utf8.RuneCountInString(string(actual)), 1, true))
+				}
+			case "service_tool":
+				actual, _ := value.Executor.AsServiceTool()
+				if actual != nil {
+					if err2 := validatejsonServiceToolSubjectTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -100,17 +105,22 @@ func validateRunSubjectOriginal(value *RunSubject) (err error) {
 	if value.Executor.Kind() == "" {
 		err = goa.MergeErrors(err, goa.MissingFieldError("executor", "value"))
 	}
-	switch string(value.Executor.Kind()) {
-	case "agent":
-		actual, _ := value.Executor.AsAgent()
-		if utf8.RuneCountInString(string(actual)) < 1 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("value.executor.value", string(actual), utf8.RuneCountInString(string(actual)), 1, true))
-		}
-	case "service_tool":
-		actual, _ := value.Executor.AsServiceTool()
-		if actual != nil {
-			if err2 := validateServiceToolSubjectOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+
+	if err2 := value.Executor.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.Executor.Kind()) {
+		case "agent":
+			actual, _ := value.Executor.AsAgent()
+			if utf8.RuneCountInString(string(actual)) < 1 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("value.executor.value", string(actual), utf8.RuneCountInString(string(actual)), 1, true))
+			}
+		case "service_tool":
+			actual, _ := value.Executor.AsServiceTool()
+			if actual != nil {
+				if err2 := validateServiceToolSubjectOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
 		}
 	}
@@ -315,6 +325,51 @@ func EncodeRunSubject(in *RunSubject) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateRunSubjectValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateRunSubjectValue(in *RunSubject) error {
+	if err := checkRunSubjectValue(in); err != nil {
+		return fmt.Errorf("validate RunSubject value: %w", err)
+	}
+	if err := validateRunSubjectOriginal(in); err != nil {
+		return fmt.Errorf("validate RunSubject value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "RunSubject")
+	}
+
+	var body *jsonRunSubjectTransport
+	{
+		body = &jsonRunSubjectTransport{}
+		var executorValue jsonRunExecutorTransport
+		switch string(in.Executor.Kind()) {
+		case "agent":
+			actual, _ := in.Executor.AsAgent()
+			obj := jsonRunExecutorBranchAgentTransport(actual)
+
+			u := executorValue
+			u.SetAgent((jsonRunExecutorBranchAgentTransport)(obj))
+			executorValue = u
+		case "service_tool":
+			actual, _ := in.Executor.AsServiceTool()
+			var obj *jsonServiceToolSubjectTransport
+			if actual != nil {
+				obj = encodeServiceToolSubjectToServiceToolSubjectTransport(actual)
+			}
+			u := executorValue
+			u.SetServiceTool((*jsonServiceToolSubjectTransport)(obj))
+			executorValue = u
+		}
+		body.Executor = &executorValue
+	}
+	if err := validatejsonRunSubjectTransport(body); err != nil {
+		return fmt.Errorf("validate RunSubject value: %w", err)
+	}
+	return nil
+}
+
 // DecodeRunSubject checks JSON field names from the Goa design and returns a service value.
 func DecodeRunSubject(data []byte) (out *RunSubject, err error) {
 	root, err := readStrictJSON(data)
@@ -386,6 +441,34 @@ func EncodeServiceToolSubject(in *ServiceToolSubject) ([]byte, error) {
 		return nil, fmt.Errorf("encode ServiceToolSubject JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateServiceToolSubjectValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateServiceToolSubjectValue(in *ServiceToolSubject) error {
+	if err := checkServiceToolSubjectValue(in); err != nil {
+		return fmt.Errorf("validate ServiceToolSubject value: %w", err)
+	}
+	if err := validateServiceToolSubjectOriginal(in); err != nil {
+		return fmt.Errorf("validate ServiceToolSubject value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ServiceToolSubject")
+	}
+
+	var body *jsonServiceToolSubjectTransport
+	{
+		body = &jsonServiceToolSubjectTransport{
+			Registry: &in.Registry,
+			Tool:     &in.Tool,
+		}
+	}
+	if err := validatejsonServiceToolSubjectTransport(body); err != nil {
+		return fmt.Errorf("validate ServiceToolSubject value: %w", err)
+	}
+	return nil
 }
 
 // DecodeServiceToolSubject checks JSON field names from the Goa design and returns a service value.

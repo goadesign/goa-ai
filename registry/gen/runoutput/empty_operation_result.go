@@ -90,19 +90,24 @@ func validatejsonOperationResultTransport(value *jsonOperationResultTransport) (
 		err = goa.MergeErrors(err, goa.MissingFieldError("outcome", "body"))
 	}
 	if value.Outcome != nil {
-		switch string(value.Outcome.Kind()) {
-		case "success":
-			actual, _ := value.Outcome.AsSuccess()
-			if actual != nil {
-				if err2 := validatejsonOperationSuccessTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Outcome.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Outcome.Kind()) {
+			case "success":
+				actual, _ := value.Outcome.AsSuccess()
+				if actual != nil {
+					if err2 := validatejsonOperationSuccessTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "failure":
-			actual, _ := value.Outcome.AsFailure()
-			if actual != nil {
-				if err2 := validatejsonOperationFailureTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "failure":
+				actual, _ := value.Outcome.AsFailure()
+				if actual != nil {
+					if err2 := validatejsonOperationFailureTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -128,6 +133,13 @@ func validatejsonOperationSuccessTransport(value *jsonOperationSuccessTransport)
 	}
 	if value.Value == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("value", "body"))
+	}
+	if value.Value != nil {
+
+		if err2 := value.Value.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+
 	}
 	if value.Bounds != nil {
 		if err2 := validatejsonResultBoundsTransport(value.Bounds); err2 != nil {
@@ -289,40 +301,45 @@ func validatejsonToolContentBlockTransport(value *jsonToolContentBlockTransport)
 		err = goa.MergeErrors(err, goa.MissingFieldError("content", "body"))
 	}
 	if value.Content != nil {
-		switch string(value.Content.Kind()) {
-		case "text":
-			actual, _ := value.Content.AsText()
-			if actual != nil {
-				if err2 := validatejsonToolTextContentTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Content.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Content.Kind()) {
+			case "text":
+				actual, _ := value.Content.AsText()
+				if actual != nil {
+					if err2 := validatejsonToolTextContentTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "image":
-			actual, _ := value.Content.AsImage()
-			if actual != nil {
-				if err2 := validatejsonToolImageContentTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "image":
+				actual, _ := value.Content.AsImage()
+				if actual != nil {
+					if err2 := validatejsonToolImageContentTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "audio":
-			actual, _ := value.Content.AsAudio()
-			if actual != nil {
-				if err2 := validatejsonToolAudioContentTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "audio":
+				actual, _ := value.Content.AsAudio()
+				if actual != nil {
+					if err2 := validatejsonToolAudioContentTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "resource_link":
-			actual, _ := value.Content.AsResourceLink()
-			if actual != nil {
-				if err2 := validatejsonToolResourceLinkTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "resource_link":
+				actual, _ := value.Content.AsResourceLink()
+				if actual != nil {
+					if err2 := validatejsonToolResourceLinkTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "resource":
-			actual, _ := value.Content.AsResource()
-			if actual != nil {
-				if err2 := validatejsonToolEmbeddedResourceTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "resource":
+				actual, _ := value.Content.AsResource()
+				if actual != nil {
+					if err2 := validatejsonToolEmbeddedResourceTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -380,19 +397,24 @@ func validatejsonToolEmbeddedResourceTransport(value *jsonToolEmbeddedResourceTr
 		err = goa.MergeErrors(err, goa.MissingFieldError("resource", "body"))
 	}
 	if value.Resource != nil {
-		switch string(value.Resource.Kind()) {
-		case "text":
-			actual, _ := value.Resource.AsText()
-			if actual != nil {
-				if err2 := validatejsonToolTextResourceTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Resource.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Resource.Kind()) {
+			case "text":
+				actual, _ := value.Resource.AsText()
+				if actual != nil {
+					if err2 := validatejsonToolTextResourceTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "blob":
-			actual, _ := value.Resource.AsBlob()
-			if actual != nil {
-				if err2 := validatejsonToolBlobResourceTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "blob":
+				actual, _ := value.Resource.AsBlob()
+				if actual != nil {
+					if err2 := validatejsonToolBlobResourceTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -594,40 +616,45 @@ func validateToolContentBlockOriginal(value *toolcontent.ToolContentBlock) (err 
 	if value.Content.Kind() == "" {
 		err = goa.MergeErrors(err, goa.MissingFieldError("content", "value"))
 	}
-	switch string(value.Content.Kind()) {
-	case "text":
-		actual, _ := value.Content.AsText()
-		if actual != nil {
-			if err2 := validateToolTextContentOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+
+	if err2 := value.Content.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.Content.Kind()) {
+		case "text":
+			actual, _ := value.Content.AsText()
+			if actual != nil {
+				if err2 := validateToolTextContentOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "image":
-		actual, _ := value.Content.AsImage()
-		if actual != nil {
-			if err2 := validateToolImageContentOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "image":
+			actual, _ := value.Content.AsImage()
+			if actual != nil {
+				if err2 := validateToolImageContentOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "audio":
-		actual, _ := value.Content.AsAudio()
-		if actual != nil {
-			if err2 := validateToolAudioContentOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "audio":
+			actual, _ := value.Content.AsAudio()
+			if actual != nil {
+				if err2 := validateToolAudioContentOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "resource_link":
-		actual, _ := value.Content.AsResourceLink()
-		if actual != nil {
-			if err2 := validateToolResourceLinkOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "resource_link":
+			actual, _ := value.Content.AsResourceLink()
+			if actual != nil {
+				if err2 := validateToolResourceLinkOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "resource":
-		actual, _ := value.Content.AsResource()
-		if actual != nil {
-			if err2 := validateToolEmbeddedResourceOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "resource":
+			actual, _ := value.Content.AsResource()
+			if actual != nil {
+				if err2 := validateToolEmbeddedResourceOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
 		}
 	}
@@ -725,19 +752,24 @@ func validateToolEmbeddedResourceOriginal(value *toolcontent.ToolEmbeddedResourc
 	if value.Resource.Kind() == "" {
 		err = goa.MergeErrors(err, goa.MissingFieldError("resource", "value"))
 	}
-	switch string(value.Resource.Kind()) {
-	case "text":
-		actual, _ := value.Resource.AsText()
-		if actual != nil {
-			if err2 := validateToolTextResourceOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+
+	if err2 := value.Resource.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.Resource.Kind()) {
+		case "text":
+			actual, _ := value.Resource.AsText()
+			if actual != nil {
+				if err2 := validateToolTextResourceOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "blob":
-		actual, _ := value.Resource.AsBlob()
-		if actual != nil {
-			if err2 := validateToolBlobResourceOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "blob":
+			actual, _ := value.Resource.AsBlob()
+			if actual != nil {
+				if err2 := validateToolBlobResourceOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
 		}
 	}
@@ -767,19 +799,24 @@ func validateOperationResultOriginal(value *OperationResult) (err error) {
 	if value.Outcome.Kind() == "" {
 		err = goa.MergeErrors(err, goa.MissingFieldError("outcome", "value"))
 	}
-	switch string(value.Outcome.Kind()) {
-	case "success":
-		actual, _ := value.Outcome.AsSuccess()
-		if actual != nil {
-			if err2 := validateOperationSuccessOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+
+	if err2 := value.Outcome.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.Outcome.Kind()) {
+		case "success":
+			actual, _ := value.Outcome.AsSuccess()
+			if actual != nil {
+				if err2 := validateOperationSuccessOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "failure":
-		actual, _ := value.Outcome.AsFailure()
-		if actual != nil {
-			if err2 := validateOperationFailureOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "failure":
+			actual, _ := value.Outcome.AsFailure()
+			if actual != nil {
+				if err2 := validateOperationFailureOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
 		}
 	}
@@ -792,6 +829,11 @@ func validateOperationSuccessOriginal(value *OperationSuccess) (err error) {
 	if value.Value.Kind() == "" {
 		err = goa.MergeErrors(err, goa.MissingFieldError("value", "value"))
 	}
+
+	if err2 := value.Value.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	}
+
 	for _, e := range value.Blocks {
 		if e == nil {
 			err = goa.MergeErrors(err, goa.MissingFieldError("value.blocks", "[*]"))
@@ -1528,6 +1570,28 @@ func EncodeEmptyOperationResult(in *EmptyOperationResult) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateEmptyOperationResultValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateEmptyOperationResultValue(in *EmptyOperationResult) error {
+	if err := checkEmptyOperationResultValue(in); err != nil {
+		return fmt.Errorf("validate EmptyOperationResult value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "EmptyOperationResult")
+	}
+
+	var body *jsonEmptyOperationResultTransport
+	{
+		body = &jsonEmptyOperationResultTransport{}
+	}
+	if err := validatejsonEmptyOperationResultTransport(body); err != nil {
+		return fmt.Errorf("validate EmptyOperationResult value: %w", err)
+	}
+	return nil
+}
+
 // DecodeEmptyOperationResult checks JSON field names from the Goa design and returns a service value.
 func DecodeEmptyOperationResult(data []byte) (out *EmptyOperationResult, err error) {
 	root, err := readStrictJSON(data)
@@ -1591,6 +1655,44 @@ func EncodeOperationFailure(in *OperationFailure) ([]byte, error) {
 		return nil, fmt.Errorf("encode OperationFailure JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateOperationFailureValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateOperationFailureValue(in *OperationFailure) error {
+	if err := checkOperationFailureValue(in); err != nil {
+		return fmt.Errorf("validate OperationFailure value: %w", err)
+	}
+	if err := validateOperationFailureOriginal(in); err != nil {
+		return fmt.Errorf("validate OperationFailure value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "OperationFailure")
+	}
+
+	var body *jsonOperationFailureTransport
+	{
+		body = &jsonOperationFailureTransport{
+			Kind:    &in.Kind,
+			Message: &in.Message,
+		}
+		if in.Blocks != nil {
+			body.Blocks = make([]*jsonToolContentBlockTransport, len(in.Blocks))
+			for i, val := range in.Blocks {
+				if val == nil {
+					body.Blocks[i] = nil
+					continue
+				}
+				body.Blocks[i] = encodeToolContentBlockToToolContentBlockTransport(val)
+			}
+		}
+	}
+	if err := validatejsonOperationFailureTransport(body); err != nil {
+		return fmt.Errorf("validate OperationFailure value: %w", err)
+	}
+	return nil
 }
 
 // DecodeOperationFailure checks JSON field names from the Goa design and returns a service value.
@@ -1678,6 +1780,53 @@ func EncodeOperationResult(in *OperationResult) ([]byte, error) {
 		return nil, fmt.Errorf("encode OperationResult JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateOperationResultValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateOperationResultValue(in *OperationResult) error {
+	if err := checkOperationResultValue(in); err != nil {
+		return fmt.Errorf("validate OperationResult value: %w", err)
+	}
+	if err := validateOperationResultOriginal(in); err != nil {
+		return fmt.Errorf("validate OperationResult value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "OperationResult")
+	}
+
+	var body *jsonOperationResultTransport
+	{
+		body = &jsonOperationResultTransport{}
+		var outcomeValue jsonOperationOutcomeTransport
+		switch string(in.Outcome.Kind()) {
+		case "success":
+			actual, _ := in.Outcome.AsSuccess()
+			var obj *jsonOperationSuccessTransport
+			if actual != nil {
+				obj = encodeOperationSuccessToOperationSuccessTransport(actual)
+			}
+			u := outcomeValue
+			u.SetSuccess((*jsonOperationSuccessTransport)(obj))
+			outcomeValue = u
+		case "failure":
+			actual, _ := in.Outcome.AsFailure()
+			var obj *jsonOperationFailureTransport
+			if actual != nil {
+				obj = encodeOperationFailureToOperationFailureTransport(actual)
+			}
+			u := outcomeValue
+			u.SetFailure((*jsonOperationFailureTransport)(obj))
+			outcomeValue = u
+		}
+		body.Outcome = &outcomeValue
+	}
+	if err := validatejsonOperationResultTransport(body); err != nil {
+		return fmt.Errorf("validate OperationResult value: %w", err)
+	}
+	return nil
 }
 
 // DecodeOperationResult checks JSON field names from the Goa design and returns a service value.
@@ -1786,6 +1935,67 @@ func EncodeOperationSuccess(in *OperationSuccess) ([]byte, error) {
 		return nil, fmt.Errorf("encode OperationSuccess JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateOperationSuccessValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateOperationSuccessValue(in *OperationSuccess) error {
+	if err := checkOperationSuccessValue(in); err != nil {
+		return fmt.Errorf("validate OperationSuccess value: %w", err)
+	}
+	if err := validateOperationSuccessOriginal(in); err != nil {
+		return fmt.Errorf("validate OperationSuccess value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "OperationSuccess")
+	}
+
+	var body *jsonOperationSuccessTransport
+	{
+		body = &jsonOperationSuccessTransport{}
+		var valueValue jsonOperationValueTransport
+		switch string(in.Value.Kind()) {
+		case "empty":
+			actual, _ := in.Value.AsEmpty()
+			var obj *jsonEmptyOperationResultTransport
+			if actual != nil {
+				obj = encodeEmptyOperationResultToEmptyOperationResultTransport(actual)
+			}
+			u := valueValue
+			u.SetEmpty((*jsonEmptyOperationResultTransport)(obj))
+			valueValue = u
+		case "json":
+			actual, _ := in.Value.AsJSON()
+			var obj jsonOperationValueBranchJSONTransport
+			if actual != nil {
+				obj = jsonOperationValueBranchJSONTransport(actual)
+
+			}
+			u := valueValue
+			u.SetJSON((jsonOperationValueBranchJSONTransport)(obj))
+			valueValue = u
+		}
+		body.Value = &valueValue
+		if in.Bounds != nil {
+			body.Bounds = encodeResultBoundsToResultBoundsTransport(in.Bounds)
+		}
+		if in.Blocks != nil {
+			body.Blocks = make([]*jsonToolContentBlockTransport, len(in.Blocks))
+			for i, val := range in.Blocks {
+				if val == nil {
+					body.Blocks[i] = nil
+					continue
+				}
+				body.Blocks[i] = encodeToolContentBlockToToolContentBlockTransport(val)
+			}
+		}
+	}
+	if err := validatejsonOperationSuccessTransport(body); err != nil {
+		return fmt.Errorf("validate OperationSuccess value: %w", err)
+	}
+	return nil
 }
 
 // DecodeOperationSuccess checks JSON field names from the Goa design and returns a service value.

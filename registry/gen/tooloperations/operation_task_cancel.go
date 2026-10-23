@@ -53,12 +53,17 @@ func validatejsonToolOperationExecutionContinuationTransport(value *jsonToolOper
 		err = goa.MergeErrors(err, goa.MissingFieldError("operation", "body"))
 	}
 	if value.Operation != nil {
-		switch string(value.Operation.Kind()) {
-		case "task_update":
-			actual, _ := value.Operation.AsTaskUpdate()
-			if actual != nil {
-				if err2 := validatejsonToolOperationTaskAnswersTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Operation.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Operation.Kind()) {
+			case "task_update":
+				actual, _ := value.Operation.AsTaskUpdate()
+				if actual != nil {
+					if err2 := validatejsonToolOperationTaskAnswersTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -120,26 +125,31 @@ func validatejsonToolOperationPendingExecutionTransport(value *jsonToolOperation
 		err = goa.MergeErrors(err, goa.MissingFieldError("outcome", "body"))
 	}
 	if value.Outcome != nil {
-		switch string(value.Outcome.Kind()) {
-		case "input":
-			actual, _ := value.Outcome.AsInput()
-			if actual != nil {
-				if err2 := validatejsonToolOperationPendingInputTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Outcome.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Outcome.Kind()) {
+			case "input":
+				actual, _ := value.Outcome.AsInput()
+				if actual != nil {
+					if err2 := validatejsonToolOperationPendingInputTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "task_wait":
-			actual, _ := value.Outcome.AsTaskWait()
-			if actual != nil {
-				if err2 := validatejsonToolOperationTaskWaitTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "task_wait":
+				actual, _ := value.Outcome.AsTaskWait()
+				if actual != nil {
+					if err2 := validatejsonToolOperationTaskWaitTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "task_input":
-			actual, _ := value.Outcome.AsTaskInput()
-			if actual != nil {
-				if err2 := validatejsonToolOperationTaskInputTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "task_input":
+				actual, _ := value.Outcome.AsTaskInput()
+				if actual != nil {
+					if err2 := validatejsonToolOperationTaskInputTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -272,12 +282,17 @@ func validateToolOperationExecutionContinuationOriginal(value *ToolOperationExec
 	if value.Operation.Kind() == "" {
 		err = goa.MergeErrors(err, goa.MissingFieldError("operation", "value"))
 	}
-	switch string(value.Operation.Kind()) {
-	case "task_update":
-		actual, _ := value.Operation.AsTaskUpdate()
-		if actual != nil {
-			if err2 := validateToolOperationTaskAnswersOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+
+	if err2 := value.Operation.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.Operation.Kind()) {
+		case "task_update":
+			actual, _ := value.Operation.AsTaskUpdate()
+			if actual != nil {
+				if err2 := validateToolOperationTaskAnswersOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
 		}
 	}
@@ -306,19 +321,24 @@ func validateToolOperationPendingExecutionOriginal(value *ToolOperationPendingEx
 	if value.Outcome.Kind() == "" {
 		err = goa.MergeErrors(err, goa.MissingFieldError("outcome", "value"))
 	}
-	switch string(value.Outcome.Kind()) {
-	case "input":
-		actual, _ := value.Outcome.AsInput()
-		if actual != nil {
-			if err2 := validateToolOperationPendingInputOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+
+	if err2 := value.Outcome.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.Outcome.Kind()) {
+		case "input":
+			actual, _ := value.Outcome.AsInput()
+			if actual != nil {
+				if err2 := validateToolOperationPendingInputOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "task_input":
-		actual, _ := value.Outcome.AsTaskInput()
-		if actual != nil {
-			if err2 := validateToolOperationTaskInputOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "task_input":
+			actual, _ := value.Outcome.AsTaskInput()
+			if actual != nil {
+				if err2 := validateToolOperationTaskInputOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
 		}
 	}
@@ -814,6 +834,67 @@ func EncodeToolOperationExecutionContinuation(in *ToolOperationExecutionContinua
 	return data, nil
 }
 
+// ValidateToolOperationExecutionContinuationValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolOperationExecutionContinuationValue(in *ToolOperationExecutionContinuation) error {
+	if err := checkToolOperationExecutionContinuationValue(in); err != nil {
+		return fmt.Errorf("validate ToolOperationExecutionContinuation value: %w", err)
+	}
+	if err := validateToolOperationExecutionContinuationOriginal(in); err != nil {
+		return fmt.Errorf("validate ToolOperationExecutionContinuation value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolOperationExecutionContinuation")
+	}
+
+	var body *jsonToolOperationExecutionContinuationTransport
+	{
+		body = &jsonToolOperationExecutionContinuationTransport{}
+		var operationValue jsonOperationTransport
+		switch string(in.Operation.Kind()) {
+		case "input":
+			actual, _ := in.Operation.AsInput()
+			var obj *jsonToolOperationInputContinuationTransport
+			if actual != nil {
+				obj = encodeToolOperationInputContinuationToToolOperationInputContinuationTransport(actual)
+			}
+			u := operationValue
+			u.SetInput((*jsonToolOperationInputContinuationTransport)(obj))
+			operationValue = u
+		case "task_get":
+			actual, _ := in.Operation.AsTaskGet()
+			obj := jsonOperationBranchTaskGetTransport(actual)
+
+			u := operationValue
+			u.SetTaskGet((jsonOperationBranchTaskGetTransport)(obj))
+			operationValue = u
+		case "task_update":
+			actual, _ := in.Operation.AsTaskUpdate()
+			var obj *jsonToolOperationTaskAnswersTransport
+			if actual != nil {
+				obj = encodeToolOperationTaskAnswersToToolOperationTaskAnswersTransport(actual)
+			}
+			u := operationValue
+			u.SetTaskUpdate((*jsonToolOperationTaskAnswersTransport)(obj))
+			operationValue = u
+		case "task_cancel":
+			actual, _ := in.Operation.AsTaskCancel()
+			obj := jsonOperationBranchTaskCancelTransport(actual)
+
+			u := operationValue
+			u.SetTaskCancel((jsonOperationBranchTaskCancelTransport)(obj))
+			operationValue = u
+		}
+		body.Operation = &operationValue
+	}
+	if err := validatejsonToolOperationExecutionContinuationTransport(body); err != nil {
+		return fmt.Errorf("validate ToolOperationExecutionContinuation value: %w", err)
+	}
+	return nil
+}
+
 // DecodeToolOperationExecutionContinuation checks JSON field names from the Goa design and returns a service value.
 func DecodeToolOperationExecutionContinuation(data []byte) (out *ToolOperationExecutionContinuation, err error) {
 	root, err := readStrictJSON(data)
@@ -903,6 +984,34 @@ func EncodeToolOperationHostRequest(in *ToolOperationHostRequest) ([]byte, error
 	return data, nil
 }
 
+// ValidateToolOperationHostRequestValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolOperationHostRequestValue(in *ToolOperationHostRequest) error {
+	if err := checkToolOperationHostRequestValue(in); err != nil {
+		return fmt.Errorf("validate ToolOperationHostRequest value: %w", err)
+	}
+	if err := validateToolOperationHostRequestOriginal(in); err != nil {
+		return fmt.Errorf("validate ToolOperationHostRequest value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolOperationHostRequest")
+	}
+
+	var body *jsonToolOperationHostRequestTransport
+	{
+		body = &jsonToolOperationHostRequestTransport{
+			Method: &in.Method,
+			Params: in.Params,
+		}
+	}
+	if err := validatejsonToolOperationHostRequestTransport(body); err != nil {
+		return fmt.Errorf("validate ToolOperationHostRequest value: %w", err)
+	}
+	return nil
+}
+
 // DecodeToolOperationHostRequest checks JSON field names from the Goa design and returns a service value.
 func DecodeToolOperationHostRequest(data []byte) (out *ToolOperationHostRequest, err error) {
 	root, err := readStrictJSON(data)
@@ -963,6 +1072,38 @@ func EncodeToolOperationInputContinuation(in *ToolOperationInputContinuation) ([
 		return nil, fmt.Errorf("encode ToolOperationInputContinuation JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateToolOperationInputContinuationValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolOperationInputContinuationValue(in *ToolOperationInputContinuation) error {
+	if err := checkToolOperationInputContinuationValue(in); err != nil {
+		return fmt.Errorf("validate ToolOperationInputContinuation value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolOperationInputContinuation")
+	}
+
+	var body *jsonToolOperationInputContinuationTransport
+	{
+		body = &jsonToolOperationInputContinuationTransport{
+			State: in.State,
+		}
+		if in.Responses != nil {
+			body.Responses = make(map[string][]byte, len(in.Responses))
+			for key, val := range in.Responses {
+				tk := key
+				tv := val
+				body.Responses[tk] = tv
+			}
+		}
+	}
+	if err := validatejsonToolOperationInputContinuationTransport(body); err != nil {
+		return fmt.Errorf("validate ToolOperationInputContinuation value: %w", err)
+	}
+	return nil
 }
 
 // DecodeToolOperationInputContinuation checks JSON field names from the Goa design and returns a service value.
@@ -1056,6 +1197,62 @@ func EncodeToolOperationPendingExecution(in *ToolOperationPendingExecution) ([]b
 		return nil, fmt.Errorf("encode ToolOperationPendingExecution JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateToolOperationPendingExecutionValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolOperationPendingExecutionValue(in *ToolOperationPendingExecution) error {
+	if err := checkToolOperationPendingExecutionValue(in); err != nil {
+		return fmt.Errorf("validate ToolOperationPendingExecution value: %w", err)
+	}
+	if err := validateToolOperationPendingExecutionOriginal(in); err != nil {
+		return fmt.Errorf("validate ToolOperationPendingExecution value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolOperationPendingExecution")
+	}
+
+	var body *jsonToolOperationPendingExecutionTransport
+	{
+		body = &jsonToolOperationPendingExecutionTransport{}
+		var outcomeValue jsonOutcomeTransport
+		switch string(in.Outcome.Kind()) {
+		case "input":
+			actual, _ := in.Outcome.AsInput()
+			var obj *jsonToolOperationPendingInputTransport
+			if actual != nil {
+				obj = encodeToolOperationPendingInputToToolOperationPendingInputTransport(actual)
+			}
+			u := outcomeValue
+			u.SetInput((*jsonToolOperationPendingInputTransport)(obj))
+			outcomeValue = u
+		case "task_wait":
+			actual, _ := in.Outcome.AsTaskWait()
+			var obj *jsonToolOperationTaskWaitTransport
+			if actual != nil {
+				obj = encodeToolOperationTaskWaitToToolOperationTaskWaitTransport(actual)
+			}
+			u := outcomeValue
+			u.SetTaskWait((*jsonToolOperationTaskWaitTransport)(obj))
+			outcomeValue = u
+		case "task_input":
+			actual, _ := in.Outcome.AsTaskInput()
+			var obj *jsonToolOperationTaskInputTransport
+			if actual != nil {
+				obj = encodeToolOperationTaskInputToToolOperationTaskInputTransport(actual)
+			}
+			u := outcomeValue
+			u.SetTaskInput((*jsonToolOperationTaskInputTransport)(obj))
+			outcomeValue = u
+		}
+		body.Outcome = &outcomeValue
+	}
+	if err := validatejsonToolOperationPendingExecutionTransport(body); err != nil {
+		return fmt.Errorf("validate ToolOperationPendingExecution value: %w", err)
+	}
+	return nil
 }
 
 // DecodeToolOperationPendingExecution checks JSON field names from the Goa design and returns a service value.
@@ -1152,6 +1349,44 @@ func EncodeToolOperationPendingInput(in *ToolOperationPendingInput) ([]byte, err
 	return data, nil
 }
 
+// ValidateToolOperationPendingInputValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolOperationPendingInputValue(in *ToolOperationPendingInput) error {
+	if err := checkToolOperationPendingInputValue(in); err != nil {
+		return fmt.Errorf("validate ToolOperationPendingInput value: %w", err)
+	}
+	if err := validateToolOperationPendingInputOriginal(in); err != nil {
+		return fmt.Errorf("validate ToolOperationPendingInput value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolOperationPendingInput")
+	}
+
+	var body *jsonToolOperationPendingInputTransport
+	{
+		body = &jsonToolOperationPendingInputTransport{
+			State: in.State,
+		}
+		if in.Requests != nil {
+			body.Requests = make(map[string]*jsonToolOperationHostRequestTransport, len(in.Requests))
+			for key, val := range in.Requests {
+				tk := key
+				if val == nil {
+					body.Requests[tk] = nil
+					continue
+				}
+				body.Requests[tk] = encodeToolOperationHostRequestToToolOperationHostRequestTransport(val)
+			}
+		}
+	}
+	if err := validatejsonToolOperationPendingInputTransport(body); err != nil {
+		return fmt.Errorf("validate ToolOperationPendingInput value: %w", err)
+	}
+	return nil
+}
+
 // DecodeToolOperationPendingInput checks JSON field names from the Goa design and returns a service value.
 func DecodeToolOperationPendingInput(data []byte) (out *ToolOperationPendingInput, err error) {
 	root, err := readStrictJSON(data)
@@ -1223,6 +1458,39 @@ func EncodeToolOperationTaskAnswers(in *ToolOperationTaskAnswers) ([]byte, error
 		return nil, fmt.Errorf("encode ToolOperationTaskAnswers JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateToolOperationTaskAnswersValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolOperationTaskAnswersValue(in *ToolOperationTaskAnswers) error {
+	if err := checkToolOperationTaskAnswersValue(in); err != nil {
+		return fmt.Errorf("validate ToolOperationTaskAnswers value: %w", err)
+	}
+	if err := validateToolOperationTaskAnswersOriginal(in); err != nil {
+		return fmt.Errorf("validate ToolOperationTaskAnswers value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolOperationTaskAnswers")
+	}
+
+	var body *jsonToolOperationTaskAnswersTransport
+	{
+		body = &jsonToolOperationTaskAnswersTransport{
+			TaskID: &in.TaskID,
+		}
+		body.Responses = make(map[string][]byte, len(in.Responses))
+		for key, val := range in.Responses {
+			tk := key
+			tv := val
+			body.Responses[tk] = tv
+		}
+	}
+	if err := validatejsonToolOperationTaskAnswersTransport(body); err != nil {
+		return fmt.Errorf("validate ToolOperationTaskAnswers value: %w", err)
+	}
+	return nil
 }
 
 // DecodeToolOperationTaskAnswers checks JSON field names from the Goa design and returns a service value.
@@ -1300,6 +1568,46 @@ func EncodeToolOperationTaskInput(in *ToolOperationTaskInput) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateToolOperationTaskInputValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolOperationTaskInputValue(in *ToolOperationTaskInput) error {
+	if err := checkToolOperationTaskInputValue(in); err != nil {
+		return fmt.Errorf("validate ToolOperationTaskInput value: %w", err)
+	}
+	if err := validateToolOperationTaskInputOriginal(in); err != nil {
+		return fmt.Errorf("validate ToolOperationTaskInput value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolOperationTaskInput")
+	}
+
+	var body *jsonToolOperationTaskInputTransport
+	{
+		body = &jsonToolOperationTaskInputTransport{
+			TaskID: &in.TaskID,
+		}
+		if in.PollIntervalMs != nil {
+			pollIntervalMs := toolOperationPendingExecutionInt64Transport(*in.PollIntervalMs)
+			body.PollIntervalMs = &pollIntervalMs
+		}
+		body.Requests = make(map[string]*jsonToolOperationHostRequestTransport, len(in.Requests))
+		for key, val := range in.Requests {
+			tk := key
+			if val == nil {
+				body.Requests[tk] = nil
+				continue
+			}
+			body.Requests[tk] = encodeToolOperationHostRequestToToolOperationHostRequestTransport(val)
+		}
+	}
+	if err := validatejsonToolOperationTaskInputTransport(body); err != nil {
+		return fmt.Errorf("validate ToolOperationTaskInput value: %w", err)
+	}
+	return nil
+}
+
 // DecodeToolOperationTaskInput checks JSON field names from the Goa design and returns a service value.
 func DecodeToolOperationTaskInput(data []byte) (out *ToolOperationTaskInput, err error) {
 	root, err := readStrictJSON(data)
@@ -1368,6 +1676,34 @@ func EncodeToolOperationTaskWait(in *ToolOperationTaskWait) ([]byte, error) {
 		return nil, fmt.Errorf("encode ToolOperationTaskWait JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateToolOperationTaskWaitValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolOperationTaskWaitValue(in *ToolOperationTaskWait) error {
+	if err := checkToolOperationTaskWaitValue(in); err != nil {
+		return fmt.Errorf("validate ToolOperationTaskWait value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolOperationTaskWait")
+	}
+
+	var body *jsonToolOperationTaskWaitTransport
+	{
+		body = &jsonToolOperationTaskWaitTransport{
+			TaskID: &in.TaskID,
+		}
+		if in.PollIntervalMs != nil {
+			pollIntervalMs := toolOperationPendingExecutionInt64Transport(*in.PollIntervalMs)
+			body.PollIntervalMs = &pollIntervalMs
+		}
+	}
+	if err := validatejsonToolOperationTaskWaitTransport(body); err != nil {
+		return fmt.Errorf("validate ToolOperationTaskWait value: %w", err)
+	}
+	return nil
 }
 
 // DecodeToolOperationTaskWait checks JSON field names from the Goa design and returns a service value.
