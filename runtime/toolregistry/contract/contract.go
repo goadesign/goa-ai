@@ -9,7 +9,6 @@ import (
 	"maps"
 	"slices"
 
-	genregistryclient "goa.design/goa-ai/registry/gen/grpc/registry/client"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -37,12 +36,9 @@ func Compile(declaration *genregistry.ToolSchema) (tools.ToolSpec, error) {
 	if declaration == nil {
 		return tools.ToolSpec{}, fmt.Errorf("tool declaration is required")
 	}
-	// This generated request validates the shared ToolSchema without requiring
-	// provider leases or a registration timestamp. Execution kind is checked below.
-	request := genregistryclient.NewProtoRegisterAgentToolsetRequest(&genregistry.AgentToolsetDeclaration{
-		Name: declaration.Name, Tools: []*genregistry.ToolSchema{declaration},
-	})
-	if err := genregistryclient.ValidateRegisterAgentToolsetRequest(request); err != nil {
+	// Check the original declaration before compiling it so text and integer
+	// constraints apply to the same values returned in the tool specification.
+	if err := genregistry.ValidateToolSchemaValue(declaration); err != nil {
 		return tools.ToolSpec{}, fmt.Errorf("tool %q declaration: %w", declaration.Name, err)
 	}
 	contract := declaration.ConsumerContract
@@ -179,7 +175,10 @@ func Compile(declaration *genregistry.ToolSchema) (tools.ToolSpec, error) {
 	}
 	if len(contract.ServerData) > 0 {
 		contracts := make(serverDataContracts, len(contract.ServerData))
-		for _, item := range contract.ServerData {
+		for index, item := range contract.ServerData {
+			if item == nil {
+				return tools.ToolSpec{}, fmt.Errorf("tool %q server_data[%d]: item is required", declaration.Name, index)
+			}
 			if item.NativeImage && item.Audience != "evidence" {
 				return tools.ToolSpec{}, fmt.Errorf("tool %q native image %q requires evidence audience", declaration.Name, item.Kind)
 			}
@@ -188,7 +187,7 @@ func Compile(declaration *genregistry.ToolSchema) (tools.ToolSpec, error) {
 			}
 			dataType, err := compileType(item.Schema, item.Type)
 			if err != nil {
-				return tools.ToolSpec{}, fmt.Errorf("tool %q server data %q: %w", declaration.Name, item.Kind, err)
+				return tools.ToolSpec{}, fmt.Errorf("tool %q server_data[%d] %q: %w", declaration.Name, index, item.Kind, err)
 			}
 			contracts[item.Kind] = serverDataContract{audience: item.Audience, codec: dataType.Codec}
 			specItem := &tools.ServerDataSpec{
@@ -207,8 +206,9 @@ func Compile(declaration *genregistry.ToolSchema) (tools.ToolSpec, error) {
 	return spec, nil
 }
 
-// compileType uses the supplied schema and the generator's field records
-// directly. The JSON codec validates dynamic values without rounding numbers.
+// compileType turns the supplied schema and field records into an executable
+// type. Null field, branch, and path records return errors because they cannot
+// identify executable metadata. The codec preserves exact JSON numbers.
 func compileType(document []byte, metadata *genregistry.ToolTypeMetadata) (tools.TypeSpec, error) {
 	codec, err := schema.Codec(document)
 	if err != nil {
@@ -223,10 +223,13 @@ func compileType(document []byte, metadata *genregistry.ToolTypeMetadata) (tools
 	if metadata.Name != nil {
 		result.Name = *metadata.Name
 	}
-	for _, field := range metadata.Fields {
+	for fieldIndex, field := range metadata.Fields {
+		if field == nil {
+			return tools.TypeSpec{}, fmt.Errorf("fields[%d]: field metadata is required", fieldIndex)
+		}
 		path, err := fieldPath(field.Path)
 		if err != nil {
-			return tools.TypeSpec{}, err
+			return tools.TypeSpec{}, fmt.Errorf("fields[%d].path: %w", fieldIndex, err)
 		}
 		details := tools.FieldMetadata{
 			Path:                path,
@@ -238,11 +241,14 @@ func compileType(document []byte, metadata *genregistry.ToolTypeMetadata) (tools
 		if field.Description != nil {
 			details.Description = *field.Description
 		}
-		for _, branch := range field.Branches {
+		for branchIndex, branch := range field.Branches {
+			if branch == nil {
+				return tools.TypeSpec{}, fmt.Errorf("fields[%d].branches[%d]: union branch is required", fieldIndex, branchIndex)
+			}
 			if tagged, ok := branch.Selection.AsTagged(); ok {
 				path, err := fieldPath(tagged.Discriminator)
 				if err != nil {
-					return tools.TypeSpec{}, err
+					return tools.TypeSpec{}, fmt.Errorf("fields[%d].branches[%d].discriminator: %w", fieldIndex, branchIndex, err)
 				}
 				details.Branches = append(details.Branches, tools.TaggedUnionBranch{
 					Discriminator: path, Value: tagged.Value,
@@ -250,7 +256,7 @@ func compileType(document []byte, metadata *genregistry.ToolTypeMetadata) (tools
 			} else if untagged, ok := branch.Selection.AsUntagged(); ok {
 				path, err := fieldPath(untagged.Path)
 				if err != nil {
-					return tools.TypeSpec{}, err
+					return tools.TypeSpec{}, fmt.Errorf("fields[%d].branches[%d].path: %w", fieldIndex, branchIndex, err)
 				}
 				details.Branches = append(details.Branches, tools.UntaggedUnionBranch{
 					Path: path, JSONKind: untagged.JSONKind, Index: untagged.Index,
@@ -268,7 +274,10 @@ func compileType(document []byte, metadata *genregistry.ToolTypeMetadata) (tools
 // property names or guessing which strings represent collection entries.
 func fieldPath(segments []*genregistry.ToolFieldPathSegment) ([]tools.FieldPathSegment, error) {
 	var result []tools.FieldPathSegment
-	for _, segment := range segments {
+	for index, segment := range segments {
+		if segment == nil {
+			return nil, fmt.Errorf("segment[%d] is required", index)
+		}
 		if value, ok := segment.Segment.AsField(); ok {
 			result = append(result, tools.FixedField(value))
 		} else if _, ok := segment.Segment.AsElement(); ok {
