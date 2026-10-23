@@ -2935,6 +2935,29 @@ default read budget or migration requirement. It uses `HKEYS` for listing and
 finite Lua scripts containing only `HGET`, `HEXISTS`, `HSTRLEN`, `SISMEMBER` and
 `TIME` for selected records; a Redis account can deny all write commands.
 
+##### Reading a declaration after serving ends
+
+A host that compares a saved result with its original tool contract can call
+`Service.ReadSavedCatalogToolset(ctx, route, rawByteBudget)`. The read returns
+that route's saved owner, complete declaration, exact registration token and
+native-Agent marker even after the registration retires. It checks the same
+coherent state, definition, permanent retirement history, schema fingerprint and
+positive byte budget as an active read. Returned data belongs to the caller;
+reading does not modify leases, stored declarations or retirement state.
+
+The host must check current resource access before returning this data to a
+caller. A saved declaration reports no provider health and grants no permission
+to attach a provider or publish a new call. For example, a host can verify an old
+page's contract with this read and separately select an authorized, compatible
+current provider for the next page. The saved read cannot admit a new call
+against that retired token.
+`Service.ReadCatalogToolset`, `CatalogReader.ReadCatalogToolset`, discovery and
+new provider/call admission keep their existing active-only behavior.
+
+This is a Go service operation, not a new Registry RPC or storage format. Existing
+applications need no regeneration or migration unless they choose to expose the
+saved read through their own API.
+
 ##### Saved declaration identity
 
 When loading a saved definition, Registry strictly decodes its stable declaration

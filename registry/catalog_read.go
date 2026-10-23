@@ -1,6 +1,7 @@
 // Package registry reads one explicitly owned catalog record without scanning
-// all declarations or pruning provider leases. Raw-byte limits apply only to
-// this read and never change which declarations may be registered.
+// all declarations or pruning provider leases. Active reads require a serving
+// registration; saved reads preserve declarations after retirement. Both apply
+// the same byte budget and saved-data checks without granting execution rights.
 package registry
 
 import (
@@ -28,8 +29,8 @@ type (
 		Registration *genregistry.ResolvedToolset
 		// NativeAgent means the application must observe its configured worker.
 		NativeAgent bool
-		// ServiceHealth is populated for service declarations read through Service.
-		// CatalogReader reads saved records without observing provider health.
+		// ServiceHealth is populated only by Service.ReadCatalogToolset for active
+		// service declarations. Saved reads and CatalogReader leave it absent.
 		ServiceHealth *ToolsetHealth
 	}
 
@@ -97,6 +98,25 @@ func (s *Service) ReadCatalogToolset(ctx context.Context, name string, rawByteBu
 	return read.toolset, nil
 }
 
+// ReadSavedCatalogToolset receives an exact route and a positive byte budget,
+// validates its saved declaration and owner, and returns an independent copy even
+// after retirement. It reports no provider health and grants no permission to
+// attach a provider or execute a new call. The host must authorize the read.
+func (s *Service) ReadSavedCatalogToolset(ctx context.Context, name string, rawByteBudget int64) (_ *CatalogToolset, err error) {
+	ctx, span := otel.Tracer("goa.design/goa-ai/registry").Start(ctx, "toolregistry.catalog.saved_read",
+		trace.WithAttributes(attribute.String("toolregistry.toolset", name)))
+	defer finishCatalogSpan(ctx, span, &err)
+	entry, now, err := s.catalog.readCatalogEntry(ctx, name, rawByteBudget)
+	if err != nil {
+		return nil, err
+	}
+	read, err := copyCatalogToolset(ctx, name, entry, now)
+	if err != nil {
+		return nil, err
+	}
+	return read.toolset, nil
+}
+
 // CatalogRoutesAfter returns at most count currently indexed routes after the
 // exclusive lexical position. It reads no declarations; the application owns
 // page size, scope authorization, and its complete response budget.
@@ -116,15 +136,27 @@ func (s *Service) CatalogContains(ctx context.Context, scope, name string) (bool
 	return s.catalog.store.Contains(ctx, scope, name)
 }
 
-// readCatalogToolset reads and validates one saved record before constructing
-// an independent result. It returns the selected health inputs for Service;
-// maintenance readers do not need a running provider-health tracker.
+// readCatalogToolset receives one exact route, validates its saved record, and
+// rejects retired registrations before returning a declaration for active use.
 func (c *toolsetCatalog) readCatalogToolset(ctx context.Context, name string, rawByteBudget int64) (_ *catalogToolsetRead, err error) {
 	ctx, span := otel.Tracer("goa.design/goa-ai/registry").Start(ctx, "toolregistry.catalog.read",
 		trace.WithAttributes(attribute.String("toolregistry.toolset", name)))
 	defer finishCatalogSpan(ctx, span, &err)
+	entry, now, err := c.readCatalogEntry(ctx, name, rawByteBudget)
+	if err != nil {
+		return nil, err
+	}
+	if entry.State != catalogEntryActive {
+		return nil, genregistry.MakeNotFound(errToolsetNotFound)
+	}
+	return copyCatalogToolset(ctx, name, entry, now)
+}
+
+// readCatalogEntry loads one coherent saved record and validates its declaration.
+// Each caller checks the state it permits before requiring application identity.
+func (c *toolsetCatalog) readCatalogEntry(ctx context.Context, name string, rawByteBudget int64) (_ catalogEntry, _ time.Time, err error) {
 	if rawByteBudget <= 0 {
-		return nil, errors.New("catalog read requires a positive raw-byte budget")
+		return catalogEntry{}, time.Time{}, errors.New("catalog read requires a positive raw-byte budget")
 	}
 	// Read fresh state, definition bytes, retirement history, and the clock
 	// together before using any retained validation.
@@ -139,19 +171,22 @@ func (c *toolsetCatalog) readCatalogToolset(ctx context.Context, name string, ra
 	}
 	finishCatalogSpan(snapshotCtx, snapshotSpan, &err)
 	if err != nil {
-		return nil, err
+		return catalogEntry{}, time.Time{}, err
 	}
 	if !snapshot.exists {
 		c.forgetDefinition(name)
-		return nil, genregistry.MakeNotFound(errToolsetNotFound)
+		return catalogEntry{}, time.Time{}, genregistry.MakeNotFound(errToolsetNotFound)
 	}
 	entry, err := c.decodeSnapshot(ctx, name, snapshot.state, snapshot.definition, snapshot.retired)
 	if err != nil {
-		return nil, err
+		return catalogEntry{}, time.Time{}, err
 	}
-	if entry.State != catalogEntryActive {
-		return nil, genregistry.MakeNotFound(errToolsetNotFound)
-	}
+	return entry, snapshot.now, nil
+}
+
+// copyCatalogToolset requires saved application ownership and copies the exact
+// declaration so a caller cannot mutate data retained by another reader.
+func copyCatalogToolset(ctx context.Context, name string, entry catalogEntry, now time.Time) (_ *catalogToolsetRead, err error) {
 	if entry.Identity == nil {
 		return nil, ErrCatalogIdentityMissing
 	}
@@ -167,7 +202,7 @@ func (c *toolsetCatalog) readCatalogToolset(ctx context.Context, name string, ra
 			Toolset: toolset, RegistrationToken: entry.RegistrationToken,
 		},
 	}
-	return &catalogToolsetRead{toolset: result, state: entry.catalogState, now: snapshot.now}, nil
+	return &catalogToolsetRead{toolset: result, state: entry.catalogState, now: now}, nil
 }
 
 func (s *redisCatalogStore) BoundedSnapshot(ctx context.Context, key string, budget int64) (catalogSnapshot, error) {
