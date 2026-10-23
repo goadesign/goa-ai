@@ -206,6 +206,9 @@ func BuildDeclareServiceToolsetPayload(registryDeclareServiceToolsetMessage *str
 	}
 	v.Tools = make([]*registry.ToolSchema, len(message.Tools))
 	for i, val := range message.Tools {
+		if val == nil {
+			continue
+		}
 		v.Tools[i] = transformProtoToolSchemaToToolSchema(val)
 	}
 
@@ -249,6 +252,9 @@ func BuildReplaceServiceToolsetPayload(registryReplaceServiceToolsetMessage *str
 	}
 	v.Tools = make([]*registry.ToolSchema, len(message.Tools))
 	for i, val := range message.Tools {
+		if val == nil {
+			continue
+		}
 		v.Tools[i] = transformProtoToolSchemaToToolSchema(val)
 	}
 
@@ -323,6 +329,9 @@ func BuildRegisterPayload(registryRegisterMessage *string) (*registry.RegisterPa
 	}
 	v.Tools = make([]*registry.ToolSchema, len(message.Tools))
 	for i, val := range message.Tools {
+		if val == nil {
+			continue
+		}
 		v.Tools[i] = transformProtoToolSchemaToToolSchema(val)
 	}
 
@@ -498,6 +507,9 @@ func BuildRegisterAgentToolsetPayload(registryRegisterAgentToolsetMessage *strin
 	}
 	v.Tools = make([]*registry.ToolSchema, len(message.Tools))
 	for i, val := range message.Tools {
+		if val == nil {
+			continue
+		}
 		v.Tools[i] = transformProtoToolSchemaToToolSchema(val)
 	}
 
@@ -540,6 +552,9 @@ func BuildReplaceAgentToolsetPayload(registryReplaceAgentToolsetMessage *string)
 	}
 	v.Tools = make([]*registry.ToolSchema, len(message.Tools))
 	for i, val := range message.Tools {
+		if val == nil {
+			continue
+		}
 		v.Tools[i] = transformProtoToolSchemaToToolSchema(val)
 	}
 

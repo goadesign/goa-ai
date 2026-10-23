@@ -165,6 +165,9 @@ func NewProtoDeclareServiceToolsetRequest(payload *registry.ServiceToolsetDeclar
 	if payload.Tools != nil {
 		message.Tools = make([]*registrypb.ToolSchema, len(payload.Tools))
 		for i, val := range payload.Tools {
+			if val == nil {
+				continue
+			}
 			message.Tools[i] = transformToolSchemaToProtoToolSchema(val)
 		}
 	}
@@ -208,6 +211,9 @@ func NewProtoReplaceServiceToolsetRequest(payload *registry.ReplaceServiceToolse
 	if payload.Tools != nil {
 		message.Tools = make([]*registrypb.ToolSchema, len(payload.Tools))
 		for i, val := range payload.Tools {
+			if val == nil {
+				continue
+			}
 			message.Tools[i] = transformToolSchemaToProtoToolSchema(val)
 		}
 	}
@@ -279,6 +285,9 @@ func NewProtoRegisterRequest(payload *registry.RegisterPayload) *registrypb.Regi
 	if payload.Tools != nil {
 		message.Tools = make([]*registrypb.ToolSchema, len(payload.Tools))
 		for i, val := range payload.Tools {
+			if val == nil {
+				continue
+			}
 			message.Tools[i] = transformToolSchemaToProtoToolSchema(val)
 		}
 	}
@@ -387,6 +396,9 @@ func NewProtoRegisterAgentToolsetRequest(payload *registry.AgentToolsetDeclarati
 	if payload.Tools != nil {
 		message.Tools = make([]*registrypb.ToolSchema, len(payload.Tools))
 		for i, val := range payload.Tools {
+			if val == nil {
+				continue
+			}
 			message.Tools[i] = transformToolSchemaToProtoToolSchema(val)
 		}
 	}
@@ -429,6 +441,9 @@ func NewProtoReplaceAgentToolsetRequest(payload *registry.ReplaceAgentToolsetPay
 	if payload.Tools != nil {
 		message.Tools = make([]*registrypb.ToolSchema, len(payload.Tools))
 		for i, val := range payload.Tools {
+			if val == nil {
+				continue
+			}
 			message.Tools[i] = transformToolSchemaToProtoToolSchema(val)
 		}
 	}
@@ -467,6 +482,9 @@ func NewListToolsetsResult(message *registrypb.ListToolsetsResponse) *registry.L
 	if message.Toolsets != nil {
 		result.Toolsets = make([]*registry.ToolsetInfo, len(message.Toolsets))
 		for i, val := range message.Toolsets {
+			if val == nil {
+				continue
+			}
 			result.Toolsets[i] = transformProtoToolsetInfoToToolsetInfo(val)
 		}
 	}
@@ -504,6 +522,9 @@ func NewGetToolsetResult(message *registrypb.GetToolsetResponse) *registry.Tools
 	}
 	result.Tools = make([]*registry.ToolSchema, len(message.Tools))
 	for i, val := range message.Tools {
+		if val == nil {
+			continue
+		}
 		result.Tools[i] = transformProtoToolSchemaToToolSchema(val)
 	}
 	return result
@@ -561,6 +582,9 @@ func NewGetToolsetSchemasResult(message *registrypb.GetToolsetSchemasResponse) *
 	}
 	result.Tools = make([]*registry.ToolSchemas, len(message.Tools))
 	for i, val := range message.Tools {
+		if val == nil {
+			continue
+		}
 		result.Tools[i] = transformProtoToolSchemasToToolSchemas(val)
 	}
 	return result
@@ -601,6 +625,9 @@ func NewSearchResult(message *registrypb.SearchResponse) *registry.SearchResult 
 	if message.Toolsets != nil {
 		result.Toolsets = make([]*registry.ToolsetInfo, len(message.Toolsets))
 		for i, val := range message.Toolsets {
+			if val == nil {
+				continue
+			}
 			result.Toolsets[i] = transformProtoToolsetInfoToToolsetInfo(val)
 		}
 	}
@@ -3289,6 +3316,9 @@ func transformConsumerContractToProtoConsumerContract(v *registry.ConsumerContra
 	if v.ServerData != nil {
 		res.ServerData = make([]*registrypb.ToolServerData, len(v.ServerData))
 		for i, val := range v.ServerData {
+			if val == nil {
+				continue
+			}
 			res.ServerData[i] = transformToolServerDataToProtoToolServerData(val)
 		}
 	}
@@ -3334,6 +3364,9 @@ func transformToolTypeMetadataToProtoToolTypeMetadata(v *registry.ToolTypeMetada
 	if v.Fields != nil {
 		res.Fields = make([]*registrypb.ToolFieldMetadata, len(v.Fields))
 		for i, val := range v.Fields {
+			if val == nil {
+				continue
+			}
 			res.Fields[i] = transformToolFieldMetadataToProtoToolFieldMetadata(val)
 		}
 	}
@@ -3355,12 +3388,18 @@ func transformToolFieldMetadataToProtoToolFieldMetadata(v *registry.ToolFieldMet
 	if v.Path != nil {
 		res.Path = make([]*registrypb.ToolFieldPathSegment, len(v.Path))
 		for i, val := range v.Path {
+			if val == nil {
+				continue
+			}
 			res.Path[i] = transformToolFieldPathSegmentToProtoToolFieldPathSegment(val)
 		}
 	}
 	if v.Branches != nil {
 		res.Branches = make([]*registrypb.ToolUnionBranch, len(v.Branches))
 		for i, val := range v.Branches {
+			if val == nil {
+				continue
+			}
 			res.Branches[i] = transformToolUnionBranchToProtoToolUnionBranch(val)
 		}
 	}
@@ -3430,6 +3469,9 @@ func transformToolTaggedUnionBranchToProtoToolTaggedUnionBranch(v *registry.Tool
 	if v.Discriminator != nil {
 		res.Discriminator = make([]*registrypb.ToolFieldPathSegment, len(v.Discriminator))
 		for i, val := range v.Discriminator {
+			if val == nil {
+				continue
+			}
 			res.Discriminator[i] = transformToolFieldPathSegmentToProtoToolFieldPathSegment(val)
 		}
 	}
@@ -3449,6 +3491,9 @@ func transformToolUntaggedUnionBranchToProtoToolUntaggedUnionBranch(v *registry.
 	if v.Path != nil {
 		res.Path = make([]*registrypb.ToolFieldPathSegment, len(v.Path))
 		for i, val := range v.Path {
+			if val == nil {
+				continue
+			}
 			res.Path[i] = transformToolFieldPathSegmentToProtoToolFieldPathSegment(val)
 		}
 	}
@@ -3638,6 +3683,9 @@ func transformProtoConsumerContractToConsumerContract(v *registrypb.ConsumerCont
 	if v.ServerData != nil {
 		res.ServerData = make([]*registry.ToolServerData, len(v.ServerData))
 		for i, val := range v.ServerData {
+			if val == nil {
+				continue
+			}
 			res.ServerData[i] = transformProtoToolServerDataToToolServerData(val)
 		}
 	}
@@ -3687,6 +3735,9 @@ func transformProtoToolTypeMetadataToToolTypeMetadata(v *registrypb.ToolTypeMeta
 	if v.Fields != nil {
 		res.Fields = make([]*registry.ToolFieldMetadata, len(v.Fields))
 		for i, val := range v.Fields {
+			if val == nil {
+				continue
+			}
 			res.Fields[i] = transformProtoToolFieldMetadataToToolFieldMetadata(val)
 		}
 	}
@@ -3708,12 +3759,18 @@ func transformProtoToolFieldMetadataToToolFieldMetadata(v *registrypb.ToolFieldM
 	if v.Path != nil {
 		res.Path = make([]*registry.ToolFieldPathSegment, len(v.Path))
 		for i, val := range v.Path {
+			if val == nil {
+				continue
+			}
 			res.Path[i] = transformProtoToolFieldPathSegmentToToolFieldPathSegment(val)
 		}
 	}
 	if v.Branches != nil {
 		res.Branches = make([]*registry.ToolUnionBranch, len(v.Branches))
 		for i, val := range v.Branches {
+			if val == nil {
+				continue
+			}
 			res.Branches[i] = transformProtoToolUnionBranchToToolUnionBranch(val)
 		}
 	}
@@ -3794,6 +3851,9 @@ func transformProtoToolTaggedUnionBranchToToolTaggedUnionBranch(v *registrypb.To
 	}
 	res.Discriminator = make([]*registry.ToolFieldPathSegment, len(v.Discriminator))
 	for i, val := range v.Discriminator {
+		if val == nil {
+			continue
+		}
 		res.Discriminator[i] = transformProtoToolFieldPathSegmentToToolFieldPathSegment(val)
 	}
 
@@ -3811,6 +3871,9 @@ func transformProtoToolUntaggedUnionBranchToToolUntaggedUnionBranch(v *registryp
 	if v.Path != nil {
 		res.Path = make([]*registry.ToolFieldPathSegment, len(v.Path))
 		for i, val := range v.Path {
+			if val == nil {
+				continue
+			}
 			res.Path[i] = transformProtoToolFieldPathSegmentToToolFieldPathSegment(val)
 		}
 	}
@@ -3945,6 +4008,9 @@ func transformProtoToolsetToToolset(v *registrypb.Toolset) *registry.Toolset {
 	}
 	res.Tools = make([]*registry.ToolSchema, len(v.Tools))
 	for i, val := range v.Tools {
+		if val == nil {
+			continue
+		}
 		res.Tools[i] = transformProtoToolSchemaToToolSchema(val)
 	}
 
