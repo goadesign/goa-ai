@@ -3,6 +3,7 @@
 package temporal
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -22,7 +23,8 @@ const cancellationReasonMemoKey = "goa_ai_cancellation_reason"
 
 // RegisterCancellationWorkflow installs an ordinary typed activity and a small
 // durable workflow on the owning worker queue. Pending work produces a timer;
-// failed delivery uses the existing activity retry rules.
+// failed delivery uses the existing activity retry rules. Unpinned jobs follow
+// the current worker build because observations do not execute agent work.
 func (e *Engine) RegisterCancellationWorkflow(_ context.Context, name string, opts engine.ActivityOptions, fn func(context.Context, engine.CancellationRequest) (bool, error)) error {
 	if err := e.requireWorkerMode("register cancellation workflows"); err != nil {
 		return err
@@ -50,16 +52,19 @@ func (e *Engine) RegisterCancellationWorkflow(_ context.Context, name string, op
 		return err
 	}
 
-	e.workerForQueue(opts.Queue).worker.RegisterWorkflowWithOptions(e.cancellationWorkflowHandler(name, activityName, opts), workflow.RegisterOptions{Name: name})
+	e.workerForQueue(opts.Queue).worker.RegisterWorkflowWithOptions(e.cancellationWorkflowHandler(name, activityName, opts), workflow.RegisterOptions{
+		Name: name, VersioningBehavior: workflow.VersioningBehaviorAutoUpgrade,
+	})
 	e.finishWorkflowRegistration(name, opts.Queue, false)
 	registered = true
 	return nil
 }
 
 // StartActiveCancellationWorkflow reads the accepted workflow type, queue and
-// status in one Temporal description. Once observed active, its cleanup job can
-// follow a later saved transition even if the owner closes during job admission.
-func (e *Engine) StartActiveCancellationWorkflow(ctx context.Context, ownerRunID string, request engine.CancellationRequest, target *engine.WorkerDeploymentVersion) error {
+// status in one Temporal description. Its observer follows current workers even
+// if the owner finishes before the observer starts. Agent work keeps its own
+// accepted worker target; the observer only delivers and follows cancellation.
+func (e *Engine) StartActiveCancellationWorkflow(ctx context.Context, ownerRunID string, request engine.CancellationRequest) error {
 	description, err := e.client.DescribeWorkflowExecution(ctx, ownerRunID, "")
 	if err != nil {
 		return mapDescribeWorkflowExecutionError(err)
@@ -71,11 +76,12 @@ func (e *Engine) StartActiveCancellationWorkflow(ctx context.Context, ownerRunID
 	if info.GetStatus() != enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING && info.GetStatus() != enumspb.WORKFLOW_EXECUTION_STATUS_PAUSED {
 		return engine.ErrWorkflowCompleted
 	}
-	return e.StartCancellationWorkflow(ctx, info.GetType().GetName()+".cancel", info.GetTaskQueue(), request, target)
+	return e.StartCancellationWorkflow(ctx, info.GetType().GetName()+".cancel", info.GetTaskQueue(), request, nil)
 }
 
 // StartCancellationWorkflow acknowledges Temporal acceptance without waiting
 // for cleanup. Duplicate delivery verifies routing and the original reason.
+// An omitted target reuses an existing job's accepted target, if any.
 func (e *Engine) StartCancellationWorkflow(ctx context.Context, name, queue string, request engine.CancellationRequest, target *engine.WorkerDeploymentVersion) error {
 	id, digest, err := startrecipe.CancellationRecipe(name, queue, request, target)
 	if err != nil {
@@ -102,13 +108,14 @@ func (e *Engine) StartCancellationWorkflow(ctx context.Context, name, queue stri
 	if !errors.As(err, &conflict) {
 		return err
 	}
-	// The shared start check already rejected changed immutable bytes. Decode
-	// the original reason to distinguish reason conflicts from routing conflicts.
+	// The submitted recipe differs from the accepted job. Preserve reason
+	// conflicts before checking whether an omitted target can reuse that job.
 	description, readErr := e.client.DescribeWorkflowExecution(ctx, id, "")
 	if readErr != nil {
 		return readErr
 	}
-	payload := description.GetWorkflowExecutionInfo().GetMemo().GetFields()[cancellationReasonMemoKey]
+	info := description.GetWorkflowExecutionInfo()
+	payload := info.GetMemo().GetFields()[cancellationReasonMemoKey]
 	if payload == nil {
 		return err
 	}
@@ -119,7 +126,37 @@ func (e *Engine) StartCancellationWorkflow(ctx context.Context, name, queue stri
 	if reason != request.Reason {
 		return &engine.CancellationConflictError{RunID: request.RunID, Reason: request.Reason}
 	}
-	return err
+	if target != nil {
+		return err
+	}
+
+	// A caller that omits a target may repeat a job accepted with an explicit
+	// pin. Rebuild its complete recipe from Temporal's saved pin and require the
+	// original digest; matching the reason alone cannot authorize a new route.
+	pinned := info.GetVersioningInfo().GetVersioningOverride().GetPinned()
+	if pinned == nil || info.GetType().GetName() != name || info.GetTaskQueue() != queue {
+		return err
+	}
+	version := pinned.GetVersion()
+	acceptedTarget := &engine.WorkerDeploymentVersion{
+		DeploymentName: version.GetDeploymentName(), BuildID: version.GetBuildId(),
+	}
+	_, acceptedDigest, recipeErr := startrecipe.CancellationRecipe(name, queue, request, acceptedTarget)
+	if recipeErr != nil {
+		return fmt.Errorf("validate accepted cancellation target: %w", recipeErr)
+	}
+	payload = info.GetMemo().GetFields()[workflowStartRecipeMemoKey]
+	if payload == nil {
+		return err
+	}
+	var savedDigest []byte
+	if decodeErr := NewAgentDataConverter().FromPayload(payload, &savedDigest); decodeErr != nil {
+		return fmt.Errorf("decode cancellation start recipe: %w", decodeErr)
+	}
+	if !bytes.Equal(savedDigest, acceptedDigest[:]) {
+		return err
+	}
+	return nil
 }
 
 // cancellationWorkflowHandler records each observation and the timer after an

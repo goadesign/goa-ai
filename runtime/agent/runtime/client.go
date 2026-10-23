@@ -5,9 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"slices"
 
+	genregistry "goa.design/goa-ai/registry/gen/registry"
 	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
@@ -487,19 +487,11 @@ func (c *agentClient) prepareStoredContinuation(
 	if prepared, found, err := c.recoverPreparedContinuation(ctx, sessionID, predecessorRunID, runID, turnID, commandID, response, workflowOptions); err != nil || found {
 		return prepared, err
 	}
-	input, writer, err := c.r.buildStoredContinuationRunInput(ctx, c.definition, sessionID, predecessorRunID, runID, turnID, &api.RunContinuationInput{Response: response}, commandID, attemptID)
-	if err != nil {
-		return nil, err
-	}
 	launch, err := encodeWorkflowLaunch(workflowOptions)
 	if err != nil {
 		return nil, continuationContractError(err)
 	}
-	owner, err := c.r.Store.LoadRun(ctx, predecessorRunID)
-	if err != nil {
-		return nil, err
-	}
-	launch.rootExecutionTarget, err = c.r.acceptedWorkflowTarget(ctx, owner)
+	input, writer, err := c.r.buildStoredContinuationRunInput(ctx, c.definition, sessionID, predecessorRunID, runID, turnID, &api.RunContinuationInput{Response: response}, commandID, attemptID)
 	if err != nil {
 		return nil, err
 	}

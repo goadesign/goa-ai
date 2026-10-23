@@ -406,14 +406,14 @@ func testRunningParentCancellation(t *testing.T, activitySibling, cancelRoot, ne
 	assert.ErrorAs(t, rt.CancelRun(ctx, CancelRequest{RunID: selected, Reason: run.CancellationReasonSessionEnded}), &conflict)
 }
 
-func (e *observedCancellationEngine) StartActiveCancellationWorkflow(ctx context.Context, id string, request engine.CancellationRequest, target *engine.WorkerDeploymentVersion) error {
+func (e *observedCancellationEngine) StartActiveCancellationWorkflow(ctx context.Context, id string, request engine.CancellationRequest) error {
 	e.mu.Lock()
 	e.activeOwners = append(e.activeOwners, id)
 	e.mu.Unlock()
 	if e.beforeActive != nil {
 		e.beforeActive()
 	}
-	return e.Engine.StartActiveCancellationWorkflow(ctx, id, request, target)
+	return e.Engine.StartActiveCancellationWorkflow(ctx, id, request)
 }
 
 func (e *observedCancellationEngine) RequestCancellation(ctx context.Context, id string, request engine.CancellationRequest) error {

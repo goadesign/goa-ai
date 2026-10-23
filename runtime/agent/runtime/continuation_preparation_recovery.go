@@ -1,6 +1,6 @@
-// Package runtime compares repeated continuation answers with
-// the already published request before reading any deployment owner. This keeps
-// retries on their original worker build and rejects changed caller arguments.
+// Package runtime compares repeated continuation answers with the published
+// request. Matching calls recover its exact launch settings; changed answers
+// or caller settings return a conflict without starting another workflow.
 package runtime
 
 import (
@@ -14,7 +14,7 @@ import (
 
 // recoverPreparedContinuation returns a published request only when its answer,
 // predecessor and launch settings match this call. Absence permits first
-// preparation; a different saved request returns a conflict before any owner read.
+// preparation; a different saved request returns a conflict before a new start.
 func (c *agentClient) recoverPreparedContinuation(ctx context.Context, sessionID, predecessorRunID, runID, turnID, commandID string, response *api.PendingInputResponse, options WorkflowOptions) (*PreparedRun, bool, error) {
 	operation := storage.PreparationOperation{
 		Subject:   genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(c.definition.route.ID))},

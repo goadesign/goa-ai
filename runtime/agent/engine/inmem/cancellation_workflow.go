@@ -19,6 +19,7 @@ type (
 	}
 	cancellationJob struct {
 		request engine.CancellationRequest
+		target  *engine.WorkerDeploymentVersion
 		digest  [32]byte
 		done    chan struct{}
 		err     error
@@ -47,8 +48,9 @@ func (e *eng) RegisterCancellationWorkflow(_ context.Context, name string, opts 
 }
 
 // StartActiveCancellationWorkflow reads an active owner's accepted route while
-// holding the admission lock, then accepts cleanup on that worker's queue.
-func (e *eng) StartActiveCancellationWorkflow(ctx context.Context, ownerRunID string, request engine.CancellationRequest, target *engine.WorkerDeploymentVersion) error {
+// holding the admission lock, then accepts an observer on that queue. The new
+// observer does not inherit the worker target of the agent work it follows.
+func (e *eng) StartActiveCancellationWorkflow(ctx context.Context, ownerRunID string, request engine.CancellationRequest) error {
 	e.mu.RLock()
 	recipe, found := e.recipes[ownerRunID]
 	status := e.statuses[ownerRunID]
@@ -59,11 +61,12 @@ func (e *eng) StartActiveCancellationWorkflow(ctx context.Context, ownerRunID st
 	if status != engine.RunStatusRunning && status != engine.RunStatusPending && status != engine.RunStatusPaused {
 		return engine.ErrWorkflowCompleted
 	}
-	return e.StartCancellationWorkflow(ctx, recipe.workflow+".cancel", recipe.queue, request, target)
+	return e.StartCancellationWorkflow(ctx, recipe.workflow+".cancel", recipe.queue, request, nil)
 }
 
 // StartCancellationWorkflow retains the first exact request before starting an
 // independent job. The caller receives acceptance while cleanup continues.
+// An omitted target reuses an existing job's accepted target, if any.
 func (e *eng) StartCancellationWorkflow(ctx context.Context, name, queue string, request engine.CancellationRequest, target *engine.WorkerDeploymentVersion) error {
 	id, digest, err := startrecipe.CancellationRecipe(name, queue, request, target)
 	if err != nil {
@@ -83,6 +86,12 @@ func (e *eng) StartCancellationWorkflow(ctx context.Context, name, queue string,
 		if previous.request.Reason != request.Reason {
 			return &engine.CancellationConflictError{RunID: request.RunID, Reason: request.Reason}
 		}
+		if target == nil {
+			_, digest, err = startrecipe.CancellationRecipe(name, queue, request, previous.target)
+			if err != nil {
+				return err
+			}
+		}
 		if previous.digest != digest {
 			return &engine.WorkflowStartConflictError{ID: id}
 		}
@@ -91,7 +100,11 @@ func (e *eng) StartCancellationWorkflow(ctx context.Context, name, queue string,
 	if e.cancellationJobs == nil {
 		e.cancellationJobs = make(map[string]*cancellationJob)
 	}
-	job := &cancellationJob{request: request, digest: digest, done: make(chan struct{})}
+	if target != nil {
+		acceptedTarget := *target
+		target = &acceptedTarget
+	}
+	job := &cancellationJob{request: request, target: target, digest: digest, done: make(chan struct{})}
 	e.cancellationJobs[id] = job
 	e.mu.Unlock()
 	go runCancellationJob(context.WithoutCancel(ctx), definition, job)

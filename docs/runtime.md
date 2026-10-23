@@ -4372,6 +4372,11 @@ Session and have a valid, nonempty transcript independently of the fresh input.
 `PrepareContinuation` reads the exact suspension and publishes a reference to
 its saved history without applying completed-turn transforms. Preparation needs
 the Store in caller processes; it neither registers workers nor starts work.
+A new answer or cancellation continuation leaves its worker target unset instead
+of inheriting the predecessor's target. Temporal dispatches it to current workers;
+with default pinned versioning, the accepted workflow stays on that version.
+Retrying the same saved request recovers that workflow rather than selecting a
+new execution. Already published bodies retain any original explicit target.
 Preparation serializes the complete compiled request into bounded Store records
 and atomically publishes it with the history. `Start`, `StartOneShot`, and
 `Continue` use this same durable acceptance path.
@@ -7508,8 +7513,11 @@ stores must implement the retained-work contract before enabling durable executi
 caller to reconstruct or answer its checkpoint. An empty root with a supported
 checkpoint closes directly; later cancellation succeeds without changing its
 first reason or closure time. For saved work that still needs cleanup, Temporal owns a cancellation job
-on the highest parent’s worker. For a running parent, the engine derives that
-route from its accepted execution. For a suspended parent, retained preparation
+using the highest parent’s workflow name and queue. New Temporal cancellation
+observers use automatic worker upgrades; the domain workflows they follow keep
+their own accepted worker versions. An existing pinned observer retains its
+original target on retries. For a running parent, the engine derives that route
+from its accepted execution. For a suspended parent, retained preparation
 or suspension supplies the route without depending on old engine history. The
 job delivers to the nearest running ancestor and follows the
 successor selected by storage, including a competing answer, and restores saved
@@ -7531,7 +7539,8 @@ admitted successor transfers that obligation to the successor. Purge checks
 that consider only running engine executions can delete unfinished work and
 must be updated before cutover. Custom engine implementations must implement
 `RegisterCancellationWorkflow`, `StartCancellationWorkflow`, and
-`StartActiveCancellationWorkflow`. The active operation must observe the owner’s
+`StartActiveCancellationWorkflow`. The active operation accepts the owner run ID
+and cancellation request, without a caller-selected worker target. It must observe the owner’s
 status and accepted workflow/queue together, start the workflow named by appending
 `.cancel` on that same queue, and return `ErrWorkflowCompleted`
 or `ErrWorkflowNotFound` if it cannot admit work from an active owner. Update

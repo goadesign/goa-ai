@@ -160,6 +160,13 @@ build. A changed target conflicts with the accepted workflow ID. Omitting the
 target preserves engine-managed routing and existing request identities. Child
 workflow requests have no target override.
 
+A new answer or cancellation continuation does not copy its predecessor's target.
+It starts a separate workflow without an override. With default pinned worker
+versioning, Temporal selects current workers when dispatching its first task and
+keeps the accepted execution on that version. An exact retry recovers the same
+workflow ID and request. A published request from an earlier release keeps any
+explicit target already saved in its body.
+
 The restriction selects generated text-only argument contracts
 before validation and cannot be removed by provider preparation or child runs.
 Registered native and service operations use the same restriction, retained with
@@ -3610,9 +3617,12 @@ continuation without starting a workflow. It preserves the original suspended
 result, checkpoint and records. An unknown checkpoint is rejected before closure.
 
 A suspension with saved work still receives a durable cancellation job. The
-job stays on the highest parent's worker. An active parent's route comes from
-engine admission; a saved parent's route comes from retained preparation or
-suspension, without requiring old engine history. Delivery targets the nearest
+job uses the highest parent's workflow name and task queue. An active parent's
+route comes from engine admission; a saved parent's route comes from retained
+preparation or suspension, without requiring old engine history. New Temporal
+observers use automatic worker upgrades, while the domain workflows they follow
+keep their own versioning behavior. Existing pinned observers recover their
+original target on retries. Delivery targets the nearest
 running ancestor. The job follows only storage-admitted successors and publishes
 ordinary cancellation continuations when all ancestors have suspended.
 A racing answer can win admission; the job then follows that accepted execution.
