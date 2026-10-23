@@ -57,7 +57,6 @@ func BenchmarkStaticServiceSnapshotRetained(b *testing.B) {
 				warm, err := CompileStaticService(fixture.expected, fixture.selected)
 				require.NoError(b, err)
 				runtime.KeepAlive(warm)
-				warm = nil
 				var totalLive uint64
 				var totalEncoded int
 				b.ResetTimer()
