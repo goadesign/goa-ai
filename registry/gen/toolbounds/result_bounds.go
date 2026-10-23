@@ -108,6 +108,38 @@ func EncodeResultBounds(in *ResultBounds) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateResultBoundsValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateResultBoundsValue(in *ResultBounds) error {
+	if err := checkResultBoundsValue(in); err != nil {
+		return fmt.Errorf("validate ResultBounds value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ResultBounds")
+	}
+
+	var body *jsonResultBoundsTransport
+	{
+		body = &jsonResultBoundsTransport{
+			Truncated:      &in.Truncated,
+			NextCursor:     in.NextCursor,
+			RefinementHint: in.RefinementHint,
+		}
+		returned := resultBoundsIntTransport(in.Returned)
+		body.Returned = &returned
+		if in.Total != nil {
+			total := resultBoundsIntTransport(*in.Total)
+			body.Total = &total
+		}
+	}
+	if err := validatejsonResultBoundsTransport(body); err != nil {
+		return fmt.Errorf("validate ResultBounds value: %w", err)
+	}
+	return nil
+}
+
 // DecodeResultBounds checks JSON field names from the Goa design and returns a service value.
 func DecodeResultBounds(data []byte) (out *ResultBounds, err error) {
 	root, err := readStrictJSON(data)

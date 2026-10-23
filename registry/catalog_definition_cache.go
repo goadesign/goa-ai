@@ -79,8 +79,9 @@ func (c *toolsetCatalog) validatedDefinition(ctx context.Context, name, raw stri
 }
 
 // prepareDefinition receives exact saved JSON, checks its original member names
-// and fingerprint, and returns an owned declaration with compiled schemas. Native
-// admission and cold reads use these same rules before retaining the result.
+// and fingerprint, and returns an owned declaration with compiled schemas.
+// Cold reads apply these rules before retaining the result. New registrations
+// validate typed declarations before serializing their saved bytes.
 func (c *toolsetCatalog) prepareDefinition(name, raw string, nativeAgent bool) (*catalogDefinition, error) {
 	toolset, fingerprint, err := internaladmission.SavedToolsetFingerprint([]byte(raw))
 	if err != nil {

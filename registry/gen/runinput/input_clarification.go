@@ -111,19 +111,24 @@ func validatejsonHostInputRequestTransport(value *jsonHostInputRequestTransport)
 		err = goa.MergeErrors(err, goa.MissingFieldError("question", "body"))
 	}
 	if value.Question != nil {
-		switch string(value.Question.Kind()) {
-		case "form":
-			actual, _ := value.Question.AsForm()
-			if actual != nil {
-				if err2 := validatejsonHostFormParamsTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Question.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Question.Kind()) {
+			case "form":
+				actual, _ := value.Question.AsForm()
+				if actual != nil {
+					if err2 := validatejsonHostFormParamsTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "url":
-			actual, _ := value.Question.AsURL()
-			if actual != nil {
-				if err2 := validatejsonHostURLParamsTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "url":
+				actual, _ := value.Question.AsURL()
+				if actual != nil {
+					if err2 := validatejsonHostURLParamsTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -360,19 +365,24 @@ func validatejsonInputResponseTransport(value *jsonInputResponseTransport) (err 
 		err = goa.MergeErrors(err, goa.MissingFieldError("answer", "body"))
 	}
 	if value.Answer != nil {
-		switch string(value.Answer.Kind()) {
-		case "questions":
-			actual, _ := value.Answer.AsQuestions()
-			if actual != nil {
-				if err2 := validatejsonInputToolResultTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Answer.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Answer.Kind()) {
+			case "questions":
+				actual, _ := value.Answer.AsQuestions()
+				if actual != nil {
+					if err2 := validatejsonInputToolResultTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "external_tools":
-			actual, _ := value.Answer.AsExternalTools()
-			if actual != nil {
-				if err2 := validatejsonRunInputAnswerBranchExternalToolsTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "external_tools":
+				actual, _ := value.Answer.AsExternalTools()
+				if actual != nil {
+					if err2 := validatejsonRunInputAnswerBranchExternalToolsTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -509,19 +519,24 @@ func validatejsonInputToolResultTransport(value *jsonInputToolResultTransport) (
 		}
 	}
 	if value.Outcome != nil {
-		switch string(value.Outcome.Kind()) {
-		case "success":
-			actual, _ := value.Outcome.AsSuccess()
-			if actual != nil {
-				if err2 := validatejsonInputToolSuccessTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Outcome.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Outcome.Kind()) {
+			case "success":
+				actual, _ := value.Outcome.AsSuccess()
+				if actual != nil {
+					if err2 := validatejsonInputToolSuccessTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "failure":
-			actual, _ := value.Outcome.AsFailure()
-			if actual != nil {
-				if err2 := validatejsonInputToolFailureTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "failure":
+				actual, _ := value.Outcome.AsFailure()
+				if actual != nil {
+					if err2 := validatejsonInputToolFailureTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -565,40 +580,45 @@ func validatejsonRequestedInputTransport(value *jsonRequestedInputTransport) (er
 		err = goa.MergeErrors(err, goa.MissingFieldError("request", "body"))
 	}
 	if value.Request != nil {
-		switch string(value.Request.Kind()) {
-		case "mcp":
-			actual, _ := value.Request.AsMcp()
-			if actual != nil {
-				if err2 := validatejsonRunInputRequestBranchMcpTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Request.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Request.Kind()) {
+			case "mcp":
+				actual, _ := value.Request.AsMcp()
+				if actual != nil {
+					if err2 := validatejsonRunInputRequestBranchMcpTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "clarification":
-			actual, _ := value.Request.AsClarification()
-			if actual != nil {
-				if err2 := validatejsonInputClarificationTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "clarification":
+				actual, _ := value.Request.AsClarification()
+				if actual != nil {
+					if err2 := validatejsonInputClarificationTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "confirmation":
-			actual, _ := value.Request.AsConfirmation()
-			if actual != nil {
-				if err2 := validatejsonInputConfirmationTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "confirmation":
+				actual, _ := value.Request.AsConfirmation()
+				if actual != nil {
+					if err2 := validatejsonInputConfirmationTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "questions":
-			actual, _ := value.Request.AsQuestions()
-			if actual != nil {
-				if err2 := validatejsonInputQuestionsTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "questions":
+				actual, _ := value.Request.AsQuestions()
+				if actual != nil {
+					if err2 := validatejsonInputQuestionsTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "external_tools":
-			actual, _ := value.Request.AsExternalTools()
-			if actual != nil {
-				if err2 := validatejsonRunInputRequestBranchExternalToolsTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "external_tools":
+				actual, _ := value.Request.AsExternalTools()
+				if actual != nil {
+					if err2 := validatejsonRunInputRequestBranchExternalToolsTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -831,40 +851,45 @@ func validatejsonToolContentBlockTransport(value *jsonToolContentBlockTransport)
 		err = goa.MergeErrors(err, goa.MissingFieldError("content", "body"))
 	}
 	if value.Content != nil {
-		switch string(value.Content.Kind()) {
-		case "text":
-			actual, _ := value.Content.AsText()
-			if actual != nil {
-				if err2 := validatejsonToolTextContentTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Content.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Content.Kind()) {
+			case "text":
+				actual, _ := value.Content.AsText()
+				if actual != nil {
+					if err2 := validatejsonToolTextContentTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "image":
-			actual, _ := value.Content.AsImage()
-			if actual != nil {
-				if err2 := validatejsonToolImageContentTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "image":
+				actual, _ := value.Content.AsImage()
+				if actual != nil {
+					if err2 := validatejsonToolImageContentTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "audio":
-			actual, _ := value.Content.AsAudio()
-			if actual != nil {
-				if err2 := validatejsonToolAudioContentTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "audio":
+				actual, _ := value.Content.AsAudio()
+				if actual != nil {
+					if err2 := validatejsonToolAudioContentTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "resource_link":
-			actual, _ := value.Content.AsResourceLink()
-			if actual != nil {
-				if err2 := validatejsonToolResourceLinkTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "resource_link":
+				actual, _ := value.Content.AsResourceLink()
+				if actual != nil {
+					if err2 := validatejsonToolResourceLinkTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "resource":
-			actual, _ := value.Content.AsResource()
-			if actual != nil {
-				if err2 := validatejsonToolEmbeddedResourceTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "resource":
+				actual, _ := value.Content.AsResource()
+				if actual != nil {
+					if err2 := validatejsonToolEmbeddedResourceTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -922,19 +947,24 @@ func validatejsonToolEmbeddedResourceTransport(value *jsonToolEmbeddedResourceTr
 		err = goa.MergeErrors(err, goa.MissingFieldError("resource", "body"))
 	}
 	if value.Resource != nil {
-		switch string(value.Resource.Kind()) {
-		case "text":
-			actual, _ := value.Resource.AsText()
-			if actual != nil {
-				if err2 := validatejsonToolTextResourceTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Resource.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Resource.Kind()) {
+			case "text":
+				actual, _ := value.Resource.AsText()
+				if actual != nil {
+					if err2 := validatejsonToolTextResourceTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "blob":
-			actual, _ := value.Resource.AsBlob()
-			if actual != nil {
-				if err2 := validatejsonToolBlobResourceTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "blob":
+				actual, _ := value.Resource.AsBlob()
+				if actual != nil {
+					if err2 := validatejsonToolBlobResourceTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -1223,19 +1253,24 @@ func validateInputResponseOriginal(value *InputResponse) (err error) {
 	if value.Answer.Kind() == "" {
 		err = goa.MergeErrors(err, goa.MissingFieldError("answer", "value"))
 	}
-	switch string(value.Answer.Kind()) {
-	case "questions":
-		actual, _ := value.Answer.AsQuestions()
-		if actual != nil {
-			if err2 := validateInputToolResultOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+
+	if err2 := value.Answer.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.Answer.Kind()) {
+		case "questions":
+			actual, _ := value.Answer.AsQuestions()
+			if actual != nil {
+				if err2 := validateInputToolResultOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "external_tools":
-		actual, _ := value.Answer.AsExternalTools()
-		if actual != nil {
-			if err2 := validateRunInputAnswerBranchExternalToolsOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "external_tools":
+			actual, _ := value.Answer.AsExternalTools()
+			if actual != nil {
+				if err2 := validateRunInputAnswerBranchExternalToolsOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
 		}
 	}
@@ -1258,12 +1293,17 @@ func validateInputToolResultOriginal(value *InputToolResult) (err error) {
 			}
 		}
 	}
-	switch string(value.Outcome.Kind()) {
-	case "failure":
-		actual, _ := value.Outcome.AsFailure()
-		if actual != nil {
-			if err2 := validateInputToolFailureOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+
+	if err2 := value.Outcome.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.Outcome.Kind()) {
+		case "failure":
+			actual, _ := value.Outcome.AsFailure()
+			if actual != nil {
+				if err2 := validateInputToolFailureOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
 		}
 	}
@@ -1276,40 +1316,45 @@ func validateToolContentBlockOriginal2(value *toolcontent.ToolContentBlock) (err
 	if value.Content.Kind() == "" {
 		err = goa.MergeErrors(err, goa.MissingFieldError("content", "value"))
 	}
-	switch string(value.Content.Kind()) {
-	case "text":
-		actual, _ := value.Content.AsText()
-		if actual != nil {
-			if err2 := validateToolTextContentOriginal2(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+
+	if err2 := value.Content.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.Content.Kind()) {
+		case "text":
+			actual, _ := value.Content.AsText()
+			if actual != nil {
+				if err2 := validateToolTextContentOriginal2(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "image":
-		actual, _ := value.Content.AsImage()
-		if actual != nil {
-			if err2 := validateToolImageContentOriginal2(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "image":
+			actual, _ := value.Content.AsImage()
+			if actual != nil {
+				if err2 := validateToolImageContentOriginal2(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "audio":
-		actual, _ := value.Content.AsAudio()
-		if actual != nil {
-			if err2 := validateToolAudioContentOriginal2(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "audio":
+			actual, _ := value.Content.AsAudio()
+			if actual != nil {
+				if err2 := validateToolAudioContentOriginal2(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "resource_link":
-		actual, _ := value.Content.AsResourceLink()
-		if actual != nil {
-			if err2 := validateToolResourceLinkOriginal2(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "resource_link":
+			actual, _ := value.Content.AsResourceLink()
+			if actual != nil {
+				if err2 := validateToolResourceLinkOriginal2(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "resource":
-		actual, _ := value.Content.AsResource()
-		if actual != nil {
-			if err2 := validateToolEmbeddedResourceOriginal2(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "resource":
+			actual, _ := value.Content.AsResource()
+			if actual != nil {
+				if err2 := validateToolEmbeddedResourceOriginal2(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
 		}
 	}
@@ -1407,19 +1452,24 @@ func validateToolEmbeddedResourceOriginal2(value *toolcontent.ToolEmbeddedResour
 	if value.Resource.Kind() == "" {
 		err = goa.MergeErrors(err, goa.MissingFieldError("resource", "value"))
 	}
-	switch string(value.Resource.Kind()) {
-	case "text":
-		actual, _ := value.Resource.AsText()
-		if actual != nil {
-			if err2 := validateToolTextResourceOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+
+	if err2 := value.Resource.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.Resource.Kind()) {
+		case "text":
+			actual, _ := value.Resource.AsText()
+			if actual != nil {
+				if err2 := validateToolTextResourceOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "blob":
-		actual, _ := value.Resource.AsBlob()
-		if actual != nil {
-			if err2 := validateToolBlobResourceOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "blob":
+			actual, _ := value.Resource.AsBlob()
+			if actual != nil {
+				if err2 := validateToolBlobResourceOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
 		}
 	}
@@ -1487,12 +1537,17 @@ func validateInputToolResultOriginal2(value *InputToolResult) (err error) {
 			}
 		}
 	}
-	switch string(value.Outcome.Kind()) {
-	case "failure":
-		actual, _ := value.Outcome.AsFailure()
-		if actual != nil {
-			if err2 := validateInputToolFailureOriginal2(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+
+	if err2 := value.Outcome.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.Outcome.Kind()) {
+		case "failure":
+			actual, _ := value.Outcome.AsFailure()
+			if actual != nil {
+				if err2 := validateInputToolFailureOriginal2(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
 		}
 	}
@@ -1505,40 +1560,45 @@ func validateToolContentBlockOriginal(value *toolcontent.ToolContentBlock) (err 
 	if value.Content.Kind() == "" {
 		err = goa.MergeErrors(err, goa.MissingFieldError("content", "value"))
 	}
-	switch string(value.Content.Kind()) {
-	case "text":
-		actual, _ := value.Content.AsText()
-		if actual != nil {
-			if err2 := validateToolTextContentOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+
+	if err2 := value.Content.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.Content.Kind()) {
+		case "text":
+			actual, _ := value.Content.AsText()
+			if actual != nil {
+				if err2 := validateToolTextContentOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "image":
-		actual, _ := value.Content.AsImage()
-		if actual != nil {
-			if err2 := validateToolImageContentOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "image":
+			actual, _ := value.Content.AsImage()
+			if actual != nil {
+				if err2 := validateToolImageContentOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "audio":
-		actual, _ := value.Content.AsAudio()
-		if actual != nil {
-			if err2 := validateToolAudioContentOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "audio":
+			actual, _ := value.Content.AsAudio()
+			if actual != nil {
+				if err2 := validateToolAudioContentOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "resource_link":
-		actual, _ := value.Content.AsResourceLink()
-		if actual != nil {
-			if err2 := validateToolResourceLinkOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "resource_link":
+			actual, _ := value.Content.AsResourceLink()
+			if actual != nil {
+				if err2 := validateToolResourceLinkOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "resource":
-		actual, _ := value.Content.AsResource()
-		if actual != nil {
-			if err2 := validateToolEmbeddedResourceOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "resource":
+			actual, _ := value.Content.AsResource()
+			if actual != nil {
+				if err2 := validateToolEmbeddedResourceOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
 		}
 	}
@@ -1636,19 +1696,24 @@ func validateToolEmbeddedResourceOriginal(value *toolcontent.ToolEmbeddedResourc
 	if value.Resource.Kind() == "" {
 		err = goa.MergeErrors(err, goa.MissingFieldError("resource", "value"))
 	}
-	switch string(value.Resource.Kind()) {
-	case "text":
-		actual, _ := value.Resource.AsText()
-		if actual != nil {
-			if err2 := validateToolTextResourceOriginal2(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+
+	if err2 := value.Resource.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.Resource.Kind()) {
+		case "text":
+			actual, _ := value.Resource.AsText()
+			if actual != nil {
+				if err2 := validateToolTextResourceOriginal2(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "blob":
-		actual, _ := value.Resource.AsBlob()
-		if actual != nil {
-			if err2 := validateToolBlobResourceOriginal2(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "blob":
+			actual, _ := value.Resource.AsBlob()
+			if actual != nil {
+				if err2 := validateToolBlobResourceOriginal2(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
 		}
 	}
@@ -1710,33 +1775,38 @@ func validateRequestedInputOriginal(value *RequestedInput) (err error) {
 	if value.Request.Kind() == "" {
 		err = goa.MergeErrors(err, goa.MissingFieldError("request", "value"))
 	}
-	switch string(value.Request.Kind()) {
-	case "mcp":
-		actual, _ := value.Request.AsMcp()
-		if actual != nil {
-			if err2 := validateRunInputRequestBranchMcpOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+
+	if err2 := value.Request.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.Request.Kind()) {
+		case "mcp":
+			actual, _ := value.Request.AsMcp()
+			if actual != nil {
+				if err2 := validateRunInputRequestBranchMcpOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "confirmation":
-		actual, _ := value.Request.AsConfirmation()
-		if actual != nil {
-			if err2 := validateInputConfirmationOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "confirmation":
+			actual, _ := value.Request.AsConfirmation()
+			if actual != nil {
+				if err2 := validateInputConfirmationOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "questions":
-		actual, _ := value.Request.AsQuestions()
-		if actual != nil {
-			if err2 := validateInputQuestionsOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "questions":
+			actual, _ := value.Request.AsQuestions()
+			if actual != nil {
+				if err2 := validateInputQuestionsOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "external_tools":
-		actual, _ := value.Request.AsExternalTools()
-		if actual != nil {
-			if err2 := validateRunInputRequestBranchExternalToolsOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "external_tools":
+			actual, _ := value.Request.AsExternalTools()
+			if actual != nil {
+				if err2 := validateRunInputRequestBranchExternalToolsOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
 		}
 	}
@@ -1761,19 +1831,24 @@ func validateHostInputRequestOriginal(value *hostinput.HostInputRequest) (err er
 	if value.Question.Kind() == "" {
 		err = goa.MergeErrors(err, goa.MissingFieldError("question", "value"))
 	}
-	switch string(value.Question.Kind()) {
-	case "form":
-		actual, _ := value.Question.AsForm()
-		if actual != nil {
-			if err2 := validateHostFormParamsOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+
+	if err2 := value.Question.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.Question.Kind()) {
+		case "form":
+			actual, _ := value.Question.AsForm()
+			if actual != nil {
+				if err2 := validateHostFormParamsOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "url":
-		actual, _ := value.Question.AsURL()
-		if actual != nil {
-			if err2 := validateHostURLParamsOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "url":
+			actual, _ := value.Question.AsURL()
+			if actual != nil {
+				if err2 := validateHostURLParamsOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
 		}
 	}
@@ -3094,6 +3169,37 @@ func EncodeInputClarification(in *InputClarification) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateInputClarificationValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateInputClarificationValue(in *InputClarification) error {
+	if err := checkInputClarificationValue(in); err != nil {
+		return fmt.Errorf("validate InputClarification value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "InputClarification")
+	}
+
+	var body *jsonInputClarificationTransport
+	{
+		body = &jsonInputClarificationTransport{
+			Question:    &in.Question,
+			ExampleJSON: in.ExampleJSON,
+		}
+		if in.MissingFields != nil {
+			body.MissingFields = make([]string, len(in.MissingFields))
+			for i, val := range in.MissingFields {
+				body.MissingFields[i] = val
+			}
+		}
+	}
+	if err := validatejsonInputClarificationTransport(body); err != nil {
+		return fmt.Errorf("validate InputClarification value: %w", err)
+	}
+	return nil
+}
+
 // DecodeInputClarification checks JSON field names from the Goa design and returns a service value.
 func DecodeInputClarification(data []byte) (out *InputClarification, err error) {
 	root, err := readStrictJSON(data)
@@ -3158,6 +3264,36 @@ func EncodeInputConfirmation(in *InputConfirmation) ([]byte, error) {
 		return nil, fmt.Errorf("encode InputConfirmation JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateInputConfirmationValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateInputConfirmationValue(in *InputConfirmation) error {
+	if err := checkInputConfirmationValue(in); err != nil {
+		return fmt.Errorf("validate InputConfirmation value: %w", err)
+	}
+	if err := validateInputConfirmationOriginal(in); err != nil {
+		return fmt.Errorf("validate InputConfirmation value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "InputConfirmation")
+	}
+
+	var body *jsonInputConfirmationTransport
+	{
+		body = &jsonInputConfirmationTransport{
+			Title:    in.Title,
+			Prompt:   &in.Prompt,
+			ToolName: &in.ToolName,
+			Payload:  in.Payload,
+		}
+	}
+	if err := validatejsonInputConfirmationTransport(body); err != nil {
+		return fmt.Errorf("validate InputConfirmation value: %w", err)
+	}
+	return nil
 }
 
 // DecodeInputConfirmation checks JSON field names from the Goa design and returns a service value.
@@ -3233,6 +3369,49 @@ func EncodeInputFieldIssue(in *InputFieldIssue) ([]byte, error) {
 		return nil, fmt.Errorf("encode InputFieldIssue JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateInputFieldIssueValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateInputFieldIssueValue(in *InputFieldIssue) error {
+	if err := checkInputFieldIssueValue(in); err != nil {
+		return fmt.Errorf("validate InputFieldIssue value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "InputFieldIssue")
+	}
+
+	var body *jsonInputFieldIssueTransport
+	{
+		body = &jsonInputFieldIssueTransport{
+			Field:            &in.Field,
+			Constraint:       &in.Constraint,
+			Pattern:          in.Pattern,
+			Format:           in.Format,
+			ExpectedJSONType: in.ExpectedJSONType,
+			ActualJSONType:   in.ActualJSONType,
+		}
+		if in.MinLen != nil {
+			minLen := inputFieldIssueIntTransport(*in.MinLen)
+			body.MinLen = &minLen
+		}
+		if in.MaxLen != nil {
+			maxLen := inputFieldIssueIntTransport(*in.MaxLen)
+			body.MaxLen = &maxLen
+		}
+		if in.Allowed != nil {
+			body.Allowed = make([]string, len(in.Allowed))
+			for i, val := range in.Allowed {
+				body.Allowed[i] = val
+			}
+		}
+	}
+	if err := validatejsonInputFieldIssueTransport(body); err != nil {
+		return fmt.Errorf("validate InputFieldIssue value: %w", err)
+	}
+	return nil
 }
 
 // DecodeInputFieldIssue checks JSON field names from the Goa design and returns a service value.
@@ -3320,6 +3499,43 @@ func EncodeInputQuestion(in *InputQuestion) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateInputQuestionValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateInputQuestionValue(in *InputQuestion) error {
+	if err := checkInputQuestionValue(in); err != nil {
+		return fmt.Errorf("validate InputQuestion value: %w", err)
+	}
+	if err := validateInputQuestionOriginal(in); err != nil {
+		return fmt.Errorf("validate InputQuestion value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "InputQuestion")
+	}
+
+	var body *jsonInputQuestionTransport
+	{
+		body = &jsonInputQuestionTransport{
+			ID:            &in.ID,
+			Prompt:        &in.Prompt,
+			AllowMultiple: &in.AllowMultiple,
+		}
+		body.Options = make([]*jsonInputQuestionOptionTransport, len(in.Options))
+		for i, val := range in.Options {
+			if val == nil {
+				body.Options[i] = nil
+				continue
+			}
+			body.Options[i] = encodeInputQuestionOptionToInputQuestionOptionTransport(val)
+		}
+	}
+	if err := validatejsonInputQuestionTransport(body); err != nil {
+		return fmt.Errorf("validate InputQuestion value: %w", err)
+	}
+	return nil
+}
+
 // DecodeInputQuestion checks JSON field names from the Goa design and returns a service value.
 func DecodeInputQuestion(data []byte) (out *InputQuestion, err error) {
 	root, err := readStrictJSON(data)
@@ -3382,6 +3598,31 @@ func EncodeInputQuestionOption(in *InputQuestionOption) ([]byte, error) {
 		return nil, fmt.Errorf("encode InputQuestionOption JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateInputQuestionOptionValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateInputQuestionOptionValue(in *InputQuestionOption) error {
+	if err := checkInputQuestionOptionValue(in); err != nil {
+		return fmt.Errorf("validate InputQuestionOption value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "InputQuestionOption")
+	}
+
+	var body *jsonInputQuestionOptionTransport
+	{
+		body = &jsonInputQuestionOptionTransport{
+			ID:    &in.ID,
+			Label: &in.Label,
+		}
+	}
+	if err := validatejsonInputQuestionOptionTransport(body); err != nil {
+		return fmt.Errorf("validate InputQuestionOption value: %w", err)
+	}
+	return nil
 }
 
 // DecodeInputQuestionOption checks JSON field names from the Goa design and returns a service value.
@@ -3448,6 +3689,42 @@ func EncodeInputQuestions(in *InputQuestions) ([]byte, error) {
 		return nil, fmt.Errorf("encode InputQuestions JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateInputQuestionsValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateInputQuestionsValue(in *InputQuestions) error {
+	if err := checkInputQuestionsValue(in); err != nil {
+		return fmt.Errorf("validate InputQuestions value: %w", err)
+	}
+	if err := validateInputQuestionsOriginal(in); err != nil {
+		return fmt.Errorf("validate InputQuestions value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "InputQuestions")
+	}
+
+	var body *jsonInputQuestionsTransport
+	{
+		body = &jsonInputQuestionsTransport{
+			Title: in.Title,
+		}
+		body.Questions = make([]*jsonInputQuestionTransport, len(in.Questions))
+		for i, val := range in.Questions {
+			if val == nil {
+				body.Questions[i] = nil
+				continue
+			}
+			body.Questions[i] = encodeInputQuestionToInputQuestionTransport(val)
+		}
+		body.ResultContract = encodeInputResultContractToInputResultContractTransport(in.ResultContract)
+	}
+	if err := validatejsonInputQuestionsTransport(body); err != nil {
+		return fmt.Errorf("validate InputQuestions value: %w", err)
+	}
+	return nil
 }
 
 // DecodeInputQuestions checks JSON field names from the Goa design and returns a service value.
@@ -3558,6 +3835,76 @@ func EncodeInputResponse(in *InputResponse) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateInputResponseValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateInputResponseValue(in *InputResponse) error {
+	if err := checkInputResponseValue(in); err != nil {
+		return fmt.Errorf("validate InputResponse value: %w", err)
+	}
+	if err := validateInputResponseOriginal(in); err != nil {
+		return fmt.Errorf("validate InputResponse value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "InputResponse")
+	}
+
+	var body *jsonInputResponseTransport
+	{
+		body = &jsonInputResponseTransport{}
+		var answerValue jsonRunInputAnswerTransport
+		switch string(in.Answer.Kind()) {
+		case "mcp":
+			actual, _ := in.Answer.AsMcp()
+			var obj jsonRunInputAnswerBranchMcpTransport
+			if actual != nil {
+				obj = encodeRunInputAnswerMcpToRunInputAnswerMcpTransport(actual)
+			}
+			u := answerValue
+			u.SetMcp((jsonRunInputAnswerBranchMcpTransport)(obj))
+			answerValue = u
+		case "clarification":
+			actual, _ := in.Answer.AsClarification()
+			obj := jsonRunInputAnswerBranchClarificationTransport(actual)
+
+			u := answerValue
+			u.SetClarification((jsonRunInputAnswerBranchClarificationTransport)(obj))
+			answerValue = u
+		case "confirmation":
+			actual, _ := in.Answer.AsConfirmation()
+			obj := jsonRunInputAnswerBranchConfirmationTransport(actual)
+
+			u := answerValue
+			u.SetConfirmation((jsonRunInputAnswerBranchConfirmationTransport)(obj))
+			answerValue = u
+		case "questions":
+			actual, _ := in.Answer.AsQuestions()
+			var obj *jsonInputToolResultTransport
+			if actual != nil {
+				obj = encodeInputToolResultToInputToolResultTransport2(actual)
+			}
+			u := answerValue
+			u.SetQuestions((*jsonInputToolResultTransport)(obj))
+			answerValue = u
+		case "external_tools":
+			actual, _ := in.Answer.AsExternalTools()
+			var obj jsonRunInputAnswerBranchExternalToolsTransport
+			if actual != nil {
+				obj = encodeRunInputAnswerExternalToolsToRunInputAnswerExternalToolsTransport(actual)
+			}
+			u := answerValue
+			u.SetExternalTools((jsonRunInputAnswerBranchExternalToolsTransport)(obj))
+			answerValue = u
+		}
+		body.Answer = &answerValue
+	}
+	if err := validatejsonInputResponseTransport(body); err != nil {
+		return fmt.Errorf("validate InputResponse value: %w", err)
+	}
+	return nil
+}
+
 // DecodeInputResponse checks JSON field names from the Goa design and returns a service value.
 func DecodeInputResponse(data []byte) (out *InputResponse, err error) {
 	root, err := readStrictJSON(data)
@@ -3658,6 +4005,36 @@ func EncodeInputResultContract(in *InputResultContract) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateInputResultContractValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateInputResultContractValue(in *InputResultContract) error {
+	if err := checkInputResultContractValue(in); err != nil {
+		return fmt.Errorf("validate InputResultContract value: %w", err)
+	}
+	if err := validateInputResultContractOriginal(in); err != nil {
+		return fmt.Errorf("validate InputResultContract value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "InputResultContract")
+	}
+
+	var body *jsonInputResultContractTransport
+	{
+		body = &jsonInputResultContractTransport{
+			Schema: in.Schema,
+		}
+		if in.Bounds != nil {
+			body.Bounds = encodeToolBoundsToToolBoundsTransport(in.Bounds)
+		}
+	}
+	if err := validatejsonInputResultContractTransport(body); err != nil {
+		return fmt.Errorf("validate InputResultContract value: %w", err)
+	}
+	return nil
+}
+
 // DecodeInputResultContract checks JSON field names from the Goa design and returns a service value.
 func DecodeInputResultContract(data []byte) (out *InputResultContract, err error) {
 	root, err := readStrictJSON(data)
@@ -3717,6 +4094,35 @@ func EncodeInputToolCall(in *InputToolCall) ([]byte, error) {
 		return nil, fmt.Errorf("encode InputToolCall JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateInputToolCallValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateInputToolCallValue(in *InputToolCall) error {
+	if err := checkInputToolCallValue(in); err != nil {
+		return fmt.Errorf("validate InputToolCall value: %w", err)
+	}
+	if err := validateInputToolCallOriginal(in); err != nil {
+		return fmt.Errorf("validate InputToolCall value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "InputToolCall")
+	}
+
+	var body *jsonInputToolCallTransport
+	{
+		body = &jsonInputToolCallTransport{
+			Name:    &in.Name,
+			Payload: in.Payload,
+		}
+		body.ResultContract = encodeInputResultContractToInputResultContractTransport2(in.ResultContract)
+	}
+	if err := validatejsonInputToolCallTransport(body); err != nil {
+		return fmt.Errorf("validate InputToolCall value: %w", err)
+	}
+	return nil
 }
 
 // DecodeInputToolCall checks JSON field names from the Goa design and returns a service value.
@@ -3787,6 +4193,45 @@ func EncodeInputToolFailure(in *InputToolFailure) ([]byte, error) {
 		return nil, fmt.Errorf("encode InputToolFailure JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateInputToolFailureValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateInputToolFailureValue(in *InputToolFailure) error {
+	if err := checkInputToolFailureValue(in); err != nil {
+		return fmt.Errorf("validate InputToolFailure value: %w", err)
+	}
+	if err := validateInputToolFailureOriginal(in); err != nil {
+		return fmt.Errorf("validate InputToolFailure value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "InputToolFailure")
+	}
+
+	var body *jsonInputToolFailureTransport
+	{
+		body = &jsonInputToolFailureTransport{
+			Kind:    &in.Kind,
+			Message: &in.Message,
+			Action:  &in.Action,
+		}
+		if in.Issues != nil {
+			body.Issues = make([]*jsonInputFieldIssueTransport, len(in.Issues))
+			for i, val := range in.Issues {
+				if val == nil {
+					body.Issues[i] = nil
+					continue
+				}
+				body.Issues[i] = encodeInputFieldIssueToInputFieldIssueTransport(val)
+			}
+		}
+	}
+	if err := validatejsonInputToolFailureTransport(body); err != nil {
+		return fmt.Errorf("validate InputToolFailure value: %w", err)
+	}
+	return nil
 }
 
 // DecodeInputToolFailure checks JSON field names from the Goa design and returns a service value.
@@ -3887,6 +4332,63 @@ func EncodeInputToolResult(in *InputToolResult) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateInputToolResultValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateInputToolResultValue(in *InputToolResult) error {
+	if err := checkInputToolResultValue(in); err != nil {
+		return fmt.Errorf("validate InputToolResult value: %w", err)
+	}
+	if err := validateInputToolResultOriginal(in); err != nil {
+		return fmt.Errorf("validate InputToolResult value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "InputToolResult")
+	}
+
+	var body *jsonInputToolResultTransport
+	{
+		body = &jsonInputToolResultTransport{}
+		if in.Blocks != nil {
+			body.Blocks = make([]*jsonToolContentBlockTransport, len(in.Blocks))
+			for i, val := range in.Blocks {
+				if val == nil {
+					body.Blocks[i] = nil
+					continue
+				}
+				body.Blocks[i] = encodeToolContentBlockToToolContentBlockTransport(val)
+			}
+		}
+		var outcomeValue jsonInputToolOutcomeTransport
+		switch string(in.Outcome.Kind()) {
+		case "success":
+			actual, _ := in.Outcome.AsSuccess()
+			var obj *jsonInputToolSuccessTransport
+			if actual != nil {
+				obj = encodeInputToolSuccessToInputToolSuccessTransport(actual)
+			}
+			u := outcomeValue
+			u.SetSuccess((*jsonInputToolSuccessTransport)(obj))
+			outcomeValue = u
+		case "failure":
+			actual, _ := in.Outcome.AsFailure()
+			var obj *jsonInputToolFailureTransport
+			if actual != nil {
+				obj = encodeInputToolFailureToInputToolFailureTransport(actual)
+			}
+			u := outcomeValue
+			u.SetFailure((*jsonInputToolFailureTransport)(obj))
+			outcomeValue = u
+		}
+		body.Outcome = &outcomeValue
+	}
+	if err := validatejsonInputToolResultTransport(body); err != nil {
+		return fmt.Errorf("validate InputToolResult value: %w", err)
+	}
+	return nil
+}
+
 // DecodeInputToolResult checks JSON field names from the Goa design and returns a service value.
 func DecodeInputToolResult(data []byte) (out *InputToolResult, err error) {
 	root, err := readStrictJSON(data)
@@ -3969,6 +4471,33 @@ func EncodeInputToolSuccess(in *InputToolSuccess) ([]byte, error) {
 		return nil, fmt.Errorf("encode InputToolSuccess JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateInputToolSuccessValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateInputToolSuccessValue(in *InputToolSuccess) error {
+	if err := checkInputToolSuccessValue(in); err != nil {
+		return fmt.Errorf("validate InputToolSuccess value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "InputToolSuccess")
+	}
+
+	var body *jsonInputToolSuccessTransport
+	{
+		body = &jsonInputToolSuccessTransport{
+			Result: in.Result,
+		}
+		if in.Bounds != nil {
+			body.Bounds = encodeResultBoundsToResultBoundsTransport(in.Bounds)
+		}
+	}
+	if err := validatejsonInputToolSuccessTransport(body); err != nil {
+		return fmt.Errorf("validate InputToolSuccess value: %w", err)
+	}
+	return nil
 }
 
 // DecodeInputToolSuccess checks JSON field names from the Goa design and returns a service value.
@@ -4075,6 +4604,80 @@ func EncodeRequestedInput(in *RequestedInput) ([]byte, error) {
 		return nil, fmt.Errorf("encode RequestedInput JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateRequestedInputValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateRequestedInputValue(in *RequestedInput) error {
+	if err := checkRequestedInputValue(in); err != nil {
+		return fmt.Errorf("validate RequestedInput value: %w", err)
+	}
+	if err := validateRequestedInputOriginal(in); err != nil {
+		return fmt.Errorf("validate RequestedInput value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "RequestedInput")
+	}
+
+	var body *jsonRequestedInputTransport
+	{
+		body = &jsonRequestedInputTransport{}
+		var requestValue jsonRunInputRequestTransport
+		switch string(in.Request.Kind()) {
+		case "mcp":
+			actual, _ := in.Request.AsMcp()
+			var obj jsonRunInputRequestBranchMcpTransport
+			if actual != nil {
+				obj = encodeRunInputRequestMcpToRunInputRequestMcpTransport(actual)
+			}
+			u := requestValue
+			u.SetMcp((jsonRunInputRequestBranchMcpTransport)(obj))
+			requestValue = u
+		case "clarification":
+			actual, _ := in.Request.AsClarification()
+			var obj *jsonInputClarificationTransport
+			if actual != nil {
+				obj = encodeInputClarificationToInputClarificationTransport(actual)
+			}
+			u := requestValue
+			u.SetClarification((*jsonInputClarificationTransport)(obj))
+			requestValue = u
+		case "confirmation":
+			actual, _ := in.Request.AsConfirmation()
+			var obj *jsonInputConfirmationTransport
+			if actual != nil {
+				obj = encodeInputConfirmationToInputConfirmationTransport(actual)
+			}
+			u := requestValue
+			u.SetConfirmation((*jsonInputConfirmationTransport)(obj))
+			requestValue = u
+		case "questions":
+			actual, _ := in.Request.AsQuestions()
+			var obj *jsonInputQuestionsTransport
+			if actual != nil {
+				obj = encodeInputQuestionsToInputQuestionsTransport(actual)
+			}
+			u := requestValue
+			u.SetQuestions((*jsonInputQuestionsTransport)(obj))
+			requestValue = u
+		case "external_tools":
+			actual, _ := in.Request.AsExternalTools()
+			var obj jsonRunInputRequestBranchExternalToolsTransport
+			if actual != nil {
+				obj = encodeRunInputRequestExternalToolsToRunInputRequestExternalToolsTransport(actual)
+			}
+			u := requestValue
+			u.SetExternalTools((jsonRunInputRequestBranchExternalToolsTransport)(obj))
+			requestValue = u
+		}
+		body.Request = &requestValue
+	}
+	if err := validatejsonRequestedInputTransport(body); err != nil {
+		return fmt.Errorf("validate RequestedInput value: %w", err)
+	}
+	return nil
 }
 
 // DecodeRequestedInput checks JSON field names from the Goa design and returns a service value.

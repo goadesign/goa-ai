@@ -1388,9 +1388,10 @@ returns bounded permanent identities for one owner without duplicating revisions
 `CheckCatalogResource` checks registration and retirement. No sharing grants or
 per-invocation permission records are stored by Registry.
 
-Native admission validates the exact saved declaration bytes with the same rules
-as a cold catalog read. A new successful commit retains that preparation in the
-existing process-local cache; idempotent repeats leave any warm entry unchanged.
+Native admission validates typed declarations and prepares an independently owned
+saved representation. A new successful commit retains that preparation and its
+exact saved-byte digest in the existing process-local cache; idempotent repeats
+leave any warm entry unchanged. Cold reads strictly validate the saved bytes.
 Reads still fetch current bytes, state and retirement information, and reuse
 validation only for the same bytes and native-agent rules.
 

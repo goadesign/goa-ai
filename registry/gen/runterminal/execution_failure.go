@@ -106,19 +106,24 @@ func validatejsonExecutionInvocationTransport(value *jsonExecutionInvocationTran
 		err = goa.MergeErrors(err, goa.MissingFieldError("invocation", "body"))
 	}
 	if value.Invocation != nil {
-		switch string(value.Invocation.Kind()) {
-		case "root":
-			actual, _ := value.Invocation.AsRoot()
-			if actual != nil {
-				if err2 := validatejsonRootInvocationTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Invocation.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Invocation.Kind()) {
+			case "root":
+				actual, _ := value.Invocation.AsRoot()
+				if actual != nil {
+					if err2 := validatejsonRootInvocationTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "tool":
-			actual, _ := value.Invocation.AsTool()
-			if actual != nil {
-				if err2 := validatejsonToolInvocationTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "tool":
+				actual, _ := value.Invocation.AsTool()
+				if actual != nil {
+					if err2 := validatejsonToolInvocationTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -159,11 +164,16 @@ func validatejsonPreparationDecisionTransport(value *jsonPreparationDecisionTran
 		err = goa.MergeErrors(err, goa.MissingFieldError("state", "body"))
 	}
 	if value.State != nil {
-		switch string(value.State.Kind()) {
-		case "stop":
-			actual, _ := value.State.AsStop()
-			if utf8.RuneCountInString(string(actual)) < 1 {
-				err = goa.MergeErrors(err, goa.InvalidLengthError("body.state.value", string(actual), utf8.RuneCountInString(string(actual)), 1, true))
+
+		if err2 := value.State.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.State.Kind()) {
+			case "stop":
+				actual, _ := value.State.AsStop()
+				if utf8.RuneCountInString(string(actual)) < 1 {
+					err = goa.MergeErrors(err, goa.InvalidLengthError("body.state.value", string(actual), utf8.RuneCountInString(string(actual)), 1, true))
+				}
 			}
 		}
 
@@ -242,17 +252,22 @@ func validatejsonRunSubjectTransport(value *jsonRunSubjectTransport) (err error)
 		err = goa.MergeErrors(err, goa.MissingFieldError("executor", "body"))
 	}
 	if value.Executor != nil {
-		switch string(value.Executor.Kind()) {
-		case "agent":
-			actual, _ := value.Executor.AsAgent()
-			if utf8.RuneCountInString(string(actual)) < 1 {
-				err = goa.MergeErrors(err, goa.InvalidLengthError("body.executor.value", string(actual), utf8.RuneCountInString(string(actual)), 1, true))
-			}
-		case "service_tool":
-			actual, _ := value.Executor.AsServiceTool()
-			if actual != nil {
-				if err2 := validatejsonServiceToolSubjectTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Executor.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Executor.Kind()) {
+			case "agent":
+				actual, _ := value.Executor.AsAgent()
+				if utf8.RuneCountInString(string(actual)) < 1 {
+					err = goa.MergeErrors(err, goa.InvalidLengthError("body.executor.value", string(actual), utf8.RuneCountInString(string(actual)), 1, true))
+				}
+			case "service_tool":
+				actual, _ := value.Executor.AsServiceTool()
+				if actual != nil {
+					if err2 := validatejsonServiceToolSubjectTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -362,26 +377,31 @@ func validatejsonUnstartedExecutionTerminalResultTransport(value *jsonUnstartedE
 		err = goa.MergeErrors(err, goa.MissingFieldError("result", "body"))
 	}
 	if value.Result != nil {
-		switch string(value.Result.Kind()) {
-		case "stored":
-			actual, _ := value.Result.AsStored()
-			if actual != nil {
-				if err2 := validatejsonUnstartedExecutionTerminalTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Result.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Result.Kind()) {
+			case "stored":
+				actual, _ := value.Result.AsStored()
+				if actual != nil {
+					if err2 := validatejsonUnstartedExecutionTerminalTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "replayed":
-			actual, _ := value.Result.AsReplayed()
-			if actual != nil {
-				if err2 := validatejsonUnstartedExecutionTerminalTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "replayed":
+				actual, _ := value.Result.AsReplayed()
+				if actual != nil {
+					if err2 := validatejsonUnstartedExecutionTerminalTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "existing":
-			actual, _ := value.Result.AsExisting()
-			if actual != nil {
-				if err2 := validatejsonUnstartedExecutionTerminalTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "existing":
+				actual, _ := value.Result.AsExisting()
+				if actual != nil {
+					if err2 := validatejsonUnstartedExecutionTerminalTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -458,29 +478,39 @@ func validatejsonUnstartedExecutionTerminalTransport(value *jsonUnstartedExecuti
 		}
 	}
 	if value.Time != nil {
-		switch string(value.Time.Kind()) {
-		case "workflow_decision":
-			actual, _ := value.Time.AsWorkflowDecision()
-			err = goa.MergeErrors(err, goa.ValidateFormat("body.time.value", string(actual), goa.FormatDateTime))
-		case "engine_closure":
-			actual, _ := value.Time.AsEngineClosure()
-			err = goa.MergeErrors(err, goa.ValidateFormat("body.time.value", string(actual), goa.FormatDateTime))
+
+		if err2 := value.Time.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Time.Kind()) {
+			case "workflow_decision":
+				actual, _ := value.Time.AsWorkflowDecision()
+				err = goa.MergeErrors(err, goa.ValidateFormat("body.time.value", string(actual), goa.FormatDateTime))
+			case "engine_closure":
+				actual, _ := value.Time.AsEngineClosure()
+				err = goa.MergeErrors(err, goa.ValidateFormat("body.time.value", string(actual), goa.FormatDateTime))
+			}
 		}
 
 	}
 	if value.Outcome != nil {
-		switch string(value.Outcome.Kind()) {
-		case "failed":
-			actual, _ := value.Outcome.AsFailed()
-			if actual != nil {
-				if err2 := validatejsonExecutionFailureTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Outcome.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Outcome.Kind()) {
+			case "failed":
+				actual, _ := value.Outcome.AsFailed()
+				if actual != nil {
+					if err2 := validatejsonExecutionFailureTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "canceled":
-			actual, _ := value.Outcome.AsCanceled()
-			if utf8.RuneCountInString(string(actual)) < 1 {
-				err = goa.MergeErrors(err, goa.InvalidLengthError("body.outcome.value", string(actual), utf8.RuneCountInString(string(actual)), 1, true))
+			case "canceled":
+				actual, _ := value.Outcome.AsCanceled()
+				if utf8.RuneCountInString(string(actual)) < 1 {
+					err = goa.MergeErrors(err, goa.InvalidLengthError("body.outcome.value", string(actual), utf8.RuneCountInString(string(actual)), 1, true))
+				}
 			}
 		}
 
@@ -493,11 +523,16 @@ func validatePreparationDecisionOriginal(value *PreparationDecision) (err error)
 	if value.State.Kind() == "" {
 		err = goa.MergeErrors(err, goa.MissingFieldError("state", "value"))
 	}
-	switch string(value.State.Kind()) {
-	case "stop":
-		actual, _ := value.State.AsStop()
-		if utf8.RuneCountInString(string(actual)) < 1 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("value.state.value", string(actual), utf8.RuneCountInString(string(actual)), 1, true))
+
+	if err2 := value.State.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.State.Kind()) {
+		case "stop":
+			actual, _ := value.State.AsStop()
+			if utf8.RuneCountInString(string(actual)) < 1 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("value.state.value", string(actual), utf8.RuneCountInString(string(actual)), 1, true))
+			}
 		}
 	}
 
@@ -545,20 +580,29 @@ func validateUnstartedExecutionTerminalOriginal(value *UnstartedExecutionTermina
 			err = goa.MergeErrors(err, err2)
 		}
 	}
-	switch string(value.Time.Kind()) {
-	case "workflow_decision":
-		actual, _ := value.Time.AsWorkflowDecision()
-		err = goa.MergeErrors(err, goa.ValidateFormat("value.time.value", string(actual), goa.FormatDateTime))
-	case "engine_closure":
-		actual, _ := value.Time.AsEngineClosure()
-		err = goa.MergeErrors(err, goa.ValidateFormat("value.time.value", string(actual), goa.FormatDateTime))
+
+	if err2 := value.Time.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.Time.Kind()) {
+		case "workflow_decision":
+			actual, _ := value.Time.AsWorkflowDecision()
+			err = goa.MergeErrors(err, goa.ValidateFormat("value.time.value", string(actual), goa.FormatDateTime))
+		case "engine_closure":
+			actual, _ := value.Time.AsEngineClosure()
+			err = goa.MergeErrors(err, goa.ValidateFormat("value.time.value", string(actual), goa.FormatDateTime))
+		}
 	}
 
-	switch string(value.Outcome.Kind()) {
-	case "canceled":
-		actual, _ := value.Outcome.AsCanceled()
-		if utf8.RuneCountInString(string(actual)) < 1 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("value.outcome.value", string(actual), utf8.RuneCountInString(string(actual)), 1, true))
+	if err2 := value.Outcome.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.Outcome.Kind()) {
+		case "canceled":
+			actual, _ := value.Outcome.AsCanceled()
+			if utf8.RuneCountInString(string(actual)) < 1 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("value.outcome.value", string(actual), utf8.RuneCountInString(string(actual)), 1, true))
+			}
 		}
 	}
 
@@ -570,17 +614,22 @@ func validateRunSubjectOriginal(value *runidentity.RunSubject) (err error) {
 	if value.Executor.Kind() == "" {
 		err = goa.MergeErrors(err, goa.MissingFieldError("executor", "value"))
 	}
-	switch string(value.Executor.Kind()) {
-	case "agent":
-		actual, _ := value.Executor.AsAgent()
-		if utf8.RuneCountInString(string(actual)) < 1 {
-			err = goa.MergeErrors(err, goa.InvalidLengthError("value.executor.value", string(actual), utf8.RuneCountInString(string(actual)), 1, true))
-		}
-	case "service_tool":
-		actual, _ := value.Executor.AsServiceTool()
-		if actual != nil {
-			if err2 := validateServiceToolSubjectOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+
+	if err2 := value.Executor.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.Executor.Kind()) {
+		case "agent":
+			actual, _ := value.Executor.AsAgent()
+			if utf8.RuneCountInString(string(actual)) < 1 {
+				err = goa.MergeErrors(err, goa.InvalidLengthError("value.executor.value", string(actual), utf8.RuneCountInString(string(actual)), 1, true))
+			}
+		case "service_tool":
+			actual, _ := value.Executor.AsServiceTool()
+			if actual != nil {
+				if err2 := validateServiceToolSubjectOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
 		}
 	}
@@ -602,19 +651,24 @@ func validateExecutionInvocationOriginal(value *registry.ExecutionInvocation) (e
 	if value.Invocation.Kind() == "" {
 		err = goa.MergeErrors(err, goa.MissingFieldError("invocation", "value"))
 	}
-	switch string(value.Invocation.Kind()) {
-	case "root":
-		actual, _ := value.Invocation.AsRoot()
-		if actual != nil {
-			if err2 := validateRootInvocationOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+
+	if err2 := value.Invocation.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.Invocation.Kind()) {
+		case "root":
+			actual, _ := value.Invocation.AsRoot()
+			if actual != nil {
+				if err2 := validateRootInvocationOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "tool":
-		actual, _ := value.Invocation.AsTool()
-		if actual != nil {
-			if err2 := validateToolInvocationOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "tool":
+			actual, _ := value.Invocation.AsTool()
+			if actual != nil {
+				if err2 := validateToolInvocationOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
 		}
 	}
@@ -646,26 +700,31 @@ func validateUnstartedExecutionTerminalResultOriginal(value *UnstartedExecutionT
 	if value.Result.Kind() == "" {
 		err = goa.MergeErrors(err, goa.MissingFieldError("result", "value"))
 	}
-	switch string(value.Result.Kind()) {
-	case "stored":
-		actual, _ := value.Result.AsStored()
-		if actual != nil {
-			if err2 := validateUnstartedExecutionTerminalOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+
+	if err2 := value.Result.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.Result.Kind()) {
+		case "stored":
+			actual, _ := value.Result.AsStored()
+			if actual != nil {
+				if err2 := validateUnstartedExecutionTerminalOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "replayed":
-		actual, _ := value.Result.AsReplayed()
-		if actual != nil {
-			if err2 := validateUnstartedExecutionTerminalOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "replayed":
+			actual, _ := value.Result.AsReplayed()
+			if actual != nil {
+				if err2 := validateUnstartedExecutionTerminalOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "existing":
-		actual, _ := value.Result.AsExisting()
-		if actual != nil {
-			if err2 := validateUnstartedExecutionTerminalOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "existing":
+			actual, _ := value.Result.AsExisting()
+			if actual != nil {
+				if err2 := validateUnstartedExecutionTerminalOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
 		}
 	}
@@ -1657,6 +1716,40 @@ func EncodeExecutionFailure(in *ExecutionFailure) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateExecutionFailureValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateExecutionFailureValue(in *ExecutionFailure) error {
+	if err := checkExecutionFailureValue(in); err != nil {
+		return fmt.Errorf("validate ExecutionFailure value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ExecutionFailure")
+	}
+
+	var body *jsonExecutionFailureTransport
+	{
+		body = &jsonExecutionFailureTransport{
+			Message:      in.Message,
+			DebugMessage: in.DebugMessage,
+			Provider:     in.Provider,
+			Operation:    in.Operation,
+			Kind:         in.Kind,
+			Code:         in.Code,
+			Retryable:    &in.Retryable,
+		}
+		if in.HTTPStatus != nil {
+			httpStatus := executionFailureIntTransport(*in.HTTPStatus)
+			body.HTTPStatus = &httpStatus
+		}
+	}
+	if err := validatejsonExecutionFailureTransport(body); err != nil {
+		return fmt.Errorf("validate ExecutionFailure value: %w", err)
+	}
+	return nil
+}
+
 // DecodeExecutionFailure checks JSON field names from the Goa design and returns a service value.
 func DecodeExecutionFailure(data []byte) (out *ExecutionFailure, err error) {
 	root, err := readStrictJSON(data)
@@ -1741,6 +1834,51 @@ func EncodePreparationDecision(in *PreparationDecision) ([]byte, error) {
 	return data, nil
 }
 
+// ValidatePreparationDecisionValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidatePreparationDecisionValue(in *PreparationDecision) error {
+	if err := checkPreparationDecisionValue(in); err != nil {
+		return fmt.Errorf("validate PreparationDecision value: %w", err)
+	}
+	if err := validatePreparationDecisionOriginal(in); err != nil {
+		return fmt.Errorf("validate PreparationDecision value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "PreparationDecision")
+	}
+
+	var body *jsonPreparationDecisionTransport
+	{
+		body = &jsonPreparationDecisionTransport{}
+		var stateValue jsonPreparationStateTransport
+		switch string(in.State.Kind()) {
+		case "proceed":
+			actual, _ := in.State.AsProceed()
+			var obj *jsonPreparationProceedTransport
+			if actual != nil {
+				obj = encodePreparationProceedToPreparationProceedTransport(actual)
+			}
+			u := stateValue
+			u.SetProceed((*jsonPreparationProceedTransport)(obj))
+			stateValue = u
+		case "stop":
+			actual, _ := in.State.AsStop()
+			obj := jsonPreparationStateBranchStopTransport(actual)
+
+			u := stateValue
+			u.SetStop((jsonPreparationStateBranchStopTransport)(obj))
+			stateValue = u
+		}
+		body.State = &stateValue
+	}
+	if err := validatejsonPreparationDecisionTransport(body); err != nil {
+		return fmt.Errorf("validate PreparationDecision value: %w", err)
+	}
+	return nil
+}
+
 // DecodePreparationDecision checks JSON field names from the Goa design and returns a service value.
 func DecodePreparationDecision(data []byte) (out *PreparationDecision, err error) {
 	root, err := readStrictJSON(data)
@@ -1808,6 +1946,28 @@ func EncodePreparationProceed(in *PreparationProceed) ([]byte, error) {
 	return data, nil
 }
 
+// ValidatePreparationProceedValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidatePreparationProceedValue(in *PreparationProceed) error {
+	if err := checkPreparationProceedValue(in); err != nil {
+		return fmt.Errorf("validate PreparationProceed value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "PreparationProceed")
+	}
+
+	var body *jsonPreparationProceedTransport
+	{
+		body = &jsonPreparationProceedTransport{}
+	}
+	if err := validatejsonPreparationProceedTransport(body); err != nil {
+		return fmt.Errorf("validate PreparationProceed value: %w", err)
+	}
+	return nil
+}
+
 // DecodePreparationProceed checks JSON field names from the Goa design and returns a service value.
 func DecodePreparationProceed(data []byte) (out *PreparationProceed, err error) {
 	root, err := readStrictJSON(data)
@@ -1855,6 +2015,28 @@ func EncodeStartedExecution(in *StartedExecution) ([]byte, error) {
 		return nil, fmt.Errorf("encode StartedExecution JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateStartedExecutionValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateStartedExecutionValue(in *StartedExecution) error {
+	if err := checkStartedExecutionValue(in); err != nil {
+		return fmt.Errorf("validate StartedExecution value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "StartedExecution")
+	}
+
+	var body *jsonStartedExecutionTransport
+	{
+		body = &jsonStartedExecutionTransport{}
+	}
+	if err := validatejsonStartedExecutionTransport(body); err != nil {
+		return fmt.Errorf("validate StartedExecution value: %w", err)
+	}
+	return nil
 }
 
 // DecodeStartedExecution checks JSON field names from the Goa design and returns a service value.
@@ -1951,6 +2133,75 @@ func EncodeUnstartedExecutionTerminal(in *UnstartedExecutionTerminal) ([]byte, e
 		return nil, fmt.Errorf("encode UnstartedExecutionTerminal JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateUnstartedExecutionTerminalValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateUnstartedExecutionTerminalValue(in *UnstartedExecutionTerminal) error {
+	if err := checkUnstartedExecutionTerminalValue(in); err != nil {
+		return fmt.Errorf("validate UnstartedExecutionTerminal value: %w", err)
+	}
+	if err := validateUnstartedExecutionTerminalOriginal(in); err != nil {
+		return fmt.Errorf("validate UnstartedExecutionTerminal value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "UnstartedExecutionTerminal")
+	}
+
+	var body *jsonUnstartedExecutionTerminalTransport
+	{
+		body = &jsonUnstartedExecutionTerminalTransport{
+			RunID:         &in.RunID,
+			SessionID:     in.SessionID,
+			RequestDigest: in.RequestDigest,
+		}
+		body.Subject = encodeRunSubjectToRunSubjectTransport(in.Subject)
+		body.Origin = encodeExecutionInvocationToExecutionInvocationTransport(in.Origin)
+		var time_Value jsonExecutionTerminalTimeTransport
+		switch string(in.Time.Kind()) {
+		case "workflow_decision":
+			actual, _ := in.Time.AsWorkflowDecision()
+			obj := jsonExecutionTerminalTimeBranchWorkflowDecisionTransport(actual)
+
+			u := time_Value
+			u.SetWorkflowDecision((jsonExecutionTerminalTimeBranchWorkflowDecisionTransport)(obj))
+			time_Value = u
+		case "engine_closure":
+			actual, _ := in.Time.AsEngineClosure()
+			obj := jsonExecutionTerminalTimeBranchEngineClosureTransport(actual)
+
+			u := time_Value
+			u.SetEngineClosure((jsonExecutionTerminalTimeBranchEngineClosureTransport)(obj))
+			time_Value = u
+		}
+		body.Time = &time_Value
+		var outcomeValue jsonUnstartedExecutionOutcomeTransport
+		switch string(in.Outcome.Kind()) {
+		case "failed":
+			actual, _ := in.Outcome.AsFailed()
+			var obj *jsonExecutionFailureTransport
+			if actual != nil {
+				obj = encodeExecutionFailureToExecutionFailureTransport(actual)
+			}
+			u := outcomeValue
+			u.SetFailed((*jsonExecutionFailureTransport)(obj))
+			outcomeValue = u
+		case "canceled":
+			actual, _ := in.Outcome.AsCanceled()
+			obj := jsonUnstartedExecutionOutcomeBranchCanceledTransport(actual)
+
+			u := outcomeValue
+			u.SetCanceled((jsonUnstartedExecutionOutcomeBranchCanceledTransport)(obj))
+			outcomeValue = u
+		}
+		body.Outcome = &outcomeValue
+	}
+	if err := validatejsonUnstartedExecutionTerminalTransport(body); err != nil {
+		return fmt.Errorf("validate UnstartedExecutionTerminal value: %w", err)
+	}
+	return nil
 }
 
 // DecodeUnstartedExecutionTerminal checks JSON field names from the Goa design and returns a service value.
@@ -2083,6 +2334,71 @@ func EncodeUnstartedExecutionTerminalResult(in *UnstartedExecutionTerminalResult
 		return nil, fmt.Errorf("encode UnstartedExecutionTerminalResult JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateUnstartedExecutionTerminalResultValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateUnstartedExecutionTerminalResultValue(in *UnstartedExecutionTerminalResult) error {
+	if err := checkUnstartedExecutionTerminalResultValue(in); err != nil {
+		return fmt.Errorf("validate UnstartedExecutionTerminalResult value: %w", err)
+	}
+	if err := validateUnstartedExecutionTerminalResultOriginal(in); err != nil {
+		return fmt.Errorf("validate UnstartedExecutionTerminalResult value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "UnstartedExecutionTerminalResult")
+	}
+
+	var body *jsonUnstartedExecutionTerminalResultTransport
+	{
+		body = &jsonUnstartedExecutionTerminalResultTransport{}
+		var resultValue jsonUnstartedExecutionTerminalDecisionTransport
+		switch string(in.Result.Kind()) {
+		case "stored":
+			actual, _ := in.Result.AsStored()
+			var obj *jsonUnstartedExecutionTerminalTransport
+			if actual != nil {
+				obj = encodeUnstartedExecutionTerminalToUnstartedExecutionTerminalTransport3(actual)
+			}
+			u := resultValue
+			u.SetStored((*jsonUnstartedExecutionTerminalTransport)(obj))
+			resultValue = u
+		case "replayed":
+			actual, _ := in.Result.AsReplayed()
+			var obj *jsonUnstartedExecutionTerminalTransport
+			if actual != nil {
+				obj = encodeUnstartedExecutionTerminalToUnstartedExecutionTerminalTransport2(actual)
+			}
+			u := resultValue
+			u.SetReplayed((*jsonUnstartedExecutionTerminalTransport)(obj))
+			resultValue = u
+		case "existing":
+			actual, _ := in.Result.AsExisting()
+			var obj *jsonUnstartedExecutionTerminalTransport
+			if actual != nil {
+				obj = encodeUnstartedExecutionTerminalToUnstartedExecutionTerminalTransport(actual)
+			}
+			u := resultValue
+			u.SetExisting((*jsonUnstartedExecutionTerminalTransport)(obj))
+			resultValue = u
+		case "started":
+			actual, _ := in.Result.AsStarted()
+			var obj *jsonStartedExecutionTransport
+			if actual != nil {
+				obj = encodeStartedExecutionToStartedExecutionTransport(actual)
+			}
+			u := resultValue
+			u.SetStarted((*jsonStartedExecutionTransport)(obj))
+			resultValue = u
+		}
+		body.Result = &resultValue
+	}
+	if err := validatejsonUnstartedExecutionTerminalResultTransport(body); err != nil {
+		return fmt.Errorf("validate UnstartedExecutionTerminalResult value: %w", err)
+	}
+	return nil
 }
 
 // DecodeUnstartedExecutionTerminalResult checks JSON field names from the Goa design and returns a service value.
