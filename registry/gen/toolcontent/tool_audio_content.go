@@ -133,40 +133,45 @@ func validatejsonToolContentBlockTransport(value *jsonToolContentBlockTransport)
 		err = goa.MergeErrors(err, goa.MissingFieldError("content", "body"))
 	}
 	if value.Content != nil {
-		switch string(value.Content.Kind()) {
-		case "text":
-			actual, _ := value.Content.AsText()
-			if actual != nil {
-				if err2 := validatejsonToolTextContentTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Content.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Content.Kind()) {
+			case "text":
+				actual, _ := value.Content.AsText()
+				if actual != nil {
+					if err2 := validatejsonToolTextContentTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "image":
-			actual, _ := value.Content.AsImage()
-			if actual != nil {
-				if err2 := validatejsonToolImageContentTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "image":
+				actual, _ := value.Content.AsImage()
+				if actual != nil {
+					if err2 := validatejsonToolImageContentTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "audio":
-			actual, _ := value.Content.AsAudio()
-			if actual != nil {
-				if err2 := validatejsonToolAudioContentTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "audio":
+				actual, _ := value.Content.AsAudio()
+				if actual != nil {
+					if err2 := validatejsonToolAudioContentTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "resource_link":
-			actual, _ := value.Content.AsResourceLink()
-			if actual != nil {
-				if err2 := validatejsonToolResourceLinkTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "resource_link":
+				actual, _ := value.Content.AsResourceLink()
+				if actual != nil {
+					if err2 := validatejsonToolResourceLinkTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "resource":
-			actual, _ := value.Content.AsResource()
-			if actual != nil {
-				if err2 := validatejsonToolEmbeddedResourceTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "resource":
+				actual, _ := value.Content.AsResource()
+				if actual != nil {
+					if err2 := validatejsonToolEmbeddedResourceTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -224,19 +229,24 @@ func validatejsonToolEmbeddedResourceTransport(value *jsonToolEmbeddedResourceTr
 		err = goa.MergeErrors(err, goa.MissingFieldError("resource", "body"))
 	}
 	if value.Resource != nil {
-		switch string(value.Resource.Kind()) {
-		case "text":
-			actual, _ := value.Resource.AsText()
-			if actual != nil {
-				if err2 := validatejsonToolTextResourceTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Resource.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Resource.Kind()) {
+			case "text":
+				actual, _ := value.Resource.AsText()
+				if actual != nil {
+					if err2 := validatejsonToolTextResourceTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "blob":
-			actual, _ := value.Resource.AsBlob()
-			if actual != nil {
-				if err2 := validatejsonToolBlobResourceTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "blob":
+				actual, _ := value.Resource.AsBlob()
+				if actual != nil {
+					if err2 := validatejsonToolBlobResourceTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -434,40 +444,45 @@ func validateToolContentBlockOriginal(value *ToolContentBlock) (err error) {
 	if value.Content.Kind() == "" {
 		err = goa.MergeErrors(err, goa.MissingFieldError("content", "value"))
 	}
-	switch string(value.Content.Kind()) {
-	case "text":
-		actual, _ := value.Content.AsText()
-		if actual != nil {
-			if err2 := validateToolTextContentOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+
+	if err2 := value.Content.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.Content.Kind()) {
+		case "text":
+			actual, _ := value.Content.AsText()
+			if actual != nil {
+				if err2 := validateToolTextContentOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "image":
-		actual, _ := value.Content.AsImage()
-		if actual != nil {
-			if err2 := validateToolImageContentOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "image":
+			actual, _ := value.Content.AsImage()
+			if actual != nil {
+				if err2 := validateToolImageContentOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "audio":
-		actual, _ := value.Content.AsAudio()
-		if actual != nil {
-			if err2 := validateToolAudioContentOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "audio":
+			actual, _ := value.Content.AsAudio()
+			if actual != nil {
+				if err2 := validateToolAudioContentOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "resource_link":
-		actual, _ := value.Content.AsResourceLink()
-		if actual != nil {
-			if err2 := validateToolResourceLinkOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "resource_link":
+			actual, _ := value.Content.AsResourceLink()
+			if actual != nil {
+				if err2 := validateToolResourceLinkOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "resource":
-		actual, _ := value.Content.AsResource()
-		if actual != nil {
-			if err2 := validateToolEmbeddedResourceOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "resource":
+			actual, _ := value.Content.AsResource()
+			if actual != nil {
+				if err2 := validateToolEmbeddedResourceOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
 		}
 	}
@@ -537,19 +552,24 @@ func validateToolEmbeddedResourceOriginal(value *ToolEmbeddedResource) (err erro
 	if value.Resource.Kind() == "" {
 		err = goa.MergeErrors(err, goa.MissingFieldError("resource", "value"))
 	}
-	switch string(value.Resource.Kind()) {
-	case "text":
-		actual, _ := value.Resource.AsText()
-		if actual != nil {
-			if err2 := validateToolTextResourceOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+
+	if err2 := value.Resource.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.Resource.Kind()) {
+		case "text":
+			actual, _ := value.Resource.AsText()
+			if actual != nil {
+				if err2 := validateToolTextResourceOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "blob":
-		actual, _ := value.Resource.AsBlob()
-		if actual != nil {
-			if err2 := validateToolBlobResourceOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "blob":
+			actual, _ := value.Resource.AsBlob()
+			if actual != nil {
+				if err2 := validateToolBlobResourceOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
 		}
 	}
@@ -1006,6 +1026,38 @@ func EncodeToolAudioContent(in *ToolAudioContent) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateToolAudioContentValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolAudioContentValue(in *ToolAudioContent) error {
+	if err := checkToolAudioContentValue(in); err != nil {
+		return fmt.Errorf("validate ToolAudioContent value: %w", err)
+	}
+	if err := validateToolAudioContentOriginal(in); err != nil {
+		return fmt.Errorf("validate ToolAudioContent value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolAudioContent")
+	}
+
+	var body *jsonToolAudioContentTransport
+	{
+		body = &jsonToolAudioContentTransport{
+			Data:     &in.Data,
+			MIMEType: &in.MIMEType,
+			Meta:     in.Meta,
+		}
+		if in.Annotations != nil {
+			body.Annotations = encodeToolContentAnnotationsToToolContentAnnotationsTransport(in.Annotations)
+		}
+	}
+	if err := validatejsonToolAudioContentTransport(body); err != nil {
+		return fmt.Errorf("validate ToolAudioContent value: %w", err)
+	}
+	return nil
+}
+
 // DecodeToolAudioContent checks JSON field names from the Goa design and returns a service value.
 func DecodeToolAudioContent(data []byte) (out *ToolAudioContent, err error) {
 	root, err := readStrictJSON(data)
@@ -1068,6 +1120,36 @@ func EncodeToolBlobResource(in *ToolBlobResource) ([]byte, error) {
 		return nil, fmt.Errorf("encode ToolBlobResource JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateToolBlobResourceValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolBlobResourceValue(in *ToolBlobResource) error {
+	if err := checkToolBlobResourceValue(in); err != nil {
+		return fmt.Errorf("validate ToolBlobResource value: %w", err)
+	}
+	if err := validateToolBlobResourceOriginal(in); err != nil {
+		return fmt.Errorf("validate ToolBlobResource value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolBlobResource")
+	}
+
+	var body *jsonToolBlobResourceTransport
+	{
+		body = &jsonToolBlobResourceTransport{
+			URI:      &in.URI,
+			MIMEType: in.MIMEType,
+			Blob:     &in.Blob,
+			Meta:     in.Meta,
+		}
+	}
+	if err := validatejsonToolBlobResourceTransport(body); err != nil {
+		return fmt.Errorf("validate ToolBlobResource value: %w", err)
+	}
+	return nil
 }
 
 // DecodeToolBlobResource checks JSON field names from the Goa design and returns a service value.
@@ -1134,6 +1216,40 @@ func EncodeToolContentAnnotations(in *ToolContentAnnotations) ([]byte, error) {
 		return nil, fmt.Errorf("encode ToolContentAnnotations JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateToolContentAnnotationsValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolContentAnnotationsValue(in *ToolContentAnnotations) error {
+	if err := checkToolContentAnnotationsValue(in); err != nil {
+		return fmt.Errorf("validate ToolContentAnnotations value: %w", err)
+	}
+	if err := validateToolContentAnnotationsOriginal(in); err != nil {
+		return fmt.Errorf("validate ToolContentAnnotations value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolContentAnnotations")
+	}
+
+	var body *jsonToolContentAnnotationsTransport
+	{
+		body = &jsonToolContentAnnotationsTransport{
+			Priority:     in.Priority,
+			LastModified: in.LastModified,
+		}
+		if in.Audience != nil {
+			body.Audience = make([]string, len(in.Audience))
+			for i, val := range in.Audience {
+				body.Audience[i] = val
+			}
+		}
+	}
+	if err := validatejsonToolContentAnnotationsTransport(body); err != nil {
+		return fmt.Errorf("validate ToolContentAnnotations value: %w", err)
+	}
+	return nil
 }
 
 // DecodeToolContentAnnotations checks JSON field names from the Goa design and returns a service value.
@@ -1246,6 +1362,80 @@ func EncodeToolContentBlock(in *ToolContentBlock) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateToolContentBlockValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolContentBlockValue(in *ToolContentBlock) error {
+	if err := checkToolContentBlockValue(in); err != nil {
+		return fmt.Errorf("validate ToolContentBlock value: %w", err)
+	}
+	if err := validateToolContentBlockOriginal(in); err != nil {
+		return fmt.Errorf("validate ToolContentBlock value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolContentBlock")
+	}
+
+	var body *jsonToolContentBlockTransport
+	{
+		body = &jsonToolContentBlockTransport{}
+		var contentValue jsonToolContentValueTransport
+		switch string(in.Content.Kind()) {
+		case "text":
+			actual, _ := in.Content.AsText()
+			var obj *jsonToolTextContentTransport
+			if actual != nil {
+				obj = encodeToolTextContentToToolTextContentTransport(actual)
+			}
+			u := contentValue
+			u.SetText((*jsonToolTextContentTransport)(obj))
+			contentValue = u
+		case "image":
+			actual, _ := in.Content.AsImage()
+			var obj *jsonToolImageContentTransport
+			if actual != nil {
+				obj = encodeToolImageContentToToolImageContentTransport(actual)
+			}
+			u := contentValue
+			u.SetImage((*jsonToolImageContentTransport)(obj))
+			contentValue = u
+		case "audio":
+			actual, _ := in.Content.AsAudio()
+			var obj *jsonToolAudioContentTransport
+			if actual != nil {
+				obj = encodeToolAudioContentToToolAudioContentTransport(actual)
+			}
+			u := contentValue
+			u.SetAudio((*jsonToolAudioContentTransport)(obj))
+			contentValue = u
+		case "resource_link":
+			actual, _ := in.Content.AsResourceLink()
+			var obj *jsonToolResourceLinkTransport
+			if actual != nil {
+				obj = encodeToolResourceLinkToToolResourceLinkTransport(actual)
+			}
+			u := contentValue
+			u.SetResourceLink((*jsonToolResourceLinkTransport)(obj))
+			contentValue = u
+		case "resource":
+			actual, _ := in.Content.AsResource()
+			var obj *jsonToolEmbeddedResourceTransport
+			if actual != nil {
+				obj = encodeToolEmbeddedResourceToToolEmbeddedResourceTransport(actual)
+			}
+			u := contentValue
+			u.SetResource((*jsonToolEmbeddedResourceTransport)(obj))
+			contentValue = u
+		}
+		body.Content = &contentValue
+	}
+	if err := validatejsonToolContentBlockTransport(body); err != nil {
+		return fmt.Errorf("validate ToolContentBlock value: %w", err)
+	}
+	return nil
+}
+
 // DecodeToolContentBlock checks JSON field names from the Goa design and returns a service value.
 func DecodeToolContentBlock(data []byte) (out *ToolContentBlock, err error) {
 	root, err := readStrictJSON(data)
@@ -1355,6 +1545,41 @@ func EncodeToolContentIcon(in *ToolContentIcon) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateToolContentIconValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolContentIconValue(in *ToolContentIcon) error {
+	if err := checkToolContentIconValue(in); err != nil {
+		return fmt.Errorf("validate ToolContentIcon value: %w", err)
+	}
+	if err := validateToolContentIconOriginal(in); err != nil {
+		return fmt.Errorf("validate ToolContentIcon value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolContentIcon")
+	}
+
+	var body *jsonToolContentIconTransport
+	{
+		body = &jsonToolContentIconTransport{
+			Src:      &in.Src,
+			MIMEType: in.MIMEType,
+			Theme:    in.Theme,
+		}
+		if in.Sizes != nil {
+			body.Sizes = make([]string, len(in.Sizes))
+			for i, val := range in.Sizes {
+				body.Sizes[i] = val
+			}
+		}
+	}
+	if err := validatejsonToolContentIconTransport(body); err != nil {
+		return fmt.Errorf("validate ToolContentIcon value: %w", err)
+	}
+	return nil
+}
+
 // DecodeToolContentIcon checks JSON field names from the Goa design and returns a service value.
 func DecodeToolContentIcon(data []byte) (out *ToolContentIcon, err error) {
 	root, err := readStrictJSON(data)
@@ -1444,6 +1669,58 @@ func EncodeToolEmbeddedResource(in *ToolEmbeddedResource) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateToolEmbeddedResourceValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolEmbeddedResourceValue(in *ToolEmbeddedResource) error {
+	if err := checkToolEmbeddedResourceValue(in); err != nil {
+		return fmt.Errorf("validate ToolEmbeddedResource value: %w", err)
+	}
+	if err := validateToolEmbeddedResourceOriginal(in); err != nil {
+		return fmt.Errorf("validate ToolEmbeddedResource value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolEmbeddedResource")
+	}
+
+	var body *jsonToolEmbeddedResourceTransport
+	{
+		body = &jsonToolEmbeddedResourceTransport{
+			Meta: in.Meta,
+		}
+		var resourceValue jsonToolResourceContentsTransport
+		switch string(in.Resource.Kind()) {
+		case "text":
+			actual, _ := in.Resource.AsText()
+			var obj *jsonToolTextResourceTransport
+			if actual != nil {
+				obj = encodeToolTextResourceToToolTextResourceTransport(actual)
+			}
+			u := resourceValue
+			u.SetText((*jsonToolTextResourceTransport)(obj))
+			resourceValue = u
+		case "blob":
+			actual, _ := in.Resource.AsBlob()
+			var obj *jsonToolBlobResourceTransport
+			if actual != nil {
+				obj = encodeToolBlobResourceToToolBlobResourceTransport(actual)
+			}
+			u := resourceValue
+			u.SetBlob((*jsonToolBlobResourceTransport)(obj))
+			resourceValue = u
+		}
+		body.Resource = &resourceValue
+		if in.Annotations != nil {
+			body.Annotations = encodeToolContentAnnotationsToToolContentAnnotationsTransport(in.Annotations)
+		}
+	}
+	if err := validatejsonToolEmbeddedResourceTransport(body); err != nil {
+		return fmt.Errorf("validate ToolEmbeddedResource value: %w", err)
+	}
+	return nil
+}
+
 // DecodeToolEmbeddedResource checks JSON field names from the Goa design and returns a service value.
 func DecodeToolEmbeddedResource(data []byte) (out *ToolEmbeddedResource, err error) {
 	root, err := readStrictJSON(data)
@@ -1528,6 +1805,38 @@ func EncodeToolImageContent(in *ToolImageContent) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateToolImageContentValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolImageContentValue(in *ToolImageContent) error {
+	if err := checkToolImageContentValue(in); err != nil {
+		return fmt.Errorf("validate ToolImageContent value: %w", err)
+	}
+	if err := validateToolImageContentOriginal(in); err != nil {
+		return fmt.Errorf("validate ToolImageContent value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolImageContent")
+	}
+
+	var body *jsonToolImageContentTransport
+	{
+		body = &jsonToolImageContentTransport{
+			Data:     &in.Data,
+			MIMEType: &in.MIMEType,
+			Meta:     in.Meta,
+		}
+		if in.Annotations != nil {
+			body.Annotations = encodeToolContentAnnotationsToToolContentAnnotationsTransport(in.Annotations)
+		}
+	}
+	if err := validatejsonToolImageContentTransport(body); err != nil {
+		return fmt.Errorf("validate ToolImageContent value: %w", err)
+	}
+	return nil
+}
+
 // DecodeToolImageContent checks JSON field names from the Goa design and returns a service value.
 func DecodeToolImageContent(data []byte) (out *ToolImageContent, err error) {
 	root, err := readStrictJSON(data)
@@ -1606,6 +1915,52 @@ func EncodeToolResourceLink(in *ToolResourceLink) ([]byte, error) {
 		return nil, fmt.Errorf("encode ToolResourceLink JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateToolResourceLinkValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolResourceLinkValue(in *ToolResourceLink) error {
+	if err := checkToolResourceLinkValue(in); err != nil {
+		return fmt.Errorf("validate ToolResourceLink value: %w", err)
+	}
+	if err := validateToolResourceLinkOriginal(in); err != nil {
+		return fmt.Errorf("validate ToolResourceLink value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolResourceLink")
+	}
+
+	var body *jsonToolResourceLinkTransport
+	{
+		body = &jsonToolResourceLinkTransport{
+			Name:        &in.Name,
+			URI:         &in.URI,
+			Title:       in.Title,
+			Description: in.Description,
+			MIMEType:    in.MIMEType,
+			Size:        in.Size,
+			Meta:        in.Meta,
+		}
+		if in.Icons != nil {
+			body.Icons = make([]*jsonToolContentIconTransport, len(in.Icons))
+			for i, val := range in.Icons {
+				if val == nil {
+					body.Icons[i] = nil
+					continue
+				}
+				body.Icons[i] = encodeToolContentIconToToolContentIconTransport(val)
+			}
+		}
+		if in.Annotations != nil {
+			body.Annotations = encodeToolContentAnnotationsToToolContentAnnotationsTransport2(in.Annotations)
+		}
+	}
+	if err := validatejsonToolResourceLinkTransport(body); err != nil {
+		return fmt.Errorf("validate ToolResourceLink value: %w", err)
+	}
+	return nil
 }
 
 // DecodeToolResourceLink checks JSON field names from the Goa design and returns a service value.
@@ -1687,6 +2042,37 @@ func EncodeToolTextContent(in *ToolTextContent) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateToolTextContentValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolTextContentValue(in *ToolTextContent) error {
+	if err := checkToolTextContentValue(in); err != nil {
+		return fmt.Errorf("validate ToolTextContent value: %w", err)
+	}
+	if err := validateToolTextContentOriginal(in); err != nil {
+		return fmt.Errorf("validate ToolTextContent value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolTextContent")
+	}
+
+	var body *jsonToolTextContentTransport
+	{
+		body = &jsonToolTextContentTransport{
+			Text: &in.Text,
+			Meta: in.Meta,
+		}
+		if in.Annotations != nil {
+			body.Annotations = encodeToolContentAnnotationsToToolContentAnnotationsTransport3(in.Annotations)
+		}
+	}
+	if err := validatejsonToolTextContentTransport(body); err != nil {
+		return fmt.Errorf("validate ToolTextContent value: %w", err)
+	}
+	return nil
+}
+
 // DecodeToolTextContent checks JSON field names from the Goa design and returns a service value.
 func DecodeToolTextContent(data []byte) (out *ToolTextContent, err error) {
 	root, err := readStrictJSON(data)
@@ -1748,6 +2134,36 @@ func EncodeToolTextResource(in *ToolTextResource) ([]byte, error) {
 		return nil, fmt.Errorf("encode ToolTextResource JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateToolTextResourceValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolTextResourceValue(in *ToolTextResource) error {
+	if err := checkToolTextResourceValue(in); err != nil {
+		return fmt.Errorf("validate ToolTextResource value: %w", err)
+	}
+	if err := validateToolTextResourceOriginal(in); err != nil {
+		return fmt.Errorf("validate ToolTextResource value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolTextResource")
+	}
+
+	var body *jsonToolTextResourceTransport
+	{
+		body = &jsonToolTextResourceTransport{
+			URI:      &in.URI,
+			MIMEType: in.MIMEType,
+			Text:     &in.Text,
+			Meta:     in.Meta,
+		}
+	}
+	if err := validatejsonToolTextResourceTransport(body); err != nil {
+		return fmt.Errorf("validate ToolTextResource value: %w", err)
+	}
+	return nil
 }
 
 // DecodeToolTextResource checks JSON field names from the Goa design and returns a service value.

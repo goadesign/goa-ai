@@ -1832,19 +1832,24 @@ func validatejsonCatalogOperationTransport(value *jsonCatalogOperationTransport)
 		}
 	}
 	if value.Target != nil {
-		switch string(value.Target.Kind()) {
-		case "native":
-			actual, _ := value.Target.AsNative()
-			if actual != nil {
-				if err2 := validatejsonNativeCatalogTargetTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Target.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Target.Kind()) {
+			case "native":
+				actual, _ := value.Target.AsNative()
+				if actual != nil {
+					if err2 := validatejsonNativeCatalogTargetTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "service":
-			actual, _ := value.Target.AsService()
-			if actual != nil {
-				if err2 := validatejsonServiceCatalogTargetTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "service":
+				actual, _ := value.Target.AsService()
+				if actual != nil {
+					if err2 := validatejsonServiceCatalogTargetTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -1925,12 +1930,17 @@ func validatejsonCatalogResourcesPageTransport(value *jsonCatalogResourcesPageTr
 		}
 	}
 	if value.Continuation != nil {
-		switch string(value.Continuation.Kind()) {
-		case "more":
-			actual, _ := value.Continuation.AsMore()
-			if actual != nil {
-				if err2 := validatejsonResourcePageMoreTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Continuation.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Continuation.Kind()) {
+			case "more":
+				actual, _ := value.Continuation.AsMore()
+				if actual != nil {
+					if err2 := validatejsonResourcePageMoreTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -2031,19 +2041,24 @@ func validatejsonCatalogSourceTransport(value *jsonCatalogSourceTransport) (err 
 		}
 	}
 	if value.Target != nil {
-		switch string(value.Target.Kind()) {
-		case "native":
-			actual, _ := value.Target.AsNative()
-			if actual != nil {
-				if err2 := validatejsonNativeCatalogSourceTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Target.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Target.Kind()) {
+			case "native":
+				actual, _ := value.Target.AsNative()
+				if actual != nil {
+					if err2 := validatejsonNativeCatalogSourceTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "service":
-			actual, _ := value.Target.AsService()
-			if actual != nil {
-				if err2 := validatejsonServiceCatalogSourceTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "service":
+				actual, _ := value.Target.AsService()
+				if actual != nil {
+					if err2 := validatejsonServiceCatalogSourceTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -2601,19 +2616,24 @@ func validatejsonExecutionInvocationTransport(value *jsonExecutionInvocationTran
 		err = goa.MergeErrors(err, goa.MissingFieldError("invocation", "body"))
 	}
 	if value.Invocation != nil {
-		switch string(value.Invocation.Kind()) {
-		case "root":
-			actual, _ := value.Invocation.AsRoot()
-			if actual != nil {
-				if err2 := validatejsonRootInvocationTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Invocation.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Invocation.Kind()) {
+			case "root":
+				actual, _ := value.Invocation.AsRoot()
+				if actual != nil {
+					if err2 := validatejsonRootInvocationTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "tool":
-			actual, _ := value.Invocation.AsTool()
-			if actual != nil {
-				if err2 := validatejsonToolInvocationTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "tool":
+				actual, _ := value.Invocation.AsTool()
+				if actual != nil {
+					if err2 := validatejsonToolInvocationTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -3234,33 +3254,38 @@ func validatejsonRegistrySelectionTransport(value *jsonRegistrySelectionTranspor
 		err = goa.MergeErrors(err, goa.MissingFieldError("selection", "body"))
 	}
 	if value.Selection != nil {
-		switch string(value.Selection.Kind()) {
-		case "direct":
-			actual, _ := value.Selection.AsDirect()
-			if actual != nil {
-				if err2 := validatejsonResolvedToolsetTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Selection.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Selection.Kind()) {
+			case "direct":
+				actual, _ := value.Selection.AsDirect()
+				if actual != nil {
+					if err2 := validatejsonResolvedToolsetTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "registered":
-			actual, _ := value.Selection.AsRegistered()
-			if actual != nil {
-				if err2 := validatejsonRegisteredToolsetSelectionTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "registered":
+				actual, _ := value.Selection.AsRegistered()
+				if actual != nil {
+					if err2 := validatejsonRegisteredToolsetSelectionTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "compiled_service":
-			actual, _ := value.Selection.AsCompiledService()
-			if actual != nil {
-				if err2 := validatejsonCompiledToolSelectionTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "compiled_service":
+				actual, _ := value.Selection.AsCompiledService()
+				if actual != nil {
+					if err2 := validatejsonCompiledToolSelectionTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "compiled_agent":
-			actual, _ := value.Selection.AsCompiledAgent()
-			if actual != nil {
-				if err2 := validatejsonCompiledAgentToolSelectionTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "compiled_agent":
+				actual, _ := value.Selection.AsCompiledAgent()
+				if actual != nil {
+					if err2 := validatejsonCompiledAgentToolSelectionTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -4025,6 +4050,13 @@ func validatejsonToolFieldPathSegmentTransport(value *jsonToolFieldPathSegmentTr
 	if value.Segment == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("segment", "body"))
 	}
+	if value.Segment != nil {
+
+		if err2 := value.Segment.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		}
+
+	}
 	return err
 }
 
@@ -4083,12 +4115,17 @@ func validatejsonToolOperationExecutionContinuationTransport(value *jsonToolOper
 		err = goa.MergeErrors(err, goa.MissingFieldError("operation", "body"))
 	}
 	if value.Operation != nil {
-		switch string(value.Operation.Kind()) {
-		case "task_update":
-			actual, _ := value.Operation.AsTaskUpdate()
-			if actual != nil {
-				if err2 := validatejsonToolOperationTaskAnswersTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Operation.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Operation.Kind()) {
+			case "task_update":
+				actual, _ := value.Operation.AsTaskUpdate()
+				if actual != nil {
+					if err2 := validatejsonToolOperationTaskAnswersTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -4484,19 +4521,24 @@ func validatejsonToolUnionBranchTransport(value *jsonToolUnionBranchTransport) (
 		err = goa.MergeErrors(err, goa.MissingFieldError("selection", "body"))
 	}
 	if value.Selection != nil {
-		switch string(value.Selection.Kind()) {
-		case "tagged":
-			actual, _ := value.Selection.AsTagged()
-			if actual != nil {
-				if err2 := validatejsonToolTaggedUnionBranchTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Selection.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Selection.Kind()) {
+			case "tagged":
+				actual, _ := value.Selection.AsTagged()
+				if actual != nil {
+					if err2 := validatejsonToolTaggedUnionBranchTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "untagged":
-			actual, _ := value.Selection.AsUntagged()
-			if actual != nil {
-				if err2 := validatejsonToolUntaggedUnionBranchTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "untagged":
+				actual, _ := value.Selection.AsUntagged()
+				if actual != nil {
+					if err2 := validatejsonToolUntaggedUnionBranchTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -5030,6 +5072,11 @@ func validateToolFieldPathSegmentOriginal(value *ToolFieldPathSegment) (err erro
 	if value.Segment.Kind() == "" {
 		err = goa.MergeErrors(err, goa.MissingFieldError("segment", "value"))
 	}
+
+	if err2 := value.Segment.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	}
+
 	return err
 }
 
@@ -5038,19 +5085,24 @@ func validateToolUnionBranchOriginal(value *ToolUnionBranch) (err error) {
 	if value.Selection.Kind() == "" {
 		err = goa.MergeErrors(err, goa.MissingFieldError("selection", "value"))
 	}
-	switch string(value.Selection.Kind()) {
-	case "tagged":
-		actual, _ := value.Selection.AsTagged()
-		if actual != nil {
-			if err2 := validateToolTaggedUnionBranchOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+
+	if err2 := value.Selection.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.Selection.Kind()) {
+		case "tagged":
+			actual, _ := value.Selection.AsTagged()
+			if actual != nil {
+				if err2 := validateToolTaggedUnionBranchOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "untagged":
-		actual, _ := value.Selection.AsUntagged()
-		if actual != nil {
-			if err2 := validateToolUntaggedUnionBranchOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "untagged":
+			actual, _ := value.Selection.AsUntagged()
+			if actual != nil {
+				if err2 := validateToolUntaggedUnionBranchOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
 		}
 	}
@@ -5372,12 +5424,17 @@ func validateToolOperationExecutionContinuationOriginal(value *tooloperations.To
 	if value.Operation.Kind() == "" {
 		err = goa.MergeErrors(err, goa.MissingFieldError("operation", "value"))
 	}
-	switch string(value.Operation.Kind()) {
-	case "task_update":
-		actual, _ := value.Operation.AsTaskUpdate()
-		if actual != nil {
-			if err2 := validateToolOperationTaskAnswersOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+
+	if err2 := value.Operation.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.Operation.Kind()) {
+		case "task_update":
+			actual, _ := value.Operation.AsTaskUpdate()
+			if actual != nil {
+				if err2 := validateToolOperationTaskAnswersOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
 		}
 	}
@@ -5452,19 +5509,24 @@ func validateCatalogOperationOriginal(value *CatalogOperation) (err error) {
 	if utf8.RuneCountInString(value.Name) < 1 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("value.name", value.Name, utf8.RuneCountInString(value.Name), 1, true))
 	}
-	switch string(value.Target.Kind()) {
-	case "native":
-		actual, _ := value.Target.AsNative()
-		if actual != nil {
-			if err2 := validateNativeCatalogTargetOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+
+	if err2 := value.Target.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.Target.Kind()) {
+		case "native":
+			actual, _ := value.Target.AsNative()
+			if actual != nil {
+				if err2 := validateNativeCatalogTargetOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "service":
-		actual, _ := value.Target.AsService()
-		if actual != nil {
-			if err2 := validateServiceCatalogTargetOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "service":
+			actual, _ := value.Target.AsService()
+			if actual != nil {
+				if err2 := validateServiceCatalogTargetOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
 		}
 	}
@@ -5527,12 +5589,17 @@ func validateCatalogResourcesPageOriginal(value *CatalogResourcesPage) (err erro
 			}
 		}
 	}
-	switch string(value.Continuation.Kind()) {
-	case "more":
-		actual, _ := value.Continuation.AsMore()
-		if actual != nil {
-			if err2 := validateResourcePageMoreOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+
+	if err2 := value.Continuation.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.Continuation.Kind()) {
+		case "more":
+			actual, _ := value.Continuation.AsMore()
+			if actual != nil {
+				if err2 := validateResourcePageMoreOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
 		}
 	}
@@ -5583,19 +5650,24 @@ func validateCatalogSourceOriginal(value *CatalogSource) (err error) {
 	if utf8.RuneCountInString(value.Name) < 1 {
 		err = goa.MergeErrors(err, goa.InvalidLengthError("value.name", value.Name, utf8.RuneCountInString(value.Name), 1, true))
 	}
-	switch string(value.Target.Kind()) {
-	case "native":
-		actual, _ := value.Target.AsNative()
-		if actual != nil {
-			if err2 := validateNativeCatalogSourceOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+
+	if err2 := value.Target.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.Target.Kind()) {
+		case "native":
+			actual, _ := value.Target.AsNative()
+			if actual != nil {
+				if err2 := validateNativeCatalogSourceOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "service":
-		actual, _ := value.Target.AsService()
-		if actual != nil {
-			if err2 := validateServiceCatalogSourceOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "service":
+			actual, _ := value.Target.AsService()
+			if actual != nil {
+				if err2 := validateServiceCatalogSourceOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
 		}
 	}
@@ -5768,19 +5840,24 @@ func validateExecutionInvocationOriginal(value *ExecutionInvocation) (err error)
 	if value.Invocation.Kind() == "" {
 		err = goa.MergeErrors(err, goa.MissingFieldError("invocation", "value"))
 	}
-	switch string(value.Invocation.Kind()) {
-	case "root":
-		actual, _ := value.Invocation.AsRoot()
-		if actual != nil {
-			if err2 := validateRootInvocationOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+
+	if err2 := value.Invocation.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.Invocation.Kind()) {
+		case "root":
+			actual, _ := value.Invocation.AsRoot()
+			if actual != nil {
+				if err2 := validateRootInvocationOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "tool":
-		actual, _ := value.Invocation.AsTool()
-		if actual != nil {
-			if err2 := validateToolInvocationOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "tool":
+			actual, _ := value.Invocation.AsTool()
+			if actual != nil {
+				if err2 := validateToolInvocationOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
 		}
 	}
@@ -6076,33 +6153,38 @@ func validateRegistrySelectionOriginal(value *RegistrySelection) (err error) {
 	if value.Selection.Kind() == "" {
 		err = goa.MergeErrors(err, goa.MissingFieldError("selection", "value"))
 	}
-	switch string(value.Selection.Kind()) {
-	case "direct":
-		actual, _ := value.Selection.AsDirect()
-		if actual != nil {
-			if err2 := validateResolvedToolsetOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+
+	if err2 := value.Selection.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.Selection.Kind()) {
+		case "direct":
+			actual, _ := value.Selection.AsDirect()
+			if actual != nil {
+				if err2 := validateResolvedToolsetOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "registered":
-		actual, _ := value.Selection.AsRegistered()
-		if actual != nil {
-			if err2 := validateRegisteredToolsetSelectionOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "registered":
+			actual, _ := value.Selection.AsRegistered()
+			if actual != nil {
+				if err2 := validateRegisteredToolsetSelectionOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "compiled_service":
-		actual, _ := value.Selection.AsCompiledService()
-		if actual != nil {
-			if err2 := validateCompiledToolSelectionOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "compiled_service":
+			actual, _ := value.Selection.AsCompiledService()
+			if actual != nil {
+				if err2 := validateCompiledToolSelectionOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "compiled_agent":
-		actual, _ := value.Selection.AsCompiledAgent()
-		if actual != nil {
-			if err2 := validateCompiledAgentToolSelectionOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "compiled_agent":
+			actual, _ := value.Selection.AsCompiledAgent()
+			if actual != nil {
+				if err2 := validateCompiledAgentToolSelectionOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
 		}
 	}
@@ -7666,6 +7748,30 @@ func EncodeAdmissionStatus(in *AdmissionStatus) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateAdmissionStatusValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateAdmissionStatusValue(in *AdmissionStatus) error {
+	if err := checkAdmissionStatusValue(in); err != nil {
+		return fmt.Errorf("validate AdmissionStatus value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "AdmissionStatus")
+	}
+
+	var body *jsonAdmissionStatusTransport
+	{
+		body = &jsonAdmissionStatusTransport{
+			Ready: &in.Ready,
+		}
+	}
+	if err := validatejsonAdmissionStatusTransport(body); err != nil {
+		return fmt.Errorf("validate AdmissionStatus value: %w", err)
+	}
+	return nil
+}
+
 // DecodeAdmissionStatus checks JSON field names from the Goa design and returns a service value.
 func DecodeAdmissionStatus(data []byte) (out *AdmissionStatus, err error) {
 	root, err := readStrictJSON(data)
@@ -7741,6 +7847,54 @@ func EncodeAgentExportsDeclaration(in *AgentExportsDeclaration) ([]byte, error) 
 		return nil, fmt.Errorf("encode AgentExportsDeclaration JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateAgentExportsDeclarationValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateAgentExportsDeclarationValue(in *AgentExportsDeclaration) error {
+	if err := checkAgentExportsDeclarationValue(in); err != nil {
+		return fmt.Errorf("validate AgentExportsDeclaration value: %w", err)
+	}
+	if err := validateAgentExportsDeclarationOriginal(in); err != nil {
+		return fmt.Errorf("validate AgentExportsDeclaration value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "AgentExportsDeclaration")
+	}
+
+	var body *jsonAgentExportsDeclarationTransport
+	{
+		body = &jsonAgentExportsDeclarationTransport{
+			Scope:        &in.Scope,
+			ResourceName: &in.ResourceName,
+			Name:         &in.Name,
+			Description:  in.Description,
+		}
+		if in.Version != nil {
+			version := jsonSemVerTransport(*in.Version)
+			body.Version = &version
+		}
+		if in.Tags != nil {
+			body.Tags = make([]string, len(in.Tags))
+			for i, val := range in.Tags {
+				body.Tags[i] = val
+			}
+		}
+		body.Exports = make([]*jsonToolSchemaTransport, len(in.Exports))
+		for i, val := range in.Exports {
+			if val == nil {
+				body.Exports[i] = nil
+				continue
+			}
+			body.Exports[i] = encodeToolSchemaToToolSchemaTransport(val)
+		}
+	}
+	if err := validatejsonAgentExportsDeclarationTransport(body); err != nil {
+		return fmt.Errorf("validate AgentExportsDeclaration value: %w", err)
+	}
+	return nil
 }
 
 // DecodeAgentExportsDeclaration checks JSON field names from the Goa design and returns a service value.
@@ -7829,6 +7983,42 @@ func EncodeAgentExportsValidation(in *AgentExportsValidation) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateAgentExportsValidationValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateAgentExportsValidationValue(in *AgentExportsValidation) error {
+	if err := checkAgentExportsValidationValue(in); err != nil {
+		return fmt.Errorf("validate AgentExportsValidation value: %w", err)
+	}
+	if err := validateAgentExportsValidationOriginal(in); err != nil {
+		return fmt.Errorf("validate AgentExportsValidation value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "AgentExportsValidation")
+	}
+
+	var body *jsonAgentExportsValidationTransport
+	{
+		body = &jsonAgentExportsValidationTransport{
+			Scope:        &in.Scope,
+			ResourceName: &in.ResourceName,
+		}
+		body.Exports = make([]*jsonToolSchemaTransport, len(in.Exports))
+		for i, val := range in.Exports {
+			if val == nil {
+				body.Exports[i] = nil
+				continue
+			}
+			body.Exports[i] = encodeToolSchemaToToolSchemaTransport(val)
+		}
+	}
+	if err := validatejsonAgentExportsValidationTransport(body); err != nil {
+		return fmt.Errorf("validate AgentExportsValidation value: %w", err)
+	}
+	return nil
+}
+
 // DecodeAgentExportsValidation checks JSON field names from the Goa design and returns a service value.
 func DecodeAgentExportsValidation(data []byte) (out *AgentExportsValidation, err error) {
 	root, err := readStrictJSON(data)
@@ -7895,6 +8085,36 @@ func EncodeAgentToolTarget(in *AgentToolTarget) ([]byte, error) {
 		return nil, fmt.Errorf("encode AgentToolTarget JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateAgentToolTargetValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateAgentToolTargetValue(in *AgentToolTarget) error {
+	if err := checkAgentToolTargetValue(in); err != nil {
+		return fmt.Errorf("validate AgentToolTarget value: %w", err)
+	}
+	if err := validateAgentToolTargetOriginal(in); err != nil {
+		return fmt.Errorf("validate AgentToolTarget value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "AgentToolTarget")
+	}
+
+	var body *jsonAgentToolTargetTransport
+	{
+		body = &jsonAgentToolTargetTransport{
+			Executor:      &in.Executor,
+			Configuration: &in.Configuration,
+			Workflow:      &in.Workflow,
+			Queue:         &in.Queue,
+		}
+	}
+	if err := validatejsonAgentToolTargetTransport(body); err != nil {
+		return fmt.Errorf("validate AgentToolTarget value: %w", err)
+	}
+	return nil
 }
 
 // DecodeAgentToolTarget checks JSON field names from the Goa design and returns a service value.
@@ -7973,6 +8193,52 @@ func EncodeAgentToolsetDeclaration(in *AgentToolsetDeclaration) ([]byte, error) 
 		return nil, fmt.Errorf("encode AgentToolsetDeclaration JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateAgentToolsetDeclarationValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateAgentToolsetDeclarationValue(in *AgentToolsetDeclaration) error {
+	if err := checkAgentToolsetDeclarationValue(in); err != nil {
+		return fmt.Errorf("validate AgentToolsetDeclaration value: %w", err)
+	}
+	if err := validateAgentToolsetDeclarationOriginal(in); err != nil {
+		return fmt.Errorf("validate AgentToolsetDeclaration value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "AgentToolsetDeclaration")
+	}
+
+	var body *jsonAgentToolsetDeclarationTransport
+	{
+		body = &jsonAgentToolsetDeclarationTransport{
+			Name:        &in.Name,
+			Description: in.Description,
+		}
+		if in.Version != nil {
+			version := jsonSemVerTransport(*in.Version)
+			body.Version = &version
+		}
+		if in.Tags != nil {
+			body.Tags = make([]string, len(in.Tags))
+			for i, val := range in.Tags {
+				body.Tags[i] = val
+			}
+		}
+		body.Tools = make([]*jsonToolSchemaTransport, len(in.Tools))
+		for i, val := range in.Tools {
+			if val == nil {
+				body.Tools[i] = nil
+				continue
+			}
+			body.Tools[i] = encodeToolSchemaToToolSchemaTransport(val)
+		}
+	}
+	if err := validatejsonAgentToolsetDeclarationTransport(body); err != nil {
+		return fmt.Errorf("validate AgentToolsetDeclaration value: %w", err)
+	}
+	return nil
 }
 
 // DecodeAgentToolsetDeclaration checks JSON field names from the Goa design and returns a service value.
@@ -8055,6 +8321,38 @@ func EncodeAttachProviderPayload(in *AttachProviderPayload) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateAttachProviderPayloadValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateAttachProviderPayloadValue(in *AttachProviderPayload) error {
+	if err := checkAttachProviderPayloadValue(in); err != nil {
+		return fmt.Errorf("validate AttachProviderPayload value: %w", err)
+	}
+	if err := validateAttachProviderPayloadOriginal(in); err != nil {
+		return fmt.Errorf("validate AttachProviderPayload value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "AttachProviderPayload")
+	}
+
+	var body *jsonAttachProviderPayloadTransport
+	{
+		body = &jsonAttachProviderPayloadTransport{
+			Name:                      &in.Name,
+			ProviderID:                &in.ProviderID,
+			ExpectedRegistrationToken: &in.ExpectedRegistrationToken,
+			ProviderIncarnationID:     &in.ProviderIncarnationID,
+		}
+		wireProtocolVersion := attachProviderPayloadIntTransport(in.WireProtocolVersion)
+		body.WireProtocolVersion = &wireProtocolVersion
+	}
+	if err := validatejsonAttachProviderPayloadTransport(body); err != nil {
+		return fmt.Errorf("validate AttachProviderPayload value: %w", err)
+	}
+	return nil
+}
+
 // DecodeAttachProviderPayload checks JSON field names from the Goa design and returns a service value.
 func DecodeAttachProviderPayload(data []byte) (out *AttachProviderPayload, err error) {
 	root, err := readStrictJSON(data)
@@ -8119,6 +8417,39 @@ func EncodeCallResolvedToolPayload(in *CallResolvedToolPayload) ([]byte, error) 
 		return nil, fmt.Errorf("encode CallResolvedToolPayload JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateCallResolvedToolPayloadValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateCallResolvedToolPayloadValue(in *CallResolvedToolPayload) error {
+	if err := checkCallResolvedToolPayloadValue(in); err != nil {
+		return fmt.Errorf("validate CallResolvedToolPayload value: %w", err)
+	}
+	if err := validateCallResolvedToolPayloadOriginal(in); err != nil {
+		return fmt.Errorf("validate CallResolvedToolPayload value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "CallResolvedToolPayload")
+	}
+
+	var body *jsonCallResolvedToolPayloadTransport
+	{
+		body = &jsonCallResolvedToolPayloadTransport{
+			ExpectedRegistrationToken: &in.ExpectedRegistrationToken,
+			Toolset:                   &in.Toolset,
+			Tool:                      &in.Tool,
+			PayloadJSON:               in.PayloadJSON,
+		}
+		wireProtocolVersion := callResolvedToolPayloadIntTransport(in.WireProtocolVersion)
+		body.WireProtocolVersion = &wireProtocolVersion
+		body.Meta = encodeToolCallMetaToToolCallMetaTransport(in.Meta)
+	}
+	if err := validatejsonCallResolvedToolPayloadTransport(body); err != nil {
+		return fmt.Errorf("validate CallResolvedToolPayload value: %w", err)
+	}
+	return nil
 }
 
 // DecodeCallResolvedToolPayload checks JSON field names from the Goa design and returns a service value.
@@ -8187,6 +8518,38 @@ func EncodeCallToolPayload(in *CallToolPayload) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateCallToolPayloadValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateCallToolPayloadValue(in *CallToolPayload) error {
+	if err := checkCallToolPayloadValue(in); err != nil {
+		return fmt.Errorf("validate CallToolPayload value: %w", err)
+	}
+	if err := validateCallToolPayloadOriginal(in); err != nil {
+		return fmt.Errorf("validate CallToolPayload value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "CallToolPayload")
+	}
+
+	var body *jsonCallToolPayloadTransport
+	{
+		body = &jsonCallToolPayloadTransport{
+			Toolset:     &in.Toolset,
+			Tool:        &in.Tool,
+			PayloadJSON: in.PayloadJSON,
+		}
+		wireProtocolVersion := callToolPayloadIntTransport(in.WireProtocolVersion)
+		body.WireProtocolVersion = &wireProtocolVersion
+		body.Meta = encodeToolCallMetaToToolCallMetaTransport(in.Meta)
+	}
+	if err := validatejsonCallToolPayloadTransport(body); err != nil {
+		return fmt.Errorf("validate CallToolPayload value: %w", err)
+	}
+	return nil
+}
+
 // DecodeCallToolPayload checks JSON field names from the Goa design and returns a service value.
 func DecodeCallToolPayload(data []byte) (out *CallToolPayload, err error) {
 	root, err := readStrictJSON(data)
@@ -8248,6 +8611,36 @@ func EncodeCallToolResult(in *CallToolResult) ([]byte, error) {
 		return nil, fmt.Errorf("encode CallToolResult JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateCallToolResultValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateCallToolResultValue(in *CallToolResult) error {
+	if err := checkCallToolResultValue(in); err != nil {
+		return fmt.Errorf("validate CallToolResult value: %w", err)
+	}
+	if err := validateCallToolResultOriginal(in); err != nil {
+		return fmt.Errorf("validate CallToolResult value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "CallToolResult")
+	}
+
+	var body *jsonCallToolResultTransport
+	{
+		body = &jsonCallToolResultTransport{
+			ToolUseID:             &in.ToolUseID,
+			RegistrationToken:     &in.RegistrationToken,
+			ExecutionDeadline:     &in.ExecutionDeadline,
+			ResultStreamExpiresAt: &in.ResultStreamExpiresAt,
+		}
+	}
+	if err := validatejsonCallToolResultTransport(body); err != nil {
+		return fmt.Errorf("validate CallToolResult value: %w", err)
+	}
+	return nil
 }
 
 // DecodeCallToolResult checks JSON field names from the Goa design and returns a service value.
@@ -8332,6 +8725,56 @@ func EncodeCatalogOperation(in *CatalogOperation) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateCatalogOperationValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateCatalogOperationValue(in *CatalogOperation) error {
+	if err := checkCatalogOperationValue(in); err != nil {
+		return fmt.Errorf("validate CatalogOperation value: %w", err)
+	}
+	if err := validateCatalogOperationOriginal(in); err != nil {
+		return fmt.Errorf("validate CatalogOperation value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "CatalogOperation")
+	}
+
+	var body *jsonCatalogOperationTransport
+	{
+		body = &jsonCatalogOperationTransport{
+			Scope: &in.Scope,
+			Name:  &in.Name,
+		}
+		var targetValue jsonCatalogTargetTransport
+		switch string(in.Target.Kind()) {
+		case "native":
+			actual, _ := in.Target.AsNative()
+			var obj *jsonNativeCatalogTargetTransport
+			if actual != nil {
+				obj = encodeNativeCatalogTargetToNativeCatalogTargetTransport(actual)
+			}
+			u := targetValue
+			u.SetNative((*jsonNativeCatalogTargetTransport)(obj))
+			targetValue = u
+		case "service":
+			actual, _ := in.Target.AsService()
+			var obj *jsonServiceCatalogTargetTransport
+			if actual != nil {
+				obj = encodeServiceCatalogTargetToServiceCatalogTargetTransport(actual)
+			}
+			u := targetValue
+			u.SetService((*jsonServiceCatalogTargetTransport)(obj))
+			targetValue = u
+		}
+		body.Target = &targetValue
+	}
+	if err := validatejsonCatalogOperationTransport(body); err != nil {
+		return fmt.Errorf("validate CatalogOperation value: %w", err)
+	}
+	return nil
+}
+
 // DecodeCatalogOperation checks JSON field names from the Goa design and returns a service value.
 func DecodeCatalogOperation(data []byte) (out *CatalogOperation, err error) {
 	root, err := readStrictJSON(data)
@@ -8409,6 +8852,35 @@ func EncodeCatalogResource(in *CatalogResource) ([]byte, error) {
 		return nil, fmt.Errorf("encode CatalogResource JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateCatalogResourceValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateCatalogResourceValue(in *CatalogResource) error {
+	if err := checkCatalogResourceValue(in); err != nil {
+		return fmt.Errorf("validate CatalogResource value: %w", err)
+	}
+	if err := validateCatalogResourceOriginal(in); err != nil {
+		return fmt.Errorf("validate CatalogResource value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "CatalogResource")
+	}
+
+	var body *jsonCatalogResourceTransport
+	{
+		body = &jsonCatalogResourceTransport{
+			Kind:  &in.Kind,
+			Scope: &in.Scope,
+			Name:  &in.Name,
+		}
+	}
+	if err := validatejsonCatalogResourceTransport(body); err != nil {
+		return fmt.Errorf("validate CatalogResource value: %w", err)
+	}
+	return nil
 }
 
 // DecodeCatalogResource checks JSON field names from the Goa design and returns a service value.
@@ -8495,6 +8967,61 @@ func EncodeCatalogResourcesPage(in *CatalogResourcesPage) ([]byte, error) {
 		return nil, fmt.Errorf("encode CatalogResourcesPage JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateCatalogResourcesPageValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateCatalogResourcesPageValue(in *CatalogResourcesPage) error {
+	if err := checkCatalogResourcesPageValue(in); err != nil {
+		return fmt.Errorf("validate CatalogResourcesPage value: %w", err)
+	}
+	if err := validateCatalogResourcesPageOriginal(in); err != nil {
+		return fmt.Errorf("validate CatalogResourcesPage value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "CatalogResourcesPage")
+	}
+
+	var body *jsonCatalogResourcesPageTransport
+	{
+		body = &jsonCatalogResourcesPageTransport{}
+		body.Resources = make([]*jsonCatalogResourceTransport, len(in.Resources))
+		for i, val := range in.Resources {
+			if val == nil {
+				body.Resources[i] = nil
+				continue
+			}
+			body.Resources[i] = encodeCatalogResourceToCatalogResourceTransport(val)
+		}
+		var continuationValue jsonResourcePageContinuationTransport
+		switch string(in.Continuation.Kind()) {
+		case "done":
+			actual, _ := in.Continuation.AsDone()
+			var obj *jsonResourcePageDoneTransport
+			if actual != nil {
+				obj = encodeResourcePageDoneToResourcePageDoneTransport(actual)
+			}
+			u := continuationValue
+			u.SetDone((*jsonResourcePageDoneTransport)(obj))
+			continuationValue = u
+		case "more":
+			actual, _ := in.Continuation.AsMore()
+			var obj *jsonResourcePageMoreTransport
+			if actual != nil {
+				obj = encodeResourcePageMoreToResourcePageMoreTransport(actual)
+			}
+			u := continuationValue
+			u.SetMore((*jsonResourcePageMoreTransport)(obj))
+			continuationValue = u
+		}
+		body.Continuation = &continuationValue
+	}
+	if err := validatejsonCatalogResourcesPageTransport(body); err != nil {
+		return fmt.Errorf("validate CatalogResourcesPage value: %w", err)
+	}
+	return nil
 }
 
 // DecodeCatalogResourcesPage checks JSON field names from the Goa design and returns a service value.
@@ -8584,6 +9111,38 @@ func EncodeCatalogResourcesQuery(in *CatalogResourcesQuery) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateCatalogResourcesQueryValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateCatalogResourcesQueryValue(in *CatalogResourcesQuery) error {
+	if err := checkCatalogResourcesQueryValue(in); err != nil {
+		return fmt.Errorf("validate CatalogResourcesQuery value: %w", err)
+	}
+	if err := validateCatalogResourcesQueryOriginal(in); err != nil {
+		return fmt.Errorf("validate CatalogResourcesQuery value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "CatalogResourcesQuery")
+	}
+
+	var body *jsonCatalogResourcesQueryTransport
+	{
+		body = &jsonCatalogResourcesQueryTransport{
+			Scope: &in.Scope,
+			Kind:  &in.Kind,
+			After: in.After,
+			Name:  in.Name,
+		}
+		limit := catalogResourcesQueryInt32Transport(in.Limit)
+		body.Limit = &limit
+	}
+	if err := validatejsonCatalogResourcesQueryTransport(body); err != nil {
+		return fmt.Errorf("validate CatalogResourcesQuery value: %w", err)
+	}
+	return nil
+}
+
 // DecodeCatalogResourcesQuery checks JSON field names from the Goa design and returns a service value.
 func DecodeCatalogResourcesQuery(data []byte) (out *CatalogResourcesQuery, err error) {
 	root, err := readStrictJSON(data)
@@ -8667,6 +9226,56 @@ func EncodeCatalogSource(in *CatalogSource) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateCatalogSourceValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateCatalogSourceValue(in *CatalogSource) error {
+	if err := checkCatalogSourceValue(in); err != nil {
+		return fmt.Errorf("validate CatalogSource value: %w", err)
+	}
+	if err := validateCatalogSourceOriginal(in); err != nil {
+		return fmt.Errorf("validate CatalogSource value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "CatalogSource")
+	}
+
+	var body *jsonCatalogSourceTransport
+	{
+		body = &jsonCatalogSourceTransport{
+			Scope: &in.Scope,
+			Name:  &in.Name,
+		}
+		var targetValue jsonCatalogSourceTargetTransport
+		switch string(in.Target.Kind()) {
+		case "native":
+			actual, _ := in.Target.AsNative()
+			var obj *jsonNativeCatalogSourceTransport
+			if actual != nil {
+				obj = encodeNativeCatalogSourceToNativeCatalogSourceTransport(actual)
+			}
+			u := targetValue
+			u.SetNative((*jsonNativeCatalogSourceTransport)(obj))
+			targetValue = u
+		case "service":
+			actual, _ := in.Target.AsService()
+			var obj *jsonServiceCatalogSourceTransport
+			if actual != nil {
+				obj = encodeServiceCatalogSourceToServiceCatalogSourceTransport(actual)
+			}
+			u := targetValue
+			u.SetService((*jsonServiceCatalogSourceTransport)(obj))
+			targetValue = u
+		}
+		body.Target = &targetValue
+	}
+	if err := validatejsonCatalogSourceTransport(body); err != nil {
+		return fmt.Errorf("validate CatalogSource value: %w", err)
+	}
+	return nil
+}
+
 // DecodeCatalogSource checks JSON field names from the Goa design and returns a service value.
 func DecodeCatalogSource(data []byte) (out *CatalogSource, err error) {
 	root, err := readStrictJSON(data)
@@ -8745,6 +9354,34 @@ func EncodeCheckAdmissionPayload(in *CheckAdmissionPayload) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateCheckAdmissionPayloadValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateCheckAdmissionPayloadValue(in *CheckAdmissionPayload) error {
+	if err := checkCheckAdmissionPayloadValue(in); err != nil {
+		return fmt.Errorf("validate CheckAdmissionPayload value: %w", err)
+	}
+	if err := validateCheckAdmissionPayloadOriginal(in); err != nil {
+		return fmt.Errorf("validate CheckAdmissionPayload value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "CheckAdmissionPayload")
+	}
+
+	var body *jsonCheckAdmissionPayloadTransport
+	{
+		body = &jsonCheckAdmissionPayloadTransport{
+			Name:                      &in.Name,
+			ExpectedRegistrationToken: &in.ExpectedRegistrationToken,
+		}
+	}
+	if err := validatejsonCheckAdmissionPayloadTransport(body); err != nil {
+		return fmt.Errorf("validate CheckAdmissionPayload value: %w", err)
+	}
+	return nil
+}
+
 // DecodeCheckAdmissionPayload checks JSON field names from the Goa design and returns a service value.
 func DecodeCheckAdmissionPayload(data []byte) (out *CheckAdmissionPayload, err error) {
 	root, err := readStrictJSON(data)
@@ -8807,6 +9444,40 @@ func EncodeClaimToolCallPayload(in *ClaimToolCallPayload) ([]byte, error) {
 		return nil, fmt.Errorf("encode ClaimToolCallPayload JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateClaimToolCallPayloadValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateClaimToolCallPayloadValue(in *ClaimToolCallPayload) error {
+	if err := checkClaimToolCallPayloadValue(in); err != nil {
+		return fmt.Errorf("validate ClaimToolCallPayload value: %w", err)
+	}
+	if err := validateClaimToolCallPayloadOriginal(in); err != nil {
+		return fmt.Errorf("validate ClaimToolCallPayload value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ClaimToolCallPayload")
+	}
+
+	var body *jsonClaimToolCallPayloadTransport
+	{
+		body = &jsonClaimToolCallPayloadTransport{
+			ClaimOperationID:          &in.ClaimOperationID,
+			Toolset:                   &in.Toolset,
+			ProviderID:                &in.ProviderID,
+			ProviderIncarnationID:     &in.ProviderIncarnationID,
+			ProviderRegistrationToken: &in.ProviderRegistrationToken,
+			CallRegistrationToken:     &in.CallRegistrationToken,
+			ToolUseID:                 &in.ToolUseID,
+			RequestEventID:            &in.RequestEventID,
+		}
+	}
+	if err := validatejsonClaimToolCallPayloadTransport(body); err != nil {
+		return fmt.Errorf("validate ClaimToolCallPayload value: %w", err)
+	}
+	return nil
 }
 
 // DecodeClaimToolCallPayload checks JSON field names from the Goa design and returns a service value.
@@ -8872,6 +9543,33 @@ func EncodeClaimToolCallResult(in *ClaimToolCallResult) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateClaimToolCallResultValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateClaimToolCallResultValue(in *ClaimToolCallResult) error {
+	if err := checkClaimToolCallResultValue(in); err != nil {
+		return fmt.Errorf("validate ClaimToolCallResult value: %w", err)
+	}
+	if err := validateClaimToolCallResultOriginal(in); err != nil {
+		return fmt.Errorf("validate ClaimToolCallResult value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ClaimToolCallResult")
+	}
+
+	var body *jsonClaimToolCallResultTransport
+	{
+		body = &jsonClaimToolCallResultTransport{
+			Disposition: &in.Disposition,
+		}
+	}
+	if err := validatejsonClaimToolCallResultTransport(body); err != nil {
+		return fmt.Errorf("validate ClaimToolCallResult value: %w", err)
+	}
+	return nil
+}
+
 // DecodeClaimToolCallResult checks JSON field names from the Goa design and returns a service value.
 func DecodeClaimToolCallResult(data []byte) (out *ClaimToolCallResult, err error) {
 	root, err := readStrictJSON(data)
@@ -8926,6 +9624,33 @@ func EncodeCompiledAgentToolSelection(in *CompiledAgentToolSelection) ([]byte, e
 		return nil, fmt.Errorf("encode CompiledAgentToolSelection JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateCompiledAgentToolSelectionValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateCompiledAgentToolSelectionValue(in *CompiledAgentToolSelection) error {
+	if err := checkCompiledAgentToolSelectionValue(in); err != nil {
+		return fmt.Errorf("validate CompiledAgentToolSelection value: %w", err)
+	}
+	if err := validateCompiledAgentToolSelectionOriginal(in); err != nil {
+		return fmt.Errorf("validate CompiledAgentToolSelection value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "CompiledAgentToolSelection")
+	}
+
+	var body *jsonCompiledAgentToolSelectionTransport
+	{
+		body = &jsonCompiledAgentToolSelectionTransport{}
+		body.Selection = encodeCompiledToolSelectionToCompiledToolSelectionTransport(in.Selection)
+		body.Agent = encodeAgentToolTargetToAgentToolTargetTransport2(in.Agent)
+	}
+	if err := validatejsonCompiledAgentToolSelectionTransport(body); err != nil {
+		return fmt.Errorf("validate CompiledAgentToolSelection value: %w", err)
+	}
+	return nil
 }
 
 // DecodeCompiledAgentToolSelection checks JSON field names from the Goa design and returns a service value.
@@ -9000,6 +9725,51 @@ func EncodeCompiledToolSelection(in *CompiledToolSelection) ([]byte, error) {
 		return nil, fmt.Errorf("encode CompiledToolSelection JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateCompiledToolSelectionValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateCompiledToolSelectionValue(in *CompiledToolSelection) error {
+	if err := checkCompiledToolSelectionValue(in); err != nil {
+		return fmt.Errorf("validate CompiledToolSelection value: %w", err)
+	}
+	if err := validateCompiledToolSelectionOriginal(in); err != nil {
+		return fmt.Errorf("validate CompiledToolSelection value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "CompiledToolSelection")
+	}
+
+	var body *jsonCompiledToolSelectionTransport
+	{
+		body = &jsonCompiledToolSelectionTransport{
+			RegistrationToken:      &in.RegistrationToken,
+			Name:                   &in.Name,
+			Description:            in.Description,
+			RegisteredAt:           &in.RegisteredAt,
+			DeclarationFingerprint: &in.DeclarationFingerprint,
+		}
+		if in.Version != nil {
+			version := jsonSemVerTransport(*in.Version)
+			body.Version = &version
+		}
+		if in.Tags != nil {
+			body.Tags = make([]string, len(in.Tags))
+			for i, val := range in.Tags {
+				body.Tags[i] = val
+			}
+		}
+		body.Operations = make([]string, len(in.Operations))
+		for i, val := range in.Operations {
+			body.Operations[i] = val
+		}
+	}
+	if err := validatejsonCompiledToolSelectionTransport(body); err != nil {
+		return fmt.Errorf("validate CompiledToolSelection value: %w", err)
+	}
+	return nil
 }
 
 // DecodeCompiledToolSelection checks JSON field names from the Goa design and returns a service value.
@@ -9083,6 +9853,40 @@ func EncodeCompleteToolCallPayload(in *CompleteToolCallPayload) ([]byte, error) 
 	return data, nil
 }
 
+// ValidateCompleteToolCallPayloadValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateCompleteToolCallPayloadValue(in *CompleteToolCallPayload) error {
+	if err := checkCompleteToolCallPayloadValue(in); err != nil {
+		return fmt.Errorf("validate CompleteToolCallPayload value: %w", err)
+	}
+	if err := validateCompleteToolCallPayloadOriginal(in); err != nil {
+		return fmt.Errorf("validate CompleteToolCallPayload value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "CompleteToolCallPayload")
+	}
+
+	var body *jsonCompleteToolCallPayloadTransport
+	{
+		body = &jsonCompleteToolCallPayloadTransport{
+			Toolset:                   &in.Toolset,
+			ProviderID:                &in.ProviderID,
+			ProviderIncarnationID:     &in.ProviderIncarnationID,
+			RegistrationToken:         &in.RegistrationToken,
+			ToolUseID:                 &in.ToolUseID,
+			ResultJSON:                in.ResultJSON,
+			RequestEventID:            &in.RequestEventID,
+			ProviderRegistrationToken: &in.ProviderRegistrationToken,
+		}
+	}
+	if err := validatejsonCompleteToolCallPayloadTransport(body); err != nil {
+		return fmt.Errorf("validate CompleteToolCallPayload value: %w", err)
+	}
+	return nil
+}
+
 // DecodeCompleteToolCallPayload checks JSON field names from the Goa design and returns a service value.
 func DecodeCompleteToolCallPayload(data []byte) (out *CompleteToolCallPayload, err error) {
 	root, err := readStrictJSON(data)
@@ -9141,6 +9945,30 @@ func EncodeCompleteToolCallResult(in *CompleteToolCallResult) ([]byte, error) {
 		return nil, fmt.Errorf("encode CompleteToolCallResult JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateCompleteToolCallResultValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateCompleteToolCallResultValue(in *CompleteToolCallResult) error {
+	if err := checkCompleteToolCallResultValue(in); err != nil {
+		return fmt.Errorf("validate CompleteToolCallResult value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "CompleteToolCallResult")
+	}
+
+	var body *jsonCompleteToolCallResultTransport
+	{
+		body = &jsonCompleteToolCallResultTransport{
+			Accepted: &in.Accepted,
+		}
+	}
+	if err := validatejsonCompleteToolCallResultTransport(body); err != nil {
+		return fmt.Errorf("validate CompleteToolCallResult value: %w", err)
+	}
+	return nil
 }
 
 // DecodeCompleteToolCallResult checks JSON field names from the Goa design and returns a service value.
@@ -9251,6 +10079,87 @@ func EncodeConsumerContract(in *ConsumerContract) ([]byte, error) {
 		return nil, fmt.Errorf("encode ConsumerContract JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateConsumerContractValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateConsumerContractValue(in *ConsumerContract) error {
+	if err := checkConsumerContractValue(in); err != nil {
+		return fmt.Errorf("validate ConsumerContract value: %w", err)
+	}
+	if err := validateConsumerContractOriginal(in); err != nil {
+		return fmt.Errorf("validate ConsumerContract value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ConsumerContract")
+	}
+
+	var body *jsonConsumerContractTransport
+	{
+		body = &jsonConsumerContractTransport{
+			Kind:           &in.Kind,
+			Title:          &in.Title,
+			ResultReminder: in.ResultReminder,
+			RequiresUI:     &in.RequiresUI,
+		}
+		if in.ReplanOnTimeout != false {
+			body.ReplanOnTimeout = &in.ReplanOnTimeout
+		}
+		body.Search = encodeToolSearchDocumentToToolSearchDocumentTransport(in.Search)
+		body.Payload = encodeToolTypeMetadataToToolTypeMetadataTransport(in.Payload)
+		if in.Result != nil {
+			body.Result = encodeToolTypeMetadataToToolTypeMetadataTransport2(in.Result)
+		}
+		if in.Meta != nil {
+			body.Meta = make(map[string][]string, len(in.Meta))
+			for key, val := range in.Meta {
+				tk := key
+				if val == nil {
+					body.Meta[tk] = nil
+					continue
+				}
+				tv := make([]string, len(val))
+				for i, val := range val {
+					tv[i] = val
+				}
+				body.Meta[tk] = tv
+			}
+		}
+		if in.RequiredLabels != nil {
+			body.RequiredLabels = make([]string, len(in.RequiredLabels))
+			for i, val := range in.RequiredLabels {
+				body.RequiredLabels[i] = val
+			}
+		}
+		if in.Bounds != nil {
+			body.Bounds = encodeToolBoundsToToolBoundsTransport(in.Bounds)
+		}
+		if in.Confirmation != nil {
+			body.Confirmation = encodeToolConfirmationToToolConfirmationTransport(in.Confirmation)
+		}
+		if in.ServerData != nil {
+			body.ServerData = make([]*jsonToolServerDataTransport, len(in.ServerData))
+			for i, val := range in.ServerData {
+				if val == nil {
+					body.ServerData[i] = nil
+					continue
+				}
+				body.ServerData[i] = encodeToolServerDataToToolServerDataTransport(val)
+			}
+		}
+		if in.Agent != nil {
+			body.Agent = encodeAgentToolTargetToAgentToolTargetTransport(in.Agent)
+		}
+		if in.TextOnly != nil {
+			body.TextOnly = encodeTextOnlyToolContractToTextOnlyToolContractTransport(in.TextOnly)
+		}
+	}
+	if err := validatejsonConsumerContractTransport(body); err != nil {
+		return fmt.Errorf("validate ConsumerContract value: %w", err)
+	}
+	return nil
 }
 
 // DecodeConsumerContract checks JSON field names from the Goa design and returns a service value.
@@ -9376,6 +10285,38 @@ func EncodeDrainProviderPayload(in *DrainProviderPayload) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateDrainProviderPayloadValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateDrainProviderPayloadValue(in *DrainProviderPayload) error {
+	if err := checkDrainProviderPayloadValue(in); err != nil {
+		return fmt.Errorf("validate DrainProviderPayload value: %w", err)
+	}
+	if err := validateDrainProviderPayloadOriginal(in); err != nil {
+		return fmt.Errorf("validate DrainProviderPayload value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "DrainProviderPayload")
+	}
+
+	var body *jsonDrainProviderPayloadTransport
+	{
+		body = &jsonDrainProviderPayloadTransport{
+			Name:                      &in.Name,
+			ProviderID:                &in.ProviderID,
+			ExpectedRegistrationToken: &in.ExpectedRegistrationToken,
+			ProviderIncarnationID:     &in.ProviderIncarnationID,
+		}
+		settlementDurationMs := drainProviderPayloadInt64Transport(in.SettlementDurationMs)
+		body.SettlementDurationMs = &settlementDurationMs
+	}
+	if err := validatejsonDrainProviderPayloadTransport(body); err != nil {
+		return fmt.Errorf("validate DrainProviderPayload value: %w", err)
+	}
+	return nil
+}
+
 // DecodeDrainProviderPayload checks JSON field names from the Goa design and returns a service value.
 func DecodeDrainProviderPayload(data []byte) (out *DrainProviderPayload, err error) {
 	root, err := readStrictJSON(data)
@@ -9456,6 +10397,53 @@ func EncodeExecutionInvocation(in *ExecutionInvocation) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateExecutionInvocationValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateExecutionInvocationValue(in *ExecutionInvocation) error {
+	if err := checkExecutionInvocationValue(in); err != nil {
+		return fmt.Errorf("validate ExecutionInvocation value: %w", err)
+	}
+	if err := validateExecutionInvocationOriginal(in); err != nil {
+		return fmt.Errorf("validate ExecutionInvocation value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ExecutionInvocation")
+	}
+
+	var body *jsonExecutionInvocationTransport
+	{
+		body = &jsonExecutionInvocationTransport{}
+		var invocationValue jsonExecutionInvocationKindTransport
+		switch string(in.Invocation.Kind()) {
+		case "root":
+			actual, _ := in.Invocation.AsRoot()
+			var obj *jsonRootInvocationTransport
+			if actual != nil {
+				obj = encodeRootInvocationToRootInvocationTransport(actual)
+			}
+			u := invocationValue
+			u.SetRoot((*jsonRootInvocationTransport)(obj))
+			invocationValue = u
+		case "tool":
+			actual, _ := in.Invocation.AsTool()
+			var obj *jsonToolInvocationTransport
+			if actual != nil {
+				obj = encodeToolInvocationToToolInvocationTransport(actual)
+			}
+			u := invocationValue
+			u.SetTool((*jsonToolInvocationTransport)(obj))
+			invocationValue = u
+		}
+		body.Invocation = &invocationValue
+	}
+	if err := validatejsonExecutionInvocationTransport(body); err != nil {
+		return fmt.Errorf("validate ExecutionInvocation value: %w", err)
+	}
+	return nil
+}
+
 // DecodeExecutionInvocation checks JSON field names from the Goa design and returns a service value.
 func DecodeExecutionInvocation(data []byte) (out *ExecutionInvocation, err error) {
 	root, err := readStrictJSON(data)
@@ -9530,6 +10518,33 @@ func EncodeGetToolsetPayload(in *GetToolsetPayload) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateGetToolsetPayloadValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateGetToolsetPayloadValue(in *GetToolsetPayload) error {
+	if err := checkGetToolsetPayloadValue(in); err != nil {
+		return fmt.Errorf("validate GetToolsetPayload value: %w", err)
+	}
+	if err := validateGetToolsetPayloadOriginal(in); err != nil {
+		return fmt.Errorf("validate GetToolsetPayload value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "GetToolsetPayload")
+	}
+
+	var body *jsonGetToolsetPayloadTransport
+	{
+		body = &jsonGetToolsetPayloadTransport{
+			Name: &in.Name,
+		}
+	}
+	if err := validatejsonGetToolsetPayloadTransport(body); err != nil {
+		return fmt.Errorf("validate GetToolsetPayload value: %w", err)
+	}
+	return nil
+}
+
 // DecodeGetToolsetPayload checks JSON field names from the Goa design and returns a service value.
 func DecodeGetToolsetPayload(data []byte) (out *GetToolsetPayload, err error) {
 	root, err := readStrictJSON(data)
@@ -9585,6 +10600,34 @@ func EncodeListToolsetsPayload(in *ListToolsetsPayload) ([]byte, error) {
 		return nil, fmt.Errorf("encode ListToolsetsPayload JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateListToolsetsPayloadValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateListToolsetsPayloadValue(in *ListToolsetsPayload) error {
+	if err := checkListToolsetsPayloadValue(in); err != nil {
+		return fmt.Errorf("validate ListToolsetsPayload value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ListToolsetsPayload")
+	}
+
+	var body *jsonListToolsetsPayloadTransport
+	{
+		body = &jsonListToolsetsPayloadTransport{}
+		if in.Tags != nil {
+			body.Tags = make([]string, len(in.Tags))
+			for i, val := range in.Tags {
+				body.Tags[i] = val
+			}
+		}
+	}
+	if err := validatejsonListToolsetsPayloadTransport(body); err != nil {
+		return fmt.Errorf("validate ListToolsetsPayload value: %w", err)
+	}
+	return nil
 }
 
 // DecodeListToolsetsPayload checks JSON field names from the Goa design and returns a service value.
@@ -9655,6 +10698,41 @@ func EncodeListToolsetsResult(in *ListToolsetsResult) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateListToolsetsResultValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateListToolsetsResultValue(in *ListToolsetsResult) error {
+	if err := checkListToolsetsResultValue(in); err != nil {
+		return fmt.Errorf("validate ListToolsetsResult value: %w", err)
+	}
+	if err := validateListToolsetsResultOriginal(in); err != nil {
+		return fmt.Errorf("validate ListToolsetsResult value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ListToolsetsResult")
+	}
+
+	var body *jsonListToolsetsResultTransport
+	{
+		body = &jsonListToolsetsResultTransport{}
+		if in.Toolsets != nil {
+			body.Toolsets = make([]*jsonToolsetInfoTransport, len(in.Toolsets))
+			for i, val := range in.Toolsets {
+				if val == nil {
+					body.Toolsets[i] = nil
+					continue
+				}
+				body.Toolsets[i] = encodeToolsetInfoToToolsetInfoTransport(val)
+			}
+		}
+	}
+	if err := validatejsonListToolsetsResultTransport(body); err != nil {
+		return fmt.Errorf("validate ListToolsetsResult value: %w", err)
+	}
+	return nil
+}
+
 // DecodeListToolsetsResult checks JSON field names from the Goa design and returns a service value.
 func DecodeListToolsetsResult(data []byte) (out *ListToolsetsResult, err error) {
 	root, err := readStrictJSON(data)
@@ -9719,6 +10797,33 @@ func EncodeNativeCatalogSource(in *NativeCatalogSource) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateNativeCatalogSourceValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateNativeCatalogSourceValue(in *NativeCatalogSource) error {
+	if err := checkNativeCatalogSourceValue(in); err != nil {
+		return fmt.Errorf("validate NativeCatalogSource value: %w", err)
+	}
+	if err := validateNativeCatalogSourceOriginal(in); err != nil {
+		return fmt.Errorf("validate NativeCatalogSource value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "NativeCatalogSource")
+	}
+
+	var body *jsonNativeCatalogSourceTransport
+	{
+		body = &jsonNativeCatalogSourceTransport{
+			Toolset: &in.Toolset,
+		}
+	}
+	if err := validatejsonNativeCatalogSourceTransport(body); err != nil {
+		return fmt.Errorf("validate NativeCatalogSource value: %w", err)
+	}
+	return nil
+}
+
 // DecodeNativeCatalogSource checks JSON field names from the Goa design and returns a service value.
 func DecodeNativeCatalogSource(data []byte) (out *NativeCatalogSource, err error) {
 	root, err := readStrictJSON(data)
@@ -9774,6 +10879,34 @@ func EncodeNativeCatalogTarget(in *NativeCatalogTarget) ([]byte, error) {
 		return nil, fmt.Errorf("encode NativeCatalogTarget JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateNativeCatalogTargetValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateNativeCatalogTargetValue(in *NativeCatalogTarget) error {
+	if err := checkNativeCatalogTargetValue(in); err != nil {
+		return fmt.Errorf("validate NativeCatalogTarget value: %w", err)
+	}
+	if err := validateNativeCatalogTargetOriginal(in); err != nil {
+		return fmt.Errorf("validate NativeCatalogTarget value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "NativeCatalogTarget")
+	}
+
+	var body *jsonNativeCatalogTargetTransport
+	{
+		body = &jsonNativeCatalogTargetTransport{
+			Toolset: &in.Toolset,
+			Tool:    &in.Tool,
+		}
+	}
+	if err := validatejsonNativeCatalogTargetTransport(body); err != nil {
+		return fmt.Errorf("validate NativeCatalogTarget value: %w", err)
+	}
+	return nil
 }
 
 // DecodeNativeCatalogTarget checks JSON field names from the Goa design and returns a service value.
@@ -9834,6 +10967,36 @@ func EncodePongPayload(in *PongPayload) ([]byte, error) {
 		return nil, fmt.Errorf("encode PongPayload JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidatePongPayloadValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidatePongPayloadValue(in *PongPayload) error {
+	if err := checkPongPayloadValue(in); err != nil {
+		return fmt.Errorf("validate PongPayload value: %w", err)
+	}
+	if err := validatePongPayloadOriginal(in); err != nil {
+		return fmt.Errorf("validate PongPayload value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "PongPayload")
+	}
+
+	var body *jsonPongPayloadTransport
+	{
+		body = &jsonPongPayloadTransport{
+			PingID:                &in.PingID,
+			Toolset:               &in.Toolset,
+			ProviderID:            &in.ProviderID,
+			ProviderIncarnationID: &in.ProviderIncarnationID,
+		}
+	}
+	if err := validatejsonPongPayloadTransport(body); err != nil {
+		return fmt.Errorf("validate PongPayload value: %w", err)
+	}
+	return nil
 }
 
 // DecodePongPayload checks JSON field names from the Goa design and returns a service value.
@@ -9899,6 +11062,39 @@ func EncodeProviderToolCallClaimPayload(in *ProviderToolCallClaimPayload) ([]byt
 		return nil, fmt.Errorf("encode ProviderToolCallClaimPayload JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateProviderToolCallClaimPayloadValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateProviderToolCallClaimPayloadValue(in *ProviderToolCallClaimPayload) error {
+	if err := checkProviderToolCallClaimPayloadValue(in); err != nil {
+		return fmt.Errorf("validate ProviderToolCallClaimPayload value: %w", err)
+	}
+	if err := validateProviderToolCallClaimPayloadOriginal(in); err != nil {
+		return fmt.Errorf("validate ProviderToolCallClaimPayload value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ProviderToolCallClaimPayload")
+	}
+
+	var body *jsonProviderToolCallClaimPayloadTransport
+	{
+		body = &jsonProviderToolCallClaimPayloadTransport{
+			Toolset:                   &in.Toolset,
+			ProviderID:                &in.ProviderID,
+			ProviderIncarnationID:     &in.ProviderIncarnationID,
+			ProviderRegistrationToken: &in.ProviderRegistrationToken,
+			CallRegistrationToken:     &in.CallRegistrationToken,
+			ToolUseID:                 &in.ToolUseID,
+			RequestEventID:            &in.RequestEventID,
+		}
+	}
+	if err := validatejsonProviderToolCallClaimPayloadTransport(body); err != nil {
+		return fmt.Errorf("validate ProviderToolCallClaimPayload value: %w", err)
+	}
+	return nil
 }
 
 // DecodeProviderToolCallClaimPayload checks JSON field names from the Goa design and returns a service value.
@@ -9969,6 +11165,41 @@ func EncodePublishToolOutputDeltaPayload(in *PublishToolOutputDeltaPayload) ([]b
 		return nil, fmt.Errorf("encode PublishToolOutputDeltaPayload JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidatePublishToolOutputDeltaPayloadValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidatePublishToolOutputDeltaPayloadValue(in *PublishToolOutputDeltaPayload) error {
+	if err := checkPublishToolOutputDeltaPayloadValue(in); err != nil {
+		return fmt.Errorf("validate PublishToolOutputDeltaPayload value: %w", err)
+	}
+	if err := validatePublishToolOutputDeltaPayloadOriginal(in); err != nil {
+		return fmt.Errorf("validate PublishToolOutputDeltaPayload value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "PublishToolOutputDeltaPayload")
+	}
+
+	var body *jsonPublishToolOutputDeltaPayloadTransport
+	{
+		body = &jsonPublishToolOutputDeltaPayloadTransport{
+			Stream:                    &in.Stream,
+			Delta:                     &in.Delta,
+			Toolset:                   &in.Toolset,
+			ProviderID:                &in.ProviderID,
+			ProviderIncarnationID:     &in.ProviderIncarnationID,
+			ProviderRegistrationToken: &in.ProviderRegistrationToken,
+			CallRegistrationToken:     &in.CallRegistrationToken,
+			ToolUseID:                 &in.ToolUseID,
+			RequestEventID:            &in.RequestEventID,
+		}
+	}
+	if err := validatejsonPublishToolOutputDeltaPayloadTransport(body); err != nil {
+		return fmt.Errorf("validate PublishToolOutputDeltaPayload value: %w", err)
+	}
+	return nil
 }
 
 // DecodePublishToolOutputDeltaPayload checks JSON field names from the Goa design and returns a service value.
@@ -10060,6 +11291,58 @@ func EncodeRegisterPayload(in *RegisterPayload) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateRegisterPayloadValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateRegisterPayloadValue(in *RegisterPayload) error {
+	if err := checkRegisterPayloadValue(in); err != nil {
+		return fmt.Errorf("validate RegisterPayload value: %w", err)
+	}
+	if err := validateRegisterPayloadOriginal(in); err != nil {
+		return fmt.Errorf("validate RegisterPayload value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "RegisterPayload")
+	}
+
+	var body *jsonRegisterPayloadTransport
+	{
+		body = &jsonRegisterPayloadTransport{
+			Name:                  &in.Name,
+			Description:           in.Description,
+			ProviderID:            &in.ProviderID,
+			AdmissionRevision:     &in.AdmissionRevision,
+			ProviderIncarnationID: &in.ProviderIncarnationID,
+			SchemaFingerprint:     &in.SchemaFingerprint,
+		}
+		if in.Version != nil {
+			version := jsonSemVerTransport(*in.Version)
+			body.Version = &version
+		}
+		wireProtocolVersion := registerPayloadIntTransport(in.WireProtocolVersion)
+		body.WireProtocolVersion = &wireProtocolVersion
+		if in.Tags != nil {
+			body.Tags = make([]string, len(in.Tags))
+			for i, val := range in.Tags {
+				body.Tags[i] = val
+			}
+		}
+		body.Tools = make([]*jsonToolSchemaTransport, len(in.Tools))
+		for i, val := range in.Tools {
+			if val == nil {
+				body.Tools[i] = nil
+				continue
+			}
+			body.Tools[i] = encodeToolSchemaToToolSchemaTransport(val)
+		}
+	}
+	if err := validatejsonRegisterPayloadTransport(body); err != nil {
+		return fmt.Errorf("validate RegisterPayload value: %w", err)
+	}
+	return nil
+}
+
 // DecodeRegisterPayload checks JSON field names from the Goa design and returns a service value.
 func DecodeRegisterPayload(data []byte) (out *RegisterPayload, err error) {
 	root, err := readStrictJSON(data)
@@ -10143,6 +11426,36 @@ func EncodeRegisterResult(in *RegisterResult) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateRegisterResultValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateRegisterResultValue(in *RegisterResult) error {
+	if err := checkRegisterResultValue(in); err != nil {
+		return fmt.Errorf("validate RegisterResult value: %w", err)
+	}
+	if err := validateRegisterResultOriginal(in); err != nil {
+		return fmt.Errorf("validate RegisterResult value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "RegisterResult")
+	}
+
+	var body *jsonRegisterResultTransport
+	{
+		body = &jsonRegisterResultTransport{
+			RegisteredAt:      &in.RegisteredAt,
+			RegistrationToken: &in.RegistrationToken,
+		}
+		leaseDurationMs := registerResultInt64Transport(in.LeaseDurationMs)
+		body.LeaseDurationMs = &leaseDurationMs
+	}
+	if err := validatejsonRegisterResultTransport(body); err != nil {
+		return fmt.Errorf("validate RegisterResult value: %w", err)
+	}
+	return nil
+}
+
 // DecodeRegisterResult checks JSON field names from the Goa design and returns a service value.
 func DecodeRegisterResult(data []byte) (out *RegisterResult, err error) {
 	root, err := readStrictJSON(data)
@@ -10203,6 +11516,35 @@ func EncodeRegisteredInvocation(in *RegisteredInvocation) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateRegisteredInvocationValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateRegisteredInvocationValue(in *RegisteredInvocation) error {
+	if err := checkRegisteredInvocationValue(in); err != nil {
+		return fmt.Errorf("validate RegisteredInvocation value: %w", err)
+	}
+	if err := validateRegisteredInvocationOriginal(in); err != nil {
+		return fmt.Errorf("validate RegisteredInvocation value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "RegisteredInvocation")
+	}
+
+	var body *jsonRegisteredInvocationTransport
+	{
+		body = &jsonRegisteredInvocationTransport{
+			Arguments: in.Arguments,
+		}
+		body.Invocation = encodeExecutionInvocationToExecutionInvocationTransport(in.Invocation)
+		body.Target = encodeCatalogOperationToCatalogOperationTransport(in.Target)
+	}
+	if err := validatejsonRegisteredInvocationTransport(body); err != nil {
+		return fmt.Errorf("validate RegisteredInvocation value: %w", err)
+	}
+	return nil
+}
+
 // DecodeRegisteredInvocation checks JSON field names from the Goa design and returns a service value.
 func DecodeRegisteredInvocation(data []byte) (out *RegisteredInvocation, err error) {
 	root, err := readStrictJSON(data)
@@ -10259,6 +11601,33 @@ func EncodeRegisteredToolsetSelection(in *RegisteredToolsetSelection) ([]byte, e
 		return nil, fmt.Errorf("encode RegisteredToolsetSelection JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateRegisteredToolsetSelectionValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateRegisteredToolsetSelectionValue(in *RegisteredToolsetSelection) error {
+	if err := checkRegisteredToolsetSelectionValue(in); err != nil {
+		return fmt.Errorf("validate RegisteredToolsetSelection value: %w", err)
+	}
+	if err := validateRegisteredToolsetSelectionOriginal(in); err != nil {
+		return fmt.Errorf("validate RegisteredToolsetSelection value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "RegisteredToolsetSelection")
+	}
+
+	var body *jsonRegisteredToolsetSelectionTransport
+	{
+		body = &jsonRegisteredToolsetSelectionTransport{}
+		body.Source = encodeCatalogSourceToCatalogSourceTransport(in.Source)
+		body.Resolved = encodeResolvedToolsetToResolvedToolsetTransport(in.Resolved)
+	}
+	if err := validatejsonRegisteredToolsetSelectionTransport(body); err != nil {
+		return fmt.Errorf("validate RegisteredToolsetSelection value: %w", err)
+	}
+	return nil
 }
 
 // DecodeRegisteredToolsetSelection checks JSON field names from the Goa design and returns a service value.
@@ -10353,6 +11722,71 @@ func EncodeRegistrySelection(in *RegistrySelection) ([]byte, error) {
 		return nil, fmt.Errorf("encode RegistrySelection JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateRegistrySelectionValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateRegistrySelectionValue(in *RegistrySelection) error {
+	if err := checkRegistrySelectionValue(in); err != nil {
+		return fmt.Errorf("validate RegistrySelection value: %w", err)
+	}
+	if err := validateRegistrySelectionOriginal(in); err != nil {
+		return fmt.Errorf("validate RegistrySelection value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "RegistrySelection")
+	}
+
+	var body *jsonRegistrySelectionTransport
+	{
+		body = &jsonRegistrySelectionTransport{}
+		var selectionValue jsonRegistrySelectionKindTransport
+		switch string(in.Selection.Kind()) {
+		case "direct":
+			actual, _ := in.Selection.AsDirect()
+			var obj *jsonResolvedToolsetTransport
+			if actual != nil {
+				obj = encodeResolvedToolsetToResolvedToolsetTransport2(actual)
+			}
+			u := selectionValue
+			u.SetDirect((*jsonResolvedToolsetTransport)(obj))
+			selectionValue = u
+		case "registered":
+			actual, _ := in.Selection.AsRegistered()
+			var obj *jsonRegisteredToolsetSelectionTransport
+			if actual != nil {
+				obj = encodeRegisteredToolsetSelectionToRegisteredToolsetSelectionTransport(actual)
+			}
+			u := selectionValue
+			u.SetRegistered((*jsonRegisteredToolsetSelectionTransport)(obj))
+			selectionValue = u
+		case "compiled_service":
+			actual, _ := in.Selection.AsCompiledService()
+			var obj *jsonCompiledToolSelectionTransport
+			if actual != nil {
+				obj = encodeCompiledToolSelectionToCompiledToolSelectionTransport2(actual)
+			}
+			u := selectionValue
+			u.SetCompiledService((*jsonCompiledToolSelectionTransport)(obj))
+			selectionValue = u
+		case "compiled_agent":
+			actual, _ := in.Selection.AsCompiledAgent()
+			var obj *jsonCompiledAgentToolSelectionTransport
+			if actual != nil {
+				obj = encodeCompiledAgentToolSelectionToCompiledAgentToolSelectionTransport(actual)
+			}
+			u := selectionValue
+			u.SetCompiledAgent((*jsonCompiledAgentToolSelectionTransport)(obj))
+			selectionValue = u
+		}
+		body.Selection = &selectionValue
+	}
+	if err := validatejsonRegistrySelectionTransport(body); err != nil {
+		return fmt.Errorf("validate RegistrySelection value: %w", err)
+	}
+	return nil
 }
 
 // DecodeRegistrySelection checks JSON field names from the Goa design and returns a service value.
@@ -10450,6 +11884,36 @@ func EncodeReleaseProviderPayload(in *ReleaseProviderPayload) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateReleaseProviderPayloadValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateReleaseProviderPayloadValue(in *ReleaseProviderPayload) error {
+	if err := checkReleaseProviderPayloadValue(in); err != nil {
+		return fmt.Errorf("validate ReleaseProviderPayload value: %w", err)
+	}
+	if err := validateReleaseProviderPayloadOriginal(in); err != nil {
+		return fmt.Errorf("validate ReleaseProviderPayload value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ReleaseProviderPayload")
+	}
+
+	var body *jsonReleaseProviderPayloadTransport
+	{
+		body = &jsonReleaseProviderPayloadTransport{
+			Name:                      &in.Name,
+			ProviderID:                &in.ProviderID,
+			ExpectedRegistrationToken: &in.ExpectedRegistrationToken,
+			ProviderIncarnationID:     &in.ProviderIncarnationID,
+		}
+	}
+	if err := validatejsonReleaseProviderPayloadTransport(body); err != nil {
+		return fmt.Errorf("validate ReleaseProviderPayload value: %w", err)
+	}
+	return nil
+}
+
 // DecodeReleaseProviderPayload checks JSON field names from the Goa design and returns a service value.
 func DecodeReleaseProviderPayload(data []byte) (out *ReleaseProviderPayload, err error) {
 	root, err := readStrictJSON(data)
@@ -10512,6 +11976,36 @@ func EncodeRenewProviderPayload(in *RenewProviderPayload) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateRenewProviderPayloadValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateRenewProviderPayloadValue(in *RenewProviderPayload) error {
+	if err := checkRenewProviderPayloadValue(in); err != nil {
+		return fmt.Errorf("validate RenewProviderPayload value: %w", err)
+	}
+	if err := validateRenewProviderPayloadOriginal(in); err != nil {
+		return fmt.Errorf("validate RenewProviderPayload value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "RenewProviderPayload")
+	}
+
+	var body *jsonRenewProviderPayloadTransport
+	{
+		body = &jsonRenewProviderPayloadTransport{
+			Name:                      &in.Name,
+			ProviderID:                &in.ProviderID,
+			ExpectedRegistrationToken: &in.ExpectedRegistrationToken,
+			ProviderIncarnationID:     &in.ProviderIncarnationID,
+		}
+	}
+	if err := validatejsonRenewProviderPayloadTransport(body); err != nil {
+		return fmt.Errorf("validate RenewProviderPayload value: %w", err)
+	}
+	return nil
+}
+
 // DecodeRenewProviderPayload checks JSON field names from the Goa design and returns a service value.
 func DecodeRenewProviderPayload(data []byte) (out *RenewProviderPayload, err error) {
 	root, err := readStrictJSON(data)
@@ -10571,6 +12065,33 @@ func EncodeRenewProviderResult(in *RenewProviderResult) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateRenewProviderResultValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateRenewProviderResultValue(in *RenewProviderResult) error {
+	if err := checkRenewProviderResultValue(in); err != nil {
+		return fmt.Errorf("validate RenewProviderResult value: %w", err)
+	}
+	if err := validateRenewProviderResultOriginal(in); err != nil {
+		return fmt.Errorf("validate RenewProviderResult value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "RenewProviderResult")
+	}
+
+	var body *jsonRenewProviderResultTransport
+	{
+		body = &jsonRenewProviderResultTransport{}
+		leaseDurationMs := renewProviderResultInt64Transport(in.LeaseDurationMs)
+		body.LeaseDurationMs = &leaseDurationMs
+	}
+	if err := validatejsonRenewProviderResultTransport(body); err != nil {
+		return fmt.Errorf("validate RenewProviderResult value: %w", err)
+	}
+	return nil
+}
+
 // DecodeRenewProviderResult checks JSON field names from the Goa design and returns a service value.
 func DecodeRenewProviderResult(data []byte) (out *RenewProviderResult, err error) {
 	root, err := readStrictJSON(data)
@@ -10628,6 +12149,34 @@ func EncodeResolvedToolset(in *ResolvedToolset) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateResolvedToolsetValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateResolvedToolsetValue(in *ResolvedToolset) error {
+	if err := checkResolvedToolsetValue(in); err != nil {
+		return fmt.Errorf("validate ResolvedToolset value: %w", err)
+	}
+	if err := validateResolvedToolsetOriginal(in); err != nil {
+		return fmt.Errorf("validate ResolvedToolset value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ResolvedToolset")
+	}
+
+	var body *jsonResolvedToolsetTransport
+	{
+		body = &jsonResolvedToolsetTransport{
+			RegistrationToken: &in.RegistrationToken,
+		}
+		body.Toolset = encodeToolsetToToolsetTransport(in.Toolset)
+	}
+	if err := validatejsonResolvedToolsetTransport(body); err != nil {
+		return fmt.Errorf("validate ResolvedToolset value: %w", err)
+	}
+	return nil
+}
+
 // DecodeResolvedToolset checks JSON field names from the Goa design and returns a service value.
 func DecodeResolvedToolset(data []byte) (out *ResolvedToolset, err error) {
 	root, err := readStrictJSON(data)
@@ -10678,6 +12227,28 @@ func EncodeResourcePageDone(in *ResourcePageDone) ([]byte, error) {
 		return nil, fmt.Errorf("encode ResourcePageDone JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateResourcePageDoneValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateResourcePageDoneValue(in *ResourcePageDone) error {
+	if err := checkResourcePageDoneValue(in); err != nil {
+		return fmt.Errorf("validate ResourcePageDone value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ResourcePageDone")
+	}
+
+	var body *jsonResourcePageDoneTransport
+	{
+		body = &jsonResourcePageDoneTransport{}
+	}
+	if err := validatejsonResourcePageDoneTransport(body); err != nil {
+		return fmt.Errorf("validate ResourcePageDone value: %w", err)
+	}
+	return nil
 }
 
 // DecodeResourcePageDone checks JSON field names from the Goa design and returns a service value.
@@ -10732,6 +12303,33 @@ func EncodeResourcePageMore(in *ResourcePageMore) ([]byte, error) {
 		return nil, fmt.Errorf("encode ResourcePageMore JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateResourcePageMoreValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateResourcePageMoreValue(in *ResourcePageMore) error {
+	if err := checkResourcePageMoreValue(in); err != nil {
+		return fmt.Errorf("validate ResourcePageMore value: %w", err)
+	}
+	if err := validateResourcePageMoreOriginal(in); err != nil {
+		return fmt.Errorf("validate ResourcePageMore value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ResourcePageMore")
+	}
+
+	var body *jsonResourcePageMoreTransport
+	{
+		body = &jsonResourcePageMoreTransport{
+			After: &in.After,
+		}
+	}
+	if err := validatejsonResourcePageMoreTransport(body); err != nil {
+		return fmt.Errorf("validate ResourcePageMore value: %w", err)
+	}
+	return nil
 }
 
 // DecodeResourcePageMore checks JSON field names from the Goa design and returns a service value.
@@ -10796,6 +12394,39 @@ func EncodeRetryToolPayload(in *RetryToolPayload) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateRetryToolPayloadValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateRetryToolPayloadValue(in *RetryToolPayload) error {
+	if err := checkRetryToolPayloadValue(in); err != nil {
+		return fmt.Errorf("validate RetryToolPayload value: %w", err)
+	}
+	if err := validateRetryToolPayloadOriginal(in); err != nil {
+		return fmt.Errorf("validate RetryToolPayload value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "RetryToolPayload")
+	}
+
+	var body *jsonRetryToolPayloadTransport
+	{
+		body = &jsonRetryToolPayloadTransport{
+			ExpectedRegistrationToken: &in.ExpectedRegistrationToken,
+			Toolset:                   &in.Toolset,
+			Tool:                      &in.Tool,
+			PayloadJSON:               in.PayloadJSON,
+		}
+		wireProtocolVersion := retryToolPayloadIntTransport(in.WireProtocolVersion)
+		body.WireProtocolVersion = &wireProtocolVersion
+		body.Meta = encodeToolCallMetaToToolCallMetaTransport(in.Meta)
+	}
+	if err := validatejsonRetryToolPayloadTransport(body); err != nil {
+		return fmt.Errorf("validate RetryToolPayload value: %w", err)
+	}
+	return nil
+}
+
 // DecodeRetryToolPayload checks JSON field names from the Goa design and returns a service value.
 func DecodeRetryToolPayload(data []byte) (out *RetryToolPayload, err error) {
 	root, err := readStrictJSON(data)
@@ -10857,6 +12488,33 @@ func EncodeRootInvocation(in *RootInvocation) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateRootInvocationValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateRootInvocationValue(in *RootInvocation) error {
+	if err := checkRootInvocationValue(in); err != nil {
+		return fmt.Errorf("validate RootInvocation value: %w", err)
+	}
+	if err := validateRootInvocationOriginal(in); err != nil {
+		return fmt.Errorf("validate RootInvocation value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "RootInvocation")
+	}
+
+	var body *jsonRootInvocationTransport
+	{
+		body = &jsonRootInvocationTransport{
+			RunID: &in.RunID,
+		}
+	}
+	if err := validatejsonRootInvocationTransport(body); err != nil {
+		return fmt.Errorf("validate RootInvocation value: %w", err)
+	}
+	return nil
+}
+
 // DecodeRootInvocation checks JSON field names from the Goa design and returns a service value.
 func DecodeRootInvocation(data []byte) (out *RootInvocation, err error) {
 	root, err := readStrictJSON(data)
@@ -10911,6 +12569,33 @@ func EncodeSearchPayload(in *SearchPayload) ([]byte, error) {
 		return nil, fmt.Errorf("encode SearchPayload JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateSearchPayloadValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateSearchPayloadValue(in *SearchPayload) error {
+	if err := checkSearchPayloadValue(in); err != nil {
+		return fmt.Errorf("validate SearchPayload value: %w", err)
+	}
+	if err := validateSearchPayloadOriginal(in); err != nil {
+		return fmt.Errorf("validate SearchPayload value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "SearchPayload")
+	}
+
+	var body *jsonSearchPayloadTransport
+	{
+		body = &jsonSearchPayloadTransport{
+			Query: &in.Query,
+		}
+	}
+	if err := validatejsonSearchPayloadTransport(body); err != nil {
+		return fmt.Errorf("validate SearchPayload value: %w", err)
+	}
+	return nil
 }
 
 // DecodeSearchPayload checks JSON field names from the Goa design and returns a service value.
@@ -10977,6 +12662,41 @@ func EncodeSearchResult(in *SearchResult) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateSearchResultValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateSearchResultValue(in *SearchResult) error {
+	if err := checkSearchResultValue(in); err != nil {
+		return fmt.Errorf("validate SearchResult value: %w", err)
+	}
+	if err := validateSearchResultOriginal(in); err != nil {
+		return fmt.Errorf("validate SearchResult value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "SearchResult")
+	}
+
+	var body *jsonSearchResultTransport
+	{
+		body = &jsonSearchResultTransport{}
+		if in.Toolsets != nil {
+			body.Toolsets = make([]*jsonToolsetInfoTransport, len(in.Toolsets))
+			for i, val := range in.Toolsets {
+				if val == nil {
+					body.Toolsets[i] = nil
+					continue
+				}
+				body.Toolsets[i] = encodeToolsetInfoToToolsetInfoTransport(val)
+			}
+		}
+	}
+	if err := validatejsonSearchResultTransport(body); err != nil {
+		return fmt.Errorf("validate SearchResult value: %w", err)
+	}
+	return nil
+}
+
 // DecodeSearchResult checks JSON field names from the Goa design and returns a service value.
 func DecodeSearchResult(data []byte) (out *SearchResult, err error) {
 	root, err := readStrictJSON(data)
@@ -11039,6 +12759,27 @@ func EncodeSemVer(in SemVer) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateSemVerValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateSemVerValue(in SemVer) error {
+	if err := checkSemVerValue(in); err != nil {
+		return fmt.Errorf("validate SemVer value: %w", err)
+	}
+	if err := validateSemVerOriginal(in); err != nil {
+		return fmt.Errorf("validate SemVer value: %w", err)
+	}
+
+	var body jsonSemVerTransport
+	{
+		body = jsonSemVerTransport(in)
+	}
+	if err := validatejsonSemVerTransport(body); err != nil {
+		return fmt.Errorf("validate SemVer value: %w", err)
+	}
+	return nil
+}
+
 // DecodeSemVer checks JSON field names from the Goa design and returns a service value.
 func DecodeSemVer(data []byte) (out SemVer, err error) {
 	root, err := readStrictJSON(data)
@@ -11092,6 +12833,34 @@ func EncodeServiceCatalogSource(in *ServiceCatalogSource) ([]byte, error) {
 		return nil, fmt.Errorf("encode ServiceCatalogSource JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateServiceCatalogSourceValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateServiceCatalogSourceValue(in *ServiceCatalogSource) error {
+	if err := checkServiceCatalogSourceValue(in); err != nil {
+		return fmt.Errorf("validate ServiceCatalogSource value: %w", err)
+	}
+	if err := validateServiceCatalogSourceOriginal(in); err != nil {
+		return fmt.Errorf("validate ServiceCatalogSource value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ServiceCatalogSource")
+	}
+
+	var body *jsonServiceCatalogSourceTransport
+	{
+		body = &jsonServiceCatalogSourceTransport{
+			Toolset:           &in.Toolset,
+			RegistrationToken: &in.RegistrationToken,
+		}
+	}
+	if err := validatejsonServiceCatalogSourceTransport(body); err != nil {
+		return fmt.Errorf("validate ServiceCatalogSource value: %w", err)
+	}
+	return nil
 }
 
 // DecodeServiceCatalogSource checks JSON field names from the Goa design and returns a service value.
@@ -11151,6 +12920,35 @@ func EncodeServiceCatalogTarget(in *ServiceCatalogTarget) ([]byte, error) {
 		return nil, fmt.Errorf("encode ServiceCatalogTarget JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateServiceCatalogTargetValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateServiceCatalogTargetValue(in *ServiceCatalogTarget) error {
+	if err := checkServiceCatalogTargetValue(in); err != nil {
+		return fmt.Errorf("validate ServiceCatalogTarget value: %w", err)
+	}
+	if err := validateServiceCatalogTargetOriginal(in); err != nil {
+		return fmt.Errorf("validate ServiceCatalogTarget value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ServiceCatalogTarget")
+	}
+
+	var body *jsonServiceCatalogTargetTransport
+	{
+		body = &jsonServiceCatalogTargetTransport{
+			Toolset:           &in.Toolset,
+			Tool:              &in.Tool,
+			RegistrationToken: &in.RegistrationToken,
+		}
+	}
+	if err := validatejsonServiceCatalogTargetTransport(body); err != nil {
+		return fmt.Errorf("validate ServiceCatalogTarget value: %w", err)
+	}
+	return nil
 }
 
 // DecodeServiceCatalogTarget checks JSON field names from the Goa design and returns a service value.
@@ -11228,6 +13026,52 @@ func EncodeServiceToolsetDeclaration(in *ServiceToolsetDeclaration) ([]byte, err
 		return nil, fmt.Errorf("encode ServiceToolsetDeclaration JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateServiceToolsetDeclarationValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateServiceToolsetDeclarationValue(in *ServiceToolsetDeclaration) error {
+	if err := checkServiceToolsetDeclarationValue(in); err != nil {
+		return fmt.Errorf("validate ServiceToolsetDeclaration value: %w", err)
+	}
+	if err := validateServiceToolsetDeclarationOriginal(in); err != nil {
+		return fmt.Errorf("validate ServiceToolsetDeclaration value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ServiceToolsetDeclaration")
+	}
+
+	var body *jsonServiceToolsetDeclarationTransport
+	{
+		body = &jsonServiceToolsetDeclarationTransport{
+			Name:        &in.Name,
+			Description: in.Description,
+		}
+		if in.Version != nil {
+			version := jsonSemVerTransport(*in.Version)
+			body.Version = &version
+		}
+		if in.Tags != nil {
+			body.Tags = make([]string, len(in.Tags))
+			for i, val := range in.Tags {
+				body.Tags[i] = val
+			}
+		}
+		body.Tools = make([]*jsonToolSchemaTransport, len(in.Tools))
+		for i, val := range in.Tools {
+			if val == nil {
+				body.Tools[i] = nil
+				continue
+			}
+			body.Tools[i] = encodeToolSchemaToToolSchemaTransport(val)
+		}
+	}
+	if err := validatejsonServiceToolsetDeclarationTransport(body); err != nil {
+		return fmt.Errorf("validate ServiceToolsetDeclaration value: %w", err)
+	}
+	return nil
 }
 
 // DecodeServiceToolsetDeclaration checks JSON field names from the Goa design and returns a service value.
@@ -11310,6 +13154,38 @@ func EncodeTextOnlyToolContract(in *TextOnlyToolContract) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateTextOnlyToolContractValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateTextOnlyToolContractValue(in *TextOnlyToolContract) error {
+	if err := checkTextOnlyToolContractValue(in); err != nil {
+		return fmt.Errorf("validate TextOnlyToolContract value: %w", err)
+	}
+	if err := validateTextOnlyToolContractOriginal(in); err != nil {
+		return fmt.Errorf("validate TextOnlyToolContract value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "TextOnlyToolContract")
+	}
+
+	var body *jsonTextOnlyToolContractTransport
+	{
+		body = &jsonTextOnlyToolContractTransport{
+			Description:     &in.Description,
+			PayloadSchema:   in.PayloadSchema,
+			ResultReminder:  in.ResultReminder,
+			ExecutionSchema: in.ExecutionSchema,
+		}
+		body.Search = encodeToolSearchDocumentToToolSearchDocumentTransport2(in.Search)
+		body.Payload = encodeToolTypeMetadataToToolTypeMetadataTransport4(in.Payload)
+	}
+	if err := validatejsonTextOnlyToolContractTransport(body); err != nil {
+		return fmt.Errorf("validate TextOnlyToolContract value: %w", err)
+	}
+	return nil
+}
+
 // DecodeTextOnlyToolContract checks JSON field names from the Goa design and returns a service value.
 func DecodeTextOnlyToolContract(data []byte) (out *TextOnlyToolContract, err error) {
 	root, err := readStrictJSON(data)
@@ -11370,6 +13246,34 @@ func EncodeToolBounds(in *ToolBounds) ([]byte, error) {
 		return nil, fmt.Errorf("encode ToolBounds JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateToolBoundsValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolBoundsValue(in *ToolBounds) error {
+	if err := checkToolBoundsValue(in); err != nil {
+		return fmt.Errorf("validate ToolBounds value: %w", err)
+	}
+	if err := validateToolBoundsOriginal(in); err != nil {
+		return fmt.Errorf("validate ToolBounds value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolBounds")
+	}
+
+	var body *jsonToolBoundsTransport
+	{
+		body = &jsonToolBoundsTransport{}
+		if in.Paging != nil {
+			body.Paging = encodeToolPagingToToolPagingTransport(in.Paging)
+		}
+	}
+	if err := validatejsonToolBoundsTransport(body); err != nil {
+		return fmt.Errorf("validate ToolBounds value: %w", err)
+	}
+	return nil
 }
 
 // DecodeToolBounds checks JSON field names from the Goa design and returns a service value.
@@ -11445,6 +13349,51 @@ func EncodeToolCallMeta(in *ToolCallMeta) ([]byte, error) {
 		return nil, fmt.Errorf("encode ToolCallMeta JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateToolCallMetaValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolCallMetaValue(in *ToolCallMeta) error {
+	if err := checkToolCallMetaValue(in); err != nil {
+		return fmt.Errorf("validate ToolCallMeta value: %w", err)
+	}
+	if err := validateToolCallMetaOriginal(in); err != nil {
+		return fmt.Errorf("validate ToolCallMeta value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolCallMeta")
+	}
+
+	var body *jsonToolCallMetaTransport
+	{
+		body = &jsonToolCallMetaTransport{
+			RunID:            &in.RunID,
+			SessionID:        in.SessionID,
+			TurnID:           in.TurnID,
+			ToolCallID:       &in.ToolCallID,
+			ParentToolCallID: in.ParentToolCallID,
+			TextOnly:         &in.TextOnly,
+		}
+		executionSequence := callResolvedToolPayloadUint64Transport(in.ExecutionSequence)
+		body.ExecutionSequence = &executionSequence
+		if in.Labels != nil {
+			body.Labels = make(map[string]string, len(in.Labels))
+			for key, val := range in.Labels {
+				tk := key
+				tv := val
+				body.Labels[tk] = tv
+			}
+		}
+		if in.ExecutionContinuation != nil {
+			body.ExecutionContinuation = encodeToolOperationExecutionContinuationToToolOperationExecutionContinuationTransport(in.ExecutionContinuation)
+		}
+	}
+	if err := validatejsonToolCallMetaTransport(body); err != nil {
+		return fmt.Errorf("validate ToolCallMeta value: %w", err)
+	}
+	return nil
 }
 
 // DecodeToolCallMeta checks JSON field names from the Goa design and returns a service value.
@@ -11525,6 +13474,28 @@ func EncodeToolCollectionElement(in *ToolCollectionElement) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateToolCollectionElementValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolCollectionElementValue(in *ToolCollectionElement) error {
+	if err := checkToolCollectionElementValue(in); err != nil {
+		return fmt.Errorf("validate ToolCollectionElement value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolCollectionElement")
+	}
+
+	var body *jsonToolCollectionElementTransport
+	{
+		body = &jsonToolCollectionElementTransport{}
+	}
+	if err := validatejsonToolCollectionElementTransport(body); err != nil {
+		return fmt.Errorf("validate ToolCollectionElement value: %w", err)
+	}
+	return nil
+}
+
 // DecodeToolCollectionElement checks JSON field names from the Goa design and returns a service value.
 func DecodeToolCollectionElement(data []byte) (out *ToolCollectionElement, err error) {
 	root, err := readStrictJSON(data)
@@ -11579,6 +13550,35 @@ func EncodeToolConfirmation(in *ToolConfirmation) ([]byte, error) {
 		return nil, fmt.Errorf("encode ToolConfirmation JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateToolConfirmationValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolConfirmationValue(in *ToolConfirmation) error {
+	if err := checkToolConfirmationValue(in); err != nil {
+		return fmt.Errorf("validate ToolConfirmation value: %w", err)
+	}
+	if err := validateToolConfirmationOriginal(in); err != nil {
+		return fmt.Errorf("validate ToolConfirmation value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolConfirmation")
+	}
+
+	var body *jsonToolConfirmationTransport
+	{
+		body = &jsonToolConfirmationTransport{
+			Title:                in.Title,
+			PromptTemplate:       &in.PromptTemplate,
+			DeniedResultTemplate: &in.DeniedResultTemplate,
+		}
+	}
+	if err := validatejsonToolConfirmationTransport(body); err != nil {
+		return fmt.Errorf("validate ToolConfirmation value: %w", err)
+	}
+	return nil
 }
 
 // DecodeToolConfirmation checks JSON field names from the Goa design and returns a service value.
@@ -11664,6 +13664,60 @@ func EncodeToolFieldMetadata(in *ToolFieldMetadata) ([]byte, error) {
 		return nil, fmt.Errorf("encode ToolFieldMetadata JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateToolFieldMetadataValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolFieldMetadataValue(in *ToolFieldMetadata) error {
+	if err := checkToolFieldMetadataValue(in); err != nil {
+		return fmt.Errorf("validate ToolFieldMetadata value: %w", err)
+	}
+	if err := validateToolFieldMetadataOriginal(in); err != nil {
+		return fmt.Errorf("validate ToolFieldMetadata value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolFieldMetadata")
+	}
+
+	var body *jsonToolFieldMetadataTransport
+	{
+		body = &jsonToolFieldMetadataTransport{
+			JSONType:    in.JSONType,
+			Description: in.Description,
+		}
+		if in.Path != nil {
+			body.Path = make([]*jsonToolFieldPathSegmentTransport, len(in.Path))
+			for i, val := range in.Path {
+				if val == nil {
+					body.Path[i] = nil
+					continue
+				}
+				body.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport(val)
+			}
+		}
+		if in.Branches != nil {
+			body.Branches = make([]*jsonToolUnionBranchTransport, len(in.Branches))
+			for i, val := range in.Branches {
+				if val == nil {
+					body.Branches[i] = nil
+					continue
+				}
+				body.Branches[i] = encodeToolUnionBranchToToolUnionBranchTransport(val)
+			}
+		}
+		if in.DiscriminatorValues != nil {
+			body.DiscriminatorValues = make([]string, len(in.DiscriminatorValues))
+			for i, val := range in.DiscriminatorValues {
+				body.DiscriminatorValues[i] = val
+			}
+		}
+	}
+	if err := validatejsonToolFieldMetadataTransport(body); err != nil {
+		return fmt.Errorf("validate ToolFieldMetadata value: %w", err)
+	}
+	return nil
 }
 
 // DecodeToolFieldMetadata checks JSON field names from the Goa design and returns a service value.
@@ -11767,6 +13821,51 @@ func EncodeToolFieldPathSegment(in *ToolFieldPathSegment) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateToolFieldPathSegmentValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolFieldPathSegmentValue(in *ToolFieldPathSegment) error {
+	if err := checkToolFieldPathSegmentValue(in); err != nil {
+		return fmt.Errorf("validate ToolFieldPathSegment value: %w", err)
+	}
+	if err := validateToolFieldPathSegmentOriginal(in); err != nil {
+		return fmt.Errorf("validate ToolFieldPathSegment value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolFieldPathSegment")
+	}
+
+	var body *jsonToolFieldPathSegmentTransport
+	{
+		body = &jsonToolFieldPathSegmentTransport{}
+		var segmentValue jsonToolFieldSegmentTransport
+		switch string(in.Segment.Kind()) {
+		case "field":
+			actual, _ := in.Segment.AsField()
+			obj := jsonToolFieldSegmentBranchFieldTransport(actual)
+
+			u := segmentValue
+			u.SetField((jsonToolFieldSegmentBranchFieldTransport)(obj))
+			segmentValue = u
+		case "element":
+			actual, _ := in.Segment.AsElement()
+			var obj *jsonToolCollectionElementTransport
+			if actual != nil {
+				obj = encodeToolCollectionElementToToolCollectionElementTransport(actual)
+			}
+			u := segmentValue
+			u.SetElement((*jsonToolCollectionElementTransport)(obj))
+			segmentValue = u
+		}
+		body.Segment = &segmentValue
+	}
+	if err := validatejsonToolFieldPathSegmentTransport(body); err != nil {
+		return fmt.Errorf("validate ToolFieldPathSegment value: %w", err)
+	}
+	return nil
+}
+
 // DecodeToolFieldPathSegment checks JSON field names from the Goa design and returns a service value.
 func DecodeToolFieldPathSegment(data []byte) (out *ToolFieldPathSegment, err error) {
 	root, err := readStrictJSON(data)
@@ -11840,6 +13939,34 @@ func EncodeToolInvocation(in *ToolInvocation) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateToolInvocationValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolInvocationValue(in *ToolInvocation) error {
+	if err := checkToolInvocationValue(in); err != nil {
+		return fmt.Errorf("validate ToolInvocation value: %w", err)
+	}
+	if err := validateToolInvocationOriginal(in); err != nil {
+		return fmt.Errorf("validate ToolInvocation value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolInvocation")
+	}
+
+	var body *jsonToolInvocationTransport
+	{
+		body = &jsonToolInvocationTransport{
+			RunID:      &in.RunID,
+			ToolCallID: &in.ToolCallID,
+		}
+	}
+	if err := validatejsonToolInvocationTransport(body); err != nil {
+		return fmt.Errorf("validate ToolInvocation value: %w", err)
+	}
+	return nil
+}
+
 // DecodeToolInvocation checks JSON field names from the Goa design and returns a service value.
 func DecodeToolInvocation(data []byte) (out *ToolInvocation, err error) {
 	root, err := readStrictJSON(data)
@@ -11902,6 +14029,40 @@ func EncodeToolPaging(in *ToolPaging) ([]byte, error) {
 		return nil, fmt.Errorf("encode ToolPaging JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateToolPagingValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolPagingValue(in *ToolPaging) error {
+	if err := checkToolPagingValue(in); err != nil {
+		return fmt.Errorf("validate ToolPaging value: %w", err)
+	}
+	if err := validateToolPagingOriginal(in); err != nil {
+		return fmt.Errorf("validate ToolPaging value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolPaging")
+	}
+
+	var body *jsonToolPagingTransport
+	{
+		body = &jsonToolPagingTransport{
+			ContinueTool:    in.ContinueTool,
+			SourceTool:      in.SourceTool,
+			CursorField:     &in.CursorField,
+			NextCursorField: &in.NextCursorField,
+		}
+		body.RetainedFields = make([]string, len(in.RetainedFields))
+		for i, val := range in.RetainedFields {
+			body.RetainedFields[i] = val
+		}
+	}
+	if err := validatejsonToolPagingTransport(body); err != nil {
+		return fmt.Errorf("validate ToolPaging value: %w", err)
+	}
+	return nil
 }
 
 // DecodeToolPaging checks JSON field names from the Goa design and returns a service value.
@@ -11979,6 +14140,47 @@ func EncodeToolSchema(in *ToolSchema) ([]byte, error) {
 		return nil, fmt.Errorf("encode ToolSchema JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateToolSchemaValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolSchemaValue(in *ToolSchema) error {
+	if err := checkToolSchemaValue(in); err != nil {
+		return fmt.Errorf("validate ToolSchema value: %w", err)
+	}
+	if err := validateToolSchemaOriginal(in); err != nil {
+		return fmt.Errorf("validate ToolSchema value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolSchema")
+	}
+
+	var body *jsonToolSchemaTransport
+	{
+		body = &jsonToolSchemaTransport{
+			Name:                   &in.Name,
+			Description:            in.Description,
+			PayloadSchema:          in.PayloadSchema,
+			ExecutionPayloadSchema: in.ExecutionPayloadSchema,
+			ResultSchema:           in.ResultSchema,
+			SidecarSchema:          in.SidecarSchema,
+		}
+		if in.Tags != nil {
+			body.Tags = make([]string, len(in.Tags))
+			for i, val := range in.Tags {
+				body.Tags[i] = val
+			}
+		}
+		if in.ConsumerContract != nil {
+			body.ConsumerContract = encodeConsumerContractToConsumerContractTransport(in.ConsumerContract)
+		}
+	}
+	if err := validatejsonToolSchemaTransport(body); err != nil {
+		return fmt.Errorf("validate ToolSchema value: %w", err)
+	}
+	return nil
 }
 
 // DecodeToolSchema checks JSON field names from the Goa design and returns a service value.
@@ -12061,6 +14263,43 @@ func EncodeToolSchemas(in *ToolSchemas) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateToolSchemasValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolSchemasValue(in *ToolSchemas) error {
+	if err := checkToolSchemasValue(in); err != nil {
+		return fmt.Errorf("validate ToolSchemas value: %w", err)
+	}
+	if err := validateToolSchemasOriginal(in); err != nil {
+		return fmt.Errorf("validate ToolSchemas value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolSchemas")
+	}
+
+	var body *jsonToolSchemasTransport
+	{
+		body = &jsonToolSchemasTransport{
+			Name:          &in.Name,
+			Description:   in.Description,
+			PayloadSchema: in.PayloadSchema,
+			ResultSchema:  in.ResultSchema,
+			SidecarSchema: in.SidecarSchema,
+		}
+		if in.Tags != nil {
+			body.Tags = make([]string, len(in.Tags))
+			for i, val := range in.Tags {
+				body.Tags[i] = val
+			}
+		}
+	}
+	if err := validatejsonToolSchemasTransport(body); err != nil {
+		return fmt.Errorf("validate ToolSchemas value: %w", err)
+	}
+	return nil
+}
+
 // DecodeToolSchemas checks JSON field names from the Goa design and returns a service value.
 func DecodeToolSchemas(data []byte) (out *ToolSchemas, err error) {
 	root, err := readStrictJSON(data)
@@ -12133,6 +14372,39 @@ func EncodeToolSearchDocument(in *ToolSearchDocument) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateToolSearchDocumentValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolSearchDocumentValue(in *ToolSearchDocument) error {
+	if err := checkToolSearchDocumentValue(in); err != nil {
+		return fmt.Errorf("validate ToolSearchDocument value: %w", err)
+	}
+	if err := validateToolSearchDocumentOriginal(in); err != nil {
+		return fmt.Errorf("validate ToolSearchDocument value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolSearchDocument")
+	}
+
+	var body *jsonToolSearchDocumentTransport
+	{
+		body = &jsonToolSearchDocumentTransport{}
+		length := agentExportsDeclarationIntTransport(in.Length)
+		body.Length = &length
+		body.Terms = make(map[string]agentExportsDeclarationIntTransport, len(in.Terms))
+		for key, val := range in.Terms {
+			tk := key
+			tv := agentExportsDeclarationIntTransport(val)
+			body.Terms[tk] = tv
+		}
+	}
+	if err := validatejsonToolSearchDocumentTransport(body); err != nil {
+		return fmt.Errorf("validate ToolSearchDocument value: %w", err)
+	}
+	return nil
+}
+
 // DecodeToolSearchDocument checks JSON field names from the Goa design and returns a service value.
 func DecodeToolSearchDocument(data []byte) (out *ToolSearchDocument, err error) {
 	root, err := readStrictJSON(data)
@@ -12200,6 +14472,40 @@ func EncodeToolServerData(in *ToolServerData) ([]byte, error) {
 		return nil, fmt.Errorf("encode ToolServerData JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateToolServerDataValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolServerDataValue(in *ToolServerData) error {
+	if err := checkToolServerDataValue(in); err != nil {
+		return fmt.Errorf("validate ToolServerData value: %w", err)
+	}
+	if err := validateToolServerDataOriginal(in); err != nil {
+		return fmt.Errorf("validate ToolServerData value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolServerData")
+	}
+
+	var body *jsonToolServerDataTransport
+	{
+		body = &jsonToolServerDataTransport{
+			Kind:        &in.Kind,
+			Audience:    &in.Audience,
+			Description: in.Description,
+			Schema:      in.Schema,
+		}
+		if in.NativeImage != false {
+			body.NativeImage = &in.NativeImage
+		}
+		body.Type = encodeToolTypeMetadataToToolTypeMetadataTransport3(in.Type)
+	}
+	if err := validatejsonToolServerDataTransport(body); err != nil {
+		return fmt.Errorf("validate ToolServerData value: %w", err)
+	}
+	return nil
 }
 
 // DecodeToolServerData checks JSON field names from the Goa design and returns a service value.
@@ -12276,6 +14582,41 @@ func EncodeToolTaggedUnionBranch(in *ToolTaggedUnionBranch) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateToolTaggedUnionBranchValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolTaggedUnionBranchValue(in *ToolTaggedUnionBranch) error {
+	if err := checkToolTaggedUnionBranchValue(in); err != nil {
+		return fmt.Errorf("validate ToolTaggedUnionBranch value: %w", err)
+	}
+	if err := validateToolTaggedUnionBranchOriginal(in); err != nil {
+		return fmt.Errorf("validate ToolTaggedUnionBranch value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolTaggedUnionBranch")
+	}
+
+	var body *jsonToolTaggedUnionBranchTransport
+	{
+		body = &jsonToolTaggedUnionBranchTransport{
+			Value: &in.Value,
+		}
+		body.Discriminator = make([]*jsonToolFieldPathSegmentTransport, len(in.Discriminator))
+		for i, val := range in.Discriminator {
+			if val == nil {
+				body.Discriminator[i] = nil
+				continue
+			}
+			body.Discriminator[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport(val)
+		}
+	}
+	if err := validatejsonToolTaggedUnionBranchTransport(body); err != nil {
+		return fmt.Errorf("validate ToolTaggedUnionBranch value: %w", err)
+	}
+	return nil
+}
+
 // DecodeToolTaggedUnionBranch checks JSON field names from the Goa design and returns a service value.
 func DecodeToolTaggedUnionBranch(data []byte) (out *ToolTaggedUnionBranch, err error) {
 	root, err := readStrictJSON(data)
@@ -12350,6 +14691,45 @@ func EncodeToolTypeMetadata(in *ToolTypeMetadata) ([]byte, error) {
 		return nil, fmt.Errorf("encode ToolTypeMetadata JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateToolTypeMetadataValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolTypeMetadataValue(in *ToolTypeMetadata) error {
+	if err := checkToolTypeMetadataValue(in); err != nil {
+		return fmt.Errorf("validate ToolTypeMetadata value: %w", err)
+	}
+	if err := validateToolTypeMetadataOriginal(in); err != nil {
+		return fmt.Errorf("validate ToolTypeMetadata value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolTypeMetadata")
+	}
+
+	var body *jsonToolTypeMetadataTransport
+	{
+		body = &jsonToolTypeMetadataTransport{
+			Name:                     in.Name,
+			SchemaWithoutRootExample: in.SchemaWithoutRootExample,
+			ExampleJSON:              in.ExampleJSON,
+		}
+		if in.Fields != nil {
+			body.Fields = make([]*jsonToolFieldMetadataTransport, len(in.Fields))
+			for i, val := range in.Fields {
+				if val == nil {
+					body.Fields[i] = nil
+					continue
+				}
+				body.Fields[i] = encodeToolFieldMetadataToToolFieldMetadataTransport(val)
+			}
+		}
+	}
+	if err := validatejsonToolTypeMetadataTransport(body); err != nil {
+		return fmt.Errorf("validate ToolTypeMetadata value: %w", err)
+	}
+	return nil
 }
 
 // DecodeToolTypeMetadata checks JSON field names from the Goa design and returns a service value.
@@ -12440,6 +14820,53 @@ func EncodeToolUnionBranch(in *ToolUnionBranch) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateToolUnionBranchValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolUnionBranchValue(in *ToolUnionBranch) error {
+	if err := checkToolUnionBranchValue(in); err != nil {
+		return fmt.Errorf("validate ToolUnionBranch value: %w", err)
+	}
+	if err := validateToolUnionBranchOriginal(in); err != nil {
+		return fmt.Errorf("validate ToolUnionBranch value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolUnionBranch")
+	}
+
+	var body *jsonToolUnionBranchTransport
+	{
+		body = &jsonToolUnionBranchTransport{}
+		var selectionValue jsonToolUnionSelectionTransport
+		switch string(in.Selection.Kind()) {
+		case "tagged":
+			actual, _ := in.Selection.AsTagged()
+			var obj *jsonToolTaggedUnionBranchTransport
+			if actual != nil {
+				obj = encodeToolTaggedUnionBranchToToolTaggedUnionBranchTransport(actual)
+			}
+			u := selectionValue
+			u.SetTagged((*jsonToolTaggedUnionBranchTransport)(obj))
+			selectionValue = u
+		case "untagged":
+			actual, _ := in.Selection.AsUntagged()
+			var obj *jsonToolUntaggedUnionBranchTransport
+			if actual != nil {
+				obj = encodeToolUntaggedUnionBranchToToolUntaggedUnionBranchTransport(actual)
+			}
+			u := selectionValue
+			u.SetUntagged((*jsonToolUntaggedUnionBranchTransport)(obj))
+			selectionValue = u
+		}
+		body.Selection = &selectionValue
+	}
+	if err := validatejsonToolUnionBranchTransport(body); err != nil {
+		return fmt.Errorf("validate ToolUnionBranch value: %w", err)
+	}
+	return nil
+}
+
 // DecodeToolUnionBranch checks JSON field names from the Goa design and returns a service value.
 func DecodeToolUnionBranch(data []byte) (out *ToolUnionBranch, err error) {
 	root, err := readStrictJSON(data)
@@ -12524,6 +14951,45 @@ func EncodeToolUntaggedUnionBranch(in *ToolUntaggedUnionBranch) ([]byte, error) 
 		return nil, fmt.Errorf("encode ToolUntaggedUnionBranch JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateToolUntaggedUnionBranchValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolUntaggedUnionBranchValue(in *ToolUntaggedUnionBranch) error {
+	if err := checkToolUntaggedUnionBranchValue(in); err != nil {
+		return fmt.Errorf("validate ToolUntaggedUnionBranch value: %w", err)
+	}
+	if err := validateToolUntaggedUnionBranchOriginal(in); err != nil {
+		return fmt.Errorf("validate ToolUntaggedUnionBranch value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolUntaggedUnionBranch")
+	}
+
+	var body *jsonToolUntaggedUnionBranchTransport
+	{
+		body = &jsonToolUntaggedUnionBranchTransport{
+			JSONKind: &in.JSONKind,
+		}
+		index := agentExportsDeclarationIntTransport(in.Index)
+		body.Index = &index
+		if in.Path != nil {
+			body.Path = make([]*jsonToolFieldPathSegmentTransport, len(in.Path))
+			for i, val := range in.Path {
+				if val == nil {
+					body.Path[i] = nil
+					continue
+				}
+				body.Path[i] = encodeToolFieldPathSegmentToToolFieldPathSegmentTransport(val)
+			}
+		}
+	}
+	if err := validatejsonToolUntaggedUnionBranchTransport(body); err != nil {
+		return fmt.Errorf("validate ToolUntaggedUnionBranch value: %w", err)
+	}
+	return nil
 }
 
 // DecodeToolUntaggedUnionBranch checks JSON field names from the Goa design and returns a service value.
@@ -12611,6 +15077,53 @@ func EncodeToolset(in *Toolset) ([]byte, error) {
 		return nil, fmt.Errorf("encode Toolset JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateToolsetValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolsetValue(in *Toolset) error {
+	if err := checkToolsetValue(in); err != nil {
+		return fmt.Errorf("validate Toolset value: %w", err)
+	}
+	if err := validateToolsetOriginal(in); err != nil {
+		return fmt.Errorf("validate Toolset value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "Toolset")
+	}
+
+	var body *jsonToolsetTransport
+	{
+		body = &jsonToolsetTransport{
+			Name:         &in.Name,
+			Description:  in.Description,
+			RegisteredAt: &in.RegisteredAt,
+		}
+		if in.Version != nil {
+			version := jsonSemVerTransport(*in.Version)
+			body.Version = &version
+		}
+		if in.Tags != nil {
+			body.Tags = make([]string, len(in.Tags))
+			for i, val := range in.Tags {
+				body.Tags[i] = val
+			}
+		}
+		body.Tools = make([]*jsonToolSchemaTransport, len(in.Tools))
+		for i, val := range in.Tools {
+			if val == nil {
+				body.Tools[i] = nil
+				continue
+			}
+			body.Tools[i] = encodeToolSchemaToToolSchemaTransport(val)
+		}
+	}
+	if err := validatejsonToolsetTransport(body); err != nil {
+		return fmt.Errorf("validate Toolset value: %w", err)
+	}
+	return nil
 }
 
 // DecodeToolset checks JSON field names from the Goa design and returns a service value.
@@ -12703,6 +15216,47 @@ func EncodeToolsetInfo(in *ToolsetInfo) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateToolsetInfoValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolsetInfoValue(in *ToolsetInfo) error {
+	if err := checkToolsetInfoValue(in); err != nil {
+		return fmt.Errorf("validate ToolsetInfo value: %w", err)
+	}
+	if err := validateToolsetInfoOriginal(in); err != nil {
+		return fmt.Errorf("validate ToolsetInfo value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolsetInfo")
+	}
+
+	var body *jsonToolsetInfoTransport
+	{
+		body = &jsonToolsetInfoTransport{
+			Name:         &in.Name,
+			Description:  in.Description,
+			RegisteredAt: &in.RegisteredAt,
+		}
+		if in.Version != nil {
+			version := jsonSemVerTransport(*in.Version)
+			body.Version = &version
+		}
+		toolCount := listToolsetsResultIntTransport(in.ToolCount)
+		body.ToolCount = &toolCount
+		if in.Tags != nil {
+			body.Tags = make([]string, len(in.Tags))
+			for i, val := range in.Tags {
+				body.Tags[i] = val
+			}
+		}
+	}
+	if err := validatejsonToolsetInfoTransport(body); err != nil {
+		return fmt.Errorf("validate ToolsetInfo value: %w", err)
+	}
+	return nil
+}
+
 // DecodeToolsetInfo checks JSON field names from the Goa design and returns a service value.
 func DecodeToolsetInfo(data []byte) (out *ToolsetInfo, err error) {
 	root, err := readStrictJSON(data)
@@ -12792,6 +15346,53 @@ func EncodeToolsetSchemas(in *ToolsetSchemas) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateToolsetSchemasValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateToolsetSchemasValue(in *ToolsetSchemas) error {
+	if err := checkToolsetSchemasValue(in); err != nil {
+		return fmt.Errorf("validate ToolsetSchemas value: %w", err)
+	}
+	if err := validateToolsetSchemasOriginal(in); err != nil {
+		return fmt.Errorf("validate ToolsetSchemas value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ToolsetSchemas")
+	}
+
+	var body *jsonToolsetSchemasTransport
+	{
+		body = &jsonToolsetSchemasTransport{
+			Name:         &in.Name,
+			Description:  in.Description,
+			RegisteredAt: &in.RegisteredAt,
+		}
+		if in.Version != nil {
+			version := jsonSemVerTransport(*in.Version)
+			body.Version = &version
+		}
+		if in.Tags != nil {
+			body.Tags = make([]string, len(in.Tags))
+			for i, val := range in.Tags {
+				body.Tags[i] = val
+			}
+		}
+		body.Tools = make([]*jsonToolSchemasTransport, len(in.Tools))
+		for i, val := range in.Tools {
+			if val == nil {
+				body.Tools[i] = nil
+				continue
+			}
+			body.Tools[i] = encodeToolSchemasToToolSchemasTransport(val)
+		}
+	}
+	if err := validatejsonToolsetSchemasTransport(body); err != nil {
+		return fmt.Errorf("validate ToolsetSchemas value: %w", err)
+	}
+	return nil
+}
+
 // DecodeToolsetSchemas checks JSON field names from the Goa design and returns a service value.
 func DecodeToolsetSchemas(data []byte) (out *ToolsetSchemas, err error) {
 	root, err := readStrictJSON(data)
@@ -12867,6 +15468,34 @@ func EncodeUnregisterPayload(in *UnregisterPayload) ([]byte, error) {
 		return nil, fmt.Errorf("encode UnregisterPayload JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateUnregisterPayloadValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateUnregisterPayloadValue(in *UnregisterPayload) error {
+	if err := checkUnregisterPayloadValue(in); err != nil {
+		return fmt.Errorf("validate UnregisterPayload value: %w", err)
+	}
+	if err := validateUnregisterPayloadOriginal(in); err != nil {
+		return fmt.Errorf("validate UnregisterPayload value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "UnregisterPayload")
+	}
+
+	var body *jsonUnregisterPayloadTransport
+	{
+		body = &jsonUnregisterPayloadTransport{
+			Name:                      &in.Name,
+			ExpectedRegistrationToken: &in.ExpectedRegistrationToken,
+		}
+	}
+	if err := validatejsonUnregisterPayloadTransport(body); err != nil {
+		return fmt.Errorf("validate UnregisterPayload value: %w", err)
+	}
+	return nil
 }
 
 // DecodeUnregisterPayload checks JSON field names from the Goa design and returns a service value.
