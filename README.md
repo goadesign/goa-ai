@@ -312,8 +312,9 @@ Custom stores must follow the [preparation ownership upgrade](docs/runtime.md#pr
   record or span; see [model middleware](docs/runtime.md#model-middleware).
 - **Evaluation and observability.** Generate typed evaluation suites; observe
   assistant text, tool progress, child runs, usage, and OpenTelemetry traces.
-- **Standalone JSON codecs.** Generate strict encoders and decoders beside
-  ordinary Goa types, independently of agent and MCP declarations.
+- **Standalone JSON codecs.** Generate typed validators and strict JSON
+  encoders and decoders beside ordinary Goa types, independently of agent and
+  MCP declarations.
 
 [Registries and search](docs/tool_search.md) · [Production configuration](docs/runtime.md#production-configuration) · [Evaluations](docs/evals.md) · [JSON codecs](docs/json_codecs.md)
 

@@ -2943,9 +2943,12 @@ preferences and distinguishes generated declarations from custom Go requests;
 the codec does not repeat that classification or traversal. Final aliases still
 belong to each output package.
 
-Each original package receives public encode/decode functions and private JSON
-helpers. Complete-original transport declarations and equivalent private checks
-and conversions are shared within that package. Sharing retains the exact Goa
+Each original package receives public validation, encode/decode functions and
+private JSON helpers. `Validate<Type>Value` checks the original Go fields with
+the same generated text, cycle, and field checks used before encoding, then
+validates the private transport value without marshaling JSON. It does not
+promise that JSON encoding will succeed. Complete-original transport declarations,
+equivalent private checks, and conversions are shared within that package. Sharing retains the exact Goa
 declaration, authored definition, generated layout, and conversion rules; a
 matching type name or original alone is insufficient. Field-occurrence rules
 remain attached to their actual fields, and each public root keeps its own

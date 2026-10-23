@@ -309,7 +309,11 @@ func (v *Value) link() (*valueData, []*goacodegen.TransformFunctionData, error) 
 		}
 		if v.validateDeclaration != nil {
 			data.Validate = v.validateDeclaration.Name()
-			data.ServicePointer = v.serviceLayout.Link(v.plan.pkg.ImportPath(), v.plan.pkg.ImportName).ReferenceIsPointer()
+			layout := v.serviceLayout
+			if v.originalLayout != nil {
+				layout = v.originalLayout
+			}
+			data.ServicePointer = layout.Link(v.plan.pkg.ImportPath(), v.plan.pkg.ImportName).ReferenceIsPointer()
 		}
 		data.EncodeTransform = transform
 		helpers = append(helpers, encodeHelpers...)
@@ -656,8 +660,21 @@ func {{ .Encode }}(in {{ .ServiceRef }}) ([]byte, error) {
 {{ end }}
 
 {{ if .Validate }}
-// {{ .Validate }} checks a service value against its declared field validation.
+{{ if .Preflight }}// {{ .Validate }} checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+{{ else }}// {{ .Validate }} checks a service value against its declared field validation.
+{{ end }}
 func {{ .Validate }}(in {{ .ServiceRef }}) error {
+ {{- if .Preflight }}
+ if err := {{ .Preflight }}(in); err != nil {
+  return {{ $.Imports.Fmt }}.Errorf("validate {{ .Name }} value: %w", err)
+ }
+ {{- end }}
+ {{- if .OriginalValidator }}
+ if err := {{ .OriginalValidator }}(in); err != nil {
+  return {{ $.Imports.Fmt }}.Errorf("validate {{ .Name }} value: %w", err)
+ }
+ {{- end }}
  {{ if .ServicePointer }}
  if in == nil {
   return {{ $.Imports.Goa }}.MissingFieldError("result", {{ printf "%q" .Name }})
