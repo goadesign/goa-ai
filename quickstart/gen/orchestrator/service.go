@@ -104,6 +104,30 @@ func EncodeAnswer(in *Answer) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateAnswerValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateAnswerValue(in *Answer) error {
+	if err := checkAnswerValue(in); err != nil {
+		return fmt.Errorf("validate Answer value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "Answer")
+	}
+
+	var body *jsonAnswerTransport
+	{
+		body = &jsonAnswerTransport{
+			Text: &in.Text,
+		}
+	}
+	if err := validatejsonAnswerTransport(body); err != nil {
+		return fmt.Errorf("validate Answer value: %w", err)
+	}
+	return nil
+}
+
 // DecodeAnswer checks JSON field names from the Goa design and returns a service value.
 func DecodeAnswer(data []byte) (out *Answer, err error) {
 	root, err := readStrictJSON(data)
@@ -155,6 +179,30 @@ func EncodeAskPayload(in *AskPayload) ([]byte, error) {
 		return nil, fmt.Errorf("encode AskPayload JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateAskPayloadValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateAskPayloadValue(in *AskPayload) error {
+	if err := checkAskPayloadValue(in); err != nil {
+		return fmt.Errorf("validate AskPayload value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "AskPayload")
+	}
+
+	var body *jsonAskPayloadTransport
+	{
+		body = &jsonAskPayloadTransport{
+			Question: &in.Question,
+		}
+	}
+	if err := validatejsonAskPayloadTransport(body); err != nil {
+		return fmt.Errorf("validate AskPayload value: %w", err)
+	}
+	return nil
 }
 
 // DecodeAskPayload checks JSON field names from the Goa design and returns a service value.
