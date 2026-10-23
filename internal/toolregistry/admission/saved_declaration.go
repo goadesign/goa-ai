@@ -11,6 +11,7 @@ import (
 	"io"
 	"reflect"
 	"strings"
+	"sync"
 
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 )
@@ -23,6 +24,14 @@ type (
 		Value() (any, error)
 	}
 
+	// savedTypeFacts retains only immutable field names and union envelope types.
+	// Saved JSON and decoded values are never stored here.
+	savedTypeFacts struct {
+		mu        sync.RWMutex
+		members   map[reflect.Type]map[string]reflect.Type
+		envelopes map[reflect.Type]reflect.Type
+	}
+
 	// savedDeclarationReader checks saved JSON values and records slices
 	// of the input for consumer contracts in the order of their tool declarations.
 	savedDeclarationReader struct {
@@ -31,6 +40,11 @@ type (
 		contracts []json.RawMessage
 	}
 )
+
+var savedTypes = savedTypeFacts{
+	members:   make(map[reflect.Type]map[string]reflect.Type),
+	envelopes: make(map[reflect.Type]reflect.Type),
+}
 
 // SavedToolsetFingerprint strictly decodes a saved definition and returns its
 // identity using the original consumer contract bytes. Missing and null contracts
@@ -76,21 +90,8 @@ func savedMemberType(target reflect.Type, name string) (reflect.Type, error) {
 		return nil, nil
 	}
 	if target.Kind() == reflect.Struct {
-		for i := range target.NumField() {
-			field := target.Field(i)
-			if !field.IsExported() {
-				continue
-			}
-			fieldName, _, _ := strings.Cut(field.Tag.Get("json"), ",")
-			if fieldName == "-" {
-				continue
-			}
-			if fieldName == "" {
-				fieldName = field.Name
-			}
-			if fieldName == name {
-				return field.Type, nil
-			}
+		if field, exists := savedStructMembers(target)[name]; exists {
+			return field, nil
 		}
 		return nil, fmt.Errorf("unknown field %q in %s; saved member names must match generated JSON names exactly", name, target.Name())
 	}
@@ -98,6 +99,63 @@ func savedMemberType(target reflect.Type, name string) (reflect.Type, error) {
 		return target.Elem(), nil
 	}
 	return nil, nil
+}
+
+// savedStructMembers receives a Go struct type and retains its exact JSON names.
+// The first exported field with a name wins, matching the original field scan.
+func savedStructMembers(target reflect.Type) map[string]reflect.Type {
+	savedTypes.mu.RLock()
+	members := savedTypes.members[target]
+	savedTypes.mu.RUnlock()
+	if members != nil {
+		return members
+	}
+	savedTypes.mu.Lock()
+	defer savedTypes.mu.Unlock()
+	if members := savedTypes.members[target]; members != nil {
+		return members
+	}
+	members = make(map[string]reflect.Type, target.NumField())
+	for i := range target.NumField() {
+		field := target.Field(i)
+		if !field.IsExported() {
+			continue
+		}
+		name, _, _ := strings.Cut(field.Tag.Get("json"), ",")
+		if name == "-" {
+			continue
+		}
+		if name == "" {
+			name = field.Name
+		}
+		if _, exists := members[name]; !exists {
+			members[name] = field.Type
+		}
+	}
+	savedTypes.members[target] = members
+	return members
+}
+
+// savedUnionEnvelope receives the selected Go branch type and retains the same
+// two envelope fields for later reads; every JSON value still selects its branch.
+func savedUnionEnvelope(branch reflect.Type) reflect.Type {
+	savedTypes.mu.RLock()
+	envelope := savedTypes.envelopes[branch]
+	savedTypes.mu.RUnlock()
+	if envelope != nil {
+		return envelope
+	}
+	savedTypes.mu.Lock()
+	defer savedTypes.mu.Unlock()
+	if envelope := savedTypes.envelopes[branch]; envelope != nil {
+		return envelope
+	}
+	envelope = reflect.StructOf([]reflect.StructField{
+		{Name: "Type", Type: reflect.TypeFor[string](), Tag: `json:"type"`},
+		{Name: "Value", Type: branch, Tag: `json:"value"`},
+	})
+	savedTypes.envelopes[branch] = envelope
+	return envelope
 }
 
 // readValue consumes one JSON value, rejects duplicate and unknown object keys,
@@ -214,10 +272,7 @@ func (r *savedDeclarationReader) readUnion(target reflect.Type, union savedUnion
 	}
 	// Goa unions save two envelope members. The value's generated Go type
 	// supplies the exact names inside its selected branch, including nested unions.
-	envelope := reflect.StructOf([]reflect.StructField{
-		{Name: "Type", Type: reflect.TypeFor[string](), Tag: `json:"type"`},
-		{Name: "Value", Type: reflect.TypeOf(value), Tag: `json:"value"`},
-	})
+	envelope := savedUnionEnvelope(reflect.TypeOf(value))
 	reader := savedDeclarationReader{raw: raw, decoder: json.NewDecoder(bytes.NewReader(raw))}
 	if err := reader.readValue(envelope, contract); err != nil {
 		return fmt.Errorf("decode saved %s: %w", target.Name(), err)
