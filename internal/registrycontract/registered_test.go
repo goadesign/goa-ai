@@ -137,6 +137,42 @@ func TestDirectSelectionRetainsOriginalName(t *testing.T) {
 	assert.Contains(t, replayed.Specs, tools.Ident(declaration.Name))
 }
 
+func TestRegisteredSourceValidatesBeforeInspectingToolKind(t *testing.T) {
+	for _, test := range []struct {
+		name, want string
+		mutate     func(*genregistry.ResolvedToolset)
+	}{
+		{"null tool", "registry tool[0]: tool declaration is required", func(r *genregistry.ResolvedToolset) { r.Toolset.Tools[0] = nil }},
+		{"missing contract", "no generated consumer contract", func(r *genregistry.ResolvedToolset) { r.Toolset.Tools[0].ConsumerContract = nil }},
+		{"null field", "fields[1]", func(r *genregistry.ResolvedToolset) {
+			m := r.Toolset.Tools[0].ConsumerContract.Payload
+			m.Fields = append(m.Fields, nil)
+		}},
+		{"control execution", "requires compiled control execution", func(r *genregistry.ResolvedToolset) { r.Toolset.Tools[0].ConsumerContract.Kind = "control" }},
+		{"agent in service source", "registered source kind", func(r *genregistry.ResolvedToolset) {
+			c := r.Toolset.Tools[0].ConsumerContract
+			c.Kind = "agent"
+			c.Agent = &genregistry.AgentToolTarget{Executor: "records.agent", Configuration: "revision/1", Workflow: "records.workflow", Queue: "records.queue"}
+		}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			declaration := testDeclaration()
+			declaration.ConsumerContract.Bounds = nil
+			registered := testResolution(declaration)
+			source := registeredServiceSource(registered, "owner", "records")
+			test.mutate(registered)
+			before, err := genregistry.EncodeResolvedToolset(registered)
+			require.NoError(t, err)
+			resolved, err := ResolveRegistered("catalog", source, registered)
+			require.ErrorContains(t, err, test.want)
+			assert.Nil(t, resolved)
+			after, err := genregistry.EncodeResolvedToolset(registered)
+			require.NoError(t, err)
+			assert.Equal(t, before, after)
+		})
+	}
+}
+
 func registeredServiceSource(registered *genregistry.ResolvedToolset, owner, resource string) *genregistry.CatalogSource {
 	return &genregistry.CatalogSource{Scope: owner, Name: resource,
 		Target: genregistry.NewCatalogSourceTargetService(&genregistry.ServiceCatalogSource{Toolset: registered.Toolset.Name, RegistrationToken: registered.RegistrationToken}),

@@ -45,14 +45,14 @@ func ResolveRegistered(registry string, source *genregistry.CatalogSource, regis
 			return nil, fmt.Errorf("registered service source does not match its declaration route and token")
 		}
 	}
+	resolved, err := Resolve(registered)
+	if err != nil {
+		return nil, err
+	}
 	for _, declaration := range registered.Toolset.Tools {
 		if declaration.ConsumerContract.Kind != kind {
 			return nil, fmt.Errorf("registered source kind %q does not match operation %q", kind, declaration.Name)
 		}
-	}
-	resolved, err := Resolve(registered)
-	if err != nil {
-		return nil, err
 	}
 	resolved.Source = source
 	originals := resolved.Specs
