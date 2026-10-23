@@ -8,6 +8,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"fmt"
 	"math"
 	"sort"
@@ -69,7 +70,8 @@ func SchemaFingerprint(schema Schema) string {
 	sort.SliceStable(tools, func(i, j int) bool {
 		return tools[i].Name < tools[j].Name
 	})
-	body, err := json.Marshal(struct {
+	hash := sha256.New()
+	err := jsonv2.MarshalWrite(hash, struct {
 		Name        string            `json:"name"`
 		Description *string           `json:"description,omitempty"`
 		Version     *string           `json:"version,omitempty"`
@@ -81,12 +83,11 @@ func SchemaFingerprint(schema Schema) string {
 		Version:     schema.Version,
 		Tags:        sortedStrings(schema.Tags),
 		Tools:       tools,
-	})
+	}, json.DefaultOptionsV1())
 	if err != nil {
 		panic(fmt.Sprintf("marshal admission schema: %v", err))
 	}
-	sum := sha256.Sum256(body)
-	return hex.EncodeToString(sum[:])
+	return hex.EncodeToString(hash.Sum(nil))
 }
 
 // RegistrationToken binds one schema fingerprint, deployment revision, and

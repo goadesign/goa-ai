@@ -1423,6 +1423,15 @@ reserving ordinary application type names in Goa's global design. Consuming APIs
 must regenerate after this breaking type-name change; operation fields, branch
 names and saved JSON remain unchanged. Designs importing the moved declarations
 use the `registry/design/types` path.
+
+Generated registry gRPC converters preserve null entries and their positions
+in nullable `ArrayOf` collections before serialization. Required entries declared
+with `ArrayOfRequired` remain subject to their existing validation. Binary
+protobuf turns a null repeated message into a present empty message; ProtoJSON
+rejects null repeated-message entries. This does not promise null preservation
+over the wire. Regenerate application gRPC code with the selected Goa version to
+adopt the converter fix; changing only a dependency leaves generated code intact.
+
 The shared registry executor constructs generated admission payloads and checks
 returned identities and deadlines. Both static and discovered tools use this
 implementation; applications pass the generated client without a separate

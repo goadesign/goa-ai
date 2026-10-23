@@ -238,6 +238,8 @@ Custom stores must follow the [preparation ownership upgrade](docs/runtime.md#pr
   Providers can bound individual Registry operations independently of accepted-call
   shutdown; omitted options retain existing behavior. See
   [provider lifecycle](docs/runtime.md#registry-routed-provider-execution-service-side).
+  Regenerate application gRPC code to adopt nullable collection conversion fixes;
+  [converter and wire rules](DESIGN.md#registry-integration) remain separate.
   Catalogs retain resource ownership; applications authorize discovery and use.
   Newly committed native declarations retain an independently owned saved
   representation and its exact-byte digest for local reuse; cold reads strictly
