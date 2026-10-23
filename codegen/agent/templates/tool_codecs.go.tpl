@@ -141,7 +141,7 @@ func newValidationError(err error) error {
 
 {{- /* Per-type enrichment attaching descriptions for any type with validation (payload or non-payload) */ -}}
 {{- range .Types }}
-{{- if and .Fields .TransportValidationSrc (ne (index .TransportValidationSrc 0) "") }}
+{{- if and .Fields .TransportValidationSrc }}
 func {{ .EnrichValidationFunc }}(err error) error {
     var ve *tools.ValidationError
     if !errors.As(err, &ve) {
