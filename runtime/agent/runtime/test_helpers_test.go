@@ -511,7 +511,7 @@ func seedTestToolSpecs(rt *Runtime, specs ...tools.ToolSpec) {
 
 func seedTestToolDefinitions(rt *Runtime, specs ...tools.ToolSpec) {
 	if rt.toolDefinitions == nil {
-		rt.toolDefinitions = make(map[tools.Ident]*model.ToolDefinition)
+		rt.toolDefinitions = make(map[tools.Ident]compiledToolDefinition)
 	}
 	for name, definition := range mustToolDefinitions(specs) {
 		rt.toolDefinitions[name] = definition

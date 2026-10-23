@@ -1493,7 +1493,12 @@ with the existing registration token. Confirmation, decoding, and replay use
 that saved contract; `CallResolvedTool` rejects a replaced registration before
 publication. Catalog changes cannot silently redirect an accepted call. Static
 runtime registrations remain immutable, and history never grants permission
-for new calls. Dynamic service and native Agent tools carry confirmation,
+for new calls. Registration retains the compiled ordinary and supported text-only
+model inputs with their exact payload codecs. Each activity keeps changed
+consumer input views local and prepares a visible text-only validator once after
+its policy, correction and availability checks. Advertising then returns separate
+copies without rebuilding validators. Changed text-only input views excluded from
+that activity are not compiled. Dynamic service and native Agent tools carry confirmation,
 pagination, field, and server-only data metadata. Planner control execution
 remains compiled.
 

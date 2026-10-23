@@ -152,9 +152,9 @@ type (
 		registries              map[string]registryConnection
 		agentToolResolvers      map[agent.Ident]AgentToolResolver
 		agentOperationProviders map[agent.Ident]agentOperationProvider
-		// toolDefinitions stores the input schema validator compiled when each
-		// tool specification is first registered.
-		toolDefinitions map[tools.Ident]*model.ToolDefinition
+		// toolDefinitions retains the ordinary and supported text-only input
+		// validators compiled when a tool specification is first registered.
+		toolDefinitions map[tools.Ident]compiledToolDefinition
 		// toolsetNames maps each global tool name to the one registered toolset
 		// that executes it in this runtime.
 		toolsetNames map[tools.Ident]string
@@ -861,7 +861,7 @@ func newFromOptions(store storage.Store, opts Options) *Runtime {
 		toolsets:             make(map[string]ToolsetRegistration),
 		toolSpecs:            make(map[tools.Ident]tools.ToolSpec),
 		imageSources:         opts.imageSources,
-		toolDefinitions:      make(map[tools.Ident]*model.ToolDefinition),
+		toolDefinitions:      make(map[tools.Ident]compiledToolDefinition),
 		toolsetNames:         make(map[tools.Ident]string),
 		policyToolMetadata:   make(map[tools.Ident]policy.ToolMetadata),
 		toolSchemas:          make(map[string]map[string]any),
@@ -2099,7 +2099,7 @@ func isTerminalRunEventType(eventType runlog.Type) bool {
 // Caller must hold r.mu.
 func (r *Runtime) addToolsetLocked(
 	ts ToolsetRegistration,
-	definitions map[tools.Ident]*model.ToolDefinition,
+	definitions map[tools.Ident]compiledToolDefinition,
 ) {
 	r.toolsets[ts.Name] = ts
 	if r.toolsetNames == nil {
@@ -2122,7 +2122,7 @@ func (r *Runtime) addToolsetLocked(
 func (r *Runtime) addToolSpecsLocked(
 	specs []tools.ToolSpec,
 	lookup ToolMetadataLookup,
-	definitions map[tools.Ident]*model.ToolDefinition,
+	definitions map[tools.Ident]compiledToolDefinition,
 ) {
 	if r.toolSpecs == nil {
 		r.toolSpecs = make(map[tools.Ident]tools.ToolSpec)
@@ -2131,7 +2131,7 @@ func (r *Runtime) addToolSpecsLocked(
 		r.policyToolMetadata = make(map[tools.Ident]policy.ToolMetadata)
 	}
 	if r.toolDefinitions == nil {
-		r.toolDefinitions = make(map[tools.Ident]*model.ToolDefinition)
+		r.toolDefinitions = make(map[tools.Ident]compiledToolDefinition)
 	}
 	for _, spec := range specs {
 		if _, exists := r.toolSpecs[spec.Name]; exists {
@@ -2139,7 +2139,7 @@ func (r *Runtime) addToolSpecsLocked(
 		}
 		r.toolSpecs[spec.Name] = spec
 		definition := definitions[spec.Name]
-		if definition == nil {
+		if definition.ordinary == nil {
 			panic(fmt.Sprintf("runtime: tool %q has no compiled model definition", spec.Name))
 		}
 		r.toolDefinitions[spec.Name] = definition

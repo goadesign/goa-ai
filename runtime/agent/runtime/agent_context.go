@@ -121,16 +121,8 @@ func (c *simplePlannerContext) AdvertisedToolDefinitions() []*model.ToolDefiniti
 	// complete saved specifications without overwriting any entries.
 	visible := make([]tools.ToolSpec, 0, len(specs))
 	for _, spec := range specs {
-		if slices.Contains(c.unavailableTools, spec.Name) {
+		if !plannerToolVisible(spec, c.policy, c.unavailableTools, c.rt.toolConfirmation) {
 			continue
-		}
-		if isDedicatedContinuationSpec(spec) {
-			continue
-		}
-		if c.policy.textOnly && c.rt.toolConfirmation != nil {
-			if _, requires := c.rt.toolConfirmation.Confirm[spec.Name]; requires {
-				continue
-			}
 		}
 		visible = append(visible, spec)
 	}

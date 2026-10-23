@@ -624,6 +624,9 @@ func (r *Runtime) preparePlannerActivity(
 		}
 		plannerAuthoredTools[spec.Name] = struct{}{}
 	}
+	if err := catalog.prepareModelDefinitions(advertisedSpecs, runPolicy, unavailableTools); err != nil {
+		return nil, err
+	}
 	var rems []reminder.Reminder
 	if r.reminders != nil {
 		rems = r.reminders.Snapshot(input.RunID)

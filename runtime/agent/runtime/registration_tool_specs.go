@@ -26,13 +26,13 @@ type toolSpecRegistration struct {
 // runtime registry and against earlier entries in the same registration.
 func (r *Runtime) validateToolSpecRegistrations(
 	registrations ...toolSpecRegistration,
-) (map[tools.Ident]*model.ToolDefinition, error) {
+) (map[tools.Ident]compiledToolDefinition, error) {
 	r.mu.RLock()
 	specs := make(map[tools.Ident]tools.ToolSpec, len(r.toolSpecs))
 	for name, spec := range r.toolSpecs {
 		specs[name] = spec
 	}
-	definitions := make(map[tools.Ident]*model.ToolDefinition, len(r.toolDefinitions))
+	definitions := make(map[tools.Ident]compiledToolDefinition, len(r.toolDefinitions))
 	for name, definition := range r.toolDefinitions {
 		definitions[name] = definition
 	}
@@ -59,6 +59,7 @@ func (r *Runtime) validateToolSpecRegistrations(
 			if _, err := isComposedContinuationSpec(spec); err != nil {
 				return nil, fmt.Errorf("%w: tool %q paging execution: %w", ErrInvalidConfig, spec.Name, err)
 			}
+			var textOnlyDefinition *model.ToolDefinition
 			if spec.TextOnly != nil {
 				if spec.TextOnly.Payload.Codec.FromJSON == nil || spec.TextOnly.Payload.Codec.ToJSON == nil || spec.TextOnly.ExecutionCodec.FromJSON == nil || spec.TextOnly.ExecutionCodec.ToJSON == nil {
 					return nil, fmt.Errorf("%w: tool %q text-only codecs are required", ErrInvalidConfig, spec.Name)
@@ -66,7 +67,9 @@ func (r *Runtime) validateToolSpecRegistrations(
 				if _, err := isComposedContinuationSpec(spec.ForTextOnly()); err != nil {
 					return nil, fmt.Errorf("%w: tool %q text-only paging execution: %w", ErrInvalidConfig, spec.Name, err)
 				}
-				if _, err := model.NewToolDefinitionFromSpec(spec.ForTextOnly()); err != nil {
+				var err error
+				textOnlyDefinition, err = model.NewToolDefinitionFromSpec(spec.ForTextOnly())
+				if err != nil {
 					return nil, fmt.Errorf("%w: tool %q text-only model contract: %w", ErrInvalidConfig, spec.Name, err)
 				}
 			}
@@ -83,7 +86,7 @@ func (r *Runtime) validateToolSpecRegistrations(
 						spec.Name,
 					)
 				}
-				if definitions[spec.Name] == nil {
+				if definitions[spec.Name].ordinary == nil {
 					return nil, fmt.Errorf(
 						"%w: tool %q has no compiled input contract",
 						ErrInvalidConfig,
@@ -97,7 +100,7 @@ func (r *Runtime) validateToolSpecRegistrations(
 				return nil, fmt.Errorf("%w: tool %q input contract: %w", ErrInvalidConfig, spec.Name, err)
 			}
 			specs[spec.Name] = spec
-			definitions[spec.Name] = definition
+			definitions[spec.Name] = compiledToolDefinition{ordinary: definition, textOnly: textOnlyDefinition}
 			metadata[spec.Name] = meta
 		}
 	}
@@ -106,10 +109,14 @@ func (r *Runtime) validateToolSpecRegistrations(
 
 // mustToolDefinitions compiles runtime-owned specifications whose validity is
 // guaranteed by generated code or test construction.
-func mustToolDefinitions(specs []tools.ToolSpec) map[tools.Ident]*model.ToolDefinition {
-	definitions := make(map[tools.Ident]*model.ToolDefinition, len(specs))
+func mustToolDefinitions(specs []tools.ToolSpec) map[tools.Ident]compiledToolDefinition {
+	definitions := make(map[tools.Ident]compiledToolDefinition, len(specs))
 	for _, spec := range specs {
-		definitions[spec.Name] = model.ToolDefinitionFromSpec(spec)
+		definition := compiledToolDefinition{ordinary: model.ToolDefinitionFromSpec(spec)}
+		if spec.TextOnly != nil {
+			definition.textOnly = model.ToolDefinitionFromSpec(spec.ForTextOnly())
+		}
+		definitions[spec.Name] = definition
 	}
 	return definitions
 }

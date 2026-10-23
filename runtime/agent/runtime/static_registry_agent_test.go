@@ -52,9 +52,7 @@ func staticAgentCatalog(t *testing.T) (*Runtime, *RegistryCatalog, []*genregistr
 	rt := New(newTestStore())
 	rt.agents[definition.route.ID] = AgentRegistration{Definition: definition}
 	rt.toolSpecs[spec.Name] = spec
-	var err error
-	rt.toolDefinitions[spec.Name], err = model.NewToolDefinitionFromSpec(spec)
-	require.NoError(t, err)
+	seedTestToolDefinitions(rt, spec)
 	require.NoError(t, rt.RegisterRegistry(testRegistryName, &genregistry.Client{}, unusedRegistryPulse{}))
 	return rt, rt.newRegistryCatalog(definition), []*genregistry.ToolSchema{&expected}, selected
 }

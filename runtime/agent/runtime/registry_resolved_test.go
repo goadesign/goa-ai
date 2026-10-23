@@ -36,7 +36,7 @@ func TestRegistryIncludeResolvedRetainsCompleteContractWithoutRemoteRead(t *test
 	definition := testRegistryAgentDefinition(resolvedTestSource{selected, testRegistryName, true})
 	catalog, err := rt.resolveRegistryCatalog(t.Context(), definition)
 	require.NoError(t, err)
-	require.True(t, catalog.definitions["records.find"].Deferred)
+	require.True(t, catalog.definitions["records.find"].ordinary.Deferred)
 	require.Equal(t, []string{"tenant"}, catalog.labels["records.find"])
 	selection := catalog.selections["records.find"]
 	binding, err := selection.resolution.Select(selection.registry, "records.find")

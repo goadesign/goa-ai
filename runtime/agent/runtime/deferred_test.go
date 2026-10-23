@@ -55,7 +55,7 @@ func TestDeferredToolsAreScopedToAgentDefinition(t *testing.T) {
 	got[0].Search.Terms["records"] = 100
 	assert.Equal(t, 2, deferred.AdvertisedToolDefinitions()[0].Search.Terms["records"])
 	assert.True(t, deferred.AdvertisedToolDefinitions()[0].Deferred)
-	assert.False(t, rt.toolDefinitions[spec.Name].Deferred)
+	assert.False(t, rt.toolDefinitions[spec.Name].ordinary.Deferred)
 }
 
 func TestDeferredDefinitionRejectsUnknownAndRepeatedTools(t *testing.T) {
