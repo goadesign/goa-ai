@@ -12,7 +12,6 @@ import (
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
-	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
@@ -26,9 +25,7 @@ func staticServiceCatalog(t *testing.T) (*Runtime, *RegistryCatalog, *genregistr
 	rt.agents[definition.route.ID] = AgentRegistration{Definition: definition}
 	for _, spec := range genrecords.Specs() {
 		rt.toolSpecs[spec.Name] = spec
-		var err error
-		rt.toolDefinitions[spec.Name], err = model.NewToolDefinitionFromSpec(spec)
-		require.NoError(t, err)
+		seedTestToolDefinitions(rt, spec)
 	}
 	require.NoError(t, rt.RegisterRegistry(testRegistryName, &genregistry.Client{}, unusedRegistryPulse{}))
 	selected := &genregistry.ResolvedToolset{Toolset: genrecords.Toolset(), RegistrationToken: strings.Repeat("a", 64)}

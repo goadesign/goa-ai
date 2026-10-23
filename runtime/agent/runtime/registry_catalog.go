@@ -47,7 +47,7 @@ type (
 		textOnly    bool
 		sources     RegistryTools
 		specs       map[tools.Ident]tools.ToolSpec
-		definitions map[tools.Ident]*model.ToolDefinition
+		definitions map[tools.Ident]compiledToolDefinition
 		selections  map[tools.Ident]registrySelection
 		labels      map[tools.Ident][]string
 	}
@@ -197,7 +197,7 @@ func (c *RegistryCatalog) includeResolved(registry string, registered *genregist
 		}
 		definition.Deferred = deferred
 		c.specs[tool] = spec
-		c.definitions[tool] = definition
+		c.definitions[tool] = compiledToolDefinition{ordinary: definition}
 		c.selections[tool] = registrySelection{registry: registry, resolution: resolved}
 		c.labels[tool] = slices.Clone(declaration.ConsumerContract.RequiredLabels)
 	}

@@ -62,7 +62,7 @@ func TestRegistryCatalogChangesOnlyAtNextResolution(t *testing.T) {
 	first, err := rt.resolveRegistryCatalog(t.Context(), definition)
 	require.NoError(t, err)
 	require.Len(t, first.selections, 1)
-	assert.True(t, first.definitions["records.find"].Deferred)
+	assert.True(t, first.definitions["records.find"].ordinary.Deferred)
 	selection := first.selections["records.find"]
 	binding, err := selection.resolution.Select(selection.registry, "records.find")
 	require.NoError(t, err)

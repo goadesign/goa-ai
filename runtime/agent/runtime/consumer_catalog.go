@@ -122,9 +122,9 @@ func (c *RegistryCatalog) bindConsumerInput(name tools.Ident, original, bound to
 	if err != nil {
 		return fmt.Errorf("tool %q bound model input: %w", name, err)
 	}
-	definition.Deferred = c.definitions[name].Deferred
+	definition.Deferred = c.definitions[name].ordinary.Deferred
 	c.specs[name] = spec
-	c.definitions[name] = definition
+	c.definitions[name] = compiledToolDefinition{ordinary: definition}
 	return nil
 }
 

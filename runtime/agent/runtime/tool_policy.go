@@ -5,6 +5,7 @@ package runtime
 import (
 	"fmt"
 	"maps"
+	"slices"
 
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -118,19 +119,15 @@ func (r *Runtime) advertisedToolDefinitions(
 
 // advertisedDefinitions copies only permitted definitions from one compiled
 // catalog. A missing definition is an internal construction error.
-func advertisedDefinitions(specs []tools.ToolSpec, policy compiledToolPolicy, compiled map[tools.Ident]*model.ToolDefinition) []*model.ToolDefinition {
+func advertisedDefinitions(specs []tools.ToolSpec, policy compiledToolPolicy, compiled map[tools.Ident]compiledToolDefinition) []*model.ToolDefinition {
 	definitions := make([]*model.ToolDefinition, 0, len(specs))
 	for _, spec := range specs {
 		if !policy.allowsTool(spec.Name, toolPolicyFactsFromSpec(spec)) {
 			continue
 		}
-		base := compiled[spec.Name]
+		base := compiled[spec.Name].ordinary
 		if policy.textOnly {
-			var err error
-			base, err = model.NewToolDefinitionFromSpec(spec.ForTextOnly())
-			if err != nil {
-				panic(fmt.Sprintf("runtime: tool %q text-only contract: %v", spec.Name, err))
-			}
+			base = compiled[spec.Name].textOnly
 		}
 		if base == nil {
 			panic(fmt.Sprintf("runtime: tool %q has no compiled model definition", spec.Name))
@@ -171,4 +168,18 @@ func tagClauseAllows(clause api.TagPolicyClause, tags []string) bool {
 		return false
 	}
 	return true
+}
+
+// plannerToolVisible applies the current exclusions before a model contract is
+// prepared or advertised. Each read still checks its current policy and failures.
+func plannerToolVisible(spec tools.ToolSpec, policy compiledToolPolicy, unavailable []tools.Ident, confirmation *ToolConfirmationConfig) bool {
+	if slices.Contains(unavailable, spec.Name) || isDedicatedContinuationSpec(spec) {
+		return false
+	}
+	if policy.textOnly && confirmation != nil {
+		if _, requires := confirmation.Confirm[spec.Name]; requires {
+			return false
+		}
+	}
+	return policy.allowsTool(spec.Name, toolPolicyFactsFromSpec(spec))
 }

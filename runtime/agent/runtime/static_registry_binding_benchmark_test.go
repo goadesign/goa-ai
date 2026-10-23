@@ -14,7 +14,6 @@ import (
 	"goa.design/goa-ai/internal/registrycontract"
 	genrecords "goa.design/goa-ai/internal/testpresentation/gen/records/toolsets/records"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
-	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -112,8 +111,7 @@ func newStaticBindingFixture(tb testing.TB, extraTools int) staticBindingFixture
 	rt.agents[definition.route.ID] = AgentRegistration{Definition: definition}
 	for _, spec := range specs {
 		rt.toolSpecs[spec.Name] = spec
-		rt.toolDefinitions[spec.Name], err = model.NewToolDefinitionFromSpec(spec)
-		require.NoError(tb, err)
+		seedTestToolDefinitions(rt, spec)
 	}
 	require.NoError(tb, rt.RegisterRegistry(testRegistryName, &genregistry.Client{}, unusedRegistryPulse{}))
 	selected := &genregistry.ResolvedToolset{Toolset: staticBindingDeclarations(extraTools), RegistrationToken: strings.Repeat("a", 64)}
