@@ -403,6 +403,33 @@ local-only execution semantics cannot use this binding. `IncludeResolved`
 continues to reject static name collisions; use the explicit binding method for
 this case.
 
+### Reuse a checked service declaration
+
+If the complete expected and selected declarations stay fixed across planning
+activities, call `runtime.CompileStaticService(expected, selected)` once. It
+performs the same generated JSON conversion, complete validation and declaration
+comparison as raw service binding, including unselected operations. The returned
+`*runtime.CompiledStaticService` owns only compact operation and paging-partner
+selections. Changing either raw input afterward cannot change that value.
+
+Each activity then calls
+`catalog.BindCompiledStaticService(registry, compiled, readPrevious, names...)`.
+It checks the current registry connection, consumption predicate, generated
+operation declarations and local specifications before installing any selection.
+Supply the current activity's `readPrevious`; the compiled value retains no
+callback, actor, permission, policy, application state, provider health or full catalog.
+Input preparation and generated execution still use the same activity-owned
+catalog described below.
+
+Compilation does not select a provider or grant execution authority. If current
+selection changes to another registration, compile that new result; retaining an
+old compiled value does not make its provider current. Accepted calls and retries
+continue to use their saved selection. Cold processes compile again from their
+owner-selected declarations; the value has no serialized format or durable store.
+Keep `BindStaticService` when the supplied raw values may change: it still checks
+them completely on every call. Concurrent readers can share a compiled value,
+but callers must not mutate either raw input while it is being compiled.
+
 Register the generated toolsets with an executor constructed by
 `executor.NewResolved(registry, client, pulse, specs, options...)`, where `specs`
 is the generated specification lookup. Generated model names, deferred loading,

@@ -1575,6 +1575,23 @@ including removing a static tool, requires draining affected runs before the
 change. The existing saved direct selection cannot distinguish those histories.
 See the [binding contract](docs/tool_search.md#bind-generated-service-tools).
 
+`CompileStaticService` checks an arbitrary expected and selected service
+with the same complete generated copy, validation and fingerprint comparison as
+raw binding. Its opaque `CompiledStaticService` value retains only existing
+compact operation and paging-partner selections, plus their route and version.
+It retains no raw catalog, caller, permission, provider health or callback.
+`RegistryCatalog.BindCompiledStaticService` restores explicitly named operations
+through this activity's generated declarations, checks current consumption and
+local specifications, then installs independent selections and a fresh previous
+registration reader. A failed check installs nothing. Raw `BindStaticService`
+continues to recheck its mutable raw arguments on every call.
+
+Applications own the compiled value's lifetime. Reuse is valid only while the
+selected registration and checked declarations stay fixed; a caller choosing a
+new current registration must compile that selection instead. Compilation grants
+no authority, changes no accepted call and adds no wire or stored format. Provider
+admission, current policy and previous-registration owner checks stay separate.
+
 `RegistryCatalog.BindStaticAgent` binds the complete generated native export set
 from unbound operation declarations and explicit original tool names. It checks
 every operation contract and the generated child's executor, workflow and queue.
