@@ -11,6 +11,8 @@ import (
 	"reflect"
 	"slices"
 
+	"go.opentelemetry.io/otel/attribute"
+
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -143,7 +145,15 @@ func (r *Runtime) continuationOutputsForHistory(ctx context.Context, input *reso
 
 // continuationActionsForHistory selects today's provider only for valid saved
 // queries. Accepted calls remain untouched; the current policy limits new pages.
-func (r *Runtime) continuationActionsForHistory(ctx context.Context, input *resolvedPlanActivityInput, catalog *RegistryCatalog, current []*planner.ToolOutput) ([]continuationAction, error) {
+func (r *Runtime) continuationActionsForHistory(ctx context.Context, input *resolvedPlanActivityInput, catalog *RegistryCatalog, current []*planner.ToolOutput) (actions []continuationAction, err error) {
+	ctx, span := r.tracer.Start(ctx, "planner.prepare_continuations")
+	span.SetAttributes(attribute.Int("tool_output.count", len(current)))
+	defer func() {
+		if err == nil {
+			span.SetAttributes(attribute.Int("continuation.count", len(actions)))
+		}
+		finishPlannerActivitySpan(ctx, span, nil, err)
+	}()
 	outputs, err := r.continuationOutputsForHistory(ctx, input, catalog.specs, current)
 	if err != nil {
 		return nil, err
