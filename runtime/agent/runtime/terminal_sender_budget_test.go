@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -73,7 +74,7 @@ func TestTerminalSenderPreservesAcceptedServiceFailure(t *testing.T) {
 	initial := hooks.NewToolResultReceivedEvent("selected-run", subject, "", "selected-run", "records.read", "selected-call", "", nil, nil, nil, "", nil, 0, nil, failure)
 	baseline, err := prepareHookRecordInputWithMetadata(initial, "", metadata)
 	require.NoError(t, err)
-	largestMessage := maxHookPayloadBytes - len(baseline.Payload) + 1
+	largestMessage := workflowcodec.MaxRecordPayloadBytes - len(baseline.Payload) + 1
 	for _, size := range []int{600_000, largestMessage} {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
 			failure := &planner.ToolFailure{Kind: planner.FailureUnavailable, Error: toolerrors.New(strings.Repeat("x", size)), Recovery: planner.RecoveryDirective{Action: planner.RecoveryReplan}}
@@ -85,7 +86,7 @@ func TestTerminalSenderPreservesAcceptedServiceFailure(t *testing.T) {
 			record, err := prepareHookRecordInputWithMetadata(toolEvent, "", metadata)
 			require.NoError(t, err)
 			if size == largestMessage {
-				assert.Len(t, record.Payload, maxHookPayloadBytes)
+				assert.Len(t, record.Payload, workflowcodec.MaxRecordPayloadBytes)
 				failure.Error.Message += "x"
 				oversized := hooks.NewToolResultReceivedEvent("selected-run", subject, "", "selected-run", "records.read", "selected-call", "", nil, nil, nil, "", nil, 0, nil, failure)
 				_, err = prepareHookRecordInputWithMetadata(oversized, "", metadata)
@@ -98,7 +99,7 @@ func TestTerminalSenderPreservesAcceptedServiceFailure(t *testing.T) {
 			require.NoError(t, err)
 			selectedResult, resultErr := operationResultFromRunOutput(output)
 			require.NoError(t, resultErr)
-			command, err := buildRunTerminalCommand(&RunInput{RunID: output.RunID, Subject: subject}, "", runStatusFailed, &selectedOperationError{cause: failure.Error}, selectedResult, metadata)
+			command, err := buildRunTerminalCommand(&RunInput{RunID: output.RunID, Subject: subject}, "terminal-turn", runStatusFailed, &selectedOperationError{cause: failure.Error}, selectedResult, metadata)
 			require.NoError(t, err)
 			t.Logf("accepted service result event=%d; terminal result=%d; terminal metadata=%d", len(record.Payload), len(command.OperationResult), len(command.Record.Payload))
 			_, err = converter.ToPayload(&api.StorageActivityCommand{Terminal: command})
@@ -112,9 +113,48 @@ func TestTerminalSenderPreservesAcceptedServiceFailure(t *testing.T) {
 			require.NoError(t, err)
 			stored, _, err := runTerminalStorageCommand(command, session.RunMeta{Labels: labels})
 			require.NoError(t, err)
-			expected, err := hooks.EncodeToRecordInput(hooks.NewRunCompletedEvent(output.RunID, subject, "", runStatusFailed, run.PhaseFailed, labels, fmt.Errorf("registered tool failed: %w", failure.Error), nil), hooks.EncodeOptions{EventKey: metadata.EventKey, TimestampMS: metadata.TimestampMS})
+			expected, err := hooks.EncodeRecordPayload(hooks.NewRunCompletedEvent(output.RunID, subject, "", runStatusFailed, run.PhaseFailed, labels, fmt.Errorf("registered tool failed: %w", failure.Error), nil))
 			require.NoError(t, err)
-			assert.Equal(t, []byte(expected.Payload), []byte(stored.Record.Payload))
+			assert.Equal(t, []byte(expected), []byte(stored.Record.Payload))
+			assert.Equal(t, command.Record.EventKey, stored.Record.EventKey)
+			assert.Equal(t, command.Record.Subject, stored.Record.Subject)
+			assert.Equal(t, command.Record.TurnID, stored.Record.TurnID)
+			assert.Equal(t, time.UnixMilli(command.Record.TimestampMS).UTC(), stored.Record.Timestamp)
+			if size == largestMessage {
+				assert.Greater(t, len(stored.Record.Payload), workflowcodec.MaxRecordPayloadBytes)
+			}
+			// The actual activity request and reply use the workflow converter.
+			// Retrying the decoded command must preserve the complete stored event.
+			requestPayload, err := converter.ToPayload(&api.StorageActivityCommand{Terminal: command})
+			require.NoError(t, err)
+			var request api.StorageActivityCommand
+			require.NoError(t, converter.FromPayload(requestPayload, &request))
+			originalRecord := *request.Terminal.Record
+			store := newTestStore()
+			admitRunForTest(t, store, session.RunMeta{Subject: subject, RunID: output.RunID, Labels: labels, Status: session.RunStatusRunning})
+			rt := New(store)
+			var recordID string
+			for attempt := range 2 {
+				result, err := rt.executeStorageCommand(t.Context(), &request)
+				require.NoError(t, err)
+				resultPayload, err := converter.ToPayload(result)
+				require.NoError(t, err)
+				var reply api.StorageActivityResult
+				require.NoError(t, converter.FromPayload(resultPayload, &reply))
+				require.NotNil(t, reply.Terminal)
+				if attempt == 0 {
+					recordID = reply.Terminal.Record.ID
+				} else {
+					assert.Equal(t, recordID, reply.Terminal.Record.ID)
+				}
+				assert.Equal(t, originalRecord, *request.Terminal.Record)
+			}
+			page, err := store.ListRunRecords(t.Context(), output.RunID, "", 10)
+			require.NoError(t, err)
+			require.Len(t, page.Events, 2)
+			assert.Equal(t, stored.Record.Payload, page.Events[1].Payload)
+			assert.Equal(t, stored.Record.EventKey, page.Events[1].EventKey)
+			assert.Equal(t, stored.Record.Timestamp, page.Events[1].Timestamp)
 			t.Logf("restored event with separately accepted labels=%d", len(stored.Record.Payload))
 		})
 	}

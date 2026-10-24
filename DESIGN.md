@@ -1100,6 +1100,15 @@ still need to convert the physical records or collections so its new
 `storage.Store` can read them. That conversion must preserve each recorded
 outcome and event.
 
+`hooks.EncodeToRecordInput` creates an outbound workflow record and rejects a
+serialized event payload larger than 1,000,000 bytes. The complete encoded
+activity call still has the workflow engine's separate aggregate allowance.
+`hooks.EncodeRecordPayload` serializes event fields without that transport check:
+the storage activity uses it when restoring saved labels, failure details, or a
+tool display hint into an already accepted record. Those facts may form a larger
+stored event while retaining the original record identity and timestamp. Record
+decoders read historical payloads without applying the outbound write allowance.
+
 The runtime requires one `storage.Store`. It exposes commands that name one
 complete workflow state change instead of separate metadata and record writes.
 `StartRootRun`, `StartChildRun`, `StartOneShotRun`, and

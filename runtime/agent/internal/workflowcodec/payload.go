@@ -1,5 +1,6 @@
 // Package workflowcodec snapshots workflow values and enforces one aggregate
-// payload limit before engines persist or submit them.
+// payload limit before engines persist or submit them. It also declares the
+// separate allowance for each record payload sent to the storage activity.
 package workflowcodec
 
 import (
@@ -27,6 +28,13 @@ type (
 		payloads      *commonpb.Payloads
 	}
 )
+
+// MaxRecordPayloadBytes is the inclusive byte allowance for one serialized
+// run-log payload sent from a workflow to the storage activity. The complete
+// activity call still has the engine's separate aggregate allowance. Storage
+// can assemble larger records from separately accepted inputs, and historical
+// reads do not apply this write allowance.
+const MaxRecordPayloadBytes = 1_000_000
 
 // AddText adds UTF-8 text to the workflow byte total.
 func (b *Budget) AddText(values ...string) error {

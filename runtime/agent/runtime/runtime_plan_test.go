@@ -20,6 +20,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/internal/outputcontract"
+	"goa.design/goa-ai/runtime/agent/internal/workflowcodec"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -1326,7 +1327,7 @@ func TestPlanStartActivityBoundsOversizedUnaryUsageModel(t *testing.T) {
 					Parts: []model.Part{model.TextPart{Text: "answer"}},
 				}},
 				Usage: model.TokenUsage{
-					Model:       strings.Repeat("provider-model", maxHookPayloadBytes),
+					Model:       strings.Repeat("provider-model", workflowcodec.MaxRecordPayloadBytes),
 					TotalTokens: 1,
 				},
 				StopReason: "end_turn",
@@ -1343,7 +1344,7 @@ func TestPlanStartActivityBoundsOversizedUnaryUsageModel(t *testing.T) {
 	requirePlannerOutputContractFailure(t, out, err)
 	encoded, err := json.Marshal(out)
 	require.NoError(t, err)
-	require.Less(t, len(encoded), maxHookPayloadBytes)
+	require.Less(t, len(encoded), workflowcodec.MaxRecordPayloadBytes)
 	require.Equal(t, 1, providerCalls)
 }
 
@@ -1368,7 +1369,7 @@ func TestPlanStartActivityBoundsOversizedStreamUsageModel(t *testing.T) {
 			return &chunkStreamer{
 				chunks: []model.Chunk{
 					model.UsageChunk{Usage: model.TokenUsage{
-						Model:            strings.Repeat("provider-model", maxHookPayloadBytes),
+						Model:            strings.Repeat("provider-model", workflowcodec.MaxRecordPayloadBytes),
 						InputTokens:      1,
 						OutputTokens:     2,
 						TotalTokens:      3,
@@ -1396,7 +1397,7 @@ func TestPlanStartActivityBoundsOversizedStreamUsageModel(t *testing.T) {
 	}, out.Usage)
 	encoded, err := json.Marshal(out)
 	require.NoError(t, err)
-	require.Less(t, len(encoded), maxHookPayloadBytes)
+	require.Less(t, len(encoded), workflowcodec.MaxRecordPayloadBytes)
 	require.Equal(t, 1, providerCalls)
 }
 
@@ -1445,7 +1446,7 @@ func TestPlanStartActivityAggregatesUsageAcrossManyRejectedInvocations(t *testin
 	require.Len(t, out.PlannerEvents, probeCount)
 	encoded, err := json.Marshal(out)
 	require.NoError(t, err)
-	require.Less(t, len(encoded), maxHookPayloadBytes)
+	require.Less(t, len(encoded), workflowcodec.MaxRecordPayloadBytes)
 	require.Equal(t, probeCount+1, providerCalls)
 }
 
@@ -2385,7 +2386,7 @@ func TestRunPlanActivityRetriesPublicationBeforeOutputFailure(t *testing.T) {
 }
 
 func TestRunPlanActivityBoundsOversizedRejectedResponseFingerprint(t *testing.T) {
-	rejectedText := strings.Repeat("x", 2*maxHookPayloadBytes)
+	rejectedText := strings.Repeat("x", 2*workflowcodec.MaxRecordPayloadBytes)
 	pl := &stubPlanner{start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
 		client, ok := input.Agent.ModelClient("test")
 		require.True(t, ok)
@@ -2424,9 +2425,9 @@ func TestRunPlanActivityBoundsOversizedRejectedResponseFingerprint(t *testing.T)
 	require.ErrorAs(t, err, &outputErr)
 	encodedOutput, marshalErr := json.Marshal(out)
 	require.NoError(t, marshalErr)
-	require.Less(t, len(encodedOutput), maxHookPayloadBytes)
+	require.Less(t, len(encodedOutput), workflowcodec.MaxRecordPayloadBytes)
 	require.Len(t, out.OutputContractFailure.ModelResponseSHA256, 64)
-	require.Greater(t, out.OutputContractFailure.ModelResponseSize, int64(maxHookPayloadBytes))
+	require.Greater(t, out.OutputContractFailure.ModelResponseSize, int64(workflowcodec.MaxRecordPayloadBytes))
 	require.Len(t, recorder.events, 1)
 	rejected, ok := recorder.events[0].(*hooks.ModelOutputRejectedEvent)
 	require.True(t, ok)
@@ -2435,7 +2436,7 @@ func TestRunPlanActivityBoundsOversizedRejectedResponseFingerprint(t *testing.T)
 }
 
 func TestPlanStartActivityRejectsOverBudgetRawToolPayloadWithoutFingerprint(t *testing.T) {
-	toolCallID := strings.Repeat("provider-controlled-id", maxHookPayloadBytes)
+	toolCallID := strings.Repeat("provider-controlled-id", workflowcodec.MaxRecordPayloadBytes)
 	pl := &stubPlanner{start: func(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
 		client, ok := input.Agent.ModelClient("test")
 		require.True(t, ok)
@@ -2479,7 +2480,7 @@ func TestPlanStartActivityRejectsOverBudgetRawToolPayloadWithoutFingerprint(t *t
 	require.Zero(t, out.OutputContractFailure.ModelResponseSize)
 	encodedOutput, err := json.Marshal(out)
 	require.NoError(t, err)
-	require.Less(t, len(encodedOutput), maxHookPayloadBytes)
+	require.Less(t, len(encodedOutput), workflowcodec.MaxRecordPayloadBytes)
 }
 
 func TestPlanStartActivityFingerprintsCompleteResponseBeforeCloneValidation(t *testing.T) {
