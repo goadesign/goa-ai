@@ -372,6 +372,19 @@ does not define namespaces or infer authorization from label names. Catalogs
 belong to individual planning activities, so concurrent sessions do not change
 one another's tool lists.
 
+## Inspect active registration facts
+
+Applications that own catalog resources can iterate their scope with
+`registry.Service.CatalogRoutesAfter` and read each route with
+`ReadCatalogRegistration`. The latter returns the saved owner, exact registration
+token and service-or-native kind without reading declarations or provider health.
+It returns `not_found` when the route has retired since listing. The exclusive
+lexical continuation is a saved route name, so process restarts do not change its
+position. These observations grant no execution authority and create no
+reservation. `ReadCatalogIdentity` remains available when ownership is needed
+after retirement. See the [catalog storage contract](../DESIGN.md)
+for the owner and registration rules.
+
 ## Bind generated service tools
 
 When an application selects a registration for tools already compiled into an

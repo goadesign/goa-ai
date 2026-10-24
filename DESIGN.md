@@ -1869,6 +1869,15 @@ return `not_found`, identity-free records return `ErrCatalogIdentityMissing`, an
 corrupt state returns a validation error. Applications authorize the returned
 owner; existing admission decides whether work may reconnect or start.
 
+`ReadCatalogRegistration` returns the active route's saved resource identity,
+registration token and service-or-native kind from one validated compact state
+read. It reads no declaration or provider health and grants no execution
+authority. Missing and retired routes return `not_found`; a route without saved
+identity returns `ErrCatalogIdentityMissing`. Application owners can combine
+this read with `CatalogRoutesAfter` to inspect exact admissions without decoding
+unrelated schemas. `ReadCatalogIdentity` continues to return immutable ownership
+for retired routes.
+
 `CatalogRoutesAfter` reads bounded exclusive lexical positions from one scope;
 `CatalogContains` checks one exact membership. `ReadCatalogToolset` requires a
 positive raw-byte budget and checks the sum of state/definition `HSTRLEN` before
