@@ -25,7 +25,7 @@ type priorPageActorKey struct{}
 
 func TestNewStaticPageUsesPriorDeclarationAndCurrentInputs(t *testing.T) {
 	for _, kind := range []string{"service", "agent"} {
-		for _, scenario := range []string{"description change", "closed chain", "missing current pair", "incompatible input", "owner denied", "wrong token", "wrong target", "independent roots"} {
+		for _, scenario := range []string{"description change", "closed chain", "missing current pair", "incompatible input", "owner denied", "wrong token", "wrong target", "independent roots", "unavailable", "unavailable then malformed", "unavailable then owner failure"} {
 			t.Run(kind+"/"+scenario, func(t *testing.T) {
 				old := testRegistryPagingResolution(strings.Repeat("a", 64))
 				current := testRegistryPagingResolution(strings.Repeat("b", 64))
@@ -69,7 +69,13 @@ func TestNewStaticPageUsesPriorDeclarationAndCurrentInputs(t *testing.T) {
 					reads++
 					assert.Equal(t, "actor-one", ctx.Value(priorPageActorKey{}))
 					assert.Equal(t, old.Toolset.Name, route)
+					if scenario == "unavailable then owner failure" && token == strings.Repeat("c", 64) {
+						return nil, errors.New("matching resource read failed")
+					}
 					assert.Equal(t, old.RegistrationToken, token)
+					if strings.HasPrefix(scenario, "unavailable") {
+						return nil, nil
+					}
 					if scenario == "owner denied" {
 						return nil, errors.New("owner denied this resource")
 					}
@@ -101,6 +107,25 @@ func TestNewStaticPageUsesPriorDeclarationAndCurrentInputs(t *testing.T) {
 					second.ToolCallID = "root-two"
 					outputs = append(outputs, &second)
 				}
+				if scenario == "unavailable then malformed" || scenario == "unavailable then owner failure" {
+					second := *output
+					second.Name = "records.continue"
+					second.ToolCallID = "page-one"
+					second.ContinuationRootToolCallID = output.ToolCallID
+					second.Payload = []byte(`{"cursor":"same-cursor"}`)
+					second.Registry = output.Registry.Clone()
+					if scenario == "unavailable then malformed" {
+						second.Registry.Resolution = []byte(`{}`)
+					} else {
+						other := *old
+						other.RegistrationToken = strings.Repeat("c", 64)
+						otherResolution, err := registrycontract.ResolveCompiled(&other)
+						require.NoError(t, err)
+						second.Registry, err = otherResolution.Select(testRegistryName, second.Name)
+						require.NoError(t, err)
+					}
+					outputs = append(outputs, &second)
+				}
 				if scenario == "closed chain" {
 					output.Bounds.NextCursor = nil
 					output.Bounds.Truncated = false
@@ -117,7 +142,7 @@ func TestNewStaticPageUsesPriorDeclarationAndCurrentInputs(t *testing.T) {
 				require.NoError(t, err)
 				input := &resolvedPlanActivityInput{PlanActivityInput: &PlanActivityInput{AgentID: definition.route.ID}}
 				actions, err := catalog.continuationActions(ctx, input, outputs)
-				if scenario == "owner denied" || scenario == "wrong token" || kind == "agent" && scenario == "wrong target" {
+				if scenario == "owner denied" || scenario == "wrong token" || kind == "agent" && scenario == "wrong target" || scenario == "unavailable then malformed" || scenario == "unavailable then owner failure" {
 					require.Error(t, err)
 					return
 				}
@@ -126,6 +151,9 @@ func TestNewStaticPageUsesPriorDeclarationAndCurrentInputs(t *testing.T) {
 				case "closed chain", "missing current pair":
 					assert.Empty(t, actions)
 					assert.Zero(t, reads)
+				case "unavailable":
+					assert.Empty(t, actions)
+					assert.Equal(t, 1, reads)
 				case "incompatible input":
 					assert.Empty(t, actions)
 				default:

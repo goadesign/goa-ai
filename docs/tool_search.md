@@ -399,7 +399,9 @@ nonempty list of original generated tool identifiers. There is no implicit
 private toolset route and exact registration token, in that order. Capture the
 current resource's owner and permanent name in this callback. Use the resource
 owner's API to verify that the saved route and token belong to that same resource;
-return an error for another resource or a failed read. Matching operation names
+return nil without an error when the saved registration belongs to another
+logical resource. Return an error for malformed bindings or failed reads of the
+matching resource. Matching operation names
 or schemas do not establish resource ownership. The callback returns `(*genregistry.ResolvedToolset, error)`: the exact old
 registration already fetched from the owner. The runtime verifies the saved
 selected-operation fingerprint with those declarations, then checks the new
@@ -534,8 +536,13 @@ The required `readPrevious` has type
 Its arguments are the prior private toolset route, exact registration token,
 and selected Agent target. Use the target's saved configuration reference and
 existing owner APIs to prove that the old registration belongs to the same
-owner and permanent resource as the current selection. Failed reads and another
-resource remain errors. Return the exact old registration already fetched by
+owner and permanent resource as the current selection. If it names a different
+logical resource, return nil without an error; that query supplies no new page
+action. Malformed target references and matching-resource read failures remain
+errors. The runtime checks every member before omitting an unavailable chain,
+while preserving all saved messages and results. This does not validate old
+cursor or payload semantics for a resource whose declarations were not returned.
+Return the exact old registration already fetched by
 that proof; the runtime verifies its saved selected-operation fingerprint.
 For a newly selected page, the current registration
 supplies the new child configuration; the original query and cursor stay intact.

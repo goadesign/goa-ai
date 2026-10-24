@@ -26,7 +26,10 @@ const staticAgentKind = "agent"
 // read declarations proving that they belong to this same logical resource.
 // Accepted calls keep their original target and never call readPrevious.
 // The reader returns the owner's exact ResolvedToolset so saved fingerprints use
-// the old declarations.
+// the old declarations. When the saved target identifies a different logical
+// resource, the reader returns nil without an error. The runtime then offers no
+// next page for that entire query chain, while preserving its saved history.
+// Malformed targets and failures reading a matching resource remain errors.
 func (c *RegistryCatalog) BindStaticAgent(registry string, expected []*genregistry.ToolSchema, selected *genregistry.ResolvedToolset, readPrevious func(context.Context, string, string, *genregistry.AgentToolTarget) (*genregistry.ResolvedToolset, error), names ...tools.Ident) error {
 	if readPrevious == nil {
 		return fmt.Errorf("static agent binding requires a reader for previous registrations")

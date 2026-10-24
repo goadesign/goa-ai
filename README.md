@@ -377,8 +377,12 @@ replacing existing deployments; a source rollback alone cannot undo new stored
 work.
 
 When binding generated service or Agent tools, the previous-registration reader
-returns the owner's exact `ResolvedToolset` along with its error. New pages can
-then verify their saved declarations while using current input and paging rules,
+returns the owner's exact `ResolvedToolset`, or nil without an error when the
+saved registration has no matching current resource. That query offers no new
+page, while its saved messages and results remain readable. A failed read or
+malformed binding still stops planning. Every member of a page chain is checked
+before an unavailable chain is omitted. The returned declarations let new pages
+verify their saved declarations while using current input and paging rules,
 including after a tool description changes. See [static tool binding](docs/tool_search.md#bind-generated-service-tools).
 
 ## Learn more

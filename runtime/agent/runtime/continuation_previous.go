@@ -78,7 +78,19 @@ func (c *RegistryCatalog) continuationActions(ctx context.Context, input *resolv
 		if !policy.allowsTool(page.Name, toolPolicyFactsFromSpec(page)) {
 			continue
 		}
-		selected[key] = true
+		// Read every member before omitting this chain. An unavailable resource
+		// must not hide another member's malformed binding or owner read failure.
+		compatible := true
+		for _, output := range chain {
+			prior, err := c.previousContinuationSelection(ctx, output)
+			if err != nil {
+				return nil, err
+			}
+			if prior == nil {
+				compatible = false
+			}
+		}
+		selected[key] = compatible
 	}
 	enriched := make([]*planner.ToolOutput, 0, len(outputs))
 	for _, output := range outputs {
@@ -127,6 +139,8 @@ func (c *RegistryCatalog) continuationActions(ctx context.Context, input *resolv
 // previousContinuationSelection returns one exact owner-proved selection for
 // this activity. Identical selections share metadata only within its actor and
 // invocation; another activity always performs its own owner authorization.
+// A nil result means the saved resource has no matching current page provider.
+// Its accepted result remains in history and grants no permission for new work.
 func (c *RegistryCatalog) previousContinuationSelection(ctx context.Context, output *planner.ToolOutput) (selection *registrycontract.Resolution, readErr error) {
 	key := previousSelectionKey(output.Registry)
 	if prior, exists := c.previousSelections[key]; exists {
@@ -188,6 +202,9 @@ func (c *RegistryCatalog) previousContinuationSelection(ctx context.Context, out
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read previous registration for %q: %w", output.Name, err)
+	}
+	if owned == nil {
+		return nil, nil
 	}
 	prior, err := registrycontract.ReadPrevious(output.Registry, owned)
 	if err != nil {
