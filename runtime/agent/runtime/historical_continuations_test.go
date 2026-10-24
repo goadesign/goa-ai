@@ -184,9 +184,9 @@ func TestHistoricalStaticBoundsDoNotRequireCurrentDeclaration(t *testing.T) {
 			if tc.registered {
 				seedTestToolSpecs(rt, spec)
 			}
-			err := rt.validateHistoricalContinuationBounds(&planner.ToolOutput{
+			err := validateHistoricalContinuationBounds(&planner.ToolOutput{
 				Name: spec.Name, ToolCallID: "saved-call", Bounds: tc.bounds,
-			}, rt)
+			}, nil)
 			if tc.wantErr != "" {
 				assert.ErrorContains(t, err, tc.wantErr)
 			} else {

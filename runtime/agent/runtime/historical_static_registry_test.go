@@ -49,7 +49,9 @@ func TestHistoricalStaticRegistryBoundsUseSavedDeclaration(t *testing.T) {
 				output.Registry = binding
 				output.Bounds = tc.bounds
 				subject := genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent(def.route.ID))}
-				err := rt.validateHistoricalContinuationBounds(output, rt.agentTools(def.route.ID))
+				savedSpecs, err := savedHistoricalContinuationSpecs(binding, rt.agentTools(def.route.ID))
+				require.NoError(t, err)
+				err = validateHistoricalContinuationBounds(output, savedSpecs)
 				if tc.want != "" {
 					require.ErrorContains(t, err, tc.want)
 				} else {

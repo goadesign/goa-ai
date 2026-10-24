@@ -294,13 +294,17 @@ func (r *selectedContinuationReader) addReference(ctx context.Context, ref *api.
 	if err := hooks.ValidateToolResultCorrelation(call, result.result); err != nil {
 		return storage.NewContractError(err)
 	}
-	var names map[string]struct{}
-	var err error
+	var savedSpecs map[tools.Ident]tools.ToolSpec
+	pagingSpecs := r.specs
 	if call.Registry != nil {
-		names, err = savedRegistryPagingNames(call.Registry, r.runtime.agentTools(r.input.AgentID))
-	} else {
-		names, err = historicalContinuationToolNames(r.specs)
+		var err error
+		savedSpecs, err = savedHistoricalContinuationSpecs(call.Registry, r.runtime.agentTools(r.input.AgentID))
+		if err != nil {
+			return err
+		}
+		pagingSpecs = savedSpecs
 	}
+	names, err := historicalContinuationToolNames(pagingSpecs)
 	if err != nil {
 		return err
 	}
@@ -319,7 +323,7 @@ func (r *selectedContinuationReader) addReference(ctx context.Context, ref *api.
 		r.seen[key] = struct{}{}
 		return nil
 	}
-	if err := r.runtime.validateHistoricalContinuationBounds(output, r.runtime.agentTools(r.input.AgentID)); err != nil {
+	if err := validateHistoricalContinuationBounds(output, savedSpecs); err != nil {
 		return err
 	}
 	r.outputs = append(r.outputs, output)
