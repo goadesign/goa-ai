@@ -16,9 +16,11 @@ import (
 	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
+	"goa.design/goa-ai/runtime/agent/storage"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -209,6 +211,163 @@ func TestSelectedContinuationStopsBeforeLaterSavedResults(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, outputs, 1)
 	assert.Equal(t, "query-0", outputs[0].ToolCallID)
+}
+
+func TestSelectedContinuationBindingUsesExactRegistryAndBytes(t *testing.T) {
+	rt := newTestRuntimeWithPlanner("records.agent", &stubPlanner{})
+	reader := selectedContinuationReader{
+		runtime: rt,
+		input: &resolvedPlanActivityInput{
+			PlanActivityInput: &PlanActivityInput{AgentID: "records.agent"},
+		},
+	}
+	resource := runtimeTestResource("owner")
+	resolved, err := registrycontract.ResolveRegistered(testRegistryName, resource.Source, resource.Resolved)
+	require.NoError(t, err)
+	name := registeredTestName(t, resource, "records.find")
+	binding, err := resolved.Select(testRegistryName, name)
+	require.NoError(t, err)
+	first, err := reader.savedRegistrySpecs(binding)
+	require.NoError(t, err)
+	require.Contains(t, first, name)
+
+	otherRegistry := binding.Clone()
+	otherRegistry.Registry = "another-catalog"
+	other, err := reader.savedRegistrySpecs(otherRegistry)
+	require.NoError(t, err)
+	require.Len(t, other, 1)
+	assert.NotContains(t, other, name, "registered tool names include the registry identity")
+
+	resource.Resolved.RegistrationToken = strings.Repeat("b", 64)
+	target, ok := resource.Source.Target.AsService()
+	require.True(t, ok)
+	target.RegistrationToken = resource.Resolved.RegistrationToken
+	resource.Resolved.Toolset.Tools[0].Description = pointer("Replacement declaration")
+	replacement, err := registrycontract.ResolveRegistered(testRegistryName, resource.Source, resource.Resolved)
+	require.NoError(t, err)
+	replacementBinding, err := replacement.Select(testRegistryName, name)
+	require.NoError(t, err)
+	require.NotEqual(t, binding.Resolution, replacementBinding.Resolution)
+	latest, err := reader.savedRegistrySpecs(replacementBinding)
+	require.NoError(t, err)
+	assert.Equal(t, "Replacement declaration", latest[name].Description)
+	assert.NotEqual(t, latest[name].Description, first[name].Description)
+}
+
+func TestSelectedContinuationBindingChecksBelongToOneHistoryRead(t *testing.T) {
+	original, definition, binding := historicalStaticFixture(t, "", "compiled")
+	input := &resolvedPlanActivityInput{
+		PlanActivityInput: &PlanActivityInput{AgentID: definition.route.ID},
+	}
+	firstReader := selectedContinuationReader{runtime: original, input: input}
+	first, err := firstReader.savedRegistrySpecs(binding)
+	require.NoError(t, err)
+	require.Contains(t, first, tools.Ident("records.find"))
+
+	changed, _, sameBinding := historicalStaticFixture(t, "metadata", "compiled")
+	require.Equal(t, binding, sameBinding)
+	laterReader := selectedContinuationReader{runtime: changed, input: input}
+	for range 2 {
+		later, err := laterReader.savedRegistrySpecs(binding)
+		require.NoError(t, err)
+		assert.Nil(t, later, "the later build cannot interpret the earlier declarations")
+	}
+	assert.Len(t, laterReader.bindings, 1, "a changed declaration is a checked result for this reader")
+}
+
+func TestSelectedContinuationLiteralImportsShareCheckedDeclarations(t *testing.T) {
+	rt, input := selectedContinuationHistoryFixture(t, "compiled", 2)
+	reader := selectedContinuationReader{
+		runtime: rt,
+		input:   input,
+		specs:   rt.toolSpecs,
+		runs:    map[string]struct{}{"saved": {}},
+		events:  make(map[string]map[string]*canonicalToolEvents),
+		seen:    make(map[continuationOutputKey]struct{}),
+	}
+	err := reader.readLiterals(t.Context(), []*model.Message{{
+		Role: model.ConversationRoleAssistant,
+		Parts: []model.Part{model.ToolUsePart{
+			ID:    "query-0",
+			Name:  "records.find",
+			Input: rawjson.Message(`{"value":1}`),
+		}},
+	}})
+	require.NoError(t, err)
+	assert.Empty(t, reader.outputs, "selected run records own the order of their results")
+	require.Len(t, reader.bindings, 1)
+	var checked *tools.BoundsSpec
+	for _, declarations := range reader.bindings {
+		checked = declarations["records.find"].Bounds
+	}
+	require.NotNil(t, checked)
+	meta, err := rt.Store.LoadRun(t.Context(), "saved")
+	require.NoError(t, err)
+	err = reader.readRun(t.Context(), continuationHistoryFrame{
+		ref:  storage.HistoryPrefix{RunID: "saved", EndID: input.HistoryEndID},
+		meta: meta,
+	})
+	require.NoError(t, err)
+	require.Len(t, reader.outputs, 2)
+	assert.Equal(t, "query-0", reader.outputs[0].ToolCallID)
+	assert.Equal(t, "query-1", reader.outputs[1].ToolCallID)
+	for _, declarations := range reader.bindings {
+		assert.Same(t, checked, declarations["records.find"].Bounds,
+			"the selected records reuse the declaration already checked for the literal import")
+	}
+}
+
+func TestSelectedContinuationBindingReusePreservesLaterErrors(t *testing.T) {
+	for _, form := range historicalSavedForms {
+		for _, scenario := range []string{"malformed final binding", "malformed failed binding", "invalid later bounds"} {
+			t.Run(form+"/"+scenario, func(t *testing.T) {
+				rt, input := selectedContinuationHistoryFixture(t, form, 1)
+				binding := historicalSavedBinding(t, form, "records.continue")
+				var bounds *agent.Bounds
+				if scenario == "invalid later bounds" {
+					bounds = &agent.Bounds{NextCursor: pointer("")}
+				} else {
+					binding.Resolution = rawjson.Message(`{}`)
+				}
+				subject := genrunidentity.RunSubject{
+					Executor: genrunidentity.NewRunExecutorAgent(
+						genrunidentity.RunExecutorBranchAgent("records.agent"),
+					),
+				}
+				call := ToolCall{
+					Name:                       "records.continue",
+					ToolCallID:                 "last-page",
+					ContinuationRootToolCallID: "query-0",
+					Registry:                   binding,
+					Payload:                    rawjson.Message(`{"cursor":"next"}`),
+				}
+				result := hooks.NewToolResultReceivedEvent(
+					"saved", subject, "session-1", "saved", call.Name, call.ToolCallID, "",
+					rawjson.Message(`{"value":1}`), nil, nil, "Last page", bounds, 0, nil, nil,
+				)
+				if scenario == "malformed failed binding" {
+					result.ResultJSON = nil
+					result.ResultBytes = 0
+					result.Failure = testToolFailure(planner.FailureInternal, planner.RecoveryFinish, "Recorded failure")
+				}
+				for index, event := range []hooks.Event{
+					newToolCallScheduledEvent("saved", subject, "session-1", call, "", "", 0),
+					result,
+				} {
+					record := testHookRecord(t, event, fmt.Sprintf("last-page-%d", index), time.UnixMilli(int64(index+3)))
+					appended, err := rt.Store.AppendRunRecord(t.Context(), record)
+					require.NoError(t, err)
+					input.HistoryEndID = appended.ID
+				}
+				_, err := rt.loadHistoricalContinuationOutputs(t.Context(), input, rt.toolSpecs)
+				want := "decode selected registry tool"
+				if scenario == "invalid later bounds" {
+					want = "empty next_cursor"
+				}
+				assert.ErrorContains(t, err, want)
+			})
+		}
+	}
 }
 
 // selectedContinuationHistoryFixture stores count independent completed

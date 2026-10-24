@@ -4,6 +4,7 @@ package runtime
 // use this reader to recover pagination roots and pages through exact run ends.
 // A continuation seed also selects the completed outputs retained by its
 // predecessor checkpoint, including results after that transcript's end.
+// Exact saved registry bindings share checked declarations only during this read.
 
 import (
 	"context"
@@ -35,14 +36,21 @@ type (
 		callRun, resultRun, call string
 	}
 
+	// continuationRegistryKey keeps the registry name and exact saved selection
+	// bytes separate, so only the same binding can reuse checked declarations.
+	continuationRegistryKey struct {
+		registry, resolution string
+	}
+
 	selectedContinuationReader struct {
-		runtime *Runtime
-		input   *resolvedPlanActivityInput
-		specs   map[tools.Ident]tools.ToolSpec
-		runs    map[string]struct{}
-		events  map[string]map[string]*canonicalToolEvents
-		seen    map[continuationOutputKey]struct{}
-		outputs []*planner.ToolOutput
+		runtime  *Runtime
+		input    *resolvedPlanActivityInput
+		specs    map[tools.Ident]tools.ToolSpec
+		runs     map[string]struct{}
+		events   map[string]map[string]*canonicalToolEvents
+		seen     map[continuationOutputKey]struct{}
+		bindings map[continuationRegistryKey]map[tools.Ident]tools.ToolSpec
+		outputs  []*planner.ToolOutput
 	}
 )
 
@@ -298,7 +306,7 @@ func (r *selectedContinuationReader) addReference(ctx context.Context, ref *api.
 	pagingSpecs := r.specs
 	if call.Registry != nil {
 		var err error
-		savedSpecs, err = savedHistoricalContinuationSpecs(call.Registry, r.runtime.agentTools(r.input.AgentID))
+		savedSpecs, err = r.savedRegistrySpecs(call.Registry)
 		if err != nil {
 			return err
 		}
@@ -422,9 +430,7 @@ func (r *selectedContinuationReader) readSeedLiterals(ctx context.Context, frame
 }
 
 func (r *selectedContinuationReader) readLiterals(ctx context.Context, messages []*model.Message) error {
-	literal := *r.input
-	literal.Messages = messages
-	outputs, err := r.runtime.loadLiteralContinuationOutputs(ctx, &literal, r.specs)
+	outputs, err := r.loadLiteralContinuationOutputs(ctx, messages)
 	if err != nil {
 		return err
 	}
@@ -442,6 +448,26 @@ func (r *selectedContinuationReader) readLiterals(ctx context.Context, messages 
 		}
 	}
 	return nil
+}
+
+// savedRegistrySpecs checks each exact registry and saved declaration once for
+// this history read. Repeated bindings reuse the checked tool declarations;
+// a present nil value means this build declares the saved tools differently.
+// These declarations do not authorize current tool execution.
+func (r *selectedContinuationReader) savedRegistrySpecs(binding *tools.RegistryBinding) (map[tools.Ident]tools.ToolSpec, error) {
+	key := continuationRegistryKey{registry: binding.Registry, resolution: string(binding.Resolution)}
+	if specs, exists := r.bindings[key]; exists {
+		return specs, nil
+	}
+	specs, err := savedHistoricalContinuationSpecs(binding, r.runtime.agentTools(r.input.AgentID))
+	if err != nil {
+		return nil, err
+	}
+	if r.bindings == nil {
+		r.bindings = make(map[continuationRegistryKey]map[tools.Ident]tools.ToolSpec)
+	}
+	r.bindings[key] = specs
+	return specs, nil
 }
 
 func (r *selectedContinuationReader) entry(runID, callID string) *canonicalToolEvents {

@@ -25,25 +25,23 @@ type historicalToolEvents struct {
 }
 
 // loadLiteralContinuationOutputs preserves the exact execution-ID contract for
-// caller-supplied messages. It never searches by a stored provider ID.
-func (r *Runtime) loadLiteralContinuationOutputs(
-	ctx context.Context,
-	input *resolvedPlanActivityInput,
-	specs map[tools.Ident]tools.ToolSpec,
-) ([]*planner.ToolOutput, error) {
-	names, err := historicalContinuationToolNames(specs)
+// caller-supplied messages. It never searches by a stored provider ID. Saved
+// declarations share this reader's checks with the selected run records.
+func (r *selectedContinuationReader) loadLiteralContinuationOutputs(ctx context.Context, messages []*model.Message) ([]*planner.ToolOutput, error) {
+	input := r.input
+	names, err := historicalContinuationToolNames(r.specs)
 	if err != nil {
 		return nil, err
 	}
 	if len(names) == 0 && input.RunContext.SessionID == "" {
-		registration, ok := r.agentByID(input.AgentID)
+		registration, ok := r.runtime.agentByID(input.AgentID)
 		if !ok || registration.Definition.registryTools == nil {
 			// A sessionless request with no paging tools has no saved pages to
 			// restore. Its ordinary literal tool exchanges remain model evidence.
 			return nil, nil
 		}
 	}
-	toolCallIDs, err := historicalContinuationToolCallIDs(input.Messages)
+	toolCallIDs, err := historicalContinuationToolCallIDs(messages)
 	if err != nil || len(toolCallIDs) == 0 {
 		return nil, err
 	}
@@ -51,7 +49,7 @@ func (r *Runtime) loadLiteralContinuationOutputs(
 		return nil, fmt.Errorf("runtime: historical continuation transcript requires a session id")
 	}
 	literalNames := make(map[string][]string, len(toolCallIDs))
-	for _, message := range input.Messages {
+	for _, message := range messages {
 		for _, part := range message.Parts {
 			if call, ok := part.(model.ToolUsePart); ok {
 				literalNames[call.ID] = append(literalNames[call.ID], call.Name)
@@ -65,7 +63,7 @@ func (r *Runtime) loadLiteralContinuationOutputs(
 	events := make(map[string]*historicalToolEvents, len(wanted))
 	cursor := ""
 	for {
-		page, err := r.Store.ListSessionRunRecords(
+		page, err := r.runtime.Store.ListSessionRunRecords(
 			ctx,
 			input.RunContext.SessionID,
 			cursor,
@@ -136,7 +134,7 @@ func (r *Runtime) loadLiteralContinuationOutputs(
 			callNames := names
 			if call.Registry != nil {
 				var err error
-				savedSpecs, err = savedHistoricalContinuationSpecs(call.Registry, r.agentTools(input.AgentID))
+				savedSpecs, err = r.savedRegistrySpecs(call.Registry)
 				if err != nil {
 					return nil, err
 				}
