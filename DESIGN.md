@@ -604,6 +604,12 @@ its declaration, uses the current generated declaration when its fingerprint sti
 matches; otherwise it is treated like a static historical call whose tool changed. Static historical calls use their saved source-call
 identities and result metadata to close completed chains before reading today's
 input contracts, including when a continuation tool was removed or renamed.
+A static binding's previous-registration reader may return nil without an error
+when the saved registration identifies a different logical resource. The whole
+query chain then offers no new action, without removing saved messages or results.
+Every member still undergoes chain and saved-binding checks; malformed references
+and matching-resource read failures remain errors. An unavailable resource does
+not supply old declarations for cursor or argument validation.
 Only unfinished chains need current execution
 authorization: an unavailable or changed static tool pair supplies no action,
 without blocking the new turn. Current static execution still requires the full

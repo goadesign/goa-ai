@@ -21,6 +21,9 @@ func (c *RegistryCatalog) bindContinuationActions(ctx context.Context, actions [
 			selected = append(selected, action)
 			continue
 		}
+		if _, _, err := historicalPagingChains(action.outputs); err != nil {
+			return nil, err
+		}
 		sourceName := action.spec.Name
 		if action.spec.Bounds.Paging.SourceTool != "" {
 			sourceName = action.spec.Bounds.Paging.SourceTool
@@ -48,6 +51,10 @@ func (c *RegistryCatalog) bindContinuationActions(ctx context.Context, actions [
 			if err != nil {
 				return nil, err
 			}
+			if previous == nil {
+				compatible = false
+				continue
+			}
 			previousSource, sourceExists := previous.Specs[sourceName]
 			previousPage, pageExists := previous.Specs[action.spec.Name]
 			if !sourceExists || !pageExists || previousSource.IsAgentTool != source.IsAgentTool ||
@@ -56,21 +63,21 @@ func (c *RegistryCatalog) bindContinuationActions(ctx context.Context, actions [
 				!samePagingArguments(previousSource.Bounds.Paging, source.Bounds.Paging) ||
 				!samePagingArguments(previousPage.Bounds.Paging, continuation.Bounds.Paging) {
 				compatible = false
-				break
+				continue
 			}
 			if previous.Source != nil {
 				resource := current.resolution.Source
 				if resource == nil || resource.Scope != previous.Source.Scope || resource.Name != previous.Source.Name ||
 					resource.Target.Kind() != previous.Source.Target.Kind() {
 					compatible = false
-					break
+					continue
 				}
 			} else if _, static := c.definition.specByName[sourceName]; !static &&
 				(current.resolution.Source != nil || current.resolution.Registered.Toolset.Name != previous.Registered.Toolset.Name) {
 				// Direct imports use their declared registry route as resource identity.
 				// Registered resources instead require their explicit owner and name.
 				compatible = false
-				break
+				continue
 			}
 		}
 		if !compatible {

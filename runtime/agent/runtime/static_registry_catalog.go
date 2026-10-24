@@ -24,6 +24,10 @@ const staticServiceKind = "service"
 // logical resource. An owner read failure stops planning; accepted calls keep their
 // original registration and never call readPrevious. The reader returns the
 // exact owner's ResolvedToolset so saved fingerprints use the old declarations.
+// A nil result without an error means the saved registration has no matching
+// current resource. Its entire page chain supplies no new action; saved history
+// remains intact. Malformed bindings and matching-resource read failures remain
+// errors, including in another member of an unavailable chain.
 func (c *RegistryCatalog) BindStaticService(registry string, expected *genregistry.Toolset, selected *genregistry.ResolvedToolset, readPrevious func(context.Context, string, string) (*genregistry.ResolvedToolset, error), names ...tools.Ident) error {
 	if readPrevious == nil {
 		return fmt.Errorf("static service binding requires a reader for previous registrations")
