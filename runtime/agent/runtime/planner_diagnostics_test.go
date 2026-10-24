@@ -45,12 +45,12 @@ func TestPlannerActivitiesOfferOriginalRejectionToTracer(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, output.OutputContractFailure)
 			assert.Equal(t, original.Unwrap().Error(), output.OutputContractFailure.Reason)
-			require.Len(t, tracer.spans, 1)
-			span := tracer.spans[0]
-			require.Len(t, span.errs, 1)
+			activityName := "planner.plan_start"
+			if resume {
+				activityName = "planner.plan_resume"
+			}
+			span := rejectedPlannerActivitySpan(t, tracer, activityName)
 			assert.Same(t, original, span.errs[0])
-			assert.Equal(t, codes.Error, span.statusCode)
-			assert.True(t, span.ended)
 		})
 	}
 }
@@ -75,9 +75,8 @@ func TestPlannerFullReasonRespectsCompleteResultBudget(t *testing.T) {
 		}
 		_, err = workflowcodec.NewDataConverter().ToPayload(out)
 		require.NoError(t, err)
-		require.Len(t, tracer.spans, 1)
-		require.Len(t, tracer.spans[0].errs, 1)
-		assert.Same(t, original, tracer.spans[0].errs[0])
+		span := rejectedPlannerActivitySpan(t, tracer, "planner.plan_start")
+		assert.Same(t, original, span.errs[0])
 	}
 }
 
@@ -90,9 +89,7 @@ func TestPlannerSpanIncludesRuntimeAcceptance(t *testing.T) {
 	output, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, PlanActivityInput{AgentID: "service.agent", RunID: "run", RunContext: run.Context{RunID: "run", TurnID: "turn"}}, nil))
 	require.NoError(t, err)
 	require.NotNil(t, output.OutputContractFailure)
-	require.Len(t, tracer.spans, 1)
-	assert.Len(t, tracer.spans[0].errs, 1)
-	assert.Equal(t, codes.Error, tracer.spans[0].statusCode)
+	rejectedPlannerActivitySpan(t, tracer, "planner.plan_start")
 	assert.NotEmpty(t, output.OutputContractFailure.Reason)
 }
 
@@ -152,4 +149,42 @@ func TestInvalidUTF8PlannerDiagnosticOmission(t *testing.T) {
 	assert.False(t, runFailure.Retryable)
 	assert.Contains(t, runFailure.DebugMessage, "invalid_utf8")
 	assert.Contains(t, runFailure.DebugMessage, failure.ReasonSHA256)
+}
+
+// rejectedPlannerActivitySpan finds the single span for the whole activity and
+// checks that preparation finished successfully before the planner result was
+// rejected. It returns the activity span so callers can check the original error.
+func rejectedPlannerActivitySpan(t *testing.T, tracer *recordingTelemetryTracer, activityName string) *recordingTelemetrySpan {
+	t.Helper()
+	preparationCounts := map[string]int{
+		"planner.resolve_activity_input": 0,
+		"planner.prepare_continuations":  0,
+		"planner.prepare_invocation":     0,
+	}
+	if activityName == "planner.plan_resume" {
+		preparationCounts["planner.load_tool_outputs"] = 0
+	}
+	var activities []*recordingTelemetrySpan
+	for _, span := range tracer.spans {
+		if span.name == activityName {
+			activities = append(activities, span)
+			continue
+		}
+		require.Contains(t, preparationCounts, span.name)
+		preparationCounts[span.name]++
+		assert.True(t, span.ended, span.name)
+		assert.Equal(t, 1, span.endCount, span.name)
+		assert.Equal(t, codes.Ok, span.statusCode, span.name)
+		assert.Empty(t, span.errs, span.name)
+	}
+	for name, count := range preparationCounts {
+		assert.Equal(t, 1, count, name)
+	}
+	require.Len(t, activities, 1)
+	activity := activities[0]
+	require.Len(t, activity.errs, 1)
+	assert.Equal(t, codes.Error, activity.statusCode)
+	assert.True(t, activity.ended)
+	assert.Equal(t, 1, activity.endCount)
+	return activity
 }
