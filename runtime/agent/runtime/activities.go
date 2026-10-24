@@ -15,7 +15,9 @@ import (
 
 	"github.com/google/uuid"
 
+	"go.opentelemetry.io/otel/attribute"
 	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
+
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
@@ -546,7 +548,14 @@ func (r *Runtime) preparePlannerActivity(
 	continuationActions []continuationAction,
 	unavailableTools []tools.Ident,
 	advertisedSpecs []tools.ToolSpec,
-) (*plannerActivityInvocation, error) {
+) (_ *plannerActivityInvocation, err error) {
+	ctx, span := r.tracer.Start(ctx, "planner.prepare_invocation")
+	span.SetAttributes(
+		attribute.Int("message.count", len(input.Messages)),
+		attribute.Int("continuation.count", len(continuationActions)),
+		attribute.Int("unavailable_tool.entry_count", len(unavailableTools)),
+	)
+	defer func() { finishPlannerActivitySpan(ctx, span, nil, err) }()
 	parentTool, err := selectedRunTool(input.RunContext, input.AgentID, r)
 	if err != nil {
 		return nil, err
@@ -587,6 +596,7 @@ func (r *Runtime) preparePlannerActivity(
 			parentTool = &selected
 		}
 	}
+	span.SetAttributes(attribute.Int("tool_spec.count", len(advertisedSpecs)))
 	events := newPlannerEvents(input.AgentID, input.RunID, input.RunContext.SessionID)
 	publicationBatchID := uuid.NewString()
 	invocations := &modelInvocationJournal{

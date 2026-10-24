@@ -12,6 +12,8 @@ import (
 	"context"
 	"fmt"
 
+	"go.opentelemetry.io/otel/attribute"
+
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/planner"
@@ -26,7 +28,15 @@ type canonicalToolEvents struct {
 
 // loadPlannerToolOutputs rebuilds planner tool outputs from their stored run
 // records.
-func (r *Runtime) loadPlannerToolOutputs(ctx context.Context, refs []*api.ToolOutputRef) ([]*planner.ToolOutput, error) {
+func (r *Runtime) loadPlannerToolOutputs(ctx context.Context, refs []*api.ToolOutputRef) (outputs []*planner.ToolOutput, err error) {
+	ctx, span := r.tracer.Start(ctx, "planner.load_tool_outputs")
+	span.SetAttributes(attribute.Int("tool_output.ref_count", len(refs)))
+	defer func() {
+		if err == nil {
+			span.SetAttributes(attribute.Int("tool_output.count", len(outputs)))
+		}
+		finishPlannerActivitySpan(ctx, span, nil, err)
+	}()
 	if len(refs) == 0 {
 		return nil, nil
 	}
@@ -57,6 +67,7 @@ func (r *Runtime) loadPlannerToolOutputs(ctx context.Context, refs []*api.ToolOu
 		}
 	}
 
+	span.SetAttributes(attribute.Int("source_run.count", len(wantedByRun)))
 	eventsByRun := make(map[string]map[string]*canonicalToolEvents, len(wantedByRun))
 	for sourceRunID, wanted := range wantedByRun {
 		events, err := r.loadCanonicalToolEvents(ctx, sourceRunID, wanted)
@@ -66,7 +77,7 @@ func (r *Runtime) loadPlannerToolOutputs(ctx context.Context, refs []*api.ToolOu
 		eventsByRun[sourceRunID] = events
 	}
 
-	outputs := make([]*planner.ToolOutput, 0, len(refs))
+	outputs = make([]*planner.ToolOutput, 0, len(refs))
 	for _, ref := range refs {
 		output, err := r.plannerToolOutputFromCanonicalEvents(
 			ref.CallRunID,

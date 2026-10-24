@@ -380,7 +380,7 @@ func TestLoadPlannerToolOutputsAcceptsCrossRunContinuationResult(t *testing.T) {
 		nil,
 	), "result", 2)
 
-	runtime := &Runtime{Store: store}
+	runtime := New(store)
 	seedTestToolSpecs(runtime, newAnyJSONSpec(toolName))
 	outputs, err := runtime.loadPlannerToolOutputs(context.Background(), []*api.ToolOutputRef{{
 		CallRunID:   "call-run",
@@ -448,7 +448,7 @@ func TestLoadPlannerToolOutputsPreservesHistoryWithoutRegistration(t *testing.T)
 				test.failure,
 			), "result", 2)
 
-			runtime := &Runtime{Store: store}
+			runtime := New(store)
 			outputs, err := runtime.loadPlannerToolOutputs(context.Background(), []*api.ToolOutputRef{{
 				CallRunID:   "run-1",
 				ResultRunID: "run-1",

@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 
+	"go.opentelemetry.io/otel/attribute"
+
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -23,7 +25,9 @@ type resolvedPlanActivityInput struct {
 
 // resolvePlanActivityInput checks the run identity and loads its frozen history.
 // Finalization adds its existing instruction only to this invocation's messages.
-func (r *Runtime) resolvePlanActivityInput(ctx context.Context, input *PlanActivityInput) (*resolvedPlanActivityInput, error) {
+func (r *Runtime) resolvePlanActivityInput(ctx context.Context, input *PlanActivityInput) (_ *resolvedPlanActivityInput, err error) {
+	ctx, span := r.tracer.Start(ctx, "planner.resolve_activity_input")
+	defer func() { finishPlannerActivitySpan(ctx, span, nil, err) }()
 	if input.RunID != input.RunContext.RunID {
 		return nil, engine.MarkActivityErrorNonRetryable(errors.New("planner run id does not match run context"))
 	}
@@ -37,6 +41,7 @@ func (r *Runtime) resolvePlanActivityInput(ctx context.Context, input *PlanActiv
 	if input.Finalize != nil && input.Finalize.Message != "" {
 		messages = append(messages, newTextAgentMessage(model.ConversationRoleSystem, input.Finalize.Message))
 	}
+	span.SetAttributes(attribute.Int("message.count", len(messages)))
 	return &resolvedPlanActivityInput{PlanActivityInput: input, Messages: messages}, nil
 }
 
