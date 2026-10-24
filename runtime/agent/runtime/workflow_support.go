@@ -25,6 +25,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/internal/errorevidence"
 	"goa.design/goa-ai/runtime/agent/internal/outputcontract"
+	"goa.design/goa-ai/runtime/agent/internal/workflowcodec"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
@@ -966,11 +967,11 @@ func preparePlannerPublicationBatch(
 		if record.Type == "" || len(record.Payload) == 0 {
 			return nil, fmt.Errorf("planner event %d is missing its type or payload", index)
 		}
-		if len(record.Payload) > maxHookPayloadBytes {
+		if len(record.Payload) > workflowcodec.MaxRecordPayloadBytes {
 			return nil, fmt.Errorf(
 				"runtime: planner event payload exceeds budget (%d > %d bytes, type=%s, run_id=%s)",
 				len(record.Payload),
-				maxHookPayloadBytes,
+				workflowcodec.MaxRecordPayloadBytes,
 				record.Type,
 				input.RunID,
 			)

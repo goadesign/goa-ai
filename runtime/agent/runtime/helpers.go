@@ -23,6 +23,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/internal/workflowcodec"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
@@ -37,11 +38,6 @@ const (
 	unknownID                     = "unknown"
 	generatedToolCallIDHashDomain = "goa-ai/runtime-tool-call-id/v2\x00"
 	terminalRunEventKey           = "runtime/terminal"
-	// maxHookPayloadBytes is a safety bound on the serialized hook payload passed
-	// across the workflow/activity boundary. Exceeding Temporal's payload limit
-	// terminates the workflow task; failing early keeps failures explicit and
-	// debuggable.
-	maxHookPayloadBytes = 1_000_000
 )
 
 // hasNonNullJSON reports whether raw contains a non-empty JSON value other than
@@ -325,24 +321,11 @@ func prepareHookRecordInputWithMetadata(
 	if eventKey := toolLifecycleEventKey(evt); eventKey != "" {
 		meta.EventKey = eventKey
 	}
-	in, err := hooks.EncodeToRecordInput(evt, hooks.EncodeOptions{
+	return hooks.EncodeToRecordInput(evt, hooks.EncodeOptions{
 		TurnID:      turnID,
 		EventKey:    meta.EventKey,
 		TimestampMS: meta.TimestampMS,
 	})
-	if err != nil {
-		return nil, err
-	}
-	if len(in.Payload) > maxHookPayloadBytes {
-		return nil, fmt.Errorf(
-			"runtime: hook payload exceeds budget (%d > %d bytes, type=%s, run_id=%s)",
-			len(in.Payload),
-			maxHookPayloadBytes,
-			evt.Type(),
-			evt.RunID(),
-		)
-	}
-	return in, nil
 }
 
 // publishPreparedHook persists a previously frozen hook envelope when the
@@ -503,11 +486,11 @@ func (r *Runtime) publishTranscriptMessages(
 	if err != nil {
 		return "", err
 	}
-	if len(payload) > maxHookPayloadBytes {
+	if len(payload) > workflowcodec.MaxRecordPayloadBytes {
 		return "", fmt.Errorf(
 			"runtime: transcript delta payload exceeds budget (%d > %d bytes, run_id=%s)",
 			len(payload),
-			maxHookPayloadBytes,
+			workflowcodec.MaxRecordPayloadBytes,
 			runID,
 		)
 	}

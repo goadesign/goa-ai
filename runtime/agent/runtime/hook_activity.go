@@ -206,17 +206,15 @@ func (r *Runtime) recordResult(ctx context.Context, input *RecordActivityInput) 
 			return storage.AppendResult{}, err
 		}
 		if enriched {
-			reencoded, err := hooks.EncodeToRecordInput(e, hooks.EncodeOptions{
-				TurnID:      input.TurnID,
-				EventKey:    input.EventKey,
-				TimestampMS: input.TimestampMS,
-			})
+			// The accepted input already supplies the record identity and time.
+			// Add the display hint only to the locally stored payload.
+			reencoded, err := hooks.EncodeRecordPayload(e)
 			if err != nil {
 				return storage.AppendResult{}, malformedStorageCommand(
 					fmt.Errorf("runtime: encode enriched tool call record: %w", err),
 				)
 			}
-			payload = append([]byte(nil), reencoded.Payload.RawMessage()...)
+			payload = append([]byte(nil), reencoded.RawMessage()...)
 		}
 	}
 	if input.Type == hooks.RunStarted || input.Type == hooks.ChildRunLinked || input.Type == hooks.RunCompleted {
@@ -564,11 +562,13 @@ func runTerminalStorageCommand(request *api.RunTerminalCommand, meta session.Run
 		}
 		completed.Failure = original
 	}
-	encoded, err := hooks.EncodeToRecordInput(completed, hooks.EncodeOptions{TurnID: input.TurnID, EventKey: input.EventKey, TimestampMS: input.TimestampMS})
+	// Saved labels and failure details arrived in separately accepted inputs.
+	// Store their complete payload under the original record identity and time.
+	payload, err := hooks.EncodeRecordPayload(completed)
 	if err != nil {
 		return storage.RunTerminal{}, nil, malformedStorageCommand(err)
 	}
-	command.Record = runLogEvent(encoded, encoded.Payload, completed.Timestamp())
+	command.Record = runLogEvent(input, payload, input.TimestampMS)
 	return command, completed, nil
 }
 

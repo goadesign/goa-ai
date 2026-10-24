@@ -1136,21 +1136,21 @@ func cancellationRecord(t *testing.T, key string, start session.RunStart, reason
 	}
 }
 
-// hookRecord converts a typed hook event into the immutable storage envelope
-// accepted by the integrated store.
+// hookRecord serializes one event for a direct Store call. The supplied key
+// and time preserve the record identity without creating a workflow request.
 func hookRecord(t *testing.T, key string, at time.Time, event hooks.Event) *runlog.Event {
 	t.Helper()
-	input, err := hooks.EncodeToRecordInput(event, hooks.EncodeOptions{EventKey: key, TimestampMS: at.UnixMilli()})
+	payload, err := hooks.EncodeRecordPayload(event)
 	require.NoError(t, err)
 	return &runlog.Event{
-		EventKey:  input.EventKey,
-		RunID:     input.RunID,
-		Subject:   input.Subject,
-		SessionID: input.SessionID,
-		TurnID:    input.TurnID,
-		Type:      input.Type,
-		Payload:   input.Payload,
-		Timestamp: time.UnixMilli(input.TimestampMS).UTC(),
+		EventKey:  key,
+		RunID:     event.RunID(),
+		Subject:   event.Subject(),
+		SessionID: event.SessionID(),
+		TurnID:    event.TurnID(),
+		Type:      event.Type(),
+		Payload:   payload,
+		Timestamp: time.UnixMilli(at.UnixMilli()).UTC(),
 	}
 }
 

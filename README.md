@@ -186,7 +186,9 @@ service wiring, and connecting a model. For MCP, follow the
 - **Large results and images.** Bound model-visible results, continue paginated
   queries, retain native image evidence, and keep rich host data outside model
   requests. Saved history remains readable after tool changes; only compatible
-  current tools can supply another page.
+  current tools can supply another page. Outbound run-log record encoding applies
+  the workflow payload allowance before publication; complete records assembled
+  inside storage and historical reads preserve separately accepted data.
 
 [Agent DSL](docs/dsl.md#agent-use-and-export) · [Runtime and composition](docs/runtime.md) · [Native images](docs/native_images.md)
 

@@ -115,7 +115,7 @@ func TestIndependentTerminalFailureRetainsExistingMessageLimits(t *testing.T) {
 	subject := genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("test.agent")}
 	input := &RunInput{RunID: "terminal-run", Subject: subject}
 	metadata := recordDispatchMetadata{EventKey: "terminal-event", TimestampMS: 1_700_000_000_000}
-	_, err := buildRunTerminalCommand(input, "", runStatusFailed, errors.New(strings.Repeat("x", maxHookPayloadBytes)), nil, metadata)
+	_, err := buildRunTerminalCommand(input, "", runStatusFailed, errors.New(strings.Repeat("x", workflowcodec.MaxRecordPayloadBytes)), nil, metadata)
 	require.Error(t, err)
 	cause := toolerrors.New(strings.Repeat("x", 600_000))
 	output := &api.RunOutput{FinalToolResult: &api.ToolEvent{Failure: &planner.ToolFailure{Kind: planner.FailureUnavailable, Error: cause, Recovery: planner.RecoveryDirective{Action: planner.RecoveryReplan}}}}

@@ -16,6 +16,7 @@ import (
 	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/internal/errorevidence"
+	"goa.design/goa-ai/runtime/agent/internal/workflowcodec"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
@@ -84,7 +85,9 @@ type (
 )
 
 // EncodeToRecordInput creates a durable runtime-record envelope from one hook
-// event for serialization and transport to the storage activity.
+// event for serialization and transport to the storage activity. It rejects a
+// serialized payload larger than 1,000,000 bytes; the complete activity call
+// must also fit the workflow engine's separate aggregate allowance.
 func EncodeToRecordInput(evt Event, opts EncodeOptions) (*runlog.ActivityInput, error) {
 	if evt == nil {
 		return nil, errors.New("encode hook record: event is nil")
@@ -118,6 +121,16 @@ func EncodeToRecordInput(evt Event, opts EncodeOptions) (*runlog.ActivityInput, 
 		return nil, err
 	}
 
+	if len(payload) > workflowcodec.MaxRecordPayloadBytes {
+		return nil, fmt.Errorf(
+			"runtime: hook payload exceeds budget (%d > %d bytes, type=%s, run_id=%s)",
+			len(payload),
+			workflowcodec.MaxRecordPayloadBytes,
+			evt.Type(),
+			evt.RunID(),
+		)
+	}
+
 	return &runlog.ActivityInput{
 		Type:        evt.Type(),
 		EventKey:    eventKey,
@@ -131,7 +144,9 @@ func EncodeToRecordInput(evt Event, opts EncodeOptions) (*runlog.ActivityInput, 
 }
 
 // EncodeRecordPayload serializes the event fields stored in a run-log record.
-// The caller supplies the record identity and timestamp separately.
+// The caller supplies the record identity and timestamp separately. Storage
+// uses this encoder to combine separately accepted facts without imposing the
+// outbound workflow payload allowance on the complete stored event.
 func EncodeRecordPayload(evt Event) (rawjson.Message, error) {
 	if evt == nil {
 		return nil, errors.New("encode hook payload: event is nil")
