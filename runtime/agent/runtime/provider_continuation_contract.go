@@ -8,7 +8,7 @@ import (
 	"fmt"
 	"reflect"
 
-	genregistry "goa.design/goa-ai/registry/gen/registry"
+	"goa.design/goa-ai/internal/registrycontract"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -133,6 +133,6 @@ func (s providedToolSpecs) spec(name tools.Ident) (tools.ToolSpec, bool) {
 
 // registryDeclaration reports that provider-supplied contracts never carry
 // generated registry declarations.
-func (providedToolSpecs) registryDeclaration(tools.Ident) (*genregistry.ToolSchema, bool) {
+func (providedToolSpecs) registryDeclaration(tools.Ident) (*registrycontract.CompiledDeclaration, bool) {
 	return nil, false
 }

@@ -317,7 +317,7 @@ func (c *RegistryCatalog) spec(name tools.Ident) (tools.ToolSpec, bool) {
 
 // registryDeclaration returns the generated declaration of a statically
 // declared tool, preferring the consuming definition over other agents.
-func (c *RegistryCatalog) registryDeclaration(name tools.Ident) (*genregistry.ToolSchema, bool) {
+func (c *RegistryCatalog) registryDeclaration(name tools.Ident) (*registrycontract.CompiledDeclaration, bool) {
 	if declaration, ok := c.definition.registryDeclaration(name); ok {
 		return declaration, true
 	}

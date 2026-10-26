@@ -126,11 +126,7 @@ func (r *Runtime) selectedAgentToolConfig(call ToolCall) (*AgentToolConfig, erro
 // prepareRegistryAgentChild runs on the provider worker, validates the selected
 // operation input and renders the exact configuration named by its registration.
 func (r *Runtime) prepareRegistryAgentChild(ctx context.Context, origin genregistry.ExecutionInvocation, call ToolCall) (*AgentToolConfiguration, error) {
-	cfg, err := r.providerAgentToolConfig(call)
-	if err != nil {
-		return nil, err
-	}
-	declaration, err := registryAgentDeclaration(call, r)
+	cfg, declaration, err := r.providerAgentOperation(call)
 	if err != nil {
 		return nil, err
 	}
@@ -232,9 +228,10 @@ func selectedParentTool(name tools.Ident, binding *tools.RegistryBinding, execut
 		if err != nil {
 			return nil, err
 		}
-		spec, err := compileAgentOperation(declaration, executor)
-		if err != nil {
-			return nil, err
+		spec := resolved.Specs[name]
+		spec.Name = tools.Ident(declaration.Name)
+		if !spec.IsAgentTool || spec.AgentID != string(executor) {
+			return nil, fmt.Errorf("operation %q does not target Agent %q", spec.Name, executor)
 		}
 		return &spec, nil
 	}

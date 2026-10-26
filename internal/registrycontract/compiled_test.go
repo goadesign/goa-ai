@@ -196,11 +196,15 @@ func compiledTestBound(generated []*genregistry.ToolSchema, configuration string
 
 // compiledTestLookup serves generated declarations by name.
 func compiledTestLookup(declarations []*genregistry.ToolSchema) CompiledDeclarations {
-	byName := make(map[tools.Ident]*genregistry.ToolSchema, len(declarations))
+	byName := make(map[tools.Ident]*CompiledDeclaration, len(declarations))
 	for _, declaration := range declarations {
-		byName[tools.Ident(declaration.Name)] = declaration
+		compiled, err := CompileDeclaration(declaration)
+		if err != nil {
+			panic(err)
+		}
+		byName[tools.Ident(declaration.Name)] = compiled
 	}
-	return func(name tools.Ident) (*genregistry.ToolSchema, bool) {
+	return func(name tools.Ident) (*CompiledDeclaration, bool) {
 		declaration, ok := byName[name]
 		return declaration, ok
 	}

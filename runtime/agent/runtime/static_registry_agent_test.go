@@ -100,6 +100,9 @@ func TestStaticAgentBindingPreservesTimeoutPolicy(t *testing.T) {
 		_, catalog, expected, selected := staticAgentCatalog(t)
 		expected[0].ConsumerContract.ReplanOnTimeout = marked
 		selected.Toolset.Tools[0].ConsumerContract.ReplanOnTimeout = marked
+		compiledDecl, err := registrycontract.CompileDeclaration(expected[0])
+		require.NoError(t, err)
+		catalog.definition.declarations[genrecords.Read] = compiledDecl
 		spec := catalog.definition.specByName[genrecords.Read]
 		spec.ReplanOnTimeout = marked
 		catalog.definition.specByName[genrecords.Read] = spec

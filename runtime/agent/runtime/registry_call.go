@@ -7,7 +7,6 @@ import (
 	"fmt"
 
 	"goa.design/goa-ai/internal/registrycontract"
-	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/policy"
@@ -182,7 +181,7 @@ func (noStaticTools) spec(tools.Ident) (tools.ToolSpec, bool) {
 }
 
 // registryDeclaration reports that a dynamic call has no generated declaration.
-func (noStaticTools) registryDeclaration(tools.Ident) (*genregistry.ToolSchema, bool) {
+func (noStaticTools) registryDeclaration(tools.Ident) (*registrycontract.CompiledDeclaration, bool) {
 	return nil, false
 }
 

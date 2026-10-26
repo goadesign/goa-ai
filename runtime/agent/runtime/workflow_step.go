@@ -17,7 +17,7 @@ import (
 	"slices"
 	"time"
 
-	genregistry "goa.design/goa-ai/registry/gen/registry"
+	"goa.design/goa-ai/internal/registrycontract"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
@@ -36,7 +36,7 @@ type (
 	// catalog, or every agent registered on the runtime.
 	toolSpecLookup interface {
 		spec(tools.Ident) (tools.ToolSpec, bool)
-		registryDeclaration(tools.Ident) (*genregistry.ToolSchema, bool)
+		registryDeclaration(tools.Ident) (*registrycontract.CompiledDeclaration, bool)
 	}
 
 	stepKind uint8
@@ -137,10 +137,15 @@ func normalizeStepWithHistory(result *PlanResult, lookup toolSpecLookup, current
 		return stepProgram{}, planner.NewOutputContractError(errors.New("workflow step received nil PlanResult"))
 	}
 	executableCalls := currentToolCalls(result.ToolCalls, current)
-	for _, call := range executableCalls {
-		if _, _, err := lookupCallSpec(call, lookup); err != nil {
+	executableSpecs := make([]tools.ToolSpec, len(executableCalls))
+	executableFound := make([]bool, len(executableCalls))
+	for index, call := range executableCalls {
+		spec, ok, err := lookupCallSpec(call, lookup)
+		if err != nil {
 			return stepProgram{}, planner.NewOutputContractError(err)
 		}
+		executableSpecs[index] = spec
+		executableFound[index] = ok
 	}
 	terminalPayloads := 0
 	if result.FinalResponse != nil {
@@ -180,8 +185,12 @@ func normalizeStepWithHistory(result *PlanResult, lookup toolSpecLookup, current
 		)
 	}
 	if result.SynthesizeAfterTools {
-		if err := validateSynthesisToolContracts(executableCalls, lookup); err != nil {
-			return stepProgram{}, planner.NewOutputContractError(err)
+		for index, call := range executableCalls {
+			if executableFound[index] && executableSpecs[index].TerminalRun {
+				return stepProgram{}, planner.NewOutputContractError(
+					fmt.Errorf("workflow step synthesis-after-tools cannot include terminal tool %q", call.Name),
+				)
+			}
 		}
 		// Completed calls already established the original budgeted-work rule.
 		// Only a wholly current response needs today's budget classification.
@@ -202,7 +211,7 @@ func normalizeStepWithHistory(result *PlanResult, lookup toolSpecLookup, current
 		}, nil
 	}
 	if hasTerminal {
-		if err := validateToolTerminalProgramWithSpecs(executableCalls, lookup); err != nil {
+		if err := validateToolTerminalResolvedSpecs(executableCalls, executableSpecs, executableFound); err != nil {
 			return stepProgram{}, planner.NewOutputContractError(err)
 		}
 		return stepProgram{
@@ -536,21 +545,6 @@ func cloneAwaitQuestions(questions []planner.AwaitQuestion) []planner.AwaitQuest
 	return cloned
 }
 
-// validateSynthesisToolContracts rejects current terminal calls before a
-// planner response can request another reasoning turn after those calls finish.
-func validateSynthesisToolContracts(calls []ToolCall, lookup toolSpecLookup) error {
-	for _, call := range calls {
-		spec, ok, err := lookupCallSpec(call, lookup)
-		if err != nil {
-			return err
-		}
-		if ok && spec.TerminalRun {
-			return fmt.Errorf("workflow step synthesis-after-tools cannot include terminal tool %q", call.Name)
-		}
-	}
-	return nil
-}
-
 // currentToolCalls selects the calls whose saved inputs still have a consumer.
 // New planner responses pass no history map and validate every call.
 func currentToolCalls(calls []ToolCall, current map[string]bool) []ToolCall {
@@ -695,22 +689,15 @@ func validatePlanResultToolCallIDs(result *PlanResult) error {
 	return nil
 }
 
-// validateToolTerminalProgram enforces the only legal terminal-with-tools
+// validateToolTerminalResolvedSpecs enforces the only legal terminal-with-tools
 // shape: non-resuming bookkeeping side effects followed by a terminal planner
 // payload in the same step.
-func (r *Runtime) validateToolTerminalProgram(calls []ToolCall) error {
-	return validateToolTerminalProgramWithSpecs(calls, r)
-}
-
-func validateToolTerminalProgramWithSpecs(calls []ToolCall, lookup toolSpecLookup) error {
-	for _, call := range calls {
-		spec, ok, err := lookupCallSpec(call, lookup)
-		if err != nil {
-			return err
-		}
-		if !ok {
+func validateToolTerminalResolvedSpecs(calls []ToolCall, specs []tools.ToolSpec, found []bool) error {
+	for index, call := range calls {
+		if !found[index] {
 			return fmt.Errorf("workflow step terminal payload cannot accompany unknown tool %q", call.Name)
 		}
+		spec := specs[index]
 		if !spec.Bookkeeping {
 			return fmt.Errorf("workflow step terminal payload cannot accompany budgeted tool %q", call.Name)
 		}

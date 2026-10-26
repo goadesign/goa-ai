@@ -124,11 +124,12 @@ func (c *RegistryCatalog) BindStaticAgent(registry string, expected []*genregist
 			return err
 		}
 	}
-	if _, err := c.restoreCompiledSelections(registry, resolved, names); err != nil {
+	restored, err := c.restoreCompiledSelections(registry, resolved, names)
+	if err != nil {
 		return err
 	}
-	for _, name := range names {
-		c.selections[name] = registrySelection{registry: registry, resolution: resolved, readPreviousAgent: readPrevious}
+	for index, name := range names {
+		c.selections[name] = registrySelection{registry: registry, resolution: restored[index], readPreviousAgent: readPrevious}
 		c.labels[name] = slices.Clone(seen[name].ConsumerContract.RequiredLabels)
 	}
 	return nil

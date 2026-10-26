@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"slices"
 
+	internaladmission "goa.design/goa-ai/internal/toolregistry/admission"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent/tools"
 	toolcontract "goa.design/goa-ai/runtime/toolregistry/contract"
@@ -23,8 +24,9 @@ type (
 		// The exact route and token remain tied to Registered.
 		Source *genregistry.CatalogSource
 		// Specs contains the validated contracts under their consumer names.
-		Specs  map[tools.Ident]tools.ToolSpec
-		byName map[tools.Ident]*genregistry.ToolSchema
+		Specs   map[tools.Ident]tools.ToolSpec
+		byName  map[tools.Ident]*genregistry.ToolSchema
+		unbound map[tools.Ident]internaladmission.ToolSchema
 		// compiled is true when the consumer's generated code declares these
 		// operations, so Select saves only the registration chosen for a call.
 		compiled bool

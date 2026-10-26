@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 
+	"goa.design/goa-ai/internal/registrycontract"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent"
@@ -154,9 +155,9 @@ type (
 		prepareInputs         func(context.Context, *RegistryCatalog) error
 		requiredInputBindings []tools.Ident
 		agents                map[agent.Ident]AgentDefinition
-		// declarations holds the generated registry declaration of each tool
-		// that has one, so saved calls can omit it. See registry_declarations.go.
-		declarations map[tools.Ident]*genregistry.ToolSchema
+		// declarations holds the pre-compiled generated registry declaration of
+		// each tool that has one, so saved calls can omit it. See registry_declarations.go.
+		declarations map[tools.Ident]*registrycontract.CompiledDeclaration
 	}
 
 	// agentClient binds execution to one generated agent definition.

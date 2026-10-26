@@ -24,7 +24,7 @@ func (f specLookupFunc) spec(name tools.Ident) (tools.ToolSpec, bool) {
 }
 
 // registryDeclaration reports that a test lookup has no generated declarations.
-func (specLookupFunc) registryDeclaration(tools.Ident) (*genregistry.ToolSchema, bool) {
+func (specLookupFunc) registryDeclaration(tools.Ident) (*registrycontract.CompiledDeclaration, bool) {
 	return nil, false
 }
 

@@ -34,12 +34,16 @@ func registryAgentDeclaration(call ToolCall, lookup toolSpecLookup) (*genregistr
 // registeredChildDefinition checks the parent's declared registry access and
 // returns only the admitted route. The provider owns its private tool catalog.
 func registeredChildDefinition(call ToolCall, parent AgentDefinition) (AgentDefinition, error) {
-	if _, err := validateRegistrySource(parent, call); err != nil {
-		return AgentDefinition{}, err
-	}
-	declaration, err := registryAgentDeclaration(call, parent)
+	resolved, err := validateRegistrySource(parent, call)
 	if err != nil {
 		return AgentDefinition{}, err
+	}
+	declaration, err := resolved.Declaration(call.Name)
+	if err != nil {
+		return AgentDefinition{}, err
+	}
+	if !resolved.Specs[call.Name].IsAgentTool {
+		return AgentDefinition{}, fmt.Errorf("registry tool %q is not an Agent operation", call.Name)
 	}
 	target := declaration.ConsumerContract.Agent
 	return NewAgentDefinition(AgentRoute{
@@ -51,20 +55,27 @@ func registeredChildDefinition(call ToolCall, parent AgentDefinition) (AgentDefi
 // providerAgentToolConfig checks that a retained registry operation selects
 // this worker's exact route. Only that worker's resolver can prepare its input.
 func (r *Runtime) providerAgentToolConfig(call ToolCall) (*AgentToolConfig, error) {
+	cfg, _, err := r.providerAgentOperation(call)
+	return cfg, err
+}
+
+// providerAgentOperation resolves both the provider worker's registered
+// definition and the retained registry declaration in a single contract read.
+func (r *Runtime) providerAgentOperation(call ToolCall) (*AgentToolConfig, *genregistry.ToolSchema, error) {
 	declaration, err := registryAgentDeclaration(call, r)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	target := declaration.ConsumerContract.Agent
 	registration, exists := r.agentByID(agent.Ident(target.Executor))
 	if !exists {
-		return nil, fmt.Errorf("agent provider %q is not registered on this worker", target.Executor)
+		return nil, nil, fmt.Errorf("agent provider %q is not registered on this worker", target.Executor)
 	}
 	route := registration.Definition.route
 	if route.WorkflowName != target.Workflow || route.DefaultTaskQueue != target.Queue {
-		return nil, fmt.Errorf("agent operation %q does not match this provider's registered route", call.Name)
+		return nil, nil, fmt.Errorf("agent operation %q does not match this provider's registered route", call.Name)
 	}
-	return &AgentToolConfig{Definition: registration.Definition}, nil
+	return &AgentToolConfig{Definition: registration.Definition}, declaration, nil
 }
 
 // agentChildPreparationConfig uses local registration for a static call and

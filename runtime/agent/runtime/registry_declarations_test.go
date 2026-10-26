@@ -22,7 +22,7 @@ func TestWithRegistryDeclarationsKeepsOnlyDefinitionTools(t *testing.T) {
 	definition := testAgentDefinition("records.agent", "records.workflow", "records.queue", specs, nil).WithRegistryDeclarations(genrecords.ToolSchema)
 	declaration, ok := definition.registryDeclaration(genrecords.Read)
 	require.True(t, ok)
-	assert.Equal(t, string(genrecords.Read), declaration.Name)
+	assert.Equal(t, string(genrecords.Read), declaration.Declaration().Name)
 	_, ok = definition.registryDeclaration(genrecords.Erase)
 	assert.False(t, ok, "a declaration for a tool outside the definition is not kept")
 	self, ok := definition.ChildDefinition(definition.route.ID)
@@ -80,7 +80,7 @@ func TestRegistryDeclarationsRejectConflictingRegistrations(t *testing.T) {
 	require.True(t, ok)
 	original, ok := genrecords.ToolSchema(genrecords.Read)
 	require.True(t, ok)
-	assert.Equal(t, original.Description, declaration.Description, "the first registration's declaration is kept")
+	assert.Equal(t, original.Description, declaration.Declaration().Description, "the first registration's declaration is kept")
 }
 
 func TestStaticBindingRequiresGeneratedRegistryDeclarations(t *testing.T) {

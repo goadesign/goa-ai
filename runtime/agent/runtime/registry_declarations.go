@@ -14,9 +14,9 @@ import (
 	"fmt"
 	"maps"
 
+	"goa.design/goa-ai/internal/registrycontract"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent/tools"
-	toolcontract "goa.design/goa-ai/runtime/toolregistry/contract"
 )
 
 // WithRegistryDeclarations returns an immutable definition holding the
@@ -29,7 +29,7 @@ func (d AgentDefinition) WithRegistryDeclarations(lookup func(tools.Ident) (*gen
 	if lookup == nil || d.declarations != nil {
 		panic("runtime: agent registry declarations must be supplied exactly once")
 	}
-	declarations := make(map[tools.Ident]*genregistry.ToolSchema, len(d.specs))
+	declarations := make(map[tools.Ident]*registrycontract.CompiledDeclaration, len(d.specs))
 	for _, spec := range d.specs {
 		declaration, ok := lookup(spec.Name)
 		if !ok {
@@ -41,7 +41,11 @@ func (d AgentDefinition) WithRegistryDeclarations(lookup func(tools.Ident) (*gen
 		if declaration.ConsumerContract.Agent != nil {
 			panic(fmt.Sprintf("runtime: generated registry declaration for %q must not select a provider", spec.Name))
 		}
-		declarations[spec.Name] = declaration
+		compiled, err := registrycontract.CompileDeclaration(declaration)
+		if err != nil {
+			panic(fmt.Sprintf("runtime: invalid registry declaration for %q: %v", spec.Name, err))
+		}
+		declarations[spec.Name] = compiled
 	}
 	d.declarations = declarations
 	d.agents = maps.Clone(d.agents)
@@ -49,17 +53,17 @@ func (d AgentDefinition) WithRegistryDeclarations(lookup func(tools.Ident) (*gen
 	return d
 }
 
-// registryDeclaration returns the generated declaration of one of this
-// definition's tools, or false when generated code supplied none.
-func (d AgentDefinition) registryDeclaration(name tools.Ident) (*genregistry.ToolSchema, bool) {
+// registryDeclaration returns the pre-compiled generated declaration of one of
+// this definition's tools, or false when generated code supplied none.
+func (d AgentDefinition) registryDeclaration(name tools.Ident) (*registrycontract.CompiledDeclaration, bool) {
 	declaration, ok := d.declarations[name]
 	return declaration, ok
 }
 
-// registryDeclaration returns the generated declaration that any registered
-// agent supplied for one tool name, or false when none did. Code that has no
-// consuming definition uses it, as it uses toolSpec for specifications.
-func (r *Runtime) registryDeclaration(name tools.Ident) (*genregistry.ToolSchema, bool) {
+// registryDeclaration returns the pre-compiled generated declaration that any
+// registered agent supplied for one tool name, or false when none did. Code
+// that has no consuming definition uses it, as it uses toolSpec for specifications.
+func (r *Runtime) registryDeclaration(name tools.Ident) (*registrycontract.CompiledDeclaration, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	declaration, ok := r.registryDeclarations[name]
@@ -77,11 +81,7 @@ func (r *Runtime) validateRegistryDeclarations(definition AgentDefinition) error
 		if !ok {
 			continue
 		}
-		same, err := sameRegistryDeclaration(existing, declaration)
-		if err != nil {
-			return err
-		}
-		if !same {
+		if !existing.Same(declaration) {
 			return fmt.Errorf("%w: tool %q has two different registry declarations", ErrInvalidConfig, name)
 		}
 	}
@@ -92,25 +92,11 @@ func (r *Runtime) validateRegistryDeclarations(definition AgentDefinition) error
 // The caller holds r.mu for writing.
 func (r *Runtime) addRegistryDeclarationsLocked(definition AgentDefinition) {
 	if r.registryDeclarations == nil {
-		r.registryDeclarations = make(map[tools.Ident]*genregistry.ToolSchema, len(definition.declarations))
+		r.registryDeclarations = make(map[tools.Ident]*registrycontract.CompiledDeclaration, len(definition.declarations))
 	}
 	for name, declaration := range definition.declarations {
 		if _, exists := r.registryDeclarations[name]; !exists {
 			r.registryDeclarations[name] = declaration
 		}
 	}
-}
-
-// sameRegistryDeclaration compares two declarations with the registry identity
-// algorithm, which covers every schema and consumer-contract field.
-func sameRegistryDeclaration(a, b *genregistry.ToolSchema) (bool, error) {
-	left, err := toolcontract.Fingerprint(&genregistry.Toolset{Name: a.Name, Tools: []*genregistry.ToolSchema{a}})
-	if err != nil {
-		return false, err
-	}
-	right, err := toolcontract.Fingerprint(&genregistry.Toolset{Name: b.Name, Tools: []*genregistry.ToolSchema{b}})
-	if err != nil {
-		return false, err
-	}
-	return left == right, nil
 }

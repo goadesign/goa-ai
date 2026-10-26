@@ -36,7 +36,7 @@ func ReadPrevious(binding *tools.RegistryBinding, owned *genregistry.ResolvedToo
 	if owned.Toolset.Name != route || owned.RegistrationToken != token {
 		return nil, fmt.Errorf("previous registration returned another route or token")
 	}
-	lookup := func(name tools.Ident) (*genregistry.ToolSchema, bool) {
+	lookup := func(name tools.Ident) (*CompiledDeclaration, bool) {
 		declaration, exists := owner.byName[name]
 		if !exists {
 			return nil, false
@@ -45,7 +45,11 @@ func ReadPrevious(binding *tools.RegistryBinding, owned *genregistry.ResolvedToo
 		contract := *declaration.ConsumerContract
 		contract.Agent = nil
 		copied.ConsumerContract = &contract
-		return &copied, true
+		compiled, err := CompileDeclaration(&copied)
+		if err != nil {
+			return nil, false
+		}
+		return compiled, true
 	}
 	prior, err := Read(binding, lookup)
 	if err != nil {

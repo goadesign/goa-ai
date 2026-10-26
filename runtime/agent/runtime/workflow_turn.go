@@ -24,6 +24,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type stepTransition uint8
@@ -169,6 +170,13 @@ func (l *workflowLoop) prepareToolStep(program *stepProgram) error {
 	l.r.logger.Info(ctx, "Workflow received tool calls from planner", "count", len(program.calls))
 	candidates := append([]ToolCall(nil), program.calls...)
 	for _, call := range candidates {
+		if call.Registry != nil {
+			call.Labels = mergeLabels(cloneLabels(l.base.RunContext.Labels), call.Labels)
+			if _, err := l.r.resolveRegistryExecution(l.reg.Definition.route.ID, call); err != nil {
+				return err
+			}
+			continue
+		}
 		_, ok, err := l.r.callSpec(call)
 		if err != nil {
 			return err
@@ -177,12 +185,6 @@ func (l *workflowLoop) prepareToolStep(program *stepProgram) error {
 			return planner.NewOutputContractError(
 				fmt.Errorf("planner called unregistered tool %q", call.Name),
 			)
-		}
-		if call.Registry != nil {
-			call.Labels = mergeLabels(cloneLabels(l.base.RunContext.Labels), call.Labels)
-			if _, err := l.r.resolveRegistryExecution(l.reg.Definition.route.ID, call); err != nil {
-				return err
-			}
 		}
 	}
 	candidates, err := l.r.applyPerRunOverrides(ctx, l.input, candidates)
@@ -218,7 +220,11 @@ func (l *workflowLoop) prepareToolStep(program *stepProgram) error {
 		)
 		return errors.New("no tools allowed for execution")
 	}
-	if err := l.r.validateTerminalRunBatch(allowed); err != nil {
+	allowedSpecs, err := l.r.resolveBatchCallSpecs(allowed)
+	if err != nil {
+		return err
+	}
+	if err := validateTerminalRunBatchSpecs(allowedSpecs); err != nil {
 		return err
 	}
 	for _, call := range awaitToolRequests(program.awaitItems) {
@@ -231,15 +237,8 @@ func (l *workflowLoop) prepareToolStep(program *stepProgram) error {
 		}
 	}
 	if len(program.awaitItems) > 0 {
-		for _, call := range allowed {
-			spec, ok, err := l.r.callSpec(call)
-			if err != nil {
-				return err
-			}
-			if !ok {
-				return fmt.Errorf("unknown tool %q", call.Name)
-			}
-			if spec.TerminalRun {
+		for index, call := range allowed {
+			if allowedSpecs[index].TerminalRun {
 				return fmt.Errorf("terminal tool %q cannot accompany planner await work", call.Name)
 			}
 		}
@@ -253,14 +252,20 @@ func (l *workflowLoop) prepareToolStep(program *stepProgram) error {
 		return nil
 	}
 	if program.kind == stepKindToolTerminal {
-		if err := l.r.validateToolTerminalProgram(allowed); err != nil {
-			return err
+		for index, call := range allowed {
+			spec := allowedSpecs[index]
+			if !spec.Bookkeeping {
+				return fmt.Errorf("workflow step terminal payload cannot accompany budgeted tool %q", call.Name)
+			}
+			if spec.TerminalRun {
+				return fmt.Errorf("workflow step terminal payload cannot accompany terminal tool %q", call.Name)
+			}
 		}
 		if len(program.awaitItems) > 0 {
 			return errors.New("workflow step terminal payload cannot accompany await work")
 		}
 	}
-	immediate, confirmations, err := l.r.splitConfirmationCalls(ctx, l.base, allowed)
+	immediate, confirmations, err := l.r.splitConfirmationCalls(ctx, l.base, allowed, allowedSpecs)
 	if err != nil {
 		return err
 	}
@@ -296,19 +301,29 @@ func (l *workflowLoop) prepareToolStep(program *stepProgram) error {
 	return nil
 }
 
-// validateTerminalRunBatch prevents one planner step from assigning both
-// completion and continuation semantics to successful side effects.
-func (r *Runtime) validateTerminalRunBatch(calls []ToolCall) error {
-	hasTerminal := false
-	hasNonTerminal := false
-	for _, call := range calls {
+// resolveBatchCallSpecs resolves each call's contract once so turn-preparation
+// checks share the same validated ToolSpec values.
+func (r *Runtime) resolveBatchCallSpecs(calls []ToolCall) ([]tools.ToolSpec, error) {
+	specs := make([]tools.ToolSpec, len(calls))
+	for index, call := range calls {
 		spec, ok, err := r.callSpec(call)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		if !ok {
-			return fmt.Errorf("unknown tool %q", call.Name)
+			return nil, fmt.Errorf("unknown tool %q", call.Name)
 		}
+		specs[index] = spec
+	}
+	return specs, nil
+}
+
+// validateTerminalRunBatchSpecs prevents one planner step from assigning both
+// completion and continuation semantics to successful side effects.
+func validateTerminalRunBatchSpecs(specs []tools.ToolSpec) error {
+	hasTerminal := false
+	hasNonTerminal := false
+	for _, spec := range specs {
 		if spec.TerminalRun {
 			hasTerminal = true
 		} else {
