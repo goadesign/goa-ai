@@ -24,6 +24,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/runlog"
 	"goa.design/goa-ai/runtime/agent/storage"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type (
@@ -236,7 +237,8 @@ func TestChildActivityHeartbeatStopsOnRejectedOwnerAndReadFailure(t *testing.T) 
 }
 
 // childHeartbeatFixture stores three separate transcript deltas so one-record
-// page reads must preserve the same committed end across the activity.
+// page reads must preserve the same committed end across the activity when a
+// PreChildValidator inspects parent history.
 func childHeartbeatFixture(t *testing.T) (*Runtime, *api.AgentChildActivityInput) {
 	t.Helper()
 	rt := New(newTestStore())
@@ -246,7 +248,10 @@ func childHeartbeatFixture(t *testing.T) (*Runtime, *api.AgentChildActivityInput
 	}, []*model.Message{userMsg("original request")})
 	input.HistoryEndID = appendTestActivityHistory(t, rt, input, []*model.Message{assistantTextMsg("earlier answer")})
 	input.HistoryEndID = appendTestActivityHistory(t, rt, input, []*model.Message{userMsg("follow-up request")})
-	cfg := AgentToolConfig{Definition: testAgentDefinition("child.agent", "child.workflow", "child.queue", nil, nil)}
+	cfg := AgentToolConfig{
+		Definition:        testAgentDefinition("child.agent", "child.workflow", "child.queue", nil, nil),
+		PreChildValidator: func(context.Context, *AgentToolValidationInput) *tools.ValidationError { return nil },
+	}
 	registerAgentToolTestConfig(rt, cfg, "child", newAnyJSONSpec("child.lookup"))
 	return rt, &api.AgentChildActivityInput{
 		Origin: genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: parent.RunID, ToolCallID: "child-call"})},
@@ -254,6 +259,36 @@ func childHeartbeatFixture(t *testing.T) (*Runtime, *api.AgentChildActivityInput
 			Name: "child.lookup", ToolCallID: "child-call", Payload: rawjson.Message(`{}`)},
 		ParentRun: parent, HistoryEndID: input.HistoryEndID,
 	}
+}
+
+func TestChildActivitySkipsTranscriptReadWithoutPreChildValidator(t *testing.T) {
+	rt := New(newTestStore())
+	parent := run.Context{RunID: "parent-run", SessionID: "session"}
+	planInput := seedTestPlanInput(t, rt, PlanActivityInput{
+		AgentID: "parent.agent", RunID: parent.RunID, RunContext: parent,
+	}, []*model.Message{userMsg("original request")})
+	cfg := AgentToolConfig{
+		Definition: testAgentDefinition("child.agent", "child.workflow", "child.queue", nil, nil),
+	}
+	registerAgentToolTestConfig(rt, cfg, "child", newAnyJSONSpec("child.lookup"))
+	store := &historyReadStore{Store: rt.Store}
+	rt.Store = store
+	out, err := rt.prepareAgentChildActivity(t.Context(), &api.AgentChildActivityInput{
+		Origin: genregistry.ExecutionInvocation{Invocation: genregistry.NewExecutionInvocationKindTool(&genregistry.ToolInvocation{RunID: parent.RunID, ToolCallID: "child-call"})},
+		Call: ToolCall{
+			Subject:    genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent(genrunidentity.RunExecutorBranchAgent("parent.agent"))},
+			RunID:      parent.RunID,
+			SessionID:  parent.SessionID,
+			Name:       "child.lookup",
+			ToolCallID: "child-call",
+			Payload:    rawjson.Message(`{}`),
+		},
+		ParentRun:    parent,
+		HistoryEndID: planInput.HistoryEndID,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, out.Success)
+	require.Zero(t, store.prefixReads)
 }
 
 func (s *childHistoryGate) ListRunTranscriptRecords(ctx context.Context, runID, endID, afterID string, _ int) (runlog.Page, error) {

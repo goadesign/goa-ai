@@ -12,6 +12,7 @@ import (
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/hooks"
+	"goa.design/goa-ai/runtime/agent/internal/workflowcodec"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -973,4 +974,93 @@ func TestAppendUserToolResults_ReplaysRetryableBookkeepingFailures(t *testing.T)
 	require.True(t, ok)
 	require.Equal(t, "call-1", resultPart.ToolUseID)
 	require.True(t, resultPart.IsError)
+}
+
+func TestAppendUserToolResults_DeduplicatesIdenticalResultReminders(t *testing.T) {
+	rt := New(newTestStore())
+	firstSpec := newAnyJSONSpec("svc.tools.first")
+	firstSpec.ResultReminder = "Shared static guidance for this tool family."
+	secondSpec := newAnyJSONSpec("svc.tools.second")
+	secondSpec.ResultReminder = "Distinct guidance for the second tool."
+	seedTestToolSpecs(rt, firstSpec, secondSpec)
+
+	base := &workflowConversation{finalization: &workflowFinalizationState{}, RunContext: run.Context{RunID: "run-1"}}
+	agentID := agent.Ident("agent-1")
+
+	calls := []ToolCall{
+		{Name: firstSpec.Name, ToolCallID: "call-1"},
+		{Name: firstSpec.Name, ToolCallID: "call-2"},
+		{Name: secondSpec.Name, ToolCallID: "call-3"},
+		{Name: firstSpec.Name, ToolCallID: "call-4"},
+	}
+	results := []*planner.ToolResult{
+		{Name: firstSpec.Name, ToolCallID: "call-1", Result: map[string]any{"ok": true}},
+		{Name: firstSpec.Name, ToolCallID: "call-2", Result: map[string]any{"ok": true}},
+		{Name: secondSpec.Name, ToolCallID: "call-3", Result: map[string]any{"ok": true}},
+		{Name: firstSpec.Name, ToolCallID: "call-4", Result: map[string]any{"ok": true}},
+	}
+
+	appendUserToolResultsForTest(t, rt, agentID, base, calls, results)
+
+	require.Len(t, base.Messages, 2)
+	require.Equal(t, model.ConversationRoleUser, base.Messages[0].Role)
+	require.Len(t, base.Messages[0].Parts, 4)
+
+	require.Equal(t, model.ConversationRoleSystem, base.Messages[1].Role)
+	require.Len(t, base.Messages[1].Parts, 1)
+	reminderPart, ok := base.Messages[1].Parts[0].(model.TextPart)
+	require.True(t, ok)
+	want := "<system-reminder>" + firstSpec.ResultReminder + "</system-reminder>\n\n<system-reminder>" + secondSpec.ResultReminder + "</system-reminder>"
+	require.Equal(t, want, reminderPart.Text)
+}
+
+func TestPublishHookPublications_BatchesAndSplitsAtRecordPayloadBudget(t *testing.T) {
+	rt := New(newTestStore())
+	wfCtx := &routeWorkflowContext{
+		ctx:   t.Context(),
+		runID: "run-batch",
+	}
+
+	chunkSize := (workflowcodec.MaxRecordPayloadBytes / 2) + 1024
+	var publishedOrder []string
+	publications := []pendingHookPublication{
+		{
+			record: &RecordActivityInput{
+				EventKey: "rec-1",
+				Payload:  rawjson.Message(strings.Repeat("a", chunkSize)),
+			},
+			onPublished: func() {
+				publishedOrder = append(publishedOrder, "rec-1")
+			},
+		},
+		{
+			record: &RecordActivityInput{
+				EventKey: "rec-2",
+				Payload:  rawjson.Message(`{"small":1}`),
+			},
+			onPublished: func() {
+				publishedOrder = append(publishedOrder, "rec-2")
+			},
+		},
+		{
+			record: &RecordActivityInput{
+				EventKey: "rec-3",
+				Payload:  rawjson.Message(strings.Repeat("b", chunkSize)),
+			},
+			onPublished: func() {
+				publishedOrder = append(publishedOrder, "rec-3")
+			},
+		},
+	}
+
+	require.NoError(t, rt.publishHookPublications(wfCtx.Context(), publications))
+	require.Len(t, wfCtx.storageCalls, 2)
+	require.NotNil(t, wfCtx.storageCalls[0].Command.Append)
+	require.Len(t, wfCtx.storageCalls[0].Command.Append.Records, 2)
+	require.Equal(t, "rec-1", wfCtx.storageCalls[0].Command.Append.Records[0].EventKey)
+	require.Equal(t, "rec-2", wfCtx.storageCalls[0].Command.Append.Records[1].EventKey)
+	require.NotNil(t, wfCtx.storageCalls[1].Command.Append)
+	require.Len(t, wfCtx.storageCalls[1].Command.Append.Records, 1)
+	require.Equal(t, "rec-3", wfCtx.storageCalls[1].Command.Append.Records[0].EventKey)
+	require.Equal(t, []string{"rec-1", "rec-2", "rec-3"}, publishedOrder)
 }

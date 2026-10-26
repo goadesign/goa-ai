@@ -34,6 +34,20 @@ import (
 	"goa.design/goa-ai/runtime/agent/transcript"
 )
 
+type (
+	// pendingHookPublication pairs a frozen storage record with the state callback
+	// that marks its workflow owner published once the storage append succeeds.
+	pendingHookPublication struct {
+		record      *RecordActivityInput
+		onPublished func()
+	}
+
+	recordDispatchMetadata struct {
+		EventKey    string
+		TimestampMS int64
+	}
+)
+
 const (
 	unknownID                     = "unknown"
 	generatedToolCallIDHashDomain = "goa-ai/runtime-tool-call-id/v2\x00"
@@ -341,6 +355,44 @@ func (r *Runtime) publishPreparedHook(ctx context.Context, in *RecordActivityInp
 	return err
 }
 
+// publishHookPublications persists an ordered slice of frozen hook records in
+// bounded storage append commands, invoking each record's onPublished callback
+// once its append command succeeds.
+func (r *Runtime) publishHookPublications(
+	ctx context.Context,
+	publications []pendingHookPublication,
+) error {
+	if len(publications) == 0 {
+		return nil
+	}
+	for start := 0; start < len(publications); {
+		end := start
+		chunkBytes := 0
+		for end < len(publications) {
+			recBytes := len(publications[end].record.Payload)
+			if end > start && chunkBytes+recBytes > workflowcodec.MaxRecordPayloadBytes {
+				break
+			}
+			chunkBytes += recBytes
+			end++
+		}
+		records := make([]*RecordActivityInput, end-start)
+		for i := start; i < end; i++ {
+			records[i-start] = publications[i].record
+		}
+		if _, err := r.executeStorage(ctx, appendStorageCommand(records...), engine.ActivityOptions{}); err != nil {
+			return err
+		}
+		for i := start; i < end; i++ {
+			if publications[i].onPublished != nil {
+				publications[i].onPublished()
+			}
+		}
+		start = end
+	}
+	return nil
+}
+
 // prepareRunStartRecords freezes one ordered event batch before the workflow
 // schedules storage. Every retry therefore uses the same records.
 func prepareRunStartRecords(ctx context.Context, events []hooks.Event, turnID string) ([]*RecordActivityInput, error) {
@@ -564,11 +616,6 @@ func (r *Runtime) publishAssistantTranscriptDelta(
 		responseID,
 		messages,
 	)
-}
-
-type recordDispatchMetadata struct {
-	EventKey    string
-	TimestampMS int64
 }
 
 // recordDispatchMetadataForContext returns canonical append metadata for one

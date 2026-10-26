@@ -229,11 +229,18 @@ func (r *Runtime) appendUserToolRecordResults(
 	}}
 
 	if len(reminders) > 0 {
+		seenReminders := make(map[string]struct{}, len(reminders))
 		var reminderText strings.Builder
-		for i, rem := range reminders {
-			if i > 0 {
+		wroteReminder := false
+		for _, rem := range reminders {
+			if _, exists := seenReminders[rem]; exists {
+				continue
+			}
+			seenReminders[rem] = struct{}{}
+			if wroteReminder {
 				reminderText.WriteString("\n\n")
 			}
+			wroteReminder = true
 			reminderText.WriteString("<system-reminder>")
 			reminderText.WriteString(rem)
 			reminderText.WriteString("</system-reminder>")

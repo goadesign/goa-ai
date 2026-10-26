@@ -26,6 +26,7 @@ type routeWorkflowContext struct {
 	toolRoutes    map[string]func(context.Context, *ToolInput) (*ToolOutput, error)
 
 	lastHookCall        engine.StorageActivityCall
+	storageCalls        []engine.StorageActivityCall
 	lastPlannerCall     engine.PlannerActivityCall
 	lastToolCall        engine.ToolActivityCall
 	sequenceMu          sync.Mutex
@@ -187,6 +188,7 @@ func (r *routeWorkflowContext) StartChildWorkflow(
 
 func (r *routeWorkflowContext) ExecuteStorageActivity(call engine.StorageActivityCall) (*api.StorageActivityResult, error) {
 	r.lastHookCall = call
+	r.root().storageCalls = append(r.root().storageCalls, call)
 	if call.Name != storageActivityName {
 		return nil, fmt.Errorf("unexpected storage activity name %q", call.Name)
 	}
