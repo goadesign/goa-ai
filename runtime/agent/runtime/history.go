@@ -11,6 +11,7 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/model"
+	"goa.design/goa-ai/runtime/agent/stream"
 )
 
 type (
@@ -117,63 +118,35 @@ func defaultCompressConfig() *compressConfig {
 	}
 }
 
-const defaultSummaryPrompt = `
-Your task is to create a detailed summary of the conversation so far, paying close attention to the user's explicit requests and your previous actions.
-This summary should be thorough in capturing key details, decisions, and context that would be essential for continuing the work without losing important information.
+const (
+	// defaultCompactionStatusMessage is the user-facing status message emitted
+	// over the live session stream while earlier turns are being summarized.
+	defaultCompactionStatusMessage = "Summarizing earlier messages…"
 
-Before providing your final summary, wrap your analysis in tags to organize your thoughts and ensure you've covered all necessary points. In your analysis process:
+	defaultSummaryPrompt = `Your task is to create a structured, high-precision context summary of the conversation so far so work can continue seamlessly without losing user intent or verified facts.
+Do not output any preamble, scratchpad, or <analysis> block—respond directly with the summary sections below.
 
-1. Chronologically analyze each message and section of the conversation. For each section thoroughly identify:
-  - The user's explicit requests and intents
-  - Your approach to addressing the user's requests
-  - Key decisions, concepts, and patterns
-  - Specific details like names, references, artifacts, edits, or outputs produced
-2. Double-check for accuracy and completeness, addressing each required element thoroughly.
+Your summary must include the following six sections in order:
 
-Your summary should include the following sections:
-
-1. Primary Request and Intent: Capture all of the user's explicit requests and intents in detail
-2. Key Concepts: List all important concepts, topics, and domains discussed.
-3. Artifacts and References: Enumerate specific items examined, modified, or created (documents, data, outputs, etc.). Pay special attention to the most recent messages and include relevant excerpts where applicable, with a summary
-of why each is important.
-4. Problem Solving: Document problems solved and any ongoing efforts.
-5. Pending Tasks: Outline any pending tasks that you have explicitly been asked to work on.
-6. Current Work: Describe in detail precisely what was being worked on immediately before this summary request, paying special attention to the most recent messages from both user and assistant. Include specific references and
-excerpts where applicable.
-7. Optional Next Step: List the next step that you will take that is related to the most recent work you were doing. IMPORTANT: ensure that this step is DIRECTLY in line with the user's explicit requests, and the task you were
-working on immediately before this summary request. If your last task was concluded, then only list next steps if they are explicitly in line with the user's request. Do not start on tangential requests without confirming with the
-user first.
-8. If there is a next step, include direct quotes from the most recent conversation showing exactly what task you were working on and where you left off. This should be verbatim to ensure there's no drift in task interpretation.
-
-Here's an example of how your output should be structured:
-
-2. Key Concepts:
-  - [Concept 1]
-  - [Concept 2]
-  - [...]
-3. Artifacts and References:
-  - [Item 1]
-      - [Summary of why this item is important]
-    - [Summary of changes or observations, if any]
-    - [Relevant excerpt]
-  - [Item 2]
-      - [Relevant excerpt]
-  - [...]
-4. Problem Solving:
-[Description of solved problems and ongoing efforts]
-5. Pending Tasks:
-  - [Task 1]
-  - [Task 2]
-  - [...]
-6. Current Work:
-[Precise description of current work]
-7. Optional Next Step:
-[Next step to take, if applicable]
-
-Provide your summary based on the conversation so far, following this structure and ensuring precision and thoroughness in your response.
+1. User Requests and Intent:
+   - List every explicit user request, question, constraint, scope change, and preference in chronological order.
+   - Preserve verbatim quotes for the most recent user requests so the user's exact wording and intent are never lost.
+2. Task Overview and Progress:
+   - State the core objective, what has been completed, and what is currently in progress.
+3. Key Findings and Evidence:
+   - Record concrete facts, measurements, documents, tool outputs, and references discovered so far.
+   - Preserve exact identifiers, names, values, units, timestamps, and why each item matters.
+4. Errors, Fixes, and Ruled-Out Hypotheses:
+   - Document any errors, failed tool calls, or ruled-out hypotheses and how they were resolved so they are not repeated.
+5. Active Context and Pending Tasks:
+   - Outline the current state, open questions, and any remaining tasks explicitly requested by the user.
+6. Current Work and Next Steps:
+   - Describe precisely what was being worked on immediately before this summary, including verbatim quotes from the most recent exchange so there is zero drift in task interpretation.
+   - State the immediate next step only if it is directly aligned with the user's explicit request. Do not invent tangential tasks.
 
 CONVERSATION:
 %s`
+)
 
 // WithSummaryPrompt sets a custom summarization prompt. The prompt should contain
 // a %s placeholder where the complete quoted textual history and source-position
@@ -384,6 +357,14 @@ func Compress(client model.Client, policyCfg HistoryCompressionConfig, opts ...C
 		if resolve, ok := ctx.Value(imageSourceReaderKey{}).(model.ImageSourceResolver); ok {
 			summaryClient, err = model.WithImageSourceResolver(client, resolve)
 			if err != nil {
+				return original, err
+			}
+		}
+		if emitStatus, ok := ctx.Value(historyStatusEmitterKey{}).(historyStatusEmitter); ok {
+			if err := emitStatus(ctx, stream.StatusPayload{
+				Code:    stream.StatusCodeContextCompaction,
+				Message: defaultCompactionStatusMessage,
+			}); err != nil {
 				return original, err
 			}
 		}

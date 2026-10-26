@@ -151,6 +151,24 @@ type (
 		Data PlannerThoughtPayload
 	}
 
+	// Status carries a transient operational status update from the runtime to a
+	// trusted host while a planner request is being prepared or executed (for
+	// example, while earlier turns are being summarized to fit the model context
+	// window). Status events are live-only and are not persisted in the run log.
+	Status struct {
+		Base
+		// Data contains the machine-readable status code and human-facing message.
+		Data StatusPayload
+	}
+
+	// StatusPayload describes a transient operational status update.
+	StatusPayload struct {
+		// Code is a stable machine-readable status identifier (e.g., "context_compaction").
+		Code string `json:"code"`
+		// Message is a concise, user-friendly status description.
+		Message string `json:"message"`
+	}
+
 	// PromptRendered reports a rendered prompt reference and scope used by the
 	// runtime for prompt resolution.
 	PromptRendered struct {
@@ -634,6 +652,8 @@ type (
 		// events. It does not remove thinking parts or provider metadata from
 		// exact messages emitted through AssistantTurn.
 		Thoughts bool
+		// Status controls emission of transient runtime status events.
+		Status bool
 		// PromptRendered controls emission of prompt_rendered events.
 		PromptRendered bool
 		// ToolStart controls emission of tool_start events.
@@ -678,6 +698,7 @@ func RuntimeHostProfile() StreamProfile {
 		Assistant:          true,
 		AssistantTurns:     true,
 		Thoughts:           true,
+		Status:             true,
 		PromptRendered:     true,
 		ToolStart:          true,
 		ToolUpdate:         true,
@@ -720,6 +741,14 @@ const (
 	// EventPlannerThought carries planner notes or provider thinking to a trusted
 	// host. It must not be sent to an end-user client unchanged.
 	EventPlannerThought EventType = "planner_thought"
+
+	// EventStatus carries transient operational status updates (such as context
+	// compaction progress) to a trusted host.
+	EventStatus EventType = "status"
+
+	// StatusCodeContextCompaction identifies a status update emitted while the
+	// runtime summarizes earlier conversation turns to fit the context budget.
+	StatusCodeContextCompaction = "context_compaction"
 
 	// EventPromptRendered streams prompt render references and scopes used by runtime prompt resolution.
 	EventPromptRendered EventType = "prompt_rendered"
