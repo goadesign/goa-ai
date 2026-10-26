@@ -501,7 +501,7 @@ func (c *toolsetCatalog) GetToolset(ctx context.Context, name string) (*genregis
 	if err != nil {
 		return nil, err
 	}
-	return entry.Toolset.copyDeclaration(entry.RegisteredAt), nil
+	return entry.Toolset.decode(entry.RegisteredAt)
 }
 
 // ActiveRegistration returns one coherent definition and active admission.
@@ -717,31 +717,13 @@ func (c *toolsetCatalog) healthEntry(ctx context.Context, name string) (catalogS
 
 // ListToolsets returns active catalog entries matching every requested tag.
 func (c *toolsetCatalog) ListToolsets(ctx context.Context, tags []string) ([]*genregistry.ToolsetInfo, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	keys, err := c.store.Keys(ctx)
+	entries, err := c.activeCatalogStates(ctx)
 	if err != nil {
 		return nil, err
 	}
-	c.pruneDefinitions(keys)
-	toolsets := make([]*genregistry.ToolsetInfo, 0, len(keys))
-	for _, key := range keys {
-		if !strings.HasPrefix(key, toolsetCatalogKeyPrefix) {
-			continue
-		}
-		raw, exists, err := c.exactRaw(ctx, key)
-		if err != nil {
-			return nil, err
-		}
-		if !exists {
-			continue
-		}
-		entry, err := parseCatalogState(strings.TrimPrefix(key, toolsetCatalogKeyPrefix), raw)
-		if err != nil {
-			return nil, err
-		}
-		if entry.State == catalogEntryActive && catalogMatchesTags(entry.Info.Tags, tags) {
+	toolsets := make([]*genregistry.ToolsetInfo, 0, len(entries))
+	for _, entry := range entries {
+		if catalogMatchesTags(entry.Info.Tags, tags) {
 			toolsets = append(toolsets, copyToolsetInfo(entry.Info))
 		}
 	}
@@ -750,16 +732,49 @@ func (c *toolsetCatalog) ListToolsets(ctx context.Context, tags []string) ([]*ge
 
 // SearchToolsets returns active entries matching name, description, or tags.
 func (c *toolsetCatalog) SearchToolsets(ctx context.Context, query string) ([]*genregistry.ToolsetInfo, error) {
-	if err := ctx.Err(); err != nil {
+	entries, err := c.activeCatalogStates(ctx)
+	if err != nil {
 		return nil, err
 	}
 	lowerQuery := strings.ToLower(query)
+	toolsets := make([]*genregistry.ToolsetInfo, 0, len(entries))
+	for _, entry := range entries {
+		if catalogMatchesQuery(entry.Info, lowerQuery) {
+			toolsets = append(toolsets, copyToolsetInfo(entry.Info))
+		}
+	}
+	return toolsets, nil
+}
+
+// activeServiceToolsets returns the names of active service registrations that
+// use provider leases and health pings. Native Agent registrations execute as
+// child workflows without provider streams and are excluded.
+func (c *toolsetCatalog) activeServiceToolsets(ctx context.Context) ([]string, error) {
+	entries, err := c.activeCatalogStates(ctx)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if !entry.NativeAgent {
+			names = append(names, entry.Info.Name)
+		}
+	}
+	return names, nil
+}
+
+// activeCatalogStates returns every active catalog state in the store and prunes
+// retained definition validation metadata for deleted keys.
+func (c *toolsetCatalog) activeCatalogStates(ctx context.Context) ([]catalogState, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	keys, err := c.store.Keys(ctx)
 	if err != nil {
 		return nil, err
 	}
 	c.pruneDefinitions(keys)
-	toolsets := make([]*genregistry.ToolsetInfo, 0, len(keys))
+	entries := make([]catalogState, 0, len(keys))
 	for _, key := range keys {
 		if !strings.HasPrefix(key, toolsetCatalogKeyPrefix) {
 			continue
@@ -775,11 +790,11 @@ func (c *toolsetCatalog) SearchToolsets(ctx context.Context, query string) ([]*g
 		if err != nil {
 			return nil, err
 		}
-		if entry.State == catalogEntryActive && catalogMatchesQuery(entry.Info, lowerQuery) {
-			toolsets = append(toolsets, copyToolsetInfo(entry.Info))
+		if entry.State == catalogEntryActive {
+			entries = append(entries, entry)
 		}
 	}
-	return toolsets, nil
+	return entries, nil
 }
 
 // replace updates compact state without retransmitting definitions or history.

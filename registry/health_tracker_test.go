@@ -198,6 +198,21 @@ func TestHealthTrackerDoesNotReportRetiredCatalogEntries(t *testing.T) {
 	assertCatalogExpectationSpan(t, spans[0], "test.toolset", 0)
 }
 
+func TestHealthTrackerDoesNotReportNativeAgentCatalogEntries(t *testing.T) {
+	recorder := newHealthSpanRecorder(t)
+	ctx := context.Background()
+	clock := newTestTimeSource(time.Unix(1_700_000_000, 0))
+	catalog := newToolsetCatalog(newTestCatalogMap(), clock)
+	service := &Service{catalog: catalog, validator: catalog.validator}
+	_, err := service.RegisterAgentToolset(ctx, testAgentToolset("revision/1"))
+	require.NoError(t, err)
+
+	tracker := newDirectHealthTracker(ctx, catalog)
+	tracker.pingRegisteredToolsets(ctx)
+
+	assert.Empty(t, recorder.Ended())
+}
+
 func TestHealthTrackerReportsExpectedCatalogPresenceAfterSuccessfulRead(t *testing.T) {
 	recorder := newHealthSpanRecorder(t)
 	ctx := context.Background()

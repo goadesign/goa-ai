@@ -80,13 +80,14 @@ func TestNativeAdmissionPreparationPreservesGeneratedEncoding(t *testing.T) {
 			decoded, fingerprint, err := internaladmission.SavedToolsetFingerprint([]byte(prepared.raw))
 			require.NoError(t, err)
 			assert.Equal(t, prepared.fingerprint, fingerprint)
-			assert.Equal(t, prepared.declaration, decoded)
+			preparedDecoded, err := prepared.decode("")
+			require.NoError(t, err)
+			assert.Equal(t, preparedDecoded, decoded)
 			read, err := catalog.validatedDefinition(t.Context(), p.Name, prepared.raw, true)
 			require.NoError(t, err)
 			assert.Equal(t, prepared.fingerprint, read.fingerprint)
-			assert.Equal(t, prepared.declaration, read.declaration)
 			assert.Equal(t, prepared.info, read.info)
-			originalTitle := prepared.declaration.Tools[0].ConsumerContract.Title
+			originalTitle := preparedDecoded.Tools[0].ConsumerContract.Title
 			p.Exports[0].ConsumerContract.Title = "Caller mutation"
 			p.Exports[0].PayloadSchema[0] = ' '
 			contract := p.Exports[0].ConsumerContract
@@ -106,8 +107,10 @@ func TestNativeAdmissionPreparationPreservesGeneratedEncoding(t *testing.T) {
 					}
 				}
 			}
-			assert.Equal(t, originalTitle, prepared.declaration.Tools[0].ConsumerContract.Title)
-			assert.Equal(t, decoded, prepared.declaration)
+			afterMutate, err := prepared.decode("")
+			require.NoError(t, err)
+			assert.Equal(t, originalTitle, afterMutate.Tools[0].ConsumerContract.Title)
+			assert.Equal(t, decoded, afterMutate)
 			for name, schema := range prepared.executionSchemas {
 				assert.Same(t, schema, read.executionSchemas[name])
 			}

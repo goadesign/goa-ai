@@ -45,8 +45,8 @@ func (s *Service) RegisterAgentExports(ctx context.Context, p *genregistry.Agent
 			if err := checkAgentRegistration(state, definition.identity, nativeAgentToken(definition.fingerprint), ""); err != nil {
 				return err
 			}
-			result = resolvedToolsetRegistration(definition, state)
-			return nil
+			result, err = resolvedToolsetRegistration(definition, state)
+			return err
 		}
 		retired, err := tx.value("retired:" + resourceKey(&genregistry.CatalogResource{Kind: "agent", Scope: p.Scope, Name: p.ResourceName}))
 		if err != nil {
@@ -62,8 +62,8 @@ func (s *Service) RegisterAgentExports(ctx context.Context, p *genregistry.Agent
 		state := catalogState{Identity: definition.identity, NativeAgent: true, ImmutableNative: true, State: catalogEntryActive, Info: copyToolsetInfo(definition.info), SchemaFingerprint: definition.fingerprint, RegistrationToken: nativeAgentToken(definition.fingerprint), RegisteredAt: now.Format(time.RFC3339Nano)}
 		state.Info.RegisteredAt = state.RegisteredAt
 		tx.registration = &catalogRegistration{state: state, definition: definition}
-		result = resolvedToolsetRegistration(definition, state)
-		return nil
+		result, err = resolvedToolsetRegistration(definition, state)
+		return err
 	})
 	return result, err
 }

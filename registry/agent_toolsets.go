@@ -68,7 +68,11 @@ func (s *Service) LookupAgentToolsetRegistration(ctx context.Context, identity C
 	if err := checkAgentRegistration(current, owned, nativeAgentToken(definition.fingerprint), ""); err != nil {
 		return nil, false, genregistry.MakeAdmissionConflict(err)
 	}
-	return resolvedToolsetRegistration(definition, current), true, nil
+	saved, err := resolvedToolsetRegistration(definition, current)
+	if err != nil {
+		return nil, false, err
+	}
+	return saved, true, nil
 }
 
 // ReplaceAgentToolset changes the declaration only while the supplied token
@@ -125,7 +129,7 @@ func (s *Service) registerAgentToolset(ctx context.Context, toolset *genregistry
 		}
 		return nil, genregistry.MakeServiceUnavailable(err)
 	}
-	return resolvedToolsetRegistration(definition, state), nil
+	return resolvedToolsetRegistration(definition, state)
 }
 
 // prepareAgentToolset applies registration's schema and native-tool checks to
@@ -149,13 +153,15 @@ func (s *Service) prepareAgentToolset(toolset *genregistry.Toolset, identity *Ca
 	return definition, nil
 }
 
-// resolvedToolsetRegistration copies the prepared saved declaration into a
-// separate response with the selected registration token and current time.
-func resolvedToolsetRegistration(definition *catalogToolset, state catalogState) *genregistry.ResolvedToolset {
-	return &genregistry.ResolvedToolset{
-		Toolset:           definition.copyDeclaration(state.RegisteredAt),
-		RegistrationToken: state.RegistrationToken,
+// resolvedToolsetRegistration decodes the selected saved declaration into a
+// separate response with its registration token and time. Callers receive the
+// selected definition without changing its stored bytes.
+func resolvedToolsetRegistration(definition *catalogToolset, state catalogState) (*genregistry.ResolvedToolset, error) {
+	registered, err := definition.decode(state.RegisteredAt)
+	if err != nil {
+		return nil, genregistry.MakeServiceUnavailable(err)
 	}
+	return &genregistry.ResolvedToolset{Toolset: registered, RegistrationToken: state.RegistrationToken}, nil
 }
 
 // RegisterAgent stores a definition and its discovery state in one conditional

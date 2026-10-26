@@ -88,7 +88,8 @@ func TestCatalogSavedEncodingPreservesRegistration(t *testing.T) {
 					expectedState, err := parseCatalogState(toolset.Name, beforeState)
 					require.NoError(t, err)
 					assert.Equal(t, expectedState, loaded.catalogState)
-					decoded := loaded.Toolset.copyDeclaration("")
+					decoded, err := loaded.Toolset.decode("")
+					require.NoError(t, err)
 					assert.Equal(t, toolset, decoded)
 					if native {
 						assert.Equal(t, nativeAgentToken(fingerprint), loaded.RegistrationToken)
@@ -210,7 +211,8 @@ func TestCatalogSavedMissingAndNullContractsPreserveIdentity(t *testing.T) {
 		assert.Equal(t, state.SchemaFingerprint, loaded.SchemaFingerprint)
 		assert.Equal(t, state.RegistrationToken, loaded.RegistrationToken)
 		assert.Equal(t, raw, loaded.Toolset.raw)
-		decoded := loaded.Toolset.copyDeclaration("")
+		decoded, err := loaded.Toolset.decode("")
+		require.NoError(t, err)
 		assert.Equal(t, toolset, decoded)
 	}
 }
@@ -260,7 +262,8 @@ func TestCatalogSavedUnionSelectionsKeepRegistration(t *testing.T) {
 			assert.Equal(t, state.RegistrationToken, loaded.RegistrationToken)
 			assert.Equal(t, definition.fingerprint, loaded.SchemaFingerprint)
 			assert.Equal(t, definition.raw, loaded.Toolset.raw)
-			decoded := loaded.Toolset.copyDeclaration("")
+			decoded, err := loaded.Toolset.decode("")
+			require.NoError(t, err)
 			assert.Equal(t, toolset, decoded)
 		})
 	}

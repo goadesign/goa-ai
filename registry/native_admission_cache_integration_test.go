@@ -50,7 +50,9 @@ func TestRedisNativeAdmissionReusesCommittedPreparation(t *testing.T) {
 
 	input.Exports[0].ConsumerContract.Title = "Caller mutation"
 	reply.Toolset.Tools[0].ConsumerContract.Title = "Response mutation"
-	read.Toolset.copyDeclaration(read.RegisteredAt).Tools[0].ConsumerContract.Title = "Read mutation"
+	decodedRead, err := read.Toolset.decode(read.RegisteredAt)
+	require.NoError(t, err)
+	decodedRead.Tools[0].ConsumerContract.Title = "Read mutation"
 	again, err := service.catalog.GetToolset(t.Context(), input.Name)
 	require.NoError(t, err)
 	assert.Equal(t, "Check installation", again.Tools[0].ConsumerContract.Title)
@@ -60,7 +62,11 @@ func TestRedisNativeAdmissionReusesCommittedPreparation(t *testing.T) {
 	afterRestart, err := restarted.ActiveRegistration(t.Context(), input.Name)
 	require.NoError(t, err)
 	assert.NotSame(t, prepared, afterRestart.Toolset.catalogDefinition)
-	assert.Equal(t, prepared.declaration, afterRestart.Toolset.declaration)
+	beforeTools, err := read.Toolset.decode("")
+	require.NoError(t, err)
+	afterTools, err := afterRestart.Toolset.decode("")
+	require.NoError(t, err)
+	assert.Equal(t, beforeTools, afterTools)
 }
 
 func TestRedisNativeAdmissionRepeatPreservesSavedByteCache(t *testing.T) {
