@@ -81,7 +81,11 @@ func (r *Runtime) validateRegistryDeclarations(definition AgentDefinition) error
 		if !ok {
 			continue
 		}
-		if !existing.Same(declaration) {
+		same, err := existing.Same(declaration)
+		if err != nil {
+			return err
+		}
+		if !same {
 			return fmt.Errorf("%w: tool %q has two different registry declarations", ErrInvalidConfig, name)
 		}
 	}
