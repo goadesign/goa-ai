@@ -67,18 +67,22 @@ func NewSubscriber(sink Sink, profile StreamProfile) (*Subscriber, error) {
 }
 
 // HandleModelOutputEvent applies the configured profile to one live
-// model text or thinking event and sends it to the same sink used for
+// model text, thinking, or status event and sends it to the same sink used for
 // hook-derived events. The boolean reports whether the sink accepted the event.
 func (s *Subscriber) HandleModelOutputEvent(ctx context.Context, event Event) (bool, error) {
 	eventType := event.Type()
 	if eventType != EventAssistantReply &&
-		eventType != EventPlannerThought {
+		eventType != EventPlannerThought &&
+		eventType != EventStatus {
 		return false, fmt.Errorf("unsupported live model output event %q", eventType)
 	}
 	if eventType == EventAssistantReply && !s.profile.Assistant {
 		return false, nil
 	}
 	if eventType == EventPlannerThought && !s.profile.Thoughts {
+		return false, nil
+	}
+	if eventType == EventStatus && !s.profile.Status {
 		return false, nil
 	}
 	if err := s.sink.Send(ctx, event); err != nil {

@@ -186,6 +186,7 @@ func (c *simplePlannerContext) configuredModelClient(id string, designated bool)
 	// that the destination provider receives. Client retrieval does no counting
 	// or summarization; preparation runs only on Complete or Stream.
 	m = c.rt.imageSourceClient(m, c.runContext)
+	m = c.rt.historyStatusClient(m, c.runID, c.sessionID)
 	cli := newRequestConfiguredClient(m, c.cache, c.history, c.agent, c.historyMessages, c.historyContext)
 	// Check and save each provider response before tracing or planner code can
 	// read it. This also keeps concurrent model calls separate.

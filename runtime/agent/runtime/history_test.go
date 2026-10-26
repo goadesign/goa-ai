@@ -10,6 +10,7 @@ import (
 
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/stream"
 )
 
 type historyCountingClient struct {
@@ -515,4 +516,47 @@ func TestParseTurnsSegmentsPlanStepsWithinOneUserTurn(t *testing.T) {
 	require.Len(t, turns[0].messages, 3)
 	require.Len(t, turns[1].messages, 2)
 	require.Len(t, turns[2].messages, 1)
+}
+
+func TestCompressEmitsCompactionStatusOnlyWhenSummarizing(t *testing.T) {
+	client := &historyCountingClient{}
+	policy := Compress(historyTestClient(t, client), HistoryCompressionConfig{
+		CompressAtTurns: 2,
+		KeepMaxTurns:    1,
+	})
+
+	var emitted []stream.StatusPayload
+	ctx := context.WithValue(t.Context(), historyStatusEmitterKey{}, historyStatusEmitter(func(_ context.Context, payload stream.StatusPayload) error {
+		emitted = append(emitted, payload)
+		return nil
+	}))
+
+	// 1. Below trigger: no summarization and no status event.
+	shortMsgs := []*model.Message{
+		userMsg("question 1"),
+		assistantTextMsg("answer 1"),
+	}
+	_, err := policy(ctx, &model.Request{Messages: shortMsgs}, historyTestClient(t, client), nil)
+	require.NoError(t, err)
+	assert.Empty(t, emitted)
+
+	// 2. At trigger: summarizes older turn and emits exactly one compaction status event.
+	longMsgs := []*model.Message{
+		userMsg("question 1"),
+		assistantTextMsg("answer 1"),
+		userMsg("question 2"),
+		assistantTextMsg("answer 2"),
+	}
+	res, err := policy(ctx, &model.Request{Messages: longMsgs}, historyTestClient(t, client), nil)
+	require.NoError(t, err)
+	require.Len(t, emitted, 1)
+	assert.Equal(t, stream.StatusPayload{
+		Code:    stream.StatusCodeContextCompaction,
+		Message: defaultCompactionStatusMessage,
+	}, emitted[0])
+
+	// 3. Reusing the existing summary for the same source prefix does not re-emit status.
+	_, err = policy(ctx, &model.Request{Messages: longMsgs}, historyTestClient(t, client), res.Summary)
+	require.NoError(t, err)
+	assert.Len(t, emitted, 1)
 }

@@ -757,3 +757,36 @@ func TestStreamSubscriberServiceSubjectKeepsToolAndTerminalEvents(t *testing.T) 
 		require.Equal(t, "session", event.SessionID())
 	}
 }
+
+func TestStreamSubscriberStatusEventHonorsProfile(t *testing.T) {
+	statusEvent := Status{
+		Base: NewBase(EventStatus, "run-1", "session-1", StatusPayload{
+			Code:    StatusCodeContextCompaction,
+			Message: "Summarizing earlier messages…",
+		}),
+		Data: StatusPayload{
+			Code:    StatusCodeContextCompaction,
+			Message: "Summarizing earlier messages…",
+		},
+	}
+
+	hostSink := &mockSink{}
+	hostSub, err := NewSubscriber(hostSink, RuntimeHostProfile())
+	require.NoError(t, err)
+	published, err := hostSub.HandleModelOutputEvent(t.Context(), statusEvent)
+	require.NoError(t, err)
+	require.True(t, published)
+	require.Len(t, hostSink.events, 1)
+	got, ok := hostSink.events[0].(Status)
+	require.True(t, ok)
+	require.Equal(t, StatusCodeContextCompaction, got.Data.Code)
+	require.Equal(t, "Summarizing earlier messages…", got.Data.Message)
+
+	metricsSink := &mockSink{}
+	metricsSub, err := NewSubscriber(metricsSink, MetricsProfile())
+	require.NoError(t, err)
+	published, err = metricsSub.HandleModelOutputEvent(t.Context(), statusEvent)
+	require.NoError(t, err)
+	require.False(t, published)
+	require.Empty(t, metricsSink.events)
+}

@@ -10,7 +10,19 @@ package runtime
 import (
 	"context"
 
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/stream"
+)
+
+type (
+	// historyStatusEmitterKey attaches a transient status emitter to a model
+	// request context so history policies can notify the host stream before
+	// long-running preparation work such as context summarization.
+	historyStatusEmitterKey struct{}
+
+	// historyStatusEmitter publishes one transient operational status update for
+	// the active run.
+	historyStatusEmitter func(ctx context.Context, payload stream.StatusPayload) error
 )
 
 // publishModelOutput sends one live model update through the configured stream
@@ -24,4 +36,30 @@ func (r *Runtime) publishModelOutput(
 		return false, nil
 	}
 	return r.streamSubscriber.HandleModelOutputEvent(ctx, event)
+}
+
+// historyStatusClient attaches a request-scoped status emitter to the model
+// call context so HistoryPolicy implementations can publish live status updates
+// (such as context compaction progress) before invoking the provider.
+func (r *Runtime) historyStatusClient(
+	client model.Client,
+	runID, sessionID string,
+) model.Client {
+	if sessionID == "" || r.streamSubscriber == nil {
+		return client
+	}
+	emit := historyStatusEmitter(func(ctx context.Context, payload stream.StatusPayload) error {
+		_, err := r.publishModelOutput(ctx, sessionID, stream.Status{
+			Base: stream.NewBase(stream.EventStatus, runID, sessionID, payload),
+			Data: payload,
+		})
+		return err
+	})
+	client, err := model.WithRequestPreparation(client, func(ctx context.Context, request *model.Request) (context.Context, *model.Request, error) {
+		return context.WithValue(ctx, historyStatusEmitterKey{}, emit), request, nil
+	})
+	if err != nil {
+		panic(err)
+	}
+	return client
 }
