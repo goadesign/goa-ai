@@ -94,6 +94,63 @@ func BenchmarkStaticServiceBindingRetained(b *testing.B) {
 	}
 }
 
+// BenchmarkStaticAgentBinding measures per-turn static Agent binding across a
+// 70-tool export set using the consuming definition's pre-compiled declarations.
+func BenchmarkStaticAgentBinding(b *testing.B) {
+	generated := staticBindingDeclarations(68)
+	expected := make([]*genregistry.ToolSchema, len(generated.Tools))
+	for index, declaration := range generated.Tools {
+		declaration.ConsumerContract.Kind = "agent"
+		unbound := *declaration
+		contract := *declaration.ConsumerContract
+		unbound.ConsumerContract = &contract
+		expected[index] = &unbound
+		declaration.ConsumerContract.Agent = &genregistry.AgentToolTarget{
+			Executor:      "generic.agent",
+			Workflow:      "generic.workflow",
+			Queue:         "generic.queue",
+			Configuration: "revision/1",
+		}
+	}
+	compiled, err := registrycontract.Compile(generated.Tools)
+	require.NoError(b, err)
+	specs := make([]tools.ToolSpec, 0, len(generated.Tools))
+	names := make([]tools.Ident, 0, len(generated.Tools))
+	for _, declaration := range generated.Tools {
+		name := tools.Ident(declaration.Name)
+		spec := compiled[name]
+		spec.IsAgentTool = true
+		spec.AgentID = "generic.agent"
+		specs = append(specs, spec)
+		names = append(names, name)
+	}
+	child := testAgentDefinition("generic.agent", "generic.workflow", "generic.queue", specs, nil)
+	definition := NewAgentDefinition(
+		AgentRoute{ID: "records.agent", WorkflowName: "records.workflow", DefaultTaskQueue: "records.queue"},
+		specs, nil, nil, names, []AgentDefinition{child}, nil,
+	).WithRegistryTools(testRegistrySources{whole: true}).WithRegistryDeclarations(testDeclarations(expected))
+	rt := New(newTestStore())
+	rt.agents[definition.route.ID] = AgentRegistration{Definition: definition}
+	for _, spec := range specs {
+		rt.toolSpecs[spec.Name] = spec
+		seedTestToolDefinitions(rt, spec)
+	}
+	require.NoError(b, rt.RegisterRegistry(testRegistryName, &genregistry.Client{}, unusedRegistryPulse{}))
+	selected := &genregistry.ResolvedToolset{Toolset: generated, RegistrationToken: strings.Repeat("a", 64)}
+	selected.Toolset.Name = "tenant.records_agent"
+	selected.Toolset.RegisteredAt = "2026-09-17T00:00:00Z"
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		catalog := rt.newRegistryCatalog(definition)
+		if err := catalog.BindStaticAgent(testRegistryName, expected, selected, readTestStaticAgentResource, names...); err != nil {
+			b.Fatal(err)
+		}
+		runtime.KeepAlive(catalog)
+	}
+}
+
 // BenchmarkCompiledAgentTurnBatch measures the synchronous workflow-thread
 // contract resolution performed across a 20-call compiled Agent batch turn.
 func BenchmarkCompiledAgentTurnBatch(b *testing.B) {

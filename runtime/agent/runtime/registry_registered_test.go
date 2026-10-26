@@ -186,6 +186,10 @@ func TestCatalogExecutionInvocationUsesOwningRun(t *testing.T) {
 	root, ok := invocation.Invocation.AsRoot()
 	require.True(t, ok)
 	assert.Equal(t, "owner-run", root.RunID)
+	rt.Store = newTestStore()
+	cached, err := catalog.ExecutionInvocation(t.Context())
+	require.NoError(t, err)
+	assert.Equal(t, invocation, cached)
 	catalog.runID = "missing-run"
 	_, err = catalog.ExecutionInvocation(t.Context())
 	require.Error(t, err)

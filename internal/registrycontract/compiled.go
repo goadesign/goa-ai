@@ -13,6 +13,7 @@
 package registrycontract
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -111,6 +112,159 @@ func ResolveCompiled(registered *genregistry.ResolvedToolset) (*Resolution, erro
 	return resolved, nil
 }
 
+// ResolveCompiledAgent checks a selected native Agent toolset against the
+// consumer's complete unbound export set and pre-compiled declarations,
+// reusing memoized ToolSpecs when declarations match instead of re-compiling
+// JSON schemas on every planning turn.
+func ResolveCompiledAgent(
+	expected []*genregistry.ToolSchema,
+	registered *genregistry.ResolvedToolset,
+	compiled CompiledDeclarations,
+) (*Resolution, map[tools.Ident]*genregistry.ToolSchema, error) {
+	if registered == nil || registered.Toolset == nil {
+		return nil, nil, errors.New("registry resolution: resolved toolset is required")
+	}
+	if err := genregistry.ValidateResolvedToolsetValue(&genregistry.ResolvedToolset{
+		Toolset: &genregistry.Toolset{
+			Name:         registered.Toolset.Name,
+			Description:  registered.Toolset.Description,
+			Version:      registered.Toolset.Version,
+			Tags:         registered.Toolset.Tags,
+			Tools:        []*genregistry.ToolSchema{},
+			RegisteredAt: registered.Toolset.RegisteredAt,
+		},
+		RegistrationToken: registered.RegistrationToken,
+	}); err != nil {
+		return nil, nil, fmt.Errorf("registry resolution: %w", err)
+	}
+	seen := make(map[tools.Ident]*genregistry.ToolSchema, len(expected))
+	for _, operation := range expected {
+		if operation == nil || operation.ConsumerContract == nil ||
+			operation.ConsumerContract.Kind != agentKind || operation.ConsumerContract.Agent != nil {
+			return nil, nil, errors.New("static agent binding requires unbound generated agent operations")
+		}
+		name := tools.Ident(operation.Name)
+		if _, exists := seen[name]; exists {
+			return nil, nil, fmt.Errorf("static agent binding repeats declaration %q", name)
+		}
+		seen[name] = operation
+	}
+	if len(registered.Toolset.Tools) != len(expected) {
+		return nil, nil, errors.New("static agent binding differs from the complete generated declarations")
+	}
+	bound := make([]*genregistry.ToolSchema, len(registered.Toolset.Tools))
+	specs := make(map[tools.Ident]tools.ToolSpec, len(registered.Toolset.Tools))
+	byName := make(map[tools.Ident]*genregistry.ToolSchema, len(registered.Toolset.Tools))
+	unbound := make(map[tools.Ident]internaladmission.ToolSchema, len(registered.Toolset.Tools))
+	for index, provider := range registered.Toolset.Tools {
+		if provider == nil || provider.ConsumerContract == nil {
+			return nil, nil, errors.New("registry resolution: tool schema and consumer contract are required")
+		}
+		name := tools.Ident(provider.Name)
+		if _, exists := specs[name]; exists {
+			return nil, nil, fmt.Errorf("registry resolution repeats tool %q", name)
+		}
+		operation, exists := seen[name]
+		if !exists {
+			return nil, nil, errors.New("static agent binding differs from the complete generated declarations")
+		}
+		if provider.ConsumerContract.Kind != agentKind {
+			return nil, nil, fmt.Errorf("static agent binding requires an agent provider for %q", name)
+		}
+		if provider.ConsumerContract.Agent == nil {
+			return nil, nil, fmt.Errorf("registry resolution: agent target is required for %q", name)
+		}
+		if err := genregistry.ValidateAgentToolTargetValue(provider.ConsumerContract.Agent); err != nil {
+			return nil, nil, fmt.Errorf("registry resolution: %w", err)
+		}
+		var entry *CompiledDeclaration
+		if compiled != nil {
+			if candidate, ok := compiled(name); ok && candidate != nil && candidate.kind == agentKind {
+				sameOperation, err := candidate.matchesUnbound(operation)
+				if err != nil {
+					return nil, nil, err
+				}
+				if sameOperation {
+					sameProvider, err := candidate.matchesUnbound(provider)
+					if err != nil {
+						return nil, nil, err
+					}
+					if !sameProvider {
+						return nil, nil, errors.New("static agent binding differs from the complete generated declarations")
+					}
+					entry = candidate
+				}
+			}
+		}
+		if entry == nil {
+			candidate, err := CompileDeclaration(operation)
+			if err != nil {
+				return nil, nil, err
+			}
+			sameProvider, err := candidate.matchesUnbound(provider)
+			if err != nil {
+				return nil, nil, err
+			}
+			if !sameProvider {
+				return nil, nil, errors.New("static agent binding differs from the complete generated declarations")
+			}
+			entry = candidate
+		}
+		admission, err := entry.ensureAdmission()
+		if err != nil {
+			return nil, nil, err
+		}
+		baseSpec, err := entry.ensureSpec()
+		if err != nil {
+			return nil, nil, err
+		}
+		target := *provider.ConsumerContract.Agent
+		copied := *entry.declaration
+		contract := *entry.declaration.ConsumerContract
+		contract.Agent = &target
+		copied.ConsumerContract = &contract
+		bound[index] = &copied
+		spec := baseSpec
+		spec.IsAgentTool = true
+		spec.AgentID = target.Executor
+		specs[name] = spec
+		byName[name] = &copied
+		unbound[name] = admission
+	}
+	for _, spec := range specs {
+		if err := validatePaging(specs, spec); err != nil {
+			return nil, nil, fmt.Errorf("registry resolution: %w", err)
+		}
+	}
+	var description *string
+	if registered.Toolset.Description != nil {
+		copiedDescription := *registered.Toolset.Description
+		description = &copiedDescription
+	}
+	var version *genregistry.SemVer
+	if registered.Toolset.Version != nil {
+		copiedVersion := *registered.Toolset.Version
+		version = &copiedVersion
+	}
+	return &Resolution{
+		Registered: &genregistry.ResolvedToolset{
+			Toolset: &genregistry.Toolset{
+				Name:         registered.Toolset.Name,
+				Description:  description,
+				Version:      version,
+				Tags:         slices.Clone(registered.Toolset.Tags),
+				Tools:        bound,
+				RegisteredAt: registered.Toolset.RegisteredAt,
+			},
+			RegistrationToken: registered.RegistrationToken,
+		},
+		Specs:    specs,
+		byName:   byName,
+		unbound:  unbound,
+		compiled: true,
+	}, seen, nil
+}
+
 // ServiceRoute reads the registration token and registered toolset name that a
 // saved service-tool call must use, without needing the tool's declaration. It
 // accepts direct and compiled service selections, and rejects registered
@@ -198,71 +352,6 @@ func (d *CompiledDeclaration) Same(other *CompiledDeclaration) (bool, error) {
 		return false, err
 	}
 	return d.fingerprint == other.fingerprint, nil
-}
-
-// ensureAdmission memoizes the unbound admission record and single-tool
-// identity fingerprint for d.
-func (d *CompiledDeclaration) ensureAdmission() (internaladmission.ToolSchema, error) {
-	d.admissionOnce.Do(func() {
-		if err := d.validateDeclaration(); err != nil {
-			d.admissionErr = err
-			return
-		}
-		d.admission, d.admissionErr = unboundAdmissionToolSchema(d.declaration)
-		if d.admissionErr != nil {
-			return
-		}
-		d.fingerprint = internaladmission.SchemaFingerprint(internaladmission.Schema{
-			Name:  d.declaration.Name,
-			Tools: []internaladmission.ToolSchema{d.admission},
-		})
-	})
-	return d.admission, d.admissionErr
-}
-
-// ensureSpec memoizes the compiled portable ToolSpec for d.
-func (d *CompiledDeclaration) ensureSpec() (tools.ToolSpec, error) {
-	d.specOnce.Do(func() {
-		compileInput := *d.declaration
-		if d.kind == agentKind {
-			agentContract := *d.declaration.ConsumerContract
-			agentContract.Agent = syntheticCompiledAgentTarget
-			compileInput.ConsumerContract = &agentContract
-		}
-		if err := genregistry.ValidateToolSchemaValue(&compileInput); err != nil {
-			d.specErr = fmt.Errorf("registry resolution: %w", err)
-			return
-		}
-		spec, err := toolcontract.Compile(&compileInput)
-		if err != nil {
-			d.specErr = err
-			return
-		}
-		if spec.Name.Toolset() == "" || spec.Name.Tool() == "" {
-			d.specErr = fmt.Errorf("registry tool %q must be qualified", spec.Name)
-			return
-		}
-		if d.kind != agentKind {
-			spec.IsAgentTool = false
-			spec.AgentID = ""
-		}
-		d.spec = spec
-	})
-	return d.spec, d.specErr
-}
-
-// validateDeclaration validates the unbound generated ToolSchema structure.
-func (d *CompiledDeclaration) validateDeclaration() error {
-	compileInput := *d.declaration
-	if d.kind == agentKind {
-		agentContract := *d.declaration.ConsumerContract
-		agentContract.Agent = syntheticCompiledAgentTarget
-		compileInput.ConsumerContract = &agentContract
-	}
-	if err := genregistry.ValidateToolSchemaValue(&compileInput); err != nil {
-		return fmt.Errorf("registry resolution: %w", err)
-	}
-	return nil
 }
 
 // compiledFingerprint returns the registry identity of a set of generated
@@ -421,6 +510,125 @@ func readCompiled(selection *genregistry.CompiledToolSelection, agent *genregist
 		unbound:  unbound,
 		compiled: true,
 	}, nil
+}
+
+// equalOptionalString reports whether two optional strings have identical
+// presence and value.
+func equalOptionalString(a, b *string) bool {
+	if (a == nil) != (b == nil) {
+		return false
+	}
+	return a == nil || *a == *b
+}
+
+// equalSortedStrings reports whether two string slices contain the same
+// multiset of elements regardless of ordering, treating nil and empty slices as
+// equivalent.
+func equalSortedStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	if slices.Equal(a, b) {
+		return true
+	}
+	left := slices.Clone(a)
+	right := slices.Clone(b)
+	slices.Sort(left)
+	slices.Sort(right)
+	return slices.Equal(left, right)
+}
+
+// ensureAdmission memoizes the unbound admission record and single-tool
+// identity fingerprint for d.
+func (d *CompiledDeclaration) ensureAdmission() (internaladmission.ToolSchema, error) {
+	d.admissionOnce.Do(func() {
+		if err := d.validateDeclaration(); err != nil {
+			d.admissionErr = err
+			return
+		}
+		d.admission, d.admissionErr = unboundAdmissionToolSchema(d.declaration)
+		if d.admissionErr != nil {
+			return
+		}
+		d.fingerprint = internaladmission.SchemaFingerprint(internaladmission.Schema{
+			Name:  d.declaration.Name,
+			Tools: []internaladmission.ToolSchema{d.admission},
+		})
+	})
+	return d.admission, d.admissionErr
+}
+
+// ensureSpec memoizes the compiled portable ToolSpec for d.
+func (d *CompiledDeclaration) ensureSpec() (tools.ToolSpec, error) {
+	d.specOnce.Do(func() {
+		compileInput := *d.declaration
+		if d.kind == agentKind {
+			agentContract := *d.declaration.ConsumerContract
+			agentContract.Agent = syntheticCompiledAgentTarget
+			compileInput.ConsumerContract = &agentContract
+		}
+		if err := genregistry.ValidateToolSchemaValue(&compileInput); err != nil {
+			d.specErr = fmt.Errorf("registry resolution: %w", err)
+			return
+		}
+		spec, err := toolcontract.Compile(&compileInput)
+		if err != nil {
+			d.specErr = err
+			return
+		}
+		if spec.Name.Toolset() == "" || spec.Name.Tool() == "" {
+			d.specErr = fmt.Errorf("registry tool %q must be qualified", spec.Name)
+			return
+		}
+		if d.kind != agentKind {
+			spec.IsAgentTool = false
+			spec.AgentID = ""
+		}
+		d.spec = spec
+	})
+	return d.spec, d.specErr
+}
+
+// validateDeclaration validates the unbound generated ToolSchema structure.
+func (d *CompiledDeclaration) validateDeclaration() error {
+	compileInput := *d.declaration
+	if d.kind == agentKind {
+		agentContract := *d.declaration.ConsumerContract
+		agentContract.Agent = syntheticCompiledAgentTarget
+		compileInput.ConsumerContract = &agentContract
+	}
+	if err := genregistry.ValidateToolSchemaValue(&compileInput); err != nil {
+		return fmt.Errorf("registry resolution: %w", err)
+	}
+	return nil
+}
+
+// matchesUnbound reports whether schema has the exact same unbound registry
+// declaration identity as d when any provider Agent target is ignored.
+func (d *CompiledDeclaration) matchesUnbound(schema *genregistry.ToolSchema) (bool, error) {
+	if d == nil || schema == nil || schema.ConsumerContract == nil {
+		return false, nil
+	}
+	admission, err := d.ensureAdmission()
+	if err != nil {
+		return false, err
+	}
+	if schema.Name != d.declaration.Name ||
+		!equalOptionalString(schema.Description, d.declaration.Description) ||
+		!equalSortedStrings(schema.Tags, d.declaration.Tags) ||
+		!bytes.Equal(schema.PayloadSchema, d.declaration.PayloadSchema) ||
+		!bytes.Equal(schema.ExecutionPayloadSchema, d.declaration.ExecutionPayloadSchema) ||
+		!bytes.Equal(schema.ResultSchema, d.declaration.ResultSchema) ||
+		!bytes.Equal(schema.SidecarSchema, d.declaration.SidecarSchema) {
+		return false, nil
+	}
+	contract := *schema.ConsumerContract
+	contract.Agent = nil
+	encodedContract, err := json.Marshal(&contract)
+	if err != nil {
+		return false, fmt.Errorf("encode tool %q consumer contract: %w", schema.Name, err)
+	}
+	return bytes.Equal(encodedContract, admission.ConsumerContract), nil
 }
 
 // selectCompiled saves the registration chosen for the named operations: the

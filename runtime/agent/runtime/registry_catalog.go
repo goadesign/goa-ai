@@ -39,11 +39,17 @@ type (
 	// Applications do not construct or retain it. Runtime planning owns its
 	// lifetime and applies run policy before exposing any definition.
 	RegistryCatalog struct {
-		runtime            *Runtime
-		definition         AgentDefinition
-		runLabels          map[string]string
-		runID              string
-		runContext         run.Context
+		runtime    *Runtime
+		definition AgentDefinition
+		runLabels  map[string]string
+		runID      string
+		runContext run.Context
+		// invocationRunID records the run ID stored in invocation so repeated
+		// ExecutionInvocation reads within one activity reuse the loaded origin.
+		invocationRunID string
+		// invocation caches the ExecutionInvocation loaded from Store.LoadRun for
+		// invocationRunID during this planning activity.
+		invocation         *genregistry.ExecutionInvocation
 		textOnly           bool
 		sources            RegistryTools
 		specs              map[tools.Ident]tools.ToolSpec
@@ -335,9 +341,14 @@ func (c *RegistryCatalog) RunLabels() map[string]string {
 // tool-call identity retained by its owner. Continued runs preserve that value;
 // a missing run is an error and never substitutes the current parent identity.
 func (c *RegistryCatalog) ExecutionInvocation(ctx context.Context) (genregistry.ExecutionInvocation, error) {
+	if c.invocation != nil && c.invocationRunID == c.runID {
+		return *c.invocation, nil
+	}
 	meta, err := c.runtime.Store.LoadRun(ctx, c.runID)
 	if err != nil {
 		return genregistry.ExecutionInvocation{}, fmt.Errorf("load catalog run: %w", err)
 	}
+	c.invocationRunID = c.runID
+	c.invocation = &meta.Origin
 	return meta.Origin, nil
 }

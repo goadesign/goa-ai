@@ -12,7 +12,6 @@ import (
 	genregistry "goa.design/goa-ai/registry/gen/registry"
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/tools"
-	toolcontract "goa.design/goa-ai/runtime/toolregistry/contract"
 )
 
 const staticAgentKind = "agent"
@@ -40,65 +39,17 @@ func (c *RegistryCatalog) BindStaticAgent(registry string, expected []*genregist
 	if _, err := c.runtime.registryConnection(registry); err != nil {
 		return err
 	}
-	encoded, err := genregistry.EncodeResolvedToolset(selected)
+	resolved, seen, err := registrycontract.ResolveCompiledAgent(expected, selected, c.definition.registryDeclaration)
 	if err != nil {
 		return err
 	}
-	selected, err = genregistry.DecodeResolvedToolset(encoded)
-	if err != nil {
-		return err
-	}
-	resolved, err := registrycontract.ResolveCompiled(selected)
-	if err != nil {
-		return err
-	}
+	selected = resolved.Registered
 	version := ""
 	if selected.Toolset.Version != nil {
 		version = string(*selected.Toolset.Version)
 	}
 	if c.sources == nil || !c.sources.Allows(registry, selected.Toolset.Name, version) {
 		return fmt.Errorf("registry %q toolset %q is outside this agent's declared consumption", registry, selected.Toolset.Name)
-	}
-	// Attach only the selected target to each unbound operation. Comparing the
-	// complete declarations also checks fields that are not in a consumer ToolSpec.
-	declarations := make([]*genregistry.ToolSchema, len(expected))
-	seen := make(map[tools.Ident]*genregistry.ToolSchema, len(expected))
-	for index, operation := range expected {
-		if operation == nil || operation.ConsumerContract == nil || operation.ConsumerContract.Kind != staticAgentKind || operation.ConsumerContract.Agent != nil {
-			return fmt.Errorf("static agent binding requires unbound generated agent operations")
-		}
-		name := tools.Ident(operation.Name)
-		if _, exists := seen[name]; exists {
-			return fmt.Errorf("static agent binding repeats declaration %q", name)
-		}
-		seen[name] = operation
-		provider, err := resolved.Declaration(name)
-		if err != nil {
-			return err
-		}
-		if provider.ConsumerContract.Kind != staticAgentKind {
-			return fmt.Errorf("static agent binding requires an agent provider for %q", name)
-		}
-		declaration := *operation
-		contract := *operation.ConsumerContract
-		contract.Agent = provider.ConsumerContract.Agent
-		declaration.ConsumerContract = &contract
-		declarations[index] = &declaration
-	}
-	// Toolset descriptions and tags belong to registration discovery. Both sides
-	// use the selected envelope so only the complete generated operations differ.
-	declaration := *selected.Toolset
-	declaration.Tools = declarations
-	expectedFingerprint, err := toolcontract.Fingerprint(&declaration)
-	if err != nil {
-		return err
-	}
-	selectedFingerprint, err := toolcontract.Fingerprint(selected.Toolset)
-	if err != nil {
-		return err
-	}
-	if expectedFingerprint != selectedFingerprint {
-		return fmt.Errorf("static agent binding differs from the complete generated declarations")
 	}
 	for index, name := range names {
 		if slices.Contains(names[:index], name) {
