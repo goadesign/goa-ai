@@ -68,18 +68,22 @@ var (
 if redis.call("HGET", KEYS[1], "digest") ~= ARGV[1] then
   return redis.error_reply("CALLADMISSIONCHANGED")
 end
+local expires = tonumber(redis.call("HGET", KEYS[1], "expires_at_unix_milli"))
+local now = redis.call("TIME")
+local now_millis = (tonumber(now[1]) * 1000) + math.floor(tonumber(now[2]) / 1000)
+if expires and expires > now_millis then
+  redis.call("PEXPIREAT", KEYS[2] .. ":lifecycle", expires)
+end
 if redis.call("HGET", KEYS[1], "terminal") == "1"
 or redis.call("XLEN", KEYS[2]) > 0 then
   return 0
 end
-local expires = tonumber(redis.call("HGET", KEYS[1], "expires_at_unix_milli"))
-local now = redis.call("TIME")
-local now_millis = (tonumber(now[1]) * 1000) + math.floor(tonumber(now[2]) / 1000)
 if not expires or expires <= now_millis then
   return redis.error_reply("CALLADMISSIONCHANGED")
 end
 redis.call("XADD", KEYS[2], "MAXLEN", "=", ARGV[4], "*", "n", ARGV[2], "p", ARGV[3])
 redis.call("PEXPIREAT", KEYS[2], expires)
+redis.call("PEXPIREAT", KEYS[2] .. ":lifecycle", expires)
 return 1
 `)
 	completeCallAdmissionScript = redis.NewScript(`
@@ -134,6 +138,7 @@ if execution_deadline <= now_millis then
   end
   local id = redis.call("XADD", KEYS[2], "MAXLEN", "=", ARGV[10], "*", "n", ARGV[8], "p", payload)
   redis.call("PEXPIREAT", KEYS[2], expires)
+  redis.call("PEXPIREAT", KEYS[2] .. ":lifecycle", expires)
   redis.call(
     "HSET", KEYS[1],
     "terminal", "1",
@@ -149,6 +154,7 @@ if execution_deadline <= now_millis then
 end
 local id = redis.call("XADD", KEYS[2], "MAXLEN", "=", ARGV[10], "*", "n", ARGV[8], "p", ARGV[9])
 redis.call("PEXPIREAT", KEYS[2], expires)
+redis.call("PEXPIREAT", KEYS[2] .. ":lifecycle", expires)
 redis.call(
   "HSET", KEYS[1],
   "terminal", "1",
@@ -215,6 +221,7 @@ end
 if ARGV[2] ~= ARGV[4] then
   local id = redis.call("XADD", KEYS[3], "MAXLEN", "=", ARGV[10], "*", "n", ARGV[7], "p", ARGV[8])
   redis.call("PEXPIREAT", KEYS[3], expires)
+  redis.call("PEXPIREAT", KEYS[3] .. ":lifecycle", expires)
   redis.call(
     "HSET", KEYS[1],
     "terminal", "1",
@@ -287,6 +294,7 @@ end
 redis.call("XADD", KEYS[2], "MAXLEN", "=", ARGV[10], "*", "n", ARGV[7], "p", ARGV[8])
 redis.call("HINCRBY", KEYS[1], "output_delta_count", 1)
 redis.call("PEXPIREAT", KEYS[2], expires)
+redis.call("PEXPIREAT", KEYS[2] .. ":lifecycle", expires)
 return 1
 `)
 	reportOverloadCallScript = redis.NewScript(`
@@ -334,6 +342,7 @@ end
 if ARGV[2] ~= ARGV[4] then
   local id = redis.call("XADD", KEYS[2], "MAXLEN", "=", ARGV[12], "*", "n", ARGV[7], "p", ARGV[9])
   redis.call("PEXPIREAT", KEYS[2], expires)
+  redis.call("PEXPIREAT", KEYS[2] .. ":lifecycle", expires)
   redis.call(
     "HSET", KEYS[1],
     "terminal", "1",
@@ -349,6 +358,7 @@ if ARGV[2] ~= ARGV[4] then
 end
 local id = redis.call("XADD", KEYS[2], "MAXLEN", "=", ARGV[12], "*", "n", ARGV[7], "p", ARGV[8])
 redis.call("PEXPIREAT", KEYS[2], expires)
+redis.call("PEXPIREAT", KEYS[2] .. ":lifecycle", expires)
 redis.call(
   "HSET", KEYS[1],
   "overload_event_id", id,
@@ -365,18 +375,22 @@ local payload = redis.call("HGET", KEYS[1], "terminal_payload")
 if not payload or payload == "" then
   return redis.error_reply("TERMINALPAYLOADMISSING")
 end
+local expires = tonumber(redis.call("HGET", KEYS[1], "expires_at_unix_milli"))
+local now = redis.call("TIME")
+local now_millis = (tonumber(now[1]) * 1000) + math.floor(tonumber(now[2]) / 1000)
+if expires and expires > now_millis then
+  redis.call("PEXPIREAT", KEYS[2] .. ":lifecycle", expires)
+end
 local event_id = redis.call("HGET", KEYS[1], "terminal_event_id") or ""
 if event_id ~= "" and #redis.call("XRANGE", KEYS[2], event_id, event_id, "COUNT", 1) == 1 then
   return 0
 end
-local expires = tonumber(redis.call("HGET", KEYS[1], "expires_at_unix_milli"))
-local now = redis.call("TIME")
-local now_millis = (tonumber(now[1]) * 1000) + math.floor(tonumber(now[2]) / 1000)
 if not expires or expires <= now_millis then
   return redis.error_reply("CALLADMISSIONCHANGED")
 end
 local id = redis.call("XADD", KEYS[2], "MAXLEN", "=", ARGV[2], "*", "n", ARGV[1], "p", payload)
 redis.call("PEXPIREAT", KEYS[2], expires)
+redis.call("PEXPIREAT", KEYS[2] .. ":lifecycle", expires)
 redis.call("HSET", KEYS[1], "terminal_event_id", id)
 return 1
 `)
@@ -441,6 +455,7 @@ end
 local digest = redis.sha1hex(payload)
 local id = redis.call("XADD", KEYS[2], "MAXLEN", "=", ARGV[2], "*", "n", ARGV[1], "p", payload)
 redis.call("PEXPIREAT", KEYS[2], expires)
+redis.call("PEXPIREAT", KEYS[2] .. ":lifecycle", expires)
 redis.call(
   "HSET", KEYS[1],
   "terminal", "1",

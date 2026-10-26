@@ -511,6 +511,7 @@ func (c *toolsetCatalog) ActiveRegistration(ctx context.Context, name string) (c
 		return catalogEntry{}, err
 	}
 	if entry.State != catalogEntryActive {
+		c.forgetDefinition(name)
 		return catalogEntry{}, errToolsetNotFound
 	}
 	return entry, nil

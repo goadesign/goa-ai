@@ -775,9 +775,6 @@ func (s *Service) routeUnpublishedToolCall(
 		if err != nil {
 			return nil, genregistry.MakeServiceUnavailable(err)
 		}
-		if err := s.ensureResultStream(ctx, prepared.resultStreamID, admission.expiresAt); err != nil {
-			return nil, err
-		}
 		return callToolResult(
 			prepared.toolUseID,
 			admission,
@@ -792,9 +789,6 @@ func (s *Service) retryPreparedToolCall(
 	prepared preparedToolCall,
 	admission callAdmission,
 ) (*genregistry.CallToolResult, error) {
-	if err := s.ensureResultStream(ctx, prepared.resultStreamID, admission.expiresAt); err != nil {
-		return nil, err
-	}
 	if admission.overloadEventID == "" {
 		return nil, genregistry.MakeServiceUnavailable(fmt.Errorf(
 			"retry admitted tool call: overload control is not retained",
@@ -854,6 +848,8 @@ func (s *Service) replayCallToolResult(
 		if err := s.callAdmissions.RestoreTerminal(ctx, admission, resultStreamID); err != nil {
 			return nil, genregistry.MakeServiceUnavailable(err)
 		}
+	} else if err := s.callAdmissions.InitializeResultStream(ctx, admission, resultStreamID); err != nil {
+		return nil, genregistry.MakeServiceUnavailable(err)
 	}
 	return callToolResult(toolUseID, admission), nil
 }
@@ -927,6 +923,9 @@ func (s *Service) publishAdmittedCall(
 		overloadEventID,
 	); err != nil {
 		return fmt.Errorf("publish tool call: %w", err)
+	}
+	if err := s.ensureResultStream(ctx, resultStreamID, admission.expiresAt); err != nil {
+		return err
 	}
 	if err := s.callAdmissions.InitializeResultStream(ctx, admission, resultStreamID); err != nil {
 		return fmt.Errorf("initialize result stream %q: %w", resultStreamID, err)

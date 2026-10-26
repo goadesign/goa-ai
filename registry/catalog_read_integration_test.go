@@ -28,8 +28,10 @@ func TestRedisBoundedReadKeepsDefinitionAdmissionIndependent(t *testing.T) {
 	key := toolsetCatalogKey(input.Name)
 	stateBytes, err := rdb.HStrLen(ctx, store.state, key).Result()
 	require.NoError(t, err)
-	definitionBytes, err := rdb.HStrLen(ctx, store.definitions, key).Result()
+	pointerBytes, err := rdb.HStrLen(ctx, store.definitions, key).Result()
 	require.NoError(t, err)
+	require.Less(t, pointerBytes, int64(256))
+	definitionBytes := int64(len(definition.raw))
 	require.Greater(t, definitionBytes, int64(6*1024*1024))
 	require.Less(t, proto.Size(registryserver.NewProtoGetToolsetResponse(input)), 4*1024*1024)
 	total := stateBytes + definitionBytes
@@ -61,9 +63,63 @@ func TestRedisBoundedReadKeepsDefinitionAdmissionIndependent(t *testing.T) {
 
 func gotRegistrationBytes(t *testing.T, store *redisCatalogStore, key string) []byte {
 	t.Helper()
-	raw, err := store.redis.HGet(t.Context(), store.definitions, key).Bytes()
+	_, raw, _, exists, err := store.Snapshot(t.Context(), key)
 	require.NoError(t, err)
-	return raw
+	require.True(t, exists)
+	return []byte(raw)
+}
+
+func TestRedisContentAddressedDefinitionsDeduplicateAcrossRoutesAndForgetOnRetire(t *testing.T) {
+	ctx := t.Context()
+	rdb := getRedis(t)
+	store := newRedisCatalogStore(rdb, t.Name())
+	catalog := newToolsetCatalog(store, newRedisTimeSource(rdb))
+	routes := []string{
+		"workspace-a.search",
+		"workspace-b.search",
+		"workspace-c.search",
+	}
+	tokens := make(map[string]string, len(routes))
+	for _, route := range routes {
+		input := &genregistry.Toolset{
+			Name:  route,
+			Tools: testServiceDeclaration().Tools,
+		}
+		definition := testCatalogDefinition(t, input)
+		definition.identity = &CatalogIdentity{Scope: "product", Name: route}
+		admitted, err := catalog.Register(ctx, definition, testAdmissionRevisionA, "provider", testIncarnationA, time.Minute)
+		require.NoError(t, err)
+		tokens[route] = admitted.RegistrationToken
+	}
+
+	fields, err := rdb.HKeys(ctx, store.definitions).Result()
+	require.NoError(t, err)
+	var bodyKeys, pointerKeys []string
+	for _, field := range fields {
+		switch {
+		case strings.HasPrefix(field, catalogDefinitionBlobPrefix):
+			bodyKeys = append(bodyKeys, field)
+		case strings.HasPrefix(field, toolsetCatalogKeyPrefix):
+			pointerKeys = append(pointerKeys, field)
+		default:
+			t.Fatalf("unexpected definitions field %q", field)
+		}
+	}
+	require.Len(t, bodyKeys, 1, "identical tool schemas across routes must share one canonical body")
+	require.Len(t, pointerKeys, len(routes))
+
+	for _, route := range routes {
+		got, err := catalog.GetToolset(ctx, route)
+		require.NoError(t, err)
+		require.Equal(t, route, got.Name)
+		require.Len(t, got.Tools, len(testServiceDeclaration().Tools))
+	}
+
+	require.NoError(t, catalog.Retire(ctx, routes[0], tokens[routes[0]]))
+	restarted := newToolsetCatalog(store, newRedisTimeSource(rdb))
+	require.NoError(t, restarted.validatePersistedEntries(ctx))
+	require.Nil(t, nativeCacheEntry(restarted, routes[0]), "startup validation must not retain retired definitions in memory")
+	require.NotNil(t, nativeCacheEntry(restarted, routes[1]), "startup validation retains active definitions in memory")
 }
 
 func defaultTestCatalogHealth(entry catalogState, now time.Time) ToolsetHealth {
