@@ -221,7 +221,7 @@ func compileStrictSchemaForModel(schema rawjson.Message, modelID string) (*stric
 	if err != nil {
 		return nil, err
 	}
-	if err := projectStrictNode(doc, "$", compiler, strictSchemaResource+"#"); err != nil {
+	if err := projectStrictNode(doc, "$"); err != nil {
 		return nil, err
 	}
 	if strings.HasPrefix(modelID, "ft:") {
@@ -438,7 +438,7 @@ func validateFineTunedStrictSchemaNode(node map[string]any, path string) error {
 // keyword positions that hold child schemas. Recursion is keyword-driven so
 // instance data such as enum values is never mistaken for schema. path names
 // the node in rejection errors.
-func projectStrictNode(node map[string]any, path string, compiler *jsonschema.Compiler, location string) error {
+func projectStrictNode(node map[string]any, path string) error {
 	for _, keyword := range strictUnsupportedKeywords {
 		delete(node, keyword)
 	}
@@ -459,12 +459,12 @@ func projectStrictNode(node map[string]any, path string, compiler *jsonschema.Co
 	if isBranchOnlyObjectUnion(node) {
 		delete(node, "type")
 	} else if _, reference := node["$ref"]; !reference && includesSchemaType(node, strictSchemaTypeObject) {
-		if err := projectStrictObject(node, path, compiler, location); err != nil {
+		if err := projectStrictObject(node, path); err != nil {
 			return err
 		}
 	}
 	if items, ok := node["items"].(map[string]any); ok {
-		if err := projectStrictNode(items, path+".items", compiler, location+"/items"); err != nil {
+		if err := projectStrictNode(items, path+".items"); err != nil {
 			return err
 		}
 	}
@@ -481,8 +481,6 @@ func projectStrictNode(node map[string]any, path string, compiler *jsonschema.Co
 			if err := projectStrictNode(
 				branchMap,
 				fmt.Sprintf("%s.%s[%d]", path, keyword, i),
-				compiler,
-				fmt.Sprintf("%s/%s/%d", location, keyword, i),
 			); err != nil {
 				return err
 			}
@@ -501,8 +499,6 @@ func projectStrictNode(node map[string]any, path string, compiler *jsonschema.Co
 			if err := projectStrictNode(
 				childMap,
 				path+"."+keyword+"."+name,
-				compiler,
-				location+"/"+keyword+"/"+escapeJSONPointerToken(name),
 			); err != nil {
 				return err
 			}
@@ -528,7 +524,7 @@ func isBranchOnlyObjectUnion(node map[string]any) bool {
 // projectStrictObject requires concrete objects to declare their closure, then
 // makes every property required. Originally optional properties become nullable
 // so the model can represent their absence with null.
-func projectStrictObject(node map[string]any, path string, compiler *jsonschema.Compiler, location string) error {
+func projectStrictObject(node map[string]any, path string) error {
 	switch additional := node["additionalProperties"].(type) {
 	case nil:
 		return fmt.Errorf("schema at %s must explicitly declare additionalProperties:false; OpenAI strict conversion does not infer concrete object closure", path)
@@ -562,16 +558,7 @@ func projectStrictObject(node map[string]any, path string, compiler *jsonschema.
 			continue
 		}
 		if property, ok := properties[name].(map[string]any); ok {
-			acceptsNull, err := schemaAcceptsNull(
-				compiler,
-				location+"/properties/"+escapeJSONPointerToken(name),
-			)
-			if err != nil {
-				return err
-			}
-			if !acceptsNull {
-				makeStrictNullable(property)
-			}
+			makeStrictNullable(property)
 		}
 	}
 	allRequired := make([]any, len(names))
@@ -883,6 +870,35 @@ func buildStrictNullProjection(
 			}
 			if strictProjectionDropsNulls(patternProjection) {
 				return nil, fmt.Errorf("schema at %s requires optional-member omission inside patternProperties; OpenAI strict conversion cannot restore those members", childLocation)
+			}
+		}
+	}
+	for _, keyword := range []string{"$defs", "definitions"} {
+		definitions, ok := node[keyword].(map[string]any)
+		if !ok {
+			continue
+		}
+		for name, rawDefinition := range definitions {
+			definition, ok := rawDefinition.(map[string]any)
+			if !ok {
+				continue
+			}
+			escaped := escapeJSONPointerToken(name)
+			if location == strictSchemaResource+"#" {
+				ref := "#/" + keyword + "/" + escaped
+				if _, visited := refs[ref]; visited {
+					continue
+				}
+				refs[ref] = nil
+				resolved, err := buildStrictNullProjection(definition, root, compiler, strictSchemaResource+ref, refs)
+				if err != nil {
+					return nil, err
+				}
+				refs[ref] = resolved
+				continue
+			}
+			if _, err := buildStrictNullProjection(definition, root, compiler, location+"/"+keyword+"/"+escaped, refs); err != nil {
+				return nil, err
 			}
 		}
 	}
