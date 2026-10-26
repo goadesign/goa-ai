@@ -44,7 +44,10 @@ func (c *toolsetCatalog) validatePersistedEntry(ctx context.Context, name string
 		_, err = c.savedSchemas(state, definition)
 		return err
 	}
-	_, err = c.decodeSnapshot(ctx, name, raw, definition, retired)
+	entry, err := c.decodeSnapshot(ctx, name, raw, definition, retired)
+	if entry.State != catalogEntryActive {
+		c.forgetDefinition(name)
+	}
 	return err
 }
 

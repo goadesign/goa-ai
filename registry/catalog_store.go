@@ -6,6 +6,7 @@ package registry
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -60,13 +61,34 @@ type (
 		retired     string
 		indexPrefix string
 	}
+
+	// catalogDefinitionPointer binds one route key in the definitions hash to a
+	// content-addressed canonical schema body in the same hash.
+	catalogDefinitionPointer struct {
+		Blob          string `json:"blob"`
+		Len           int    `json:"len"`
+		Name          string `json:"name"`
+		Configuration string `json:"configuration,omitempty"`
+	}
+)
+
+const (
+	catalogDefinitionBlobPrefix    = "registry:definition:"
+	catalogDefinitionPointerPrefix = `{"blob":"registry:definition:`
 )
 
 var (
 	catalogReadScript = redis.NewScript(`
 local state = redis.call("HGET", KEYS[1], ARGV[1])
-if state and redis.call("HEXISTS", KEYS[2], ARGV[1]) == 0 then
+local definition = redis.call("HGET", KEYS[2], ARGV[1])
+if state and not definition then
   return redis.error_reply("CATALOGINCOMPLETE")
+end
+if state and string.sub(definition, 1, 29) == '{"blob":"registry:definition:' then
+  local ptr = cjson.decode(definition)
+  if type(ptr.blob) ~= "string" or redis.call("HEXISTS", KEYS[2], ptr.blob) == 0 then
+    return redis.error_reply("CATALOGINCOMPLETE")
+  end
 end
 return state
 `)
@@ -78,16 +100,36 @@ if (state and not definition) or (definition and not state) then
   return redis.error_reply("CATALOGINCOMPLETE")
 end
 if not state then
-  return {"", "", "0"}
+  return {"", "", "0", ""}
+end
+local blob = ""
+if string.sub(definition, 1, 29) == '{"blob":"registry:definition:' then
+  local ptr = cjson.decode(definition)
+  if type(ptr.blob) ~= "string" then
+    return redis.error_reply("CATALOGINCOMPLETE")
+  end
+  blob = redis.call("HGET", KEYS[2], ptr.blob)
+  if not blob then
+    return redis.error_reply("CATALOGINCOMPLETE")
+  end
 end
 local entry = cjson.decode(state)
 if type(entry.registration_token) ~= "string" then
   return redis.error_reply("CATALOGINVALIDTOKEN")
 end
 local retired = redis.call("SISMEMBER", KEYS[3], entry.registration_token)
-return {state, definition, tostring(retired)}
+return {state, definition, tostring(retired), blob}
 `)
 
+	// catalogCommitScript atomically compares previous state and updates state,
+	// deduplicated definition pointer/body, retired tokens, and scope/resource
+	// indices in one Redis transaction:
+	// KEYS: [1]=state, [2]=definitions, [3]=retired, [4]=scopeIndex,
+	//       [5]=resourceIndex, [6]=ownerResourcesIndex
+	// ARGV: [1]=key, [2]=previous, [3]=state, [4]=routeDefinition,
+	//       [5]=candidateToken, [6]=retireToken, [7]=liveLease,
+	//       [8]=routableUntilUnixMilli, [9]=indexState, [10]=route,
+	//       [11]=encodedResource, [12]=blobKey, [13]=blobRaw
 	catalogCommitScript = redis.NewScript(`
 local current = redis.call("HGET", KEYS[1], ARGV[1])
 if (current or "") ~= ARGV[2] then
@@ -128,6 +170,9 @@ if ARGV[9] ~= "" then
   end
 end
 if ARGV[4] ~= "" then
+  if ARGV[12] ~= "" then
+    redis.call("HSET", KEYS[2], ARGV[12], ARGV[13])
+  end
   redis.call("HSET", KEYS[2], ARGV[1], ARGV[4])
 end
 if ARGV[6] ~= "" then
@@ -182,10 +227,17 @@ func (s *redisCatalogStore) Snapshot(ctx context.Context, key string) (string, s
 	if err != nil {
 		return "", "", false, false, fmt.Errorf("read catalog definition and state: %w", err)
 	}
-	if len(values) != 3 {
+	if len(values) != 4 {
 		return "", "", false, false, fmt.Errorf("catalog snapshot returned %d values", len(values))
 	}
-	return values[0], values[1], values[2] == "1", values[0] != "", nil
+	if values[0] == "" {
+		return "", "", false, false, nil
+	}
+	definition, err := expandCatalogDefinition(values[1], values[3])
+	if err != nil {
+		return "", "", false, false, err
+	}
+	return values[0], definition, values[2] == "1", true, nil
 }
 
 func (s *redisCatalogStore) Keys(ctx context.Context) ([]string, error) {
@@ -193,7 +245,17 @@ func (s *redisCatalogStore) Keys(ctx context.Context) ([]string, error) {
 }
 
 func (s *redisCatalogStore) DefinitionKeys(ctx context.Context) ([]string, error) {
-	return s.redis.HKeys(ctx, s.definitions).Result()
+	keys, err := s.redis.HKeys(ctx, s.definitions).Result()
+	if err != nil {
+		return nil, err
+	}
+	filtered := keys[:0]
+	for _, key := range keys {
+		if !strings.HasPrefix(key, catalogDefinitionBlobPrefix) {
+			filtered = append(filtered, key)
+		}
+	}
+	return filtered, nil
 }
 
 func (s *redisCatalogStore) Retired(ctx context.Context, token string) (bool, error) {
@@ -229,10 +291,14 @@ func (s *redisCatalogStore) Commit(ctx context.Context, key, previous string, ne
 			indexState = string(catalogEntryActive)
 		}
 	}
+	routeDefinition, blobKey, blobRaw := "", "", ""
+	if next.Definition != "" {
+		routeDefinition, blobKey, blobRaw = encodeCatalogDefinitionRecord(next.Definition)
+	}
 	result, err := catalogCommitScript.Run(ctx, s.redis,
 		keys,
-		key, previous, next.State, next.Definition, next.CandidateToken, next.RetireToken, next.LiveLease, next.RoutableUntilUnixMilli,
-		indexState, strings.TrimPrefix(key, toolsetCatalogKeyPrefix), resourceMember,
+		key, previous, next.State, routeDefinition, next.CandidateToken, next.RetireToken, next.LiveLease, next.RoutableUntilUnixMilli,
+		indexState, strings.TrimPrefix(key, toolsetCatalogKeyPrefix), resourceMember, blobKey, blobRaw,
 	).Int()
 	if err != nil {
 		switch {
@@ -246,6 +312,104 @@ func (s *redisCatalogStore) Commit(ctx context.Context, key, previous string, ne
 	}
 	span.SetAttributes(attribute.Bool("toolregistry.catalog.conditional_retry", result == 0))
 	return result == 1, nil
+}
+
+// encodeCatalogDefinitionRecord separates a canonical toolset declaration into
+// a content-addressed schema body and a compact route-specific pointer when
+// exact byte reconstruction is possible. Non-canonical payloads stay inline.
+func encodeCatalogDefinitionRecord(raw string) (string, string, string) {
+	if !strings.HasPrefix(raw, `{"Name":`) {
+		return raw, "", ""
+	}
+	var toolset genregistry.Toolset
+	if err := json.Unmarshal([]byte(raw), &toolset); err != nil || toolset.Name == "" {
+		return raw, "", ""
+	}
+	nameJSON, err := json.Marshal(toolset.Name)
+	if err != nil {
+		return raw, "", ""
+	}
+	prefix := `{"Name":` + string(nameJSON) + `,`
+	if !strings.HasPrefix(raw, prefix) {
+		return raw, "", ""
+	}
+	blob := `{"Name":"",` + raw[len(prefix):]
+	configuration := ""
+	if len(toolset.Tools) > 0 && toolset.Tools[0] != nil &&
+		toolset.Tools[0].ConsumerContract != nil && toolset.Tools[0].ConsumerContract.Agent != nil {
+		candidate := toolset.Tools[0].ConsumerContract.Agent.Configuration
+		allSame := candidate != ""
+		for _, tool := range toolset.Tools[1:] {
+			if tool == nil || tool.ConsumerContract == nil || tool.ConsumerContract.Agent == nil ||
+				tool.ConsumerContract.Agent.Configuration != candidate {
+				allSame = false
+				break
+			}
+		}
+		if allSame {
+			configJSON, marshalErr := json.Marshal(candidate)
+			if marshalErr == nil {
+				configuration = candidate
+				blob = strings.ReplaceAll(
+					blob,
+					`"Configuration":`+string(configJSON)+`,"Workflow":`,
+					`"Configuration":"","Workflow":`,
+				)
+			}
+		}
+	}
+	blobKey := fmt.Sprintf("%s%x", catalogDefinitionBlobPrefix, sha256.Sum256([]byte(blob)))
+	pointerBytes, err := json.Marshal(catalogDefinitionPointer{
+		Blob:          blobKey,
+		Len:           len(raw),
+		Name:          toolset.Name,
+		Configuration: configuration,
+	})
+	if err != nil {
+		return raw, "", ""
+	}
+	pointer := string(pointerBytes)
+	reconstructed, err := expandCatalogDefinition(pointer, blob)
+	if err != nil || reconstructed != raw {
+		return raw, "", ""
+	}
+	return pointer, blobKey, blob
+}
+
+// expandCatalogDefinition restores the exact serialized toolset declaration
+// from a deduplicated pointer and shared schema body without re-parsing the
+// toolset schema tree. Inline declarations are returned unchanged.
+func expandCatalogDefinition(stored, blob string) (string, error) {
+	if !strings.HasPrefix(stored, catalogDefinitionPointerPrefix) {
+		return stored, nil
+	}
+	var ptr catalogDefinitionPointer
+	if err := json.Unmarshal([]byte(stored), &ptr); err != nil {
+		return "", fmt.Errorf("decode catalog definition pointer: %w", err)
+	}
+	if !strings.HasPrefix(blob, `{"Name":"",`) {
+		return "", errors.New("catalog definition blob has invalid prefix")
+	}
+	nameJSON, err := json.Marshal(ptr.Name)
+	if err != nil {
+		return "", fmt.Errorf("encode catalog definition name: %w", err)
+	}
+	expanded := `{"Name":` + string(nameJSON) + `,` + blob[len(`{"Name":"",`):]
+	if ptr.Configuration != "" {
+		configJSON, err := json.Marshal(ptr.Configuration)
+		if err != nil {
+			return "", fmt.Errorf("encode catalog definition configuration: %w", err)
+		}
+		expanded = strings.ReplaceAll(
+			expanded,
+			`"Configuration":"","Workflow":`,
+			`"Configuration":`+string(configJSON)+`,"Workflow":`,
+		)
+	}
+	if len(expanded) != ptr.Len {
+		return "", errors.New("catalog definition pointer length does not match expanded definition")
+	}
+	return expanded, nil
 }
 
 func (s *redisCatalogStore) scopeIndex(scope string) string {

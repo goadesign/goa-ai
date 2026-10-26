@@ -64,22 +64,36 @@ if has_state ~= has_definition then
   return redis.error_reply("CATALOGINCOMPLETE")
 end
 if has_state == 0 then
-  return {"", "", "0", "0", "0"}
+  return {"", "", "0", "0", "0", ""}
 end
 local state_bytes = redis.call("HSTRLEN", KEYS[1], ARGV[1])
-local definition_bytes = redis.call("HSTRLEN", KEYS[2], ARGV[1])
-if state_bytes + definition_bytes > tonumber(ARGV[2]) then
+local definition = redis.call("HGET", KEYS[2], ARGV[1])
+local definition_bytes = #definition
+local blob = ""
+if string.sub(definition, 1, 29) == '{"blob":"registry:definition:' then
+  local ptr = cjson.decode(definition)
+  if type(ptr.blob) ~= "string" or type(ptr.len) ~= "number" then
+    return redis.error_reply("CATALOGINCOMPLETE")
+  end
+  definition_bytes = ptr.len
+  if state_bytes + definition_bytes > tonumber(ARGV[2]) then
+    return redis.error_reply("CATALOGREADBUDGET")
+  end
+  blob = redis.call("HGET", KEYS[2], ptr.blob)
+  if not blob then
+    return redis.error_reply("CATALOGINCOMPLETE")
+  end
+elseif state_bytes + definition_bytes > tonumber(ARGV[2]) then
   return redis.error_reply("CATALOGREADBUDGET")
 end
 local state = redis.call("HGET", KEYS[1], ARGV[1])
-local definition = redis.call("HGET", KEYS[2], ARGV[1])
 local entry = cjson.decode(state)
 if type(entry.registration_token) ~= "string" then
   return redis.error_reply("CATALOGINVALIDTOKEN")
 end
 local retired = redis.call("SISMEMBER", KEYS[3], entry.registration_token)
 local now = redis.call("TIME")
-return {state, definition, tostring(retired), now[1], now[2]}
+return {state, definition, tostring(retired), now[1], now[2], blob}
 `)
 )
 
@@ -147,6 +161,7 @@ func (c *toolsetCatalog) readCatalogToolset(ctx context.Context, name string, ra
 		return nil, err
 	}
 	if entry.State != catalogEntryActive {
+		c.forgetDefinition(name)
 		return nil, genregistry.MakeNotFound(errToolsetNotFound)
 	}
 	return copyCatalogToolset(ctx, name, entry, now)
@@ -216,7 +231,7 @@ func (s *redisCatalogStore) BoundedSnapshot(ctx context.Context, key string, bud
 		}
 		return catalogSnapshot{}, fmt.Errorf("read bounded catalog record: %w", err)
 	}
-	if len(values) != 5 {
+	if len(values) != 6 {
 		return catalogSnapshot{}, fmt.Errorf("bounded catalog read returned %d values", len(values))
 	}
 	seconds, err := strconv.ParseInt(values[3], 10, 64)
@@ -227,8 +242,15 @@ func (s *redisCatalogStore) BoundedSnapshot(ctx context.Context, key string, bud
 	if err != nil {
 		return catalogSnapshot{}, fmt.Errorf("decode catalog clock microseconds: %w", err)
 	}
+	definition := values[1]
+	if values[0] != "" {
+		definition, err = expandCatalogDefinition(values[1], values[5])
+		if err != nil {
+			return catalogSnapshot{}, fmt.Errorf("read bounded catalog record: %w", err)
+		}
+	}
 	return catalogSnapshot{
-		state: values[0], definition: values[1], retired: values[2] == "1",
+		state: values[0], definition: definition, retired: values[2] == "1",
 		exists: values[0] != "", now: time.Unix(seconds, micros*1000),
 	}, nil
 }

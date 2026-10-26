@@ -119,8 +119,13 @@ func (s *Service) catalogAttempt(ctx context.Context, apply func(*catalogTransac
 					return err
 				}
 				key := toolsetCatalogKey(registration.state.Info.Name)
+				routeDefinition, blobKey, blobRaw := encodeCatalogDefinitionRecord(registration.definition.raw)
 				pipe.HSet(ctx, store.state, key, raw)
-				pipe.HSet(ctx, store.definitions, key, registration.definition.raw)
+				if blobKey != "" {
+					pipe.HSet(ctx, store.definitions, blobKey, blobRaw, key, routeDefinition)
+				} else {
+					pipe.HSet(ctx, store.definitions, key, routeDefinition)
+				}
 			}
 			for key, member := range p.indexWrites {
 				pipe.ZAdd(ctx, key, redis.Z{Score: 0, Member: member})

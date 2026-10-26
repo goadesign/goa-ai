@@ -81,8 +81,9 @@ func TestRedisNativeAdmissionRepeatPreservesSavedByteCache(t *testing.T) {
 	assert.Same(t, initial, nativeCacheEntry(service.catalog, input.Name))
 	store := service.catalog.store.(*redisCatalogStore)
 	key := toolsetCatalogKey(input.Name)
-	raw, err := testRedisClient.HGet(t.Context(), store.definitions, key).Result()
+	_, raw, _, exists, err := store.Snapshot(t.Context(), key)
 	require.NoError(t, err)
+	require.True(t, exists)
 	changed := " \n" + raw
 	require.NoError(t, testRedisClient.HSet(t.Context(), store.definitions, key, changed).Err())
 	actual, err := service.catalog.ActiveRegistration(t.Context(), input.Name)
