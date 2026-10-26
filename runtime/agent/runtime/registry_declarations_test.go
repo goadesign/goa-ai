@@ -29,6 +29,21 @@ func TestWithRegistryDeclarationsKeepsOnlyDefinitionTools(t *testing.T) {
 	require.True(t, ok)
 	_, ok = self.registryDeclaration(genrecords.Read)
 	assert.True(t, ok, "the definition graph sees the same declarations")
+
+	control := testAgentDefinition("control.agent", "control.workflow", "control.queue", specs, nil).WithRegistryDeclarations(func(name tools.Ident) (*genregistry.ToolSchema, bool) {
+		schema, found := genrecords.ToolSchema(name)
+		if !found {
+			return nil, false
+		}
+		copied := *schema
+		contract := *schema.ConsumerContract
+		contract.Kind = "control"
+		copied.ConsumerContract = &contract
+		return &copied, true
+	})
+	controlDeclaration, ok := control.registryDeclaration(genrecords.Read)
+	require.True(t, ok)
+	assert.Equal(t, "control", controlDeclaration.Declaration().ConsumerContract.Kind)
 }
 
 func TestWithRegistryDeclarationsRejectsInvalidGeneratedValues(t *testing.T) {
