@@ -91,16 +91,19 @@ func CompileDeclaration(declaration *genregistry.ToolSchema) (*CompiledDeclarati
 	if err := genregistry.ValidateToolSchemaValue(&compileInput); err != nil {
 		return nil, fmt.Errorf("registry resolution: %w", err)
 	}
-	spec, err := toolcontract.Compile(&compileInput)
-	if err != nil {
-		return nil, err
-	}
-	if spec.Name.Toolset() == "" || spec.Name.Tool() == "" {
-		return nil, fmt.Errorf("registry tool %q must be qualified", spec.Name)
-	}
-	if contract.Kind != agentKind {
-		spec.IsAgentTool = false
-		spec.AgentID = ""
+	var spec tools.ToolSpec
+	if contract.Kind == serviceKind || contract.Kind == agentKind {
+		spec, err = toolcontract.Compile(&compileInput)
+		if err != nil {
+			return nil, err
+		}
+		if spec.Name.Toolset() == "" || spec.Name.Tool() == "" {
+			return nil, fmt.Errorf("registry tool %q must be qualified", spec.Name)
+		}
+		if contract.Kind != agentKind {
+			spec.IsAgentTool = false
+			spec.AgentID = ""
+		}
 	}
 	return &CompiledDeclaration{
 		declaration: &unbound,
@@ -316,6 +319,9 @@ func readCompiled(selection *genregistry.CompiledToolSelection, agent *genregist
 	unbound := make(map[tools.Ident]internaladmission.ToolSchema, len(entries))
 	for index, entry := range entries {
 		declaration := entry.declaration
+		if entry.kind != serviceKind && entry.kind != agentKind {
+			return nil, fmt.Errorf("restore compiled tool selection: tool %q requires compiled %s execution", declaration.Name, entry.kind)
+		}
 		if (entry.kind == agentKind) != (agent != nil) {
 			return nil, fmt.Errorf("restore compiled tool selection: tool %q agent target mismatch", declaration.Name)
 		}
