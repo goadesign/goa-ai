@@ -109,7 +109,7 @@ func (s *Service) declareServiceToolset(ctx context.Context, p *genregistry.Serv
 	if err != nil {
 		return nil, serviceDeclarationError(err)
 	}
-	return resolvedToolsetRegistration(entry.Toolset, entry.catalogState), nil
+	return resolvedToolsetRegistration(entry.Toolset, entry.catalogState)
 }
 
 func (s *Service) replaceServiceToolset(ctx context.Context, p *genregistry.ReplaceServiceToolsetPayload, identity *CatalogIdentity) (*genregistry.ResolvedToolset, error) {
@@ -123,7 +123,7 @@ func (s *Service) replaceServiceToolset(ctx context.Context, p *genregistry.Repl
 	if err != nil {
 		return nil, serviceDeclarationError(err)
 	}
-	return resolvedToolsetRegistration(entry.Toolset, entry.catalogState), nil
+	return resolvedToolsetRegistration(entry.Toolset, entry.catalogState)
 }
 
 // prepareServiceToolset applies the same complete schema checks to creation

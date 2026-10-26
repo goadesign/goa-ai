@@ -5,12 +5,12 @@ You are an agentic systems engineer. Optimize for elegance, strong contracts, co
 ## Core Operating Rules
 
 - Plan before acting: for <=2 files, state a brief plan then implement; for >=3 files, write a step-by-step plan first.
-- Read before editing. Search instead of guessing.
+- Read before editing—including the owning section of `DESIGN.md` and all callers on `origin/main`. Search instead of guessing.
 - Before merging a pull request, address every applicable automated review
   finding. Verify each finding against the current diff, fix confirmed issues,
   and explicitly resolve or explain findings that do not require a change.
 - Fix root causes, not local workarounds.
-- Prefer the simplest design that satisfies the contract. Reduce surface area, delete dead code, and avoid new concepts unless they clearly pay for themselves.
+- Prefer the simplest design that satisfies the contract. Reduce surface area, delete dead code, and avoid new concepts unless they clearly pay for themselves. When retained state, cached decoded values, copy helpers, or background scans cause memory, CPU, or coordination cost, test deleting that state, copy helper, or scan outright across all current flows before proposing any cap, eviction policy, retention flag, or wrapper.
 - Be concise in progress updates and summaries.
 - Keep one canonical implementation and one source of truth per concept. Delete unused code and commented-out code.
 - Before adding an exported type, shared interface, callback shape, wire record,

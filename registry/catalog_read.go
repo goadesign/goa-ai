@@ -184,18 +184,21 @@ func (c *toolsetCatalog) readCatalogEntry(ctx context.Context, name string, rawB
 	return entry, snapshot.now, nil
 }
 
-// copyCatalogToolset requires saved application ownership and copies the exact
+// copyCatalogToolset requires saved application ownership and decodes the exact
 // declaration so a caller cannot mutate data retained by another reader.
 func copyCatalogToolset(ctx context.Context, name string, entry catalogEntry, now time.Time) (_ *catalogToolsetRead, err error) {
 	if entry.Identity == nil {
 		return nil, ErrCatalogIdentityMissing
 	}
-	// Copy the prepared saved declaration so this reader owns its returned data.
-	// Fresh registration state and health still come from the current snapshot.
+	// Decode the checked bytes into a separate object so the caller can change
+	// its returned toolset without changing another read.
 	decodeCtx, decodeSpan := otel.Tracer("goa.design/goa-ai/registry").Start(ctx, "toolregistry.catalog.definition.decode",
 		trace.WithAttributes(attribute.String("toolregistry.toolset", name)))
-	toolset := entry.Toolset.copyDeclaration(entry.RegisteredAt)
+	toolset, err := entry.Toolset.decode(entry.RegisteredAt)
 	finishCatalogSpan(decodeCtx, decodeSpan, &err)
+	if err != nil {
+		return nil, err
+	}
 	result := &CatalogToolset{
 		Identity: *entry.Identity, NativeAgent: entry.NativeAgent,
 		Registration: &genregistry.ResolvedToolset{

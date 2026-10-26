@@ -272,14 +272,14 @@ func (h *healthTracker) runHealthSweep(ctx context.Context) {
 	h.pingRegisteredToolsets(ctx)
 }
 
-// pingRegisteredToolsets reads the active toolsets from the shared catalog.
-// Every registry replica records the active names it sees. The replica that
-// wins a toolset's lease also records whether that toolset can accept calls and
-// publishes a ping when at least one provider can receive it. Losing the lease
-// means another replica or a previous check already sampled the current
-// interval.
+// pingRegisteredToolsets reads the active service toolsets from the shared
+// catalog. Every registry replica records the active service names it sees.
+// The replica that wins a toolset's lease also records whether that toolset can
+// accept calls and publishes a ping when at least one provider can receive it.
+// Losing the lease means another replica or a previous check already sampled
+// the current interval.
 func (h *healthTracker) pingRegisteredToolsets(ctx context.Context) {
-	toolsets, err := h.catalog.ListToolsets(ctx, nil)
+	toolsets, err := h.catalog.activeServiceToolsets(ctx)
 	if err != nil {
 		if ctx.Err() != nil {
 			return
@@ -288,12 +288,11 @@ func (h *healthTracker) pingRegisteredToolsets(ctx context.Context) {
 		return
 	}
 	active := make(map[string]struct{}, len(toolsets))
-	for _, registered := range toolsets {
-		active[registered.Name] = struct{}{}
+	for _, toolset := range toolsets {
+		active[toolset] = struct{}{}
 	}
 	h.recordCatalogExpectations(ctx, active)
-	for _, registered := range toolsets {
-		toolset := registered.Name
+	for _, toolset := range toolsets {
 		h.recordCatalogEntry(ctx, toolset)
 		acquired, err := h.acquirePingLease(ctx, toolset)
 		if err != nil {
