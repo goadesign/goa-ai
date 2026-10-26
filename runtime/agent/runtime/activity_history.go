@@ -48,8 +48,21 @@ func (r *Runtime) resolvePlanActivityInput(ctx context.Context, input *PlanActiv
 // loadActivityHistory rejects a foreign run before reading its transcript.
 // Missing owners and invalid positions cannot become valid by retrying.
 func (r *Runtime) loadActivityHistory(ctx context.Context, agentID agent.Ident, runID, sessionID, endID string) ([]*model.Message, error) {
+	if err := r.verifyActivityHistoryOwner(ctx, agentID, runID, sessionID, endID); err != nil {
+		return nil, err
+	}
+	messages, err := transcript.BuildMessagesFromRunLogPrefix(ctx, r.Store, runID, endID)
+	if err != nil {
+		return nil, activityHistoryError(err)
+	}
+	return messages, nil
+}
+
+// verifyActivityHistoryOwner checks that the parent run exists and belongs to
+// the declared agent and session before child preparation or transcript reads.
+func (r *Runtime) verifyActivityHistoryOwner(ctx context.Context, agentID agent.Ident, runID, sessionID, endID string) error {
 	if agentID == "" || runID == "" || endID == "" {
-		return nil, engine.MarkActivityErrorNonRetryable(errors.New("history requires agent, run and end record identifiers"))
+		return engine.MarkActivityErrorNonRetryable(errors.New("history requires agent, run and end record identifiers"))
 	}
 	meta, err := r.Store.LoadRun(ctx, runID)
 	executor, isAgent := meta.Subject.Executor.AsAgent()
@@ -57,13 +70,9 @@ func (r *Runtime) loadActivityHistory(ctx context.Context, agentID agent.Ident, 
 		err = storage.NewContractError(storage.ErrRunRecordOwnerMismatch)
 	}
 	if err != nil {
-		return nil, activityHistoryError(err)
+		return activityHistoryError(err)
 	}
-	messages, err := transcript.BuildMessagesFromRunLogPrefix(ctx, r.Store, runID, endID)
-	if err != nil {
-		return nil, activityHistoryError(err)
-	}
-	return messages, nil
+	return nil
 }
 
 // activityHistoryError retains temporary store errors while rejecting requests

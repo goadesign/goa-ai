@@ -17,6 +17,7 @@ import (
 	"goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/storage"
 	"goa.design/goa-ai/runtime/agent/tools"
@@ -77,8 +78,14 @@ func (r *Runtime) prepareAgentChildActivity(ctx context.Context, input *api.Agen
 			history = config.History
 		}
 	} else {
-		messages, historyErr := r.loadActivityHistory(ctx, agent.Ident(executor), input.ParentRun.RunID, input.ParentRun.SessionID, input.HistoryEndID)
-		if historyErr != nil {
+		var messages []*model.Message
+		if cfg.PreChildValidator != nil {
+			var historyErr error
+			messages, historyErr = r.loadActivityHistory(ctx, agent.Ident(executor), input.ParentRun.RunID, input.ParentRun.SessionID, input.HistoryEndID)
+			if historyErr != nil {
+				return nil, historyErr
+			}
+		} else if historyErr := r.verifyActivityHistoryOwner(ctx, agent.Ident(executor), input.ParentRun.RunID, input.ParentRun.SessionID, input.HistoryEndID); historyErr != nil {
 			return nil, historyErr
 		}
 		request, err = r.buildAgentChildRequest(ctx, cfg, &input.Call, messages, &input.ParentRun)

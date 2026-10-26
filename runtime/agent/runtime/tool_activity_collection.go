@@ -44,6 +44,14 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 			return activityByID, pending, false, errors.Join(executionErr, err)
 		}
 
+		var resultPubs []pendingHookPublication
+		flushResults := func() {
+			if len(resultPubs) > 0 {
+				executionErr = errors.Join(executionErr, e.r.publishHookPublications(ctx, resultPubs))
+				resultPubs = nil
+			}
+		}
+
 		i := 0
 		for i < len(pending) {
 			info := pending[i]
@@ -54,6 +62,7 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 				}
 				if info.pollTimer.IsReady() {
 					if err := e.continueTaskPoll(wfCtx, &info); err != nil {
+						flushResults()
 						return activityByID, pending, false, errors.Join(executionErr, err)
 					}
 					pending[i] = info
@@ -72,11 +81,13 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 			out, err := info.future.Get(ctx)
 			if err != nil {
 				if isRunCancellationError(err) || temporalerrors.IsRequestValidation(err) {
+					flushResults()
 					return activityByID, pending, false, errors.Join(executionErr, err)
 				}
 				if info.task != nil {
 					if _, reading := info.call.ExecutionContinuation.AsTaskGet(); reading && temporalerrors.Retryable(err) {
 						if err := startTaskObservationTimer(wfCtx, &info); err != nil {
+							flushResults()
 							return activityByID, pending, false, errors.Join(executionErr, err)
 						}
 						pending = append(pending, info)
@@ -84,13 +95,17 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 						continue
 					}
 					if cancelErr := e.cancelAcceptedTask(wfCtx, info); cancelErr != nil {
+						flushResults()
 						return activityByID, pending, false, errors.Join(executionErr, err, cancelErr)
 					}
 				}
 				duration := wfCtx.Now().Sub(info.startTime)
-				result, synthErr := e.synthesizeToolError(ctx, info.call, err, "tool activity failed", duration)
+				result, pub, synthErr := e.prepareSynthesizedToolError(ctx, info.call, err, "tool activity failed", duration)
 				if result != nil {
 					activityByID[info.call.ToolCallID] = result
+				}
+				if pub != nil {
+					resultPubs = append(resultPubs, *pub)
 				}
 				if synthErr != nil {
 					executionErr = errors.Join(executionErr, synthErr)
@@ -105,7 +120,10 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 				continue
 			}
 
-			execResult, err := e.executionFromActivityOutput(ctx, info, out, wfCtx.Now().Sub(info.startTime))
+			execResult, pub, err := e.prepareExecutionFromActivityOutput(ctx, info, out, wfCtx.Now().Sub(info.startTime))
+			if pub != nil {
+				resultPubs = append(resultPubs, *pub)
+			}
 			if err != nil {
 				if execResult != nil {
 					activityByID[info.call.ToolCallID] = execResult
@@ -116,6 +134,7 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 			if execResult.mcpPending != nil {
 				accepted, waiting, err := acceptTaskPending(&info, execResult.mcpPending)
 				if err != nil {
+					flushResults()
 					return activityByID, pending, false, errors.Join(executionErr, err)
 				}
 				execResult.mcpPending = accepted
@@ -125,6 +144,7 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 				}
 				if waiting {
 					if err := startTaskObservationTimer(wfCtx, &info); err != nil {
+						flushResults()
 						return activityByID, pending, false, errors.Join(executionErr, err)
 					}
 					pending = append(pending, info)
@@ -136,6 +156,7 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 			activityByID[info.call.ToolCallID] = execResult
 			delete(e.ownedTasks, info.call.ToolCallID)
 		}
+		flushResults()
 		if finalizeTimer != nil && finalizeTimer.IsReady() && len(pending) > 0 {
 			return activityByID, pending, true, executionErr
 		}
@@ -146,31 +167,46 @@ func (e *toolBatchExec) collectActivityResultsAsComplete(wfCtx engine.WorkflowCo
 // executionFromActivityOutput decodes and validates one activity result, then
 // publishes the canonical result event for the tool call.
 func (e *toolBatchExec) executionFromActivityOutput(ctx context.Context, info futureInfo, out *ToolOutput, duration time.Duration) (*ToolExecutionResult, error) {
+	result, pub, err := e.prepareExecutionFromActivityOutput(ctx, info, out, duration)
+	if err != nil {
+		return result, err
+	}
+	if pub != nil {
+		if pubErr := e.r.publishHookPublications(ctx, []pendingHookPublication{*pub}); pubErr != nil {
+			return result, pubErr
+		}
+	}
+	return result, nil
+}
+
+// prepareExecutionFromActivityOutput decodes and validates one activity result,
+// then prepares the canonical result event publication for the tool call.
+func (e *toolBatchExec) prepareExecutionFromActivityOutput(ctx context.Context, info futureInfo, out *ToolOutput, duration time.Duration) (*ToolExecutionResult, *pendingHookPublication, error) {
 	spec, ok, err := e.r.callSpec(info.call)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if !ok {
-		return e.synthesizeUnknownToolResult(ctx, info.call, duration)
+		return e.prepareSynthesizedUnknownToolResult(ctx, info.call, duration)
 	}
 
 	if out.PendingExecution != nil {
 		if info.call.TextOnly && pendingHostInput(out.PendingExecution) != nil {
-			return nil, errors.New("text-only tools cannot request MCP host input")
+			return nil, nil, errors.New("text-only tools cannot request MCP host input")
 		}
 		if err := validatePendingActivityOutput(out); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		return &ToolExecutionResult{mcpPending: out.PendingExecution, mcpToolCallID: info.call.ToolCallID, duration: duration, task: cloneTaskExecution(info.task), executionSequence: info.call.ExecutionSequence}, nil
+		return &ToolExecutionResult{mcpPending: out.PendingExecution, mcpToolCallID: info.call.ToolCallID, duration: duration, task: cloneTaskExecution(info.task), executionSequence: info.call.ExecutionSequence}, nil, nil
 	}
 	if err := out.Blocks.Validate(); err != nil {
-		return nil, fmt.Errorf("tool %q activity content: %w", info.call.Name, err)
+		return nil, nil, fmt.Errorf("tool %q activity content: %w", info.call.Name, err)
 	}
 	var decoded any
 	if out.Failure == nil && hasNonNullJSON(out.Payload.RawMessage()) {
 		v, err := spec.Result.Codec.FromJSON(out.Payload)
 		if err != nil {
-			return nil, fmt.Errorf("tool %q result decode failed (tool_call_id=%s): %w", info.call.Name, info.call.ToolCallID, err)
+			return nil, nil, fmt.Errorf("tool %q result decode failed (tool_call_id=%s): %w", info.call.Name, info.call.ToolCallID, err)
 		}
 		decoded = v
 	}
@@ -186,10 +222,10 @@ func (e *toolBatchExec) executionFromActivityOutput(ctx context.Context, info fu
 	}
 	toolRes.Failure = out.Failure
 	if err := canonicalizeAndValidateWorkflowToolResult(spec, info.call, toolRes); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := validateToolClarificationContract(info.call, toolRes, out.Clarification); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	result := &ToolExecutionResult{
 		ToolResult:        toolRes,
@@ -197,12 +233,11 @@ func (e *toolBatchExec) executionFromActivityOutput(ctx context.Context, info fu
 		duration:          duration,
 		executionSequence: info.call.ExecutionSequence,
 	}
-	result.resultRecord, err = e.publishToolResultReceived(ctx, info.call, result, out.Payload, duration)
+	pub, err := e.prepareToolResultReceived(ctx, info.call, result, out.Payload, duration)
 	if err != nil {
-		return result, err
+		return result, nil, err
 	}
-	result.resultPublished = true
-	return result, nil
+	return result, &pub, nil
 }
 
 // scheduleToolActivity selects the configured queue and retry policy for one

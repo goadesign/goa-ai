@@ -44,13 +44,25 @@ func (e *toolBatchExec) collectAgentChildResults(wfCtx engine.WorkflowContext, c
 			return out, pending, false, errors.Join(executionErr, err)
 		}
 
+		var resultPubs []pendingHookPublication
+		flushResults := func() {
+			if len(resultPubs) > 0 {
+				executionErr = errors.Join(executionErr, e.r.publishHookPublications(ctx, resultPubs))
+				resultPubs = nil
+			}
+		}
+
 		i := 0
 		for i < len(pending) {
 			info := pending[i]
 			if result, collected := out[info.call.ToolCallID]; collected {
 				pending[i] = pending[len(pending)-1]
 				pending = pending[:len(pending)-1]
-				executionErr = errors.Join(executionErr, e.publishChildResult(ctx, info.call, result))
+				pub, err := e.prepareChildResult(ctx, info.call, result)
+				if pub != nil {
+					resultPubs = append(resultPubs, *pub)
+				}
+				executionErr = errors.Join(executionErr, err)
 				continue
 			}
 			if !info.handle.IsReady() {
@@ -63,15 +75,20 @@ func (e *toolBatchExec) collectAgentChildResults(wfCtx engine.WorkflowContext, c
 			outPtr, err := info.handle.Get(wfCtx.Context())
 			if err != nil {
 				if isRunCancellationError(err) || temporalerrors.IsOutputContract(err) || temporalerrors.IsRequestValidation(err) {
+					flushResults()
 					return out, pending, false, errors.Join(executionErr, err)
 				}
 				if _, ok := temporalerrors.Provider(err); ok {
+					flushResults()
 					return out, pending, false, errors.Join(executionErr, err)
 				}
 				duration := wfCtx.Now().Sub(info.startTime)
-				result, synthErr := e.synthesizeToolError(ctx, info.call, err, "agent tool execution failed", duration)
+				result, pub, synthErr := e.prepareSynthesizedToolError(ctx, info.call, err, "agent tool execution failed", duration)
 				if result != nil {
 					out[info.call.ToolCallID] = result
+				}
+				if pub != nil {
+					resultPubs = append(resultPubs, *pub)
 				}
 				if synthErr != nil {
 					executionErr = errors.Join(executionErr, synthErr)
@@ -84,8 +101,13 @@ func (e *toolBatchExec) collectAgentChildResults(wfCtx engine.WorkflowContext, c
 				continue
 			}
 			out[info.call.ToolCallID] = result
-			executionErr = errors.Join(executionErr, e.publishChildResult(ctx, info.call, result))
+			pub, err := e.prepareChildResult(ctx, info.call, result)
+			if pub != nil {
+				resultPubs = append(resultPubs, *pub)
+			}
+			executionErr = errors.Join(executionErr, err)
 		}
+		flushResults()
 		if finalizeTimer != nil && finalizeTimer.IsReady() && len(pending) > 0 {
 			return out, pending, true, executionErr
 		}
@@ -136,20 +158,20 @@ func (e *toolBatchExec) adaptCompletedChild(wfCtx engine.WorkflowContext, info a
 	return result, nil
 }
 
-// publishChildResult records a completed tool result once. Suspended children
-// retain unanswered calls until their continuation supplies a result.
-func (e *toolBatchExec) publishChildResult(ctx context.Context, call ToolCall, result *ToolExecutionResult) error {
+// prepareChildResult prepares the ToolResultReceived publication for a
+// completed child run. Suspended children retain unanswered calls until their
+// continuation supplies a result.
+func (e *toolBatchExec) prepareChildResult(ctx context.Context, call ToolCall, result *ToolExecutionResult) (*pendingHookPublication, error) {
 	if result.childSuspension != nil || result.resultPublished {
-		return nil
+		return nil, nil
 	}
 	data, err := e.r.materializeToolResult(ctx, call, result.ToolResult)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	result.resultRecord, err = e.publishToolResultReceived(ctx, call, result, data, result.duration)
+	pub, err := e.prepareToolResultReceived(ctx, call, result, data, result.duration)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	result.resultPublished = true
-	return nil
+	return &pub, nil
 }
