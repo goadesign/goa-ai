@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"sync"
 
 	internaladmission "goa.design/goa-ai/internal/toolregistry/admission"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
@@ -31,17 +32,21 @@ type (
 	// build does not declare that operation.
 	CompiledDeclarations func(name tools.Ident) (*CompiledDeclaration, bool)
 
-	// CompiledDeclaration holds one generated tool declaration together with its
-	// pre-encoded admission record, identity fingerprint, and compiled portable
-	// ToolSpec. An AgentDefinition constructs it once per static tool so reading
-	// a saved compiled selection never re-marshals ConsumerContract JSON or
+	// CompiledDeclaration holds one generated tool declaration and memoizes its
+	// admission record, identity fingerprint, and compiled portable ToolSpec on
+	// first use. Package initialization stays allocation-free while reading a
+	// saved compiled selection never re-marshals ConsumerContract JSON or
 	// re-compiles JSON schemas and regexes.
 	CompiledDeclaration struct {
-		declaration *genregistry.ToolSchema
-		admission   internaladmission.ToolSchema
-		fingerprint string
-		kind        string
-		spec        tools.ToolSpec
+		declaration   *genregistry.ToolSchema
+		kind          string
+		admissionOnce sync.Once
+		admission     internaladmission.ToolSchema
+		fingerprint   string
+		admissionErr  error
+		specOnce      sync.Once
+		spec          tools.ToolSpec
+		specErr       error
 	}
 )
 
@@ -65,9 +70,9 @@ var (
 	}
 )
 
-// CompileDeclaration validates and pre-compiles one generated tool declaration.
-// The declaration must be unbound (no provider Agent target) and have a
-// qualified tool name.
+// CompileDeclaration validates that declaration is an unbound generated tool
+// schema and wraps it so its admission fingerprint and portable ToolSpec are
+// compiled at most once on first read.
 func CompileDeclaration(declaration *genregistry.ToolSchema) (*CompiledDeclaration, error) {
 	if declaration == nil || declaration.ConsumerContract == nil {
 		return nil, errors.New("compiled tool declaration is required")
@@ -78,42 +83,9 @@ func CompileDeclaration(declaration *genregistry.ToolSchema) (*CompiledDeclarati
 	unbound := *declaration
 	contract := *declaration.ConsumerContract
 	unbound.ConsumerContract = &contract
-	admission, err := unboundAdmissionToolSchema(&unbound)
-	if err != nil {
-		return nil, err
-	}
-	compileInput := unbound
-	if contract.Kind == agentKind {
-		agentContract := contract
-		agentContract.Agent = syntheticCompiledAgentTarget
-		compileInput.ConsumerContract = &agentContract
-	}
-	if err := genregistry.ValidateToolSchemaValue(&compileInput); err != nil {
-		return nil, fmt.Errorf("registry resolution: %w", err)
-	}
-	var spec tools.ToolSpec
-	if contract.Kind == serviceKind || contract.Kind == agentKind {
-		spec, err = toolcontract.Compile(&compileInput)
-		if err != nil {
-			return nil, err
-		}
-		if spec.Name.Toolset() == "" || spec.Name.Tool() == "" {
-			return nil, fmt.Errorf("registry tool %q must be qualified", spec.Name)
-		}
-		if contract.Kind != agentKind {
-			spec.IsAgentTool = false
-			spec.AgentID = ""
-		}
-	}
 	return &CompiledDeclaration{
 		declaration: &unbound,
-		admission:   admission,
-		fingerprint: internaladmission.SchemaFingerprint(internaladmission.Schema{
-			Name:  unbound.Name,
-			Tools: []internaladmission.ToolSchema{admission},
-		}),
-		kind: contract.Kind,
-		spec: spec,
+		kind:        contract.Kind,
 	}, nil
 }
 
@@ -215,8 +187,82 @@ func (d *CompiledDeclaration) Declaration() *genregistry.ToolSchema {
 
 // Same reports whether d and other have the exact same registry declaration
 // identity.
-func (d *CompiledDeclaration) Same(other *CompiledDeclaration) bool {
-	return d != nil && other != nil && d.fingerprint == other.fingerprint
+func (d *CompiledDeclaration) Same(other *CompiledDeclaration) (bool, error) {
+	if d == nil || other == nil {
+		return false, nil
+	}
+	if _, err := d.ensureAdmission(); err != nil {
+		return false, err
+	}
+	if _, err := other.ensureAdmission(); err != nil {
+		return false, err
+	}
+	return d.fingerprint == other.fingerprint, nil
+}
+
+// ensureAdmission memoizes the unbound admission record and single-tool
+// identity fingerprint for d.
+func (d *CompiledDeclaration) ensureAdmission() (internaladmission.ToolSchema, error) {
+	d.admissionOnce.Do(func() {
+		if err := d.validateDeclaration(); err != nil {
+			d.admissionErr = err
+			return
+		}
+		d.admission, d.admissionErr = unboundAdmissionToolSchema(d.declaration)
+		if d.admissionErr != nil {
+			return
+		}
+		d.fingerprint = internaladmission.SchemaFingerprint(internaladmission.Schema{
+			Name:  d.declaration.Name,
+			Tools: []internaladmission.ToolSchema{d.admission},
+		})
+	})
+	return d.admission, d.admissionErr
+}
+
+// ensureSpec memoizes the compiled portable ToolSpec for d.
+func (d *CompiledDeclaration) ensureSpec() (tools.ToolSpec, error) {
+	d.specOnce.Do(func() {
+		compileInput := *d.declaration
+		if d.kind == agentKind {
+			agentContract := *d.declaration.ConsumerContract
+			agentContract.Agent = syntheticCompiledAgentTarget
+			compileInput.ConsumerContract = &agentContract
+		}
+		if err := genregistry.ValidateToolSchemaValue(&compileInput); err != nil {
+			d.specErr = fmt.Errorf("registry resolution: %w", err)
+			return
+		}
+		spec, err := toolcontract.Compile(&compileInput)
+		if err != nil {
+			d.specErr = err
+			return
+		}
+		if spec.Name.Toolset() == "" || spec.Name.Tool() == "" {
+			d.specErr = fmt.Errorf("registry tool %q must be qualified", spec.Name)
+			return
+		}
+		if d.kind != agentKind {
+			spec.IsAgentTool = false
+			spec.AgentID = ""
+		}
+		d.spec = spec
+	})
+	return d.spec, d.specErr
+}
+
+// validateDeclaration validates the unbound generated ToolSchema structure.
+func (d *CompiledDeclaration) validateDeclaration() error {
+	compileInput := *d.declaration
+	if d.kind == agentKind {
+		agentContract := *d.declaration.ConsumerContract
+		agentContract.Agent = syntheticCompiledAgentTarget
+		compileInput.ConsumerContract = &agentContract
+	}
+	if err := genregistry.ValidateToolSchemaValue(&compileInput); err != nil {
+		return fmt.Errorf("registry resolution: %w", err)
+	}
+	return nil
 }
 
 // compiledFingerprint returns the registry identity of a set of generated
@@ -285,8 +331,12 @@ func readCompiled(selection *genregistry.CompiledToolSelection, agent *genregist
 		if !ok || entry == nil {
 			return nil, fmt.Errorf("%w: operation %q is not declared by this build", ErrCompiledContractChanged, name)
 		}
+		admission, err := entry.ensureAdmission()
+		if err != nil {
+			return nil, err
+		}
 		entries[index] = entry
-		admissionTools[index] = entry.admission
+		admissionTools[index] = admission
 	}
 	fingerprint := internaladmission.SchemaFingerprint(internaladmission.Schema{
 		Name:  selection.Name,
@@ -325,12 +375,16 @@ func readCompiled(selection *genregistry.CompiledToolSelection, agent *genregist
 		if (entry.kind == agentKind) != (agent != nil) {
 			return nil, fmt.Errorf("restore compiled tool selection: tool %q agent target mismatch", declaration.Name)
 		}
+		baseSpec, err := entry.ensureSpec()
+		if err != nil {
+			return nil, fmt.Errorf("restore compiled tool selection: %w", err)
+		}
 		copied := *declaration
 		contract := *declaration.ConsumerContract
 		contract.Agent = agent
 		copied.ConsumerContract = &contract
 		bound[index] = &copied
-		spec := entry.spec
+		spec := baseSpec
 		if agent != nil {
 			spec.IsAgentTool = true
 			spec.AgentID = agent.Executor
