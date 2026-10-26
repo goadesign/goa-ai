@@ -49,6 +49,7 @@ import (
 	openai "goa.design/goa-ai/features/model/openai"
 	vertexprovider "goa.design/goa-ai/features/model/vertex"
 	"goa.design/goa-ai/internal/registrycall"
+	"goa.design/goa-ai/internal/registrycontract"
 	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	agent "goa.design/goa-ai/runtime/agent"
 	"goa.design/goa-ai/runtime/agent/api"
@@ -144,9 +145,9 @@ type (
 		agents    map[agent.Ident]AgentRegistration
 		toolsets  map[string]ToolsetRegistration
 		toolSpecs map[tools.Ident]tools.ToolSpec
-		// registryDeclarations holds the generated registry declaration that
-		// registered agents supplied for each tool name.
-		registryDeclarations    map[tools.Ident]*genregistry.ToolSchema
+		// registryDeclarations holds the pre-compiled generated registry
+		// declaration that registered agents supplied for each tool name.
+		registryDeclarations    map[tools.Ident]*registrycontract.CompiledDeclaration
 		imageSources            *imageSourceRegistry
 		registries              map[string]registryConnection
 		agentToolResolvers      map[agent.Ident]AgentToolResolver

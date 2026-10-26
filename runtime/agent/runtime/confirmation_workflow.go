@@ -27,6 +27,7 @@ import (
 	"text/template"
 
 	"goa.design/goa-ai/runtime/agent/rawjson"
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type confirmationAwait struct {
@@ -38,15 +39,20 @@ type confirmationAwait struct {
 // splitConfirmationCalls partitions allowed tool calls into:
 // - calls that may execute immediately, and
 // - calls that require an await_confirmation boundary before execution.
-func (r *Runtime) splitConfirmationCalls(ctx context.Context, base *workflowConversation, allowed []ToolCall) ([]ToolCall, []confirmationAwait, error) {
+func (r *Runtime) splitConfirmationCalls(
+	ctx context.Context,
+	base *workflowConversation,
+	allowed []ToolCall,
+	specs []tools.ToolSpec,
+) ([]ToolCall, []confirmationAwait, error) {
 	if len(allowed) == 0 {
 		return nil, nil, nil
 	}
 
 	toExecute := make([]ToolCall, 0, len(allowed))
 	toConfirm := make([]confirmationAwait, 0, 1)
-	for _, call := range allowed {
-		plan, needs, err := r.confirmationPlan(ctx, &call)
+	for index, call := range allowed {
+		plan, needs, err := r.confirmationPlanForSpec(ctx, &call, specs[index], true)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -85,6 +91,26 @@ func (r *Runtime) confirmationPlan(ctx context.Context, call *ToolCall) (*confir
 	// Runtime override takes precedence and can require confirmation for tools that
 	// do not declare design-time Confirmation.
 	if r.toolConfirmation != nil && len(r.toolConfirmation.Confirm) > 0 {
+		if _, ok := r.toolConfirmation.Confirm[call.Name]; ok {
+			return r.confirmationPlanForSpec(ctx, call, tools.ToolSpec{}, false)
+		}
+	}
+	spec, ok, err := r.callSpec(*call)
+	if err != nil {
+		return nil, false, err
+	}
+	return r.confirmationPlanForSpec(ctx, call, spec, ok)
+}
+
+// confirmationPlanForSpec renders the confirmation prompt and denied-result
+// payload using an already-resolved ToolSpec when no runtime override applies.
+func (r *Runtime) confirmationPlanForSpec(
+	ctx context.Context,
+	call *ToolCall,
+	spec tools.ToolSpec,
+	hasSpec bool,
+) (*confirmationPlan, bool, error) {
+	if r.toolConfirmation != nil && len(r.toolConfirmation.Confirm) > 0 {
 		if h, ok := r.toolConfirmation.Confirm[call.Name]; ok {
 			if call.TextOnly {
 				return nil, false, errors.New("text-only tools cannot require confirmation")
@@ -104,12 +130,7 @@ func (r *Runtime) confirmationPlan(ctx context.Context, call *ToolCall) (*confir
 			}, true, nil
 		}
 	}
-
-	spec, ok, err := r.callSpec(*call)
-	if err != nil {
-		return nil, false, err
-	}
-	if !ok || spec.Confirmation == nil {
+	if !hasSpec || spec.Confirmation == nil {
 		return nil, false, nil
 	}
 	if call.TextOnly {

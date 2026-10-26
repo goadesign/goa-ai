@@ -128,7 +128,10 @@ func TestCompiledStaticServicePreservesOriginalValues(t *testing.T) {
 			name := tools.Ident(fixture.expected.Tools[index].Name)
 			expected := fixture.expected.Tools[index].ConsumerContract
 			selected := fixture.selected.Toolset.Tools[index].ConsumerContract
-			generated := fixture.definition.declarations[name].ConsumerContract
+			generatedSchema := *fixture.definition.declarations[name].Declaration()
+			generatedContract := *generatedSchema.ConsumerContract
+			generatedSchema.ConsumerContract = &generatedContract
+			generated := &generatedContract
 			switch variant {
 			case "empty omitted collections":
 				expected.Meta, generated.Meta = nil, nil
@@ -147,7 +150,10 @@ func TestCompiledStaticServicePreservesOriginalValues(t *testing.T) {
 					value.Payload.Fields = []*genregistry.ToolFieldMetadata{{Branches: []*genregistry.ToolUnionBranch{{Selection: genregistry.NewToolUnionSelectionUntagged(&genregistry.ToolUntaggedUnionBranch{JSONKind: "object", Index: 4294967297})}}}}
 				}
 			}
-			spec, err := toolcontract.Compile(fixture.definition.declarations[name])
+			compiledDecl, err := registrycontract.CompileDeclaration(&generatedSchema)
+			require.NoError(t, err)
+			fixture.definition.declarations[name] = compiledDecl
+			spec, err := toolcontract.Compile(&generatedSchema)
 			require.NoError(t, err)
 			fixture.definition.specByName[name] = spec
 			compiled, err := CompileStaticService(fixture.expected, fixture.selected)
@@ -187,7 +193,11 @@ func TestCompiledStaticServiceBindChecksCurrentConsumer(t *testing.T) {
 				spec.Bookkeeping = true
 				catalog.definition.specByName[names[0]] = spec
 			case "generated declaration":
-				catalog.definition.declarations[names[0]].Description = new("Changed consuming build")
+				changed := *catalog.definition.declarations[names[0]].Declaration()
+				changed.Description = new("Changed consuming build")
+				compiledDecl, err := registrycontract.CompileDeclaration(&changed)
+				require.NoError(t, err)
+				catalog.definition.declarations[names[0]] = compiledDecl
 			case "duplicate":
 				names = append(names, names[0])
 			case "already bound":

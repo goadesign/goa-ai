@@ -117,15 +117,20 @@ func (c *RegistryCatalog) SelectedOperation() (*genregistry.ToolSchema, error) {
 		if err != nil {
 			return nil, err
 		}
-	}
-	if selected == nil {
-		return nil, fmt.Errorf("run has no selected native operation")
-	}
-	if _, err := compileAgentOperation(selected, c.definition.route.ID); err != nil {
-		return nil, err
-	}
-	if c.runContext.ToolRegistry == nil && tools.Ident(selected.Name) != c.runContext.Tool {
-		return nil, fmt.Errorf("selected operation name differs from the run's operation")
+		spec := resolved.Specs[c.runContext.Tool]
+		if !spec.IsAgentTool || spec.AgentID != string(c.definition.route.ID) {
+			return nil, fmt.Errorf("operation %q does not target Agent %q", selected.Name, c.definition.route.ID)
+		}
+	} else {
+		if selected == nil {
+			return nil, fmt.Errorf("run has no selected native operation")
+		}
+		if _, err := compileAgentOperation(selected, c.definition.route.ID); err != nil {
+			return nil, err
+		}
+		if tools.Ident(selected.Name) != c.runContext.Tool {
+			return nil, fmt.Errorf("selected operation name differs from the run's operation")
+		}
 	}
 	encoded, err := genregistry.EncodeToolSchema(selected)
 	if err != nil {

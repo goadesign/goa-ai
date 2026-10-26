@@ -7,6 +7,7 @@ package runtime
 // first contract or executable toolset owner.
 
 import (
+	"bytes"
 	"fmt"
 	"maps"
 	"reflect"
@@ -133,7 +134,7 @@ func validateToolResultSpec(spec tools.ToolSpec) error {
 			spec.Name,
 		)
 	}
-	if !hasEncoder && !reflect.DeepEqual(spec.Result, tools.TypeSpec{}) {
+	if !hasEncoder && !equivalentTypeSpec(spec.Result, tools.TypeSpec{}) {
 		return fmt.Errorf(
 			"%w: tool %q result metadata requires a complete codec",
 			ErrInvalidConfig,
@@ -143,67 +144,138 @@ func validateToolResultSpec(spec tools.ToolSpec) error {
 	return nil
 }
 
-// equivalentToolSpec compares every declarative field. Codec functions are
-// implementation values and cannot be compared soundly because Go exposes a
-// closure's code address but not its captured state. The first registration
-// owns those functions and later matching specs never replace it.
+// equivalentToolSpec compares every declarative field without allocating
+// normalized copies. Codec functions are implementation values and cannot be
+// compared soundly because Go exposes a closure's code address but not its
+// captured state. The first registration owns those functions and later
+// matching specs never replace it.
 func equivalentToolSpec(a, b tools.ToolSpec) bool {
-	return reflect.DeepEqual(toolSpecShape(a), toolSpecShape(b))
+	return a.Name == b.Name &&
+		a.Description == b.Description &&
+		a.RequiresUI == b.RequiresUI &&
+		equivalentModelContract(a.TextOnly, b.TextOnly) &&
+		equivalentSearchDocument(a.Search, b.Search) &&
+		slices.Equal(a.Tags, b.Tags) &&
+		equivalentStringLists(a.Meta, b.Meta) &&
+		a.TerminalRun == b.TerminalRun &&
+		a.Bookkeeping == b.Bookkeeping &&
+		a.ReplanOnTimeout == b.ReplanOnTimeout &&
+		a.IsAgentTool == b.IsAgentTool &&
+		a.AgentID == b.AgentID &&
+		equivalentBoundsSpec(a.Bounds, b.Bounds) &&
+		equivalentServerDataSpecs(a.ServerData, b.ServerData) &&
+		a.ResultReminder == b.ResultReminder &&
+		equivalentConfirmationSpec(a.Confirmation, b.Confirmation) &&
+		bytes.Equal(a.ExecutionPayloadSchema, b.ExecutionPayloadSchema) &&
+		equivalentTypeSpec(a.Payload, b.Payload) &&
+		equivalentTypeSpec(a.Result, b.Result)
 }
 
-// toolSpecShape prepares one tool declaration for read-only comparison. It
-// removes functions without copying schema bytes or changing the caller's
-// codecs, and keeps the empty-metadata rules used by cloneToolSpec. Only
-// reflect.DeepEqual reads the returned value.
-func toolSpecShape(spec tools.ToolSpec) tools.ToolSpec {
-	spec.Tags = append([]string(nil), spec.Tags...)
-	spec.Meta = maps.Clone(spec.Meta)
-	for key, values := range spec.Meta {
-		spec.Meta[key] = append([]string(nil), values...)
+// equivalentModelContract compares optional text-only model contracts without
+// comparing codec closures.
+func equivalentModelContract(a, b *tools.ModelContract) bool {
+	if a == nil || b == nil {
+		return a == b
 	}
-	if len(spec.ExecutionPayloadSchema) == 0 {
-		spec.ExecutionPayloadSchema = nil
-	}
-	spec.Payload = toolTypeShape(spec.Payload)
-	if spec.TextOnly != nil {
-		contract := *spec.TextOnly
-		contract.Payload = toolTypeShape(contract.Payload)
-		contract.ExecutionCodec = tools.JSONCodec[any]{}
-		spec.TextOnly = &contract
-	}
-	spec.ExecutionPayloadCodec = tools.JSONCodec[any]{}
-	spec.Result = toolTypeShape(spec.Result)
-	spec.CanonicalizeServerData = nil
-	spec.PrepareInput = nil
-	serverData := make([]*tools.ServerDataSpec, len(spec.ServerData))
-	for index, item := range spec.ServerData {
-		if item == nil {
-			continue
-		}
-		declaration := *item
-		declaration.Type = toolTypeShape(declaration.Type)
-		serverData[index] = &declaration
-	}
-	spec.ServerData = serverData
-	return spec
+	return a.Description == b.Description &&
+		equivalentSearchDocument(a.Search, b.Search) &&
+		equivalentTypeSpec(a.Payload, b.Payload) &&
+		(a.ExecutionSchema == nil) == (b.ExecutionSchema == nil) &&
+		bytes.Equal(a.ExecutionSchema, b.ExecutionSchema) &&
+		a.ResultReminder == b.ResultReminder
 }
 
-// toolTypeShape prepares one type for comparison without changing its codec.
-// It keeps nil and empty schemas equivalent and copies field metadata with the
-// existing empty-slice rules. Comparison only reads the large schema documents.
-func toolTypeShape(spec tools.TypeSpec) tools.TypeSpec {
-	spec.Codec = tools.JSONCodec[any]{}
-	if len(spec.Schema) == 0 {
-		spec.Schema = nil
+// equivalentSearchDocument compares lexical discovery term counts.
+func equivalentSearchDocument(a, b tools.SearchDocument) bool {
+	if a.Length != b.Length || (a.Terms == nil) != (b.Terms == nil) {
+		return false
 	}
-	if len(spec.SchemaWithoutRootExample) == 0 {
-		spec.SchemaWithoutRootExample = nil
+	return maps.Equal(a.Terms, b.Terms)
+}
+
+// equivalentStringLists compares string-list maps while preserving nil vs
+// non-nil empty map distinction and treating nil and empty value slices as
+// equivalent.
+func equivalentStringLists(a, b map[string][]string) bool {
+	if (a == nil) != (b == nil) {
+		return false
 	}
-	if len(spec.ExampleJSON) == 0 {
-		spec.ExampleJSON = nil
+	return maps.EqualFunc(a, b, slices.Equal)
+}
+
+// equivalentBoundsSpec compares optional bounded-result and paging metadata.
+func equivalentBoundsSpec(a, b *tools.BoundsSpec) bool {
+	if a == nil || b == nil {
+		return a == b
 	}
-	spec.Fields = tools.CloneFieldMetadata(spec.Fields)
-	return spec
+	if a.Paging == nil || b.Paging == nil {
+		return a.Paging == b.Paging
+	}
+	return a.Paging.ContinueTool == b.Paging.ContinueTool &&
+		a.Paging.SourceTool == b.Paging.SourceTool &&
+		(a.Paging.RetainedFields == nil) == (b.Paging.RetainedFields == nil) &&
+		slices.Equal(a.Paging.RetainedFields, b.Paging.RetainedFields) &&
+		a.Paging.CursorField == b.Paging.CursorField &&
+		a.Paging.NextCursorField == b.Paging.NextCursorField
+}
+
+// equivalentServerDataSpecs compares server-data declarations in order.
+func equivalentServerDataSpecs(a, b []*tools.ServerDataSpec) bool {
+	return slices.EqualFunc(a, b, equivalentServerDataSpec)
+}
+
+// equivalentServerDataSpec compares one server-data declaration without
+// comparing codec closures.
+func equivalentServerDataSpec(a, b *tools.ServerDataSpec) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return a.Kind == b.Kind &&
+		a.Audience == b.Audience &&
+		a.NativeImage == b.NativeImage &&
+		a.Description == b.Description &&
+		equivalentTypeSpec(a.Type, b.Type)
+}
+
+// equivalentConfirmationSpec compares optional confirmation templates.
+func equivalentConfirmationSpec(a, b *tools.ConfirmationSpec) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+// equivalentTypeSpec compares one type's schemas and field metadata without
+// comparing codec closures. Nil and empty byte/field slices are equivalent.
+func equivalentTypeSpec(a, b tools.TypeSpec) bool {
+	return a.Name == b.Name &&
+		bytes.Equal(a.Schema, b.Schema) &&
+		bytes.Equal(a.SchemaWithoutRootExample, b.SchemaWithoutRootExample) &&
+		bytes.Equal(a.ExampleJSON, b.ExampleJSON) &&
+		slices.EqualFunc(a.Fields, b.Fields, equivalentFieldMetadata)
+}
+
+// equivalentFieldMetadata compares one advertised schema field.
+func equivalentFieldMetadata(a, b tools.FieldMetadata) bool {
+	return slices.Equal(a.Path, b.Path) &&
+		a.JSONType == b.JSONType &&
+		a.Description == b.Description &&
+		slices.EqualFunc(a.Branches, b.Branches, equivalentUnionBranch) &&
+		slices.Equal(a.DiscriminatorValues, b.DiscriminatorValues)
+}
+
+// equivalentUnionBranch compares one tagged or untagged union branch requirement.
+func equivalentUnionBranch(a, b tools.UnionBranch) bool {
+	switch left := a.(type) {
+	case tools.TaggedUnionBranch:
+		right, ok := b.(tools.TaggedUnionBranch)
+		return ok && left.Value == right.Value && slices.Equal(left.Discriminator, right.Discriminator)
+	case tools.UntaggedUnionBranch:
+		right, ok := b.(tools.UntaggedUnionBranch)
+		return ok && left.JSONKind == right.JSONKind && left.Index == right.Index && slices.Equal(left.Path, right.Path)
+	default:
+		return a == b
+	}
 }
 
 // cloneToolsetRegistration takes ownership of mutable specs, hint maps, and

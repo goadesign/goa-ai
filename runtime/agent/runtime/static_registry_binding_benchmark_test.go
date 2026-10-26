@@ -14,6 +14,8 @@ import (
 	"goa.design/goa-ai/internal/registrycontract"
 	genrecords "goa.design/goa-ai/internal/testpresentation/gen/records/toolsets/records"
 	genregistry "goa.design/goa-ai/registry/gen/registry"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
+	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
@@ -89,6 +91,86 @@ func BenchmarkStaticServiceBindingRetained(b *testing.B) {
 			}
 			b.ReportMetric(float64(totalLive)/float64(b.N*cohortSize), "retained_B/catalog")
 		})
+	}
+}
+
+// BenchmarkCompiledAgentTurnBatch measures the synchronous workflow-thread
+// contract resolution performed across a 20-call compiled Agent batch turn.
+func BenchmarkCompiledAgentTurnBatch(b *testing.B) {
+	selected := &genregistry.ResolvedToolset{Toolset: genrecords.Toolset(), RegistrationToken: strings.Repeat("a", 64)}
+	var operation *genregistry.ToolSchema
+	for _, candidate := range selected.Toolset.Tools {
+		if candidate.Name == string(genrecords.Read) {
+			operation = candidate
+		}
+	}
+	require.NotNil(b, operation)
+	operation.ConsumerContract.Kind = "agent"
+	expected := *operation
+	expectedContract := *operation.ConsumerContract
+	expected.ConsumerContract = &expectedContract
+	operation.ConsumerContract.Agent = &genregistry.AgentToolTarget{
+		Executor:      "generic.agent",
+		Workflow:      "generic.workflow",
+		Queue:         "generic.queue",
+		Configuration: "revision/1",
+	}
+	selected.Toolset.Tools = []*genregistry.ToolSchema{operation}
+	selected.Toolset.RegisteredAt = "2026-09-17T00:00:00Z"
+	spec := genrecords.SpecRead()
+	spec.IsAgentTool = true
+	spec.AgentID = "generic.agent"
+	child := testAgentDefinition("generic.agent", "generic.workflow", "generic.queue", nil, nil)
+	definition := NewAgentDefinition(
+		AgentRoute{ID: "records.agent", WorkflowName: "records.workflow", DefaultTaskQueue: "records.queue"},
+		[]tools.ToolSpec{spec}, nil, nil, []tools.Ident{spec.Name}, []AgentDefinition{child}, nil,
+	).WithRegistryTools(testRegistrySources{whole: true}).WithRegistryDeclarations(testDeclarations([]*genregistry.ToolSchema{&expected}))
+	rt := New(newTestStore())
+	rt.agents[definition.route.ID] = AgentRegistration{Definition: definition}
+	rt.toolSpecs[spec.Name] = spec
+	seedTestToolDefinitions(rt, spec)
+	require.NoError(b, rt.RegisterRegistry(testRegistryName, &genregistry.Client{}, unusedRegistryPulse{}))
+	catalog := rt.newRegistryCatalog(definition)
+	require.NoError(b, catalog.BindStaticAgent(testRegistryName, []*genregistry.ToolSchema{&expected}, selected, readTestStaticAgentResource, genrecords.Read))
+	binding, err := catalog.selections[genrecords.Read].resolution.Select(testRegistryName, genrecords.Read)
+	require.NoError(b, err)
+
+	calls := make([]ToolCall, 20)
+	for index := range calls {
+		calls[index] = ToolCall{
+			Name:       genrecords.Read,
+			Registry:   binding,
+			ToolCallID: fmt.Sprintf("call-%d", index),
+			RunID:      "parent-run",
+			SessionID:  "session-1",
+			TurnID:     "turn-1",
+			Payload:    rawjson.Message(`{"query":"all"}`),
+			Subject:    genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("records.agent")},
+		}
+	}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+	for range b.N {
+		for _, call := range calls {
+			if err := validateCheckpointToolRequest(call, definition); err != nil {
+				b.Fatal(err)
+			}
+			if _, err := rt.resolveRegistryExecution(definition.route.ID, call); err != nil {
+				b.Fatal(err)
+			}
+			if _, err := registryCallMetadata(call, definition); err != nil {
+				b.Fatal(err)
+			}
+			for range 3 {
+				if _, _, err := rt.callSpec(call); err != nil {
+					b.Fatal(err)
+				}
+			}
+			if _, err := rt.selectedAgentToolConfig(call); err != nil {
+				b.Fatal(err)
+			}
+		}
 	}
 }
 
