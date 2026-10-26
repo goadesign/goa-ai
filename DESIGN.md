@@ -1,3797 +1,668 @@
-# Goa-AI: Design-First Agentic Systems
+# Goa-AI Design: Agentic Runtime, Toolsets, and MCP Extensions for Goa
 
-Build intelligent agents, MCP servers, and registry-integrated toolsets from your Goa designs. This plugin extends Goa with agent orchestration, MCP protocol support and centralized registries.
+**Goa-AI** (`goa.design/goa-ai`) extends the [Goa](https://goa.design) framework with a declarative DSL, code generators, and a durable execution runtime for building AI agents, tool registries, typed evaluations, and Model Context Protocol (MCP) servers and clients in Go.
+
+---
+
+## Table of Contents
+
+1. [What you get](#what-you-get)
+2. [How it works](#how-it-works)
+3. [Layout](#layout)
+4. [Unified Toolset Model](#unified-toolset-model)
+   - [Toolset Ownership and Registration](#toolset-ownership-and-registration)
+   - [Tool Identification](#tool-identification)
+   - [Tool Input Schema](#tool-input-schema)
+   - [Consumer Input Binding](#consumer-input-binding)
+   - [Presentation, Server Data, and Text-Only Contracts](#presentation-server-data-and-text-only-contracts)
+   - [Confirmation, Hints, and Prompt Caching](#confirmation-hints-and-prompt-caching)
+   - [Pagination Ownership](#pagination-ownership)
+   - [Standalone Value Codecs](#standalone-value-codecs)
+5. [Agent Runtime, Operations, and Evaluations](#agent-runtime-operations-and-evaluations)
+   - [Direct Agent Operations](#direct-agent-operations)
+   - [Service-Owned Typed Completions](#service-owned-typed-completions)
+   - [Generated Evaluations](#generated-evaluations)
+   - [Planner Step Contract](#planner-step-contract)
+   - [Run Timing and Workflow Continuations](#run-timing-and-workflow-continuations)
+6. [Streaming, Model Gateways, Observability, and Engine Activation](#streaming-model-gateways-observability-and-engine-activation)
+   - [Agent run lifecycle streaming contract](#agent-run-lifecycle-streaming-contract)
+   - [Provider Stream Integrity Contract](#provider-stream-integrity-contract)
+   - [Model Clients, Adaptive Rate Limiting, and Capability Gates](#model-clients-adaptive-rate-limiting-and-capability-gates)
+   - [GenAI Observability Contract](#genai-observability-contract)
+   - [Runtime Tracing Error Contract](#runtime-tracing-error-contract)
+   - [Temporal Worker Activation Contract](#temporal-worker-activation-contract)
+7. [Registry Integration](#registry-integration)
+   - [Deployment Ownership](#deployment-ownership)
+   - [Registry Vocabulary](#registry-vocabulary)
+   - [Transcript Boundary](#transcript-boundary)
+8. [MCP Server Definition](#mcp-server-definition)
+   - [Protocol and Ownership](#protocol-and-ownership)
+   - [Catalog ownership and generated definitions](#catalog-ownership-and-generated-definitions)
+   - [Silent MCP HTTP responses](#silent-mcp-http-responses)
+   - [MCP DSL Quick Reference](#mcp-dsl-quick-reference)
+   - [Generated Server, Adapter, Client, and Transport](#generated-server-adapter-client-and-transport)
+   - [Tasks, Subscriptions, Completions, and Content Blocks](#tasks-subscriptions-completions-and-content-blocks)
+9. [Agents Quickstart & Example Scaffold](#agents-quickstart--example-scaffold)
+10. [Security considerations](#security-considerations)
+    - [Private OAuth credential storage](#private-oauth-credential-storage)
+11. [Error code mapping](#error-code-mapping)
+12. [Contributing](#contributing)
+13. [Summary](#summary)
+
+---
 
 ## What you get
 
-- **Agents**: Durable plan/execute loops with policy enforcement, memory, and streaming
-- **Typed Completions**: Service-owned structured assistant-output contracts with generated codecs and helpers
-- **Generated Evaluations**: Design-owned scenarios with typed application hooks, bounded execution, and trustworthy semantic judging
-- **MCP**: Tools, native asynchronous jobs, resources, static or method-backed prompts, typed argument suggestions, and authored change streams mapped from your Goa service over JSON-RPC HTTP
-- **Registries**: Centralized tool catalogs with federation, caching, and semantic search
-- **Unified Toolsets**: Single `Toolset` construct with providers (local, MCP, registry)
+- **Declarative Agent, Toolset, Evaluation, and MCP DSLs**: Extend Goa service definitions with agents (`Agent`, `Use`, `Export`), toolsets (`Toolset`, `Tool`), typed operations (`Operation`), evaluation suites (`EvalSuite`, `Scenario`), and MCP capabilities (`MCP`, `Resource`, `Prompt`, `TaskExchange`, `SubscriptionSource`).
+- **Compile-Time Specialization and Code Generation**: Emit canonical JSON Schemas, deterministic payload/result/server-data codecs, type transforms, tool specifications, Temporal workflow registrations, evaluation harnesses, and MCP JSON-RPC servers/clients with zero runtime reflection over Goa design expressions.
+- **Durable Agent Execution Runtime**: Execute multi-turn agent loops, parallel tool batches, nested agent-as-tool child workflows, and stateless human-in-the-loop suspensions (`await_clarification`, `await_confirmation`, `await_external_tools`) backed by Temporal or an in-memory development engine.
+- **Cluster-Wide Tool Registry**: Route tool invocations from agent workers to remote service providers over Redis-backed Pulse streams (`ConnectProvider`) with strict wire-protocol admission (`WireProtocolVersion = 15`) and lease-based health monitoring.
+- **Provider-Agnostic Model Gateways**: Connect planners to AWS Bedrock, Anthropic, OpenAI, and Google Gemini through unified streaming adapters with strict stream-integrity verification, provider capability gates, and adaptive token-bucket rate limiting.
+- **OpenTelemetry GenAI Observability**: Emit structured spans, metrics, and session-scoped Pulse stream events (`session/<session_id>`) with explicit audience filtering (`RuntimeHostProfile`, `AgentDebugProfile`, `MetricsProfile`).
 
-An agent runtime sends events only through the stream profile chosen with its
-sink. The trusted-host profile sends assistant text, live thinking, tool
-progress, requests for user input, workflow status, and exact committed
-assistant messages. These are private runtime events, not a public browser
-contract. The host selects fields and translates them into its own public
-events. The debug profile also sends every event to make the diagnostic
-purpose explicit at its call sites. An accepted response keeps the complete
-provider response in the internal transcript, including thinking needed for an
-exact later provider request. Live thinking events carry only new text
-fragments; a complete signed reasoning block is retained in the provider
-transcript without repeating its text in the live stream. A rejected response or ordinary
-failure reported before activity cancellation keeps only assistant text already
-delivered to the trusted host. Cancellation may prevent that text from reaching
-durable storage.
-
-Assistant text from the designated planner model call is append-only: later
-tool or output validation cannot retract it. One execution-scoped response ID
-groups fragments from the same planner activity. Plan and Resume activities
-are single-attempt, so one response ID can never name output from two model
-executions. A later explicit planner turn receives a new response ID. The workflow's committed
-assistant-turn event uses that same ID.
-
-Provider recovery is explicitly enabled by a separate finite run allowance.
-The activity certifies one temporary failed model invocation with no observed
-model output and clean completed phases; an activity error is never permission
-to retry. Certification is independent of that allowance. The exclusive
-activity result preserves the canonical provider error, including cause-only
-diagnostic text; disabled or exhausted consumers return the typed failure.
-The engine owns its private versioned encoding and rejects historical summary
-certificates that cannot supply the original provider facts. Durable workflow
-timers schedule the identical pending planning request as a new single-attempt
-activity. A helper reports its certified failure through its actual workflow
-parents to the run that owns the allowance. That owner counts overlapping
-failed-activity and entered-wait intervals once. Helpers using inherited recovery
-do not receive a fresh allowance. Accepted tools remain intact; saved external-input checkpoints retain
-the remaining allowance.
-
-Each runtime measures when its own work is paused. A parent waiting for several
-helpers pauses its active-work clock only when every unfinished branch is known
-to be paused. Healthy work, unresolved failures, and ordinary publication still
-consume active-work time. A descendant's pause is not automatically a pause for
-every ancestor.
-
-The runtime owns certification, spending, and the first terminal decision. The
-engine owns the accepted child relationship, ordered messages, and receiver
-acceptance. Sending a native signal does not complete a recovery obligation.
-The Temporal engine installs a worker interceptor that retains those obligations
-and waits for acceptance before ordinary workflow completion. Native workflows
-on that worker obtain the shared control through `NewWorkflowContext`, which
-returns an error when the required interceptor is missing or belongs to another
-engine. Custom engine adapters must implement the typed control described in
-[engine integration](docs/runtime.md#engine-integration).
-See [provider recovery](docs/runtime.md#streaming-planners) in the runtime reference.
-
-An accepted response stores its complete
-provider transcript and sends those exact ordered messages to stream consumers.
-A rejected response or ordinary failure
-reported before activity cancellation stores the exact text already delivered
-as a plain assistant message before recovery or failure continues. Live
-fragments themselves do not enter the run log, hook
-bus, or memory. Tool
-argument fragments and completed calls stay inside model validation until the provider's terminal
-response reconciles with the stream and the originating advertised schema plus
-attached decoder accept every payload. A raw remote gateway transports provider
-output without replacing those request-owned checks. After planner selection,
-the canonical response is persisted once, and its ordered runtime records are
-published through one idempotent activity batch.
+---
 
 ## How it works
 
-For each service annotated with agents or MCP, the plugin:
+1. **Design**: Authors declare services, agents, toolsets, operations, evaluation suites, and MCP surfaces in Goa design packages using `goa.design/goa/v3/dsl` and `goa.design/goa-ai/dsl`.
+2. **Evaluate DSL**: Running `goa gen <module>/design` executes the Goa-AI generator plugins (`codegen/agent`, `codegen/mcp`, `codegen/eval`), which evaluate the DSL into roots under `expr/agent/` and `expr/mcp/` and validate cross-expression invariants during the `Prepare` and `Validate` phases.
+3. **Generate Code**:
+   - The **Agent plugin** (`codegen/agent`) emits per-agent packages (`gen/<service>/agents/<agent>/`), service-shared toolset specifications (`gen/<service>/toolsets/<toolset>/`), operation runners (`gen/<service>/operations/<op>/`), standalone value codecs (`gen/<service>/codecs/<codec>/`), and typed completions (`gen/<service>/completions/`).
+   - The **Eval plugin** (`codegen/eval`) emits deterministic evaluation suites (`gen/evals/<suite>/`) and scenario harnesses.
+   - The **MCP plugin** (`codegen/mcp`) emits JSON-RPC 2.0 MCP handlers, service-method adapters, typed clients, and SSE/HTTP streamable transports (`gen/mcp_<service>/` and `gen/jsonrpc/mcp_<service>/`).
+4. **Execute**: Application binaries construct `runtime.Runtime` with a workflow engine (`features/engine/temporal` or `features/engine/inmem`), a session store (`features/session/mongo` or in-memory), a Pulse stream sink (`features/stream/pulse`), and model clients, then register generated agents and toolsets before activating workers.
 
-1. Derives service expressions from your DSL (see `expr/agent/` and `expr/mcp.go`).
-2. Runs standard Goa generators:
-   - Service layer via `codegen/service` (service, endpoints, client)
-   - JSON-RPC transport via `jsonrpc/codegen` (server, client, and types)
-   - Agent workflows, activities, tool specs, and completion specs via `codegen/agent`
-   - Evaluation suites and typed scenario hooks via `eval/codegen`
-3. Applies small, deterministic transformations so files land under appropriate paths.
+```
+┌────────────────────────────────────────────────────────────────────────────┐
+│                              Goa + Goa-AI DSL                              │
+│   Service / Agent / Toolset / Operation /Completion / EvalSuite / MCP     │
+└─────────────────────────────────────┬──────────────────────────────────────┘
+                                      │ `goa gen`
+                  ┌───────────────────┼───────────────────┐
+                  ▼                   ▼                   ▼
+        ┌───────────────────┐ ┌───────────────┐ ┌───────────────────┐
+        │   codegen/agent   │ │ codegen/eval  │ │    codegen/mcp    │
+        │  gen/<svc>/...    │ │ gen/evals/... │ │  gen/mcp_<svc>/   │
+        └─────────┬─────────┘ └───────┬───────┘ └─────────┬─────────┘
+                  │                   │                   │
+                  ▼                   ▼                   ▼
+        ┌────────────────────────────────────────────────────────────────────┐
+        │                        Goa-AI Runtime Layer                        │
+        │  • runtime/agent/runtime (Workflows, Planner Loop, Hook Bus)       │
+        │  • runtime/toolregistry  (Pulse Stream Router, Protocol v15)       │
+        │  • runtime/mcp           (JSON-RPC Caller, SSE/HTTP Transport)     │
+        │  • features/*            (Temporal, Mongo, Pulse, Bedrock/OpenAI)  │
+        └────────────────────────────────────────────────────────────────────┘
+```
 
-We compose on top of Goa—no forks, minimal templates, and predictable output.
-
-The framework requires Go 1.27 or newer. OAuth metadata decoding can use Goa's
-existing response-decoder argument with the standard `encoding/json/v2` package.
-This preserves generated response validation while matching JSON names exactly
-and accepting metadata extensions. Closed tool codecs retain their stricter
-unknown-field rules. The [upgrade plan](docs/mcp_protocol_upgrade_plan.md#verified-metadata-decoding-and-toolchain-choice)
-records the compiled evidence; [the current release guide](docs/releases/v0.89.0.md)
-describes the completed authorization paths and application upgrade requirements.
+---
 
 ## Layout
 
-- Agent packages: `gen/<svc>/agents/<agent>/`
-- Tool specs: `gen/<svc>/agents/<agent>/specs/`
-- Service completions: `gen/<svc>/completions/`
-- Evaluation suites: `gen/evals/<suite>/`
-- MCP service: `gen/mcp_<service>/`
-- Registry source clients: `gen/<svc>/registry/<name>/`
-- Registry service clients: `registry/gen/registry/` and its generated transports;
-  application startup registers these clients through `runtime.RegisterRegistry`.
+```
+goa-ai/
+├── dsl/                          # Public DSL functions (Agent, Toolset, Tool, Operation, EvalSuite, MCP, ...)
+├── expr/
+│   ├── agent/                    # Evaluated AST expressions for agents, toolsets, operations, codecs, evals
+│   └── mcp/                      # Evaluated AST expressions for MCP servers, tools, resources, prompts, tasks
+├── codegen/
+│   ├── agent/                    # Code generator for agents, toolsets, specs, operations, codecs, completions
+│   ├── eval/                     # Code generator for evaluation suites and scenario runners
+│   ├── mcp/                      # Code generator for MCP servers, adapters, clients, and JSON-RPC transports
+│   ├── ir/                       # Intermediate representation shared across generators
+│   ├── naming/                   # Canonical identifier and package naming helpers
+│   └── shared/                   # Shared schema, transform, and template helpers
+├── runtime/
+│   ├── agent/                    # Core agent runtime packages
+│   │   ├── api/                  # Workflow engine contracts, storage activity commands, suspension checkpoints
+│   │   ├── engine/               # Abstract workflow engine, WorkflowContext, Future, Receiver interfaces
+│   │   ├── hooks/                # Strongly typed hook event bus and subscriber interfaces
+│   │   ├── interrupt/            # Run cancellation and human-in-the-loop pause/resume controllers
+│   │   ├── model/                # Provider-agnostic LLM request, response, chunk, and citation contracts
+│   │   ├── memory/               # Transcript persistence store interfaces
+│   │   ├── planner/              # Planner interfaces, PlanResult, ToolFailure, RetryHint, FinalTool
+│   │   ├── policy/               # Run capability and budget policies
+│   │   ├── prompt/               # Prompt registry, template rendering, and prompt specialization
+│   │   ├── rawjson/              # Immutable raw JSON message wrappers
+│   │   ├── reminder/             # System reminder injection for planner turns
+│   │   ├── runtime/              # Runtime orchestrator, workflow loop, tool execution, hints/
+│   │   ├── session/              # Session, run metadata, seed, preparation, and checkpoint store contracts
+│   │   ├── stream/               # Subscriber stream profiles (RuntimeHost, AgentDebug, Metrics) and bridge
+│   │   ├── telemetry/            # OpenTelemetry GenAI spans, metrics, and logger interfaces
+│   │   ├── tools/                # ToolSpec, TypeSpec, JSONCodec, Ident, and schema validation
+│   │   └── transcript/           # Canonical transcript ledger, message conversion, and thought signatures
+│   ├── content/                  # Rich MCP content block constructors and validators (Text, Image, Audio, ...)
+│   ├── mcp/                      # MCP JSON-RPC runtime, Caller, transport clients, OAuth, and error types
+│   ├── toolregistry/             # Registry wire protocol (v15), Pulse stream routing, and admission control
+│   └── toolserverdata/           # Typed server-data envelopes and audience enforcement (model/timeline/internal)
+├── eval/
+│   ├── evidence/                 # Deterministic trajectory and tool-call expectation assertions
+│   ├── judge/                    # LLM-as-a-judge rubric evaluators
+│   └── runner/                   # Evaluation scenario execution harness
+├── features/
+│   ├── engine/                   # Workflow engines: temporal/ and inmem/
+│   ├── memory/mongo/             # MongoDB transcript backing store
+│   ├── model/                    # Model adapters: anthropic/, bedrock/, gemini/, openai/, middleware/, ollama/
+│   ├── policy/basic/             # Basic turn/time budget policy implementation
+│   ├── prompt/mongo/             # MongoDB prompt override store
+│   ├── session/mongo/            # MongoDB session, run, event, seed, and checkpoint store
+│   └── stream/pulse/             # Redis Streams (Pulse) sink and subscriber implementation
+└── gen/ (emitted in user repos)
+    ├── <svc>/
+    │   ├── agents/<agent>/       # Agent registration, workflow definitions, specs/, exports/, agenttools/
+    │   ├── toolsets/<toolset>/   # Shared toolset specs.go, codecs.go, types.go, transforms.go
+    │   ├── operations/<op>/      # Direct operation types, codecs, and runners
+    │   ├── completions/          # Service-owned typed completion specs and helpers
+    │   └── codecs/<codec>/       # Standalone value codecs
+    ├── evals/<suite>/            # Generated evaluation suite runners
+    ├── mcp_<svc>/                # Generated MCP server, adapter, client, and notification encoders
+    └── jsonrpc/mcp_<svc>/        # Generated JSON-RPC HTTP and SSE transport handlers/clients
+```
+
+---
 
 ## Unified Toolset Model
 
-Goa-AI provides a unified `Toolset` construct with configurable providers:
+Goa-AI treats every toolset uniformly through the `Toolset` DSL, regardless of how its tools are executed at runtime.
 
-```go
-// Local toolset (inline schemas)
-var LocalTools = Toolset("utils", func() {
-    Tool("summarize", "Summarize text", func() {
-        Args(func() { Attribute("text", String) })
-        Return(func() { Attribute("summary", String) })
-    })
-})
+### Toolset Ownership and Registration
 
-// Goa-backed MCP toolset
-var MCPTools = Toolset("assistant", FromMCP("assistant-service", "assistant-mcp"))
+A `Toolset` is declared once—either at the top level or inside its owning `Service`—and consumed by one or more agents via `Use` or exported by an agent via `Export`:
 
-// External MCP toolset with inline schemas
-var RemoteMCPTools = Toolset("remote-search", FromExternalMCP("remote", "search"), func() {
-    Tool("web_search", "Search the web", func() {
-        Args(func() { Attribute("query", String) })
-        Return(func() { Attribute("results", ArrayOf(String)) })
-    })
-})
+| Toolset Kind | DSL Declaration | Runtime Execution Path | Generated Artifacts |
+| :--- | :--- | :--- | :--- |
+| **Service-Backed (Method-Bound)** | `Toolset("name", func() { Tool("t", func() { BindTo("Method") }) })` | Dispatched as a Temporal tool activity (`ExecuteToolActivity`), either locally via generated executors or remotely through the Tool Registry (`FromRegistry`) | `gen/<svc>/toolsets/<toolset>/` (`specs.go`, `codecs.go`, `types.go`, `transforms.go`) |
+| **Agent-as-Tool (Exported)** | Inside `Agent`: `Export("suite", func() { Tool(...) })`; consumer calls `Use(AgentToolset("svc", "agent", "suite"))` | Executed inline inside the parent workflow as a deterministic child workflow via `ExecuteAgentChild` (never scheduled as an activity) | `gen/<svc>/agents/<agent>/exports/<export>/` and `agenttools/<export>/` |
+| **MCP-Backed** | `Toolset(FromMCP("service", "suite"))` or external `FromExternalMCP("server", "suite")` | Routed through the runtime's `mcpruntime.Caller` (`ExecuteToolActivity` -> MCP JSON-RPC `tools/call`) | `gen/<svc>/agents/<agent>/specs/<mcp_suite>/` |
+| **Client-Provided / External** | Tools declared without backend service bindings and registered as external | Pauses the workflow with `await_external_tools`, records a suspension checkpoint, and resumes when the caller supplies `ProvideToolResults` | `gen/<svc>/toolsets/<toolset>/` |
 
-// Registry-backed toolset (discovered at runtime)
-var RegistryTools = Toolset("enterprise", FromRegistry(CorpRegistry, "data-tools"))
+#### Service-Shared vs. Agent-Scoped Specs
+
+When a service declares a `Toolset`, `codegen/agent` generates the canonical types, JSON Schemas, and codecs once under `gen/<svc>/toolsets/<toolset>/`. Every agent in that service (or across services) that references the toolset imports those shared definitions, eliminating type duplication. Agent-specific wrappers under `gen/<svc>/agents/<agent>/specs/<toolset>/` re-export or specialize only what differs per consumer (such as consumer input bindings or `UIOnly` projections).
+
+### Tool Identification
+
+Every tool has a canonical, globally unambiguous identifier (`tools.Ident`) formatted as:
+
+```
+<toolset_name>.<tool_name>
 ```
 
-All toolsets are first-class citizens—agents use `Use(toolset)` uniformly regardless of provider.
+For example, tool `get_forecast` in toolset `weather.read` has canonical ID `weather.read.get_forecast`.
+- Generated constants (`const GetForecast tools.Ident = "weather.read.get_forecast"`) are emitted in the toolset's package so callers never construct tool names with string concatenation.
+- Because LLM provider APIs (such as AWS Bedrock Converse and OpenAI Function Calling) restrict tool names to `[a-zA-Z0-9_-]{1,64}`, model adapters automatically sanitize `tools.Ident` values at the provider wire boundary (replacing `.` with `_` or hashing overlong names) and reverse-map incoming `ToolUse` blocks back to the canonical `tools.Ident` before returning chunks to the runtime.
 
-## Direct Agent Operations
+### Tool Input Schema
 
-An exported Agent operation can run before it is published as a tool.
-`Runtime.StartOperation` requires an existing session;
-`Runtime.StartOneShotOperation` creates no conversation. Both accept the complete
-operation declaration, input, run identity and labels.
-The host authorizes the selection before starting it. The declaration does not
-create an access grant. The start and completion-repair methods accept
-`WithTextOnly(true)` and `WithRootExecutionTarget(engine.WorkerDeploymentVersion{
-DeploymentName: "execution", BuildID: "build-a"})` after the memo argument.
-The host can restrict interaction and select an exact root worker build; provider
-configuration still owns planner policy and generated workflow routing. The root
-target is copied into the accepted engine request and its digest, so delayed
-starts, retries, stored prepared requests, and completion repair retain the same
-build. A changed target conflicts with the accepted workflow ID. Omitting the
-target preserves engine-managed routing and existing request identities. Child
-workflow requests have no target override.
+Generated `tools.ToolSpec` factories (`Specs()` and `Spec<Name>()`) produce self-contained tool specifications on demand without reading Goa's `docs.json` at runtime:
 
-A new answer or cancellation continuation does not copy its predecessor's target.
-It starts a separate workflow without an override. With default pinned worker
-versioning, Temporal selects current workers when dispatching its first task and
-keeps the accepted execution on that version. An exact retry recovers the same
-workflow ID and request. A published request from an earlier release keeps any
-explicit target already saved in its body.
+- **Canonical Raw JSON Schemas**: Payload, result, and server-data schemas are emitted at codegen time as immutable `rawjson.Message` (`tools.RawJSON`) byte slices. They are never re-parsed into `map[string]any` in the runtime except inside provider SDK adapters that require untyped map inputs.
+- **Structured Field Metadata (`TypeSpec.Fields`)**: Alongside the raw JSON Schema, codegen precomputes `[]tools.FieldSpec` on every `TypeSpec`, capturing each field's dot-path, description, JSON type, enum values, and union (`OneOf`) branch membership. Clarification prompts, retry hints, and UI form builders read `TypeSpec.Fields` directly instead of walking JSON Schema trees at runtime.
+- **Two-Stage Boundary Validation**: When a model emits a tool call, the runtime first validates the raw JSON arguments against the exact JSON Schema advertised to the model, and then invokes the generated `JSONCodec.FromJSON` decoder to run Goa's typed validations (patterns, min/max bounds, required non-empty arrays, and `OneOf` discriminated unions). If either check fails, the runtime synthesizes a structured `planner.RetryHint` containing the field-level errors and the generated `InputExample` JSON.
 
-The restriction selects generated text-only argument contracts
-before validation and cannot be removed by provider preparation or child runs.
-Registered native and service operations use the same restriction, retained with
-their original request through dispatch and recovery.
+### Consumer Input Binding
 
-The engine accepts the request before the provider prepares messages. A typed
-activity on the selected provider queue checks its exact route and validates the
-export against either the generated definition or the independently loaded saved
-revision. The provider registration identifies which component owns the contract.
-The existing Agent loop validates the result against the retained operation.
-A direct call has no parent; delegation keeps its real child relationship. Exact request replay observes the
-same work, while changed input conflicts. Continuations retain the original
-operation rather than accepting a replacement.
-
-Provider configuration selects literal messages or an exact completed run with
-`AgentHistory`. The shared history preparation code replaces old system messages,
-validates transcript order and preserves source and reasoning exclusions by
-reference. Storage captures the completed source's committed terminal position
-under the same Agent and session; the provider cannot choose record positions.
-Direct and delegated operations publish this history with their accepted control
-values, and retries recover that publication without resolving configuration again.
-
-See [direct operations](docs/runtime.md#direct-agent-operations) for the caller
-and provider contracts, including [revision-owned exports](docs/runtime.md#revision-owned-operation-contracts).
-The [provider history upgrade](docs/runtime.md#provider-owned-history)
-replaces the public resolver's `Messages` field with required `History`.
-
-## Service-Owned Typed Completions
-
-Direct assistant output is a different contract than a tool call, so Goa-AI models
-it explicitly with `Completion(...)` on a service:
+When an agent consumes a provider toolset via `Use`, some provider payload fields may represent server-verified context or lookup values that the model should not supply directly or should specify via a simpler key. The **Consumer Input Binding DSL** (`dsl/input_binding.go`) customizes how an agent consumes a tool inside `Use`:
 
 ```go
-var Draft = Type("Draft", func() {
-    Attribute("name", String, "Task name")
-    Attribute("goal", String, "Outcome-style goal")
-    Example(map[string]any{
-        "name": "Investigate startup alarms",
-        "goal": "Explain every alarm observed during startup.",
-    })
-    Required("name", "goal")
+Use(ProviderToolset, func() {
+    BindInput("update_order_shipping",
+        // Hide account_id from the model schema; resolve it at decode time from execution context.
+        BindField("account_id"),
+        // Replace the provider's complex AddressTarget struct with a model-facing AddressKey string.
+        BindField("destination", func() {
+            Lookup(AddressKey, "address_label", "postal_code")
+        }),
+    )
 })
+```
 
-var _ = Service("tasks", func() {
-    Completion("draft_from_transcript", "Produce a task draft directly", func() {
-        Return(Draft)
+- **Context-Bound Fields (`BindField("field")`)**: Omitted from the model-facing JSON Schema and consumer payload struct. Before the provider tool executes, the generated `ConsumerInputResolver` populates the field from the verified execution context.
+- **Lookup-Bound Fields (`BindField("field", func() { Lookup(keyType, ...) })`)**: Replaced in the model-facing schema with `keyType` (or inlined key attributes). At decode time, the runtime decodes the model's payload into the consumer-specific struct, invokes the registered typed lookup resolver to translate the model's key into the provider's domain type, and constructs the canonical provider payload via generated `InputBindingTransform` helpers (`codegen/agent/consumer_input_*.go`).
+- **Context-Injected Strings (`Inject`)**: For tool fields that are simple strings fixed at run start (such as `session_id` or `tenant_id`), `Inject("field_name")` hides the field from the model schema and populates it from `run.Context` via `runtime.ToolCallExecutor` interceptors.
+
+### Presentation, Server Data, and Text-Only Contracts
+
+Goa-AI separates data meant for the model's reasoning transcript from rich visual artifacts meant for the user interface or observer timelines.
+
+#### Server-Data Envelopes and Audiences (`runtime/toolserverdata`)
+
+Tools can declare sidecar `ServerData(kind, type, ...)` payloads in the DSL that travel alongside `ToolResult` without inflating the model's context window. Every server-data entry carries an explicit `Audience` (`runtime/toolserverdata`):
+- **`AudienceTimeline` (`"timeline"`)**: Visual artifacts (charts, tables, citations, summary cards) persisted to the session stream and rendered in the user interface.
+- **`AudienceModel` (`"model"`)**: Compact structured metadata visible to the planner/model boundary when explicitly projected.
+- **`AudienceInternal` (`"internal"`)**: Execution-only state (such as pagination continuation tokens or telemetry metrics) consumed by parent finalizers or hooks and stripped before reaching the UI or model.
+
+#### Presentation DSL (`dsl/presentation.go`) and Text-Only Enforcement
+
+For tools or fields that exist solely to drive visual UI components (such as chart layout options or interactive canvas cards), the DSL provides four presentation primitives:
+- **`RequiresUI()`**: Marks an entire tool as requiring a graphical user interface.
+- **`UIOnly(fields...)`**: Marks specific payload fields on a tool as UI-only presentation controls.
+- **`UIInstructions(text)`**: Attaches model-facing system instructions that are included in the prompt only when a UI is present.
+- **`UIResultReminder(text)`**: Emits a turn-scoped system reminder after the tool succeeds in a UI-enabled run.
+
+When an agent definition or an individual run sets `TextOnly: true` (for example, headless background jobs, Slack/SMS integrations, or API-only invocations):
+1. Tools marked `RequiresUI()` are excluded from the advertised tool catalog and rejected if called.
+2. Payload fields marked `UIOnly(...)` are stripped from the model-visible JSON Schema (`codegen/agent/specs_builder_uionly.go`), and `UIInstructions` / `UIResultReminder` strings are suppressed.
+3. At the tool-result boundary, `toolserverdata.ValidateTextOnly` inspects all emitted server-data items and fails fast if any item carries `AudienceTimeline`.
+
+### Confirmation, Hints, and Prompt Caching
+
+#### Operator Confirmation (`dsl/confirmation.go`)
+
+Tools that perform state-mutating or destructive actions (such as canceling an order or deleting records) can require explicit user approval in the DSL:
+
+```go
+Tool("cancel_order", "Cancel an existing customer order", func() {
+    Args(CancelOrderPayload)
+    Return(CancelOrderResult)
+    Confirmation(func() {
+        Title("Confirm Order Cancellation")
+        PromptTemplate("Cancel order {{ .OrderID }} for {{ .CustomerName }}?")
+        DeniedResultTemplate("User declined canceling order {{ .OrderID }}.")
     })
 })
 ```
 
-Completion names are part of the structured-output contract. They must be
-1-64 ASCII characters, may contain letters, digits, `_`, and `-`, and must
-start with a letter or digit.
+When the model invokes a tool with a `Confirmation` policy (or a runtime-registered confirmation rule), the workflow does not execute the tool activity. Instead, it renders `PromptTemplate` against the validated payload, publishes an `await_confirmation` event, persists a `goa-ai.run-suspension.v14` checkpoint, and exits the workflow cleanly. When the user approves or denies via `ProvideConfirmation`, a new workflow continuation either executes the tool with the exact checkpointed payload or injects the rendered `DeniedResultTemplate` into the transcript.
 
-This generates a service-owned completions package with:
+#### Tool Call and Result Hints (`runtime/agent/runtime/hints`)
 
-- public `Spec<Name>()` factories that return fresh typed contracts containing
-  the result schema and generated codec
-- narrow `<Name>Example()` accessors that return an immutable copy of the
-  canonical authored root example, when the return type declares one
-- public `Complete<Name>` wrappers that own provider-enforced structured output
-  and decode the assistant response through the private generated codec
-- public `StreamComplete<Name>` wrappers that may surface preview
-  `completion_delta` fragments and
-  expose the final `completion` value only after the provider ends a valid
-  stream and its complete response contains the same value
+To provide human-readable progress labels in streaming UIs (for example, *"Checking forecast for San Francisco..."*), generated specs register deterministic Go `text/template` templates compiled with `missingkey=error` via `hints.RegisterCallHint` / `hints.RegisterResultHint` (and batch helpers `RegisterCallHints` / `RegisterResultHints`). When streaming hook events, the runtime calls `hints.RenderCallHint` and `hints.RenderResultHint` against the typed payload or result.
 
-Streaming completions use a typed `completion.Streamer[T]`. It may expose
-preview chunks, but its typed `Value` stays unavailable until the complete
-provider stream and final response pass validation.
-Providers that do not implement structured output fail explicitly with
-`model.ErrStructuredOutputUnsupported`.
-Each field's authored description remains on that field, including references
-to a shared type. Shared definitions retain their own descriptions and constraints,
-so reusing a type does not copy one caller's instructions to another. Validation
-continues to follow the evaluated Goa design.
+#### Prompt Caching (`dsl/history.go`)
 
-Generated schemas stay provider-neutral. Provider adapters may normalize that
-canonical schema to a provider-specific subset for constrained decoding, but
-they must fail explicitly instead of redefining the service contract.
-Gemini tool declarations retain the supported structure, required fields,
-types, and enums, translate `oneOf` choices to `anyOf`, and omit validation
-limits and annotations that Vertex rejects. The request-owned validator applies
-the complete original schema to the completed tool call before it becomes
-visible. An unknown structural keyword fails translation instead of being
-dropped.
-Before provider work, the validated client compiles the canonical schema into a
-request-owned validator. Raw schema bytes pass directly to the JSON Schema
-compiler's in-memory loader; the runtime does not publish or pass a generic map
-as the schema contract. It applies that validator to unary output. For
-streaming output, it retains the final completion until the provider ends,
-validates both final representations, and requires their JSON bytes to match
-before returning the completion. Generated validation adds checks without
-replacing these framework checks. Provider enforcement and local validation
-are both required: local validation remains the final acceptance check, but it
-never substitutes for a provider that cannot enforce the requested schema.
-Tool-input rejection keeps the original validator error available through
-`errors.As` and `errors.Is`. A rejected response that passed the existing
-copying limits remains available through `OutputValidationError.RejectedResponse`,
-including when the error supplies correction guidance. These private diagnostic
-values do not become successful output or add rejected bodies to automatic
-telemetry or the public model gateway transport. Complete calls selected for
-runtime recovery are separately retained in Temporal activity input/output,
-under the application's history access and retention policy. The
-[runtime tool-input contract](docs/runtime.md#model-visible-tool-arguments)
-separates diagnostic access from the correction sent to the model.
-Generated choice metadata also identifies a missing or invalid discriminator
-(the field naming the chosen variant). Feedback names that field and its
-allowed strings without guessing a variant or applying every branch's rules.
-Independent field failures remain visible; undetailed branch failures retain
-the existing omission notice.
-Formatting the underlying validator or malformed-argument error includes its
-original diagnostic after the existing summary prefix. Direct callers of those
-errors receive more detail; `OutputValidationError.Error()` and correction text
-remain unchanged. This requires no regeneration or wire migration.
-Applications already recording the underlying error now receive the original
-diagnostic; no logging or message-capture switch is enabled by this change.
-The Bedrock Converse adapter uses a private strict tool for Claude 4.6 so
-Runtime `CountTokens` and Converse receive the same schema. Claude 4.5 retains
-native `OutputConfig` because its manual thinking mode cannot use forced tools.
-The Claude-on-Bedrock Messages adapter uses native output formatting only when
-Bedrock can enforce it. Sonnet 5 and Opus 5 reject both
-`output_config.format` and the `strict` tool property, so the adapter returns
-`model.ErrStructuredOutputUnsupported` before inference. It never weakens the
-request to an ordinary tool backed only by local validation. The same
-Anthropic adapter encodes user-message `ImagePart` bytes as base64 image blocks
-for PNG, JPEG, GIF, and WebP, so direct Anthropic, Claude-on-Vertex, and
-Claude-on-Bedrock clients share one multimodal message contract.
-
-The Bedrock adapters also reject forced `tool` and `any` choices for Fable 5.1
-before inference or counting. This endpoint-specific check returns the existing
-`model.RequestValidationError` without inventing provider status, request ID, or
-usage. It neither changes the tool choice nor enables native structured output.
-Other models and hosts keep their existing request and error contracts; see
-[thinking and tool choice](docs/runtime.md#thinking-and-tool-choice-on-claude).
-
-Retained images use the request-only `ImageSourcePart{SourceKind, Data}` in saved
-messages. Generated `NativeImage` evidence metadata identifies admitted producers;
-source-only generated manifests keep historical kind codecs independent of
-current tool visibility. Marked source graphs retain exact declared Goa attribute
-names across codecs, raw-field validation, schemas, field metadata and examples.
-The selection belongs to that ServerData occurrence; ordinary tool and unmarked
-evidence naming stays unchanged even when they reuse the same nested type. New results use only their selected tool's item markers.
-Producer declarations match exactly; historical kind equality ignores only the
-top-level producer-specific Go alias. Each model client has one reader binding,
-preserved by wrappers; current runs and summaries bind from unbound bases.
-Actual count, summary and final request preparation
-checks current access through the host reader and replaces each descriptor with
-the existing byte-bearing `ImagePart`. Recording and replay perform no image
-I/O. No result-record lookup, new blob store, cached access grant or provider wire
-variant is introduced. See [native image contracts](docs/native_images.md) for
-the full path, per-candidate and total-work accounting, errors and compatibility.
-
-Adapters with provider-native structured-output examples receive the generated
-root example separately from the schema. Unary helpers ask the model once for a
-structured value. If the generated codec rejects the response, the helper
-returns a non-retryable `planner.OutputContractError` and does not ask the model
-again. `completion.Response.ModelResponse` contains that exact model response
-and its token usage. Streaming helpers follow the same one-request rule. Provider
-adapters may suppress previews when their wire representation contains private
-framing that is absent from the completion contract.
-
-The separate `runtime/agent/tooloutput` package owns the case where an
-application deliberately permits the model to replace invalid ordinary-tool
-arguments. `Run[T]` and `RunAutomatic[T]` accept one typed `completion.Spec[T]`,
-normally returned by the generated `Spec<Name>()` factory. The spec exposes only the output name,
-description, schema, example, and codec. The helper privately
-uses those fields as both the argument and result contract of one ordinary
-tool, so callers cannot add tool policy or execution behavior. A private
-in-memory agent advertises only that tool, allows one successful
-tool execution, and requires it to complete the run. The typed schema and codec
-remain the model boundary; malformed JSON, typed validation failures and
-eligible unadvertised-tool-name rejections use the runtime's bounded correction
-flow. Provider, cancellation and deadline failures remain terminal. The returned
-`T` is exactly the value decoded from
-the accepted arguments, so callers cannot insert domain execution or rewriting
-between accepted model output and the returned value.
-
-`Run` forces the named tool; `RunAutomatic` requests automatic selection but
-accepts only one validated call to that tool. Neither parses ordinary text as a
-result or switches output mechanisms. Cardinality applies to the accepted
-response: invalid arguments in an earlier multi-call response may use the same
-bounded correction flow, without executing any of those rejected calls.
-
-The private runtime also owns a per-call diagnostic receiver through its existing
-tracer interface. On failure, either operation returns a `*tooloutput.RunError`
-whose `TerminalError()` exposes the exact cause that ended the call, before diagnostic
-observations were attached. Its text and `Unwrap` retain the original terminal
-and observed errors, with every nested cause rendered and available for
-`errors.Is` / `errors.As`. Observations do not determine execution policy and may
-record the same rejection at more than one operation. The returned snapshot is
-immutable even if caller cancellation lets an activity finish later. This adds no
-workflow state, model call, or global tracing configuration. The
-full [returned-error contract](docs/runtime.md#forced-typed-tool-output) describes
-which diagnostic facts are available.
-
-The design intentionally keeps completions separate from toolsets: toolsets model
-callable capabilities, while completions model final assistant answers. Both reuse
-the same Goa types, validations, and codegen pipeline so there is one contract
-surface for structured model I/O.
-
-Every model request crosses one allocation preflight before the client copies
-messages, media, tool contracts, or structured-output schemas or calls an
-observer or provider. The complete request shares one 16 MiB byte budget and
-one 100,000-value visit budget.
-
-All provider output crosses one allocation preflight before copying,
-fingerprinting, or decoding. A unary response has one 16 MiB byte budget and
-one 100,000-value visit budget; nested dynamic metadata and tool-result values
-have a maximum depth of 64. A stream shares those bounds across all chunks and
-its terminal response, which is also bounded independently. Before copying the
-terminal response, the boundary exempts only fields that exactly repeat
-accepted chunks; response wrappers, metadata, and new or mismatched data
-consume the remaining shared budget. Every collection length is checked before
-allocating its copy or its sorted map-key list.
-
-Canonical dynamic values are JSON-shaped: nil, booleans, finite numbers, valid
-UTF-8 strings, byte slices, arrays, slices, and valid UTF-8 string-keyed maps.
-Structs are not canonical; bounded structs may survive only in rejected-output
-evidence. Pointers are unsupported in canonical data and rejected evidence.
-The boundary rejects invalid UTF-8, cycles, unknown typed parts, typed-nil
-streamers, and over-budget output without fallback, truncation, coercion,
-repair, or omission.
-
-Vertex validates argument strings and keys before allocating their exact-sized
-JSON payload. Workflow encoding rejects custom JSON and text encoders on map
-keys before invoking them, so checked key bytes remain the bytes being encoded.
-Plain and named string keys without custom encoders retain their values.
-These write checks do not alter persisted JSON decoding; see the
-[JSON boundary contract](docs/runtime.md#json-boundary-contract).
-
-## Generated Evaluations
-
-Applications define stable evaluation scenarios with `eval/dsl` beside their
-normal Goa v3 service design. A scenario `Input` is a Goa schema; concrete
-users, facilities, prompts, and other fixture values remain application code.
-`goa gen` emits local input types, Goa validation, one typed hook method per
-scenario, and a constructor that validates all supplied values before any live
-call. A scenario without `Input` receives only `context.Context`.
-
-Suites may be generic top-level declarations or nested inside an agent.
-Agent-attached suites receive a generated lookup over the static tool specs
-reachable through that agent and its nested generated agents. The lookup
-delegates to canonical generated `ToolSpec` values and codecs; it does not
-reconstruct schemas or include registry-discovered contracts.
-
-`goa example` emits `cmd/<suite>-evals/main.go` once. This application-owned
-scaffold exposes every input and hook TODO but is not overwritten after product
-logic is added. The application implements those hooks to call the real product
-and return:
-
-- deterministic checks for exact facts such as IDs, counts, and tool calls;
-- semantic claims for meaning that requires reading a model answer; and
-- artifacts that help diagnose a failure.
-
-The evidence collector owns correlation and assertion scope. `ToolCalls` records
-new invocations in one root run tree; ordered `ToolCompletions` records results
-delivered there, including earlier calls completed after an accepted continuation.
-The application supplies that accepted successor through
-`NewContinuationCollector`. Collector-produced context retains only pending calls
-and their observed ancestry across root stream boundaries. It cannot be authored
-through public evidence fields. Invocation and completion root scopes describe
-the observed run trees, not native child workflow identity. Exact trajectories,
-tool bans, and attempt policies continue to count only new invocations.
-
-The runner owns execution mechanics. Callers choose all scenarios, exact
-scenario IDs, or tags through separate methods. Selection is validated before
-any product or model call. An explicit positive concurrency limit bounds work;
-failures do not stop unrelated scenarios; reports remain in declaration order.
-Progressive reporter callbacks expose starts and finishes without moving
-scheduling into the application. Caller cancellation stops new hooks, cancels
-in-flight contexts, and returns a partial report plus the context error.
-Application hooks, reporters, and the judge support concurrent calls up to the
-configured limit.
-
-When semantic claims are present, a provider-neutral judge classifies each one
-as `entailed`, `contradicted`, `not_addressed`, or `indeterminate`. Before any
-scenario runs, the runner verifies all four meanings with framework-owned
-examples. Applications cannot weaken that check by supplying easier examples.
-Only `entailed` passes. Deterministic-only suites may omit the judge entirely.
-The model applies each claim's conditions, distinguishing required content from
-constraints that permit omission. Code never infers claim categories or remaps
-judgments to make omitted content pass.
-
-The application constructing `eval/judge` supplies a required positive output-token
-limit for each complete model response and handles a construction error for invalid
-configuration. That limit is independent of claim count and remains unchanged
-across the existing bounded corrections. The judge owns response shape; the
-application owns permitted response work; providers enforce their own ceilings.
-No finite limit guarantees a completed judgment.
-
-`judge.New` uses forced tool output and `judge.NewAutomatic` explicitly selects
-automatic tool output. Both share the same judge implementation, prompt, schema,
-codec and correction policy. The application chooses the operation; no model
-capability guess or failure-driven fallback changes it.
-
-The private judge tool names each required property with its claim ID and places
-the full claim in that property's description. Code looks up results by name and
-returns them in input order; response position never establishes association.
-The schema owns shape and coverage, and the judge codec rejects duplicate raw
-JSON member names before decoding can overwrite a decision. Semantic truth remains
-model-owned. Hooks supply shared factual context through `Result.Reference`;
-the runner passes it to `Judge(ctx, output, claims, reference)` and retains it in
-the report. Each model request includes the reference once, separate from the
-unchanged candidate. Reference facts cannot fill omissions in that candidate.
-An empty reference is legitimate, and an empty candidate still skips grading.
-The judge attaches structural field metadata to the same tool schema so the
-existing model validator can name an invalid object or field in correction
-guidance. Semantic claim text stays in the schema, not in that metadata;
-correction never supplies a verdict or changes the accepted judgments.
-See the
-[judge contract](docs/evals.md#how-judging-works) for validation and limits.
-
-See [docs/evals.md](docs/evals.md) for the DSL, generated API, runner methods,
-and report behavior.
-
-## Planner Step Contract
-
-Each `PlanResult` is one admitted workflow step. Planners may return tool calls,
-await work, or a terminal result according to the runtime's mutually exclusive
-step shapes.
-
-External input does not weaken provider transcript identity. A model-authored
-free-text interaction uses the tool-clarification await branch, which retains
-the exact tool name, call ID, and payload. The successor run supplies the human
-answer as that tool's generated result. Runtime-owned clarification prompts
-remain a separate branch whose successor supplies a user message. This
-distinction prevents
-prompt reminders or presence-dependent fields from standing in for a real
-`tool_use` / `tool_result` exchange.
-
-`PlanResult.SynthesizeAfterTools` selects the success transition for a tool-only
-step: after the selected batch succeeds, the next planner activity may only
-synthesize a final response. The workflow serializes that decision in its
-activity input and exposes it as `PlanResumeInput.SynthesisOnly`, so the contract
-survives activity retries and execution on another worker. Planners remain
-responsible for enforcing synthesis-only output because provider APIs may need
-the tool catalog to interpret the preceding tool results.
-
-Planner requests contain domain intent: a tool name and typed payload. A request
-forwarded from a model response also carries that provider's correlation ID;
-planner-authored requests do not invent one. The runtime assigns every accepted
-request a deterministic execution ID from the run, turn, attempt, tool, and
-batch position. It rejects a provider ID that does not belong to the selected
-model response. When planner code compiles model output into different
-executable intent, the runtime retains the original model name and payload
-separately for the transcript. When the same step also contains planner-authored
-calls, the runtime appends their declarations after the unchanged provider
-messages. Their execution IDs identify their matching results; they never
-reuse a provider call ID or copy provider reasoning or signatures.
-The [tool-call ID upgrade requirements](docs/runtime.md#tool-call-id-upgrade)
-describe worker replacement when the execution-ID encoding changes.
-
-Model-derived calls have a nonempty `ModelToolCallID` and must name a tool in the
-exact catalog shown to the model. Planner-authored calls have an empty ID and
-must name a tool in the agent definition's executable catalog. Ordinary
-`correct_call` recovery retains those choices plus exact executable contracts
-for failed tools, after the same run policy filters both sets. Finalization
-correction retains only its failed terminal tool. Dedicated continuation tools stay hidden from models, but
-planner code may call one when it reconstructs the typed cursor payload itself.
-Such a direct call is standalone and does not create a model-facing continuation
-action. Generated codecs and run policy still validate every request.
-
-Generated agent definitions populate the executable catalog. Code that builds
-an `AgentDefinition` directly must list every tool the agent may execute; an
-empty list means the agent has no executable tools.
-
-The selected model response owns context-stop recovery. A
-`model_context_window_exceeded` response cannot complete planning or execute
-tools. Its reported usage and already-delivered text retain their existing
-accounting and transcript paths. The next workflow activity requests mandatory
-compaction through the registered history policy and consumes the existing
-recovery-turn budget. Only a summary replacing additional original messages and
-a strictly smaller destination input count permits another inference. The
-newest whole turn and every System instruction remain intact; the runtime
-stops when no additional history can be summarized. Direct provider clients
-continue exposing partial responses, and ordinary output limits and validation
-errors retain their prior meaning.
-
-The validated model client applies each tool's advertised schema before its
-attached input decoder and before a response becomes canonical. A schema
-rejection or non-nil `*tools.ValidationError` can produce limited-size
-replacement guidance without copying rejected argument values. Ordinary
-decoder and internal errors remain terminal. The workflow records usage, keeps
-the rejected call out of transcript history, and spends one recovery turn on a
-normal planner resume with executable tools available. It selects the rejected
-invocation by invocation start order, never by a model-supplied value or
-completion order.
-For a complete response, `ModelInvocationRecovery.ToolInput` requires every
-call's original name and argument text, in order, beside that generated
-guidance. The runtime quotes the data as untrusted and unexecuted in the one
-replacement reminder. Valid siblings do not execute. Acceptance clears the
-context; a later rejection replaces it rather than accumulating it. It never
-enters accepted messages, checkpoints or evaluation call/completion evidence.
-The existing response-copy, activity-output and activity-input limits apply
-without truncating calls or increasing budgets. Copy, encoding or budget
-failure is terminal, not a correction-only fallback.
-When a provider cannot represent a completed tool call because its arguments
-are not valid JSON, the adapter reads only the stream's terminal usage and
-completion evidence. The adapter attaches the canonical tool name already
-resolved through its request map to the malformed-argument error. The receiving
-request contract supplies the fixed JSON instruction with that input contract's
-name only if it advertised the name. The name is a diagnostic identifier, not a
-callable provider name. Malformed bytes, call IDs and provider diagnostics stay
-private; an unknown name cannot authorize argument correction. Such a genuine
-absence of a complete retained body uses `NoCallBodyCorrection`, including
-trusted transported errors that do not retain a response.
-When a supported provider instead returns a valid tool name absent from the
-request's advertised catalog, the adapter rejects the complete response. The
-same invocation-recovery value carries only that untouched name, mutually
-exclusive with tool-input correction guidance. The replacement starts from the
-last accepted conversation with its current executable catalog. Unstructured
-validation failures remain terminal.
-
-The removed flat `ModelInvocationRecovery.Correction` shape is intentionally
-incompatible with the new activity input/output. Old histories require their
-matching old program; new histories require the new program. Use existing
-worker-build isolation or drain affected unversioned work before replacement,
-not a legacy decoder or a permanent workflow-version branch. Stopping new
-traffic, retiring worker processes, and deleting immutable old release
-artifacts have separate obligations. Retain matching binaries and source for
-every supported historical replay, query or reset, including retained exports.
-See [upgrade and retention requirements](docs/runtime.md#rejected-call-recovery-and-worker-upgrades).
-
-When a new run restores paging actions from earlier turns, saved result bodies
-remain evidence rather than typed inputs to current work. The runtime verifies
-the saved events and paging metadata without decoding old result bodies or
-server data against today's tool contract. Failed historical calls remain in
-the transcript but never supply paging state, so their old execution details
-are not restored or revalidated. Absent historical bounds supply no next page
-and retire any earlier cursor in the same chain; present bounds remain validated.
-Registered historical calls use their saved declarations to validate bounds and
-finish ordered page chains. A historical call to a compiled tool, saved without
-its declaration, uses the current generated declaration when its fingerprint still
-matches; otherwise it is treated like a static historical call whose tool changed. Static historical calls use their saved source-call
-identities and result metadata to close completed chains before reading today's
-input contracts, including when a continuation tool was removed or renamed.
-A static binding's previous-registration reader may return nil without an error
-when the saved registration identifies a different logical resource. The whole
-query chain then offers no new action, without removing saved messages or results.
-Every member still undergoes chain and saved-binding checks; malformed references
-and matching-resource read failures remain errors. An unavailable resource does
-not supply old declarations for cursor or argument validation.
-Only unfinished chains need current execution
-authorization: an unavailable or changed static tool pair supplies no action,
-without blocking the new turn. Current static execution still requires the full
-matching declaration, including metadata and injected context.
-
-Generated paging registrations select call and result hints from the decoded
-query or page payload type. A page's template receives its own arguments; it
-never reads the query's fields. A branch without authored hint text remains
-absent, while invalid templates still return errors. This selection adds no
-model-visible input or saved execution state.
-
-Saved result bytes and chronological order remain unchanged. Active outputs,
-suspended work, and new page requests retain their current codec checks. See the
-[historical paging contract](docs/runtime.md#bounded-results).
-
-When a completed model reply or planner result breaks its required shape, the
-planner returns `OutputContractError`. The runtime validates the full result
-before accepting its selected tool calls or storing its selected response. The
-provider's output-limit status is part of the response given to the planner.
-For a final response without tool calls, the runtime does not override a planner
-that accepts that exact response. An output-limited response with tool calls is
-rejected before any call can execute because the provider may not have finished
-the complete call batch.
-Ordinary output contract errors are terminal and Temporal does not retry them.
-Local model-request rejection is a separate input failure:
-`model.RequestValidationError` retains its required cause and does not claim
-that a provider was called or produced invalid output. Adapters create it only
-for known application-side request validation. It remains non-retryable across
-tool activities, nested agents, and planner failures returned after visible
-text. The runtime preserves that text before ending the run and never turns the
-rejection into model correction guidance. The run failure has kind
-`model_request`, no provider facts, a host-customizable summary, and the full
-diagnostic. See [the saved error and worker upgrade
-contract](docs/runtime.md#local-model-request-rejections).
-
-Adapters can report `model.ErrRequestByteCapacity` for a complete request proved
-too large before remote inference dispatch. This existing terminal error type
-also identifies the specific byte failure during history selection, where the
-runtime may retain fewer optional older whole turns. It never removes the newest
-turn, fixed request settings or required summary evidence, and does not infer
-capacity from unrelated errors. See the
-[request-byte contract](docs/runtime.md#locally-measured-request-byte-capacity).
-
-Diagnostics are separate from that execution decision. Planner activities offer
-the original error to the application tracer and retain the exact selected
-reason in v2 rejection metadata when it is valid UTF-8, without a per-reason
-length cutoff. Invalid text is explicitly unavailable with its original
-fingerprint. Whole workflow values remain subject to their aggregate limit.
-Historical hash-only and length-limited v1 records remain unchanged during
-replay; new records do not make old explanations recoverable. Temporal's private
-v3 application types retain full valid diagnostic text and plain exact provider
-fields, while historical types keep their original decoding and re-wrapping.
-Native failure objects are not workflow argument payloads; backend failure-size
-limits and application-supplied converters remain separate contracts.
-The native Temporal activity/child chain ending in a timeout without a previous
-failure retains its SDK representation and full diagnostics. Other application,
-joined, and previously saved failures keep their existing conversion. A
-provider-authored `ReplanOnTimeout()` declaration on a generated agent export
-allows alternative work after that operation's typed timeout, without retrying
-it; unmarked operations still require finishing. Generated registry declarations
-carry the same per-operation policy, and registry consumers restore it when
-checking a selected native registration against the local specification. See
-[agent timeout recovery](docs/runtime.md#agent-timeout-recovery).
-Other classification and retry settings are unchanged. Applications own
-capture, disclosure, and retention; arbitrary typed causes and custom Temporal
-details are available to the original-error tracer, not promised on the wire.
-See [diagnostic transport and upgrade restrictions](docs/runtime.md#diagnostic-ownership-and-transport).
-
-When the planner can give exact replacement guidance for completed model
-output, it returns one of two explicit errors. `NewRecoverableModelAnswerError`
-spends one recovery turn on a replacement answer without ordinary tools.
-`NewRecoverableModelPlanningError` spends one recovery turn on replacement
-output with the current executable catalog. The rejected output may contain
-invalid tool calls or may have omitted a required call. Both paths are bound to
-the exact rejected response fingerprint, record usage, and keep the rejected
-body private. Infrastructure failures remain activity errors and follow the
-activity retry policy. Plan and Resume activities are the exception: their
-generated and registered policy permits exactly one attempt because they may
-have already emitted append-only text. Tool activities retain retries because
-their stable call identities let tool owners return stored results without
-repeating side effects.
-
-Text-only runs accept one saved execution restriction. Generated tool contracts
-omit optional UI arguments, instructions, and UI result reminders while retaining
-domain result reminders. Generated decoders initialize omitted UI controls to
-false before execution; tools requiring UI or confirmation
-cannot enter that run. Producers retain domain results and internal evidence,
-while the runtime rejects UI output before publication or persistence. Native
-children inherit the parent's restriction or their own stricter restriction;
-an incompatible child invocation fails before its model input is saved. Recovery
-uses the accepted policy rather than current application configuration. See
-[Text-only execution](docs/runtime.md#text-only-execution) for declarations and
-runtime integration.
-
-The runtime keeps execution policy and planner intent separate:
-
-| Completed step | Next state |
-| --- | --- |
-| The configured `CompletionTool` executed successfully | End the run without another planner turn |
-| `CompletionTool` is configured and another terminal condition occurs | Fail because the required tool did not succeed |
-| A cap or deadline requires finalization and the run supplied `LimitTerminalPlans` | Execute the matching terminal call without loading saved messages |
-| A cap or deadline requires finalization without either completion policy | `PlanResumeInput.Finalize` |
-| A successful `TerminalRun` tool completed without `CompletionTool` | End the run without another planner turn |
-| A failed tool requires `finish` recovery and no successful query has another page | `PlanResumeInput.Finalize` with reason `tool_failure` |
-| A failed tool requires `finish` recovery while a successful query has another page | `Finalize` with reason `tool_failure`, retaining failure evidence, generated continuation actions, and terminal bookkeeping |
-| Any failed tool has a `ToolFailure` whose recovery action permits tools | Runtime-enforced correction or replan turn |
-| A finalization response is correctable, or its terminal tool returns `correct_call` | Spend one recovery turn while retaining finalization and, for a tool failure, advertise only that exact terminal tool |
-| A successful batch has `SynthesizeAfterTools` set without `CompletionTool` | `PlanResumeInput.SynthesisOnly` |
-| Otherwise | Normal continuation turn |
-
-`LimitTerminalPlans` is one optional run-policy value containing exactly three
-payload-only calls: time budget, tool-call cap, and recovery-turn cap.
-Before the first planner call, the runtime requires every payload to pass the
-registered generated codec and every target to be a `TerminalRun` bookkeeping
-tool owned by the agent that does not require confirmation. At a matching limit,
-the workflow adds its current identifiers and labels and executes the call
-through the normal terminal-tool path. The individual `tool_failure`
-termination case never selects these fixed calls because its final result may
-depend on saved tool evidence. Instead, the finalization planner may use that
-evidence to author a registered terminal bookkeeping call.
-
-Immediately before either a fixed limit call or a planner-authored finalization
-call executes, the runtime writes the exact `planner.TerminationReason` to
-`runtime.FinalizationReasonLabel` (`goa-ai.finalization_reason`). This happens
-after run and policy labels are applied, so callers, policies, planners, and
-models cannot choose or replace the reason. Ordinary tool calls do not receive
-this label: the runtime removes the reserved key if any of those sources
-supplies it.
-
-Consumers of fixed-limit and planner-authored finalization calls, including
-`tool_failure`, read the termination reason from
-`runtime.FinalizationReasonLabel` (`goa-ai.finalization_reason`).
-
-Temporal workers strictly decode planner activity input. Every worker and
-caller on one task queue must use the same generated input contract.
-
-This order makes recovery explicit rather than presence-based. `ToolFailure`
-classifies why execution failed independently from its `RecoveryDirective`:
-`correct_call` keeps the failed tool available and attaches its generated
-validation issues, rejected model-authored input, and example to the next
-planner activity. Executors and tool activities report only the classification,
-error, recovery action, and generated field issues. Immediately before the
-failure becomes durable or model-visible, the workflow requires a provider
-tool-call ID and replaces any executor-supplied correction input and example
-with clones from the retained model call and registered tool specification.
-Runtime-authored calls, including automatic pagination continuations, have no
-provider tool-call ID and therefore cannot request `correct_call`; the workflow
-returns a contract error without rendering their execution payload. The planner
-may retry fewer, equal, or more calls, combine work, use another advertised
-capability, await input, or answer. Provider adapters continue to project
-historical canonical tool names independently of the current catalog.
-`replan` removes the failed tool from the recovery turn while permitting another
-advertised action, input request, or answer. A direct model call to an excluded
-tool is rejected as invalid planner output before any sibling call executes.
-Planner-owned tool-backed awaits remain strict because they encode suspension
-rather than a raw model request. `finish` forbids new domain work. It enters
-finalization unless a successful sibling query already has another page. In
-that case the recovery turn excludes every authored domain tool and retains
-the generated continuation actions for those unfinished queries together with
-registered terminal bookkeeping. `PlanResumeInput.Finalize` carries reason
-`tool_failure`; the planner may continue a query or submit the final result, but
-may not combine pagination and terminal submission in one batch. A successful
-page never reopens domain tools. With no remaining continuation, finalization
-permits only a final response or registered terminal bookkeeping. When the same tool has both correction and replan
-failures in one batch, the correctable failure keeps that tool available. A
-recovery turn may end with an input suspension; its evidence remains available
-when a new workflow continues after the answer.
-
-Saved pagination uses the exact `RunSeed.Source` ancestry and completed
-execution records through each selected end. A selected result can name a call
-scheduled in another run, including a run represented by literal history. The
-reader loads only that exact schedule and checks the call, tool, agent, and
-session identities before using the result. This does not select other results
-from the scheduling run or extend any selected end. A continuation checkpoint also
-selects its retained completed output references: a completed sibling's event
-can follow the predecessor's transcript end without being published again by
-the successor. Provider IDs remain transcript identities and can repeat across
-responses; they are never a session-wide correlation key. Start and Resume
-share this private reader with the continuation-availability activity.
-
-Before a finish failure chooses recovery or finalization, the workflow records
-one availability read through the typed engine activity contract. A negative
-answer retains direct `tool_failure` finalization and its hard deadline without
-an initial recovery-turn charge. A positive answer retains ordinary recovery
-charging and its normal deadline. Read errors remain errors. The read uses the
-storage activity's existing attempt allowance, bounded by remaining hard time;
-it does not move deadlines or change recovery capacity. Custom engines must
-implement this activity. Existing Temporal executions must remain on workers
-with their original workflow code; the added activity changes command history.
-
-Active tool failures and model-replacement feedback are separate workflow
-facts. A rejected response preserves active failed-call IDs and their execution
-restrictions. Ordinary correction/replan restrictions end when the accepted
-recovery work executes; finish restrictions last until terminal completion.
-Successful pages during finish do not reset the recovery allowance and do not
-consume replacement attempts. Their normal tool/time budgets still apply;
-each rejection-driven replacement consumes the shared recovery allowance.
-A failed batch never enters `SynthesisOnly` and does not preserve its earlier
-`SynthesizeAfterTools` intent; a planner that retries work selects synthesis
-again on that new batch.
-An agent-as-tool result follows the same typed success or failure transition as
-every other tool. Its observed child-tool count is run-link telemetry, not an
-outcome signal: validation may reject the request before a child tool runs, and
-a child agent may return a valid result without invoking another tool.
-Synthesis-after-tools batches must contain at least one budgeted tool and cannot
-contain a `TerminalRun` tool, ensuring the existing step classification always
-reaches the appropriate planner resume. The resume activity validates the
-returned planner result, so ignoring `SynthesisOnly` fails at the activity
-boundary rather than reopening execution.
-
-### Run Timing and Workflow Continuations
-
-Each accepted user input starts one top-level workflow for that turn. The
-workflow ends with either that turn's final result or an external-input
-suspension. Nested agents retain their linked child workflows.
-Agent-tool child IDs hash the complete parent, tool, and call identity into a
-fixed-size string; parent links remain separate. See
-[child run identifiers and worker upgrades](docs/runtime.md#child-run-identifiers-and-worker-upgrades)
-for the encoding and replay restrictions.
-
-The workflow loop is the sole owner of run-duration enforcement. `TimeBudget`
-becomes the deterministic Budget deadline for active planner and tool work.
-The Hard deadline is Budget plus `FinalizerGrace`; it bounds the final planner
-activity after budget exhaustion. Terminal hook persistence uses its own
-completion context after planner execution. Time spent blocked on an
-external-input request (`await_clarification`, `await_confirmation`, or
-provided tool results) consumes neither deadline. The workflow ends with the
-remaining Budget and Hard durations in a trusted checkpoint. A continuation
-starts a new workflow and rebuilds both deadlines from those durations, so a
-person can take arbitrarily long to respond without burning active work time or
-keeping a workflow assigned to an old deployment.
-
-The terminal `RunOutput.Suspension` contains an ordered public request list and
-an opaque private checkpoint. Before returning that result, the runtime calls
-`storage.Store.RecordRunSuspension`, which stores the checkpoint, suspended run
-status, and matching `RunSuspended` record in one operation. Exact activity
-retries are idempotent; a different suspension for the same run is rejected as
-corruption. The application exposes only the public request to clients and must
-atomically accept one response before it starts the next workflow, so concurrent
-submissions cannot continue the same state twice under different run IDs. A
-continuation supplies the completed run ID and exactly one typed response for
-the first request; the runtime loads its own checkpoint. Running runs remain
-temporarily not ready. Completed, failed, and canceled runs permanently have no
-suspension. A missing checkpoint, malformed stored value, mismatched stored and
-payload IDs, invalid checkpoint state, or checkpoint for another predecessor
-returns `runtime.ErrRunSuspensionCorrupt`. Store failures retain their original
-errors because they do not prove that the checkpoint is permanently unusable.
-The application may also supply engine
-options for the new workflow, such as memo and search attributes used for
-ownership and observability. These options do not alter the saved execution
-contract. If requests remain, that workflow stores and returns a new
-suspension. The checkpoint restores the transcript, planner state, labels,
-policy, nested-agent identity, and exact tool-call/result provenance. The
-generated caller and worker share one immutable `AgentDefinition` containing
-the route, tool specifications, codecs, required labels, completion policy, and
-transitive child definitions. `AgentClient.PrepareContinuation` loads the saved
-checkpoint and validates it and the supplied response against that complete
-definition before the workflow engine receives the successor ID. It returns an
-opaque `PreparedRun`. `StartPrepared` submits that exact stored request, so a
-retry cannot silently load or construct a different request. The
-workflow validates the same stored input again before restoring it. Completed
-history retains its accepted input and result JSON, server data, media, bounds,
-and rendered previews without decoding them through a newer generated result
-type. Changing or removing a completed tool does not prevent answering
-a later clarification. The runtime still validates the saved identities, JSON
-and server-data envelopes, media, failure shape, and bounds metadata. The saved
-required-tool list remains an exact inventory of referenced tools; current tool
-availability is required only for unfinished executable work and saved policy.
-Pending execution, unmaterialized successful results, confirmations, child
-suspensions, external results, and unfinished paging consumers retain current generated
-contract checks. A value rejected by one of those current consumers rejects the
-continuation. A tool call created in an earlier workflow
-retains that workflow's run ID while its result records the new workflow's run
-ID. The tool-result hook and `tool_end` stream payload carry the original call
-run ID explicitly; the result event's own run ID identifies the workflow that
-received the external answer. When a nested agent suspends, the parent ends
-with the same request; continuing the parent starts a new child workflow from
-the child's saved checkpoint. That child names the new parent execution before
-its request is accepted, while retaining the original tool-call ID, call run,
-arguments, selected contract, actor and resource context. The old checkpoint
-keeps its historical parent unchanged. Standalone runs use
-`PrepareOneShotContinuation` and `StartPrepared` to answer the exact saved request
-without creating a Session. Durable host workers can use
-`StartToolContinuation` and `EnsureToolContinuationCompletion` for direct or
-registered operations, with or without a Session. Both methods recover the exact
-published successor request; direct operations retain their saved declaration
-while registered operations retain their original registered invocation.
-Standalone parents and children preserve the original invocation and exact
-history position; the store admits only one successor for each suspended run.
-Conversation continuation and next-turn APIs still require a Session.
-
-Initial sessionful runs use the same command. `Prepare(ctx, sessionID, messages,
-options...)` validates the generated agent contract and publishes the exact
-literal initial history before producing the final engine request. Publication
-does not create a run or start a workflow. `PrepareNextTurn` instead takes one
-exact completed run, fresh system messages and fresh input. The store verifies
-the source's agent and Session and freezes its successful completion position;
-the runtime never chooses a latest run for the caller.
-The returned `PreparedRun.RunID` is the workflow ID the application associates
-with its durable command. Applications can store the versioned bytes and parse
-them after a process restart. `Start` and `Continue` are convenience methods
-that prepare and start through this same path.
-
-Literal history uses complete canonical message arrays when they fit the
-storage command. A larger literal uses contiguous `LiteralPart` records:
-nonempty binary `Data` and an explicit `Final` boolean. These records divide
-bytes, never messages, images or semantic content. Existing record keys and
-previous positions provide ordering and exact retries. An unfinished literal
-cannot be followed by another content kind or published. The shared transcript
-decoder joins parts across pages and validates complete JSON and UTF-8 before
-returning messages. Command packing measures the complete encoded activity
-envelope, including base64; it adds no total-history or per-image limit.
-
-`WithoutPriorReasoning()` is an initial-run option for applications supplying
-completed conversation history. Before the prepared request is frozen, the
-runtime copies those messages and removes prior thinking and provider-native
-reasoning continuation data, preserving all other conversation content and
-metadata. The option itself is not workflow input or durable policy. The default
-preserves prior reasoning, new output is always recorded normally, and suspended
-continuations restore their native checkpoint without this transformation.
-
-Initial and one-shot calls express each launch setting through `WithTaskQueue`,
-`WithMemo`, or `WithSearchAttributes`. Continuations take one
-`runtime.WorkflowOptions` value on Client preparation methods because their
-other arguments identify the saved run and its typed answer. Runtime
-`StartToolContinuation` and `EnsureToolContinuationCompletion` instead require
-an explicit `map[string]any` Memo argument. Each caller chooses metadata for
-that successor workflow; the runtime does not copy predecessor Memo. These
-settings configure only the new engine start and never become workflow input.
-The published request includes the encoded Memo, and a retry with a changed
-answer or Memo returns `storage.ErrSeedConflict` without replacing saved bytes.
-Passing `nil` retains empty Memo, including for requests published without it.
-
-Preparation requires the owning Store in caller processes. It uploads bounded,
-ordered history records followed by the complete compiled engine request. One
-atomic publication accepts both, without submitting a workflow. Multiple
-candidates may upload for one original operation; only one complete candidate
-can become accepted. Continuations reference their saved history without
-removing system messages or reasoning.
-
-Application-owned starts record the original command and upload attempt before
-calling preparation with `WithPreparation`. `RecoverPrepared` retrieves the
-accepted result. `SettlePrepared` returns that same result or permanently
-abandons the exact attempt, including a first upload that arrives afterward.
-A lost reply or transferred worker lease cannot replace accepted prompts,
-profile policy, labels, or control values. A genuinely new operation may resolve
-current configuration.
-
-`PreparedRun` uses one current v3 reference format: original operation identity,
-exact history/body positions, byte length and digest. `MarshalBinary` never
-copies full engine control into an application row. `StartPrepared` reads and
-validates the exact accepted body through bounded Store pages, then submits its
-original engine request. Child preparation uses the same acceptance lifecycle
-and recovers its saved result before resolving mutable prompts again.
-
-The preparation operation owns the original invocation. History declarations
-reference that operation without copying its invocation into bounded write
-commands. Stores return `RunSeed.Origin` from the matching preparation binding;
-continuations preserve that original value even when their current parent changes.
-See the [custom-store upgrade](docs/runtime.md#preparation-ownership-upgrade).
-
-Planner and child-preparation activity commands identify the exact committed
-end of the current run's transcript instead of carrying its message array.
-`storage.Store.ListRunTranscriptRecords` checks record ownership and returns
-bounded ordered pages through that position. The activity reconstructs the
-original messages before calling the planner or child validator. Later appends
-cannot change an earlier activity's input, and summaries do not replace durable
-messages. Prepared v3 references the accepted preparation; initial workflow input names the published history;
-checkpoint v9 replaces only the full prior message array with its exact history
-position. Active response transcript, tool values, pending order, nested state,
-native metadata, policy and budgets remain control state. Starting a run attaches
-the publication in the owner's existing start transaction without copying it.
-Old accepted workflows require their original workers. Existing unsubmitted
-prepared requests and resumable checkpoints need a separately verified finite
-transition before this format can be deployed; there is no v1/v8 decoder.
-
-Agent-tool registrations carry only child configuration, while ordinary toolsets
-carry only their execution function. The workflow starts all configured children
-with its exact saved history position. Registration rejects missing or competing
-execution routes. Generated registration constructors no longer take a Runtime;
-applications regenerate and update callers together.
-
-Prepared bytes remain private application data because a continuation can
-contain tool values and its private control checkpoint. Initial messages remain
-in the owning Store. The application atomically
-stores those bytes with initial-run admission or continuation-answer acceptance.
-Launch settings such as memo, search attributes, and task queue exist only on
-the engine request; `api.RunInput` contains only workflow input. The inclusive
-`engine.MaxPayloadBytes` limit counts request IDs and names together with the
-encoded workflow input, memo, search-value, and reserved digest memo data and
-metadata. The prepared JSON record has a separate eight-times-larger limit for
-its complete representation, including the agent ID, explicit queue override,
-JSON escaping, base64 expansion, and field syntax. `MarshalBinary` enforces it
-when creating a record and parsing enforces it before decoding. The storage
-limit protects the record format and never increases the engine request limit.
-
-Stored historical completion reporting verifies the run owner, public suspension
-facts and digest of the opaque checkpoint without interpreting private execution
-state or rewriting the original result. Restoring execution remains strict.
-Repairing an actually missing completion validates the engine's current-format
-result before writing it. Historical records that require only public reporting
-can remain unchanged; an outstanding repair that needs retired execution state
-still blocks that format's removal.
-
-Runtime callers provide ordinary memo values. Goa-AI encodes each value once
-and gives engines an `engine.EncodedValue` containing its encoding metadata and
-data bytes. Engines store those bytes directly. This keeps a local start and a
-start parsed after a process restart identical without requiring engines to
-know the caller's private Go types.
-
-Every engine adapter applies the public `engine/contract` ownership rules. It
-normalizes and privately retains each accepted request, then gives the workflow
-handler a fresh `RunInput` for every initial or retry attempt. After success it
-retains one private `RunOutput` and makes another copy for every wait, query, or
-other caller-facing read. Shared normalization fixes portable search values and
-the root request digest. Translating and submitting those values remains the
-backend adapter's responsibility.
-
-The runtime returns only the completed answer or terminal tool result and the
-invocation's count/telemetry; it does not return a second copy of tool history.
-Before recording success or suspension, it applies `contract.CopyRunOutput`
-to the exact result. This catches deterministic codec failures before terminal
-storage, but does not make Store and engine commits atomic. Full records remain
-in the existing paged Store; suspension tool-history contents remain unchanged.
-New top-level results use `json/goa-ai-run-output-v3` with a required generated
-Agent-or-service-tool subject. Common records preserve that complete identity;
-Agent planning and model history still require the Agent branch. The strict
-reader rejects earlier results instead of inferring a subject from old fields.
-The breaking source and saved-data requirements are defined in
-[Run subjects](docs/run-subjects.md) and [Workflow results](docs/workflow-results.md).
-
-Malformed prepared references, changed publication identities, or a stored
-request that no longer satisfies the current generated definition return
-`ErrPreparedRunRejected` and cannot start. A valid reference submitted through
-the wrong generated agent client also returns that error; its owning client may
-still use it. Full compiled JSON is bounded independently from engine bytes,
-including per-entry syntax for many tiny memo values; it lives only in bounded
-Store records. The compact application reference has its own identity/framing
-bound. The detailed contract is in
-[External Input and Workflow Continuations](docs/runtime.md#external-input-and-workflow-continuations).
-`ErrWorkflowStartFailed` preserves the exact accepted request. Goa-AI does not
-retry it implicitly; the application chooses each attempt and submits the same
-prepared value after an uncertain response. A workflow-start conflict remains
-permanent because another request already owns the ID.
-
-#### Deployment ownership
-
-Goa-AI owns workflow replay, suspension persistence, continuation validation,
-and exact call/result provenance. The consuming application owns release
-routing for the runtime workers, generated packages, and callers that use those
-contracts. They form one release unit: consumers regenerate every package from
-the same Goa-AI revision and deploy the complete generated system together.
-Before that deployment, they finish or cancel every workflow created by the old
-runtime and resolve or abandon every start whose engine result was uncertain.
-The new workers do not replay old active workflow histories or retry old
-uncertain start requests.
-
-Saved tool inputs are validated according to their remaining consumers. A
-fully recorded historical call retains its accepted argument bytes; it is not
-decoded against a newer input schema merely to restore history. Exact call IDs
-correlate repeated checkpoint representations, and the batch's recorded prefix
-must agree with published results. A materialized result event owns its canonical
-content and preview, even before publication or transcript append completes.
-Delayed transcript writes consume that exact event after validating its result,
-server data, call/run identity and checkpoint ownership. An empty preview is a
-valid saved value. Without a materialized event, successful results still need
-current inputs for typed materialization. Failed arguments remain evidence even
-while recovery is pending: exact recorded failure data and call identity must
-agree, and every fresh correction is validated against its current input contract.
-Failure materialization, previews and paging do not decode failed arguments.
-Pending execution, confirmation, external input, unfinished children and
-live paging outputs retain current input validation. A saved successful final
-page closes its exact source call and registration, including inside a
-checkpoint. Recorded or materialized closed chains do not decode their old
-arguments or results through current codecs. An unmaterialized final result
-cannot close an earlier cursor. An unfinished historical static
-query whose arguments no longer fit its current tools offers no continuation
-action, while its saved evidence remains available to the new turn.
-Current result and server-data contracts,
-required tools, registry admission, checkpoint digests and ownership remain
-mandatory. This changes no stored format, accepted request bytes or provider
-metadata, and does not make arbitrary tool-contract or workflow-code changes
-compatible. The detailed rules are in
-[External Input and Workflow Continuations](docs/runtime.md#external-input-and-workflow-continuations).
-
-Completed run history keeps the same meaning across this release. A host may
-still need to convert the physical records or collections so its new
-`storage.Store` can read them. That conversion must preserve each recorded
-outcome and event.
-
-`hooks.EncodeToRecordInput` creates an outbound workflow record and rejects a
-serialized event payload larger than 1,000,000 bytes. The complete encoded
-activity call still has the workflow engine's separate aggregate allowance.
-`hooks.EncodeRecordPayload` serializes event fields without that transport check:
-the storage activity uses it when restoring saved labels, failure details, or a
-tool display hint into an already accepted record. Those facts may form a larger
-stored event while retaining the original record identity and timestamp. Record
-decoders read historical payloads without applying the outbound write allowance.
-
-The runtime requires one `storage.Store`. It exposes commands that name one
-complete workflow state change instead of separate metadata and record writes.
-`StartRootRun`, `StartChildRun`, `StartOneShotRun`, and
-`StartOneShotChildRun` accept a concrete
-`RunStart` after the engine accepts the workflow. Exact retries return the
-original outcome and record identifiers, together with the current `RunStatus`
-observed in the same atomic Store operation; changed identity returns
-`session.ErrRunConflict`. `RecordRunCancellation`, `RecordRunSuspension`, and
-`RecordRunTerminal` store the state change and matching ordered record together.
-This is a source-breaking replacement for the former `session.Store` and
-`runlog.Store` interfaces.
-
-The consuming application owns session administration and the durable
-repository. If that repository belongs to a separate Session service, agent
-workers satisfy `storage.Store` through an adapter built on the service's
-generated client. They do not open or share the Session service's database.
-The complete worker-facing store contract is documented in
-[Runtime Store](docs/runtime.md#runtime-store-storagestore).
-
-Workflow start and session ending share one serialization point in the host's
-store. Root and child starts create running metadata when the session is active.
-If the host already ended the session, they instead create terminal canceled
-metadata with reason `session_ended`; an exact retry never changes an existing
-running run. The host atomically changes an active session to ended and cannot
-restore a purged session ID. All processes that write runtime storage must use
-the same contract; mixed old and new writers are unsupported.
-
-The engine binds a workflow ID to the complete immutable start request while
-the backend can still query that execution. Repeating that ID and request
-returns a handle to the original open or closed execution. A changed request
-returns `WorkflowStartConflictError`. Temporal forces duplicate starts to
-return an error, then compares an engine-owned versioned digest stored in
-workflow memo. The shared digest frames the caller-submitted workflow name, task
-queue, input boundary payload, run timeout, retry policy, and every sorted memo
-and search-attribute entry with its payload metadata and bytes. The in-memory
-engine stores only that fixed-size digest and applies the same rule.
-Every root and child request requires the engine workflow ID to equal
-`RunInput.RunID`. A zero retry policy supplies no override. A non-zero policy
-counts the first execution in `MaxAttempts` and may set retry timing only when
-it also selects a positive attempt count or unlimited attempts.
-Continue-as-new retains one workflow chain identity. Once backend history
-expires, durable product command identity prevents reopening a settled
-obligation; the engine does not add a second durable registry.
-
-The accepted workflow owns the run history. It sends every durable change
-through the single `runtime.store` activity. Each command sets exactly one of
-`Append`, `RootStart`, `ChildStart`, `OneShotStart`, `OneShotChildStart`,
-`Cancellation`, `Suspension`, or `Terminal`; the result sets the same field and
-no other field.
-The activity therefore cannot infer an operation from record contents or return
-an unrelated result shape. Hosts return `storage.ContractError` for stored-state
-conflicts and other permanent contract failures, so engines do not retry them.
-Temporary database and network failures remain ordinary errors and can retry.
-
-A root start always stores `RunStarted`. If the session has ended, it then
-stores `RunCompleted` with canceled status and the workflow does no planner or
-tool work. A child start always stores `ChildRunLinked` followed by
-`RunStarted`; an ended session adds the canceled `RunCompleted` record. A
-Temporal child is terminated if its parent workflow closes first. A
-continued run puts the exact run ID whose
-checkpoint it restored in `RunStarted.PredecessorRunID`; initial runs leave it
-empty. The same value is part of `session.RunStart`. Before writing any part of
-the successor start, the store requires the predecessor to exist, be suspended,
-and have the same session, agent, and root-or-child identity. For children, both
-exact parent-link records must retain the tool-call ID, tool name, parent agent
-and child agent. Their execution parents may differ. Before that start, runtime
-proves the new parent's first pending child from its accepted continuation seed
-and immediate checkpoint. A fresh child still requires its execution parent to
-be running; exact accepted retries remain valid after closure. The old records
-and checkpoints are never rewritten. `RunMeta` does not duplicate the
-predecessor because the immutable start record owns that relationship. The
-immutable `StartOutcome` records the first start decision. The returned
-`RunStatus` records current state. A `proceed` start whose run is now suspended,
-completed, failed, or canceled returns `engine.ErrWorkflowCompleted` before
-planner work, prompt or transcript writes, or terminal replacement. The
-storage activity validates the complete result before publishing hooks and
-suppresses both parent-link and start publication for that closed replay.
-An original `stop` outcome stores a cancellation intent and keeps the admitted
-workflow running while it settles inherited Tasks and children. The workflow
-then writes canceled completion, or failed completion if cleanup is permanently
-rejected. An exact closed retry selects the original start and intent without
-replacing the terminal result. Prompt references are derived from `PromptRendered`, the
-continuation predecessor in `RunStarted`, and `ChildRunLinked` rather than
-duplicated in `RunMeta`. A child continuation's prompt references follow its
-exact accepted history source, not equality between its old and new execution
-parents. That source must match the predecessor in its start record; Session,
-agent, root-or-child identity and suspended status remain required. Cancellation,
-suspension, and terminal commands update run metadata and store their matching
-record in one transaction. The hook bus
-receives successfully stored records afterward and does not write lifecycle
-state.
-
-The hooks codec owns strict JSON decoding for lifecycle and rejection records.
-It rejects invalid raw UTF-8 before the JSON decoder can replace bytes with
-different text. Lifecycle validators use this same decoder before the store
-changes run state or appends its matching record. Valid text and record shapes
-are unchanged; malformed stored records return errors rather than being
-rewritten. See the [JSON boundary contract](docs/runtime.md#json-boundary-contract)
-for the exact record kinds and compatibility behavior.
-
-Prompt rendering has no storage side effect. When its context contains a
-`prompt.RenderRecorder`, every successful render records the same resolved
-prompt ID, version, and scope value. A caller that renders text before starting
-a run puts those events in the immutable `RunInput` with
-`WithRenderedPrompts`; the accepted workflow stores them after `RunStarted` and
-before planner work. A planner activity returns its recorded events with the
-accepted result. Consumer-side agent-tool rendering carries them in the child
-input, and one-shot callbacks attach them to the one-shot run already created.
-`RenderRecorder.Events` returns completed renders in stable prompt identity
-order, so concurrent render completion cannot change workflow start identity.
-Child rendering runs in an activity. Workflow history therefore contains the
-exact rendered text and events, and replay never reads prompt storage again.
-The activity returns exactly one of `Success` or `Failure`. Success contains
-only messages and rendered prompt facts. Workflow code derives the child run,
-session, parent, tool, and label identity from the original recorded tool call;
-the activity cannot replace that identity.
-These are transport differences only. Every event accepted into a proceeding
-run produces the same `PromptRendered` record, and a failed render produces no
-event.
-
-The first root-start or child-link activity retries transient persistence
-failures without an attempt ceiling. It classifies malformed typed input and
-immutable event-key conflicts as non-retryable, so accepted work cannot reach
-planning before the first record is durable and deterministic defects do not
-loop. Child workflow IDs are single-use commands: Temporal uses
-`REJECT_DUPLICATE`, the in-memory engine rejects every second explicit issue,
-and Temporal replay remains execution of the original command. Temporal does
-not return a child handle until it has accepted or rejected that child start;
-the handle then represents completion only. The in-memory engine encodes and
-decodes every successful root and child output through the same strict, bounded
-converter used at the Temporal workflow boundary. The returned result is a
-separate copy and an oversized or unserializable result fails in both engines.
-A child link
-stores the tool and call that created the child plus the child run and agent;
-tool arguments, budgets, attempts, and repeated identity remain in workflow
-input or dedicated event fields. A new child start is accepted only while its
-parent is running. An exact retry of an already stored child start remains valid
-after the parent stops.
-
-Cancellation stores its first reason and matching record before engine
-cancellation, retains it through every engine outcome, and never rolls it back.
-Root, child, and one-shot runs share this contract. Active metadata paired with
-`ErrWorkflowNotFound` is an invariant error. No metadata paired with the same
-engine result is idempotent absence. A run that completed between a host's
-active-run listing and its cancellation request also returns idempotent success.
-
-Suspension and terminal writes retry until the store either accepts the exact
-state change or returns a contract error that another retry cannot fix. Runtime
-reads never repair lifecycle state. If engine history is already closed while
-the stored run remains active, `Runtime.EnsureRunCompletion` is the explicit
-command that retrieves the final engine result and writes the missing
-suspension or terminal record through a repair-only store operation. If the run
-is already closed, the command validates and redelivers the exact stored result.
-The store atomically writes a missing result while the run is active or reports
-the terminal state that a workflow stored first. The runtime publishes a
-reconstructed event only when that event owns the stored record; otherwise it
-reloads and redelivers the stored winner. Before delivering a child terminal
-event, it validates the child's stored start and redelivers the exact parent
-link. `Runtime.EnsureChildRunLink` exposes that exact link delivery separately
-when a host must restore nested parent relationships before it replays final
-results in their stored order. Active Sessions require `Runtime.WithStream` for
-either ensure command. When the store response reports that this process
-inserted the completion, the runtime sends it to the local hook bus once before
-stream delivery. Retries redeliver only the exact stored stream events. Ended
-Sessions retain their results and suppress stream delivery. The Session status
-returned with the stored record decides the obligation, so an event accepted
-while active remains due if the Session ends during a delivery retry. A
-failure to retrieve the engine result is distinct from the workflow's
-own final error and cannot be saved as the workflow outcome. The engine also
-returns the stable time at which it closed the workflow. A recovered record
-uses that time, so an exact retry cannot create a different timestamp. Every
-accepted lifecycle timestamp uses millisecond precision because runtime records
-carry time as integer milliseconds.
-
-`RunOneShot` stores its start before invoking application code. It records
-prompt events and the terminal result after the callback returns, even when the
-callback canceled its context. Store retries reuse the prepared records and do
-not run the callback again. An exact start replay that reports a closed run
-returns `engine.ErrWorkflowCompleted` without invoking the callback.
-Its `StartSynchronousRun` operation has no engine-request digest. It requires
-the same original timestamp, identity, published history and complete event on
-every retry. Lost history begin, append, publish and start replies reuse that
-invocation's exact commands and attempt before any callback can run.
-The Store records synchronous versus engine ownership explicitly for the
-entire Run lifetime. Neither operation can claim the other's Run ID, even
-when all other command fields match. Missing old metadata identifies neither.
-
-The four engine start operations require the digest of the complete accepted
-`RequestSnapshot`, supplied through `WorkflowContext.StartRequestDigest`.
-Root digest encoding is unchanged. Child starts use a separate versioned
-domain for their complete supported request. Engine-owned metadata carries
-the digest into each workflow attempt, including canceled and detached
-contexts. The first Store write binds it atomically to the original actual
-start and record IDs. A matching closed request validates and selects those
-original records and its closing outcome, even when a new execution proposes
-a later time. A changed request or missing proof is an error. Ordinary
-running-start timestamp equality is unchanged; this does not resume a running
-Run or recover missing records. Matching closed results produce no new hooks,
-streams, planner work or outcome writes.
-
-An accepted workflow may fail before its first Run write. The common finalizer
-stores a generated `UnstartedExecutionTerminal` with the original invocation,
-actual engine input digest and sourced failure or cancellation time. The Store
-orders that decision with preparation and first start; a late writer cannot
-reopen the execution. If start already won, completion preserves its current
-terminal or suspended outcome. High-level workflows require one workflow
-attempt and retain activity retries for durable delivery. External engine
-closure uses exact-request completion repair, never a guessed failure or a
-new start to inspect history.
-
-An unstarted continuation records only its own outcome, never a continued
-successor on its predecessor. A different continuation can still start and own
-that saved work. The initiating service owns any cancellation required by its
-overall accepted operation; generic execution repair must not cancel another
-answer that won admission.
-
-All five Store methods return current run status in the same operation that
-selects the original records. Synchronous starts reuse the sessionless result
-shape. Hosts must implement the required engine digest and explicit execution
-ownership, update the activity commands, and finish old executions on their
-matching workers before the [history cutover](docs/runtime.md#start-result-history-upgrade).
-No digest or execution owner is inferred from old records.
-
-The recipe digest is also an all-writer cutover. Before deployment, stop new
-admissions and prove that no unresolved pre-upgrade start obligation or active
-workflow still requires attachment by exact ID. Deploy all workflow starters
-together, then resume admission. A queryable Temporal execution without the
-reserved recipe memo conflicts; the adapter never reconstructs or guesses its
-start request.
-
-Goa-AI does not provide a production database implementation or prescribe a
-database migration procedure. The host owns the durable schema and any one-time
-conversion needed to satisfy `storage.Store`. Before the new runtime writes,
-the resulting data must support one transaction boundary for lifecycle state
-and its matching run records, reject unresolved legacy states, and omit
-metadata derived from records. Old split-store writers and new integrated-store
-writers must not overlap. How the host reaches that state depends on its
-database and deployment environment.
-
-Continuation preparation accepts only the current suspension schema,
-`goa-ai.run-suspension.v14`, which references an exact saved history position.
-Every accepted recovery plan that waits for input retains its actual advertised
-catalog, including authorized alternatives to a
-failed tool, preserving the catalog contract introduced in version eight.
-Earlier versions are rejected; catalogs omitted by versions before eight
-are not reconstructed from today's registrations. Hosts must finish old-format
-saved work before upgrading, or separately decide how to preserve it. No saved
-work is automatically deleted, canceled, or rewritten. Every model-authored
-await item preserves the runtime `ToolCallID` separately from the provider
-`ModelToolCallID`, so execution records and provider transcript reconstruction
-never substitute one identity for the other. Any other checkpoint shape fails
-validation. See [Runtime Store](docs/runtime.md#runtime-store-storagestore) for
-the current preparation and checkpoint upgrade requirements.
-
-Coordinated generated-code deployment does not own ordinary service
-availability. Services called by activities must keep a ready endpoint
-throughout their own rollout. These responsibilities stay outside Goa-AI because the
-consumer owns its process layout, traffic router, persistence, and downstream
-services. The operational checklist is in
-[docs/runtime.md](docs/runtime.md#coordinated-generated-system-releases).
-
-The host application ends and purges sessions through its own administrative
-API, not through `runtime.Runtime`. Ending a session prevents new root and child
-work from proceeding but retains its runtime history. Before purging, the host
-ends the session and settles every active run. Purge permanently reserves the
-session ID before deleting its runs, checkpoints, and ordered records. Any later
-write for that session must fail as purged, including an exact retry whose
-original record was deleted. The integrated in-memory store provides these host
-operations for local development and tests under the same mutex as workflow
-writes.
-
-Planner activities project the active deadline onto
-`ScheduleToCloseTimeout`, which limits the complete queue/retry/backoff
-lifetime. `ScheduleToStartTimeout` and `StartToCloseTimeout` retain their
-separate queue-wait and attempt-failure semantics. Initial and resumed planning
-receive the `TimeBudget` deadline; planner finalization alone receives the Hard
-deadline. When initial or resumed planning exhausts the budget deadline, the
-runtime performs one explicit finalization turn inside the reserved
-`FinalizerGrace`. Engine adapters identify schedule-to-close expiration
-explicitly, so the runtime never infers timeout ownership from workflow time.
-Planner results that already completed are consumed at the Budget boundary:
-terminal and await results remain valid, budgeted tool plans are rejected
-before transcript commit, and runtime bookkeeping completes inside Hard.
-
-Engines must never impose a second, competing wall-clock ceiling (for
-example Temporal's `WorkflowRunTimeout`) on top of this. Unlike the
-workflow's own deadline check, an engine-level timeout force-closes the run
-from outside application code, so it can fire during active work without the
-runtime emitting its canonical terminal event. `resolveRunTiming` therefore
-never derives an engine run timeout from policy; engine start requests leave
-that field unset.
-
-## Registry Integration
-
-Registry owns resource identity, immutable operation declarations and provider
-delivery. The host owns authorization: registered ownership identifies a resource
-but does not grant permission to a caller. `ListCatalogResources`
-returns bounded permanent identities for one owner without duplicating revisions;
-`CheckCatalogResource` checks registration and retirement. No sharing grants or
-per-invocation permission records are stored by Registry.
-
-Native admission validates typed declarations and prepares an independently owned
-saved representation. A new successful commit retains that preparation and its
-exact saved-byte digest in the existing process-local cache; idempotent repeats
-leave any warm entry unchanged. Cold reads strictly validate the saved bytes.
-Reads still fetch current bytes, state and retirement information, and reuse
-validation only for the same bytes and native-agent rules.
-
-`Service.ReadSavedCatalogToolset` returns the exact saved declaration and owner
-for historical comparison, including a retired registration. It uses the same
-bounded snapshot and integrity checks as the active reader, returns independent
-data, and leaves provider health absent. `ReadCatalogToolset`, discovery and new
-provider/call admission still reject retired registrations. Reading a saved
-contract neither reopens its token nor grants resource access; the host continues
-to authorize the caller.
-
-Resource listing reads its bounded index candidates once, then checks their
-registration and permanent retirement together in one Redis transaction.
-Unrelated catalog writes do not invalidate the page. Retirement between selection
-and checking may leave an empty page with a continuation; insertions can appear
-on a later read. Pages do not retain a snapshot across requests.
-
-`RegisteredInvocation` retains only the original invocation identity, exact
-selected target, and validated original arguments. These values survive workflow
-continuations; actor attribution stays with the host's execution records.
-Service delivery uses `CallResolvedTool` and its exact registration token, with
-the existing deadlines, provider leases, claims, result retention, and overload
-recovery. Native operations use their generated declaration and runtime path.
-
-Applications that expose tool registration through their own Goa services reuse
-`registry/design/types`. That package declares the registry schemas without
-registering an API or service. `registry/design` references those schema objects
-directly. Shared unfinished-tool types have `ToolOperation` names to avoid
-reserving ordinary application type names in Goa's global design. Consuming APIs
-must regenerate after this breaking type-name change; operation fields, branch
-names and saved JSON remain unchanged. Designs importing the moved declarations
-use the `registry/design/types` path.
-
-Generated registry gRPC converters preserve null entries and their positions
-in nullable `ArrayOf` collections before serialization. Required entries declared
-with `ArrayOfRequired` remain subject to their existing validation. Binary
-protobuf turns a null repeated message into a present empty message; ProtoJSON
-rejects null repeated-message entries. This does not promise null preservation
-over the wire. Regenerate application gRPC code with the selected Goa version to
-adopt the converter fix; changing only a dependency leaves generated code intact.
-
-The shared registry executor constructs generated admission payloads and checks
-returned identities and deadlines. Both static and discovered tools use this
-implementation; applications pass the generated client without a separate
-runtime-metadata adapter.
-See [tool contract reuse](docs/tool_search.md#publish-complete-provider-contracts).
-
-Declare centralized registry sources for dynamic tool discovery and agent publication:
+Agents can configure provider-side prompt cache checkpoints in their DSL Policy block using `Cache`:
 
 ```go
-var CorpRegistry = Registry("corp-registry", func() {
-    Description("Corporate tool registry")
-    URL("https://registry.corp.internal")
-    APIVersion("v1")
-    Security(CorpAPIKey)
-    SyncInterval("5m")
-    CacheTTL("1h")
-})
-
-// Federated external registry
-var AnthropicRegistry = Registry("anthropic", func() {
-    URL("https://registry.anthropic.com/v1")
-    Security(AnthropicOAuth)
-    Federation(func() {
-        Include("web-search", "code-execution")
-        Exclude("experimental/*")
+Agent("chat", "Conversational assistant", func() {
+    RunPolicy(func() {
+        Cache(func() {
+            AfterSystem()
+            AfterTools()
+        })
     })
 })
 ```
 
-### Registry Vocabulary
-
-- **DSL registry source**: `Registry(...)` declares a remote catalog and `FromRegistry(...)` binds a toolset to it.
-- **Generated registry client**: `gen/<svc>/registry/<name>/` contains the agent-side client/helpers for one declared DSL registry source.
-- **Registry wire protocol**: `runtime/toolregistry/` defines the Pulse stream names, message envelopes, and output-delta context used by providers, executors, and the clustered gateway.
-  Registry protocol 15 carries workflow-owned operation sequences and host answers
-  outside model arguments. Each service round has its own admission identity;
-  duplicate delivery of that round reuses the saved outcome. Required input is
-  exclusive with completed result data, errors, retries, bounds and server data.
-  Its saved outcome finishes one service invocation while the durable workflow
-  keeps the logical tool call unfinished. The shared registry reader returns the
-  existing activity output; static and discovered consumers route required input
-  to runtime suspension before decoding any completed result.
-
-- **Clustered registry service**: `registry/` implements the standalone multi-node service that admits toolsets, tracks provider health, and routes tool calls over the wire protocol.
-
-Generated `registry.go` files in agent packages are local runtime registration helpers; they do not implement the clustered registry service.
-
-Registry consumption and deferred loading are separate declarations. A named
-`Toolset(FromRegistry(...))` consumes one required registration; `Use(registry)`
-consumes its current toolsets. `Deferred()` inside either consuming `Use`, or a
-static `Use`, chooses native model tool search for every consumed tool.
-`Deferred("search", "analyze")` selects exact authored local names in a compiled
-toolset, leaving its other tools eager. The consuming expression owns this
-choice; shared definitions and exports do not. The generator resolves names
-against the complete tools, including Goa-backed MCP tools, and rejects unknown
-names. The DSL rejects empty, duplicate, and mixed all/named declarations.
-Named selection is rejected for registry sources because their tools are
-resolved at runtime. Repeated `Deferred()` remains valid.
-
-Generation emits each agent's direct registry reads and exact source/version
-permission predicates, including independent child-agent declarations. Static
-search word counts, deferred IDs, complete provider `ConsumerContract` records,
-and schema fingerprints are generated literals. The runtime does not interpret
-these static choices. Applications connect already-built registry and Pulse
-clients once with `RegisterRegistry`; generated `Definition()` and
-`NewClient(rt)` require no catalog inputs and perform no remote reads.
-
-Each planning activity resolves its own current catalog. The model adapter
-receives only permitted definitions. OpenAI uses native client search with
-private BM25 ranking and single-function native namespaces so discovered call
-identities replay completely on Bedrock. Namespace names derive directly from
-provider function names; they are not an application concept or new stored state.
-Claude uses provider-hosted deferred search, including
-the dedicated Messages transport on Bedrock. Provider-specific search records
-stay in existing message metadata. There is no separate loaded-tool store.
-Claude snapshots encode raw schemas with the same JSON escaping used by retained
-definitions, preserving key order and exact number literals. Replay rejects actual
-definition changes, not escaping introduced by serialization.
-
-Accepted calls retain their selected definition and fixed pagination partner
-with the existing registration token. Confirmation, decoding, and replay use
-that saved contract; `CallResolvedTool` rejects a replaced registration before
-publication. Catalog changes cannot silently redirect an accepted call. Static
-runtime registrations remain immutable, and history never grants permission
-for new calls. Registration retains the compiled ordinary and supported text-only
-model inputs with their exact payload codecs. Each activity keeps changed
-consumer input views local and prepares a visible text-only validator once after
-its policy, correction and availability checks. Advertising then returns separate
-copies without rebuilding validators. Changed text-only input views excluded from
-that activity are not compiled. Dynamic service and native Agent tools carry confirmation,
-pagination, field, and server-only data metadata. Planner control execution
-remains compiled.
-
-Native Agent declarations name a preconfigured executor and an immutable
-application configuration reference. The registry owns their create, conditional
-replace, and retire operations, independently of service-provider leases. Child
-preparation resolves the reference in an activity and records messages, labels,
-and policy. The existing child workflow path owns execution, progress,
-cancellation, and input continuations. The parent call's saved registry binding
-travels through child input and checkpoints, independently of live discovery.
-Planner inputs expose its result contract as `ParentTool`; completion validates
-against that contract, even after replacement. No shared application storage,
-per-configuration worker registration, or additional model loop is introduced.
-
-`RegistryCatalog.BindStaticService` attaches an exact service registration to
-explicitly named tools already owned by the consuming generated definition. It
-compares the complete generated declaration, replacing only its toolset route
-name, and preserves generated codecs, input preparation, loading, hints, and
-execution. `executor.NewResolved` admits and retries through `CallResolvedTool`
-using the saved route, operation, and token. The existing `ToolCall.Registry`
-retains that selection without copying the operation declarations: readers
-restore them from the consuming definition's generated declarations and compare
-a saved fingerprint first. No model argument is introduced.
-New service pages select today's catalog registration before acceptance. The
-required `BindStaticService` callback reads each prior private route and token
-from the current resource's owner and permanent name and returns its exact
-`ResolvedToolset`. Saved compiled fingerprints are checked against those old
-selected operations; current input, paging and policy checks govern the new call.
-A changed description alone does not remove a valid page action. Proven previous
-selections belong only to that activity's accepted actor and invocation. Registered imports use
-their retained owner, kind, and resource name; direct imports keep their declared
-registry route identity. Runtime source-call IDs correlate ordered pages across
-registrations, while every accepted call keeps its own exact execution selection.
-Saved arguments, cursor bytes, and completed results remain unchanged. No worker
-retention record or additional checkpoint field is needed.
-The complete static declaration supplies validation contracts, while the Agent's
-executable list chooses its planner tools. Binding a static declaration never
-adds an omitted operation to that list, on initial planning or resume. Separately
-discovered tools remain additional planner choices.
-Classification uses the consuming Agent definition, never process-wide tool
-names. Changing that definition between direct dynamic and bound static usage,
-including removing a static tool, requires draining affected runs before the
-change. The existing saved direct selection cannot distinguish those histories.
-See the [binding contract](docs/tool_search.md#bind-generated-service-tools).
-
-`CompileStaticService` checks an arbitrary expected and selected service
-with the same complete generated copy, validation and fingerprint comparison as
-raw binding. Its opaque `CompiledStaticService` value retains only existing
-compact operation and paging-partner selections, plus their route and version.
-It retains no raw catalog, caller, permission, provider health or callback.
-`RegistryCatalog.BindCompiledStaticService` restores explicitly named operations
-through this activity's generated declarations, checks current consumption and
-local specifications, then installs independent selections and a fresh previous
-registration reader. A failed check installs nothing. Raw `BindStaticService`
-continues to recheck its mutable raw arguments on every call.
-
-Applications own the compiled value's lifetime. Reuse is valid only while the
-selected registration and checked declarations stay fixed; a caller choosing a
-new current registration must compile that selection instead. Compilation grants
-no authority, changes no accepted call and adds no wire or stored format. Provider
-admission, current policy and previous-registration owner checks stay separate.
-
-`RegistryCatalog.BindStaticAgent` binds the complete generated native export set
-from unbound operation declarations and explicit original tool names. It checks
-every operation contract and the generated child's executor, workflow and queue.
-The selected registration owns configuration revisions; discovery descriptions
-and tags do not replace generated operation contracts. Accepted calls retain
-that selection, without the operation declarations, and use consumer-owned codecs.
-New pages select the current native registration and configuration only after
-the required owner callback reads the exact prior declarations and verifies
-routes, tokens and Agent targets. It returns the existing generated
-`ResolvedToolset`; old selected-operation fingerprints remain exact even when
-current descriptions differ. The callback uses existing owner APIs; no new saved
-record is needed. Native
-calls still run as durable child workflows.
-
-`RegistryCatalog.IncludeResolved` imports original operation names from an exact
-registration and continues to reject collisions with generated static tools. `IncludeRegistered` instead requires the owner-selected
-`CatalogSource` and exact registration. It validates the route, registration token
-and operation kind, then derives names from registry, owner, resource kind,
-logical resource name and original operation. Revision routes and tokens do not
-change these names. Provider declarations remain unchanged; pagination partners
-use the same derived identity, and provider adapters own name length projection.
-Duplicate derived identities fail instead of replacing an existing operation.
-`ForEachRegisteredSource` returns independent source copies for generated
-`Bind*SourceInput` helpers. A binding must match the owner and exact target.
-
-Saved `RegistryBinding.Resolution` values use the generated `RegistrySelection`
-union: a direct registration, or a registered resource with its required source
-and registration. Replay reconstructs the same names and original operations
-without discovery or a saved alias table. Deployments upgrading from protobuf
-`ResolveToolsetResponse` bytes must convert every retained binding to the direct
-variant before starting the new reader; see the [upgrade contract](docs/tool_search.md#generation-and-upgrades).
-
-Generated `Toolset()` declarations and the public portable contract compiler
-support SDK integration. Portable bounded-result codecs accept provider result
-data before the runtime adds counts, truncation, and paging information from
-separate `Bounds`; advertised schemas still describe the final output. Applications can use
-`RegistryCatalog.RunLabels()` to select per-run sources; product namespaces and
-authorization remain application concerns.
-
-[Tool search and dynamic registries](docs/tool_search.md) describes consumer
-loading and execution. The [runtime provider guide](docs/runtime.md#registry-routed-provider-execution-service-side)
-owns callback wiring, recovery, and the storage upgrade procedure.
-
-`DeclareServiceToolset` accepts a complete portable service declaration before
-providers connect. It validates each tool and the complete collection's qualified
-identities and pagination relationships, then creates a service admission with a
-registry-issued UUID revision, Redis registration time, an empty lease map,
-positive health epoch, and no pong. The existing state format represents this
-condition without a new storage variant. An identical active fingerprint returns
-the saved definition, original token, and original time, including the winner's
-tool and tag order. A different or native declaration conflicts; retired service
-occupancy cannot be recreated by declaration. The declaration RPC requires no
-provider contact or health tracker and creates no provider lease, stream, or
-ping. The existing catalog scheduler still observes its presence and may report
-it unavailable under the normal sampling lease.
-
-`ReplaceServiceToolset` compares the current registration and saves a complete
-replacement only after every old provider lease has ended. A stable replacement
-request ID lets repeated requests return the saved winner without a journal.
-The old service token is permanently retired; fresh attachment establishes
-availability for the replacement. The [service publication contract](docs/runtime.md#service-declarations-before-provider-startup)
-defines errors, replay, reactivation, rollback, and client upgrade steps.
-
-`AttachProvider` requires the exact existing name and token, a stable provider ID,
-a lifecycle incarnation, and the current wire version. Its conditional write
-changes only leases and health. It preserves longer deadlines, rejects draining
-incarnations, and cannot replace declarations after the last provider leaves.
-The first routable member advances the health epoch and needs a new pong.
-`Register` retains its deployment-managed replacement behavior, including
-permanent retirement of old tokens. Native Agent operations are unchanged.
-Applications own who may declare, attach, or perform deployment registration;
-a registration token identifies a contract and is not a credential.
-
-Provider admission is owned by the clustered registry. `Serve` generates one
-UUID incarnation per lifecycle; leases are keyed by stable provider ID plus
-incarnation, so delayed old-process release cannot remove a replacement.
-The health epoch (which identifies the routable provider set) and pong freshness
-live beside those leases in one compact current-state record. The active
-`toolprovider.Serve` lifecycle opens the Pulse stream, invokes a typed,
-context-compliant registration callback, and creates the shared sink only after
-admission. Deployment callbacks capture validated schemas and their required
-admission revision for `Register`. Attachment callbacks capture an existing
-registration token for `AttachProvider`. Both send the runtime-owned
-`toolregistry.WireProtocolVersion`; the generic lifecycle owns neither selection. `Register` is used only during startup; it may retry
-until admission succeeds. The required `Registration.Renew` callback calls
-`RenewProvider` with the toolset, provider ID, incarnation, and original token.
-It receives only a duration, so renewal cannot change the admission identity.
-The same supervisor schedules renewal around one third of that duration with
-jitter. It measures the local deadline from the attempt start, bounds retries
-by the last accepted lease, and closes consumption before expiry. A late reply
-cannot extend the previous safety cutoff.
-
-After every admitted exit, `Serve` cancels renewal, atomically marks its one
-token/incarnation lease draining, then closes the shared sink and leaves
-unclaimed local work for redelivery. An in-flight renewal may succeed for an
-unexpired draining lease, but must preserve its draining flag and the later of
-the existing expiry and the newly granted expiry. It cannot reopen intake or
-shorten the time available to settle accepted work. Draining leases are
-excluded from new publication and new claims, but retain authority to settle
-claims that committed before draining.
-An exact retry of one of those claim operations returns its original `execute`
-decision. The drain transition carries the configured shutdown duration so
-Redis keeps that authority for the full settlement lifecycle. `Serve` waits
-for workers and any terminal publication, drains every queued acknowledgement,
-and releases its one exact lease only after local cleanup succeeds. Native
-release settles remaining claims after removing that lease. Failed
-settlement suppresses release and returns the cleanup error. A sink-setup
-failure has no consumption to settle and proceeds directly to bounded release.
-`ServeAndWait` shares this lifecycle and its arguments with `Serve`, but waits
-internally for all invocation-owned work, including the original sink Close,
-before returning the already-decided result. It may outlast the settlement
-deadline while dependencies finish. That later join never permits release after
-incomplete settlement. `Serve` retains its published bounded-return behavior.
-Provider `Options.OperationTimeout` can bound each claim, result publication
-and acknowledgement separately from that shutdown wait. Its zero value keeps
-the existing `ShutdownTimeout`-derived operation allowance. This permits longer
-accepted-call drainage without changing individual operation waits, handler
-deadlines or the separately bounded lease release.
-Neither entry point can join resources a sink leaves active after Close returns;
-the sink owns that local cleanup contract.
-Shutdown classification follows the returned error's own `Unwrap` causes, not
-alternate diagnostic errors exposed through `errors.As`. Cancellation joined
-with a real cleanup failure remains a failure with its original error chain.
-Close, worker, result, or acknowledgement failure is explicit and suppresses
-release; lease expiry is the durable fallback. Before a worker dispatches
-locally queued work, `ClaimToolCall` authenticates its exact lease and request
-event at the global call record. The atomic result is `execute`, `terminal`,
-`claimed`, or `expired`; only `execute` invokes the handler. The claim uses the
-provider worker lifecycle context and its bounded claim timeout, so an old
-delivery can still receive the registry's expiration or retained-terminal
-decision. Only after `execute` does the provider apply the message's absolute
-execution deadline to the handler. A registry expiration decision is
-acknowledged without stopping the provider or running the handler.
-Dispatch ownership never transfers. One claim-operation ID is reused by
-transport retries, while a later event redelivery creates a new ID and receives
-`claimed`, so redelivery cannot repeat side effects.
-Claims enter global and exact-lease settlement indexes. At the call's absolute
-execution deadline, or earlier if the lease is released, the registry
-atomically commits `internal` / `outcome_unknown`, states that the effect may
-have occurred, and forbids another execution. This happens before the later
-call-record retention deadline. The same transition publishes stale-generation
-terminal history before acknowledgement.
-
-`CompleteToolCall` returns a required `accepted` boolean. It is true when the
-registry retains the submitted provider terminal, including an identical
-repeat, and false when the call was settled by its execution deadline instead.
-Both outcomes finish the request delivery; neither permits another execution.
-Exact provider and dispatch ownership checks still precede that decision.
-`Registration.Complete` carries the boolean to `Serve`, which acknowledges
-either outcome but records provider-result publication only when accepted.
-The registry's existing atomic transition owns this distinction; no additional
-record, admission step, or retry protocol is introduced.
-
-`runtime/toolregistry.DecodeToolResultMessage` is the single explicit reader
-for the existing result envelope in native completion, retained call records,
-and executor result events. It rejects null or nonobject roots, trailing JSON,
-and unknown members in fixed records. Dynamic result, server-data payload, and
-recovery JSON retain their existing raw representations. Existing message
-validation, exact-call matching, Retry restrictions, and semantic tool codecs
-remain separate owners. The executor still filters foreign identities before
-validating the success/error/retry combination. Registry retains and replays
-the original submitted bytes without re-encoding them.
-The [runtime envelope contract](docs/runtime.md#registry-result-envelope-decoding)
-defines standard parser behavior and the external/retained compatibility gate.
-
-`runtime.ValidateSuccessfulToolResult` makes the existing successful-result
-checks available to adapters before completion. It delegates to the same private
-semantic-result decoder and bounds validator already used by the runtime.
-A no-result tool requires absent result bytes; a declared result must decode to
-a non-nil value, and its bounds must satisfy the selected tool's existing rules.
-The caller first establishes the successful envelope and exact identity, and
-validates server data with its existing owner. The function does not publish,
-re-encode, select a tool, or change native-provider behavior. Private runtime
-callers retain their existing validation paths and call-aware diagnostics.
-
-`Handler.HandleToolCall` may explicitly return `provider.ErrResultUnavailable`
-when it stops without a terminal. `Serve` recognizes the error at this return
-only, ends that call's local work, acknowledges delivery, and keeps serving.
-It does not construct `execution_failed`, call Complete, or claim that a
-terminal already exists. The durable dispatch claim remains with Registry,
-which performs its existing deadline or lease recovery. A clean provider
-release also settles these claims. Other handler errors and successful tools
-with no semantic result retain their existing behavior.
-The [runtime provider guide](docs/runtime.md#registry-routed-provider-execution-service-side)
-owns the marker, acknowledgement, and resource-lifetime contract.
-
-Provider processes supply one stable `ProviderID` per process/toolset pair and
-deployment callbacks capture one validated, deployment-issued `AdmissionRevision`
-per admission before calling `Serve`. Attachment callbacks instead capture the
-registry-issued token returned by declaration or resolution.
-Provider registration wiring must also send the single
-`runtime/toolregistry.WireProtocolVersion`; it is not deployment configuration
-or capability negotiation. Consumers never register, but every `CallTool` and
-`RetryTool` request must send the same version before the registry can publish
-protocol bytes.
-Every replica with the same contract shares the revision across scaling and
-RollingUpdate; a revision changes only when a new execution fence is intended.
-Registry protocol 15 permits standalone tool executions without session membership.
-Run and tool-call identifiers remain required. A supplied session identifier is
-validated before admission; sessionful runtime entry points still require a session.
-The runtime carries the accepted session unchanged, while standalone executions
-carry no session. See [session metadata and upgrade](docs/runtime.md#session-metadata-and-upgrade)
-for generated source changes and coordinated cutover.
-Catalog loading validates the saved structure and original token independently
-from current execution compatibility. Historical registrations retain their exact
-version, definition, and retirement history. Schema-only inspection remains
-available; full typed reads and explicit replacement require metadata that the
-current executable contract can represent. Ordinary provider registration can
-replace an older admission after its leases end. Only current-protocol
-registrations can acquire provider authority or receive new work. Completed
-results replay without reopening that authority.
-Startup verifies historical service declarations against their saved summary
-and fingerprint using the original consumer-contract JSON. It validates their
-argument and result schemas without interpreting historical consumer metadata
-as today's executable contract. Current services and native Agents still require
-full current metadata validation. Exact typed resolution is unchanged: historical
-definitions with removed metadata fields cannot be represented by the current
-response type and continue to fail that read; startup integrity does not repair
-or discard those fields.
-`GetToolsetSchemas` supplies schema-only inspection of active registrations:
-original names, descriptions, tags, version, registration time, and argument,
-result, and sidecar schemas. It returns neither consumer metadata nor an
-admission token. It verifies original declaration integrity and schema validity;
-current services and native Agents additionally retain full executable validation.
-Missing or retired registrations return `not_found`.
-
-The registry rejects a missing or mismatched wire version with
-`validation_error` before creating streams, mutating catalog state, admitting a
-lease, or scheduling health checks. The catalog privately owns three kinds of durable Redis data:
-
-| Data | Contents and ownership |
-| --- | --- |
-| Compact current state | Active/retired status, listing summary, optional immutable application scope/public-name identity, wire version, schema fingerprint, admission revision, registration token/time, provider-incarnation leases with draining flags and expiry, health epoch, and last pong. |
-| Current definition | One serialized toolset per name, including generated schemas and consumer metadata. Registration time is supplied by current state, not the static definition. |
-| Permanent retired tokens | Every token invalidated by replacement or retirement. Tokens never expire and cannot be truncated. |
-| Derived application membership | Sorted internal routes for each explicitly owned scope, updated in the same conditional commit as active/retired state. No membership is inferred for identity-free records. |
-
-Registry replicas read and update these records directly through Redis commands
-and conditional-update scripts; there is no Pulse replicated catalog map,
-full-definition publication, or map-revision repair. Registration/replacement
-commits state, any changed definition, and retirement history atomically.
-Renewal, health, pong, drain, release, and atomic call-ownership checks operate
-on compact state without transferring definitions. Publication, claim, and
-completion still check the exact lease in the same Redis operation that records
-their effects.
-
-Application owners may call the explicit `WithIdentity` variants of Register,
-DeclareServiceToolset, ReplaceServiceToolset, RegisterAgentToolset and ReplaceAgentToolset. These share
-the existing compiler and catalog commit. Identity is immutable, is not part of
-the declaration fingerprint, and cannot be introduced by an ordinary retry.
-Existing identity-free registration remains supported. Assignment to historical
-records is an application's explicit migration responsibility, not a fallback.
-
-Upgrade every registry replica sharing the catalog before using identity-taking
-registration. Older readers reject the new identity field in current state.
-Existing identity-free records need no migration. After identity-bearing records
-exist, downgrading those readers requires an application-owned data conversion;
-reverting the library alone is not a safe rollback. Provider wire messages and
-stored declaration JSON remain unchanged.
-
-`NewCatalogReader(redisClient, registryName)` gives local maintenance code only
-`ListToolsets` and `ReadCatalogToolset`, using the same saved-record validation
-as the running service. Construction does not contact Redis or start workers;
-the caller owns the borrowed client. Reads do not mutate Redis or prune leases.
-The reader returns saved ownership, exact registration and native-Agent status,
-but no `ServiceHealth`: provider health requires the running Registry's configured
-ping settings. The service retains that health observation. No RPC, saved-data
-format, registration rule or migration changes. See
-[read-only catalog inspection](docs/runtime.md#read-only-catalog-inspection).
-
-`ReadCatalogIdentity` reads only the exact route's compact saved state and
-returns its immutable application owner, including after retirement. It neither
-loads declarations nor checks provider health or active status. Missing routes
-return `not_found`, identity-free records return `ErrCatalogIdentityMissing`, and
-corrupt state returns a validation error. Applications authorize the returned
-owner; existing admission decides whether work may reconnect or start.
-
-`ReadCatalogRegistration` returns the active route's saved resource identity,
-registration token and service-or-native kind from one validated compact state
-read. It reads no declaration or provider health and grants no execution
-authority. Missing and retired routes return `not_found`; a route without saved
-identity returns `ErrCatalogIdentityMissing`. Application owners can combine
-this read with `CatalogRoutesAfter` to inspect exact admissions without decoding
-unrelated schemas. `ReadCatalogIdentity` continues to return immutable ownership
-for retired routes.
-
-`CatalogRoutesAfter` reads bounded exclusive lexical positions from one scope;
-`CatalogContains` checks one exact membership. `ReadCatalogToolset` requires a
-positive raw-byte budget and checks the sum of state/definition `HSTRLEN` before
-either `HGET` or decoding in one finite Lua operation. It reuses canonical
-snapshot validation and the exact-record provider-health calculation without
-lease pruning or retries. A budget failure leaves registration and bytes intact.
-No definition codec, definition write cap, cursor TTL or application authorization
-is introduced. Applications own page selection and encoded response budgets.
-Native Agent records carry no service-health value; their configured executor's
-readiness belongs to the application. `LookupAgentToolsetRegistration` compares
-the complete intended Agent declaration and explicit identity through the same
-preparation and admission checks as registration. It returns the existing typed
-registration with saved token/time, `found=true` and no error for a match.
-Ordinary absence is `(nil, false, nil)`. A different, retired or differently
-owned entry returns `admission_conflict`; invalid input or failed reads remain
-errors, with no registration and `found=false`. Callers check the error before
-using `found`. Lookup loads compact state without writing, reserving the name,
-exposing admission facts for callers to compare, or imposing discovery capacity
-on registration.
-
-A nonzero-to-zero lease transition
-advances the epoch and resets pong freshness. Ping IDs carry token plus epoch;
-pongs authenticate that pair and the responding incarnation atomically.
-Aggregate health and new-call routing require one unexpired, non-draining lease
-plus a fresh current-epoch pong.
-
-`CheckAdmission` applies that same routing test to one deployment-supplied
-registration token. Generated toolset specs expose
-`RegistrationToken(admissionRevision)`, which combines their precomputed schema
-fingerprint with the runtime wire version and deployment revision through the
-same pure implementation the registry uses. Providers include that generated
-fingerprint in `Register`; the registry derives it again from the submitted
-toolset and rejects any mismatch before creating routing state. The check
-returns `ready=false`
-when the toolset is absent, a different token is active, no routable lease
-remains, or the current epoch lacks a fresh pong. Infrastructure failures remain
-errors, while caller cancellation remains cancellation. This read contract lets
-a deployment verify the exact routable tool contract after Kubernetes confirms
-that the intended workload rollout completed. Workload readiness remains
-independent of admission, so a changed-token rolling update cannot deadlock.
-
-Registry construction validates every stored state/definition pair and all
-permanent retired tokens before starting health tracking. It rejects unknown
-stable declaration fields, old combined records, missing pairs, invalid schemas or wire versions,
-inconsistent fingerprints or summaries, and disagreement with retirement
-history. Historical service consumer metadata retains its original JSON and
-fingerprint rather than requiring current typed decoding; current services and
-native Agents remain strict. Startup reports invalid data without rewriting it.
-
-Definition-dependent reads fetch current state, definition and retirement
-membership in one Redis snapshot and validate the complete pair. Declaration
-fingerprints ignore tool and tag ordering, and native replacements can reuse
-their token, so neither can select an earlier saved definition. Each read hashes
-all current definition bytes with SHA-256 and reuses validation only when both
-that hash and the service or native-agent validation rules match. Changed bytes
-pass the same strict saved-encoding checks before use.
-
-The private catalog retains one immutable validation result per name: compact
-metadata, the saved fingerprint, and compiled execution-schema maps. It retains
-neither full JSON nor decoded declarations. Replacements overwrite that entry;
-reads or successful listings that observe removed names discard it. Cold
-validation runs one definition at a time to avoid concurrent large parsing
-allocations; warm lookups do not wait for that work. Canceled reads leave
-the validation queue without retaining their current definition. The existing schema
-validator still shares compiled schemas by schema digest.
-
-Each selected lookup owns its current definition string and state. Callers
-requesting full definitions receive independently decoded values with that
-state's time and token. Full definition transfer remains part of resolution and
-call preparation, including availability retries; warm call preparation skips
-full decoding and fingerprint reconstruction. Lease and health operations still
-read compact state only. Every consequential call operation checks current
-authority. This optimization changes no API, saved encoding, or migration.
-
-Saved consumer-contract JSON enters the fingerprint calculation in its original
-encoding, after duplicate-member and declaration checks. Current executable
-reads also strictly decode consumer metadata. Reads retain the complete saved definition
-instead of serializing it with today's generated types. This preserves existing
-identity when new optional fields are added, while mismatched definitions still
-fail validation. The [saved declaration identity contract](docs/runtime.md#saved-declaration-identity)
-defines decoding, registration, and upgrade behavior.
-
-Attachment and same-token Register may preserve a pong only while a previous
-routable provider remains live at the atomic write. The commit checks Redis time
-against the latest expiry among those previous routable leases. An expired
-premise retries with fresh state; a real membership gap advances the existing
-health epoch and requires a new pong. Uninterrupted joins preserve health and
-longer lease deadlines.
-
-The wire-visible `RegistrationToken` is not a secret. It is the lowercase
-SHA-256 digest of the domain `goa-ai/tool-registry-admission/v2\0`, the uint32
-big-endian wire protocol version, the raw 32-byte canonical schema fingerprint,
-a uint32 big-endian admission-revision byte length, and the revision bytes. Tool
-order and toolset/tool tag order are
-normalized before schema fingerprinting. The model payload, registry execution
-payload, result, and sidecar schema bytes are exact identity inputs, so
-generated schema JSON must remain canonical.
-The same wire version, schema, and revision derive the same admission token
-across replicas. Changing any of those inputs derives a different token. Every
-Goa and Pulse boundary requires the canonical lowercase 64-hex spelling
-`^[0-9a-f]{64}$`.
-
-Registration uses atomic conditional updates. An absent state/definition pair
-may become a new admission and first lease after checking permanent retirement
-history. An explicit same-token Register can add or refresh a provider, but
-rejects an existing draining incarnation with `provider_lease_lost`. Active
-Serve lifecycles use only `RenewProvider` after startup.
-A different token first prunes expired leases using Redis TIME: while any old
-lease remains it returns retryable `admission_blocked`; once none remain it
-replaces the record with the candidate and first lease while atomically
-tombstoning the prior token. Concurrent renewal, replacement, and competing
-candidates commit only if the previously read state still matches. Retirement also atomically tombstones the
-current token. Any candidate in the tombstone set returns permanent
-`admission_retired`; therefore A→B→A cannot resurrect A. Another fresh token may
-activate after retired leases are released or expire. Tombstones are permanent,
-unbounded correctness history. They grow with distinct admissions; no lossy
-compaction is safe without another immutable authority that can prove
-non-resurrection.
-
-Same-token scaling and RollingUpdate require no deployment token persistence.
-A different schema or admission revision may use the same RollingUpdate: the
-new pod stays blocked at registration while the old admission drains, so
-incompatible providers never execute concurrently. A new call that observes no
-healthy provider waits until the replacement becomes healthy or the existing
-execution deadline expires. Request publication atomically checks that the
-selected provider is still routable. If draining won that race, the
-unpublished call selects the replacement and tries publication again; only a
-published call has an immutable provider assignment.
-Graceful releases permit immediate server-owned handoff, while crashes delay
-handoff until lease expiry. Registry servers and consumers use one exact wire
-protocol; they do not negotiate envelope versions.
-`Unregister` is not rollout orchestration; it intentionally changes active to
-retired while preserving leases. Same-token retirement retry succeeds, a stale
-expected token returns `admission_conflict`, retired toolsets are unavailable to
-discovery and calls, and the retired exact token cannot register again.
-
-The wire protocol has no optional fallback, capability negotiation, or dual
-decoder. The registry rejects a missing or mismatched version before service
-invocation, catalog lookup, health checks, result-stream creation, call
-admission, or Pulse publication. Register validates the provider's supplied
-version at startup. Renewal sends no repeated wire version: the exact token and
-strictly validated current state bind the version already admitted. The storage
-split kept wire protocol 10 and preserved schema fingerprints and token derivation.
-The MCP input upgrade separately moves the coordinated message contract to
-protocol 11; old providers and consumers must be drained before that cutover.
-
-Loss of current registration or exact lease authority is terminal for an active
-provider. `RenewProvider` returns `provider_lease_lost` for a missing, expired,
-retired, or replaced lease; Serve shuts down without calling Register again.
-Retained definitions cannot reconstruct a lost draining decision. Missing or
-corrupt paired definitions are storage errors, not permission to rebuild state.
-
-Temporary connection failures retry only within the existing lease cutoff.
-Registry restart with intact durable data, stream/group loss, and ping-lease
-loss remain recoverable: Pulse repairs the existing stream lifecycle and
-consumer group, the provider periodically ensures the group exists, and registry
-schedulers reacquire ping leases. Intentional Pulse `Stream.Destroy` is different:
-it permanently invalidates that stream generation, so existing sinks cannot
-resume it. Repair restores future delivery, not messages erased from Redis.
-Erased catalog or retirement data requires
-controlled restoration or a deliberate fresh initialization with providers and
-new admissions stopped. Complete erasure can look like an empty installation
-to a new process; it cannot establish continuity for lost claims, results, or
-retired tokens. The [storage upgrade](docs/runtime.md#registry-storage-upgrade)
-preserves current data through offline conversion, never catalog deletion.
-The gateway stamps each routed call with the exact active token used for
-validation. It derives the global transport `ToolUseID` as a domain-separated,
-uint64-length-delimited SHA-256 hash of required `run_id` plus model/provider
-`tool_call_id`; retries in one run therefore reuse the result stream while
-concurrent runs cannot collide. Both IDs are required; direct callers generate
-and retain stable call identity. The original model/provider ID remains separate
-metadata.
-
-Providers execute only matching calls. For a stale queued call, the current
-provider asks the registry to reject the exact call; the registry authenticates
-that provider's distinct current token/incarnation lease and publishes the only
-valid terminal `stale_registration` result under the call's older token. The
-provider then acknowledges the request, so generation changes cannot execute old
-work or strand a waiting caller. Every
-success and error result echoes the call token; independent executor readers
-accept only the exact tool-use ID and token pair and ignore mismatched late
-results from reused IDs. Ordinary completion verifies the completing provider's
-exact token/incarnation lease, including a preserved lease after retirement, and
-atomically stores the full canonical result in terminal call state while
-appending its delivery event. Result streams retain at most
-`ResultStreamMaxLen` events through the absolute retention deadline; a terminal
-trimmed from Pulse is restored from the call record on replay. Output deltas and
-completion require the exact immutable dispatch owner and stop at the earlier
-execution deadline. Delta bytes and count are bounded. Overload notices are
-idempotent per request event and accepted only before dispatch; stale overload
-observations become the canonical stale terminal atomically. Preserved retired
-or draining exact leases may
-settle calls they already claimed. The waiting queue is exact and bounded.
-Within one `Serve` invocation, a repeated stream name, stream generation, and
-event ID already queued, running, or waiting for acknowledgement consumes no
-additional queue slot and produces no overload notice. The provider does not
-acknowledge that repeated delivery early: Redis must retain the original event
-for recovery until its normal acknowledgement succeeds. A different event or
-another provider invocation still follows the existing registry ownership and
-overload decisions. A provider receiving a new call when its queue is full
-reports transient retry intent with reason
-`provider_overloaded` before acknowledging it. Retry control has
-no planner failure; terminal `ToolError` is the single authority for planner
-classification and recovery. The executor submits `RetryTool` with the original
-admission token. The registry requires that exact admission to remain active,
-attaches to its existing immutable call admission, and atomically republishes at
-most once per retained overload event across replicas. It never creates retry
-state or republishes through a replacement provider. Provider ping intake remains
-available while the retry waits.
-
-The registry atomically records each global `ToolUseID` once. The authoritative
-record stores a token-independent digest of toolset, tool, payload, and call
-metadata. Before request publication, its provider token may move to the
-current healthy registration because no provider can have started the call.
-Publication atomically verifies that token and makes the positive assignment
-immutable. `CallTool` attaches to this record before current catalog or health
-lookup; an exact retry of a published call therefore returns its original token
-and deadlines after retirement or replacement. A valid unpublished call that
-finds no healthy provider waits and subtracts the wait from its original
-execution budget. Provider recovery publishes the call normally; deadline
-expiry atomically replaces the unpublished state with the rejected decision.
-Other catalog and health failures commit the rejected state or observe an
-admission that won the race. The registry does not infer whether a no-provider
-interval came from a deployment or an outage. A rejected state returns typed
-`call_not_admitted` and prevents every exact retry from executing while that
-run-scoped decision is retained, so the executor may safely replan. Generated
-`not_found` and `validation_error` preserve their actionable types in the same
-decision record. Errors after request publication remain ambiguous and produce
-`outcome_unknown`, which forbids replacement execution because an effect may
-have occurred.
-The explicit decision record uses wire protocol version 15. Registry replicas,
-providers, and consumers use that exact protocol. Records with another shape
-are rejected and never rewritten.
-The earlier protocol-8/9 transition changed message and call-record contracts;
-it is distinct from the catalog storage split, which kept protocol 10,
-and the MCP execution upgrade to protocol 13. Do not apply a
-historical catalog reset to current state or retirement history. See the
-[preview upgrade guide](docs/runtime.md#preview-upgrade-guide) for the separate
-source, storage, and historical wire-version requirements.
-`CallTool` owns only initial admission and publication. `RetryTool` owns overload
-republication and requires both the
-existing admission record and its still-active token. The request-stream append
-and admission marker commit atomically, so ownership cannot expire between
-publication and commit and exact retries return the original request event. The
-call record owns a Redis-selected absolute execution deadline no longer than
-`MaxToolCallWait` and a later bounded retention expiration shared with result
-history. Provider handler context and executor waiting use the execution
-deadline. Structural reference validation checks only timestamp shape and
-ordering; Redis owns liveness. The record stores the complete canonical
-terminal payload. Atomic terminal publication preserves the later retention
-expiration; replay restores a missing terminal delivery event without
-re-executing the call. Claimed calls that reach execution deadline without a
-provider terminal atomically become `outcome_unknown` while the authoritative
-record is still retained. Redis expiry deletes only after that settlement
-window.
-The request stream is trimmed by the minimum safe consumer-group watermark:
-the earliest pending ID for groups with pending work, otherwise each group's
-last-delivered ID. Length-based trimming is forbidden because a single old PEL
-entry can outlive arbitrarily many acknowledged later entries.
-Retry decisions use the overload event retained in the call record and never
-snapshot Pulse history. Executors use independent oldest-first Pulse Readers,
-so each waiter replays retained events
-without consumer groups, acknowledgements, or keepalive metadata. No consumer
-destroys the stream; abandoned, completed, and recreated state expires at the
-record's absolute deadline.
-
-Deterministic admission identity, catalog-owned leases, token fencing, flat
-shared streams, server-owned handoff, and incompatible-admission non-overlap
-are permanent. Catalog and queued records must match the current wire protocol;
-the runtime rejects unknown records instead of guessing how to translate them.
-
-Health scheduling and stream repair do not recreate provider authority.
-Expiring ping leases can be reacquired on the next scheduler tick, and
-`toolprovider.Serve` repairs the consumer group at `Options.EnsureInterval`
-while its catalog lease remains valid. The required renewal callback extends
-that exact lease without uploading definitions or changing its token.
-
-### Transcript Boundary
-
-The OpenAI Responses adapter has distinct constructors for direct OpenAI and
-Amazon Bedrock. They share transcript encoding, streaming, provider-issued tool
-identity and encrypted reasoning replay. The constructor, not a per-request
-fallback, selects the tool-schema contract: direct OpenAI projects to
-`strict:true`; `NewBedrock` and `NewBedrockProvider` send the complete schema
-with `strict:false` and preserve returned arguments. `NewBedrockStrictProvider`
-uses the shared strict compiler with Bedrock transport and never changes schema
-contracts after an error. Required disjoint string tags select each object union
-branch's own optional-null removal rules. The validated model client remains responsible
-for checking the original schema and generated decoder in every case.
-Strict conversion represents an optional non-nullable member's absence with
-`null`; a generated function tool note explains that representation. Required
-meaningful nulls and explicit values remain intact. Before transport, the
-compiler requires concrete objects to be explicitly closed and rejects optional
-nullable members, reachable reference cycles, reference structural siblings,
-unions combined with local object-shape rules, and patterns that conflict with
-optional-member removal. The compiler also rejects a `const` or `enum` when its
-own value structure needs that removal, including at reference sites; making
-the entire field optional does not trigger this restriction. These are
-supported-subset restrictions, including redundant structural siblings and otherwise valid
-fixed values over optional structures. The compiler does not rewrite literals
-or infer equivalent object definitions from arbitrary compositions. Complete
-closed tagged branches and plain reused acyclic references retain their own
-omission rules. The caller's schema remains unchanged.
-See the [strict schema contract](docs/runtime.md#openai-adapter-matrix).
-
-All constructors send `store:false` and explicitly include
-`reasoning.encrypted_content` on every request. Requesting replay data belongs
-to stateless transcript ownership, not to the optional reasoning-effort setting:
-provider-default reasoning can also return items that the next request must
-preserve. This does not enable reasoning or change the selected effort.
-
-Reasoning settings are explicit client configuration, not model-name guesses.
-`ThinkingEffort` controls enabled requests; optional `DisabledThinkingEffort`
-maps disabled requests to `"none"` for clients whose models support it. An
-unconfigured disabled effort preserves existing omission, and absent thinking
-always leaves provider defaults unchanged. Both options apply across that
-client's configured model classes and explicit model overrides; unsupported
-provider settings fail without a fallback.
-
-The official OpenAI Go SDK v3 owns Bedrock authentication and endpoint
-resolution. The adapter accepts only the configuration it consumes: region,
-refreshable credentials, model options and SDK request options. Bedrock requests
-disable storage, background execution, input truncation and implicit prompt
-cache writes. Unary structured output uses the shared strict schema compiler
-and original-schema validation on supporting models. Streaming structured output
-and cache-bearing requests fail before transport. Bedrock Responses exposes a
-declared local token estimate; direct OpenAI counting remains unsupported.
-The Bedrock estimator counts
-GPT-5.6, GPT-6 Sol, and GPT-6.1 Sol images from dimensions rather than their base64 transfer
-size, retaining the byte approximation for text, tools, and opaque reasoning.
-GPT-6 Sol and GPT-6.1 Sol use an explicit local patch estimate; it does not claim the GPT-5.6
-billing rule or impose its provider limits. Provider usage remains the measured
-accounting total. Unknown image model families fail counting.
-Consumers requiring exact counts must resolve that requirement separately.
-See the [runtime provider contract](docs/runtime.md#openai-responses-on-amazon-bedrock)
-for details and the SDK source-compatibility change.
-
-- **Stateless model adapters**: Provider clients accept the full provider-ready
-  transcript in `model.Request.Messages`; they never reload history from a
-  runtime-owned `RunID`.
-- **Durable replay**: The runtime persists canonical transcript deltas as
-  runlog records so providers, replay tooling, and future backends can
-  reconstruct the exact message order generically. Canonical tool-call IDs
-  remain opaque and unchanged; adapters whose wire protocol restricts ID syntax
-  assign request-local aliases and use the same alias for each matching tool
-  result. Provider calls must contain an ID. Planner requests preserve that ID
-  when they forward a provider call and leave it empty when the planner authored
-  the request. The runtime assigns every accepted request its deterministic
-  execution ID from the run, turn, attempt, tool, and batch index.
-- **Rejected model evidence**: The model boundary hashes a versioned,
-  deterministic encoding of complete responses before copying or validating
-  them. The encoding includes malformed raw tool bytes without requiring valid
-  JSON. The activity result and durable rejection event carry the
-  complete-response presence, SHA-256 digest, byte count, and encoding version
-  when a digest exists.
-  Each version explicitly orders response fields, message-part variants, and
-  metadata struct fields rather than depending on Go declaration order. Struct
-  field tags and anonymous-field status are part of the encoding.
-  Canonical metadata and tool-result values may contain nil, booleans, finite
-  numbers, strings, string-keyed maps, slices, and arrays. Fingerprinting and
-  rejected-response evidence copying also encode structs with exported fields
-  so an invalid provider response still has a stable identity. Canonical copying
-  rejects structs, pointers, functions, channels, unsafe pointers, complex
-  numbers, uintptr values, reference cycles, more than 64 nesting levels, or
-  more than 100,000 visited values in one metadata object or tool-result value.
-  Strings, byte slices, and map keys in one such value may total at most 16 MiB.
-  Fingerprints are captured before ownership cloning so invalid metadata or
-  parts cannot be mistaken for no response. If
-  concurrent calls reject output, the envelope uses the earliest-started
-  rejected invocation's reason and complete-response evidence. The
-  event fingerprints the private validation-cause text instead of retaining
-  that text. A mechanical rejection also carries the closed
-  `OutputValidationKind` from the first check that rejected the response. The
-  kind identifies only the failed contract area; it contains no response text,
-  provider text, tool identity, arguments, or schema path and cannot authorize
-  recovery. Model content remains observability data rather than workflow
-  state, so diagnostic storage cannot retry inference and Temporal and hook
-  payloads remain bounded. Planner-authored policy rejection is semantic: the
-  same response can be accepted by one planner and rejected by another. It
-  therefore carries no mechanical kind and keeps its exact planner correction
-  as the only recovery fact. A planner result rejected after model output was
-  accepted emits `PlannerOutputRejected` instead, with only the bounded private
-  cause identity.
-- **Generated tool validation**: A model definition created from a generated
-  tool specification retains its advertised schema and generated payload
-  decoder inside the process.
-  Unary tool calls and streamed tool calls must match a definition in the exact
-  model request. A completed streamed call remains withheld until terminal
-  usage arrives and the complete response matches every retained chunk. The
-  originating schema then validates each call before its decoder runs and
-  before planner code can observe it. Only schema rejections and typed
-  tool-input validation errors can carry final usage into bounded replacement
-  planning without executing the rejected call. Ordinary decoder failures and
-  incomplete or inconsistent streams remain terminal. The activity validates
-  the selected planner request again before scheduling effects.
-- **Planner-transparent provenance**: Each model call produces an isolated
-  canonical response and ordered live output before planner code observes
-  completion. One opaque validated-stream value owns validated chunks, the
-  validated response, and event scoping. It is
-  bound to the immutable output-validation contract copied when validation
-  begins and cannot be reused under different model identity, structured
-  output, tool, or generated-validator checks. Message and sampling changes do
-  not alter that contract. One receive operation includes provider access,
-  validation, and every observer callback; close waits for that complete
-  sequence and returns one stable result to every caller. Observer callbacks
-  may inspect the current response but must not call receive or close on the
-  same stream. The validated stream never exposes the provider stream. Each framework-owned
-  message carries a private
-  in-memory origin copied with it, so two messages with identical content remain
-  distinct without comparing visible text or metadata. The runtime identifies
-  tool turns from unchanged model-facing calls and terminal turns from the
-  canonical provider message returned by its response helpers. Only the
-  designated planner client publishes live text and, when the selected profile
-  permits it, thinking. Tool-argument deltas remain internal, while usage accounts for every invocation, including valid numeric
-  counts from a rejected usage chunk. It commits the complete selected response
-  once after atomic admission and before effects. Planners never manage
-  transcript handles or provider replay metadata, and uncertain ownership fails
-  instead of selecting by call order or visible text.
-- **History compression**: Agent designs may declare compression defaults with
-  `CompressAtTurns`, `CompressAtMaxInputTokens`, `KeepMaxTurns`, and
-  `KeepMaxInputTokens`. The shared history grouping keeps a complete contiguous
-  assistant response with its tool results and reminders, including results
-  accompanied by text. Later completed exchanges after one user kickoff remain
-  separate turns; individual reasoning or parallel-call messages do not.
-  `KeepRecentTurns` uses the same grouping. No messages, parts, order, signatures,
-  or validation rules are changed. See [complete history turns](docs/runtime.md#complete-history-turns).
-  Each planner activity loads saved `Messages` through its committed history
-  position. The runtime applies history
-  policy only when a runtime model client receives an actual `Complete` or
-  `Stream` request, after cache defaults and original request validation and
-  before final validation and observers. Inspecting messages, choosing a
-  code-owned action, or retrieving a model client performs no counting or
-  summarization. Custom planners replace the removed `PrepareMessages`
-  callback with `Messages`; those messages and stored transcripts stay
-  unchanged. Planner activity inputs and outputs carry a bounded, separately
-  verified summary for reuse within one workflow. Source-content and
-  source-position checks preserve exact evidence and numbered references;
-  only the accepted or recoverable model invocation can advance it. Each
-  actual request is still counted independently. Suspension checkpoints do
-  not carry this optimization. See [the preparation contract](docs/runtime.md#preparing-conversation-messages)
-  and [summary reuse](docs/runtime.md#reusing-a-summary-within-one-workflow).
-  The runtime supplies the selected older history as
-  complete quoted semantic parts, preserving tool values, correlation IDs, and
-  errors. Historical System messages are quoted context for relevance decisions,
-  while original instructions stay exact in the destination. The existing policy
-  fingerprint binds their contents and positions through the last source
-  conversational message; later reminders do not invalidate reuse. Native media
-  keeps its original user-message groups and source
-  positions; historical tools are not advertised for execution. Cited summary
-  sentences retain their supplied attribution as quoted text. Provider replay
-  metadata and reasoning stay in exact history rather than entering a new
-  summary call. The shared summary instruction asks for verbatim identifiers and
-  their meaning when needed for unfinished work or retained findings, without
-  merging separate selections or treating past resolution as current validity.
-  The model may omit completed or irrelevant identifiers. This changes semantic
-  guidance, not retention budgets or a guarantee of lossless prose; the existing
-  policy fingerprint prevents reuse under different instructions.
-  This improves evidence delivery, not guaranteed model relevance
-  or provider admission; [the runtime contract](docs/runtime.md#history-policies)
-  defines custom prompts, citation coordinates, and explicit failure behavior.
-  With a positive total ceiling, one summary receives every turn older than
-  newest before optional exact turns can be removed. The runtime counts the
-  actual summary and eligible exact suffixes, longest first, and returns the
-  first fitting combination. It never splits newest, guesses additive counts,
-  or generates another summary. Some older turns may appear both in summary
-  prose and exact history; this is not a guarantee of correct interpretation.
-  With no total ceiling, the existing disjoint prefix and suffix are preserved.
-  The runtime evaluates token budgets with the destination model client's
-  `model.TokenCounter`, not the separate summary model. Runtime response
-  recording and tracing preserve that counter, including when request
-  preparation is added. Explicit `CountTokens` calls validate the supplied
-  request without running inference preparation or observers; unsupported
-  providers and counting failures retain their original errors.
-  A history policy receives
-  the actual request and its destination counter. Every candidate replaces only
-  `Messages`; the selected model, tools, thinking, cache, output settings, and
-  other request fields remain unchanged. Counts must be exact by default.
-  `HistoryCompressionConfig.AllowEstimatedTokens` explicitly permits estimates
-  declared by that counter; counter errors remain errors, never fallback
-  triggers. Estimated budgets do not prove provider context-window fit or
-  billing usage. Original messages and the exact-count requirement for the
-  preflight adaptive rate limiters remain unchanged. The usage-reconciled
-  limiter admits a request using the destination provider's declared estimate
-  plus its maximum output budget. It then replaces that provisional charge
-  with the provider's final token total, or with reported partial usage when a
-  stream ends early. If the provider reports no usage, the charge remains a
-  provisional estimate; it is never labeled as measured usage. The token
-  balance is local to each process while adaptive capacity is shared across
-  processes. Construction subscribes before initializing shared capacity and
-  waits for local replication under the caller context. It releases the subscription on
-  initialization failure or context cancellation. Construction fails if the
-  shared capacity cannot be initialized; it does not silently switch to local
-  capacity. A gateway
-  preserves exact counting only when its transport supplies the separate
-  count operation through `NewCountingRemoteClient`; otherwise counting
-  returns `model.ErrTokenCountingUnsupported`.
-  The Bedrock Converse adapter routes models supported by Runtime
-  `CountTokens` there. For Claude Opus 4.7, Opus 4.8, Opus 5, Sonnet 5, and
-  Mythos 5, it delegates the resolved Bedrock-effective request to an optional
-  Mantle counter. Without that configured counter it returns
-  `model.ErrTokenCountingUnsupported`. Mantle cannot represent Bedrock
-  structured output. Claude 4.6 instead uses the same strict private tool for
-  Runtime counting and Converse.
-  The Claude-on-Bedrock Messages adapter requires an exact Anthropic counter.
-  It passes supported native structured output to the counter after replacing
-  a cross-region inference-profile model ID with its foundation model ID.
-  Unsupported model and transport combinations fail before inference or
-  counting, so the adapter never counts a weaker representation.
-  When encoded tools carry authored `input_examples`, completion, streaming,
-  and counting all attach the same Anthropic tool-examples beta header.
-  Exact retention always keeps whole recent turns; it never truncates
-  tool_use/tool_result pairs to satisfy a token budget.
-- **Bookkeeping control plane**: `Bookkeeping()` calls and results remain in the
-  provider transcript so signed model-authored parts replay without modification.
-  They do not consume the tool-call budget. Successful bookkeeping results do
-  not reset recovery turns, are omitted only from compact `ToolOutputs`, and
-  do not force another planner turn. Every failed bookkeeping result enters
-  the recovery transition: `correct_call` and `replan` may repair through tools,
-  while `finish` enters finalization so the planner can synthesize the terminal
-  outcome or invoke a terminal bookkeeping action. A successful
-  bookkeeping-only turn must otherwise resolve in the same turn via a terminal
-  outcome or an external-input suspension.
-- **Forced finalization control plane**: when runtime caps or deadlines force
-  finalization, planners may return terminal bookkeeping tools instead of a
-  prose final answer. The runtime executes only `TerminalRun()` tools in that
-  path (`TerminalRun()` implies bookkeeping), keeps them inside the remaining
-  hard-deadline window, and closes the run only if every terminal side effect
-  succeeds. A rejected finalizer output or terminal-tool `correct_call` failure
-  consumes the existing recovery-turn budget while retaining the same
-  finalization reason and restricted tool catalog. Other terminal failures end
-  the run. Recovery call IDs extend the planner activity payload and select the
-  canonical failed outputs that shape both reminders and the advertised catalog.
-  Empty recovery IDs are omitted from ordinary activity payloads. Runtime
-  workers, generated packages, and callers use one generated contract and
-  deploy as one release unit. Mixed contracts are unsupported.
-  Current run policy still applies while the fixed terminal call is prepared.
-  For example, `WithRestrictToTool` can reject that call because the
-  restriction applies to every tool in the run.
-- **Run-scoped completion operations**: callers use
-  `WithRunCompletionTool(tool_name)` when one successful budgeted tool call is
-  the operation's complete outcome. The serialized run policy survives
-  suspension and continuation. The completion tool must belong to the executing
-  agent, be non-bookkeeping and non-terminal, and be allowed by the run's static
-  tool policy. A planner response containing that tool cannot contain another
-  call or an await request. The run cannot request post-tool synthesis because
-  its required next terminal answer cannot satisfy the completion policy. A
-  successful result closes the run without another planner turn; correctable
-  failures retain ordinary recovery and cap accounting. A planner terminal response,
-  forced-finalization request, exhausted cap, or deadline ends the run with an
-  error instead of fabricating success after the required side effect did not
-  occur. `CompletionTool` and `LimitTerminalPlans` are mutually exclusive
-  because they assign different outcomes to the same exhausted limits.
-  Completion-aware suspensions use `goa-ai.run-suspension.v14`. The saved policy
-  is required, and a checkpoint with another version fails at that typed
-  boundary.
-- **Provider reasoning stream contract**: when a caller enables thinking
-  for a Bedrock adaptive Claude model, the adapter asks the provider to return
-  summarized reasoning text for exact replay and trusted-host presentation. This includes Claude
-  Sonnet 5, whose always-on thinking otherwise returns only an opaque signature,
-  and later adaptive model revisions with the same omitted-display default.
-
-## MCP Server Definition
-
-Enable MCP protocol for a service with `MCP`:
-
-```go
-Service("calculator", func() {
-    MCP("calc", "1.0.0")
-    JSONRPC(func() {
-        POST("/mcp")
-    })
-    Method("add", func() {
-        Payload(func() { Attribute("a", Int); Attribute("b", Int) })
-        Result(func() { Attribute("sum", Int) })
-        Tool("add", "Add two numbers") // Context-aware in Method
-    })
-})
-```
-
-`DynamicTools()` inside `MCP` selects application-owned tool listing and
-invocation. The generator emits the ordinary MCP tool methods and types even
-when no static tool is declared. The application implements those methods on
-the generated service interface and can embed `MCPAdapter` for discovery and
-other declared capabilities. Resource authorization and both HTTP protocol
-revisions remain owned by the generated transport. The application owns runtime
-schemas, argument validation, pagination, and per-tool authorization. The legacy
-transport uniformly wraps present dynamic results and their output schemas in a
-`value` object, preserving schema reference identity. It does not reread the catalog
-during invocation or require the application to adapt results for each client.
-
-Static `Tool` and `ToolCatalog` cannot be combined with `DynamicTools` in one
-service: one implementation owns the complete catalog and dispatch. Existing
-static services and services without tools retain their generated contracts.
-See [runtime-defined tools](docs/dsl.md#runtime-defined-tools) for composition
-and older-client schema requirements.
-
-### Protocol and ownership
-
-MCP uses the framework-owned `2026-07-28` revision. Every request carries its
-version and truthful client capabilities; `server/discover` reports capabilities
-without creating session state. The shared HTTP transport validates mirrored
-headers and exact response IDs for generated and imported clients.
-
-Generated HTTP servers also accept basic `2025-11-25` clients at the same URL.
-An `initialize` request receives that implemented revision even when the client
-requests another older revision. Later calls name `2025-11-25` in the HTTP
-header. This wire adapter reuses the configured endpoints, argument codecs and
-response body types; it creates no protocol session or second application
-service. Object results retain their shape; scalar and array results use a
-required `value` field with a matching generated schema. See the
-[older HTTP client contract](docs/runtime.md#older-http-clients) for supported
-methods and limits.
-
-Generated adapters call explicitly declared MCP methods through generated
-argument and result codecs. Ordinary methods in the same service retain their
-declared transports and do not enter MCP catalogs, codecs, or executors. Tool schemas and agent specs use the same generation-time JSON contract,
-including exact JSON field names, local recursive definitions, and union branches.
-Tools accept object arguments. Their structured results may be any declared JSON
-root kind; text is not a fallback decoder. Adapters emit OpenTelemetry spans and
-use the optional `ErrorMapper` to control disclosed error messages. The original
-endpoint error determines whether the response is a domain tool failure or an
-internal protocol error. Goa server-fault flags and each method's declared fault
-errors remain internal after redaction. Classification follows one wrapped error
-to its first named owner; independent joined errors cannot borrow a child's name
-or flag. Invalid returned fields and undeclared result views are server faults,
-not arguments the model should correct. These failures do not authorize replay.
-
-The application composition root constructs HTTP dependencies and callers, then
-registers one generated MCP executor for each runtime binding. Agent registration
-owns agent definitions. It does not construct callers or register duplicate
-executables. The same binding can serve multiple agents and aliases.
-
-The result decoder selects `resultType` before validating branch fields. MCP
-permits extra result fields, so completed-content fields on an input request
-cannot become a final result, and continuation fields on a completed reply
-cannot reopen the invocation. Each selected branch retains its required fields
-and null checks. Independent HTTP peers from the official Go SDK test these
-contracts without adding an application dependency.
-
-Authored content and resource catalog extension metadata use the same private
-JSON codec plan as native service arguments and results. Known `_meta` fields
-remain typed Goa objects in service and view declarations; the adapter encodes
-only the extension object into MCP's open metadata field. Optional absent values
-stay absent. Externally defined metadata retains its raw JSON object boundary.
-`mcpcontract.WithoutField` preserves named declarations, locations, examples and
-required fields when excluding separately encoded fields from Goa transforms.
-Catalog projections use `MethodTypeLayout` for the selected result graph;
-content metadata uses the selected union's layout rather than unrelated result
-fields. There is no separate Apps resource converter or service serialization API.
-
-Skill discovery reuses the existing endpoint, result-view, codec and transform
-planning. `SkillCatalog` and `SkillLookup` select existing unary methods and
-require the existing resource reader. One private Goa expression defines the
-protocol entry for generation and consuming runtime codecs. Generated adapters
-validate the authored result, encode the complete entry with its native field
-layout, and use the runtime's shared cross-field verifier before publishing.
-`ResourceDirectory` selects another ordinary unary method for directory URI and
-cursor inputs. The shared discovery planner specializes each operation's inputs
-and preserves its resource metadata. A runtime validator checks direct-child
-membership without resolving URI authorities. Only declared directory methods
-advertise `directoryRead`; live pages never expand a held Skill manifest.
-Metadata callers distinguish pointer fields from standalone value references
-using Goa's retained layouts, including anonymous objects in catalogs, prompts
-and tool results. No discovery operation reads files or grants approval.
-`VerifySkillFile` consumes the complete retained entry and requested bytes through
-that same generated codec. It checks membership, size, digest and complete YAML
-before use. The reference host retains entries with ordinary model context and
-assigns server identity from application connections. It owns lazy reads, a
-private origin-and-digest cache and content-bound consent. Existing native tool
-confirmation suspends local execution until approval; neither discovery nor
-remote frontmatter supplies permissions. A changed manifest revokes consent.
-Restart-persistent context and approval remain application responsibilities.
-
-`ToolUI` associates a tool with an existing HTML resource, and `ToolVisibility`
-selects model callers, app callers, or both. Generation emits nested UI metadata
-and removes app-only tools from model toolsets. Generated model callers use
-their authored visibility; remote HTTP and stdio model callers share catalog,
-schema and visibility validation for the current credentials. The protocol
-client remains the app host's transport. The host must enforce app permissions.
-
-`ToolMetadata` selects a typed completed-result object for host-only result
-metadata. `mcpcontract.StructuredResult` removes both content and host metadata
-from the same model contract. One private result converter handles ordinary
-results, selected views and completed Tasks; existing codecs validate and encode
-the selected object. The framework's server identity is added at the protocol
-boundary without decoding or rewriting authored JSON numbers. Generation uses
-the shared JSON-name resolver to reject fields that would replace that identity.
-The maintained browser host in `integration_tests/apps` composes the official
-client and Apps SDK with generated endpoints. Its client is pinned to this
-protocol; its bridge uses checked handlers rather than automatic forwarding.
-One bound connection owns every resource read and app tool call. The current
-catalog controls app visibility, and the host controls credentials and browser
-permissions. A separate-origin proxy and opaque inner frame isolate the view;
-HTTP headers deny undeclared network and frame access. An origin-restricted
-transport prevents a navigated frame from receiving private results. Teardown
-aborts view requests, closes SDK listeners and removes the frame while the host
-retains its server connection. Chromium verifies the full path and the generated
-Goa method's cancellation. This introduces no framework browser API or second
-MCP serialization path.
-
-`internal/mcpinput` reads inherited method contracts for early DSL validation.
-Goa validates every root before finalizing inherited fields, so this reader
-resolves a detached graph with Goa's `AttributeGraphCopier` and `Finalize`.
-It finalizes inherited sources before their consumers, including nested sources,
-and returns the original selected declarations to InputExchange and Task planners.
-Ordinary contracts retain their original attribute identity. Result validators,
-argument selection and native job roles use this shared reader; they do not
-implement their own field merges or change authored expressions before Goa's
-normal finalization phase.
-
-An authored `InputExchange` maps an optional native payload continuation and a
-required completed-or-input-required result union. Generation derives matching
-question identifiers, flat form schemas, native answer codecs and pending-result
-validation from the same Goa attributes. Tool arguments exclude continuation;
-tool results expose only completion. Resource and prompt methods use the same
-input filler and result planning. Exact empty state and empty request objects
-retain their protocol presence. The service owns state integrity and user
-binding; its configured endpoint runs authorization and middleware each round.
-Current request capabilities govern selected questions. The protocol's empty
-elicitation object means form-only support; malformed declarations fail before
-answer conversion. Shared runtime checks and generated answer decoders use exact
-JSON names, so extension fields cannot replace declared values. Native `BindTo`
-and registry providers reuse the same answer planning and conversion templates. Shared tool specs own native continuation and outcome
-functions; generated executors and providers call them. Host metadata stays
-outside tool arguments. Native method results select completion before ordinary
-result transforms, bounds and server-only data are applied. Registry output uses
-the authored tool result contract; HTTP view names do not change that contract.
-Local bound calls always use generated transforms instead of guessing Go type
-identity from equal DSL names. No separate input-result API or HTTP loop exists.
-
-MCP additional-input continuation retains presence independently of answer count.
-An explicit empty request object may require a later round without state or
-answers. Shared callers emit an empty `inputResponses` object for that round;
-generated payloads retain it and native input fillers construct the authored
-continuation object. An absent continuation remains an initial service call.
-
-Private JSON integer types accept exact whole-number decimal and exponent
-spellings before applying each native integer range. Named aliases, fields,
-collections and union branches share this decoding rule. Shape checks establish
-JSON number type; typed decoding owns integrality and range without floating-point
-rounding. Explicit custom Go types retain their own decoding contract.
-
-An unfinished remote call returns `input_required`. The runtime stores its
-original arguments and opaque state in a version-13 checkpoint, publishes typed
-host input requests, and validates the exact answers before the next activity.
-Server-assigned input keys are arbitrary strings, including an empty string;
-validation preserves their exact value and requires matching answer keys. Typed
-question names authored as Goa fields retain their separate design rules.
-Only a finished call enters completed tool history. MCP network rounds allow one
-activity attempt; an engine retry must not silently duplicate remote work.
-Inside that activity, explicit host trust and a per-round HTTP attempt allowance
-permit retrying a lost SSE response only for tools declared read-only or
-idempotent. Generated callers use precomputed design hints; imported callers
-read credential-scoped catalogs. A retry changes the network request ID and any requested progress token.
-The service owns preventing additional effects; missing hints, cancellation,
-malformed replies, and completed tool errors never authorize this retry path.
-
-Unary services report work through `mcp.ReportProgress` on the request context.
-The shared transport owns client tokens, strict per-request ordering, event
-framing and terminal response delivery. HTTP and stdio callers receive typed
-updates through a context-bound handler. Callbacks run in the operation's
-goroutine; stdio applies bounded per-call backpressure and releases blocked
-reads when that call ends. A callback or write failure is terminal, not a retry
-trigger. Generated decoders receive their original request ID only after the
-transport verifies a successful retry against its actual network ID.
-
-The activity owns host correlation and forwards progress through the existing
-session stream profile. These updates are not persisted results or model input.
-The final result and continuation paths retain completion ownership. See
-[the progress contract](docs/runtime.md#request-scoped-mcp-progress).
-
-An accepted text-only run also restricts each MCP operation's host input.
-Generated executors derive a one-way context restriction; shared callers omit
-form and URL capabilities, reject continuation data before dispatch, and reject
-unfinished results including state-only replies. Runtime activity, workflow and
-checkpoint boundaries reject custom executor input before host suspension.
-Ordinary operations retain their support; no caller-wide setting changes.
-
-HTTP and stdio callers can open a distinct `subscriptions/listen` request.
-The transport checks acknowledgment order, the accepted subset of the requested
-filter, and each message's exact originating request ID. Callbacks run in the
-owning operation; cancellation releases bounded stdio delivery. A graceful reply
-closes the listener, while connection loss returns an interruption without an
-implicit reconnect. The host chooses a new listen request. This consumer does
-not make fixed catalogs dynamic or turn private session streams into public
-change sources. `SubscriptionSource()` binds one authored Goa stream to generated HTTP catalog, resource and Task updates. Dynamic resource and template catalogs bind authenticated native page methods; their source shares resource-list notifications.
-The shared HTTP producer keeps source authorization and change selection in the
-configured handler, while its transport owns acknowledgment order, exact request
-IDs, serialized writes and graceful completion. Producer and receiver use one
-private filter-state implementation. Source errors before acknowledgment retain
-their original protocol response; delivery failures stop the request. This
-transport neither advertises nor authorizes a source. The binding generates a
-distinct `subscriptions/listen` endpoint. Resource selection advertises
-`resources.subscribe`; a job-only source does not. The original Goa stream receives
-requested URIs and creator-named native job arrays through a generated constructor,
-then sends a typed acknowledgment/update union. Its configured endpoint owns
-authentication, scopes, interceptors and middleware; its generated result codec
-validates every event before transmission. The source owns accepted selections,
-related sub-resources and change detection. Each changed job is read through its
-configured observation endpoint and encoded as a full Task snapshot. Multiple MCP
-names for one creator share a native selection, while each accepted MCP handle
-receives its own snapshot. An empty accepted subset may complete successfully.
-Ordinary method return closes the response; HTTP cancellation reaches the original
-service context. Fixed catalogs gain no list-change flags. No private session
-stream, adapter job store or global notification registry is involved.
-See [the subscription contract](docs/runtime.md#mcp-change-subscriptions).
-
-Generated servers advertise only their implemented tools, native Task bindings,
-fixed and parameterized resource reads, static or method-backed prompts, and
-prompt/resource argument suggestion methods, plus resource subscriptions when an
-authored resource source is bound.
-Resource representations are selected
-at generation time: byte results become base64 blobs, text results with a text MIME type remain
-text, and JSON results use the generated codec. Empty content preserves its field.
-Generated clients share one `ContentItem` type for tool and prompt replies. They
-preserve text, images, audio, resource links, embedded resources, annotations,
-icons and extension metadata. The generated decoder checks each selected kind's
-required fields, base64 data and embedded resource representation. Empty content
-remains present. MCP puts variant fields beside its discriminator; Goa's ordinary
-unions put the selected value in a separate field, so the MCP generator supplies
-these cross-field checks alongside Goa's existing field validators. Runtime
-callers apply the same content requirements and retain icons in tool errors.
-
-Method-backed prompts use ordinary string-valued Goa payloads and typed message
-results. The generator constructs and validates payloads without a JSON round
-trip, validates service results, and converts declared content unions to MCP's
-flat content objects. Binary content stays bytes until the protocol conversion.
-Goa owns aliases, field names and located declarations; the generator retains
-those layouts and specializes each declared branch. Null or non-string prompt
-arguments fail at the raw protocol boundary before Go map decoding.
-
-Parameterized resource discovery uses RFC 6570 declarations. One typed service
-method owns all non-fixed URI interpretation and returns ordered text/blob
-contents. The generator preserves the exact URI instead of guessing variables
-from lossy expansions or selecting the first overlapping template. The parser
-runs only during design evaluation to validate syntax and derive completion
-names. Prompt and resource suggestions share one generated constructor and typed
-result conversion path. Fixed-resource dispatch remains exact.
-
-Tools select one typed attachment array with `ToolContent(field)`. Each item
-contains one required `content` OneOf, using the same content conversion as
-prompts. The marked field is absent from the structured result contract,
-including result examples and every selected Goa view. The configured original
-endpoint still returns its full typed result; generated code validates that
-result and converts content separately. A fixed result containing only the
-marked field returns content without structured JSON. Service-selected views
-retain their declared name and exclude content when that view omits the field.
-Tasks use `TaskExchange` to bind existing application-owned job methods. `ToolCatalog` and `PromptCatalog` bind typed pages of declared names. `ResourceCatalog` and `ResourceTemplateCatalog` return typed runtime descriptors through the same catalog endpoint planner. `ResourceReader` owns URI reads independently of catalog declarations.
-Server-produced additional input now has its authored `InputExchange` binding;
-resource subscriptions use their existing typed stream binding.
-See [the MCP runtime contract](docs/runtime.md#mcp-callers) and
-[the completed upgrade inventory](docs/mcp_protocol_upgrade_plan.md#current-completion-gates)
-for verification scope and explicit conformance limitations.
-
-## Agent run lifecycle streaming contract
-
-The runtime emits one terminal lifecycle event per workflow: `RunCompleted` for
-success, failure, or cancellation, and `RunSuspended` when external input is
-required. The stream subscriber translates both into a private `workflow`
-event (`stream.WorkflowPayload`) followed by `run_stream_end`, so the trusted
-host knows exactly when to stop reading. The host selects safe fields and emits
-its own public completion event for an end-user interface.
-
-- **Terminal status**
-  - `status="success"` → `phase="completed"`
-  - `status="failed"` → `phase="failed"`
-  - `status="canceled"` → `phase="canceled"`
-  - `status="suspended"` → `phase="suspended"`
-
-- **Cancellation is not an error**
-  - For `status="canceled"`, the stream payload **must not** include a user-facing `error`.
-  - Consumers should treat cancellation as a terminal, non-error end state.
-  - Cancellation from a service activity, inline tool, or agent child cancels
-    the owning run and does not synthesize a failed `ToolResult`.
-    Results received before cancellation retain their saved scheduling and result
-    records; unfinished calls are closed by the run's terminal event. A prior
-    execution error or a cleanup failure remains a failure even when cancellation
-    also occurs.
-  - Engine adapters normalize backend cancellation to `context.Canceled` while
-    runtime hooks are recorded, then restore the backend's cancellation type at
-    the workflow boundary. Temporal therefore records the execution as canceled
-    rather than failed.
-
-- **Failures are structured**
-  - For `status="failed"`, the stream payload includes:
-    - `error_kind`: stable classifier for UX/decisioning (provider kinds like `rate_limited`, `unavailable`, or runtime kinds like `timeout`/`internal`)
-    - `retryable`: whether retrying may succeed without changing input
-    - `error`: **user-safe** message suitable for direct display
-    - `debug_error`: diagnostic error text; the application decides who may see it
-  - Tool-execution events carry a `ToolFailure` with an independent failure kind
-    and recovery action. `correct_call` keeps the failed tool available and
-    supplies structured correction evidence without requiring a retry,
-    `replan` removes the failed tool from the next turn's caller-allowed
-    catalog, and `finish` is terminal for tool execution. A same-tool
-    `correct_call` keeps that tool available alongside a parallel `replan`.
-  - Planner activities preserve `ProviderError.Retryable()` in Temporal
-    application errors. This metadata does not override the runtime's
-    single-attempt planner policy: an activity may already have published model
-    output. A separate retry owner must establish that replay is safe.
-
-- **Terminal identity**
-  - `RunCompletedEvent.Labels` carries the run-scoped labels provided at run
-    start (`RunInput.Labels`, nil when the run had none) so completion
-    subscribers can attribute that outcome without tracking run identity out
-    of band. Suspended runs and polling readers obtain the same labels from the
-    durable `RunStarted` record through `run.Snapshot.Labels`.
-
-This keeps consumers simple: render `error`, gate “Retry” on `retryable`, and treat `canceled` as non-error.
-
-## Provider Stream Integrity Contract
-
-The OpenAI Responses adapter decodes nested SDK stream errors using the official
-error fields. The exact `server_error` type with `internal_server_error` code
-becomes an `unavailable`, retryable `ProviderError`, retaining the provider's code,
-message, and original Go error cause. It does not infer an HTTP status or request
-ID from a stream event. Unknown, malformed, and conflicting-type events do not
-gain retryability from this rule; existing HTTP and flat-event rules still apply.
-Temporal serialization preserves the existing provider error fields, not the
-native SDK error object.
-
-The adapter checks the raw JSON types of `type`, `code`, `message`, and `param`
-because the official SDK's response decoder can stringify non-string values.
-A present, non-null known field must be a JSON string; otherwise the whole
-structured classification is discarded and the original diagnostic remains
-unknown and nonretryable. Missing and null fields remain absent, and unknown
-extra fields are ignored. Missing, null, or empty messages use the original
-error diagnostic, not a provider-supplied message; an otherwise valid exact
-type/code pair still qualifies. Missing, null, or empty type/code values cannot
-match the new pair rule. An absent or null `param` is allowed.
-
-Retryability means another attempt may succeed; it does not authorize replay of
-an operation that already published text or tool effects. The adapter does not
-retry a failed stream. Consumers that implement retries must independently enforce
-their output-safety and attempt limits. Corrected metadata can affect those
-consumers' retry decisions without changing an error schema or stored history.
-
-Provider adapters (Bedrock, Anthropic) validate the streaming event protocol
-with a strict state machine: a message must start before content blocks flow
-and must stop exactly once before metadata. A provider terminal event that
-violates this order is rejected as `OutputValidationStreamProtocol`. Transport
-failures and caller cancellation remain outside `OutputValidationError`.
-Two event-source termination shapes retain provider-failure classifications:
-
-- **Empty event source** — the event source closes before any message starts.
-  Adapters build the error with `model.NewEmptyStreamError`, which carries the
-  `model.ErrEmptyStream` sentinel plus a retryable `unavailable` ProviderError
-  (code `empty_stream`). Callers detect it with
-  `errors.Is(err, model.ErrEmptyStream)` and may retry the request a bounded
-  number of times before surfacing the failure.
-- **Truncated stream** — the stream closes cleanly after a message started but
-  before `messageStop`. The classification is a retryable `unavailable`
-  ProviderError (code `truncated_stream`) without the empty-stream sentinel:
-  output was partially produced, so blind pre-output retry policies must not
-  match it.
-
-`model.NewStreamEndedEarlyError(provider, operation, started)` is the single
-classifier for streams that close before message stop; adapters pass whether a
-message had started and the model package owns which of the two shapes
-applies.
-
-Adapters never retry internally; retry policy belongs to the integrating
-application (for example, a guard that retries only before the first visible
-output chunk).
-
-## Runtime Tracing Error Contract
-
-The runtime uses one generic rule for span failures across model clients and
-Temporal activities:
-
-- Non-nil errors mark spans failed by default.
-- They do not mark spans failed when the active context is already done and the
-  returned error is a structured context-termination shape.
-- Supported termination shapes are `context.Canceled`,
-  `context.DeadlineExceeded`, and gRPC `Canceled` / `DeadlineExceeded`
-  statuses.
-
-This tracing rule is intentionally generic. Application-specific error
-taxonomies, dashboard semantics, and product observability attributes belong in
-the integrating application rather than in the runtime.
-
-## GenAI Observability Contract
-
-The Clue tracer converts span-event values with OpenTelemetry's native
-constructors for `string`, `bool`, `int`, `int64`, `float64`, and slices of those
-types. Lists retain order, duplicate entries, and empty values. This conversion
-does not enable capture or change application sampling and exporter settings.
-
-The runtime emits OpenTelemetry GenAI semantic-convention spans for agent
-operations:
-
-- Planner-scoped model calls use `gen_ai.operation.name="chat"` and span names
-  of the form `chat {model}`. Model requests must carry a model name or model
-  class, and the runtime attaches conversation, agent, request model, max token,
-  response model, finish reason, token usage, and streaming
-  time-to-first-chunk attributes.
-- Tool executions use `gen_ai.operation.name="execute_tool"` and span names of
-  the form `execute_tool {tool_name}`. The runlog hook subscriber owns these
-  spans so inline, activity, and registry-backed tools produce exactly one
-  GenAI tool operation. Tool arguments and results are not recorded as span
-  attributes because they may contain user data.
-- Agent-as-tool links emit caller-side `invoke_agent {agent_name}` spans. The
-  child agent emits its own model and tool spans under its own agent identity.
-
-Prompt content, chat history, tool arguments, and tool results remain opt-in
-application policy. The runtime records identifiers, names, counts, timings,
-errors, and token usage by default.
-
-For an exact `model.OutputValidationError`, model-call tracing retains the
-original error and adds its full underlying cause as
-`gen_ai.response.validation.cause` on that same error event. This is independent
-of message capture: error values are not filtered. The span also records the
-closed `gen_ai.response.validation.kind` category. Unrelated errors joined with
-a validation error remain ordinary complete errors; they are not reclassified
-as a pure validation rejection.
-
-`CaptureGenAIMessages` additionally records these attributes on the rejection's
-existing error event:
-
-- `gen_ai.response.rejected.response_retained` distinguishes unavailable
-  response evidence (`false`) from an owned rejected response (`true`).
-- `gen_ai.response.rejected.tool_calls` is a JSON array in retained response
-  order. Each object contains `id`, `name`, and `arguments_json`. The arguments
-  are JSON **strings**, not parsed values: decoding restores the exact retained
-  `ToolCall.Payload` bytes, including whitespace, numeric spelling, malformed
-  JSON, explicit null, and empty arrays. This is the provider-neutral retained
-  representation, not a claim to capture the original provider wire bytes.
-
-No tool-call attribute is emitted when the response is unavailable. A retained
-response with no calls emits `[]`. All retained calls are included, without
-guessing which call failed or implying every sibling call is invalid. The new
-projection includes no reasoning, signatures, or unrelated response content;
-full error values are still recorded without inspecting or filtering them.
-Rejected calls never enter `gen_ai.output.messages`, conversation history, or
-tool execution. Unary rejection, stream setup failure, and the first terminal
-stream rejection are recorded on their own call's span. Repeated receives and
-cleanup do not repeat retained argument capture; cleanup errors remain separate
-errors. Failure to copy or serialize evidence emits
-`gen_ai.messages_serialize_failed` with direction `rejected` and the complete
-capture error, without replacing the original validation error.
-
-Capture remains disabled by default and uses the existing response-retention
-bounds; it does not reconstruct missing output or truncate argument text.
-Applications own capture activation, sampling, exporter limits, and retention.
-JSON string escaping can expand the exported value beyond the retained argument
-size. The framework guarantees emission to the configured tracer, not retention
-by a particular exporter or backend. Disabling capture stops future body
-recording; it does not erase previously exported telemetry.
-
-Planner model-call spans also record `goa_ai.request.tool_count` and
-`goa_ai.request.tool_names`, which expose the exact names advertised to that
-request without recording arguments or labels. Every registry replica emits a
-`toolregistry.catalog.entry` span for each active toolset returned by the
-shared catalog; retired records are not reported. The replicas then compete to
-send the provider ping, and the winner emits one `toolregistry.health` sample
-for that toolset and interval. Each replica also emits a
-`toolregistry.health.sweep` span for every scheduler attempt. An application
-may configure `Registry.Config.ExpectedToolsets`; after a successful catalog
-read, every replica emits `toolregistry.catalog.expectation` with an exact
-present or absent result for each required name. Failed reads emit no presence
-result. Applications that alert on these spans must keep the scheduler root
-trace in their sampling policy. The full catalog, readiness, and error contract is
-documented in
-[Registry and model-request traces](docs/runtime.md#registry-and-model-request-traces).
-
-## Temporal Worker Activation Contract
-
-Temporal worker startup is a real runtime contract, not a background best-effort
-side effect:
-
-- Worker-capable engines stage workflow and activity registrations until
-  `runtime.Seal(ctx)` closes registration.
-- Runtime registration methods serialize validation, engine callbacks, and
-  metadata commit. Seal closes new admission immediately and waits for already
-  admitted registrations. Its context can end that wait or a wait behind another
-  Seal call without canceling the operation already running. Engine sealing stays
-  synchronous and serialized; errors permit another call, and success is cached.
-  See [registration and sealing](docs/runtime.md#registration-and-sealing).
-- The Temporal adapter accepts SDK workflow and activity handlers through
-  `RegisterNativeWorkflow` and `RegisterNativeActivity`, using SDK registration
-  options with an explicit name for one function. Activity struct groups are
-  rejected before creating workers or reserving names. These methods share the
-  same registration seal and
-  worker lifecycle without acquiring the agent input or start-recipe contract.
-  Native names may repeat across queues; typed agent names remain globally
-  unique and cannot collide with native names.
-- `RegisteredTaskQueues` derives a sorted queue inventory from successful
-  workflow and activity registrations, including activity-only queues. Reading
-  it before sealing requires no server connection or active poller.
-- The adapter's `CurrentWorkflowTarget` reads saved queue routing through its
-  existing SDK client and returns the same `engine.WorkerDeploymentVersion`
-  used by root starts. Nil means unversioned routing or no current version.
-  This read requires no active poller, reports owner failures, and never changes
-  a root target that a caller already accepted.
-- In the Temporal engine, sealing is the activation boundary. It starts every
-  registered worker with `worker.Start()`, retries startup failures until `ctx`
-  ends, and returns an error when activation fails. SDK `Start` accepts no context,
-  so an initiating call may remain inside startup beyond its context deadline.
-- Once sealing returns `nil`, the runtime may safely start serving traffic
-  because its workers are actively polling.
-- Temporal engines always construct their client from `ClientOptions` and
-  install the Goa-AI data converter. No supported constructor can bypass exact
-  number decoding, unknown-field rejection, unsafe-value checks, or the total
-  1 MiB limit for one workflow or activity call. Tool executors persist larger
-  domain results first and return their durable reference.
-- Post-start fatal worker failures surface through the configured
-  `worker.Options.OnFatalError` callback instead of being silently ignored.
-  Integrating services should treat that callback as process-fatal and exit.
-
-## Standalone Value Codecs
-
-The normal Goa-AI generation plugin adds strict JSON functions beside supported
-original named Goa types. Designs import only DSL packages. Goa's original-type
-catalog owns reachability, force metadata, package placement, and declarations;
-codec generation does not repeat that selection or create a synthetic service.
-`type:generate:force` retains its existing service scope for otherwise-unused
-types.
-
-Complete original layouts come from Goa's exact original/declaration query for
-the current generation. Every root uses the common registered pairs; a local
-copy remains separate from the same original emitted in another service. The
-codec neither selects a convenient root or method nor reconstructs ownership
-from expression metadata. MCP consumes the existing complete method layout,
-including the top-level declaration, before imports and names become final.
-Both consumers register complete imports through Goa's
-`GeneratedImportPlan.AddCompleteType`. Goa retains generated-package naming
-preferences and distinguishes generated declarations from custom Go requests;
-the codec does not repeat that classification or traversal. Final aliases still
-belong to each output package.
-
-Each original package receives public validation, encode/decode functions and
-private JSON helpers. `Validate<Type>Value` checks the original Go fields with
-the same generated text, cycle, and field checks used before encoding, then
-validates the private transport value without marshaling JSON. It does not
-promise that JSON encoding will succeed. Complete-original transport declarations,
-equivalent private checks, and conversions are shared within that package. Sharing retains the exact Goa
-declaration, authored definition, generated layout, and conversion rules; a
-matching type name or original alone is insufficient. Field-occurrence rules
-remain attached to their actual fields, and each public root keeps its own
-entry checks and error context. The existing original-codec constructor finishes
-package-wide conversion planning before Goa fixes generated names.
-No codec subdirectory or public transport representation is introduced. Types
-containing untyped `Any`, other custom Go representations, or non-string map keys have their
-complete codecs skipped; their original types remain valid and supported peers
-remain eligible. Runtime-owned builtin forms are excluded.
-
-An explicit `Any` or `Bytes` field represented as `json.RawMessage` retains its open
-external contract. Complete-value codecs check raw syntax, text and duplicate
-members before encoding or typed decoding; future members and exact numbers
-remain intact. Raw byte unions preserve selected JSON null and named branch
-identity; ordinary bytes retain base64 JSON encoding and protobuf remains bytes.
-Other custom Go representations remain unsupported.
-
-An object may preserve additional JSON members in one optional, unbounded
-String-key map tagged `json:",embed"`. Its known sibling fields must have explicit literal JSON names and use
-`case:strict`, for example `json:"message,case:strict"`: `MESSAGE` then remains
-an extra member instead of overwriting `message` in Go's compatibility decoder.
-Literal names may contain Unicode; empty names, quoted or escaped tag-name syntax,
-and `-` with options are rejected. Only the exact `json:"-"` tag hides a field.
-Generation rejects required or bounded embedded maps, multiple embedded maps,
-and known siblings without explicit names and exact-case matching, even if another field prevents
-standalone codec generation. A named tag such as `json:"extras,embed"` stays an
-ordinary named map. Strict encoding rejects extra members that collide with known
-fields or a containing flattened union's discriminator. Strict decoding rejects
-duplicate names and checks extra values against the map element's declared type.
-Generated MCP form and URL parameters supply these tags automatically and keep
-extra protocol members as raw JSON values. Closed objects remain closed.
-
-Encoding checks the original typed value before conversion, including required
-nil fields, invalid text, and cycles. Decoding checks raw JSON names, types,
-duplicates, and text before typed decoding can lose those distinctions.
-Generated validation and transforms reuse Goa's retained type layouts,
-declarations, and constraints. Named union receivers use the underlying
-declaration that owns their methods. The same planned parameter type supplies
-each validator's signature and checks.
-
-Union mapping is an evaluated Goa fact. Flat object unions retain their
-selected discriminator and object fields through private codec transports,
-strict raw checks, catalog schemas, field metadata and authored examples.
-Generation selects the mapping before rendering; generated code does not walk
-a schema or guess a branch from field presence. Ordinary tagged unions retain
-their nested value. Neither mapping changes protobuf's native oneof.
-
-Complete-original, tool and completion codecs consume Goa's evaluated untagged union mapping.
-The outer JSON kind selects a branch whose raw value is encoded directly;
-typed decoding and the existing generated validators check its contents.
-The shared JSON shape checks and schema builder use the same mapping. The
-generator retains the authored branch kinds and emits their typed decoding;
-runtime code does not infer the mapping from JSON Schema.
-
-Tool and completion sum types render through Goa's `service.UnionTypeSource`
-with final planned declaration names and branch references. There is no separate
-tagged-only serializer. Goa owns constructors, branch storage and JSON mapping;
-the shared generated tool codec owns strict raw input checks and structured field
-errors at exact JSON paths. Direct union validation returns native Goa errors.
-
-The original-value, tool, and completion codecs share JSON shape checks while
-retaining their different contracts. Complete-original functions do not change
-model-visible field selection, completion-owned result representations, or
-existing JSON methods. Application request budgets and stored-data conversion
-remain application-owned. See [Standalone JSON codecs](docs/json_codecs.md) for
-automatic coverage, supported values, errors, and adoption.
-
-Application-owned schema artifacts use `codegen/jsonschema.Build` with the
-evaluated original Goa type. MCP catalogs and agent specifications use that
-same builder; MCP forms use its separate restricted `BuildForm` contract.
-See [standalone schema generation](docs/json_codecs.md#generate-a-standalone-schema).
-
-## Tool Input Schema
-
-Every model-visible tool input is an object. Designs may use an inline object or
-an object-shaped user type; omitting `Args` on an
-unbound tool means `{}`, while omitting it on a tool with `BindTo` uses the
-bound method payload, which must follow the same object-shape rule. Primitive,
-array, map, and `OneOf` roots are rejected, while `Return` remains
-unrestricted. Generated tool codecs reject undeclared object and union properties, while maps
-accept dynamic keys, and the validated model client applies the advertised
-schema before any attached input decoder. Only schema rejections and typed
-tool-input validation errors qualify for limited-size correction guidance that
-omits rejected arguments. Code generation records field types through nested
-objects, collections, and union branches. Callers that build `ToolSpec` values
-directly may supply the same field metadata. The model client uses that metadata
-to explain independently identified required, type, enum, or array-length
-violations. Sound instructions survive unrelated ambiguous failures. For unions,
-only the branch selected by its authored mapping participates. Tagged and flat
-unions use a string discriminator; untagged unions use distinct JSON kinds. Their
-generated metadata also records the schema branch position, so the existing
-correction engine selects the corresponding structured validator diagnostic.
-The registry carries this same tagged-or-untagged requirement as a generated
-union rather than a record with optional selectors. Array indexes
-and map keys appear as `*`; distinct instructions for the same displayed path
-are omitted. With no sound field instruction, guidance remains generic.
-A request-owned copy of the validated input example
-can accompany that guidance, intact within the existing correction size limit.
-It illustrates argument structure without choosing the request's values or
-restricting valid tool or union choices. One or many rejected calls use the same
-named sections and size checks. Each section identifies the request's input
-contract and the call's position in the response. Whole optional examples are
-omitted if necessary; if complete field blocks and headings still cannot fit,
-the rejection remains terminal. The complete contract lives in
-[Model-Visible Tool Arguments](docs/runtime.md#model-visible-tool-arguments).
-
-Fields marked with `Inject` are absent from the model-visible input and filled
-from call metadata or run labels before the tool executes. They must be Goa
-`String` fields or named Goa `String` types; custom Go field replacements are
-rejected. The generated injection function applies the field's Goa validation
-to either source before assigning the value. Generated injection uses shared
-`tools.ToolCallMeta`, without importing the agent engine or model adapters.
-`runtime.ToolCallMeta` remains an alias for existing executors. The complete
-contract lives in [Injected Fields](docs/runtime.md#injected-fields-inject).
+- `AfterSystem()` places a cache breakpoint immediately after the system prompt preamble.
+- `AfterTools()` places a cache breakpoint after the advertised tool catalog definitions (supported on Anthropic and AWS Bedrock Converse for Claude models).
 
 ### Pagination Ownership
 
-For a truncated result without a next-page cursor, the bounds reminder distinguishes
-disclosing an incomplete view from supporting claims about omitted items: a partial-answer
-disclaimer supplies no missing evidence. This guidance leaves the original
-result, counts, refinement hint, and the model's next-action choice unchanged.
+Tools that query bounded slices of large datasets declare cursor-based pagination in the DSL using `Paginated(cursorField, nextCursorField)` or `BoundedResult`:
 
-`ContinueWith` declares the first-query and next-page implementations of one
-public operation. The generator publishes only the first tool name. Its model
-schema accepts the initial semantic arguments; its execution schema accepts
-exactly one of two flat objects: the initial arguments without a cursor, or the
-page arguments with a required cursor. Each branch retains its own typed codec
-and original service method. Direct service and native Agent callers send either object under
-the same operation name. The page specification remains available to provider
-code, but its name is not registered or callable.
+- **Model-Facing vs. Runtime-Driven Continuation**: When a tool returns a non-empty `NextCursor` in its `BoundedResult`, the owning toolset or parent agent decides whether pagination is exposed to the model (by advertising `cursor` in the payload schema) or driven automatically by the runtime/finalizer.
+- **Guaranteed Termination**: Every paginated tool result must report truthful `Bounds` (`Returned`, `Total`, `Truncated`, `NextCursor`, `RefinementHint`). When a result is truncated and no further cursor is available (or the continuation budget is exhausted), `RefinementHint` tells the model how to narrow its query (for example, by shortening the date range or adding a category filter).
 
-Both declarations must agree on their public result and execution policies.
-Their planning tags remain separate for native planners; the generator does not
-combine permissions or broaden the result. Generated `ToolPaging` identifies
-the public operation itself as `ContinueTool`, with no `SourceTool`. Plain
-`Cursor` declarations retain their existing repeated-query behavior.
+### Standalone Value Codecs
 
-Parallel source invocations are valid. When a live page
-returns zero items and a next cursor, the runtime advances that chain before
-planning because no semantic evidence exists for the model to judge. Once a
-page returns items with a next cursor, the runtime derives one temporary
-no-argument action for that live source invocation. A truncated result without
-a cursor exposes its refinement hint instead. Each action has a stable
-model-facing name and describes the original model-visible query, while execution
-uses the public operation name. The bounded-result reminder names that same
-temporary action, so the prompt and advertised
-catalog cannot disagree. Selecting an action binds the exact source
-tool-call identity and cursor into the executable request. Successful
-continuation results carry that source identity through the durable tool-call
-record, so repeated equal queries, equal opaque cursors, sequential pages, and
-parallel batches remain independent. A continuation that returns its input
-cursor violates the paging contract and fails immediately. The model chooses
-which semantic query with returned evidence to continue but never reproduces a
-cursor or correlation identifier.
+When a service needs deterministic JSON serialization and Goa schema validation for domain types that are not directly bound to a tool payload or result (such as durable workflow state, object-store envelopes, or Redis cache records), authors declare `ValueCodec(name, Type)` in the DSL (`dsl/codec.go`). Codegen emits `gen/<svc>/codecs/<codec>/` containing a standalone `tools.JSONCodec[T]` with `ToJSON` and `FromJSON` functions that enforce all Goa design validations without requiring a tool wrapper.
 
-Each generated input schema has a matching generated codec. `Payload.Codec`
-accepts the initial model-authored arguments. Temporary continuation actions
-accept an empty object. `ExecutionPayloadCodec` accepts the restored execution payload
-and is used when running tools or restoring saved work. Standalone registered
-service and native Agent operations use this execution codec during submission, workflow
-restoration, and provider dispatch; direct callers supply the complete query
-and cursor, while provider-injected fields remain excluded. These codec functions
-are shared when both inputs have the same shape. The generator derives cursor
-presence and hidden fields before creating the schema and decoder, so adding
-an authored example cannot make a valid continuation fail registration.
-Paired payload declarations use distinct named Go types, even when both reuse
-the same authored argument type. Decoding preserves the accepted branch, and
-encoding selects its matching codec by that type. No new model-visible fields
-or persisted representations are added.
+---
 
-A new run reconstructs still-live continuation actions from structured
-transcript tool-call IDs and canonical scheduled/result events in the session
-run log. It never trusts a cursor copied through the transcript and never
-selects the latest result heuristically. Completed chains remain absent, while
-multiple unfinished chains retain distinct action names derived from their
-source call identities. The configured runtime store supplies this history
-through `ListSessionRunRecords`. Tool names matching `continue_`
-followed by exactly 24
-lowercase hexadecimal characters are reserved for runtime-generated
-continuation tools. Agent and toolset registration reject that exact format;
-similar names such as `continue_search` and qualified canonical tools such as
-`tools.continue_search` remain valid.
+## Agent Runtime, Operations, and Evaluations
 
-For each tool, the plugin derives JSON Schema from its effective Goa input
-using Goa's `openapi.Schema` type for complete JSON Schema draft 2020-12
-support. The generated tool spec is the canonical model-facing contract:
-it contains the annotated schema, a schema with the root `example` removed,
-the raw authored example JSON, and a parsed `ExampleInput` object when the
-payload has an authored top-level Goa `Example(...)`.
+### Direct Agent Operations
 
-Authored Goa `Example(...)` values are the only source for provider-facing tool
-examples. Codegen removes synthesized Goa examples throughout the JSON Schema
-graph, including fields and definitions, so generated placeholder data never
-becomes model guidance. Explicitly authored nested examples remain on their
-schema nodes. The annotated schema retains the authored root example; the plain
-schema omits that root for providers that carry it through a native
-tool-examples field.
+Not every AI interaction requires an open-ended multi-turn planner loop. For deterministic, single-purpose AI tasks with typed inputs and typed outputs (such as extracting structured metadata from a document, classifying a support ticket, or drafting a summary), Goa-AI provides the `Operation` DSL (`dsl/operation.go`):
 
-Provider adapters choose between the precomputed projections. Providers that
-consume JSON Schema annotations use the annotated schema. Anthropic Messages
-uses top-level `input_examples` with the schema that omits the root example for
-the direct Anthropic API. The adapter attaches the corresponding beta header
-(additively, preserving caller-configured betas) to completion, streaming, and
-token-count requests. The header is attached only when a tool carries authored
-examples because gateways may reject beta identifiers they do not recognize.
+```go
+Service("documents", func() {
+    Operation("extract_metadata", "Extract structured metadata from a document", func() {
+        Args(ExtractMetadataPayload)
+        Return(ExtractMetadataResult)
+        Use(DocumentTools)
+    })
+})
+```
 
-Amazon Bedrock's native Messages endpoint has a narrower tool object. Live
-Sonnet 5 and Opus 5 requests reject both `input_examples` and the `strict`
-property, including `strict:false`, but accept the authored root `example`
-inside `input_schema` for ordinary tools on fresh and resumed turns.
-`bedrock.NewAnthropic` therefore retains the annotated schema and omits
-`input_examples` for ordinary tools. This does not make those tools a valid
-replacement for `StructuredOutput`; such requests fail before inference.
+`codegen/agent` generates `gen/<svc>/operations/<op>/` with typed request/response wrappers and registers the operation on the runtime. Operations can be invoked via:
+- **`StartOperation` / `EnsureRunCompletion`**: Starts or awaits a durable, session-affiliated operation workflow.
+- **`StartOneShotOperation`**: Starts a stateless, sessionless operation workflow.
+- **`StartToolOperation` / `StartOneShotToolOperation` / `EnsureToolOperationCompletion` / `EnsureOneShotToolOperationCompletion`**: Executes a single registered tool directly through the runtime's durable workflow and activity machinery without invoking a planner model.
 
-The Converse adapter can carry the same examples through Anthropic's
-provider-native request fields in `additionalModelRequestFields` only on turns
-where Bedrock does not require a competing `ToolConfig` declaration. Applications
-that require examples and tools to remain identical across Claude turns use the
-Messages transport instead of relying on that split representation.
-Claude-on-Vertex serves the same native contract: it delivers `input_examples`
-with no beta activation and ignores the header (live-verified via rawPredict
-`usage.input_tokens`). Runtime and product code do not inspect or rewrite
-schemas to infer provider-specific shapes.
+### Service-Owned Typed Completions
 
-Any proxy or product-owned model boundary that reconstructs goa-ai model tools
-must carry these projections as one provider-neutral `model.ToolInputContract`.
-The boundary should not import generator-only `tools.TypeSpec`, re-marshal
-decoded schemas back into generated bytes, or know which provider consumes which
-projection. Dropping the example fields before a provider adapter runs prevents
-direct Anthropic from sending `input_examples` and Bedrock Messages from
-retaining the schema `example`, even though the generated tool spec still
-contained the authored example.
+When a service needs a single, schema-constrained structured output from a model without any tool calls or workflow persistence (for example, generating a concise session title or parsing a natural-language filter into a struct), it declares a `Completion(name, description, func() { Return(ResultType) })` in the DSL (`dsl/completion.go`):
 
-## Tool Identification
+- `codegen/agent` emits `gen/<svc>/completions/` with a canonical JSON Schema and typed `JSONCodec` for `ResultType`.
+- At runtime, `CompleteStructured` / `StreamCompleteStructured` invokes the model with constrained decoding (`StructuredOutput` schema enforcement) and validates the response through the generated codec before returning the Go struct to the caller.
+- Completion names must be 1–64 ASCII characters matching `^[A-Za-z0-9_-]+$` so they satisfy every model provider's structured-output schema name rules.
 
-Tools are identified by canonical IDs in the format `<toolset>.<tool>` (dot-separated). The generated code produces typed constants (e.g., `MyTool tools.Ident`) matching this format.
+### Generated Evaluations
 
-## Agents Quickstart & Example Scaffold
+Goa-AI includes a first-class evaluation framework (`dsl/eval.go`, `codegen/eval`, `eval/`) so agent behavior and tool trajectories can be tested deterministically in CI alongside unit tests:
 
-A contextual quickstart file `AGENTS_QUICKSTART.md` is emitted at the module root on `goa gen`, summarizing what was generated and how to wire it. To opt out, invoke `DisableAgentDocs()` inside your API DSL.
+```go
+EvalSuite("assistant_evals", func() {
+    TargetAgent("assistant", "helper")
+    Scenario("weather_forecast_lookup", func() {
+        Prompt("What is the current forecast for San Francisco?")
+        // Deterministic evidence assertions or LLM-as-a-judge rubrics
+    })
+})
+```
 
-The `goa example` phase generates application-owned scaffold under `internal/agents/`:
+- **Generated Runners (`gen/evals/<suite>/`)**: `codegen/eval` emits typed scenario harnesses that wire the target agent, mock or live tool executors, and transcript collectors (`eval/runner`).
+- **Deterministic Evidence Assertions (`eval/evidence`)**: Tests assert exact trajectory invariants over the recorded run using `evidence.Expect`:
+  - `ExpectCall(toolIdent)`: Verifies that a specific tool was called and optionally inspects its decoded payload and result.
+  - `ExpectFailure(toolIdent, kind)`: Verifies that a tool call failed with the expected `planner.ToolFailure` classification.
+  - `ExpectConfirmation(toolIdent)`: Verifies that the run paused to request operator confirmation for the specified tool.
+  - `ForbidTools(toolIdents...)`: Verifies that none of the forbidden tools were invoked during the run.
+- **Rubric Judges (`eval/judge`)**: Combines deterministic trajectory checks with model-graded rubric evaluations for semantic quality, tone, and completeness.
 
-- `internal/agents/bootstrap/bootstrap.go`: constructs a minimal runtime and registers generated agents
-- `internal/agents/<agent>/planner/planner.go`: planner stub implementing `PlanStart`/`PlanResume`
-- `internal/agents/<agent>/toolsets/<toolset>/adapter.go`: stubs for mapping method-backed tools
+### Planner Step Contract
 
-## Security considerations
+Each turn of an agent workflow invokes the agent's `planner.Planner` implementation (`PlanStart` on the initial turn; `PlanResume` after tool execution or human input). The planner returns a `planner.PlanResult` subject to strict mutual-exclusion invariants enforced by the runtime:
 
-- Registry authentication: use Goa security schemes (`APIKeySecurity`, `OAuth2Security`, etc.)
-- Logging: avoid logging sensitive payloads and results in production
+1. **Mutually Exclusive Actions**: A `PlanResult` must contain either:
+   - Non-empty `ToolCalls` (requesting parallel or sequential execution of domain tools or nested agents), **or**
+   - An `Await` specification (`AwaitClarification`, `AwaitConfirmation`, or `AwaitExternalTools`), **or**
+   - A `FinalResponse` (or `FinalTool` result for structured agent outputs) that terminates the turn.
+   Returning both `ToolCalls` and `FinalResponse` (or `Await`) in the same step is a contract violation and fails the workflow immediately.
+2. **Structured Tool Failures and Recovery (`planner.ToolFailure`)**: When a tool call fails, the runtime classifies the error into `invalid_call`, `domain_rejection`, `unavailable`, `rate_limited`, `timeout`, or `malformed_result` and attaches a `Recovery` directive:
+   - `correct_call`: Keeps the failed tool in the advertised catalog and provides a `RetryHint` with field-level schema issues and `InputExample` so the model can fix its arguments on the next turn.
+   - `replan`: Removes the failed tool from the next turn's catalog so the model chooses an alternative tool.
+   - `finish`: Strips domain tools (preserving only active pagination continuations) and forces the planner to synthesize a final response from the evidence gathered so far.
 
-Generated MCP adapters invoke configured original Goa endpoints for every
-method-backed tool, resource, prompt and completion. They neither call the bare
-service nor build a second endpoint set. Goa owns declared authentication, method
-scopes, authenticated context, interceptors and endpoint middleware; the MCP
-adapter owns argument decoding and protocol results. A returned value outside an
-endpoint's declared Go type is an internal protocol error and bypasses application
-error mapping. Goa security annotations distinguish credentials from domain
-arguments during generation. Catalogs, examples, field metadata and exact argument
-codecs exclude those credentials; ordinary unannotated fields keep their meaning.
-Generated native HTTP bindings supply headers, query values and cookies outside
-JSON-RPC parameters. Private typed adapter code fills the original service payload
-and runs its complete generated validation before invoking the configured endpoint.
-Credential-only methods accept empty domain input, including fixed resources.
+### Run Timing and Workflow Continuations
 
-MCP route generation retains the original Goa mapped attributes and complete
-API and service paths. Private protocol fields carry raw URL values outside the
-JSON-RPC body. For each selected method, the generator plans the native HTTP
-wire attribute, parser and service-field conversion before names freeze, then
-renders from retained layouts. It fills the original payload field without
-replacing the decoded domain payload. Optional fields retain their native
-pointers, named values retain their types, and complete Goa validation runs
-before dispatch. Protocol signatures and selectors come from the same generated
-layouts as the native HTTP transport; no wildcard rewrite or runtime field map
-implements a second binding system.
+#### Bounded Turn and Workflow Budgets
 
-MCP Task clients use the same HTTP and stdio request machinery as tool calls.
-The shared Caller contract includes tool invocation and Task get, update and
-cancel operations. Generated execution can therefore use the original caller
-without an optional interface assertion or a second transport. Function-only
-CallerFunc is removed; custom callers implement all four methods. Task operations
-never request or emit progress; their work observations are Task state. Ordinary
-tool requests retain their request-scoped progress contract.
-A request advertises the Tasks extension only when its host declares support;
-only `tools/call` may return a Task creation handle. Get, update and cancel are
-separate operations on the exact server-owned ID. State decoding selects the
-released Task status before reading its associated input, result or JSON-RPC
-error. Completed tool errors remain completed results with `IsError` retained.
-These operations perform no automatic tool replay or polling. Task notifications
-reuse the existing subscription receiver and the same detailed-state decoder as
-queries. Requested task IDs are copied, acknowledgments can narrow that list, and
-notifications must name an accepted ID. The callback receives a typed observation;
-form and URL input still require the host capability advertised on that request.
+Agent runs separate **Workflow Engine timeouts** from **RunPolicy budgets** (`runtime/agent/policy`):
+- `MaxToolCalls`: Maximum total tool invocations permitted across the turn.
+- `MaxConsecutiveFailedToolCalls`: Maximum consecutive failed tool steps before the runtime halts tool execution and transitions to finalization.
+- `TimeBudget`: Wall-clock budget for active planner and tool execution within a single run segment.
 
-Task retention has a required nullable wire member. A generated native HTTP
-fixture proves that Goa's required scalar rejects null and its optional scalar
-collapses null and absence. The external Task decoder therefore checks member
-presence before converting a nullable duration; the application job API can use
-an optional native duration for unlimited retention. The shared `rawjson`
-integer decoder owns exact decimal/exponent handling and native Go range checks
-for both Task durations and generated private codecs. No second numeric parser,
-untyped domain duration, or framework retention policy is introduced. Task
-metadata applies to one observation; retention and polling guidance can change.
-Generated Task production and workflow-owned consumption are implemented.
-`TaskExchange` retains the creator and read endpoint's distinct native layouts,
-including full creation values and read-selected Goa views. One observation
-planner emits their validation and metadata conversion. Creation returns only a
-readable durable handle; the read endpoint owns complete typed output and content.
-The adapter derives opaque MCP IDs from tool and native job identities without
-storing jobs or original arguments. Later requests supply native credentials,
-mapped route values, saved IDs and typed answers, applying native defaults before
-full payload validation. Impossible required inputs fail generation.
+#### Zero-Wait Workflow Suspensions (`goa-ai.run-suspension.v14`)
 
-The same `SubscriptionSource` selects native resource URIs and creator-named job
-arrays. It authorizes and acknowledges a subset before reporting changed IDs.
-Generated code reuses each job's configured read endpoint, result views and
-protocol codec to send full snapshots. Accepted MCP aliases fan out from one
-native selection; that mapping lives only for the listen request. Source updates
-before acknowledgment or for unaccepted jobs fail before reading. No global
-broadcaster, shared job store or second snapshot schema owns this path.
+Goa-AI workflows **never** block inside a Temporal workflow awaiting human input (`await_clarification`, `await_confirmation`, or `await_external_tools`). Holding a workflow open across human think-time ties up worker deployment versions and complicates rollouts. Instead:
 
-The generated MCP server's `ServeHTTP` checks the HTTP protocol envelope
-before invoking its configured HTTP handler. Direct serving and `Mount` use this
-same entry point; rejected requests reach neither HTTP middleware nor endpoints.
-The constructor takes and copies the allowed browser origins, builds native Goa
-endpoint handlers from the saved transport plan, and installs one private guard.
-The inner HTTP handler is private; callers serve the checked server itself.
-`Server.Use` wraps the accepted-request handler, so middleware added after mounting
-still runs. Protocol request checks also own notification acceptance and response
-stream selection; the inner handler only decodes and dispatches a protocol method.
-There is no separate mount policy or a second direct-serving implementation.
-Required dependencies come from Goa's shared constructor plan. MCP's server
-sections consume its retained types, private names and ordering for fields and
-arguments before the final origin collection. Native imports, application
-factories and example startup use the same facts; MCP adds no construction path.
-With no declared dependency, the existing MCP constructor remains unchanged.
+1. **Suspend & Checkpoint**: When the planner (or confirmation gate) requests external input, the workflow invokes the `runtime.store` activity with the `Suspension` command, which writes an immutable **`goa-ai.run-suspension.v14`** checkpoint document to the session store (`session.Store`), emits the `await_*` stream event followed by `run_stream_end`, and returns from the Temporal workflow function (`COMPLETED` at the Temporal layer, `suspended` in `session.RunMeta`).
+2. **Prepare Continuation**: When the user or external caller supplies input via `ProvideClarification`, `ProvideConfirmation`, or `ProvideToolResults`, the service calls `PrepareContinuation` (`SeedBegin` -> `SeedAppend` -> `SeedPublish` / `PreparationBegin`), validating the supplied response ID and payload against the saved `goa-ai.run-suspension.v14` checkpoint.
+3. **Resume on Current Workers**: The runtime launches a fresh Temporal workflow execution for the continuation turn on the currently active `WorkerDeploymentVersion`. The new workflow loads the prior transcript and validated continuation seed from the session store and resumes at `PlanResume`.
 
-OAuth credentials require `Authorization: Bearer`. Basic and Bearer schemes can
-be alternatives when their inactive payload fields allow absence; they cannot be
-combined in one authorization requirement. Unsupported body bindings, conflicting
-field bindings and protocol-owned headers fail generation. This does not add a
-second method authentication callback. An explicit MCP `Security` block, or an
-inherited service/API bearer policy, requires a concrete `ResourceServer` through
-Goa's constructor plan. The generator computes scope alternatives and reuses
-native request decoders to select the actual operation before middleware. The
-guard owns signature, issuer, audience, validity times and HTTP challenges;
-original endpoints retain their native security callbacks and domain decisions.
-Catalog metadata contains basic-access scopes rather than every method's scopes.
+#### Cancellation, Relinquishment, and Task Consumer Pending Execution
 
-The signed-token profile uses the JWT library for cryptography and a private Goa
-claims decoder for exact names, required fields and fractional timestamps. Its
-SDK audience field represents the standard string-or-array wire value; this is
-an existing external-contract value shared by signed-token and introspection
-paths. Goa now supports the same untagged wire shape; retaining this SDK value
-avoids a second audience representation and normalization path.
-JOSE's private resource RSA verifier extension calls Go's cryptographic
-primitives with the standard PSS salt length. The SDK's default verifier accepts
-other salt lengths; resource construction also enforces the standard RSA key
-minimum for each key. These are algorithm constraints, not framework budgets.
-Successful HTTP requests carry verified issuer, subject and client identity.
-Native OAuth, JWT and Bearer callbacks reuse a grant only for the same verifier,
-exact token hash and still-valid interval, then run Goa's own scope validator.
-Post-dispatch domain failures never become resource challenges.
+- **`CancelRun`**: Cancels an active or suspended run. If the run is currently executing a Temporal workflow, the runtime signals cancellation and records `Cancellation` in the session store. If the run is suspended at a checkpoint, `CancelRun` transitions `RunMeta` to `canceled` and sets `RunMeta.SuspensionResolution` so late resume attempts are rejected deterministically.
+- **`RelinquishRunSuspension`**: Allows an owning orchestrator (such as a parent workflow coordinator) to release a suspended run without executing a resumption turn, recording the resolution reason in `RunMeta.SuspensionResolution`.
+- **Single-Flight Storage Activity (`runtime.store`)**: All session and transcript mutations inside a workflow pass through a single local/regular activity (`runtime.store`) multiplexed by `api.StorageActivityCommand`, which enforces exactly one of **14** mutually exclusive command variants per invocation:
+  - Run lifecycle starts: `RootStart`, `ChildStart`, `OneShotStart`, `OneShotChildStart`, `SynchronousStart`
+  - Continuation preparation & seeding: `PreparationBegin`, `SeedBegin`, `SeedAppend`, `SeedPublish`
+  - In-turn and terminal transitions: `Append`, `Cancellation`, `Suspension`, `Terminal`, `UnstartedTerminal`
 
-Opaque tokens use an explicitly configured HTTPS introspection endpoint and a
-separate resource-server client registration. Native Goa Basic authentication
-keeps the individually form-encoded credentials in the header; the generated
-form carries only the submitted token and access-token lookup hint. The same
-resource owner requires current activity and the exact audience, checks supplied
-issuer and whole-second validity limits, then applies the generated scopes.
-The hint does not prove token purpose: the trusted issuer must report active only
-for access tokens usable by this resource. Missing subject/client claims remain
-empty identity values. Every guard and native callback asks the issuer anew;
-there is no introspection cache or token-format fallback. Inactive tokens receive
-401; issuer transport, authentication or response-contract failures receive 503
-without an invalid-token challenge. Enterprise authorization and durable host
-credentials use the same private authorization store. Independent verification
-records its supported profiles and fixture limitations rather than claiming
-universal conformance; see [the verification report](integration_tests/conformance/README.md).
+---
 
-The shared MCP HTTP transport records whether any attempt reached its
-configured HTTP dependency. Preparation failures retain their local error;
-cancellation observed before delegation sends nothing. Once dispatch has occurred,
-later failures cannot erase the possibility of completed work. This evidence belongs
-to one complete invocation across its attempts, not just the final attempt.
-Generated and discovered clients use the same implementation and agent recovery.
+## Streaming, Model Gateways, Observability, and Engine Activation
 
-The shared MCP HTTP transport retains each failed attempt's response status
-and exact authorization challenge values in `HTTPResponseError`. The error wraps
-validated JSON-RPC errors so generated and imported clients can inspect both
-contracts. HTTP authorization rejections close their bodies without waiting for
-protocol messages. Explicit request rejections do not authorize interrupted-tool
-retries; the authorization client owns fresh credentials, challenge validation
-and consent. Challenge headers and HTTP bodies are excluded from error text.
-Complete OAuth clients and server resource authorization remain separate release
-gates. No HTTP authentication state enters workflow checkpoints or model inputs.
+### Agent run lifecycle streaming contract
 
-The built-in client-secret profile runs in the shared HTTP transport after local
-request preparation and before MCP dispatch. A grant is constructed for one
-exact HTTPS resource, issuer and registered client. It uses native Goa HTTP
-clients generated from `internal/mcpauth/design` for resource metadata, issuer
-metadata and token responses. `FormRequest()` and fixed grant defaults in that
-design generate the token form codecs; there are no runtime field encoders.
-Private response decoders use standard Go JSON v2 with exact
-names and non-null declared values while allowing unknown extensions. No second
-DTO or schema walker owns these contracts. Metadata is checked for each attempt;
-token reuse ends at that token's returned lifetime in seconds, measured from
-before exchange. Missing lifetime means no reuse, not an invented expiry.
-Cancellation uses the active request context, including while waiting for another
-exchange. Each grant owns its token and does not share credentials with another
-resource, issuer or client. Native caller wrapping retains that grant.
+Every event emitted during an agent turn flows through the in-process `hooks.Bus` and is projected by `stream.Subscriber` onto a session-owned Pulse stream (`session/<session_id>`):
 
-An immutable `ClientRegistration` chooses the exact issuer, client identity and
-public, Basic, POST-secret or signed authentication. It contains no user, scope
-or token. Native Goa expressions specialize each grant's required authentication
-fields; runtime selection follows the constructed registration. Machine grants
-require confidential authentication and explicit `client_credentials` support.
-The issuer must support the selected method. Native Goa metadata decoding applies
-RFC 8414’s Basic default only when the authentication-method list is omitted;
-explicit lists and null retain their separate meanings. No alternate method is
-tried. The independently scored Basic and signed machine fixtures pass with the
-HTTPS and issuer configuration described in the
-[conformance instructions](integration_tests/conformance/README.md). These selected
-passes do not prove complete extension conformance. No redirects,
-unchanged machine-credential retries or token-syntax guesses are made. Only HTTP
-404 advances well-known discovery; malformed documents and owner mismatches stop
-before dispatch. Validated metadata selects the exact token audience for grant forms and saved
-record identity. Endpoint metadata binds its configured request address; origin
-well-known metadata binds the exact origin. Advertised challenge metadata still
-binds the exact challenged request address. No prefix matching or sibling-endpoint
-permission follows from an origin audience. Each operation loads its audience's
-record into private operation state; concurrent operations cannot overwrite another
-audience's grant. A shared application registration does not merge user, issuer,
-audience or grant identities.
+- **Session-Scoped Stream Ownership**: Both root agent runs and nested agent-as-tool child runs publish to the same `session/<session_id>` stream. Events from nested child runs carry their own `RunID` and are linked to the parent tool call via a preceding `child_run_linked` event and `ToolResult.RunLink`.
+- **Explicit Per-Run Termination (`run_stream_end`)**: Every run execution segment (whether it ends in `completed`, `failed`, `canceled`, or pauses in `suspended`) emits a terminal `workflow` phase event followed by a `run_stream_end` marker for its `RunID`. SSE gateways and test runners watch for `run_stream_end` matching the root `RunID` to close the HTTP response stream deterministically without polling.
+- **Stream Visibility Profiles (`runtime/agent/stream`)**: Consumers select one of three preconfigured `StreamProfile` projections:
+  1. **`stream.RuntimeHostProfile()` (`"runtime-host"`)**: The default profile for product gateways and UI SSE bridges. Emits assistant deltas, thinking blocks, tool call start/update/result notifications, await prompts, workflow status transitions, `child_run_linked` links, and `run_stream_end` markers.
+  2. **`stream.AgentDebugProfile()` (`"agent-debug"`)**: Adds internal planner prompts, raw retry hints, and detailed child-run diagnostics for developer debugging tools.
+  3. **`stream.MetricsProfile()` (`"metrics"`)**: Emits only lightweight usage, token count, and timing telemetry events.
 
-Browser authorization uses the same private grant owner and native generated
-OAuth contracts. Registration constructors select preregistration or a client-hosted HTTPS
-metadata document; one browser grant composes all authentication methods. Client-metadata identity, redirect membership and the
-absence of shared-secret members are checked before consent. Native Goa query
-decoding uses `issuer:iss` mapping for callback transport names. The host owns
-browser interaction; state, PKCE verification, issuer binding and refresh-token
-rotation belong to the transport and never enter model or workflow input.
-Standard grant defaults are declared in the Goa design, rather than reconstructed
-by runtime code. The resource server owns scope hierarchies; clients record
-requested and returned scope tokens without interpreting those hierarchies.
+### Provider Stream Integrity Contract
 
-Before initial interactive authorization, the shared transport sends a credential-free
-`server/discover` request to obtain the resource's authorization challenge. It never
-executes a domain tool for this purpose. Challenge scopes take priority over basic
-resource metadata; absent both, the authorization request omits scope. A saved
-grant keeps its requested and granted permissions for reuse and refresh. Changes
-to advertised metadata do not start consent; an actual resource rejection owns
-later permission changes. Machine grants retain their explicitly configured policy.
+Streaming model adapters (`features/model/bedrock`, `anthropic`, `openai`, `gemini`, `ollama`) enforce a strict state-machine contract over provider token streams before emitting `model.Chunk` values to the planner (`planner.ConsumeStream` / `PlannerModelClient`):
 
-A browser operation may recover once from an explicit resource rejection after a
-successful fresh grant. An insufficient-scope challenge adds its scopes to prior
-requested and granted scopes before new consent. Challenge metadata is checked
-against the constructed resource and issuer; unrelated realms remain separate.
-The limit spans one HTTP request round, including stream retries. Concurrent
-rejections reuse a credential already changed by another call instead of rotating
-the same refresh token again. Definite authorization rejections remain distinct
-from lost tool results. A rejection after an earlier lost response retains the
-unknown outcome and the later HTTP status. Independent authorization checks
-and their fixture limitations are recorded in [the verification report](integration_tests/conformance/README.md).
-Applications still own their coordinated caller and storage cutover before deployment.
+1. **Complete Tool Call Assembly**: Provider adapters accumulate streamed JSON fragments for `ToolUse` blocks internally and emit a `ChunkTypeToolCall` only when the provider signals block completion and the JSON payload is syntactically complete. Truncated or malformed JSON tool deltas fail the stream immediately rather than reaching the tool decoder.
+2. **Cryptographic Thought Signatures**: When reasoning models (such as Claude 3.7+/4 with extended thinking or Gemini 2.5+ thinking) emit signed thinking blocks, the adapter preserves the exact `ThinkingPart.Signature` and `RedactedThinkingPart` byte payloads. `runtime/agent/transcript` replays these blocks unmodified in subsequent assistant turns so multi-turn tool loops never trigger provider signature-verification errors.
+3. **Explicit Stop Reason and Usage Accounting**: Every valid model stream must close with an explicit `ChunkTypeStop` carrying the canonical stop reason (`end_turn`, `tool_use`, `max_tokens`, `content_filtered`) and reconciled token `Usage` (input, output, cache read, and cache write tokens). Premature EOF without a stop chunk is classified as a transport error.
 
-Enterprise authorization adds a user identity owner above the existing resource
-grant owner. Application registration remains immutable and user-independent.
-The host supplies a validated ID token, SAML assertion or IdP refresh credential.
-Native Goa expressions specialize the identity token-exchange and final JWT-grant
-forms for each constructed authentication profile. Identity grants require their
-exact issued purpose and token_type=N_A; only resource redemption returns the
-existing bearer result. Separate IdP and resource clients retain separate trust.
-A user identity serializes SAML bootstrap and retains its IdP refresh credential
-across resources; resource access tokens remain isolated. Pending or expired
-bootstrap requests a fresh host assertion rather than resending a consumed one.
-Renewal requests a fresh IdP grant rather than substituting browser refresh.
-An IdP scope restriction remains effective when the resource response omits scope.
-Optional profile advertisements do not replace explicit configuration; positive
-advertisements must satisfy the protocol's required grant relationships.
-Intermediate grants and SSO credentials never enter MCP arguments or checkpoints.
+### Model Clients, Adaptive Rate Limiting, and Capability Gates
 
-Native query credentials remain distinct from OAuth resource identity. The
-MCP generator consumes the original evaluated Goa credential mappings and emits
-one private HTTP binding factory for both generated client constructors. Tool
-facts and protocol-method credential names enter the shared runtime through
-`HTTPBindings`, replacing the previous tools-only constructor argument. The
-transport copies those facts at construction. It excludes only the current
-method's declared credential query segments when comparing a request address;
-every other URL byte retains its configured meaning. The configured resource
-must contain no credential query name declared by any method, so an earlier
-catalog request cannot leak a domain key into discovery or a token grant.
-Unknown query names and malformed credential query values fail before network
-access. There is no model-controlled exception, URI normalization, schema walk,
-second credential owner or compatibility constructor.
+- **Adaptive Token-Bucket Rate Limiter (`features/model/middleware`)**: `AdaptiveRateLimiter` wraps any `model.Client` with cluster-coordinated (Pulse `rmap`) or process-local AIMD (Additive Increase / Multiplicative Decrease) token budgeting:
+  - Before invoking the model, `Reserve` estimates input token cost and acquires capacity from the shared token bucket.
+  - When the stream finishes, `Settle` reconciles actual provider-reported token usage against the reservation and adjusts the target TPM (tokens per minute) rate—increasing linearly on sustained throughput and backing off multiplicatively when a provider returns `429 TooManyRequests` / throttling exceptions.
+- **Claude Capability Gates (`features/model/internal/claudecaps`)**: Centralizes model-family capability detection across Anthropic and AWS Bedrock Converse (such as whether the target Claude model version supports interleaved thinking, adaptive thinking budgets, tool-result image blocks, or `AfterTools` prompt cache breakpoints) so adapters fail fast or specialize requests deterministically at construction time.
 
-Signed client authentication is independent of the grant. Machine and browser
-grants share one private signer and credential owner. The host supplies a constructed
-`jose.Signer` and explicit registered client, assertion issuer, audience and
-validity. Goa generates the `private_key_jwt` metadata field and token form,
-including fixed grant and assertion types; no handwritten form mapping or
-second token cache exists. A native DSL loop specializes public and signed
-code/refresh forms; each generated request has fixed authentication fields.
-Separate metadata operations require `none` or `private_key_jwt`, rather than
-choosing authentication from optional field presence. Signed metadata requires
-exactly one HTTPS public-key URL or an inline set containing only valid public
-keys. The authorization server resolves URLs and verifies the registered key;
-the client does not add a second key-discovery path. The go-jose library owns JWT claims encoding and
-signatures. Signing algorithms must be asymmetric and advertised by the issuer;
-unknown algorithms and signatures made with a shared secret stop before token exchange.
+### GenAI Observability Contract
 
-Each token acquisition creates fresh issued-at, expiration and random assertion
-identifier claims. The registered assertion lifetime uses positive whole seconds
-for one assertion, with exclusive expiration. It has no framework maximum and
-does not constrain the returned access token's independent lifetime. Cancellation
-and expiration during signing prevent exchange. Signer diagnostics and assertion
-bytes never enter errors or traces. A supplied signer owns its key-operation
-timeout; the transport checks request cancellation before and after signing.
-Machine grants do not request consent or repeat after resource rejection.
+`runtime/agent/telemetry` instruments every run, planner turn, model call, and tool execution following the OpenTelemetry Semantic Conventions for Generative AI (`gen_ai.*`):
+- **Span Hierarchy**: `gen_ai.agent.run` (root/child workflow) -> `gen_ai.planner.turn` -> `gen_ai.chat` (model invocation) and `gen_ai.execute_tool` (tool activity or child agent).
+- **Recorded Attributes**: `gen_ai.system`, `gen_ai.request.model`, `gen_ai.usage.input_tokens`, `gen_ai.usage.output_tokens`, `gen_ai.response.finish_reasons`, `gen_ai.tool.name`, `gen_ai.tool.call.id`, and `goa_ai.run_id` / `goa_ai.session_id`.
 
-Fixed MCP result views have one selected field contract shared by catalog
-schemas and agent specs. Server codecs consume the projected values already
-returned and validated by the original Goa endpoint. They do not convert a view
-back into a full authored result. Field selection retains Goa's declaration
-origins and actual pointer layouts. Different nested views receive separate
-private JSON types, even when they share one generated Goa view declaration;
-Goa's graph copier preserves those shapes and recursive references. Schema
-requirements apply per occurrence. A missing object result is rejected at the
-Goa endpoint before view conversion, while an empty collection remains valid.
-Execution-selected tool results and JSON resources use Goa's tagged OneOf
-contract: the endpoint's view name is the tag, and the selected fields are the
-value. Each branch owns its required-field checks. Agent decoders and stored
-results preserve the tag, including when two views have identical fields.
-Prompt, resource-template and completion conversions retain their flat protocol
-shape; generation checks the required operation fields in every selectable view.
-Private server codecs encode results; only consumer codecs decode results.
+### Runtime Tracing Error Contract
 
-`runtime/content` owns one closed, ordered value contract for text, images,
-audio, resource links and embedded resources. Its JSON codec validates every
-block at transport and saved-value boundaries, retaining annotations, icons and
-raw extension metadata. Copying retains nested values without opening resource
-addresses. The workflow codec admits this exact typed codec and still checks
-its complete payload byte budget; unrelated custom JSON encoders remain
-rejected. Model tool results expose that same value through `ToolResultPart.Blocks`;
-JSON replay, copying, character estimates and complete-request preflight include
-it. Provider translation honors the assistant audience and keeps extension
-metadata and display icons private. It returns explicit unsupported-media
-errors instead of changing media into text. Resource references never authorize
-a fetch. Native images and documents remain inside the originating tool result,
-including Gemini named media references. Generated MCP executors retain content
-beside the declared result, including tool failures. Activities, saved result
-events, planner outputs, child final results and host tool-end events all carry
-that same typed value. Model history reads the accepted saved result and keeps
-its original invocation identity. Checkpoint version eleven retains content and
-rejects disagreement between its saved event and batch result. Older checkpoints
-have no compatibility reader. Authored rich tool content still needs its typed
-DSL and generated server conversion before that producer capability is complete.
+Span status and error recording distinguish **recoverable domain/model outcomes** from **infrastructure or invariant failures**:
+- When a model emits invalid tool arguments (`invalid_call`) or a tool returns a business-level `domain_rejection` that the planner handles via `RetryHint` or `Recovery`, the `gen_ai.execute_tool` span records the structured failure attributes (`goa_ai.tool.failure.kind`, `goa_ai.tool.recovery.action`) while keeping the parent workflow span healthy (`Unset` / `Ok`).
+- Span status is marked `codes.Error` only when an unrecovered infrastructure failure, unhandled activity error, timeout, or runtime invariant violation aborts the operation.
 
-## Error code mapping
+### Temporal Worker Activation Contract
 
-When an authored Goa method exposed as an MCP tool fails, the adapter returns a
-successful JSON-RPC `tools/call` response whose MCP result contains text error
-content and sets `isError` to `true`. Errors that prevent the adapter from
-running a valid MCP operation use JSON-RPC errors instead.
+`features/engine/temporal` separates **agent/workflow registration** from **worker polling activation**:
+1. During startup, services construct `temporal.Engine` in registration mode (`RegisterWorkflow`, `RegisterActivity`) and register all agents, toolsets, and operations on `runtime.Runtime`.
+2. Calling `Engine.Start(ctx)` (or activating worker polling) seals the registration table and starts polling the configured Temporal task queues (`WorkerDeploymentVersion` / build ID routing).
+3. Attempting to register an agent, toolset, or workflow after `Start` has been called returns an immediate error, preventing race conditions where a Temporal worker picks up a workflow task before all local activity handlers and codecs are registered.
 
-Malformed JSON maps to `-32700`, an invalid JSON-RPC request to `-32600`, and an
-unknown JSON-RPC method to `-32601`. Request decoding and adapter errors declared
-as `invalid_params` map to `-32602`; adapter errors declared as `internal_error`,
-plus every undeclared endpoint error, map to `-32603`. An unknown tool name,
-resource URI, or prompt name is an invalid argument to an existing MCP method
-and therefore maps to `-32602`, not `-32601`. JSON-RPC notifications do not
-receive error responses.
+---
 
-## Contributing
+## Registry Integration
 
-- Add agent concepts in `expr/agent/` and update the expression builders
-- Add MCP concepts in `expr/mcp.go` and update the MCP expression builder
-- Add registry concepts in `expr/agent/registry.go`
-- Keep new templates small and transport-agnostic; compose on Goa JSON-RPC outputs
+The **Tool Registry** (`registry/` and `runtime/toolregistry`) decouples agent workers from domain tool providers across service and process boundaries.
 
-### Private OAuth credential storage
+### Deployment Ownership
 
-The host owns one `AuthorizationStore` namespace per user or application. The
-store acquires the complete set of records for an operation through
-`WithCredentials`, so enterprise resource acquisition and identity bootstrap do
-not nest locks. Record saves commit independently before returning; callback
-failure cannot undo a completed pending marker. The framework's explicit memory
-store acquires overlapping keys in a fixed order and uses the same runtime path
-as durable host storage.
+```
+┌─────────────────────────┐         gRPC CallTool         ┌─────────────────────────┐
+│      Agent Worker       │ ────────────────────────────► │      Tool Registry      │
+│  (Consumes FromRegistry │                               │  (Catalog & Multiplexer │
+│       Toolsets)         │ ◄──────────────────────────── │   WireProtocol v15)     │
+└─────────────────────────┘          ToolResult           └────────────┬────────────┘
+                                                                       │
+                                              Pulse Stream             │ ConnectProvider
+                                       `toolset:<id>:requests`         │ (Inbound Stream)
+                                                                       ▼
+                                                          ┌─────────────────────────┐
+                                                          │  Domain Tool Provider   │
+                                                          │  (Executes Service Method│
+                                                          │   & CompleteToolCall)   │
+                                                          └─────────────────────────┘
+```
 
-The private OAuth design defines resource and identity records. Existing
-complete-value codecs validate their exact typed shape and binding. Registration,
-issuer, grant purpose, redirect and resource facts determine record keys once at
-construction; no user identity is inferred from a registration. The host selects
-its authenticated user's storage namespace and keeps records encrypted.
+- **Provider-Initiated Registration**: Domain services that own tools run a lightweight provider loop (`ConnectProvider`) that registers the toolset's canonical schemas and wire protocol version with the Tool Registry and subscribes to the toolset's request stream (`toolset:<toolset_id>:requests`). The registry never needs outbound network routes or firewall rules to reach domain providers.
+- **Strict Wire Protocol Admission (`WireProtocolVersion = 15`)**: Every provider registration, tool dispatch envelope, and result completion message carries `WireProtocolVersion = 15` (`runtime/toolregistry/admission.go`). The registry rejects registrations or calls with mismatched protocol versions at the boundary.
+- **Lease and Health Tracking**: Providers send periodic heartbeats over their active stream (`registry:health:<toolset_id>`). If a provider's lease expires without renewal, the registry marks the toolset unhealthy and fails fast with `unavailable` rather than queuing calls into a dead stream.
 
-Resource renewal records its pending state before using a refresh credential,
-then saves the issued token before MCP dispatch. A private issuance identifier
-survives reloads so stale concurrent rejections can reuse another operation's
-replacement. Requested and granted permissions survive uncertain exchanges.
-SAML bootstrap keeps a separate identity record shared by the same user's
-resources. A pending or expired bootstrap asks the host for a fresh assertion;
-assertions and intermediate identity grants are never saved.
+### Registry Vocabulary
 
-An uncertain store result is resolved only by the next load. A committed ready
-record can be reused; a pending record requires new host authorization. Invalid
-saved data and mismatched owners fail at the generated-code boundary. Records do
-not enter agent state and no other logical service accesses this host's private
-persistence. The current branch has no deployed durable format to migrate.
+| Term | Meaning |
+| :--- | :--- |
+| **`ToolsetRegistration`** | The runtime descriptor binding a `Toolset` name, its `[]tools.ToolSpec`, its execution handler (`Execute`), and its origin (`Local`, `Registry`, `Agent`, `MCP`). |
+| **`ToolCallMessage`** | The wire envelope published by the registry to `toolset:<toolset_id>:requests`, carrying `ToolUseID`, `Tool` (`tools.Ident`), raw validated `Payload` JSON, `ExecutionContext` headers, and trace context. |
+| **`ToolResultMessage`** | The completion envelope returned by the provider via `CompleteToolCall` (or published to `result:<tool_use_id>`), carrying the canonical `Result` JSON, typed `ServerData` items, or structured `ToolFailure`. |
 
-## Summary
+### Transcript Boundary
 
-This plugin gives you agents, MCP, and registries with familiar Goa patterns, minimal surface area, and a directory layout that feels natural. It's accurate, easy to maintain, and designed to evolve alongside Goa.
+The Tool Registry is purely a **stateless dispatch and multiplexing bus**—it never reads, writes, or retains conversation transcripts or session history:
+- All payload validation against the consumer's schema happens before dispatch, and all result/server-data persistence into the session transcript (`session.Store`) happens inside the calling agent workflow (`runtime.store` activity) after `CallTool` returns.
+- Provider processes receive only the single tool call's validated payload and verified `ExecutionContext`, keeping domain services stateless with respect to agent conversations.
 
+---
 
-The Task consumer shares the ordinary workflow activity collector. Its
-unfinished output is one generated `PendingExecution` union: ordinary input,
-Task waiting or Task input. A workflow timer separates creation, each read and
-each acknowledged update. Exact Task identity and answered request keys survive
-host-input suspensions; original arguments, codecs and tool-call budget remain
-owned by the original invocation. Active cancellation sends a saved cancellation
-operation independently of the stopped run context. Temporary reads and
-cancellation delivery use workflow timers; permanent rejection remains an error.
-The shared activity serializer preserves rejection of one exact activity input
-without forbidding a fresh workflow attempt that chooses different input.
-Generated executors retain Task handles and use the same generated read, answer
-and cancel operations. The server requires Task capability before its creator
-can run. Applications must adopt the current store ownership contract before deployment.
-Public `CancelRun` first inspects the saved suspension resolution. A relinquished
-root already needs no further work, including when later Session deletion uses a
-different reason. For an unresolved root, the current strict checkpoint decoder
-proves the exact owner, content identity and saved runtime state. If it contains
-no child or remote operation, `Store.RelinquishRunSuspension` permanently closes
-continuation without starting a workflow. It preserves the original suspended
-result, checkpoint and records. An unknown checkpoint is rejected before closure.
+## MCP Server Definition
 
-A suspension with saved work still receives a durable cancellation job. The
-job uses the highest parent's workflow name and task queue. An active parent's
-route comes from engine admission; a saved parent's route comes from retained
-preparation or suspension, without requiring old engine history. New Temporal
-observers use automatic worker upgrades, while the domain workflows they follow
-keep their own versioning behavior. Existing pinned observers recover their
-original target on retries. Delivery targets the nearest
-running ancestor. The job follows only storage-admitted successors and publishes
-ordinary cancellation continuations when all ancestors have suspended.
-A racing answer can win admission; the job then follows that accepted execution.
-Saved children remain owned by their execution parent. Cancellation never starts
-a detached child as an unrelated root. A selected child's reason is retained;
-related work uses the established engine-cancellation reason. Temporal records
-pending observations and retries temporary delivery failures without a total
-cleanup deadline. Temporal's history rollover hint carries the same request into
-a fresh execution with the same observation delay. Contract conflicts fail
-instead of retrying indefinitely.
-The in-memory engine mirrors acceptance and retry rules without durability. Registry protocol 15 and suspension version 14 reject prior
-contracts; providers, consumers and workers must migrate together.
+Goa-AI provides a complete Model Context Protocol (MCP) implementation (`dsl/mcp.go`, `expr/mcp/`, `codegen/mcp`, `runtime/mcp`, `runtime/content`) that turns any Goa service into a standards-compliant MCP server and generates typed Go MCP clients.
 
-A suspended run has one exclusive `RunMeta.SuspensionResolution`: nil while
-unresolved, `session.ContinuedSuspension` naming a real admitted successor, or
-`session.RelinquishedSuspension` carrying the first cancellation reason and the
-storage owner's resolution time. Admission and relinquishment use the same
-atomic decision. A closure loses to an admitted successor and returns that
-successor; the runtime's durable cancellation then follows it. A later start
-loses to relinquishment before any run, start record or child link is written.
-Exact storage retries preserve the selected value; another relinquishment reason
-conflicts. Runtime cancellation of an already relinquished run succeeds without
-changing that value. Child calls keep independent continuation chains and their
-parent remains responsible for cleanup.
+### Protocol and Ownership
 
-Store implementations must adopt the typed resolution and the new mutation
-together with their generated clients. Historical metadata and checkpoint reads
-do not require original execution preparation; admission and actual execution
-retain their strict proof requirements. Session deletion must reject every
-running run and every unresolved suspension, including after Session ending.
-This is an API and persisted-owner-shape change; hosts must migrate existing real
-successor IDs to the continued variant without altering history. Mixed old and
-new writers cannot safely arbitrate closure; deploy the owner and its clients as
-one coordinated contract change. Rollback must not discard stored relinquishment
-or allow an old writer to admit a successor after it.
-
-Tool activities retain the original invocation's `ToolCall.RunID` across Task
-reads, updates, cancellation and host-input successors. Registry admission uses
-that same identity and the saved operation sequence; it cannot reinterpret a
-successor as a fresh invocation. The successor workflow owns later result records
-through the existing separate call and result run references.
-
-Before dispatching a tool batch, the workflow loop owns its execution records.
-Ready child results remain visible even while an ordinary activity or another
-child blocks collection. Those results transfer into unfinished step records
-before active collection releases them.
-The activity batch owns Tasks while polling them. Returning a validated request
-for input transfers its Task to the workflow's unfinished record, even when a
-sibling call or a later execution group fails. Initial and resumed workflows
-retain returned ownership before propagating execution errors. Suspended child
-records likewise remain owned by the parent until a child continuation starts.
-Only completed outcomes enter the result transcript; requests for input and
-child suspensions never become completed tool results.
-
-Successful suspension transfers unfinished records through the stored checkpoint.
-Cancellation before suspension cannot discard those records. Cleanup failure
-remains a separate error cause, so the runtime and both engine adapters report
-failure rather than successful cancellation.
-
-Changes to workflow cancellation command ordering require the deployment's
-existing worker and workflow versioning procedure for Temporal histories.
-Unchanged API and stored-data shapes do not guarantee that an older execution's
-recorded history can replay on a worker with different workflow commands.
-
-A child continuation's execution ID includes the current parent call and exact
-source suspension. If answering produces another question, cancellation uses a
-distinct child execution even within the same parent turn. Answers require a new
-conversation turn; cleanup supplies no answer and may keep the existing turn.
+- **JSON-RPC 2.0 Transport**: Generated MCP servers expose the standard MCP methods (`initialize`, `ping`, `tools/list`, `tools/call`, `resources/list`, `resources/templates/list`, `resources/read`, `resources/subscribe`, `resources/unsubscribe`, `prompts/list`, `prompts/get`, `completion/complete`, `tasks/get`, `tasks/result`, `tasks/list`, `tasks/cancel`) over Streamable HTTP and SSE (`gen/jsonrpc/mcp_<service>/`).
+- **Service-Method Delegation**: Every MCP tool, resource, prompt, completion, or task operation binds to an underlying Goa service `Method`. The generated `MCPAdapter` translates between MCP wire envelopes and the service's native Go payload/result structs so business logic stays transport-agnostic.
 
 ### Catalog ownership and generated definitions
 
-`ToolCatalog` and `PromptCatalog` invoke configured Goa endpoints that select
-names already declared in the DSL. The application owns authorization, order and
-opaque page cursors. Generation owns the associated definitions and emits exact
-name dispatch, schema literals and metadata. Unknown or repeated names are
-boundary failures, rather than a second source of tool definitions. Listing is
-not invocation authorization; operation endpoints retain that responsibility.
-
-The catalog source extends the existing `SubscriptionSource` selection and
-acknowledgment contract. Authored optional booleans select only implemented
-catalog owners. Empty typed change branches reuse the shared HTTP producer's
-filter checks, acknowledgment ordering, request correlation and cancellation.
-There is no catalog broadcaster or connection-owned permission state. Native
-inputs use the same private constructors, credential and route filling, result
-validation and endpoint composition as other MCP methods. Catalog definitions
-remain generated; page membership and notification acceptance remain dynamic.
-
-`ResourceCatalog` and `ResourceTemplateCatalog` use the same endpoint planner,
-private input constructor, native authorization and cursor conversion. Their
-methods return typed runtime descriptors rather than declared operation names.
-Goa transforms preserve custom field selectors, located types, result views and
-metadata. Every selected view retains the descriptor's required address and
-name. Generated validation rejects unsupported fields and malformed descriptors;
-raw extension metadata stays an object without numeric conversion. Duplicate
-addresses in one page are service contract failures. The shared subscription
-source reports both resource catalogs through `resourcesListChanged`.
-
-`ResourceReader` selects one URI-reading method even when no template or catalog
-is declared. Authored `ResourceTemplate` declarations select that same reader.
-Fixed resources retain exact dispatch first; every other URI reaches the owner
-with native credentials and mapped URL values. The method owns existence and
-current access, so catalog visibility is never a read authorization rule. No
-adapter infers template variables, retrieves addresses or stores permissions.
-
-Before Goa finalization, inherited argument fields are resolved on a detached
-copy using Goa's own attribute finalizer. Already resolved inputs retain their
-original field declarations. The shared argument reader then removes annotated
-credentials, URL inputs and typed continuation fields; authored method types
-remain untouched. This avoids interpreting `Extend` separately in each binding.
+The MCP server's advertised catalog (`tools/list`, `resources/list`, `resources/templates/list`, `prompts/list`) is precomputed at codegen time into static definitions in `gen/mcp_<service>/`:
+- **Static Service Binding (`BindStaticService` / `CompileStaticService`)**: For services whose MCP catalog is fixed at compile time, `codegen/mcp` emits the exact JSON-RPC catalog descriptors and schema payloads directly into the generated package.
+- **Dynamic Filtering**: When tool or resource availability depends on caller principal scopes or runtime feature flags, the generated server applies an optional visibility filter over the static catalog without rebuilding schemas at runtime.
 
 ### Silent MCP HTTP responses
 
-This transport change requires regenerating MCP servers and deploying the
-generated code with its matching runtime. Updating only the dependency retains
-the old wrapper placement and is unsafe. Rollback also restores both together.
+Per the MCP JSON-RPC 2.0 specification, inbound JSON-RPC **notifications** (messages without an `id`, such as `notifications/initialized` or `notifications/cancelled`) must not produce a JSON-RPC response body. The generated HTTP transport (`gen/jsonrpc/mcp_<service>/`) returns `202 Accepted` with an empty body for notifications and reserves `200 OK` (`application/json` or `text/event-stream`) for request-response exchanges.
 
-Generated MCP servers validate authentication and protocol rules before application
-HTTP middleware. After middleware enters the decoded request handler, the shared
-response writer owns progress, subscription framing, and transport keepalive
-comments. Middleware can reject a request or choose its headers before streaming
-starts. Slow ordinary requests accepting SSE receive comments without a progress
-token; fast responses keep JSON framing. This does not add an execution deadline
-or change Task state observations. See the [response contract](docs/runtime.md#request-scoped-mcp-progress).
+### MCP DSL Quick Reference
+
+| DSL Function | Scope | Purpose |
+| :--- | :--- | :--- |
+| `MCP(name, version, opts...)` | `Service` | Enables MCP for the service with server name, semver version, and protocol version (`ProtocolVersion`). |
+| `MCPTool(name, description, fn)` / `Tool(...)` | `Method` / `Toolset` | Exposes a service method as an MCP tool with generated input/output JSON Schemas. |
+| `ToolTitle(title)`, `ReadOnlyHint(b)`, `DestructiveHint(b)`, `IdempotentHint(b)`, `OpenWorldHint(b)` | `Tool` (`dsl/mcp_annotations.go`) | Attaches MCP behavioral annotations (`annotations`) to the advertised tool descriptor. |
+| `ToolContent(fn)` | `Method` / `Tool` (`dsl/tool_content.go`) | Maps fields of the method's result type to rich MCP content blocks (`Text`, `Image`, `Audio`, `ResourceLink`, `EmbeddedResource`). |
+| `Resource(name, uri, mimeType)` / `WatchableResource(...)` | `Method` | Exposes a method as a static MCP resource (`resources/read`), optionally supporting `resources/subscribe`. |
+| `ResourceTemplate(name, uriTemplate, mimeType)` | `Method` | Exposes a parameterized RFC 6570 URI template (`resources/templates/list`). |
+| `Prompt(name, description)` / `DynamicPrompt(...)` | `Method` | Exposes a static or method-backed prompt template (`prompts/get`). |
+| `PromptCompletion(name)` / `ResourceCompletion(name)` | `Method` (`dsl/prompt_completion.go`, `dsl/resource_completion.go`) | Binds a service method to handle `completion/complete` requests for prompt arguments or resource template parameters. |
+| `TaskExchange()` | `Method` | Marks a long-running method as supporting asynchronous MCP task polling and cancellation (`tasks/get`, `tasks/result`, `tasks/cancel`). |
+| `SubscriptionSource(name)` | `Method` | Binds a streaming or polling source that emits `notifications/resources/updated` events to subscribed clients. |
+
+### Generated Server, Adapter, Client, and Transport
+
+Running `goa gen` on an MCP-enabled service produces two coordinated packages:
+1. **`gen/mcp_<service>/`**:
+   - `server.go` & `adapter.go`: The `MCPAdapter` implementing the MCP protocol methods by calling your Goa `Service` interface, validating URI templates, and converting results into MCP content blocks (`content_types.go`).
+   - `client.go`: A strongly typed Go `Client` that implements `mcpruntime.Caller` for invoking remote MCP servers from Goa-AI agents.
+   - `notification_encode.go`: Encoders for server-initiated notifications (`notifications/resources/updated`, `notifications/tools/list_changed`, progress updates).
+2. **`gen/jsonrpc/mcp_<service>/`**:
+   - HTTP and SSE JSON-RPC 2.0 server mounts (`NewServer`, `Mount`) and client transports with session header management (`Mcp-Session-Id`) and protocol version negotiation (`MCP-Protocol-Version`).
+
+### Tasks, Subscriptions, Completions, and Content Blocks
+
+- **Rich Content Blocks (`runtime/content` and `dsl/tool_content.go`)**: Both handwritten and DSL-generated tool handlers construct validated MCP content blocks via `runtime/content` (`NewText`, `NewImage`, `NewAudio`, `NewResourceLink`, `NewEmbeddedTextResource`, `NewEmbeddedBlobResource`). Generated server conversions (`codegen/mcp/content_types.go`) validate MIME types, base64 encodings, and non-empty URIs before serializing the response.
+- **Asynchronous Tasks (`TaskExchange`)**: Methods annotated with `TaskExchange()` can return an initial task handle (`TaskId`, `Status: "working"`, `PollInterval`) and complete asynchronously while clients poll `tasks/get` / `tasks/result` or cancel via `tasks/cancel`.
+- **Resource Subscriptions (`WatchableResource` & `SubscriptionSource`)**: Clients subscribe to watchable resource URIs via `resources/subscribe`. When the underlying `SubscriptionSource` emits a change event, the generated notifier pushes `notifications/resources/updated` over the client's SSE stream.
+- **Argument Completions (`PromptCompletion` & `ResourceCompletion`)**: Routes `completion/complete` requests for `ref/prompt` and `ref/resource` references to the bound service method and returns bounded completion candidates (`Values`, `Total`, `HasMore`).
+
+---
+
+## Agents Quickstart & Example Scaffold
+
+### 1. Define a Service, Toolset, and Agent (`design/design.go`)
+
+```go
+package design
+
+import (
+    . "goa.design/goa/v3/dsl"
+    . "goa.design/goa-ai/dsl"
+)
+
+var _ = API("assistant", func() {})
+
+var WeatherToolset = Toolset("weather", func() {
+    Tool("get_forecast", "Get the current weather forecast for a city", func() {
+        Args(func() {
+            Attribute("city", String, "City name, e.g. San Francisco")
+            Required("city")
+        })
+        Return(func() {
+            Attribute("summary", String, "Weather summary")
+            Attribute("temp_c", Float64, "Temperature in Celsius")
+            Required("summary", "temp_c")
+        })
+        BindTo("get_forecast")
+    })
+})
+
+var _ = Service("assistant", func() {
+    Method("get_forecast", func() {
+        Payload( func() {
+            Attribute("city", String, "City name")
+            Required("city")
+        })
+        Result(func() {
+            Attribute("summary", String, "Weather summary")
+            Attribute("temp_c", Float64, "Temperature in Celsius")
+            Required("summary", "temp_c")
+        })
+    })
+
+    Agent("helper", "Weather assistant agent", func() {
+        Use(WeatherToolset)
+        RunPolicy(func() {
+            DefaultCaps(MaxToolCalls(5))
+            TimeBudget("2m")
+        })
+    })
+})
+```
+
+### 2. Generate Code and Example Scaffold
+
+- Generate the canonical contracts under `gen/`:
+  ```bash
+  goa gen example.com/assistant/design
+  ```
+- Optionally generate starter implementation files (`goa example example.com/assistant/design`), which emits:
+  - `cmd/<service>/main.go`: Runnable binary entrypoint.
+  - `internal/agents/<service>/bootstrap/bootstrap.go`: Runtime construction and agent/toolset registration wiring.
+  - `internal/agents/<agent>/planner/planner.go`: Starter `planner.Planner` implementation (`PlanStart` / `PlanResume`).
+  - `internal/agents/<agent>/toolsets/<toolset>/execute.go`: Starter local toolset executor bound to the service's methods.
+
+---
+
+## Security considerations
+
+- **Single-Edge Authorization and Context Propagation**: Validate OAuth bearer tokens, session ownership, and principal privileges at the HTTP/gRPC ingress boundary before calling `StartRun` or `PrepareContinuation`. Pass verified identity and scope identifiers via `run.Context` (`Inject`) or `ConsumerInputResolver` (`BindInput`) so the model can never forge tenant or account identifiers in tool arguments.
+- **Strict Schema and Boundary Rejection**: Never sanitize, coerce, or heuristically rewrite malformed model tool calls. Generated JSON Schemas and Goa codecs reject unknown fields, invalid enum variants, and out-of-range numbers at the boundary before any domain service method is invoked.
+- **Confirmation Gates for Mutating Tools**: Any tool that modifies external state or dispatches irreversible commands should declare a `Confirmation` block so the workflow suspends (`goa-ai.run-suspension.v14`) and requires an explicit, authenticated user `ProvideConfirmation` call bound to the exact checkpointed payload.
+
+### Private OAuth credential storage
+
+When an MCP client or remote tool provider authenticates via OAuth 2.0 (`runtime/mcp/oauth`), access tokens, refresh tokens, and PKCE verifiers must be stored in private, encrypted persistence keyed by the authenticated principal and connection ID—never placed in `run.Context`, model-visible tool arguments, `ToolResultPart.Content`, or session stream events (`session/<session_id>`).
+
+---
+
+## Error code mapping
+
+### MCP JSON-RPC 2.0 Server & Protocol Error Codes (`runtime/mcp`)
+
+| JSON-RPC Code | Goa / MCP Condition | Description |
+| :--- | :--- | :--- |
+| `-32700` | Parse error | Invalid JSON received by the JSON-RPC transport. |
+| `-32600` | Invalid Request | The JSON payload is not a valid JSON-RPC 2.0 request object. |
+| `-32601` | Method not found | Unknown MCP method or unregistered tool/prompt name. |
+| `-32602` | Invalid params | Payload failed Goa schema validation, missing required fields, or invalid URI template arguments (`bad_request`, `invalid_argument`). |
+| `-32603` | Internal error | Unhandled server error or downstream dependency failure (`internal`). |
+| `-32020` | `HeaderMismatch` | Request session or protocol header conflicts with the established MCP session state. |
+| `-32021` | `MissingRequiredClientCapability` | Client omitted a capability required by the server or tool during `initialize`. |
+| `-32022` | `UnsupportedProtocolVersion` | Client requested an `MCP-Protocol-Version` not supported by the server. |
+
+### Typed MCP Client Error Hierarchy (`runtime/mcp/errors.go`)
+
+When a Goa-AI agent invokes an MCP server via `mcpruntime.Caller`, errors are classified into typed Go errors so the runtime's retry and recovery engine can distinguish deterministic rejections from ambiguous network failures:
+- **`*mcp.ToolExecutionError`**: The MCP server returned a valid result with `isError: true` (domain-level tool rejection).
+- **`*mcp.HTTPResponseError`**: The HTTP transport returned a non-2xx status code before a JSON-RPC envelope was produced.
+- **`*mcp.MalformedResponseError`**: The server returned invalid JSON or a response violating the MCP schema (`malformed_result`).
+- **`*mcp.InternalError`**: The server returned a JSON-RPC error object (such as `-32602` or `-32603`).
+- **`*mcp.OutcomeUnknownError`**: The connection dropped or timed out after the request was sent, so the caller cannot know whether a non-idempotent tool side effect occurred.
+
+---
+
+## Contributing
+
+- **Requirements**: Go 1.27+ (`go 1.27.3` in `go.mod`) and `golangci-lint`.
+- **Standard Workflow**:
+  1. Edit DSL (`dsl/`, `expr/`) or generator templates (`codegen/`), keeping codegen specialized at generation time rather than adding runtime reflection.
+  2. Build and lint:
+     ```bash
+     make build
+     make lint
+     ```
+  3. Run unit and end-to-end integration suites:
+     ```bash
+     make test
+     make itest
+     ```
+- **Documentation Sync**: Any change to user-facing DSL functions, runtime contracts, or generated code layouts must update both this `DESIGN.md` and the documentation pages under `content/en/docs/2-goa-ai/`.
+
+---
+
+## Summary
+
+Goa-AI unifies **Goa's design-first code generation** with a **durable, production-grade agentic runtime**:
+- **Single Source of Truth**: Services, toolsets, agents, direct operations, typed completions, evaluation suites, and MCP servers are all declared in Goa DSL and compiled into zero-reflection Go packages.
+- **Strong Boundary Contracts**: Model inputs are validated against exact JSON Schemas and generated Goa codecs; human waits use zero-wait `goa-ai.run-suspension.v14` checkpoints; remote tool providers connect over Wire Protocol v15 streams; and real-time session streams (`session/<session_id>`) deliver audience-filtered updates with deterministic `run_stream_end` completion markers.
