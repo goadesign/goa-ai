@@ -127,7 +127,7 @@ func TestCatalogDrainFencesRoutingButPreservesSettlementLease(t *testing.T) {
 	)
 	require.NoError(t, err)
 	assert.True(t, active, "draining lease remains valid for terminal settlement")
-	_, _, err = catalog.HealthIdentity(ctx, "test.toolset")
+	err = catalog.HealthIdentity(ctx, "test.toolset")
 	require.ErrorIs(t, err, errToolsetNotFound)
 	require.NoError(t, catalog.ReleaseProvider(
 		ctx,
@@ -830,6 +830,28 @@ func (m *testCatalogMap) Keys(ctx context.Context) ([]string, error) {
 	}
 	keys := make([]string, 0, len(m.content))
 	for key := range m.content {
+		keys = append(keys, key)
+	}
+	return keys, nil
+}
+
+func (m *testCatalogMap) ActiveKeys(ctx context.Context, serviceOnly bool) ([]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	keys := make([]string, 0, len(m.content))
+	for key, raw := range m.content {
+		var entry struct {
+			State       catalogEntryState `json:"state"`
+			NativeAgent bool              `json:"native_agent"`
+		}
+		if err := json.Unmarshal([]byte(raw), &entry); err == nil {
+			if entry.State == catalogEntryRetired || (serviceOnly && entry.NativeAgent) {
+				continue
+			}
+		}
 		keys = append(keys, key)
 	}
 	return keys, nil

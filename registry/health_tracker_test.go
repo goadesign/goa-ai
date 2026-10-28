@@ -533,12 +533,20 @@ func (m authoritativeKeysFailureMap) Keys(context.Context) ([]string, error) {
 	return nil, m.err
 }
 
+func (m authoritativeKeysFailureMap) ActiveKeys(context.Context, bool) ([]string, error) {
+	return nil, m.err
+}
+
 // Keys waits for tracker shutdown and proves the scheduler passes
 // a cancelable context into catalog reads.
 func (m cancelableKeysMap) Keys(ctx context.Context) ([]string, error) {
 	close(m.started)
 	<-ctx.Done()
 	return nil, ctx.Err()
+}
+
+func (m cancelableKeysMap) ActiveKeys(ctx context.Context, _ bool) ([]string, error) {
+	return m.Keys(ctx)
 }
 
 func rejectRedisConnection(context.Context, string, string) (net.Conn, error) {

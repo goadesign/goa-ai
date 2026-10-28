@@ -203,10 +203,7 @@ func (h *healthTracker) EnsurePingLoop(ctx context.Context, toolset string) erro
 	}
 	// Scheduling derives from catalog membership; validating the health
 	// identity is the entire ensure contract.
-	if _, _, err := h.catalog.HealthIdentity(ctx, toolset); err != nil {
-		return err
-	}
-	return nil
+	return h.catalog.HealthIdentity(ctx, toolset)
 }
 
 // Close implements HealthTracker.
@@ -371,18 +368,9 @@ func (h *healthTracker) schedulerTickPeriod() time.Duration {
 	return max(h.pingInterval/4, time.Millisecond)
 }
 
-// sendPing publishes one ping only while the catalog still has a live provider
-// for the admission. A provider that leaves after the readiness sample is an
-// expected race and receives no ping. Catalog and publication failures are
-// returned to the health span.
-func (h *healthTracker) sendPing(ctx context.Context, toolset string) error {
-	token, epoch, err := h.catalog.HealthIdentity(ctx, toolset)
-	if err != nil {
-		if errors.Is(err, errToolsetNotFound) {
-			return nil
-		}
-		return fmt.Errorf("resolve ping identity: %w", err)
-	}
+// sendPing publishes one ping for the sampled admission token and membership
+// epoch. Publication failures are returned to the health span.
+func (h *healthTracker) sendPing(ctx context.Context, toolset, token string, epoch uint64) error {
 	pingID := newPingID(token, epoch)
 	if err := h.streamManager.PublishToolCall(
 		ctx,
@@ -436,7 +424,7 @@ func (h *healthTracker) sampleRegisteredToolset(ctx context.Context, toolset str
 		span.SetAttributes(attribute.Int64("toolregistry.last_pong_age_ms", health.Age.Milliseconds()))
 	}
 	if health.ProviderCount > 0 {
-		if err := h.sendPing(ctx, toolset); err != nil {
+		if err := h.sendPing(ctx, toolset, entry.RegistrationToken, entry.HealthEpoch); err != nil {
 			if ctx.Err() != nil {
 				return
 			}

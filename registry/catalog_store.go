@@ -30,6 +30,7 @@ type (
 		After(context.Context, string, string, int) ([]string, error)
 		Contains(context.Context, string, string) (bool, error)
 		Keys(context.Context) ([]string, error)
+		ActiveKeys(context.Context, bool) ([]string, error)
 		DefinitionKeys(context.Context) ([]string, error)
 		Retired(context.Context, string) (bool, error)
 		RetiredTokens(context.Context) ([]string, error)
@@ -91,6 +92,24 @@ if state and string.sub(definition, 1, 29) == '{"blob":"registry:definition:' th
   end
 end
 return state
+`)
+
+	catalogActiveKeysScript = redis.NewScript(`
+local keys = redis.call("HKEYS", KEYS[1])
+local selected = {}
+local service_only = ARGV[1] == "1"
+for _, key in ipairs(keys) do
+  local state = redis.call("HGET", KEYS[1], key)
+  if state then
+    local ok, entry = pcall(cjson.decode, state)
+    if not ok or type(entry) ~= "table" then
+      table.insert(selected, key)
+    elseif entry.state ~= "retired" and (not service_only or entry.native_agent ~= true) then
+      table.insert(selected, key)
+    end
+  end
+end
+return selected
 `)
 
 	catalogSnapshotScript = redis.NewScript(`
@@ -242,6 +261,14 @@ func (s *redisCatalogStore) Snapshot(ctx context.Context, key string) (string, s
 
 func (s *redisCatalogStore) Keys(ctx context.Context) ([]string, error) {
 	return s.redis.HKeys(ctx, s.state).Result()
+}
+
+func (s *redisCatalogStore) ActiveKeys(ctx context.Context, serviceOnly bool) ([]string, error) {
+	flag := "0"
+	if serviceOnly {
+		flag = "1"
+	}
+	return catalogActiveKeysScript.Run(ctx, s.redis, []string{s.state}, flag).StringSlice()
 }
 
 func (s *redisCatalogStore) DefinitionKeys(ctx context.Context) ([]string, error) {
