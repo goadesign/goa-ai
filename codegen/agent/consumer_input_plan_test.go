@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	agentexpr "goa.design/goa-ai/expr/agent"
+	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/expr"
 )
 
@@ -141,4 +142,58 @@ func TestResolveConsumerFieldBindings(t *testing.T) {
 		Field: "missing",
 	}})
 	require.ErrorContains(t, err, "matches no tools")
+}
+
+func TestConsumerToolsetFieldBindingHasUniformFieldType(t *testing.T) {
+	stringLayout, err := codegen.PlanGoType(&expr.AttributeExpr{Type: expr.String, Description: "First description"}, codegen.GoTypePlanOptions{Owner: "test.local"})
+	require.NoError(t, err)
+	stringOtherDescLayout, err := codegen.PlanGoType(&expr.AttributeExpr{Type: expr.String, Description: "Second description"}, codegen.GoTypePlanOptions{Owner: "test.local"})
+	require.NoError(t, err)
+	intLayout, err := codegen.PlanGoType(&expr.AttributeExpr{Type: expr.Int}, codegen.GoTypePlanOptions{Owner: "test.local"})
+	require.NoError(t, err)
+
+	for _, tc := range []struct {
+		name    string
+		binding *consumerToolsetFieldBinding
+		want    bool
+	}{
+		{
+			name:    "empty tools",
+			binding: &consumerToolsetFieldBinding{},
+			want:    true,
+		},
+		{
+			name: "single tool",
+			binding: &consumerToolsetFieldBinding{
+				tools: []*consumerInputTool{{
+					fieldLayouts: []*codegen.GoTypePlan{stringLayout},
+				}},
+			},
+			want: true,
+		},
+		{
+			name: "multiple tools with same parameter type and different field descriptions",
+			binding: &consumerToolsetFieldBinding{
+				tools: []*consumerInputTool{
+					{fieldLayouts: []*codegen.GoTypePlan{stringLayout}},
+					{fieldLayouts: []*codegen.GoTypePlan{stringOtherDescLayout}},
+				},
+			},
+			want: true,
+		},
+		{
+			name: "multiple tools with non-equivalent layouts",
+			binding: &consumerToolsetFieldBinding{
+				tools: []*consumerInputTool{
+					{fieldLayouts: []*codegen.GoTypePlan{stringLayout}},
+					{fieldLayouts: []*codegen.GoTypePlan{intLayout}},
+				},
+			},
+			want: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, tc.binding.hasUniformFieldType())
+		})
+	}
 }

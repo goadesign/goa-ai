@@ -113,6 +113,9 @@ func consumerBindingFile(plan *consumerInputPlan) (*codegen.File, error) {
 		sections = append(sections, &codegen.SectionTemplate{Name: "consumer-input-binding-" + tool.expression.Name, Source: consumerBindingSource, Data: data})
 	}
 	for _, group := range plan.fieldBindings {
+		if group.local == nil {
+			continue
+		}
 		firstLayout := group.tools[0].fieldLayouts[0]
 		groupData := &consumerToolsetFieldBindingData{
 			FieldName: group.goName,
