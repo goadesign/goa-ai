@@ -607,16 +607,17 @@ func (c *toolsetCatalog) ActiveProviderLeases(
 	return leases, nil
 }
 
-// HealthIdentity returns the exact token and membership epoch a ping must carry.
-func (c *toolsetCatalog) HealthIdentity(ctx context.Context, name string) (string, uint64, error) {
+// HealthIdentity verifies that the named toolset is an active service toolset
+// with at least one routable provider lease eligible for health pings.
+func (c *toolsetCatalog) HealthIdentity(ctx context.Context, name string) error {
 	entry, now, err := c.healthEntry(ctx, name)
 	if err != nil {
-		return "", 0, err
+		return err
 	}
 	if entry.WireProtocolVersion != toolregistry.WireProtocolVersion || routableProviderCount(entry, now) == 0 {
-		return "", 0, errToolsetNotFound
+		return errToolsetNotFound
 	}
-	return entry.RegistrationToken, entry.HealthEpoch, nil
+	return nil
 }
 
 // RecordPong atomically authenticates one provider incarnation and records a
@@ -751,26 +752,29 @@ func (c *toolsetCatalog) SearchToolsets(ctx context.Context, query string) ([]*g
 // use provider leases and health pings. Native Agent registrations execute as
 // child workflows without provider streams and are excluded.
 func (c *toolsetCatalog) activeServiceToolsets(ctx context.Context) ([]string, error) {
-	entries, err := c.activeCatalogStates(ctx)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	keys, err := c.store.ActiveKeys(ctx, true)
 	if err != nil {
 		return nil, err
 	}
-	names := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		if !entry.NativeAgent {
-			names = append(names, entry.Info.Name)
+	names := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if name, ok := strings.CutPrefix(key, toolsetCatalogKeyPrefix); ok {
+			names = append(names, name)
 		}
 	}
 	return names, nil
 }
 
 // activeCatalogStates returns every active catalog state in the store and prunes
-// retained definition validation metadata for deleted keys.
+// retained definition validation metadata for deleted or retired keys.
 func (c *toolsetCatalog) activeCatalogStates(ctx context.Context) ([]catalogState, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	keys, err := c.store.Keys(ctx)
+	keys, err := c.store.ActiveKeys(ctx, false)
 	if err != nil {
 		return nil, err
 	}
@@ -791,6 +795,8 @@ func (c *toolsetCatalog) activeCatalogStates(ctx context.Context) ([]catalogStat
 		if err != nil {
 			return nil, err
 		}
+		// Re-check active state in case the entry was retired concurrently
+		// between ActiveKeys and exactRaw.
 		if entry.State == catalogEntryActive {
 			entries = append(entries, entry)
 		}

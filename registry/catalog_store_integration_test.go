@@ -252,6 +252,58 @@ func TestRedisCatalogReportsBoundedOperationSizes(t *testing.T) {
 	assert.Equal(t, 2, seen["toolregistry.catalog.state.read"])
 }
 
+func TestRedisHealthSweepAndListSkipRetiredAndNativeStateReads(t *testing.T) {
+	ctx := t.Context()
+	rdb := getRedis(t)
+	store := newRedisCatalogStore(rdb, t.Name())
+	catalog := newToolsetCatalog(store, newRedisTimeSource(rdb))
+	svc := &Service{catalog: catalog, validator: catalog.validator}
+
+	activeDef := testCatalogDefinition(t, testCatalogToolset("active.service", "active service", nil))
+	_, err := catalog.Register(ctx, activeDef, testAdmissionRevisionA, "provider", testIncarnationA, time.Minute)
+	require.NoError(t, err)
+
+	for _, name := range []string{"retired.one", "retired.two"} {
+		def := testCatalogDefinition(t, testCatalogToolset(name, "retired service", nil))
+		admitted, registerErr := catalog.Register(ctx, def, testAdmissionRevisionA, "provider", testIncarnationA, time.Minute)
+		require.NoError(t, registerErr)
+		require.NoError(t, catalog.Retire(ctx, name, admitted.RegistrationToken))
+	}
+	_, err = svc.RegisterAgentToolset(ctx, testAgentToolset("native/1"))
+	require.NoError(t, err)
+
+	recorder := newHealthSpanRecorder(t)
+	tracker := newDirectHealthTracker(ctx, catalog)
+	tracker.redis = rdb
+	tracker.leaseScope = "sweep-" + uuid.NewString()
+	tracker.streamManager = &recordingHealthStreamManager{}
+	tracker.runHealthSweep(ctx)
+
+	var sweepStateReads []string
+	for _, span := range recorder.Ended() {
+		if span.Name() == "toolregistry.catalog.state.read" {
+			attrs := healthSpanAttributes(span)
+			sweepStateReads = append(sweepStateReads, attrs["toolregistry.toolset"].AsString())
+		}
+	}
+	assert.Equal(t, []string{"active.service"}, sweepStateReads,
+		"health sweep must read state only once when sampling the leased active service toolset")
+
+	recorder.Reset()
+	listed, err := catalog.ListToolsets(ctx, nil)
+	require.NoError(t, err)
+	require.Len(t, listed, 2)
+	var listStateReads []string
+	for _, span := range recorder.Ended() {
+		if span.Name() == "toolregistry.catalog.state.read" {
+			attrs := healthSpanAttributes(span)
+			listStateReads = append(listStateReads, attrs["toolregistry.toolset"].AsString())
+		}
+	}
+	assert.ElementsMatch(t, []string{"active.service", "installation"}, listStateReads,
+		"listing active toolsets must not read state for retired toolsets")
+}
+
 func (s *measuredCatalogStore) Read(ctx context.Context, key string) (string, bool, error) {
 	raw, exists, err := s.catalogStore.Read(ctx, key)
 	s.stateBytes += len(raw)

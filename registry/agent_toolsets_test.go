@@ -43,7 +43,7 @@ func TestAgentToolsetRegistrationReplacementAndRestart(t *testing.T) {
 	current, err := restarted.GetToolset(t.Context(), next.Name)
 	require.NoError(t, err)
 	assert.Equal(t, "revision/2", current.Tools[0].ConsumerContract.Agent.Configuration)
-	_, _, err = restarted.HealthIdentity(t.Context(), next.Name)
+	err = restarted.HealthIdentity(t.Context(), next.Name)
 	require.ErrorIs(t, err, errToolsetNotFound)
 	_, err = restarted.Register(t.Context(), testCatalogDefinition(t, current),
 		testAdmissionRevisionA, "provider", testIncarnationA, time.Minute)
