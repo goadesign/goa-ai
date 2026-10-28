@@ -31,6 +31,16 @@ type (
 		Branches            []UnionBranchForTest
 		DiscriminatorValues []string
 	}
+
+	// ConsumerFieldBindingPlanForTest records planned declaration state for a
+	// toolset-wide field binding.
+	ConsumerFieldBindingPlanForTest struct {
+		Field      string
+		LocalName  string
+		LookupName string
+		HasLocal   bool
+		HasLookup  bool
+	}
 )
 
 // BuildDataForTest chooses service and agent names exactly as generation does,
@@ -51,6 +61,38 @@ func BuildFilesForTest(genpkg string, roots []eval.Root, example bool) ([]*codeg
 		return nil, err
 	}
 	return plan.Files(nil)
+}
+
+// BuildAgentPlanForTest chooses every Goa and agent name and builds the data
+// used by a focused generator test.
+func BuildAgentPlanForTest(genpkg string, roots []eval.Root) (*Plan, error) {
+	return buildAgentPlanForTest(genpkg, roots, false)
+}
+
+// ConsumerFieldBindingsForTest returns the planned field binding declarations
+// across every consumer input plan.
+func ConsumerFieldBindingsForTest(plan *Plan) []ConsumerFieldBindingPlanForTest {
+	var result []ConsumerFieldBindingPlanForTest
+	if plan == nil || plan.specs == nil {
+		return result
+	}
+	for _, binding := range plan.specs.consumerInputs {
+		for _, group := range binding.fieldBindings {
+			item := ConsumerFieldBindingPlanForTest{
+				Field:     group.field,
+				HasLocal:  group.local != nil,
+				HasLookup: group.lookupLocal != nil,
+			}
+			if group.local != nil {
+				item.LocalName = group.local.Name()
+			}
+			if group.lookupLocal != nil {
+				item.LookupName = group.lookupLocal.Name()
+			}
+			result = append(result, item)
+		}
+	}
+	return result
 }
 
 // buildAgentPlanForTest chooses every Goa and agent name and builds the data

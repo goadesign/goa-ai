@@ -384,6 +384,9 @@ func (p *consumerInputPlan) plan() error {
 		contextType.jsonValidator.render = true
 	}
 	for _, group := range p.fieldBindings {
+		if !group.hasUniformFieldType() {
+			continue
+		}
 		for _, entry := range []struct {
 			suffix string
 			target **codegen.NameDeclaration
@@ -562,4 +565,81 @@ func (p *consumerInputPlan) link(api *goaexpr.APIExpr) error {
 	p.specs.JSONValidators = materializeJSONValidators(p.packages.jsonValidators)
 	p.specs.JSONDocumentValidators = materializeJSONDocumentValidators(p.packages.jsonDocumentValidators)
 	return nil
+}
+
+// hasUniformFieldType reports whether every tool matched by this toolset-level
+// field binding shares an identical Go parameter type for the bound field. When
+// tools declare distinct Go types for the same field name, toolset-wide convenience
+// wrappers cannot compile and only per-tool binding functions are emitted.
+func (b *consumerToolsetFieldBinding) hasUniformFieldType() bool {
+	if len(b.tools) <= 1 {
+		return true
+	}
+	first := b.tools[0].fieldLayouts[0]
+	for _, tool := range b.tools[1:] {
+		if !sameParameterType(first, tool.fieldLayouts[0]) {
+			return false
+		}
+	}
+	return true
+}
+
+// sameParameterType reports whether two field layout plans produce the same Go
+// parameter type reference when linked in a consumer input binding function,
+// ignoring enclosing-struct field comments, descriptions, and JSON tags.
+func sameParameterType(a, b *codegen.GoTypePlan) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if a.Kind() != b.Kind() || a.ReferenceIsPointer() != b.ReferenceIsPointer() || a.Owner() != b.Owner() {
+		return false
+	}
+	switch a.Kind() {
+	case codegen.GoNamed:
+		if a.TypeDeclaration() != nil || b.TypeDeclaration() != nil {
+			return a.TypeDeclaration() == b.TypeDeclaration()
+		}
+		return a.Link("", identityQualifier).Name() == b.Link("", identityQualifier).Name()
+	case codegen.GoUnion:
+		if a.UnionDeclaration() != nil || b.UnionDeclaration() != nil {
+			return a.UnionDeclaration() == b.UnionDeclaration()
+		}
+		return a.Link("", identityQualifier).Name() == b.Link("", identityQualifier).Name()
+	case codegen.GoPrimitive, codegen.GoEmpty, codegen.GoServiceError:
+		return a.Link("", identityQualifier).Name() == b.Link("", identityQualifier).Name()
+	case codegen.GoArray:
+		return a.Elem().IsPointer() == b.Elem().IsPointer() && sameParameterType(a.Elem(), b.Elem())
+	case codegen.GoMap:
+		return a.Key().IsPointer() == b.Key().IsPointer() &&
+			a.Elem().IsPointer() == b.Elem().IsPointer() &&
+			sameParameterType(a.Key(), b.Key()) &&
+			sameParameterType(a.Elem(), b.Elem())
+	case codegen.GoStruct:
+		aFields, bFields := a.Fields(), b.Fields()
+		if len(aFields) != len(bFields) {
+			return false
+		}
+		for i := range aFields {
+			af, bf := aFields[i], bFields[i]
+			if af.FieldName(true) != bf.FieldName(true) ||
+				af.IsPointer() != bf.IsPointer() ||
+				af.Tag() != bf.Tag() ||
+				af.Description() != bf.Description() ||
+				!sameParameterType(af, bf) {
+				return false
+			}
+		}
+		return true
+	default:
+		return a.Equivalent(b)
+	}
+}
+
+// identityQualifier returns importPath unchanged so LinkedGoType comparisons can
+// compare canonical package-qualified type names before file import aliases are linked.
+func identityQualifier(importPath string) string {
+	if importPath == "" {
+		return "_"
+	}
+	return importPath
 }
