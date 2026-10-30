@@ -948,6 +948,94 @@ func TestRequestHistoryCompressPublishesTerminalFailureAndRejectedPlannerUsage(t
 			TotalTokens:  18,
 		}, failedOut.Usage)
 	})
+
+	t.Run("summary succeeds and model child context is canceled while activity context stays live", func(t *testing.T) {
+		summaryUsage := model.TokenUsage{
+			Model:        "summary-model",
+			ModelClass:   model.ModelClassSmall,
+			InputTokens:  12,
+			OutputTokens: 5,
+			TotalTokens:  17,
+		}
+		summaryClient := historyTestClient(t, stubModelClient{
+			complete: func(context.Context, *model.Request) (*model.Response, error) {
+				return testModelResponseWithUsage(
+					[]model.Message{*assistantTextMsg("summary before child cancellation")},
+					summaryUsage,
+				), nil
+			},
+		})
+		policy := Compress(
+			summaryClient,
+			HistoryCompressionConfig{CompressAtTurns: 2, KeepMaxTurns: 1},
+			WithModelClass(model.ModelClassSmall),
+		)
+		var cancelChild context.CancelFunc
+		pl := &stubPlanner{start: func(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
+			client, ok := in.Agent.PlannerModelClient("test")
+			require.True(t, ok)
+			var childCtx context.Context
+			childCtx, cancelChild = context.WithCancel(ctx)
+			defer cancelChild()
+			_, err := client.Complete(childCtx, &model.Request{Model: "planner-model", Messages: in.Messages})
+			return nil, err
+		}}
+		rt := newRequestHistoryRuntime(pl, policy)
+		rt.models["test"] = mustTestModelClient(stubModelClient{
+			complete: func(callCtx context.Context, _ *model.Request) (*model.Response, error) {
+				cancelChild()
+				return nil, callCtx.Err()
+			},
+		})
+		input := seedTestPlanInput(t, rt, PlanActivityInput{
+			AgentID:    "service.agent",
+			RunID:      "summary-child-canceled-run",
+			RunContext: run.Context{RunID: "summary-child-canceled-run", SessionID: "sess-1", TurnID: "turn-1"},
+			Policy:     &PolicyOverrides{ProviderRetryBudget: time.Hour},
+		}, requestHistoryMessages())
+		base := &workflowConversation{
+			finalization:     &workflowFinalizationState{},
+			providerRecovery: &providerRecoveryBudget{Remaining: time.Hour},
+		}
+		w := &providerRecoveryWorkflow{clock: time.Unix(100, 0)}
+		w.routeWorkflowContext = &routeWorkflowContext{
+			ctx:         t.Context(),
+			runID:       input.RunID,
+			hookRuntime: rt,
+			plannerRoutes: map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error){
+				"plan": func(ctx context.Context, actual *PlanActivityInput) (*PlanActivityOutput, error) {
+					w.clock = w.clock.Add(time.Second)
+					return rt.PlanStartActivity(ctx, actual)
+				},
+			},
+		}
+		budget := w.Now().Add(15 * time.Minute)
+		hard := budget.Add(time.Minute)
+		wf, err := installProviderRecovery(w, base.providerRecovery)
+		require.NoError(t, err)
+		base.providerControl = wf.actor
+		wf.actor.budget = &budget
+		wf.actor.hard = &hard
+		canceledOut, canceledErr := rt.runPlanActivity(
+			wf,
+			"plan",
+			engine.ActivityOptions{StartToCloseTimeout: time.Minute, RetryPolicy: engine.RetryPolicy{MaxAttempts: 1}},
+			*seedTestPlanInput(t, rt, *input, nil),
+			base,
+			budget,
+		)
+		require.Error(t, canceledErr)
+		require.ErrorIs(t, canceledErr, context.Canceled)
+		assert.Equal(t, runStatusCanceled, terminalRunStatusForError(canceledErr))
+		require.NotNil(t, canceledOut)
+		assert.Empty(t, canceledOut.PublishedAssistantText)
+		assert.Equal(t, model.TokenUsage{
+			InputTokens:  12,
+			OutputTokens: 5,
+			TotalTokens:  17,
+		}, canceledOut.Usage)
+		assert.Equal(t, []model.TokenUsage{summaryUsage}, plannerOutputUsageEvents(t, canceledOut))
+	})
 }
 
 func TestCompressStandaloneLeavesSuppliedClientUnmodified(t *testing.T) {
