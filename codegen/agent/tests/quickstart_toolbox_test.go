@@ -1,12 +1,14 @@
 package tests
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/codegen/agent/tests/testscenarios"
+	gcodegen "goa.design/goa/v3/codegen"
 )
 
 // TestQuickstartToolboxListsCompiledGuardrails checks that the toolbox
@@ -49,14 +51,16 @@ func TestQuickstartToolboxListsCompiledGuardrails(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			toolbox := quickstartToolbox(t, fileContent(t, buildAndGenerate(t, c.design), "AGENTS_QUICKSTART.md"))
+			files := buildAndGenerate(t, c.design)
+			toolbox := quickstartToolbox(t, fileContent(t, files, "AGENTS_QUICKSTART.md"))
 			for _, w := range c.want {
 				assert.Contains(t, toolbox, w)
 			}
 			for _, u := range c.unwanted {
 				assert.NotContains(t, toolbox, u)
 			}
-			assert.Regexp(t, "`gen/[^`]+/agents/[^`]+/specs/tool_schemas.json` \\(`input_binding`\\)", toolbox,
+			catalog := agentCatalogPath(t, files)
+			assert.Contains(t, toolbox, "`"+catalog+"` (`input_binding`)",
 				"the toolbox points to the agent's generated input schema file")
 		})
 	}
@@ -69,4 +73,18 @@ func quickstartToolbox(t *testing.T, content string) string {
 	end := strings.Index(content, "## 7. Agents Calling Agents")
 	require.True(t, start >= 0 && end > start, "quickstart has a toolbox section")
 	return content[start:end]
+}
+
+// agentCatalogPath returns the path of the single generated per-agent
+// tool_schemas.json catalog.
+func agentCatalogPath(t *testing.T, files []*gcodegen.File) string {
+	t.Helper()
+	var paths []string
+	for _, f := range files {
+		if p := filepath.ToSlash(f.Path); strings.HasSuffix(p, "/specs/tool_schemas.json") {
+			paths = append(paths, p)
+		}
+	}
+	require.Len(t, paths, 1, "the design generates one agent catalog")
+	return paths[0]
 }
