@@ -526,7 +526,7 @@ cfg := <agentpkg>.<AgentConfig>{Planner: myPlanner}
   * Requires confirmation before it runs
 {{- end }}
 {{- if .ServerData }}
-  * Server data (not sent to the model): {{ range $i, $d := .ServerData }}{{ if $i }}, {{ end }}`{{ $d.Kind }}`{{ end }}
+  * Server data: {{ range $i, $d := .ServerData }}{{ if $i }}, {{ end }}`{{ $d.Kind }}`{{ if $d.NativeImage }} (an image the model sees){{ end }}{{ end }}
 {{- end }}
 {{- if .TerminalRun }}
   * Ends the run when it succeeds
