@@ -1,4 +1,5 @@
 {
+  "agent_id": "alpha.scribe",
   "tools": [
     {
       "confirmation": {
@@ -8,6 +9,7 @@
       },
       "description": "Write a stateful change",
       "id": "catalog.commands.dangerous_write",
+      "name": "dangerous_write",
       "payload": {
         "name": "DangerousWritePayload",
         "schema": {

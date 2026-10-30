@@ -29,6 +29,10 @@ Goa-AI extends [Goa](https://goa.design) with AI agents, the Model Context Proto
 clients, servers, model schemas, validation, and runtime wiring. Implement your
 application's behavior in ordinary Go.
 
+Design tools can read the generated [per-agent schema catalog](docs/dsl.md#agent-specs-specs),
+including consumer-bound, lookup, and text-only input contracts, without running
+application bindings.
+
 For engineers, this means fewer contracts to maintain and compiler feedback when
 they change. For coding agents, it means explicit types, generated validation,
 and an application-specific guide to the code they need to implement.

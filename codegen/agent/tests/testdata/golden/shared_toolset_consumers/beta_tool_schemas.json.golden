@@ -1,8 +1,10 @@
 {
+  "agent_id": "beta.beta_worker",
   "tools": [
     {
       "description": "Return the supplied message.",
       "id": "shared.ping",
+      "name": "ping",
       "payload": {
         "name": "PingPayload",
         "schema": {
@@ -29,6 +31,23 @@
         }
       },
       "service": "beta",
+      "text_only_payload": {
+        "name": "PingPayload",
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "properties": {
+            "message": {
+              "description": "Message to return.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "message"
+          ],
+          "type": "object"
+        }
+      },
       "title": "Ping",
       "toolset": "beta.shared"
     }

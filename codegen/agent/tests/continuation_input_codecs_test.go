@@ -2,10 +2,13 @@ package tests
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"os/exec"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	"goa.design/goa-ai/codegen/agent/tests/testscenarios"
 	"goa.design/goa-ai/codegen/testhelpers"
 )
@@ -14,7 +17,40 @@ import (
 // definition, including its authored example, before any model call is made.
 func TestGeneratedContinuationInputCodecs(t *testing.T) {
 	files := testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", testscenarios.ContinuationInputCodecs())
+	catalog := readSchemaCatalogs(t, files)["alpha.scribe"]
+	require.NotEmpty(t, catalog.Tools)
+	catalogJSON, err := json.Marshal(catalog.Tools)
+	require.NoError(t, err)
 	root := writeGeneratedModule(t, files)
+	writeGeneratedPackageTest(t, root, "alpha/toolsets/lookup/catalog_test.go", fmt.Sprintf(`package lookup
+
+import (
+ "encoding/json"
+ "testing"
+ "github.com/stretchr/testify/require"
+)
+
+// TestCatalogUsesAdvertisedInput checks continuation inputs against real Specs.
+func TestCatalogUsesAdvertisedInput(t *testing.T) {
+ var catalog []map[string]json.RawMessage
+ require.NoError(t, json.Unmarshal([]byte(%q), &catalog))
+ for _, spec := range Specs() {
+  found := false
+  for _, entry := range catalog {
+   var id string
+   require.NoError(t, json.Unmarshal(entry["id"], &id))
+   if id != string(spec.Name) { continue }
+   found = true
+   var input, result struct { Schema json.RawMessage }
+   require.NoError(t, json.Unmarshal(entry["payload"], &input))
+   require.NoError(t, json.Unmarshal(entry["result"], &result))
+   require.JSONEq(t, string(spec.Payload.Schema), string(input.Schema))
+   require.JSONEq(t, string(spec.Result.Schema), string(result.Schema))
+  }
+  require.True(t, found, "missing tool %%s", spec.Name)
+ }
+}
+`, catalogJSON))
 	writeGeneratedPackageTest(t, root, "alpha/toolsets/lookup/continuation_input_test.go", `package lookup
 
 import (
