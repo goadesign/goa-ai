@@ -298,6 +298,7 @@ cfg := <agentpkg>.<AgentConfig>{Planner: myPlanner}
 * **`orchestrator.helpers`** 
 * **Tool: `helpers.answer`**
 * *Answer a simple question*
+* Exact per-agent input schemas, including `BindField` and lookup variants, are in each toolset's generated `specs/tool_schemas.json` (`input_binding`).
 * **Tools this agent EXPORTS for others to use:**
 * *This agent does not export any toolsets.*
 </details>
