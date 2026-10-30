@@ -3,6 +3,7 @@
   "tools": [
     {
       "id": "helpers.answer",
+      "name": "answer",
       "service": "orchestrator",
       "toolset": "orchestrator.helpers",
       "title": "Answer",

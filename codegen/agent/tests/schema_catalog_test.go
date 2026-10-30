@@ -33,12 +33,16 @@ type (
 	}
 	// catalogTool keeps the established route and provider schemas plus input views.
 	catalogTool struct {
+		// Name is the authored name supplied directly by the compiler.
+		Name string `json:"name"`
 		// ID is the existing qualified runtime tool identifier.
 		ID string `json:"id"`
 		// Toolset is the original selected registration route.
 		Toolset string `json:"toolset"`
 		// Payload is the unbound provider input contract.
 		Payload *catalogType `json:"payload"`
+		// HiddenFields lists fields supplied outside the model input.
+		HiddenFields []string `json:"hidden_fields"`
 		// Result is the provider's model-visible result contract.
 		Result *catalogType `json:"result"`
 		// TextOnlyPayload is present only for an available text-only view.
@@ -115,6 +119,7 @@ func TestSchemaCatalogPreservesNamesAndConsumerVariants(t *testing.T) {
 		assert.Equal(t, "records.readOrders", catalog.Tools[0].ID)
 		assert.Equal(t, "records.read_orders", catalog.Tools[1].ID)
 		for _, tool := range catalog.Tools {
+			assert.Contains(t, []string{"read_orders", "readOrders"}, tool.Name)
 			assert.Equal(t, "reader.records", tool.Toolset)
 			require.NotNil(t, tool.Payload)
 			assert.Contains(t, string(tool.Payload.Schema), `"order_id"`)

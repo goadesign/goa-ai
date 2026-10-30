@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"sort"
 
 	agentexpr "goa.design/goa-ai/expr/agent"
@@ -23,6 +24,8 @@ type (
 	// agentInputBindingSchemas lists available compiled input contracts without
 	// claiming which installer the application invokes or supplying its values.
 	agentInputBindingSchemas struct {
+		// HiddenFields names provider fields supplied outside this model input.
+		HiddenFields []string `json:"hidden_fields,omitempty"`
 		// Payload is the schema installed by ordinary application-value binding.
 		Payload *agentTypeSchema `json:"payload"`
 		// TextOnlyPayload is the ordinary text-only input when supported.
@@ -127,7 +130,9 @@ func agentSpecsJSONFile(agent *AgentData, bindings []*consumerInputPlan) (*codeg
 	}
 
 	type toolSchema struct {
-		ID           string              `json:"id"`
+		ID string `json:"id"`
+		// Name is the authored tool name, independent of its qualified ID or route.
+		Name         string              `json:"name"`
 		Service      string              `json:"service"`
 		Toolset      string              `json:"toolset"`
 		Title        string              `json:"title,omitempty"`
@@ -136,7 +141,13 @@ func agentSpecsJSONFile(agent *AgentData, bindings []*consumerInputPlan) (*codeg
 		Meta         map[string][]string `json:"meta,omitempty"`
 		Confirmation *confirmationSchema `json:"confirmation,omitempty"`
 		Payload      *agentTypeSchema    `json:"payload,omitempty"`
-		Result       *agentTypeSchema    `json:"result,omitempty"`
+		// HiddenFields names inputs supplied by the runtime or provider.
+		HiddenFields []string `json:"hidden_fields,omitempty"`
+		// RequiresUI excludes the tool from text-only execution.
+		RequiresUI bool `json:"requires_ui,omitempty"`
+		// BoundedResult reports the compiler's out-of-band bounds contract.
+		BoundedResult bool             `json:"bounded_result,omitempty"`
+		Result        *agentTypeSchema `json:"result,omitempty"`
 		// TextOnlyPayload retains the provider's generated UI-free contract.
 		TextOnlyPayload *agentTypeSchema `json:"text_only_payload,omitempty"`
 		// InputBinding lists only this exact reference's compiled input choices.
@@ -208,11 +219,15 @@ func agentSpecsJSONFile(agent *AgentData, bindings []*consumerInputPlan) (*codeg
 			seen[t.Name] = route
 
 			entry := toolSchema{
-				ID:          t.Name,
-				Service:     route.service,
-				Toolset:     route.toolset,
-				Title:       t.Title,
-				Description: t.Description,
+				ID:            t.Name,
+				Name:          tool.Tool.Name,
+				Service:       route.service,
+				Toolset:       route.toolset,
+				Title:         t.Title,
+				Description:   t.Description,
+				HiddenFields:  slices.Clone(tool.Tool.ModelHiddenPayloadFields),
+				RequiresUI:    t.RequiresUI,
+				BoundedResult: t.Bounds != nil,
 			}
 			if len(t.Tags) > 0 {
 				entry.Tags = append([]string(nil), t.Tags...)
@@ -230,6 +245,7 @@ func agentSpecsJSONFile(agent *AgentData, bindings []*consumerInputPlan) (*codeg
 			entry.TextOnlyPayload = catalogTypeSchema(t.TextOnlyPayload)
 			if bound := inputs[bindingKey{toolset.Expr, tool.Tool.Name}]; bound != nil {
 				entry.InputBinding = &agentInputBindingSchemas{
+					HiddenFields:  slices.Clone(bound.owner.ModelHiddenPayloadFields),
 					Payload:       catalogTypeSchema(bound.model),
 					LookupPayload: catalogTypeSchema(bound.lookupModel),
 				}

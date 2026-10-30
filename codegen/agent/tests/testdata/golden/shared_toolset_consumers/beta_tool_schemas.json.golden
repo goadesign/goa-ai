@@ -4,6 +4,7 @@
     {
       "description": "Return the supplied message.",
       "id": "shared.ping",
+      "name": "ping",
       "payload": {
         "name": "PingPayload",
         "schema": {
