@@ -543,7 +543,7 @@ cfg := <agentpkg>.<AgentConfig>{Planner: myPlanner}
 {{- else }}
 * *This agent does not use any toolsets.*
 {{- end }}
-* Exact per-agent input schemas, including `BindField` and lookup variants, are in each toolset's generated `specs/tool_schemas.json` (`input_binding`).
+* Exact input schemas for this agent, including `BindField` and lookup variants: `{{ .Dir }}/specs/tool_schemas.json` (`input_binding`).
 * **Tools this agent EXPORTS for others to use:**
 {{- if .ExportedToolsets }}
 {{- range .ExportedToolsets }}

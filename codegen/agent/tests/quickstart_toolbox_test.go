@@ -56,8 +56,8 @@ func TestQuickstartToolboxListsCompiledGuardrails(t *testing.T) {
 			for _, u := range c.unwanted {
 				assert.NotContains(t, toolbox, u)
 			}
-			assert.Contains(t, toolbox, "`specs/tool_schemas.json` (`input_binding`)",
-				"the toolbox points to the exact per-agent input schemas")
+			assert.Regexp(t, "`gen/[^`]+/agents/[^`]+/specs/tool_schemas.json` \\(`input_binding`\\)", toolbox,
+				"the toolbox points to the agent's generated input schema file")
 		})
 	}
 }
