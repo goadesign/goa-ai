@@ -45,9 +45,16 @@ func generateAgentFiles(data *GeneratorData, roots []eval.Root, specsPlan *toolS
 	}
 	generated = append(generated, completionFiles...)
 
+	// Partition existing binding plans once; each agent's catalog receives only
+	// its own references without rebuilding schemas or scanning other agents.
+	bindingsByAgent := make(map[string][]*consumerInputPlan)
+	for _, binding := range specsPlan.consumerInputs {
+		id := binding.reference.Agent.ID
+		bindingsByAgent[id] = append(bindingsByAgent[id], binding)
+	}
 	for _, svc := range data.Services {
 		for _, agent := range svc.Agents {
-			afiles, err := agentFiles(agent, aggregates)
+			afiles, err := agentFiles(agent, aggregates, bindingsByAgent[agent.ID])
 			if err != nil {
 				return nil, err
 			}

@@ -1,4 +1,5 @@
 {
+  "agent_id": "alpha.scribe",
   "tools": [
     {
       "confirmation": {

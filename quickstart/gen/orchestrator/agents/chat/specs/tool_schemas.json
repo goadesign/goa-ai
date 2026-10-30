@@ -1,4 +1,5 @@
 {
+  "agent_id": "orchestrator.chat",
   "tools": [
     {
       "id": "helpers.answer",
@@ -39,6 +40,26 @@
           },
           "required": [
             "text"
+          ],
+          "type": "object"
+        }
+      },
+      "text_only_payload": {
+        "name": "AnswerPayload",
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "additionalProperties": false,
+          "example": {
+            "question": "What is the capital of Japan?"
+          },
+          "properties": {
+            "question": {
+              "description": "User question to answer",
+              "type": "string"
+            }
+          },
+          "required": [
+            "question"
           ],
           "type": "object"
         }

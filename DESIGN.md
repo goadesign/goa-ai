@@ -196,6 +196,11 @@ For example, tool `get_forecast` in toolset `weather.read` has canonical ID `wea
 
 Generated `tools.ToolSpec` factories (`Specs()` and `Spec<Name>()`) produce self-contained tool specifications on demand without reading Goa's `docs.json` at runtime:
 
+Design tooling can inspect the existing per-agent `specs/tool_schemas.json`
+catalog, including the exact compiled ordinary, lookup, and text-only input
+choices. It reads linked schema data without constructing application values
+or installing bindings. See [Agent Specs](docs/dsl.md#agent-specs-specs).
+
 - **Canonical Raw JSON Schemas**: Payload, result, and server-data schemas are emitted at codegen time as immutable `rawjson.Message` (`tools.RawJSON`) byte slices. They are never re-parsed into `map[string]any` in the runtime except inside provider SDK adapters that require untyped map inputs.
 - **Structured Field Metadata (`TypeSpec.Fields`)**: Alongside the raw JSON Schema, codegen precomputes `[]tools.FieldSpec` on every `TypeSpec`, capturing each field's dot-path, description, JSON type, enum values, and union (`OneOf`) branch membership. Clarification prompts, retry hints, and UI form builders read `TypeSpec.Fields` directly instead of walking JSON Schema trees at runtime.
 - **Two-Stage Boundary Validation**: When a model emits a tool call, the runtime first validates the raw JSON arguments against the exact JSON Schema advertised to the model, and then invokes the generated `JSONCodec.FromJSON` decoder to run Goa's typed validations (patterns, min/max bounds, required non-empty arrays, and `OneOf` discriminated unions). If either check fails, the runtime synthesizes a structured `planner.RetryHint` containing the field-level errors and the generated `InputExample` JSON.

@@ -8,11 +8,38 @@ import (
 	"path/filepath"
 	"sort"
 
+	agentexpr "goa.design/goa-ai/expr/agent"
 	"goa.design/goa/v3/codegen"
 )
 
+type (
+	// agentTypeSchema is the existing catalog's named JSON Schema representation.
+	agentTypeSchema struct {
+		// Name is the generated type name associated with the contract.
+		Name string `json:"name"`
+		// Schema is the compiler-produced JSON document when one is available.
+		Schema json.RawMessage `json:"schema,omitempty"`
+	}
+	// agentInputBindingSchemas lists available compiled input contracts without
+	// claiming which installer the application invokes or supplying its values.
+	agentInputBindingSchemas struct {
+		// Payload is the schema installed by ordinary application-value binding.
+		Payload *agentTypeSchema `json:"payload"`
+		// TextOnlyPayload is the ordinary text-only input when supported.
+		TextOnlyPayload *agentTypeSchema `json:"text_only_payload,omitempty"`
+		// LookupPayload is the key-shaped input declared by Lookup, when present.
+		LookupPayload *agentTypeSchema `json:"lookup_payload,omitempty"`
+		// LookupTextOnlyPayload is the text-only key-shaped input when supported.
+		LookupTextOnlyPayload *agentTypeSchema `json:"lookup_text_only_payload,omitempty"`
+	}
+)
+
 // agentFiles returns all files written for one agent.
-func agentFiles(agent *AgentData, aggregates *aggregateSpecsPackagesPlan) ([]*codegen.File, error) {
+func agentFiles(
+	agent *AgentData,
+	aggregates *aggregateSpecsPackagesPlan,
+	bindings []*consumerInputPlan,
+) ([]*codegen.File, error) {
 	files := []*codegen.File{
 		agentImplFile(agent),
 		agentConfigFile(agent),
@@ -22,7 +49,7 @@ func agentFiles(agent *AgentData, aggregates *aggregateSpecsPackagesPlan) ([]*co
 	if agg != nil {
 		files = append(files, agg)
 	}
-	jsonFile, err := agentSpecsJSONFile(agent)
+	jsonFile, err := agentSpecsJSONFile(agent, bindings)
 	if err != nil {
 		return nil, err
 	}
@@ -78,17 +105,12 @@ func agentFiles(agent *AgentData, aggregates *aggregateSpecsPackagesPlan) ([]*co
 //
 // Schemas are emitted only when available; tools without payload, result, or
 // server data schemas still appear with their names.
-func agentSpecsJSONFile(agent *AgentData) (*codegen.File, error) {
+func agentSpecsJSONFile(agent *AgentData, bindings []*consumerInputPlan) (*codegen.File, error) {
 	selected, err := selectedAgentData(agent)
 	if err != nil {
 		return nil, err
 	}
 	agent = selected
-
-	type typeSchema struct {
-		Name   string          `json:"name"`
-		Schema json.RawMessage `json:"schema,omitempty"`
-	}
 
 	type confirmationSchema struct {
 		Title                string `json:"title,omitempty"`
@@ -97,11 +119,11 @@ func agentSpecsJSONFile(agent *AgentData) (*codegen.File, error) {
 	}
 
 	type serverDataSchema struct {
-		Kind        string     `json:"kind"`
-		Audience    string     `json:"audience"`
-		NativeImage bool       `json:"native_image,omitempty"`
-		Description string     `json:"description,omitempty"`
-		Type        typeSchema `json:"type"`
+		Kind        string          `json:"kind"`
+		Audience    string          `json:"audience"`
+		NativeImage bool            `json:"native_image,omitempty"`
+		Description string          `json:"description,omitempty"`
+		Type        agentTypeSchema `json:"type"`
 	}
 
 	type toolSchema struct {
@@ -113,19 +135,40 @@ func agentSpecsJSONFile(agent *AgentData) (*codegen.File, error) {
 		Tags         []string            `json:"tags,omitempty"`
 		Meta         map[string][]string `json:"meta,omitempty"`
 		Confirmation *confirmationSchema `json:"confirmation,omitempty"`
-		Payload      *typeSchema         `json:"payload,omitempty"`
-		Result       *typeSchema         `json:"result,omitempty"`
-		ServerData   []serverDataSchema  `json:"server_data,omitempty"`
+		Payload      *agentTypeSchema    `json:"payload,omitempty"`
+		Result       *agentTypeSchema    `json:"result,omitempty"`
+		// TextOnlyPayload retains the provider's generated UI-free contract.
+		TextOnlyPayload *agentTypeSchema `json:"text_only_payload,omitempty"`
+		// InputBinding lists only this exact reference's compiled input choices.
+		InputBinding *agentInputBindingSchemas `json:"input_binding,omitempty"`
+		ServerData   []serverDataSchema        `json:"server_data,omitempty"`
 	}
 	type catalogRoute struct {
 		service string
 		toolset string
 	}
+	// bindingKey joins the exact retained reference and authored tool name;
+	// generated package spellings and registration-route guesses are unnecessary.
+	type bindingKey struct {
+		// reference is the exact expression retained by this toolset reference.
+		reference *agentexpr.ToolsetExpr
+		// tool is the authored name used by the provider's existing tool lookup.
+		tool string
+	}
+	inputs := make(map[bindingKey]*consumerInputTool)
+	for _, binding := range bindings {
+		for _, tool := range binding.tools {
+			inputs[bindingKey{binding.reference.Expr, tool.expression.Name}] = tool
+		}
+	}
 
 	out := struct {
-		Tools []toolSchema `json:"tools"`
+		// AgentID lets tooling associate this file without guessing package names.
+		AgentID string       `json:"agent_id"`
+		Tools   []toolSchema `json:"tools"`
 	}{
-		Tools: make([]toolSchema, 0, len(agent.Tools)),
+		AgentID: agent.ID,
+		Tools:   make([]toolSchema, 0, len(agent.Tools)),
 	}
 
 	// A shared specification package describes the tool contract once. Build
@@ -182,24 +225,18 @@ func agentSpecsJSONFile(agent *AgentData) (*codegen.File, error) {
 				entry.Meta = meta
 			}
 
-			if td := t.Payload; td != nil && td.TypeName != "" {
-				ts := typeSchema{
-					Name: td.TypeName,
+			entry.Payload = catalogTypeSchema(t.Payload)
+			entry.Result = catalogTypeSchema(t.Result)
+			entry.TextOnlyPayload = catalogTypeSchema(t.TextOnlyPayload)
+			if bound := inputs[bindingKey{toolset.Expr, tool.Tool.Name}]; bound != nil {
+				entry.InputBinding = &agentInputBindingSchemas{
+					Payload:       catalogTypeSchema(bound.model),
+					LookupPayload: catalogTypeSchema(bound.lookupModel),
 				}
-				if len(td.SchemaJSON) > 0 {
-					ts.Schema = json.RawMessage(td.SchemaJSON)
+				if t.TextOnlyPayload != nil {
+					entry.InputBinding.TextOnlyPayload = catalogTypeSchema(bound.textOnly)
+					entry.InputBinding.LookupTextOnlyPayload = catalogTypeSchema(bound.lookupTextOnly)
 				}
-				entry.Payload = &ts
-			}
-
-			if td := t.Result; td != nil && td.TypeName != "" {
-				ts := typeSchema{
-					Name: td.TypeName,
-				}
-				if len(td.SchemaJSON) > 0 {
-					ts.Schema = json.RawMessage(td.SchemaJSON)
-				}
-				entry.Result = &ts
 			}
 
 			if len(t.ServerData) > 0 {
@@ -208,7 +245,7 @@ func agentSpecsJSONFile(agent *AgentData) (*codegen.File, error) {
 					if sd == nil || sd.Type == nil || sd.Type.TypeName == "" {
 						continue
 					}
-					ts := typeSchema{Name: sd.Type.TypeName}
+					ts := agentTypeSchema{Name: sd.Type.TypeName}
 					if len(sd.Type.SchemaJSON) > 0 {
 						ts.Schema = json.RawMessage(sd.Type.SchemaJSON)
 					}
@@ -261,6 +298,19 @@ func agentSpecsJSONFile(agent *AgentData) (*codegen.File, error) {
 		Path:             path,
 		SectionTemplates: sections,
 	}, nil
+}
+
+// catalogTypeSchema preserves the existing catalog's type/schema availability
+// rules while allowing every view to read the same linked schema data.
+func catalogTypeSchema(data *typeData) *agentTypeSchema {
+	if data == nil || data.TypeName == "" {
+		return nil
+	}
+	result := &agentTypeSchema{Name: data.TypeName}
+	if len(data.SchemaJSON) > 0 {
+		result.Schema = json.RawMessage(data.SchemaJSON)
+	}
+	return result
 }
 
 // agentToolSpecsData combines the saved names, types, and schemas for every
