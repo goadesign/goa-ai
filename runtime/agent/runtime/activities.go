@@ -809,7 +809,7 @@ func (a *plannerActivityInvocation) failureOutput(ctx context.Context, err error
 		}
 	}
 	publishedText := a.invocations.publishedAssistantText()
-	if publishedText == "" {
+	if publishedText == "" && !a.invocations.hasFinalizedSummaryInvocation() {
 		return nil, err
 	}
 	if contextErr := ctx.Err(); contextErr != nil {

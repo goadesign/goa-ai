@@ -360,6 +360,9 @@ func Compress(client model.Client, policyCfg HistoryCompressionConfig, opts ...C
 				return original, err
 			}
 		}
+		if decorate, ok := ctx.Value(historySummaryClientDecoratorKey{}).(historySummaryClientDecorator); ok {
+			summaryClient = decorate(summaryClient)
+		}
 		if emitStatus, ok := ctx.Value(historyStatusEmitterKey{}).(historyStatusEmitter); ok {
 			if err := emitStatus(ctx, stream.StatusPayload{
 				Code:    stream.StatusCodeContextCompaction,

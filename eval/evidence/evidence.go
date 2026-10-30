@@ -3,8 +3,8 @@
 //
 // Evidence is the framework-owned record of one run tree's observable
 // behavior: tool calls in canonical causal order, results in observation order,
-// the accumulated assistant answer, a pending confirmation boundary, and the
-// terminal workflow phase.
+// token-usage reports in observation order, the accumulated assistant answer,
+// a pending confirmation boundary, and the terminal workflow phase.
 // A Collector builds Evidence from stream.Event values; an Expect converts
 // Evidence into eval.Check results.
 //
@@ -21,6 +21,7 @@ import (
 	"fmt"
 
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
@@ -46,6 +47,9 @@ type (
 		// observation order. They include earlier invocations completed here
 		// without counting those invocations again in ToolCalls.
 		ToolCompletions []ToolCompletion
+		// Usage is every token-usage report observed in this root's stream, in
+		// observation order, including reports from agent-as-tool child runs.
+		Usage []UsageRecord
 		// Confirmation is the pending operator confirmation when the run
 		// stopped at an await_confirmation boundary.
 		Confirmation *Confirmation
@@ -60,6 +64,16 @@ type (
 		// continuation preserves collector-owned pending observations. Public
 		// evidence fields are snapshots, never inputs to continuation state.
 		continuation *continuationContext
+	}
+
+	// UsageRecord pairs one observed token-usage report with the run that
+	// emitted it.
+	UsageRecord struct {
+		// RunID is the workflow run that reported this token usage.
+		RunID string
+		// TokenUsage is the canonical token-count payload reported for the
+		// model invocation.
+		TokenUsage model.TokenUsage
 	}
 
 	// ToolCompletion records one observed result and the original invocation.

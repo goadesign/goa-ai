@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/stream"
@@ -70,15 +71,21 @@ func TestContinuationSeparatesInvocationsFromObservedCompletions(t *testing.T) {
 }
 
 func TestContinuationRetainsPendingCallsAcrossMultipleAcceptedRoots(t *testing.T) {
+	firstUsage := model.TokenUsage{Model: "model-a", ModelClass: model.ModelClassDefault, InputTokens: 10, OutputTokens: 5, TotalTokens: 15}
+	secondUsage := model.TokenUsage{Model: "model-b", ModelClass: model.ModelClassSmall, InputTokens: 20, OutputTokens: 8, TotalTokens: 28}
+	thirdUsage := model.TokenUsage{Model: "model-a", ModelClass: model.ModelClassDefault, InputTokens: 30, OutputTokens: 12, TotalTokens: 42}
 	first := collectEvents(t, NewCollector(),
 		toolStart("first", "svc.summary", "summary", ""),
+		usageEvent("first", firstUsage),
 		toolStart("first", "svc.ask", "ask", ""),
 		runStreamEnd("first"),
 	)
+	require.Equal(t, []UsageRecord{{RunID: "first", TokenUsage: firstUsage}}, first.Usage)
 	second, err := NewContinuationCollector(first, "second")
 	require.NoError(t, err)
 	middle := collectEvents(t, second,
 		workflowEvent("second", "started", nil),
+		usageEvent("second-child", secondUsage),
 		toolStart("second", "svc.read", "read", ""),
 		toolEnd("second", "svc.read", "read", "", `{}`, nil),
 		toolEnd("second", "svc.summary", "summary", "", `{"cursor":"C"}`, nil),
@@ -86,6 +93,7 @@ func TestContinuationRetainsPendingCallsAcrossMultipleAcceptedRoots(t *testing.T
 		toolEnd("second", "svc.continue", "continue", "", `{"cursor":"C","complete":true}`, nil),
 		runStreamEnd("second"),
 	)
+	require.Equal(t, []UsageRecord{{RunID: "second-child", TokenUsage: secondUsage}}, middle.Usage)
 	require.Len(t, middle.ToolCompletions, 3)
 	assert.Equal(t, []string{"read", "summary", "continue"}, []string{
 		middle.ToolCompletions[0].Call.ToolCallID,
@@ -97,8 +105,10 @@ func TestContinuationRetainsPendingCallsAcrossMultipleAcceptedRoots(t *testing.T
 	last := collectEvents(t, third,
 		workflowEvent("third", "started", nil),
 		toolEnd("third", "svc.ask", "ask", "", `{"answer":"yes"}`, nil),
+		usageEvent("third", thirdUsage),
 		runStreamEnd("third"),
 	)
+	require.Equal(t, []UsageRecord{{RunID: "third", TokenUsage: thirdUsage}}, last.Usage)
 	assert.Empty(t, last.ToolCalls)
 	require.Len(t, last.ToolCompletions, 1)
 	assert.Equal(t, "first", last.ToolCompletions[0].InvocationRootRunID)
@@ -109,6 +119,7 @@ func TestContinuationRetainsPendingCallsAcrossMultipleAcceptedRoots(t *testing.T
 	empty := collectEvents(t, fourth, workflowEvent("fourth", "started", nil), runStreamEnd("fourth"))
 	assert.Empty(t, empty.ToolCalls)
 	assert.Empty(t, empty.ToolCompletions)
+	assert.Nil(t, empty.Usage)
 }
 
 func TestContinuationUsesObservedPriorParentsWithoutInventingCalls(t *testing.T) {

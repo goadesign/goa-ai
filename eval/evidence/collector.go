@@ -9,8 +9,10 @@ package evidence
 import (
 	"bytes"
 	"fmt"
+	"slices"
 
 	"goa.design/goa-ai/runtime/agent"
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/stream"
@@ -50,8 +52,8 @@ func NewCollector() *Collector {
 // Consume applies one stream event to the evidence. It returns an error when
 // the event violates the stream contract: an unknown or duplicate invocation,
 // a repeated completion, or a result with a different tool name or parent.
-// Event kinds that carry no evidence (thoughts, deltas, usage, session markers)
-// are ignored.
+// Event kinds that carry no evidence (thoughts, deltas, session markers) are
+// ignored.
 func (c *Collector) Consume(event stream.Event) error {
 	if c.expectRoot && event.RunID() != "" {
 		if event.RunID() != c.evidence.RunID || event.SessionID() != c.evidence.SessionID {
@@ -108,6 +110,22 @@ func (c *Collector) Consume(event stream.Event) error {
 		if e.RunID() == c.evidence.RunID {
 			c.evidence.Answer += e.Data.Text
 		}
+	case stream.Usage:
+		if c.evidence.RunID == "" {
+			return fmt.Errorf("usage requires an observed root run")
+		}
+		c.evidence.Usage = append(c.evidence.Usage, UsageRecord{
+			RunID: e.RunID(),
+			TokenUsage: model.TokenUsage{
+				Model:            e.Data.Model,
+				ModelClass:       e.Data.ModelClass,
+				InputTokens:      e.Data.InputTokens,
+				OutputTokens:     e.Data.OutputTokens,
+				TotalTokens:      e.Data.TotalTokens,
+				CacheReadTokens:  e.Data.CacheReadTokens,
+				CacheWriteTokens: e.Data.CacheWriteTokens,
+			},
+		})
 	case stream.Workflow:
 		if e.RunID() != c.evidence.RunID {
 			return nil
@@ -173,6 +191,7 @@ func (c *Collector) Finish() (*Evidence, error) {
 			Call:                cloneToolCall(completed.Call),
 		}
 	}
+	snapshot.Usage = slices.Clone(c.evidence.Usage)
 	if c.evidence.Confirmation != nil {
 		confirmation := *c.evidence.Confirmation
 		confirmation.Payload = bytes.Clone(confirmation.Payload)

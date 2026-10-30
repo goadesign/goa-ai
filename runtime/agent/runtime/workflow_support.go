@@ -801,9 +801,6 @@ func (r *Runtime) runPlanActivityOnce(
 		if out.Result != nil {
 			return nil, errors.New("runPlanActivity received both PlanResult and PlanningFailure")
 		}
-		if out.PublishedAssistantText == "" {
-			return nil, errors.New("runPlanActivity received PlanningFailure without published assistant text")
-		}
 		if err := validatePlanningFailure(out.PlanningFailure); err != nil {
 			return nil, err
 		}
