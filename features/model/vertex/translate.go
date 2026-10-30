@@ -190,6 +190,7 @@ func translateResponse(resp *genai.GenerateContentResponse, modelID string, clas
 		}
 	}
 	out.Usage = translateUsage(resp.UsageMetadata, modelID, class)
+	out.UsageReported = resp.UsageMetadata != nil
 	return out, nil
 }
 

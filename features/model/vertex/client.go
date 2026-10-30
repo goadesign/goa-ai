@@ -96,13 +96,14 @@ func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Res
 	}
 	response, err := translateResponse(resp, prep.modelID, prep.modelClass, prep.provToCanon, prep.toolCallIDs)
 	if err != nil {
-		usage := translateUsage(nil, prep.modelID, prep.modelClass)
-		if resp != nil {
-			usage = translateUsage(resp.UsageMetadata, prep.modelID, prep.modelClass)
+		var usage *model.TokenUsage
+		if resp != nil && resp.UsageMetadata != nil {
+			translated := translateUsage(resp.UsageMetadata, prep.modelID, prep.modelClass)
+			usage = &translated
 		}
 		return nil, contract.RejectProviderOutput(
 			outputvalidation.RequiredKind(err),
-			&usage,
+			usage,
 			err,
 		)
 	}

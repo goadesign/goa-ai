@@ -225,10 +225,9 @@ func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Res
 	}
 	resp, err := translateResponse(output, parts.toolNameProvToCanonical, parts.modelID, parts.modelClass)
 	if err != nil {
-		usage := translateBedrockUsage(output, parts.modelID, parts.modelClass)
 		return nil, contract.RejectProviderOutput(
 			outputvalidation.RequiredKind(err),
-			&usage,
+			rejectedBedrockUsage(output, parts.modelID, parts.modelClass),
 			err,
 		)
 	}
@@ -1827,6 +1826,7 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 		resp.Content = append(resp.Content, assistant)
 	}
 	resp.Usage = translateBedrockUsage(output, modelID, modelClass)
+	resp.UsageReported = bedrockTokenUsageReported(output.Usage)
 	resp.StopReason = string(output.StopReason)
 	if resp.StopReason == "" {
 		return nil, outputvalidation.New(
@@ -1843,6 +1843,26 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 func bedrockOutputLimited(reason brtypes.StopReason) bool {
 	return reason == brtypes.StopReasonMaxTokens ||
 		reason == brtypes.StopReasonModelContextWindowExceeded
+}
+
+// bedrockTokenUsageReported reports whether Bedrock populated at least one
+// token count field on Usage.
+func bedrockTokenUsageReported(usage *brtypes.TokenUsage) bool {
+	return usage != nil && (usage.InputTokens != nil ||
+		usage.OutputTokens != nil ||
+		usage.TotalTokens != nil ||
+		usage.CacheReadInputTokens != nil ||
+		usage.CacheWriteInputTokens != nil)
+}
+
+// rejectedBedrockUsage returns provider-reported token usage for a rejected
+// Converse response, or nil when Bedrock omitted token usage metadata.
+func rejectedBedrockUsage(output *bedrockruntime.ConverseOutput, modelID string, modelClass model.ModelClass) *model.TokenUsage {
+	if output == nil || !bedrockTokenUsageReported(output.Usage) {
+		return nil
+	}
+	usage := translateBedrockUsage(output, modelID, modelClass)
+	return &usage
 }
 
 // translateBedrockUsage extracts provider usage and resolved model identity

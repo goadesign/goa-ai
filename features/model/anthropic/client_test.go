@@ -57,6 +57,15 @@ func mustAnthropicToolInput(t *testing.T, schema rawjson.Message) model.ToolInpu
 	return input
 }
 
+// mustAnthropicUsage decodes a JSON usage payload into sdk.Usage so SDK JSON
+// presence metadata matches a real Anthropic wire response.
+func mustAnthropicUsage(t *testing.T, raw string) sdk.Usage {
+	t.Helper()
+	var usage sdk.Usage
+	require.NoError(t, json.Unmarshal([]byte(raw), &usage))
+	return usage
+}
+
 type (
 	// stubMessagesClient records the last request per Messages endpoint and
 	// replays canned responses.
@@ -144,10 +153,7 @@ func TestCompleteRejectsMissingToolCallIDWithUsage(t *testing.T) {
 			Input: json.RawMessage(`{"id":"a"}`),
 		}},
 		StopReason: sdk.StopReasonToolUse,
-		Usage: sdk.Usage{
-			InputTokens:  7,
-			OutputTokens: 2,
-		},
+		Usage:      mustAnthropicUsage(t, `{"input_tokens":7,"output_tokens":2}`),
 	}}
 	client, err := New(stub, Options{DefaultModel: "claude-test", MaxTokens: 64})
 	require.NoError(t, err)
@@ -293,10 +299,7 @@ func TestComplete_TextOnly(t *testing.T) {
 			},
 		},
 		StopReason: sdk.StopReasonEndTurn,
-		Usage: sdk.Usage{
-			InputTokens:  10,
-			OutputTokens: 5,
-		},
+		Usage:      mustAnthropicUsage(t, `{"input_tokens":10,"output_tokens":5}`),
 	}
 
 	resp, err := cl.Complete(context.Background(), req)

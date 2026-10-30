@@ -181,6 +181,26 @@ func (s *retainedOutputService) GetWorkflowExecutionHistory(_ context.Context, r
 	if request.GetExecution().GetWorkflowId() != retainedChildWorkflowID {
 		return nil, status.Error(codes.NotFound, "unexpected fixture workflow")
 	}
+	if request.GetHistoryEventFilterType() == enumspb.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT {
+		startedInput, err := NewAgentDataConverter().ToPayloads(&api.RunInput{
+			RunID:   retainedChildWorkflowID,
+			Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("agent")},
+		})
+		if err != nil {
+			return nil, err
+		}
+		return &workflowservice.GetWorkflowExecutionHistoryResponse{
+			History: &historypb.History{Events: []*historypb.HistoryEvent{{
+				EventId:   1,
+				EventType: enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_STARTED,
+				Attributes: &historypb.HistoryEvent_WorkflowExecutionStartedEventAttributes{
+					WorkflowExecutionStartedEventAttributes: &historypb.WorkflowExecutionStartedEventAttributes{
+						Input: startedInput,
+					},
+				},
+			}}},
+		}, nil
+	}
 	return &workflowservice.GetWorkflowExecutionHistoryResponse{
 		History: &historypb.History{Events: []*historypb.HistoryEvent{{
 			EventId:   11,

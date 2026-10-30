@@ -46,7 +46,8 @@ func translateResponse(
 		return nil, outputvalidation.New(model.OutputValidationOutputBounds, err)
 	}
 	translated := &model.Response{
-		Usage: translateUsage(resp.Usage, chooseModelID(resp.Model, resolvedModelID), resolvedModelClass),
+		Usage:         translateUsage(resp.Usage, chooseModelID(resp.Model, resolvedModelID), resolvedModelClass),
+		UsageReported: openAIResponseUsageReported(resp),
 	}
 	var (
 		pendingThinking []model.Part
@@ -461,6 +462,23 @@ func extractAssistantText(content []model.Message) string {
 		}
 	}
 	return text.String()
+}
+
+// openAIResponseUsageReported reports whether an OpenAI response explicitly
+// included a usage block or non-zero token counts.
+func openAIResponseUsageReported(resp *responses.Response) bool {
+	if resp == nil {
+		return false
+	}
+	return resp.JSON.Usage.Valid() || openAIUsageReported(resp.Usage)
+}
+
+// openAIUsageReported reports whether a ResponseUsage block carries explicit
+// JSON token fields.
+func openAIUsageReported(usage responses.ResponseUsage) bool {
+	return usage.JSON.InputTokens.Valid() ||
+		usage.JSON.OutputTokens.Valid() ||
+		usage.JSON.TotalTokens.Valid()
 }
 
 func translateUsage(usage responses.ResponseUsage, modelID string, modelClass model.ModelClass) model.TokenUsage {

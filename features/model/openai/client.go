@@ -187,24 +187,39 @@ func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Res
 		resp, err := c.transport.Complete(ctx, prepared.request)
 		if err != nil {
 			err = wrapOpenAIError("responses.create", err)
-			if prepared.search != nil {
+			if prepared.search != nil && prepared.search.usageReported {
 				err = model.RetainUsage(err, prepared.search.usage)
 			}
 			return nil, err
 		}
 		var usage model.TokenUsage
+		var rejectedUsage *model.TokenUsage
+		reported := openAIResponseUsageReported(resp)
 		if resp != nil {
 			usage = translateUsage(
 				resp.Usage,
 				chooseModelID(resp.Model, prepared.resolvedModelID),
 				prepared.resolvedModelClass,
 			)
+			if reported {
+				copied := usage
+				rejectedUsage = &copied
+			}
 		}
 		if prepared.search != nil {
-			if err := prepared.search.account(usage); err != nil {
-				return nil, contract.RejectProviderOutput(outputvalidation.RequiredKind(err), &prepared.search.usage, err)
+			if err := prepared.search.account(usage, reported); err != nil {
+				var prior *model.TokenUsage
+				if prepared.search.usageReported {
+					copied := prepared.search.usage
+					prior = &copied
+				}
+				return nil, contract.RejectProviderOutput(outputvalidation.RequiredKind(err), prior, err)
 			}
 			usage = prepared.search.usage
+			if prepared.search.usageReported {
+				copied := usage
+				rejectedUsage = &copied
+			}
 		}
 		response, err := translateResponse(
 			resp, prepared.codec, prepared.resolvedModelID, prepared.resolvedModelClass,
@@ -212,21 +227,24 @@ func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Res
 		)
 		if err != nil {
 			if _, providerFailure := model.AsProviderError(err); providerFailure {
-				return nil, model.RetainUsage(err, usage)
+				if rejectedUsage != nil {
+					return nil, model.RetainUsage(err, *rejectedUsage)
+				}
+				return nil, err
 			}
-			return nil, contract.RejectProviderOutput(outputvalidation.RequiredKind(err), &usage, err)
+			return nil, contract.RejectProviderOutput(outputvalidation.RequiredKind(err), rejectedUsage, err)
 		}
 		if prepared.search == nil {
 			return response, nil
 		}
 		if !prepared.search.finishRound(response) {
 			if err := prepared.search.complete(response); err != nil {
-				return nil, contract.RejectProviderOutput(outputvalidation.RequiredKind(err), &usage, err)
+				return nil, contract.RejectProviderOutput(outputvalidation.RequiredKind(err), rejectedUsage, err)
 			}
 			return response, nil
 		}
 		if err := prepared.search.continueRequest(&prepared.request, resp); err != nil {
-			return nil, contract.RejectProviderOutput(outputvalidation.RequiredKind(err), &usage, err)
+			return nil, contract.RejectProviderOutput(outputvalidation.RequiredKind(err), rejectedUsage, err)
 		}
 	}
 }

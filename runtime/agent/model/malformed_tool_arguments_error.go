@@ -5,6 +5,7 @@
 package model
 
 import (
+	"errors"
 	"fmt"
 
 	"goa.design/goa-ai/runtime/agent/internal/correction"
@@ -29,6 +30,16 @@ func NewMalformedToolArgumentsError(name tools.Ident, cause error) error {
 		panic("model: malformed tool arguments require a cause")
 	}
 	return &malformedToolArgumentsError{toolName: name, cause: cause}
+}
+
+// MalformedToolArgumentsToolName returns the canonical tool identifier and
+// parsing cause carried by a malformed-tool-arguments marker in err's chain.
+func MalformedToolArgumentsToolName(err error) (tools.Ident, error, bool) {
+	var marker *malformedToolArgumentsError
+	if !errors.As(err, &marker) {
+		return "", nil, false
+	}
+	return marker.toolName, marker.cause, true
 }
 
 // Error includes the original parsing diagnostic after the failure summary.

@@ -1,0 +1,482 @@
+// Code generated with goa, DO NOT EDIT.
+//
+// model_gateway protocol buffer definition
+//
+// Command:
+// $ goa gen goa.design/goa-ai/features/model/gateway/design -o
+// features/model/gateway
+
+syntax = "proto3";
+
+package goa_ai_model_gateway;
+
+option go_package = "/goa_ai_model_gatewaypb";
+
+// Model gateway service forwarding canonical model requests, responses, stream
+// frames, and token counts.
+service ModelGateway {
+	// Execute one unary model completion and return the raw provider response or
+// structured error.
+	rpc Complete (.goa_ai_model_gateway.CompleteRequest) returns (.goa_ai_model_gateway.CompleteResponse);
+	// Execute one streaming model completion and emit incremental chunk frames
+// followed by the terminal response or error frame.
+	rpc Stream (.goa_ai_model_gateway.StreamRequest) returns (stream .goa_ai_model_gateway.StreamResponse);
+	// Count exact input tokens for one model request when supported by the
+// configured provider.
+	rpc CountTokens (.goa_ai_model_gateway.CountTokensRequest) returns (.goa_ai_model_gateway.CountTokensResponse);
+}
+
+message CompleteRequest {
+	// Provider-specific model identifier.
+	optional string model = 1;
+	// Logical model family.
+	optional string model_class = 2;
+	// Prompt references used to build the request.
+	repeated PromptRef prompt_refs = 3;
+	// Ordered conversation transcript.
+	repeated ModelMessage messages = 4;
+	// Sampling temperature.
+	optional float temperature = 5;
+	// Advertised tool definitions.
+	repeated ToolDefinition tools = 6;
+	// Optional tool selection constraint.
+	ToolChoice tool_choice = 7;
+	// Maximum output tokens.
+	optional sint32 max_tokens = 8;
+	// Whether streaming was requested.
+	optional bool stream = 9;
+	// Optional reasoning configuration.
+	ThinkingOptions thinking = 10;
+	// Optional structured output contract.
+	StructuredOutput structured_output = 11;
+	// Optional prompt caching configuration.
+	CacheOptions cache = 12;
+}
+// Exact prompt identifier and version used to construct a model request.
+message PromptRef {
+	// Stable prompt identifier.
+	optional string id = 1;
+	// Content-derived or configured prompt version.
+	optional string version = 2;
+}
+// Single conversation message.
+message ModelMessage {
+	// Speaker role.
+	optional string role = 1;
+	// Ordered message content blocks.
+	repeated MessagePart parts = 2;
+	// JSON-encoded dynamic message metadata map.
+	optional bytes meta_json = 3;
+}
+// Discriminated union of model.Part variants.
+message MessagePart {
+	// Concrete part kind discriminator.
+	optional string kind = 1;
+	// Text content for text, document, citations, or thinking parts.
+	optional string text = 2;
+	// Provider thinking signature.
+	optional string signature = 3;
+	// Redacted provider thinking bytes.
+	optional bytes redacted = 4;
+	// Reasoning block sequence index.
+	optional sint32 index = 5;
+	// Whether a thinking part is finalized.
+	optional bool final = 6;
+	// Image encoding format.
+	optional string image_format = 7;
+	// Raw image or document bytes.
+	optional bytes bytes_ = 8;
+	// Retained generated image descriptor kind.
+	optional string source_kind = 9;
+	// Raw JSON image source descriptor.
+	optional bytes data = 10;
+	// Document or tool identifier.
+	optional string name = 11;
+	// Document format or extension.
+	optional string document_format = 12;
+	// Ordered document text chunks.
+	repeated string chunks = 13;
+	// External document URI.
+	optional string uri = 14;
+	// Document citation context.
+	optional string context = 15;
+	// Whether document citations are requested.
+	optional bool cite = 16;
+	// Attached citation metadata.
+	repeated Citation citations = 17;
+	// Tool call identifier.
+	optional string id = 18;
+	// Raw JSON tool arguments.
+	optional bytes input = 19;
+	// Provider reasoning signature on a tool call.
+	optional string thought_signature = 20;
+	// Correlated tool use identifier on a tool result.
+	optional string tool_use_id = 21;
+	// JSON-encoded tool result content value.
+	optional bytes content = 22;
+	// Whether tool result content was non-nil.
+	optional bool content_present = 23;
+	// MCP-encoded tool content blocks.
+	optional bytes blocks_json = 24;
+	// Whether the tool result represents an error.
+	optional bool is_error = 25;
+}
+// Provider citation metadata.
+message Citation {
+	// Human-readable source title.
+	optional string title = 1;
+	// Provider-neutral source identifier or URI.
+	optional string source = 2;
+	// Span location within the source.
+	CitationLocation location = 3;
+	// Quoted excerpts from the source.
+	repeated string source_content = 4;
+}
+// Location of a citation within its source.
+message CitationLocation {
+	// Character span location.
+	DocumentCharLocation document_char = 1;
+	// Page span location.
+	DocumentPageLocation document_page = 2;
+	// Chunk span location.
+	DocumentChunkLocation document_chunk = 3;
+}
+// Character range inside a cited document.
+message DocumentCharLocation {
+	// Zero-based document index.
+	optional sint32 document_index = 1;
+	// Inclusive start character index.
+	optional sint32 start = 2;
+	// Exclusive end character index.
+	optional sint32 end = 3;
+}
+// Page range inside a cited document.
+message DocumentPageLocation {
+	// Zero-based document index.
+	optional sint32 document_index = 1;
+	// Inclusive start page number.
+	optional sint32 start = 2;
+	// Inclusive end page number.
+	optional sint32 end = 3;
+}
+// Chunk range inside a cited document.
+message DocumentChunkLocation {
+	// Zero-based document index.
+	optional sint32 document_index = 1;
+	// Inclusive start chunk index.
+	optional sint32 start = 2;
+	// Exclusive end chunk index.
+	optional sint32 end = 3;
+}
+// Tool definition advertised to the model.
+message ToolDefinition {
+	// Canonical tool identifier.
+	optional string name = 1;
+	// Precomputed search document.
+	SearchDocument search = 2;
+	// Whether the tool is loaded via tool search.
+	optional bool deferred = 3;
+	// Concise tool summary.
+	optional string description = 4;
+	// Tool input schema contract.
+	ToolInputContract input = 5;
+	// Whether choosing the tool requires no arguments.
+	optional bool no_arguments = 6;
+}
+// Precomputed search document for a tool definition.
+message SearchDocument {
+	// Total term count.
+	optional sint32 length = 1;
+	// Term frequencies.
+	map<string, sint32> terms = 2;
+}
+// Provider-neutral raw JSON projection of a tool input contract.
+message ToolInputContract {
+	// Canonical JSON Schema bytes.
+	optional bytes schema = 1;
+	// Schema without root example annotation.
+	optional bytes schema_without_root_example = 2;
+	// Canonical authored example JSON.
+	optional bytes example_json = 3;
+}
+// Optional tool selection constraint.
+message ToolChoice {
+	// Tool choice mode.
+	optional string mode = 1;
+	// Target tool name when mode is tool.
+	optional string name = 2;
+}
+// Provider reasoning configuration.
+message ThinkingOptions {
+	// Whether reasoning is enabled.
+	optional bool enable = 1;
+	// Whether reasoning is interleaved with assistant content.
+	optional bool interleaved = 2;
+	// Reasoning token budget.
+	optional sint32 budget_tokens = 3;
+}
+// Provider-enforced structured output schema contract.
+message StructuredOutput {
+	// Canonical JSON Schema bytes.
+	optional bytes schema = 1;
+	// Schema without root example annotation.
+	optional bytes schema_without_root_example = 2;
+	// Canonical authored example JSON.
+	optional bytes example_json = 3;
+	// Provider-facing schema identifier.
+	optional string name = 4;
+	// Schema purpose description.
+	optional string description = 5;
+}
+// Prompt caching checkpoint configuration.
+message CacheOptions {
+	// Place checkpoint after system messages.
+	optional bool after_system = 1;
+	// Place checkpoint after tool definitions.
+	optional bool after_tools = 2;
+}
+
+message CompleteResponse {
+	// Provider response when Complete succeeded.
+	ModelResponse response = 1;
+	// Structured error when Complete failed.
+	GatewayError error = 2;
+}
+// Provider completion response.
+message ModelResponse {
+	// Ordered assistant messages.
+	repeated ModelMessage content = 1;
+	// Token consumption metadata.
+	TokenUsage usage = 2;
+	// Whether the provider explicitly reported token usage.
+	optional bool usage_reported = 3;
+	// Provider stop reason.
+	optional string stop_reason = 4;
+	// Whether generation stopped at its token or context limit.
+	optional bool output_limited = 5;
+}
+// Token usage counters and model attribution.
+message TokenUsage {
+	// Resolved provider model identifier.
+	optional string model = 1;
+	// Logical model family.
+	optional string model_class = 2;
+	// Prompt/input tokens consumed.
+	optional sint32 input_tokens = 3;
+	// Completion/output tokens generated.
+	optional sint32 output_tokens = 4;
+	// Total tokens consumed.
+	optional sint32 total_tokens = 5;
+	// Tokens read from prompt cache.
+	optional sint32 cache_read_tokens = 6;
+	// Tokens written to prompt cache.
+	optional sint32 cache_write_tokens = 7;
+}
+// Structured gateway error tree preserving provider, validation, sentinel, and
+// retained-usage contracts.
+message GatewayError {
+	// Flattened error tree nodes with root at index 0.
+	repeated GatewayErrorNode nodes = 1;
+	// Validated invocation usage retained on a failed call.
+	TokenUsage retained_usage = 2;
+}
+// Single node in an encoded error tree.
+message GatewayErrorNode {
+	// Error node kind discriminator.
+	optional string kind = 1;
+	// Plain error text.
+	optional string message_ = 2;
+	// Known sentinel error code.
+	optional string sentinel = 3;
+	// Structured provider error details.
+	ProviderErrorDetail provider = 4;
+	// Output validation error details.
+	ValidationErrorDetail validation = 5;
+	// Rejected unadvertised tool name.
+	optional string unadvertised_tool_name = 6;
+	// Canonical tool name for malformed arguments.
+	optional string malformed_tool_name = 7;
+	// Index into GatewayError.nodes of the wrapped cause (-1 when none).
+	optional sint32 cause_index = 8;
+	// Indices into GatewayError.nodes of joined child errors.
+	repeated sint32 child_indices = 9;
+}
+// Structured provider error details.
+message ProviderErrorDetail {
+	// Provider identifier.
+	optional string provider = 1;
+	// Provider operation name.
+	optional string operation = 2;
+	// HTTP status code when available.
+	optional sint32 http_status = 3;
+	// Coarse-grained provider error classification.
+	optional string kind = 4;
+	// Provider-specific error code.
+	optional string code = 5;
+	// Provider error message.
+	optional string message_ = 6;
+	// Provider request identifier.
+	optional string request_id = 7;
+	// Whether retrying the call may succeed.
+	optional bool retryable = 8;
+}
+// Structured output validation error details.
+message ValidationErrorDetail {
+	// Closed output-validation category.
+	optional string kind = 1;
+	// Bounded response fingerprint.
+	ResponseEvidence evidence = 2;
+	// Validated scalar token usage.
+	TokenUsage usage = 3;
+	// Framework-authored recovery guidance.
+	optional string recovery_correction = 4;
+}
+// Bounded fingerprint of a rejected provider response.
+message ResponseEvidence {
+	// Whether a complete response was present.
+	optional bool present = 1;
+	// Stable digest encoding version.
+	optional string version = 2;
+	// Lowercase hex SHA-256 digest.
+	optional string sha256 = 3;
+	// Encoded byte size.
+	optional sint64 size = 4;
+}
+
+message StreamRequest {
+	// Provider-specific model identifier.
+	optional string model = 1;
+	// Logical model family.
+	optional string model_class = 2;
+	// Prompt references used to build the request.
+	repeated PromptRef prompt_refs = 3;
+	// Ordered conversation transcript.
+	repeated ModelMessage messages = 4;
+	// Sampling temperature.
+	optional float temperature = 5;
+	// Advertised tool definitions.
+	repeated ToolDefinition tools = 6;
+	// Optional tool selection constraint.
+	ToolChoice tool_choice = 7;
+	// Maximum output tokens.
+	optional sint32 max_tokens = 8;
+	// Whether streaming was requested.
+	optional bool stream = 9;
+	// Optional reasoning configuration.
+	ThinkingOptions thinking = 10;
+	// Optional structured output contract.
+	StructuredOutput structured_output = 11;
+	// Optional prompt caching configuration.
+	CacheOptions cache = 12;
+}
+
+message StreamResponse {
+	// Frame discriminator: chunk, response, or error.
+	optional string kind = 1;
+	// Incremental chunk when kind is chunk.
+	StreamChunk chunk = 2;
+	// Terminal provider response when kind is response.
+	ModelResponse response = 3;
+	// Structured error when kind is error.
+	GatewayError error = 4;
+}
+// Discriminated union of model.Chunk variants.
+message StreamChunk {
+	// Concrete chunk kind discriminator.
+	optional string kind = 1;
+	// Message payload for text or thinking chunks.
+	ModelMessage message_ = 2;
+	// Tool invocation for tool_call chunks.
+	ToolCall tool_call = 3;
+	// Argument fragment for tool_call_delta chunks.
+	ToolCallDelta tool_call_delta = 4;
+	// Structured payload for completion chunks.
+	Completion completion = 5;
+	// Fragment for completion_delta chunks.
+	CompletionDelta completion_delta = 6;
+	// Token delta for usage chunks.
+	TokenUsage usage = 7;
+	// Stop reason for stop chunks.
+	optional string stop_reason = 8;
+	// Output-limited flag for stop chunks.
+	optional bool output_limited = 9;
+}
+// Finalized tool call invocation.
+message ToolCall {
+	// Canonical tool identifier.
+	optional string name = 1;
+	// Raw JSON tool arguments.
+	optional bytes payload = 2;
+	// Tool call identifier.
+	optional string id = 3;
+	// Provider reasoning signature.
+	optional string thought_signature = 4;
+}
+// Incremental tool call argument fragment.
+message ToolCallDelta {
+	// Canonical tool identifier.
+	optional string name = 1;
+	// Tool call identifier.
+	optional string id = 2;
+	// Raw JSON fragment.
+	optional string delta = 3;
+}
+// Finalized structured completion payload.
+message Completion {
+	// Completion schema name.
+	optional string name = 1;
+	// Canonical JSON completion payload.
+	optional bytes payload = 2;
+}
+// Incremental structured completion fragment.
+message CompletionDelta {
+	// Completion schema name.
+	optional string name = 1;
+	// Raw JSON fragment.
+	optional string delta = 2;
+}
+
+message CountTokensRequest {
+	// Provider-specific model identifier.
+	optional string model = 1;
+	// Logical model family.
+	optional string model_class = 2;
+	// Prompt references used to build the request.
+	repeated PromptRef prompt_refs = 3;
+	// Ordered conversation transcript.
+	repeated ModelMessage messages = 4;
+	// Sampling temperature.
+	optional float temperature = 5;
+	// Advertised tool definitions.
+	repeated ToolDefinition tools = 6;
+	// Optional tool selection constraint.
+	ToolChoice tool_choice = 7;
+	// Maximum output tokens.
+	optional sint32 max_tokens = 8;
+	// Whether streaming was requested.
+	optional bool stream = 9;
+	// Optional reasoning configuration.
+	ThinkingOptions thinking = 10;
+	// Optional structured output contract.
+	StructuredOutput structured_output = 11;
+	// Optional prompt caching configuration.
+	CacheOptions cache = 12;
+}
+
+message CountTokensResponse {
+	// Provider token count when CountTokens succeeded.
+	TokenCount count = 1;
+	// Structured error when CountTokens failed.
+	GatewayError error = 2;
+}
+// Provider input token count.
+message TokenCount {
+	// Resolved provider model identifier.
+	optional string model = 1;
+	// Logical model family.
+	optional string model_class = 2;
+	// Counted input tokens.
+	optional sint32 input_tokens = 3;
+	// Whether the count is provider-exact.
+	optional bool exact = 4;
+}

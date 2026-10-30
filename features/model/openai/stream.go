@@ -39,7 +39,7 @@ type (
 
 		responseMu    sync.RWMutex
 		response      *model.Response
-		rejectedUsage model.TokenUsage
+		rejectedUsage *model.TokenUsage
 	}
 
 	// openAIChunkProcessor converts streamed OpenAI events into provider-neutral
@@ -47,7 +47,7 @@ type (
 	openAIChunkProcessor struct {
 		emit           func(model.Chunk) error
 		recordResponse func(*model.Response)
-		recordUsage    func(model.TokenUsage)
+		recordUsage    func(*model.TokenUsage)
 
 		toolCalls       map[string]*streamToolBuffer
 		streamedCallIDs map[string]struct{}
@@ -102,10 +102,6 @@ func newOpenAIStreamer(
 		contract:  contract,
 		chunks:    make(chan model.Chunk, 32),
 		done:      make(chan struct{}),
-		rejectedUsage: model.TokenUsage{
-			Model:      prepared.resolvedModelID,
-			ModelClass: prepared.resolvedModelClass,
-		},
 	}
 	processor := &openAIChunkProcessor{
 		emit:            streamer.emitChunk,
@@ -294,7 +290,10 @@ func (s *openAIStreamer) withUsage(err error) error {
 	s.responseMu.RLock()
 	usage := s.rejectedUsage
 	s.responseMu.RUnlock()
-	return model.RetainUsage(err, usage)
+	if usage == nil {
+		return err
+	}
+	return model.RetainUsage(err, *usage)
 }
 
 // outputError preserves transport, cancellation, and provider failures while
@@ -312,10 +311,12 @@ func (s *openAIStreamer) outputError(err error) error {
 	if errors.As(err, &validationErr) {
 		return err
 	}
+	s.responseMu.RLock()
 	usage := s.rejectedUsage
+	s.responseMu.RUnlock()
 	return s.contract.RejectProviderOutput(
 		outputvalidation.RequiredKind(err),
-		&usage,
+		usage,
 		err,
 	)
 }
@@ -337,7 +338,7 @@ func (s *openAIStreamer) recordResponse(response *model.Response) {
 
 // recordUsage retains validated scalar evidence before terminal content
 // translation can fail.
-func (s *openAIStreamer) recordUsage(usage model.TokenUsage) {
+func (s *openAIStreamer) recordUsage(usage *model.TokenUsage) {
 	s.responseMu.Lock()
 	s.rejectedUsage = usage
 	s.responseMu.Unlock()
@@ -496,14 +497,19 @@ func (p *openAIChunkProcessor) handleFailed(resp responses.Response) error {
 
 // accountUsage records one physical response before translating its content.
 func (p *openAIChunkProcessor) accountUsage(resp responses.Response) error {
+	reported := openAIResponseUsageReported(&resp)
 	usage := translateUsage(resp.Usage, p.modelID, p.modelClass)
 	if p.search != nil {
-		if err := p.search.account(usage); err != nil {
+		if err := p.search.account(usage, reported); err != nil {
 			return err
 		}
 		usage = p.search.usage
+		reported = p.search.usageReported
 	}
-	p.recordUsage(usage)
+	if reported {
+		copied := usage
+		p.recordUsage(&copied)
+	}
 	return nil
 }
 func (p *openAIChunkProcessor) registerOutputItem(item responses.ResponseOutputItemUnion) error {
@@ -748,7 +754,7 @@ func (p *openAIChunkProcessor) handleCompleted(resp responses.Response) error {
 			return err
 		}
 	}
-	if translated.Usage != (model.TokenUsage{}) {
+	if translated.Usage != (model.TokenUsage{}) || translated.HasUsage() {
 		if err := p.emit(model.UsageChunk{
 			Usage: translated.Usage,
 		}); err != nil {

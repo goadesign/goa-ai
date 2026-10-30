@@ -292,6 +292,8 @@ type (
 	RunCompletion struct {
 		// StartRequestDigest identifies the exact request accepted for this execution.
 		StartRequestDigest [32]byte
+		// Input is an isolated copy of the workflow input accepted for this execution.
+		Input *api.RunInput
 		// Status is the workflow state observed by the same query.
 		Status RunStatus
 		// CompletedAt is the time the engine closed the workflow. It is zero while

@@ -157,6 +157,7 @@ func (s *anthropicStreamer) run() {
 					return
 				}
 				translated.Usage = processor.attributedUsage(s.encoded.model, s.modelClass)
+				translated.UsageReported = processor.usageSeen
 				s.responseMu.Lock()
 				s.response = translated
 				s.responseMu.Unlock()
@@ -251,10 +252,14 @@ func (s *anthropicStreamer) outputError(processor *anthropicChunkProcessor, err 
 	if errors.As(err, &validationErr) {
 		return err
 	}
-	usage := processor.attributedUsage(s.encoded.model, s.modelClass)
+	var usage *model.TokenUsage
+	if processor.usageSeen {
+		attributed := processor.attributedUsage(s.encoded.model, s.modelClass)
+		usage = &attributed
+	}
 	return s.contract.RejectProviderOutput(
 		outputvalidation.RequiredKind(err),
-		&usage,
+		usage,
 		err,
 	)
 }
@@ -302,8 +307,10 @@ type anthropicChunkProcessor struct {
 	noArgumentTools map[string]struct{}
 	output          *model.StructuredOutput
 
-	stopReason     string
-	usage          model.TokenUsage
+	stopReason string
+	usage      model.TokenUsage
+	// usageSeen records whether the Anthropic stream emitted a usage block.
+	usageSeen      bool
 	started        bool
 	complete       bool
 	retainedBytes  int
@@ -348,6 +355,7 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 		p.searchBlocks = make(map[int]struct{})
 		p.stopReason = ""
 		p.usage = anthropicUsage(ev.Message.Usage)
+		p.usageSeen = anthropicMessageUsageReported(&ev.Message)
 		p.started = true
 		p.complete = false
 		if p.usage == (model.TokenUsage{}) {
@@ -758,6 +766,9 @@ func (p *anthropicChunkProcessor) Handle(event sdk.MessageStreamEventUnion) erro
 		if err != nil {
 			return outputvalidation.New(model.OutputValidationUsage, err)
 		}
+		if anthropicDeltaUsageReported(ev.Usage) {
+			p.usageSeen = true
+		}
 		p.usage = cumulative
 		if delta == (model.TokenUsage{}) {
 			return nil
@@ -847,6 +858,15 @@ func anthropicUsage(usage sdk.Usage) model.TokenUsage {
 		CacheReadTokens:  int(usage.CacheReadInputTokens),
 		CacheWriteTokens: int(usage.CacheCreationInputTokens),
 	}
+}
+
+// anthropicDeltaUsageReported reports whether an Anthropic message_delta event
+// included any explicit JSON usage field.
+func anthropicDeltaUsageReported(usage sdk.MessageDeltaUsage) bool {
+	return usage.JSON.InputTokens.Valid() ||
+		usage.JSON.OutputTokens.Valid() ||
+		usage.JSON.CacheReadInputTokens.Valid() ||
+		usage.JSON.CacheCreationInputTokens.Valid()
 }
 
 // subtractAnthropicUsage turns successive cumulative provider snapshots into

@@ -57,10 +57,12 @@ type (
 	// Opening a stream is not success because the provider can return a rate
 	// limit after earlier chunks have already arrived.
 	limitedStreamer struct {
-		next      model.Streamer
-		limiter   *AdaptiveRateLimiter
-		reserved  int
-		usage     model.TokenUsage
+		next     model.Streamer
+		limiter  *AdaptiveRateLimiter
+		reserved int
+		usage    model.TokenUsage
+		// usageSeen records whether the stream emitted a UsageChunk or terminal Response usage.
+		usageSeen bool
 		settleErr error
 		once      sync.Once
 	}
@@ -230,7 +232,7 @@ func (c *limitedProvider) Complete(ctx context.Context, req *model.Request) (*mo
 			if settleErr := c.limiter.settle(reserved, model.UsageFromError(err)); settleErr != nil {
 				err = errors.Join(err, settleErr)
 			}
-		} else {
+		} else if resp.HasUsage() {
 			err = c.limiter.settle(reserved, &resp.Usage)
 		}
 	}
@@ -281,6 +283,7 @@ func (s *limitedStreamer) Recv() (model.Chunk, error) {
 				return nil, usageErr
 			}
 			s.usage = usage
+			s.usageSeen = true
 		}
 	}
 	if err != nil {
@@ -325,11 +328,14 @@ func (s *limitedStreamer) settle(err error) error {
 	}
 	//nolint:errorlint // Only literal EOF proves a complete provider response.
 	if err == io.EOF {
-		if response := s.next.Response(); response != nil {
+		if response := s.next.Response(); response.HasUsage() {
 			return s.limiter.settle(s.reserved, &response.Usage)
 		}
 	}
-	return s.limiter.settle(s.reserved, &s.usage)
+	if s.usageSeen {
+		return s.limiter.settle(s.reserved, &s.usage)
+	}
+	return s.limiter.settle(s.reserved, nil)
 }
 
 // Response returns the provider's response after clean stream completion.
@@ -403,7 +409,7 @@ func (l *AdaptiveRateLimiter) waitForBalance(ctx context.Context, cost int) erro
 // settle replaces a request's estimated charge with the provider's reported
 // token total. Unknown usage retains the provisional charge in the limiter.
 func (l *AdaptiveRateLimiter) settle(reserved int, usage *model.TokenUsage) error {
-	if usage == nil || usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.TotalTokens == 0 {
+	if usage == nil {
 		return nil
 	}
 	if _, err := model.AddTokenUsage(model.TokenUsage{}, *usage); err != nil {

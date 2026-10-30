@@ -133,7 +133,7 @@ func TestBedrockStreamRejectsMissingToolCallIDWithUsage(t *testing.T) {
 		TotalTokens:  9,
 	}
 
-	classified := (&bedrockStreamer{contract: contract}).outputError(usage, err)
+	classified := (&bedrockStreamer{contract: contract}).outputError(&usage, err)
 
 	var validationErr *model.OutputValidationError
 	require.ErrorAs(t, classified, &validationErr)

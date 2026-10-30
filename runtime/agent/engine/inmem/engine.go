@@ -59,9 +59,10 @@ type (
 	// acceptedWorkflowRecipe binds an admitted workflow ID to its request and
 	// worker route, so active cancellation does not need caller-supplied routing.
 	acceptedWorkflowRecipe struct {
-		digest   [sha256.Size]byte
-		workflow string
-		queue    string
+		digest       [sha256.Size]byte
+		inputPayload *commonpb.Payload
+		workflow     string
+		queue        string
 	}
 
 	// wfCtx adapts context.Context into engine.WorkflowContext.
@@ -366,7 +367,7 @@ func (e *eng) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequest
 		return nil, &engine.WorkflowStartConflictError{ID: req.ID}
 	}
 	h, executionCtx := e.reserveWorkflowLocked(context.WithoutCancel(ctx), req.ID)
-	e.recipes[req.ID] = acceptedWorkflowRecipe{digest: snapshot.Digest, workflow: req.Workflow, queue: req.TaskQueue}
+	e.recipes[req.ID] = acceptedWorkflowRecipe{digest: snapshot.Digest, inputPayload: snapshot.InputPayload, workflow: req.Workflow, queue: req.TaskQueue}
 	e.mu.Unlock()
 
 	e.executeWorkflow(executionCtx, req.ID, req.RunTimeout, req.RetryPolicy, def, snapshot.InputPayload, snapshot.Digest, h)
@@ -535,8 +536,12 @@ func (e *eng) QueryRunCompletion(ctx context.Context, workflowID string) (engine
 	if !recipeOK || recipe.digest == ([32]byte{}) {
 		return engine.RunCompletion{}, errors.New("workflow accepted request digest is missing")
 	}
+	var input *api.RunInput
+	if err := workflowcodec.NewDataConverter().FromPayload(recipe.inputPayload, &input); err != nil {
+		return engine.RunCompletion{}, fmt.Errorf("decode workflow input: %w", err)
+	}
 	if !isTerminalRunStatus(status) {
-		return engine.RunCompletion{Status: status, StartRequestDigest: recipe.digest}, nil
+		return engine.RunCompletion{Status: status, StartRequestDigest: recipe.digest, Input: input}, nil
 	}
 	select {
 	case <-ctx.Done():
@@ -557,7 +562,7 @@ func (e *eng) QueryRunCompletion(ctx context.Context, workflowID string) (engine
 		}
 	}
 	return engine.RunCompletion{
-		Status: status, StartRequestDigest: recipe.digest, CompletedAt: completedAt, Output: output, WorkflowError: workflowErr,
+		Status: status, StartRequestDigest: recipe.digest, Input: input, CompletedAt: completedAt, Output: output, WorkflowError: workflowErr,
 	}, nil
 }
 
@@ -736,7 +741,7 @@ func (w *wfCtx) StartChildWorkflow(_ context.Context, req engine.ChildWorkflowRe
 		return nil, &engine.ChildWorkflowIDReuseError{ID: req.ID}
 	}
 	h, executionCtx := w.eng.reserveWorkflowLocked(w.ctx, req.ID)
-	w.eng.recipes[req.ID] = acceptedWorkflowRecipe{digest: snapshot.Digest, workflow: req.Workflow, queue: req.TaskQueue}
+	w.eng.recipes[req.ID] = acceptedWorkflowRecipe{digest: snapshot.Digest, inputPayload: snapshot.InputPayload, workflow: req.Workflow, queue: req.TaskQueue}
 	w.eng.mu.Unlock()
 
 	control := w.executionControl()

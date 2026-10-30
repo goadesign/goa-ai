@@ -647,6 +647,10 @@ type (
 		// Usage reports token consumption for the request.
 		Usage TokenUsage
 
+		// UsageReported reports whether the provider explicitly reported token
+		// usage metadata, including when all token counts are zero.
+		UsageReported bool
+
 		// StopReason records why generation stopped (provider-specific).
 		StopReason string
 
@@ -1139,6 +1143,12 @@ func (r *Response) ToolCalls() []ToolCall {
 		}
 	}
 	return calls
+}
+
+// HasUsage reports whether the provider explicitly reported token usage for the
+// response.
+func (r *Response) HasUsage() bool {
+	return r != nil && r.UsageReported
 }
 
 // NewToolDefinitionFromSpec converts a Goa tool specification into the contract

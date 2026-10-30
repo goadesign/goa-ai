@@ -53,8 +53,12 @@ func (e *Engine) QueryRunCompletion(ctx context.Context, workflowID string) (eng
 	if err != nil {
 		return engine.RunCompletion{}, err
 	}
+	input, err := e.acceptedInputFromHistory(ctx, workflowID, executionID)
+	if err != nil {
+		return engine.RunCompletion{}, err
+	}
 	status := queryRunStatusFromInfo(info)
-	completion := engine.RunCompletion{Status: status, StartRequestDigest: digest}
+	completion := engine.RunCompletion{Status: status, StartRequestDigest: digest, Input: input}
 	if !isTerminalRunStatus(status) {
 		return completion, nil
 	}
@@ -184,4 +188,32 @@ func acceptedRequestDigest(memo *commonpb.Memo) ([32]byte, error) {
 		return [32]byte{}, errors.New("workflow accepted request digest is missing")
 	}
 	return digest, nil
+}
+
+// acceptedInputFromHistory decodes the workflow's started event input for this
+// execution.
+func (e *Engine) acceptedInputFromHistory(ctx context.Context, workflowID, executionID string) (*api.RunInput, error) {
+	history := e.client.GetWorkflowHistory(ctx, workflowID, executionID, false, enumspb.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
+	if !history.HasNext() {
+		return nil, errors.New("workflow has no start event")
+	}
+	startedEvent, err := history.Next()
+	if err != nil {
+		return nil, mapDescribeWorkflowExecutionError(err)
+	}
+	if startedEvent.GetEventType() != enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_STARTED {
+		return nil, fmt.Errorf("workflow history first event is %s, want %s", startedEvent.GetEventType(), enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_STARTED)
+	}
+	started := startedEvent.GetWorkflowExecutionStartedEventAttributes()
+	if started == nil || len(started.GetInput().GetPayloads()) == 0 {
+		return nil, errors.New("workflow started event has no input")
+	}
+	var input *api.RunInput
+	if err := NewAgentDataConverter().FromPayloads(started.GetInput(), &input); err != nil {
+		return nil, fmt.Errorf("decode workflow start input: %w", err)
+	}
+	if input == nil || input.RunID != workflowID {
+		return nil, errors.New("workflow started input run id does not match workflow id")
+	}
+	return input, nil
 }

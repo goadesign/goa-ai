@@ -227,14 +227,14 @@ func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Res
 	}
 	response, err := translateSearchResponse(msg, enc)
 	if err != nil {
-		usage := translateAnthropicUsage(msg, enc.model, req.ModelClass)
 		return nil, contract.RejectProviderOutput(
 			outputvalidation.RequiredKind(err),
-			&usage,
+			rejectedAnthropicUsage(msg, enc.model, req.ModelClass),
 			err,
 		)
 	}
 	response.Usage = translateAnthropicUsage(msg, enc.model, req.ModelClass)
+	response.UsageReported = anthropicMessageUsageReported(msg)
 	return response, nil
 }
 
@@ -1042,7 +1042,8 @@ func translateResponse(msg *sdk.Message, nameMap map[string]string) (*model.Resp
 	if len(assistant.Parts) > 0 {
 		resp.Content = append(resp.Content, assistant)
 	}
-	if u := msg.Usage; u.InputTokens != 0 || u.OutputTokens != 0 || u.CacheReadInputTokens != 0 || u.CacheCreationInputTokens != 0 {
+	if anthropicMessageUsageReported(msg) {
+		u := msg.Usage
 		resp.Usage = model.TokenUsage{
 			InputTokens:      int(u.InputTokens),
 			OutputTokens:     int(u.OutputTokens),
@@ -1050,6 +1051,7 @@ func translateResponse(msg *sdk.Message, nameMap map[string]string) (*model.Resp
 			CacheReadTokens:  int(u.CacheReadInputTokens),
 			CacheWriteTokens: int(u.CacheCreationInputTokens),
 		}
+		resp.UsageReported = true
 	}
 	resp.StopReason = string(msg.StopReason)
 	if resp.StopReason == "" {
@@ -1088,6 +1090,34 @@ func translateAnthropicUsage(msg *sdk.Message, modelID string, modelClass model.
 		CacheReadTokens:  int(usage.CacheReadInputTokens),
 		CacheWriteTokens: int(usage.CacheCreationInputTokens),
 	}
+}
+
+// rejectedAnthropicUsage returns provider usage for rejected responses only
+// when the provider response reported usage counters.
+func rejectedAnthropicUsage(msg *sdk.Message, modelID string, modelClass model.ModelClass) *model.TokenUsage {
+	if !anthropicMessageUsageReported(msg) {
+		return nil
+	}
+	usage := translateAnthropicUsage(msg, modelID, modelClass)
+	return &usage
+}
+
+// anthropicMessageUsageReported reports whether an Anthropic message included
+// provider usage counters.
+func anthropicMessageUsageReported(msg *sdk.Message) bool {
+	if msg == nil {
+		return false
+	}
+	return msg.JSON.Usage.Valid() || anthropicUsageReported(msg.Usage)
+}
+
+// anthropicUsageReported reports whether an Anthropic usage object included
+// any explicit JSON usage field.
+func anthropicUsageReported(usage sdk.Usage) bool {
+	return usage.JSON.InputTokens.Valid() ||
+		usage.JSON.OutputTokens.Valid() ||
+		usage.JSON.CacheReadInputTokens.Valid() ||
+		usage.JSON.CacheCreationInputTokens.Valid()
 }
 
 // translateCitations preserves every Anthropic text citation in the canonical

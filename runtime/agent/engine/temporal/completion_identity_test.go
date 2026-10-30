@@ -16,6 +16,7 @@ import (
 	workflowpb "go.temporal.io/api/workflow/v1"
 	workflowservice "go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/internal/startrecipe"
@@ -26,6 +27,7 @@ type (
 	completionIdentityClient struct {
 		client.Client
 		info              *workflowpb.WorkflowExecutionInfo
+		started           *historypb.HistoryEvent
 		closed            *historypb.HistoryEvent
 		fetched           string
 		historyExecution  string
@@ -42,6 +44,15 @@ func TestQueryRunCompletionPinsAcceptedExecution(t *testing.T) {
 	digest := [32]byte{1}
 	payload, err := NewAgentDataConverter().ToPayload(digest[:])
 	require.NoError(t, err)
+	subject := genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("agent")}
+	inputPayload, err := NewAgentDataConverter().ToPayloads(&api.RunInput{
+		RunID:     "workflow",
+		Subject:   subject,
+		SessionID: "session-1",
+		TurnID:    "turn-1",
+		Labels:    map[string]string{"TenantID": "t-1"},
+	})
+	require.NoError(t, err)
 	for _, test := range []struct {
 		name      string
 		memo      *commonpb.Memo
@@ -56,6 +67,11 @@ func TestQueryRunCompletionPinsAcceptedExecution(t *testing.T) {
 			backend := &completionIdentityClient{info: &workflowpb.WorkflowExecutionInfo{
 				Execution: &commonpb.WorkflowExecution{WorkflowId: "workflow", RunId: "accepted-execution"},
 				Memo:      test.memo, Status: enumspb.WORKFLOW_EXECUTION_STATUS_COMPLETED, CloseTime: timestamppb.New(time.Unix(10, 0)),
+			}, started: &historypb.HistoryEvent{
+				EventType: enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_STARTED,
+				Attributes: &historypb.HistoryEvent_WorkflowExecutionStartedEventAttributes{
+					WorkflowExecutionStartedEventAttributes: &historypb.WorkflowExecutionStartedEventAttributes{Input: inputPayload},
+				},
 			}, closed: &historypb.HistoryEvent{EventType: enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_COMPLETED, Attributes: &historypb.HistoryEvent_WorkflowExecutionCompletedEventAttributes{WorkflowExecutionCompletedEventAttributes: &historypb.WorkflowExecutionCompletedEventAttributes{}}}}
 			if test.successor {
 				backend.closed.GetWorkflowExecutionCompletedEventAttributes().NewExecutionRunId = "retry"
@@ -69,6 +85,11 @@ func TestQueryRunCompletionPinsAcceptedExecution(t *testing.T) {
 			}
 			require.NoError(t, err)
 			assert.Equal(t, digest, got.StartRequestDigest)
+			require.NotNil(t, got.Input)
+			assert.Equal(t, subject, got.Input.Subject)
+			assert.Equal(t, "session-1", got.Input.SessionID)
+			assert.Equal(t, "turn-1", got.Input.TurnID)
+			assert.Equal(t, map[string]string{"TenantID": "t-1"}, got.Input.Labels)
 			assert.Equal(t, engine.RunStatusCompleted, got.Status)
 			assert.Equal(t, "accepted-execution", backend.fetched)
 			assert.Equal(t, "accepted-execution", backend.historyExecution)
@@ -80,8 +101,11 @@ func TestQueryRunCompletionPinsAcceptedExecution(t *testing.T) {
 func (c *completionIdentityClient) DescribeWorkflowExecution(context.Context, string, string) (*workflowservice.DescribeWorkflowExecutionResponse, error) {
 	return &workflowservice.DescribeWorkflowExecutionResponse{WorkflowExecutionInfo: c.info}, nil
 }
-func (c *completionIdentityClient) GetWorkflowHistory(_ context.Context, _, execution string, _ bool, _ enumspb.HistoryEventFilterType) client.HistoryEventIterator {
+func (c *completionIdentityClient) GetWorkflowHistory(_ context.Context, _, execution string, _ bool, filter enumspb.HistoryEventFilterType) client.HistoryEventIterator {
 	c.historyExecution = execution
+	if filter == enumspb.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT {
+		return &completionIdentityHistory{event: c.started}
+	}
 	return &completionIdentityHistory{event: c.closed}
 }
 func (c *completionIdentityClient) GetWorkflow(_ context.Context, _, execution string) client.WorkflowRun {

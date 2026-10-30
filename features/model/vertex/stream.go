@@ -65,7 +65,7 @@ type (
 		canonical      *model.Response
 		retainedBytes  int
 		retainedValues int
-		rejectedUsage  model.TokenUsage
+		rejectedUsage  *model.TokenUsage
 
 		// assistant accumulates provider-authored response parts in provider order.
 		assistant model.Message
@@ -101,13 +101,12 @@ func (c *provider) Stream(ctx context.Context, req *model.Request) (model.Stream
 	ctx, cancel := context.WithCancel(ctx)
 	seq := c.models.GenerateContentStream(ctx, prep.modelID, prep.contents, prep.config)
 	s := &geminiStreamer{
-		ctx:           ctx,
-		cancel:        cancel,
-		chunks:        make(chan model.Chunk, 32),
-		done:          make(chan struct{}),
-		contract:      contract,
-		callIDs:       prep.toolCallIDs,
-		rejectedUsage: translateUsage(nil, prep.modelID, prep.modelClass),
+		ctx:      ctx,
+		cancel:   cancel,
+		chunks:   make(chan model.Chunk, 32),
+		done:     make(chan struct{}),
+		contract: contract,
+		callIDs:  prep.toolCallIDs,
 	}
 	go s.run(seq, prep)
 	return s, nil
@@ -170,7 +169,8 @@ func (s *geminiStreamer) run(seq func(func(*genai.GenerateContentResponse, error
 			// Usage is independent of candidate content and must survive any
 			// later translation rejection.
 			latestUsage = translateUsage(resp.UsageMetadata, prep.modelID, prep.modelClass)
-			s.rejectedUsage = latestUsage
+			copied := latestUsage
+			s.rejectedUsage = &copied
 			usageSeen = true
 		}
 		if resp == nil || len(resp.Candidates) == 0 {
@@ -296,7 +296,12 @@ func (s *geminiStreamer) run(seq func(func(*genai.GenerateContentResponse, error
 	}
 	s.response.StopReason = stopReason
 	s.response.OutputLimited = vertexOutputLimited(stopReason)
-	s.response.Usage = latestUsage
+	if usageSeen {
+		s.response.Usage = latestUsage
+		s.response.UsageReported = true
+	} else {
+		s.response.Usage = translateUsage(nil, prep.modelID, prep.modelClass)
+	}
 	grounded, err := applyGroundingMetadata(s.assistant.Parts, grounding)
 	if err != nil {
 		s.setErr(outputvalidation.New(model.OutputValidationResponseShape, err))
@@ -494,10 +499,9 @@ func (s *geminiStreamer) setErr(err error) {
 		if _, providerFailure := model.AsProviderError(err); !providerFailure {
 			var validationErr *model.OutputValidationError
 			if !errors.As(err, &validationErr) {
-				usage := s.rejectedUsage
 				err = s.contract.RejectProviderOutput(
 					outputvalidation.RequiredKind(err),
-					&usage,
+					s.rejectedUsage,
 					err,
 				)
 			}
