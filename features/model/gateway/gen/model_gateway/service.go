@@ -181,6 +181,12 @@ type GatewayError struct {
 	Nodes []*GatewayErrorNode
 	// Validated invocation usage retained on a failed call.
 	RetainedUsage *TokenUsage
+	// Whether retained_usage represents only partial counts (for example, a
+	// multi-round tool-search invocation that failed on a later round after
+	// earlier rounds reported usage, a stream that failed after emitting partial
+	// usage chunks, or a provider response that omitted input or output token
+	// counters).
+	RetainedUsageIncomplete bool
 }
 
 // Single node in an encoded error tree.
@@ -513,4 +519,9 @@ type ValidationErrorDetail struct {
 	Usage *TokenUsage
 	// Framework-authored recovery guidance.
 	RecoveryCorrection string
+	// Whether usage represents only partial counts (for example, a stream rejected
+	// after initial input token chunks before output tokens arrive, a provider
+	// response omitting input or output counters, or a multi-round tool-search
+	// failure after an uncounted round).
+	UsageIncomplete bool
 }

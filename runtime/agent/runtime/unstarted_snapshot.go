@@ -97,8 +97,8 @@ func (r *Runtime) loadAcceptedRunSnapshot(ctx context.Context, runID string) (*r
 }
 
 // resolveAcceptedRunLabels returns the accepted run's labels, inheriting
-// predecessor labels from the durable continuation seed when a continuation run
-// has not yet executed its start restoration step.
+// predecessor checkpoint labels from the durable continuation seed and saved
+// suspension when a continuation run has not yet executed its start step.
 func (r *Runtime) resolveAcceptedRunLabels(ctx context.Context, accepted engine.AcceptedRun) (map[string]string, error) {
 	if len(accepted.Labels) > 0 {
 		return cloneLabels(accepted.Labels), nil
@@ -113,11 +113,29 @@ func (r *Runtime) resolveAcceptedRunLabels(ctx context.Context, accepted engine.
 	if seed.Declaration.PredecessorRunID == "" {
 		return nil, nil
 	}
-	predecessor, err := r.Store.LoadRun(ctx, seed.Declaration.PredecessorRunID)
+	suspension, err := r.LoadRunSuspension(ctx, seed.Declaration.PredecessorRunID)
+	if err != nil {
+		if errors.Is(err, session.ErrRunSuspensionNotFound) {
+			predecessor, loadErr := r.Store.LoadRun(ctx, seed.Declaration.PredecessorRunID)
+			if loadErr != nil {
+				return nil, loadErr
+			}
+			return cloneLabels(predecessor.Labels), nil
+		}
+		return nil, err
+	}
+	if _, serviceTool := accepted.Subject.Executor.AsServiceTool(); serviceTool {
+		checkpoint, err := decodeRegisteredRootCheckpoint(suspension)
+		if err != nil {
+			return nil, err
+		}
+		return cloneLabels(checkpoint.Input.Labels), nil
+	}
+	checkpoint, err := decodeWorkflowCheckpointState(suspension)
 	if err != nil {
 		return nil, err
 	}
-	return cloneLabels(predecessor.Labels), nil
+	return cloneLabels(checkpoint.Context.Labels), nil
 }
 
 // loadRecordedRunSnapshotIfPresent replays the canonical run log when the run

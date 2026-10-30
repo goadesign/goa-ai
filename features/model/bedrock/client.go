@@ -225,11 +225,15 @@ func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Res
 	}
 	resp, err := translateResponse(output, parts.toolNameProvToCanonical, parts.modelID, parts.modelClass)
 	if err != nil {
-		return nil, contract.RejectProviderOutput(
+		rejected := contract.RejectProviderOutput(
 			outputvalidation.RequiredKind(err),
 			rejectedBedrockUsage(output, parts.modelID, parts.modelClass),
 			err,
 		)
+		if (output == nil || !bedrockTokenUsageComplete(output.Usage)) && rejected.Usage() != nil {
+			return nil, model.RetainIncompleteUsage(rejected, *rejected.Usage())
+		}
+		return nil, rejected
 	}
 	if parts.structuredOutputToolName != "" {
 		if err := reifyStructuredOutputTool(resp, parts.structuredOutputToolName); err != nil {

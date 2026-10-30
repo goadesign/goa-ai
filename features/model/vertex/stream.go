@@ -62,10 +62,11 @@ type (
 		// response is the canonical model response assembled by the pump.
 		response model.Response
 		// canonical is published atomically when the provider stream completes.
-		canonical      *model.Response
-		retainedBytes  int
-		retainedValues int
-		rejectedUsage  *model.TokenUsage
+		canonical               *model.Response
+		retainedBytes           int
+		retainedValues          int
+		rejectedUsage           *model.TokenUsage
+		rejectedUsageIncomplete bool
 
 		// assistant accumulates provider-authored response parts in provider order.
 		assistant model.Message
@@ -185,6 +186,7 @@ func (s *geminiStreamer) run(seq func(func(*genai.GenerateContentResponse, error
 			}
 			copied := latestUsage
 			s.rejectedUsage = &copied
+			s.rejectedUsageIncomplete = !sawInputUsage || !sawOutputUsage
 			usageSeen = true
 		}
 		if resp == nil || len(resp.Candidates) == 0 {
@@ -514,11 +516,16 @@ func (s *geminiStreamer) setErr(err error) {
 		if _, providerFailure := model.AsProviderError(err); !providerFailure {
 			var validationErr *model.OutputValidationError
 			if !errors.As(err, &validationErr) {
-				err = s.contract.RejectProviderOutput(
+				rejected := s.contract.RejectProviderOutput(
 					outputvalidation.RequiredKind(err),
 					s.rejectedUsage,
 					err,
 				)
+				if s.rejectedUsageIncomplete && rejected.Usage() != nil {
+					err = model.RetainIncompleteUsage(rejected, *rejected.Usage())
+				} else {
+					err = rejected
+				}
 			}
 		}
 	}

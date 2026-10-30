@@ -174,7 +174,7 @@ func TestNativeSearchMixedModelUsageKeepsCountsWithoutFalseAttribution(t *testin
 	for _, modelID := range []string{"revision-1", "revision-2", "revision-2"} {
 		require.NoError(t, search.account(model.TokenUsage{
 			Model: modelID, InputTokens: 10, OutputTokens: 2, TotalTokens: 12,
-		}, true))
+		}, true, true))
 	}
 	assert.Equal(t, model.TokenUsage{InputTokens: 30, OutputTokens: 6, TotalTokens: 36}, search.usage)
 }

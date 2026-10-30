@@ -165,9 +165,9 @@ func (s *bedrockStreamer) run() {
 						processor.started,
 					))
 				} else if err := processor.finishStream(); err != nil {
-					s.setErr(s.outputError(processor.rejectedUsage(), err))
+					s.setErr(s.outputErrorWithCompleteness(processor.rejectedUsage(), !processor.canonical.HasCompleteUsage(), err))
 				} else if rejected != nil {
-					s.setErr(s.outputError(processor.rejectedUsage(), rejected))
+					s.setErr(s.outputErrorWithCompleteness(processor.rejectedUsage(), !processor.canonical.HasCompleteUsage(), rejected))
 				} else {
 					response := processor.response()
 					s.responseMu.Lock()
@@ -185,7 +185,7 @@ func (s *bedrockStreamer) run() {
 					processor.discardSemanticOutput()
 					continue
 				}
-				s.setErr(s.outputError(processor.rejectedUsage(), err))
+				s.setErr(s.outputErrorWithCompleteness(processor.rejectedUsage(), !processor.canonical.HasCompleteUsage(), err))
 				return
 			}
 		}
@@ -215,6 +215,13 @@ func (s *bedrockStreamer) closeProviderStream() error {
 // outputError preserves provider and caller flow-control errors while marking
 // malformed Bedrock stream data as output validation.
 func (s *bedrockStreamer) outputError(usage *model.TokenUsage, err error) error {
+	return s.outputErrorWithCompleteness(usage, false, err)
+}
+
+// outputErrorWithCompleteness preserves provider and caller flow-control errors
+// while marking malformed Bedrock stream data as output validation and retaining
+// whether the captured usage was incomplete.
+func (s *bedrockStreamer) outputErrorWithCompleteness(usage *model.TokenUsage, incomplete bool, err error) error {
 	if err == nil ||
 		errors.Is(err, context.Canceled) ||
 		errors.Is(err, context.DeadlineExceeded) {
@@ -227,11 +234,15 @@ func (s *bedrockStreamer) outputError(usage *model.TokenUsage, err error) error 
 	if errors.As(err, &validationErr) {
 		return err
 	}
-	return s.contract.RejectProviderOutput(
+	rejected := s.contract.RejectProviderOutput(
 		outputvalidation.RequiredKind(err),
 		usage,
 		err,
 	)
+	if incomplete && rejected.Usage() != nil {
+		return model.RetainIncompleteUsage(rejected, *rejected.Usage())
+	}
+	return rejected
 }
 
 func (s *bedrockStreamer) emitChunk(chunk model.Chunk) error {

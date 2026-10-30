@@ -386,7 +386,8 @@ var ValidationErrorDetail = Type("ValidationErrorDetail", func() {
 	Field(2, "evidence", ResponseEvidence, "Bounded response fingerprint.")
 	Field(3, "usage", TokenUsage, "Validated scalar token usage.")
 	Field(4, "recovery_correction", String, "Framework-authored recovery guidance.")
-	Required("kind", "evidence", "recovery_correction")
+	Field(5, "usage_incomplete", Boolean, "Whether usage represents only partial counts (for example, a stream rejected after initial input token chunks before output tokens arrive, a provider response omitting input or output counters, or a multi-round tool-search failure after an uncounted round).")
+	Required("kind", "evidence", "recovery_correction", "usage_incomplete")
 })
 
 // GatewayErrorNode encodes one node in a structured error tree.
@@ -409,7 +410,8 @@ var GatewayError = Type("GatewayError", func() {
 	Description("Structured gateway error tree preserving provider, validation, sentinel, and retained-usage contracts.")
 	Field(1, "nodes", ArrayOf(GatewayErrorNode), "Flattened error tree nodes with root at index 0.")
 	Field(2, "retained_usage", TokenUsage, "Validated invocation usage retained on a failed call.")
-	Required("nodes")
+	Field(3, "retained_usage_incomplete", Boolean, "Whether retained_usage represents only partial counts (for example, a multi-round tool-search invocation that failed on a later round after earlier rounds reported usage, a stream that failed after emitting partial usage chunks, or a provider response that omitted input or output token counters).")
+	Required("nodes", "retained_usage_incomplete")
 })
 
 // CompleteResult wraps an exclusive unary completion response or structured error.

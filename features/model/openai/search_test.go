@@ -141,6 +141,7 @@ func TestNativeSearchFailuresRetainUsage(t *testing.T) {
 		require.ErrorIs(t, err, cause)
 		require.NotNil(t, model.UsageFromError(err))
 		assert.Equal(t, 12, model.UsageFromError(err).TotalTokens)
+		assert.True(t, model.UsageIncompleteFromError(err))
 		var rejected *model.OutputValidationError
 		assert.NotErrorAs(t, err, &rejected)
 	}
@@ -153,7 +154,24 @@ func TestNativeSearchFailuresRetainUsage(t *testing.T) {
 	var rejected *model.OutputValidationError
 	require.ErrorAs(t, err, &rejected)
 	assert.Equal(t, 12, rejected.Usage().TotalTokens)
+	assert.False(t, model.UsageIncompleteFromError(err))
 	assert.Len(t, transport.requests, 1)
+
+	// Partial explicit-zero usage (`{"usage":{"input_tokens":0}}`) is observed
+	// and marked incomplete.
+	partialZeroResp := mustResponse(t, `{"status":"completed","model":"gpt-5.4","output":[{"type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"done"}]}],"usage":{"input_tokens":0}}`)
+	partialClient, err := New(Options{DefaultModel: "gpt-5.4", transport: &searchTransport{responses: []*responses.Response{partialZeroResp}}})
+	require.NoError(t, err)
+	resp, err := partialClient.Complete(t.Context(), &model.Request{
+		Messages: []*model.Message{{
+			Role:  model.ConversationRoleUser,
+			Parts: []model.Part{model.TextPart{Text: "hi"}},
+		}},
+	})
+	require.NoError(t, err)
+	assert.False(t, resp.UsageReported)
+	assert.True(t, resp.UsageIncomplete)
+	assert.True(t, resp.HasObservedUsage())
 }
 
 func TestNativeSearchCatalogChangesRemoveLoadedDefinitions(t *testing.T) {

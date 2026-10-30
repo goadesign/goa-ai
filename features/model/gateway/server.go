@@ -156,7 +156,11 @@ func NewServer(opts ...Option) (*Server, error) {
 					closeErr := finishProviderStream(ctx, nil, st.Close())
 					if closeErr != nil {
 						if resp.HasObservedUsage() && model.UsageFromError(closeErr) == nil {
-							closeErr = model.RetainUsage(closeErr, resp.Usage)
+							if resp.UsageIncomplete {
+								closeErr = model.RetainIncompleteUsage(closeErr, resp.Usage)
+							} else {
+								closeErr = model.RetainUsage(closeErr, resp.Usage)
+							}
 						}
 						return nil, closeErr
 					}
@@ -164,14 +168,22 @@ func NewServer(opts ...Option) (*Server, error) {
 				}
 				closeErr := finishProviderStream(ctx, err, st.Close())
 				if resp := st.Response(); resp.HasObservedUsage() && model.UsageFromError(closeErr) == nil {
-					closeErr = model.RetainUsage(closeErr, resp.Usage)
+					if resp.UsageIncomplete {
+						closeErr = model.RetainIncompleteUsage(closeErr, resp.Usage)
+					} else {
+						closeErr = model.RetainUsage(closeErr, resp.Usage)
+					}
 				}
 				return nil, closeErr
 			}
 			if err := send(ch); err != nil {
 				closeErr := finishProviderStream(ctx, err, st.Close())
 				if resp := st.Response(); resp.HasObservedUsage() && model.UsageFromError(closeErr) == nil {
-					closeErr = model.RetainUsage(closeErr, resp.Usage)
+					if resp.UsageIncomplete {
+						closeErr = model.RetainIncompleteUsage(closeErr, resp.Usage)
+					} else {
+						closeErr = model.RetainUsage(closeErr, resp.Usage)
+					}
 				}
 				return nil, closeErr
 			}

@@ -75,3 +75,55 @@ func TestAddTokenUsageRejectsOverflowAndInvalidCounts(t *testing.T) {
 	_, err = AddTokenUsage(TokenUsage{}, TokenUsage{TotalTokens: -1})
 	require.ErrorContains(t, err, "negative")
 }
+
+func TestRetainIncompleteUsageAndOmittedResponseUsageEvidence(t *testing.T) {
+	partial := TokenUsage{InputTokens: 15}
+	err := RetainIncompleteUsage(context.DeadlineExceeded, partial)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Equal(t, &partial, UsageFromError(err))
+	require.True(t, UsageIncompleteFromError(err))
+
+	// A rejected response that omitted usage counters entirely (even when
+	// ModelClass is stamped) must leave OutputValidationError.Usage() nil.
+	contract, err := NewRequestContract(&Request{
+		ModelClass: ModelClassDefault,
+		Messages: []*Message{{
+			Role:  ConversationRoleUser,
+			Parts: []Part{TextPart{Text: "hi"}},
+		}},
+		StructuredOutput: &StructuredOutput{
+			Name:   "answer",
+			Schema: []byte(`{"type":"object","properties":{"ok":{"type":"boolean"}},"required":["ok"]}`),
+		},
+	})
+	require.NoError(t, err)
+	_, validateErr := contract.ValidateResponse(&Response{
+		Content: []Message{{
+			Role:  ConversationRoleAssistant,
+			Parts: []Part{TextPart{Text: "not json"}},
+		}},
+		Usage: TokenUsage{Model: "gpt-4o"},
+	})
+	var rejected *OutputValidationError
+	require.ErrorAs(t, validateErr, &rejected)
+	assert.Nil(t, rejected.Usage())
+	assert.False(t, rejected.UsageIncomplete())
+	assert.False(t, UsageIncompleteFromError(validateErr))
+
+	// When the rejected response carried partial usage (UsageIncomplete: true),
+	// OutputValidationError preserves both the counts and UsageIncomplete.
+	_, validateIncompleteErr := contract.ValidateResponse(&Response{
+		Content: []Message{{
+			Role:  ConversationRoleAssistant,
+			Parts: []Part{TextPart{Text: "not json"}},
+		}},
+		Usage:           TokenUsage{Model: "gpt-4o", InputTokens: 15},
+		UsageIncomplete: true,
+	})
+	var rejectedIncomplete *OutputValidationError
+	require.ErrorAs(t, validateIncompleteErr, &rejectedIncomplete)
+	require.NotNil(t, rejectedIncomplete.Usage())
+	assert.Equal(t, 15, rejectedIncomplete.Usage().InputTokens)
+	assert.True(t, rejectedIncomplete.UsageIncomplete())
+	assert.True(t, UsageIncompleteFromError(validateIncompleteErr))
+}

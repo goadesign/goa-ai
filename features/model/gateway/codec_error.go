@@ -68,6 +68,7 @@ func toGenError(err error) *genmodelgateway.GatewayError {
 	if len(nodes) > 0 && nodes[0].Kind != errorKindValidation {
 		if usage := model.UsageFromError(err); usage != nil {
 			out.RetainedUsage = toGenUsage(*usage)
+			out.RetainedUsageIncomplete = model.UsageIncompleteFromError(err)
 		}
 	}
 	return out
@@ -112,6 +113,7 @@ func encodeErrorNode(err error, nodes *[]*genmodelgateway.GatewayErrorNode, seen
 				Size:    ev.Size,
 			},
 			RecoveryCorrection: validationErr.RecoveryCorrection(),
+			UsageIncomplete:    validationErr.UsageIncomplete(),
 		}
 		if u := validationErr.Usage(); u != nil {
 			detail.Usage = toGenUsage(*u)
@@ -124,7 +126,16 @@ func encodeErrorNode(err error, nodes *[]*genmodelgateway.GatewayErrorNode, seen
 		}
 		*nodes = append(*nodes, node)
 		rememberEncodedErrorNode(err, idx, seen)
-		node.CauseIndex = encodeErrorNode(errors.Unwrap(validationErr), nodes, seen)
+		cause := errors.Unwrap(validationErr)
+		for {
+			//nolint:errorlint // Unwrap RetainUsage copies that point to the original OutputValidationError.
+			innerValidation, isInner := cause.(*model.OutputValidationError)
+			if !isInner || innerValidation == nil {
+				break
+			}
+			cause = errors.Unwrap(innerValidation)
+		}
+		node.CauseIndex = encodeErrorNode(cause, nodes, seen)
 		return idx
 	}
 	if sentinel, ok := sentinelCode(err); ok {
@@ -187,6 +198,10 @@ func encodeErrorNode(err error, nodes *[]*genmodelgateway.GatewayErrorNode, seen
 				}
 			}
 		}
+		if len(node.ChildIndices) == 0 {
+			node.Kind = errorKindPlain
+			node.Message = err.Error()
+		}
 		return idx
 	}
 	if name, ok := model.UnadvertisedToolName(err); ok && errors.Unwrap(err) == nil {
@@ -248,22 +263,101 @@ func rememberEncodedErrorNode(err error, idx int64, seen *[]encodedErrorNode) {
 }
 
 // fromGenError reconstructs a Go error from a Goa-generated GatewayError.
+// A non-nil GatewayError represents a remote failure; malformed or cyclic node
+// graphs return a non-nil protocol error instead of silently succeeding.
 func fromGenError(in *genmodelgateway.GatewayError) error {
-	if in == nil || len(in.Nodes) == 0 {
+	if in == nil {
 		return nil
+	}
+	if err := validateErrorGraph(in.Nodes); err != nil {
+		return fmt.Errorf("gateway: invalid wire error graph: %w", err)
 	}
 	memo := make([]error, len(in.Nodes))
 	err := decodeErrorNode(in.Nodes, 0, memo)
-	if err != nil && in.RetainedUsage != nil && in.Nodes[0] != nil && in.Nodes[0].Kind != errorKindValidation {
+	if err == nil {
+		return errors.New("gateway: wire error decoded to nil")
+	}
+	if in.RetainedUsage != nil && in.Nodes[0] != nil && in.Nodes[0].Kind != errorKindValidation {
 		if usage, uerr := fromGenUsage(in.RetainedUsage); uerr == nil {
-			err = model.RetainUsage(err, usage)
+			if in.RetainedUsageIncomplete {
+				err = model.RetainIncompleteUsage(err, usage)
+			} else {
+				err = model.RetainUsage(err, usage)
+			}
 		}
 	}
 	return err
 }
 
+// validateErrorGraph verifies that nodes forms a non-empty, bounds-safe,
+// acyclic DAG before decodeErrorNode traverses it.
+func validateErrorGraph(nodes []*genmodelgateway.GatewayErrorNode) error {
+	if len(nodes) == 0 {
+		return errors.New("empty error node list")
+	}
+	const (
+		stateUnvisited uint8 = iota
+		stateVisiting
+		stateVisited
+	)
+	state := make([]uint8, len(nodes))
+	var visit func(idx int64) error
+	visit = func(idx int64) error {
+		if idx < 0 || idx >= int64(len(nodes)) {
+			return fmt.Errorf("node index %d out of bounds", idx)
+		}
+		switch state[idx] {
+		case stateVisiting:
+			return fmt.Errorf("cycle detected at node %d", idx)
+		case stateVisited:
+			return nil
+		}
+		w := nodes[idx]
+		if w == nil {
+			return fmt.Errorf("node %d is nil", idx)
+		}
+		state[idx] = stateVisiting
+		switch w.Kind {
+		case errorKindJoined:
+			if w.CauseIndex != -1 {
+				return fmt.Errorf("joined node %d cannot have cause_index %d", idx, w.CauseIndex)
+			}
+			if len(w.ChildIndices) == 0 {
+				return fmt.Errorf("joined node %d has no children", idx)
+			}
+			for _, childIdx := range w.ChildIndices {
+				if err := visit(childIdx); err != nil {
+					return err
+				}
+			}
+		default:
+			if len(w.ChildIndices) > 0 {
+				return fmt.Errorf("non-joined node %d cannot have child_indices", idx)
+			}
+			if w.CauseIndex < -1 || w.CauseIndex >= int64(len(nodes)) {
+				return fmt.Errorf("node %d cause_index %d out of bounds", idx, w.CauseIndex)
+			}
+			if w.CauseIndex >= 0 {
+				if err := visit(w.CauseIndex); err != nil {
+					return err
+				}
+			}
+		}
+		state[idx] = stateVisited
+		return nil
+	}
+	for i := range nodes {
+		if state[i] == stateUnvisited {
+			if err := visit(int64(i)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // decodeErrorNode recursively reconstructs one error node from nodes[idx] while
-// memoizing decoded nodes so shared indices decode to the same error instance.
+// memoizing decoded nodes so shared DAG indices decode to the same error instance.
 func decodeErrorNode(nodes []*genmodelgateway.GatewayErrorNode, idx int64, memo []error) error {
 	if idx < 0 || idx >= int64(len(nodes)) {
 		return nil
@@ -276,7 +370,7 @@ func decodeErrorNode(nodes []*genmodelgateway.GatewayErrorNode, idx int64, memo 
 		return nil
 	}
 	decodeChild := func(childIdx int64) error {
-		if childIdx <= idx || childIdx >= int64(len(nodes)) {
+		if childIdx < 0 || childIdx >= int64(len(nodes)) {
 			return nil
 		}
 		return decodeErrorNode(nodes, childIdx, memo)
@@ -370,7 +464,10 @@ func decodeErrorNode(nodes []*genmodelgateway.GatewayErrorNode, idx int64, memo 
 				decoded = err
 				break
 			}
-			decoded = correctable
+			restored = correctable
+		}
+		if w.Validation.UsageIncomplete && usage != nil {
+			decoded = model.RetainIncompleteUsage(restored, *usage)
 			break
 		}
 		decoded = restored

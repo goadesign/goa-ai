@@ -722,3 +722,110 @@ func TestGRPCStreamerTerminalFrameTransitionsAndUsageRetention(t *testing.T) {
 		require.Equal(t, 16, retained.TotalTokens)
 	})
 }
+
+func TestGRPCErrorGraphSharedDAGAndMalformedWireErrors(t *testing.T) {
+	t.Run("shared_dag_with_backward_reference_preserves_exact_validation_identity", func(t *testing.T) {
+		v, err := model.RestoreOutputValidationError(
+			model.OutputValidationToolArguments,
+			model.NewMalformedToolArgumentsError("svc.lookup", errors.New("unexpected EOF")),
+			model.ResponseEvidence{},
+			&model.TokenUsage{Model: "gpt-4o", InputTokens: 10, OutputTokens: 0, TotalTokens: 10},
+		)
+		require.NoError(t, err)
+		incompleteV := model.RetainIncompleteUsage(v, *v.Usage())
+		//nolint:errorlint // Verify RetainIncompleteUsage preserves exact root type.
+		exactV, ok := incompleteV.(*model.OutputValidationError)
+		require.True(t, ok)
+
+		// Join exactV directly with a wrapper around exactV so node 2 references node 1 (1 < 2).
+		joined := errors.Join(exactV, fmt.Errorf("context: %w", exactV))
+		wire := toGenError(joined)
+		require.NotNil(t, wire)
+
+		decoded := fromGenError(wire)
+		require.Error(t, decoded)
+		require.True(t, isExactGatewayValidation(decoded))
+		require.True(t, model.UsageIncompleteFromError(decoded))
+		var outErr *model.OutputValidationError
+		require.ErrorAs(t, decoded, &outErr)
+		require.True(t, outErr.UsageIncomplete())
+		require.Equal(t, 10, outErr.Usage().InputTokens)
+	})
+
+	t.Run("incomplete_retained_usage_round_trips_on_provider_error", func(t *testing.T) {
+		provErr := model.NewProviderError(
+			"openai",
+			"responses.create",
+			502,
+			model.ProviderErrorKindUnavailable,
+			"bad_gateway",
+			"upstream failed on round 2",
+			"req-99",
+			true,
+			nil,
+		)
+		withIncomplete := model.RetainIncompleteUsage(provErr, model.TokenUsage{
+			Model:       "gpt-4o",
+			InputTokens: 12,
+			TotalTokens: 12,
+		})
+		wire := toGenError(withIncomplete)
+		require.NotNil(t, wire)
+		require.True(t, wire.RetainedUsageIncomplete)
+
+		decoded := fromGenError(wire)
+		require.Error(t, decoded)
+		require.True(t, model.UsageIncompleteFromError(decoded))
+		require.Equal(t, 12, model.UsageFromError(decoded).InputTokens)
+	})
+
+	t.Run("malformed_and_cyclic_wire_error_graphs_return_non_nil_errors", func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			wire *genmodelgateway.GatewayError
+			want string
+		}{
+			{
+				name: "empty_nodes",
+				wire: &genmodelgateway.GatewayError{},
+				want: "empty error node list",
+			},
+			{
+				name: "self_loop_joined",
+				wire: &genmodelgateway.GatewayError{
+					Nodes: []*genmodelgateway.GatewayErrorNode{{
+						Kind:         errorKindJoined,
+						CauseIndex:   -1,
+						ChildIndices: []int64{0},
+					}},
+				},
+				want: "cycle detected",
+			},
+			{
+				name: "two_node_cycle",
+				wire: &genmodelgateway.GatewayError{
+					Nodes: []*genmodelgateway.GatewayErrorNode{
+						{Kind: errorKindPlain, Message: "a", CauseIndex: 1},
+						{Kind: errorKindPlain, Message: "b", CauseIndex: 0},
+					},
+				},
+				want: "cycle detected",
+			},
+			{
+				name: "empty_joined_children",
+				wire: &genmodelgateway.GatewayError{
+					Nodes: []*genmodelgateway.GatewayErrorNode{{
+						Kind:       errorKindJoined,
+						CauseIndex: -1,
+					}},
+				},
+				want: "no children",
+			},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				err := fromGenError(tc.wire)
+				require.ErrorContains(t, err, tc.want)
+			})
+		}
+	})
+}

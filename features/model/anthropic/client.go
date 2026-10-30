@@ -227,11 +227,15 @@ func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Res
 	}
 	response, err := translateSearchResponse(msg, enc)
 	if err != nil {
-		return nil, contract.RejectProviderOutput(
+		rejected := contract.RejectProviderOutput(
 			outputvalidation.RequiredKind(err),
 			rejectedAnthropicUsage(msg, enc.model, req.ModelClass),
 			err,
 		)
+		if !anthropicMessageUsageReported(msg) && rejected.Usage() != nil {
+			return nil, model.RetainIncompleteUsage(rejected, *rejected.Usage())
+		}
+		return nil, rejected
 	}
 	response.Usage = translateAnthropicUsage(msg, enc.model, req.ModelClass)
 	response.UsageReported = anthropicMessageUsageReported(msg)

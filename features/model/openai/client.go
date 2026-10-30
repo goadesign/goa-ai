@@ -188,20 +188,22 @@ func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Res
 		if err != nil {
 			err = wrapOpenAIError("responses.create", err)
 			if prepared.search != nil && prepared.search.usageObserved {
-				err = model.RetainUsage(err, prepared.search.usage)
+				err = model.RetainIncompleteUsage(err, prepared.search.usage)
 			}
 			return nil, err
 		}
 		var usage model.TokenUsage
 		var rejectedUsage *model.TokenUsage
 		reported := openAIResponseUsageReported(resp)
+		observed := openAIResponseUsageObserved(resp)
+		usageComplete := reported
 		if resp != nil {
 			usage = translateUsage(
 				resp.Usage,
 				chooseModelID(resp.Model, prepared.resolvedModelID),
 				prepared.resolvedModelClass,
 			)
-			if reported || model.HasObservedTokenCounts(usage) {
+			if observed {
 				copied := usage
 				rejectedUsage = &copied
 			}
@@ -212,14 +214,26 @@ func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Res
 				copied := prepared.search.usage
 				prior = &copied
 			}
-			if err := prepared.search.account(usage, reported); err != nil {
-				return nil, contract.RejectProviderOutput(outputvalidation.RequiredKind(err), prior, err)
+			if err := prepared.search.account(usage, reported, observed); err != nil {
+				rejected := contract.RejectProviderOutput(outputvalidation.RequiredKind(err), prior, err)
+				if rejected.Usage() != nil {
+					return nil, model.RetainIncompleteUsage(rejected, *rejected.Usage())
+				}
+				return nil, rejected
 			}
 			usage = prepared.search.usage
+			usageComplete = prepared.search.usageReported
 			if prepared.search.usageObserved {
 				copied := usage
 				rejectedUsage = &copied
 			}
+		}
+		rejectWithUsage := func(cause error) error {
+			rejected := contract.RejectProviderOutput(outputvalidation.RequiredKind(cause), rejectedUsage, cause)
+			if !usageComplete && rejected.Usage() != nil {
+				return model.RetainIncompleteUsage(rejected, *rejected.Usage())
+			}
+			return rejected
 		}
 		response, err := translateResponse(
 			resp, prepared.codec, prepared.resolvedModelID, prepared.resolvedModelClass,
@@ -228,23 +242,26 @@ func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Res
 		if err != nil {
 			if _, providerFailure := model.AsProviderError(err); providerFailure {
 				if rejectedUsage != nil {
+					if !usageComplete {
+						return nil, model.RetainIncompleteUsage(err, *rejectedUsage)
+					}
 					return nil, model.RetainUsage(err, *rejectedUsage)
 				}
 				return nil, err
 			}
-			return nil, contract.RejectProviderOutput(outputvalidation.RequiredKind(err), rejectedUsage, err)
+			return nil, rejectWithUsage(err)
 		}
 		if prepared.search == nil {
 			return response, nil
 		}
 		if !prepared.search.finishRound(response) {
 			if err := prepared.search.complete(response); err != nil {
-				return nil, contract.RejectProviderOutput(outputvalidation.RequiredKind(err), rejectedUsage, err)
+				return nil, rejectWithUsage(err)
 			}
 			return response, nil
 		}
 		if err := prepared.search.continueRequest(&prepared.request, resp); err != nil {
-			return nil, contract.RejectProviderOutput(outputvalidation.RequiredKind(err), rejectedUsage, err)
+			return nil, rejectWithUsage(err)
 		}
 	}
 }

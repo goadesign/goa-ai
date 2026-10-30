@@ -901,6 +901,9 @@ func validatemodel_5F_gateway_model_5F_gateway_TokenUsage_At_usage(usage *model_
 // validatemodel_5F_gateway_model_5F_gateway_GatewayError_Target_error_5F__Context_error
 // runs the validations defined on GatewayError.
 func validatemodel_5F_gateway_model_5F_gateway_GatewayError_Target_error_5F__Context_error(error_ *model_gatewaypb.GatewayError) (err error) {
+	if error_.RetainedUsageIncomplete == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("retained_usage_incomplete", "error"))
+	}
 	for _, e := range error_.Nodes {
 		if e != nil {
 			if err2 := validatemodel_5F_gateway_model_5F_gateway_GatewayErrorNode_At_elem(e); err2 != nil {
@@ -991,6 +994,9 @@ func validatemodel_5F_gateway_model_5F_gateway_ValidationErrorDetail_At_validati
 	}
 	if validation.RecoveryCorrection == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("recovery_correction", "validation"))
+	}
+	if validation.UsageIncomplete == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("usage_incomplete", "validation"))
 	}
 	if validation.Evidence != nil {
 		if err2 := validatemodel_5F_gateway_model_5F_gateway_ResponseEvidence_At_evidence(validation.Evidence); err2 != nil {
@@ -2367,7 +2373,9 @@ func transformProtoTokenUsageToTokenUsage(v *model_gatewaypb.TokenUsage) *modelg
 // *modelgateway.GatewayError from a value of type
 // *model_gatewaypb.GatewayError.
 func transformProtoGatewayErrorToGatewayError(v *model_gatewaypb.GatewayError) *modelgateway.GatewayError {
-	res := &modelgateway.GatewayError{}
+	res := &modelgateway.GatewayError{
+		RetainedUsageIncomplete: *v.RetainedUsageIncomplete,
+	}
 	res.Nodes = make([]*modelgateway.GatewayErrorNode, len(v.Nodes))
 	for i, val := range v.Nodes {
 		if val == nil {
@@ -2435,6 +2443,7 @@ func transformProtoValidationErrorDetailToValidationErrorDetail(v *model_gateway
 	res := &modelgateway.ValidationErrorDetail{
 		Kind:               *v.Kind,
 		RecoveryCorrection: *v.RecoveryCorrection,
+		UsageIncomplete:    *v.UsageIncomplete,
 	}
 	if v.Evidence != nil {
 		res.Evidence = transformProtoResponseEvidenceToResponseEvidence(v.Evidence)

@@ -97,17 +97,18 @@ type (
 	}
 
 	validatedStreamer struct {
-		inner            Streamer
-		contract         *RequestContract
-		validator        *streamValidator
-		response         *Response
-		rejected         *Response
-		rejectedDelta    *TokenUsage
-		rejectedTotal    *TokenUsage
-		responseEvidence ResponseEvidence
-		pending          []Chunk
-		finished         bool
-		terminalErr      error
+		inner                   Streamer
+		contract                *RequestContract
+		validator               *streamValidator
+		response                *Response
+		rejected                *Response
+		rejectedDelta           *TokenUsage
+		rejectedTotal           *TokenUsage
+		rejectedTotalIncomplete bool
+		responseEvidence        ResponseEvidence
+		pending                 []Chunk
+		finished                bool
+		terminalErr             error
 	}
 
 	observedValidatedStreamer struct {
@@ -553,6 +554,7 @@ func (s *validatedStreamer) finishReceive(err error) (Chunk, error) {
 	rawResponse := s.inner.Response()
 	s.responseEvidence.Present = rawResponse != nil
 	s.rejectedTotal = s.contract.validatedUsageEvidence(rawResponse)
+	s.rejectedTotalIncomplete = rawResponse != nil && rawResponse.UsageIncomplete && s.rejectedTotal != nil
 	var responseBudget dynamicValueWalk
 	if preflightErr := preflightResponse(
 		rawResponse,
@@ -640,7 +642,7 @@ func observeStreamResult(inner Streamer, chunk Chunk, err error) StreamObservati
 		if errors.As(err, &outputErr) {
 			kind = outputErr.Kind()
 		}
-		err = newOutputValidationError(
+		validationErr := newOutputValidationError(
 			kind,
 			errors.Join(err, copyErr),
 			evidence,
@@ -648,6 +650,10 @@ func observeStreamResult(inner Streamer, chunk Chunk, err error) StreamObservati
 			firstTokenUsage(rejectedUsageTotal, rejectedUsageDelta),
 			nil,
 		)
+		if (rejectedUsageTotal == nil && rejectedUsageDelta != nil) || UsageIncompleteFromError(err) {
+			validationErr.usageIncomplete = true
+		}
+		err = validationErr
 	}
 	return StreamObservation{
 		Chunk:              observedChunk,
@@ -896,6 +902,9 @@ func (s *validatedStreamer) failValidation(kind OutputValidationKind, err error)
 		firstTokenUsage(s.rejectedTotal, s.rejectedDelta),
 		s.contract.toolValidators,
 	)
+	if (s.rejectedTotal == nil && s.rejectedDelta != nil) || s.rejectedTotalIncomplete {
+		validationErr.usageIncomplete = true
+	}
 	s.terminalErr = validationErr
 	return s.terminalErr
 }
@@ -909,7 +918,8 @@ func (s *validatedStreamer) captureProviderRejection(err error) error {
 		return err
 	}
 	s.responseEvidence = outputErr.Evidence()
-	s.rejectedTotal = outputErr.Usage()
+	s.rejectedTotal = UsageFromError(err)
+	s.rejectedTotalIncomplete = UsageIncompleteFromError(err)
 	rejected, cloneErr := outputErr.RejectedResponse()
 	if cloneErr != nil {
 		return errors.Join(err, cloneErr)

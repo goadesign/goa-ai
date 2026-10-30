@@ -229,7 +229,7 @@ func (c *limitedProvider) Complete(ctx context.Context, req *model.Request) (*mo
 	resp, err := c.next.Complete(ctx, req)
 	if c.limiter.reconcileUsage {
 		if err != nil {
-			if settleErr := c.limiter.settle(reserved, model.UsageFromError(err)); settleErr != nil {
+			if settleErr := c.limiter.settleError(reserved, err); settleErr != nil {
 				err = errors.Join(err, settleErr)
 			}
 		} else {
@@ -252,7 +252,7 @@ func (c *limitedProvider) Stream(ctx context.Context, req *model.Request) (model
 	stream, err := c.next.Stream(ctx, req)
 	if err != nil {
 		if c.limiter.reconcileUsage {
-			if settleErr := c.limiter.settle(reserved, model.UsageFromError(err)); settleErr != nil {
+			if settleErr := c.limiter.settleError(reserved, err); settleErr != nil {
 				err = errors.Join(err, settleErr)
 			}
 		}
@@ -324,7 +324,7 @@ func (s *limitedStreamer) Close() error {
 // unfinished stream uses retained usage or the usage chunks already received.
 func (s *limitedStreamer) settle(err error) error {
 	if usage := model.UsageFromError(err); usage != nil {
-		return s.limiter.settle(s.reserved, usage)
+		return s.limiter.settleError(s.reserved, err)
 	}
 	//nolint:errorlint // Only literal EOF proves a complete provider response.
 	if err == io.EOF {
@@ -333,7 +333,11 @@ func (s *limitedStreamer) settle(err error) error {
 		}
 	}
 	if s.usageSeen {
-		return s.limiter.settle(s.reserved, &s.usage)
+		//nolint:errorlint // Only nil (Close) or literal EOF permits settling streamed chunks as complete.
+		if (err == nil || err == io.EOF) && s.usage.InputTokens > 0 && s.usage.OutputTokens > 0 {
+			return s.limiter.settle(s.reserved, &s.usage)
+		}
+		return s.limiter.settleIncomplete(s.reserved, &s.usage)
 	}
 	return s.limiter.settle(s.reserved, nil)
 }
@@ -418,6 +422,20 @@ func (l *AdaptiveRateLimiter) settleResponse(reserved int, resp *model.Response)
 		return l.settleIncomplete(reserved, &resp.Usage)
 	}
 	return l.settle(reserved, &resp.Usage)
+}
+
+// settleError reconciles error-retained usage against the provisional
+// reservation. Complete retained usage replaces the reservation; incomplete
+// retained usage charges only overruns above the reservation.
+func (l *AdaptiveRateLimiter) settleError(reserved int, err error) error {
+	usage := model.UsageFromError(err)
+	if usage == nil {
+		return nil
+	}
+	if model.UsageIncompleteFromError(err) {
+		return l.settleIncomplete(reserved, usage)
+	}
+	return l.settle(reserved, usage)
 }
 
 // settleIncomplete charges only overruns when usage metadata is known to be

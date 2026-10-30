@@ -259,11 +259,15 @@ func (s *anthropicStreamer) outputError(processor *anthropicChunkProcessor, err 
 		attributed := processor.attributedUsage(s.encoded.model, s.modelClass)
 		usage = &attributed
 	}
-	return s.contract.RejectProviderOutput(
+	rejected := s.contract.RejectProviderOutput(
 		outputvalidation.RequiredKind(err),
 		usage,
 		err,
 	)
+	if (!processor.inputUsageReported || !processor.outputUsageReported) && rejected.Usage() != nil {
+		return model.RetainIncompleteUsage(rejected, *rejected.Usage())
+	}
+	return rejected
 }
 
 func (s *anthropicStreamer) emitChunk(chunk model.Chunk) error {

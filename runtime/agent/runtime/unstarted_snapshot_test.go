@@ -213,7 +213,7 @@ func TestGetRunSnapshotAcceptedContinuationBeforeStartRootRun(t *testing.T) {
 		spec.Name,
 		"svc.agent",
 		"run-1",
-		map[string]string{"TenantID": "tenant-acme", "CustomerID": "cust-42"},
+		map[string]string{"TenantID": "tenant-acme", "CustomerID": "cust-42", "policy_applied": "review"},
 		nil,
 	)
 	now := time.Now().UTC()
@@ -274,9 +274,73 @@ func TestGetRunSnapshotAcceptedContinuationBeforeStartRootRun(t *testing.T) {
 	require.Equal(t, "turn-2", snap.TurnID)
 	require.Equal(t, run.StatusPending, snap.Status)
 	require.Equal(t, map[string]string{
-		"TenantID":   "tenant-acme",
-		"CustomerID": "cust-42",
+		"TenantID":       "tenant-acme",
+		"CustomerID":     "cust-42",
+		"policy_applied": "review",
 	}, snap.Labels)
+
+	close(release)
+	_, err = handle.Wait(ctx)
+	require.NoError(t, err)
+}
+
+func TestGetRunSnapshotAcceptedServiceToolSubjectIsIsolatedFromCallerMutation(t *testing.T) {
+	ctx := t.Context()
+	release := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	eng := &gatedStartEngine{
+		Engine:  engineinmem.New(),
+		release: release,
+		entered: entered,
+	}
+	require.NoError(t, eng.RegisterWorkflow(ctx, engine.WorkflowDefinition{
+		Name: "svc.tool.workflow",
+		Handler: func(_ engine.WorkflowContext, input *RunInput) (*RunOutput, error) {
+			return &RunOutput{Subject: input.Subject, RunID: input.RunID}, nil
+		},
+	}))
+
+	subject := genrunidentity.RunSubject{
+		Executor: genrunidentity.NewRunExecutorServiceTool(&genrunidentity.ServiceToolSubject{
+			Registry: "reg.main",
+			Tool:     "svc.lookup",
+		}),
+	}
+	store := storageinmem.New()
+	rt := New(store, WithEngine(eng))
+	handle, err := eng.StartWorkflow(ctx, engine.WorkflowStartRequest{
+		ID:        "run-service-tool-1",
+		Workflow:  "svc.tool.workflow",
+		TaskQueue: "svc.queue",
+		Input: &RunInput{
+			Subject:   subject,
+			RunID:     "run-service-tool-1",
+			TurnID:    "turn-st-1",
+			SeedEndID: "empty",
+			Labels:    map[string]string{"TenantID": "tenant-acme"},
+		},
+	})
+	require.NoError(t, err)
+	<-entered
+
+	snap1, err := rt.GetRunSnapshot(ctx, "run-service-tool-1")
+	require.NoError(t, err)
+	st1, ok := snap1.Subject.Executor.AsServiceTool()
+	require.True(t, ok)
+	require.Equal(t, "reg.main", st1.Registry)
+	require.Equal(t, "svc.lookup", st1.Tool)
+
+	// Mutating the returned ServiceToolSubject pointer must not mutate the
+	// in-memory engine's retained accepted identity.
+	st1.Registry = "mutated.registry"
+	st1.Tool = "mutated.tool"
+
+	snap2, err := rt.GetRunSnapshot(ctx, "run-service-tool-1")
+	require.NoError(t, err)
+	st2, ok := snap2.Subject.Executor.AsServiceTool()
+	require.True(t, ok)
+	require.Equal(t, "reg.main", st2.Registry)
+	require.Equal(t, "svc.lookup", st2.Tool)
 
 	close(release)
 	_, err = handle.Wait(ctx)

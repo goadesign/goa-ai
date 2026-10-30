@@ -1640,7 +1640,9 @@ func transformTokenUsageToProtoTokenUsage(v *modelgateway.TokenUsage) *model_gat
 // *model_gatewaypb.GatewayError from a value of type
 // *modelgateway.GatewayError.
 func transformGatewayErrorToProtoGatewayError(v *modelgateway.GatewayError) *model_gatewaypb.GatewayError {
-	res := &model_gatewaypb.GatewayError{}
+	res := &model_gatewaypb.GatewayError{
+		RetainedUsageIncomplete: &v.RetainedUsageIncomplete,
+	}
 	if v.Nodes != nil {
 		res.Nodes = make([]*model_gatewaypb.GatewayErrorNode, len(v.Nodes))
 		for i, val := range v.Nodes {
@@ -1710,6 +1712,7 @@ func transformValidationErrorDetailToProtoValidationErrorDetail(v *modelgateway.
 	res := &model_gatewaypb.ValidationErrorDetail{
 		Kind:               &v.Kind,
 		RecoveryCorrection: &v.RecoveryCorrection,
+		UsageIncomplete:    &v.UsageIncomplete,
 	}
 	if v.Evidence != nil {
 		res.Evidence = transformResponseEvidenceToProtoResponseEvidence(v.Evidence)

@@ -340,6 +340,12 @@ message GatewayError {
 	repeated GatewayErrorNode nodes = 1;
 	// Validated invocation usage retained on a failed call.
 	TokenUsage retained_usage = 2;
+	// Whether retained_usage represents only partial counts (for example, a
+// multi-round tool-search invocation that failed on a later round after
+// earlier rounds reported usage, a stream that failed after emitting partial
+// usage chunks, or a provider response that omitted input or output token
+// counters).
+	optional bool retained_usage_incomplete = 3;
 }
 // Single node in an encoded error tree.
 message GatewayErrorNode {
@@ -391,6 +397,11 @@ message ValidationErrorDetail {
 	TokenUsage usage = 3;
 	// Framework-authored recovery guidance.
 	optional string recovery_correction = 4;
+	// Whether usage represents only partial counts (for example, a stream rejected
+// after initial input token chunks before output tokens arrive, a provider
+// response omitting input or output counters, or a multi-round tool-search
+// failure after an uncounted round).
+	optional bool usage_incomplete = 5;
 }
 // Bounded fingerprint of a rejected provider response.
 message ResponseEvidence {

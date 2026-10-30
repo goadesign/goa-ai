@@ -139,13 +139,13 @@ func (s *toolSearch) record(native responses.ResponseToolSearchCall) error {
 
 // account keeps every completed provider request's usage, including a response
 // whose output will subsequently fail validation.
-func (s *toolSearch) account(usage model.TokenUsage, reported bool) error {
+func (s *toolSearch) account(usage model.TokenUsage, reported, observed bool) error {
 	if s.rounds == 0 {
 		s.usageReported = reported
 	} else {
 		s.usageReported = s.usageReported && reported
 	}
-	if reported || model.HasObservedTokenCounts(usage) {
+	if reported || observed || model.HasObservedTokenCounts(usage) {
 		s.usageObserved = true
 	}
 	s.rounds++

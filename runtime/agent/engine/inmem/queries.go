@@ -7,6 +7,7 @@ import (
 	"errors"
 	"time"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 )
@@ -41,7 +42,7 @@ func (e *eng) QueryAcceptedRun(ctx context.Context, workflowID string) (engine.A
 		h.mu.Unlock()
 	}
 	return engine.AcceptedRun{
-		Subject:     recipe.accepted.subject,
+		Subject:     cloneRunSubject(recipe.accepted.subject),
 		RunID:       recipe.accepted.runID,
 		SessionID:   recipe.accepted.sessionID,
 		TurnID:      recipe.accepted.turnID,
@@ -59,13 +60,24 @@ func extractAcceptedRunIdentity(input *api.RunInput) acceptedRunIdentity {
 		return acceptedRunIdentity{}
 	}
 	return acceptedRunIdentity{
-		subject:   input.Subject,
+		subject:   cloneRunSubject(input.Subject),
 		runID:     input.RunID,
 		sessionID: input.SessionID,
 		turnID:    input.TurnID,
 		seedEndID: input.SeedEndID,
 		labels:    cloneLabels(input.Labels),
 	}
+}
+
+// cloneRunSubject returns an isolated copy of a RunSubject, deep-copying any
+// pointer-backed union branch so caller mutations cannot affect retained state.
+func cloneRunSubject(in genrunidentity.RunSubject) genrunidentity.RunSubject {
+	out := in
+	if st, ok := in.Executor.AsServiceTool(); ok && st != nil {
+		copied := *st
+		out.Executor.SetServiceTool(&copied)
+	}
+	return out
 }
 
 // cloneLabels returns an isolated copy of a string map when non-empty.

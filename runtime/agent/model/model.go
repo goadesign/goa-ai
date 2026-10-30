@@ -1157,6 +1157,12 @@ func (r *Response) HasUsage() bool {
 	return r != nil && r.UsageReported
 }
 
+// HasCompleteUsage reports whether the provider explicitly reported complete
+// token usage for the response without omitted counters or uncounted rounds.
+func (r *Response) HasCompleteUsage() bool {
+	return r != nil && r.UsageReported && !r.UsageIncomplete
+}
+
 // HasObservedUsage reports whether the response carries any reported or observed
 // token usage metadata, including partial counts or legacy nonzero usage fields.
 func (r *Response) HasObservedUsage() bool {

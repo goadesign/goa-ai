@@ -2206,8 +2206,14 @@ type GatewayError struct {
 	Nodes []*GatewayErrorNode `protobuf:"bytes,1,rep,name=nodes,proto3" json:"nodes,omitempty"`
 	// Validated invocation usage retained on a failed call.
 	RetainedUsage *TokenUsage `protobuf:"bytes,2,opt,name=retained_usage,json=retainedUsage,proto3" json:"retained_usage,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	// Whether retained_usage represents only partial counts (for example, a
+	// multi-round tool-search invocation that failed on a later round after
+	// earlier rounds reported usage, a stream that failed after emitting partial
+	// usage chunks, or a provider response that omitted input or output token
+	// counters).
+	RetainedUsageIncomplete *bool `protobuf:"varint,3,opt,name=retained_usage_incomplete,json=retainedUsageIncomplete,proto3,oneof" json:"retained_usage_incomplete,omitempty"`
+	unknownFields           protoimpl.UnknownFields
+	sizeCache               protoimpl.SizeCache
 }
 
 func (x *GatewayError) Reset() {
@@ -2252,6 +2258,13 @@ func (x *GatewayError) GetRetainedUsage() *TokenUsage {
 		return x.RetainedUsage
 	}
 	return nil
+}
+
+func (x *GatewayError) GetRetainedUsageIncomplete() bool {
+	if x != nil && x.RetainedUsageIncomplete != nil {
+		return *x.RetainedUsageIncomplete
+	}
+	return false
 }
 
 // Single node in an encoded error tree.
@@ -2492,8 +2505,13 @@ type ValidationErrorDetail struct {
 	Usage *TokenUsage `protobuf:"bytes,3,opt,name=usage,proto3" json:"usage,omitempty"`
 	// Framework-authored recovery guidance.
 	RecoveryCorrection *string `protobuf:"bytes,4,opt,name=recovery_correction,json=recoveryCorrection,proto3,oneof" json:"recovery_correction,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// Whether usage represents only partial counts (for example, a stream rejected
+	// after initial input token chunks before output tokens arrive, a provider
+	// response omitting input or output counters, or a multi-round tool-search
+	// failure after an uncounted round).
+	UsageIncomplete *bool `protobuf:"varint,5,opt,name=usage_incomplete,json=usageIncomplete,proto3,oneof" json:"usage_incomplete,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
 }
 
 func (x *ValidationErrorDetail) Reset() {
@@ -2552,6 +2570,13 @@ func (x *ValidationErrorDetail) GetRecoveryCorrection() string {
 		return *x.RecoveryCorrection
 	}
 	return ""
+}
+
+func (x *ValidationErrorDetail) GetUsageIncomplete() bool {
+	if x != nil && x.UsageIncomplete != nil {
+		return *x.UsageIncomplete
+	}
+	return false
 }
 
 // Bounded fingerprint of a rejected provider response.
@@ -3906,10 +3931,12 @@ const file_goagen_gateway_model_gateway_proto_rawDesc = "" +
 	"\x0e_output_tokensB\x0f\n" +
 	"\r_total_tokensB\x14\n" +
 	"\x12_cache_read_tokensB\x15\n" +
-	"\x13_cache_write_tokens\"\x95\x01\n" +
+	"\x13_cache_write_tokens\"\xf4\x01\n" +
 	"\fGatewayError\x12<\n" +
 	"\x05nodes\x18\x01 \x03(\v2&.goa_ai_model_gateway.GatewayErrorNodeR\x05nodes\x12G\n" +
-	"\x0eretained_usage\x18\x02 \x01(\v2 .goa_ai_model_gateway.TokenUsageR\rretainedUsage\"\xa1\x04\n" +
+	"\x0eretained_usage\x18\x02 \x01(\v2 .goa_ai_model_gateway.TokenUsageR\rretainedUsage\x12?\n" +
+	"\x19retained_usage_incomplete\x18\x03 \x01(\bH\x00R\x17retainedUsageIncomplete\x88\x01\x01B\x1c\n" +
+	"\x1a_retained_usage_incomplete\"\xa1\x04\n" +
 	"\x10GatewayErrorNode\x12\x17\n" +
 	"\x04kind\x18\x01 \x01(\tH\x00R\x04kind\x88\x01\x01\x12\x1e\n" +
 	"\bmessage_\x18\x02 \x01(\tH\x01R\amessage\x88\x01\x01\x12\x1f\n" +
@@ -3949,14 +3976,16 @@ const file_goagen_gateway_model_gateway_proto_rawDesc = "" +
 	"\t_message_B\r\n" +
 	"\v_request_idB\f\n" +
 	"\n" +
-	"_retryable\"\x83\x02\n" +
+	"_retryable\"\xc8\x02\n" +
 	"\x15ValidationErrorDetail\x12\x17\n" +
 	"\x04kind\x18\x01 \x01(\tH\x00R\x04kind\x88\x01\x01\x12B\n" +
 	"\bevidence\x18\x02 \x01(\v2&.goa_ai_model_gateway.ResponseEvidenceR\bevidence\x126\n" +
 	"\x05usage\x18\x03 \x01(\v2 .goa_ai_model_gateway.TokenUsageR\x05usage\x124\n" +
-	"\x13recovery_correction\x18\x04 \x01(\tH\x01R\x12recoveryCorrection\x88\x01\x01B\a\n" +
+	"\x13recovery_correction\x18\x04 \x01(\tH\x01R\x12recoveryCorrection\x88\x01\x01\x12.\n" +
+	"\x10usage_incomplete\x18\x05 \x01(\bH\x02R\x0fusageIncomplete\x88\x01\x01B\a\n" +
 	"\x05_kindB\x16\n" +
-	"\x14_recovery_correction\"\xb2\x01\n" +
+	"\x14_recovery_correctionB\x13\n" +
+	"\x11_usage_incomplete\"\xb2\x01\n" +
 	"\x10ResponseEvidence\x12\x1d\n" +
 	"\apresent\x18\x01 \x01(\bH\x00R\apresent\x88\x01\x01\x12\x1d\n" +
 	"\aversion\x18\x02 \x01(\tH\x01R\aversion\x88\x01\x01\x12\x1b\n" +
@@ -4271,6 +4300,7 @@ func file_goagen_gateway_model_gateway_proto_init() {
 	}
 	file_goagen_gateway_model_gateway_proto_msgTypes[26].OneofWrappers = []any{}
 	file_goagen_gateway_model_gateway_proto_msgTypes[27].OneofWrappers = []any{}
+	file_goagen_gateway_model_gateway_proto_msgTypes[28].OneofWrappers = []any{}
 	file_goagen_gateway_model_gateway_proto_msgTypes[29].OneofWrappers = []any{}
 	file_goagen_gateway_model_gateway_proto_msgTypes[30].OneofWrappers = []any{}
 	file_goagen_gateway_model_gateway_proto_msgTypes[31].OneofWrappers = []any{}

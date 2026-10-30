@@ -237,7 +237,11 @@ func (s *grpcStreamer) Recv() (model.Chunk, error) {
 		if tailErr == nil || extraFrame != nil {
 			dupErr := errors.New("gateway: gRPC stream emitted unexpected frame after terminal response")
 			if resp.HasObservedUsage() {
-				dupErr = model.RetainUsage(dupErr, resp.Usage)
+				if resp.UsageIncomplete {
+					dupErr = model.RetainIncompleteUsage(dupErr, resp.Usage)
+				} else {
+					dupErr = model.RetainUsage(dupErr, resp.Usage)
+				}
 			}
 			s.finish(nil, dupErr)
 			return nil, dupErr
@@ -246,7 +250,11 @@ func (s *grpcStreamer) Recv() (model.Chunk, error) {
 		if tailErr != io.EOF {
 			normErr := normalizeTransportError(s.ctx, tailErr)
 			if resp.HasObservedUsage() && model.UsageFromError(normErr) == nil {
-				normErr = model.RetainUsage(normErr, resp.Usage)
+				if resp.UsageIncomplete {
+					normErr = model.RetainIncompleteUsage(normErr, resp.Usage)
+				} else {
+					normErr = model.RetainUsage(normErr, resp.Usage)
+				}
 			}
 			s.finish(nil, normErr)
 			return nil, normErr
@@ -322,7 +330,10 @@ func invokeGRPCComplete(
 	switch res.Outcome.Kind() {
 	case genmodelgateway.CompleteOutcomeKindError:
 		genErr, _ := res.Outcome.AsError()
-		return nil, fromGenError(genErr)
+		if err := fromGenError(genErr); err != nil {
+			return nil, err
+		}
+		return nil, errors.New("gateway: unary failed without error details")
 	case genmodelgateway.CompleteOutcomeKindResponse:
 		genResp, _ := res.Outcome.AsResponse()
 		return fromGenResponse(genResp)
@@ -377,7 +388,10 @@ func invokeGRPCCountTokens(
 	switch res.Outcome.Kind() {
 	case genmodelgateway.CountTokensOutcomeKindError:
 		genErr, _ := res.Outcome.AsError()
-		return model.TokenCount{}, fromGenError(genErr)
+		if err := fromGenError(genErr); err != nil {
+			return model.TokenCount{}, err
+		}
+		return model.TokenCount{}, errors.New("gateway: token count failed without error details")
 	case genmodelgateway.CountTokensOutcomeKindCount:
 		genCount, _ := res.Outcome.AsCount()
 		return fromGenTokenCount(genCount)
