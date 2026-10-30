@@ -272,25 +272,34 @@ func fromGenError(in *genmodelgateway.GatewayError) error {
 	if err := validateErrorGraph(in.Nodes); err != nil {
 		return fmt.Errorf("gateway: invalid wire error graph: %w", err)
 	}
+	if in.RetainedUsageIncomplete && in.RetainedUsage == nil {
+		return errors.New("gateway: invalid wire error graph: retained_usage_incomplete requires retained_usage")
+	}
+	if in.RetainedUsage != nil && in.Nodes[0].Kind == errorKindValidation {
+		return errors.New("gateway: invalid wire error graph: validation root node cannot carry top-level retained_usage")
+	}
 	memo := make([]error, len(in.Nodes))
 	err := decodeErrorNode(in.Nodes, 0, memo)
 	if err == nil {
 		return errors.New("gateway: wire error decoded to nil")
 	}
-	if in.RetainedUsage != nil && in.Nodes[0] != nil && in.Nodes[0].Kind != errorKindValidation {
-		if usage, uerr := fromGenUsage(in.RetainedUsage); uerr == nil {
-			if in.RetainedUsageIncomplete {
-				err = model.RetainIncompleteUsage(err, usage)
-			} else {
-				err = model.RetainUsage(err, usage)
-			}
+	if in.RetainedUsage != nil {
+		u, uerr := fromGenUsage(in.RetainedUsage)
+		if uerr != nil {
+			return fmt.Errorf("gateway: invalid wire error usage: %w", uerr)
+		}
+		if in.RetainedUsageIncomplete {
+			err = model.RetainIncompleteUsage(err, u)
+		} else {
+			err = model.RetainUsage(err, u)
 		}
 	}
 	return err
 }
 
 // validateErrorGraph verifies that nodes forms a non-empty, bounds-safe,
-// acyclic DAG before decodeErrorNode traverses it.
+// acyclic DAG with valid node discriminators and fields before decodeErrorNode
+// traverses it.
 func validateErrorGraph(nodes []*genmodelgateway.GatewayErrorNode) error {
 	if len(nodes) == 0 {
 		return errors.New("empty error node list")
@@ -313,34 +322,19 @@ func validateErrorGraph(nodes []*genmodelgateway.GatewayErrorNode) error {
 			return nil
 		}
 		w := nodes[idx]
-		if w == nil {
-			return fmt.Errorf("node %d is nil", idx)
+		if err := validateErrorNode(idx, w, int64(len(nodes))); err != nil {
+			return err
 		}
 		state[idx] = stateVisiting
-		switch w.Kind {
-		case errorKindJoined:
-			if w.CauseIndex != -1 {
-				return fmt.Errorf("joined node %d cannot have cause_index %d", idx, w.CauseIndex)
-			}
-			if len(w.ChildIndices) == 0 {
-				return fmt.Errorf("joined node %d has no children", idx)
-			}
+		if w.Kind == errorKindJoined {
 			for _, childIdx := range w.ChildIndices {
 				if err := visit(childIdx); err != nil {
 					return err
 				}
 			}
-		default:
-			if len(w.ChildIndices) > 0 {
-				return fmt.Errorf("non-joined node %d cannot have child_indices", idx)
-			}
-			if w.CauseIndex < -1 || w.CauseIndex >= int64(len(nodes)) {
-				return fmt.Errorf("node %d cause_index %d out of bounds", idx, w.CauseIndex)
-			}
-			if w.CauseIndex >= 0 {
-				if err := visit(w.CauseIndex); err != nil {
-					return err
-				}
+		} else if w.CauseIndex >= 0 {
+			if err := visit(w.CauseIndex); err != nil {
+				return err
 			}
 		}
 		state[idx] = stateVisited
@@ -352,6 +346,82 @@ func validateErrorGraph(nodes []*genmodelgateway.GatewayErrorNode) error {
 				return err
 			}
 		}
+	}
+	return nil
+}
+
+// validateErrorNode verifies one wire error node's discriminator, edge indices,
+// and kind-specific payload fields.
+func validateErrorNode(idx int64, w *genmodelgateway.GatewayErrorNode, numNodes int64) error {
+	if w == nil {
+		return fmt.Errorf("node %d is nil", idx)
+	}
+	if w.Kind == errorKindJoined {
+		if w.CauseIndex != -1 {
+			return fmt.Errorf("joined node %d cannot have cause_index %d", idx, w.CauseIndex)
+		}
+		if len(w.ChildIndices) == 0 {
+			return fmt.Errorf("joined node %d has no children", idx)
+		}
+		if w.Message != "" || w.Sentinel != "" || w.Provider != nil || w.Validation != nil ||
+			w.UnadvertisedToolName != "" || w.MalformedToolName != "" {
+			return fmt.Errorf("joined node %d has contradictory fields", idx)
+		}
+		return nil
+	}
+	if len(w.ChildIndices) > 0 {
+		return fmt.Errorf("non-joined node %d cannot have child_indices", idx)
+	}
+	if w.CauseIndex < -1 || w.CauseIndex >= numNodes {
+		return fmt.Errorf("node %d cause_index %d out of bounds", idx, w.CauseIndex)
+	}
+	switch w.Kind {
+	case errorKindPlain:
+		if w.Sentinel != "" || w.Provider != nil || w.Validation != nil ||
+			w.UnadvertisedToolName != "" || w.MalformedToolName != "" {
+			return fmt.Errorf("plain node %d has contradictory fields", idx)
+		}
+		if w.CauseIndex >= 0 && w.Message == "" {
+			return fmt.Errorf("plain wrapper node %d requires non-empty message", idx)
+		}
+	case errorKindSentinel:
+		if fromSentinelCode(w.Sentinel) == nil {
+			return fmt.Errorf("sentinel node %d has unknown sentinel %q", idx, w.Sentinel)
+		}
+		if w.CauseIndex != -1 || w.Message != "" || w.Provider != nil || w.Validation != nil ||
+			w.UnadvertisedToolName != "" || w.MalformedToolName != "" {
+			return fmt.Errorf("sentinel node %d has contradictory fields", idx)
+		}
+	case errorKindRequestValidation:
+		if w.Sentinel != "" || w.Provider != nil || w.Validation != nil ||
+			w.UnadvertisedToolName != "" || w.MalformedToolName != "" {
+			return fmt.Errorf("request_validation node %d has contradictory fields", idx)
+		}
+	case errorKindProvider:
+		if w.Provider == nil || w.Message != "" || w.Sentinel != "" || w.Validation != nil ||
+			w.UnadvertisedToolName != "" || w.MalformedToolName != "" {
+			return fmt.Errorf("provider node %d has invalid fields", idx)
+		}
+	case errorKindValidation:
+		if w.Validation == nil || w.Message != "" || w.Sentinel != "" || w.Provider != nil ||
+			w.UnadvertisedToolName != "" || w.MalformedToolName != "" {
+			return fmt.Errorf("validation node %d has invalid fields", idx)
+		}
+		if w.Validation.UsageIncomplete && w.Validation.Usage == nil {
+			return fmt.Errorf("validation node %d has usage_incomplete without usage", idx)
+		}
+	case errorKindUnadvertised:
+		if w.UnadvertisedToolName == "" || w.CauseIndex != -1 || w.Message != "" || w.Sentinel != "" ||
+			w.Provider != nil || w.Validation != nil || w.MalformedToolName != "" {
+			return fmt.Errorf("unadvertised_tool node %d has invalid fields", idx)
+		}
+	case errorKindMalformed:
+		if w.MalformedToolName == "" || w.Message != "" || w.Sentinel != "" ||
+			w.Provider != nil || w.Validation != nil || w.UnadvertisedToolName != "" {
+			return fmt.Errorf("malformed_tool_args node %d has invalid fields", idx)
+		}
+	default:
+		return fmt.Errorf("node %d has unknown kind %q", idx, w.Kind)
 	}
 	return nil
 }
@@ -378,11 +448,7 @@ func decodeErrorNode(nodes []*genmodelgateway.GatewayErrorNode, idx int64, memo 
 	var decoded error
 	switch w.Kind {
 	case errorKindSentinel:
-		if err := fromSentinelCode(w.Sentinel); err != nil {
-			decoded = err
-		} else {
-			decoded = errors.New(w.Message)
-		}
+		decoded = fromSentinelCode(w.Sentinel)
 	case errorKindRequestValidation:
 		cause := decodeChild(w.CauseIndex)
 		if cause == nil {
@@ -472,21 +538,13 @@ func decodeErrorNode(nodes []*genmodelgateway.GatewayErrorNode, idx int64, memo 
 		}
 		decoded = restored
 	case errorKindUnadvertised:
-		if w.UnadvertisedToolName != "" {
-			decoded = model.NewUnadvertisedToolNameError(w.UnadvertisedToolName)
-		} else {
-			decoded = errors.New("model returned an unadvertised tool name")
-		}
+		decoded = model.NewUnadvertisedToolNameError(w.UnadvertisedToolName)
 	case errorKindMalformed:
 		cause := decodeChild(w.CauseIndex)
 		if cause == nil {
 			cause = errors.New("invalid JSON")
 		}
-		if w.MalformedToolName != "" {
-			decoded = model.NewMalformedToolArgumentsError(tools.Ident(w.MalformedToolName), cause)
-		} else {
-			decoded = cause
-		}
+		decoded = model.NewMalformedToolArgumentsError(tools.Ident(w.MalformedToolName), cause)
 	case errorKindJoined:
 		children := make([]error, 0, len(w.ChildIndices))
 		for _, childIdx := range w.ChildIndices {
@@ -495,13 +553,13 @@ func decodeErrorNode(nodes []*genmodelgateway.GatewayErrorNode, idx int64, memo 
 			}
 		}
 		decoded = errors.Join(children...)
-	default:
+	case errorKindPlain:
 		cause := decodeChild(w.CauseIndex)
 		switch {
 		case cause == nil:
 			decoded = errors.New(w.Message)
-		case w.Message == "" || w.Message == cause.Error():
-			decoded = cause
+		case w.Message == cause.Error():
+			decoded = fmt.Errorf("%w", cause)
 		default:
 			prefix := strings.TrimSuffix(w.Message, ": "+cause.Error())
 			decoded = fmt.Errorf("%s: %w", prefix, cause)

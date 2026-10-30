@@ -304,9 +304,6 @@ func (c *modelInvocationCall) observeRejectedModelOutput(validationErr *model.Ou
 	if usage := validationErr.Usage(); usage != nil {
 		usageErr = c.provider.sink.recordRejectedModelUsageTotal(c.invocationID, *usage)
 		c.usage = append(c.usage, modelcall.Result{Called: true, Err: usageErr})
-	} else if validationErr.Evidence().SHA256 != "" {
-		usageErr = c.provider.sink.recordRejectedModelUsageTotal(c.invocationID, model.TokenUsage{})
-		c.usage = append(c.usage, modelcall.Result{Called: true, Err: usageErr})
 	}
 	var outputErr error = outputcontract.NewWithOrigin(
 		validationErr,
@@ -426,13 +423,6 @@ func (s *modelInvocationStreamer) ObserveStreamRecv(observation model.StreamObse
 				err := s.call.provider.sink.recordRejectedModelUsageTotal(
 					s.call.invocationID,
 					*observation.RejectedUsageTotal,
-				)
-				s.call.usage = append(s.call.usage, modelcall.Result{Called: true, Err: err})
-				recordingErr = errors.Join(recordingErr, err)
-			} else if observation.RejectedUsageDelta == nil && len(s.call.usage) == 0 && observation.ResponseEvidence.SHA256 != "" {
-				err := s.call.provider.sink.recordRejectedModelUsageTotal(
-					s.call.invocationID,
-					model.TokenUsage{},
 				)
 				s.call.usage = append(s.call.usage, modelcall.Result{Called: true, Err: err})
 				recordingErr = errors.Join(recordingErr, err)

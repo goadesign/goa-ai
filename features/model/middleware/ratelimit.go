@@ -333,10 +333,6 @@ func (s *limitedStreamer) settle(err error) error {
 		}
 	}
 	if s.usageSeen {
-		//nolint:errorlint // Only nil (Close) or literal EOF permits settling streamed chunks as complete.
-		if (err == nil || err == io.EOF) && s.usage.InputTokens > 0 && s.usage.OutputTokens > 0 {
-			return s.limiter.settle(s.reserved, &s.usage)
-		}
 		return s.limiter.settleIncomplete(s.reserved, &s.usage)
 	}
 	return s.limiter.settle(s.reserved, nil)

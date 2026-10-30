@@ -372,24 +372,46 @@ func TestUsageReconciledRateLimiterStreamFinalTotalReplacesChunks(t *testing.T) 
 }
 
 func TestUsageReconciledRateLimiterEarlyCloseUsesReportedChunks(t *testing.T) {
-	l, err := NewUsageReconciledAdaptiveRateLimiter(t.Context(), nil, "", 400, 400)
-	require.NoError(t, err)
-	provider, err := l.WrapProvider(&fakeCountingClient{
-		fakeClient: fakeClient{stream: &closeTrackingStreamer{
-			chunk: model.UsageChunk{Usage: model.TokenUsage{InputTokens: 10, OutputTokens: 2, TotalTokens: 12}},
-		}},
-		count: model.TokenCount{InputTokens: 100, Exact: false},
+	t.Run("partial chunks below reservation do not refund unfinished stream", func(t *testing.T) {
+		l, err := NewUsageReconciledAdaptiveRateLimiter(t.Context(), nil, "", 400, 400)
+		require.NoError(t, err)
+		provider, err := l.WrapProvider(&fakeCountingClient{
+			fakeClient: fakeClient{stream: &closeTrackingStreamer{
+				chunk: model.UsageChunk{Usage: model.TokenUsage{InputTokens: 10, OutputTokens: 2, TotalTokens: 12}},
+			}},
+			count: model.TokenCount{InputTokens: 100, Exact: false},
+		})
+		require.NoError(t, err)
+		stream, err := provider.Stream(t.Context(), &model.Request{MaxTokens: 100})
+		require.NoError(t, err)
+		_, err = stream.Recv()
+		require.NoError(t, err)
+		require.NoError(t, stream.Close())
+		l.mu.Lock()
+		balance := l.balance
+		l.mu.Unlock()
+		require.InDelta(t, 200, balance, 0.1)
 	})
-	require.NoError(t, err)
-	stream, err := provider.Stream(t.Context(), &model.Request{MaxTokens: 100})
-	require.NoError(t, err)
-	_, err = stream.Recv()
-	require.NoError(t, err)
-	require.NoError(t, stream.Close())
-	l.mu.Lock()
-	balance := l.balance
-	l.mu.Unlock()
-	require.InDelta(t, 388, balance, 0.1)
+	t.Run("partial chunks above reservation charge overrun on early close", func(t *testing.T) {
+		l, err := NewUsageReconciledAdaptiveRateLimiter(t.Context(), nil, "", 400, 400)
+		require.NoError(t, err)
+		provider, err := l.WrapProvider(&fakeCountingClient{
+			fakeClient: fakeClient{stream: &closeTrackingStreamer{
+				chunk: model.UsageChunk{Usage: model.TokenUsage{InputTokens: 150, OutputTokens: 100, TotalTokens: 250}},
+			}},
+			count: model.TokenCount{InputTokens: 100, Exact: false},
+		})
+		require.NoError(t, err)
+		stream, err := provider.Stream(t.Context(), &model.Request{MaxTokens: 100})
+		require.NoError(t, err)
+		_, err = stream.Recv()
+		require.NoError(t, err)
+		require.NoError(t, stream.Close())
+		l.mu.Lock()
+		balance := l.balance
+		l.mu.Unlock()
+		require.InDelta(t, 150, balance, 0.1)
+	})
 }
 
 func TestAdaptiveRateLimiterPublicConstructorsSelectRequestCost(t *testing.T) {

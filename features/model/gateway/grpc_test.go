@@ -821,6 +821,55 @@ func TestGRPCErrorGraphSharedDAGAndMalformedWireErrors(t *testing.T) {
 				},
 				want: "no children",
 			},
+			{
+				name: "unknown_kind_pointing_to_validation",
+				wire: &genmodelgateway.GatewayError{
+					Nodes: []*genmodelgateway.GatewayErrorNode{
+						{Kind: "unknown", Message: "", CauseIndex: 1},
+						{
+							Kind:       errorKindValidation,
+							CauseIndex: -1,
+							Validation: &genmodelgateway.ValidationErrorDetail{
+								Kind: string(model.OutputValidationResponseShape),
+							},
+						},
+					},
+				},
+				want: "unknown kind",
+			},
+			{
+				name: "unknown_sentinel",
+				wire: &genmodelgateway.GatewayError{
+					Nodes: []*genmodelgateway.GatewayErrorNode{{
+						Kind:       errorKindSentinel,
+						Sentinel:   "not_a_sentinel",
+						CauseIndex: -1,
+					}},
+				},
+				want: "unknown sentinel",
+			},
+			{
+				name: "plain_wrapper_empty_message",
+				wire: &genmodelgateway.GatewayError{
+					Nodes: []*genmodelgateway.GatewayErrorNode{
+						{Kind: errorKindPlain, Message: "", CauseIndex: 1},
+						{Kind: errorKindPlain, Message: "leaf", CauseIndex: -1},
+					},
+				},
+				want: "requires non-empty message",
+			},
+			{
+				name: "retained_usage_incomplete_without_usage",
+				wire: &genmodelgateway.GatewayError{
+					Nodes: []*genmodelgateway.GatewayErrorNode{{
+						Kind:       errorKindPlain,
+						Message:    "boom",
+						CauseIndex: -1,
+					}},
+					RetainedUsageIncomplete: true,
+				},
+				want: "retained_usage_incomplete requires retained_usage",
+			},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				err := fromGenError(tc.wire)

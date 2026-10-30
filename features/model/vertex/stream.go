@@ -128,7 +128,13 @@ func (s *geminiStreamer) Recv() (model.Chunk, error) {
 		}
 		return ch, nil
 	case <-s.ctx.Done():
-		return nil, s.ctx.Err()
+		err := s.ctx.Err()
+		s.mu.Lock()
+		if s.rejectedUsage != nil {
+			err = model.RetainIncompleteUsage(err, *s.rejectedUsage)
+		}
+		s.mu.Unlock()
+		return nil, err
 	}
 }
 
@@ -185,8 +191,10 @@ func (s *geminiStreamer) run(seq func(func(*genai.GenerateContentResponse, error
 				latestUsage.TotalTokens = frameUsage.TotalTokens
 			}
 			copied := latestUsage
+			s.mu.Lock()
 			s.rejectedUsage = &copied
 			s.rejectedUsageIncomplete = !sawInputUsage || !sawOutputUsage
+			s.mu.Unlock()
 			usageSeen = true
 		}
 		if resp == nil || len(resp.Candidates) == 0 {
@@ -510,10 +518,13 @@ func (s *geminiStreamer) emit(ch model.Chunk) {
 // setErr records the terminal pump error surfaced by Recv after chunks
 // closes.
 func (s *geminiStreamer) setErr(err error) {
-	if err != nil &&
-		!errors.Is(err, context.Canceled) &&
-		!errors.Is(err, context.DeadlineExceeded) {
-		if _, providerFailure := model.AsProviderError(err); !providerFailure {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err != nil {
+		_, providerFailure := model.AsProviderError(err)
+		if !errors.Is(err, context.Canceled) &&
+			!errors.Is(err, context.DeadlineExceeded) &&
+			!providerFailure {
 			var validationErr *model.OutputValidationError
 			if !errors.As(err, &validationErr) {
 				rejected := s.contract.RejectProviderOutput(
@@ -527,11 +538,11 @@ func (s *geminiStreamer) setErr(err error) {
 					err = rejected
 				}
 			}
+		} else if s.rejectedUsage != nil {
+			err = model.RetainIncompleteUsage(err, *s.rejectedUsage)
 		}
 	}
-	s.mu.Lock()
 	s.err = err
-	s.mu.Unlock()
 }
 
 // finalStructuredCompletionPayload validates the fully-accumulated
