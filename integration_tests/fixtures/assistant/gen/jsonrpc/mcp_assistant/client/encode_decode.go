@@ -411,26 +411,31 @@ func DecodeToolsCallResponse(decoder func(*http.Response) goahttp.Decoder, resto
 		if err != nil {
 			return nil, goahttp.ErrDecodingError("mcp_assistant", "tools/call", err)
 		}
-		switch string(body.Kind()) {
-		case "complete":
-			actual, _ := body.AsComplete()
-			if actual != nil {
-				if err2 := validateToolsCallCompleteResultResponse(actual, "body.value"); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := body.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(body.Kind()) {
+			case "complete":
+				actual, _ := body.AsComplete()
+				if actual != nil {
+					if err2 := validateToolsCallCompleteResultResponse(actual, "body.value"); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "input_required":
-			actual, _ := body.AsInputRequired()
-			if actual != nil {
-				if err2 := validateInputRequiredResultResponse(actual, "body.value"); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "input_required":
+				actual, _ := body.AsInputRequired()
+				if actual != nil {
+					if err2 := validateInputRequiredResultResponse(actual, "body.value"); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "task":
-			actual, _ := body.AsTask()
-			if actual != nil {
-				if err2 := validateTaskCreatedResponse(actual, "body.value"); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "task":
+				actual, _ := body.AsTask()
+				if actual != nil {
+					if err2 := validateTaskCreatedResponse(actual, "body.value"); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -730,19 +735,24 @@ func DecodeResourcesReadResponse(decoder func(*http.Response) goahttp.Decoder, r
 		if err != nil {
 			return nil, goahttp.ErrDecodingError("mcp_assistant", "resources/read", err)
 		}
-		switch string(body.Kind()) {
-		case "complete":
-			actual, _ := body.AsComplete()
-			if actual != nil {
-				if err2 := validateResourcesReadCompleteResultResponse(actual, "body.value"); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := body.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(body.Kind()) {
+			case "complete":
+				actual, _ := body.AsComplete()
+				if actual != nil {
+					if err2 := validateResourcesReadCompleteResultResponse(actual, "body.value"); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "input_required":
-			actual, _ := body.AsInputRequired()
-			if actual != nil {
-				if err2 := validateInputRequiredResultResponse(actual, "body.value"); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "input_required":
+				actual, _ := body.AsInputRequired()
+				if actual != nil {
+					if err2 := validateInputRequiredResultResponse(actual, "body.value"); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -1172,19 +1182,24 @@ func DecodePromptsGetResponse(decoder func(*http.Response) goahttp.Decoder, rest
 		if err != nil {
 			return nil, goahttp.ErrDecodingError("mcp_assistant", "prompts/get", err)
 		}
-		switch string(body.Kind()) {
-		case "complete":
-			actual, _ := body.AsComplete()
-			if actual != nil {
-				if err2 := validatePromptsGetCompleteResultResponse(actual, "body.value"); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := body.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(body.Kind()) {
+			case "complete":
+				actual, _ := body.AsComplete()
+				if actual != nil {
+					if err2 := validatePromptsGetCompleteResultResponse(actual, "body.value"); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "input_required":
-			actual, _ := body.AsInputRequired()
-			if actual != nil {
-				if err2 := validateInputRequiredResultResponse(actual, "body.value"); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "input_required":
+				actual, _ := body.AsInputRequired()
+				if actual != nil {
+					if err2 := validateInputRequiredResultResponse(actual, "body.value"); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}

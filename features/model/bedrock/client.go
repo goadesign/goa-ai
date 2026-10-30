@@ -1826,7 +1826,8 @@ func translateResponse(output *bedrockruntime.ConverseOutput, nameMap map[string
 		resp.Content = append(resp.Content, assistant)
 	}
 	resp.Usage = translateBedrockUsage(output, modelID, modelClass)
-	resp.UsageReported = bedrockTokenUsageReported(output.Usage)
+	resp.UsageReported = bedrockTokenUsageComplete(output.Usage)
+	resp.UsageIncomplete = bedrockTokenUsageObserved(output.Usage) && !resp.UsageReported
 	resp.StopReason = string(output.StopReason)
 	if resp.StopReason == "" {
 		return nil, outputvalidation.New(
@@ -1845,9 +1846,17 @@ func bedrockOutputLimited(reason brtypes.StopReason) bool {
 		reason == brtypes.StopReasonModelContextWindowExceeded
 }
 
-// bedrockTokenUsageReported reports whether Bedrock populated at least one
+// bedrockTokenUsageComplete reports whether Bedrock populated both input and
+// output token counts on Usage.
+func bedrockTokenUsageComplete(usage *brtypes.TokenUsage) bool {
+	return usage != nil &&
+		usage.InputTokens != nil &&
+		usage.OutputTokens != nil
+}
+
+// bedrockTokenUsageObserved reports whether Bedrock populated at least one
 // token count field on Usage.
-func bedrockTokenUsageReported(usage *brtypes.TokenUsage) bool {
+func bedrockTokenUsageObserved(usage *brtypes.TokenUsage) bool {
 	return usage != nil && (usage.InputTokens != nil ||
 		usage.OutputTokens != nil ||
 		usage.TotalTokens != nil ||
@@ -1858,7 +1867,7 @@ func bedrockTokenUsageReported(usage *brtypes.TokenUsage) bool {
 // rejectedBedrockUsage returns provider-reported token usage for a rejected
 // Converse response, or nil when Bedrock omitted token usage metadata.
 func rejectedBedrockUsage(output *bedrockruntime.ConverseOutput, modelID string, modelClass model.ModelClass) *model.TokenUsage {
-	if output == nil || !bedrockTokenUsageReported(output.Usage) {
+	if output == nil || !bedrockTokenUsageObserved(output.Usage) {
 		return nil
 	}
 	usage := translateBedrockUsage(output, modelID, modelClass)

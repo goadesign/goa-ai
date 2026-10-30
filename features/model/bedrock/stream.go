@@ -729,7 +729,7 @@ func (p *chunkProcessor) Handle(event any) error {
 				errors.New("bedrock stream: metadata received outside a completed message"),
 			)
 		}
-		if !bedrockTokenUsageReported(ev.Value.Usage) {
+		if !bedrockTokenUsageObserved(ev.Value.Usage) {
 			return p.finishStream()
 		}
 		// Compute ints efficiently with direct nil checks (avoid helper + double cast)
@@ -759,7 +759,8 @@ func (p *chunkProcessor) Handle(event any) error {
 			CacheWriteTokens: cacheWrite,
 		}
 		p.canonical.Usage = usage
-		p.canonical.UsageReported = true
+		p.canonical.UsageReported = bedrockTokenUsageComplete(ev.Value.Usage)
+		p.canonical.UsageIncomplete = !p.canonical.UsageReported
 		if err := p.emit(model.UsageChunk{Usage: usage}); err != nil {
 			return err
 		}
@@ -805,7 +806,7 @@ func bedrockTerminalEvidence(event any) bool {
 // rejectedUsage returns scalar usage with resolved identity when the stream
 // emitted usage metadata before or after content rejection.
 func (p *chunkProcessor) rejectedUsage() *model.TokenUsage {
-	if !p.canonical.UsageReported {
+	if !p.canonical.HasObservedUsage() {
 		return nil
 	}
 	usage := p.canonical.Usage

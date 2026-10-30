@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	commonpb "go.temporal.io/api/common/v1"
 	enumspb "go.temporal.io/api/enums/v1"
@@ -53,30 +54,13 @@ func (e *Engine) QueryRunCompletion(ctx context.Context, workflowID string) (eng
 	if err != nil {
 		return engine.RunCompletion{}, err
 	}
-	input, err := e.acceptedInputFromHistory(ctx, workflowID, executionID)
-	if err != nil {
-		return engine.RunCompletion{}, err
-	}
 	status := queryRunStatusFromInfo(info)
-	completion := engine.RunCompletion{Status: status, StartRequestDigest: digest, Input: input}
+	completion := engine.RunCompletion{Status: status, StartRequestDigest: digest}
 	if !isTerminalRunStatus(status) {
 		return completion, nil
 	}
-	// A closed attempt with a successor has not completed the whole execution.
-	// Inspect its exact close event before allowing callers to persist an outcome.
-	history := e.client.GetWorkflowHistory(ctx, workflowID, executionID, false, enumspb.HISTORY_EVENT_FILTER_TYPE_CLOSE_EVENT)
-	if !history.HasNext() {
-		return engine.RunCompletion{}, errors.New("closed workflow has no close event")
-	}
-	closed, err := history.Next()
-	if err != nil {
-		return engine.RunCompletion{}, mapDescribeWorkflowExecutionError(err)
-	}
-	if closed.GetWorkflowExecutionCompletedEventAttributes().GetNewExecutionRunId() != "" ||
-		closed.GetWorkflowExecutionFailedEventAttributes().GetNewExecutionRunId() != "" ||
-		closed.GetWorkflowExecutionTimedOutEventAttributes().GetNewExecutionRunId() != "" ||
-		closed.GetWorkflowExecutionContinuedAsNewEventAttributes() != nil {
-		return engine.RunCompletion{}, errors.New("selected workflow attempt has a successor; completion requires the current execution")
+	if err := e.verifyClosedExecutionHasNoSuccessor(ctx, workflowID, executionID); err != nil {
+		return engine.RunCompletion{}, err
 	}
 	completion.CompletedAt = info.GetCloseTime().AsTime().UTC()
 	var out *api.RunOutput
@@ -94,6 +78,48 @@ func (e *Engine) QueryRunCompletion(ctx context.Context, workflowID string) (eng
 	}
 	completion.Output = out
 	return completion, nil
+}
+
+// QueryAcceptedRun returns the immutable identity metadata and current engine
+// status of an accepted Temporal workflow execution.
+func (e *Engine) QueryAcceptedRun(ctx context.Context, workflowID string) (engine.AcceptedRun, error) {
+	if workflowID == "" {
+		return engine.AcceptedRun{}, fmt.Errorf("workflow id is required")
+	}
+	desc, err := e.client.DescribeWorkflowExecution(ctx, workflowID, "")
+	if err != nil {
+		return engine.AcceptedRun{}, mapDescribeWorkflowExecutionError(err)
+	}
+	info := desc.GetWorkflowExecutionInfo()
+	executionID := info.GetExecution().GetRunId()
+	if executionID == "" {
+		return engine.AcceptedRun{}, errors.New("workflow execution identity is missing")
+	}
+	if _, err := acceptedRequestDigest(info.GetMemo()); err != nil {
+		return engine.AcceptedRun{}, err
+	}
+	status := queryRunStatusFromInfo(info)
+	var completedAt time.Time
+	if isTerminalRunStatus(status) {
+		if err := e.verifyClosedExecutionHasNoSuccessor(ctx, workflowID, executionID); err != nil {
+			return engine.AcceptedRun{}, err
+		}
+		completedAt = info.GetCloseTime().AsTime().UTC()
+	}
+	input, err := e.acceptedInputFromHistory(ctx, workflowID, executionID)
+	if err != nil {
+		return engine.AcceptedRun{}, err
+	}
+	return engine.AcceptedRun{
+		Subject:     input.Subject,
+		RunID:       input.RunID,
+		SessionID:   input.SessionID,
+		TurnID:      input.TurnID,
+		SeedEndID:   input.SeedEndID,
+		Labels:      input.Labels,
+		Status:      status,
+		CompletedAt: completedAt,
+	}, nil
 }
 
 // isTerminalRunStatus reports whether Temporal has a final workflow result.
@@ -188,6 +214,26 @@ func acceptedRequestDigest(memo *commonpb.Memo) ([32]byte, error) {
 		return [32]byte{}, errors.New("workflow accepted request digest is missing")
 	}
 	return digest, nil
+}
+
+// verifyClosedExecutionHasNoSuccessor ensures a closed workflow attempt has not
+// continued into a retry or ContinueAsNew execution.
+func (e *Engine) verifyClosedExecutionHasNoSuccessor(ctx context.Context, workflowID, executionID string) error {
+	history := e.client.GetWorkflowHistory(ctx, workflowID, executionID, false, enumspb.HISTORY_EVENT_FILTER_TYPE_CLOSE_EVENT)
+	if !history.HasNext() {
+		return errors.New("closed workflow has no close event")
+	}
+	closed, err := history.Next()
+	if err != nil {
+		return mapDescribeWorkflowExecutionError(err)
+	}
+	if closed.GetWorkflowExecutionCompletedEventAttributes().GetNewExecutionRunId() != "" ||
+		closed.GetWorkflowExecutionFailedEventAttributes().GetNewExecutionRunId() != "" ||
+		closed.GetWorkflowExecutionTimedOutEventAttributes().GetNewExecutionRunId() != "" ||
+		closed.GetWorkflowExecutionContinuedAsNewEventAttributes() != nil {
+		return errors.New("selected workflow attempt has a successor; completion requires the current execution")
+	}
+	return nil
 }
 
 // acceptedInputFromHistory decodes the workflow's started event input for this

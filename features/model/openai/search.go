@@ -24,9 +24,12 @@ type (
 		pending   []string
 		outputs   []string
 		content   []model.Message
-		usage     model.TokenUsage
-		// usageReported records whether any native search turn reported token usage.
+		usage model.TokenUsage
+		// usageReported records whether every native search round reported complete token usage.
 		usageReported bool
+		// usageObserved records whether any native search round reported or observed token usage.
+		usageObserved bool
+		rounds        int
 		thinking      int
 		searches      int
 	}
@@ -137,9 +140,15 @@ func (s *toolSearch) record(native responses.ResponseToolSearchCall) error {
 // account keeps every completed provider request's usage, including a response
 // whose output will subsequently fail validation.
 func (s *toolSearch) account(usage model.TokenUsage, reported bool) error {
-	if reported {
-		s.usageReported = true
+	if s.rounds == 0 {
+		s.usageReported = reported
+	} else {
+		s.usageReported = s.usageReported && reported
 	}
+	if reported || model.HasObservedTokenCounts(usage) {
+		s.usageObserved = true
+	}
+	s.rounds++
 	total, err := model.AddTokenUsage(s.usage, usage)
 	if err != nil {
 		return outputvalidation.New(model.OutputValidationUsage, err)
@@ -235,5 +244,6 @@ func (s *toolSearch) complete(response *model.Response) error {
 	response.Content = content
 	response.Usage = s.usage
 	response.UsageReported = s.usageReported
+	response.UsageIncomplete = s.usageObserved && !s.usageReported
 	return nil
 }

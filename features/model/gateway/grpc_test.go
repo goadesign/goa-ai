@@ -226,21 +226,24 @@ func TestGRPCGatewayCompleteRoundTripPreservesRequestPartsAndUsageState(t *testi
 	require.Equal(t, tools.Ident("svc.lookup"), resp.ToolCalls()[0].Name)
 }
 
-func TestGRPCGatewayPreservesExplicitZeroVsUnreportedTokenUsage(t *testing.T) {
+func TestGRPCGatewayPreservesExplicitZeroIncompleteAndUnreportedTokenUsage(t *testing.T) {
 	var reportUsage bool
+	var incompleteUsage bool
+	var usageTokens model.TokenUsage
 	provider := &grpcCaptureProvider{
 		onComplete: func(_ context.Context, _ *model.Request) (*model.Response, error) {
+			u := usageTokens
+			u.Model = "gpt-4o"
+			u.ModelClass = model.ModelClassDefault
 			return &model.Response{
 				Content: []model.Message{{
 					Role:  model.ConversationRoleAssistant,
 					Parts: []model.Part{model.TextPart{Text: "ok"}},
 				}},
-				Usage: model.TokenUsage{
-					Model:      "gpt-4o",
-					ModelClass: model.ModelClassDefault,
-				},
-				UsageReported: reportUsage,
-				StopReason:    "end_turn",
+				Usage:           u,
+				UsageReported:   reportUsage,
+				UsageIncomplete: incompleteUsage,
+				StopReason:      "end_turn",
 			}, nil
 		},
 		onCount: func(_ context.Context, req *model.Request) (model.TokenCount, error) {
@@ -259,18 +262,31 @@ func TestGRPCGatewayPreservesExplicitZeroVsUnreportedTokenUsage(t *testing.T) {
 	require.NoError(t, err)
 
 	reportUsage = false
+	incompleteUsage = false
+	usageTokens = model.TokenUsage{}
 	unreported, err := client.Complete(t.Context(), &model.Request{Model: "gpt-4o"})
 	require.NoError(t, err)
 	require.False(t, unreported.HasUsage())
+	require.False(t, unreported.HasObservedUsage())
 
 	reportUsage = true
+	incompleteUsage = false
 	reportedZero, err := client.Complete(t.Context(), &model.Request{Model: "gpt-4o"})
 	require.NoError(t, err)
 	require.True(t, reportedZero.HasUsage())
+	require.True(t, reportedZero.HasObservedUsage())
 	require.Zero(t, reportedZero.Usage.TotalTokens)
 
-	// Verify UsageReconciledAdaptiveRateLimiter settles explicit 0-token usage
-	// while keeping the reservation when usage was unreported.
+	reportUsage = false
+	incompleteUsage = true
+	usageTokens = model.TokenUsage{InputTokens: 120}
+	partial, err := client.Complete(t.Context(), &model.Request{Model: "gpt-4o"})
+	require.NoError(t, err)
+	require.False(t, partial.HasUsage())
+	require.True(t, partial.UsageIncomplete)
+	require.True(t, partial.HasObservedUsage())
+	require.Equal(t, 120, partial.Usage.InputTokens)
+
 	limiter, err := middleware.NewUsageReconciledAdaptiveRateLimiter(
 		t.Context(),
 		nil,
@@ -291,6 +307,8 @@ func TestGRPCGatewayPreservesExplicitZeroVsUnreportedTokenUsage(t *testing.T) {
 	}
 
 	reportUsage = true
+	incompleteUsage = false
+	usageTokens = model.TokenUsage{}
 	_, err = wrapped.Complete(t.Context(), estimateReq)
 	require.NoError(t, err)
 }
@@ -400,6 +418,7 @@ func TestGRPCGatewayCountTokensAndStructuredErrors(t *testing.T) {
 	)
 
 	var completeErr error
+	var countTokensVal int
 	provider := &grpcCaptureProvider{
 		onComplete: func(_ context.Context, _ *model.Request) (*model.Response, error) {
 			return nil, completeErr
@@ -408,7 +427,7 @@ func TestGRPCGatewayCountTokensAndStructuredErrors(t *testing.T) {
 			return model.TokenCount{
 				Model:       req.Model,
 				ModelClass:  req.ModelClass,
-				InputTokens: 77,
+				InputTokens: countTokensVal,
 				Exact:       true,
 			}, nil
 		},
@@ -421,12 +440,15 @@ func TestGRPCGatewayCountTokensAndStructuredErrors(t *testing.T) {
 	rawProvider, err := newGRPCProvider(conn)
 	require.NoError(t, err)
 
+	// Verify 64-bit token counts (> math.MaxInt32) round-trip without truncation.
+	const largeTokenCount = 4_294_967_297
+	countTokensVal = largeTokenCount
 	count, err := client.CountTokens(t.Context(), &model.Request{
 		Model:      "claude-sonnet-4-20250514",
 		ModelClass: model.ModelClassDefault,
 	})
 	require.NoError(t, err)
-	require.Equal(t, 77, count.InputTokens)
+	require.Equal(t, largeTokenCount, count.InputTokens)
 	require.True(t, count.Exact)
 
 	// 1. OutputValidationError round-trip with RecoveryCorrection and Usage.
@@ -442,7 +464,37 @@ func TestGRPCGatewayCountTokensAndStructuredErrors(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, tools.Ident("svc.lookup"), toolName)
 
-	// 2. ProviderError wrapping ErrRateLimited and multi-level wrapped plain error without message duplication.
+	// 2. Shared OutputValidationError node identity in errors.Join.
+	completeErr = errors.Join(validationErr, validationErr)
+	_, err = rawProvider.Complete(t.Context(), &model.Request{Model: "m"})
+	exactVal, exactOK := exactGatewayValidation(err)
+	require.True(t, exactOK, "joined identical OutputValidationError leaves must decode to the same pointer")
+	require.NotNil(t, exactVal)
+
+	// 3. RequestValidationError and capacity sentinels preserve typed identity.
+	completeErr = fmt.Errorf("request too large: %w", model.ErrRequestByteCapacity)
+	_, err = rawProvider.Complete(t.Context(), &model.Request{Model: "m"})
+	require.ErrorIs(t, err, model.ErrRequestByteCapacity)
+	var gotReqVal *model.RequestValidationError
+	require.ErrorAs(t, err, &gotReqVal)
+
+	completeErr = fmt.Errorf("image source overflow: %w", model.ErrImageSourceCapacity)
+	_, err = rawProvider.Complete(t.Context(), &model.Request{Model: "m"})
+	require.ErrorIs(t, err, model.ErrImageSourceCapacity)
+
+	completeErr = model.NewRequestValidationError(fmt.Errorf("image source overflow: %w", model.ErrImageSourceCapacity))
+	_, err = rawProvider.Complete(t.Context(), &model.Request{Model: "m"})
+	require.ErrorIs(t, err, model.ErrImageSourceCapacity)
+	gotReqVal = nil
+	require.ErrorAs(t, err, &gotReqVal)
+
+	completeErr = model.NewRequestValidationError(errors.New("custom request validation cause"))
+	_, err = rawProvider.Complete(t.Context(), &model.Request{Model: "m"})
+	gotReqVal = nil
+	require.ErrorAs(t, err, &gotReqVal)
+	require.EqualError(t, gotReqVal, "custom request validation cause")
+
+	// 4. ProviderError wrapping ErrRateLimited and multi-level wrapped plain error without message duplication.
 	wrappedPlain := fmt.Errorf("outer step: %w", fmt.Errorf("middle step: %w", errors.New("root cause")))
 	completeErr = wrappedPlain
 	_, err = rawProvider.Complete(t.Context(), &model.Request{Model: "m"})
@@ -467,7 +519,7 @@ func TestGRPCGatewayCountTokensAndStructuredErrors(t *testing.T) {
 	require.Equal(t, 429, gotProviderErr.HTTPStatus())
 	require.True(t, gotProviderErr.Retryable())
 
-	// 3. Context deadline propagation.
+	// 5. Context deadline propagation.
 	completeErr = nil
 	provider.onComplete = func(ctx context.Context, _ *model.Request) (*model.Response, error) {
 		<-ctx.Done()
@@ -505,34 +557,48 @@ func (s *scriptedStreamClientStream) RecvWithContext(context.Context) (*genmodel
 	return frame, err
 }
 
-func TestGRPCStreamerTerminalFrameTransitions(t *testing.T) {
+func TestGRPCStreamerTerminalFrameTransitionsAndUsageRetention(t *testing.T) {
 	terminalFrame := &genmodelgateway.StreamFrame{
-		Kind: streamFrameKindResponse,
-		Response: &genmodelgateway.ModelResponse{
+		Payload: genmodelgateway.NewStreamFramePayloadResponse(&genmodelgateway.ModelResponse{
 			Content: []*genmodelgateway.ModelMessage{{
 				Role: string(model.ConversationRoleAssistant),
 				Parts: []*genmodelgateway.MessagePart{{
-					Kind: partKindText,
-					Text: "done",
+					Payload: genmodelgateway.NewMessagePartPayloadText(&genmodelgateway.TextPartDetail{
+						Text: "done",
+					}),
 				}},
 			}},
 			Usage:         &genmodelgateway.TokenUsage{InputTokens: 2, OutputTokens: 3, TotalTokens: 5},
 			UsageReported: true,
 			StopReason:    "end_turn",
-		},
+		}),
 	}
-	chunkFrame := &genmodelgateway.StreamFrame{
-		Kind: streamFrameKindChunk,
-		Chunk: &genmodelgateway.StreamChunk{
-			Kind: model.ChunkTypeText,
-			Message: &genmodelgateway.ModelMessage{
+	zeroUsageTerminalFrame := &genmodelgateway.StreamFrame{
+		Payload: genmodelgateway.NewStreamFramePayloadResponse(&genmodelgateway.ModelResponse{
+			Content: []*genmodelgateway.ModelMessage{{
 				Role: string(model.ConversationRoleAssistant),
 				Parts: []*genmodelgateway.MessagePart{{
-					Kind: partKindText,
-					Text: "trailing",
+					Payload: genmodelgateway.NewMessagePartPayloadText(&genmodelgateway.TextPartDetail{
+						Text: "cached",
+					}),
 				}},
-			},
-		},
+			}},
+			Usage:         &genmodelgateway.TokenUsage{Model: "gpt-4o"},
+			UsageReported: true,
+			StopReason:    "end_turn",
+		}),
+	}
+	chunkFrame := &genmodelgateway.StreamFrame{
+		Payload: genmodelgateway.NewStreamFramePayloadChunk(&genmodelgateway.StreamChunk{
+			Payload: genmodelgateway.NewStreamChunkPayloadText(&genmodelgateway.ModelMessage{
+				Role: string(model.ConversationRoleAssistant),
+				Parts: []*genmodelgateway.MessagePart{{
+					Payload: genmodelgateway.NewMessagePartPayloadText(&genmodelgateway.TextPartDetail{
+						Text: "trailing",
+					}),
+				}},
+			}),
+		}),
 	}
 
 	t.Run("terminal_to_eof", func(t *testing.T) {
@@ -553,7 +619,7 @@ func TestGRPCStreamerTerminalFrameTransitions(t *testing.T) {
 		require.Equal(t, 5, streamer.Response().Usage.TotalTokens)
 	})
 
-	t.Run("terminal_to_chunk", func(t *testing.T) {
+	t.Run("terminal_to_chunk_retains_usage", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		streamer := &grpcStreamer{
@@ -568,9 +634,12 @@ func TestGRPCStreamerTerminalFrameTransitions(t *testing.T) {
 		require.Nil(t, chunk)
 		require.ErrorContains(t, err, "unexpected frame after terminal response")
 		require.Nil(t, streamer.Response())
+		retained := model.UsageFromError(err)
+		require.NotNil(t, retained)
+		require.Equal(t, 5, retained.TotalTokens)
 	})
 
-	t.Run("terminal_to_terminal", func(t *testing.T) {
+	t.Run("terminal_to_terminal_retains_usage", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		streamer := &grpcStreamer{
@@ -585,9 +654,12 @@ func TestGRPCStreamerTerminalFrameTransitions(t *testing.T) {
 		require.Nil(t, chunk)
 		require.ErrorContains(t, err, "unexpected frame after terminal response")
 		require.Nil(t, streamer.Response())
+		retained := model.UsageFromError(err)
+		require.NotNil(t, retained)
+		require.Equal(t, 5, retained.TotalTokens)
 	})
 
-	t.Run("terminal_to_transport_error", func(t *testing.T) {
+	t.Run("terminal_to_transport_error_retains_usage_and_reported_zero", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(t.Context())
 		defer cancel()
 		transportBoom := errors.New("broken stream trailer")
@@ -595,7 +667,7 @@ func TestGRPCStreamerTerminalFrameTransitions(t *testing.T) {
 			ctx:    ctx,
 			cancel: cancel,
 			stream: &scriptedStreamClientStream{
-				frames: []*genmodelgateway.StreamFrame{terminalFrame, nil},
+				frames: []*genmodelgateway.StreamFrame{zeroUsageTerminalFrame, nil},
 				errs:   []error{nil, transportBoom},
 			},
 		}
@@ -603,5 +675,50 @@ func TestGRPCStreamerTerminalFrameTransitions(t *testing.T) {
 		require.Nil(t, chunk)
 		require.ErrorIs(t, err, transportBoom)
 		require.Nil(t, streamer.Response())
+		retained := model.UsageFromError(err)
+		require.NotNil(t, retained)
+		require.Equal(t, "gpt-4o", retained.Model)
+		require.Zero(t, retained.TotalTokens)
+	})
+
+	t.Run("provider_close_error_after_terminal_retains_usage", func(t *testing.T) {
+		closeBoom := errors.New("provider stream close failed")
+		provider := &grpcCaptureProvider{
+			onStream: func(_ context.Context, _ *model.Request) (model.Streamer, error) {
+				return &stubStreamer{
+					recvErr:  io.EOF,
+					closeErr: closeBoom,
+					response: &model.Response{
+						Content: []model.Message{{
+							Role:  model.ConversationRoleAssistant,
+							Parts: []model.Part{model.TextPart{Text: "done"}},
+						}},
+						Usage: model.TokenUsage{
+							Model:        "gpt-4o",
+							InputTokens:  12,
+							OutputTokens: 4,
+							TotalTokens:  16,
+						},
+						UsageReported: true,
+						StopReason:    "end_turn",
+					},
+				}, nil
+			},
+		}
+		srv, err := NewServer(WithProvider(provider))
+		require.NoError(t, err)
+		conn := startBufconnGRPCGateway(t, srv)
+		rawProvider, err := newGRPCProvider(conn)
+		require.NoError(t, err)
+		st, err := rawProvider.Stream(t.Context(), &model.Request{Model: "gpt-4o"})
+		require.NoError(t, err)
+		defer func() { require.NoError(t, st.Close()) }()
+
+		_, recvErr := st.Recv()
+		require.ErrorContains(t, recvErr, "provider stream close failed")
+		require.Nil(t, st.Response())
+		retained := model.UsageFromError(recvErr)
+		require.NotNil(t, retained)
+		require.Equal(t, 16, retained.TotalTokens)
 	})
 }

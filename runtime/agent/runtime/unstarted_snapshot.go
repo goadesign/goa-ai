@@ -1,7 +1,7 @@
 // Package runtime inspects engine-accepted runs before their first worker
 // activity records StartRootRun. Storage LoadRun remains strictly for recorded
 // runs; unstarted inspection reads the accepted execution identity and status
-// from Engine.QueryRunCompletion without synthesizing a start event or time.
+// from engine.AcceptedRunQuerier without synthesizing a start event or time.
 package runtime
 
 import (
@@ -11,60 +11,11 @@ import (
 	"reflect"
 
 	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
-	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/run"
 	"goa.design/goa-ai/runtime/agent/session"
 	"goa.design/goa-ai/runtime/agent/transcript"
 )
-
-// acceptedRunSnapshotBase extracts the immutable owner, session, turn, and
-// labels from an accepted workflow input using the runtime's existing input and
-// continuation checkpoint restore rules.
-func acceptedRunSnapshotBase(runID string, input *api.RunInput) (*run.Snapshot, error) {
-	if input == nil || input.RunID != runID {
-		return nil, errors.New("accepted workflow input is missing or does not match run id")
-	}
-	subject := input.Subject
-	if _, err := genrunidentity.EncodeRunSubject(&subject); err != nil {
-		return nil, fmt.Errorf("accepted run subject: %w", err)
-	}
-	if service, ok := subject.Executor.AsServiceTool(); ok && service != nil {
-		restored, state, err := restoreRegisteredRoot(input)
-		if err != nil {
-			return nil, err
-		}
-		owner := *service
-		subject.Executor = genrunidentity.NewRunExecutorServiceTool(&owner)
-		return &run.Snapshot{
-			RunID:     runID,
-			Subject:   subject,
-			SessionID: restored.SessionID,
-			TurnID:    restored.TurnID,
-			Labels:    cloneLabels(state.call.Labels),
-		}, nil
-	}
-	if err := validateWorkflowRunInput(input); err != nil {
-		return nil, err
-	}
-	copied := *input
-	if copied.Continuation != nil {
-		checkpoint, err := decodeWorkflowCheckpointState(copied.Continuation.Suspension)
-		if err != nil {
-			return nil, err
-		}
-		if err := restoreContinuationRunInput(&copied, checkpoint); err != nil {
-			return nil, err
-		}
-	}
-	return &run.Snapshot{
-		RunID:     runID,
-		Subject:   subject,
-		SessionID: copied.SessionID,
-		TurnID:    copied.TurnID,
-		Labels:    cloneLabels(copied.Labels),
-	}, nil
-}
 
 // loadAcceptedRunSnapshot returns a compact snapshot from the workflow engine's
 // accepted execution record when StartRootRun has not yet committed to Store.
@@ -72,9 +23,16 @@ func (r *Runtime) loadAcceptedRunSnapshot(ctx context.Context, runID string) (*r
 	if runID == "" || r.Engine == nil {
 		return nil, session.ErrRunNotFound
 	}
-	completion, err := r.Engine.QueryRunCompletion(ctx, runID)
+	querier, ok := r.Engine.(engine.AcceptedRunQuerier)
+	if !ok || querier == nil {
+		return nil, session.ErrRunNotFound
+	}
+	accepted, err := querier.QueryAcceptedRun(ctx, runID)
 	if err != nil {
 		if errors.Is(err, engine.ErrWorkflowNotFound) {
+			if snapshot, found, recErr := r.loadRecordedRunSnapshotIfPresent(ctx, runID); recErr != nil || found {
+				return snapshot, recErr
+			}
 			return nil, session.ErrRunNotFound
 		}
 		return nil, err
@@ -82,8 +40,15 @@ func (r *Runtime) loadAcceptedRunSnapshot(ctx context.Context, runID string) (*r
 	if snapshot, found, err := r.loadRecordedRunSnapshotIfPresent(ctx, runID); err != nil || found {
 		return snapshot, err
 	}
-	if completion.Input != nil && completion.Input.SessionID != "" {
-		status, err := r.Store.LoadSessionStatus(ctx, completion.Input.SessionID)
+	if accepted.RunID != runID {
+		return nil, errors.New("accepted workflow input run id does not match run id")
+	}
+	subject := accepted.Subject
+	if _, err := genrunidentity.EncodeRunSubject(&subject); err != nil {
+		return nil, fmt.Errorf("accepted run subject: %w", err)
+	}
+	if accepted.SessionID != "" {
+		status, err := r.Store.LoadSessionStatus(ctx, accepted.SessionID)
 		if err != nil {
 			if errors.Is(err, session.ErrSessionPurged) || errors.Is(err, session.ErrSessionNotFound) {
 				return nil, session.ErrRunNotFound
@@ -94,11 +59,18 @@ func (r *Runtime) loadAcceptedRunSnapshot(ctx context.Context, runID string) (*r
 			return nil, session.ErrRunNotFound
 		}
 	}
-	base, err := acceptedRunSnapshotBase(runID, completion.Input)
+	labels, err := r.resolveAcceptedRunLabels(ctx, accepted)
 	if err != nil {
 		return nil, err
 	}
-	switch completion.Status {
+	base := &run.Snapshot{
+		RunID:     runID,
+		Subject:   subject,
+		SessionID: accepted.SessionID,
+		TurnID:    accepted.TurnID,
+		Labels:    labels,
+	}
+	switch accepted.Status {
 	case engine.RunStatusPending, engine.RunStatusRunning:
 		base.Status = run.StatusPending
 		base.Phase = run.PhasePrompted
@@ -110,22 +82,46 @@ func (r *Runtime) loadAcceptedRunSnapshot(ctx context.Context, runID string) (*r
 	case engine.RunStatusFailed, engine.RunStatusTimedOut:
 		base.Status = run.StatusFailed
 		base.Phase = run.PhaseFailed
-		base.UpdatedAt = completion.CompletedAt
+		base.UpdatedAt = accepted.CompletedAt
 		return base, nil
 	case engine.RunStatusCanceled:
 		base.Status = run.StatusCanceled
 		base.Phase = run.PhaseCanceled
-		base.UpdatedAt = completion.CompletedAt
+		base.UpdatedAt = accepted.CompletedAt
 		return base, nil
 	case engine.RunStatusCompleted:
 		return nil, fmt.Errorf("%w: unstarted run %q has completed engine status without stored run", ErrRunCompletionCorrupt, runID)
 	default:
-		return nil, fmt.Errorf("%w: unstarted run %q has unsupported engine status %q", ErrRunCompletionCorrupt, runID, completion.Status)
+		return nil, fmt.Errorf("%w: unstarted run %q has unsupported engine status %q", ErrRunCompletionCorrupt, runID, accepted.Status)
 	}
 }
 
+// resolveAcceptedRunLabels returns the accepted run's labels, inheriting
+// predecessor labels from the durable continuation seed when a continuation run
+// has not yet executed its start restoration step.
+func (r *Runtime) resolveAcceptedRunLabels(ctx context.Context, accepted engine.AcceptedRun) (map[string]string, error) {
+	if len(accepted.Labels) > 0 {
+		return cloneLabels(accepted.Labels), nil
+	}
+	if accepted.SeedEndID == "" {
+		return nil, nil
+	}
+	seed, err := r.Store.LoadRunSeed(ctx, accepted.RunID, accepted.SeedEndID)
+	if err != nil {
+		return nil, err
+	}
+	if seed.Declaration.PredecessorRunID == "" {
+		return nil, nil
+	}
+	predecessor, err := r.Store.LoadRun(ctx, seed.Declaration.PredecessorRunID)
+	if err != nil {
+		return nil, err
+	}
+	return cloneLabels(predecessor.Labels), nil
+}
+
 // loadRecordedRunSnapshotIfPresent replays the canonical run log when the run
-// was recorded in Store concurrently with an engine completion query.
+// was recorded in Store concurrently with an engine query.
 func (r *Runtime) loadRecordedRunSnapshotIfPresent(ctx context.Context, runID string) (*run.Snapshot, bool, error) {
 	events, err := r.loadRunEvents(ctx, runID)
 	if err != nil {

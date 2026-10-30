@@ -97,7 +97,7 @@ func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Res
 	response, err := translateResponse(resp, prep.modelID, prep.modelClass, prep.provToCanon, prep.toolCallIDs)
 	if err != nil {
 		var usage *model.TokenUsage
-		if resp != nil && resp.UsageMetadata != nil {
+		if resp != nil && vertexUsageObserved(resp.UsageMetadata) {
 			translated := translateUsage(resp.UsageMetadata, prep.modelID, prep.modelClass)
 			usage = &translated
 		}

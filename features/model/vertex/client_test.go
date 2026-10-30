@@ -310,3 +310,30 @@ func TestCompleteThinkingConfig(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, stub.lastConfig.ThinkingConfig)
 }
+
+func TestVertexUsageCompleteness(t *testing.T) {
+	emptyMeta := textResp("x")
+	emptyMeta.UsageMetadata = &genai.GenerateContentResponseUsageMetadata{}
+	stub := &stubGenerativeClient{resp: emptyMeta}
+	cl, err := New(stub, Options{DefaultModel: "gemini-2.5-pro"})
+	require.NoError(t, err)
+	resp, err := cl.Complete(t.Context(), &model.Request{
+		Messages: []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "hi"}}}},
+	})
+	require.NoError(t, err)
+	assert.False(t, resp.UsageReported)
+	assert.False(t, resp.UsageIncomplete)
+	assert.False(t, resp.HasObservedUsage())
+
+	partialMeta := textResp("x")
+	partialMeta.UsageMetadata = &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 11}
+	stub.resp = partialMeta
+	resp, err = cl.Complete(t.Context(), &model.Request{
+		Messages: []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "hi"}}}},
+	})
+	require.NoError(t, err)
+	assert.False(t, resp.UsageReported)
+	assert.True(t, resp.UsageIncomplete)
+	assert.True(t, resp.HasObservedUsage())
+	assert.Equal(t, 11, resp.Usage.InputTokens)
+}

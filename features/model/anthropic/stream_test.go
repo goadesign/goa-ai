@@ -445,16 +445,18 @@ func TestAnthropicStreamerValidatesNativeStructuredOutput(t *testing.T) {
 	}
 
 	require.True(t, decoded)
-	require.Len(t, chunks, 4)
-	assert.Equal(t, `{"answer":`, chunks[0].(model.CompletionDeltaChunk).Delta.Delta)
-	assert.Equal(t, `"yes"}`, chunks[1].(model.CompletionDeltaChunk).Delta.Delta)
-	assert.JSONEq(t, `{"answer":"yes"}`, string(chunks[2].(model.CompletionChunk).Completion.Payload))
-	stop := chunks[3].(model.StopChunk)
+	require.Len(t, chunks, 5)
+	assert.Equal(t, model.TokenUsage{Model: "claude-sonnet-5", ModelClass: model.ModelClassDefault}, chunks[0].(model.UsageChunk).Usage)
+	assert.Equal(t, `{"answer":`, chunks[1].(model.CompletionDeltaChunk).Delta.Delta)
+	assert.Equal(t, `"yes"}`, chunks[2].(model.CompletionDeltaChunk).Delta.Delta)
+	assert.JSONEq(t, `{"answer":"yes"}`, string(chunks[3].(model.CompletionChunk).Completion.Payload))
+	stop := chunks[4].(model.StopChunk)
 	assert.Equal(t, "max_tokens", stop.Reason)
 	assert.True(t, stop.OutputLimited)
 	response := stream.Response()
 	require.NotNil(t, response)
 	assert.True(t, response.OutputLimited)
+	assert.True(t, response.HasUsage())
 }
 
 // TestAnthropicStreamerRejectsOversizedSDKSnapshotBeforeAccumulation verifies
@@ -594,13 +596,20 @@ func TestAnthropicStreamerClassifiesUnsupportedDeltaAsResponseShape(t *testing.T
 	)
 	defer func() { require.NoError(t, translated.Close()) }()
 
-	_, err := translated.Recv()
+	chunk, err := translated.Recv()
+	require.NoError(t, err)
+	assert.Equal(t, model.UsageChunk{
+		Usage: model.TokenUsage{Model: "claude-test", ModelClass: model.ModelClassDefault},
+	}, chunk)
+	_, err = translated.Recv()
 
 	var validationErr *model.OutputValidationError
 	require.ErrorAs(t, err, &validationErr)
 	require.Equal(t, model.OutputValidationResponseShape, validationErr.Kind())
 	require.EqualError(t, validationErr, "model output does not meet its request contract")
 	require.NotContains(t, validationErr.Error(), "private-marker")
+	require.NotNil(t, validationErr.Usage())
+	assert.Zero(t, validationErr.Usage().TotalTokens)
 }
 
 func TestAnthropicStreamerRejectsMissingToolCallIDWithUsage(t *testing.T) {

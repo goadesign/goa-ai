@@ -81,17 +81,25 @@ func (s *grpcService) Complete(
 ) (*genmodelgateway.CompleteResult, error) {
 	req, err := fromGenRequest(payload)
 	if err != nil {
-		return &genmodelgateway.CompleteResult{Error: toGenError(err)}, nil
+		return &genmodelgateway.CompleteResult{
+			Outcome: genmodelgateway.NewCompleteOutcomeError(toGenError(err)),
+		}, nil
 	}
 	resp, err := s.server.Complete(ctx, req)
 	if err != nil {
-		return &genmodelgateway.CompleteResult{Error: toGenError(err)}, nil
+		return &genmodelgateway.CompleteResult{
+			Outcome: genmodelgateway.NewCompleteOutcomeError(toGenError(err)),
+		}, nil
 	}
 	genResp, err := toGenResponse(resp)
 	if err != nil {
-		return &genmodelgateway.CompleteResult{Error: toGenError(err)}, nil
+		return &genmodelgateway.CompleteResult{
+			Outcome: genmodelgateway.NewCompleteOutcomeError(toGenError(err)),
+		}, nil
 	}
-	return &genmodelgateway.CompleteResult{Response: genResp}, nil
+	return &genmodelgateway.CompleteResult{
+		Outcome: genmodelgateway.NewCompleteOutcomeResponse(genResp),
+	}, nil
 }
 
 // Stream decodes a typed wire request, invokes the gateway Server stream chain,
@@ -104,8 +112,7 @@ func (s *grpcService) Stream(
 	req, err := fromGenRequest(payload)
 	if err != nil {
 		return stream.Send(&genmodelgateway.StreamFrame{
-			Kind:  streamFrameKindError,
-			Error: toGenError(err),
+			Payload: genmodelgateway.NewStreamFramePayloadError(toGenError(err)),
 		})
 	}
 	var sendErr error
@@ -115,8 +122,7 @@ func (s *grpcService) Stream(
 			return encErr
 		}
 		if err := stream.Send(&genmodelgateway.StreamFrame{
-			Kind:  streamFrameKindChunk,
-			Chunk: gc,
+			Payload: genmodelgateway.NewStreamFramePayloadChunk(gc),
 		}); err != nil {
 			sendErr = err
 			return err
@@ -128,20 +134,17 @@ func (s *grpcService) Stream(
 	}
 	if err != nil {
 		return stream.Send(&genmodelgateway.StreamFrame{
-			Kind:  streamFrameKindError,
-			Error: toGenError(err),
+			Payload: genmodelgateway.NewStreamFramePayloadError(toGenError(err)),
 		})
 	}
 	genResp, encErr := toGenResponse(resp)
 	if encErr != nil {
 		return stream.Send(&genmodelgateway.StreamFrame{
-			Kind:  streamFrameKindError,
-			Error: toGenError(encErr),
+			Payload: genmodelgateway.NewStreamFramePayloadError(toGenError(encErr)),
 		})
 	}
 	return stream.Send(&genmodelgateway.StreamFrame{
-		Kind:     streamFrameKindResponse,
-		Response: genResp,
+		Payload: genmodelgateway.NewStreamFramePayloadResponse(genResp),
 	})
 }
 
@@ -153,13 +156,19 @@ func (s *grpcService) CountTokens(
 ) (*genmodelgateway.CountTokensResult, error) {
 	req, err := fromGenRequest(payload)
 	if err != nil {
-		return &genmodelgateway.CountTokensResult{Error: toGenError(err)}, nil
+		return &genmodelgateway.CountTokensResult{
+			Outcome: genmodelgateway.NewCountTokensOutcomeError(toGenError(err)),
+		}, nil
 	}
 	count, err := s.server.CountTokens(ctx, req)
 	if err != nil {
-		return &genmodelgateway.CountTokensResult{Error: toGenError(err)}, nil
+		return &genmodelgateway.CountTokensResult{
+			Outcome: genmodelgateway.NewCountTokensOutcomeError(toGenError(err)),
+		}, nil
 	}
-	return &genmodelgateway.CountTokensResult{Count: toGenTokenCount(count)}, nil
+	return &genmodelgateway.CountTokensResult{
+		Outcome: genmodelgateway.NewCountTokensOutcomeCount(toGenTokenCount(count)),
+	}, nil
 }
 
 // Recv reads the next typed frame from the gRPC stream and translates it into a
@@ -190,52 +199,62 @@ func (s *grpcStreamer) Recv() (model.Chunk, error) {
 		s.finish(nil, nilErr)
 		return nil, nilErr
 	}
+	if err := frame.Payload.Validate(); err != nil {
+		valErr := fmt.Errorf("gateway: invalid stream frame payload: %w", err)
+		s.finish(nil, valErr)
+		return nil, valErr
+	}
 
-	switch frame.Kind {
-	case streamFrameKindChunk:
-		chunk, err := fromGenChunk(frame.Chunk)
+	switch frame.Payload.Kind() {
+	case genmodelgateway.StreamFramePayloadKindChunk:
+		genChunk, _ := frame.Payload.AsChunk()
+		chunk, err := fromGenChunk(genChunk)
 		if err != nil {
 			s.finish(nil, err)
 			return nil, err
 		}
 		return chunk, nil
-	case streamFrameKindError:
-		streamErr := fromGenError(frame.Error)
+	case genmodelgateway.StreamFramePayloadKindError:
+		genErr, _ := frame.Payload.AsError()
+		streamErr := fromGenError(genErr)
 		if streamErr == nil {
 			streamErr = errors.New("gateway: stream failed without error details")
 		}
 		s.finish(nil, streamErr)
 		return nil, streamErr
-	case streamFrameKindResponse:
-		if frame.Response == nil {
-			respErr := errors.New("gateway: terminal stream frame missing response")
-			s.finish(nil, respErr)
-			return nil, respErr
-		}
-		resp, err := fromGenResponse(frame.Response)
+	case genmodelgateway.StreamFramePayloadKindResponse:
+		genResp, _ := frame.Payload.AsResponse()
+		resp, err := fromGenResponse(genResp)
 		if err != nil {
 			s.finish(nil, err)
 			return nil, err
 		}
 		// Require clean EOF immediately after the terminal response frame. Any
 		// trailing frame is a protocol violation; any non-EOF read error is a
-		// transport failure.
+		// transport failure. Retain any observed terminal usage on the error
+		// while keeping Response() nil.
 		extraFrame, tailErr := s.stream.RecvWithContext(s.ctx)
 		if tailErr == nil || extraFrame != nil {
 			dupErr := errors.New("gateway: gRPC stream emitted unexpected frame after terminal response")
+			if resp.HasObservedUsage() {
+				dupErr = model.RetainUsage(dupErr, resp.Usage)
+			}
 			s.finish(nil, dupErr)
 			return nil, dupErr
 		}
 		//nolint:errorlint // Exact io.EOF equality is required by the stream contract.
 		if tailErr != io.EOF {
 			normErr := normalizeTransportError(s.ctx, tailErr)
+			if resp.HasObservedUsage() && model.UsageFromError(normErr) == nil {
+				normErr = model.RetainUsage(normErr, resp.Usage)
+			}
 			s.finish(nil, normErr)
 			return nil, normErr
 		}
 		s.finish(resp, io.EOF)
 		return nil, io.EOF
 	default:
-		kindErr := fmt.Errorf("gateway: unknown stream frame kind %q", frame.Kind)
+		kindErr := fmt.Errorf("gateway: unknown stream frame kind %q", frame.Payload.Kind())
 		s.finish(nil, kindErr)
 		return nil, kindErr
 	}
@@ -297,10 +316,19 @@ func invokeGRPCComplete(
 	if res == nil {
 		return nil, errors.New("gateway: unary response envelope is nil")
 	}
-	if res.Error != nil {
-		return nil, fromGenError(res.Error)
+	if err := res.Outcome.Validate(); err != nil {
+		return nil, fmt.Errorf("gateway: invalid unary outcome: %w", err)
 	}
-	return fromGenResponse(res.Response)
+	switch res.Outcome.Kind() {
+	case genmodelgateway.CompleteOutcomeKindError:
+		genErr, _ := res.Outcome.AsError()
+		return nil, fromGenError(genErr)
+	case genmodelgateway.CompleteOutcomeKindResponse:
+		genResp, _ := res.Outcome.AsResponse()
+		return fromGenResponse(genResp)
+	default:
+		return nil, fmt.Errorf("gateway: unknown unary outcome kind %q", res.Outcome.Kind())
+	}
 }
 
 // invokeGRPCStream opens one server-streaming Stream call over the Goa gRPC client.
@@ -343,13 +371,19 @@ func invokeGRPCCountTokens(
 	if res == nil {
 		return model.TokenCount{}, errors.New("gateway: token count envelope is nil")
 	}
-	if res.Error != nil {
-		return model.TokenCount{}, fromGenError(res.Error)
+	if err := res.Outcome.Validate(); err != nil {
+		return model.TokenCount{}, fmt.Errorf("gateway: invalid token count outcome: %w", err)
 	}
-	if res.Count == nil {
-		return model.TokenCount{}, errors.New("gateway: token count response is empty")
+	switch res.Outcome.Kind() {
+	case genmodelgateway.CountTokensOutcomeKindError:
+		genErr, _ := res.Outcome.AsError()
+		return model.TokenCount{}, fromGenError(genErr)
+	case genmodelgateway.CountTokensOutcomeKindCount:
+		genCount, _ := res.Outcome.AsCount()
+		return fromGenTokenCount(genCount)
+	default:
+		return model.TokenCount{}, fmt.Errorf("gateway: unknown token count outcome kind %q", res.Outcome.Kind())
 	}
-	return fromGenTokenCount(res.Count), nil
 }
 
 // normalizeTransportError preserves context cancellation and deadline errors

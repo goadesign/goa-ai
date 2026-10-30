@@ -392,26 +392,31 @@ func validatejsonRefereePromptMessageTransport(value *jsonRefereePromptMessageTr
 		}
 	}
 	if value.Content != nil {
-		switch string(value.Content.Kind()) {
-		case "text":
-			actual, _ := value.Content.AsText()
-			if actual != nil {
-				if err2 := validatejsonRefereePromptTextTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Content.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Content.Kind()) {
+			case "text":
+				actual, _ := value.Content.AsText()
+				if actual != nil {
+					if err2 := validatejsonRefereePromptTextTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "image":
-			actual, _ := value.Content.AsImage()
-			if actual != nil {
-				if err2 := validatejsonRefereePromptImageTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "image":
+				actual, _ := value.Content.AsImage()
+				if actual != nil {
+					if err2 := validatejsonRefereePromptImageTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "resource":
-			actual, _ := value.Content.AsResource()
-			if actual != nil {
-				if err2 := validatejsonRefereePromptResourceTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "resource":
+				actual, _ := value.Content.AsResource()
+				if actual != nil {
+					if err2 := validatejsonRefereePromptResourceTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -435,12 +440,17 @@ func validatejsonRefereePromptResourceTransport(value *jsonRefereePromptResource
 		err = goa.MergeErrors(err, goa.MissingFieldError("resource", "body"))
 	}
 	if value.Resource != nil {
-		switch string(value.Resource.Kind()) {
-		case "text":
-			actual, _ := value.Resource.AsText()
-			if actual != nil {
-				if err2 := validatejsonRefereeEmbeddedTextTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Resource.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Resource.Kind()) {
+			case "text":
+				actual, _ := value.Resource.AsText()
+				if actual != nil {
+					if err2 := validatejsonRefereeEmbeddedTextTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -535,19 +545,24 @@ func validatejsonTemplateItemTransport(value *jsonTemplateItemTransport) (err er
 		err = goa.MergeErrors(err, goa.MissingFieldError("content", "body"))
 	}
 	if value.Selected != nil {
-		switch string(value.Selected.Kind()) {
-		case "text":
-			actual, _ := value.Selected.AsText()
-			if actual != nil {
-				if err2 := validatejsonTemplateTextTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Selected.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Selected.Kind()) {
+			case "text":
+				actual, _ := value.Selected.AsText()
+				if actual != nil {
+					if err2 := validatejsonTemplateTextTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "blob":
-			actual, _ := value.Selected.AsBlob()
-			if actual != nil {
-				if err2 := validatejsonTemplateBlobTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "blob":
+				actual, _ := value.Selected.AsBlob()
+				if actual != nil {
+					if err2 := validatejsonTemplateBlobTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -605,12 +620,17 @@ func validateRefereePromptMessageOriginal(value *RefereePromptMessage) (err erro
 	if !(value.Role == "user") {
 		err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.role", value.Role, []any{"user"}))
 	}
-	switch string(value.Content.Kind()) {
-	case "resource":
-		actual, _ := value.Content.AsResource()
-		if actual != nil {
-			if err2 := validateRefereePromptResourceOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+
+	if err2 := value.Content.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.Content.Kind()) {
+		case "resource":
+			actual, _ := value.Content.AsResource()
+			if actual != nil {
+				if err2 := validateRefereePromptResourceOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
 		}
 	}
@@ -623,12 +643,17 @@ func validateRefereePromptResourceOriginal(value *RefereePromptResource) (err er
 	if value.Resource.Kind() == "" {
 		err = goa.MergeErrors(err, goa.MissingFieldError("resource", "value"))
 	}
-	switch string(value.Resource.Kind()) {
-	case "text":
-		actual, _ := value.Resource.AsText()
-		if actual != nil {
-			if err2 := validateRefereeEmbeddedTextOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+
+	if err2 := value.Resource.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.Resource.Kind()) {
+		case "text":
+			actual, _ := value.Resource.AsText()
+			if actual != nil {
+				if err2 := validateRefereeEmbeddedTextOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
 		}
 	}
@@ -668,19 +693,24 @@ func validateTemplateItemOriginal(value *TemplateItem) (err error) {
 	if value.Selected.Kind() == "" {
 		err = goa.MergeErrors(err, goa.MissingFieldError("content", "value"))
 	}
-	switch string(value.Selected.Kind()) {
-	case "text":
-		actual, _ := value.Selected.AsText()
-		if actual != nil {
-			if err2 := validateTemplateTextOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+
+	if err2 := value.Selected.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.Selected.Kind()) {
+		case "text":
+			actual, _ := value.Selected.AsText()
+			if actual != nil {
+				if err2 := validateTemplateTextOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "blob":
-		actual, _ := value.Selected.AsBlob()
-		if actual != nil {
-			if err2 := validateTemplateBlobOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+		case "blob":
+			actual, _ := value.Selected.AsBlob()
+			if actual != nil {
+				if err2 := validateTemplateBlobOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
 		}
 	}
@@ -1167,6 +1197,35 @@ func EncodeDocuments(in *Documents) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateDocumentsValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateDocumentsValue(in *Documents) error {
+	if err := checkDocumentsValue(in); err != nil {
+		return fmt.Errorf("validate Documents value: %w", err)
+	}
+	if err := validateDocumentsOriginal(in); err != nil {
+		return fmt.Errorf("validate Documents value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "Documents")
+	}
+
+	var body *jsonDocumentsTransport
+	{
+		body = &jsonDocumentsTransport{}
+		body.Items = make([]string, len(in.Items))
+		for i, val := range in.Items {
+			body.Items[i] = val
+		}
+	}
+	if err := validatejsonDocumentsTransport(body); err != nil {
+		return fmt.Errorf("validate Documents value: %w", err)
+	}
+	return nil
+}
+
 // DecodeDocuments checks JSON field names from the Goa design and returns a service value.
 func DecodeDocuments(data []byte) (out *Documents, err error) {
 	root, err := readStrictJSON(data)
@@ -1218,6 +1277,24 @@ func EncodeImage(in Image) ([]byte, error) {
 		return nil, fmt.Errorf("encode Image JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateImageValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateImageValue(in Image) error {
+	if err := checkImageValue(in); err != nil {
+		return fmt.Errorf("validate Image value: %w", err)
+	}
+
+	var body jsonImageTransport
+	{
+		body = jsonImageTransport(in)
+	}
+	if err := validatejsonImageTransport(body); err != nil {
+		return fmt.Errorf("validate Image value: %w", err)
+	}
+	return nil
 }
 
 // DecodeImage checks JSON field names from the Goa design and returns a service value.
@@ -1275,6 +1352,34 @@ func EncodeRefereeEmbeddedText(in *RefereeEmbeddedText) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateRefereeEmbeddedTextValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateRefereeEmbeddedTextValue(in *RefereeEmbeddedText) error {
+	if err := checkRefereeEmbeddedTextValue(in); err != nil {
+		return fmt.Errorf("validate RefereeEmbeddedText value: %w", err)
+	}
+	if err := validateRefereeEmbeddedTextOriginal(in); err != nil {
+		return fmt.Errorf("validate RefereeEmbeddedText value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "RefereeEmbeddedText")
+	}
+
+	var body *jsonRefereeEmbeddedTextTransport
+	{
+		body = &jsonRefereeEmbeddedTextTransport{
+			URI:  &in.URI,
+			Text: &in.Text,
+		}
+	}
+	if err := validatejsonRefereeEmbeddedTextTransport(body); err != nil {
+		return fmt.Errorf("validate RefereeEmbeddedText value: %w", err)
+	}
+	return nil
+}
+
 // DecodeRefereeEmbeddedText checks JSON field names from the Goa design and returns a service value.
 func DecodeRefereeEmbeddedText(data []byte) (out *RefereeEmbeddedText, err error) {
 	root, err := readStrictJSON(data)
@@ -1328,6 +1433,31 @@ func EncodeRefereePromptImage(in *RefereePromptImage) ([]byte, error) {
 		return nil, fmt.Errorf("encode RefereePromptImage JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateRefereePromptImageValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateRefereePromptImageValue(in *RefereePromptImage) error {
+	if err := checkRefereePromptImageValue(in); err != nil {
+		return fmt.Errorf("validate RefereePromptImage value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "RefereePromptImage")
+	}
+
+	var body *jsonRefereePromptImageTransport
+	{
+		body = &jsonRefereePromptImageTransport{
+			Data:     in.Data,
+			MimeType: &in.MimeType,
+		}
+	}
+	if err := validatejsonRefereePromptImageTransport(body); err != nil {
+		return fmt.Errorf("validate RefereePromptImage value: %w", err)
+	}
+	return nil
 }
 
 // DecodeRefereePromptImage checks JSON field names from the Goa design and returns a service value.
@@ -1416,6 +1546,64 @@ func EncodeRefereePromptMessage(in *RefereePromptMessage) ([]byte, error) {
 		return nil, fmt.Errorf("encode RefereePromptMessage JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateRefereePromptMessageValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateRefereePromptMessageValue(in *RefereePromptMessage) error {
+	if err := checkRefereePromptMessageValue(in); err != nil {
+		return fmt.Errorf("validate RefereePromptMessage value: %w", err)
+	}
+	if err := validateRefereePromptMessageOriginal(in); err != nil {
+		return fmt.Errorf("validate RefereePromptMessage value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "RefereePromptMessage")
+	}
+
+	var body *jsonRefereePromptMessageTransport
+	{
+		body = &jsonRefereePromptMessageTransport{
+			Role: &in.Role,
+		}
+		var contentValue jsonContentTransport
+		switch string(in.Content.Kind()) {
+		case "text":
+			actual, _ := in.Content.AsText()
+			var obj *jsonRefereePromptTextTransport
+			if actual != nil {
+				obj = encodeRefereePromptTextToRefereePromptTextTransport(actual)
+			}
+			u := contentValue
+			u.SetText((*jsonRefereePromptTextTransport)(obj))
+			contentValue = u
+		case "image":
+			actual, _ := in.Content.AsImage()
+			var obj *jsonRefereePromptImageTransport
+			if actual != nil {
+				obj = encodeRefereePromptImageToRefereePromptImageTransport(actual)
+			}
+			u := contentValue
+			u.SetImage((*jsonRefereePromptImageTransport)(obj))
+			contentValue = u
+		case "resource":
+			actual, _ := in.Content.AsResource()
+			var obj *jsonRefereePromptResourceTransport
+			if actual != nil {
+				obj = encodeRefereePromptResourceToRefereePromptResourceTransport(actual)
+			}
+			u := contentValue
+			u.SetResource((*jsonRefereePromptResourceTransport)(obj))
+			contentValue = u
+		}
+		body.Content = &contentValue
+	}
+	if err := validatejsonRefereePromptMessageTransport(body); err != nil {
+		return fmt.Errorf("validate RefereePromptMessage value: %w", err)
+	}
+	return nil
 }
 
 // DecodeRefereePromptMessage checks JSON field names from the Goa design and returns a service value.
@@ -1514,6 +1702,44 @@ func EncodeRefereePromptResource(in *RefereePromptResource) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateRefereePromptResourceValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateRefereePromptResourceValue(in *RefereePromptResource) error {
+	if err := checkRefereePromptResourceValue(in); err != nil {
+		return fmt.Errorf("validate RefereePromptResource value: %w", err)
+	}
+	if err := validateRefereePromptResourceOriginal(in); err != nil {
+		return fmt.Errorf("validate RefereePromptResource value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "RefereePromptResource")
+	}
+
+	var body *jsonRefereePromptResourceTransport
+	{
+		body = &jsonRefereePromptResourceTransport{}
+		var resourceValue jsonResourceTransport
+		switch string(in.Resource.Kind()) {
+		case "text":
+			actual, _ := in.Resource.AsText()
+			var obj *jsonRefereeEmbeddedTextTransport
+			if actual != nil {
+				obj = encodeRefereeEmbeddedTextToRefereeEmbeddedTextTransport(actual)
+			}
+			u := resourceValue
+			u.SetText((*jsonRefereeEmbeddedTextTransport)(obj))
+			resourceValue = u
+		}
+		body.Resource = &resourceValue
+	}
+	if err := validatejsonRefereePromptResourceTransport(body); err != nil {
+		return fmt.Errorf("validate RefereePromptResource value: %w", err)
+	}
+	return nil
+}
+
 // DecodeRefereePromptResource checks JSON field names from the Goa design and returns a service value.
 func DecodeRefereePromptResource(data []byte) (out *RefereePromptResource, err error) {
 	root, err := readStrictJSON(data)
@@ -1585,6 +1811,39 @@ func EncodeRefereePromptResult(in *RefereePromptResult) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateRefereePromptResultValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateRefereePromptResultValue(in *RefereePromptResult) error {
+	if err := checkRefereePromptResultValue(in); err != nil {
+		return fmt.Errorf("validate RefereePromptResult value: %w", err)
+	}
+	if err := validateRefereePromptResultOriginal(in); err != nil {
+		return fmt.Errorf("validate RefereePromptResult value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "RefereePromptResult")
+	}
+
+	var body *jsonRefereePromptResultTransport
+	{
+		body = &jsonRefereePromptResultTransport{}
+		body.Messages = make([]*jsonRefereePromptMessageTransport, len(in.Messages))
+		for i, val := range in.Messages {
+			if val == nil {
+				body.Messages[i] = nil
+				continue
+			}
+			body.Messages[i] = encodeRefereePromptMessageToRefereePromptMessageTransport(val)
+		}
+	}
+	if err := validatejsonRefereePromptResultTransport(body); err != nil {
+		return fmt.Errorf("validate RefereePromptResult value: %w", err)
+	}
+	return nil
+}
+
 // DecodeRefereePromptResult checks JSON field names from the Goa design and returns a service value.
 func DecodeRefereePromptResult(data []byte) (out *RefereePromptResult, err error) {
 	root, err := readStrictJSON(data)
@@ -1644,6 +1903,30 @@ func EncodeRefereePromptText(in *RefereePromptText) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateRefereePromptTextValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateRefereePromptTextValue(in *RefereePromptText) error {
+	if err := checkRefereePromptTextValue(in); err != nil {
+		return fmt.Errorf("validate RefereePromptText value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "RefereePromptText")
+	}
+
+	var body *jsonRefereePromptTextTransport
+	{
+		body = &jsonRefereePromptTextTransport{
+			Text: &in.Text,
+		}
+	}
+	if err := validatejsonRefereePromptTextTransport(body); err != nil {
+		return fmt.Errorf("validate RefereePromptText value: %w", err)
+	}
+	return nil
+}
+
 // DecodeRefereePromptText checks JSON field names from the Goa design and returns a service value.
 func DecodeRefereePromptText(data []byte) (out *RefereePromptText, err error) {
 	root, err := readStrictJSON(data)
@@ -1700,6 +1983,35 @@ func EncodeTemplateBlob(in *TemplateBlob) ([]byte, error) {
 		return nil, fmt.Errorf("encode TemplateBlob JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateTemplateBlobValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateTemplateBlobValue(in *TemplateBlob) error {
+	if err := checkTemplateBlobValue(in); err != nil {
+		return fmt.Errorf("validate TemplateBlob value: %w", err)
+	}
+	if err := validateTemplateBlobOriginal(in); err != nil {
+		return fmt.Errorf("validate TemplateBlob value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "TemplateBlob")
+	}
+
+	var body *jsonTemplateBlobTransport
+	{
+		body = &jsonTemplateBlobTransport{
+			URI:      &in.URI,
+			MimeType: in.MimeType,
+			Blob:     in.Blob,
+		}
+	}
+	if err := validatejsonTemplateBlobTransport(body); err != nil {
+		return fmt.Errorf("validate TemplateBlob value: %w", err)
+	}
+	return nil
 }
 
 // DecodeTemplateBlob checks JSON field names from the Goa design and returns a service value.
@@ -1780,6 +2092,53 @@ func EncodeTemplateItem(in *TemplateItem) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateTemplateItemValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateTemplateItemValue(in *TemplateItem) error {
+	if err := checkTemplateItemValue(in); err != nil {
+		return fmt.Errorf("validate TemplateItem value: %w", err)
+	}
+	if err := validateTemplateItemOriginal(in); err != nil {
+		return fmt.Errorf("validate TemplateItem value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "TemplateItem")
+	}
+
+	var body *jsonTemplateItemTransport
+	{
+		body = &jsonTemplateItemTransport{}
+		var contentValue jsonTemplateRepresentationTransport
+		switch string(in.Selected.Kind()) {
+		case "text":
+			actual, _ := in.Selected.AsText()
+			var obj *jsonTemplateTextTransport
+			if actual != nil {
+				obj = encodeTemplateTextToTemplateTextTransport(actual)
+			}
+			u := contentValue
+			u.SetText((*jsonTemplateTextTransport)(obj))
+			contentValue = u
+		case "blob":
+			actual, _ := in.Selected.AsBlob()
+			var obj *jsonTemplateBlobTransport
+			if actual != nil {
+				obj = encodeTemplateBlobToTemplateBlobTransport(actual)
+			}
+			u := contentValue
+			u.SetBlob((*jsonTemplateBlobTransport)(obj))
+			contentValue = u
+		}
+		body.Selected = &contentValue
+	}
+	if err := validatejsonTemplateItemTransport(body); err != nil {
+		return fmt.Errorf("validate TemplateItem value: %w", err)
+	}
+	return nil
+}
+
 // DecodeTemplateItem checks JSON field names from the Goa design and returns a service value.
 func DecodeTemplateItem(data []byte) (out *TemplateItem, err error) {
 	root, err := readStrictJSON(data)
@@ -1854,6 +2213,35 @@ func EncodeTemplateText(in *TemplateText) ([]byte, error) {
 		return nil, fmt.Errorf("encode TemplateText JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateTemplateTextValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateTemplateTextValue(in *TemplateText) error {
+	if err := checkTemplateTextValue(in); err != nil {
+		return fmt.Errorf("validate TemplateText value: %w", err)
+	}
+	if err := validateTemplateTextOriginal(in); err != nil {
+		return fmt.Errorf("validate TemplateText value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "TemplateText")
+	}
+
+	var body *jsonTemplateTextTransport
+	{
+		body = &jsonTemplateTextTransport{
+			URI:      &in.URI,
+			MimeType: in.MimeType,
+			Text:     &in.Text,
+		}
+	}
+	if err := validatejsonTemplateTextTransport(body); err != nil {
+		return fmt.Errorf("validate TemplateText value: %w", err)
+	}
+	return nil
 }
 
 // DecodeTemplateText checks JSON field names from the Goa design and returns a service value.

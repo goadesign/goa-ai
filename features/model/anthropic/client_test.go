@@ -1184,3 +1184,46 @@ func TestCompleteUsesNativeStructuredOutputOnSupportedModel(t *testing.T) {
 	require.True(t, ok)
 	assert.JSONEq(t, `"object"`, string(schemaType))
 }
+
+func TestCompleteUsageCompletenessAndValidationErrorUsage(t *testing.T) {
+	var partialMsg sdk.Message
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"id":"msg_1",
+		"type":"message",
+		"role":"assistant",
+		"model":"claude-sonnet-5",
+		"stop_reason":"end_turn",
+		"content":[{"type":"text","text":"{\"answer\":\"yes\"}"}],
+		"usage":{"input_tokens":14}
+	}`), &partialMsg))
+	stub := &stubMessagesClient{resp: &partialMsg}
+	client, err := New(stub, Options{DefaultModel: "claude-sonnet-5", MaxTokens: 64})
+	require.NoError(t, err)
+	resp, err := client.Complete(t.Context(), &model.Request{
+		Messages: []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "hi"}}}},
+	})
+	require.NoError(t, err)
+	assert.False(t, resp.UsageReported)
+	assert.True(t, resp.UsageIncomplete)
+	assert.True(t, resp.HasObservedUsage())
+	assert.Equal(t, 14, resp.Usage.InputTokens)
+
+	// Unreported usage on provider translation rejection leaves Usage() nil.
+	var noUsageInvalidMsg sdk.Message
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"id":"msg_2",
+		"type":"message",
+		"role":"assistant",
+		"model":"claude-sonnet-5",
+		"stop_reason":"end_turn",
+		"content":[{"type":"unknown_block"}]
+	}`), &noUsageInvalidMsg))
+	stub.resp = &noUsageInvalidMsg
+	req := &model.Request{
+		Messages: []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "hi"}}}},
+	}
+	_, err = client.Complete(t.Context(), req)
+	var valErr *model.OutputValidationError
+	require.ErrorAs(t, err, &valErr)
+	assert.Nil(t, valErr.Usage())
+}

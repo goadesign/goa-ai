@@ -21,7 +21,7 @@ func NewCompletePayload(message *model_gatewaypb.CompleteRequest) *modelgateway.
 		Model:       *message.Model,
 		ModelClass:  *message.ModelClass,
 		Temperature: *message.Temperature,
-		MaxTokens:   int(*message.MaxTokens),
+		MaxTokens:   *message.MaxTokens,
 		Stream:      *message.Stream,
 	}
 	if message.PromptRefs != nil {
@@ -70,11 +70,15 @@ func NewCompletePayload(message *model_gatewaypb.CompleteRequest) *modelgateway.
 // *modelgateway.CompleteResult.
 func NewProtoCompleteResponse(result *modelgateway.CompleteResult) *model_gatewaypb.CompleteResponse {
 	message := &model_gatewaypb.CompleteResponse{}
-	if result.Response != nil {
-		message.Response = transformModelResponseToProtoModelResponse(result.Response)
-	}
-	if result.Error != nil {
-		message.Error = transformGatewayErrorToProtoGatewayError(result.Error)
+	if result.Outcome.Kind() != "" {
+		switch string(result.Outcome.Kind()) {
+		case "response":
+			actual, _ := result.Outcome.AsResponse()
+			message.Outcome = &model_gatewaypb.CompleteResponse_Response{Response: transformModelResponseToProtoModelResponse(actual)}
+		case "error":
+			actual, _ := result.Outcome.AsError()
+			message.Outcome = &model_gatewaypb.CompleteResponse_Error{Error: transformGatewayErrorToProtoGatewayError(actual)}
+		}
 	}
 	return message
 }
@@ -86,7 +90,7 @@ func NewStreamPayload(message *model_gatewaypb.StreamRequest) *modelgateway.Mode
 		Model:       *message.Model,
 		ModelClass:  *message.ModelClass,
 		Temperature: *message.Temperature,
-		MaxTokens:   int(*message.MaxTokens),
+		MaxTokens:   *message.MaxTokens,
 		Stream:      *message.Stream,
 	}
 	if message.PromptRefs != nil {
@@ -134,17 +138,19 @@ func NewStreamPayload(message *model_gatewaypb.StreamRequest) *modelgateway.Mode
 // NewProtoStreamResponse builds *model_gatewaypb.StreamResponse from
 // *modelgateway.StreamFrame.
 func NewProtoStreamResponse(result *modelgateway.StreamFrame) *model_gatewaypb.StreamResponse {
-	message := &model_gatewaypb.StreamResponse{
-		Kind: &result.Kind,
-	}
-	if result.Chunk != nil {
-		message.Chunk = transformStreamChunkToProtoStreamChunk(result.Chunk)
-	}
-	if result.Response != nil {
-		message.Response = transformModelResponseToProtoModelResponse(result.Response)
-	}
-	if result.Error != nil {
-		message.Error = transformGatewayErrorToProtoGatewayError(result.Error)
+	message := &model_gatewaypb.StreamResponse{}
+	if result.Payload.Kind() != "" {
+		switch string(result.Payload.Kind()) {
+		case "chunk":
+			actual, _ := result.Payload.AsChunk()
+			message.Payload = &model_gatewaypb.StreamResponse_Chunk{Chunk: transformStreamChunkToProtoStreamChunk(actual)}
+		case "response":
+			actual, _ := result.Payload.AsResponse()
+			message.Payload = &model_gatewaypb.StreamResponse_Response{Response: transformModelResponseToProtoModelResponse(actual)}
+		case "error":
+			actual, _ := result.Payload.AsError()
+			message.Payload = &model_gatewaypb.StreamResponse_Error{Error: transformGatewayErrorToProtoGatewayError(actual)}
+		}
 	}
 	return message
 }
@@ -156,7 +162,7 @@ func NewCountTokensPayload(message *model_gatewaypb.CountTokensRequest) *modelga
 		Model:       *message.Model,
 		ModelClass:  *message.ModelClass,
 		Temperature: *message.Temperature,
-		MaxTokens:   int(*message.MaxTokens),
+		MaxTokens:   *message.MaxTokens,
 		Stream:      *message.Stream,
 	}
 	if message.PromptRefs != nil {
@@ -205,11 +211,15 @@ func NewCountTokensPayload(message *model_gatewaypb.CountTokensRequest) *modelga
 // *modelgateway.CountTokensResult.
 func NewProtoCountTokensResponse(result *modelgateway.CountTokensResult) *model_gatewaypb.CountTokensResponse {
 	message := &model_gatewaypb.CountTokensResponse{}
-	if result.Count != nil {
-		message.Count = transformTokenCountToProtoTokenCount(result.Count)
-	}
-	if result.Error != nil {
-		message.Error = transformGatewayErrorToProtoGatewayError(result.Error)
+	if result.Outcome.Kind() != "" {
+		switch string(result.Outcome.Kind()) {
+		case "count":
+			actual, _ := result.Outcome.AsCount()
+			message.Outcome = &model_gatewaypb.CountTokensResponse_Count{Count: transformTokenCountToProtoTokenCount(actual)}
+		case "error":
+			actual, _ := result.Outcome.AsError()
+			message.Outcome = &model_gatewaypb.CountTokensResponse_Error{Error: transformGatewayErrorToProtoGatewayError(actual)}
+		}
 	}
 	return message
 }
@@ -306,58 +316,221 @@ func validatemodel_5F_gateway_model_5F_gateway_ModelMessage_At_elem(elem *model_
 // validatemodel_5F_gateway_model_5F_gateway_MessagePart_At_elem runs the
 // validations defined on MessagePart.
 func validatemodel_5F_gateway_model_5F_gateway_MessagePart_At_elem(elem *model_gatewaypb.MessagePart) (err error) {
-	if elem.Kind == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("kind", "elem"))
+	if elem.Payload == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("payload", "elem"))
 	}
-	if elem.Text == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("text", "elem"))
+	switch v := elem.Payload.(type) {
+	case *model_gatewaypb.MessagePart_Text:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("text", "elem.payload"))
+			break
+		}
+		if v.Text == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("text", "elem.payload"))
+			break
+		}
+		if v.Text != nil {
+			if err2 := validatemodel_5F_gateway_model_5F_gateway_TextPartDetail_At_text(v.Text); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+
+	case *model_gatewaypb.MessagePart_Thinking:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("thinking", "elem.payload"))
+			break
+		}
+		if v.Thinking == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("thinking", "elem.payload"))
+			break
+		}
+		if v.Thinking != nil {
+			if err2 := validatemodel_5F_gateway_model_5F_gateway_ThinkingPartDetail_At_thinking(v.Thinking); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+
+	case *model_gatewaypb.MessagePart_Image:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("image", "elem.payload"))
+			break
+		}
+		if v.Image == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("image", "elem.payload"))
+			break
+		}
+		if v.Image != nil {
+			if err2 := validatemodel_5F_gateway_model_5F_gateway_ImagePartDetail_At_image(v.Image); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+
+	case *model_gatewaypb.MessagePart_ImageSource:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("image_source", "elem.payload"))
+			break
+		}
+		if v.ImageSource == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("image_source", "elem.payload"))
+			break
+		}
+		if v.ImageSource != nil {
+			if err2 := validatemodel_5F_gateway_model_5F_gateway_ImageSourcePartDetail_Target_imageSource_Context_image_5F_source(v.ImageSource); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+
+	case *model_gatewaypb.MessagePart_Document:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("document", "elem.payload"))
+			break
+		}
+		if v.Document == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("document", "elem.payload"))
+			break
+		}
+		if v.Document != nil {
+			if err2 := validatemodel_5F_gateway_model_5F_gateway_DocumentPartDetail_At_document(v.Document); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+
+	case *model_gatewaypb.MessagePart_Citations:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("citations", "elem.payload"))
+			break
+		}
+		if v.Citations == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("citations", "elem.payload"))
+			break
+		}
+		if v.Citations != nil {
+			if err2 := validatemodel_5F_gateway_model_5F_gateway_CitationsPartDetail_At_citations(v.Citations); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+
+	case *model_gatewaypb.MessagePart_ToolUse:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("tool_use", "elem.payload"))
+			break
+		}
+		if v.ToolUse == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("tool_use", "elem.payload"))
+			break
+		}
+		if v.ToolUse != nil {
+			if err2 := validatemodel_5F_gateway_model_5F_gateway_ToolUsePartDetail_Target_toolUse_Context_tool_5F_use(v.ToolUse); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+
+	case *model_gatewaypb.MessagePart_ToolResult:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("tool_result", "elem.payload"))
+			break
+		}
+		if v.ToolResult == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("tool_result", "elem.payload"))
+			break
+		}
+		if v.ToolResult != nil {
+			if err2 := validatemodel_5F_gateway_model_5F_gateway_ToolResultPartDetail_Target_toolResult_Context_tool_5F_result(v.ToolResult); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+
+	case *model_gatewaypb.MessagePart_CacheCheckpoint:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("cache_checkpoint", "elem.payload"))
+			break
+		}
+		if v.CacheCheckpoint == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("cache_checkpoint", "elem.payload"))
+			break
+		}
+
 	}
-	if elem.Signature == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("signature", "elem"))
+
+	return
+}
+
+// validatemodel_5F_gateway_model_5F_gateway_TextPartDetail_At_text runs the
+// validations defined on TextPartDetail.
+func validatemodel_5F_gateway_model_5F_gateway_TextPartDetail_At_text(text *model_gatewaypb.TextPartDetail) (err error) {
+	if text.Text == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("text", "text"))
 	}
-	if elem.Index == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("index", "elem"))
+	return
+}
+
+// validatemodel_5F_gateway_model_5F_gateway_ThinkingPartDetail_At_thinking
+// runs the validations defined on ThinkingPartDetail.
+func validatemodel_5F_gateway_model_5F_gateway_ThinkingPartDetail_At_thinking(thinking *model_gatewaypb.ThinkingPartDetail) (err error) {
+	if thinking.Text == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("text", "thinking"))
 	}
-	if elem.Final == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("final", "elem"))
+	if thinking.Signature == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("signature", "thinking"))
 	}
-	if elem.ImageFormat == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("image_format", "elem"))
+	if thinking.Index == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("index", "thinking"))
 	}
-	if elem.SourceKind == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("source_kind", "elem"))
+	if thinking.Final == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("final", "thinking"))
 	}
-	if elem.Name == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("name", "elem"))
+	return
+}
+
+// validatemodel_5F_gateway_model_5F_gateway_ImagePartDetail_At_image runs the
+// validations defined on ImagePartDetail.
+func validatemodel_5F_gateway_model_5F_gateway_ImagePartDetail_At_image(image *model_gatewaypb.ImagePartDetail) (err error) {
+	if image.Format == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("format", "image"))
 	}
-	if elem.DocumentFormat == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("document_format", "elem"))
+	return
+}
+
+// validatemodel_5F_gateway_model_5F_gateway_ImageSourcePartDetail_Target_imageSource_Context_image_5F_source
+// runs the validations defined on ImageSourcePartDetail.
+func validatemodel_5F_gateway_model_5F_gateway_ImageSourcePartDetail_Target_imageSource_Context_image_5F_source(imageSource *model_gatewaypb.ImageSourcePartDetail) (err error) {
+	if imageSource.SourceKind == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("source_kind", "image_source"))
 	}
-	if elem.Uri == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("uri", "elem"))
+	return
+}
+
+// validatemodel_5F_gateway_model_5F_gateway_DocumentPartDetail_At_document
+// runs the validations defined on DocumentPartDetail.
+func validatemodel_5F_gateway_model_5F_gateway_DocumentPartDetail_At_document(document *model_gatewaypb.DocumentPartDetail) (err error) {
+	if document.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "document"))
 	}
-	if elem.Context == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("context", "elem"))
+	if document.Format == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("format", "document"))
 	}
-	if elem.Cite == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("cite", "elem"))
+	if document.Text == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("text", "document"))
 	}
-	if elem.Id == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("id", "elem"))
+	if document.Uri == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("uri", "document"))
 	}
-	if elem.ThoughtSignature == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("thought_signature", "elem"))
+	if document.Context == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("context", "document"))
 	}
-	if elem.ToolUseId == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("tool_use_id", "elem"))
+	if document.Cite == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cite", "document"))
 	}
-	if elem.ContentPresent == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("content_present", "elem"))
+	return
+}
+
+// validatemodel_5F_gateway_model_5F_gateway_CitationsPartDetail_At_citations
+// runs the validations defined on CitationsPartDetail.
+func validatemodel_5F_gateway_model_5F_gateway_CitationsPartDetail_At_citations(citations *model_gatewaypb.CitationsPartDetail) (err error) {
+	if citations.Text == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("text", "citations"))
 	}
-	if elem.IsError == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("is_error", "elem"))
-	}
-	for _, e := range elem.Citations {
+	for _, e := range citations.Citations {
 		if e != nil {
 			if err2 := validatemodel_5F_gateway_model_5F_gateway_Citation_At_elem(e); err2 != nil {
 				err = goa.MergeErrors(err, err2)
@@ -387,21 +560,56 @@ func validatemodel_5F_gateway_model_5F_gateway_Citation_At_elem(elem *model_gate
 // validatemodel_5F_gateway_model_5F_gateway_CitationLocation_At_location runs
 // the validations defined on CitationLocation.
 func validatemodel_5F_gateway_model_5F_gateway_CitationLocation_At_location(location *model_gatewaypb.CitationLocation) (err error) {
-	if location.DocumentChar != nil {
-		if err2 := validatemodel_5F_gateway_model_5F_gateway_DocumentCharLocation_Target_documentChar_Context_document_5F_char(location.DocumentChar); err2 != nil {
-			err = goa.MergeErrors(err, err2)
+	if location.Span == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("span", "location"))
+	}
+	switch v := location.Span.(type) {
+	case *model_gatewaypb.CitationLocation_DocumentChar:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("document_char", "location.span"))
+			break
+		}
+		if v.DocumentChar == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("document_char", "location.span"))
+			break
+		}
+		if v.DocumentChar != nil {
+			if err2 := validatemodel_5F_gateway_model_5F_gateway_DocumentCharLocation_Target_documentChar_Context_document_5F_char(v.DocumentChar); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+
+	case *model_gatewaypb.CitationLocation_DocumentPage:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("document_page", "location.span"))
+			break
+		}
+		if v.DocumentPage == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("document_page", "location.span"))
+			break
+		}
+		if v.DocumentPage != nil {
+			if err2 := validatemodel_5F_gateway_model_5F_gateway_DocumentPageLocation_Target_documentPage_Context_document_5F_page(v.DocumentPage); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+
+	case *model_gatewaypb.CitationLocation_DocumentChunk:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("document_chunk", "location.span"))
+			break
+		}
+		if v.DocumentChunk == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("document_chunk", "location.span"))
+			break
+		}
+		if v.DocumentChunk != nil {
+			if err2 := validatemodel_5F_gateway_model_5F_gateway_DocumentChunkLocation_Target_documentChunk_Context_document_5F_chunk(v.DocumentChunk); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
 		}
 	}
-	if location.DocumentPage != nil {
-		if err2 := validatemodel_5F_gateway_model_5F_gateway_DocumentPageLocation_Target_documentPage_Context_document_5F_page(location.DocumentPage); err2 != nil {
-			err = goa.MergeErrors(err, err2)
-		}
-	}
-	if location.DocumentChunk != nil {
-		if err2 := validatemodel_5F_gateway_model_5F_gateway_DocumentChunkLocation_Target_documentChunk_Context_document_5F_chunk(location.DocumentChunk); err2 != nil {
-			err = goa.MergeErrors(err, err2)
-		}
-	}
+
 	return
 }
 
@@ -446,6 +654,36 @@ func validatemodel_5F_gateway_model_5F_gateway_DocumentChunkLocation_Target_docu
 	}
 	if documentChunk.End == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("end", "document_chunk"))
+	}
+	return
+}
+
+// validatemodel_5F_gateway_model_5F_gateway_ToolUsePartDetail_Target_toolUse_Context_tool_5F_use
+// runs the validations defined on ToolUsePartDetail.
+func validatemodel_5F_gateway_model_5F_gateway_ToolUsePartDetail_Target_toolUse_Context_tool_5F_use(toolUse *model_gatewaypb.ToolUsePartDetail) (err error) {
+	if toolUse.Id == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("id", "tool_use"))
+	}
+	if toolUse.Name == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("name", "tool_use"))
+	}
+	if toolUse.ThoughtSignature == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("thought_signature", "tool_use"))
+	}
+	return
+}
+
+// validatemodel_5F_gateway_model_5F_gateway_ToolResultPartDetail_Target_toolResult_Context_tool_5F_result
+// runs the validations defined on ToolResultPartDetail.
+func validatemodel_5F_gateway_model_5F_gateway_ToolResultPartDetail_Target_toolResult_Context_tool_5F_result(toolResult *model_gatewaypb.ToolResultPartDetail) (err error) {
+	if toolResult.ToolUseId == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("tool_use_id", "tool_result"))
+	}
+	if toolResult.ContentPresent == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("content_present", "tool_result"))
+	}
+	if toolResult.IsError == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("is_error", "tool_result"))
 	}
 	return
 }
@@ -697,36 +935,148 @@ func transformProtoModelMessageToModelMessage(v *model_gatewaypb.ModelMessage) *
 // transformProtoMessagePartToMessagePart builds a value of type
 // *modelgateway.MessagePart from a value of type *model_gatewaypb.MessagePart.
 func transformProtoMessagePartToMessagePart(v *model_gatewaypb.MessagePart) *modelgateway.MessagePart {
-	res := &modelgateway.MessagePart{
-		Kind:             *v.Kind,
-		Text:             *v.Text,
-		Signature:        *v.Signature,
-		Redacted:         v.Redacted,
-		Index:            int(*v.Index),
-		Final:            *v.Final,
-		ImageFormat:      *v.ImageFormat,
-		Bytes:            v.Bytes_,
-		SourceKind:       *v.SourceKind,
-		Data:             v.Data,
-		Name:             *v.Name,
-		DocumentFormat:   *v.DocumentFormat,
-		URI:              *v.Uri,
-		Context:          *v.Context,
-		Cite:             *v.Cite,
-		ID:               *v.Id,
-		Input:            v.Input,
-		ThoughtSignature: *v.ThoughtSignature,
-		ToolUseID:        *v.ToolUseId,
-		Content:          v.Content,
-		ContentPresent:   *v.ContentPresent,
-		BlocksJSON:       v.BlocksJson,
-		IsError:          *v.IsError,
+	res := &modelgateway.MessagePart{}
+	if v.Payload != nil {
+		switch val := v.Payload.(type) {
+		case *model_gatewaypb.MessagePart_Text:
+			{
+				u := res.Payload
+				u.SetText(transformProtoTextPartDetailToTextPartDetail(val.Text))
+				res.Payload = u
+			}
+		case *model_gatewaypb.MessagePart_Thinking:
+			{
+				u := res.Payload
+				u.SetThinking(transformProtoThinkingPartDetailToThinkingPartDetail(val.Thinking))
+				res.Payload = u
+			}
+		case *model_gatewaypb.MessagePart_Image:
+			{
+				u := res.Payload
+				u.SetImage(transformProtoImagePartDetailToImagePartDetail(val.Image))
+				res.Payload = u
+			}
+		case *model_gatewaypb.MessagePart_ImageSource:
+			{
+				u := res.Payload
+				u.SetImageSource(transformProtoImageSourcePartDetailToImageSourcePartDetail(val.ImageSource))
+				res.Payload = u
+			}
+		case *model_gatewaypb.MessagePart_Document:
+			{
+				u := res.Payload
+				u.SetDocument(transformProtoDocumentPartDetailToDocumentPartDetail(val.Document))
+				res.Payload = u
+			}
+		case *model_gatewaypb.MessagePart_Citations:
+			{
+				u := res.Payload
+				u.SetCitations(transformProtoCitationsPartDetailToCitationsPartDetail(val.Citations))
+				res.Payload = u
+			}
+		case *model_gatewaypb.MessagePart_ToolUse:
+			{
+				u := res.Payload
+				u.SetToolUse(transformProtoToolUsePartDetailToToolUsePartDetail(val.ToolUse))
+				res.Payload = u
+			}
+		case *model_gatewaypb.MessagePart_ToolResult:
+			{
+				u := res.Payload
+				u.SetToolResult(transformProtoToolResultPartDetailToToolResultPartDetail(val.ToolResult))
+				res.Payload = u
+			}
+		case *model_gatewaypb.MessagePart_CacheCheckpoint:
+			{
+				u := res.Payload
+				u.SetCacheCheckpoint(transformProtoCacheCheckpointDetailToCacheCheckpointDetail(val.CacheCheckpoint))
+				res.Payload = u
+			}
+		}
+	}
+
+	return res
+}
+
+// transformProtoTextPartDetailToTextPartDetail builds a value of type
+// *modelgateway.TextPartDetail from a value of type
+// *model_gatewaypb.TextPartDetail.
+func transformProtoTextPartDetailToTextPartDetail(v *model_gatewaypb.TextPartDetail) *modelgateway.TextPartDetail {
+	res := &modelgateway.TextPartDetail{
+		Text: *v.Text,
+	}
+
+	return res
+}
+
+// transformProtoThinkingPartDetailToThinkingPartDetail builds a value of type
+// *modelgateway.ThinkingPartDetail from a value of type
+// *model_gatewaypb.ThinkingPartDetail.
+func transformProtoThinkingPartDetailToThinkingPartDetail(v *model_gatewaypb.ThinkingPartDetail) *modelgateway.ThinkingPartDetail {
+	res := &modelgateway.ThinkingPartDetail{
+		Text:      *v.Text,
+		Signature: *v.Signature,
+		Redacted:  v.Redacted,
+		Index:     *v.Index,
+		Final:     *v.Final,
+	}
+
+	return res
+}
+
+// transformProtoImagePartDetailToImagePartDetail builds a value of type
+// *modelgateway.ImagePartDetail from a value of type
+// *model_gatewaypb.ImagePartDetail.
+func transformProtoImagePartDetailToImagePartDetail(v *model_gatewaypb.ImagePartDetail) *modelgateway.ImagePartDetail {
+	res := &modelgateway.ImagePartDetail{
+		Format: *v.Format,
+		Bytes:  v.Bytes_,
+	}
+
+	return res
+}
+
+// transformProtoImageSourcePartDetailToImageSourcePartDetail builds a value of
+// type *modelgateway.ImageSourcePartDetail from a value of type
+// *model_gatewaypb.ImageSourcePartDetail.
+func transformProtoImageSourcePartDetailToImageSourcePartDetail(v *model_gatewaypb.ImageSourcePartDetail) *modelgateway.ImageSourcePartDetail {
+	res := &modelgateway.ImageSourcePartDetail{
+		SourceKind: *v.SourceKind,
+		Data:       v.Data,
+	}
+
+	return res
+}
+
+// transformProtoDocumentPartDetailToDocumentPartDetail builds a value of type
+// *modelgateway.DocumentPartDetail from a value of type
+// *model_gatewaypb.DocumentPartDetail.
+func transformProtoDocumentPartDetailToDocumentPartDetail(v *model_gatewaypb.DocumentPartDetail) *modelgateway.DocumentPartDetail {
+	res := &modelgateway.DocumentPartDetail{
+		Name:    *v.Name,
+		Format:  *v.Format,
+		Bytes:   v.Bytes_,
+		Text:    *v.Text,
+		URI:     *v.Uri,
+		Context: *v.Context,
+		Cite:    *v.Cite,
 	}
 	if v.Chunks != nil {
 		res.Chunks = make([]string, len(v.Chunks))
 		for i, val := range v.Chunks {
 			res.Chunks[i] = val
 		}
+	}
+
+	return res
+}
+
+// transformProtoCitationsPartDetailToCitationsPartDetail builds a value of
+// type *modelgateway.CitationsPartDetail from a value of type
+// *model_gatewaypb.CitationsPartDetail.
+func transformProtoCitationsPartDetailToCitationsPartDetail(v *model_gatewaypb.CitationsPartDetail) *modelgateway.CitationsPartDetail {
+	res := &modelgateway.CitationsPartDetail{
+		Text: *v.Text,
 	}
 	if v.Citations != nil {
 		res.Citations = make([]*modelgateway.Citation, len(v.Citations))
@@ -766,14 +1116,27 @@ func transformProtoCitationToCitation(v *model_gatewaypb.Citation) *modelgateway
 // *model_gatewaypb.CitationLocation.
 func transformProtoCitationLocationToCitationLocation(v *model_gatewaypb.CitationLocation) *modelgateway.CitationLocation {
 	res := &modelgateway.CitationLocation{}
-	if v.DocumentChar != nil {
-		res.DocumentChar = transformProtoDocumentCharLocationToDocumentCharLocation(v.DocumentChar)
-	}
-	if v.DocumentPage != nil {
-		res.DocumentPage = transformProtoDocumentPageLocationToDocumentPageLocation(v.DocumentPage)
-	}
-	if v.DocumentChunk != nil {
-		res.DocumentChunk = transformProtoDocumentChunkLocationToDocumentChunkLocation(v.DocumentChunk)
+	if v.Span != nil {
+		switch val := v.Span.(type) {
+		case *model_gatewaypb.CitationLocation_DocumentChar:
+			{
+				u := res.Span
+				u.SetDocumentChar(transformProtoDocumentCharLocationToDocumentCharLocation(val.DocumentChar))
+				res.Span = u
+			}
+		case *model_gatewaypb.CitationLocation_DocumentPage:
+			{
+				u := res.Span
+				u.SetDocumentPage(transformProtoDocumentPageLocationToDocumentPageLocation(val.DocumentPage))
+				res.Span = u
+			}
+		case *model_gatewaypb.CitationLocation_DocumentChunk:
+			{
+				u := res.Span
+				u.SetDocumentChunk(transformProtoDocumentChunkLocationToDocumentChunkLocation(val.DocumentChunk))
+				res.Span = u
+			}
+		}
 	}
 
 	return res
@@ -784,9 +1147,9 @@ func transformProtoCitationLocationToCitationLocation(v *model_gatewaypb.Citatio
 // *model_gatewaypb.DocumentCharLocation.
 func transformProtoDocumentCharLocationToDocumentCharLocation(v *model_gatewaypb.DocumentCharLocation) *modelgateway.DocumentCharLocation {
 	res := &modelgateway.DocumentCharLocation{
-		DocumentIndex: int(*v.DocumentIndex),
-		Start:         int(*v.Start),
-		End:           int(*v.End),
+		DocumentIndex: *v.DocumentIndex,
+		Start:         *v.Start,
+		End:           *v.End,
 	}
 
 	return res
@@ -797,9 +1160,9 @@ func transformProtoDocumentCharLocationToDocumentCharLocation(v *model_gatewaypb
 // *model_gatewaypb.DocumentPageLocation.
 func transformProtoDocumentPageLocationToDocumentPageLocation(v *model_gatewaypb.DocumentPageLocation) *modelgateway.DocumentPageLocation {
 	res := &modelgateway.DocumentPageLocation{
-		DocumentIndex: int(*v.DocumentIndex),
-		Start:         int(*v.Start),
-		End:           int(*v.End),
+		DocumentIndex: *v.DocumentIndex,
+		Start:         *v.Start,
+		End:           *v.End,
 	}
 
 	return res
@@ -810,10 +1173,48 @@ func transformProtoDocumentPageLocationToDocumentPageLocation(v *model_gatewaypb
 // *model_gatewaypb.DocumentChunkLocation.
 func transformProtoDocumentChunkLocationToDocumentChunkLocation(v *model_gatewaypb.DocumentChunkLocation) *modelgateway.DocumentChunkLocation {
 	res := &modelgateway.DocumentChunkLocation{
-		DocumentIndex: int(*v.DocumentIndex),
-		Start:         int(*v.Start),
-		End:           int(*v.End),
+		DocumentIndex: *v.DocumentIndex,
+		Start:         *v.Start,
+		End:           *v.End,
 	}
+
+	return res
+}
+
+// transformProtoToolUsePartDetailToToolUsePartDetail builds a value of type
+// *modelgateway.ToolUsePartDetail from a value of type
+// *model_gatewaypb.ToolUsePartDetail.
+func transformProtoToolUsePartDetailToToolUsePartDetail(v *model_gatewaypb.ToolUsePartDetail) *modelgateway.ToolUsePartDetail {
+	res := &modelgateway.ToolUsePartDetail{
+		ID:               *v.Id,
+		Name:             *v.Name,
+		Input:            v.Input,
+		ThoughtSignature: *v.ThoughtSignature,
+	}
+
+	return res
+}
+
+// transformProtoToolResultPartDetailToToolResultPartDetail builds a value of
+// type *modelgateway.ToolResultPartDetail from a value of type
+// *model_gatewaypb.ToolResultPartDetail.
+func transformProtoToolResultPartDetailToToolResultPartDetail(v *model_gatewaypb.ToolResultPartDetail) *modelgateway.ToolResultPartDetail {
+	res := &modelgateway.ToolResultPartDetail{
+		ToolUseID:      *v.ToolUseId,
+		Content:        v.Content,
+		ContentPresent: *v.ContentPresent,
+		BlocksJSON:     v.BlocksJson,
+		IsError:        *v.IsError,
+	}
+
+	return res
+}
+
+// transformProtoCacheCheckpointDetailToCacheCheckpointDetail builds a value of
+// type *modelgateway.CacheCheckpointDetail from a value of type
+// *model_gatewaypb.CacheCheckpointDetail.
+func transformProtoCacheCheckpointDetailToCacheCheckpointDetail(v *model_gatewaypb.CacheCheckpointDetail) *modelgateway.CacheCheckpointDetail {
+	res := &modelgateway.CacheCheckpointDetail{}
 
 	return res
 }
@@ -843,13 +1244,13 @@ func transformProtoToolDefinitionToToolDefinition(v *model_gatewaypb.ToolDefinit
 // *model_gatewaypb.SearchDocument.
 func transformProtoSearchDocumentToSearchDocument(v *model_gatewaypb.SearchDocument) *modelgateway.SearchDocument {
 	res := &modelgateway.SearchDocument{
-		Length: int(*v.Length),
+		Length: *v.Length,
 	}
 	if v.Terms != nil {
-		res.Terms = make(map[string]int, len(v.Terms))
+		res.Terms = make(map[string]int64, len(v.Terms))
 		for key, val := range v.Terms {
 			tk := key
-			tv := int(val)
+			tv := val
 			res.Terms[tk] = tv
 		}
 	}
@@ -888,7 +1289,7 @@ func transformProtoThinkingOptionsToThinkingOptions(v *model_gatewaypb.ThinkingO
 	res := &modelgateway.ThinkingOptions{
 		Enable:       *v.Enable,
 		Interleaved:  *v.Interleaved,
-		BudgetTokens: int(*v.BudgetTokens),
+		BudgetTokens: *v.BudgetTokens,
 	}
 
 	return res
@@ -926,9 +1327,10 @@ func transformProtoCacheOptionsToCacheOptions(v *model_gatewaypb.CacheOptions) *
 // *modelgateway.ModelResponse.
 func transformModelResponseToProtoModelResponse(v *modelgateway.ModelResponse) *model_gatewaypb.ModelResponse {
 	res := &model_gatewaypb.ModelResponse{
-		UsageReported: &v.UsageReported,
-		StopReason:    &v.StopReason,
-		OutputLimited: &v.OutputLimited,
+		UsageReported:   &v.UsageReported,
+		UsageIncomplete: &v.UsageIncomplete,
+		StopReason:      &v.StopReason,
+		OutputLimited:   &v.OutputLimited,
 	}
 	if v.Content != nil {
 		res.Content = make([]*model_gatewaypb.ModelMessage, len(v.Content))
@@ -970,37 +1372,121 @@ func transformModelMessageToProtoModelMessage(v *modelgateway.ModelMessage) *mod
 // transformMessagePartToProtoMessagePart builds a value of type
 // *model_gatewaypb.MessagePart from a value of type *modelgateway.MessagePart.
 func transformMessagePartToProtoMessagePart(v *modelgateway.MessagePart) *model_gatewaypb.MessagePart {
-	res := &model_gatewaypb.MessagePart{
-		Kind:             &v.Kind,
-		Text:             &v.Text,
-		Signature:        &v.Signature,
-		Redacted:         v.Redacted,
-		Final:            &v.Final,
-		ImageFormat:      &v.ImageFormat,
-		Bytes_:           v.Bytes,
-		SourceKind:       &v.SourceKind,
-		Data:             v.Data,
-		Name:             &v.Name,
-		DocumentFormat:   &v.DocumentFormat,
-		Uri:              &v.URI,
-		Context:          &v.Context,
-		Cite:             &v.Cite,
-		Id:               &v.ID,
-		Input:            v.Input,
-		ThoughtSignature: &v.ThoughtSignature,
-		ToolUseId:        &v.ToolUseID,
-		Content:          v.Content,
-		ContentPresent:   &v.ContentPresent,
-		BlocksJson:       v.BlocksJSON,
-		IsError:          &v.IsError,
+	res := &model_gatewaypb.MessagePart{}
+	if v.Payload.Kind() != "" {
+		switch string(v.Payload.Kind()) {
+		case "text":
+			actual, _ := v.Payload.AsText()
+			res.Payload = &model_gatewaypb.MessagePart_Text{Text: transformTextPartDetailToProtoTextPartDetail(actual)}
+		case "thinking":
+			actual, _ := v.Payload.AsThinking()
+			res.Payload = &model_gatewaypb.MessagePart_Thinking{Thinking: transformThinkingPartDetailToProtoThinkingPartDetail(actual)}
+		case "image":
+			actual, _ := v.Payload.AsImage()
+			res.Payload = &model_gatewaypb.MessagePart_Image{Image: transformImagePartDetailToProtoImagePartDetail(actual)}
+		case "image_source":
+			actual, _ := v.Payload.AsImageSource()
+			res.Payload = &model_gatewaypb.MessagePart_ImageSource{ImageSource: transformImageSourcePartDetailToProtoImageSourcePartDetail(actual)}
+		case "document":
+			actual, _ := v.Payload.AsDocument()
+			res.Payload = &model_gatewaypb.MessagePart_Document{Document: transformDocumentPartDetailToProtoDocumentPartDetail(actual)}
+		case "citations":
+			actual, _ := v.Payload.AsCitations()
+			res.Payload = &model_gatewaypb.MessagePart_Citations{Citations: transformCitationsPartDetailToProtoCitationsPartDetail(actual)}
+		case "tool_use":
+			actual, _ := v.Payload.AsToolUse()
+			res.Payload = &model_gatewaypb.MessagePart_ToolUse{ToolUse: transformToolUsePartDetailToProtoToolUsePartDetail(actual)}
+		case "tool_result":
+			actual, _ := v.Payload.AsToolResult()
+			res.Payload = &model_gatewaypb.MessagePart_ToolResult{ToolResult: transformToolResultPartDetailToProtoToolResultPartDetail(actual)}
+		case "cache_checkpoint":
+			actual, _ := v.Payload.AsCacheCheckpoint()
+			res.Payload = &model_gatewaypb.MessagePart_CacheCheckpoint{CacheCheckpoint: transformCacheCheckpointDetailToProtoCacheCheckpointDetail(actual)}
+		}
 	}
-	index := int32(v.Index)
-	res.Index = &index
+
+	return res
+}
+
+// transformTextPartDetailToProtoTextPartDetail builds a value of type
+// *model_gatewaypb.TextPartDetail from a value of type
+// *modelgateway.TextPartDetail.
+func transformTextPartDetailToProtoTextPartDetail(v *modelgateway.TextPartDetail) *model_gatewaypb.TextPartDetail {
+	res := &model_gatewaypb.TextPartDetail{
+		Text: &v.Text,
+	}
+
+	return res
+}
+
+// transformThinkingPartDetailToProtoThinkingPartDetail builds a value of type
+// *model_gatewaypb.ThinkingPartDetail from a value of type
+// *modelgateway.ThinkingPartDetail.
+func transformThinkingPartDetailToProtoThinkingPartDetail(v *modelgateway.ThinkingPartDetail) *model_gatewaypb.ThinkingPartDetail {
+	res := &model_gatewaypb.ThinkingPartDetail{
+		Text:      &v.Text,
+		Signature: &v.Signature,
+		Redacted:  v.Redacted,
+		Index:     &v.Index,
+		Final:     &v.Final,
+	}
+
+	return res
+}
+
+// transformImagePartDetailToProtoImagePartDetail builds a value of type
+// *model_gatewaypb.ImagePartDetail from a value of type
+// *modelgateway.ImagePartDetail.
+func transformImagePartDetailToProtoImagePartDetail(v *modelgateway.ImagePartDetail) *model_gatewaypb.ImagePartDetail {
+	res := &model_gatewaypb.ImagePartDetail{
+		Format: &v.Format,
+		Bytes_: v.Bytes,
+	}
+
+	return res
+}
+
+// transformImageSourcePartDetailToProtoImageSourcePartDetail builds a value of
+// type *model_gatewaypb.ImageSourcePartDetail from a value of type
+// *modelgateway.ImageSourcePartDetail.
+func transformImageSourcePartDetailToProtoImageSourcePartDetail(v *modelgateway.ImageSourcePartDetail) *model_gatewaypb.ImageSourcePartDetail {
+	res := &model_gatewaypb.ImageSourcePartDetail{
+		SourceKind: &v.SourceKind,
+		Data:       v.Data,
+	}
+
+	return res
+}
+
+// transformDocumentPartDetailToProtoDocumentPartDetail builds a value of type
+// *model_gatewaypb.DocumentPartDetail from a value of type
+// *modelgateway.DocumentPartDetail.
+func transformDocumentPartDetailToProtoDocumentPartDetail(v *modelgateway.DocumentPartDetail) *model_gatewaypb.DocumentPartDetail {
+	res := &model_gatewaypb.DocumentPartDetail{
+		Name:    &v.Name,
+		Format:  &v.Format,
+		Bytes_:  v.Bytes,
+		Text:    &v.Text,
+		Uri:     &v.URI,
+		Context: &v.Context,
+		Cite:    &v.Cite,
+	}
 	if v.Chunks != nil {
 		res.Chunks = make([]string, len(v.Chunks))
 		for i, val := range v.Chunks {
 			res.Chunks[i] = val
 		}
+	}
+
+	return res
+}
+
+// transformCitationsPartDetailToProtoCitationsPartDetail builds a value of
+// type *model_gatewaypb.CitationsPartDetail from a value of type
+// *modelgateway.CitationsPartDetail.
+func transformCitationsPartDetailToProtoCitationsPartDetail(v *modelgateway.CitationsPartDetail) *model_gatewaypb.CitationsPartDetail {
+	res := &model_gatewaypb.CitationsPartDetail{
+		Text: &v.Text,
 	}
 	if v.Citations != nil {
 		res.Citations = make([]*model_gatewaypb.Citation, len(v.Citations))
@@ -1040,14 +1526,18 @@ func transformCitationToProtoCitation(v *modelgateway.Citation) *model_gatewaypb
 // *modelgateway.CitationLocation.
 func transformCitationLocationToProtoCitationLocation(v *modelgateway.CitationLocation) *model_gatewaypb.CitationLocation {
 	res := &model_gatewaypb.CitationLocation{}
-	if v.DocumentChar != nil {
-		res.DocumentChar = transformDocumentCharLocationToProtoDocumentCharLocation(v.DocumentChar)
-	}
-	if v.DocumentPage != nil {
-		res.DocumentPage = transformDocumentPageLocationToProtoDocumentPageLocation(v.DocumentPage)
-	}
-	if v.DocumentChunk != nil {
-		res.DocumentChunk = transformDocumentChunkLocationToProtoDocumentChunkLocation(v.DocumentChunk)
+	if v.Span.Kind() != "" {
+		switch string(v.Span.Kind()) {
+		case "document_char":
+			actual, _ := v.Span.AsDocumentChar()
+			res.Span = &model_gatewaypb.CitationLocation_DocumentChar{DocumentChar: transformDocumentCharLocationToProtoDocumentCharLocation(actual)}
+		case "document_page":
+			actual, _ := v.Span.AsDocumentPage()
+			res.Span = &model_gatewaypb.CitationLocation_DocumentPage{DocumentPage: transformDocumentPageLocationToProtoDocumentPageLocation(actual)}
+		case "document_chunk":
+			actual, _ := v.Span.AsDocumentChunk()
+			res.Span = &model_gatewaypb.CitationLocation_DocumentChunk{DocumentChunk: transformDocumentChunkLocationToProtoDocumentChunkLocation(actual)}
+		}
 	}
 
 	return res
@@ -1057,13 +1547,11 @@ func transformCitationLocationToProtoCitationLocation(v *modelgateway.CitationLo
 // type *model_gatewaypb.DocumentCharLocation from a value of type
 // *modelgateway.DocumentCharLocation.
 func transformDocumentCharLocationToProtoDocumentCharLocation(v *modelgateway.DocumentCharLocation) *model_gatewaypb.DocumentCharLocation {
-	res := &model_gatewaypb.DocumentCharLocation{}
-	documentIndex := int32(v.DocumentIndex)
-	res.DocumentIndex = &documentIndex
-	start := int32(v.Start)
-	res.Start = &start
-	end := int32(v.End)
-	res.End = &end
+	res := &model_gatewaypb.DocumentCharLocation{
+		DocumentIndex: &v.DocumentIndex,
+		Start:         &v.Start,
+		End:           &v.End,
+	}
 
 	return res
 }
@@ -1072,13 +1560,11 @@ func transformDocumentCharLocationToProtoDocumentCharLocation(v *modelgateway.Do
 // type *model_gatewaypb.DocumentPageLocation from a value of type
 // *modelgateway.DocumentPageLocation.
 func transformDocumentPageLocationToProtoDocumentPageLocation(v *modelgateway.DocumentPageLocation) *model_gatewaypb.DocumentPageLocation {
-	res := &model_gatewaypb.DocumentPageLocation{}
-	documentIndex := int32(v.DocumentIndex)
-	res.DocumentIndex = &documentIndex
-	start := int32(v.Start)
-	res.Start = &start
-	end := int32(v.End)
-	res.End = &end
+	res := &model_gatewaypb.DocumentPageLocation{
+		DocumentIndex: &v.DocumentIndex,
+		Start:         &v.Start,
+		End:           &v.End,
+	}
 
 	return res
 }
@@ -1087,13 +1573,49 @@ func transformDocumentPageLocationToProtoDocumentPageLocation(v *modelgateway.Do
 // type *model_gatewaypb.DocumentChunkLocation from a value of type
 // *modelgateway.DocumentChunkLocation.
 func transformDocumentChunkLocationToProtoDocumentChunkLocation(v *modelgateway.DocumentChunkLocation) *model_gatewaypb.DocumentChunkLocation {
-	res := &model_gatewaypb.DocumentChunkLocation{}
-	documentIndex := int32(v.DocumentIndex)
-	res.DocumentIndex = &documentIndex
-	start := int32(v.Start)
-	res.Start = &start
-	end := int32(v.End)
-	res.End = &end
+	res := &model_gatewaypb.DocumentChunkLocation{
+		DocumentIndex: &v.DocumentIndex,
+		Start:         &v.Start,
+		End:           &v.End,
+	}
+
+	return res
+}
+
+// transformToolUsePartDetailToProtoToolUsePartDetail builds a value of type
+// *model_gatewaypb.ToolUsePartDetail from a value of type
+// *modelgateway.ToolUsePartDetail.
+func transformToolUsePartDetailToProtoToolUsePartDetail(v *modelgateway.ToolUsePartDetail) *model_gatewaypb.ToolUsePartDetail {
+	res := &model_gatewaypb.ToolUsePartDetail{
+		Id:               &v.ID,
+		Name:             &v.Name,
+		Input:            v.Input,
+		ThoughtSignature: &v.ThoughtSignature,
+	}
+
+	return res
+}
+
+// transformToolResultPartDetailToProtoToolResultPartDetail builds a value of
+// type *model_gatewaypb.ToolResultPartDetail from a value of type
+// *modelgateway.ToolResultPartDetail.
+func transformToolResultPartDetailToProtoToolResultPartDetail(v *modelgateway.ToolResultPartDetail) *model_gatewaypb.ToolResultPartDetail {
+	res := &model_gatewaypb.ToolResultPartDetail{
+		ToolUseId:      &v.ToolUseID,
+		Content:        v.Content,
+		ContentPresent: &v.ContentPresent,
+		BlocksJson:     v.BlocksJSON,
+		IsError:        &v.IsError,
+	}
+
+	return res
+}
+
+// transformCacheCheckpointDetailToProtoCacheCheckpointDetail builds a value of
+// type *model_gatewaypb.CacheCheckpointDetail from a value of type
+// *modelgateway.CacheCheckpointDetail.
+func transformCacheCheckpointDetailToProtoCacheCheckpointDetail(v *modelgateway.CacheCheckpointDetail) *model_gatewaypb.CacheCheckpointDetail {
+	res := &model_gatewaypb.CacheCheckpointDetail{}
 
 	return res
 }
@@ -1102,19 +1624,14 @@ func transformDocumentChunkLocationToProtoDocumentChunkLocation(v *modelgateway.
 // *model_gatewaypb.TokenUsage from a value of type *modelgateway.TokenUsage.
 func transformTokenUsageToProtoTokenUsage(v *modelgateway.TokenUsage) *model_gatewaypb.TokenUsage {
 	res := &model_gatewaypb.TokenUsage{
-		Model:      &v.Model,
-		ModelClass: &v.ModelClass,
+		Model:            &v.Model,
+		ModelClass:       &v.ModelClass,
+		InputTokens:      &v.InputTokens,
+		OutputTokens:     &v.OutputTokens,
+		TotalTokens:      &v.TotalTokens,
+		CacheReadTokens:  &v.CacheReadTokens,
+		CacheWriteTokens: &v.CacheWriteTokens,
 	}
-	inputTokens := int32(v.InputTokens)
-	res.InputTokens = &inputTokens
-	outputTokens := int32(v.OutputTokens)
-	res.OutputTokens = &outputTokens
-	totalTokens := int32(v.TotalTokens)
-	res.TotalTokens = &totalTokens
-	cacheReadTokens := int32(v.CacheReadTokens)
-	res.CacheReadTokens = &cacheReadTokens
-	cacheWriteTokens := int32(v.CacheWriteTokens)
-	res.CacheWriteTokens = &cacheWriteTokens
 
 	return res
 }
@@ -1150,9 +1667,8 @@ func transformGatewayErrorNodeToProtoGatewayErrorNode(v *modelgateway.GatewayErr
 		Sentinel:             &v.Sentinel,
 		UnadvertisedToolName: &v.UnadvertisedToolName,
 		MalformedToolName:    &v.MalformedToolName,
+		CauseIndex:           &v.CauseIndex,
 	}
-	causeIndex := int32(v.CauseIndex)
-	res.CauseIndex = &causeIndex
 	if v.Provider != nil {
 		res.Provider = transformProviderErrorDetailToProtoProviderErrorDetail(v.Provider)
 	}
@@ -1160,9 +1676,9 @@ func transformGatewayErrorNodeToProtoGatewayErrorNode(v *modelgateway.GatewayErr
 		res.Validation = transformValidationErrorDetailToProtoValidationErrorDetail(v.Validation)
 	}
 	if v.ChildIndices != nil {
-		res.ChildIndices = make([]int32, len(v.ChildIndices))
+		res.ChildIndices = make([]int64, len(v.ChildIndices))
 		for i, val := range v.ChildIndices {
-			res.ChildIndices[i] = int32(val)
+			res.ChildIndices[i] = val
 		}
 	}
 
@@ -1174,16 +1690,15 @@ func transformGatewayErrorNodeToProtoGatewayErrorNode(v *modelgateway.GatewayErr
 // *modelgateway.ProviderErrorDetail.
 func transformProviderErrorDetailToProtoProviderErrorDetail(v *modelgateway.ProviderErrorDetail) *model_gatewaypb.ProviderErrorDetail {
 	res := &model_gatewaypb.ProviderErrorDetail{
-		Provider:  &v.Provider,
-		Operation: &v.Operation,
-		Kind:      &v.Kind,
-		Code:      &v.Code,
-		Message_:  &v.Message,
-		RequestId: &v.RequestID,
-		Retryable: &v.Retryable,
+		Provider:   &v.Provider,
+		Operation:  &v.Operation,
+		HttpStatus: &v.HTTPStatus,
+		Kind:       &v.Kind,
+		Code:       &v.Code,
+		Message_:   &v.Message,
+		RequestId:  &v.RequestID,
+		Retryable:  &v.Retryable,
 	}
-	httpStatus := int32(v.HTTPStatus)
-	res.HttpStatus = &httpStatus
 
 	return res
 }
@@ -1223,28 +1738,34 @@ func transformResponseEvidenceToProtoResponseEvidence(v *modelgateway.ResponseEv
 // transformStreamChunkToProtoStreamChunk builds a value of type
 // *model_gatewaypb.StreamChunk from a value of type *modelgateway.StreamChunk.
 func transformStreamChunkToProtoStreamChunk(v *modelgateway.StreamChunk) *model_gatewaypb.StreamChunk {
-	res := &model_gatewaypb.StreamChunk{
-		Kind:          &v.Kind,
-		StopReason:    &v.StopReason,
-		OutputLimited: &v.OutputLimited,
-	}
-	if v.Message != nil {
-		res.Message_ = transformModelMessageToProtoModelMessage(v.Message)
-	}
-	if v.ToolCall != nil {
-		res.ToolCall = transformToolCallToProtoToolCall(v.ToolCall)
-	}
-	if v.ToolCallDelta != nil {
-		res.ToolCallDelta = transformToolCallDeltaToProtoToolCallDelta(v.ToolCallDelta)
-	}
-	if v.Completion != nil {
-		res.Completion = transformCompletionToProtoCompletion(v.Completion)
-	}
-	if v.CompletionDelta != nil {
-		res.CompletionDelta = transformCompletionDeltaToProtoCompletionDelta(v.CompletionDelta)
-	}
-	if v.Usage != nil {
-		res.Usage = transformTokenUsageToProtoTokenUsage(v.Usage)
+	res := &model_gatewaypb.StreamChunk{}
+	if v.Payload.Kind() != "" {
+		switch string(v.Payload.Kind()) {
+		case "text":
+			actual, _ := v.Payload.AsText()
+			res.Payload = &model_gatewaypb.StreamChunk_Text{Text: transformModelMessageToProtoModelMessage(actual)}
+		case "thinking":
+			actual, _ := v.Payload.AsThinking()
+			res.Payload = &model_gatewaypb.StreamChunk_Thinking{Thinking: transformModelMessageToProtoModelMessage(actual)}
+		case "tool_call":
+			actual, _ := v.Payload.AsToolCall()
+			res.Payload = &model_gatewaypb.StreamChunk_ToolCall{ToolCall: transformToolCallToProtoToolCall(actual)}
+		case "tool_call_delta":
+			actual, _ := v.Payload.AsToolCallDelta()
+			res.Payload = &model_gatewaypb.StreamChunk_ToolCallDelta{ToolCallDelta: transformToolCallDeltaToProtoToolCallDelta(actual)}
+		case "completion":
+			actual, _ := v.Payload.AsCompletion()
+			res.Payload = &model_gatewaypb.StreamChunk_Completion{Completion: transformCompletionToProtoCompletion(actual)}
+		case "completion_delta":
+			actual, _ := v.Payload.AsCompletionDelta()
+			res.Payload = &model_gatewaypb.StreamChunk_CompletionDelta{CompletionDelta: transformCompletionDeltaToProtoCompletionDelta(actual)}
+		case "usage":
+			actual, _ := v.Payload.AsUsage()
+			res.Payload = &model_gatewaypb.StreamChunk_Usage{Usage: transformTokenUsageToProtoTokenUsage(actual)}
+		case "stop":
+			actual, _ := v.Payload.AsStop()
+			res.Payload = &model_gatewaypb.StreamChunk_Stop{Stop: transformStopDetailToProtoStopDetail(actual)}
+		}
 	}
 
 	return res
@@ -1299,16 +1820,26 @@ func transformCompletionDeltaToProtoCompletionDelta(v *modelgateway.CompletionDe
 	return res
 }
 
+// transformStopDetailToProtoStopDetail builds a value of type
+// *model_gatewaypb.StopDetail from a value of type *modelgateway.StopDetail.
+func transformStopDetailToProtoStopDetail(v *modelgateway.StopDetail) *model_gatewaypb.StopDetail {
+	res := &model_gatewaypb.StopDetail{
+		Reason:        &v.Reason,
+		OutputLimited: &v.OutputLimited,
+	}
+
+	return res
+}
+
 // transformTokenCountToProtoTokenCount builds a value of type
 // *model_gatewaypb.TokenCount from a value of type *modelgateway.TokenCount.
 func transformTokenCountToProtoTokenCount(v *modelgateway.TokenCount) *model_gatewaypb.TokenCount {
 	res := &model_gatewaypb.TokenCount{
-		Model:      &v.Model,
-		ModelClass: &v.ModelClass,
-		Exact:      &v.Exact,
+		Model:       &v.Model,
+		ModelClass:  &v.ModelClass,
+		InputTokens: &v.InputTokens,
+		Exact:       &v.Exact,
 	}
-	inputTokens := int32(v.InputTokens)
-	res.InputTokens = &inputTokens
 
 	return res
 }

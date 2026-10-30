@@ -50,24 +50,32 @@ func (e *gatedStartEngine) RegisterWorkflow(ctx context.Context, def engine.Work
 	return e.Engine.RegisterWorkflow(ctx, wrapped)
 }
 
-func (e *gatedStartEngine) QueryRunCompletion(ctx context.Context, workflowID string) (engine.RunCompletion, error) {
-	completion, err := e.Engine.QueryRunCompletion(ctx, workflowID)
+func (e *gatedStartEngine) QueryAcceptedRun(ctx context.Context, workflowID string) (engine.AcceptedRun, error) {
+	querier, ok := e.Engine.(engine.AcceptedRunQuerier)
+	if !ok {
+		return engine.AcceptedRun{}, engine.ErrWorkflowNotFound
+	}
+	accepted, err := querier.QueryAcceptedRun(ctx, workflowID)
 	if err != nil {
-		return engine.RunCompletion{}, err
+		return engine.AcceptedRun{}, err
 	}
-	if e.status != "" && !isTerminalEngineRunStatus(completion.Status) {
-		completion.Status = e.status
+	if e.status != "" && !isTerminalEngineRunStatus(accepted.Status) {
+		accepted.Status = e.status
 	}
-	return completion, nil
+	return accepted, nil
 }
 
 type terminalUnstartedEngine struct {
 	engine.Engine
-	completion engine.RunCompletion
+	accepted engine.AcceptedRun
+	err      error
 }
 
-func (e *terminalUnstartedEngine) QueryRunCompletion(_ context.Context, _ string) (engine.RunCompletion, error) {
-	return e.completion, nil
+func (e *terminalUnstartedEngine) QueryAcceptedRun(_ context.Context, _ string) (engine.AcceptedRun, error) {
+	if e.err != nil {
+		return engine.AcceptedRun{}, e.err
+	}
+	return e.accepted, nil
 }
 
 func TestGetRunSnapshotAcceptedBeforeStartRootRun(t *testing.T) {
@@ -217,6 +225,7 @@ func TestGetRunSnapshotAcceptedContinuationBeforeStartRootRun(t *testing.T) {
 		Status:    session.RunStatusRunning,
 		StartedAt: now,
 		UpdatedAt: now,
+		Labels:    map[string]string{"TenantID": "tenant-acme", "CustomerID": "cust-42"},
 	})
 	suspensionData, err := json.Marshal(suspension)
 	require.NoError(t, err)
@@ -320,18 +329,14 @@ func TestGetRunSnapshotUnstartedTerminalStatuses(t *testing.T) {
 			require.NoError(t, err)
 			eng := &terminalUnstartedEngine{
 				Engine: engineinmem.New(),
-				completion: engine.RunCompletion{
-					StartRequestDigest: [32]byte{1},
-					Input: &api.RunInput{
-						RunID:     "run-unstarted-terminal",
-						Subject:   subject,
-						SessionID: "sess-1",
-						TurnID:    "turn-1",
-						Labels:    map[string]string{"TenantID": "tenant-acme"},
-					},
-					Status:        tc.status,
-					CompletedAt:   closedAt,
-					WorkflowError: tc.wfErr,
+				accepted: engine.AcceptedRun{
+					RunID:       "run-unstarted-terminal",
+					Subject:     subject,
+					SessionID:   "sess-1",
+					TurnID:      "turn-1",
+					Labels:      map[string]string{"TenantID": "tenant-acme"},
+					Status:      tc.status,
+					CompletedAt: closedAt,
 				},
 			}
 			rt := New(store, WithEngine(eng))
@@ -361,18 +366,14 @@ func TestGetRunSnapshotUnstartedTerminalStatuses(t *testing.T) {
 		require.NoError(t, err)
 		eng := &terminalUnstartedEngine{
 			Engine: engineinmem.New(),
-			completion: engine.RunCompletion{
-				StartRequestDigest: [32]byte{1},
-				Input: &api.RunInput{
-					RunID:     "run-ended-sess",
-					Subject:   subject,
-					SessionID: "sess-ended",
-					TurnID:    "turn-1",
-					Labels:    map[string]string{"TenantID": "tenant-acme"},
-				},
-				Status:        engine.RunStatusFailed,
-				CompletedAt:   closedAt,
-				WorkflowError: errors.New("terminated"),
+			accepted: engine.AcceptedRun{
+				RunID:       "run-ended-sess",
+				Subject:     subject,
+				SessionID:   "sess-ended",
+				TurnID:      "turn-1",
+				Labels:      map[string]string{"TenantID": "tenant-acme"},
+				Status:      engine.RunStatusFailed,
+				CompletedAt: closedAt,
 			},
 		}
 		rt := New(store, WithEngine(eng))
@@ -393,14 +394,11 @@ func TestGetRunSnapshotUnstartedTerminalStatuses(t *testing.T) {
 		for _, sessID := range []string{"sess-missing", "sess-purged"} {
 			eng := &terminalUnstartedEngine{
 				Engine: engineinmem.New(),
-				completion: engine.RunCompletion{
-					StartRequestDigest: [32]byte{1},
-					Input: &api.RunInput{
-						RunID:     "run-" + sessID,
-						Subject:   subject,
-						SessionID: sessID,
-						Labels:    map[string]string{"TenantID": "tenant-acme"},
-					},
+				accepted: engine.AcceptedRun{
+					RunID:       "run-" + sessID,
+					Subject:     subject,
+					SessionID:   sessID,
+					Labels:      map[string]string{"TenantID": "tenant-acme"},
 					Status:      engine.RunStatusCompleted,
 					CompletedAt: closedAt,
 				},
@@ -415,13 +413,10 @@ func TestGetRunSnapshotUnstartedTerminalStatuses(t *testing.T) {
 		store := storageinmem.New()
 		eng := &terminalUnstartedEngine{
 			Engine: engineinmem.New(),
-			completion: engine.RunCompletion{
-				StartRequestDigest: [32]byte{1},
-				Input: &api.RunInput{
-					RunID:   "run-sessionless",
-					Subject: subject,
-					Labels:  map[string]string{"TenantID": "tenant-acme"},
-				},
+			accepted: engine.AcceptedRun{
+				RunID:       "run-sessionless",
+				Subject:     subject,
+				Labels:      map[string]string{"TenantID": "tenant-acme"},
 				Status:      engine.RunStatusPending,
 				CompletedAt: closedAt,
 			},

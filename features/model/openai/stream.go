@@ -499,14 +499,15 @@ func (p *openAIChunkProcessor) handleFailed(resp responses.Response) error {
 func (p *openAIChunkProcessor) accountUsage(resp responses.Response) error {
 	reported := openAIResponseUsageReported(&resp)
 	usage := translateUsage(resp.Usage, p.modelID, p.modelClass)
+	observed := reported || model.HasObservedTokenCounts(usage)
 	if p.search != nil {
 		if err := p.search.account(usage, reported); err != nil {
 			return err
 		}
 		usage = p.search.usage
-		reported = p.search.usageReported
+		observed = p.search.usageObserved
 	}
-	if reported {
+	if observed {
 		copied := usage
 		p.recordUsage(&copied)
 	}
@@ -754,7 +755,7 @@ func (p *openAIChunkProcessor) handleCompleted(resp responses.Response) error {
 			return err
 		}
 	}
-	if translated.Usage != (model.TokenUsage{}) || translated.HasUsage() {
+	if translated.HasObservedUsage() {
 		if err := p.emit(model.UsageChunk{
 			Usage: translated.Usage,
 		}); err != nil {

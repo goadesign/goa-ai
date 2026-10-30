@@ -59,6 +59,10 @@ type StreamClientStream interface {
 	RecvWithContext(context.Context) (*StreamFrame, error)
 }
 
+// Prompt cache checkpoint marker.
+type CacheCheckpointDetail struct {
+}
+
 // Prompt caching checkpoint configuration.
 type CacheOptions struct {
 	// Place checkpoint after system messages.
@@ -81,21 +85,21 @@ type Citation struct {
 
 // Location of a citation within its source.
 type CitationLocation struct {
-	// Character span location.
-	DocumentChar *DocumentCharLocation
-	// Page span location.
-	DocumentPage *DocumentPageLocation
-	// Chunk span location.
-	DocumentChunk *DocumentChunkLocation
+	Span CitationSpan
+}
+
+// Assistant text with source citations.
+type CitationsPartDetail struct {
+	// Cited assistant text.
+	Text string
+	// Attached citation metadata.
+	Citations []*Citation
 }
 
 // CompleteResult is the result type of the model_gateway service Complete
 // method.
 type CompleteResult struct {
-	// Provider response when Complete succeeded.
-	Response *ModelResponse
-	// Structured error when Complete failed.
-	Error *GatewayError
+	Outcome CompleteOutcome
 }
 
 // Finalized structured completion payload.
@@ -117,40 +121,57 @@ type CompletionDelta struct {
 // CountTokensResult is the result type of the model_gateway service
 // CountTokens method.
 type CountTokensResult struct {
-	// Provider token count when CountTokens succeeded.
-	Count *TokenCount
-	// Structured error when CountTokens failed.
-	Error *GatewayError
+	Outcome CountTokensOutcome
 }
 
 // Character range inside a cited document.
 type DocumentCharLocation struct {
 	// Zero-based document index.
-	DocumentIndex int
+	DocumentIndex int64
 	// Inclusive start character index.
-	Start int
+	Start int64
 	// Exclusive end character index.
-	End int
+	End int64
 }
 
 // Chunk range inside a cited document.
 type DocumentChunkLocation struct {
 	// Zero-based document index.
-	DocumentIndex int
+	DocumentIndex int64
 	// Inclusive start chunk index.
-	Start int
+	Start int64
 	// Exclusive end chunk index.
-	End int
+	End int64
 }
 
 // Page range inside a cited document.
 type DocumentPageLocation struct {
 	// Zero-based document index.
-	DocumentIndex int
+	DocumentIndex int64
 	// Inclusive start page number.
-	Start int
+	Start int64
 	// Inclusive end page number.
-	End int
+	End int64
+}
+
+// Document content block.
+type DocumentPartDetail struct {
+	// Document identifier.
+	Name string
+	// Document format or extension.
+	Format string
+	// Raw binary document bytes.
+	Bytes []byte
+	// Plaintext document content.
+	Text string
+	// Ordered document text chunks.
+	Chunks []string
+	// External document URI.
+	URI string
+	// Document citation context.
+	Context string
+	// Whether document citations are requested.
+	Cite bool
 }
 
 // Structured gateway error tree preserving provider, validation, sentinel, and
@@ -179,63 +200,30 @@ type GatewayErrorNode struct {
 	// Canonical tool name for malformed arguments.
 	MalformedToolName string
 	// Index into GatewayError.nodes of the wrapped cause (-1 when none).
-	CauseIndex int
+	CauseIndex int64
 	// Indices into GatewayError.nodes of joined child errors.
-	ChildIndices []int
+	ChildIndices []int64
 }
 
-// Discriminated union of model.Part variants.
-type MessagePart struct {
-	// Concrete part kind discriminator.
-	Kind string
-	// Text content for text, document, citations, or thinking parts.
-	Text string
-	// Provider thinking signature.
-	Signature string
-	// Redacted provider thinking bytes.
-	Redacted []byte
-	// Reasoning block sequence index.
-	Index int
-	// Whether a thinking part is finalized.
-	Final bool
+// Raw image content block.
+type ImagePartDetail struct {
 	// Image encoding format.
-	ImageFormat string
-	// Raw image or document bytes.
+	Format string
+	// Raw image bytes.
 	Bytes []byte
-	// Retained generated image descriptor kind.
+}
+
+// Retained generated image descriptor.
+type ImageSourcePartDetail struct {
+	// Opaque source descriptor kind.
 	SourceKind string
 	// Raw JSON image source descriptor.
 	Data []byte
-	// Document or tool identifier.
-	Name string
-	// Document format or extension.
-	DocumentFormat string
-	// Ordered document text chunks.
-	Chunks []string
-	// External document URI.
-	URI string
-	// Document citation context.
-	Context string
-	// Whether document citations are requested.
-	Cite bool
-	// Attached citation metadata.
-	Citations []*Citation
-	// Tool call identifier.
-	ID string
-	// Raw JSON tool arguments.
-	Input []byte
-	// Provider reasoning signature on a tool call.
-	ThoughtSignature string
-	// Correlated tool use identifier on a tool result.
-	ToolUseID string
-	// JSON-encoded tool result content value.
-	Content []byte
-	// Whether tool result content was non-nil.
-	ContentPresent bool
-	// MCP-encoded tool content blocks.
-	BlocksJSON []byte
-	// Whether the tool result represents an error.
-	IsError bool
+}
+
+// Exclusive sum type of model.Part variants.
+type MessagePart struct {
+	Payload MessagePartPayload
 }
 
 // Single conversation message.
@@ -266,7 +254,7 @@ type ModelRequest struct {
 	// Optional tool selection constraint.
 	ToolChoice *ToolChoice
 	// Maximum output tokens.
-	MaxTokens int
+	MaxTokens int64
 	// Whether streaming was requested.
 	Stream bool
 	// Optional reasoning configuration.
@@ -283,8 +271,10 @@ type ModelResponse struct {
 	Content []*ModelMessage
 	// Token consumption metadata.
 	Usage *TokenUsage
-	// Whether the provider explicitly reported token usage.
+	// Whether the provider explicitly reported complete token usage.
 	UsageReported bool
+	// Whether the provider reported only partial token usage.
+	UsageIncomplete bool
 	// Provider stop reason.
 	StopReason string
 	// Whether generation stopped at its token or context limit.
@@ -306,7 +296,7 @@ type ProviderErrorDetail struct {
 	// Provider operation name.
 	Operation string
 	// HTTP status code when available.
-	HTTPStatus int
+	HTTPStatus int64
 	// Coarse-grained provider error classification.
 	Kind string
 	// Provider-specific error code.
@@ -334,43 +324,27 @@ type ResponseEvidence struct {
 // Precomputed search document for a tool definition.
 type SearchDocument struct {
 	// Total term count.
-	Length int
+	Length int64
 	// Term frequencies.
-	Terms map[string]int
+	Terms map[string]int64
 }
 
-// Discriminated union of model.Chunk variants.
-type StreamChunk struct {
-	// Concrete chunk kind discriminator.
-	Kind string
-	// Message payload for text or thinking chunks.
-	Message *ModelMessage
-	// Tool invocation for tool_call chunks.
-	ToolCall *ToolCall
-	// Argument fragment for tool_call_delta chunks.
-	ToolCallDelta *ToolCallDelta
-	// Structured payload for completion chunks.
-	Completion *Completion
-	// Fragment for completion_delta chunks.
-	CompletionDelta *CompletionDelta
-	// Token delta for usage chunks.
-	Usage *TokenUsage
-	// Stop reason for stop chunks.
-	StopReason string
-	// Output-limited flag for stop chunks.
+// Terminal stop chunk details.
+type StopDetail struct {
+	// Provider stop reason.
+	Reason string
+	// Whether generation ended at its token or context limit.
 	OutputLimited bool
+}
+
+// Exclusive sum type of model.Chunk variants.
+type StreamChunk struct {
+	Payload StreamChunkPayload
 }
 
 // StreamFrame is the result type of the model_gateway service Stream method.
 type StreamFrame struct {
-	// Frame discriminator: chunk, response, or error.
-	Kind string
-	// Incremental chunk when kind is chunk.
-	Chunk *StreamChunk
-	// Terminal provider response when kind is response.
-	Response *ModelResponse
-	// Structured error when kind is error.
-	Error *GatewayError
+	Payload StreamFramePayload
 }
 
 // Provider-enforced structured output schema contract.
@@ -387,6 +361,12 @@ type StructuredOutput struct {
 	Description string
 }
 
+// Text content block.
+type TextPartDetail struct {
+	// Text content.
+	Text string
+}
+
 // Provider reasoning configuration.
 type ThinkingOptions struct {
 	// Whether reasoning is enabled.
@@ -394,7 +374,21 @@ type ThinkingOptions struct {
 	// Whether reasoning is interleaved with assistant content.
 	Interleaved bool
 	// Reasoning token budget.
-	BudgetTokens int
+	BudgetTokens int64
+}
+
+// Provider reasoning block.
+type ThinkingPartDetail struct {
+	// Plaintext reasoning content.
+	Text string
+	// Provider signature for finalized plaintext thinking.
+	Signature string
+	// Redacted reasoning bytes.
+	Redacted []byte
+	// Reasoning block sequence index.
+	Index int64
+	// Whether the thinking block is finalized.
+	Final bool
 }
 
 // Provider input token count.
@@ -404,7 +398,7 @@ type TokenCount struct {
 	// Logical model family.
 	ModelClass string
 	// Counted input tokens.
-	InputTokens int
+	InputTokens int64
 	// Whether the count is provider-exact.
 	Exact bool
 }
@@ -416,15 +410,15 @@ type TokenUsage struct {
 	// Logical model family.
 	ModelClass string
 	// Prompt/input tokens consumed.
-	InputTokens int
+	InputTokens int64
 	// Completion/output tokens generated.
-	OutputTokens int
+	OutputTokens int64
 	// Total tokens consumed.
-	TotalTokens int
+	TotalTokens int64
 	// Tokens read from prompt cache.
-	CacheReadTokens int
+	CacheReadTokens int64
 	// Tokens written to prompt cache.
-	CacheWriteTokens int
+	CacheWriteTokens int64
 }
 
 // Finalized tool call invocation.
@@ -481,6 +475,32 @@ type ToolInputContract struct {
 	SchemaWithoutRootExample []byte
 	// Canonical authored example JSON.
 	ExampleJSON []byte
+}
+
+// Correlated tool result block.
+type ToolResultPartDetail struct {
+	// Correlated tool use identifier.
+	ToolUseID string
+	// JSON-encoded tool result content value.
+	Content []byte
+	// Whether tool result content was non-nil.
+	ContentPresent bool
+	// MCP-encoded tool content blocks.
+	BlocksJSON []byte
+	// Whether the tool result represents an error.
+	IsError bool
+}
+
+// Assistant tool invocation block.
+type ToolUsePartDetail struct {
+	// Tool call identifier.
+	ID string
+	// Canonical tool identifier.
+	Name string
+	// Raw JSON tool arguments.
+	Input []byte
+	// Provider reasoning signature.
+	ThoughtSignature string
 }
 
 // Structured output validation error details.

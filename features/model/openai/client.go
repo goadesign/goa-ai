@@ -187,7 +187,7 @@ func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Res
 		resp, err := c.transport.Complete(ctx, prepared.request)
 		if err != nil {
 			err = wrapOpenAIError("responses.create", err)
-			if prepared.search != nil && prepared.search.usageReported {
+			if prepared.search != nil && prepared.search.usageObserved {
 				err = model.RetainUsage(err, prepared.search.usage)
 			}
 			return nil, err
@@ -201,22 +201,22 @@ func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Res
 				chooseModelID(resp.Model, prepared.resolvedModelID),
 				prepared.resolvedModelClass,
 			)
-			if reported {
+			if reported || model.HasObservedTokenCounts(usage) {
 				copied := usage
 				rejectedUsage = &copied
 			}
 		}
 		if prepared.search != nil {
+			var prior *model.TokenUsage
+			if prepared.search.usageObserved {
+				copied := prepared.search.usage
+				prior = &copied
+			}
 			if err := prepared.search.account(usage, reported); err != nil {
-				var prior *model.TokenUsage
-				if prepared.search.usageReported {
-					copied := prepared.search.usage
-					prior = &copied
-				}
 				return nil, contract.RejectProviderOutput(outputvalidation.RequiredKind(err), prior, err)
 			}
 			usage = prepared.search.usage
-			if prepared.search.usageReported {
+			if prepared.search.usageObserved {
 				copied := usage
 				rejectedUsage = &copied
 			}

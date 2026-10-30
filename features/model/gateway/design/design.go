@@ -23,8 +23,8 @@ var PromptRef = Type("PromptRef", func() {
 // SearchDocument carries precomputed search terms for a tool definition.
 var SearchDocument = Type("SearchDocument", func() {
 	Description("Precomputed search document for a tool definition.")
-	Field(1, "length", Int, "Total term count.")
-	Field(2, "terms", MapOf(String, Int), "Term frequencies.")
+	Field(1, "length", Int64, "Total term count.")
+	Field(2, "terms", MapOf(String, Int64), "Term frequencies.")
 	Required("length")
 })
 
@@ -61,7 +61,7 @@ var ThinkingOptions = Type("ThinkingOptions", func() {
 	Description("Provider reasoning configuration.")
 	Field(1, "enable", Boolean, "Whether reasoning is enabled.")
 	Field(2, "interleaved", Boolean, "Whether reasoning is interleaved with assistant content.")
-	Field(3, "budget_tokens", Int, "Reasoning token budget.")
+	Field(3, "budget_tokens", Int64, "Reasoning token budget.")
 	Required("enable", "interleaved", "budget_tokens")
 })
 
@@ -87,36 +87,40 @@ var CacheOptions = Type("CacheOptions", func() {
 // DocumentCharLocation locates a character span inside a cited document.
 var DocumentCharLocation = Type("DocumentCharLocation", func() {
 	Description("Character range inside a cited document.")
-	Field(1, "document_index", Int, "Zero-based document index.")
-	Field(2, "start", Int, "Inclusive start character index.")
-	Field(3, "end", Int, "Exclusive end character index.")
+	Field(1, "document_index", Int64, "Zero-based document index.")
+	Field(2, "start", Int64, "Inclusive start character index.")
+	Field(3, "end", Int64, "Exclusive end character index.")
 	Required("document_index", "start", "end")
 })
 
 // DocumentPageLocation locates a page span inside a cited document.
 var DocumentPageLocation = Type("DocumentPageLocation", func() {
 	Description("Page range inside a cited document.")
-	Field(1, "document_index", Int, "Zero-based document index.")
-	Field(2, "start", Int, "Inclusive start page number.")
-	Field(3, "end", Int, "Inclusive end page number.")
+	Field(1, "document_index", Int64, "Zero-based document index.")
+	Field(2, "start", Int64, "Inclusive start page number.")
+	Field(3, "end", Int64, "Inclusive end page number.")
 	Required("document_index", "start", "end")
 })
 
 // DocumentChunkLocation locates a chunk span inside a cited document.
 var DocumentChunkLocation = Type("DocumentChunkLocation", func() {
 	Description("Chunk range inside a cited document.")
-	Field(1, "document_index", Int, "Zero-based document index.")
-	Field(2, "start", Int, "Inclusive start chunk index.")
-	Field(3, "end", Int, "Exclusive end chunk index.")
+	Field(1, "document_index", Int64, "Zero-based document index.")
+	Field(2, "start", Int64, "Inclusive start chunk index.")
+	Field(3, "end", Int64, "Exclusive end chunk index.")
 	Required("document_index", "start", "end")
 })
 
 // CitationLocation locates cited content inside a source document.
 var CitationLocation = Type("CitationLocation", func() {
 	Description("Location of a citation within its source.")
-	Field(1, "document_char", DocumentCharLocation, "Character span location.")
-	Field(2, "document_page", DocumentPageLocation, "Page span location.")
-	Field(3, "document_chunk", DocumentChunkLocation, "Chunk span location.")
+	OneOf("span", func() {
+		TypeName("CitationSpan")
+		Field(1, "document_char", DocumentCharLocation, "Character span location.")
+		Field(2, "document_page", DocumentPageLocation, "Page span location.")
+		Field(3, "document_chunk", DocumentChunkLocation, "Chunk span location.")
+	})
+	Required("span")
 })
 
 // Citation describes one provider citation attached to assistant text.
@@ -129,39 +133,104 @@ var Citation = Type("Citation", func() {
 	Required("title", "source")
 })
 
+// TextPartDetail carries a text message block.
+var TextPartDetail = Type("TextPartDetail", func() {
+	Description("Text content block.")
+	Field(1, "text", String, "Text content.")
+	Required("text")
+})
+
+// ThinkingPartDetail carries a provider reasoning block.
+var ThinkingPartDetail = Type("ThinkingPartDetail", func() {
+	Description("Provider reasoning block.")
+	Field(1, "text", String, "Plaintext reasoning content.")
+	Field(2, "signature", String, "Provider signature for finalized plaintext thinking.")
+	Field(3, "redacted", Bytes, "Redacted reasoning bytes.")
+	Field(4, "index", Int64, "Reasoning block sequence index.")
+	Field(5, "final", Boolean, "Whether the thinking block is finalized.")
+	Required("text", "signature", "index", "final")
+})
+
+// ImagePartDetail carries a raw image block.
+var ImagePartDetail = Type("ImagePartDetail", func() {
+	Description("Raw image content block.")
+	Field(1, "format", String, "Image encoding format.")
+	Field(2, "bytes", Bytes, "Raw image bytes.")
+	Required("format")
+})
+
+// ImageSourcePartDetail carries a retained generated image source descriptor.
+var ImageSourcePartDetail = Type("ImageSourcePartDetail", func() {
+	Description("Retained generated image descriptor.")
+	Field(1, "source_kind", String, "Opaque source descriptor kind.")
+	Field(2, "data", Bytes, "Raw JSON image source descriptor.")
+	Required("source_kind")
+})
+
+// DocumentPartDetail carries a document block.
+var DocumentPartDetail = Type("DocumentPartDetail", func() {
+	Description("Document content block.")
+	Field(1, "name", String, "Document identifier.")
+	Field(2, "format", String, "Document format or extension.")
+	Field(3, "bytes", Bytes, "Raw binary document bytes.")
+	Field(4, "text", String, "Plaintext document content.")
+	Field(5, "chunks", ArrayOf(String), "Ordered document text chunks.")
+	Field(6, "uri", String, "External document URI.")
+	Field(7, "context", String, "Document citation context.")
+	Field(8, "cite", Boolean, "Whether document citations are requested.")
+	Required("name", "format", "text", "uri", "context", "cite")
+})
+
+// CitationsPartDetail carries assistant text with source citations.
+var CitationsPartDetail = Type("CitationsPartDetail", func() {
+	Description("Assistant text with source citations.")
+	Field(1, "text", String, "Cited assistant text.")
+	Field(2, "citations", ArrayOf(Citation), "Attached citation metadata.")
+	Required("text")
+})
+
+// ToolUsePartDetail carries an assistant tool invocation block.
+var ToolUsePartDetail = Type("ToolUsePartDetail", func() {
+	Description("Assistant tool invocation block.")
+	Field(1, "id", String, "Tool call identifier.")
+	Field(2, "name", String, "Canonical tool identifier.")
+	Field(3, "input", Bytes, "Raw JSON tool arguments.")
+	Field(4, "thought_signature", String, "Provider reasoning signature.")
+	Required("id", "name", "thought_signature")
+})
+
+// ToolResultPartDetail carries a correlated tool result block.
+var ToolResultPartDetail = Type("ToolResultPartDetail", func() {
+	Description("Correlated tool result block.")
+	Field(1, "tool_use_id", String, "Correlated tool use identifier.")
+	Field(2, "content", Bytes, "JSON-encoded tool result content value.")
+	Field(3, "content_present", Boolean, "Whether tool result content was non-nil.")
+	Field(4, "blocks_json", Bytes, "MCP-encoded tool content blocks.")
+	Field(5, "is_error", Boolean, "Whether the tool result represents an error.")
+	Required("tool_use_id", "content_present", "is_error")
+})
+
+// CacheCheckpointDetail marks a prompt cache checkpoint boundary.
+var CacheCheckpointDetail = Type("CacheCheckpointDetail", func() {
+	Description("Prompt cache checkpoint marker.")
+})
+
 // MessagePart represents one concrete model.Part variant in a message.
 var MessagePart = Type("MessagePart", func() {
-	Description("Discriminated union of model.Part variants.")
-	Field(1, "kind", String, "Concrete part kind discriminator.")
-	Field(2, "text", String, "Text content for text, document, citations, or thinking parts.")
-	Field(3, "signature", String, "Provider thinking signature.")
-	Field(4, "redacted", Bytes, "Redacted provider thinking bytes.")
-	Field(5, "index", Int, "Reasoning block sequence index.")
-	Field(6, "final", Boolean, "Whether a thinking part is finalized.")
-	Field(7, "image_format", String, "Image encoding format.")
-	Field(8, "bytes", Bytes, "Raw image or document bytes.")
-	Field(9, "source_kind", String, "Retained generated image descriptor kind.")
-	Field(10, "data", Bytes, "Raw JSON image source descriptor.")
-	Field(11, "name", String, "Document or tool identifier.")
-	Field(12, "document_format", String, "Document format or extension.")
-	Field(13, "chunks", ArrayOf(String), "Ordered document text chunks.")
-	Field(14, "uri", String, "External document URI.")
-	Field(15, "context", String, "Document citation context.")
-	Field(16, "cite", Boolean, "Whether document citations are requested.")
-	Field(17, "citations", ArrayOf(Citation), "Attached citation metadata.")
-	Field(18, "id", String, "Tool call identifier.")
-	Field(19, "input", Bytes, "Raw JSON tool arguments.")
-	Field(20, "thought_signature", String, "Provider reasoning signature on a tool call.")
-	Field(21, "tool_use_id", String, "Correlated tool use identifier on a tool result.")
-	Field(22, "content", Bytes, "JSON-encoded tool result content value.")
-	Field(23, "content_present", Boolean, "Whether tool result content was non-nil.")
-	Field(24, "blocks_json", Bytes, "MCP-encoded tool content blocks.")
-	Field(25, "is_error", Boolean, "Whether the tool result represents an error.")
-	Required(
-		"kind", "text", "signature", "index", "final", "image_format",
-		"source_kind", "name", "document_format", "uri", "context", "cite",
-		"id", "thought_signature", "tool_use_id", "content_present", "is_error",
-	)
+	Description("Exclusive sum type of model.Part variants.")
+	OneOf("payload", func() {
+		TypeName("MessagePartPayload")
+		Field(1, "text", TextPartDetail, "Text content block.")
+		Field(2, "thinking", ThinkingPartDetail, "Provider reasoning block.")
+		Field(3, "image", ImagePartDetail, "Raw image content block.")
+		Field(4, "image_source", ImageSourcePartDetail, "Retained generated image descriptor.")
+		Field(5, "document", DocumentPartDetail, "Document content block.")
+		Field(6, "citations", CitationsPartDetail, "Assistant text with source citations.")
+		Field(7, "tool_use", ToolUsePartDetail, "Assistant tool invocation block.")
+		Field(8, "tool_result", ToolResultPartDetail, "Correlated tool result block.")
+		Field(9, "cache_checkpoint", CacheCheckpointDetail, "Prompt cache checkpoint marker.")
+	})
+	Required("payload")
 })
 
 // ModelMessage represents one conversation message in a transcript or response.
@@ -183,7 +252,7 @@ var ModelRequest = Type("ModelRequest", func() {
 	Field(5, "temperature", Float32, "Sampling temperature.")
 	Field(6, "tools", ArrayOf(ToolDefinition), "Advertised tool definitions.")
 	Field(7, "tool_choice", ToolChoice, "Optional tool selection constraint.")
-	Field(8, "max_tokens", Int, "Maximum output tokens.")
+	Field(8, "max_tokens", Int64, "Maximum output tokens.")
 	Field(9, "stream", Boolean, "Whether streaming was requested.")
 	Field(10, "thinking", ThinkingOptions, "Optional reasoning configuration.")
 	Field(11, "structured_output", StructuredOutput, "Optional structured output contract.")
@@ -196,11 +265,11 @@ var TokenUsage = Type("TokenUsage", func() {
 	Description("Token usage counters and model attribution.")
 	Field(1, "model", String, "Resolved provider model identifier.")
 	Field(2, "model_class", String, "Logical model family.")
-	Field(3, "input_tokens", Int, "Prompt/input tokens consumed.")
-	Field(4, "output_tokens", Int, "Completion/output tokens generated.")
-	Field(5, "total_tokens", Int, "Total tokens consumed.")
-	Field(6, "cache_read_tokens", Int, "Tokens read from prompt cache.")
-	Field(7, "cache_write_tokens", Int, "Tokens written to prompt cache.")
+	Field(3, "input_tokens", Int64, "Prompt/input tokens consumed.")
+	Field(4, "output_tokens", Int64, "Completion/output tokens generated.")
+	Field(5, "total_tokens", Int64, "Total tokens consumed.")
+	Field(6, "cache_read_tokens", Int64, "Tokens read from prompt cache.")
+	Field(7, "cache_write_tokens", Int64, "Tokens written to prompt cache.")
 	Required("model", "model_class", "input_tokens", "output_tokens", "total_tokens", "cache_read_tokens", "cache_write_tokens")
 })
 
@@ -209,10 +278,11 @@ var ModelResponse = Type("ModelResponse", func() {
 	Description("Provider completion response.")
 	Field(1, "content", ArrayOf(ModelMessage), "Ordered assistant messages.")
 	Field(2, "usage", TokenUsage, "Token consumption metadata.")
-	Field(3, "usage_reported", Boolean, "Whether the provider explicitly reported token usage.")
-	Field(4, "stop_reason", String, "Provider stop reason.")
-	Field(5, "output_limited", Boolean, "Whether generation stopped at its token or context limit.")
-	Required("usage", "usage_reported", "stop_reason", "output_limited")
+	Field(3, "usage_reported", Boolean, "Whether the provider explicitly reported complete token usage.")
+	Field(4, "usage_incomplete", Boolean, "Whether the provider reported only partial token usage.")
+	Field(5, "stop_reason", String, "Provider stop reason.")
+	Field(6, "output_limited", Boolean, "Whether generation stopped at its token or context limit.")
+	Required("usage", "usage_reported", "usage_incomplete", "stop_reason", "output_limited")
 })
 
 // ToolCall represents one finalized tool invocation chunk payload.
@@ -250,19 +320,29 @@ var CompletionDelta = Type("CompletionDelta", func() {
 	Required("name", "delta")
 })
 
+// StopDetail carries the stop reason and output-limited flag for a stop chunk.
+var StopDetail = Type("StopDetail", func() {
+	Description("Terminal stop chunk details.")
+	Field(1, "reason", String, "Provider stop reason.")
+	Field(2, "output_limited", Boolean, "Whether generation ended at its token or context limit.")
+	Required("reason", "output_limited")
+})
+
 // StreamChunk represents one incremental model.Chunk event.
 var StreamChunk = Type("StreamChunk", func() {
-	Description("Discriminated union of model.Chunk variants.")
-	Field(1, "kind", String, "Concrete chunk kind discriminator.")
-	Field(2, "message", ModelMessage, "Message payload for text or thinking chunks.")
-	Field(3, "tool_call", ToolCall, "Tool invocation for tool_call chunks.")
-	Field(4, "tool_call_delta", ToolCallDelta, "Argument fragment for tool_call_delta chunks.")
-	Field(5, "completion", Completion, "Structured payload for completion chunks.")
-	Field(6, "completion_delta", CompletionDelta, "Fragment for completion_delta chunks.")
-	Field(7, "usage", TokenUsage, "Token delta for usage chunks.")
-	Field(8, "stop_reason", String, "Stop reason for stop chunks.")
-	Field(9, "output_limited", Boolean, "Output-limited flag for stop chunks.")
-	Required("kind", "stop_reason", "output_limited")
+	Description("Exclusive sum type of model.Chunk variants.")
+	OneOf("payload", func() {
+		TypeName("StreamChunkPayload")
+		Field(1, "text", ModelMessage, "Message payload for text chunks.")
+		Field(2, "thinking", ModelMessage, "Message payload for thinking chunks.")
+		Field(3, "tool_call", ToolCall, "Tool invocation for tool_call chunks.")
+		Field(4, "tool_call_delta", ToolCallDelta, "Argument fragment for tool_call_delta chunks.")
+		Field(5, "completion", Completion, "Structured payload for completion chunks.")
+		Field(6, "completion_delta", CompletionDelta, "Fragment for completion_delta chunks.")
+		Field(7, "usage", TokenUsage, "Token delta for usage chunks.")
+		Field(8, "stop", StopDetail, "Stop details for stop chunks.")
+	})
+	Required("payload")
 })
 
 // TokenCount represents one provider token count result.
@@ -270,7 +350,7 @@ var TokenCount = Type("TokenCount", func() {
 	Description("Provider input token count.")
 	Field(1, "model", String, "Resolved provider model identifier.")
 	Field(2, "model_class", String, "Logical model family.")
-	Field(3, "input_tokens", Int, "Counted input tokens.")
+	Field(3, "input_tokens", Int64, "Counted input tokens.")
 	Field(4, "exact", Boolean, "Whether the count is provider-exact.")
 	Required("model", "model_class", "input_tokens", "exact")
 })
@@ -280,7 +360,7 @@ var ProviderErrorDetail = Type("ProviderErrorDetail", func() {
 	Description("Structured provider error details.")
 	Field(1, "provider", String, "Provider identifier.")
 	Field(2, "operation", String, "Provider operation name.")
-	Field(3, "http_status", Int, "HTTP status code when available.")
+	Field(3, "http_status", Int64, "HTTP status code when available.")
 	Field(4, "kind", String, "Coarse-grained provider error classification.")
 	Field(5, "code", String, "Provider-specific error code.")
 	Field(6, "message", String, "Provider error message.")
@@ -319,8 +399,8 @@ var GatewayErrorNode = Type("GatewayErrorNode", func() {
 	Field(5, "validation", ValidationErrorDetail, "Output validation error details.")
 	Field(6, "unadvertised_tool_name", String, "Rejected unadvertised tool name.")
 	Field(7, "malformed_tool_name", String, "Canonical tool name for malformed arguments.")
-	Field(8, "cause_index", Int, "Index into GatewayError.nodes of the wrapped cause (-1 when none).")
-	Field(9, "child_indices", ArrayOf(Int), "Indices into GatewayError.nodes of joined child errors.")
+	Field(8, "cause_index", Int64, "Index into GatewayError.nodes of the wrapped cause (-1 when none).")
+	Field(9, "child_indices", ArrayOf(Int64), "Indices into GatewayError.nodes of joined child errors.")
 	Required("kind", "message", "sentinel", "unadvertised_tool_name", "malformed_tool_name", "cause_index")
 })
 
@@ -332,28 +412,38 @@ var GatewayError = Type("GatewayError", func() {
 	Required("nodes")
 })
 
-// CompleteResult wraps a unary completion response or structured error.
+// CompleteResult wraps an exclusive unary completion response or structured error.
 var CompleteResult = Type("CompleteResult", func() {
 	Description("Unary completion result envelope.")
-	Field(1, "response", ModelResponse, "Provider response when Complete succeeded.")
-	Field(2, "error", GatewayError, "Structured error when Complete failed.")
+	OneOf("outcome", func() {
+		TypeName("CompleteOutcome")
+		Field(1, "response", ModelResponse, "Provider response when Complete succeeded.")
+		Field(2, "error", GatewayError, "Structured error when Complete failed.")
+	})
+	Required("outcome")
 })
 
-// CountTokensResult wraps a token count or structured error.
+// CountTokensResult wraps an exclusive token count or structured error.
 var CountTokensResult = Type("CountTokensResult", func() {
 	Description("Token count result envelope.")
-	Field(1, "count", TokenCount, "Provider token count when CountTokens succeeded.")
-	Field(2, "error", GatewayError, "Structured error when CountTokens failed.")
+	OneOf("outcome", func() {
+		TypeName("CountTokensOutcome")
+		Field(1, "count", TokenCount, "Provider token count when CountTokens succeeded.")
+		Field(2, "error", GatewayError, "Structured error when CountTokens failed.")
+	})
+	Required("outcome")
 })
 
-// StreamFrame wraps one streaming chunk, terminal response, or structured error.
+// StreamFrame wraps one exclusive streaming chunk, terminal response, or structured error.
 var StreamFrame = Type("StreamFrame", func() {
-	Description("Server-streaming frame carrying a chunk, terminal response, or structured error.")
-	Field(1, "kind", String, "Frame discriminator: chunk, response, or error.")
-	Field(2, "chunk", StreamChunk, "Incremental chunk when kind is chunk.")
-	Field(3, "response", ModelResponse, "Terminal provider response when kind is response.")
-	Field(4, "error", GatewayError, "Structured error when kind is error.")
-	Required("kind")
+	Description("Server-streaming frame carrying an exclusive chunk, terminal response, or structured error.")
+	OneOf("payload", func() {
+		TypeName("StreamFramePayload")
+		Field(1, "chunk", StreamChunk, "Incremental chunk frame.")
+		Field(2, "response", ModelResponse, "Terminal provider response frame.")
+		Field(3, "error", GatewayError, "Terminal structured error frame.")
+	})
+	Required("payload")
 })
 
 var _ = Service("model_gateway", func() {

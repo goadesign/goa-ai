@@ -269,14 +269,16 @@ func TestUsageReconciledRateLimiterRejectsInvalidProviderUsage(t *testing.T) {
 
 func TestUsageReconciledRateLimiterUsesProviderTotal(t *testing.T) {
 	for _, tc := range []struct {
-		name     string
-		usage    model.TokenUsage
-		reported bool
-		want     float64
+		name       string
+		usage      model.TokenUsage
+		reported   bool
+		incomplete bool
+		want       float64
 	}{
 		{name: "reported", usage: model.TokenUsage{InputTokens: 17, OutputTokens: 8, TotalTokens: 25}, reported: true, want: 375},
 		{name: "reported_zero", usage: model.TokenUsage{}, reported: true, want: 400},
-		{name: "unreported_nonzero", usage: model.TokenUsage{InputTokens: 17, OutputTokens: 8, TotalTokens: 25}, reported: false, want: 200},
+		{name: "unreported_nonzero", usage: model.TokenUsage{InputTokens: 17, OutputTokens: 8, TotalTokens: 25}, reported: false, want: 375},
+		{name: "incomplete_partial", usage: model.TokenUsage{InputTokens: 17, OutputTokens: 8, TotalTokens: 25}, incomplete: true, want: 200},
 		{name: "unknown", want: 200},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -284,8 +286,9 @@ func TestUsageReconciledRateLimiterUsesProviderTotal(t *testing.T) {
 			require.NoError(t, err)
 			provider, err := l.WrapProvider(&fakeCountingClient{
 				fakeClient: fakeClient{response: &model.Response{
-					Usage:         tc.usage,
-					UsageReported: tc.reported,
+					Usage:           tc.usage,
+					UsageReported:   tc.reported,
+					UsageIncomplete: tc.incomplete,
 				}},
 				count: model.TokenCount{InputTokens: 100, Exact: false},
 			})

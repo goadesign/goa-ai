@@ -42,7 +42,7 @@ message CompleteRequest {
 	// Optional tool selection constraint.
 	ToolChoice tool_choice = 7;
 	// Maximum output tokens.
-	optional sint32 max_tokens = 8;
+	optional sint64 max_tokens = 8;
 	// Whether streaming was requested.
 	optional bool stream = 9;
 	// Optional reasoning configuration.
@@ -68,58 +68,86 @@ message ModelMessage {
 	// JSON-encoded dynamic message metadata map.
 	optional bytes meta_json = 3;
 }
-// Discriminated union of model.Part variants.
+// Exclusive sum type of model.Part variants.
 message MessagePart {
-	// Concrete part kind discriminator.
-	optional string kind = 1;
-	// Text content for text, document, citations, or thinking parts.
-	optional string text = 2;
-	// Provider thinking signature.
-	optional string signature = 3;
-	// Redacted provider thinking bytes.
-	optional bytes redacted = 4;
+	oneof payload {
+		// Text content block.
+	TextPartDetail text = 1;
+		// Provider reasoning block.
+	ThinkingPartDetail thinking = 2;
+		// Raw image content block.
+	ImagePartDetail image = 3;
+		// Retained generated image descriptor.
+	ImageSourcePartDetail image_source = 4;
+		// Document content block.
+	DocumentPartDetail document = 5;
+		// Assistant text with source citations.
+	CitationsPartDetail citations = 6;
+		// Assistant tool invocation block.
+	ToolUsePartDetail tool_use = 7;
+		// Correlated tool result block.
+	ToolResultPartDetail tool_result = 8;
+		// Prompt cache checkpoint marker.
+	CacheCheckpointDetail cache_checkpoint = 9;
+	}
+}
+// Text content block.
+message TextPartDetail {
+	// Text content.
+	optional string text = 1;
+}
+// Provider reasoning block.
+message ThinkingPartDetail {
+	// Plaintext reasoning content.
+	optional string text = 1;
+	// Provider signature for finalized plaintext thinking.
+	optional string signature = 2;
+	// Redacted reasoning bytes.
+	optional bytes redacted = 3;
 	// Reasoning block sequence index.
-	optional sint32 index = 5;
-	// Whether a thinking part is finalized.
-	optional bool final = 6;
+	optional sint64 index = 4;
+	// Whether the thinking block is finalized.
+	optional bool final = 5;
+}
+// Raw image content block.
+message ImagePartDetail {
 	// Image encoding format.
-	optional string image_format = 7;
-	// Raw image or document bytes.
-	optional bytes bytes_ = 8;
-	// Retained generated image descriptor kind.
-	optional string source_kind = 9;
+	optional string format = 1;
+	// Raw image bytes.
+	optional bytes bytes_ = 2;
+}
+// Retained generated image descriptor.
+message ImageSourcePartDetail {
+	// Opaque source descriptor kind.
+	optional string source_kind = 1;
 	// Raw JSON image source descriptor.
-	optional bytes data = 10;
-	// Document or tool identifier.
-	optional string name = 11;
+	optional bytes data = 2;
+}
+// Document content block.
+message DocumentPartDetail {
+	// Document identifier.
+	optional string name = 1;
 	// Document format or extension.
-	optional string document_format = 12;
+	optional string format = 2;
+	// Raw binary document bytes.
+	optional bytes bytes_ = 3;
+	// Plaintext document content.
+	optional string text = 4;
 	// Ordered document text chunks.
-	repeated string chunks = 13;
+	repeated string chunks = 5;
 	// External document URI.
-	optional string uri = 14;
+	optional string uri = 6;
 	// Document citation context.
-	optional string context = 15;
+	optional string context = 7;
 	// Whether document citations are requested.
-	optional bool cite = 16;
+	optional bool cite = 8;
+}
+// Assistant text with source citations.
+message CitationsPartDetail {
+	// Cited assistant text.
+	optional string text = 1;
 	// Attached citation metadata.
-	repeated Citation citations = 17;
-	// Tool call identifier.
-	optional string id = 18;
-	// Raw JSON tool arguments.
-	optional bytes input = 19;
-	// Provider reasoning signature on a tool call.
-	optional string thought_signature = 20;
-	// Correlated tool use identifier on a tool result.
-	optional string tool_use_id = 21;
-	// JSON-encoded tool result content value.
-	optional bytes content = 22;
-	// Whether tool result content was non-nil.
-	optional bool content_present = 23;
-	// MCP-encoded tool content blocks.
-	optional bytes blocks_json = 24;
-	// Whether the tool result represents an error.
-	optional bool is_error = 25;
+	repeated Citation citations = 2;
 }
 // Provider citation metadata.
 message Citation {
@@ -134,39 +162,68 @@ message Citation {
 }
 // Location of a citation within its source.
 message CitationLocation {
-	// Character span location.
+	oneof span {
+		// Character span location.
 	DocumentCharLocation document_char = 1;
-	// Page span location.
+		// Page span location.
 	DocumentPageLocation document_page = 2;
-	// Chunk span location.
+		// Chunk span location.
 	DocumentChunkLocation document_chunk = 3;
+	}
 }
 // Character range inside a cited document.
 message DocumentCharLocation {
 	// Zero-based document index.
-	optional sint32 document_index = 1;
+	optional sint64 document_index = 1;
 	// Inclusive start character index.
-	optional sint32 start = 2;
+	optional sint64 start = 2;
 	// Exclusive end character index.
-	optional sint32 end = 3;
+	optional sint64 end = 3;
 }
 // Page range inside a cited document.
 message DocumentPageLocation {
 	// Zero-based document index.
-	optional sint32 document_index = 1;
+	optional sint64 document_index = 1;
 	// Inclusive start page number.
-	optional sint32 start = 2;
+	optional sint64 start = 2;
 	// Inclusive end page number.
-	optional sint32 end = 3;
+	optional sint64 end = 3;
 }
 // Chunk range inside a cited document.
 message DocumentChunkLocation {
 	// Zero-based document index.
-	optional sint32 document_index = 1;
+	optional sint64 document_index = 1;
 	// Inclusive start chunk index.
-	optional sint32 start = 2;
+	optional sint64 start = 2;
 	// Exclusive end chunk index.
-	optional sint32 end = 3;
+	optional sint64 end = 3;
+}
+// Assistant tool invocation block.
+message ToolUsePartDetail {
+	// Tool call identifier.
+	optional string id = 1;
+	// Canonical tool identifier.
+	optional string name = 2;
+	// Raw JSON tool arguments.
+	optional bytes input = 3;
+	// Provider reasoning signature.
+	optional string thought_signature = 4;
+}
+// Correlated tool result block.
+message ToolResultPartDetail {
+	// Correlated tool use identifier.
+	optional string tool_use_id = 1;
+	// JSON-encoded tool result content value.
+	optional bytes content = 2;
+	// Whether tool result content was non-nil.
+	optional bool content_present = 3;
+	// MCP-encoded tool content blocks.
+	optional bytes blocks_json = 4;
+	// Whether the tool result represents an error.
+	optional bool is_error = 5;
+}
+// Prompt cache checkpoint marker.
+message CacheCheckpointDetail {
 }
 // Tool definition advertised to the model.
 message ToolDefinition {
@@ -186,9 +243,9 @@ message ToolDefinition {
 // Precomputed search document for a tool definition.
 message SearchDocument {
 	// Total term count.
-	optional sint32 length = 1;
+	optional sint64 length = 1;
 	// Term frequencies.
-	map<string, sint32> terms = 2;
+	map<string, sint64> terms = 2;
 }
 // Provider-neutral raw JSON projection of a tool input contract.
 message ToolInputContract {
@@ -213,7 +270,7 @@ message ThinkingOptions {
 	// Whether reasoning is interleaved with assistant content.
 	optional bool interleaved = 2;
 	// Reasoning token budget.
-	optional sint32 budget_tokens = 3;
+	optional sint64 budget_tokens = 3;
 }
 // Provider-enforced structured output schema contract.
 message StructuredOutput {
@@ -237,10 +294,12 @@ message CacheOptions {
 }
 
 message CompleteResponse {
-	// Provider response when Complete succeeded.
+	oneof outcome {
+		// Provider response when Complete succeeded.
 	ModelResponse response = 1;
-	// Structured error when Complete failed.
+		// Structured error when Complete failed.
 	GatewayError error = 2;
+	}
 }
 // Provider completion response.
 message ModelResponse {
@@ -248,12 +307,14 @@ message ModelResponse {
 	repeated ModelMessage content = 1;
 	// Token consumption metadata.
 	TokenUsage usage = 2;
-	// Whether the provider explicitly reported token usage.
+	// Whether the provider explicitly reported complete token usage.
 	optional bool usage_reported = 3;
+	// Whether the provider reported only partial token usage.
+	optional bool usage_incomplete = 4;
 	// Provider stop reason.
-	optional string stop_reason = 4;
+	optional string stop_reason = 5;
 	// Whether generation stopped at its token or context limit.
-	optional bool output_limited = 5;
+	optional bool output_limited = 6;
 }
 // Token usage counters and model attribution.
 message TokenUsage {
@@ -262,15 +323,15 @@ message TokenUsage {
 	// Logical model family.
 	optional string model_class = 2;
 	// Prompt/input tokens consumed.
-	optional sint32 input_tokens = 3;
+	optional sint64 input_tokens = 3;
 	// Completion/output tokens generated.
-	optional sint32 output_tokens = 4;
+	optional sint64 output_tokens = 4;
 	// Total tokens consumed.
-	optional sint32 total_tokens = 5;
+	optional sint64 total_tokens = 5;
 	// Tokens read from prompt cache.
-	optional sint32 cache_read_tokens = 6;
+	optional sint64 cache_read_tokens = 6;
 	// Tokens written to prompt cache.
-	optional sint32 cache_write_tokens = 7;
+	optional sint64 cache_write_tokens = 7;
 }
 // Structured gateway error tree preserving provider, validation, sentinel, and
 // retained-usage contracts.
@@ -297,9 +358,9 @@ message GatewayErrorNode {
 	// Canonical tool name for malformed arguments.
 	optional string malformed_tool_name = 7;
 	// Index into GatewayError.nodes of the wrapped cause (-1 when none).
-	optional sint32 cause_index = 8;
+	optional sint64 cause_index = 8;
 	// Indices into GatewayError.nodes of joined child errors.
-	repeated sint32 child_indices = 9;
+	repeated sint64 child_indices = 9;
 }
 // Structured provider error details.
 message ProviderErrorDetail {
@@ -308,7 +369,7 @@ message ProviderErrorDetail {
 	// Provider operation name.
 	optional string operation = 2;
 	// HTTP status code when available.
-	optional sint32 http_status = 3;
+	optional sint64 http_status = 3;
 	// Coarse-grained provider error classification.
 	optional string kind = 4;
 	// Provider-specific error code.
@@ -359,7 +420,7 @@ message StreamRequest {
 	// Optional tool selection constraint.
 	ToolChoice tool_choice = 7;
 	// Maximum output tokens.
-	optional sint32 max_tokens = 8;
+	optional sint64 max_tokens = 8;
 	// Whether streaming was requested.
 	optional bool stream = 9;
 	// Optional reasoning configuration.
@@ -371,35 +432,35 @@ message StreamRequest {
 }
 
 message StreamResponse {
-	// Frame discriminator: chunk, response, or error.
-	optional string kind = 1;
-	// Incremental chunk when kind is chunk.
-	StreamChunk chunk = 2;
-	// Terminal provider response when kind is response.
-	ModelResponse response = 3;
-	// Structured error when kind is error.
-	GatewayError error = 4;
+	oneof payload {
+		// Incremental chunk frame.
+	StreamChunk chunk = 1;
+		// Terminal provider response frame.
+	ModelResponse response = 2;
+		// Terminal structured error frame.
+	GatewayError error = 3;
+	}
 }
-// Discriminated union of model.Chunk variants.
+// Exclusive sum type of model.Chunk variants.
 message StreamChunk {
-	// Concrete chunk kind discriminator.
-	optional string kind = 1;
-	// Message payload for text or thinking chunks.
-	ModelMessage message_ = 2;
-	// Tool invocation for tool_call chunks.
+	oneof payload {
+		// Message payload for text chunks.
+	ModelMessage text = 1;
+		// Message payload for thinking chunks.
+	ModelMessage thinking = 2;
+		// Tool invocation for tool_call chunks.
 	ToolCall tool_call = 3;
-	// Argument fragment for tool_call_delta chunks.
+		// Argument fragment for tool_call_delta chunks.
 	ToolCallDelta tool_call_delta = 4;
-	// Structured payload for completion chunks.
+		// Structured payload for completion chunks.
 	Completion completion = 5;
-	// Fragment for completion_delta chunks.
+		// Fragment for completion_delta chunks.
 	CompletionDelta completion_delta = 6;
-	// Token delta for usage chunks.
+		// Token delta for usage chunks.
 	TokenUsage usage = 7;
-	// Stop reason for stop chunks.
-	optional string stop_reason = 8;
-	// Output-limited flag for stop chunks.
-	optional bool output_limited = 9;
+		// Stop details for stop chunks.
+	StopDetail stop = 8;
+	}
 }
 // Finalized tool call invocation.
 message ToolCall {
@@ -435,6 +496,13 @@ message CompletionDelta {
 	// Raw JSON fragment.
 	optional string delta = 2;
 }
+// Terminal stop chunk details.
+message StopDetail {
+	// Provider stop reason.
+	optional string reason = 1;
+	// Whether generation ended at its token or context limit.
+	optional bool output_limited = 2;
+}
 
 message CountTokensRequest {
 	// Provider-specific model identifier.
@@ -452,7 +520,7 @@ message CountTokensRequest {
 	// Optional tool selection constraint.
 	ToolChoice tool_choice = 7;
 	// Maximum output tokens.
-	optional sint32 max_tokens = 8;
+	optional sint64 max_tokens = 8;
 	// Whether streaming was requested.
 	optional bool stream = 9;
 	// Optional reasoning configuration.
@@ -464,10 +532,12 @@ message CountTokensRequest {
 }
 
 message CountTokensResponse {
-	// Provider token count when CountTokens succeeded.
+	oneof outcome {
+		// Provider token count when CountTokens succeeded.
 	TokenCount count = 1;
-	// Structured error when CountTokens failed.
+		// Structured error when CountTokens failed.
 	GatewayError error = 2;
+	}
 }
 // Provider input token count.
 message TokenCount {
@@ -476,7 +546,7 @@ message TokenCount {
 	// Logical model family.
 	optional string model_class = 2;
 	// Counted input tokens.
-	optional sint32 input_tokens = 3;
+	optional sint64 input_tokens = 3;
 	// Whether the count is provider-exact.
 	optional bool exact = 4;
 }

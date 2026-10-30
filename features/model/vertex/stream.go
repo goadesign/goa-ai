@@ -157,7 +157,9 @@ func (s *geminiStreamer) run(seq func(func(*genai.GenerateContentResponse, error
 	var stopReason string
 	var sawCandidate bool
 	var usageSeen bool
-	var latestUsage model.TokenUsage
+	var sawInputUsage bool
+	var sawOutputUsage bool
+	latestUsage := translateUsage(nil, prep.modelID, prep.modelClass)
 	var grounding *genai.GroundingMetadata
 	var rejected error
 	for resp, err := range seq {
@@ -165,10 +167,22 @@ func (s *geminiStreamer) run(seq func(func(*genai.GenerateContentResponse, error
 			s.setErr(wrapGeminiError("generate_content_stream", err))
 			return
 		}
-		if resp != nil && resp.UsageMetadata != nil {
+		if resp != nil && vertexUsageObserved(resp.UsageMetadata) {
 			// Usage is independent of candidate content and must survive any
 			// later translation rejection.
-			latestUsage = translateUsage(resp.UsageMetadata, prep.modelID, prep.modelClass)
+			frameUsage := translateUsage(resp.UsageMetadata, prep.modelID, prep.modelClass)
+			if vertexUsageInputObserved(resp.UsageMetadata) {
+				latestUsage.InputTokens = frameUsage.InputTokens
+				latestUsage.CacheReadTokens = frameUsage.CacheReadTokens
+				sawInputUsage = true
+			}
+			if vertexUsageOutputObserved(resp.UsageMetadata) {
+				latestUsage.OutputTokens = frameUsage.OutputTokens
+				sawOutputUsage = true
+			}
+			if resp.UsageMetadata.TotalTokenCount > 0 {
+				latestUsage.TotalTokens = frameUsage.TotalTokens
+			}
 			copied := latestUsage
 			s.rejectedUsage = &copied
 			usageSeen = true
@@ -298,7 +312,8 @@ func (s *geminiStreamer) run(seq func(func(*genai.GenerateContentResponse, error
 	s.response.OutputLimited = vertexOutputLimited(stopReason)
 	if usageSeen {
 		s.response.Usage = latestUsage
-		s.response.UsageReported = true
+		s.response.UsageReported = sawInputUsage && sawOutputUsage
+		s.response.UsageIncomplete = !s.response.UsageReported
 	} else {
 		s.response.Usage = translateUsage(nil, prep.modelID, prep.modelClass)
 	}

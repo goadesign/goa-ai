@@ -647,9 +647,15 @@ type (
 		// Usage reports token consumption for the request.
 		Usage TokenUsage
 
-		// UsageReported reports whether the provider explicitly reported token
-		// usage metadata, including when all token counts are zero.
+		// UsageReported reports whether the provider explicitly reported complete
+		// token usage metadata, including when all token counts are zero.
 		UsageReported bool
+
+		// UsageIncomplete reports that the provider supplied partial token usage
+		// metadata (for example, one round of a multi-round search or an incomplete
+		// usage object missing required counters), so Usage holds observed partial
+		// counts rather than a complete total.
+		UsageIncomplete bool
 
 		// StopReason records why generation stopped (provider-specific).
 		StopReason string
@@ -1145,10 +1151,28 @@ func (r *Response) ToolCalls() []ToolCall {
 	return calls
 }
 
-// HasUsage reports whether the provider explicitly reported token usage for the
-// response.
+// HasUsage reports whether the provider explicitly reported complete token usage
+// for the response.
 func (r *Response) HasUsage() bool {
 	return r != nil && r.UsageReported
+}
+
+// HasObservedUsage reports whether the response carries any reported or observed
+// token usage metadata, including partial counts or legacy nonzero usage fields.
+func (r *Response) HasObservedUsage() bool {
+	if r == nil {
+		return false
+	}
+	return r.UsageReported || r.UsageIncomplete || HasObservedTokenCounts(r.Usage)
+}
+
+// HasObservedTokenCounts reports whether any token counter on usage is non-zero.
+func HasObservedTokenCounts(usage TokenUsage) bool {
+	return usage.InputTokens != 0 ||
+		usage.OutputTokens != 0 ||
+		usage.TotalTokens != 0 ||
+		usage.CacheReadTokens != 0 ||
+		usage.CacheWriteTokens != 0
 }
 
 // NewToolDefinitionFromSpec converts a Goa tool specification into the contract

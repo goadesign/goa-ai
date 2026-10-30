@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"maps"
+	"math"
 
 	genmodelgateway "goa.design/goa-ai/features/model/gateway/gen/model_gateway"
 	"goa.design/goa-ai/runtime/agent/model"
@@ -14,24 +14,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/tools"
 	toolcontent "goa.design/goa-ai/runtime/content"
-)
-
-// Stream frame kinds and message part kinds carried inside the typed wire
-// contract.
-const (
-	streamFrameKindChunk    = "chunk"
-	streamFrameKindResponse = "response"
-	streamFrameKindError    = "error"
-
-	partKindText            = "text"
-	partKindThinking        = "thinking"
-	partKindImage           = "image"
-	partKindImageSource     = "image_source"
-	partKindDocument        = "document"
-	partKindCitations       = "citations"
-	partKindToolUse         = "tool_use"
-	partKindToolResult      = "tool_result"
-	partKindCacheCheckpoint = "cache_checkpoint"
 )
 
 // toGenRequest converts a model.Request into its Goa-generated wire representation.
@@ -43,7 +25,7 @@ func toGenRequest(req *model.Request) (*genmodelgateway.ModelRequest, error) {
 		Model:       req.Model,
 		ModelClass:  string(req.ModelClass),
 		Temperature: req.Temperature,
-		MaxTokens:   req.MaxTokens,
+		MaxTokens:   int64(req.MaxTokens),
 		Stream:      req.Stream,
 	}
 	if len(req.PromptRefs) > 0 {
@@ -75,11 +57,18 @@ func toGenRequest(req *model.Request) (*genmodelgateway.ModelRequest, error) {
 				return nil, fmt.Errorf("gateway: request tool %d is nil", i)
 			}
 			contract := def.Input.Contract()
+			var terms map[string]int64
+			if len(def.Search.Terms) > 0 {
+				terms = make(map[string]int64, len(def.Search.Terms))
+				for k, v := range def.Search.Terms {
+					terms[k] = int64(v)
+				}
+			}
 			out.Tools[i] = &genmodelgateway.ToolDefinition{
 				Name: def.Name,
 				Search: &genmodelgateway.SearchDocument{
-					Length: def.Search.Length,
-					Terms:  maps.Clone(def.Search.Terms),
+					Length: int64(def.Search.Length),
+					Terms:  terms,
 				},
 				Deferred:    def.Deferred,
 				Description: def.Description,
@@ -102,7 +91,7 @@ func toGenRequest(req *model.Request) (*genmodelgateway.ModelRequest, error) {
 		out.Thinking = &genmodelgateway.ThinkingOptions{
 			Enable:       req.Thinking.Enable,
 			Interleaved:  req.Thinking.Interleaved,
-			BudgetTokens: req.Thinking.BudgetTokens,
+			BudgetTokens: int64(req.Thinking.BudgetTokens),
 		}
 	}
 	if req.StructuredOutput != nil {
@@ -128,11 +117,15 @@ func fromGenRequest(in *genmodelgateway.ModelRequest) (*model.Request, error) {
 	if in == nil {
 		return nil, errors.New("gateway: wire request is nil")
 	}
+	maxTokens, err := int64ToInt(in.MaxTokens, "max_tokens")
+	if err != nil {
+		return nil, err
+	}
 	req := &model.Request{
 		Model:       in.Model,
 		ModelClass:  model.ModelClass(in.ModelClass),
 		Temperature: in.Temperature,
-		MaxTokens:   in.MaxTokens,
+		MaxTokens:   maxTokens,
 		Stream:      in.Stream,
 	}
 	if len(in.PromptRefs) > 0 {
@@ -180,9 +173,24 @@ func fromGenRequest(in *genmodelgateway.ModelRequest) (*model.Request, error) {
 			}
 			var search tools.SearchDocument
 			if gt.Search != nil {
+				searchLen, err := int64ToInt(gt.Search.Length, "search.length")
+				if err != nil {
+					return nil, err
+				}
+				var terms map[string]int
+				if len(gt.Search.Terms) > 0 {
+					terms = make(map[string]int, len(gt.Search.Terms))
+					for k, v := range gt.Search.Terms {
+						tv, err := int64ToInt(v, "search.terms")
+						if err != nil {
+							return nil, err
+						}
+						terms[k] = tv
+					}
+				}
 				search = tools.SearchDocument{
-					Length: gt.Search.Length,
-					Terms:  maps.Clone(gt.Search.Terms),
+					Length: searchLen,
+					Terms:  terms,
 				}
 			}
 			req.Tools[i] = &model.ToolDefinition{
@@ -202,10 +210,14 @@ func fromGenRequest(in *genmodelgateway.ModelRequest) (*model.Request, error) {
 		}
 	}
 	if in.Thinking != nil {
+		budget, err := int64ToInt(in.Thinking.BudgetTokens, "thinking.budget_tokens")
+		if err != nil {
+			return nil, err
+		}
 		req.Thinking = &model.ThinkingOptions{
 			Enable:       in.Thinking.Enable,
 			Interleaved:  in.Thinking.Interleaved,
-			BudgetTokens: in.Thinking.BudgetTokens,
+			BudgetTokens: budget,
 		}
 	}
 	if in.StructuredOutput != nil {
@@ -232,10 +244,11 @@ func toGenResponse(resp *model.Response) (*genmodelgateway.ModelResponse, error)
 		return nil, nil
 	}
 	out := &genmodelgateway.ModelResponse{
-		Usage:         toGenUsage(resp.Usage),
-		UsageReported: resp.UsageReported,
-		StopReason:    resp.StopReason,
-		OutputLimited: resp.OutputLimited,
+		Usage:           toGenUsage(resp.Usage),
+		UsageReported:   resp.UsageReported,
+		UsageIncomplete: resp.UsageIncomplete,
+		StopReason:      resp.StopReason,
+		OutputLimited:   resp.OutputLimited,
 	}
 	if len(resp.Content) > 0 {
 		out.Content = make([]*genmodelgateway.ModelMessage, len(resp.Content))
@@ -255,11 +268,16 @@ func fromGenResponse(in *genmodelgateway.ModelResponse) (*model.Response, error)
 	if in == nil {
 		return nil, nil
 	}
+	usage, err := fromGenUsage(in.Usage)
+	if err != nil {
+		return nil, err
+	}
 	resp := &model.Response{
-		Usage:         fromGenUsage(in.Usage),
-		UsageReported: in.UsageReported,
-		StopReason:    in.StopReason,
-		OutputLimited: in.OutputLimited,
+		Usage:           usage,
+		UsageReported:   in.UsageReported,
+		UsageIncomplete: in.UsageIncomplete,
+		StopReason:      in.StopReason,
+		OutputLimited:   in.OutputLimited,
 	}
 	if len(in.Content) > 0 {
 		resp.Content = make([]model.Message, len(in.Content))
@@ -328,64 +346,77 @@ func fromGenMessage(in *genmodelgateway.ModelMessage) (model.Message, error) {
 func toGenPart(part model.Part) (*genmodelgateway.MessagePart, error) {
 	switch v := part.(type) {
 	case model.TextPart:
-		return &genmodelgateway.MessagePart{Kind: partKindText, Text: v.Text}, nil
+		return &genmodelgateway.MessagePart{
+			Payload: genmodelgateway.NewMessagePartPayloadText(&genmodelgateway.TextPartDetail{
+				Text: v.Text,
+			}),
+		}, nil
 	case model.ThinkingPart:
 		return &genmodelgateway.MessagePart{
-			Kind:      partKindThinking,
-			Text:      v.Text,
-			Signature: v.Signature,
-			Redacted:  append([]byte(nil), v.Redacted...),
-			Index:     v.Index,
-			Final:     v.Final,
+			Payload: genmodelgateway.NewMessagePartPayloadThinking(&genmodelgateway.ThinkingPartDetail{
+				Text:      v.Text,
+				Signature: v.Signature,
+				Redacted:  append([]byte(nil), v.Redacted...),
+				Index:     int64(v.Index),
+				Final:     v.Final,
+			}),
 		}, nil
 	case model.ImagePart:
 		return &genmodelgateway.MessagePart{
-			Kind:        partKindImage,
-			ImageFormat: string(v.Format),
-			Bytes:       append([]byte(nil), v.Bytes...),
+			Payload: genmodelgateway.NewMessagePartPayloadImage(&genmodelgateway.ImagePartDetail{
+				Format: string(v.Format),
+				Bytes:  append([]byte(nil), v.Bytes...),
+			}),
 		}, nil
 	case model.ImageSourcePart:
 		return &genmodelgateway.MessagePart{
-			Kind:       partKindImageSource,
-			SourceKind: v.SourceKind,
-			Data:       append([]byte(nil), v.Data...),
+			Payload: genmodelgateway.NewMessagePartPayloadImageSource(&genmodelgateway.ImageSourcePartDetail{
+				SourceKind: v.SourceKind,
+				Data:       append([]byte(nil), v.Data...),
+			}),
 		}, nil
 	case model.DocumentPart:
 		return &genmodelgateway.MessagePart{
-			Kind:           partKindDocument,
-			Name:           v.Name,
-			DocumentFormat: string(v.Format),
-			Bytes:          append([]byte(nil), v.Bytes...),
-			Text:           v.Text,
-			Chunks:         append([]string(nil), v.Chunks...),
-			URI:            v.URI,
-			Context:        v.Context,
-			Cite:           v.Cite,
+			Payload: genmodelgateway.NewMessagePartPayloadDocument(&genmodelgateway.DocumentPartDetail{
+				Name:    v.Name,
+				Format:  string(v.Format),
+				Bytes:   append([]byte(nil), v.Bytes...),
+				Text:    v.Text,
+				Chunks:  append([]string(nil), v.Chunks...),
+				URI:     v.URI,
+				Context: v.Context,
+				Cite:    v.Cite,
+			}),
 		}, nil
 	case model.CitationsPart:
 		var citations []*genmodelgateway.Citation
 		if len(v.Citations) > 0 {
 			citations = make([]*genmodelgateway.Citation, len(v.Citations))
 			for i, c := range v.Citations {
-				citations[i] = toGenCitation(c)
+				gc, err := toGenCitation(c)
+				if err != nil {
+					return nil, err
+				}
+				citations[i] = gc
 			}
 		}
 		return &genmodelgateway.MessagePart{
-			Kind:      partKindCitations,
-			Text:      v.Text,
-			Citations: citations,
+			Payload: genmodelgateway.NewMessagePartPayloadCitations(&genmodelgateway.CitationsPartDetail{
+				Text:      v.Text,
+				Citations: citations,
+			}),
 		}, nil
 	case model.ToolUsePart:
 		return &genmodelgateway.MessagePart{
-			Kind:             partKindToolUse,
-			ID:               v.ID,
-			Name:             v.Name,
-			Input:            append([]byte(nil), v.Input...),
-			ThoughtSignature: v.ThoughtSignature,
+			Payload: genmodelgateway.NewMessagePartPayloadToolUse(&genmodelgateway.ToolUsePartDetail{
+				ID:               v.ID,
+				Name:             v.Name,
+				Input:            append([]byte(nil), v.Input...),
+				ThoughtSignature: v.ThoughtSignature,
+			}),
 		}, nil
 	case model.ToolResultPart:
-		gp := &genmodelgateway.MessagePart{
-			Kind:      partKindToolResult,
+		detail := &genmodelgateway.ToolResultPartDetail{
 			ToolUseID: v.ToolUseID,
 			IsError:   v.IsError,
 		}
@@ -394,19 +425,23 @@ func toGenPart(part model.Part) (*genmodelgateway.MessagePart, error) {
 			if err != nil {
 				return nil, fmt.Errorf("marshal tool result content: %w", err)
 			}
-			gp.Content = raw
-			gp.ContentPresent = true
+			detail.Content = raw
+			detail.ContentPresent = true
 		}
 		if len(v.Blocks) > 0 {
 			blocksRaw, err := json.Marshal(v.Blocks)
 			if err != nil {
 				return nil, fmt.Errorf("marshal tool result blocks: %w", err)
 			}
-			gp.BlocksJSON = blocksRaw
+			detail.BlocksJSON = blocksRaw
 		}
-		return gp, nil
+		return &genmodelgateway.MessagePart{
+			Payload: genmodelgateway.NewMessagePartPayloadToolResult(detail),
+		}, nil
 	case model.CacheCheckpointPart:
-		return &genmodelgateway.MessagePart{Kind: partKindCacheCheckpoint}, nil
+		return &genmodelgateway.MessagePart{
+			Payload: genmodelgateway.NewMessagePartPayloadCacheCheckpoint(&genmodelgateway.CacheCheckpointDetail{}),
+		}, nil
 	default:
 		return nil, fmt.Errorf("unsupported message part %T", part)
 	}
@@ -417,152 +452,229 @@ func fromGenPart(in *genmodelgateway.MessagePart) (model.Part, error) {
 	if in == nil {
 		return nil, errors.New("gateway: wire part is nil")
 	}
-	switch in.Kind {
-	case partKindText:
-		return model.TextPart{Text: in.Text}, nil
-	case partKindThinking:
+	if err := in.Payload.Validate(); err != nil {
+		return nil, fmt.Errorf("gateway: invalid message part payload: %w", err)
+	}
+	switch in.Payload.Kind() {
+	case genmodelgateway.MessagePartPayloadKindText:
+		v, _ := in.Payload.AsText()
+		return model.TextPart{Text: v.Text}, nil
+	case genmodelgateway.MessagePartPayloadKindThinking:
+		v, _ := in.Payload.AsThinking()
+		idx, err := int64ToInt(v.Index, "thinking_part.index")
+		if err != nil {
+			return nil, err
+		}
 		return model.ThinkingPart{
-			Text:      in.Text,
-			Signature: in.Signature,
-			Redacted:  append([]byte(nil), in.Redacted...),
-			Index:     in.Index,
-			Final:     in.Final,
+			Text:      v.Text,
+			Signature: v.Signature,
+			Redacted:  append([]byte(nil), v.Redacted...),
+			Index:     idx,
+			Final:     v.Final,
 		}, nil
-	case partKindImage:
+	case genmodelgateway.MessagePartPayloadKindImage:
+		v, _ := in.Payload.AsImage()
 		return model.ImagePart{
-			Format: model.ImageFormat(in.ImageFormat),
-			Bytes:  append([]byte(nil), in.Bytes...),
+			Format: model.ImageFormat(v.Format),
+			Bytes:  append([]byte(nil), v.Bytes...),
 		}, nil
-	case partKindImageSource:
+	case genmodelgateway.MessagePartPayloadKindImageSource:
+		v, _ := in.Payload.AsImageSource()
 		return model.ImageSourcePart{
-			SourceKind: in.SourceKind,
-			Data:       rawjson.Message(append([]byte(nil), in.Data...)),
+			SourceKind: v.SourceKind,
+			Data:       rawjson.Message(append([]byte(nil), v.Data...)),
 		}, nil
-	case partKindDocument:
+	case genmodelgateway.MessagePartPayloadKindDocument:
+		v, _ := in.Payload.AsDocument()
 		return model.DocumentPart{
-			Name:    in.Name,
-			Format:  model.DocumentFormat(in.DocumentFormat),
-			Bytes:   append([]byte(nil), in.Bytes...),
-			Text:    in.Text,
-			Chunks:  append([]string(nil), in.Chunks...),
-			URI:     in.URI,
-			Context: in.Context,
-			Cite:    in.Cite,
+			Name:    v.Name,
+			Format:  model.DocumentFormat(v.Format),
+			Bytes:   append([]byte(nil), v.Bytes...),
+			Text:    v.Text,
+			Chunks:  append([]string(nil), v.Chunks...),
+			URI:     v.URI,
+			Context: v.Context,
+			Cite:    v.Cite,
 		}, nil
-	case partKindCitations:
+	case genmodelgateway.MessagePartPayloadKindCitations:
+		v, _ := in.Payload.AsCitations()
 		var citations []model.Citation
-		if len(in.Citations) > 0 {
-			citations = make([]model.Citation, len(in.Citations))
-			for i, gc := range in.Citations {
-				citations[i] = fromGenCitation(gc)
+		if len(v.Citations) > 0 {
+			citations = make([]model.Citation, len(v.Citations))
+			for i, gc := range v.Citations {
+				c, err := fromGenCitation(gc)
+				if err != nil {
+					return nil, err
+				}
+				citations[i] = c
 			}
 		}
 		return model.CitationsPart{
-			Text:      in.Text,
+			Text:      v.Text,
 			Citations: citations,
 		}, nil
-	case partKindToolUse:
+	case genmodelgateway.MessagePartPayloadKindToolUse:
+		v, _ := in.Payload.AsToolUse()
 		return model.ToolUsePart{
-			ID:               in.ID,
-			Name:             in.Name,
-			Input:            rawjson.Message(append([]byte(nil), in.Input...)),
-			ThoughtSignature: in.ThoughtSignature,
+			ID:               v.ID,
+			Name:             v.Name,
+			Input:            rawjson.Message(append([]byte(nil), v.Input...)),
+			ThoughtSignature: v.ThoughtSignature,
 		}, nil
-	case partKindToolResult:
+	case genmodelgateway.MessagePartPayloadKindToolResult:
+		v, _ := in.Payload.AsToolResult()
 		var content any
-		if in.ContentPresent {
-			if err := rawjson.Unmarshal(rawjson.Message(in.Content), &content); err != nil {
+		if v.ContentPresent {
+			if err := rawjson.Unmarshal(rawjson.Message(v.Content), &content); err != nil {
 				return nil, fmt.Errorf("unmarshal tool result content: %w", err)
 			}
 		}
 		var blocks toolcontent.Blocks
-		if len(in.BlocksJSON) > 0 {
-			if err := json.Unmarshal(in.BlocksJSON, &blocks); err != nil {
+		if len(v.BlocksJSON) > 0 {
+			if err := json.Unmarshal(v.BlocksJSON, &blocks); err != nil {
 				return nil, fmt.Errorf("unmarshal tool result blocks: %w", err)
 			}
 		}
 		return model.ToolResultPart{
-			ToolUseID: in.ToolUseID,
+			ToolUseID: v.ToolUseID,
 			Content:   content,
 			Blocks:    blocks,
-			IsError:   in.IsError,
+			IsError:   v.IsError,
 		}, nil
-	case partKindCacheCheckpoint:
+	case genmodelgateway.MessagePartPayloadKindCacheCheckpoint:
 		return model.CacheCheckpointPart{}, nil
 	default:
-		return nil, fmt.Errorf("unsupported wire part kind %q", in.Kind)
+		return nil, fmt.Errorf("unsupported wire part kind %q", in.Payload.Kind())
 	}
 }
 
 // toGenCitation converts a model.Citation into its Goa-generated wire representation.
-func toGenCitation(c model.Citation) *genmodelgateway.Citation {
+func toGenCitation(c model.Citation) (*genmodelgateway.Citation, error) {
 	out := &genmodelgateway.Citation{
 		Title:         c.Title,
 		Source:        c.Source,
 		SourceContent: append([]string(nil), c.SourceContent...),
 	}
-	if c.Location.DocumentChar != nil || c.Location.DocumentPage != nil || c.Location.DocumentChunk != nil {
-		loc := &genmodelgateway.CitationLocation{}
-		if c.Location.DocumentChar != nil {
-			loc.DocumentChar = &genmodelgateway.DocumentCharLocation{
-				DocumentIndex: c.Location.DocumentChar.DocumentIndex,
-				Start:         c.Location.DocumentChar.Start,
-				End:           c.Location.DocumentChar.End,
-			}
-		}
-		if c.Location.DocumentPage != nil {
-			loc.DocumentPage = &genmodelgateway.DocumentPageLocation{
-				DocumentIndex: c.Location.DocumentPage.DocumentIndex,
-				Start:         c.Location.DocumentPage.Start,
-				End:           c.Location.DocumentPage.End,
-			}
-		}
-		if c.Location.DocumentChunk != nil {
-			loc.DocumentChunk = &genmodelgateway.DocumentChunkLocation{
-				DocumentIndex: c.Location.DocumentChunk.DocumentIndex,
-				Start:         c.Location.DocumentChunk.Start,
-				End:           c.Location.DocumentChunk.End,
-			}
-		}
-		out.Location = loc
+	count := 0
+	if c.Location.DocumentChar != nil {
+		count++
 	}
-	return out
+	if c.Location.DocumentPage != nil {
+		count++
+	}
+	if c.Location.DocumentChunk != nil {
+		count++
+	}
+	if count > 1 {
+		return nil, errors.New("gateway: citation location must specify at most one span")
+	}
+	switch {
+	case c.Location.DocumentChar != nil:
+		out.Location = &genmodelgateway.CitationLocation{
+			Span: genmodelgateway.NewCitationSpanDocumentChar(&genmodelgateway.DocumentCharLocation{
+				DocumentIndex: int64(c.Location.DocumentChar.DocumentIndex),
+				Start:         int64(c.Location.DocumentChar.Start),
+				End:           int64(c.Location.DocumentChar.End),
+			}),
+		}
+	case c.Location.DocumentPage != nil:
+		out.Location = &genmodelgateway.CitationLocation{
+			Span: genmodelgateway.NewCitationSpanDocumentPage(&genmodelgateway.DocumentPageLocation{
+				DocumentIndex: int64(c.Location.DocumentPage.DocumentIndex),
+				Start:         int64(c.Location.DocumentPage.Start),
+				End:           int64(c.Location.DocumentPage.End),
+			}),
+		}
+	case c.Location.DocumentChunk != nil:
+		out.Location = &genmodelgateway.CitationLocation{
+			Span: genmodelgateway.NewCitationSpanDocumentChunk(&genmodelgateway.DocumentChunkLocation{
+				DocumentIndex: int64(c.Location.DocumentChunk.DocumentIndex),
+				Start:         int64(c.Location.DocumentChunk.Start),
+				End:           int64(c.Location.DocumentChunk.End),
+			}),
+		}
+	}
+	return out, nil
 }
 
 // fromGenCitation converts a Goa-generated Citation back into a model.Citation.
-func fromGenCitation(in *genmodelgateway.Citation) model.Citation {
+func fromGenCitation(in *genmodelgateway.Citation) (model.Citation, error) {
 	if in == nil {
-		return model.Citation{}
+		return model.Citation{}, errors.New("gateway: wire citation is nil")
 	}
 	out := model.Citation{
 		Title:         in.Title,
 		Source:        in.Source,
 		SourceContent: append([]string(nil), in.SourceContent...),
 	}
-	if in.Location != nil {
-		if in.Location.DocumentChar != nil {
-			out.Location.DocumentChar = &model.DocumentCharLocation{
-				DocumentIndex: in.Location.DocumentChar.DocumentIndex,
-				Start:         in.Location.DocumentChar.Start,
-				End:           in.Location.DocumentChar.End,
-			}
-		}
-		if in.Location.DocumentPage != nil {
-			out.Location.DocumentPage = &model.DocumentPageLocation{
-				DocumentIndex: in.Location.DocumentPage.DocumentIndex,
-				Start:         in.Location.DocumentPage.Start,
-				End:           in.Location.DocumentPage.End,
-			}
-		}
-		if in.Location.DocumentChunk != nil {
-			out.Location.DocumentChunk = &model.DocumentChunkLocation{
-				DocumentIndex: in.Location.DocumentChunk.DocumentIndex,
-				Start:         in.Location.DocumentChunk.Start,
-				End:           in.Location.DocumentChunk.End,
-			}
-		}
+	if in.Location == nil {
+		return out, nil
 	}
-	return out
+	if err := in.Location.Span.Validate(); err != nil {
+		return model.Citation{}, fmt.Errorf("gateway: invalid citation span: %w", err)
+	}
+	switch in.Location.Span.Kind() {
+	case genmodelgateway.CitationSpanKindDocumentChar:
+		v, _ := in.Location.Span.AsDocumentChar()
+		docIdx, err := int64ToInt(v.DocumentIndex, "citation.document_char.document_index")
+		if err != nil {
+			return model.Citation{}, err
+		}
+		start, err := int64ToInt(v.Start, "citation.document_char.start")
+		if err != nil {
+			return model.Citation{}, err
+		}
+		end, err := int64ToInt(v.End, "citation.document_char.end")
+		if err != nil {
+			return model.Citation{}, err
+		}
+		out.Location.DocumentChar = &model.DocumentCharLocation{
+			DocumentIndex: docIdx,
+			Start:         start,
+			End:           end,
+		}
+	case genmodelgateway.CitationSpanKindDocumentPage:
+		v, _ := in.Location.Span.AsDocumentPage()
+		docIdx, err := int64ToInt(v.DocumentIndex, "citation.document_page.document_index")
+		if err != nil {
+			return model.Citation{}, err
+		}
+		start, err := int64ToInt(v.Start, "citation.document_page.start")
+		if err != nil {
+			return model.Citation{}, err
+		}
+		end, err := int64ToInt(v.End, "citation.document_page.end")
+		if err != nil {
+			return model.Citation{}, err
+		}
+		out.Location.DocumentPage = &model.DocumentPageLocation{
+			DocumentIndex: docIdx,
+			Start:         start,
+			End:           end,
+		}
+	case genmodelgateway.CitationSpanKindDocumentChunk:
+		v, _ := in.Location.Span.AsDocumentChunk()
+		docIdx, err := int64ToInt(v.DocumentIndex, "citation.document_chunk.document_index")
+		if err != nil {
+			return model.Citation{}, err
+		}
+		start, err := int64ToInt(v.Start, "citation.document_chunk.start")
+		if err != nil {
+			return model.Citation{}, err
+		}
+		end, err := int64ToInt(v.End, "citation.document_chunk.end")
+		if err != nil {
+			return model.Citation{}, err
+		}
+		out.Location.DocumentChunk = &model.DocumentChunkLocation{
+			DocumentIndex: docIdx,
+			Start:         start,
+			End:           end,
+		}
+	default:
+		return model.Citation{}, fmt.Errorf("unsupported citation span kind %q", in.Location.Span.Kind())
+	}
+	return out, nil
 }
 
 // toGenChunk converts one model.Chunk into its Goa-generated wire representation.
@@ -576,58 +688,58 @@ func toGenChunk(chunk model.Chunk) (*genmodelgateway.StreamChunk, error) {
 		if err != nil {
 			return nil, err
 		}
-		return &genmodelgateway.StreamChunk{Kind: model.ChunkTypeText, Message: gm}, nil
+		return &genmodelgateway.StreamChunk{
+			Payload: genmodelgateway.NewStreamChunkPayloadText(gm),
+		}, nil
 	case model.ThinkingChunk:
 		gm, err := toGenMessage(v.Message)
 		if err != nil {
 			return nil, err
 		}
-		return &genmodelgateway.StreamChunk{Kind: model.ChunkTypeThinking, Message: gm}, nil
+		return &genmodelgateway.StreamChunk{
+			Payload: genmodelgateway.NewStreamChunkPayloadThinking(gm),
+		}, nil
 	case model.ToolCallChunk:
 		return &genmodelgateway.StreamChunk{
-			Kind: model.ChunkTypeToolCall,
-			ToolCall: &genmodelgateway.ToolCall{
+			Payload: genmodelgateway.NewStreamChunkPayloadToolCall(&genmodelgateway.ToolCall{
 				Name:             string(v.ToolCall.Name),
 				Payload:          append([]byte(nil), v.ToolCall.Payload...),
 				ID:               v.ToolCall.ID,
 				ThoughtSignature: v.ToolCall.ThoughtSignature,
-			},
+			}),
 		}, nil
 	case model.ToolCallDeltaChunk:
 		return &genmodelgateway.StreamChunk{
-			Kind: model.ChunkTypeToolCallDelta,
-			ToolCallDelta: &genmodelgateway.ToolCallDelta{
+			Payload: genmodelgateway.NewStreamChunkPayloadToolCallDelta(&genmodelgateway.ToolCallDelta{
 				Name:  string(v.Delta.Name),
 				ID:    v.Delta.ID,
 				Delta: v.Delta.Delta,
-			},
+			}),
 		}, nil
 	case model.CompletionChunk:
 		return &genmodelgateway.StreamChunk{
-			Kind: model.ChunkTypeCompletion,
-			Completion: &genmodelgateway.Completion{
+			Payload: genmodelgateway.NewStreamChunkPayloadCompletion(&genmodelgateway.Completion{
 				Name:    v.Completion.Name,
 				Payload: append([]byte(nil), v.Completion.Payload...),
-			},
+			}),
 		}, nil
 	case model.CompletionDeltaChunk:
 		return &genmodelgateway.StreamChunk{
-			Kind: model.ChunkTypeCompletionDelta,
-			CompletionDelta: &genmodelgateway.CompletionDelta{
+			Payload: genmodelgateway.NewStreamChunkPayloadCompletionDelta(&genmodelgateway.CompletionDelta{
 				Name:  v.Delta.Name,
 				Delta: v.Delta.Delta,
-			},
+			}),
 		}, nil
 	case model.UsageChunk:
 		return &genmodelgateway.StreamChunk{
-			Kind:  model.ChunkTypeUsage,
-			Usage: toGenUsage(v.Usage),
+			Payload: genmodelgateway.NewStreamChunkPayloadUsage(toGenUsage(v.Usage)),
 		}, nil
 	case model.StopChunk:
 		return &genmodelgateway.StreamChunk{
-			Kind:          model.ChunkTypeStop,
-			StopReason:    v.Reason,
-			OutputLimited: v.OutputLimited,
+			Payload: genmodelgateway.NewStreamChunkPayloadStop(&genmodelgateway.StopDetail{
+				Reason:        v.Reason,
+				OutputLimited: v.OutputLimited,
+			}),
 		}, nil
 	default:
 		return nil, fmt.Errorf("gateway: unsupported chunk %T", chunk)
@@ -639,80 +751,74 @@ func fromGenChunk(in *genmodelgateway.StreamChunk) (model.Chunk, error) {
 	if in == nil {
 		return nil, errors.New("gateway: wire chunk is nil")
 	}
-	switch in.Kind {
-	case model.ChunkTypeText:
-		if in.Message == nil {
-			return nil, errors.New("gateway: text chunk missing message")
-		}
-		msg, err := fromGenMessage(in.Message)
+	if err := in.Payload.Validate(); err != nil {
+		return nil, fmt.Errorf("gateway: invalid stream chunk payload: %w", err)
+	}
+	switch in.Payload.Kind() {
+	case genmodelgateway.StreamChunkPayloadKindText:
+		v, _ := in.Payload.AsText()
+		msg, err := fromGenMessage(v)
 		if err != nil {
 			return nil, err
 		}
 		return model.TextChunk{Message: msg}, nil
-	case model.ChunkTypeThinking:
-		if in.Message == nil {
-			return nil, errors.New("gateway: thinking chunk missing message")
-		}
-		msg, err := fromGenMessage(in.Message)
+	case genmodelgateway.StreamChunkPayloadKindThinking:
+		v, _ := in.Payload.AsThinking()
+		msg, err := fromGenMessage(v)
 		if err != nil {
 			return nil, err
 		}
 		return model.ThinkingChunk{Message: msg}, nil
-	case model.ChunkTypeToolCall:
-		if in.ToolCall == nil {
-			return nil, errors.New("gateway: tool_call chunk missing tool_call")
-		}
+	case genmodelgateway.StreamChunkPayloadKindToolCall:
+		v, _ := in.Payload.AsToolCall()
 		return model.ToolCallChunk{
 			ToolCall: model.ToolCall{
-				Name:             tools.Ident(in.ToolCall.Name),
-				Payload:          rawjson.Message(append([]byte(nil), in.ToolCall.Payload...)),
-				ID:               in.ToolCall.ID,
-				ThoughtSignature: in.ToolCall.ThoughtSignature,
+				Name:             tools.Ident(v.Name),
+				Payload:          rawjson.Message(append([]byte(nil), v.Payload...)),
+				ID:               v.ID,
+				ThoughtSignature: v.ThoughtSignature,
 			},
 		}, nil
-	case model.ChunkTypeToolCallDelta:
-		if in.ToolCallDelta == nil {
-			return nil, errors.New("gateway: tool_call_delta chunk missing delta")
-		}
+	case genmodelgateway.StreamChunkPayloadKindToolCallDelta:
+		v, _ := in.Payload.AsToolCallDelta()
 		return model.ToolCallDeltaChunk{
 			Delta: model.ToolCallDelta{
-				Name:  tools.Ident(in.ToolCallDelta.Name),
-				ID:    in.ToolCallDelta.ID,
-				Delta: in.ToolCallDelta.Delta,
+				Name:  tools.Ident(v.Name),
+				ID:    v.ID,
+				Delta: v.Delta,
 			},
 		}, nil
-	case model.ChunkTypeCompletion:
-		if in.Completion == nil {
-			return nil, errors.New("gateway: completion chunk missing completion")
-		}
+	case genmodelgateway.StreamChunkPayloadKindCompletion:
+		v, _ := in.Payload.AsCompletion()
 		return model.CompletionChunk{
 			Completion: model.Completion{
-				Name:    in.Completion.Name,
-				Payload: rawjson.Message(append([]byte(nil), in.Completion.Payload...)),
+				Name:    v.Name,
+				Payload: rawjson.Message(append([]byte(nil), v.Payload...)),
 			},
 		}, nil
-	case model.ChunkTypeCompletionDelta:
-		if in.CompletionDelta == nil {
-			return nil, errors.New("gateway: completion_delta chunk missing delta")
-		}
+	case genmodelgateway.StreamChunkPayloadKindCompletionDelta:
+		v, _ := in.Payload.AsCompletionDelta()
 		return model.CompletionDeltaChunk{
 			Delta: model.CompletionDelta{
-				Name:  in.CompletionDelta.Name,
-				Delta: in.CompletionDelta.Delta,
+				Name:  v.Name,
+				Delta: v.Delta,
 			},
 		}, nil
-	case model.ChunkTypeUsage:
-		if in.Usage == nil {
-			return nil, errors.New("gateway: usage chunk missing usage")
+	case genmodelgateway.StreamChunkPayloadKindUsage:
+		v, _ := in.Payload.AsUsage()
+		usage, err := fromGenUsage(v)
+		if err != nil {
+			return nil, err
 		}
-		return model.UsageChunk{Usage: fromGenUsage(in.Usage)}, nil
-	case model.ChunkTypeStop:
+		return model.UsageChunk{Usage: usage}, nil
+	case genmodelgateway.StreamChunkPayloadKindStop:
+		v, _ := in.Payload.AsStop()
 		return model.StopChunk{
-			Reason:        in.StopReason,
-			OutputLimited: in.OutputLimited,
+			Reason:        v.Reason,
+			OutputLimited: v.OutputLimited,
 		}, nil
 	default:
-		return nil, fmt.Errorf("gateway: unsupported wire chunk kind %q", in.Kind)
+		return nil, fmt.Errorf("gateway: unsupported wire chunk kind %q", in.Payload.Kind())
 	}
 }
 
@@ -721,28 +827,48 @@ func toGenUsage(u model.TokenUsage) *genmodelgateway.TokenUsage {
 	return &genmodelgateway.TokenUsage{
 		Model:            u.Model,
 		ModelClass:       string(u.ModelClass),
-		InputTokens:      u.InputTokens,
-		OutputTokens:     u.OutputTokens,
-		TotalTokens:      u.TotalTokens,
-		CacheReadTokens:  u.CacheReadTokens,
-		CacheWriteTokens: u.CacheWriteTokens,
+		InputTokens:      int64(u.InputTokens),
+		OutputTokens:     int64(u.OutputTokens),
+		TotalTokens:      int64(u.TotalTokens),
+		CacheReadTokens:  int64(u.CacheReadTokens),
+		CacheWriteTokens: int64(u.CacheWriteTokens),
 	}
 }
 
 // fromGenUsage converts a Goa-generated TokenUsage back into model.TokenUsage.
-func fromGenUsage(in *genmodelgateway.TokenUsage) model.TokenUsage {
+func fromGenUsage(in *genmodelgateway.TokenUsage) (model.TokenUsage, error) {
 	if in == nil {
-		return model.TokenUsage{}
+		return model.TokenUsage{}, nil
+	}
+	inTokens, err := int64ToInt(in.InputTokens, "usage.input_tokens")
+	if err != nil {
+		return model.TokenUsage{}, err
+	}
+	outTokens, err := int64ToInt(in.OutputTokens, "usage.output_tokens")
+	if err != nil {
+		return model.TokenUsage{}, err
+	}
+	totalTokens, err := int64ToInt(in.TotalTokens, "usage.total_tokens")
+	if err != nil {
+		return model.TokenUsage{}, err
+	}
+	cacheRead, err := int64ToInt(in.CacheReadTokens, "usage.cache_read_tokens")
+	if err != nil {
+		return model.TokenUsage{}, err
+	}
+	cacheWrite, err := int64ToInt(in.CacheWriteTokens, "usage.cache_write_tokens")
+	if err != nil {
+		return model.TokenUsage{}, err
 	}
 	return model.TokenUsage{
 		Model:            in.Model,
 		ModelClass:       model.ModelClass(in.ModelClass),
-		InputTokens:      in.InputTokens,
-		OutputTokens:     in.OutputTokens,
-		TotalTokens:      in.TotalTokens,
-		CacheReadTokens:  in.CacheReadTokens,
-		CacheWriteTokens: in.CacheWriteTokens,
-	}
+		InputTokens:      inTokens,
+		OutputTokens:     outTokens,
+		TotalTokens:      totalTokens,
+		CacheReadTokens:  cacheRead,
+		CacheWriteTokens: cacheWrite,
+	}, nil
 }
 
 // toGenTokenCount converts model.TokenCount into its Goa-generated wire representation.
@@ -750,20 +876,33 @@ func toGenTokenCount(c model.TokenCount) *genmodelgateway.TokenCount {
 	return &genmodelgateway.TokenCount{
 		Model:       c.Model,
 		ModelClass:  string(c.ModelClass),
-		InputTokens: c.InputTokens,
+		InputTokens: int64(c.InputTokens),
 		Exact:       c.Exact,
 	}
 }
 
 // fromGenTokenCount converts a Goa-generated TokenCount back into model.TokenCount.
-func fromGenTokenCount(in *genmodelgateway.TokenCount) model.TokenCount {
+func fromGenTokenCount(in *genmodelgateway.TokenCount) (model.TokenCount, error) {
 	if in == nil {
-		return model.TokenCount{}
+		return model.TokenCount{}, nil
+	}
+	inTokens, err := int64ToInt(in.InputTokens, "token_count.input_tokens")
+	if err != nil {
+		return model.TokenCount{}, err
 	}
 	return model.TokenCount{
 		Model:       in.Model,
 		ModelClass:  model.ModelClass(in.ModelClass),
-		InputTokens: in.InputTokens,
+		InputTokens: inTokens,
 		Exact:       in.Exact,
+	}, nil
+}
+
+// int64ToInt converts a 64-bit wire integer to Go int while rejecting values
+// outside the platform's int range.
+func int64ToInt(v int64, field string) (int, error) {
+	if v < int64(math.MinInt) || v > int64(math.MaxInt) {
+		return 0, fmt.Errorf("gateway: integer field %s (%d) overflows int", field, v)
 	}
+	return int(v), nil
 }

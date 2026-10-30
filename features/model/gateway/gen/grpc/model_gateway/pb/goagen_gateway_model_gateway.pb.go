@@ -46,7 +46,7 @@ type CompleteRequest struct {
 	// Optional tool selection constraint.
 	ToolChoice *ToolChoice `protobuf:"bytes,7,opt,name=tool_choice,json=toolChoice,proto3" json:"tool_choice,omitempty"`
 	// Maximum output tokens.
-	MaxTokens *int32 `protobuf:"zigzag32,8,opt,name=max_tokens,json=maxTokens,proto3,oneof" json:"max_tokens,omitempty"`
+	MaxTokens *int64 `protobuf:"zigzag64,8,opt,name=max_tokens,json=maxTokens,proto3,oneof" json:"max_tokens,omitempty"`
 	// Whether streaming was requested.
 	Stream *bool `protobuf:"varint,9,opt,name=stream,proto3,oneof" json:"stream,omitempty"`
 	// Optional reasoning configuration.
@@ -138,7 +138,7 @@ func (x *CompleteRequest) GetToolChoice() *ToolChoice {
 	return nil
 }
 
-func (x *CompleteRequest) GetMaxTokens() int32 {
+func (x *CompleteRequest) GetMaxTokens() int64 {
 	if x != nil && x.MaxTokens != nil {
 		return *x.MaxTokens
 	}
@@ -292,59 +292,21 @@ func (x *ModelMessage) GetMetaJson() []byte {
 	return nil
 }
 
-// Discriminated union of model.Part variants.
+// Exclusive sum type of model.Part variants.
 type MessagePart struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Concrete part kind discriminator.
-	Kind *string `protobuf:"bytes,1,opt,name=kind,proto3,oneof" json:"kind,omitempty"`
-	// Text content for text, document, citations, or thinking parts.
-	Text *string `protobuf:"bytes,2,opt,name=text,proto3,oneof" json:"text,omitempty"`
-	// Provider thinking signature.
-	Signature *string `protobuf:"bytes,3,opt,name=signature,proto3,oneof" json:"signature,omitempty"`
-	// Redacted provider thinking bytes.
-	Redacted []byte `protobuf:"bytes,4,opt,name=redacted,proto3,oneof" json:"redacted,omitempty"`
-	// Reasoning block sequence index.
-	Index *int32 `protobuf:"zigzag32,5,opt,name=index,proto3,oneof" json:"index,omitempty"`
-	// Whether a thinking part is finalized.
-	Final *bool `protobuf:"varint,6,opt,name=final,proto3,oneof" json:"final,omitempty"`
-	// Image encoding format.
-	ImageFormat *string `protobuf:"bytes,7,opt,name=image_format,json=imageFormat,proto3,oneof" json:"image_format,omitempty"`
-	// Raw image or document bytes.
-	Bytes_ []byte `protobuf:"bytes,8,opt,name=bytes_,json=bytes,proto3,oneof" json:"bytes_,omitempty"`
-	// Retained generated image descriptor kind.
-	SourceKind *string `protobuf:"bytes,9,opt,name=source_kind,json=sourceKind,proto3,oneof" json:"source_kind,omitempty"`
-	// Raw JSON image source descriptor.
-	Data []byte `protobuf:"bytes,10,opt,name=data,proto3,oneof" json:"data,omitempty"`
-	// Document or tool identifier.
-	Name *string `protobuf:"bytes,11,opt,name=name,proto3,oneof" json:"name,omitempty"`
-	// Document format or extension.
-	DocumentFormat *string `protobuf:"bytes,12,opt,name=document_format,json=documentFormat,proto3,oneof" json:"document_format,omitempty"`
-	// Ordered document text chunks.
-	Chunks []string `protobuf:"bytes,13,rep,name=chunks,proto3" json:"chunks,omitempty"`
-	// External document URI.
-	Uri *string `protobuf:"bytes,14,opt,name=uri,proto3,oneof" json:"uri,omitempty"`
-	// Document citation context.
-	Context *string `protobuf:"bytes,15,opt,name=context,proto3,oneof" json:"context,omitempty"`
-	// Whether document citations are requested.
-	Cite *bool `protobuf:"varint,16,opt,name=cite,proto3,oneof" json:"cite,omitempty"`
-	// Attached citation metadata.
-	Citations []*Citation `protobuf:"bytes,17,rep,name=citations,proto3" json:"citations,omitempty"`
-	// Tool call identifier.
-	Id *string `protobuf:"bytes,18,opt,name=id,proto3,oneof" json:"id,omitempty"`
-	// Raw JSON tool arguments.
-	Input []byte `protobuf:"bytes,19,opt,name=input,proto3,oneof" json:"input,omitempty"`
-	// Provider reasoning signature on a tool call.
-	ThoughtSignature *string `protobuf:"bytes,20,opt,name=thought_signature,json=thoughtSignature,proto3,oneof" json:"thought_signature,omitempty"`
-	// Correlated tool use identifier on a tool result.
-	ToolUseId *string `protobuf:"bytes,21,opt,name=tool_use_id,json=toolUseId,proto3,oneof" json:"tool_use_id,omitempty"`
-	// JSON-encoded tool result content value.
-	Content []byte `protobuf:"bytes,22,opt,name=content,proto3,oneof" json:"content,omitempty"`
-	// Whether tool result content was non-nil.
-	ContentPresent *bool `protobuf:"varint,23,opt,name=content_present,json=contentPresent,proto3,oneof" json:"content_present,omitempty"`
-	// MCP-encoded tool content blocks.
-	BlocksJson []byte `protobuf:"bytes,24,opt,name=blocks_json,json=blocksJson,proto3,oneof" json:"blocks_json,omitempty"`
-	// Whether the tool result represents an error.
-	IsError       *bool `protobuf:"varint,25,opt,name=is_error,json=isError,proto3,oneof" json:"is_error,omitempty"`
+	// Types that are valid to be assigned to Payload:
+	//
+	//	*MessagePart_Text
+	//	*MessagePart_Thinking
+	//	*MessagePart_Image
+	//	*MessagePart_ImageSource
+	//	*MessagePart_Document
+	//	*MessagePart_Citations
+	//	*MessagePart_ToolUse
+	//	*MessagePart_ToolResult
+	//	*MessagePart_CacheCheckpoint
+	Payload       isMessagePart_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -379,179 +341,561 @@ func (*MessagePart) Descriptor() ([]byte, []int) {
 	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{3}
 }
 
-func (x *MessagePart) GetKind() string {
-	if x != nil && x.Kind != nil {
-		return *x.Kind
+func (x *MessagePart) GetPayload() isMessagePart_Payload {
+	if x != nil {
+		return x.Payload
 	}
-	return ""
+	return nil
 }
 
-func (x *MessagePart) GetText() string {
+func (x *MessagePart) GetText() *TextPartDetail {
+	if x != nil {
+		if x, ok := x.Payload.(*MessagePart_Text); ok {
+			return x.Text
+		}
+	}
+	return nil
+}
+
+func (x *MessagePart) GetThinking() *ThinkingPartDetail {
+	if x != nil {
+		if x, ok := x.Payload.(*MessagePart_Thinking); ok {
+			return x.Thinking
+		}
+	}
+	return nil
+}
+
+func (x *MessagePart) GetImage() *ImagePartDetail {
+	if x != nil {
+		if x, ok := x.Payload.(*MessagePart_Image); ok {
+			return x.Image
+		}
+	}
+	return nil
+}
+
+func (x *MessagePart) GetImageSource() *ImageSourcePartDetail {
+	if x != nil {
+		if x, ok := x.Payload.(*MessagePart_ImageSource); ok {
+			return x.ImageSource
+		}
+	}
+	return nil
+}
+
+func (x *MessagePart) GetDocument() *DocumentPartDetail {
+	if x != nil {
+		if x, ok := x.Payload.(*MessagePart_Document); ok {
+			return x.Document
+		}
+	}
+	return nil
+}
+
+func (x *MessagePart) GetCitations() *CitationsPartDetail {
+	if x != nil {
+		if x, ok := x.Payload.(*MessagePart_Citations); ok {
+			return x.Citations
+		}
+	}
+	return nil
+}
+
+func (x *MessagePart) GetToolUse() *ToolUsePartDetail {
+	if x != nil {
+		if x, ok := x.Payload.(*MessagePart_ToolUse); ok {
+			return x.ToolUse
+		}
+	}
+	return nil
+}
+
+func (x *MessagePart) GetToolResult() *ToolResultPartDetail {
+	if x != nil {
+		if x, ok := x.Payload.(*MessagePart_ToolResult); ok {
+			return x.ToolResult
+		}
+	}
+	return nil
+}
+
+func (x *MessagePart) GetCacheCheckpoint() *CacheCheckpointDetail {
+	if x != nil {
+		if x, ok := x.Payload.(*MessagePart_CacheCheckpoint); ok {
+			return x.CacheCheckpoint
+		}
+	}
+	return nil
+}
+
+type isMessagePart_Payload interface {
+	isMessagePart_Payload()
+}
+
+type MessagePart_Text struct {
+	// Text content block.
+	Text *TextPartDetail `protobuf:"bytes,1,opt,name=text,proto3,oneof"`
+}
+
+type MessagePart_Thinking struct {
+	// Provider reasoning block.
+	Thinking *ThinkingPartDetail `protobuf:"bytes,2,opt,name=thinking,proto3,oneof"`
+}
+
+type MessagePart_Image struct {
+	// Raw image content block.
+	Image *ImagePartDetail `protobuf:"bytes,3,opt,name=image,proto3,oneof"`
+}
+
+type MessagePart_ImageSource struct {
+	// Retained generated image descriptor.
+	ImageSource *ImageSourcePartDetail `protobuf:"bytes,4,opt,name=image_source,json=imageSource,proto3,oneof"`
+}
+
+type MessagePart_Document struct {
+	// Document content block.
+	Document *DocumentPartDetail `protobuf:"bytes,5,opt,name=document,proto3,oneof"`
+}
+
+type MessagePart_Citations struct {
+	// Assistant text with source citations.
+	Citations *CitationsPartDetail `protobuf:"bytes,6,opt,name=citations,proto3,oneof"`
+}
+
+type MessagePart_ToolUse struct {
+	// Assistant tool invocation block.
+	ToolUse *ToolUsePartDetail `protobuf:"bytes,7,opt,name=tool_use,json=toolUse,proto3,oneof"`
+}
+
+type MessagePart_ToolResult struct {
+	// Correlated tool result block.
+	ToolResult *ToolResultPartDetail `protobuf:"bytes,8,opt,name=tool_result,json=toolResult,proto3,oneof"`
+}
+
+type MessagePart_CacheCheckpoint struct {
+	// Prompt cache checkpoint marker.
+	CacheCheckpoint *CacheCheckpointDetail `protobuf:"bytes,9,opt,name=cache_checkpoint,json=cacheCheckpoint,proto3,oneof"`
+}
+
+func (*MessagePart_Text) isMessagePart_Payload() {}
+
+func (*MessagePart_Thinking) isMessagePart_Payload() {}
+
+func (*MessagePart_Image) isMessagePart_Payload() {}
+
+func (*MessagePart_ImageSource) isMessagePart_Payload() {}
+
+func (*MessagePart_Document) isMessagePart_Payload() {}
+
+func (*MessagePart_Citations) isMessagePart_Payload() {}
+
+func (*MessagePart_ToolUse) isMessagePart_Payload() {}
+
+func (*MessagePart_ToolResult) isMessagePart_Payload() {}
+
+func (*MessagePart_CacheCheckpoint) isMessagePart_Payload() {}
+
+// Text content block.
+type TextPartDetail struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Text content.
+	Text          *string `protobuf:"bytes,1,opt,name=text,proto3,oneof" json:"text,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TextPartDetail) Reset() {
+	*x = TextPartDetail{}
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TextPartDetail) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TextPartDetail) ProtoMessage() {}
+
+func (x *TextPartDetail) ProtoReflect() protoreflect.Message {
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TextPartDetail.ProtoReflect.Descriptor instead.
+func (*TextPartDetail) Descriptor() ([]byte, []int) {
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *TextPartDetail) GetText() string {
 	if x != nil && x.Text != nil {
 		return *x.Text
 	}
 	return ""
 }
 
-func (x *MessagePart) GetSignature() string {
+// Provider reasoning block.
+type ThinkingPartDetail struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Plaintext reasoning content.
+	Text *string `protobuf:"bytes,1,opt,name=text,proto3,oneof" json:"text,omitempty"`
+	// Provider signature for finalized plaintext thinking.
+	Signature *string `protobuf:"bytes,2,opt,name=signature,proto3,oneof" json:"signature,omitempty"`
+	// Redacted reasoning bytes.
+	Redacted []byte `protobuf:"bytes,3,opt,name=redacted,proto3,oneof" json:"redacted,omitempty"`
+	// Reasoning block sequence index.
+	Index *int64 `protobuf:"zigzag64,4,opt,name=index,proto3,oneof" json:"index,omitempty"`
+	// Whether the thinking block is finalized.
+	Final         *bool `protobuf:"varint,5,opt,name=final,proto3,oneof" json:"final,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ThinkingPartDetail) Reset() {
+	*x = ThinkingPartDetail{}
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ThinkingPartDetail) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ThinkingPartDetail) ProtoMessage() {}
+
+func (x *ThinkingPartDetail) ProtoReflect() protoreflect.Message {
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ThinkingPartDetail.ProtoReflect.Descriptor instead.
+func (*ThinkingPartDetail) Descriptor() ([]byte, []int) {
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *ThinkingPartDetail) GetText() string {
+	if x != nil && x.Text != nil {
+		return *x.Text
+	}
+	return ""
+}
+
+func (x *ThinkingPartDetail) GetSignature() string {
 	if x != nil && x.Signature != nil {
 		return *x.Signature
 	}
 	return ""
 }
 
-func (x *MessagePart) GetRedacted() []byte {
+func (x *ThinkingPartDetail) GetRedacted() []byte {
 	if x != nil {
 		return x.Redacted
 	}
 	return nil
 }
 
-func (x *MessagePart) GetIndex() int32 {
+func (x *ThinkingPartDetail) GetIndex() int64 {
 	if x != nil && x.Index != nil {
 		return *x.Index
 	}
 	return 0
 }
 
-func (x *MessagePart) GetFinal() bool {
+func (x *ThinkingPartDetail) GetFinal() bool {
 	if x != nil && x.Final != nil {
 		return *x.Final
 	}
 	return false
 }
 
-func (x *MessagePart) GetImageFormat() string {
-	if x != nil && x.ImageFormat != nil {
-		return *x.ImageFormat
+// Raw image content block.
+type ImagePartDetail struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Image encoding format.
+	Format *string `protobuf:"bytes,1,opt,name=format,proto3,oneof" json:"format,omitempty"`
+	// Raw image bytes.
+	Bytes_        []byte `protobuf:"bytes,2,opt,name=bytes_,json=bytes,proto3,oneof" json:"bytes_,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ImagePartDetail) Reset() {
+	*x = ImagePartDetail{}
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ImagePartDetail) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ImagePartDetail) ProtoMessage() {}
+
+func (x *ImagePartDetail) ProtoReflect() protoreflect.Message {
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ImagePartDetail.ProtoReflect.Descriptor instead.
+func (*ImagePartDetail) Descriptor() ([]byte, []int) {
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *ImagePartDetail) GetFormat() string {
+	if x != nil && x.Format != nil {
+		return *x.Format
 	}
 	return ""
 }
 
-func (x *MessagePart) GetBytes_() []byte {
+func (x *ImagePartDetail) GetBytes_() []byte {
 	if x != nil {
 		return x.Bytes_
 	}
 	return nil
 }
 
-func (x *MessagePart) GetSourceKind() string {
+// Retained generated image descriptor.
+type ImageSourcePartDetail struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Opaque source descriptor kind.
+	SourceKind *string `protobuf:"bytes,1,opt,name=source_kind,json=sourceKind,proto3,oneof" json:"source_kind,omitempty"`
+	// Raw JSON image source descriptor.
+	Data          []byte `protobuf:"bytes,2,opt,name=data,proto3,oneof" json:"data,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ImageSourcePartDetail) Reset() {
+	*x = ImageSourcePartDetail{}
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ImageSourcePartDetail) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ImageSourcePartDetail) ProtoMessage() {}
+
+func (x *ImageSourcePartDetail) ProtoReflect() protoreflect.Message {
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ImageSourcePartDetail.ProtoReflect.Descriptor instead.
+func (*ImageSourcePartDetail) Descriptor() ([]byte, []int) {
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *ImageSourcePartDetail) GetSourceKind() string {
 	if x != nil && x.SourceKind != nil {
 		return *x.SourceKind
 	}
 	return ""
 }
 
-func (x *MessagePart) GetData() []byte {
+func (x *ImageSourcePartDetail) GetData() []byte {
 	if x != nil {
 		return x.Data
 	}
 	return nil
 }
 
-func (x *MessagePart) GetName() string {
+// Document content block.
+type DocumentPartDetail struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Document identifier.
+	Name *string `protobuf:"bytes,1,opt,name=name,proto3,oneof" json:"name,omitempty"`
+	// Document format or extension.
+	Format *string `protobuf:"bytes,2,opt,name=format,proto3,oneof" json:"format,omitempty"`
+	// Raw binary document bytes.
+	Bytes_ []byte `protobuf:"bytes,3,opt,name=bytes_,json=bytes,proto3,oneof" json:"bytes_,omitempty"`
+	// Plaintext document content.
+	Text *string `protobuf:"bytes,4,opt,name=text,proto3,oneof" json:"text,omitempty"`
+	// Ordered document text chunks.
+	Chunks []string `protobuf:"bytes,5,rep,name=chunks,proto3" json:"chunks,omitempty"`
+	// External document URI.
+	Uri *string `protobuf:"bytes,6,opt,name=uri,proto3,oneof" json:"uri,omitempty"`
+	// Document citation context.
+	Context *string `protobuf:"bytes,7,opt,name=context,proto3,oneof" json:"context,omitempty"`
+	// Whether document citations are requested.
+	Cite          *bool `protobuf:"varint,8,opt,name=cite,proto3,oneof" json:"cite,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DocumentPartDetail) Reset() {
+	*x = DocumentPartDetail{}
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DocumentPartDetail) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DocumentPartDetail) ProtoMessage() {}
+
+func (x *DocumentPartDetail) ProtoReflect() protoreflect.Message {
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DocumentPartDetail.ProtoReflect.Descriptor instead.
+func (*DocumentPartDetail) Descriptor() ([]byte, []int) {
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *DocumentPartDetail) GetName() string {
 	if x != nil && x.Name != nil {
 		return *x.Name
 	}
 	return ""
 }
 
-func (x *MessagePart) GetDocumentFormat() string {
-	if x != nil && x.DocumentFormat != nil {
-		return *x.DocumentFormat
+func (x *DocumentPartDetail) GetFormat() string {
+	if x != nil && x.Format != nil {
+		return *x.Format
 	}
 	return ""
 }
 
-func (x *MessagePart) GetChunks() []string {
+func (x *DocumentPartDetail) GetBytes_() []byte {
+	if x != nil {
+		return x.Bytes_
+	}
+	return nil
+}
+
+func (x *DocumentPartDetail) GetText() string {
+	if x != nil && x.Text != nil {
+		return *x.Text
+	}
+	return ""
+}
+
+func (x *DocumentPartDetail) GetChunks() []string {
 	if x != nil {
 		return x.Chunks
 	}
 	return nil
 }
 
-func (x *MessagePart) GetUri() string {
+func (x *DocumentPartDetail) GetUri() string {
 	if x != nil && x.Uri != nil {
 		return *x.Uri
 	}
 	return ""
 }
 
-func (x *MessagePart) GetContext() string {
+func (x *DocumentPartDetail) GetContext() string {
 	if x != nil && x.Context != nil {
 		return *x.Context
 	}
 	return ""
 }
 
-func (x *MessagePart) GetCite() bool {
+func (x *DocumentPartDetail) GetCite() bool {
 	if x != nil && x.Cite != nil {
 		return *x.Cite
 	}
 	return false
 }
 
-func (x *MessagePart) GetCitations() []*Citation {
+// Assistant text with source citations.
+type CitationsPartDetail struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Cited assistant text.
+	Text *string `protobuf:"bytes,1,opt,name=text,proto3,oneof" json:"text,omitempty"`
+	// Attached citation metadata.
+	Citations     []*Citation `protobuf:"bytes,2,rep,name=citations,proto3" json:"citations,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CitationsPartDetail) Reset() {
+	*x = CitationsPartDetail{}
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CitationsPartDetail) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CitationsPartDetail) ProtoMessage() {}
+
+func (x *CitationsPartDetail) ProtoReflect() protoreflect.Message {
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CitationsPartDetail.ProtoReflect.Descriptor instead.
+func (*CitationsPartDetail) Descriptor() ([]byte, []int) {
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *CitationsPartDetail) GetText() string {
+	if x != nil && x.Text != nil {
+		return *x.Text
+	}
+	return ""
+}
+
+func (x *CitationsPartDetail) GetCitations() []*Citation {
 	if x != nil {
 		return x.Citations
 	}
 	return nil
-}
-
-func (x *MessagePart) GetId() string {
-	if x != nil && x.Id != nil {
-		return *x.Id
-	}
-	return ""
-}
-
-func (x *MessagePart) GetInput() []byte {
-	if x != nil {
-		return x.Input
-	}
-	return nil
-}
-
-func (x *MessagePart) GetThoughtSignature() string {
-	if x != nil && x.ThoughtSignature != nil {
-		return *x.ThoughtSignature
-	}
-	return ""
-}
-
-func (x *MessagePart) GetToolUseId() string {
-	if x != nil && x.ToolUseId != nil {
-		return *x.ToolUseId
-	}
-	return ""
-}
-
-func (x *MessagePart) GetContent() []byte {
-	if x != nil {
-		return x.Content
-	}
-	return nil
-}
-
-func (x *MessagePart) GetContentPresent() bool {
-	if x != nil && x.ContentPresent != nil {
-		return *x.ContentPresent
-	}
-	return false
-}
-
-func (x *MessagePart) GetBlocksJson() []byte {
-	if x != nil {
-		return x.BlocksJson
-	}
-	return nil
-}
-
-func (x *MessagePart) GetIsError() bool {
-	if x != nil && x.IsError != nil {
-		return *x.IsError
-	}
-	return false
 }
 
 // Provider citation metadata.
@@ -571,7 +915,7 @@ type Citation struct {
 
 func (x *Citation) Reset() {
 	*x = Citation{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[4]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -583,7 +927,7 @@ func (x *Citation) String() string {
 func (*Citation) ProtoMessage() {}
 
 func (x *Citation) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[4]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -596,7 +940,7 @@ func (x *Citation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Citation.ProtoReflect.Descriptor instead.
 func (*Citation) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{4}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *Citation) GetTitle() string {
@@ -630,19 +974,19 @@ func (x *Citation) GetSourceContent() []string {
 // Location of a citation within its source.
 type CitationLocation struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Character span location.
-	DocumentChar *DocumentCharLocation `protobuf:"bytes,1,opt,name=document_char,json=documentChar,proto3" json:"document_char,omitempty"`
-	// Page span location.
-	DocumentPage *DocumentPageLocation `protobuf:"bytes,2,opt,name=document_page,json=documentPage,proto3" json:"document_page,omitempty"`
-	// Chunk span location.
-	DocumentChunk *DocumentChunkLocation `protobuf:"bytes,3,opt,name=document_chunk,json=documentChunk,proto3" json:"document_chunk,omitempty"`
+	// Types that are valid to be assigned to Span:
+	//
+	//	*CitationLocation_DocumentChar
+	//	*CitationLocation_DocumentPage
+	//	*CitationLocation_DocumentChunk
+	Span          isCitationLocation_Span `protobuf_oneof:"span"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CitationLocation) Reset() {
 	*x = CitationLocation{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[5]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -654,7 +998,7 @@ func (x *CitationLocation) String() string {
 func (*CitationLocation) ProtoMessage() {}
 
 func (x *CitationLocation) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[5]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -667,46 +1011,84 @@ func (x *CitationLocation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CitationLocation.ProtoReflect.Descriptor instead.
 func (*CitationLocation) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{5}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *CitationLocation) GetSpan() isCitationLocation_Span {
+	if x != nil {
+		return x.Span
+	}
+	return nil
 }
 
 func (x *CitationLocation) GetDocumentChar() *DocumentCharLocation {
 	if x != nil {
-		return x.DocumentChar
+		if x, ok := x.Span.(*CitationLocation_DocumentChar); ok {
+			return x.DocumentChar
+		}
 	}
 	return nil
 }
 
 func (x *CitationLocation) GetDocumentPage() *DocumentPageLocation {
 	if x != nil {
-		return x.DocumentPage
+		if x, ok := x.Span.(*CitationLocation_DocumentPage); ok {
+			return x.DocumentPage
+		}
 	}
 	return nil
 }
 
 func (x *CitationLocation) GetDocumentChunk() *DocumentChunkLocation {
 	if x != nil {
-		return x.DocumentChunk
+		if x, ok := x.Span.(*CitationLocation_DocumentChunk); ok {
+			return x.DocumentChunk
+		}
 	}
 	return nil
 }
+
+type isCitationLocation_Span interface {
+	isCitationLocation_Span()
+}
+
+type CitationLocation_DocumentChar struct {
+	// Character span location.
+	DocumentChar *DocumentCharLocation `protobuf:"bytes,1,opt,name=document_char,json=documentChar,proto3,oneof"`
+}
+
+type CitationLocation_DocumentPage struct {
+	// Page span location.
+	DocumentPage *DocumentPageLocation `protobuf:"bytes,2,opt,name=document_page,json=documentPage,proto3,oneof"`
+}
+
+type CitationLocation_DocumentChunk struct {
+	// Chunk span location.
+	DocumentChunk *DocumentChunkLocation `protobuf:"bytes,3,opt,name=document_chunk,json=documentChunk,proto3,oneof"`
+}
+
+func (*CitationLocation_DocumentChar) isCitationLocation_Span() {}
+
+func (*CitationLocation_DocumentPage) isCitationLocation_Span() {}
+
+func (*CitationLocation_DocumentChunk) isCitationLocation_Span() {}
 
 // Character range inside a cited document.
 type DocumentCharLocation struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Zero-based document index.
-	DocumentIndex *int32 `protobuf:"zigzag32,1,opt,name=document_index,json=documentIndex,proto3,oneof" json:"document_index,omitempty"`
+	DocumentIndex *int64 `protobuf:"zigzag64,1,opt,name=document_index,json=documentIndex,proto3,oneof" json:"document_index,omitempty"`
 	// Inclusive start character index.
-	Start *int32 `protobuf:"zigzag32,2,opt,name=start,proto3,oneof" json:"start,omitempty"`
+	Start *int64 `protobuf:"zigzag64,2,opt,name=start,proto3,oneof" json:"start,omitempty"`
 	// Exclusive end character index.
-	End           *int32 `protobuf:"zigzag32,3,opt,name=end,proto3,oneof" json:"end,omitempty"`
+	End           *int64 `protobuf:"zigzag64,3,opt,name=end,proto3,oneof" json:"end,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *DocumentCharLocation) Reset() {
 	*x = DocumentCharLocation{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[6]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -718,7 +1100,7 @@ func (x *DocumentCharLocation) String() string {
 func (*DocumentCharLocation) ProtoMessage() {}
 
 func (x *DocumentCharLocation) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[6]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -731,24 +1113,24 @@ func (x *DocumentCharLocation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DocumentCharLocation.ProtoReflect.Descriptor instead.
 func (*DocumentCharLocation) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{6}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{12}
 }
 
-func (x *DocumentCharLocation) GetDocumentIndex() int32 {
+func (x *DocumentCharLocation) GetDocumentIndex() int64 {
 	if x != nil && x.DocumentIndex != nil {
 		return *x.DocumentIndex
 	}
 	return 0
 }
 
-func (x *DocumentCharLocation) GetStart() int32 {
+func (x *DocumentCharLocation) GetStart() int64 {
 	if x != nil && x.Start != nil {
 		return *x.Start
 	}
 	return 0
 }
 
-func (x *DocumentCharLocation) GetEnd() int32 {
+func (x *DocumentCharLocation) GetEnd() int64 {
 	if x != nil && x.End != nil {
 		return *x.End
 	}
@@ -759,18 +1141,18 @@ func (x *DocumentCharLocation) GetEnd() int32 {
 type DocumentPageLocation struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Zero-based document index.
-	DocumentIndex *int32 `protobuf:"zigzag32,1,opt,name=document_index,json=documentIndex,proto3,oneof" json:"document_index,omitempty"`
+	DocumentIndex *int64 `protobuf:"zigzag64,1,opt,name=document_index,json=documentIndex,proto3,oneof" json:"document_index,omitempty"`
 	// Inclusive start page number.
-	Start *int32 `protobuf:"zigzag32,2,opt,name=start,proto3,oneof" json:"start,omitempty"`
+	Start *int64 `protobuf:"zigzag64,2,opt,name=start,proto3,oneof" json:"start,omitempty"`
 	// Inclusive end page number.
-	End           *int32 `protobuf:"zigzag32,3,opt,name=end,proto3,oneof" json:"end,omitempty"`
+	End           *int64 `protobuf:"zigzag64,3,opt,name=end,proto3,oneof" json:"end,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *DocumentPageLocation) Reset() {
 	*x = DocumentPageLocation{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[7]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -782,7 +1164,7 @@ func (x *DocumentPageLocation) String() string {
 func (*DocumentPageLocation) ProtoMessage() {}
 
 func (x *DocumentPageLocation) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[7]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -795,24 +1177,24 @@ func (x *DocumentPageLocation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DocumentPageLocation.ProtoReflect.Descriptor instead.
 func (*DocumentPageLocation) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{7}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{13}
 }
 
-func (x *DocumentPageLocation) GetDocumentIndex() int32 {
+func (x *DocumentPageLocation) GetDocumentIndex() int64 {
 	if x != nil && x.DocumentIndex != nil {
 		return *x.DocumentIndex
 	}
 	return 0
 }
 
-func (x *DocumentPageLocation) GetStart() int32 {
+func (x *DocumentPageLocation) GetStart() int64 {
 	if x != nil && x.Start != nil {
 		return *x.Start
 	}
 	return 0
 }
 
-func (x *DocumentPageLocation) GetEnd() int32 {
+func (x *DocumentPageLocation) GetEnd() int64 {
 	if x != nil && x.End != nil {
 		return *x.End
 	}
@@ -823,18 +1205,18 @@ func (x *DocumentPageLocation) GetEnd() int32 {
 type DocumentChunkLocation struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Zero-based document index.
-	DocumentIndex *int32 `protobuf:"zigzag32,1,opt,name=document_index,json=documentIndex,proto3,oneof" json:"document_index,omitempty"`
+	DocumentIndex *int64 `protobuf:"zigzag64,1,opt,name=document_index,json=documentIndex,proto3,oneof" json:"document_index,omitempty"`
 	// Inclusive start chunk index.
-	Start *int32 `protobuf:"zigzag32,2,opt,name=start,proto3,oneof" json:"start,omitempty"`
+	Start *int64 `protobuf:"zigzag64,2,opt,name=start,proto3,oneof" json:"start,omitempty"`
 	// Exclusive end chunk index.
-	End           *int32 `protobuf:"zigzag32,3,opt,name=end,proto3,oneof" json:"end,omitempty"`
+	End           *int64 `protobuf:"zigzag64,3,opt,name=end,proto3,oneof" json:"end,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *DocumentChunkLocation) Reset() {
 	*x = DocumentChunkLocation{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[8]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -846,7 +1228,7 @@ func (x *DocumentChunkLocation) String() string {
 func (*DocumentChunkLocation) ProtoMessage() {}
 
 func (x *DocumentChunkLocation) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[8]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -859,28 +1241,220 @@ func (x *DocumentChunkLocation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DocumentChunkLocation.ProtoReflect.Descriptor instead.
 func (*DocumentChunkLocation) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{8}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{14}
 }
 
-func (x *DocumentChunkLocation) GetDocumentIndex() int32 {
+func (x *DocumentChunkLocation) GetDocumentIndex() int64 {
 	if x != nil && x.DocumentIndex != nil {
 		return *x.DocumentIndex
 	}
 	return 0
 }
 
-func (x *DocumentChunkLocation) GetStart() int32 {
+func (x *DocumentChunkLocation) GetStart() int64 {
 	if x != nil && x.Start != nil {
 		return *x.Start
 	}
 	return 0
 }
 
-func (x *DocumentChunkLocation) GetEnd() int32 {
+func (x *DocumentChunkLocation) GetEnd() int64 {
 	if x != nil && x.End != nil {
 		return *x.End
 	}
 	return 0
+}
+
+// Assistant tool invocation block.
+type ToolUsePartDetail struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Tool call identifier.
+	Id *string `protobuf:"bytes,1,opt,name=id,proto3,oneof" json:"id,omitempty"`
+	// Canonical tool identifier.
+	Name *string `protobuf:"bytes,2,opt,name=name,proto3,oneof" json:"name,omitempty"`
+	// Raw JSON tool arguments.
+	Input []byte `protobuf:"bytes,3,opt,name=input,proto3,oneof" json:"input,omitempty"`
+	// Provider reasoning signature.
+	ThoughtSignature *string `protobuf:"bytes,4,opt,name=thought_signature,json=thoughtSignature,proto3,oneof" json:"thought_signature,omitempty"`
+	unknownFields    protoimpl.UnknownFields
+	sizeCache        protoimpl.SizeCache
+}
+
+func (x *ToolUsePartDetail) Reset() {
+	*x = ToolUsePartDetail{}
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ToolUsePartDetail) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ToolUsePartDetail) ProtoMessage() {}
+
+func (x *ToolUsePartDetail) ProtoReflect() protoreflect.Message {
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ToolUsePartDetail.ProtoReflect.Descriptor instead.
+func (*ToolUsePartDetail) Descriptor() ([]byte, []int) {
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *ToolUsePartDetail) GetId() string {
+	if x != nil && x.Id != nil {
+		return *x.Id
+	}
+	return ""
+}
+
+func (x *ToolUsePartDetail) GetName() string {
+	if x != nil && x.Name != nil {
+		return *x.Name
+	}
+	return ""
+}
+
+func (x *ToolUsePartDetail) GetInput() []byte {
+	if x != nil {
+		return x.Input
+	}
+	return nil
+}
+
+func (x *ToolUsePartDetail) GetThoughtSignature() string {
+	if x != nil && x.ThoughtSignature != nil {
+		return *x.ThoughtSignature
+	}
+	return ""
+}
+
+// Correlated tool result block.
+type ToolResultPartDetail struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Correlated tool use identifier.
+	ToolUseId *string `protobuf:"bytes,1,opt,name=tool_use_id,json=toolUseId,proto3,oneof" json:"tool_use_id,omitempty"`
+	// JSON-encoded tool result content value.
+	Content []byte `protobuf:"bytes,2,opt,name=content,proto3,oneof" json:"content,omitempty"`
+	// Whether tool result content was non-nil.
+	ContentPresent *bool `protobuf:"varint,3,opt,name=content_present,json=contentPresent,proto3,oneof" json:"content_present,omitempty"`
+	// MCP-encoded tool content blocks.
+	BlocksJson []byte `protobuf:"bytes,4,opt,name=blocks_json,json=blocksJson,proto3,oneof" json:"blocks_json,omitempty"`
+	// Whether the tool result represents an error.
+	IsError       *bool `protobuf:"varint,5,opt,name=is_error,json=isError,proto3,oneof" json:"is_error,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ToolResultPartDetail) Reset() {
+	*x = ToolResultPartDetail{}
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ToolResultPartDetail) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ToolResultPartDetail) ProtoMessage() {}
+
+func (x *ToolResultPartDetail) ProtoReflect() protoreflect.Message {
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ToolResultPartDetail.ProtoReflect.Descriptor instead.
+func (*ToolResultPartDetail) Descriptor() ([]byte, []int) {
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *ToolResultPartDetail) GetToolUseId() string {
+	if x != nil && x.ToolUseId != nil {
+		return *x.ToolUseId
+	}
+	return ""
+}
+
+func (x *ToolResultPartDetail) GetContent() []byte {
+	if x != nil {
+		return x.Content
+	}
+	return nil
+}
+
+func (x *ToolResultPartDetail) GetContentPresent() bool {
+	if x != nil && x.ContentPresent != nil {
+		return *x.ContentPresent
+	}
+	return false
+}
+
+func (x *ToolResultPartDetail) GetBlocksJson() []byte {
+	if x != nil {
+		return x.BlocksJson
+	}
+	return nil
+}
+
+func (x *ToolResultPartDetail) GetIsError() bool {
+	if x != nil && x.IsError != nil {
+		return *x.IsError
+	}
+	return false
+}
+
+// Prompt cache checkpoint marker.
+type CacheCheckpointDetail struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CacheCheckpointDetail) Reset() {
+	*x = CacheCheckpointDetail{}
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[17]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CacheCheckpointDetail) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CacheCheckpointDetail) ProtoMessage() {}
+
+func (x *CacheCheckpointDetail) ProtoReflect() protoreflect.Message {
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[17]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CacheCheckpointDetail.ProtoReflect.Descriptor instead.
+func (*CacheCheckpointDetail) Descriptor() ([]byte, []int) {
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{17}
 }
 
 // Tool definition advertised to the model.
@@ -904,7 +1478,7 @@ type ToolDefinition struct {
 
 func (x *ToolDefinition) Reset() {
 	*x = ToolDefinition{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[9]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -916,7 +1490,7 @@ func (x *ToolDefinition) String() string {
 func (*ToolDefinition) ProtoMessage() {}
 
 func (x *ToolDefinition) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[9]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -929,7 +1503,7 @@ func (x *ToolDefinition) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ToolDefinition.ProtoReflect.Descriptor instead.
 func (*ToolDefinition) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{9}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *ToolDefinition) GetName() string {
@@ -978,16 +1552,16 @@ func (x *ToolDefinition) GetNoArguments() bool {
 type SearchDocument struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Total term count.
-	Length *int32 `protobuf:"zigzag32,1,opt,name=length,proto3,oneof" json:"length,omitempty"`
+	Length *int64 `protobuf:"zigzag64,1,opt,name=length,proto3,oneof" json:"length,omitempty"`
 	// Term frequencies.
-	Terms         map[string]int32 `protobuf:"bytes,2,rep,name=terms,proto3" json:"terms,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"zigzag32,2,opt,name=value"`
+	Terms         map[string]int64 `protobuf:"bytes,2,rep,name=terms,proto3" json:"terms,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"zigzag64,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SearchDocument) Reset() {
 	*x = SearchDocument{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[10]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -999,7 +1573,7 @@ func (x *SearchDocument) String() string {
 func (*SearchDocument) ProtoMessage() {}
 
 func (x *SearchDocument) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[10]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1012,17 +1586,17 @@ func (x *SearchDocument) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SearchDocument.ProtoReflect.Descriptor instead.
 func (*SearchDocument) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{10}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{19}
 }
 
-func (x *SearchDocument) GetLength() int32 {
+func (x *SearchDocument) GetLength() int64 {
 	if x != nil && x.Length != nil {
 		return *x.Length
 	}
 	return 0
 }
 
-func (x *SearchDocument) GetTerms() map[string]int32 {
+func (x *SearchDocument) GetTerms() map[string]int64 {
 	if x != nil {
 		return x.Terms
 	}
@@ -1044,7 +1618,7 @@ type ToolInputContract struct {
 
 func (x *ToolInputContract) Reset() {
 	*x = ToolInputContract{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[11]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1056,7 +1630,7 @@ func (x *ToolInputContract) String() string {
 func (*ToolInputContract) ProtoMessage() {}
 
 func (x *ToolInputContract) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[11]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1069,7 +1643,7 @@ func (x *ToolInputContract) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ToolInputContract.ProtoReflect.Descriptor instead.
 func (*ToolInputContract) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{11}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *ToolInputContract) GetSchema() []byte {
@@ -1106,7 +1680,7 @@ type ToolChoice struct {
 
 func (x *ToolChoice) Reset() {
 	*x = ToolChoice{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[12]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1118,7 +1692,7 @@ func (x *ToolChoice) String() string {
 func (*ToolChoice) ProtoMessage() {}
 
 func (x *ToolChoice) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[12]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1131,7 +1705,7 @@ func (x *ToolChoice) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ToolChoice.ProtoReflect.Descriptor instead.
 func (*ToolChoice) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{12}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *ToolChoice) GetMode() string {
@@ -1156,14 +1730,14 @@ type ThinkingOptions struct {
 	// Whether reasoning is interleaved with assistant content.
 	Interleaved *bool `protobuf:"varint,2,opt,name=interleaved,proto3,oneof" json:"interleaved,omitempty"`
 	// Reasoning token budget.
-	BudgetTokens  *int32 `protobuf:"zigzag32,3,opt,name=budget_tokens,json=budgetTokens,proto3,oneof" json:"budget_tokens,omitempty"`
+	BudgetTokens  *int64 `protobuf:"zigzag64,3,opt,name=budget_tokens,json=budgetTokens,proto3,oneof" json:"budget_tokens,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ThinkingOptions) Reset() {
 	*x = ThinkingOptions{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[13]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1175,7 +1749,7 @@ func (x *ThinkingOptions) String() string {
 func (*ThinkingOptions) ProtoMessage() {}
 
 func (x *ThinkingOptions) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[13]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1188,7 +1762,7 @@ func (x *ThinkingOptions) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ThinkingOptions.ProtoReflect.Descriptor instead.
 func (*ThinkingOptions) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{13}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *ThinkingOptions) GetEnable() bool {
@@ -1205,7 +1779,7 @@ func (x *ThinkingOptions) GetInterleaved() bool {
 	return false
 }
 
-func (x *ThinkingOptions) GetBudgetTokens() int32 {
+func (x *ThinkingOptions) GetBudgetTokens() int64 {
 	if x != nil && x.BudgetTokens != nil {
 		return *x.BudgetTokens
 	}
@@ -1231,7 +1805,7 @@ type StructuredOutput struct {
 
 func (x *StructuredOutput) Reset() {
 	*x = StructuredOutput{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[14]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1243,7 +1817,7 @@ func (x *StructuredOutput) String() string {
 func (*StructuredOutput) ProtoMessage() {}
 
 func (x *StructuredOutput) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[14]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1256,7 +1830,7 @@ func (x *StructuredOutput) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StructuredOutput.ProtoReflect.Descriptor instead.
 func (*StructuredOutput) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{14}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *StructuredOutput) GetSchema() []byte {
@@ -1307,7 +1881,7 @@ type CacheOptions struct {
 
 func (x *CacheOptions) Reset() {
 	*x = CacheOptions{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[15]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1319,7 +1893,7 @@ func (x *CacheOptions) String() string {
 func (*CacheOptions) ProtoMessage() {}
 
 func (x *CacheOptions) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[15]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1332,7 +1906,7 @@ func (x *CacheOptions) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CacheOptions.ProtoReflect.Descriptor instead.
 func (*CacheOptions) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{15}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *CacheOptions) GetAfterSystem() bool {
@@ -1351,17 +1925,18 @@ func (x *CacheOptions) GetAfterTools() bool {
 
 type CompleteResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Provider response when Complete succeeded.
-	Response *ModelResponse `protobuf:"bytes,1,opt,name=response,proto3" json:"response,omitempty"`
-	// Structured error when Complete failed.
-	Error         *GatewayError `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
+	// Types that are valid to be assigned to Outcome:
+	//
+	//	*CompleteResponse_Response
+	//	*CompleteResponse_Error
+	Outcome       isCompleteResponse_Outcome `protobuf_oneof:"outcome"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CompleteResponse) Reset() {
 	*x = CompleteResponse{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[16]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1373,7 +1948,7 @@ func (x *CompleteResponse) String() string {
 func (*CompleteResponse) ProtoMessage() {}
 
 func (x *CompleteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[16]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1386,22 +1961,51 @@ func (x *CompleteResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CompleteResponse.ProtoReflect.Descriptor instead.
 func (*CompleteResponse) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{16}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{25}
+}
+
+func (x *CompleteResponse) GetOutcome() isCompleteResponse_Outcome {
+	if x != nil {
+		return x.Outcome
+	}
+	return nil
 }
 
 func (x *CompleteResponse) GetResponse() *ModelResponse {
 	if x != nil {
-		return x.Response
+		if x, ok := x.Outcome.(*CompleteResponse_Response); ok {
+			return x.Response
+		}
 	}
 	return nil
 }
 
 func (x *CompleteResponse) GetError() *GatewayError {
 	if x != nil {
-		return x.Error
+		if x, ok := x.Outcome.(*CompleteResponse_Error); ok {
+			return x.Error
+		}
 	}
 	return nil
 }
+
+type isCompleteResponse_Outcome interface {
+	isCompleteResponse_Outcome()
+}
+
+type CompleteResponse_Response struct {
+	// Provider response when Complete succeeded.
+	Response *ModelResponse `protobuf:"bytes,1,opt,name=response,proto3,oneof"`
+}
+
+type CompleteResponse_Error struct {
+	// Structured error when Complete failed.
+	Error *GatewayError `protobuf:"bytes,2,opt,name=error,proto3,oneof"`
+}
+
+func (*CompleteResponse_Response) isCompleteResponse_Outcome() {}
+
+func (*CompleteResponse_Error) isCompleteResponse_Outcome() {}
 
 // Provider completion response.
 type ModelResponse struct {
@@ -1410,19 +2014,21 @@ type ModelResponse struct {
 	Content []*ModelMessage `protobuf:"bytes,1,rep,name=content,proto3" json:"content,omitempty"`
 	// Token consumption metadata.
 	Usage *TokenUsage `protobuf:"bytes,2,opt,name=usage,proto3" json:"usage,omitempty"`
-	// Whether the provider explicitly reported token usage.
+	// Whether the provider explicitly reported complete token usage.
 	UsageReported *bool `protobuf:"varint,3,opt,name=usage_reported,json=usageReported,proto3,oneof" json:"usage_reported,omitempty"`
+	// Whether the provider reported only partial token usage.
+	UsageIncomplete *bool `protobuf:"varint,4,opt,name=usage_incomplete,json=usageIncomplete,proto3,oneof" json:"usage_incomplete,omitempty"`
 	// Provider stop reason.
-	StopReason *string `protobuf:"bytes,4,opt,name=stop_reason,json=stopReason,proto3,oneof" json:"stop_reason,omitempty"`
+	StopReason *string `protobuf:"bytes,5,opt,name=stop_reason,json=stopReason,proto3,oneof" json:"stop_reason,omitempty"`
 	// Whether generation stopped at its token or context limit.
-	OutputLimited *bool `protobuf:"varint,5,opt,name=output_limited,json=outputLimited,proto3,oneof" json:"output_limited,omitempty"`
+	OutputLimited *bool `protobuf:"varint,6,opt,name=output_limited,json=outputLimited,proto3,oneof" json:"output_limited,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ModelResponse) Reset() {
 	*x = ModelResponse{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[17]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1434,7 +2040,7 @@ func (x *ModelResponse) String() string {
 func (*ModelResponse) ProtoMessage() {}
 
 func (x *ModelResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[17]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1447,7 +2053,7 @@ func (x *ModelResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ModelResponse.ProtoReflect.Descriptor instead.
 func (*ModelResponse) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{17}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *ModelResponse) GetContent() []*ModelMessage {
@@ -1467,6 +2073,13 @@ func (x *ModelResponse) GetUsage() *TokenUsage {
 func (x *ModelResponse) GetUsageReported() bool {
 	if x != nil && x.UsageReported != nil {
 		return *x.UsageReported
+	}
+	return false
+}
+
+func (x *ModelResponse) GetUsageIncomplete() bool {
+	if x != nil && x.UsageIncomplete != nil {
+		return *x.UsageIncomplete
 	}
 	return false
 }
@@ -1493,22 +2106,22 @@ type TokenUsage struct {
 	// Logical model family.
 	ModelClass *string `protobuf:"bytes,2,opt,name=model_class,json=modelClass,proto3,oneof" json:"model_class,omitempty"`
 	// Prompt/input tokens consumed.
-	InputTokens *int32 `protobuf:"zigzag32,3,opt,name=input_tokens,json=inputTokens,proto3,oneof" json:"input_tokens,omitempty"`
+	InputTokens *int64 `protobuf:"zigzag64,3,opt,name=input_tokens,json=inputTokens,proto3,oneof" json:"input_tokens,omitempty"`
 	// Completion/output tokens generated.
-	OutputTokens *int32 `protobuf:"zigzag32,4,opt,name=output_tokens,json=outputTokens,proto3,oneof" json:"output_tokens,omitempty"`
+	OutputTokens *int64 `protobuf:"zigzag64,4,opt,name=output_tokens,json=outputTokens,proto3,oneof" json:"output_tokens,omitempty"`
 	// Total tokens consumed.
-	TotalTokens *int32 `protobuf:"zigzag32,5,opt,name=total_tokens,json=totalTokens,proto3,oneof" json:"total_tokens,omitempty"`
+	TotalTokens *int64 `protobuf:"zigzag64,5,opt,name=total_tokens,json=totalTokens,proto3,oneof" json:"total_tokens,omitempty"`
 	// Tokens read from prompt cache.
-	CacheReadTokens *int32 `protobuf:"zigzag32,6,opt,name=cache_read_tokens,json=cacheReadTokens,proto3,oneof" json:"cache_read_tokens,omitempty"`
+	CacheReadTokens *int64 `protobuf:"zigzag64,6,opt,name=cache_read_tokens,json=cacheReadTokens,proto3,oneof" json:"cache_read_tokens,omitempty"`
 	// Tokens written to prompt cache.
-	CacheWriteTokens *int32 `protobuf:"zigzag32,7,opt,name=cache_write_tokens,json=cacheWriteTokens,proto3,oneof" json:"cache_write_tokens,omitempty"`
+	CacheWriteTokens *int64 `protobuf:"zigzag64,7,opt,name=cache_write_tokens,json=cacheWriteTokens,proto3,oneof" json:"cache_write_tokens,omitempty"`
 	unknownFields    protoimpl.UnknownFields
 	sizeCache        protoimpl.SizeCache
 }
 
 func (x *TokenUsage) Reset() {
 	*x = TokenUsage{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[18]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1520,7 +2133,7 @@ func (x *TokenUsage) String() string {
 func (*TokenUsage) ProtoMessage() {}
 
 func (x *TokenUsage) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[18]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1533,7 +2146,7 @@ func (x *TokenUsage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TokenUsage.ProtoReflect.Descriptor instead.
 func (*TokenUsage) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{18}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *TokenUsage) GetModel() string {
@@ -1550,35 +2163,35 @@ func (x *TokenUsage) GetModelClass() string {
 	return ""
 }
 
-func (x *TokenUsage) GetInputTokens() int32 {
+func (x *TokenUsage) GetInputTokens() int64 {
 	if x != nil && x.InputTokens != nil {
 		return *x.InputTokens
 	}
 	return 0
 }
 
-func (x *TokenUsage) GetOutputTokens() int32 {
+func (x *TokenUsage) GetOutputTokens() int64 {
 	if x != nil && x.OutputTokens != nil {
 		return *x.OutputTokens
 	}
 	return 0
 }
 
-func (x *TokenUsage) GetTotalTokens() int32 {
+func (x *TokenUsage) GetTotalTokens() int64 {
 	if x != nil && x.TotalTokens != nil {
 		return *x.TotalTokens
 	}
 	return 0
 }
 
-func (x *TokenUsage) GetCacheReadTokens() int32 {
+func (x *TokenUsage) GetCacheReadTokens() int64 {
 	if x != nil && x.CacheReadTokens != nil {
 		return *x.CacheReadTokens
 	}
 	return 0
 }
 
-func (x *TokenUsage) GetCacheWriteTokens() int32 {
+func (x *TokenUsage) GetCacheWriteTokens() int64 {
 	if x != nil && x.CacheWriteTokens != nil {
 		return *x.CacheWriteTokens
 	}
@@ -1599,7 +2212,7 @@ type GatewayError struct {
 
 func (x *GatewayError) Reset() {
 	*x = GatewayError{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[19]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1611,7 +2224,7 @@ func (x *GatewayError) String() string {
 func (*GatewayError) ProtoMessage() {}
 
 func (x *GatewayError) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[19]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1624,7 +2237,7 @@ func (x *GatewayError) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GatewayError.ProtoReflect.Descriptor instead.
 func (*GatewayError) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{19}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *GatewayError) GetNodes() []*GatewayErrorNode {
@@ -1659,16 +2272,16 @@ type GatewayErrorNode struct {
 	// Canonical tool name for malformed arguments.
 	MalformedToolName *string `protobuf:"bytes,7,opt,name=malformed_tool_name,json=malformedToolName,proto3,oneof" json:"malformed_tool_name,omitempty"`
 	// Index into GatewayError.nodes of the wrapped cause (-1 when none).
-	CauseIndex *int32 `protobuf:"zigzag32,8,opt,name=cause_index,json=causeIndex,proto3,oneof" json:"cause_index,omitempty"`
+	CauseIndex *int64 `protobuf:"zigzag64,8,opt,name=cause_index,json=causeIndex,proto3,oneof" json:"cause_index,omitempty"`
 	// Indices into GatewayError.nodes of joined child errors.
-	ChildIndices  []int32 `protobuf:"zigzag32,9,rep,packed,name=child_indices,json=childIndices,proto3" json:"child_indices,omitempty"`
+	ChildIndices  []int64 `protobuf:"zigzag64,9,rep,packed,name=child_indices,json=childIndices,proto3" json:"child_indices,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *GatewayErrorNode) Reset() {
 	*x = GatewayErrorNode{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[20]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1680,7 +2293,7 @@ func (x *GatewayErrorNode) String() string {
 func (*GatewayErrorNode) ProtoMessage() {}
 
 func (x *GatewayErrorNode) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[20]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1693,7 +2306,7 @@ func (x *GatewayErrorNode) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GatewayErrorNode.ProtoReflect.Descriptor instead.
 func (*GatewayErrorNode) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{20}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *GatewayErrorNode) GetKind() string {
@@ -1745,14 +2358,14 @@ func (x *GatewayErrorNode) GetMalformedToolName() string {
 	return ""
 }
 
-func (x *GatewayErrorNode) GetCauseIndex() int32 {
+func (x *GatewayErrorNode) GetCauseIndex() int64 {
 	if x != nil && x.CauseIndex != nil {
 		return *x.CauseIndex
 	}
 	return 0
 }
 
-func (x *GatewayErrorNode) GetChildIndices() []int32 {
+func (x *GatewayErrorNode) GetChildIndices() []int64 {
 	if x != nil {
 		return x.ChildIndices
 	}
@@ -1767,7 +2380,7 @@ type ProviderErrorDetail struct {
 	// Provider operation name.
 	Operation *string `protobuf:"bytes,2,opt,name=operation,proto3,oneof" json:"operation,omitempty"`
 	// HTTP status code when available.
-	HttpStatus *int32 `protobuf:"zigzag32,3,opt,name=http_status,json=httpStatus,proto3,oneof" json:"http_status,omitempty"`
+	HttpStatus *int64 `protobuf:"zigzag64,3,opt,name=http_status,json=httpStatus,proto3,oneof" json:"http_status,omitempty"`
 	// Coarse-grained provider error classification.
 	Kind *string `protobuf:"bytes,4,opt,name=kind,proto3,oneof" json:"kind,omitempty"`
 	// Provider-specific error code.
@@ -1784,7 +2397,7 @@ type ProviderErrorDetail struct {
 
 func (x *ProviderErrorDetail) Reset() {
 	*x = ProviderErrorDetail{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[21]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1796,7 +2409,7 @@ func (x *ProviderErrorDetail) String() string {
 func (*ProviderErrorDetail) ProtoMessage() {}
 
 func (x *ProviderErrorDetail) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[21]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1809,7 +2422,7 @@ func (x *ProviderErrorDetail) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProviderErrorDetail.ProtoReflect.Descriptor instead.
 func (*ProviderErrorDetail) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{21}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *ProviderErrorDetail) GetProvider() string {
@@ -1826,7 +2439,7 @@ func (x *ProviderErrorDetail) GetOperation() string {
 	return ""
 }
 
-func (x *ProviderErrorDetail) GetHttpStatus() int32 {
+func (x *ProviderErrorDetail) GetHttpStatus() int64 {
 	if x != nil && x.HttpStatus != nil {
 		return *x.HttpStatus
 	}
@@ -1885,7 +2498,7 @@ type ValidationErrorDetail struct {
 
 func (x *ValidationErrorDetail) Reset() {
 	*x = ValidationErrorDetail{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[22]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1897,7 +2510,7 @@ func (x *ValidationErrorDetail) String() string {
 func (*ValidationErrorDetail) ProtoMessage() {}
 
 func (x *ValidationErrorDetail) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[22]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1910,7 +2523,7 @@ func (x *ValidationErrorDetail) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ValidationErrorDetail.ProtoReflect.Descriptor instead.
 func (*ValidationErrorDetail) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{22}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *ValidationErrorDetail) GetKind() string {
@@ -1958,7 +2571,7 @@ type ResponseEvidence struct {
 
 func (x *ResponseEvidence) Reset() {
 	*x = ResponseEvidence{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[23]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1970,7 +2583,7 @@ func (x *ResponseEvidence) String() string {
 func (*ResponseEvidence) ProtoMessage() {}
 
 func (x *ResponseEvidence) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[23]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1983,7 +2596,7 @@ func (x *ResponseEvidence) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResponseEvidence.ProtoReflect.Descriptor instead.
 func (*ResponseEvidence) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{23}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *ResponseEvidence) GetPresent() bool {
@@ -2031,7 +2644,7 @@ type StreamRequest struct {
 	// Optional tool selection constraint.
 	ToolChoice *ToolChoice `protobuf:"bytes,7,opt,name=tool_choice,json=toolChoice,proto3" json:"tool_choice,omitempty"`
 	// Maximum output tokens.
-	MaxTokens *int32 `protobuf:"zigzag32,8,opt,name=max_tokens,json=maxTokens,proto3,oneof" json:"max_tokens,omitempty"`
+	MaxTokens *int64 `protobuf:"zigzag64,8,opt,name=max_tokens,json=maxTokens,proto3,oneof" json:"max_tokens,omitempty"`
 	// Whether streaming was requested.
 	Stream *bool `protobuf:"varint,9,opt,name=stream,proto3,oneof" json:"stream,omitempty"`
 	// Optional reasoning configuration.
@@ -2046,7 +2659,7 @@ type StreamRequest struct {
 
 func (x *StreamRequest) Reset() {
 	*x = StreamRequest{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[24]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2058,7 +2671,7 @@ func (x *StreamRequest) String() string {
 func (*StreamRequest) ProtoMessage() {}
 
 func (x *StreamRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[24]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2071,7 +2684,7 @@ func (x *StreamRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamRequest.ProtoReflect.Descriptor instead.
 func (*StreamRequest) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{24}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *StreamRequest) GetModel() string {
@@ -2123,7 +2736,7 @@ func (x *StreamRequest) GetToolChoice() *ToolChoice {
 	return nil
 }
 
-func (x *StreamRequest) GetMaxTokens() int32 {
+func (x *StreamRequest) GetMaxTokens() int64 {
 	if x != nil && x.MaxTokens != nil {
 		return *x.MaxTokens
 	}
@@ -2160,21 +2773,19 @@ func (x *StreamRequest) GetCache() *CacheOptions {
 
 type StreamResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Frame discriminator: chunk, response, or error.
-	Kind *string `protobuf:"bytes,1,opt,name=kind,proto3,oneof" json:"kind,omitempty"`
-	// Incremental chunk when kind is chunk.
-	Chunk *StreamChunk `protobuf:"bytes,2,opt,name=chunk,proto3" json:"chunk,omitempty"`
-	// Terminal provider response when kind is response.
-	Response *ModelResponse `protobuf:"bytes,3,opt,name=response,proto3" json:"response,omitempty"`
-	// Structured error when kind is error.
-	Error         *GatewayError `protobuf:"bytes,4,opt,name=error,proto3" json:"error,omitempty"`
+	// Types that are valid to be assigned to Payload:
+	//
+	//	*StreamResponse_Chunk
+	//	*StreamResponse_Response
+	//	*StreamResponse_Error
+	Payload       isStreamResponse_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *StreamResponse) Reset() {
 	*x = StreamResponse{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[25]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2186,7 +2797,7 @@ func (x *StreamResponse) String() string {
 func (*StreamResponse) ProtoMessage() {}
 
 func (x *StreamResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[25]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2199,65 +2810,89 @@ func (x *StreamResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamResponse.ProtoReflect.Descriptor instead.
 func (*StreamResponse) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{25}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{34}
 }
 
-func (x *StreamResponse) GetKind() string {
-	if x != nil && x.Kind != nil {
-		return *x.Kind
+func (x *StreamResponse) GetPayload() isStreamResponse_Payload {
+	if x != nil {
+		return x.Payload
 	}
-	return ""
+	return nil
 }
 
 func (x *StreamResponse) GetChunk() *StreamChunk {
 	if x != nil {
-		return x.Chunk
+		if x, ok := x.Payload.(*StreamResponse_Chunk); ok {
+			return x.Chunk
+		}
 	}
 	return nil
 }
 
 func (x *StreamResponse) GetResponse() *ModelResponse {
 	if x != nil {
-		return x.Response
+		if x, ok := x.Payload.(*StreamResponse_Response); ok {
+			return x.Response
+		}
 	}
 	return nil
 }
 
 func (x *StreamResponse) GetError() *GatewayError {
 	if x != nil {
-		return x.Error
+		if x, ok := x.Payload.(*StreamResponse_Error); ok {
+			return x.Error
+		}
 	}
 	return nil
 }
 
-// Discriminated union of model.Chunk variants.
+type isStreamResponse_Payload interface {
+	isStreamResponse_Payload()
+}
+
+type StreamResponse_Chunk struct {
+	// Incremental chunk frame.
+	Chunk *StreamChunk `protobuf:"bytes,1,opt,name=chunk,proto3,oneof"`
+}
+
+type StreamResponse_Response struct {
+	// Terminal provider response frame.
+	Response *ModelResponse `protobuf:"bytes,2,opt,name=response,proto3,oneof"`
+}
+
+type StreamResponse_Error struct {
+	// Terminal structured error frame.
+	Error *GatewayError `protobuf:"bytes,3,opt,name=error,proto3,oneof"`
+}
+
+func (*StreamResponse_Chunk) isStreamResponse_Payload() {}
+
+func (*StreamResponse_Response) isStreamResponse_Payload() {}
+
+func (*StreamResponse_Error) isStreamResponse_Payload() {}
+
+// Exclusive sum type of model.Chunk variants.
 type StreamChunk struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Concrete chunk kind discriminator.
-	Kind *string `protobuf:"bytes,1,opt,name=kind,proto3,oneof" json:"kind,omitempty"`
-	// Message payload for text or thinking chunks.
-	Message_ *ModelMessage `protobuf:"bytes,2,opt,name=message_,json=message,proto3" json:"message_,omitempty"`
-	// Tool invocation for tool_call chunks.
-	ToolCall *ToolCall `protobuf:"bytes,3,opt,name=tool_call,json=toolCall,proto3" json:"tool_call,omitempty"`
-	// Argument fragment for tool_call_delta chunks.
-	ToolCallDelta *ToolCallDelta `protobuf:"bytes,4,opt,name=tool_call_delta,json=toolCallDelta,proto3" json:"tool_call_delta,omitempty"`
-	// Structured payload for completion chunks.
-	Completion *Completion `protobuf:"bytes,5,opt,name=completion,proto3" json:"completion,omitempty"`
-	// Fragment for completion_delta chunks.
-	CompletionDelta *CompletionDelta `protobuf:"bytes,6,opt,name=completion_delta,json=completionDelta,proto3" json:"completion_delta,omitempty"`
-	// Token delta for usage chunks.
-	Usage *TokenUsage `protobuf:"bytes,7,opt,name=usage,proto3" json:"usage,omitempty"`
-	// Stop reason for stop chunks.
-	StopReason *string `protobuf:"bytes,8,opt,name=stop_reason,json=stopReason,proto3,oneof" json:"stop_reason,omitempty"`
-	// Output-limited flag for stop chunks.
-	OutputLimited *bool `protobuf:"varint,9,opt,name=output_limited,json=outputLimited,proto3,oneof" json:"output_limited,omitempty"`
+	// Types that are valid to be assigned to Payload:
+	//
+	//	*StreamChunk_Text
+	//	*StreamChunk_Thinking
+	//	*StreamChunk_ToolCall
+	//	*StreamChunk_ToolCallDelta
+	//	*StreamChunk_Completion
+	//	*StreamChunk_CompletionDelta
+	//	*StreamChunk_Usage
+	//	*StreamChunk_Stop
+	Payload       isStreamChunk_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *StreamChunk) Reset() {
 	*x = StreamChunk{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[26]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2269,7 +2904,7 @@ func (x *StreamChunk) String() string {
 func (*StreamChunk) ProtoMessage() {}
 
 func (x *StreamChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[26]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2282,71 +2917,147 @@ func (x *StreamChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamChunk.ProtoReflect.Descriptor instead.
 func (*StreamChunk) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{26}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{35}
 }
 
-func (x *StreamChunk) GetKind() string {
-	if x != nil && x.Kind != nil {
-		return *x.Kind
-	}
-	return ""
-}
-
-func (x *StreamChunk) GetMessage_() *ModelMessage {
+func (x *StreamChunk) GetPayload() isStreamChunk_Payload {
 	if x != nil {
-		return x.Message_
+		return x.Payload
+	}
+	return nil
+}
+
+func (x *StreamChunk) GetText() *ModelMessage {
+	if x != nil {
+		if x, ok := x.Payload.(*StreamChunk_Text); ok {
+			return x.Text
+		}
+	}
+	return nil
+}
+
+func (x *StreamChunk) GetThinking() *ModelMessage {
+	if x != nil {
+		if x, ok := x.Payload.(*StreamChunk_Thinking); ok {
+			return x.Thinking
+		}
 	}
 	return nil
 }
 
 func (x *StreamChunk) GetToolCall() *ToolCall {
 	if x != nil {
-		return x.ToolCall
+		if x, ok := x.Payload.(*StreamChunk_ToolCall); ok {
+			return x.ToolCall
+		}
 	}
 	return nil
 }
 
 func (x *StreamChunk) GetToolCallDelta() *ToolCallDelta {
 	if x != nil {
-		return x.ToolCallDelta
+		if x, ok := x.Payload.(*StreamChunk_ToolCallDelta); ok {
+			return x.ToolCallDelta
+		}
 	}
 	return nil
 }
 
 func (x *StreamChunk) GetCompletion() *Completion {
 	if x != nil {
-		return x.Completion
+		if x, ok := x.Payload.(*StreamChunk_Completion); ok {
+			return x.Completion
+		}
 	}
 	return nil
 }
 
 func (x *StreamChunk) GetCompletionDelta() *CompletionDelta {
 	if x != nil {
-		return x.CompletionDelta
+		if x, ok := x.Payload.(*StreamChunk_CompletionDelta); ok {
+			return x.CompletionDelta
+		}
 	}
 	return nil
 }
 
 func (x *StreamChunk) GetUsage() *TokenUsage {
 	if x != nil {
-		return x.Usage
+		if x, ok := x.Payload.(*StreamChunk_Usage); ok {
+			return x.Usage
+		}
 	}
 	return nil
 }
 
-func (x *StreamChunk) GetStopReason() string {
-	if x != nil && x.StopReason != nil {
-		return *x.StopReason
+func (x *StreamChunk) GetStop() *StopDetail {
+	if x != nil {
+		if x, ok := x.Payload.(*StreamChunk_Stop); ok {
+			return x.Stop
+		}
 	}
-	return ""
+	return nil
 }
 
-func (x *StreamChunk) GetOutputLimited() bool {
-	if x != nil && x.OutputLimited != nil {
-		return *x.OutputLimited
-	}
-	return false
+type isStreamChunk_Payload interface {
+	isStreamChunk_Payload()
 }
+
+type StreamChunk_Text struct {
+	// Message payload for text chunks.
+	Text *ModelMessage `protobuf:"bytes,1,opt,name=text,proto3,oneof"`
+}
+
+type StreamChunk_Thinking struct {
+	// Message payload for thinking chunks.
+	Thinking *ModelMessage `protobuf:"bytes,2,opt,name=thinking,proto3,oneof"`
+}
+
+type StreamChunk_ToolCall struct {
+	// Tool invocation for tool_call chunks.
+	ToolCall *ToolCall `protobuf:"bytes,3,opt,name=tool_call,json=toolCall,proto3,oneof"`
+}
+
+type StreamChunk_ToolCallDelta struct {
+	// Argument fragment for tool_call_delta chunks.
+	ToolCallDelta *ToolCallDelta `protobuf:"bytes,4,opt,name=tool_call_delta,json=toolCallDelta,proto3,oneof"`
+}
+
+type StreamChunk_Completion struct {
+	// Structured payload for completion chunks.
+	Completion *Completion `protobuf:"bytes,5,opt,name=completion,proto3,oneof"`
+}
+
+type StreamChunk_CompletionDelta struct {
+	// Fragment for completion_delta chunks.
+	CompletionDelta *CompletionDelta `protobuf:"bytes,6,opt,name=completion_delta,json=completionDelta,proto3,oneof"`
+}
+
+type StreamChunk_Usage struct {
+	// Token delta for usage chunks.
+	Usage *TokenUsage `protobuf:"bytes,7,opt,name=usage,proto3,oneof"`
+}
+
+type StreamChunk_Stop struct {
+	// Stop details for stop chunks.
+	Stop *StopDetail `protobuf:"bytes,8,opt,name=stop,proto3,oneof"`
+}
+
+func (*StreamChunk_Text) isStreamChunk_Payload() {}
+
+func (*StreamChunk_Thinking) isStreamChunk_Payload() {}
+
+func (*StreamChunk_ToolCall) isStreamChunk_Payload() {}
+
+func (*StreamChunk_ToolCallDelta) isStreamChunk_Payload() {}
+
+func (*StreamChunk_Completion) isStreamChunk_Payload() {}
+
+func (*StreamChunk_CompletionDelta) isStreamChunk_Payload() {}
+
+func (*StreamChunk_Usage) isStreamChunk_Payload() {}
+
+func (*StreamChunk_Stop) isStreamChunk_Payload() {}
 
 // Finalized tool call invocation.
 type ToolCall struct {
@@ -2365,7 +3076,7 @@ type ToolCall struct {
 
 func (x *ToolCall) Reset() {
 	*x = ToolCall{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[27]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2377,7 +3088,7 @@ func (x *ToolCall) String() string {
 func (*ToolCall) ProtoMessage() {}
 
 func (x *ToolCall) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[27]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2390,7 +3101,7 @@ func (x *ToolCall) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ToolCall.ProtoReflect.Descriptor instead.
 func (*ToolCall) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{27}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *ToolCall) GetName() string {
@@ -2436,7 +3147,7 @@ type ToolCallDelta struct {
 
 func (x *ToolCallDelta) Reset() {
 	*x = ToolCallDelta{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[28]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2448,7 +3159,7 @@ func (x *ToolCallDelta) String() string {
 func (*ToolCallDelta) ProtoMessage() {}
 
 func (x *ToolCallDelta) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[28]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2461,7 +3172,7 @@ func (x *ToolCallDelta) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ToolCallDelta.ProtoReflect.Descriptor instead.
 func (*ToolCallDelta) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{28}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *ToolCallDelta) GetName() string {
@@ -2498,7 +3209,7 @@ type Completion struct {
 
 func (x *Completion) Reset() {
 	*x = Completion{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[29]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2510,7 +3221,7 @@ func (x *Completion) String() string {
 func (*Completion) ProtoMessage() {}
 
 func (x *Completion) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[29]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2523,7 +3234,7 @@ func (x *Completion) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Completion.ProtoReflect.Descriptor instead.
 func (*Completion) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{29}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *Completion) GetName() string {
@@ -2553,7 +3264,7 @@ type CompletionDelta struct {
 
 func (x *CompletionDelta) Reset() {
 	*x = CompletionDelta{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[30]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2565,7 +3276,7 @@ func (x *CompletionDelta) String() string {
 func (*CompletionDelta) ProtoMessage() {}
 
 func (x *CompletionDelta) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[30]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2578,7 +3289,7 @@ func (x *CompletionDelta) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CompletionDelta.ProtoReflect.Descriptor instead.
 func (*CompletionDelta) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{30}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *CompletionDelta) GetName() string {
@@ -2593,6 +3304,61 @@ func (x *CompletionDelta) GetDelta() string {
 		return *x.Delta
 	}
 	return ""
+}
+
+// Terminal stop chunk details.
+type StopDetail struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Provider stop reason.
+	Reason *string `protobuf:"bytes,1,opt,name=reason,proto3,oneof" json:"reason,omitempty"`
+	// Whether generation ended at its token or context limit.
+	OutputLimited *bool `protobuf:"varint,2,opt,name=output_limited,json=outputLimited,proto3,oneof" json:"output_limited,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *StopDetail) Reset() {
+	*x = StopDetail{}
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[40]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *StopDetail) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*StopDetail) ProtoMessage() {}
+
+func (x *StopDetail) ProtoReflect() protoreflect.Message {
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[40]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use StopDetail.ProtoReflect.Descriptor instead.
+func (*StopDetail) Descriptor() ([]byte, []int) {
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{40}
+}
+
+func (x *StopDetail) GetReason() string {
+	if x != nil && x.Reason != nil {
+		return *x.Reason
+	}
+	return ""
+}
+
+func (x *StopDetail) GetOutputLimited() bool {
+	if x != nil && x.OutputLimited != nil {
+		return *x.OutputLimited
+	}
+	return false
 }
 
 type CountTokensRequest struct {
@@ -2612,7 +3378,7 @@ type CountTokensRequest struct {
 	// Optional tool selection constraint.
 	ToolChoice *ToolChoice `protobuf:"bytes,7,opt,name=tool_choice,json=toolChoice,proto3" json:"tool_choice,omitempty"`
 	// Maximum output tokens.
-	MaxTokens *int32 `protobuf:"zigzag32,8,opt,name=max_tokens,json=maxTokens,proto3,oneof" json:"max_tokens,omitempty"`
+	MaxTokens *int64 `protobuf:"zigzag64,8,opt,name=max_tokens,json=maxTokens,proto3,oneof" json:"max_tokens,omitempty"`
 	// Whether streaming was requested.
 	Stream *bool `protobuf:"varint,9,opt,name=stream,proto3,oneof" json:"stream,omitempty"`
 	// Optional reasoning configuration.
@@ -2627,7 +3393,7 @@ type CountTokensRequest struct {
 
 func (x *CountTokensRequest) Reset() {
 	*x = CountTokensRequest{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[31]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2639,7 +3405,7 @@ func (x *CountTokensRequest) String() string {
 func (*CountTokensRequest) ProtoMessage() {}
 
 func (x *CountTokensRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[31]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2652,7 +3418,7 @@ func (x *CountTokensRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CountTokensRequest.ProtoReflect.Descriptor instead.
 func (*CountTokensRequest) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{31}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *CountTokensRequest) GetModel() string {
@@ -2704,7 +3470,7 @@ func (x *CountTokensRequest) GetToolChoice() *ToolChoice {
 	return nil
 }
 
-func (x *CountTokensRequest) GetMaxTokens() int32 {
+func (x *CountTokensRequest) GetMaxTokens() int64 {
 	if x != nil && x.MaxTokens != nil {
 		return *x.MaxTokens
 	}
@@ -2741,17 +3507,18 @@ func (x *CountTokensRequest) GetCache() *CacheOptions {
 
 type CountTokensResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Provider token count when CountTokens succeeded.
-	Count *TokenCount `protobuf:"bytes,1,opt,name=count,proto3" json:"count,omitempty"`
-	// Structured error when CountTokens failed.
-	Error         *GatewayError `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
+	// Types that are valid to be assigned to Outcome:
+	//
+	//	*CountTokensResponse_Count
+	//	*CountTokensResponse_Error
+	Outcome       isCountTokensResponse_Outcome `protobuf_oneof:"outcome"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CountTokensResponse) Reset() {
 	*x = CountTokensResponse{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[32]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2763,7 +3530,7 @@ func (x *CountTokensResponse) String() string {
 func (*CountTokensResponse) ProtoMessage() {}
 
 func (x *CountTokensResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[32]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2776,22 +3543,51 @@ func (x *CountTokensResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CountTokensResponse.ProtoReflect.Descriptor instead.
 func (*CountTokensResponse) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{32}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{42}
+}
+
+func (x *CountTokensResponse) GetOutcome() isCountTokensResponse_Outcome {
+	if x != nil {
+		return x.Outcome
+	}
+	return nil
 }
 
 func (x *CountTokensResponse) GetCount() *TokenCount {
 	if x != nil {
-		return x.Count
+		if x, ok := x.Outcome.(*CountTokensResponse_Count); ok {
+			return x.Count
+		}
 	}
 	return nil
 }
 
 func (x *CountTokensResponse) GetError() *GatewayError {
 	if x != nil {
-		return x.Error
+		if x, ok := x.Outcome.(*CountTokensResponse_Error); ok {
+			return x.Error
+		}
 	}
 	return nil
 }
+
+type isCountTokensResponse_Outcome interface {
+	isCountTokensResponse_Outcome()
+}
+
+type CountTokensResponse_Count struct {
+	// Provider token count when CountTokens succeeded.
+	Count *TokenCount `protobuf:"bytes,1,opt,name=count,proto3,oneof"`
+}
+
+type CountTokensResponse_Error struct {
+	// Structured error when CountTokens failed.
+	Error *GatewayError `protobuf:"bytes,2,opt,name=error,proto3,oneof"`
+}
+
+func (*CountTokensResponse_Count) isCountTokensResponse_Outcome() {}
+
+func (*CountTokensResponse_Error) isCountTokensResponse_Outcome() {}
 
 // Provider input token count.
 type TokenCount struct {
@@ -2801,7 +3597,7 @@ type TokenCount struct {
 	// Logical model family.
 	ModelClass *string `protobuf:"bytes,2,opt,name=model_class,json=modelClass,proto3,oneof" json:"model_class,omitempty"`
 	// Counted input tokens.
-	InputTokens *int32 `protobuf:"zigzag32,3,opt,name=input_tokens,json=inputTokens,proto3,oneof" json:"input_tokens,omitempty"`
+	InputTokens *int64 `protobuf:"zigzag64,3,opt,name=input_tokens,json=inputTokens,proto3,oneof" json:"input_tokens,omitempty"`
 	// Whether the count is provider-exact.
 	Exact         *bool `protobuf:"varint,4,opt,name=exact,proto3,oneof" json:"exact,omitempty"`
 	unknownFields protoimpl.UnknownFields
@@ -2810,7 +3606,7 @@ type TokenCount struct {
 
 func (x *TokenCount) Reset() {
 	*x = TokenCount{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[33]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2822,7 +3618,7 @@ func (x *TokenCount) String() string {
 func (*TokenCount) ProtoMessage() {}
 
 func (x *TokenCount) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[33]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2835,7 +3631,7 @@ func (x *TokenCount) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TokenCount.ProtoReflect.Descriptor instead.
 func (*TokenCount) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{33}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *TokenCount) GetModel() string {
@@ -2852,7 +3648,7 @@ func (x *TokenCount) GetModelClass() string {
 	return ""
 }
 
-func (x *TokenCount) GetInputTokens() int32 {
+func (x *TokenCount) GetInputTokens() int64 {
 	if x != nil && x.InputTokens != nil {
 		return *x.InputTokens
 	}
@@ -2883,7 +3679,7 @@ const file_goagen_gateway_model_gateway_proto_rawDesc = "" +
 	"\vtool_choice\x18\a \x01(\v2 .goa_ai_model_gateway.ToolChoiceR\n" +
 	"toolChoice\x12\"\n" +
 	"\n" +
-	"max_tokens\x18\b \x01(\x11H\x03R\tmaxTokens\x88\x01\x01\x12\x1b\n" +
+	"max_tokens\x18\b \x01(\x12H\x03R\tmaxTokens\x88\x01\x01\x12\x1b\n" +
 	"\x06stream\x18\t \x01(\bH\x04R\x06stream\x88\x01\x01\x12A\n" +
 	"\bthinking\x18\n" +
 	" \x01(\v2%.goa_ai_model_gateway.ThinkingOptionsR\bthinking\x12S\n" +
@@ -2906,95 +3702,122 @@ const file_goagen_gateway_model_gateway_proto_rawDesc = "" +
 	"\tmeta_json\x18\x03 \x01(\fH\x01R\bmetaJson\x88\x01\x01B\a\n" +
 	"\x05_roleB\f\n" +
 	"\n" +
-	"_meta_json\"\xe6\b\n" +
-	"\vMessagePart\x12\x17\n" +
-	"\x04kind\x18\x01 \x01(\tH\x00R\x04kind\x88\x01\x01\x12\x17\n" +
-	"\x04text\x18\x02 \x01(\tH\x01R\x04text\x88\x01\x01\x12!\n" +
-	"\tsignature\x18\x03 \x01(\tH\x02R\tsignature\x88\x01\x01\x12\x1f\n" +
-	"\bredacted\x18\x04 \x01(\fH\x03R\bredacted\x88\x01\x01\x12\x19\n" +
-	"\x05index\x18\x05 \x01(\x11H\x04R\x05index\x88\x01\x01\x12\x19\n" +
-	"\x05final\x18\x06 \x01(\bH\x05R\x05final\x88\x01\x01\x12&\n" +
-	"\fimage_format\x18\a \x01(\tH\x06R\vimageFormat\x88\x01\x01\x12\x1a\n" +
-	"\x06bytes_\x18\b \x01(\fH\aR\x05bytes\x88\x01\x01\x12$\n" +
-	"\vsource_kind\x18\t \x01(\tH\bR\n" +
-	"sourceKind\x88\x01\x01\x12\x17\n" +
-	"\x04data\x18\n" +
-	" \x01(\fH\tR\x04data\x88\x01\x01\x12\x17\n" +
-	"\x04name\x18\v \x01(\tH\n" +
-	"R\x04name\x88\x01\x01\x12,\n" +
-	"\x0fdocument_format\x18\f \x01(\tH\vR\x0edocumentFormat\x88\x01\x01\x12\x16\n" +
-	"\x06chunks\x18\r \x03(\tR\x06chunks\x12\x15\n" +
-	"\x03uri\x18\x0e \x01(\tH\fR\x03uri\x88\x01\x01\x12\x1d\n" +
-	"\acontext\x18\x0f \x01(\tH\rR\acontext\x88\x01\x01\x12\x17\n" +
-	"\x04cite\x18\x10 \x01(\bH\x0eR\x04cite\x88\x01\x01\x12<\n" +
-	"\tcitations\x18\x11 \x03(\v2\x1e.goa_ai_model_gateway.CitationR\tcitations\x12\x13\n" +
-	"\x02id\x18\x12 \x01(\tH\x0fR\x02id\x88\x01\x01\x12\x19\n" +
-	"\x05input\x18\x13 \x01(\fH\x10R\x05input\x88\x01\x01\x120\n" +
-	"\x11thought_signature\x18\x14 \x01(\tH\x11R\x10thoughtSignature\x88\x01\x01\x12#\n" +
-	"\vtool_use_id\x18\x15 \x01(\tH\x12R\ttoolUseId\x88\x01\x01\x12\x1d\n" +
-	"\acontent\x18\x16 \x01(\fH\x13R\acontent\x88\x01\x01\x12,\n" +
-	"\x0fcontent_present\x18\x17 \x01(\bH\x14R\x0econtentPresent\x88\x01\x01\x12$\n" +
-	"\vblocks_json\x18\x18 \x01(\fH\x15R\n" +
-	"blocksJson\x88\x01\x01\x12\x1e\n" +
-	"\bis_error\x18\x19 \x01(\bH\x16R\aisError\x88\x01\x01B\a\n" +
-	"\x05_kindB\a\n" +
+	"_meta_json\"\xaf\x05\n" +
+	"\vMessagePart\x12:\n" +
+	"\x04text\x18\x01 \x01(\v2$.goa_ai_model_gateway.TextPartDetailH\x00R\x04text\x12F\n" +
+	"\bthinking\x18\x02 \x01(\v2(.goa_ai_model_gateway.ThinkingPartDetailH\x00R\bthinking\x12=\n" +
+	"\x05image\x18\x03 \x01(\v2%.goa_ai_model_gateway.ImagePartDetailH\x00R\x05image\x12P\n" +
+	"\fimage_source\x18\x04 \x01(\v2+.goa_ai_model_gateway.ImageSourcePartDetailH\x00R\vimageSource\x12F\n" +
+	"\bdocument\x18\x05 \x01(\v2(.goa_ai_model_gateway.DocumentPartDetailH\x00R\bdocument\x12I\n" +
+	"\tcitations\x18\x06 \x01(\v2).goa_ai_model_gateway.CitationsPartDetailH\x00R\tcitations\x12D\n" +
+	"\btool_use\x18\a \x01(\v2'.goa_ai_model_gateway.ToolUsePartDetailH\x00R\atoolUse\x12M\n" +
+	"\vtool_result\x18\b \x01(\v2*.goa_ai_model_gateway.ToolResultPartDetailH\x00R\n" +
+	"toolResult\x12X\n" +
+	"\x10cache_checkpoint\x18\t \x01(\v2+.goa_ai_model_gateway.CacheCheckpointDetailH\x00R\x0fcacheCheckpointB\t\n" +
+	"\apayload\"2\n" +
+	"\x0eTextPartDetail\x12\x17\n" +
+	"\x04text\x18\x01 \x01(\tH\x00R\x04text\x88\x01\x01B\a\n" +
+	"\x05_text\"\xdf\x01\n" +
+	"\x12ThinkingPartDetail\x12\x17\n" +
+	"\x04text\x18\x01 \x01(\tH\x00R\x04text\x88\x01\x01\x12!\n" +
+	"\tsignature\x18\x02 \x01(\tH\x01R\tsignature\x88\x01\x01\x12\x1f\n" +
+	"\bredacted\x18\x03 \x01(\fH\x02R\bredacted\x88\x01\x01\x12\x19\n" +
+	"\x05index\x18\x04 \x01(\x12H\x03R\x05index\x88\x01\x01\x12\x19\n" +
+	"\x05final\x18\x05 \x01(\bH\x04R\x05final\x88\x01\x01B\a\n" +
 	"\x05_textB\f\n" +
 	"\n" +
 	"_signatureB\v\n" +
 	"\t_redactedB\b\n" +
 	"\x06_indexB\b\n" +
-	"\x06_finalB\x0f\n" +
-	"\r_image_formatB\t\n" +
-	"\a_bytes_B\x0e\n" +
+	"\x06_final\"`\n" +
+	"\x0fImagePartDetail\x12\x1b\n" +
+	"\x06format\x18\x01 \x01(\tH\x00R\x06format\x88\x01\x01\x12\x1a\n" +
+	"\x06bytes_\x18\x02 \x01(\fH\x01R\x05bytes\x88\x01\x01B\t\n" +
+	"\a_formatB\t\n" +
+	"\a_bytes_\"o\n" +
+	"\x15ImageSourcePartDetail\x12$\n" +
+	"\vsource_kind\x18\x01 \x01(\tH\x00R\n" +
+	"sourceKind\x88\x01\x01\x12\x17\n" +
+	"\x04data\x18\x02 \x01(\fH\x01R\x04data\x88\x01\x01B\x0e\n" +
 	"\f_source_kindB\a\n" +
-	"\x05_dataB\a\n" +
-	"\x05_nameB\x12\n" +
-	"\x10_document_formatB\x06\n" +
+	"\x05_data\"\xab\x02\n" +
+	"\x12DocumentPartDetail\x12\x17\n" +
+	"\x04name\x18\x01 \x01(\tH\x00R\x04name\x88\x01\x01\x12\x1b\n" +
+	"\x06format\x18\x02 \x01(\tH\x01R\x06format\x88\x01\x01\x12\x1a\n" +
+	"\x06bytes_\x18\x03 \x01(\fH\x02R\x05bytes\x88\x01\x01\x12\x17\n" +
+	"\x04text\x18\x04 \x01(\tH\x03R\x04text\x88\x01\x01\x12\x16\n" +
+	"\x06chunks\x18\x05 \x03(\tR\x06chunks\x12\x15\n" +
+	"\x03uri\x18\x06 \x01(\tH\x04R\x03uri\x88\x01\x01\x12\x1d\n" +
+	"\acontext\x18\a \x01(\tH\x05R\acontext\x88\x01\x01\x12\x17\n" +
+	"\x04cite\x18\b \x01(\bH\x06R\x04cite\x88\x01\x01B\a\n" +
+	"\x05_nameB\t\n" +
+	"\a_formatB\t\n" +
+	"\a_bytes_B\a\n" +
+	"\x05_textB\x06\n" +
 	"\x04_uriB\n" +
 	"\n" +
 	"\b_contextB\a\n" +
-	"\x05_citeB\x05\n" +
-	"\x03_idB\b\n" +
-	"\x06_inputB\x14\n" +
-	"\x12_thought_signatureB\x0e\n" +
-	"\f_tool_use_idB\n" +
-	"\n" +
-	"\b_contentB\x12\n" +
-	"\x10_content_presentB\x0e\n" +
-	"\f_blocks_jsonB\v\n" +
-	"\t_is_error\"\xc2\x01\n" +
+	"\x05_cite\"u\n" +
+	"\x13CitationsPartDetail\x12\x17\n" +
+	"\x04text\x18\x01 \x01(\tH\x00R\x04text\x88\x01\x01\x12<\n" +
+	"\tcitations\x18\x02 \x03(\v2\x1e.goa_ai_model_gateway.CitationR\tcitationsB\a\n" +
+	"\x05_text\"\xc2\x01\n" +
 	"\bCitation\x12\x19\n" +
 	"\x05title\x18\x01 \x01(\tH\x00R\x05title\x88\x01\x01\x12\x1b\n" +
 	"\x06source\x18\x02 \x01(\tH\x01R\x06source\x88\x01\x01\x12B\n" +
 	"\blocation\x18\x03 \x01(\v2&.goa_ai_model_gateway.CitationLocationR\blocation\x12%\n" +
 	"\x0esource_content\x18\x04 \x03(\tR\rsourceContentB\b\n" +
 	"\x06_titleB\t\n" +
-	"\a_source\"\x88\x02\n" +
-	"\x10CitationLocation\x12O\n" +
-	"\rdocument_char\x18\x01 \x01(\v2*.goa_ai_model_gateway.DocumentCharLocationR\fdocumentChar\x12O\n" +
-	"\rdocument_page\x18\x02 \x01(\v2*.goa_ai_model_gateway.DocumentPageLocationR\fdocumentPage\x12R\n" +
-	"\x0edocument_chunk\x18\x03 \x01(\v2+.goa_ai_model_gateway.DocumentChunkLocationR\rdocumentChunk\"\x99\x01\n" +
+	"\a_source\"\x96\x02\n" +
+	"\x10CitationLocation\x12Q\n" +
+	"\rdocument_char\x18\x01 \x01(\v2*.goa_ai_model_gateway.DocumentCharLocationH\x00R\fdocumentChar\x12Q\n" +
+	"\rdocument_page\x18\x02 \x01(\v2*.goa_ai_model_gateway.DocumentPageLocationH\x00R\fdocumentPage\x12T\n" +
+	"\x0edocument_chunk\x18\x03 \x01(\v2+.goa_ai_model_gateway.DocumentChunkLocationH\x00R\rdocumentChunkB\x06\n" +
+	"\x04span\"\x99\x01\n" +
 	"\x14DocumentCharLocation\x12*\n" +
-	"\x0edocument_index\x18\x01 \x01(\x11H\x00R\rdocumentIndex\x88\x01\x01\x12\x19\n" +
-	"\x05start\x18\x02 \x01(\x11H\x01R\x05start\x88\x01\x01\x12\x15\n" +
-	"\x03end\x18\x03 \x01(\x11H\x02R\x03end\x88\x01\x01B\x11\n" +
+	"\x0edocument_index\x18\x01 \x01(\x12H\x00R\rdocumentIndex\x88\x01\x01\x12\x19\n" +
+	"\x05start\x18\x02 \x01(\x12H\x01R\x05start\x88\x01\x01\x12\x15\n" +
+	"\x03end\x18\x03 \x01(\x12H\x02R\x03end\x88\x01\x01B\x11\n" +
 	"\x0f_document_indexB\b\n" +
 	"\x06_startB\x06\n" +
 	"\x04_end\"\x99\x01\n" +
 	"\x14DocumentPageLocation\x12*\n" +
-	"\x0edocument_index\x18\x01 \x01(\x11H\x00R\rdocumentIndex\x88\x01\x01\x12\x19\n" +
-	"\x05start\x18\x02 \x01(\x11H\x01R\x05start\x88\x01\x01\x12\x15\n" +
-	"\x03end\x18\x03 \x01(\x11H\x02R\x03end\x88\x01\x01B\x11\n" +
+	"\x0edocument_index\x18\x01 \x01(\x12H\x00R\rdocumentIndex\x88\x01\x01\x12\x19\n" +
+	"\x05start\x18\x02 \x01(\x12H\x01R\x05start\x88\x01\x01\x12\x15\n" +
+	"\x03end\x18\x03 \x01(\x12H\x02R\x03end\x88\x01\x01B\x11\n" +
 	"\x0f_document_indexB\b\n" +
 	"\x06_startB\x06\n" +
 	"\x04_end\"\x9a\x01\n" +
 	"\x15DocumentChunkLocation\x12*\n" +
-	"\x0edocument_index\x18\x01 \x01(\x11H\x00R\rdocumentIndex\x88\x01\x01\x12\x19\n" +
-	"\x05start\x18\x02 \x01(\x11H\x01R\x05start\x88\x01\x01\x12\x15\n" +
-	"\x03end\x18\x03 \x01(\x11H\x02R\x03end\x88\x01\x01B\x11\n" +
+	"\x0edocument_index\x18\x01 \x01(\x12H\x00R\rdocumentIndex\x88\x01\x01\x12\x19\n" +
+	"\x05start\x18\x02 \x01(\x12H\x01R\x05start\x88\x01\x01\x12\x15\n" +
+	"\x03end\x18\x03 \x01(\x12H\x02R\x03end\x88\x01\x01B\x11\n" +
 	"\x0f_document_indexB\b\n" +
 	"\x06_startB\x06\n" +
-	"\x04_end\"\xcd\x02\n" +
+	"\x04_end\"\xbe\x01\n" +
+	"\x11ToolUsePartDetail\x12\x13\n" +
+	"\x02id\x18\x01 \x01(\tH\x00R\x02id\x88\x01\x01\x12\x17\n" +
+	"\x04name\x18\x02 \x01(\tH\x01R\x04name\x88\x01\x01\x12\x19\n" +
+	"\x05input\x18\x03 \x01(\fH\x02R\x05input\x88\x01\x01\x120\n" +
+	"\x11thought_signature\x18\x04 \x01(\tH\x03R\x10thoughtSignature\x88\x01\x01B\x05\n" +
+	"\x03_idB\a\n" +
+	"\x05_nameB\b\n" +
+	"\x06_inputB\x14\n" +
+	"\x12_thought_signature\"\x9b\x02\n" +
+	"\x14ToolResultPartDetail\x12#\n" +
+	"\vtool_use_id\x18\x01 \x01(\tH\x00R\ttoolUseId\x88\x01\x01\x12\x1d\n" +
+	"\acontent\x18\x02 \x01(\fH\x01R\acontent\x88\x01\x01\x12,\n" +
+	"\x0fcontent_present\x18\x03 \x01(\bH\x02R\x0econtentPresent\x88\x01\x01\x12$\n" +
+	"\vblocks_json\x18\x04 \x01(\fH\x03R\n" +
+	"blocksJson\x88\x01\x01\x12\x1e\n" +
+	"\bis_error\x18\x05 \x01(\bH\x04R\aisError\x88\x01\x01B\x0e\n" +
+	"\f_tool_use_idB\n" +
+	"\n" +
+	"\b_contentB\x12\n" +
+	"\x10_content_presentB\x0e\n" +
+	"\f_blocks_jsonB\v\n" +
+	"\t_is_error\"\x17\n" +
+	"\x15CacheCheckpointDetail\"\xcd\x02\n" +
 	"\x0eToolDefinition\x12\x17\n" +
 	"\x04name\x18\x01 \x01(\tH\x00R\x04name\x88\x01\x01\x12<\n" +
 	"\x06search\x18\x02 \x01(\v2$.goa_ai_model_gateway.SearchDocumentR\x06search\x12\x1f\n" +
@@ -3007,12 +3830,12 @@ const file_goagen_gateway_model_gateway_proto_rawDesc = "" +
 	"\f_descriptionB\x0f\n" +
 	"\r_no_arguments\"\xb9\x01\n" +
 	"\x0eSearchDocument\x12\x1b\n" +
-	"\x06length\x18\x01 \x01(\x11H\x00R\x06length\x88\x01\x01\x12E\n" +
+	"\x06length\x18\x01 \x01(\x12H\x00R\x06length\x88\x01\x01\x12E\n" +
 	"\x05terms\x18\x02 \x03(\v2/.goa_ai_model_gateway.SearchDocument.TermsEntryR\x05terms\x1a8\n" +
 	"\n" +
 	"TermsEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
-	"\x05value\x18\x02 \x01(\x11R\x05value:\x028\x01B\t\n" +
+	"\x05value\x18\x02 \x01(\x12R\x05value:\x028\x01B\t\n" +
 	"\a_length\"\xd8\x01\n" +
 	"\x11ToolInputContract\x12\x1b\n" +
 	"\x06schema\x18\x01 \x01(\fH\x00R\x06schema\x88\x01\x01\x12B\n" +
@@ -3030,7 +3853,7 @@ const file_goagen_gateway_model_gateway_proto_rawDesc = "" +
 	"\x0fThinkingOptions\x12\x1b\n" +
 	"\x06enable\x18\x01 \x01(\bH\x00R\x06enable\x88\x01\x01\x12%\n" +
 	"\vinterleaved\x18\x02 \x01(\bH\x01R\vinterleaved\x88\x01\x01\x12(\n" +
-	"\rbudget_tokens\x18\x03 \x01(\x11H\x02R\fbudgetTokens\x88\x01\x01B\t\n" +
+	"\rbudget_tokens\x18\x03 \x01(\x12H\x02R\fbudgetTokens\x88\x01\x01B\t\n" +
 	"\a_enableB\x0e\n" +
 	"\f_interleavedB\x10\n" +
 	"\x0e_budget_tokens\"\xb0\x02\n" +
@@ -3050,18 +3873,21 @@ const file_goagen_gateway_model_gateway_proto_rawDesc = "" +
 	"\vafter_tools\x18\x02 \x01(\bH\x01R\n" +
 	"afterTools\x88\x01\x01B\x0f\n" +
 	"\r_after_systemB\x0e\n" +
-	"\f_after_tools\"\x8d\x01\n" +
-	"\x10CompleteResponse\x12?\n" +
-	"\bresponse\x18\x01 \x01(\v2#.goa_ai_model_gateway.ModelResponseR\bresponse\x128\n" +
-	"\x05error\x18\x02 \x01(\v2\".goa_ai_model_gateway.GatewayErrorR\x05error\"\xb9\x02\n" +
+	"\f_after_tools\"\x9c\x01\n" +
+	"\x10CompleteResponse\x12A\n" +
+	"\bresponse\x18\x01 \x01(\v2#.goa_ai_model_gateway.ModelResponseH\x00R\bresponse\x12:\n" +
+	"\x05error\x18\x02 \x01(\v2\".goa_ai_model_gateway.GatewayErrorH\x00R\x05errorB\t\n" +
+	"\aoutcome\"\xfe\x02\n" +
 	"\rModelResponse\x12<\n" +
 	"\acontent\x18\x01 \x03(\v2\".goa_ai_model_gateway.ModelMessageR\acontent\x126\n" +
 	"\x05usage\x18\x02 \x01(\v2 .goa_ai_model_gateway.TokenUsageR\x05usage\x12*\n" +
-	"\x0eusage_reported\x18\x03 \x01(\bH\x00R\rusageReported\x88\x01\x01\x12$\n" +
-	"\vstop_reason\x18\x04 \x01(\tH\x01R\n" +
+	"\x0eusage_reported\x18\x03 \x01(\bH\x00R\rusageReported\x88\x01\x01\x12.\n" +
+	"\x10usage_incomplete\x18\x04 \x01(\bH\x01R\x0fusageIncomplete\x88\x01\x01\x12$\n" +
+	"\vstop_reason\x18\x05 \x01(\tH\x02R\n" +
 	"stopReason\x88\x01\x01\x12*\n" +
-	"\x0eoutput_limited\x18\x05 \x01(\bH\x02R\routputLimited\x88\x01\x01B\x11\n" +
-	"\x0f_usage_reportedB\x0e\n" +
+	"\x0eoutput_limited\x18\x06 \x01(\bH\x03R\routputLimited\x88\x01\x01B\x11\n" +
+	"\x0f_usage_reportedB\x13\n" +
+	"\x11_usage_incompleteB\x0e\n" +
 	"\f_stop_reasonB\x11\n" +
 	"\x0f_output_limited\"\xa6\x03\n" +
 	"\n" +
@@ -3069,11 +3895,11 @@ const file_goagen_gateway_model_gateway_proto_rawDesc = "" +
 	"\x05model\x18\x01 \x01(\tH\x00R\x05model\x88\x01\x01\x12$\n" +
 	"\vmodel_class\x18\x02 \x01(\tH\x01R\n" +
 	"modelClass\x88\x01\x01\x12&\n" +
-	"\finput_tokens\x18\x03 \x01(\x11H\x02R\vinputTokens\x88\x01\x01\x12(\n" +
-	"\routput_tokens\x18\x04 \x01(\x11H\x03R\foutputTokens\x88\x01\x01\x12&\n" +
-	"\ftotal_tokens\x18\x05 \x01(\x11H\x04R\vtotalTokens\x88\x01\x01\x12/\n" +
-	"\x11cache_read_tokens\x18\x06 \x01(\x11H\x05R\x0fcacheReadTokens\x88\x01\x01\x121\n" +
-	"\x12cache_write_tokens\x18\a \x01(\x11H\x06R\x10cacheWriteTokens\x88\x01\x01B\b\n" +
+	"\finput_tokens\x18\x03 \x01(\x12H\x02R\vinputTokens\x88\x01\x01\x12(\n" +
+	"\routput_tokens\x18\x04 \x01(\x12H\x03R\foutputTokens\x88\x01\x01\x12&\n" +
+	"\ftotal_tokens\x18\x05 \x01(\x12H\x04R\vtotalTokens\x88\x01\x01\x12/\n" +
+	"\x11cache_read_tokens\x18\x06 \x01(\x12H\x05R\x0fcacheReadTokens\x88\x01\x01\x121\n" +
+	"\x12cache_write_tokens\x18\a \x01(\x12H\x06R\x10cacheWriteTokens\x88\x01\x01B\b\n" +
 	"\x06_modelB\x0e\n" +
 	"\f_model_classB\x0f\n" +
 	"\r_input_tokensB\x10\n" +
@@ -3094,9 +3920,9 @@ const file_goagen_gateway_model_gateway_proto_rawDesc = "" +
 	"validation\x129\n" +
 	"\x16unadvertised_tool_name\x18\x06 \x01(\tH\x03R\x14unadvertisedToolName\x88\x01\x01\x123\n" +
 	"\x13malformed_tool_name\x18\a \x01(\tH\x04R\x11malformedToolName\x88\x01\x01\x12$\n" +
-	"\vcause_index\x18\b \x01(\x11H\x05R\n" +
+	"\vcause_index\x18\b \x01(\x12H\x05R\n" +
 	"causeIndex\x88\x01\x01\x12#\n" +
-	"\rchild_indices\x18\t \x03(\x11R\fchildIndicesB\a\n" +
+	"\rchild_indices\x18\t \x03(\x12R\fchildIndicesB\a\n" +
 	"\x05_kindB\v\n" +
 	"\t_message_B\v\n" +
 	"\t_sentinelB\x19\n" +
@@ -3106,7 +3932,7 @@ const file_goagen_gateway_model_gateway_proto_rawDesc = "" +
 	"\x13ProviderErrorDetail\x12\x1f\n" +
 	"\bprovider\x18\x01 \x01(\tH\x00R\bprovider\x88\x01\x01\x12!\n" +
 	"\toperation\x18\x02 \x01(\tH\x01R\toperation\x88\x01\x01\x12$\n" +
-	"\vhttp_status\x18\x03 \x01(\x11H\x02R\n" +
+	"\vhttp_status\x18\x03 \x01(\x12H\x02R\n" +
 	"httpStatus\x88\x01\x01\x12\x17\n" +
 	"\x04kind\x18\x04 \x01(\tH\x03R\x04kind\x88\x01\x01\x12\x17\n" +
 	"\x04code\x18\x05 \x01(\tH\x04R\x04code\x88\x01\x01\x12\x1e\n" +
@@ -3154,7 +3980,7 @@ const file_goagen_gateway_model_gateway_proto_rawDesc = "" +
 	"\vtool_choice\x18\a \x01(\v2 .goa_ai_model_gateway.ToolChoiceR\n" +
 	"toolChoice\x12\"\n" +
 	"\n" +
-	"max_tokens\x18\b \x01(\x11H\x03R\tmaxTokens\x88\x01\x01\x12\x1b\n" +
+	"max_tokens\x18\b \x01(\x12H\x03R\tmaxTokens\x88\x01\x01\x12\x1b\n" +
 	"\x06stream\x18\t \x01(\bH\x04R\x06stream\x88\x01\x01\x12A\n" +
 	"\bthinking\x18\n" +
 	" \x01(\v2%.goa_ai_model_gateway.ThinkingOptionsR\bthinking\x12S\n" +
@@ -3164,29 +3990,24 @@ const file_goagen_gateway_model_gateway_proto_rawDesc = "" +
 	"\f_model_classB\x0e\n" +
 	"\f_temperatureB\r\n" +
 	"\v_max_tokensB\t\n" +
-	"\a_stream\"\xe6\x01\n" +
-	"\x0eStreamResponse\x12\x17\n" +
-	"\x04kind\x18\x01 \x01(\tH\x00R\x04kind\x88\x01\x01\x127\n" +
-	"\x05chunk\x18\x02 \x01(\v2!.goa_ai_model_gateway.StreamChunkR\x05chunk\x12?\n" +
-	"\bresponse\x18\x03 \x01(\v2#.goa_ai_model_gateway.ModelResponseR\bresponse\x128\n" +
-	"\x05error\x18\x04 \x01(\v2\".goa_ai_model_gateway.GatewayErrorR\x05errorB\a\n" +
-	"\x05_kind\"\xb9\x04\n" +
-	"\vStreamChunk\x12\x17\n" +
-	"\x04kind\x18\x01 \x01(\tH\x00R\x04kind\x88\x01\x01\x12=\n" +
-	"\bmessage_\x18\x02 \x01(\v2\".goa_ai_model_gateway.ModelMessageR\amessage\x12;\n" +
-	"\ttool_call\x18\x03 \x01(\v2\x1e.goa_ai_model_gateway.ToolCallR\btoolCall\x12K\n" +
-	"\x0ftool_call_delta\x18\x04 \x01(\v2#.goa_ai_model_gateway.ToolCallDeltaR\rtoolCallDelta\x12@\n" +
+	"\a_stream\"\xd5\x01\n" +
+	"\x0eStreamResponse\x129\n" +
+	"\x05chunk\x18\x01 \x01(\v2!.goa_ai_model_gateway.StreamChunkH\x00R\x05chunk\x12A\n" +
+	"\bresponse\x18\x02 \x01(\v2#.goa_ai_model_gateway.ModelResponseH\x00R\bresponse\x12:\n" +
+	"\x05error\x18\x03 \x01(\v2\".goa_ai_model_gateway.GatewayErrorH\x00R\x05errorB\t\n" +
+	"\apayload\"\xac\x04\n" +
+	"\vStreamChunk\x128\n" +
+	"\x04text\x18\x01 \x01(\v2\".goa_ai_model_gateway.ModelMessageH\x00R\x04text\x12@\n" +
+	"\bthinking\x18\x02 \x01(\v2\".goa_ai_model_gateway.ModelMessageH\x00R\bthinking\x12=\n" +
+	"\ttool_call\x18\x03 \x01(\v2\x1e.goa_ai_model_gateway.ToolCallH\x00R\btoolCall\x12M\n" +
+	"\x0ftool_call_delta\x18\x04 \x01(\v2#.goa_ai_model_gateway.ToolCallDeltaH\x00R\rtoolCallDelta\x12B\n" +
 	"\n" +
-	"completion\x18\x05 \x01(\v2 .goa_ai_model_gateway.CompletionR\n" +
-	"completion\x12P\n" +
-	"\x10completion_delta\x18\x06 \x01(\v2%.goa_ai_model_gateway.CompletionDeltaR\x0fcompletionDelta\x126\n" +
-	"\x05usage\x18\a \x01(\v2 .goa_ai_model_gateway.TokenUsageR\x05usage\x12$\n" +
-	"\vstop_reason\x18\b \x01(\tH\x01R\n" +
-	"stopReason\x88\x01\x01\x12*\n" +
-	"\x0eoutput_limited\x18\t \x01(\bH\x02R\routputLimited\x88\x01\x01B\a\n" +
-	"\x05_kindB\x0e\n" +
-	"\f_stop_reasonB\x11\n" +
-	"\x0f_output_limited\"\xbb\x01\n" +
+	"completion\x18\x05 \x01(\v2 .goa_ai_model_gateway.CompletionH\x00R\n" +
+	"completion\x12R\n" +
+	"\x10completion_delta\x18\x06 \x01(\v2%.goa_ai_model_gateway.CompletionDeltaH\x00R\x0fcompletionDelta\x128\n" +
+	"\x05usage\x18\a \x01(\v2 .goa_ai_model_gateway.TokenUsageH\x00R\x05usage\x126\n" +
+	"\x04stop\x18\b \x01(\v2 .goa_ai_model_gateway.StopDetailH\x00R\x04stopB\t\n" +
+	"\apayload\"\xbb\x01\n" +
 	"\bToolCall\x12\x17\n" +
 	"\x04name\x18\x01 \x01(\tH\x00R\x04name\x88\x01\x01\x12\x1d\n" +
 	"\apayload\x18\x02 \x01(\fH\x01R\apayload\x88\x01\x01\x12\x13\n" +
@@ -3215,7 +4036,13 @@ const file_goagen_gateway_model_gateway_proto_rawDesc = "" +
 	"\x04name\x18\x01 \x01(\tH\x00R\x04name\x88\x01\x01\x12\x19\n" +
 	"\x05delta\x18\x02 \x01(\tH\x01R\x05delta\x88\x01\x01B\a\n" +
 	"\x05_nameB\b\n" +
-	"\x06_delta\"\xd4\x05\n" +
+	"\x06_delta\"s\n" +
+	"\n" +
+	"StopDetail\x12\x1b\n" +
+	"\x06reason\x18\x01 \x01(\tH\x00R\x06reason\x88\x01\x01\x12*\n" +
+	"\x0eoutput_limited\x18\x02 \x01(\bH\x01R\routputLimited\x88\x01\x01B\t\n" +
+	"\a_reasonB\x11\n" +
+	"\x0f_output_limited\"\xd4\x05\n" +
 	"\x12CountTokensRequest\x12\x19\n" +
 	"\x05model\x18\x01 \x01(\tH\x00R\x05model\x88\x01\x01\x12$\n" +
 	"\vmodel_class\x18\x02 \x01(\tH\x01R\n" +
@@ -3228,7 +4055,7 @@ const file_goagen_gateway_model_gateway_proto_rawDesc = "" +
 	"\vtool_choice\x18\a \x01(\v2 .goa_ai_model_gateway.ToolChoiceR\n" +
 	"toolChoice\x12\"\n" +
 	"\n" +
-	"max_tokens\x18\b \x01(\x11H\x03R\tmaxTokens\x88\x01\x01\x12\x1b\n" +
+	"max_tokens\x18\b \x01(\x12H\x03R\tmaxTokens\x88\x01\x01\x12\x1b\n" +
 	"\x06stream\x18\t \x01(\bH\x04R\x06stream\x88\x01\x01\x12A\n" +
 	"\bthinking\x18\n" +
 	" \x01(\v2%.goa_ai_model_gateway.ThinkingOptionsR\bthinking\x12S\n" +
@@ -3238,16 +4065,17 @@ const file_goagen_gateway_model_gateway_proto_rawDesc = "" +
 	"\f_model_classB\x0e\n" +
 	"\f_temperatureB\r\n" +
 	"\v_max_tokensB\t\n" +
-	"\a_stream\"\x87\x01\n" +
-	"\x13CountTokensResponse\x126\n" +
-	"\x05count\x18\x01 \x01(\v2 .goa_ai_model_gateway.TokenCountR\x05count\x128\n" +
-	"\x05error\x18\x02 \x01(\v2\".goa_ai_model_gateway.GatewayErrorR\x05error\"\xc5\x01\n" +
+	"\a_stream\"\x96\x01\n" +
+	"\x13CountTokensResponse\x128\n" +
+	"\x05count\x18\x01 \x01(\v2 .goa_ai_model_gateway.TokenCountH\x00R\x05count\x12:\n" +
+	"\x05error\x18\x02 \x01(\v2\".goa_ai_model_gateway.GatewayErrorH\x00R\x05errorB\t\n" +
+	"\aoutcome\"\xc5\x01\n" +
 	"\n" +
 	"TokenCount\x12\x19\n" +
 	"\x05model\x18\x01 \x01(\tH\x00R\x05model\x88\x01\x01\x12$\n" +
 	"\vmodel_class\x18\x02 \x01(\tH\x01R\n" +
 	"modelClass\x88\x01\x01\x12&\n" +
-	"\finput_tokens\x18\x03 \x01(\x11H\x02R\vinputTokens\x88\x01\x01\x12\x19\n" +
+	"\finput_tokens\x18\x03 \x01(\x12H\x02R\vinputTokens\x88\x01\x01\x12\x19\n" +
 	"\x05exact\x18\x04 \x01(\bH\x03R\x05exact\x88\x01\x01B\b\n" +
 	"\x06_modelB\x0e\n" +
 	"\f_model_classB\x0f\n" +
@@ -3270,107 +4098,128 @@ func file_goagen_gateway_model_gateway_proto_rawDescGZIP() []byte {
 	return file_goagen_gateway_model_gateway_proto_rawDescData
 }
 
-var file_goagen_gateway_model_gateway_proto_msgTypes = make([]protoimpl.MessageInfo, 35)
+var file_goagen_gateway_model_gateway_proto_msgTypes = make([]protoimpl.MessageInfo, 45)
 var file_goagen_gateway_model_gateway_proto_goTypes = []any{
 	(*CompleteRequest)(nil),       // 0: goa_ai_model_gateway.CompleteRequest
 	(*PromptRef)(nil),             // 1: goa_ai_model_gateway.PromptRef
 	(*ModelMessage)(nil),          // 2: goa_ai_model_gateway.ModelMessage
 	(*MessagePart)(nil),           // 3: goa_ai_model_gateway.MessagePart
-	(*Citation)(nil),              // 4: goa_ai_model_gateway.Citation
-	(*CitationLocation)(nil),      // 5: goa_ai_model_gateway.CitationLocation
-	(*DocumentCharLocation)(nil),  // 6: goa_ai_model_gateway.DocumentCharLocation
-	(*DocumentPageLocation)(nil),  // 7: goa_ai_model_gateway.DocumentPageLocation
-	(*DocumentChunkLocation)(nil), // 8: goa_ai_model_gateway.DocumentChunkLocation
-	(*ToolDefinition)(nil),        // 9: goa_ai_model_gateway.ToolDefinition
-	(*SearchDocument)(nil),        // 10: goa_ai_model_gateway.SearchDocument
-	(*ToolInputContract)(nil),     // 11: goa_ai_model_gateway.ToolInputContract
-	(*ToolChoice)(nil),            // 12: goa_ai_model_gateway.ToolChoice
-	(*ThinkingOptions)(nil),       // 13: goa_ai_model_gateway.ThinkingOptions
-	(*StructuredOutput)(nil),      // 14: goa_ai_model_gateway.StructuredOutput
-	(*CacheOptions)(nil),          // 15: goa_ai_model_gateway.CacheOptions
-	(*CompleteResponse)(nil),      // 16: goa_ai_model_gateway.CompleteResponse
-	(*ModelResponse)(nil),         // 17: goa_ai_model_gateway.ModelResponse
-	(*TokenUsage)(nil),            // 18: goa_ai_model_gateway.TokenUsage
-	(*GatewayError)(nil),          // 19: goa_ai_model_gateway.GatewayError
-	(*GatewayErrorNode)(nil),      // 20: goa_ai_model_gateway.GatewayErrorNode
-	(*ProviderErrorDetail)(nil),   // 21: goa_ai_model_gateway.ProviderErrorDetail
-	(*ValidationErrorDetail)(nil), // 22: goa_ai_model_gateway.ValidationErrorDetail
-	(*ResponseEvidence)(nil),      // 23: goa_ai_model_gateway.ResponseEvidence
-	(*StreamRequest)(nil),         // 24: goa_ai_model_gateway.StreamRequest
-	(*StreamResponse)(nil),        // 25: goa_ai_model_gateway.StreamResponse
-	(*StreamChunk)(nil),           // 26: goa_ai_model_gateway.StreamChunk
-	(*ToolCall)(nil),              // 27: goa_ai_model_gateway.ToolCall
-	(*ToolCallDelta)(nil),         // 28: goa_ai_model_gateway.ToolCallDelta
-	(*Completion)(nil),            // 29: goa_ai_model_gateway.Completion
-	(*CompletionDelta)(nil),       // 30: goa_ai_model_gateway.CompletionDelta
-	(*CountTokensRequest)(nil),    // 31: goa_ai_model_gateway.CountTokensRequest
-	(*CountTokensResponse)(nil),   // 32: goa_ai_model_gateway.CountTokensResponse
-	(*TokenCount)(nil),            // 33: goa_ai_model_gateway.TokenCount
-	nil,                           // 34: goa_ai_model_gateway.SearchDocument.TermsEntry
+	(*TextPartDetail)(nil),        // 4: goa_ai_model_gateway.TextPartDetail
+	(*ThinkingPartDetail)(nil),    // 5: goa_ai_model_gateway.ThinkingPartDetail
+	(*ImagePartDetail)(nil),       // 6: goa_ai_model_gateway.ImagePartDetail
+	(*ImageSourcePartDetail)(nil), // 7: goa_ai_model_gateway.ImageSourcePartDetail
+	(*DocumentPartDetail)(nil),    // 8: goa_ai_model_gateway.DocumentPartDetail
+	(*CitationsPartDetail)(nil),   // 9: goa_ai_model_gateway.CitationsPartDetail
+	(*Citation)(nil),              // 10: goa_ai_model_gateway.Citation
+	(*CitationLocation)(nil),      // 11: goa_ai_model_gateway.CitationLocation
+	(*DocumentCharLocation)(nil),  // 12: goa_ai_model_gateway.DocumentCharLocation
+	(*DocumentPageLocation)(nil),  // 13: goa_ai_model_gateway.DocumentPageLocation
+	(*DocumentChunkLocation)(nil), // 14: goa_ai_model_gateway.DocumentChunkLocation
+	(*ToolUsePartDetail)(nil),     // 15: goa_ai_model_gateway.ToolUsePartDetail
+	(*ToolResultPartDetail)(nil),  // 16: goa_ai_model_gateway.ToolResultPartDetail
+	(*CacheCheckpointDetail)(nil), // 17: goa_ai_model_gateway.CacheCheckpointDetail
+	(*ToolDefinition)(nil),        // 18: goa_ai_model_gateway.ToolDefinition
+	(*SearchDocument)(nil),        // 19: goa_ai_model_gateway.SearchDocument
+	(*ToolInputContract)(nil),     // 20: goa_ai_model_gateway.ToolInputContract
+	(*ToolChoice)(nil),            // 21: goa_ai_model_gateway.ToolChoice
+	(*ThinkingOptions)(nil),       // 22: goa_ai_model_gateway.ThinkingOptions
+	(*StructuredOutput)(nil),      // 23: goa_ai_model_gateway.StructuredOutput
+	(*CacheOptions)(nil),          // 24: goa_ai_model_gateway.CacheOptions
+	(*CompleteResponse)(nil),      // 25: goa_ai_model_gateway.CompleteResponse
+	(*ModelResponse)(nil),         // 26: goa_ai_model_gateway.ModelResponse
+	(*TokenUsage)(nil),            // 27: goa_ai_model_gateway.TokenUsage
+	(*GatewayError)(nil),          // 28: goa_ai_model_gateway.GatewayError
+	(*GatewayErrorNode)(nil),      // 29: goa_ai_model_gateway.GatewayErrorNode
+	(*ProviderErrorDetail)(nil),   // 30: goa_ai_model_gateway.ProviderErrorDetail
+	(*ValidationErrorDetail)(nil), // 31: goa_ai_model_gateway.ValidationErrorDetail
+	(*ResponseEvidence)(nil),      // 32: goa_ai_model_gateway.ResponseEvidence
+	(*StreamRequest)(nil),         // 33: goa_ai_model_gateway.StreamRequest
+	(*StreamResponse)(nil),        // 34: goa_ai_model_gateway.StreamResponse
+	(*StreamChunk)(nil),           // 35: goa_ai_model_gateway.StreamChunk
+	(*ToolCall)(nil),              // 36: goa_ai_model_gateway.ToolCall
+	(*ToolCallDelta)(nil),         // 37: goa_ai_model_gateway.ToolCallDelta
+	(*Completion)(nil),            // 38: goa_ai_model_gateway.Completion
+	(*CompletionDelta)(nil),       // 39: goa_ai_model_gateway.CompletionDelta
+	(*StopDetail)(nil),            // 40: goa_ai_model_gateway.StopDetail
+	(*CountTokensRequest)(nil),    // 41: goa_ai_model_gateway.CountTokensRequest
+	(*CountTokensResponse)(nil),   // 42: goa_ai_model_gateway.CountTokensResponse
+	(*TokenCount)(nil),            // 43: goa_ai_model_gateway.TokenCount
+	nil,                           // 44: goa_ai_model_gateway.SearchDocument.TermsEntry
 }
 var file_goagen_gateway_model_gateway_proto_depIdxs = []int32{
 	1,  // 0: goa_ai_model_gateway.CompleteRequest.prompt_refs:type_name -> goa_ai_model_gateway.PromptRef
 	2,  // 1: goa_ai_model_gateway.CompleteRequest.messages:type_name -> goa_ai_model_gateway.ModelMessage
-	9,  // 2: goa_ai_model_gateway.CompleteRequest.tools:type_name -> goa_ai_model_gateway.ToolDefinition
-	12, // 3: goa_ai_model_gateway.CompleteRequest.tool_choice:type_name -> goa_ai_model_gateway.ToolChoice
-	13, // 4: goa_ai_model_gateway.CompleteRequest.thinking:type_name -> goa_ai_model_gateway.ThinkingOptions
-	14, // 5: goa_ai_model_gateway.CompleteRequest.structured_output:type_name -> goa_ai_model_gateway.StructuredOutput
-	15, // 6: goa_ai_model_gateway.CompleteRequest.cache:type_name -> goa_ai_model_gateway.CacheOptions
+	18, // 2: goa_ai_model_gateway.CompleteRequest.tools:type_name -> goa_ai_model_gateway.ToolDefinition
+	21, // 3: goa_ai_model_gateway.CompleteRequest.tool_choice:type_name -> goa_ai_model_gateway.ToolChoice
+	22, // 4: goa_ai_model_gateway.CompleteRequest.thinking:type_name -> goa_ai_model_gateway.ThinkingOptions
+	23, // 5: goa_ai_model_gateway.CompleteRequest.structured_output:type_name -> goa_ai_model_gateway.StructuredOutput
+	24, // 6: goa_ai_model_gateway.CompleteRequest.cache:type_name -> goa_ai_model_gateway.CacheOptions
 	3,  // 7: goa_ai_model_gateway.ModelMessage.parts:type_name -> goa_ai_model_gateway.MessagePart
-	4,  // 8: goa_ai_model_gateway.MessagePart.citations:type_name -> goa_ai_model_gateway.Citation
-	5,  // 9: goa_ai_model_gateway.Citation.location:type_name -> goa_ai_model_gateway.CitationLocation
-	6,  // 10: goa_ai_model_gateway.CitationLocation.document_char:type_name -> goa_ai_model_gateway.DocumentCharLocation
-	7,  // 11: goa_ai_model_gateway.CitationLocation.document_page:type_name -> goa_ai_model_gateway.DocumentPageLocation
-	8,  // 12: goa_ai_model_gateway.CitationLocation.document_chunk:type_name -> goa_ai_model_gateway.DocumentChunkLocation
-	10, // 13: goa_ai_model_gateway.ToolDefinition.search:type_name -> goa_ai_model_gateway.SearchDocument
-	11, // 14: goa_ai_model_gateway.ToolDefinition.input:type_name -> goa_ai_model_gateway.ToolInputContract
-	34, // 15: goa_ai_model_gateway.SearchDocument.terms:type_name -> goa_ai_model_gateway.SearchDocument.TermsEntry
-	17, // 16: goa_ai_model_gateway.CompleteResponse.response:type_name -> goa_ai_model_gateway.ModelResponse
-	19, // 17: goa_ai_model_gateway.CompleteResponse.error:type_name -> goa_ai_model_gateway.GatewayError
-	2,  // 18: goa_ai_model_gateway.ModelResponse.content:type_name -> goa_ai_model_gateway.ModelMessage
-	18, // 19: goa_ai_model_gateway.ModelResponse.usage:type_name -> goa_ai_model_gateway.TokenUsage
-	20, // 20: goa_ai_model_gateway.GatewayError.nodes:type_name -> goa_ai_model_gateway.GatewayErrorNode
-	18, // 21: goa_ai_model_gateway.GatewayError.retained_usage:type_name -> goa_ai_model_gateway.TokenUsage
-	21, // 22: goa_ai_model_gateway.GatewayErrorNode.provider:type_name -> goa_ai_model_gateway.ProviderErrorDetail
-	22, // 23: goa_ai_model_gateway.GatewayErrorNode.validation:type_name -> goa_ai_model_gateway.ValidationErrorDetail
-	23, // 24: goa_ai_model_gateway.ValidationErrorDetail.evidence:type_name -> goa_ai_model_gateway.ResponseEvidence
-	18, // 25: goa_ai_model_gateway.ValidationErrorDetail.usage:type_name -> goa_ai_model_gateway.TokenUsage
-	1,  // 26: goa_ai_model_gateway.StreamRequest.prompt_refs:type_name -> goa_ai_model_gateway.PromptRef
-	2,  // 27: goa_ai_model_gateway.StreamRequest.messages:type_name -> goa_ai_model_gateway.ModelMessage
-	9,  // 28: goa_ai_model_gateway.StreamRequest.tools:type_name -> goa_ai_model_gateway.ToolDefinition
-	12, // 29: goa_ai_model_gateway.StreamRequest.tool_choice:type_name -> goa_ai_model_gateway.ToolChoice
-	13, // 30: goa_ai_model_gateway.StreamRequest.thinking:type_name -> goa_ai_model_gateway.ThinkingOptions
-	14, // 31: goa_ai_model_gateway.StreamRequest.structured_output:type_name -> goa_ai_model_gateway.StructuredOutput
-	15, // 32: goa_ai_model_gateway.StreamRequest.cache:type_name -> goa_ai_model_gateway.CacheOptions
-	26, // 33: goa_ai_model_gateway.StreamResponse.chunk:type_name -> goa_ai_model_gateway.StreamChunk
-	17, // 34: goa_ai_model_gateway.StreamResponse.response:type_name -> goa_ai_model_gateway.ModelResponse
-	19, // 35: goa_ai_model_gateway.StreamResponse.error:type_name -> goa_ai_model_gateway.GatewayError
-	2,  // 36: goa_ai_model_gateway.StreamChunk.message_:type_name -> goa_ai_model_gateway.ModelMessage
-	27, // 37: goa_ai_model_gateway.StreamChunk.tool_call:type_name -> goa_ai_model_gateway.ToolCall
-	28, // 38: goa_ai_model_gateway.StreamChunk.tool_call_delta:type_name -> goa_ai_model_gateway.ToolCallDelta
-	29, // 39: goa_ai_model_gateway.StreamChunk.completion:type_name -> goa_ai_model_gateway.Completion
-	30, // 40: goa_ai_model_gateway.StreamChunk.completion_delta:type_name -> goa_ai_model_gateway.CompletionDelta
-	18, // 41: goa_ai_model_gateway.StreamChunk.usage:type_name -> goa_ai_model_gateway.TokenUsage
-	1,  // 42: goa_ai_model_gateway.CountTokensRequest.prompt_refs:type_name -> goa_ai_model_gateway.PromptRef
-	2,  // 43: goa_ai_model_gateway.CountTokensRequest.messages:type_name -> goa_ai_model_gateway.ModelMessage
-	9,  // 44: goa_ai_model_gateway.CountTokensRequest.tools:type_name -> goa_ai_model_gateway.ToolDefinition
-	12, // 45: goa_ai_model_gateway.CountTokensRequest.tool_choice:type_name -> goa_ai_model_gateway.ToolChoice
-	13, // 46: goa_ai_model_gateway.CountTokensRequest.thinking:type_name -> goa_ai_model_gateway.ThinkingOptions
-	14, // 47: goa_ai_model_gateway.CountTokensRequest.structured_output:type_name -> goa_ai_model_gateway.StructuredOutput
-	15, // 48: goa_ai_model_gateway.CountTokensRequest.cache:type_name -> goa_ai_model_gateway.CacheOptions
-	33, // 49: goa_ai_model_gateway.CountTokensResponse.count:type_name -> goa_ai_model_gateway.TokenCount
-	19, // 50: goa_ai_model_gateway.CountTokensResponse.error:type_name -> goa_ai_model_gateway.GatewayError
-	0,  // 51: goa_ai_model_gateway.ModelGateway.Complete:input_type -> goa_ai_model_gateway.CompleteRequest
-	24, // 52: goa_ai_model_gateway.ModelGateway.Stream:input_type -> goa_ai_model_gateway.StreamRequest
-	31, // 53: goa_ai_model_gateway.ModelGateway.CountTokens:input_type -> goa_ai_model_gateway.CountTokensRequest
-	16, // 54: goa_ai_model_gateway.ModelGateway.Complete:output_type -> goa_ai_model_gateway.CompleteResponse
-	25, // 55: goa_ai_model_gateway.ModelGateway.Stream:output_type -> goa_ai_model_gateway.StreamResponse
-	32, // 56: goa_ai_model_gateway.ModelGateway.CountTokens:output_type -> goa_ai_model_gateway.CountTokensResponse
-	54, // [54:57] is the sub-list for method output_type
-	51, // [51:54] is the sub-list for method input_type
-	51, // [51:51] is the sub-list for extension type_name
-	51, // [51:51] is the sub-list for extension extendee
-	0,  // [0:51] is the sub-list for field type_name
+	4,  // 8: goa_ai_model_gateway.MessagePart.text:type_name -> goa_ai_model_gateway.TextPartDetail
+	5,  // 9: goa_ai_model_gateway.MessagePart.thinking:type_name -> goa_ai_model_gateway.ThinkingPartDetail
+	6,  // 10: goa_ai_model_gateway.MessagePart.image:type_name -> goa_ai_model_gateway.ImagePartDetail
+	7,  // 11: goa_ai_model_gateway.MessagePart.image_source:type_name -> goa_ai_model_gateway.ImageSourcePartDetail
+	8,  // 12: goa_ai_model_gateway.MessagePart.document:type_name -> goa_ai_model_gateway.DocumentPartDetail
+	9,  // 13: goa_ai_model_gateway.MessagePart.citations:type_name -> goa_ai_model_gateway.CitationsPartDetail
+	15, // 14: goa_ai_model_gateway.MessagePart.tool_use:type_name -> goa_ai_model_gateway.ToolUsePartDetail
+	16, // 15: goa_ai_model_gateway.MessagePart.tool_result:type_name -> goa_ai_model_gateway.ToolResultPartDetail
+	17, // 16: goa_ai_model_gateway.MessagePart.cache_checkpoint:type_name -> goa_ai_model_gateway.CacheCheckpointDetail
+	10, // 17: goa_ai_model_gateway.CitationsPartDetail.citations:type_name -> goa_ai_model_gateway.Citation
+	11, // 18: goa_ai_model_gateway.Citation.location:type_name -> goa_ai_model_gateway.CitationLocation
+	12, // 19: goa_ai_model_gateway.CitationLocation.document_char:type_name -> goa_ai_model_gateway.DocumentCharLocation
+	13, // 20: goa_ai_model_gateway.CitationLocation.document_page:type_name -> goa_ai_model_gateway.DocumentPageLocation
+	14, // 21: goa_ai_model_gateway.CitationLocation.document_chunk:type_name -> goa_ai_model_gateway.DocumentChunkLocation
+	19, // 22: goa_ai_model_gateway.ToolDefinition.search:type_name -> goa_ai_model_gateway.SearchDocument
+	20, // 23: goa_ai_model_gateway.ToolDefinition.input:type_name -> goa_ai_model_gateway.ToolInputContract
+	44, // 24: goa_ai_model_gateway.SearchDocument.terms:type_name -> goa_ai_model_gateway.SearchDocument.TermsEntry
+	26, // 25: goa_ai_model_gateway.CompleteResponse.response:type_name -> goa_ai_model_gateway.ModelResponse
+	28, // 26: goa_ai_model_gateway.CompleteResponse.error:type_name -> goa_ai_model_gateway.GatewayError
+	2,  // 27: goa_ai_model_gateway.ModelResponse.content:type_name -> goa_ai_model_gateway.ModelMessage
+	27, // 28: goa_ai_model_gateway.ModelResponse.usage:type_name -> goa_ai_model_gateway.TokenUsage
+	29, // 29: goa_ai_model_gateway.GatewayError.nodes:type_name -> goa_ai_model_gateway.GatewayErrorNode
+	27, // 30: goa_ai_model_gateway.GatewayError.retained_usage:type_name -> goa_ai_model_gateway.TokenUsage
+	30, // 31: goa_ai_model_gateway.GatewayErrorNode.provider:type_name -> goa_ai_model_gateway.ProviderErrorDetail
+	31, // 32: goa_ai_model_gateway.GatewayErrorNode.validation:type_name -> goa_ai_model_gateway.ValidationErrorDetail
+	32, // 33: goa_ai_model_gateway.ValidationErrorDetail.evidence:type_name -> goa_ai_model_gateway.ResponseEvidence
+	27, // 34: goa_ai_model_gateway.ValidationErrorDetail.usage:type_name -> goa_ai_model_gateway.TokenUsage
+	1,  // 35: goa_ai_model_gateway.StreamRequest.prompt_refs:type_name -> goa_ai_model_gateway.PromptRef
+	2,  // 36: goa_ai_model_gateway.StreamRequest.messages:type_name -> goa_ai_model_gateway.ModelMessage
+	18, // 37: goa_ai_model_gateway.StreamRequest.tools:type_name -> goa_ai_model_gateway.ToolDefinition
+	21, // 38: goa_ai_model_gateway.StreamRequest.tool_choice:type_name -> goa_ai_model_gateway.ToolChoice
+	22, // 39: goa_ai_model_gateway.StreamRequest.thinking:type_name -> goa_ai_model_gateway.ThinkingOptions
+	23, // 40: goa_ai_model_gateway.StreamRequest.structured_output:type_name -> goa_ai_model_gateway.StructuredOutput
+	24, // 41: goa_ai_model_gateway.StreamRequest.cache:type_name -> goa_ai_model_gateway.CacheOptions
+	35, // 42: goa_ai_model_gateway.StreamResponse.chunk:type_name -> goa_ai_model_gateway.StreamChunk
+	26, // 43: goa_ai_model_gateway.StreamResponse.response:type_name -> goa_ai_model_gateway.ModelResponse
+	28, // 44: goa_ai_model_gateway.StreamResponse.error:type_name -> goa_ai_model_gateway.GatewayError
+	2,  // 45: goa_ai_model_gateway.StreamChunk.text:type_name -> goa_ai_model_gateway.ModelMessage
+	2,  // 46: goa_ai_model_gateway.StreamChunk.thinking:type_name -> goa_ai_model_gateway.ModelMessage
+	36, // 47: goa_ai_model_gateway.StreamChunk.tool_call:type_name -> goa_ai_model_gateway.ToolCall
+	37, // 48: goa_ai_model_gateway.StreamChunk.tool_call_delta:type_name -> goa_ai_model_gateway.ToolCallDelta
+	38, // 49: goa_ai_model_gateway.StreamChunk.completion:type_name -> goa_ai_model_gateway.Completion
+	39, // 50: goa_ai_model_gateway.StreamChunk.completion_delta:type_name -> goa_ai_model_gateway.CompletionDelta
+	27, // 51: goa_ai_model_gateway.StreamChunk.usage:type_name -> goa_ai_model_gateway.TokenUsage
+	40, // 52: goa_ai_model_gateway.StreamChunk.stop:type_name -> goa_ai_model_gateway.StopDetail
+	1,  // 53: goa_ai_model_gateway.CountTokensRequest.prompt_refs:type_name -> goa_ai_model_gateway.PromptRef
+	2,  // 54: goa_ai_model_gateway.CountTokensRequest.messages:type_name -> goa_ai_model_gateway.ModelMessage
+	18, // 55: goa_ai_model_gateway.CountTokensRequest.tools:type_name -> goa_ai_model_gateway.ToolDefinition
+	21, // 56: goa_ai_model_gateway.CountTokensRequest.tool_choice:type_name -> goa_ai_model_gateway.ToolChoice
+	22, // 57: goa_ai_model_gateway.CountTokensRequest.thinking:type_name -> goa_ai_model_gateway.ThinkingOptions
+	23, // 58: goa_ai_model_gateway.CountTokensRequest.structured_output:type_name -> goa_ai_model_gateway.StructuredOutput
+	24, // 59: goa_ai_model_gateway.CountTokensRequest.cache:type_name -> goa_ai_model_gateway.CacheOptions
+	43, // 60: goa_ai_model_gateway.CountTokensResponse.count:type_name -> goa_ai_model_gateway.TokenCount
+	28, // 61: goa_ai_model_gateway.CountTokensResponse.error:type_name -> goa_ai_model_gateway.GatewayError
+	0,  // 62: goa_ai_model_gateway.ModelGateway.Complete:input_type -> goa_ai_model_gateway.CompleteRequest
+	33, // 63: goa_ai_model_gateway.ModelGateway.Stream:input_type -> goa_ai_model_gateway.StreamRequest
+	41, // 64: goa_ai_model_gateway.ModelGateway.CountTokens:input_type -> goa_ai_model_gateway.CountTokensRequest
+	25, // 65: goa_ai_model_gateway.ModelGateway.Complete:output_type -> goa_ai_model_gateway.CompleteResponse
+	34, // 66: goa_ai_model_gateway.ModelGateway.Stream:output_type -> goa_ai_model_gateway.StreamResponse
+	42, // 67: goa_ai_model_gateway.ModelGateway.CountTokens:output_type -> goa_ai_model_gateway.CountTokensResponse
+	65, // [65:68] is the sub-list for method output_type
+	62, // [62:65] is the sub-list for method input_type
+	62, // [62:62] is the sub-list for extension type_name
+	62, // [62:62] is the sub-list for extension extendee
+	0,  // [0:62] is the sub-list for field type_name
 }
 
 func init() { file_goagen_gateway_model_gateway_proto_init() }
@@ -3381,40 +4230,85 @@ func file_goagen_gateway_model_gateway_proto_init() {
 	file_goagen_gateway_model_gateway_proto_msgTypes[0].OneofWrappers = []any{}
 	file_goagen_gateway_model_gateway_proto_msgTypes[1].OneofWrappers = []any{}
 	file_goagen_gateway_model_gateway_proto_msgTypes[2].OneofWrappers = []any{}
-	file_goagen_gateway_model_gateway_proto_msgTypes[3].OneofWrappers = []any{}
+	file_goagen_gateway_model_gateway_proto_msgTypes[3].OneofWrappers = []any{
+		(*MessagePart_Text)(nil),
+		(*MessagePart_Thinking)(nil),
+		(*MessagePart_Image)(nil),
+		(*MessagePart_ImageSource)(nil),
+		(*MessagePart_Document)(nil),
+		(*MessagePart_Citations)(nil),
+		(*MessagePart_ToolUse)(nil),
+		(*MessagePart_ToolResult)(nil),
+		(*MessagePart_CacheCheckpoint)(nil),
+	}
 	file_goagen_gateway_model_gateway_proto_msgTypes[4].OneofWrappers = []any{}
+	file_goagen_gateway_model_gateway_proto_msgTypes[5].OneofWrappers = []any{}
 	file_goagen_gateway_model_gateway_proto_msgTypes[6].OneofWrappers = []any{}
 	file_goagen_gateway_model_gateway_proto_msgTypes[7].OneofWrappers = []any{}
 	file_goagen_gateway_model_gateway_proto_msgTypes[8].OneofWrappers = []any{}
 	file_goagen_gateway_model_gateway_proto_msgTypes[9].OneofWrappers = []any{}
 	file_goagen_gateway_model_gateway_proto_msgTypes[10].OneofWrappers = []any{}
-	file_goagen_gateway_model_gateway_proto_msgTypes[11].OneofWrappers = []any{}
+	file_goagen_gateway_model_gateway_proto_msgTypes[11].OneofWrappers = []any{
+		(*CitationLocation_DocumentChar)(nil),
+		(*CitationLocation_DocumentPage)(nil),
+		(*CitationLocation_DocumentChunk)(nil),
+	}
 	file_goagen_gateway_model_gateway_proto_msgTypes[12].OneofWrappers = []any{}
 	file_goagen_gateway_model_gateway_proto_msgTypes[13].OneofWrappers = []any{}
 	file_goagen_gateway_model_gateway_proto_msgTypes[14].OneofWrappers = []any{}
 	file_goagen_gateway_model_gateway_proto_msgTypes[15].OneofWrappers = []any{}
-	file_goagen_gateway_model_gateway_proto_msgTypes[17].OneofWrappers = []any{}
+	file_goagen_gateway_model_gateway_proto_msgTypes[16].OneofWrappers = []any{}
 	file_goagen_gateway_model_gateway_proto_msgTypes[18].OneofWrappers = []any{}
+	file_goagen_gateway_model_gateway_proto_msgTypes[19].OneofWrappers = []any{}
 	file_goagen_gateway_model_gateway_proto_msgTypes[20].OneofWrappers = []any{}
 	file_goagen_gateway_model_gateway_proto_msgTypes[21].OneofWrappers = []any{}
 	file_goagen_gateway_model_gateway_proto_msgTypes[22].OneofWrappers = []any{}
 	file_goagen_gateway_model_gateway_proto_msgTypes[23].OneofWrappers = []any{}
 	file_goagen_gateway_model_gateway_proto_msgTypes[24].OneofWrappers = []any{}
-	file_goagen_gateway_model_gateway_proto_msgTypes[25].OneofWrappers = []any{}
+	file_goagen_gateway_model_gateway_proto_msgTypes[25].OneofWrappers = []any{
+		(*CompleteResponse_Response)(nil),
+		(*CompleteResponse_Error)(nil),
+	}
 	file_goagen_gateway_model_gateway_proto_msgTypes[26].OneofWrappers = []any{}
 	file_goagen_gateway_model_gateway_proto_msgTypes[27].OneofWrappers = []any{}
-	file_goagen_gateway_model_gateway_proto_msgTypes[28].OneofWrappers = []any{}
 	file_goagen_gateway_model_gateway_proto_msgTypes[29].OneofWrappers = []any{}
 	file_goagen_gateway_model_gateway_proto_msgTypes[30].OneofWrappers = []any{}
 	file_goagen_gateway_model_gateway_proto_msgTypes[31].OneofWrappers = []any{}
+	file_goagen_gateway_model_gateway_proto_msgTypes[32].OneofWrappers = []any{}
 	file_goagen_gateway_model_gateway_proto_msgTypes[33].OneofWrappers = []any{}
+	file_goagen_gateway_model_gateway_proto_msgTypes[34].OneofWrappers = []any{
+		(*StreamResponse_Chunk)(nil),
+		(*StreamResponse_Response)(nil),
+		(*StreamResponse_Error)(nil),
+	}
+	file_goagen_gateway_model_gateway_proto_msgTypes[35].OneofWrappers = []any{
+		(*StreamChunk_Text)(nil),
+		(*StreamChunk_Thinking)(nil),
+		(*StreamChunk_ToolCall)(nil),
+		(*StreamChunk_ToolCallDelta)(nil),
+		(*StreamChunk_Completion)(nil),
+		(*StreamChunk_CompletionDelta)(nil),
+		(*StreamChunk_Usage)(nil),
+		(*StreamChunk_Stop)(nil),
+	}
+	file_goagen_gateway_model_gateway_proto_msgTypes[36].OneofWrappers = []any{}
+	file_goagen_gateway_model_gateway_proto_msgTypes[37].OneofWrappers = []any{}
+	file_goagen_gateway_model_gateway_proto_msgTypes[38].OneofWrappers = []any{}
+	file_goagen_gateway_model_gateway_proto_msgTypes[39].OneofWrappers = []any{}
+	file_goagen_gateway_model_gateway_proto_msgTypes[40].OneofWrappers = []any{}
+	file_goagen_gateway_model_gateway_proto_msgTypes[41].OneofWrappers = []any{}
+	file_goagen_gateway_model_gateway_proto_msgTypes[42].OneofWrappers = []any{
+		(*CountTokensResponse_Count)(nil),
+		(*CountTokensResponse_Error)(nil),
+	}
+	file_goagen_gateway_model_gateway_proto_msgTypes[43].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_goagen_gateway_model_gateway_proto_rawDesc), len(file_goagen_gateway_model_gateway_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   35,
+			NumMessages:   45,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
