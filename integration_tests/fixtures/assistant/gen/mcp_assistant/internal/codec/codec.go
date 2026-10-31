@@ -141,26 +141,31 @@ func ValidateArgumentPromptResultRefereePromptMessageTransport(value *ArgumentPr
 		}
 	}
 	if value.Content != nil {
-		switch string(value.Content.Kind()) {
-		case "text":
-			actual, _ := value.Content.AsText()
-			if actual != nil {
-				if err2 := ValidateArgumentPromptResultRefereePromptTextTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Content.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Content.Kind()) {
+			case "text":
+				actual, _ := value.Content.AsText()
+				if actual != nil {
+					if err2 := ValidateArgumentPromptResultRefereePromptTextTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "image":
-			actual, _ := value.Content.AsImage()
-			if actual != nil {
-				if err2 := ValidateArgumentPromptResultRefereePromptImageTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "image":
+				actual, _ := value.Content.AsImage()
+				if actual != nil {
+					if err2 := ValidateArgumentPromptResultRefereePromptImageTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "resource":
-			actual, _ := value.Content.AsResource()
-			if actual != nil {
-				if err2 := ValidateArgumentPromptResultRefereePromptResourceTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "resource":
+				actual, _ := value.Content.AsResource()
+				if actual != nil {
+					if err2 := ValidateArgumentPromptResultRefereePromptResourceTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -184,12 +189,17 @@ func ValidateArgumentPromptResultRefereePromptResourceTransport(value *ArgumentP
 		err = goa.MergeErrors(err, goa.MissingFieldError("resource", "body"))
 	}
 	if value.Resource != nil {
-		switch string(value.Resource.Kind()) {
-		case "text":
-			actual, _ := value.Resource.AsText()
-			if actual != nil {
-				if err2 := ValidateArgumentPromptResultRefereeEmbeddedTextTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Resource.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Resource.Kind()) {
+			case "text":
+				actual, _ := value.Resource.AsText()
+				if actual != nil {
+					if err2 := ValidateArgumentPromptResultRefereeEmbeddedTextTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -388,26 +398,31 @@ func ValidateImagePromptResultRefereePromptMessageTransport(value *ImagePromptRe
 		}
 	}
 	if value.Content != nil {
-		switch string(value.Content.Kind()) {
-		case "text":
-			actual, _ := value.Content.AsText()
-			if actual != nil {
-				if err2 := ValidateImagePromptResultRefereePromptTextTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Content.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Content.Kind()) {
+			case "text":
+				actual, _ := value.Content.AsText()
+				if actual != nil {
+					if err2 := ValidateImagePromptResultRefereePromptTextTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "image":
-			actual, _ := value.Content.AsImage()
-			if actual != nil {
-				if err2 := ValidateImagePromptResultRefereePromptImageTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "image":
+				actual, _ := value.Content.AsImage()
+				if actual != nil {
+					if err2 := ValidateImagePromptResultRefereePromptImageTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "resource":
-			actual, _ := value.Content.AsResource()
-			if actual != nil {
-				if err2 := ValidateImagePromptResultRefereePromptResourceTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "resource":
+				actual, _ := value.Content.AsResource()
+				if actual != nil {
+					if err2 := ValidateImagePromptResultRefereePromptResourceTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -431,12 +446,17 @@ func ValidateImagePromptResultRefereePromptResourceTransport(value *ImagePromptR
 		err = goa.MergeErrors(err, goa.MissingFieldError("resource", "body"))
 	}
 	if value.Resource != nil {
-		switch string(value.Resource.Kind()) {
-		case "text":
-			actual, _ := value.Resource.AsText()
-			if actual != nil {
-				if err2 := ValidateImagePromptResultRefereeEmbeddedTextTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Resource.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Resource.Kind()) {
+			case "text":
+				actual, _ := value.Resource.AsText()
+				if actual != nil {
+					if err2 := ValidateImagePromptResultRefereeEmbeddedTextTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -613,19 +633,24 @@ func ValidateReadResourceResultTemplateItemTransport(value *ReadResourceResultTe
 		err = goa.MergeErrors(err, goa.MissingFieldError("content", "body"))
 	}
 	if value.Selected != nil {
-		switch string(value.Selected.Kind()) {
-		case "text":
-			actual, _ := value.Selected.AsText()
-			if actual != nil {
-				if err2 := ValidateReadResourceResultTemplateTextTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Selected.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Selected.Kind()) {
+			case "text":
+				actual, _ := value.Selected.AsText()
+				if actual != nil {
+					if err2 := ValidateReadResourceResultTemplateTextTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "blob":
-			actual, _ := value.Selected.AsBlob()
-			if actual != nil {
-				if err2 := ValidateReadResourceResultTemplateBlobTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "blob":
+				actual, _ := value.Selected.AsBlob()
+				if actual != nil {
+					if err2 := ValidateReadResourceResultTemplateBlobTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -789,26 +814,31 @@ func ValidateResourcePromptResultRefereePromptMessageTransport(value *ResourcePr
 		}
 	}
 	if value.Content != nil {
-		switch string(value.Content.Kind()) {
-		case "text":
-			actual, _ := value.Content.AsText()
-			if actual != nil {
-				if err2 := ValidateResourcePromptResultRefereePromptTextTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Content.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Content.Kind()) {
+			case "text":
+				actual, _ := value.Content.AsText()
+				if actual != nil {
+					if err2 := ValidateResourcePromptResultRefereePromptTextTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "image":
-			actual, _ := value.Content.AsImage()
-			if actual != nil {
-				if err2 := ValidateResourcePromptResultRefereePromptImageTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "image":
+				actual, _ := value.Content.AsImage()
+				if actual != nil {
+					if err2 := ValidateResourcePromptResultRefereePromptImageTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "resource":
-			actual, _ := value.Content.AsResource()
-			if actual != nil {
-				if err2 := ValidateResourcePromptResultRefereePromptResourceTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "resource":
+				actual, _ := value.Content.AsResource()
+				if actual != nil {
+					if err2 := ValidateResourcePromptResultRefereePromptResourceTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -832,12 +862,17 @@ func ValidateResourcePromptResultRefereePromptResourceTransport(value *ResourceP
 		err = goa.MergeErrors(err, goa.MissingFieldError("resource", "body"))
 	}
 	if value.Resource != nil {
-		switch string(value.Resource.Kind()) {
-		case "text":
-			actual, _ := value.Resource.AsText()
-			if actual != nil {
-				if err2 := ValidateResourcePromptResultRefereeEmbeddedTextTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Resource.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Resource.Kind()) {
+			case "text":
+				actual, _ := value.Resource.AsText()
+				if actual != nil {
+					if err2 := ValidateResourcePromptResultRefereeEmbeddedTextTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -1016,26 +1051,31 @@ func ValidateSimplePromptResultRefereePromptMessageTransport(value *SimplePrompt
 		}
 	}
 	if value.Content != nil {
-		switch string(value.Content.Kind()) {
-		case "text":
-			actual, _ := value.Content.AsText()
-			if actual != nil {
-				if err2 := ValidateSimplePromptResultRefereePromptTextTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Content.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Content.Kind()) {
+			case "text":
+				actual, _ := value.Content.AsText()
+				if actual != nil {
+					if err2 := ValidateSimplePromptResultRefereePromptTextTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "image":
-			actual, _ := value.Content.AsImage()
-			if actual != nil {
-				if err2 := ValidateSimplePromptResultRefereePromptImageTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "image":
+				actual, _ := value.Content.AsImage()
+				if actual != nil {
+					if err2 := ValidateSimplePromptResultRefereePromptImageTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "resource":
-			actual, _ := value.Content.AsResource()
-			if actual != nil {
-				if err2 := ValidateSimplePromptResultRefereePromptResourceTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "resource":
+				actual, _ := value.Content.AsResource()
+				if actual != nil {
+					if err2 := ValidateSimplePromptResultRefereePromptResourceTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -1059,12 +1099,17 @@ func ValidateSimplePromptResultRefereePromptResourceTransport(value *SimplePromp
 		err = goa.MergeErrors(err, goa.MissingFieldError("resource", "body"))
 	}
 	if value.Resource != nil {
-		switch string(value.Resource.Kind()) {
-		case "text":
-			actual, _ := value.Resource.AsText()
-			if actual != nil {
-				if err2 := ValidateSimplePromptResultRefereeEmbeddedTextTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Resource.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Resource.Kind()) {
+			case "text":
+				actual, _ := value.Resource.AsText()
+				if actual != nil {
+					if err2 := ValidateSimplePromptResultRefereeEmbeddedTextTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -1969,6 +2014,7 @@ func NewArgumentPromptPayload(body *ArgumentPromptPayloadTransport) (out *assist
 }
 
 // ValidateArgumentPromptResultValue checks a service value against its declared field validation.
+
 func ValidateArgumentPromptResultValue(in *assistant.RefereePromptResult) error {
 
 	if in == nil {
@@ -2085,6 +2131,7 @@ func EncodeExtractKeywordsResult(in *assistant.ExtractKeywordsResult) ([]byte, e
 }
 
 // ValidateImagePromptResultValue checks a service value against its declared field validation.
+
 func ValidateImagePromptResultValue(in *assistant.RefereePromptResult) error {
 
 	if in == nil {
@@ -2193,6 +2240,7 @@ func NewReadResourcePayload(body *ReadResourcePayloadTransport) (out *assistant.
 }
 
 // ValidateReadResourceResultValue checks a service value against its declared field validation.
+
 func ValidateReadResourceResultValue(in *assistant.ReadResourceResult) error {
 
 	if in == nil {
@@ -2247,6 +2295,7 @@ func NewResourcePromptPayload(body *ResourcePromptPayloadTransport) (out *assist
 }
 
 // ValidateResourcePromptResultValue checks a service value against its declared field validation.
+
 func ValidateResourcePromptResultValue(in *assistant.RefereePromptResult) error {
 
 	if in == nil {
@@ -2323,6 +2372,7 @@ func EncodeSearchResult(in *assistant.SearchResult) ([]byte, error) {
 }
 
 // ValidateSimplePromptResultValue checks a service value against its declared field validation.
+
 func ValidateSimplePromptResultValue(in *assistant.RefereePromptResult) error {
 
 	if in == nil {
@@ -2369,6 +2419,7 @@ func NewSuggestArgumentPayload(body *SuggestArgumentPayloadTransport) (out *assi
 }
 
 // ValidateSuggestArgumentResultValue checks a service value against its declared field validation.
+
 func ValidateSuggestArgumentResultValue(in *assistant.SuggestArgumentResult) error {
 
 	if in == nil {

@@ -227,6 +227,30 @@ func EncodeImageSelected(in *ImageSelected) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateImageSelectedValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateImageSelectedValue(in *ImageSelected) error {
+	if err := checkImageSelectedValue(in); err != nil {
+		return fmt.Errorf("validate ImageSelected value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ImageSelected")
+	}
+
+	var body *jsonImageSelectedTransport
+	{
+		body = &jsonImageSelectedTransport{
+			ID: &in.ID,
+		}
+	}
+	if err := validatejsonImageSelectedTransport(body); err != nil {
+		return fmt.Errorf("validate ImageSelected value: %w", err)
+	}
+	return nil
+}
+
 // DecodeImageSelected checks JSON field names from the Goa design and returns a service value.
 func DecodeImageSelected(data []byte) (out *ImageSelected, err error) {
 	root, err := readStrictJSON(data)
@@ -281,6 +305,33 @@ func EncodeImageSelection(in *ImageSelection) ([]byte, error) {
 		return nil, fmt.Errorf("encode ImageSelection JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateImageSelectionValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateImageSelectionValue(in *ImageSelection) error {
+	if err := checkImageSelectionValue(in); err != nil {
+		return fmt.Errorf("validate ImageSelection value: %w", err)
+	}
+	if err := validateImageSelectionOriginal(in); err != nil {
+		return fmt.Errorf("validate ImageSelection value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ImageSelection")
+	}
+
+	var body *jsonImageSelectionTransport
+	{
+		body = &jsonImageSelectionTransport{
+			ID: &in.ID,
+		}
+	}
+	if err := validatejsonImageSelectionTransport(body); err != nil {
+		return fmt.Errorf("validate ImageSelection value: %w", err)
+	}
+	return nil
 }
 
 // DecodeImageSelection checks JSON field names from the Goa design and returns a service value.
@@ -341,6 +392,37 @@ func EncodeImageSource(in *ImageSource) ([]byte, error) {
 		return nil, fmt.Errorf("encode ImageSource JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateImageSourceValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateImageSourceValue(in *ImageSource) error {
+	if err := checkImageSourceValue(in); err != nil {
+		return fmt.Errorf("validate ImageSource value: %w", err)
+	}
+	if err := validateImageSourceOriginal(in); err != nil {
+		return fmt.Errorf("validate ImageSource value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ImageSource")
+	}
+
+	var body *jsonImageSourceTransport
+	{
+		body = &jsonImageSourceTransport{
+			ID:     &in.ID,
+			Format: &in.Format,
+			Sha256: &in.Sha256,
+		}
+		size := imageSourceInt64Transport(in.Size)
+		body.Size = &size
+	}
+	if err := validatejsonImageSourceTransport(body); err != nil {
+		return fmt.Errorf("validate ImageSource value: %w", err)
+	}
+	return nil
 }
 
 // DecodeImageSource checks JSON field names from the Goa design and returns a service value.

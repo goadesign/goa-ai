@@ -115,6 +115,33 @@ func EncodeRetainedImage(in *RetainedImage) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateRetainedImageValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateRetainedImageValue(in *RetainedImage) error {
+	if err := checkRetainedImageValue(in); err != nil {
+		return fmt.Errorf("validate RetainedImage value: %w", err)
+	}
+	if err := validateRetainedImageOriginal(in); err != nil {
+		return fmt.Errorf("validate RetainedImage value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "RetainedImage")
+	}
+
+	var body *jsonRetainedImageTransport
+	{
+		body = &jsonRetainedImageTransport{
+			ID: &in.ID,
+		}
+	}
+	if err := validatejsonRetainedImageTransport(body); err != nil {
+		return fmt.Errorf("validate RetainedImage value: %w", err)
+	}
+	return nil
+}
+
 // DecodeRetainedImage checks JSON field names from the Goa design and returns a service value.
 func DecodeRetainedImage(data []byte) (out *RetainedImage, err error) {
 	root, err := readStrictJSON(data)

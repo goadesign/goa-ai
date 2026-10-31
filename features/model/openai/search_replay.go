@@ -80,20 +80,9 @@ func decodeSearchJSON(data []byte, value any) error {
 	return nil
 }
 
-// searchFunctionFromTool reads this adapter's eager function or single-function
-// namespace. Both contain the same schema used to compare saved discovery with
-// the current permitted catalog.
-func searchFunctionFromTool(tool responses.ToolUnionParam) (searchFunction, error) {
-	var name, description string
-	var parametersValue any
-	var strict bool
-	if namespace := tool.OfNamespace; namespace != nil {
-		function := namespace.Tools[0].OfFunction
-		name, description, parametersValue, strict = function.Name, function.Description.Value, function.Parameters, function.Strict.Value
-	} else {
-		function := tool.OfFunction
-		name, description, parametersValue, strict = function.Name, function.Description.Value, function.Parameters, function.Strict.Value
-	}
+// newSearchFunction encodes the schema and metadata used to persist search
+// results and compare saved discovery against the current permitted catalog.
+func newSearchFunction(name, description string, parametersValue any, strict bool) (searchFunction, error) {
 	parameters, err := json.Marshal(parametersValue)
 	if err != nil {
 		return searchFunction{}, fmt.Errorf("openai: encode search tool schema: %w", err)
@@ -179,7 +168,7 @@ func encodeSearchReplay(meta map[string]any, key string) (responses.ResponseInpu
 				CallID:    param.NewOpt(output.CallID),
 				Execution: responses.ResponseToolSearchOutputItemParamExecutionClient,
 				Status:    responses.ResponseToolSearchOutputItemParamStatusCompleted,
-				Tools:     make([]responses.ToolUnionParam, 0, len(output.Tools)),
+				Tools:     make([]responses.ResponseToolSearchOutputItemParamToolUnion, 0, len(output.Tools)),
 			}
 			seen := make(map[string]struct{}, len(output.Tools))
 			for _, function := range output.Tools {
@@ -199,17 +188,21 @@ func encodeSearchReplay(meta map[string]any, key string) (responses.ResponseInpu
 				// Bedrock omits the namespace of a bare dynamically loaded
 				// function, then rejects that same call during replay. An
 				// explicit namespace makes the returned identity complete.
-				native.Tools = append(native.Tools, responses.ToolUnionParam{OfNamespace: &responses.NamespaceToolParam{
-					Name:        function.Name,
-					Description: function.Description,
-					Tools: []responses.NamespaceToolToolUnionParam{{OfFunction: &responses.NamespaceToolToolFunctionParam{
-						Name:         function.Name,
-						Description:  param.NewOpt(function.Description),
-						Parameters:   parameters,
-						Strict:       param.NewOpt(function.Strict),
-						DeferLoading: param.NewOpt(true),
-					}}},
-				}})
+				native.Tools = append(native.Tools, responses.ResponseToolSearchOutputItemParamToolUnion{
+					OfNamespace: &responses.ToolSearchOutputNamespaceToolParam{
+						Name:        function.Name,
+						Description: function.Description,
+						Tools: []responses.ToolSearchOutputNamespaceToolToolUnionParam{{
+							OfFunction: &responses.ToolSearchOutputNamespaceToolToolFunctionParam{
+								Name:         function.Name,
+								Description:  param.NewOpt(function.Description),
+								Parameters:   parameters,
+								Strict:       param.NewOpt(function.Strict),
+								DeferLoading: param.NewOpt(true),
+							},
+						}},
+					},
+				})
 			}
 			items = append(items, responses.ResponseInputItemUnionParam{OfToolSearchOutput: native})
 		default:
@@ -243,9 +236,15 @@ func filterSearchHistory(input responses.ResponseInputParam, current map[string]
 			return errors.New("openai: tool search output has no preceding unresolved call")
 		}
 		delete(pending, id)
-		retained := make([]responses.ToolUnionParam, 0, len(output.Tools))
+		retained := make([]responses.ResponseToolSearchOutputItemParamToolUnion, 0, len(output.Tools))
 		for _, tool := range output.Tools {
-			historical, err := searchFunctionFromTool(tool)
+			function := tool.OfNamespace.Tools[0].OfFunction
+			historical, err := newSearchFunction(
+				function.Name,
+				function.Description.Value,
+				function.Parameters,
+				function.Strict.Value,
+			)
 			if err != nil {
 				return err
 			}

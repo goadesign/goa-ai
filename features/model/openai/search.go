@@ -19,7 +19,7 @@ type (
 	// toolSearch exists only for one invocation and is never persisted.
 	toolSearch struct {
 		index     *searchIndex
-		functions map[string]responses.ToolUnionParam
+		functions map[string]searchFunction
 		seen      map[string]struct{}
 		pending   []string
 		outputs   []string
@@ -35,14 +35,20 @@ type (
 func prepareToolSearch(req *model.Request, native *responses.ResponseNewParams) (*toolSearch, error) {
 	current := make(map[string]searchFunction, len(req.Tools))
 	search := &toolSearch{
-		functions: make(map[string]responses.ToolUnionParam),
+		functions: make(map[string]searchFunction),
 		seen:      make(map[string]struct{}),
 	}
 	var eager []responses.ToolUnionParam
 	var documents []searchDocument
 	for i, definition := range req.Tools {
 		encoded := native.Tools[i]
-		snapshot, err := searchFunctionFromTool(encoded)
+		function := encoded.OfFunction
+		snapshot, err := newSearchFunction(
+			function.Name,
+			function.Description.Value,
+			function.Parameters,
+			function.Strict.Value,
+		)
 		if err != nil {
 			return nil, err
 		}
@@ -53,8 +59,7 @@ func prepareToolSearch(req *model.Request, native *responses.ResponseNewParams) 
 			eager = append(eager, encoded)
 			continue
 		}
-		encoded.OfFunction.DeferLoading = param.NewOpt(true)
-		search.functions[definition.Name] = encoded
+		search.functions[definition.Name] = snapshot
 		documents = append(documents, searchDocument{
 			name: definition.Name, document: definition.Search,
 		})
@@ -116,11 +121,7 @@ func (s *toolSearch) record(native responses.ResponseToolSearchCall) error {
 		Tools: make([]searchFunction, 0, searchResultLimit),
 	}
 	for _, hit := range s.index.search(call.Arguments.Query, searchResultLimit) {
-		function, err := searchFunctionFromTool(s.functions[hit.name])
-		if err != nil {
-			return err
-		}
-		output.Tools = append(output.Tools, function)
+		output.Tools = append(output.Tools, s.functions[hit.name])
 	}
 	outputJSON, err := json.Marshal(output)
 	if err != nil {
