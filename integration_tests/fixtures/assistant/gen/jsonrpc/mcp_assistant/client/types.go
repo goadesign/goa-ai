@@ -3099,19 +3099,24 @@ func ValidateInputRequestResponse(body *InputRequestResponse) (err error) {
 		}
 	}
 	if body.Params != nil {
-		switch string(body.Params.Kind()) {
-		case "form":
-			actual, _ := body.Params.AsForm()
-			if actual != nil {
-				if err2 := validateElicitationFormParamsResponse(actual, "body.params.value"); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := body.Params.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(body.Params.Kind()) {
+			case "form":
+				actual, _ := body.Params.AsForm()
+				if actual != nil {
+					if err2 := validateElicitationFormParamsResponse(actual, "body.params.value"); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "url":
-			actual, _ := body.Params.AsURL()
-			if actual != nil {
-				if err2 := validateElicitationURLParamsResponse(actual, "body.params.value"); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "url":
+				actual, _ := body.Params.AsURL()
+				if actual != nil {
+					if err2 := validateElicitationURLParamsResponse(actual, "body.params.value"); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}
@@ -3135,19 +3140,24 @@ func validateInputRequestResponse(body *InputRequestResponse, path string) (err 
 		}
 	}
 	if body.Params != nil {
-		switch string(body.Params.Kind()) {
-		case "form":
-			actual, _ := body.Params.AsForm()
-			if actual != nil {
-				if err2 := validateElicitationFormParamsResponse(actual, path+".params.value"); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := body.Params.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(body.Params.Kind()) {
+			case "form":
+				actual, _ := body.Params.AsForm()
+				if actual != nil {
+					if err2 := validateElicitationFormParamsResponse(actual, path+".params.value"); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "url":
-			actual, _ := body.Params.AsURL()
-			if actual != nil {
-				if err2 := validateElicitationURLParamsResponse(actual, path+".params.value"); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+			case "url":
+				actual, _ := body.Params.AsURL()
+				if actual != nil {
+					if err2 := validateElicitationURLParamsResponse(actual, path+".params.value"); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
 			}
 		}

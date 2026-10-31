@@ -390,18 +390,23 @@ func validatejsonIdentityCredentialStateTransport(value *jsonIdentityCredentialS
 		}
 	}
 	if value.State != nil {
-		switch string(value.State.Kind()) {
-		case "ready":
-			actual, _ := value.State.AsReady()
-			if actual != nil {
-				if err2 := validatejsonIdentityCredentialReadyTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.State.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.State.Kind()) {
+			case "ready":
+				actual, _ := value.State.AsReady()
+				if actual != nil {
+					if err2 := validatejsonIdentityCredentialReadyTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "pending":
-			actual, _ := value.State.AsPending()
-			if !(string(actual) == "exchange") {
-				err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.state.value", string(actual), []any{"exchange"}))
+			case "pending":
+				actual, _ := value.State.AsPending()
+				if !(string(actual) == "exchange") {
+					err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.state.value", string(actual), []any{"exchange"}))
+				}
 			}
 		}
 
@@ -589,18 +594,23 @@ func validateIdentityCredentialStateOriginal(value *IdentityCredentialState) (er
 			err = goa.MergeErrors(err, goa.InvalidLengthError("value.binding[*]", e, utf8.RuneCountInString(e), 1, true))
 		}
 	}
-	switch string(value.State.Kind()) {
-	case "ready":
-		actual, _ := value.State.AsReady()
-		if actual != nil {
-			if err2 := validateIdentityCredentialReadyOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+
+	if err2 := value.State.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.State.Kind()) {
+		case "ready":
+			actual, _ := value.State.AsReady()
+			if actual != nil {
+				if err2 := validateIdentityCredentialReadyOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "pending":
-		actual, _ := value.State.AsPending()
-		if !(string(actual) == "exchange") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.state.value", string(actual), []any{"exchange"}))
+		case "pending":
+			actual, _ := value.State.AsPending()
+			if !(string(actual) == "exchange") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.state.value", string(actual), []any{"exchange"}))
+			}
 		}
 	}
 
@@ -804,6 +814,34 @@ func EncodeIdentityCredentialReady(in *IdentityCredentialReady) ([]byte, error) 
 	return data, nil
 }
 
+// ValidateIdentityCredentialReadyValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateIdentityCredentialReadyValue(in *IdentityCredentialReady) error {
+	if err := checkIdentityCredentialReadyValue(in); err != nil {
+		return fmt.Errorf("validate IdentityCredentialReady value: %w", err)
+	}
+	if err := validateIdentityCredentialReadyOriginal(in); err != nil {
+		return fmt.Errorf("validate IdentityCredentialReady value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "IdentityCredentialReady")
+	}
+
+	var body *jsonIdentityCredentialReadyTransport
+	{
+		body = &jsonIdentityCredentialReadyTransport{
+			Obtained: &in.Obtained,
+		}
+		body.Credential = encodeIdentityRefreshToIdentityRefreshTransport(in.Credential)
+	}
+	if err := validatejsonIdentityCredentialReadyTransport(body); err != nil {
+		return fmt.Errorf("validate IdentityCredentialReady value: %w", err)
+	}
+	return nil
+}
+
 // DecodeIdentityCredentialReady checks JSON field names from the Goa design and returns a service value.
 func DecodeIdentityCredentialReady(data []byte) (out *IdentityCredentialReady, err error) {
 	root, err := readStrictJSON(data)
@@ -881,6 +919,55 @@ func EncodeIdentityCredentialState(in *IdentityCredentialState) ([]byte, error) 
 		return nil, fmt.Errorf("encode IdentityCredentialState JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateIdentityCredentialStateValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateIdentityCredentialStateValue(in *IdentityCredentialState) error {
+	if err := checkIdentityCredentialStateValue(in); err != nil {
+		return fmt.Errorf("validate IdentityCredentialState value: %w", err)
+	}
+	if err := validateIdentityCredentialStateOriginal(in); err != nil {
+		return fmt.Errorf("validate IdentityCredentialState value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "IdentityCredentialState")
+	}
+
+	var body *jsonIdentityCredentialStateTransport
+	{
+		body = &jsonIdentityCredentialStateTransport{}
+		body.Binding = make([]string, len(in.Binding))
+		for i, val := range in.Binding {
+			body.Binding[i] = val
+		}
+		var stateValue jsonStateTransport
+		switch string(in.State.Kind()) {
+		case "ready":
+			actual, _ := in.State.AsReady()
+			var obj *jsonIdentityCredentialReadyTransport
+			if actual != nil {
+				obj = encodeIdentityCredentialReadyToIdentityCredentialReadyTransport(actual)
+			}
+			u := stateValue
+			u.SetReady((*jsonIdentityCredentialReadyTransport)(obj))
+			stateValue = u
+		case "pending":
+			actual, _ := in.State.AsPending()
+			obj := jsonStateBranchPendingTransport(actual)
+
+			u := stateValue
+			u.SetPending((jsonStateBranchPendingTransport)(obj))
+			stateValue = u
+		}
+		body.State = &stateValue
+	}
+	if err := validatejsonIdentityCredentialStateTransport(body); err != nil {
+		return fmt.Errorf("validate IdentityCredentialState value: %w", err)
+	}
+	return nil
 }
 
 // DecodeIdentityCredentialState checks JSON field names from the Goa design and returns a service value.
@@ -967,6 +1054,41 @@ func EncodeIdentityGrant(in *IdentityGrant) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateIdentityGrantValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateIdentityGrantValue(in *IdentityGrant) error {
+	if err := checkIdentityGrantValue(in); err != nil {
+		return fmt.Errorf("validate IdentityGrant value: %w", err)
+	}
+	if err := validateIdentityGrantOriginal(in); err != nil {
+		return fmt.Errorf("validate IdentityGrant value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "IdentityGrant")
+	}
+
+	var body *jsonIdentityGrantTransport
+	{
+		body = &jsonIdentityGrantTransport{
+			IssuedTokenType: &in.IssuedTokenType,
+			AccessToken:     &in.AccessToken,
+			TokenType:       &in.TokenType,
+			Scope:           in.Scope,
+			RefreshToken:    in.RefreshToken,
+		}
+		if in.ExpiresIn != nil {
+			expiresIn := identityGrantInt64Transport(*in.ExpiresIn)
+			body.ExpiresIn = &expiresIn
+		}
+	}
+	if err := validatejsonIdentityGrantTransport(body); err != nil {
+		return fmt.Errorf("validate IdentityGrant value: %w", err)
+	}
+	return nil
+}
+
 // DecodeIdentityGrant checks JSON field names from the Goa design and returns a service value.
 func DecodeIdentityGrant(data []byte) (out *IdentityGrant, err error) {
 	root, err := readStrictJSON(data)
@@ -1036,6 +1158,40 @@ func EncodeIdentityRefresh(in *IdentityRefresh) ([]byte, error) {
 		return nil, fmt.Errorf("encode IdentityRefresh JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateIdentityRefreshValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateIdentityRefreshValue(in *IdentityRefresh) error {
+	if err := checkIdentityRefreshValue(in); err != nil {
+		return fmt.Errorf("validate IdentityRefresh value: %w", err)
+	}
+	if err := validateIdentityRefreshOriginal(in); err != nil {
+		return fmt.Errorf("validate IdentityRefresh value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "IdentityRefresh")
+	}
+
+	var body *jsonIdentityRefreshTransport
+	{
+		body = &jsonIdentityRefreshTransport{
+			IssuedTokenType: &in.IssuedTokenType,
+			AccessToken:     &in.AccessToken,
+			TokenType:       &in.TokenType,
+			Scope:           in.Scope,
+		}
+		if in.ExpiresIn != nil {
+			expiresIn := identityCredentialReadyInt64Transport(*in.ExpiresIn)
+			body.ExpiresIn = &expiresIn
+		}
+	}
+	if err := validatejsonIdentityRefreshTransport(body); err != nil {
+		return fmt.Errorf("validate IdentityRefresh value: %w", err)
+	}
+	return nil
 }
 
 // DecodeIdentityRefresh checks JSON field names from the Goa design and returns a service value.
