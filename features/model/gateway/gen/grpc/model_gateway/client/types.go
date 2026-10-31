@@ -9,6 +9,8 @@
 package client
 
 import (
+	"unicode/utf8"
+
 	model_gatewaypb "goa.design/goa-ai/features/model/gateway/gen/grpc/model_gateway/pb"
 	modelgateway "goa.design/goa-ai/features/model/gateway/gen/model_gateway"
 	goa "goa.design/goa/v3/pkg"
@@ -904,6 +906,9 @@ func validatemodel_5F_gateway_model_5F_gateway_GatewayError_Target_error_5F__Con
 	if error_.RetainedUsageIncomplete == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("retained_usage_incomplete", "error"))
 	}
+	if len(error_.Nodes) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("error.nodes", error_.Nodes, len(error_.Nodes), 1, true))
+	}
 	for _, e := range error_.Nodes {
 		if e != nil {
 			if err2 := validatemodel_5F_gateway_model_5F_gateway_GatewayErrorNode_At_elem(e); err2 != nil {
@@ -922,32 +927,148 @@ func validatemodel_5F_gateway_model_5F_gateway_GatewayError_Target_error_5F__Con
 // validatemodel_5F_gateway_model_5F_gateway_GatewayErrorNode_At_elem runs the
 // validations defined on GatewayErrorNode.
 func validatemodel_5F_gateway_model_5F_gateway_GatewayErrorNode_At_elem(elem *model_gatewaypb.GatewayErrorNode) (err error) {
-	if elem.Kind == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("kind", "elem"))
+	if elem.Detail == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("detail", "elem"))
 	}
-	if elem.Message_ == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("message", "elem"))
-	}
-	if elem.Sentinel == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("sentinel", "elem"))
-	}
-	if elem.UnadvertisedToolName == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("unadvertised_tool_name", "elem"))
-	}
-	if elem.MalformedToolName == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("malformed_tool_name", "elem"))
-	}
-	if elem.CauseIndex == nil {
-		err = goa.MergeErrors(err, goa.MissingFieldError("cause_index", "elem"))
-	}
-	if elem.Provider != nil {
-		if err2 := validatemodel_5F_gateway_model_5F_gateway_ProviderErrorDetail_At_provider(elem.Provider); err2 != nil {
-			err = goa.MergeErrors(err, err2)
+	switch v := elem.Detail.(type) {
+	case *model_gatewaypb.GatewayErrorNode_Plain:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("plain", "elem.detail"))
+			break
+		}
+		if v.Plain == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("plain", "elem.detail"))
+			break
+		}
+		if v.Plain != nil {
+			if err2 := validatemodel_5F_gateway_model_5F_gateway_PlainErrorDetail_At_plain(v.Plain); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+
+	case *model_gatewaypb.GatewayErrorNode_Sentinel:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("sentinel", "elem.detail"))
+			break
+		}
+		if !(string(v.Sentinel) == "streaming_unsupported" || string(v.Sentinel) == "structured_output_unsupported" || string(v.Sentinel) == "tool_search_unsupported" || string(v.Sentinel) == "tool_content_unsupported" || string(v.Sentinel) == "rate_limited" || string(v.Sentinel) == "empty_stream" || string(v.Sentinel) == "token_counting_unsupported" || string(v.Sentinel) == "request_byte_capacity" || string(v.Sentinel) == "image_source_capacity" || string(v.Sentinel) == "context_canceled" || string(v.Sentinel) == "context_deadline_exceeded") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("elem.detail.value", string(v.Sentinel), []any{"streaming_unsupported", "structured_output_unsupported", "tool_search_unsupported", "tool_content_unsupported", "rate_limited", "empty_stream", "token_counting_unsupported", "request_byte_capacity", "image_source_capacity", "context_canceled", "context_deadline_exceeded"}))
+		}
+
+	case *model_gatewaypb.GatewayErrorNode_RequestValidation:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("request_validation", "elem.detail"))
+			break
+		}
+		if v.RequestValidation == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("request_validation", "elem.detail"))
+			break
+		}
+		if v.RequestValidation != nil {
+			if err2 := validatemodel_5F_gateway_model_5F_gateway_RequestValidationErrorDetail_Target_requestValidation_Context_request_5F_validation(v.RequestValidation); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+
+	case *model_gatewaypb.GatewayErrorNode_Provider:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("provider", "elem.detail"))
+			break
+		}
+		if v.Provider == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("provider", "elem.detail"))
+			break
+		}
+		if v.Provider != nil {
+			if err2 := validatemodel_5F_gateway_model_5F_gateway_ProviderErrorDetail_At_provider(v.Provider); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+
+	case *model_gatewaypb.GatewayErrorNode_Validation:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("validation", "elem.detail"))
+			break
+		}
+		if v.Validation == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("validation", "elem.detail"))
+			break
+		}
+		if v.Validation != nil {
+			if err2 := validatemodel_5F_gateway_model_5F_gateway_ValidationErrorDetail_At_validation(v.Validation); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+
+	case *model_gatewaypb.GatewayErrorNode_UnadvertisedTool:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("unadvertised_tool", "elem.detail"))
+			break
+		}
+		if utf8.RuneCountInString(string(v.UnadvertisedTool)) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("elem.detail.value", string(v.UnadvertisedTool), utf8.RuneCountInString(string(v.UnadvertisedTool)), 1, true))
+		}
+
+	case *model_gatewaypb.GatewayErrorNode_MalformedToolArgs:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("malformed_tool_args", "elem.detail"))
+			break
+		}
+		if v.MalformedToolArgs == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("malformed_tool_args", "elem.detail"))
+			break
+		}
+		if v.MalformedToolArgs != nil {
+			if err2 := validatemodel_5F_gateway_model_5F_gateway_MalformedToolArgsErrorDetail_Target_malformedToolArgs_Context_malformed_5F_tool_5F_args(v.MalformedToolArgs); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
+		}
+
+	case *model_gatewaypb.GatewayErrorNode_Joined:
+		if v == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("joined", "elem.detail"))
+			break
+		}
+		if v.Joined == nil {
+			err = goa.MergeErrors(err, goa.MissingFieldError("joined", "elem.detail"))
+			break
+		}
+		if v.Joined != nil {
+			if err2 := validatemodel_5F_gateway_model_5F_gateway_JoinedErrorDetail_At_joined(v.Joined); err2 != nil {
+				err = goa.MergeErrors(err, err2)
+			}
 		}
 	}
-	if elem.Validation != nil {
-		if err2 := validatemodel_5F_gateway_model_5F_gateway_ValidationErrorDetail_At_validation(elem.Validation); err2 != nil {
-			err = goa.MergeErrors(err, err2)
+
+	return
+}
+
+// validatemodel_5F_gateway_model_5F_gateway_PlainErrorDetail_At_plain runs the
+// validations defined on PlainErrorDetail.
+func validatemodel_5F_gateway_model_5F_gateway_PlainErrorDetail_At_plain(plain *model_gatewaypb.PlainErrorDetail) (err error) {
+	if plain.Message_ == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("message", "plain"))
+	}
+	if plain.CauseIndex == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cause_index", "plain"))
+	}
+	if plain.CauseIndex != nil {
+		if *plain.CauseIndex < -1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("plain.cause_index", *plain.CauseIndex, -1, true))
+		}
+	}
+	return
+}
+
+// validatemodel_5F_gateway_model_5F_gateway_RequestValidationErrorDetail_Target_requestValidation_Context_request_5F_validation
+// runs the validations defined on RequestValidationErrorDetail.
+func validatemodel_5F_gateway_model_5F_gateway_RequestValidationErrorDetail_Target_requestValidation_Context_request_5F_validation(requestValidation *model_gatewaypb.RequestValidationErrorDetail) (err error) {
+	if requestValidation.CauseIndex == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cause_index", "request_validation"))
+	}
+	if requestValidation.CauseIndex != nil {
+		if *requestValidation.CauseIndex < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("request_validation.cause_index", *requestValidation.CauseIndex, 0, true))
 		}
 	}
 	return
@@ -980,6 +1101,24 @@ func validatemodel_5F_gateway_model_5F_gateway_ProviderErrorDetail_At_provider(p
 	if provider.Retryable == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("retryable", "provider"))
 	}
+	if provider.CauseIndex == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cause_index", "provider"))
+	}
+	if provider.Provider != nil {
+		if utf8.RuneCountInString(*provider.Provider) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("provider.provider", *provider.Provider, utf8.RuneCountInString(*provider.Provider), 1, true))
+		}
+	}
+	if provider.Kind != nil {
+		if !(*provider.Kind == "auth" || *provider.Kind == "invalid_request" || *provider.Kind == "rate_limited" || *provider.Kind == "unavailable" || *provider.Kind == "unknown") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("provider.kind", *provider.Kind, []any{"auth", "invalid_request", "rate_limited", "unavailable", "unknown"}))
+		}
+	}
+	if provider.CauseIndex != nil {
+		if *provider.CauseIndex < -1 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("provider.cause_index", *provider.CauseIndex, -1, true))
+		}
+	}
 	return
 }
 
@@ -998,6 +1137,14 @@ func validatemodel_5F_gateway_model_5F_gateway_ValidationErrorDetail_At_validati
 	if validation.UsageIncomplete == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("usage_incomplete", "validation"))
 	}
+	if validation.CauseIndex == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cause_index", "validation"))
+	}
+	if validation.Kind != nil {
+		if !(*validation.Kind == "response_shape" || *validation.Kind == "output_bounds" || *validation.Kind == "tool_identity" || *validation.Kind == "tool_arguments" || *validation.Kind == "tool_choice" || *validation.Kind == "structured_output" || *validation.Kind == "stream_protocol" || *validation.Kind == "usage") {
+			err = goa.MergeErrors(err, goa.InvalidEnumValueError("validation.kind", *validation.Kind, []any{"response_shape", "output_bounds", "tool_identity", "tool_arguments", "tool_choice", "structured_output", "stream_protocol", "usage"}))
+		}
+	}
 	if validation.Evidence != nil {
 		if err2 := validatemodel_5F_gateway_model_5F_gateway_ResponseEvidence_At_evidence(validation.Evidence); err2 != nil {
 			err = goa.MergeErrors(err, err2)
@@ -1006,6 +1153,11 @@ func validatemodel_5F_gateway_model_5F_gateway_ValidationErrorDetail_At_validati
 	if validation.Usage != nil {
 		if err2 := validatemodel_5F_gateway_model_5F_gateway_TokenUsage_At_usage(validation.Usage); err2 != nil {
 			err = goa.MergeErrors(err, err2)
+		}
+	}
+	if validation.CauseIndex != nil {
+		if *validation.CauseIndex < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("validation.cause_index", *validation.CauseIndex, 0, true))
 		}
 	}
 	return
@@ -1025,6 +1177,42 @@ func validatemodel_5F_gateway_model_5F_gateway_ResponseEvidence_At_evidence(evid
 	}
 	if evidence.Size == nil {
 		err = goa.MergeErrors(err, goa.MissingFieldError("size", "evidence"))
+	}
+	return
+}
+
+// validatemodel_5F_gateway_model_5F_gateway_MalformedToolArgsErrorDetail_Target_malformedToolArgs_Context_malformed_5F_tool_5F_args
+// runs the validations defined on MalformedToolArgsErrorDetail.
+func validatemodel_5F_gateway_model_5F_gateway_MalformedToolArgsErrorDetail_Target_malformedToolArgs_Context_malformed_5F_tool_5F_args(malformedToolArgs *model_gatewaypb.MalformedToolArgsErrorDetail) (err error) {
+	if malformedToolArgs.ToolName == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("tool_name", "malformed_tool_args"))
+	}
+	if malformedToolArgs.CauseIndex == nil {
+		err = goa.MergeErrors(err, goa.MissingFieldError("cause_index", "malformed_tool_args"))
+	}
+	if malformedToolArgs.ToolName != nil {
+		if utf8.RuneCountInString(*malformedToolArgs.ToolName) < 1 {
+			err = goa.MergeErrors(err, goa.InvalidLengthError("malformed_tool_args.tool_name", *malformedToolArgs.ToolName, utf8.RuneCountInString(*malformedToolArgs.ToolName), 1, true))
+		}
+	}
+	if malformedToolArgs.CauseIndex != nil {
+		if *malformedToolArgs.CauseIndex < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("malformed_tool_args.cause_index", *malformedToolArgs.CauseIndex, 0, true))
+		}
+	}
+	return
+}
+
+// validatemodel_5F_gateway_model_5F_gateway_JoinedErrorDetail_At_joined runs
+// the validations defined on JoinedErrorDetail.
+func validatemodel_5F_gateway_model_5F_gateway_JoinedErrorDetail_At_joined(joined *model_gatewaypb.JoinedErrorDetail) (err error) {
+	if len(joined.ChildIndices) < 1 {
+		err = goa.MergeErrors(err, goa.InvalidLengthError("joined.child_indices", joined.ChildIndices, len(joined.ChildIndices), 1, true))
+	}
+	for _, e := range joined.ChildIndices {
+		if e < 0 {
+			err = goa.MergeErrors(err, goa.InvalidRangeError("joined.child_indices[*]", e, 0, true))
+		}
 	}
 	return
 }
@@ -2394,25 +2582,81 @@ func transformProtoGatewayErrorToGatewayError(v *model_gatewaypb.GatewayError) *
 // *modelgateway.GatewayErrorNode from a value of type
 // *model_gatewaypb.GatewayErrorNode.
 func transformProtoGatewayErrorNodeToGatewayErrorNode(v *model_gatewaypb.GatewayErrorNode) *modelgateway.GatewayErrorNode {
-	res := &modelgateway.GatewayErrorNode{
-		Kind:                 *v.Kind,
-		Message:              *v.Message_,
-		Sentinel:             *v.Sentinel,
-		UnadvertisedToolName: *v.UnadvertisedToolName,
-		MalformedToolName:    *v.MalformedToolName,
-		CauseIndex:           *v.CauseIndex,
-	}
-	if v.Provider != nil {
-		res.Provider = transformProtoProviderErrorDetailToProviderErrorDetail(v.Provider)
-	}
-	if v.Validation != nil {
-		res.Validation = transformProtoValidationErrorDetailToValidationErrorDetail(v.Validation)
-	}
-	if v.ChildIndices != nil {
-		res.ChildIndices = make([]int64, len(v.ChildIndices))
-		for i, val := range v.ChildIndices {
-			res.ChildIndices[i] = val
+	res := &modelgateway.GatewayErrorNode{}
+	if v.Detail != nil {
+		switch val := v.Detail.(type) {
+		case *model_gatewaypb.GatewayErrorNode_Plain:
+			{
+				u := res.Detail
+				u.SetPlain(transformProtoPlainErrorDetailToPlainErrorDetail(val.Plain))
+				res.Detail = u
+			}
+		case *model_gatewaypb.GatewayErrorNode_Sentinel:
+			{
+				u := res.Detail
+				u.SetSentinel(modelgateway.GatewayErrorNodeDetailBranchSentinel(val.Sentinel))
+				res.Detail = u
+			}
+		case *model_gatewaypb.GatewayErrorNode_RequestValidation:
+			{
+				u := res.Detail
+				u.SetRequestValidation(transformProtoRequestValidationErrorDetailToRequestValidationErrorDetail(val.RequestValidation))
+				res.Detail = u
+			}
+		case *model_gatewaypb.GatewayErrorNode_Provider:
+			{
+				u := res.Detail
+				u.SetProvider(transformProtoProviderErrorDetailToProviderErrorDetail(val.Provider))
+				res.Detail = u
+			}
+		case *model_gatewaypb.GatewayErrorNode_Validation:
+			{
+				u := res.Detail
+				u.SetValidation(transformProtoValidationErrorDetailToValidationErrorDetail(val.Validation))
+				res.Detail = u
+			}
+		case *model_gatewaypb.GatewayErrorNode_UnadvertisedTool:
+			{
+				u := res.Detail
+				u.SetUnadvertisedTool(modelgateway.GatewayErrorNodeDetailBranchUnadvertisedTool(val.UnadvertisedTool))
+				res.Detail = u
+			}
+		case *model_gatewaypb.GatewayErrorNode_MalformedToolArgs:
+			{
+				u := res.Detail
+				u.SetMalformedToolArgs(transformProtoMalformedToolArgsErrorDetailToMalformedToolArgsErrorDetail(val.MalformedToolArgs))
+				res.Detail = u
+			}
+		case *model_gatewaypb.GatewayErrorNode_Joined:
+			{
+				u := res.Detail
+				u.SetJoined(transformProtoJoinedErrorDetailToJoinedErrorDetail(val.Joined))
+				res.Detail = u
+			}
 		}
+	}
+
+	return res
+}
+
+// transformProtoPlainErrorDetailToPlainErrorDetail builds a value of type
+// *modelgateway.PlainErrorDetail from a value of type
+// *model_gatewaypb.PlainErrorDetail.
+func transformProtoPlainErrorDetailToPlainErrorDetail(v *model_gatewaypb.PlainErrorDetail) *modelgateway.PlainErrorDetail {
+	res := &modelgateway.PlainErrorDetail{
+		Message:    *v.Message_,
+		CauseIndex: *v.CauseIndex,
+	}
+
+	return res
+}
+
+// transformProtoRequestValidationErrorDetailToRequestValidationErrorDetail
+// builds a value of type *modelgateway.RequestValidationErrorDetail from a
+// value of type *model_gatewaypb.RequestValidationErrorDetail.
+func transformProtoRequestValidationErrorDetailToRequestValidationErrorDetail(v *model_gatewaypb.RequestValidationErrorDetail) *modelgateway.RequestValidationErrorDetail {
+	res := &modelgateway.RequestValidationErrorDetail{
+		CauseIndex: *v.CauseIndex,
 	}
 
 	return res
@@ -2431,6 +2675,7 @@ func transformProtoProviderErrorDetailToProviderErrorDetail(v *model_gatewaypb.P
 		Message:    *v.Message_,
 		RequestID:  *v.RequestId,
 		Retryable:  *v.Retryable,
+		CauseIndex: *v.CauseIndex,
 	}
 
 	return res
@@ -2444,6 +2689,7 @@ func transformProtoValidationErrorDetailToValidationErrorDetail(v *model_gateway
 		Kind:               *v.Kind,
 		RecoveryCorrection: *v.RecoveryCorrection,
 		UsageIncomplete:    *v.UsageIncomplete,
+		CauseIndex:         *v.CauseIndex,
 	}
 	if v.Evidence != nil {
 		res.Evidence = transformProtoResponseEvidenceToResponseEvidence(v.Evidence)
@@ -2464,6 +2710,31 @@ func transformProtoResponseEvidenceToResponseEvidence(v *model_gatewaypb.Respons
 		Version: *v.Version,
 		Sha256:  *v.Sha256,
 		Size:    *v.Size,
+	}
+
+	return res
+}
+
+// transformProtoMalformedToolArgsErrorDetailToMalformedToolArgsErrorDetail
+// builds a value of type *modelgateway.MalformedToolArgsErrorDetail from a
+// value of type *model_gatewaypb.MalformedToolArgsErrorDetail.
+func transformProtoMalformedToolArgsErrorDetailToMalformedToolArgsErrorDetail(v *model_gatewaypb.MalformedToolArgsErrorDetail) *modelgateway.MalformedToolArgsErrorDetail {
+	res := &modelgateway.MalformedToolArgsErrorDetail{
+		ToolName:   *v.ToolName,
+		CauseIndex: *v.CauseIndex,
+	}
+
+	return res
+}
+
+// transformProtoJoinedErrorDetailToJoinedErrorDetail builds a value of type
+// *modelgateway.JoinedErrorDetail from a value of type
+// *model_gatewaypb.JoinedErrorDetail.
+func transformProtoJoinedErrorDetailToJoinedErrorDetail(v *model_gatewaypb.JoinedErrorDetail) *modelgateway.JoinedErrorDetail {
+	res := &modelgateway.JoinedErrorDetail{}
+	res.ChildIndices = make([]int64, len(v.ChildIndices))
+	for i, val := range v.ChildIndices {
+		res.ChildIndices[i] = val
 	}
 
 	return res

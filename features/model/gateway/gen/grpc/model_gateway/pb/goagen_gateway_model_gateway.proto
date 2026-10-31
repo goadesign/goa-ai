@@ -349,24 +349,36 @@ message GatewayError {
 }
 // Single node in an encoded error tree.
 message GatewayErrorNode {
-	// Error node kind discriminator.
-	optional string kind = 1;
-	// Plain error text.
-	optional string message_ = 2;
-	// Known sentinel error code.
-	optional string sentinel = 3;
-	// Structured provider error details.
+	oneof detail {
+		// Untyped error message and optional wrapped cause.
+	PlainErrorDetail plain = 1;
+		// Known sentinel error code.
+	string sentinel = 2;
+		// Application-side request validation error wrapping a cause node.
+	RequestValidationErrorDetail request_validation = 3;
+		// Structured provider error details and optional wrapped cause.
 	ProviderErrorDetail provider = 4;
-	// Output validation error details.
+		// Output validation error details and wrapped cause.
 	ValidationErrorDetail validation = 5;
-	// Rejected unadvertised tool name.
-	optional string unadvertised_tool_name = 6;
-	// Canonical tool name for malformed arguments.
-	optional string malformed_tool_name = 7;
+		// Rejected unadvertised tool name.
+	string unadvertised_tool = 6;
+		// Malformed tool arguments marker and wrapped parsing cause.
+	MalformedToolArgsErrorDetail malformed_tool_args = 7;
+		// Child node indices for a joined error.
+	JoinedErrorDetail joined = 8;
+	}
+}
+// Untyped error node message and optional wrapped cause index.
+message PlainErrorDetail {
+	// Plain error text.
+	optional string message_ = 1;
 	// Index into GatewayError.nodes of the wrapped cause (-1 when none).
-	optional sint64 cause_index = 8;
-	// Indices into GatewayError.nodes of joined child errors.
-	repeated sint64 child_indices = 9;
+	optional sint64 cause_index = 2;
+}
+// Application-side request validation error wrapping a cause node.
+message RequestValidationErrorDetail {
+	// Index into GatewayError.nodes of the wrapped cause.
+	optional sint64 cause_index = 1;
 }
 // Structured provider error details.
 message ProviderErrorDetail {
@@ -386,6 +398,8 @@ message ProviderErrorDetail {
 	optional string request_id = 7;
 	// Whether retrying the call may succeed.
 	optional bool retryable = 8;
+	// Index into GatewayError.nodes of the wrapped cause (-1 when none).
+	optional sint64 cause_index = 9;
 }
 // Structured output validation error details.
 message ValidationErrorDetail {
@@ -402,6 +416,8 @@ message ValidationErrorDetail {
 // response omitting input or output counters, or a multi-round tool-search
 // failure after an uncounted round).
 	optional bool usage_incomplete = 5;
+	// Index into GatewayError.nodes of the wrapped cause.
+	optional sint64 cause_index = 6;
 }
 // Bounded fingerprint of a rejected provider response.
 message ResponseEvidence {
@@ -413,6 +429,18 @@ message ResponseEvidence {
 	optional string sha256 = 3;
 	// Encoded byte size.
 	optional sint64 size = 4;
+}
+// Malformed tool arguments error marker and wrapped parsing cause index.
+message MalformedToolArgsErrorDetail {
+	// Canonical tool name for malformed arguments.
+	optional string tool_name = 1;
+	// Index into GatewayError.nodes of the wrapped parsing cause.
+	optional sint64 cause_index = 2;
+}
+// Child node indices for a joined error.
+message JoinedErrorDetail {
+	// Indices into GatewayError.nodes of joined child errors.
+	repeated sint64 child_indices = 1;
 }
 
 message StreamRequest {

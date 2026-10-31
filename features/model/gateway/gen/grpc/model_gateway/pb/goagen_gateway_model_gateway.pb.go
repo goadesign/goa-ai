@@ -2270,24 +2270,17 @@ func (x *GatewayError) GetRetainedUsageIncomplete() bool {
 // Single node in an encoded error tree.
 type GatewayErrorNode struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Error node kind discriminator.
-	Kind *string `protobuf:"bytes,1,opt,name=kind,proto3,oneof" json:"kind,omitempty"`
-	// Plain error text.
-	Message_ *string `protobuf:"bytes,2,opt,name=message_,json=message,proto3,oneof" json:"message_,omitempty"`
-	// Known sentinel error code.
-	Sentinel *string `protobuf:"bytes,3,opt,name=sentinel,proto3,oneof" json:"sentinel,omitempty"`
-	// Structured provider error details.
-	Provider *ProviderErrorDetail `protobuf:"bytes,4,opt,name=provider,proto3" json:"provider,omitempty"`
-	// Output validation error details.
-	Validation *ValidationErrorDetail `protobuf:"bytes,5,opt,name=validation,proto3" json:"validation,omitempty"`
-	// Rejected unadvertised tool name.
-	UnadvertisedToolName *string `protobuf:"bytes,6,opt,name=unadvertised_tool_name,json=unadvertisedToolName,proto3,oneof" json:"unadvertised_tool_name,omitempty"`
-	// Canonical tool name for malformed arguments.
-	MalformedToolName *string `protobuf:"bytes,7,opt,name=malformed_tool_name,json=malformedToolName,proto3,oneof" json:"malformed_tool_name,omitempty"`
-	// Index into GatewayError.nodes of the wrapped cause (-1 when none).
-	CauseIndex *int64 `protobuf:"zigzag64,8,opt,name=cause_index,json=causeIndex,proto3,oneof" json:"cause_index,omitempty"`
-	// Indices into GatewayError.nodes of joined child errors.
-	ChildIndices  []int64 `protobuf:"zigzag64,9,rep,packed,name=child_indices,json=childIndices,proto3" json:"child_indices,omitempty"`
+	// Types that are valid to be assigned to Detail:
+	//
+	//	*GatewayErrorNode_Plain
+	//	*GatewayErrorNode_Sentinel
+	//	*GatewayErrorNode_RequestValidation
+	//	*GatewayErrorNode_Provider
+	//	*GatewayErrorNode_Validation
+	//	*GatewayErrorNode_UnadvertisedTool
+	//	*GatewayErrorNode_MalformedToolArgs
+	//	*GatewayErrorNode_Joined
+	Detail        isGatewayErrorNode_Detail `protobuf_oneof:"detail"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2322,67 +2315,244 @@ func (*GatewayErrorNode) Descriptor() ([]byte, []int) {
 	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{29}
 }
 
-func (x *GatewayErrorNode) GetKind() string {
-	if x != nil && x.Kind != nil {
-		return *x.Kind
+func (x *GatewayErrorNode) GetDetail() isGatewayErrorNode_Detail {
+	if x != nil {
+		return x.Detail
 	}
-	return ""
+	return nil
 }
 
-func (x *GatewayErrorNode) GetMessage_() string {
-	if x != nil && x.Message_ != nil {
-		return *x.Message_
+func (x *GatewayErrorNode) GetPlain() *PlainErrorDetail {
+	if x != nil {
+		if x, ok := x.Detail.(*GatewayErrorNode_Plain); ok {
+			return x.Plain
+		}
 	}
-	return ""
+	return nil
 }
 
 func (x *GatewayErrorNode) GetSentinel() string {
-	if x != nil && x.Sentinel != nil {
-		return *x.Sentinel
+	if x != nil {
+		if x, ok := x.Detail.(*GatewayErrorNode_Sentinel); ok {
+			return x.Sentinel
+		}
 	}
 	return ""
+}
+
+func (x *GatewayErrorNode) GetRequestValidation() *RequestValidationErrorDetail {
+	if x != nil {
+		if x, ok := x.Detail.(*GatewayErrorNode_RequestValidation); ok {
+			return x.RequestValidation
+		}
+	}
+	return nil
 }
 
 func (x *GatewayErrorNode) GetProvider() *ProviderErrorDetail {
 	if x != nil {
-		return x.Provider
+		if x, ok := x.Detail.(*GatewayErrorNode_Provider); ok {
+			return x.Provider
+		}
 	}
 	return nil
 }
 
 func (x *GatewayErrorNode) GetValidation() *ValidationErrorDetail {
 	if x != nil {
-		return x.Validation
+		if x, ok := x.Detail.(*GatewayErrorNode_Validation); ok {
+			return x.Validation
+		}
 	}
 	return nil
 }
 
-func (x *GatewayErrorNode) GetUnadvertisedToolName() string {
-	if x != nil && x.UnadvertisedToolName != nil {
-		return *x.UnadvertisedToolName
+func (x *GatewayErrorNode) GetUnadvertisedTool() string {
+	if x != nil {
+		if x, ok := x.Detail.(*GatewayErrorNode_UnadvertisedTool); ok {
+			return x.UnadvertisedTool
+		}
 	}
 	return ""
 }
 
-func (x *GatewayErrorNode) GetMalformedToolName() string {
-	if x != nil && x.MalformedToolName != nil {
-		return *x.MalformedToolName
+func (x *GatewayErrorNode) GetMalformedToolArgs() *MalformedToolArgsErrorDetail {
+	if x != nil {
+		if x, ok := x.Detail.(*GatewayErrorNode_MalformedToolArgs); ok {
+			return x.MalformedToolArgs
+		}
+	}
+	return nil
+}
+
+func (x *GatewayErrorNode) GetJoined() *JoinedErrorDetail {
+	if x != nil {
+		if x, ok := x.Detail.(*GatewayErrorNode_Joined); ok {
+			return x.Joined
+		}
+	}
+	return nil
+}
+
+type isGatewayErrorNode_Detail interface {
+	isGatewayErrorNode_Detail()
+}
+
+type GatewayErrorNode_Plain struct {
+	// Untyped error message and optional wrapped cause.
+	Plain *PlainErrorDetail `protobuf:"bytes,1,opt,name=plain,proto3,oneof"`
+}
+
+type GatewayErrorNode_Sentinel struct {
+	// Known sentinel error code.
+	Sentinel string `protobuf:"bytes,2,opt,name=sentinel,proto3,oneof"`
+}
+
+type GatewayErrorNode_RequestValidation struct {
+	// Application-side request validation error wrapping a cause node.
+	RequestValidation *RequestValidationErrorDetail `protobuf:"bytes,3,opt,name=request_validation,json=requestValidation,proto3,oneof"`
+}
+
+type GatewayErrorNode_Provider struct {
+	// Structured provider error details and optional wrapped cause.
+	Provider *ProviderErrorDetail `protobuf:"bytes,4,opt,name=provider,proto3,oneof"`
+}
+
+type GatewayErrorNode_Validation struct {
+	// Output validation error details and wrapped cause.
+	Validation *ValidationErrorDetail `protobuf:"bytes,5,opt,name=validation,proto3,oneof"`
+}
+
+type GatewayErrorNode_UnadvertisedTool struct {
+	// Rejected unadvertised tool name.
+	UnadvertisedTool string `protobuf:"bytes,6,opt,name=unadvertised_tool,json=unadvertisedTool,proto3,oneof"`
+}
+
+type GatewayErrorNode_MalformedToolArgs struct {
+	// Malformed tool arguments marker and wrapped parsing cause.
+	MalformedToolArgs *MalformedToolArgsErrorDetail `protobuf:"bytes,7,opt,name=malformed_tool_args,json=malformedToolArgs,proto3,oneof"`
+}
+
+type GatewayErrorNode_Joined struct {
+	// Child node indices for a joined error.
+	Joined *JoinedErrorDetail `protobuf:"bytes,8,opt,name=joined,proto3,oneof"`
+}
+
+func (*GatewayErrorNode_Plain) isGatewayErrorNode_Detail() {}
+
+func (*GatewayErrorNode_Sentinel) isGatewayErrorNode_Detail() {}
+
+func (*GatewayErrorNode_RequestValidation) isGatewayErrorNode_Detail() {}
+
+func (*GatewayErrorNode_Provider) isGatewayErrorNode_Detail() {}
+
+func (*GatewayErrorNode_Validation) isGatewayErrorNode_Detail() {}
+
+func (*GatewayErrorNode_UnadvertisedTool) isGatewayErrorNode_Detail() {}
+
+func (*GatewayErrorNode_MalformedToolArgs) isGatewayErrorNode_Detail() {}
+
+func (*GatewayErrorNode_Joined) isGatewayErrorNode_Detail() {}
+
+// Untyped error node message and optional wrapped cause index.
+type PlainErrorDetail struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Plain error text.
+	Message_ *string `protobuf:"bytes,1,opt,name=message_,json=message,proto3,oneof" json:"message_,omitempty"`
+	// Index into GatewayError.nodes of the wrapped cause (-1 when none).
+	CauseIndex    *int64 `protobuf:"zigzag64,2,opt,name=cause_index,json=causeIndex,proto3,oneof" json:"cause_index,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PlainErrorDetail) Reset() {
+	*x = PlainErrorDetail{}
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[30]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PlainErrorDetail) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PlainErrorDetail) ProtoMessage() {}
+
+func (x *PlainErrorDetail) ProtoReflect() protoreflect.Message {
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[30]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PlainErrorDetail.ProtoReflect.Descriptor instead.
+func (*PlainErrorDetail) Descriptor() ([]byte, []int) {
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{30}
+}
+
+func (x *PlainErrorDetail) GetMessage_() string {
+	if x != nil && x.Message_ != nil {
+		return *x.Message_
 	}
 	return ""
 }
 
-func (x *GatewayErrorNode) GetCauseIndex() int64 {
+func (x *PlainErrorDetail) GetCauseIndex() int64 {
 	if x != nil && x.CauseIndex != nil {
 		return *x.CauseIndex
 	}
 	return 0
 }
 
-func (x *GatewayErrorNode) GetChildIndices() []int64 {
+// Application-side request validation error wrapping a cause node.
+type RequestValidationErrorDetail struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Index into GatewayError.nodes of the wrapped cause.
+	CauseIndex    *int64 `protobuf:"zigzag64,1,opt,name=cause_index,json=causeIndex,proto3,oneof" json:"cause_index,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RequestValidationErrorDetail) Reset() {
+	*x = RequestValidationErrorDetail{}
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[31]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RequestValidationErrorDetail) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RequestValidationErrorDetail) ProtoMessage() {}
+
+func (x *RequestValidationErrorDetail) ProtoReflect() protoreflect.Message {
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[31]
 	if x != nil {
-		return x.ChildIndices
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
 	}
-	return nil
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RequestValidationErrorDetail.ProtoReflect.Descriptor instead.
+func (*RequestValidationErrorDetail) Descriptor() ([]byte, []int) {
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{31}
+}
+
+func (x *RequestValidationErrorDetail) GetCauseIndex() int64 {
+	if x != nil && x.CauseIndex != nil {
+		return *x.CauseIndex
+	}
+	return 0
 }
 
 // Structured provider error details.
@@ -2403,14 +2573,16 @@ type ProviderErrorDetail struct {
 	// Provider request identifier.
 	RequestId *string `protobuf:"bytes,7,opt,name=request_id,json=requestId,proto3,oneof" json:"request_id,omitempty"`
 	// Whether retrying the call may succeed.
-	Retryable     *bool `protobuf:"varint,8,opt,name=retryable,proto3,oneof" json:"retryable,omitempty"`
+	Retryable *bool `protobuf:"varint,8,opt,name=retryable,proto3,oneof" json:"retryable,omitempty"`
+	// Index into GatewayError.nodes of the wrapped cause (-1 when none).
+	CauseIndex    *int64 `protobuf:"zigzag64,9,opt,name=cause_index,json=causeIndex,proto3,oneof" json:"cause_index,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ProviderErrorDetail) Reset() {
 	*x = ProviderErrorDetail{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[30]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2422,7 +2594,7 @@ func (x *ProviderErrorDetail) String() string {
 func (*ProviderErrorDetail) ProtoMessage() {}
 
 func (x *ProviderErrorDetail) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[30]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2435,7 +2607,7 @@ func (x *ProviderErrorDetail) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ProviderErrorDetail.ProtoReflect.Descriptor instead.
 func (*ProviderErrorDetail) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{30}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *ProviderErrorDetail) GetProvider() string {
@@ -2494,6 +2666,13 @@ func (x *ProviderErrorDetail) GetRetryable() bool {
 	return false
 }
 
+func (x *ProviderErrorDetail) GetCauseIndex() int64 {
+	if x != nil && x.CauseIndex != nil {
+		return *x.CauseIndex
+	}
+	return 0
+}
+
 // Structured output validation error details.
 type ValidationErrorDetail struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -2510,13 +2689,15 @@ type ValidationErrorDetail struct {
 	// response omitting input or output counters, or a multi-round tool-search
 	// failure after an uncounted round).
 	UsageIncomplete *bool `protobuf:"varint,5,opt,name=usage_incomplete,json=usageIncomplete,proto3,oneof" json:"usage_incomplete,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Index into GatewayError.nodes of the wrapped cause.
+	CauseIndex    *int64 `protobuf:"zigzag64,6,opt,name=cause_index,json=causeIndex,proto3,oneof" json:"cause_index,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ValidationErrorDetail) Reset() {
 	*x = ValidationErrorDetail{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[31]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2528,7 +2709,7 @@ func (x *ValidationErrorDetail) String() string {
 func (*ValidationErrorDetail) ProtoMessage() {}
 
 func (x *ValidationErrorDetail) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[31]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2541,7 +2722,7 @@ func (x *ValidationErrorDetail) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ValidationErrorDetail.ProtoReflect.Descriptor instead.
 func (*ValidationErrorDetail) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{31}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *ValidationErrorDetail) GetKind() string {
@@ -2579,6 +2760,13 @@ func (x *ValidationErrorDetail) GetUsageIncomplete() bool {
 	return false
 }
 
+func (x *ValidationErrorDetail) GetCauseIndex() int64 {
+	if x != nil && x.CauseIndex != nil {
+		return *x.CauseIndex
+	}
+	return 0
+}
+
 // Bounded fingerprint of a rejected provider response.
 type ResponseEvidence struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -2596,7 +2784,7 @@ type ResponseEvidence struct {
 
 func (x *ResponseEvidence) Reset() {
 	*x = ResponseEvidence{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[32]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2608,7 +2796,7 @@ func (x *ResponseEvidence) String() string {
 func (*ResponseEvidence) ProtoMessage() {}
 
 func (x *ResponseEvidence) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[32]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2621,7 +2809,7 @@ func (x *ResponseEvidence) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResponseEvidence.ProtoReflect.Descriptor instead.
 func (*ResponseEvidence) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{32}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *ResponseEvidence) GetPresent() bool {
@@ -2650,6 +2838,107 @@ func (x *ResponseEvidence) GetSize() int64 {
 		return *x.Size
 	}
 	return 0
+}
+
+// Malformed tool arguments error marker and wrapped parsing cause index.
+type MalformedToolArgsErrorDetail struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Canonical tool name for malformed arguments.
+	ToolName *string `protobuf:"bytes,1,opt,name=tool_name,json=toolName,proto3,oneof" json:"tool_name,omitempty"`
+	// Index into GatewayError.nodes of the wrapped parsing cause.
+	CauseIndex    *int64 `protobuf:"zigzag64,2,opt,name=cause_index,json=causeIndex,proto3,oneof" json:"cause_index,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MalformedToolArgsErrorDetail) Reset() {
+	*x = MalformedToolArgsErrorDetail{}
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[35]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MalformedToolArgsErrorDetail) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MalformedToolArgsErrorDetail) ProtoMessage() {}
+
+func (x *MalformedToolArgsErrorDetail) ProtoReflect() protoreflect.Message {
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[35]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MalformedToolArgsErrorDetail.ProtoReflect.Descriptor instead.
+func (*MalformedToolArgsErrorDetail) Descriptor() ([]byte, []int) {
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{35}
+}
+
+func (x *MalformedToolArgsErrorDetail) GetToolName() string {
+	if x != nil && x.ToolName != nil {
+		return *x.ToolName
+	}
+	return ""
+}
+
+func (x *MalformedToolArgsErrorDetail) GetCauseIndex() int64 {
+	if x != nil && x.CauseIndex != nil {
+		return *x.CauseIndex
+	}
+	return 0
+}
+
+// Child node indices for a joined error.
+type JoinedErrorDetail struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Indices into GatewayError.nodes of joined child errors.
+	ChildIndices  []int64 `protobuf:"zigzag64,1,rep,packed,name=child_indices,json=childIndices,proto3" json:"child_indices,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *JoinedErrorDetail) Reset() {
+	*x = JoinedErrorDetail{}
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[36]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *JoinedErrorDetail) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*JoinedErrorDetail) ProtoMessage() {}
+
+func (x *JoinedErrorDetail) ProtoReflect() protoreflect.Message {
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[36]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use JoinedErrorDetail.ProtoReflect.Descriptor instead.
+func (*JoinedErrorDetail) Descriptor() ([]byte, []int) {
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{36}
+}
+
+func (x *JoinedErrorDetail) GetChildIndices() []int64 {
+	if x != nil {
+		return x.ChildIndices
+	}
+	return nil
 }
 
 type StreamRequest struct {
@@ -2684,7 +2973,7 @@ type StreamRequest struct {
 
 func (x *StreamRequest) Reset() {
 	*x = StreamRequest{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[33]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2696,7 +2985,7 @@ func (x *StreamRequest) String() string {
 func (*StreamRequest) ProtoMessage() {}
 
 func (x *StreamRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[33]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2709,7 +2998,7 @@ func (x *StreamRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamRequest.ProtoReflect.Descriptor instead.
 func (*StreamRequest) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{33}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *StreamRequest) GetModel() string {
@@ -2810,7 +3099,7 @@ type StreamResponse struct {
 
 func (x *StreamResponse) Reset() {
 	*x = StreamResponse{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[34]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2822,7 +3111,7 @@ func (x *StreamResponse) String() string {
 func (*StreamResponse) ProtoMessage() {}
 
 func (x *StreamResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[34]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2835,7 +3124,7 @@ func (x *StreamResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamResponse.ProtoReflect.Descriptor instead.
 func (*StreamResponse) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{34}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *StreamResponse) GetPayload() isStreamResponse_Payload {
@@ -2917,7 +3206,7 @@ type StreamChunk struct {
 
 func (x *StreamChunk) Reset() {
 	*x = StreamChunk{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[35]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2929,7 +3218,7 @@ func (x *StreamChunk) String() string {
 func (*StreamChunk) ProtoMessage() {}
 
 func (x *StreamChunk) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[35]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2942,7 +3231,7 @@ func (x *StreamChunk) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StreamChunk.ProtoReflect.Descriptor instead.
 func (*StreamChunk) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{35}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *StreamChunk) GetPayload() isStreamChunk_Payload {
@@ -3101,7 +3390,7 @@ type ToolCall struct {
 
 func (x *ToolCall) Reset() {
 	*x = ToolCall{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[36]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3113,7 +3402,7 @@ func (x *ToolCall) String() string {
 func (*ToolCall) ProtoMessage() {}
 
 func (x *ToolCall) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[36]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3126,7 +3415,7 @@ func (x *ToolCall) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ToolCall.ProtoReflect.Descriptor instead.
 func (*ToolCall) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{36}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *ToolCall) GetName() string {
@@ -3172,7 +3461,7 @@ type ToolCallDelta struct {
 
 func (x *ToolCallDelta) Reset() {
 	*x = ToolCallDelta{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[37]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3184,7 +3473,7 @@ func (x *ToolCallDelta) String() string {
 func (*ToolCallDelta) ProtoMessage() {}
 
 func (x *ToolCallDelta) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[37]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3197,7 +3486,7 @@ func (x *ToolCallDelta) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ToolCallDelta.ProtoReflect.Descriptor instead.
 func (*ToolCallDelta) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{37}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *ToolCallDelta) GetName() string {
@@ -3234,7 +3523,7 @@ type Completion struct {
 
 func (x *Completion) Reset() {
 	*x = Completion{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[38]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3246,7 +3535,7 @@ func (x *Completion) String() string {
 func (*Completion) ProtoMessage() {}
 
 func (x *Completion) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[38]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3259,7 +3548,7 @@ func (x *Completion) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Completion.ProtoReflect.Descriptor instead.
 func (*Completion) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{38}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *Completion) GetName() string {
@@ -3289,7 +3578,7 @@ type CompletionDelta struct {
 
 func (x *CompletionDelta) Reset() {
 	*x = CompletionDelta{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[39]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3301,7 +3590,7 @@ func (x *CompletionDelta) String() string {
 func (*CompletionDelta) ProtoMessage() {}
 
 func (x *CompletionDelta) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[39]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3314,7 +3603,7 @@ func (x *CompletionDelta) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CompletionDelta.ProtoReflect.Descriptor instead.
 func (*CompletionDelta) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{39}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *CompletionDelta) GetName() string {
@@ -3344,7 +3633,7 @@ type StopDetail struct {
 
 func (x *StopDetail) Reset() {
 	*x = StopDetail{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[40]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3356,7 +3645,7 @@ func (x *StopDetail) String() string {
 func (*StopDetail) ProtoMessage() {}
 
 func (x *StopDetail) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[40]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3369,7 +3658,7 @@ func (x *StopDetail) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StopDetail.ProtoReflect.Descriptor instead.
 func (*StopDetail) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{40}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *StopDetail) GetReason() string {
@@ -3418,7 +3707,7 @@ type CountTokensRequest struct {
 
 func (x *CountTokensRequest) Reset() {
 	*x = CountTokensRequest{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[41]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3430,7 +3719,7 @@ func (x *CountTokensRequest) String() string {
 func (*CountTokensRequest) ProtoMessage() {}
 
 func (x *CountTokensRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[41]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3443,7 +3732,7 @@ func (x *CountTokensRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CountTokensRequest.ProtoReflect.Descriptor instead.
 func (*CountTokensRequest) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{41}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *CountTokensRequest) GetModel() string {
@@ -3543,7 +3832,7 @@ type CountTokensResponse struct {
 
 func (x *CountTokensResponse) Reset() {
 	*x = CountTokensResponse{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[42]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3555,7 +3844,7 @@ func (x *CountTokensResponse) String() string {
 func (*CountTokensResponse) ProtoMessage() {}
 
 func (x *CountTokensResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[42]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3568,7 +3857,7 @@ func (x *CountTokensResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CountTokensResponse.ProtoReflect.Descriptor instead.
 func (*CountTokensResponse) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{42}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{46}
 }
 
 func (x *CountTokensResponse) GetOutcome() isCountTokensResponse_Outcome {
@@ -3631,7 +3920,7 @@ type TokenCount struct {
 
 func (x *TokenCount) Reset() {
 	*x = TokenCount{}
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[43]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -3643,7 +3932,7 @@ func (x *TokenCount) String() string {
 func (*TokenCount) ProtoMessage() {}
 
 func (x *TokenCount) ProtoReflect() protoreflect.Message {
-	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[43]
+	mi := &file_goagen_gateway_model_gateway_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -3656,7 +3945,7 @@ func (x *TokenCount) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TokenCount.ProtoReflect.Descriptor instead.
 func (*TokenCount) Descriptor() ([]byte, []int) {
-	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{43}
+	return file_goagen_gateway_model_gateway_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *TokenCount) GetModel() string {
@@ -3936,26 +4225,29 @@ const file_goagen_gateway_model_gateway_proto_rawDesc = "" +
 	"\x05nodes\x18\x01 \x03(\v2&.goa_ai_model_gateway.GatewayErrorNodeR\x05nodes\x12G\n" +
 	"\x0eretained_usage\x18\x02 \x01(\v2 .goa_ai_model_gateway.TokenUsageR\rretainedUsage\x12?\n" +
 	"\x19retained_usage_incomplete\x18\x03 \x01(\bH\x00R\x17retainedUsageIncomplete\x88\x01\x01B\x1c\n" +
-	"\x1a_retained_usage_incomplete\"\xa1\x04\n" +
-	"\x10GatewayErrorNode\x12\x17\n" +
-	"\x04kind\x18\x01 \x01(\tH\x00R\x04kind\x88\x01\x01\x12\x1e\n" +
-	"\bmessage_\x18\x02 \x01(\tH\x01R\amessage\x88\x01\x01\x12\x1f\n" +
-	"\bsentinel\x18\x03 \x01(\tH\x02R\bsentinel\x88\x01\x01\x12E\n" +
-	"\bprovider\x18\x04 \x01(\v2).goa_ai_model_gateway.ProviderErrorDetailR\bprovider\x12K\n" +
+	"\x1a_retained_usage_incomplete\"\xcf\x04\n" +
+	"\x10GatewayErrorNode\x12>\n" +
+	"\x05plain\x18\x01 \x01(\v2&.goa_ai_model_gateway.PlainErrorDetailH\x00R\x05plain\x12\x1c\n" +
+	"\bsentinel\x18\x02 \x01(\tH\x00R\bsentinel\x12c\n" +
+	"\x12request_validation\x18\x03 \x01(\v22.goa_ai_model_gateway.RequestValidationErrorDetailH\x00R\x11requestValidation\x12G\n" +
+	"\bprovider\x18\x04 \x01(\v2).goa_ai_model_gateway.ProviderErrorDetailH\x00R\bprovider\x12M\n" +
 	"\n" +
-	"validation\x18\x05 \x01(\v2+.goa_ai_model_gateway.ValidationErrorDetailR\n" +
-	"validation\x129\n" +
-	"\x16unadvertised_tool_name\x18\x06 \x01(\tH\x03R\x14unadvertisedToolName\x88\x01\x01\x123\n" +
-	"\x13malformed_tool_name\x18\a \x01(\tH\x04R\x11malformedToolName\x88\x01\x01\x12$\n" +
-	"\vcause_index\x18\b \x01(\x12H\x05R\n" +
-	"causeIndex\x88\x01\x01\x12#\n" +
-	"\rchild_indices\x18\t \x03(\x12R\fchildIndicesB\a\n" +
-	"\x05_kindB\v\n" +
-	"\t_message_B\v\n" +
-	"\t_sentinelB\x19\n" +
-	"\x17_unadvertised_tool_nameB\x16\n" +
-	"\x14_malformed_tool_nameB\x0e\n" +
-	"\f_cause_index\"\xff\x02\n" +
+	"validation\x18\x05 \x01(\v2+.goa_ai_model_gateway.ValidationErrorDetailH\x00R\n" +
+	"validation\x12-\n" +
+	"\x11unadvertised_tool\x18\x06 \x01(\tH\x00R\x10unadvertisedTool\x12d\n" +
+	"\x13malformed_tool_args\x18\a \x01(\v22.goa_ai_model_gateway.MalformedToolArgsErrorDetailH\x00R\x11malformedToolArgs\x12A\n" +
+	"\x06joined\x18\b \x01(\v2'.goa_ai_model_gateway.JoinedErrorDetailH\x00R\x06joinedB\b\n" +
+	"\x06detail\"u\n" +
+	"\x10PlainErrorDetail\x12\x1e\n" +
+	"\bmessage_\x18\x01 \x01(\tH\x00R\amessage\x88\x01\x01\x12$\n" +
+	"\vcause_index\x18\x02 \x01(\x12H\x01R\n" +
+	"causeIndex\x88\x01\x01B\v\n" +
+	"\t_message_B\x0e\n" +
+	"\f_cause_index\"T\n" +
+	"\x1cRequestValidationErrorDetail\x12$\n" +
+	"\vcause_index\x18\x01 \x01(\x12H\x00R\n" +
+	"causeIndex\x88\x01\x01B\x0e\n" +
+	"\f_cause_index\"\xb5\x03\n" +
 	"\x13ProviderErrorDetail\x12\x1f\n" +
 	"\bprovider\x18\x01 \x01(\tH\x00R\bprovider\x88\x01\x01\x12!\n" +
 	"\toperation\x18\x02 \x01(\tH\x01R\toperation\x88\x01\x01\x12$\n" +
@@ -3966,7 +4258,9 @@ const file_goagen_gateway_model_gateway_proto_rawDesc = "" +
 	"\bmessage_\x18\x06 \x01(\tH\x05R\amessage\x88\x01\x01\x12\"\n" +
 	"\n" +
 	"request_id\x18\a \x01(\tH\x06R\trequestId\x88\x01\x01\x12!\n" +
-	"\tretryable\x18\b \x01(\bH\aR\tretryable\x88\x01\x01B\v\n" +
+	"\tretryable\x18\b \x01(\bH\aR\tretryable\x88\x01\x01\x12$\n" +
+	"\vcause_index\x18\t \x01(\x12H\bR\n" +
+	"causeIndex\x88\x01\x01B\v\n" +
 	"\t_providerB\f\n" +
 	"\n" +
 	"_operationB\x0e\n" +
@@ -3976,16 +4270,20 @@ const file_goagen_gateway_model_gateway_proto_rawDesc = "" +
 	"\t_message_B\r\n" +
 	"\v_request_idB\f\n" +
 	"\n" +
-	"_retryable\"\xc8\x02\n" +
+	"_retryableB\x0e\n" +
+	"\f_cause_index\"\xfe\x02\n" +
 	"\x15ValidationErrorDetail\x12\x17\n" +
 	"\x04kind\x18\x01 \x01(\tH\x00R\x04kind\x88\x01\x01\x12B\n" +
 	"\bevidence\x18\x02 \x01(\v2&.goa_ai_model_gateway.ResponseEvidenceR\bevidence\x126\n" +
 	"\x05usage\x18\x03 \x01(\v2 .goa_ai_model_gateway.TokenUsageR\x05usage\x124\n" +
 	"\x13recovery_correction\x18\x04 \x01(\tH\x01R\x12recoveryCorrection\x88\x01\x01\x12.\n" +
-	"\x10usage_incomplete\x18\x05 \x01(\bH\x02R\x0fusageIncomplete\x88\x01\x01B\a\n" +
+	"\x10usage_incomplete\x18\x05 \x01(\bH\x02R\x0fusageIncomplete\x88\x01\x01\x12$\n" +
+	"\vcause_index\x18\x06 \x01(\x12H\x03R\n" +
+	"causeIndex\x88\x01\x01B\a\n" +
 	"\x05_kindB\x16\n" +
 	"\x14_recovery_correctionB\x13\n" +
-	"\x11_usage_incomplete\"\xb2\x01\n" +
+	"\x11_usage_incompleteB\x0e\n" +
+	"\f_cause_index\"\xb2\x01\n" +
 	"\x10ResponseEvidence\x12\x1d\n" +
 	"\apresent\x18\x01 \x01(\bH\x00R\apresent\x88\x01\x01\x12\x1d\n" +
 	"\aversion\x18\x02 \x01(\tH\x01R\aversion\x88\x01\x01\x12\x1b\n" +
@@ -3996,7 +4294,16 @@ const file_goagen_gateway_model_gateway_proto_rawDesc = "" +
 	"\n" +
 	"\b_versionB\t\n" +
 	"\a_sha256B\a\n" +
-	"\x05_size\"\xcf\x05\n" +
+	"\x05_size\"\x84\x01\n" +
+	"\x1cMalformedToolArgsErrorDetail\x12 \n" +
+	"\ttool_name\x18\x01 \x01(\tH\x00R\btoolName\x88\x01\x01\x12$\n" +
+	"\vcause_index\x18\x02 \x01(\x12H\x01R\n" +
+	"causeIndex\x88\x01\x01B\f\n" +
+	"\n" +
+	"_tool_nameB\x0e\n" +
+	"\f_cause_index\"8\n" +
+	"\x11JoinedErrorDetail\x12#\n" +
+	"\rchild_indices\x18\x01 \x03(\x12R\fchildIndices\"\xcf\x05\n" +
 	"\rStreamRequest\x12\x19\n" +
 	"\x05model\x18\x01 \x01(\tH\x00R\x05model\x88\x01\x01\x12$\n" +
 	"\vmodel_class\x18\x02 \x01(\tH\x01R\n" +
@@ -4127,53 +4434,57 @@ func file_goagen_gateway_model_gateway_proto_rawDescGZIP() []byte {
 	return file_goagen_gateway_model_gateway_proto_rawDescData
 }
 
-var file_goagen_gateway_model_gateway_proto_msgTypes = make([]protoimpl.MessageInfo, 45)
+var file_goagen_gateway_model_gateway_proto_msgTypes = make([]protoimpl.MessageInfo, 49)
 var file_goagen_gateway_model_gateway_proto_goTypes = []any{
-	(*CompleteRequest)(nil),       // 0: goa_ai_model_gateway.CompleteRequest
-	(*PromptRef)(nil),             // 1: goa_ai_model_gateway.PromptRef
-	(*ModelMessage)(nil),          // 2: goa_ai_model_gateway.ModelMessage
-	(*MessagePart)(nil),           // 3: goa_ai_model_gateway.MessagePart
-	(*TextPartDetail)(nil),        // 4: goa_ai_model_gateway.TextPartDetail
-	(*ThinkingPartDetail)(nil),    // 5: goa_ai_model_gateway.ThinkingPartDetail
-	(*ImagePartDetail)(nil),       // 6: goa_ai_model_gateway.ImagePartDetail
-	(*ImageSourcePartDetail)(nil), // 7: goa_ai_model_gateway.ImageSourcePartDetail
-	(*DocumentPartDetail)(nil),    // 8: goa_ai_model_gateway.DocumentPartDetail
-	(*CitationsPartDetail)(nil),   // 9: goa_ai_model_gateway.CitationsPartDetail
-	(*Citation)(nil),              // 10: goa_ai_model_gateway.Citation
-	(*CitationLocation)(nil),      // 11: goa_ai_model_gateway.CitationLocation
-	(*DocumentCharLocation)(nil),  // 12: goa_ai_model_gateway.DocumentCharLocation
-	(*DocumentPageLocation)(nil),  // 13: goa_ai_model_gateway.DocumentPageLocation
-	(*DocumentChunkLocation)(nil), // 14: goa_ai_model_gateway.DocumentChunkLocation
-	(*ToolUsePartDetail)(nil),     // 15: goa_ai_model_gateway.ToolUsePartDetail
-	(*ToolResultPartDetail)(nil),  // 16: goa_ai_model_gateway.ToolResultPartDetail
-	(*CacheCheckpointDetail)(nil), // 17: goa_ai_model_gateway.CacheCheckpointDetail
-	(*ToolDefinition)(nil),        // 18: goa_ai_model_gateway.ToolDefinition
-	(*SearchDocument)(nil),        // 19: goa_ai_model_gateway.SearchDocument
-	(*ToolInputContract)(nil),     // 20: goa_ai_model_gateway.ToolInputContract
-	(*ToolChoice)(nil),            // 21: goa_ai_model_gateway.ToolChoice
-	(*ThinkingOptions)(nil),       // 22: goa_ai_model_gateway.ThinkingOptions
-	(*StructuredOutput)(nil),      // 23: goa_ai_model_gateway.StructuredOutput
-	(*CacheOptions)(nil),          // 24: goa_ai_model_gateway.CacheOptions
-	(*CompleteResponse)(nil),      // 25: goa_ai_model_gateway.CompleteResponse
-	(*ModelResponse)(nil),         // 26: goa_ai_model_gateway.ModelResponse
-	(*TokenUsage)(nil),            // 27: goa_ai_model_gateway.TokenUsage
-	(*GatewayError)(nil),          // 28: goa_ai_model_gateway.GatewayError
-	(*GatewayErrorNode)(nil),      // 29: goa_ai_model_gateway.GatewayErrorNode
-	(*ProviderErrorDetail)(nil),   // 30: goa_ai_model_gateway.ProviderErrorDetail
-	(*ValidationErrorDetail)(nil), // 31: goa_ai_model_gateway.ValidationErrorDetail
-	(*ResponseEvidence)(nil),      // 32: goa_ai_model_gateway.ResponseEvidence
-	(*StreamRequest)(nil),         // 33: goa_ai_model_gateway.StreamRequest
-	(*StreamResponse)(nil),        // 34: goa_ai_model_gateway.StreamResponse
-	(*StreamChunk)(nil),           // 35: goa_ai_model_gateway.StreamChunk
-	(*ToolCall)(nil),              // 36: goa_ai_model_gateway.ToolCall
-	(*ToolCallDelta)(nil),         // 37: goa_ai_model_gateway.ToolCallDelta
-	(*Completion)(nil),            // 38: goa_ai_model_gateway.Completion
-	(*CompletionDelta)(nil),       // 39: goa_ai_model_gateway.CompletionDelta
-	(*StopDetail)(nil),            // 40: goa_ai_model_gateway.StopDetail
-	(*CountTokensRequest)(nil),    // 41: goa_ai_model_gateway.CountTokensRequest
-	(*CountTokensResponse)(nil),   // 42: goa_ai_model_gateway.CountTokensResponse
-	(*TokenCount)(nil),            // 43: goa_ai_model_gateway.TokenCount
-	nil,                           // 44: goa_ai_model_gateway.SearchDocument.TermsEntry
+	(*CompleteRequest)(nil),              // 0: goa_ai_model_gateway.CompleteRequest
+	(*PromptRef)(nil),                    // 1: goa_ai_model_gateway.PromptRef
+	(*ModelMessage)(nil),                 // 2: goa_ai_model_gateway.ModelMessage
+	(*MessagePart)(nil),                  // 3: goa_ai_model_gateway.MessagePart
+	(*TextPartDetail)(nil),               // 4: goa_ai_model_gateway.TextPartDetail
+	(*ThinkingPartDetail)(nil),           // 5: goa_ai_model_gateway.ThinkingPartDetail
+	(*ImagePartDetail)(nil),              // 6: goa_ai_model_gateway.ImagePartDetail
+	(*ImageSourcePartDetail)(nil),        // 7: goa_ai_model_gateway.ImageSourcePartDetail
+	(*DocumentPartDetail)(nil),           // 8: goa_ai_model_gateway.DocumentPartDetail
+	(*CitationsPartDetail)(nil),          // 9: goa_ai_model_gateway.CitationsPartDetail
+	(*Citation)(nil),                     // 10: goa_ai_model_gateway.Citation
+	(*CitationLocation)(nil),             // 11: goa_ai_model_gateway.CitationLocation
+	(*DocumentCharLocation)(nil),         // 12: goa_ai_model_gateway.DocumentCharLocation
+	(*DocumentPageLocation)(nil),         // 13: goa_ai_model_gateway.DocumentPageLocation
+	(*DocumentChunkLocation)(nil),        // 14: goa_ai_model_gateway.DocumentChunkLocation
+	(*ToolUsePartDetail)(nil),            // 15: goa_ai_model_gateway.ToolUsePartDetail
+	(*ToolResultPartDetail)(nil),         // 16: goa_ai_model_gateway.ToolResultPartDetail
+	(*CacheCheckpointDetail)(nil),        // 17: goa_ai_model_gateway.CacheCheckpointDetail
+	(*ToolDefinition)(nil),               // 18: goa_ai_model_gateway.ToolDefinition
+	(*SearchDocument)(nil),               // 19: goa_ai_model_gateway.SearchDocument
+	(*ToolInputContract)(nil),            // 20: goa_ai_model_gateway.ToolInputContract
+	(*ToolChoice)(nil),                   // 21: goa_ai_model_gateway.ToolChoice
+	(*ThinkingOptions)(nil),              // 22: goa_ai_model_gateway.ThinkingOptions
+	(*StructuredOutput)(nil),             // 23: goa_ai_model_gateway.StructuredOutput
+	(*CacheOptions)(nil),                 // 24: goa_ai_model_gateway.CacheOptions
+	(*CompleteResponse)(nil),             // 25: goa_ai_model_gateway.CompleteResponse
+	(*ModelResponse)(nil),                // 26: goa_ai_model_gateway.ModelResponse
+	(*TokenUsage)(nil),                   // 27: goa_ai_model_gateway.TokenUsage
+	(*GatewayError)(nil),                 // 28: goa_ai_model_gateway.GatewayError
+	(*GatewayErrorNode)(nil),             // 29: goa_ai_model_gateway.GatewayErrorNode
+	(*PlainErrorDetail)(nil),             // 30: goa_ai_model_gateway.PlainErrorDetail
+	(*RequestValidationErrorDetail)(nil), // 31: goa_ai_model_gateway.RequestValidationErrorDetail
+	(*ProviderErrorDetail)(nil),          // 32: goa_ai_model_gateway.ProviderErrorDetail
+	(*ValidationErrorDetail)(nil),        // 33: goa_ai_model_gateway.ValidationErrorDetail
+	(*ResponseEvidence)(nil),             // 34: goa_ai_model_gateway.ResponseEvidence
+	(*MalformedToolArgsErrorDetail)(nil), // 35: goa_ai_model_gateway.MalformedToolArgsErrorDetail
+	(*JoinedErrorDetail)(nil),            // 36: goa_ai_model_gateway.JoinedErrorDetail
+	(*StreamRequest)(nil),                // 37: goa_ai_model_gateway.StreamRequest
+	(*StreamResponse)(nil),               // 38: goa_ai_model_gateway.StreamResponse
+	(*StreamChunk)(nil),                  // 39: goa_ai_model_gateway.StreamChunk
+	(*ToolCall)(nil),                     // 40: goa_ai_model_gateway.ToolCall
+	(*ToolCallDelta)(nil),                // 41: goa_ai_model_gateway.ToolCallDelta
+	(*Completion)(nil),                   // 42: goa_ai_model_gateway.Completion
+	(*CompletionDelta)(nil),              // 43: goa_ai_model_gateway.CompletionDelta
+	(*StopDetail)(nil),                   // 44: goa_ai_model_gateway.StopDetail
+	(*CountTokensRequest)(nil),           // 45: goa_ai_model_gateway.CountTokensRequest
+	(*CountTokensResponse)(nil),          // 46: goa_ai_model_gateway.CountTokensResponse
+	(*TokenCount)(nil),                   // 47: goa_ai_model_gateway.TokenCount
+	nil,                                  // 48: goa_ai_model_gateway.SearchDocument.TermsEntry
 }
 var file_goagen_gateway_model_gateway_proto_depIdxs = []int32{
 	1,  // 0: goa_ai_model_gateway.CompleteRequest.prompt_refs:type_name -> goa_ai_model_gateway.PromptRef
@@ -4200,55 +4511,59 @@ var file_goagen_gateway_model_gateway_proto_depIdxs = []int32{
 	14, // 21: goa_ai_model_gateway.CitationLocation.document_chunk:type_name -> goa_ai_model_gateway.DocumentChunkLocation
 	19, // 22: goa_ai_model_gateway.ToolDefinition.search:type_name -> goa_ai_model_gateway.SearchDocument
 	20, // 23: goa_ai_model_gateway.ToolDefinition.input:type_name -> goa_ai_model_gateway.ToolInputContract
-	44, // 24: goa_ai_model_gateway.SearchDocument.terms:type_name -> goa_ai_model_gateway.SearchDocument.TermsEntry
+	48, // 24: goa_ai_model_gateway.SearchDocument.terms:type_name -> goa_ai_model_gateway.SearchDocument.TermsEntry
 	26, // 25: goa_ai_model_gateway.CompleteResponse.response:type_name -> goa_ai_model_gateway.ModelResponse
 	28, // 26: goa_ai_model_gateway.CompleteResponse.error:type_name -> goa_ai_model_gateway.GatewayError
 	2,  // 27: goa_ai_model_gateway.ModelResponse.content:type_name -> goa_ai_model_gateway.ModelMessage
 	27, // 28: goa_ai_model_gateway.ModelResponse.usage:type_name -> goa_ai_model_gateway.TokenUsage
 	29, // 29: goa_ai_model_gateway.GatewayError.nodes:type_name -> goa_ai_model_gateway.GatewayErrorNode
 	27, // 30: goa_ai_model_gateway.GatewayError.retained_usage:type_name -> goa_ai_model_gateway.TokenUsage
-	30, // 31: goa_ai_model_gateway.GatewayErrorNode.provider:type_name -> goa_ai_model_gateway.ProviderErrorDetail
-	31, // 32: goa_ai_model_gateway.GatewayErrorNode.validation:type_name -> goa_ai_model_gateway.ValidationErrorDetail
-	32, // 33: goa_ai_model_gateway.ValidationErrorDetail.evidence:type_name -> goa_ai_model_gateway.ResponseEvidence
-	27, // 34: goa_ai_model_gateway.ValidationErrorDetail.usage:type_name -> goa_ai_model_gateway.TokenUsage
-	1,  // 35: goa_ai_model_gateway.StreamRequest.prompt_refs:type_name -> goa_ai_model_gateway.PromptRef
-	2,  // 36: goa_ai_model_gateway.StreamRequest.messages:type_name -> goa_ai_model_gateway.ModelMessage
-	18, // 37: goa_ai_model_gateway.StreamRequest.tools:type_name -> goa_ai_model_gateway.ToolDefinition
-	21, // 38: goa_ai_model_gateway.StreamRequest.tool_choice:type_name -> goa_ai_model_gateway.ToolChoice
-	22, // 39: goa_ai_model_gateway.StreamRequest.thinking:type_name -> goa_ai_model_gateway.ThinkingOptions
-	23, // 40: goa_ai_model_gateway.StreamRequest.structured_output:type_name -> goa_ai_model_gateway.StructuredOutput
-	24, // 41: goa_ai_model_gateway.StreamRequest.cache:type_name -> goa_ai_model_gateway.CacheOptions
-	35, // 42: goa_ai_model_gateway.StreamResponse.chunk:type_name -> goa_ai_model_gateway.StreamChunk
-	26, // 43: goa_ai_model_gateway.StreamResponse.response:type_name -> goa_ai_model_gateway.ModelResponse
-	28, // 44: goa_ai_model_gateway.StreamResponse.error:type_name -> goa_ai_model_gateway.GatewayError
-	2,  // 45: goa_ai_model_gateway.StreamChunk.text:type_name -> goa_ai_model_gateway.ModelMessage
-	2,  // 46: goa_ai_model_gateway.StreamChunk.thinking:type_name -> goa_ai_model_gateway.ModelMessage
-	36, // 47: goa_ai_model_gateway.StreamChunk.tool_call:type_name -> goa_ai_model_gateway.ToolCall
-	37, // 48: goa_ai_model_gateway.StreamChunk.tool_call_delta:type_name -> goa_ai_model_gateway.ToolCallDelta
-	38, // 49: goa_ai_model_gateway.StreamChunk.completion:type_name -> goa_ai_model_gateway.Completion
-	39, // 50: goa_ai_model_gateway.StreamChunk.completion_delta:type_name -> goa_ai_model_gateway.CompletionDelta
-	27, // 51: goa_ai_model_gateway.StreamChunk.usage:type_name -> goa_ai_model_gateway.TokenUsage
-	40, // 52: goa_ai_model_gateway.StreamChunk.stop:type_name -> goa_ai_model_gateway.StopDetail
-	1,  // 53: goa_ai_model_gateway.CountTokensRequest.prompt_refs:type_name -> goa_ai_model_gateway.PromptRef
-	2,  // 54: goa_ai_model_gateway.CountTokensRequest.messages:type_name -> goa_ai_model_gateway.ModelMessage
-	18, // 55: goa_ai_model_gateway.CountTokensRequest.tools:type_name -> goa_ai_model_gateway.ToolDefinition
-	21, // 56: goa_ai_model_gateway.CountTokensRequest.tool_choice:type_name -> goa_ai_model_gateway.ToolChoice
-	22, // 57: goa_ai_model_gateway.CountTokensRequest.thinking:type_name -> goa_ai_model_gateway.ThinkingOptions
-	23, // 58: goa_ai_model_gateway.CountTokensRequest.structured_output:type_name -> goa_ai_model_gateway.StructuredOutput
-	24, // 59: goa_ai_model_gateway.CountTokensRequest.cache:type_name -> goa_ai_model_gateway.CacheOptions
-	43, // 60: goa_ai_model_gateway.CountTokensResponse.count:type_name -> goa_ai_model_gateway.TokenCount
-	28, // 61: goa_ai_model_gateway.CountTokensResponse.error:type_name -> goa_ai_model_gateway.GatewayError
-	0,  // 62: goa_ai_model_gateway.ModelGateway.Complete:input_type -> goa_ai_model_gateway.CompleteRequest
-	33, // 63: goa_ai_model_gateway.ModelGateway.Stream:input_type -> goa_ai_model_gateway.StreamRequest
-	41, // 64: goa_ai_model_gateway.ModelGateway.CountTokens:input_type -> goa_ai_model_gateway.CountTokensRequest
-	25, // 65: goa_ai_model_gateway.ModelGateway.Complete:output_type -> goa_ai_model_gateway.CompleteResponse
-	34, // 66: goa_ai_model_gateway.ModelGateway.Stream:output_type -> goa_ai_model_gateway.StreamResponse
-	42, // 67: goa_ai_model_gateway.ModelGateway.CountTokens:output_type -> goa_ai_model_gateway.CountTokensResponse
-	65, // [65:68] is the sub-list for method output_type
-	62, // [62:65] is the sub-list for method input_type
-	62, // [62:62] is the sub-list for extension type_name
-	62, // [62:62] is the sub-list for extension extendee
-	0,  // [0:62] is the sub-list for field type_name
+	30, // 31: goa_ai_model_gateway.GatewayErrorNode.plain:type_name -> goa_ai_model_gateway.PlainErrorDetail
+	31, // 32: goa_ai_model_gateway.GatewayErrorNode.request_validation:type_name -> goa_ai_model_gateway.RequestValidationErrorDetail
+	32, // 33: goa_ai_model_gateway.GatewayErrorNode.provider:type_name -> goa_ai_model_gateway.ProviderErrorDetail
+	33, // 34: goa_ai_model_gateway.GatewayErrorNode.validation:type_name -> goa_ai_model_gateway.ValidationErrorDetail
+	35, // 35: goa_ai_model_gateway.GatewayErrorNode.malformed_tool_args:type_name -> goa_ai_model_gateway.MalformedToolArgsErrorDetail
+	36, // 36: goa_ai_model_gateway.GatewayErrorNode.joined:type_name -> goa_ai_model_gateway.JoinedErrorDetail
+	34, // 37: goa_ai_model_gateway.ValidationErrorDetail.evidence:type_name -> goa_ai_model_gateway.ResponseEvidence
+	27, // 38: goa_ai_model_gateway.ValidationErrorDetail.usage:type_name -> goa_ai_model_gateway.TokenUsage
+	1,  // 39: goa_ai_model_gateway.StreamRequest.prompt_refs:type_name -> goa_ai_model_gateway.PromptRef
+	2,  // 40: goa_ai_model_gateway.StreamRequest.messages:type_name -> goa_ai_model_gateway.ModelMessage
+	18, // 41: goa_ai_model_gateway.StreamRequest.tools:type_name -> goa_ai_model_gateway.ToolDefinition
+	21, // 42: goa_ai_model_gateway.StreamRequest.tool_choice:type_name -> goa_ai_model_gateway.ToolChoice
+	22, // 43: goa_ai_model_gateway.StreamRequest.thinking:type_name -> goa_ai_model_gateway.ThinkingOptions
+	23, // 44: goa_ai_model_gateway.StreamRequest.structured_output:type_name -> goa_ai_model_gateway.StructuredOutput
+	24, // 45: goa_ai_model_gateway.StreamRequest.cache:type_name -> goa_ai_model_gateway.CacheOptions
+	39, // 46: goa_ai_model_gateway.StreamResponse.chunk:type_name -> goa_ai_model_gateway.StreamChunk
+	26, // 47: goa_ai_model_gateway.StreamResponse.response:type_name -> goa_ai_model_gateway.ModelResponse
+	28, // 48: goa_ai_model_gateway.StreamResponse.error:type_name -> goa_ai_model_gateway.GatewayError
+	2,  // 49: goa_ai_model_gateway.StreamChunk.text:type_name -> goa_ai_model_gateway.ModelMessage
+	2,  // 50: goa_ai_model_gateway.StreamChunk.thinking:type_name -> goa_ai_model_gateway.ModelMessage
+	40, // 51: goa_ai_model_gateway.StreamChunk.tool_call:type_name -> goa_ai_model_gateway.ToolCall
+	41, // 52: goa_ai_model_gateway.StreamChunk.tool_call_delta:type_name -> goa_ai_model_gateway.ToolCallDelta
+	42, // 53: goa_ai_model_gateway.StreamChunk.completion:type_name -> goa_ai_model_gateway.Completion
+	43, // 54: goa_ai_model_gateway.StreamChunk.completion_delta:type_name -> goa_ai_model_gateway.CompletionDelta
+	27, // 55: goa_ai_model_gateway.StreamChunk.usage:type_name -> goa_ai_model_gateway.TokenUsage
+	44, // 56: goa_ai_model_gateway.StreamChunk.stop:type_name -> goa_ai_model_gateway.StopDetail
+	1,  // 57: goa_ai_model_gateway.CountTokensRequest.prompt_refs:type_name -> goa_ai_model_gateway.PromptRef
+	2,  // 58: goa_ai_model_gateway.CountTokensRequest.messages:type_name -> goa_ai_model_gateway.ModelMessage
+	18, // 59: goa_ai_model_gateway.CountTokensRequest.tools:type_name -> goa_ai_model_gateway.ToolDefinition
+	21, // 60: goa_ai_model_gateway.CountTokensRequest.tool_choice:type_name -> goa_ai_model_gateway.ToolChoice
+	22, // 61: goa_ai_model_gateway.CountTokensRequest.thinking:type_name -> goa_ai_model_gateway.ThinkingOptions
+	23, // 62: goa_ai_model_gateway.CountTokensRequest.structured_output:type_name -> goa_ai_model_gateway.StructuredOutput
+	24, // 63: goa_ai_model_gateway.CountTokensRequest.cache:type_name -> goa_ai_model_gateway.CacheOptions
+	47, // 64: goa_ai_model_gateway.CountTokensResponse.count:type_name -> goa_ai_model_gateway.TokenCount
+	28, // 65: goa_ai_model_gateway.CountTokensResponse.error:type_name -> goa_ai_model_gateway.GatewayError
+	0,  // 66: goa_ai_model_gateway.ModelGateway.Complete:input_type -> goa_ai_model_gateway.CompleteRequest
+	37, // 67: goa_ai_model_gateway.ModelGateway.Stream:input_type -> goa_ai_model_gateway.StreamRequest
+	45, // 68: goa_ai_model_gateway.ModelGateway.CountTokens:input_type -> goa_ai_model_gateway.CountTokensRequest
+	25, // 69: goa_ai_model_gateway.ModelGateway.Complete:output_type -> goa_ai_model_gateway.CompleteResponse
+	38, // 70: goa_ai_model_gateway.ModelGateway.Stream:output_type -> goa_ai_model_gateway.StreamResponse
+	46, // 71: goa_ai_model_gateway.ModelGateway.CountTokens:output_type -> goa_ai_model_gateway.CountTokensResponse
+	69, // [69:72] is the sub-list for method output_type
+	66, // [66:69] is the sub-list for method input_type
+	66, // [66:66] is the sub-list for extension type_name
+	66, // [66:66] is the sub-list for extension extendee
+	0,  // [0:66] is the sub-list for field type_name
 }
 
 func init() { file_goagen_gateway_model_gateway_proto_init() }
@@ -4301,17 +4616,29 @@ func file_goagen_gateway_model_gateway_proto_init() {
 	file_goagen_gateway_model_gateway_proto_msgTypes[26].OneofWrappers = []any{}
 	file_goagen_gateway_model_gateway_proto_msgTypes[27].OneofWrappers = []any{}
 	file_goagen_gateway_model_gateway_proto_msgTypes[28].OneofWrappers = []any{}
-	file_goagen_gateway_model_gateway_proto_msgTypes[29].OneofWrappers = []any{}
+	file_goagen_gateway_model_gateway_proto_msgTypes[29].OneofWrappers = []any{
+		(*GatewayErrorNode_Plain)(nil),
+		(*GatewayErrorNode_Sentinel)(nil),
+		(*GatewayErrorNode_RequestValidation)(nil),
+		(*GatewayErrorNode_Provider)(nil),
+		(*GatewayErrorNode_Validation)(nil),
+		(*GatewayErrorNode_UnadvertisedTool)(nil),
+		(*GatewayErrorNode_MalformedToolArgs)(nil),
+		(*GatewayErrorNode_Joined)(nil),
+	}
 	file_goagen_gateway_model_gateway_proto_msgTypes[30].OneofWrappers = []any{}
 	file_goagen_gateway_model_gateway_proto_msgTypes[31].OneofWrappers = []any{}
 	file_goagen_gateway_model_gateway_proto_msgTypes[32].OneofWrappers = []any{}
 	file_goagen_gateway_model_gateway_proto_msgTypes[33].OneofWrappers = []any{}
-	file_goagen_gateway_model_gateway_proto_msgTypes[34].OneofWrappers = []any{
+	file_goagen_gateway_model_gateway_proto_msgTypes[34].OneofWrappers = []any{}
+	file_goagen_gateway_model_gateway_proto_msgTypes[35].OneofWrappers = []any{}
+	file_goagen_gateway_model_gateway_proto_msgTypes[37].OneofWrappers = []any{}
+	file_goagen_gateway_model_gateway_proto_msgTypes[38].OneofWrappers = []any{
 		(*StreamResponse_Chunk)(nil),
 		(*StreamResponse_Response)(nil),
 		(*StreamResponse_Error)(nil),
 	}
-	file_goagen_gateway_model_gateway_proto_msgTypes[35].OneofWrappers = []any{
+	file_goagen_gateway_model_gateway_proto_msgTypes[39].OneofWrappers = []any{
 		(*StreamChunk_Text)(nil),
 		(*StreamChunk_Thinking)(nil),
 		(*StreamChunk_ToolCall)(nil),
@@ -4321,24 +4648,24 @@ func file_goagen_gateway_model_gateway_proto_init() {
 		(*StreamChunk_Usage)(nil),
 		(*StreamChunk_Stop)(nil),
 	}
-	file_goagen_gateway_model_gateway_proto_msgTypes[36].OneofWrappers = []any{}
-	file_goagen_gateway_model_gateway_proto_msgTypes[37].OneofWrappers = []any{}
-	file_goagen_gateway_model_gateway_proto_msgTypes[38].OneofWrappers = []any{}
-	file_goagen_gateway_model_gateway_proto_msgTypes[39].OneofWrappers = []any{}
 	file_goagen_gateway_model_gateway_proto_msgTypes[40].OneofWrappers = []any{}
 	file_goagen_gateway_model_gateway_proto_msgTypes[41].OneofWrappers = []any{}
-	file_goagen_gateway_model_gateway_proto_msgTypes[42].OneofWrappers = []any{
+	file_goagen_gateway_model_gateway_proto_msgTypes[42].OneofWrappers = []any{}
+	file_goagen_gateway_model_gateway_proto_msgTypes[43].OneofWrappers = []any{}
+	file_goagen_gateway_model_gateway_proto_msgTypes[44].OneofWrappers = []any{}
+	file_goagen_gateway_model_gateway_proto_msgTypes[45].OneofWrappers = []any{}
+	file_goagen_gateway_model_gateway_proto_msgTypes[46].OneofWrappers = []any{
 		(*CountTokensResponse_Count)(nil),
 		(*CountTokensResponse_Error)(nil),
 	}
-	file_goagen_gateway_model_gateway_proto_msgTypes[43].OneofWrappers = []any{}
+	file_goagen_gateway_model_gateway_proto_msgTypes[47].OneofWrappers = []any{}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_goagen_gateway_model_gateway_proto_rawDesc), len(file_goagen_gateway_model_gateway_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   45,
+			NumMessages:   49,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

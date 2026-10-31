@@ -50,6 +50,16 @@ func UsageIncompleteFromError(err error) bool {
 	return incomplete
 }
 
+// Error returns the wrapped cause message unchanged.
+func (e *usageError) Error() string {
+	return e.cause.Error()
+}
+
+// Unwrap returns the wrapped cause.
+func (e *usageError) Unwrap() error {
+	return e.cause
+}
+
 // retainUsageWithCompleteness attaches validated usage and its completeness
 // flag to err while preserving OutputValidationError root identity when present.
 func retainUsageWithCompleteness(err error, usage TokenUsage, incomplete bool) error {
@@ -95,12 +105,4 @@ func usageFromError(err error) (*TokenUsage, bool) {
 		}
 	}
 	return nil, false
-}
-
-func (e *usageError) Error() string {
-	return e.cause.Error()
-}
-
-func (e *usageError) Unwrap() error {
-	return e.cause
 }

@@ -504,7 +504,7 @@ func TestGRPCGatewayCountTokensAndStructuredErrors(t *testing.T) {
 		"bedrock",
 		"converse",
 		429,
-		"throttling",
+		model.ProviderErrorKindRateLimited,
 		"ThrottlingException",
 		"rate exceeded",
 		"",
@@ -794,9 +794,9 @@ func TestGRPCErrorGraphSharedDAGAndMalformedWireErrors(t *testing.T) {
 				name: "self_loop_joined",
 				wire: &genmodelgateway.GatewayError{
 					Nodes: []*genmodelgateway.GatewayErrorNode{{
-						Kind:         errorKindJoined,
-						CauseIndex:   -1,
-						ChildIndices: []int64{0},
+						Detail: genmodelgateway.NewGatewayErrorNodeDetailJoined(&genmodelgateway.JoinedErrorDetail{
+							ChildIndices: []int64{0},
+						}),
 					}},
 				},
 				want: "cycle detected",
@@ -805,8 +805,18 @@ func TestGRPCErrorGraphSharedDAGAndMalformedWireErrors(t *testing.T) {
 				name: "two_node_cycle",
 				wire: &genmodelgateway.GatewayError{
 					Nodes: []*genmodelgateway.GatewayErrorNode{
-						{Kind: errorKindPlain, Message: "a", CauseIndex: 1},
-						{Kind: errorKindPlain, Message: "b", CauseIndex: 0},
+						{
+							Detail: genmodelgateway.NewGatewayErrorNodeDetailPlain(&genmodelgateway.PlainErrorDetail{
+								Message:    "a",
+								CauseIndex: 1,
+							}),
+						},
+						{
+							Detail: genmodelgateway.NewGatewayErrorNodeDetailPlain(&genmodelgateway.PlainErrorDetail{
+								Message:    "b",
+								CauseIndex: 0,
+							}),
+						},
 					},
 				},
 				want: "cycle detected",
@@ -815,35 +825,31 @@ func TestGRPCErrorGraphSharedDAGAndMalformedWireErrors(t *testing.T) {
 				name: "empty_joined_children",
 				wire: &genmodelgateway.GatewayError{
 					Nodes: []*genmodelgateway.GatewayErrorNode{{
-						Kind:       errorKindJoined,
-						CauseIndex: -1,
+						Detail: genmodelgateway.NewGatewayErrorNodeDetailJoined(&genmodelgateway.JoinedErrorDetail{}),
 					}},
 				},
 				want: "no children",
 			},
 			{
-				name: "unknown_kind_pointing_to_validation",
+				name: "unset_detail_pointing_to_validation",
 				wire: &genmodelgateway.GatewayError{
 					Nodes: []*genmodelgateway.GatewayErrorNode{
-						{Kind: "unknown", Message: "", CauseIndex: 1},
+						{},
 						{
-							Kind:       errorKindValidation,
-							CauseIndex: -1,
-							Validation: &genmodelgateway.ValidationErrorDetail{
-								Kind: string(model.OutputValidationResponseShape),
-							},
+							Detail: genmodelgateway.NewGatewayErrorNodeDetailValidation(&genmodelgateway.ValidationErrorDetail{
+								Kind:       string(model.OutputValidationResponseShape),
+								CauseIndex: 0,
+							}),
 						},
 					},
 				},
-				want: "unknown kind",
+				want: "invalid detail",
 			},
 			{
 				name: "unknown_sentinel",
 				wire: &genmodelgateway.GatewayError{
 					Nodes: []*genmodelgateway.GatewayErrorNode{{
-						Kind:       errorKindSentinel,
-						Sentinel:   "not_a_sentinel",
-						CauseIndex: -1,
+						Detail: genmodelgateway.NewGatewayErrorNodeDetailSentinel("not_a_sentinel"),
 					}},
 				},
 				want: "unknown sentinel",
@@ -852,19 +858,55 @@ func TestGRPCErrorGraphSharedDAGAndMalformedWireErrors(t *testing.T) {
 				name: "plain_wrapper_empty_message",
 				wire: &genmodelgateway.GatewayError{
 					Nodes: []*genmodelgateway.GatewayErrorNode{
-						{Kind: errorKindPlain, Message: "", CauseIndex: 1},
-						{Kind: errorKindPlain, Message: "leaf", CauseIndex: -1},
+						{
+							Detail: genmodelgateway.NewGatewayErrorNodeDetailPlain(&genmodelgateway.PlainErrorDetail{
+								Message:    "",
+								CauseIndex: 1,
+							}),
+						},
+						{
+							Detail: genmodelgateway.NewGatewayErrorNodeDetailPlain(&genmodelgateway.PlainErrorDetail{
+								Message:    "leaf",
+								CauseIndex: -1,
+							}),
+						},
 					},
 				},
 				want: "requires non-empty message",
 			},
 			{
+				name: "validation_missing_cause",
+				wire: &genmodelgateway.GatewayError{
+					Nodes: []*genmodelgateway.GatewayErrorNode{{
+						Detail: genmodelgateway.NewGatewayErrorNodeDetailValidation(&genmodelgateway.ValidationErrorDetail{
+							Kind:       string(model.OutputValidationResponseShape),
+							CauseIndex: -1,
+						}),
+					}},
+				},
+				want: "cause_index -1 out of bounds",
+			},
+			{
+				name: "provider_empty_provider_or_unknown_kind",
+				wire: &genmodelgateway.GatewayError{
+					Nodes: []*genmodelgateway.GatewayErrorNode{{
+						Detail: genmodelgateway.NewGatewayErrorNodeDetailProvider(&genmodelgateway.ProviderErrorDetail{
+							Provider:   "",
+							Kind:       string(model.ProviderErrorKindUnavailable),
+							CauseIndex: -1,
+						}),
+					}},
+				},
+				want: "requires non-empty provider",
+			},
+			{
 				name: "retained_usage_incomplete_without_usage",
 				wire: &genmodelgateway.GatewayError{
 					Nodes: []*genmodelgateway.GatewayErrorNode{{
-						Kind:       errorKindPlain,
-						Message:    "boom",
-						CauseIndex: -1,
+						Detail: genmodelgateway.NewGatewayErrorNodeDetailPlain(&genmodelgateway.PlainErrorDetail{
+							Message:    "boom",
+							CauseIndex: -1,
+						}),
 					}},
 					RetainedUsageIncomplete: true,
 				},

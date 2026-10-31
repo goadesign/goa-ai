@@ -530,6 +530,404 @@ func (u *CountTokensOutcome) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// GatewayErrorNodeDetail holds exactly one of its branch values.
+type GatewayErrorNodeDetail struct {
+	kind              GatewayErrorNodeDetailKind
+	plain             *PlainErrorDetail
+	sentinel          GatewayErrorNodeDetailBranchSentinel
+	requestValidation *RequestValidationErrorDetail
+	provider          *ProviderErrorDetail
+	validation        *ValidationErrorDetail
+	unadvertisedTool  GatewayErrorNodeDetailBranchUnadvertisedTool
+	malformedToolArgs *MalformedToolArgsErrorDetail
+	joined            *JoinedErrorDetail
+}
+
+// GatewayErrorNodeDetailKind records which GatewayErrorNodeDetail branch is selected.
+type GatewayErrorNodeDetailKind string
+
+const (
+	// GatewayErrorNodeDetailKindPlain identifies the plain branch.
+	GatewayErrorNodeDetailKindPlain GatewayErrorNodeDetailKind = "plain"
+	// GatewayErrorNodeDetailKindSentinel identifies the sentinel branch.
+	GatewayErrorNodeDetailKindSentinel GatewayErrorNodeDetailKind = "sentinel"
+	// GatewayErrorNodeDetailKindRequestValidation identifies the request_validation branch.
+	GatewayErrorNodeDetailKindRequestValidation GatewayErrorNodeDetailKind = "request_validation"
+	// GatewayErrorNodeDetailKindProvider identifies the provider branch.
+	GatewayErrorNodeDetailKindProvider GatewayErrorNodeDetailKind = "provider"
+	// GatewayErrorNodeDetailKindValidation identifies the validation branch.
+	GatewayErrorNodeDetailKindValidation GatewayErrorNodeDetailKind = "validation"
+	// GatewayErrorNodeDetailKindUnadvertisedTool identifies the unadvertised_tool branch.
+	GatewayErrorNodeDetailKindUnadvertisedTool GatewayErrorNodeDetailKind = "unadvertised_tool"
+	// GatewayErrorNodeDetailKindMalformedToolArgs identifies the malformed_tool_args branch.
+	GatewayErrorNodeDetailKindMalformedToolArgs GatewayErrorNodeDetailKind = "malformed_tool_args"
+	// GatewayErrorNodeDetailKindJoined identifies the joined branch.
+	GatewayErrorNodeDetailKindJoined GatewayErrorNodeDetailKind = "joined"
+)
+
+// Kind returns the selected branch.
+func (u GatewayErrorNodeDetail) Kind() GatewayErrorNodeDetailKind {
+	return u.kind
+}
+
+// NewGatewayErrorNodeDetailPlain constructs GatewayErrorNodeDetail with the plain branch set.
+func NewGatewayErrorNodeDetailPlain(v *PlainErrorDetail) GatewayErrorNodeDetail {
+	return GatewayErrorNodeDetail{
+		kind:  GatewayErrorNodeDetailKindPlain,
+		plain: v,
+	}
+}
+
+// AsPlain returns the value when the plain branch is selected.
+func (u GatewayErrorNodeDetail) AsPlain() (_ *PlainErrorDetail, ok bool) {
+	if u.kind != GatewayErrorNodeDetailKindPlain {
+		return
+	}
+	return u.plain, true
+}
+
+// SetPlain selects the plain branch and stores v.
+func (u *GatewayErrorNodeDetail) SetPlain(v *PlainErrorDetail) {
+	*u = GatewayErrorNodeDetail{
+		kind:  GatewayErrorNodeDetailKindPlain,
+		plain: v,
+	}
+}
+
+// NewGatewayErrorNodeDetailSentinel constructs GatewayErrorNodeDetail with the sentinel branch set.
+func NewGatewayErrorNodeDetailSentinel(v GatewayErrorNodeDetailBranchSentinel) GatewayErrorNodeDetail {
+	return GatewayErrorNodeDetail{
+		kind:     GatewayErrorNodeDetailKindSentinel,
+		sentinel: v,
+	}
+}
+
+// AsSentinel returns the value when the sentinel branch is selected.
+func (u GatewayErrorNodeDetail) AsSentinel() (_ GatewayErrorNodeDetailBranchSentinel, ok bool) {
+	if u.kind != GatewayErrorNodeDetailKindSentinel {
+		return
+	}
+	return u.sentinel, true
+}
+
+// SetSentinel selects the sentinel branch and stores v.
+func (u *GatewayErrorNodeDetail) SetSentinel(v GatewayErrorNodeDetailBranchSentinel) {
+	*u = GatewayErrorNodeDetail{
+		kind:     GatewayErrorNodeDetailKindSentinel,
+		sentinel: v,
+	}
+}
+
+// NewGatewayErrorNodeDetailRequestValidation constructs GatewayErrorNodeDetail with the request_validation branch set.
+func NewGatewayErrorNodeDetailRequestValidation(v *RequestValidationErrorDetail) GatewayErrorNodeDetail {
+	return GatewayErrorNodeDetail{
+		kind:              GatewayErrorNodeDetailKindRequestValidation,
+		requestValidation: v,
+	}
+}
+
+// AsRequestValidation returns the value when the request_validation branch is selected.
+func (u GatewayErrorNodeDetail) AsRequestValidation() (_ *RequestValidationErrorDetail, ok bool) {
+	if u.kind != GatewayErrorNodeDetailKindRequestValidation {
+		return
+	}
+	return u.requestValidation, true
+}
+
+// SetRequestValidation selects the request_validation branch and stores v.
+func (u *GatewayErrorNodeDetail) SetRequestValidation(v *RequestValidationErrorDetail) {
+	*u = GatewayErrorNodeDetail{
+		kind:              GatewayErrorNodeDetailKindRequestValidation,
+		requestValidation: v,
+	}
+}
+
+// NewGatewayErrorNodeDetailProvider constructs GatewayErrorNodeDetail with the provider branch set.
+func NewGatewayErrorNodeDetailProvider(v *ProviderErrorDetail) GatewayErrorNodeDetail {
+	return GatewayErrorNodeDetail{
+		kind:     GatewayErrorNodeDetailKindProvider,
+		provider: v,
+	}
+}
+
+// AsProvider returns the value when the provider branch is selected.
+func (u GatewayErrorNodeDetail) AsProvider() (_ *ProviderErrorDetail, ok bool) {
+	if u.kind != GatewayErrorNodeDetailKindProvider {
+		return
+	}
+	return u.provider, true
+}
+
+// SetProvider selects the provider branch and stores v.
+func (u *GatewayErrorNodeDetail) SetProvider(v *ProviderErrorDetail) {
+	*u = GatewayErrorNodeDetail{
+		kind:     GatewayErrorNodeDetailKindProvider,
+		provider: v,
+	}
+}
+
+// NewGatewayErrorNodeDetailValidation constructs GatewayErrorNodeDetail with the validation branch set.
+func NewGatewayErrorNodeDetailValidation(v *ValidationErrorDetail) GatewayErrorNodeDetail {
+	return GatewayErrorNodeDetail{
+		kind:       GatewayErrorNodeDetailKindValidation,
+		validation: v,
+	}
+}
+
+// AsValidation returns the value when the validation branch is selected.
+func (u GatewayErrorNodeDetail) AsValidation() (_ *ValidationErrorDetail, ok bool) {
+	if u.kind != GatewayErrorNodeDetailKindValidation {
+		return
+	}
+	return u.validation, true
+}
+
+// SetValidation selects the validation branch and stores v.
+func (u *GatewayErrorNodeDetail) SetValidation(v *ValidationErrorDetail) {
+	*u = GatewayErrorNodeDetail{
+		kind:       GatewayErrorNodeDetailKindValidation,
+		validation: v,
+	}
+}
+
+// NewGatewayErrorNodeDetailUnadvertisedTool constructs GatewayErrorNodeDetail with the unadvertised_tool branch set.
+func NewGatewayErrorNodeDetailUnadvertisedTool(v GatewayErrorNodeDetailBranchUnadvertisedTool) GatewayErrorNodeDetail {
+	return GatewayErrorNodeDetail{
+		kind:             GatewayErrorNodeDetailKindUnadvertisedTool,
+		unadvertisedTool: v,
+	}
+}
+
+// AsUnadvertisedTool returns the value when the unadvertised_tool branch is selected.
+func (u GatewayErrorNodeDetail) AsUnadvertisedTool() (_ GatewayErrorNodeDetailBranchUnadvertisedTool, ok bool) {
+	if u.kind != GatewayErrorNodeDetailKindUnadvertisedTool {
+		return
+	}
+	return u.unadvertisedTool, true
+}
+
+// SetUnadvertisedTool selects the unadvertised_tool branch and stores v.
+func (u *GatewayErrorNodeDetail) SetUnadvertisedTool(v GatewayErrorNodeDetailBranchUnadvertisedTool) {
+	*u = GatewayErrorNodeDetail{
+		kind:             GatewayErrorNodeDetailKindUnadvertisedTool,
+		unadvertisedTool: v,
+	}
+}
+
+// NewGatewayErrorNodeDetailMalformedToolArgs constructs GatewayErrorNodeDetail with the malformed_tool_args branch set.
+func NewGatewayErrorNodeDetailMalformedToolArgs(v *MalformedToolArgsErrorDetail) GatewayErrorNodeDetail {
+	return GatewayErrorNodeDetail{
+		kind:              GatewayErrorNodeDetailKindMalformedToolArgs,
+		malformedToolArgs: v,
+	}
+}
+
+// AsMalformedToolArgs returns the value when the malformed_tool_args branch is selected.
+func (u GatewayErrorNodeDetail) AsMalformedToolArgs() (_ *MalformedToolArgsErrorDetail, ok bool) {
+	if u.kind != GatewayErrorNodeDetailKindMalformedToolArgs {
+		return
+	}
+	return u.malformedToolArgs, true
+}
+
+// SetMalformedToolArgs selects the malformed_tool_args branch and stores v.
+func (u *GatewayErrorNodeDetail) SetMalformedToolArgs(v *MalformedToolArgsErrorDetail) {
+	*u = GatewayErrorNodeDetail{
+		kind:              GatewayErrorNodeDetailKindMalformedToolArgs,
+		malformedToolArgs: v,
+	}
+}
+
+// NewGatewayErrorNodeDetailJoined constructs GatewayErrorNodeDetail with the joined branch set.
+func NewGatewayErrorNodeDetailJoined(v *JoinedErrorDetail) GatewayErrorNodeDetail {
+	return GatewayErrorNodeDetail{
+		kind:   GatewayErrorNodeDetailKindJoined,
+		joined: v,
+	}
+}
+
+// AsJoined returns the value when the joined branch is selected.
+func (u GatewayErrorNodeDetail) AsJoined() (_ *JoinedErrorDetail, ok bool) {
+	if u.kind != GatewayErrorNodeDetailKindJoined {
+		return
+	}
+	return u.joined, true
+}
+
+// SetJoined selects the joined branch and stores v.
+func (u *GatewayErrorNodeDetail) SetJoined(v *JoinedErrorDetail) {
+	*u = GatewayErrorNodeDetail{
+		kind:   GatewayErrorNodeDetailKindJoined,
+		joined: v,
+	}
+}
+
+// Validate ensures exactly one valid branch is selected.
+func (u GatewayErrorNodeDetail) Validate() error {
+	_, err := u.Value()
+	return err
+}
+
+// Value returns the selected branch value, or the same selection error as Validate.
+// Go templates can read this method directly; an invalid selection stops execution.
+func (u GatewayErrorNodeDetail) Value() (any, error) {
+	switch u.kind {
+	case "":
+		return nil, goa.InvalidEnumValueError("type", "", []any{
+			string(GatewayErrorNodeDetailKindPlain),
+			string(GatewayErrorNodeDetailKindSentinel),
+			string(GatewayErrorNodeDetailKindRequestValidation),
+			string(GatewayErrorNodeDetailKindProvider),
+			string(GatewayErrorNodeDetailKindValidation),
+			string(GatewayErrorNodeDetailKindUnadvertisedTool),
+			string(GatewayErrorNodeDetailKindMalformedToolArgs),
+			string(GatewayErrorNodeDetailKindJoined),
+		})
+	case GatewayErrorNodeDetailKindPlain:
+		if u.plain == nil {
+			return nil, goa.MissingFieldError("value", "GatewayErrorNodeDetail")
+		}
+		return u.plain, nil
+	case GatewayErrorNodeDetailKindSentinel:
+		return u.sentinel, nil
+	case GatewayErrorNodeDetailKindRequestValidation:
+		if u.requestValidation == nil {
+			return nil, goa.MissingFieldError("value", "GatewayErrorNodeDetail")
+		}
+		return u.requestValidation, nil
+	case GatewayErrorNodeDetailKindProvider:
+		if u.provider == nil {
+			return nil, goa.MissingFieldError("value", "GatewayErrorNodeDetail")
+		}
+		return u.provider, nil
+	case GatewayErrorNodeDetailKindValidation:
+		if u.validation == nil {
+			return nil, goa.MissingFieldError("value", "GatewayErrorNodeDetail")
+		}
+		return u.validation, nil
+	case GatewayErrorNodeDetailKindUnadvertisedTool:
+		return u.unadvertisedTool, nil
+	case GatewayErrorNodeDetailKindMalformedToolArgs:
+		if u.malformedToolArgs == nil {
+			return nil, goa.MissingFieldError("value", "GatewayErrorNodeDetail")
+		}
+		return u.malformedToolArgs, nil
+	case GatewayErrorNodeDetailKindJoined:
+		if u.joined == nil {
+			return nil, goa.MissingFieldError("value", "GatewayErrorNodeDetail")
+		}
+		return u.joined, nil
+	default:
+		return nil, goa.InvalidEnumValueError("type", u.kind, []any{
+			string(GatewayErrorNodeDetailKindPlain),
+			string(GatewayErrorNodeDetailKindSentinel),
+			string(GatewayErrorNodeDetailKindRequestValidation),
+			string(GatewayErrorNodeDetailKindProvider),
+			string(GatewayErrorNodeDetailKindValidation),
+			string(GatewayErrorNodeDetailKindUnadvertisedTool),
+			string(GatewayErrorNodeDetailKindMalformedToolArgs),
+			string(GatewayErrorNodeDetailKindJoined),
+		})
+	}
+}
+
+// MarshalJSON marshals the union into the canonical {type,value} JSON shape.
+func (u GatewayErrorNodeDetail) MarshalJSON() ([]byte, error) {
+	value, err := u.Value()
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(struct {
+		Type  string `json:"type"`
+		Value any    `json:"value"`
+	}{
+		Type:  string(u.kind),
+		Value: value,
+	})
+}
+
+// UnmarshalJSON unmarshals the union from the canonical {type,value} JSON shape.
+func (u *GatewayErrorNodeDetail) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Type  string          `json:"type"`
+		Value json.RawMessage `json:"value"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if len(raw.Value) == 0 {
+		return goa.MissingFieldError("value", "GatewayErrorNodeDetail")
+	}
+	if bytes.Equal(bytes.TrimSpace(raw.Value), []byte("null")) {
+		return goa.InvalidFieldTypeError("value", nil, "non-null JSON value")
+	}
+	switch raw.Type {
+	case string(GatewayErrorNodeDetailKindPlain):
+		var v *PlainErrorDetail
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetPlain(v)
+	case string(GatewayErrorNodeDetailKindSentinel):
+		var v GatewayErrorNodeDetailBranchSentinel
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetSentinel(v)
+	case string(GatewayErrorNodeDetailKindRequestValidation):
+		var v *RequestValidationErrorDetail
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetRequestValidation(v)
+	case string(GatewayErrorNodeDetailKindProvider):
+		var v *ProviderErrorDetail
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetProvider(v)
+	case string(GatewayErrorNodeDetailKindValidation):
+		var v *ValidationErrorDetail
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetValidation(v)
+	case string(GatewayErrorNodeDetailKindUnadvertisedTool):
+		var v GatewayErrorNodeDetailBranchUnadvertisedTool
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetUnadvertisedTool(v)
+	case string(GatewayErrorNodeDetailKindMalformedToolArgs):
+		var v *MalformedToolArgsErrorDetail
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetMalformedToolArgs(v)
+	case string(GatewayErrorNodeDetailKindJoined):
+		var v *JoinedErrorDetail
+		if err := json.Unmarshal(raw.Value, &v); err != nil {
+			return err
+		}
+		u.SetJoined(v)
+	default:
+		if raw.Type == "" {
+			return goa.MissingFieldError("type", "GatewayErrorNodeDetail")
+		}
+		return goa.InvalidEnumValueError("type", raw.Type, []any{
+			string(GatewayErrorNodeDetailKindPlain),
+			string(GatewayErrorNodeDetailKindSentinel),
+			string(GatewayErrorNodeDetailKindRequestValidation),
+			string(GatewayErrorNodeDetailKindProvider),
+			string(GatewayErrorNodeDetailKindValidation),
+			string(GatewayErrorNodeDetailKindUnadvertisedTool),
+			string(GatewayErrorNodeDetailKindMalformedToolArgs),
+			string(GatewayErrorNodeDetailKindJoined),
+		})
+	}
+	return nil
+}
+
 // MessagePartPayload holds exactly one of its branch values.
 type MessagePartPayload struct {
 	kind            MessagePartPayloadKind

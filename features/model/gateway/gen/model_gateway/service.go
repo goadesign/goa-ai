@@ -191,25 +191,14 @@ type GatewayError struct {
 
 // Single node in an encoded error tree.
 type GatewayErrorNode struct {
-	// Error node kind discriminator.
-	Kind string
-	// Plain error text.
-	Message string
-	// Known sentinel error code.
-	Sentinel string
-	// Structured provider error details.
-	Provider *ProviderErrorDetail
-	// Output validation error details.
-	Validation *ValidationErrorDetail
-	// Rejected unadvertised tool name.
-	UnadvertisedToolName string
-	// Canonical tool name for malformed arguments.
-	MalformedToolName string
-	// Index into GatewayError.nodes of the wrapped cause (-1 when none).
-	CauseIndex int64
-	// Indices into GatewayError.nodes of joined child errors.
-	ChildIndices []int64
+	Detail GatewayErrorNodeDetail
 }
+
+// Known sentinel error code.
+type GatewayErrorNodeDetailBranchSentinel string
+
+// Rejected unadvertised tool name.
+type GatewayErrorNodeDetailBranchUnadvertisedTool string
 
 // Raw image content block.
 type ImagePartDetail struct {
@@ -225,6 +214,20 @@ type ImageSourcePartDetail struct {
 	SourceKind string
 	// Raw JSON image source descriptor.
 	Data []byte
+}
+
+// Child node indices for a joined error.
+type JoinedErrorDetail struct {
+	// Indices into GatewayError.nodes of joined child errors.
+	ChildIndices []int64
+}
+
+// Malformed tool arguments error marker and wrapped parsing cause index.
+type MalformedToolArgsErrorDetail struct {
+	// Canonical tool name for malformed arguments.
+	ToolName string
+	// Index into GatewayError.nodes of the wrapped parsing cause.
+	CauseIndex int64
 }
 
 // Exclusive sum type of model.Part variants.
@@ -287,6 +290,14 @@ type ModelResponse struct {
 	OutputLimited bool
 }
 
+// Untyped error node message and optional wrapped cause index.
+type PlainErrorDetail struct {
+	// Plain error text.
+	Message string
+	// Index into GatewayError.nodes of the wrapped cause (-1 when none).
+	CauseIndex int64
+}
+
 // Exact prompt identifier and version used to construct a model request.
 type PromptRef struct {
 	// Stable prompt identifier.
@@ -313,6 +324,14 @@ type ProviderErrorDetail struct {
 	RequestID string
 	// Whether retrying the call may succeed.
 	Retryable bool
+	// Index into GatewayError.nodes of the wrapped cause (-1 when none).
+	CauseIndex int64
+}
+
+// Application-side request validation error wrapping a cause node.
+type RequestValidationErrorDetail struct {
+	// Index into GatewayError.nodes of the wrapped cause.
+	CauseIndex int64
 }
 
 // Bounded fingerprint of a rejected provider response.
@@ -524,4 +543,6 @@ type ValidationErrorDetail struct {
 	// response omitting input or output counters, or a multi-round tool-search
 	// failure after an uncounted round).
 	UsageIncomplete bool
+	// Index into GatewayError.nodes of the wrapped cause.
+	CauseIndex int64
 }

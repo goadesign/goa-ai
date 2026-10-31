@@ -1663,25 +1663,57 @@ func transformGatewayErrorToProtoGatewayError(v *modelgateway.GatewayError) *mod
 // *model_gatewaypb.GatewayErrorNode from a value of type
 // *modelgateway.GatewayErrorNode.
 func transformGatewayErrorNodeToProtoGatewayErrorNode(v *modelgateway.GatewayErrorNode) *model_gatewaypb.GatewayErrorNode {
-	res := &model_gatewaypb.GatewayErrorNode{
-		Kind:                 &v.Kind,
-		Message_:             &v.Message,
-		Sentinel:             &v.Sentinel,
-		UnadvertisedToolName: &v.UnadvertisedToolName,
-		MalformedToolName:    &v.MalformedToolName,
-		CauseIndex:           &v.CauseIndex,
-	}
-	if v.Provider != nil {
-		res.Provider = transformProviderErrorDetailToProtoProviderErrorDetail(v.Provider)
-	}
-	if v.Validation != nil {
-		res.Validation = transformValidationErrorDetailToProtoValidationErrorDetail(v.Validation)
-	}
-	if v.ChildIndices != nil {
-		res.ChildIndices = make([]int64, len(v.ChildIndices))
-		for i, val := range v.ChildIndices {
-			res.ChildIndices[i] = val
+	res := &model_gatewaypb.GatewayErrorNode{}
+	if v.Detail.Kind() != "" {
+		switch string(v.Detail.Kind()) {
+		case "plain":
+			actual, _ := v.Detail.AsPlain()
+			res.Detail = &model_gatewaypb.GatewayErrorNode_Plain{Plain: transformPlainErrorDetailToProtoPlainErrorDetail(actual)}
+		case "sentinel":
+			actual, _ := v.Detail.AsSentinel()
+			res.Detail = &model_gatewaypb.GatewayErrorNode_Sentinel{Sentinel: string(actual)}
+		case "request_validation":
+			actual, _ := v.Detail.AsRequestValidation()
+			res.Detail = &model_gatewaypb.GatewayErrorNode_RequestValidation{RequestValidation: transformRequestValidationErrorDetailToProtoRequestValidationErrorDetail(actual)}
+		case "provider":
+			actual, _ := v.Detail.AsProvider()
+			res.Detail = &model_gatewaypb.GatewayErrorNode_Provider{Provider: transformProviderErrorDetailToProtoProviderErrorDetail(actual)}
+		case "validation":
+			actual, _ := v.Detail.AsValidation()
+			res.Detail = &model_gatewaypb.GatewayErrorNode_Validation{Validation: transformValidationErrorDetailToProtoValidationErrorDetail(actual)}
+		case "unadvertised_tool":
+			actual, _ := v.Detail.AsUnadvertisedTool()
+			res.Detail = &model_gatewaypb.GatewayErrorNode_UnadvertisedTool{UnadvertisedTool: string(actual)}
+		case "malformed_tool_args":
+			actual, _ := v.Detail.AsMalformedToolArgs()
+			res.Detail = &model_gatewaypb.GatewayErrorNode_MalformedToolArgs{MalformedToolArgs: transformMalformedToolArgsErrorDetailToProtoMalformedToolArgsErrorDetail(actual)}
+		case "joined":
+			actual, _ := v.Detail.AsJoined()
+			res.Detail = &model_gatewaypb.GatewayErrorNode_Joined{Joined: transformJoinedErrorDetailToProtoJoinedErrorDetail(actual)}
 		}
+	}
+
+	return res
+}
+
+// transformPlainErrorDetailToProtoPlainErrorDetail builds a value of type
+// *model_gatewaypb.PlainErrorDetail from a value of type
+// *modelgateway.PlainErrorDetail.
+func transformPlainErrorDetailToProtoPlainErrorDetail(v *modelgateway.PlainErrorDetail) *model_gatewaypb.PlainErrorDetail {
+	res := &model_gatewaypb.PlainErrorDetail{
+		Message_:   &v.Message,
+		CauseIndex: &v.CauseIndex,
+	}
+
+	return res
+}
+
+// transformRequestValidationErrorDetailToProtoRequestValidationErrorDetail
+// builds a value of type *model_gatewaypb.RequestValidationErrorDetail from a
+// value of type *modelgateway.RequestValidationErrorDetail.
+func transformRequestValidationErrorDetailToProtoRequestValidationErrorDetail(v *modelgateway.RequestValidationErrorDetail) *model_gatewaypb.RequestValidationErrorDetail {
+	res := &model_gatewaypb.RequestValidationErrorDetail{
+		CauseIndex: &v.CauseIndex,
 	}
 
 	return res
@@ -1700,6 +1732,7 @@ func transformProviderErrorDetailToProtoProviderErrorDetail(v *modelgateway.Prov
 		Message_:   &v.Message,
 		RequestId:  &v.RequestID,
 		Retryable:  &v.Retryable,
+		CauseIndex: &v.CauseIndex,
 	}
 
 	return res
@@ -1713,6 +1746,7 @@ func transformValidationErrorDetailToProtoValidationErrorDetail(v *modelgateway.
 		Kind:               &v.Kind,
 		RecoveryCorrection: &v.RecoveryCorrection,
 		UsageIncomplete:    &v.UsageIncomplete,
+		CauseIndex:         &v.CauseIndex,
 	}
 	if v.Evidence != nil {
 		res.Evidence = transformResponseEvidenceToProtoResponseEvidence(v.Evidence)
@@ -1733,6 +1767,33 @@ func transformResponseEvidenceToProtoResponseEvidence(v *modelgateway.ResponseEv
 		Version: &v.Version,
 		Sha256:  &v.Sha256,
 		Size:    &v.Size,
+	}
+
+	return res
+}
+
+// transformMalformedToolArgsErrorDetailToProtoMalformedToolArgsErrorDetail
+// builds a value of type *model_gatewaypb.MalformedToolArgsErrorDetail from a
+// value of type *modelgateway.MalformedToolArgsErrorDetail.
+func transformMalformedToolArgsErrorDetailToProtoMalformedToolArgsErrorDetail(v *modelgateway.MalformedToolArgsErrorDetail) *model_gatewaypb.MalformedToolArgsErrorDetail {
+	res := &model_gatewaypb.MalformedToolArgsErrorDetail{
+		ToolName:   &v.ToolName,
+		CauseIndex: &v.CauseIndex,
+	}
+
+	return res
+}
+
+// transformJoinedErrorDetailToProtoJoinedErrorDetail builds a value of type
+// *model_gatewaypb.JoinedErrorDetail from a value of type
+// *modelgateway.JoinedErrorDetail.
+func transformJoinedErrorDetailToProtoJoinedErrorDetail(v *modelgateway.JoinedErrorDetail) *model_gatewaypb.JoinedErrorDetail {
+	res := &model_gatewaypb.JoinedErrorDetail{}
+	if v.ChildIndices != nil {
+		res.ChildIndices = make([]int64, len(v.ChildIndices))
+		for i, val := range v.ChildIndices {
+			res.ChildIndices[i] = val
+		}
 	}
 
 	return res

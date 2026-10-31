@@ -26,28 +26,19 @@ type (
 	}
 )
 
-// Error node kind and sentinel discriminators carried inside GatewayErrorNode.
+// Sentinel discriminators carried inside GatewayErrorNodeDetail.
 const (
-	errorKindPlain             = "plain"
-	errorKindSentinel          = "sentinel"
-	errorKindProvider          = "provider"
-	errorKindValidation        = "validation"
-	errorKindRequestValidation = "request_validation"
-	errorKindUnadvertised      = "unadvertised_tool"
-	errorKindMalformed         = "malformed_tool_args"
-	errorKindJoined            = "joined"
-
-	sentinelStreamingUnsupported        = "streaming_unsupported"
-	sentinelStructuredOutputUnsupported = "structured_output_unsupported"
-	sentinelToolSearchUnsupported       = "tool_search_unsupported"
-	sentinelToolContentUnsupported      = "tool_content_unsupported"
-	sentinelRateLimited                 = "rate_limited"
-	sentinelEmptyStream                 = "empty_stream"
-	sentinelTokenCountingUnsupported    = "token_counting_unsupported"
-	sentinelRequestByteCapacity         = "request_byte_capacity"
-	sentinelImageSourceCapacity         = "image_source_capacity"
-	sentinelContextCanceled             = "context_canceled"
-	sentinelContextDeadlineExceeded     = "context_deadline_exceeded"
+	sentinelStreamingUnsupported        genmodelgateway.GatewayErrorNodeDetailBranchSentinel = "streaming_unsupported"
+	sentinelStructuredOutputUnsupported genmodelgateway.GatewayErrorNodeDetailBranchSentinel = "structured_output_unsupported"
+	sentinelToolSearchUnsupported       genmodelgateway.GatewayErrorNodeDetailBranchSentinel = "tool_search_unsupported"
+	sentinelToolContentUnsupported      genmodelgateway.GatewayErrorNodeDetailBranchSentinel = "tool_content_unsupported"
+	sentinelRateLimited                 genmodelgateway.GatewayErrorNodeDetailBranchSentinel = "rate_limited"
+	sentinelEmptyStream                 genmodelgateway.GatewayErrorNodeDetailBranchSentinel = "empty_stream"
+	sentinelTokenCountingUnsupported    genmodelgateway.GatewayErrorNodeDetailBranchSentinel = "token_counting_unsupported"
+	sentinelRequestByteCapacity         genmodelgateway.GatewayErrorNodeDetailBranchSentinel = "request_byte_capacity"
+	sentinelImageSourceCapacity         genmodelgateway.GatewayErrorNodeDetailBranchSentinel = "image_source_capacity"
+	sentinelContextCanceled             genmodelgateway.GatewayErrorNodeDetailBranchSentinel = "context_canceled"
+	sentinelContextDeadlineExceeded     genmodelgateway.GatewayErrorNodeDetailBranchSentinel = "context_deadline_exceeded"
 )
 
 // toGenError encodes an error tree into a Goa-generated GatewayError while
@@ -63,15 +54,31 @@ func toGenError(err error) *genmodelgateway.GatewayError {
 	out := &genmodelgateway.GatewayError{
 		Nodes: nodes,
 	}
-	// Attach top-level retained usage when the root node is not already a
-	// direct OutputValidationError (which carries its own Usage field).
-	if len(nodes) > 0 && nodes[0].Kind != errorKindValidation {
-		if usage := model.UsageFromError(err); usage != nil {
+	if usage := model.UsageFromError(err); usage != nil {
+		incomplete := model.UsageIncompleteFromError(err)
+		if !nodesCarryRetainedUsage(nodes, *usage, incomplete) {
 			out.RetainedUsage = toGenUsage(*usage)
-			out.RetainedUsageIncomplete = model.UsageIncompleteFromError(err)
+			out.RetainedUsageIncomplete = incomplete
 		}
 	}
 	return out
+}
+
+// nodesCarryRetainedUsage reports whether the first usage-bearing
+// ValidationErrorDetail node in nodes already carries usage and incomplete.
+func nodesCarryRetainedUsage(
+	nodes []*genmodelgateway.GatewayErrorNode,
+	usage model.TokenUsage,
+	incomplete bool,
+) bool {
+	for _, node := range nodes {
+		val, ok := node.Detail.AsValidation()
+		if !ok || val == nil || val.Usage == nil {
+			continue
+		}
+		return *val.Usage == *toGenUsage(usage) && val.UsageIncomplete == incomplete
+	}
+	return false
 }
 
 // encodeErrorNode appends one error node and its descendants to nodes and
@@ -79,24 +86,6 @@ func toGenError(err error) *genmodelgateway.GatewayError {
 func encodeErrorNode(err error, nodes *[]*genmodelgateway.GatewayErrorNode, seen *[]encodedErrorNode) int64 {
 	if err == nil {
 		return -1
-	}
-	// Unwrap usageError transparently before checking node identity because
-	// top-level RetainedUsage is captured on the root GatewayError.
-	if _, isSentinel := sentinelCode(err); !isSentinel {
-		//nolint:errorlint // Check exact root types before unwrapping transparent usage wrappers.
-		_, isValidation := err.(*model.OutputValidationError)
-		//nolint:errorlint // Check exact root types before unwrapping transparent usage wrappers.
-		_, isReqValidation := err.(*model.RequestValidationError)
-		//nolint:errorlint // Check exact root types before unwrapping transparent usage wrappers.
-		_, isProvider := err.(*model.ProviderError)
-		if !isValidation && !isReqValidation && !isProvider {
-			if inner := errors.Unwrap(err); inner != nil && inner.Error() == err.Error() {
-				_, _, isMalformedTool := model.MalformedToolArgumentsToolName(err)
-				if !isMalformedTool {
-					return encodeErrorNode(inner, nodes, seen)
-				}
-			}
-		}
 	}
 	if idx, ok := findEncodedErrorNode(err, *seen); ok {
 		return idx
@@ -119,11 +108,7 @@ func encodeErrorNode(err error, nodes *[]*genmodelgateway.GatewayErrorNode, seen
 			detail.Usage = toGenUsage(*u)
 		}
 		idx := int64(len(*nodes))
-		node := &genmodelgateway.GatewayErrorNode{
-			Kind:       errorKindValidation,
-			Validation: detail,
-			CauseIndex: -1,
-		}
+		node := &genmodelgateway.GatewayErrorNode{}
 		*nodes = append(*nodes, node)
 		rememberEncodedErrorNode(err, idx, seen)
 		cause := errors.Unwrap(validationErr)
@@ -135,15 +120,14 @@ func encodeErrorNode(err error, nodes *[]*genmodelgateway.GatewayErrorNode, seen
 			}
 			cause = errors.Unwrap(innerValidation)
 		}
-		node.CauseIndex = encodeErrorNode(cause, nodes, seen)
+		detail.CauseIndex = encodeErrorNode(cause, nodes, seen)
+		node.Detail = genmodelgateway.NewGatewayErrorNodeDetailValidation(detail)
 		return idx
 	}
 	if sentinel, ok := sentinelCode(err); ok {
 		idx := int64(len(*nodes))
 		*nodes = append(*nodes, &genmodelgateway.GatewayErrorNode{
-			Kind:       errorKindSentinel,
-			Sentinel:   sentinel,
-			CauseIndex: -1,
+			Detail: genmodelgateway.NewGatewayErrorNodeDetailSentinel(sentinel),
 		})
 		rememberEncodedErrorNode(err, idx, seen)
 		return idx
@@ -151,65 +135,64 @@ func encodeErrorNode(err error, nodes *[]*genmodelgateway.GatewayErrorNode, seen
 	//nolint:errorlint // Inspect exact node before unwrapping children.
 	if reqValidationErr, ok := err.(*model.RequestValidationError); ok && reqValidationErr != nil {
 		idx := int64(len(*nodes))
-		node := &genmodelgateway.GatewayErrorNode{
-			Kind:       errorKindRequestValidation,
-			Message:    reqValidationErr.Error(),
-			CauseIndex: -1,
-		}
+		node := &genmodelgateway.GatewayErrorNode{}
 		*nodes = append(*nodes, node)
 		rememberEncodedErrorNode(err, idx, seen)
-		node.CauseIndex = encodeErrorNode(errors.Unwrap(reqValidationErr), nodes, seen)
+		node.Detail = genmodelgateway.NewGatewayErrorNodeDetailRequestValidation(&genmodelgateway.RequestValidationErrorDetail{
+			CauseIndex: encodeErrorNode(errors.Unwrap(reqValidationErr), nodes, seen),
+		})
 		return idx
 	}
 	//nolint:errorlint // Inspect exact node before unwrapping children.
 	if providerErr, ok := err.(*model.ProviderError); ok && providerErr != nil {
 		idx := int64(len(*nodes))
-		node := &genmodelgateway.GatewayErrorNode{
-			Kind: errorKindProvider,
-			Provider: &genmodelgateway.ProviderErrorDetail{
-				Provider:   providerErr.Provider(),
-				Operation:  providerErr.Operation(),
-				HTTPStatus: int64(providerErr.HTTPStatus()),
-				Kind:       string(providerErr.Kind()),
-				Code:       providerErr.Code(),
-				Message:    providerErr.Message(),
-				RequestID:  providerErr.RequestID(),
-				Retryable:  providerErr.Retryable(),
-			},
-			CauseIndex: -1,
-		}
+		node := &genmodelgateway.GatewayErrorNode{}
 		*nodes = append(*nodes, node)
 		rememberEncodedErrorNode(err, idx, seen)
-		node.CauseIndex = encodeErrorNode(errors.Unwrap(providerErr), nodes, seen)
+		node.Detail = genmodelgateway.NewGatewayErrorNodeDetailProvider(&genmodelgateway.ProviderErrorDetail{
+			Provider:   providerErr.Provider(),
+			Operation:  providerErr.Operation(),
+			HTTPStatus: int64(providerErr.HTTPStatus()),
+			Kind:       string(providerErr.Kind()),
+			Code:       providerErr.Code(),
+			Message:    providerErr.Message(),
+			RequestID:  providerErr.RequestID(),
+			Retryable:  providerErr.Retryable(),
+			CauseIndex: encodeErrorNode(errors.Unwrap(providerErr), nodes, seen),
+		})
 		return idx
 	}
 	if joined, ok := err.(interface{ Unwrap() []error }); ok {
 		idx := int64(len(*nodes))
-		node := &genmodelgateway.GatewayErrorNode{
-			Kind:       errorKindJoined,
-			CauseIndex: -1,
-		}
+		node := &genmodelgateway.GatewayErrorNode{}
 		*nodes = append(*nodes, node)
 		rememberEncodedErrorNode(err, idx, seen)
+		var childIndices []int64
 		for _, child := range joined.Unwrap() {
 			if child != nil {
 				if childIdx := encodeErrorNode(child, nodes, seen); childIdx >= 0 {
-					node.ChildIndices = append(node.ChildIndices, childIdx)
+					childIndices = append(childIndices, childIdx)
 				}
 			}
 		}
-		if len(node.ChildIndices) == 0 {
-			node.Kind = errorKindPlain
-			node.Message = err.Error()
+		if len(childIndices) == 0 {
+			node.Detail = genmodelgateway.NewGatewayErrorNodeDetailPlain(&genmodelgateway.PlainErrorDetail{
+				Message:    err.Error(),
+				CauseIndex: -1,
+			})
+		} else {
+			node.Detail = genmodelgateway.NewGatewayErrorNodeDetailJoined(&genmodelgateway.JoinedErrorDetail{
+				ChildIndices: childIndices,
+			})
 		}
 		return idx
 	}
 	if name, ok := model.UnadvertisedToolName(err); ok && errors.Unwrap(err) == nil {
 		idx := int64(len(*nodes))
 		*nodes = append(*nodes, &genmodelgateway.GatewayErrorNode{
-			Kind:                 errorKindUnadvertised,
-			UnadvertisedToolName: name,
-			CauseIndex:           -1,
+			Detail: genmodelgateway.NewGatewayErrorNodeDetailUnadvertisedTool(
+				genmodelgateway.GatewayErrorNodeDetailBranchUnadvertisedTool(name),
+			),
 		})
 		rememberEncodedErrorNode(err, idx, seen)
 		return idx
@@ -217,25 +200,28 @@ func encodeErrorNode(err error, nodes *[]*genmodelgateway.GatewayErrorNode, seen
 	//nolint:errorlint // Inspect exact node identity before recursing into cause.
 	if toolName, cause, ok := model.MalformedToolArgumentsToolName(err); ok && errors.Unwrap(err) == cause {
 		idx := int64(len(*nodes))
-		node := &genmodelgateway.GatewayErrorNode{
-			Kind:              errorKindMalformed,
-			MalformedToolName: string(toolName),
-			CauseIndex:        -1,
-		}
+		node := &genmodelgateway.GatewayErrorNode{}
 		*nodes = append(*nodes, node)
 		rememberEncodedErrorNode(err, idx, seen)
-		node.CauseIndex = encodeErrorNode(cause, nodes, seen)
+		node.Detail = genmodelgateway.NewGatewayErrorNodeDetailMalformedToolArgs(&genmodelgateway.MalformedToolArgsErrorDetail{
+			ToolName:   string(toolName),
+			CauseIndex: encodeErrorNode(cause, nodes, seen),
+		})
 		return idx
 	}
-	idx := int64(len(*nodes))
-	node := &genmodelgateway.GatewayErrorNode{
-		Kind:       errorKindPlain,
-		Message:    err.Error(),
-		CauseIndex: -1,
+	// Transparently unwrap message-identical wrappers (such as model.RetainUsage)
+	// whose usage is captured on the root GatewayError.
+	if inner := errors.Unwrap(err); inner != nil && inner.Error() == err.Error() {
+		return encodeErrorNode(inner, nodes, seen)
 	}
+	idx := int64(len(*nodes))
+	node := &genmodelgateway.GatewayErrorNode{}
 	*nodes = append(*nodes, node)
 	rememberEncodedErrorNode(err, idx, seen)
-	node.CauseIndex = encodeErrorNode(errors.Unwrap(err), nodes, seen)
+	node.Detail = genmodelgateway.NewGatewayErrorNodeDetailPlain(&genmodelgateway.PlainErrorDetail{
+		Message:    err.Error(),
+		CauseIndex: encodeErrorNode(errors.Unwrap(err), nodes, seen),
+	})
 	return idx
 }
 
@@ -275,11 +261,14 @@ func fromGenError(in *genmodelgateway.GatewayError) error {
 	if in.RetainedUsageIncomplete && in.RetainedUsage == nil {
 		return errors.New("gateway: invalid wire error graph: retained_usage_incomplete requires retained_usage")
 	}
-	if in.RetainedUsage != nil && in.Nodes[0].Kind == errorKindValidation {
+	if in.RetainedUsage != nil && in.Nodes[0].Detail.Kind() == genmodelgateway.GatewayErrorNodeDetailKindValidation {
 		return errors.New("gateway: invalid wire error graph: validation root node cannot carry top-level retained_usage")
 	}
 	memo := make([]error, len(in.Nodes))
-	err := decodeErrorNode(in.Nodes, 0, memo)
+	err, decodeErr := decodeErrorNode(in.Nodes, 0, memo)
+	if decodeErr != nil {
+		return fmt.Errorf("gateway: invalid wire error graph: %w", decodeErr)
+	}
 	if err == nil {
 		return errors.New("gateway: wire error decoded to nil")
 	}
@@ -310,9 +299,10 @@ func validateErrorGraph(nodes []*genmodelgateway.GatewayErrorNode) error {
 		stateVisited
 	)
 	state := make([]uint8, len(nodes))
+	numNodes := int64(len(nodes))
 	var visit func(idx int64) error
 	visit = func(idx int64) error {
-		if idx < 0 || idx >= int64(len(nodes)) {
+		if idx < 0 || idx >= numNodes {
 			return fmt.Errorf("node index %d out of bounds", idx)
 		}
 		switch state[idx] {
@@ -322,18 +312,46 @@ func validateErrorGraph(nodes []*genmodelgateway.GatewayErrorNode) error {
 			return nil
 		}
 		w := nodes[idx]
-		if err := validateErrorNode(idx, w, int64(len(nodes))); err != nil {
+		if err := validateErrorNode(idx, w, numNodes); err != nil {
 			return err
 		}
 		state[idx] = stateVisiting
-		if w.Kind == errorKindJoined {
-			for _, childIdx := range w.ChildIndices {
+		//nolint:exhaustive // Sentinel and UnadvertisedTool are leaf variants with no outgoing edges.
+		switch w.Detail.Kind() {
+		case genmodelgateway.GatewayErrorNodeDetailKindJoined:
+			joined, _ := w.Detail.AsJoined()
+			for _, childIdx := range joined.ChildIndices {
 				if err := visit(childIdx); err != nil {
 					return err
 				}
 			}
-		} else if w.CauseIndex >= 0 {
-			if err := visit(w.CauseIndex); err != nil {
+		case genmodelgateway.GatewayErrorNodeDetailKindPlain:
+			plain, _ := w.Detail.AsPlain()
+			if plain.CauseIndex >= 0 {
+				if err := visit(plain.CauseIndex); err != nil {
+					return err
+				}
+			}
+		case genmodelgateway.GatewayErrorNodeDetailKindRequestValidation:
+			reqVal, _ := w.Detail.AsRequestValidation()
+			if err := visit(reqVal.CauseIndex); err != nil {
+				return err
+			}
+		case genmodelgateway.GatewayErrorNodeDetailKindProvider:
+			prov, _ := w.Detail.AsProvider()
+			if prov.CauseIndex >= 0 {
+				if err := visit(prov.CauseIndex); err != nil {
+					return err
+				}
+			}
+		case genmodelgateway.GatewayErrorNodeDetailKindValidation:
+			val, _ := w.Detail.AsValidation()
+			if err := visit(val.CauseIndex); err != nil {
+				return err
+			}
+		case genmodelgateway.GatewayErrorNodeDetailKindMalformedToolArgs:
+			malformed, _ := w.Detail.AsMalformedToolArgs()
+			if err := visit(malformed.CauseIndex); err != nil {
 				return err
 			}
 		}
@@ -350,227 +368,216 @@ func validateErrorGraph(nodes []*genmodelgateway.GatewayErrorNode) error {
 	return nil
 }
 
-// validateErrorNode verifies one wire error node's discriminator, edge indices,
-// and kind-specific payload fields.
+// validateErrorNode verifies one wire error node's union branch, edge indices,
+// and branch-specific invariants.
 func validateErrorNode(idx int64, w *genmodelgateway.GatewayErrorNode, numNodes int64) error {
 	if w == nil {
 		return fmt.Errorf("node %d is nil", idx)
 	}
-	if w.Kind == errorKindJoined {
-		if w.CauseIndex != -1 {
-			return fmt.Errorf("joined node %d cannot have cause_index %d", idx, w.CauseIndex)
-		}
-		if len(w.ChildIndices) == 0 {
-			return fmt.Errorf("joined node %d has no children", idx)
-		}
-		if w.Message != "" || w.Sentinel != "" || w.Provider != nil || w.Validation != nil ||
-			w.UnadvertisedToolName != "" || w.MalformedToolName != "" {
-			return fmt.Errorf("joined node %d has contradictory fields", idx)
-		}
-		return nil
+	if err := w.Detail.Validate(); err != nil {
+		return fmt.Errorf("node %d has invalid detail: %w", idx, err)
 	}
-	if len(w.ChildIndices) > 0 {
-		return fmt.Errorf("non-joined node %d cannot have child_indices", idx)
-	}
-	if w.CauseIndex < -1 || w.CauseIndex >= numNodes {
-		return fmt.Errorf("node %d cause_index %d out of bounds", idx, w.CauseIndex)
-	}
-	switch w.Kind {
-	case errorKindPlain:
-		if w.Sentinel != "" || w.Provider != nil || w.Validation != nil ||
-			w.UnadvertisedToolName != "" || w.MalformedToolName != "" {
-			return fmt.Errorf("plain node %d has contradictory fields", idx)
+	switch w.Detail.Kind() {
+	case genmodelgateway.GatewayErrorNodeDetailKindPlain:
+		plain, _ := w.Detail.AsPlain()
+		if plain.CauseIndex < -1 || plain.CauseIndex >= numNodes {
+			return fmt.Errorf("plain node %d cause_index %d out of bounds", idx, plain.CauseIndex)
 		}
-		if w.CauseIndex >= 0 && w.Message == "" {
+		if plain.CauseIndex >= 0 && plain.Message == "" {
 			return fmt.Errorf("plain wrapper node %d requires non-empty message", idx)
 		}
-	case errorKindSentinel:
-		if fromSentinelCode(w.Sentinel) == nil {
-			return fmt.Errorf("sentinel node %d has unknown sentinel %q", idx, w.Sentinel)
+	case genmodelgateway.GatewayErrorNodeDetailKindSentinel:
+		sentinel, _ := w.Detail.AsSentinel()
+		if fromSentinelCode(sentinel) == nil {
+			return fmt.Errorf("sentinel node %d has unknown sentinel %q", idx, sentinel)
 		}
-		if w.CauseIndex != -1 || w.Message != "" || w.Provider != nil || w.Validation != nil ||
-			w.UnadvertisedToolName != "" || w.MalformedToolName != "" {
-			return fmt.Errorf("sentinel node %d has contradictory fields", idx)
+	case genmodelgateway.GatewayErrorNodeDetailKindRequestValidation:
+		reqVal, _ := w.Detail.AsRequestValidation()
+		if reqVal.CauseIndex < 0 || reqVal.CauseIndex >= numNodes {
+			return fmt.Errorf("request_validation node %d cause_index %d out of bounds", idx, reqVal.CauseIndex)
 		}
-	case errorKindRequestValidation:
-		if w.Sentinel != "" || w.Provider != nil || w.Validation != nil ||
-			w.UnadvertisedToolName != "" || w.MalformedToolName != "" {
-			return fmt.Errorf("request_validation node %d has contradictory fields", idx)
+	case genmodelgateway.GatewayErrorNodeDetailKindProvider:
+		prov, _ := w.Detail.AsProvider()
+		if prov.CauseIndex < -1 || prov.CauseIndex >= numNodes {
+			return fmt.Errorf("provider node %d cause_index %d out of bounds", idx, prov.CauseIndex)
 		}
-	case errorKindProvider:
-		if w.Provider == nil || w.Message != "" || w.Sentinel != "" || w.Validation != nil ||
-			w.UnadvertisedToolName != "" || w.MalformedToolName != "" {
-			return fmt.Errorf("provider node %d has invalid fields", idx)
+		if prov.Provider == "" {
+			return fmt.Errorf("provider node %d requires non-empty provider", idx)
 		}
-	case errorKindValidation:
-		if w.Validation == nil || w.Message != "" || w.Sentinel != "" || w.Provider != nil ||
-			w.UnadvertisedToolName != "" || w.MalformedToolName != "" {
-			return fmt.Errorf("validation node %d has invalid fields", idx)
+		if prov.Kind == "" {
+			return fmt.Errorf("provider node %d requires non-empty kind", idx)
 		}
-		if w.Validation.UsageIncomplete && w.Validation.Usage == nil {
+	case genmodelgateway.GatewayErrorNodeDetailKindValidation:
+		val, _ := w.Detail.AsValidation()
+		if val.CauseIndex < 0 || val.CauseIndex >= numNodes {
+			return fmt.Errorf("validation node %d cause_index %d out of bounds", idx, val.CauseIndex)
+		}
+		if val.UsageIncomplete && val.Usage == nil {
 			return fmt.Errorf("validation node %d has usage_incomplete without usage", idx)
 		}
-	case errorKindUnadvertised:
-		if w.UnadvertisedToolName == "" || w.CauseIndex != -1 || w.Message != "" || w.Sentinel != "" ||
-			w.Provider != nil || w.Validation != nil || w.MalformedToolName != "" {
-			return fmt.Errorf("unadvertised_tool node %d has invalid fields", idx)
+	case genmodelgateway.GatewayErrorNodeDetailKindUnadvertisedTool:
+		name, _ := w.Detail.AsUnadvertisedTool()
+		if name == "" {
+			return fmt.Errorf("unadvertised_tool node %d requires non-empty tool name", idx)
 		}
-	case errorKindMalformed:
-		if w.MalformedToolName == "" || w.Message != "" || w.Sentinel != "" ||
-			w.Provider != nil || w.Validation != nil || w.UnadvertisedToolName != "" {
-			return fmt.Errorf("malformed_tool_args node %d has invalid fields", idx)
+	case genmodelgateway.GatewayErrorNodeDetailKindMalformedToolArgs:
+		malformed, _ := w.Detail.AsMalformedToolArgs()
+		if malformed.ToolName == "" {
+			return fmt.Errorf("malformed_tool_args node %d requires non-empty tool_name", idx)
+		}
+		if malformed.CauseIndex < 0 || malformed.CauseIndex >= numNodes {
+			return fmt.Errorf("malformed_tool_args node %d cause_index %d out of bounds", idx, malformed.CauseIndex)
+		}
+	case genmodelgateway.GatewayErrorNodeDetailKindJoined:
+		joined, _ := w.Detail.AsJoined()
+		if len(joined.ChildIndices) == 0 {
+			return fmt.Errorf("joined node %d has no children", idx)
+		}
+		for _, childIdx := range joined.ChildIndices {
+			if childIdx < 0 || childIdx >= numNodes {
+				return fmt.Errorf("joined node %d child_index %d out of bounds", idx, childIdx)
+			}
 		}
 	default:
-		return fmt.Errorf("node %d has unknown kind %q", idx, w.Kind)
+		return fmt.Errorf("node %d has unknown detail kind %q", idx, w.Detail.Kind())
 	}
 	return nil
 }
 
 // decodeErrorNode recursively reconstructs one error node from nodes[idx] while
 // memoizing decoded nodes so shared DAG indices decode to the same error instance.
-func decodeErrorNode(nodes []*genmodelgateway.GatewayErrorNode, idx int64, memo []error) error {
-	if idx < 0 || idx >= int64(len(nodes)) {
-		return nil
-	}
+// Callers must run validateErrorGraph(nodes) first.
+func decodeErrorNode(nodes []*genmodelgateway.GatewayErrorNode, idx int64, memo []error) (error, error) {
 	if cached := memo[idx]; cached != nil {
-		return cached
+		return cached, nil
 	}
 	w := nodes[idx]
-	if w == nil {
-		return nil
-	}
-	decodeChild := func(childIdx int64) error {
-		if childIdx < 0 || childIdx >= int64(len(nodes)) {
-			return nil
+	decodeOptionalChild := func(childIdx int64) (error, error) {
+		if childIdx < 0 {
+			return nil, nil
 		}
 		return decodeErrorNode(nodes, childIdx, memo)
 	}
 	var decoded error
-	switch w.Kind {
-	case errorKindSentinel:
-		decoded = fromSentinelCode(w.Sentinel)
-	case errorKindRequestValidation:
-		cause := decodeChild(w.CauseIndex)
-		if cause == nil {
-			cause = errors.New(w.Message)
+	switch w.Detail.Kind() {
+	case genmodelgateway.GatewayErrorNodeDetailKindSentinel:
+		sentinel, _ := w.Detail.AsSentinel()
+		decoded = fromSentinelCode(sentinel)
+	case genmodelgateway.GatewayErrorNodeDetailKindRequestValidation:
+		reqVal, _ := w.Detail.AsRequestValidation()
+		cause, err := decodeErrorNode(nodes, reqVal.CauseIndex, memo)
+		if err != nil {
+			return nil, err
 		}
 		decoded = model.NewRequestValidationError(cause)
-	case errorKindProvider:
-		if w.Provider == nil {
-			decoded = errors.New("gateway: malformed provider error")
-			break
-		}
-		provider := w.Provider.Provider
-		if provider == "" {
-			provider = "gateway"
-		}
-		kind := model.ProviderErrorKind(w.Provider.Kind)
-		if kind == "" {
-			kind = model.ProviderErrorKindUnknown
-		}
-		httpStatus, err := int64ToInt(w.Provider.HTTPStatus, "provider.http_status")
+	case genmodelgateway.GatewayErrorNodeDetailKindProvider:
+		prov, _ := w.Detail.AsProvider()
+		httpStatus, err := int64ToInt(prov.HTTPStatus, "provider.http_status")
 		if err != nil {
-			decoded = err
-			break
+			return nil, err
+		}
+		cause, err := decodeOptionalChild(prov.CauseIndex)
+		if err != nil {
+			return nil, err
 		}
 		decoded = model.NewProviderError(
-			provider,
-			w.Provider.Operation,
+			prov.Provider,
+			prov.Operation,
 			httpStatus,
-			kind,
-			w.Provider.Code,
-			w.Provider.Message,
-			w.Provider.RequestID,
-			w.Provider.Retryable,
-			decodeChild(w.CauseIndex),
+			model.ProviderErrorKind(prov.Kind),
+			prov.Code,
+			prov.Message,
+			prov.RequestID,
+			prov.Retryable,
+			cause,
 		)
-	case errorKindValidation:
-		if w.Validation == nil {
-			decoded = errors.New("gateway: malformed output validation error")
-			break
-		}
-		cause := decodeChild(w.CauseIndex)
-		if cause == nil {
-			cause = errors.New("model output rejected by gateway")
+	case genmodelgateway.GatewayErrorNodeDetailKindValidation:
+		val, _ := w.Detail.AsValidation()
+		cause, err := decodeErrorNode(nodes, val.CauseIndex, memo)
+		if err != nil {
+			return nil, err
 		}
 		var ev model.ResponseEvidence
-		if w.Validation.Evidence != nil {
+		if val.Evidence != nil {
 			ev = model.ResponseEvidence{
-				Present: w.Validation.Evidence.Present,
-				Version: w.Validation.Evidence.Version,
-				SHA256:  w.Validation.Evidence.Sha256,
-				Size:    w.Validation.Evidence.Size,
+				Present: val.Evidence.Present,
+				Version: val.Evidence.Version,
+				SHA256:  val.Evidence.Sha256,
+				Size:    val.Evidence.Size,
 			}
 		}
 		var usage *model.TokenUsage
-		if w.Validation.Usage != nil {
-			u, err := fromGenUsage(w.Validation.Usage)
+		if val.Usage != nil {
+			u, err := fromGenUsage(val.Usage)
 			if err != nil {
-				decoded = err
-				break
+				return nil, err
 			}
 			usage = &u
 		}
 		restored, err := model.RestoreOutputValidationError(
-			model.OutputValidationKind(w.Validation.Kind),
+			model.OutputValidationKind(val.Kind),
 			cause,
 			ev,
 			usage,
 		)
 		if err != nil {
-			decoded = err
-			break
+			return nil, err
 		}
-		if w.Validation.RecoveryCorrection != "" {
+		if val.RecoveryCorrection != "" {
 			correctable, err := model.RestoreCorrectableOutputValidationError(
 				restored,
-				w.Validation.RecoveryCorrection,
+				val.RecoveryCorrection,
 			)
 			if err != nil {
-				decoded = err
-				break
+				return nil, err
 			}
 			restored = correctable
 		}
-		if w.Validation.UsageIncomplete && usage != nil {
+		if val.UsageIncomplete && usage != nil {
 			decoded = model.RetainIncompleteUsage(restored, *usage)
-			break
+		} else {
+			decoded = restored
 		}
-		decoded = restored
-	case errorKindUnadvertised:
-		decoded = model.NewUnadvertisedToolNameError(w.UnadvertisedToolName)
-	case errorKindMalformed:
-		cause := decodeChild(w.CauseIndex)
-		if cause == nil {
-			cause = errors.New("invalid JSON")
+	case genmodelgateway.GatewayErrorNodeDetailKindUnadvertisedTool:
+		name, _ := w.Detail.AsUnadvertisedTool()
+		decoded = model.NewUnadvertisedToolNameError(string(name))
+	case genmodelgateway.GatewayErrorNodeDetailKindMalformedToolArgs:
+		malformed, _ := w.Detail.AsMalformedToolArgs()
+		cause, err := decodeErrorNode(nodes, malformed.CauseIndex, memo)
+		if err != nil {
+			return nil, err
 		}
-		decoded = model.NewMalformedToolArgumentsError(tools.Ident(w.MalformedToolName), cause)
-	case errorKindJoined:
-		children := make([]error, 0, len(w.ChildIndices))
-		for _, childIdx := range w.ChildIndices {
-			if child := decodeChild(childIdx); child != nil {
-				children = append(children, child)
+		decoded = model.NewMalformedToolArgumentsError(tools.Ident(malformed.ToolName), cause)
+	case genmodelgateway.GatewayErrorNodeDetailKindJoined:
+		joined, _ := w.Detail.AsJoined()
+		children := make([]error, 0, len(joined.ChildIndices))
+		for _, childIdx := range joined.ChildIndices {
+			child, err := decodeErrorNode(nodes, childIdx, memo)
+			if err != nil {
+				return nil, err
 			}
+			children = append(children, child)
 		}
 		decoded = errors.Join(children...)
-	case errorKindPlain:
-		cause := decodeChild(w.CauseIndex)
-		switch {
-		case cause == nil:
-			decoded = errors.New(w.Message)
-		case w.Message == cause.Error():
-			decoded = fmt.Errorf("%w", cause)
-		default:
-			prefix := strings.TrimSuffix(w.Message, ": "+cause.Error())
+	case genmodelgateway.GatewayErrorNodeDetailKindPlain:
+		plain, _ := w.Detail.AsPlain()
+		cause, err := decodeOptionalChild(plain.CauseIndex)
+		if err != nil {
+			return nil, err
+		}
+		if cause == nil {
+			decoded = errors.New(plain.Message)
+		} else {
+			prefix := strings.TrimSuffix(plain.Message, ": "+cause.Error())
 			decoded = fmt.Errorf("%s: %w", prefix, cause)
 		}
 	}
 	memo[idx] = decoded
-	return decoded
+	return decoded, nil
 }
 
 // sentinelCode returns the wire code for an exact sentinel error value.
-func sentinelCode(err error) (string, bool) {
+func sentinelCode(err error) (genmodelgateway.GatewayErrorNodeDetailBranchSentinel, bool) {
 	//nolint:errorlint // Check exact node identity so wrapped chains preserve outer context.
 	switch err {
 	case model.ErrStreamingUnsupported:
@@ -601,7 +608,7 @@ func sentinelCode(err error) (string, bool) {
 }
 
 // fromSentinelCode maps a wire sentinel code back to the exact sentinel error.
-func fromSentinelCode(code string) error {
+func fromSentinelCode(code genmodelgateway.GatewayErrorNodeDetailBranchSentinel) error {
 	switch code {
 	case sentinelStreamingUnsupported:
 		return model.ErrStreamingUnsupported

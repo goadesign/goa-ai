@@ -242,13 +242,13 @@ func (r *Runtime) runPlanActivity(wfCtx engine.WorkflowContext, activityName str
 			recovery.cancel = nil
 		}
 		if err != nil {
-			if out != nil && hasTokenCounts(out.Usage) {
+			if out != nil && model.HasObservedTokenCounts(out.Usage) {
 				aggregated, usageErr := model.AddTokenUsage(usage, out.Usage)
 				if usageErr != nil {
 					return out, errors.Join(err, fmt.Errorf("aggregate provider recovery usage: %w", usageErr))
 				}
 				out.Usage = aggregated
-			} else if out != nil && hasTokenCounts(usage) {
+			} else if out != nil && model.HasObservedTokenCounts(usage) {
 				out.Usage = usage
 			}
 			if recovery != nil {

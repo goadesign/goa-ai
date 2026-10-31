@@ -1,3 +1,7 @@
+// Package gateway implements the server-side model completion, streaming, and
+// token-counting pipeline with unary and streaming middleware chains. It
+// enforces request contract validation and stream-event ordering before
+// forwarding calls to the underlying model.Client or model.TokenCounter.
 package gateway
 
 import (
@@ -153,39 +157,15 @@ func NewServer(opts ...Option) (*Server, error) {
 				//nolint:errorlint // Exact equality is required by the model stream contract.
 				if err == io.EOF {
 					resp := st.Response()
-					closeErr := finishProviderStream(ctx, nil, st.Close())
-					if closeErr != nil {
-						if resp.HasObservedUsage() && model.UsageFromError(closeErr) == nil {
-							if resp.UsageIncomplete {
-								closeErr = model.RetainIncompleteUsage(closeErr, resp.Usage)
-							} else {
-								closeErr = model.RetainUsage(closeErr, resp.Usage)
-							}
-						}
+					if closeErr := retainResponseUsage(finishProviderStream(ctx, nil, st.Close()), resp); closeErr != nil {
 						return nil, closeErr
 					}
 					return resp, nil
 				}
-				closeErr := finishProviderStream(ctx, err, st.Close())
-				if resp := st.Response(); resp.HasObservedUsage() && model.UsageFromError(closeErr) == nil {
-					if resp.UsageIncomplete {
-						closeErr = model.RetainIncompleteUsage(closeErr, resp.Usage)
-					} else {
-						closeErr = model.RetainUsage(closeErr, resp.Usage)
-					}
-				}
-				return nil, closeErr
+				return nil, retainResponseUsage(finishProviderStream(ctx, err, st.Close()), st.Response())
 			}
 			if err := send(ch); err != nil {
-				closeErr := finishProviderStream(ctx, err, st.Close())
-				if resp := st.Response(); resp.HasObservedUsage() && model.UsageFromError(closeErr) == nil {
-					if resp.UsageIncomplete {
-						closeErr = model.RetainIncompleteUsage(closeErr, resp.Usage)
-					} else {
-						closeErr = model.RetainUsage(closeErr, resp.Usage)
-					}
-				}
-				return nil, closeErr
+				return nil, retainResponseUsage(finishProviderStream(ctx, err, st.Close()), st.Response())
 			}
 		}
 	}
@@ -323,6 +303,18 @@ func joinGatewayErrors(errs ...error) error {
 		joined = errors.Join(joined, err)
 	}
 	return joined
+}
+
+// retainResponseUsage attaches any observed usage on resp to err when err does
+// not already carry retained usage.
+func retainResponseUsage(err error, resp *model.Response) error {
+	if err == nil || !resp.HasObservedUsage() || model.UsageFromError(err) != nil {
+		return err
+	}
+	if resp.UsageIncomplete {
+		return model.RetainIncompleteUsage(err, resp.Usage)
+	}
+	return model.RetainUsage(err, resp.Usage)
 }
 
 // isNilStreamer rejects typed nil stream implementations before the gateway

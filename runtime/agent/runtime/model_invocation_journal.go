@@ -285,7 +285,7 @@ func (j *modelInvocationJournal) recordRejectedModelUsageTotal(
 	previous := candidate.usage
 	previousSeen := candidate.usageSeen
 	candidate.usageSeen = true
-	if hasTokenCounts(rejected) {
+	if model.HasObservedTokenCounts(rejected) {
 		candidate.usage = candidate.attributeUsage(rejected)
 	} else {
 		candidate.usage = model.TokenUsage{}
@@ -293,7 +293,7 @@ func (j *modelInvocationJournal) recordRejectedModelUsageTotal(
 	var activityUsage model.TokenUsage
 	for _, id := range j.order {
 		invocation := j.invocations[id]
-		if invocation == nil || !invocation.usageSeen || !hasTokenCounts(invocation.usage) {
+		if invocation == nil || !invocation.usageSeen || !model.HasObservedTokenCounts(invocation.usage) {
 			continue
 		}
 		var err error
@@ -354,7 +354,7 @@ func (j *modelInvocationJournal) saveModelResponse(
 	}
 	candidate.response = captured
 	candidate.responseEvidence = model.EvidenceForResponse(response)
-	if !candidate.usageSeen && hasTokenCounts(response.Usage) {
+	if !candidate.usageSeen && model.HasObservedTokenCounts(response.Usage) {
 		responseUsage := candidate.attributeUsage(response.Usage)
 		usage, err := model.AddTokenUsage(j.usage, responseUsage)
 		if err != nil {
@@ -407,7 +407,7 @@ func (j *modelInvocationJournal) recordModelChunk(
 		}
 	}
 	if usage, ok := chunk.(model.UsageChunk); ok {
-		if !hasTokenCounts(usage.Usage) {
+		if !model.HasObservedTokenCounts(usage.Usage) {
 			j.mu.Unlock()
 			return nil
 		}
@@ -686,7 +686,7 @@ func (j *modelInvocationJournal) publishUsage(ctx context.Context, events planne
 	usageEvents := make([]model.TokenUsage, 0, len(j.order))
 	for _, id := range j.order {
 		candidate := j.invocations[id]
-		if candidate != nil && hasTokenCounts(candidate.usage) {
+		if candidate != nil && model.HasObservedTokenCounts(candidate.usage) {
 			usageEvents = append(usageEvents, candidate.usage)
 		}
 	}
@@ -721,16 +721,6 @@ func (j *modelInvocationJournal) publishedAssistantText() string {
 func (c *modelInvocationCandidate) attributeUsage(usage model.TokenUsage) model.TokenUsage {
 	usage.ModelClass = c.requestModelClass
 	return usage
-}
-
-// hasTokenCounts reports whether a terminal response actually reported usage
-// rather than carrying only request identity stamped by validation.
-func hasTokenCounts(usage model.TokenUsage) bool {
-	return usage.InputTokens != 0 ||
-		usage.OutputTokens != 0 ||
-		usage.TotalTokens != 0 ||
-		usage.CacheReadTokens != 0 ||
-		usage.CacheWriteTokens != 0
 }
 
 // liveModelOutputEventsLocked converts one provider chunk into the client

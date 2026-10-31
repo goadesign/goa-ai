@@ -355,18 +355,44 @@ var TokenCount = Type("TokenCount", func() {
 	Required("model", "model_class", "input_tokens", "exact")
 })
 
+// PlainErrorDetail carries the message text and optional cause for an untyped error node.
+var PlainErrorDetail = Type("PlainErrorDetail", func() {
+	Description("Untyped error node message and optional wrapped cause index.")
+	Field(1, "message", String, "Plain error text.")
+	Field(2, "cause_index", Int64, "Index into GatewayError.nodes of the wrapped cause (-1 when none).", func() {
+		Minimum(-1)
+	})
+	Required("message", "cause_index")
+})
+
+// RequestValidationErrorDetail carries the wrapped cause index for a model.RequestValidationError node.
+var RequestValidationErrorDetail = Type("RequestValidationErrorDetail", func() {
+	Description("Application-side request validation error wrapping a cause node.")
+	Field(1, "cause_index", Int64, "Index into GatewayError.nodes of the wrapped cause.", func() {
+		Minimum(0)
+	})
+	Required("cause_index")
+})
+
 // ProviderErrorDetail encodes model.ProviderError fields.
 var ProviderErrorDetail = Type("ProviderErrorDetail", func() {
 	Description("Structured provider error details.")
-	Field(1, "provider", String, "Provider identifier.")
+	Field(1, "provider", String, "Provider identifier.", func() {
+		MinLength(1)
+	})
 	Field(2, "operation", String, "Provider operation name.")
 	Field(3, "http_status", Int64, "HTTP status code when available.")
-	Field(4, "kind", String, "Coarse-grained provider error classification.")
+	Field(4, "kind", String, "Coarse-grained provider error classification.", func() {
+		Enum("auth", "invalid_request", "rate_limited", "unavailable", "unknown")
+	})
 	Field(5, "code", String, "Provider-specific error code.")
 	Field(6, "message", String, "Provider error message.")
 	Field(7, "request_id", String, "Provider request identifier.")
 	Field(8, "retryable", Boolean, "Whether retrying the call may succeed.")
-	Required("provider", "operation", "http_status", "kind", "code", "message", "request_id", "retryable")
+	Field(9, "cause_index", Int64, "Index into GatewayError.nodes of the wrapped cause (-1 when none).", func() {
+		Minimum(-1)
+	})
+	Required("provider", "operation", "http_status", "kind", "code", "message", "request_id", "retryable", "cause_index")
 })
 
 // ResponseEvidence encodes model.ResponseEvidence fields.
@@ -382,33 +408,90 @@ var ResponseEvidence = Type("ResponseEvidence", func() {
 // ValidationErrorDetail encodes model.OutputValidationError fields.
 var ValidationErrorDetail = Type("ValidationErrorDetail", func() {
 	Description("Structured output validation error details.")
-	Field(1, "kind", String, "Closed output-validation category.")
+	Field(1, "kind", String, "Closed output-validation category.", func() {
+		Enum(
+			"response_shape",
+			"output_bounds",
+			"tool_identity",
+			"tool_arguments",
+			"tool_choice",
+			"structured_output",
+			"stream_protocol",
+			"usage",
+		)
+	})
 	Field(2, "evidence", ResponseEvidence, "Bounded response fingerprint.")
 	Field(3, "usage", TokenUsage, "Validated scalar token usage.")
 	Field(4, "recovery_correction", String, "Framework-authored recovery guidance.")
 	Field(5, "usage_incomplete", Boolean, "Whether usage represents only partial counts (for example, a stream rejected after initial input token chunks before output tokens arrive, a provider response omitting input or output counters, or a multi-round tool-search failure after an uncounted round).")
-	Required("kind", "evidence", "recovery_correction", "usage_incomplete")
+	Field(6, "cause_index", Int64, "Index into GatewayError.nodes of the wrapped cause.", func() {
+		Minimum(0)
+	})
+	Required("kind", "evidence", "recovery_correction", "usage_incomplete", "cause_index")
+})
+
+// MalformedToolArgsErrorDetail carries the tool name and wrapped cause index for a malformed-tool-arguments marker.
+var MalformedToolArgsErrorDetail = Type("MalformedToolArgsErrorDetail", func() {
+	Description("Malformed tool arguments error marker and wrapped parsing cause index.")
+	Field(1, "tool_name", String, "Canonical tool name for malformed arguments.", func() {
+		MinLength(1)
+	})
+	Field(2, "cause_index", Int64, "Index into GatewayError.nodes of the wrapped parsing cause.", func() {
+		Minimum(0)
+	})
+	Required("tool_name", "cause_index")
+})
+
+// JoinedErrorDetail carries the child node indices for a multi-unwrap error node.
+var JoinedErrorDetail = Type("JoinedErrorDetail", func() {
+	Description("Child node indices for a joined error.")
+	Field(1, "child_indices", ArrayOf(Int64, func() {
+		Minimum(0)
+	}), "Indices into GatewayError.nodes of joined child errors.", func() {
+		MinLength(1)
+	})
+	Required("child_indices")
 })
 
 // GatewayErrorNode encodes one node in a structured error tree.
 var GatewayErrorNode = Type("GatewayErrorNode", func() {
 	Description("Single node in an encoded error tree.")
-	Field(1, "kind", String, "Error node kind discriminator.")
-	Field(2, "message", String, "Plain error text.")
-	Field(3, "sentinel", String, "Known sentinel error code.")
-	Field(4, "provider", ProviderErrorDetail, "Structured provider error details.")
-	Field(5, "validation", ValidationErrorDetail, "Output validation error details.")
-	Field(6, "unadvertised_tool_name", String, "Rejected unadvertised tool name.")
-	Field(7, "malformed_tool_name", String, "Canonical tool name for malformed arguments.")
-	Field(8, "cause_index", Int64, "Index into GatewayError.nodes of the wrapped cause (-1 when none).")
-	Field(9, "child_indices", ArrayOf(Int64), "Indices into GatewayError.nodes of joined child errors.")
-	Required("kind", "message", "sentinel", "unadvertised_tool_name", "malformed_tool_name", "cause_index")
+	OneOf("detail", func() {
+		TypeName("GatewayErrorNodeDetail")
+		Field(1, "plain", PlainErrorDetail, "Untyped error message and optional wrapped cause.")
+		Field(2, "sentinel", String, "Known sentinel error code.", func() {
+			Enum(
+				"streaming_unsupported",
+				"structured_output_unsupported",
+				"tool_search_unsupported",
+				"tool_content_unsupported",
+				"rate_limited",
+				"empty_stream",
+				"token_counting_unsupported",
+				"request_byte_capacity",
+				"image_source_capacity",
+				"context_canceled",
+				"context_deadline_exceeded",
+			)
+		})
+		Field(3, "request_validation", RequestValidationErrorDetail, "Application-side request validation error wrapping a cause node.")
+		Field(4, "provider", ProviderErrorDetail, "Structured provider error details and optional wrapped cause.")
+		Field(5, "validation", ValidationErrorDetail, "Output validation error details and wrapped cause.")
+		Field(6, "unadvertised_tool", String, "Rejected unadvertised tool name.", func() {
+			MinLength(1)
+		})
+		Field(7, "malformed_tool_args", MalformedToolArgsErrorDetail, "Malformed tool arguments marker and wrapped parsing cause.")
+		Field(8, "joined", JoinedErrorDetail, "Child node indices for a joined error.")
+	})
+	Required("detail")
 })
 
 // GatewayError encodes a structured error tree and optional retained usage.
 var GatewayError = Type("GatewayError", func() {
 	Description("Structured gateway error tree preserving provider, validation, sentinel, and retained-usage contracts.")
-	Field(1, "nodes", ArrayOf(GatewayErrorNode), "Flattened error tree nodes with root at index 0.")
+	Field(1, "nodes", ArrayOf(GatewayErrorNode), "Flattened error tree nodes with root at index 0.", func() {
+		MinLength(1)
+	})
 	Field(2, "retained_usage", TokenUsage, "Validated invocation usage retained on a failed call.")
 	Field(3, "retained_usage_incomplete", Boolean, "Whether retained_usage represents only partial counts (for example, a multi-round tool-search invocation that failed on a later round after earlier rounds reported usage, a stream that failed after emitting partial usage chunks, or a provider response that omitted input or output token counters).")
 	Required("nodes", "retained_usage_incomplete")

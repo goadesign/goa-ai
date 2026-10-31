@@ -235,27 +235,16 @@ func (s *grpcStreamer) Recv() (model.Chunk, error) {
 		// while keeping Response() nil.
 		extraFrame, tailErr := s.stream.RecvWithContext(s.ctx)
 		if tailErr == nil || extraFrame != nil {
-			dupErr := errors.New("gateway: gRPC stream emitted unexpected frame after terminal response")
-			if resp.HasObservedUsage() {
-				if resp.UsageIncomplete {
-					dupErr = model.RetainIncompleteUsage(dupErr, resp.Usage)
-				} else {
-					dupErr = model.RetainUsage(dupErr, resp.Usage)
-				}
-			}
+			dupErr := retainResponseUsage(
+				errors.New("gateway: gRPC stream emitted unexpected frame after terminal response"),
+				resp,
+			)
 			s.finish(nil, dupErr)
 			return nil, dupErr
 		}
 		//nolint:errorlint // Exact io.EOF equality is required by the stream contract.
 		if tailErr != io.EOF {
-			normErr := normalizeTransportError(s.ctx, tailErr)
-			if resp.HasObservedUsage() && model.UsageFromError(normErr) == nil {
-				if resp.UsageIncomplete {
-					normErr = model.RetainIncompleteUsage(normErr, resp.Usage)
-				} else {
-					normErr = model.RetainUsage(normErr, resp.Usage)
-				}
-			}
+			normErr := retainResponseUsage(normalizeTransportError(s.ctx, tailErr), resp)
 			s.finish(nil, normErr)
 			return nil, normErr
 		}
