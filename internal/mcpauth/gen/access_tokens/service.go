@@ -522,18 +522,23 @@ func validatejsonResourceCredentialStateTransport(value *jsonResourceCredentialS
 		err = goa.MergeErrors(err, goa.ValidatePattern("body.granted[*]", e, "^[\\x21\\x23-\\x5b\\x5d-\\x7e]+$"))
 	}
 	if value.State != nil {
-		switch string(value.State.Kind()) {
-		case "ready":
-			actual, _ := value.State.AsReady()
-			if actual != nil {
-				if err2 := validatejsonResourceCredentialReadyTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.State.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.State.Kind()) {
+			case "ready":
+				actual, _ := value.State.AsReady()
+				if actual != nil {
+					if err2 := validatejsonResourceCredentialReadyTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "pending":
-			actual, _ := value.State.AsPending()
-			if !(string(actual) == "exchange") {
-				err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.state.value", string(actual), []any{"exchange"}))
+			case "pending":
+				actual, _ := value.State.AsPending()
+				if !(string(actual) == "exchange") {
+					err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.state.value", string(actual), []any{"exchange"}))
+				}
 			}
 		}
 
@@ -615,18 +620,23 @@ func validateResourceCredentialStateOriginal(value *ResourceCredentialState) (er
 	for _, e := range value.Granted {
 		err = goa.MergeErrors(err, goa.ValidatePattern("value.granted[*]", e, "^[\\x21\\x23-\\x5b\\x5d-\\x7e]+$"))
 	}
-	switch string(value.State.Kind()) {
-	case "ready":
-		actual, _ := value.State.AsReady()
-		if actual != nil {
-			if err2 := validateResourceCredentialReadyOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+
+	if err2 := value.State.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.State.Kind()) {
+		case "ready":
+			actual, _ := value.State.AsReady()
+			if actual != nil {
+				if err2 := validateResourceCredentialReadyOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "pending":
-		actual, _ := value.State.AsPending()
-		if !(string(actual) == "exchange") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.state.value", string(actual), []any{"exchange"}))
+		case "pending":
+			actual, _ := value.State.AsPending()
+			if !(string(actual) == "exchange") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.state.value", string(actual), []any{"exchange"}))
+			}
 		}
 	}
 
@@ -810,6 +820,40 @@ func EncodeBearerToken(in *BearerToken) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateBearerTokenValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateBearerTokenValue(in *BearerToken) error {
+	if err := checkBearerTokenValue(in); err != nil {
+		return fmt.Errorf("validate BearerToken value: %w", err)
+	}
+	if err := validateBearerTokenOriginal(in); err != nil {
+		return fmt.Errorf("validate BearerToken value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "BearerToken")
+	}
+
+	var body *jsonBearerTokenTransport
+	{
+		body = &jsonBearerTokenTransport{
+			AccessToken:  &in.AccessToken,
+			TokenType:    &in.TokenType,
+			Scope:        in.Scope,
+			RefreshToken: in.RefreshToken,
+		}
+		if in.ExpiresIn != nil {
+			expiresIn := bearerTokenInt64Transport(*in.ExpiresIn)
+			body.ExpiresIn = &expiresIn
+		}
+	}
+	if err := validatejsonBearerTokenTransport(body); err != nil {
+		return fmt.Errorf("validate BearerToken value: %w", err)
+	}
+	return nil
+}
+
 // DecodeBearerToken checks JSON field names from the Goa design and returns a service value.
 func DecodeBearerToken(data []byte) (out *BearerToken, err error) {
 	root, err := readStrictJSON(data)
@@ -873,6 +917,35 @@ func EncodeResourceCredentialReady(in *ResourceCredentialReady) ([]byte, error) 
 		return nil, fmt.Errorf("encode ResourceCredentialReady JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateResourceCredentialReadyValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateResourceCredentialReadyValue(in *ResourceCredentialReady) error {
+	if err := checkResourceCredentialReadyValue(in); err != nil {
+		return fmt.Errorf("validate ResourceCredentialReady value: %w", err)
+	}
+	if err := validateResourceCredentialReadyOriginal(in); err != nil {
+		return fmt.Errorf("validate ResourceCredentialReady value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ResourceCredentialReady")
+	}
+
+	var body *jsonResourceCredentialReadyTransport
+	{
+		body = &jsonResourceCredentialReadyTransport{
+			Obtained: &in.Obtained,
+			Issuance: &in.Issuance,
+		}
+		body.Token = encodeBearerTokenToBearerTokenTransport(in.Token)
+	}
+	if err := validatejsonResourceCredentialReadyTransport(body); err != nil {
+		return fmt.Errorf("validate ResourceCredentialReady value: %w", err)
+	}
+	return nil
 }
 
 // DecodeResourceCredentialReady checks JSON field names from the Goa design and returns a service value.
@@ -965,6 +1038,67 @@ func EncodeResourceCredentialState(in *ResourceCredentialState) ([]byte, error) 
 		return nil, fmt.Errorf("encode ResourceCredentialState JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateResourceCredentialStateValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateResourceCredentialStateValue(in *ResourceCredentialState) error {
+	if err := checkResourceCredentialStateValue(in); err != nil {
+		return fmt.Errorf("validate ResourceCredentialState value: %w", err)
+	}
+	if err := validateResourceCredentialStateOriginal(in); err != nil {
+		return fmt.Errorf("validate ResourceCredentialState value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "ResourceCredentialState")
+	}
+
+	var body *jsonResourceCredentialStateTransport
+	{
+		body = &jsonResourceCredentialStateTransport{}
+		body.Binding = make([]string, len(in.Binding))
+		for i, val := range in.Binding {
+			body.Binding[i] = val
+		}
+		if in.Requested != nil {
+			body.Requested = make([]string, len(in.Requested))
+			for i, val := range in.Requested {
+				body.Requested[i] = val
+			}
+		}
+		if in.Granted != nil {
+			body.Granted = make([]string, len(in.Granted))
+			for i, val := range in.Granted {
+				body.Granted[i] = val
+			}
+		}
+		var stateValue jsonStateTransport
+		switch string(in.State.Kind()) {
+		case "ready":
+			actual, _ := in.State.AsReady()
+			var obj *jsonResourceCredentialReadyTransport
+			if actual != nil {
+				obj = encodeResourceCredentialReadyToResourceCredentialReadyTransport(actual)
+			}
+			u := stateValue
+			u.SetReady((*jsonResourceCredentialReadyTransport)(obj))
+			stateValue = u
+		case "pending":
+			actual, _ := in.State.AsPending()
+			obj := jsonStateBranchPendingTransport(actual)
+
+			u := stateValue
+			u.SetPending((jsonStateBranchPendingTransport)(obj))
+			stateValue = u
+		}
+		body.State = &stateValue
+	}
+	if err := validatejsonResourceCredentialStateTransport(body); err != nil {
+		return fmt.Errorf("validate ResourceCredentialState value: %w", err)
+	}
+	return nil
 }
 
 // DecodeResourceCredentialState checks JSON field names from the Goa design and returns a service value.

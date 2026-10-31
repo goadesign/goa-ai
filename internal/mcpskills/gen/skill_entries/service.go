@@ -118,18 +118,23 @@ func validatejsonSkillEntryTransport(value *jsonSkillEntryTransport) (err error)
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.uri", *value.URI, goa.FormatURI))
 	}
 	if value.Resources != nil {
-		switch string(value.Resources.Kind()) {
-		case "manifest":
-			actual, _ := value.Resources.AsManifest()
-			if actual != nil {
-				if err2 := validatejsonSkillResourcesBranchManifestTransport(actual); err2 != nil {
-					err = goa.MergeErrors(err, err2)
+
+		if err2 := value.Resources.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(value.Resources.Kind()) {
+			case "manifest":
+				actual, _ := value.Resources.AsManifest()
+				if actual != nil {
+					if err2 := validatejsonSkillResourcesBranchManifestTransport(actual); err2 != nil {
+						err = goa.MergeErrors(err, err2)
+					}
 				}
-			}
-		case "dynamic":
-			actual, _ := value.Resources.AsDynamic()
-			if !(string(actual) == "dynamic") {
-				err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.resources.value", string(actual), []any{"dynamic"}))
+			case "dynamic":
+				actual, _ := value.Resources.AsDynamic()
+				if !(string(actual) == "dynamic") {
+					err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.resources.value", string(actual), []any{"dynamic"}))
+				}
 			}
 		}
 
@@ -233,18 +238,23 @@ func validateSkillEntryOriginal(value *SkillEntry) (err error) {
 		err = goa.MergeErrors(err, goa.MissingFieldError("resources", "value"))
 	}
 	err = goa.MergeErrors(err, goa.ValidateFormat("value.uri", value.URI, goa.FormatURI))
-	switch string(value.Resources.Kind()) {
-	case "manifest":
-		actual, _ := value.Resources.AsManifest()
-		if actual != nil {
-			if err2 := validateSkillResourcesBranchManifestOriginal(actual); err2 != nil {
-				err = goa.MergeErrors(err, err2)
+
+	if err2 := value.Resources.Validate(); err2 != nil {
+		err = goa.MergeErrors(err, err2)
+	} else {
+		switch string(value.Resources.Kind()) {
+		case "manifest":
+			actual, _ := value.Resources.AsManifest()
+			if actual != nil {
+				if err2 := validateSkillResourcesBranchManifestOriginal(actual); err2 != nil {
+					err = goa.MergeErrors(err, err2)
+				}
 			}
-		}
-	case "dynamic":
-		actual, _ := value.Resources.AsDynamic()
-		if !(string(actual) == "dynamic") {
-			err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.resources.value", string(actual), []any{"dynamic"}))
+		case "dynamic":
+			actual, _ := value.Resources.AsDynamic()
+			if !(string(actual) == "dynamic") {
+				err = goa.MergeErrors(err, goa.InvalidEnumValueError("value.resources.value", string(actual), []any{"dynamic"}))
+			}
 		}
 	}
 
@@ -460,6 +470,54 @@ func EncodeSkillEntry(in *SkillEntry) ([]byte, error) {
 	return data, nil
 }
 
+// ValidateSkillEntryValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateSkillEntryValue(in *SkillEntry) error {
+	if err := checkSkillEntryValue(in); err != nil {
+		return fmt.Errorf("validate SkillEntry value: %w", err)
+	}
+	if err := validateSkillEntryOriginal(in); err != nil {
+		return fmt.Errorf("validate SkillEntry value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "SkillEntry")
+	}
+
+	var body *jsonSkillEntryTransport
+	{
+		body = &jsonSkillEntryTransport{
+			URI:         &in.URI,
+			Frontmatter: in.Frontmatter,
+		}
+		var resourcesValue jsonSkillResourcesTransport
+		switch string(in.Resources.Kind()) {
+		case "manifest":
+			actual, _ := in.Resources.AsManifest()
+			var obj jsonSkillResourcesBranchManifestTransport
+			if actual != nil {
+				obj = encodeSkillResourcesManifestToSkillResourcesManifestTransport(actual)
+			}
+			u := resourcesValue
+			u.SetManifest((jsonSkillResourcesBranchManifestTransport)(obj))
+			resourcesValue = u
+		case "dynamic":
+			actual, _ := in.Resources.AsDynamic()
+			obj := jsonSkillResourcesBranchDynamicTransport(actual)
+
+			u := resourcesValue
+			u.SetDynamic((jsonSkillResourcesBranchDynamicTransport)(obj))
+			resourcesValue = u
+		}
+		body.Resources = &resourcesValue
+	}
+	if err := validatejsonSkillEntryTransport(body); err != nil {
+		return fmt.Errorf("validate SkillEntry value: %w", err)
+	}
+	return nil
+}
+
 // DecodeSkillEntry checks JSON field names from the Goa design and returns a service value.
 func DecodeSkillEntry(data []byte) (out *SkillEntry, err error) {
 	root, err := readStrictJSON(data)
@@ -536,6 +594,36 @@ func EncodeSkillFile(in *SkillFile) ([]byte, error) {
 		return nil, fmt.Errorf("encode SkillFile JSON: %w", err)
 	}
 	return data, nil
+}
+
+// ValidateSkillFileValue checks the original Go fields against their declared constraints.
+// It returns validation errors without encoding the value as JSON.
+
+func ValidateSkillFileValue(in *SkillFile) error {
+	if err := checkSkillFileValue(in); err != nil {
+		return fmt.Errorf("validate SkillFile value: %w", err)
+	}
+	if err := validateSkillFileOriginal(in); err != nil {
+		return fmt.Errorf("validate SkillFile value: %w", err)
+	}
+
+	if in == nil {
+		return goa.MissingFieldError("result", "SkillFile")
+	}
+
+	var body *jsonSkillFileTransport
+	{
+		body = &jsonSkillFileTransport{
+			URI:    &in.URI,
+			Digest: &in.Digest,
+		}
+		size := skillEntryInt64Transport(in.Size)
+		body.Size = &size
+	}
+	if err := validatejsonSkillFileTransport(body); err != nil {
+		return fmt.Errorf("validate SkillFile value: %w", err)
+	}
+	return nil
 }
 
 // DecodeSkillFile checks JSON field names from the Goa design and returns a service value.

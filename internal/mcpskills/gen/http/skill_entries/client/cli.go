@@ -36,23 +36,28 @@ func BuildDecodePayload(skillEntriesDecodeBody *string) (*skillentries.SkillEntr
 			err = goa.MergeErrors(err, goa.MissingFieldError("resources", "body"))
 		}
 		err = goa.MergeErrors(err, goa.ValidateFormat("body.uri", body.URI, goa.FormatURI))
-		switch string(body.Resources.Kind()) {
-		case "manifest":
-			actual, _ := body.Resources.AsManifest()
-			for _, e := range actual {
-				if e == nil {
-					err = goa.MergeErrors(err, goa.MissingFieldError("body.resources.value", "[*]"))
-				}
-				if e != nil {
-					if err2 := validateSkillFileRequestBody(e, "body.resources.value[*]"); err2 != nil {
-						err = goa.MergeErrors(err, err2)
+
+		if err2 := body.Resources.Validate(); err2 != nil {
+			err = goa.MergeErrors(err, err2)
+		} else {
+			switch string(body.Resources.Kind()) {
+			case "manifest":
+				actual, _ := body.Resources.AsManifest()
+				for _, e := range actual {
+					if e == nil {
+						err = goa.MergeErrors(err, goa.MissingFieldError("body.resources.value", "[*]"))
+					}
+					if e != nil {
+						if err2 := validateSkillFileRequestBody(e, "body.resources.value[*]"); err2 != nil {
+							err = goa.MergeErrors(err, err2)
+						}
 					}
 				}
-			}
-		case "dynamic":
-			actual, _ := body.Resources.AsDynamic()
-			if !(actual == "dynamic") {
-				err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.resources.value", actual, []any{"dynamic"}))
+			case "dynamic":
+				actual, _ := body.Resources.AsDynamic()
+				if !(actual == "dynamic") {
+					err = goa.MergeErrors(err, goa.InvalidEnumValueError("body.resources.value", actual, []any{"dynamic"}))
+				}
 			}
 		}
 
