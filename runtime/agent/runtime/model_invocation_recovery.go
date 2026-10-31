@@ -177,10 +177,16 @@ func recoverableModelCall(candidate *modelInvocationCandidate) bool {
 }
 
 // candidateRecoveryEligible requires one and only one bounded recovery value
-// plus usage attributed to the same rejected invocation.
+// from a completed fingerprinted response or a pre-response rejection with
+// attributed usage.
 func candidateRecoveryEligible(candidate *modelInvocationCandidate) bool {
-	if candidate == nil || !candidate.usageSeen || candidate.outcome == nil ||
-		len(candidate.outcome.Usage) == 0 {
+	if candidate == nil || candidate.summary || candidate.outcome == nil {
+		return false
+	}
+	completedResponse := candidate.rejectedResponseEvidence != nil &&
+		candidate.rejectedResponseEvidence.SHA256 != ""
+	attributedUsage := candidate.usageSeen && len(candidate.outcome.Usage) > 0
+	if !completedResponse && !attributedUsage {
 		return false
 	}
 	correctionPresent := candidate.recoveryCorrection != ""
@@ -447,7 +453,7 @@ func (j *modelInvocationJournal) selectRecoverableModelResponse(message *model.M
 	var matchedID modelInvocationID
 	for _, id := range j.order {
 		candidate := j.invocations[id]
-		if candidate == nil {
+		if candidate == nil || candidate.summary {
 			continue
 		}
 		contains, err := responseContainsMessage(candidate.response, message)

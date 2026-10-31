@@ -2634,6 +2634,37 @@ Tool schemas are also written to:
 gen/<service>/agents/<agent>/specs/tool_schemas.json
 ```
 
+The catalog identifies its consumer with top-level `agent_id`. Each tool keeps
+its existing `id`, `service`, registration-route `toolset`, `payload`, `result`,
+and `server_data` records. `name` retains the authored tool name without parsing
+the qualified ID. `payload` contains the actual schema advertised to the model,
+including the compiler's removal of runtime-supplied continuation fields.
+`hidden_fields` lists those runtime/provider-supplied fields,
+`requires_ui` reports UI-only availability, and `bounded_result` reports the
+out-of-band result bounds contract. `text_only_payload` contains the generated
+text-only input when available. Every schema is read from the same linked type
+record that emits the corresponding specification; tooling must not rebuild
+snake-case fields, bounded results, or lookup shapes from the authored DSL.
+
+For a tool with consumer input bindings, `input_binding` lists the compiled
+choices:
+
+| Field | Generated contract |
+| --- | --- |
+| `payload` | Ordinary `Bind<Tool>Input` input, with application-owned fields hidden |
+| `text_only_payload` | The ordinary text-only input, when supported |
+| `lookup_payload` | `Bind<Tool>Lookup` input with the declared lookup-key shape, when present |
+| `lookup_text_only_payload` | The text-only lookup input, when supported |
+| `hidden_fields` | Fields supplied outside the ordinary bound model input |
+
+Both ordinary and lookup inputs are listed when `Lookup` is declared. This
+describes available generated shapes, without asserting which installer the
+application invokes or which runtime lookup keys it supplies. For example, a
+lookup input can require a nonempty string key while the ordinary input omits
+the bound field. Runtime planners and executors continue using generated
+`ToolSpec` factories and installed bindings; this JSON catalog is for design
+inspection and does not authorize execution.
+
 ### Agent Tool Exports (`exports/<export>/`)
 
 Generated when an agent exports toolsets (agent-as-tool). Export packages provide:

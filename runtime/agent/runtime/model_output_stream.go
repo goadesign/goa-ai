@@ -23,6 +23,15 @@ type (
 	// historyStatusEmitter publishes one transient operational status update for
 	// the active run.
 	historyStatusEmitter func(ctx context.Context, payload stream.StatusPayload) error
+
+	// historySummaryClientDecoratorKey attaches a planner-scoped decorator to a
+	// model request context so history policies run summary model calls through
+	// the active planner turn's invocation journal and telemetry tracer.
+	historySummaryClientDecoratorKey struct{}
+
+	// historySummaryClientDecorator wraps a history policy's summary client with
+	// the active planner turn's invocation journal and telemetry tracer.
+	historySummaryClientDecorator func(client model.Client) model.Client
 )
 
 // publishModelOutput sends one live model update through the configured stream

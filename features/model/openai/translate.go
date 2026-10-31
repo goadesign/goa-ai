@@ -45,8 +45,13 @@ func translateResponse(
 	if err := preflightResponseSnapshot(resp); err != nil {
 		return nil, outputvalidation.New(model.OutputValidationOutputBounds, err)
 	}
+	usage := translateUsage(resp.Usage, chooseModelID(resp.Model, resolvedModelID), resolvedModelClass)
+	reported := openAIResponseUsageReported(resp)
+	observed := openAIResponseUsageObserved(resp)
 	translated := &model.Response{
-		Usage: translateUsage(resp.Usage, chooseModelID(resp.Model, resolvedModelID), resolvedModelClass),
+		Usage:           usage,
+		UsageReported:   reported,
+		UsageIncomplete: !reported && observed,
 	}
 	var (
 		pendingThinking []model.Part
@@ -461,6 +466,44 @@ func extractAssistantText(content []model.Message) string {
 		}
 	}
 	return text.String()
+}
+
+// openAIResponseUsageReported reports whether an OpenAI response explicitly
+// included complete token usage counters.
+func openAIResponseUsageReported(resp *responses.Response) bool {
+	if resp == nil {
+		return false
+	}
+	return openAIUsageReported(resp.Usage)
+}
+
+// openAIResponseUsageObserved reports whether an OpenAI response included any
+// explicit or non-zero token usage counters.
+func openAIResponseUsageObserved(resp *responses.Response) bool {
+	if resp == nil {
+		return false
+	}
+	return openAIUsageObserved(resp.Usage)
+}
+
+// openAIUsageReported reports whether a ResponseUsage block carries explicit
+// input and output token fields (or non-zero counts when constructed directly).
+func openAIUsageReported(usage responses.ResponseUsage) bool {
+	if usage.JSON.InputTokens.Valid() || usage.JSON.OutputTokens.Valid() || usage.JSON.TotalTokens.Valid() {
+		return usage.JSON.InputTokens.Valid() && usage.JSON.OutputTokens.Valid()
+	}
+	return usage.InputTokens > 0 && usage.OutputTokens > 0
+}
+
+// openAIUsageObserved reports whether a ResponseUsage block carries any
+// explicit JSON usage field or non-zero counter.
+func openAIUsageObserved(usage responses.ResponseUsage) bool {
+	return usage.JSON.InputTokens.Valid() ||
+		usage.JSON.OutputTokens.Valid() ||
+		usage.JSON.TotalTokens.Valid() ||
+		usage.JSON.InputTokensDetails.Valid() ||
+		usage.JSON.OutputTokensDetails.Valid() ||
+		model.HasObservedTokenCounts(translateUsage(usage, "", ""))
 }
 
 func translateUsage(usage responses.ResponseUsage, modelID string, modelClass model.ModelClass) model.TokenUsage {

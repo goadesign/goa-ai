@@ -1,7 +1,6 @@
+// Package temporal verifies that completion and accepted-run queries pin
+// execution identity and reject attempts superseded by retries.
 package temporal
-
-// Completion reads must return evidence from one exact accepted execution and
-// reject a closed attempt whose retry or continuation still owns the operation.
 
 import (
 	"context"
@@ -16,26 +15,25 @@ import (
 	workflowpb "go.temporal.io/api/workflow/v1"
 	workflowservice "go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/client"
+	"google.golang.org/protobuf/types/known/timestamppb"
+
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/internal/startrecipe"
-	"google.golang.org/protobuf/types/known/timestamppb"
 )
 
 type (
 	completionIdentityClient struct {
 		client.Client
-		info              *workflowpb.WorkflowExecutionInfo
-		closed            *historypb.HistoryEvent
-		fetched           string
-		historyExecution  string
-		followingDisabled bool
+		info             *workflowpb.WorkflowExecutionInfo
+		started          *historypb.HistoryEvent
+		closed           *historypb.HistoryEvent
+		fetched          string
+		historyExecution string
 	}
 	completionIdentityHistory struct{ event *historypb.HistoryEvent }
-	completionIdentityRun     struct {
-		client.WorkflowRun
-		owner *completionIdentityClient
-	}
+	completionIdentityRun     struct{ client.WorkflowRun }
 )
 
 func TestQueryRunCompletionPinsAcceptedExecution(t *testing.T) {
@@ -46,11 +44,11 @@ func TestQueryRunCompletionPinsAcceptedExecution(t *testing.T) {
 		name      string
 		memo      *commonpb.Memo
 		successor bool
-		wantError string
+		wantErr   string
 	}{
-		{name: "exact", memo: &commonpb.Memo{Fields: map[string]*commonpb.Payload{startrecipe.MemoKey: payload}}},
-		{name: "missing identity", wantError: "digest is missing"},
-		{name: "retry pending", memo: &commonpb.Memo{Fields: map[string]*commonpb.Payload{startrecipe.MemoKey: payload}}, successor: true, wantError: "has a successor"},
+		{name: "accepted memo", memo: &commonpb.Memo{Fields: map[string]*commonpb.Payload{startrecipe.MemoKey: payload}}},
+		{name: "missing memo", wantErr: "accepted request digest is missing"},
+		{name: "retried close", memo: &commonpb.Memo{Fields: map[string]*commonpb.Payload{startrecipe.MemoKey: payload}}, successor: true, wantErr: "has a successor"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			backend := &completionIdentityClient{info: &workflowpb.WorkflowExecutionInfo{
@@ -60,10 +58,9 @@ func TestQueryRunCompletionPinsAcceptedExecution(t *testing.T) {
 			if test.successor {
 				backend.closed.GetWorkflowExecutionCompletedEventAttributes().NewExecutionRunId = "retry"
 			}
-			e := &Engine{client: backend}
-			got, err := e.QueryRunCompletion(t.Context(), "workflow")
-			if test.wantError != "" {
-				require.ErrorContains(t, err, test.wantError)
+			got, err := (&Engine{client: backend}).QueryRunCompletion(t.Context(), "workflow")
+			if test.wantErr != "" {
+				require.ErrorContains(t, err, test.wantErr)
 				assert.Empty(t, backend.fetched)
 				return
 			}
@@ -72,21 +69,62 @@ func TestQueryRunCompletionPinsAcceptedExecution(t *testing.T) {
 			assert.Equal(t, engine.RunStatusCompleted, got.Status)
 			assert.Equal(t, "accepted-execution", backend.fetched)
 			assert.Equal(t, "accepted-execution", backend.historyExecution)
-			assert.True(t, backend.followingDisabled)
 		})
 	}
+}
+
+func TestQueryAcceptedRunPinsAcceptedExecution(t *testing.T) {
+	digest := [32]byte{1}
+	payload, err := NewAgentDataConverter().ToPayload(digest[:])
+	require.NoError(t, err)
+	subject := genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("agent")}
+	inputPayload, err := NewAgentDataConverter().ToPayloads(&api.RunInput{
+		RunID:     "workflow",
+		Subject:   subject,
+		SessionID: "session-1",
+		TurnID:    "turn-1",
+		SeedEndID: "seed-1",
+		Labels:    map[string]string{"TenantID": "t-1"},
+	})
+	require.NoError(t, err)
+	backend := &completionIdentityClient{
+		info: &workflowpb.WorkflowExecutionInfo{
+			Execution: &commonpb.WorkflowExecution{WorkflowId: "workflow", RunId: "accepted-execution"},
+			Memo:      &commonpb.Memo{Fields: map[string]*commonpb.Payload{startrecipe.MemoKey: payload}},
+			Status:    enumspb.WORKFLOW_EXECUTION_STATUS_RUNNING,
+		},
+		started: &historypb.HistoryEvent{
+			EventType: enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_STARTED,
+			Attributes: &historypb.HistoryEvent_WorkflowExecutionStartedEventAttributes{
+				WorkflowExecutionStartedEventAttributes: &historypb.WorkflowExecutionStartedEventAttributes{Input: inputPayload},
+			},
+		},
+	}
+	got, err := (&Engine{client: backend}).QueryAcceptedRun(t.Context(), "workflow")
+	require.NoError(t, err)
+	assert.Equal(t, subject, got.Subject)
+	assert.Equal(t, "workflow", got.RunID)
+	assert.Equal(t, "session-1", got.SessionID)
+	assert.Equal(t, "turn-1", got.TurnID)
+	assert.Equal(t, "seed-1", got.SeedEndID)
+	assert.Equal(t, map[string]string{"TenantID": "t-1"}, got.Labels)
+	assert.Equal(t, engine.RunStatusRunning, got.Status)
+	assert.Equal(t, "accepted-execution", backend.historyExecution)
 }
 
 func (c *completionIdentityClient) DescribeWorkflowExecution(context.Context, string, string) (*workflowservice.DescribeWorkflowExecutionResponse, error) {
 	return &workflowservice.DescribeWorkflowExecutionResponse{WorkflowExecutionInfo: c.info}, nil
 }
-func (c *completionIdentityClient) GetWorkflowHistory(_ context.Context, _, execution string, _ bool, _ enumspb.HistoryEventFilterType) client.HistoryEventIterator {
+func (c *completionIdentityClient) GetWorkflowHistory(_ context.Context, _, execution string, _ bool, filter enumspb.HistoryEventFilterType) client.HistoryEventIterator {
 	c.historyExecution = execution
+	if filter == enumspb.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT {
+		return &completionIdentityHistory{event: c.started}
+	}
 	return &completionIdentityHistory{event: c.closed}
 }
 func (c *completionIdentityClient) GetWorkflow(_ context.Context, _, execution string) client.WorkflowRun {
 	c.fetched = execution
-	return &completionIdentityRun{owner: c}
+	return completionIdentityRun{}
 }
 func (h *completionIdentityHistory) HasNext() bool { return h.event != nil }
 func (h *completionIdentityHistory) Next() (*historypb.HistoryEvent, error) {
@@ -94,8 +132,13 @@ func (h *completionIdentityHistory) Next() (*historypb.HistoryEvent, error) {
 	h.event = nil
 	return event, nil
 }
-func (r *completionIdentityRun) GetWithOptions(_ context.Context, destination any, options client.WorkflowRunGetOptions) error {
-	r.owner.followingDisabled = options.DisableFollowingRuns
-	*(destination.(**api.RunOutput)) = &api.RunOutput{RunID: "run"}
+func (completionIdentityRun) GetWithOptions(_ context.Context, valuePtr any, opts client.WorkflowRunGetOptions) error {
+	if !opts.DisableFollowingRuns {
+		panic("completion query must not follow successor runs")
+	}
+	*(valuePtr.(**api.RunOutput)) = &api.RunOutput{
+		Subject: genrunidentity.RunSubject{Executor: genrunidentity.NewRunExecutorAgent("agent")},
+		RunID:   "workflow",
+	}
 	return nil
 }

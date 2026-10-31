@@ -133,7 +133,7 @@ func TestBedrockStreamRejectsMissingToolCallIDWithUsage(t *testing.T) {
 		TotalTokens:  9,
 	}
 
-	classified := (&bedrockStreamer{contract: contract}).outputError(usage, err)
+	classified := (&bedrockStreamer{contract: contract}).outputError(&usage, err)
 
 	var validationErr *model.OutputValidationError
 	require.ErrorAs(t, classified, &validationErr)
@@ -649,4 +649,36 @@ func TestChunkProcessorChargesSyntheticCompletionBeforeAppend(t *testing.T) {
 
 	require.ErrorContains(t, err, "retained output exceeds 16777216 bytes")
 	require.Zero(t, cp.completion.fragments.Len())
+}
+
+func TestChunkProcessorRejectedUsageRetainsPartialObservedUsage(t *testing.T) {
+	cp := newChunkProcessor(
+		func(model.Chunk) error { return nil },
+		nil,
+		"test-model-id",
+		model.ModelClassDefault,
+		nil,
+		"",
+	)
+	require.Nil(t, cp.rejectedUsage())
+
+	inTokens := int32(19)
+	require.NoError(t, cp.Handle(&brtypes.ConverseStreamOutputMemberMessageStart{}))
+	require.NoError(t, cp.Handle(&brtypes.ConverseStreamOutputMemberMessageStop{
+		Value: brtypes.MessageStopEvent{StopReason: brtypes.StopReasonEndTurn},
+	}))
+	require.NoError(t, cp.Handle(&brtypes.ConverseStreamOutputMemberMetadata{
+		Value: brtypes.ConverseStreamMetadataEvent{
+			Usage: &brtypes.TokenUsage{
+				InputTokens: &inTokens,
+			},
+		},
+	}))
+	require.False(t, cp.canonical.UsageReported)
+	require.True(t, cp.canonical.UsageIncomplete)
+	require.Equal(t, &model.TokenUsage{
+		Model:       "test-model-id",
+		ModelClass:  model.ModelClassDefault,
+		InputTokens: 19,
+	}, cp.rejectedUsage())
 }

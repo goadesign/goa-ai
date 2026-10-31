@@ -23,6 +23,7 @@ import (
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/internal/errorevidence"
 	"goa.design/goa-ai/runtime/agent/internal/outputcontract"
+	"goa.design/goa-ai/runtime/agent/internal/temporalerrors"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
@@ -809,14 +810,24 @@ func (a *plannerActivityInvocation) failureOutput(ctx context.Context, err error
 		}
 	}
 	publishedText := a.invocations.publishedAssistantText()
-	if publishedText == "" {
+	if publishedText == "" && !a.invocations.hasFinalizedSummaryInvocation() {
 		return nil, err
 	}
 	if contextErr := ctx.Err(); contextErr != nil {
 		return nil, errors.Join(err, contextErr)
 	}
-	failure := hooks.RunFailureFromError(err)
-	failure.DebugMessage = errorevidence.DiagnosticMessage(failure.DebugMessage)
+	var failure *run.Failure
+	if temporalerrors.CancellationOnly(err) {
+		failure = &run.Failure{
+			Message:      "canceled",
+			DebugMessage: errorevidence.DiagnosticMessage(err.Error()),
+			Kind:         planningFailureKindCanceled,
+			Retryable:    false,
+		}
+	} else {
+		failure = hooks.RunFailureFromError(err)
+		failure.DebugMessage = errorevidence.DiagnosticMessage(failure.DebugMessage)
+	}
 	failureEvents := newPlannerEvents(
 		a.events.agentID,
 		a.events.runID,

@@ -141,6 +141,7 @@ func newRequestConfiguredClient(inner model.Client, cache CachePolicy, history H
 type modelInvocationSink interface {
 	contextWindowFailure() error
 	beginModelInvocation(context.Context, model.ModelClass, context.CancelFunc) (modelInvocationID, error)
+	beginSummaryModelInvocation(context.Context, model.ModelClass, context.CancelFunc) (modelInvocationID, error)
 	designateModelInvocation(invocationID modelInvocationID) error
 	stageRejectedModelOutput(
 		invocationID modelInvocationID,
@@ -164,6 +165,7 @@ type modelInvocationProvider struct {
 	inner      model.Provider
 	sink       modelInvocationSink
 	designated bool
+	summary    bool
 	mu         sync.Mutex
 	terminal   error
 }
@@ -201,6 +203,17 @@ func newDesignatedModelInvocationClient(inner model.Client, sink modelInvocation
 	})
 }
 
+// newSummaryModelInvocationClient records a history-compression summary call in
+// the activity journal without making it eligible for planner response selection.
+func newSummaryModelInvocationClient(inner model.Client, sink modelInvocationSink) model.Client {
+	if sink == nil {
+		return inner
+	}
+	return mustWrapModelClient(inner, func(provider model.Provider) model.Provider {
+		return &modelInvocationProvider{inner: provider, sink: sink, summary: true}
+	})
+}
+
 // Complete forwards one raw provider result. The opaque client calls the
 // matching modelInvocationCall only after canonical validation.
 func (c *modelInvocationProvider) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
@@ -233,7 +246,15 @@ func (c *modelInvocationProvider) PrepareClientCall(
 		return ctx, nil, terminal
 	}
 	invocationCtx, cancel := context.WithCancel(ctx)
-	invocationID, err := c.sink.beginModelInvocation(invocationCtx, req.ModelClass, cancel)
+	var (
+		invocationID modelInvocationID
+		err          error
+	)
+	if c.summary {
+		invocationID, err = c.sink.beginSummaryModelInvocation(invocationCtx, req.ModelClass, cancel)
+	} else {
+		invocationID, err = c.sink.beginModelInvocation(invocationCtx, req.ModelClass, cancel)
+	}
 	if err != nil {
 		cancel()
 		return ctx, nil, err

@@ -451,17 +451,31 @@ func TestStreamCloseStopsPump(t *testing.T) {
 }
 
 func TestStreamSurfacesIteratorError(t *testing.T) {
-	stub := &stubGenerativeClient{streamErr: errors.New("boom")}
+	stub := &stubGenerativeClient{
+		streamChunks: []*genai.GenerateContentResponse{{
+			Candidates:    []*genai.Candidate{{Content: &genai.Content{Parts: []*genai.Part{{Text: "partial"}}}}},
+			UsageMetadata: &genai.GenerateContentResponseUsageMetadata{PromptTokenCount: 11, CandidatesTokenCount: 4, TotalTokenCount: 15},
+		}},
+		streamErr: errors.New("boom"),
+	}
 	cl, err := New(stub, Options{DefaultModel: "gemini-2.5-flash"})
 	require.NoError(t, err)
 	s, err := cl.Stream(context.Background(), &model.Request{
 		Messages: []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "go"}}}},
 	})
 	require.NoError(t, err)
+	_, err = s.Recv()
+	require.NoError(t, err)
 	_, recvErr := s.Recv()
 	require.Error(t, recvErr)
 	_, ok := model.AsProviderError(recvErr)
 	assert.True(t, ok)
+	retained := model.UsageFromError(recvErr)
+	require.NotNil(t, retained)
+	assert.Equal(t, 11, retained.InputTokens)
+	assert.Equal(t, 4, retained.OutputTokens)
+	assert.Equal(t, 15, retained.TotalTokens)
+	assert.True(t, model.UsageIncompleteFromError(recvErr))
 }
 
 func TestStreamStructuredOutputEmitsCompletionDeltaAndFinalCompletion(t *testing.T) {

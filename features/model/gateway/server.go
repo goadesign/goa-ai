@@ -1,3 +1,7 @@
+// Package gateway implements the server-side model completion, streaming, and
+// token-counting pipeline with unary and streaming middleware chains. It
+// enforces request contract validation and stream-event ordering before
+// forwarding calls to the underlying model.Client or model.TokenCounter.
 package gateway
 
 import (
@@ -152,12 +156,16 @@ func NewServer(opts ...Option) (*Server, error) {
 				// the provider failure that added the wrapper.
 				//nolint:errorlint // Exact equality is required by the model stream contract.
 				if err == io.EOF {
-					return st.Response(), finishProviderStream(ctx, nil, st.Close())
+					resp := st.Response()
+					if closeErr := retainResponseUsage(finishProviderStream(ctx, nil, st.Close()), resp); closeErr != nil {
+						return nil, closeErr
+					}
+					return resp, nil
 				}
-				return nil, finishProviderStream(ctx, err, st.Close())
+				return nil, retainResponseUsage(finishProviderStream(ctx, err, st.Close()), st.Response())
 			}
 			if err := send(ch); err != nil {
-				return nil, finishProviderStream(ctx, err, st.Close())
+				return nil, retainResponseUsage(finishProviderStream(ctx, err, st.Close()), st.Response())
 			}
 		}
 	}
@@ -171,6 +179,50 @@ func NewServer(opts ...Option) (*Server, error) {
 		stream = cfg.streamMW[i](stream)
 	}
 	return &Server{provider: cfg.provider, unary: unary, stream: stream}, nil
+}
+
+// Complete processes a unary model completion request through the configured
+// middleware chain and returns the complete response. The request flows through
+// all registered UnaryMiddleware in order before reaching the provider client.
+// The context is propagated through the chain and can be used for cancellation,
+// timeouts, and request-scoped values. The request shape is checked before the
+// chain runs, but the returned provider response is not canonicalized or output
+// validated by Server.
+func (s *Server) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
+	if _, err := model.NewRequestContract(req); err != nil {
+		return nil, err
+	}
+	return s.unary(ctx, req)
+}
+
+// Stream processes a streaming model completion request through the configured
+// middleware chain, invoking send for each chunk produced. The send callback
+// must be called sequentially; returning an error from send or from any
+// middleware aborts the stream. A successful call returns the raw provider
+// response separately from the presentation chunks. Server checks the request
+// shape but leaves chunk and response output validation to the consuming
+// model.Client. The context controls the lifetime of the stream.
+func (s *Server) Stream(ctx context.Context, req *model.Request, send func(model.Chunk) error) (*model.Response, error) {
+	if send == nil {
+		return nil, errors.New("gateway: stream send function is required")
+	}
+	if _, err := model.NewRequestContract(req); err != nil {
+		return nil, err
+	}
+	return s.stream(ctx, req, send)
+}
+
+// CountTokens validates and forwards one exact count request when the
+// configured provider supports native token counting.
+func (s *Server) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
+	if _, err := model.NewRequestContract(req); err != nil {
+		return model.TokenCount{}, err
+	}
+	counter, ok := s.provider.(model.TokenCounter)
+	if !ok {
+		return model.TokenCount{}, model.ErrTokenCountingUnsupported
+	}
+	return counter.CountTokens(ctx, req)
 }
 
 // finishProviderStream closes a failed raw provider stream. Model-output
@@ -253,48 +305,16 @@ func joinGatewayErrors(errs ...error) error {
 	return joined
 }
 
-// Complete processes a unary model completion request through the configured
-// middleware chain and returns the complete response. The request flows through
-// all registered UnaryMiddleware in order before reaching the provider client.
-// The context is propagated through the chain and can be used for cancellation,
-// timeouts, and request-scoped values. The request shape is checked before the
-// chain runs, but the returned provider response is not canonicalized or output
-// validated by Server.
-func (s *Server) Complete(ctx context.Context, req *model.Request) (*model.Response, error) {
-	if _, err := model.NewRequestContract(req); err != nil {
-		return nil, err
+// retainResponseUsage attaches any observed usage on resp to err when err does
+// not already carry retained usage.
+func retainResponseUsage(err error, resp *model.Response) error {
+	if err == nil || !resp.HasObservedUsage() || model.UsageFromError(err) != nil {
+		return err
 	}
-	return s.unary(ctx, req)
-}
-
-// Stream processes a streaming model completion request through the configured
-// middleware chain, invoking send for each chunk produced. The send callback
-// must be called sequentially; returning an error from send or from any
-// middleware aborts the stream. A successful call returns the raw provider
-// response separately from the presentation chunks. Server checks the request
-// shape but leaves chunk and response output validation to the consuming
-// model.Client. The context controls the lifetime of the stream.
-func (s *Server) Stream(ctx context.Context, req *model.Request, send func(model.Chunk) error) (*model.Response, error) {
-	if send == nil {
-		return nil, errors.New("gateway: stream send function is required")
+	if resp.UsageIncomplete {
+		return model.RetainIncompleteUsage(err, resp.Usage)
 	}
-	if _, err := model.NewRequestContract(req); err != nil {
-		return nil, err
-	}
-	return s.stream(ctx, req, send)
-}
-
-// CountTokens validates and forwards one exact count request when the
-// configured provider supports native token counting.
-func (s *Server) CountTokens(ctx context.Context, req *model.Request) (model.TokenCount, error) {
-	if _, err := model.NewRequestContract(req); err != nil {
-		return model.TokenCount{}, err
-	}
-	counter, ok := s.provider.(model.TokenCounter)
-	if !ok {
-		return model.TokenCount{}, model.ErrTokenCountingUnsupported
-	}
-	return counter.CountTokens(ctx, req)
+	return model.RetainUsage(err, resp.Usage)
 }
 
 // isNilStreamer rejects typed nil stream implementations before the gateway

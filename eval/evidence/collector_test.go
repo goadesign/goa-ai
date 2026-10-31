@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
@@ -125,6 +126,76 @@ func TestCollectorRejectsContractViolations(t *testing.T) {
 		_, err := c.Finish()
 		assert.ErrorContains(t, err, "orphaned parent tool call IDs")
 	})
+	t.Run("usage without root run", func(t *testing.T) {
+		c := NewCollector()
+		assert.ErrorContains(t, c.Consume(usageEvent("", model.TokenUsage{TotalTokens: 5})), "usage requires an observed root run")
+	})
+}
+
+func TestCollectorRecordsInterleavedAndIdenticalUsage(t *testing.T) {
+	c := NewCollector()
+	rootSummaryUsage := model.TokenUsage{
+		Model:            "claude-haiku-4-5",
+		ModelClass:       model.ModelClassSmall,
+		InputTokens:      120,
+		OutputTokens:     30,
+		TotalTokens:      150,
+		CacheReadTokens:  80,
+		CacheWriteTokens: 20,
+	}
+	rootPlannerUsage := model.TokenUsage{
+		Model:            "claude-sonnet-4-5",
+		ModelClass:       model.ModelClassDefault,
+		InputTokens:      400,
+		OutputTokens:     60,
+		TotalTokens:      460,
+		CacheReadTokens:  200,
+		CacheWriteTokens: 50,
+	}
+	childUsage := model.TokenUsage{
+		Model:        "claude-haiku-4-5",
+		ModelClass:   model.ModelClassSmall,
+		InputTokens:  90,
+		OutputTokens: 15,
+		TotalTokens:  105,
+	}
+	events := []stream.Event{
+		workflowEvent("root", "started", nil),
+		usageEvent("root", rootSummaryUsage),
+		usageEvent("root", rootPlannerUsage),
+		toolStart("root", "svc.agents.helper", "call-1", ""),
+		usageEvent("child", childUsage),
+		usageEvent("child", childUsage),
+		toolEnd("root", "svc.agents.helper", "call-1", "", `{"ok":true}`, nil),
+		usageEvent("root", rootPlannerUsage),
+		workflowEvent("root", "completed", nil),
+		runStreamEnd("child"),
+		runStreamEnd("root"),
+	}
+	for _, event := range events {
+		require.NoError(t, c.Consume(event))
+	}
+	firstSnapshot, err := c.Finish()
+	require.NoError(t, err)
+	expected := []UsageRecord{
+		{RunID: "root", TokenUsage: rootSummaryUsage},
+		{RunID: "root", TokenUsage: rootPlannerUsage},
+		{RunID: "child", TokenUsage: childUsage},
+		{RunID: "child", TokenUsage: childUsage},
+		{RunID: "root", TokenUsage: rootPlannerUsage},
+	}
+	require.Equal(t, expected, firstSnapshot.Usage)
+
+	// Mutating a snapshot or consuming trailing child events does not alter
+	// previously finished snapshots.
+	firstSnapshot.Usage[0].RunID = "mutated"
+	firstSnapshot.Usage[0].TokenUsage.InputTokens = 9999
+	require.NoError(t, c.Consume(usageEvent("child", childUsage)))
+	secondSnapshot, err := c.Finish()
+	require.NoError(t, err)
+	require.Len(t, secondSnapshot.Usage, 6)
+	assert.Equal(t, expected, secondSnapshot.Usage[:5])
+	assert.Equal(t, UsageRecord{RunID: "child", TokenUsage: childUsage}, secondSnapshot.Usage[5])
 }
 
 // toolStart builds a synthetic tool_start event for tests.
@@ -181,5 +252,22 @@ func runStreamEnd(runID string) stream.Event {
 	return stream.RunStreamEnd{
 		Base: stream.NewBase(stream.EventRunStreamEnd, runID, "session", stream.RunStreamEndPayload{}),
 		Data: stream.RunStreamEndPayload{},
+	}
+}
+
+// usageEvent builds a synthetic usage event for tests.
+func usageEvent(runID string, usage model.TokenUsage) stream.Event {
+	payload := stream.UsagePayload{
+		Model:            usage.Model,
+		ModelClass:       usage.ModelClass,
+		InputTokens:      usage.InputTokens,
+		OutputTokens:     usage.OutputTokens,
+		TotalTokens:      usage.TotalTokens,
+		CacheReadTokens:  usage.CacheReadTokens,
+		CacheWriteTokens: usage.CacheWriteTokens,
+	}
+	return stream.Usage{
+		Base: stream.NewBase(stream.EventUsage, runID, "session", payload),
+		Data: payload,
 	}
 }

@@ -67,6 +67,7 @@ import (
 	"math"
 	"time"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 )
 
@@ -302,6 +303,36 @@ type (
 		// WorkflowError is the final error returned by a failed, canceled, or timed
 		// out workflow.
 		WorkflowError error
+	}
+
+	// AcceptedRun captures the immutable run identity and current engine status
+	// of an accepted workflow execution before its first durable session event
+	// is appended.
+	AcceptedRun struct {
+		// Subject is the canonical subject of the accepted workflow execution.
+		Subject genrunidentity.RunSubject
+		// RunID is the accepted workflow's run identifier.
+		RunID string
+		// SessionID is the session identifier carried on the accepted run input.
+		SessionID string
+		// TurnID is the initial turn identifier carried on the accepted run input.
+		TurnID string
+		// SeedEndID is the durable run seed identifier for child runs started via StartChildWorkflow.
+		SeedEndID string
+		// Labels are the caller-supplied labels carried on the accepted run input.
+		Labels map[string]string
+		// Status is the current engine lifecycle status of the accepted execution.
+		Status RunStatus
+		// CompletedAt is the engine completion timestamp when Status is terminal.
+		CompletedAt time.Time
+	}
+
+	// AcceptedRunQuerier is an optional Engine extension that inspects an
+	// accepted workflow execution's immutable identity metadata and current
+	// engine status without restoring workflow execution state or decoding
+	// full run inputs on completion queries.
+	AcceptedRunQuerier interface {
+		QueryAcceptedRun(ctx context.Context, workflowID string) (AcceptedRun, error)
 	}
 
 	// WorkflowDefinition binds a workflow handler to a logical name and default queue.

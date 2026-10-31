@@ -33,6 +33,7 @@ type (
 	modelInvocationCandidate struct {
 		response                 *model.Response
 		responseEvidence         model.ResponseEvidence
+		summary                  bool
 		usageSeen                bool
 		finished                 bool
 		requestModelClass        model.ModelClass
@@ -99,6 +100,27 @@ func (j *modelInvocationJournal) beginModelInvocation(
 	requestModelClass model.ModelClass,
 	cancel context.CancelFunc,
 ) (modelInvocationID, error) {
+	return j.beginModelInvocationWithRole(ctx, requestModelClass, cancel, false)
+}
+
+// beginSummaryModelInvocation creates a place to save one history-compression
+// summary model call without making it eligible for planner response selection.
+func (j *modelInvocationJournal) beginSummaryModelInvocation(
+	ctx context.Context,
+	requestModelClass model.ModelClass,
+	cancel context.CancelFunc,
+) (modelInvocationID, error) {
+	return j.beginModelInvocationWithRole(ctx, requestModelClass, cancel, true)
+}
+
+// beginModelInvocationWithRole records one planner or summary model call in the
+// activity journal.
+func (j *modelInvocationJournal) beginModelInvocationWithRole(
+	ctx context.Context,
+	requestModelClass model.ModelClass,
+	cancel context.CancelFunc,
+	summary bool,
+) (modelInvocationID, error) {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if err := j.sealedError(); err != nil {
@@ -108,11 +130,13 @@ func (j *modelInvocationJournal) beginModelInvocation(
 		return modelInvocationID{}, j.outputErr
 	}
 	var historyContext *api.HistoryContext
-	if value := ctx.Value(preparedHistoryKey{}); value != nil {
-		var ok bool
-		historyContext, ok = value.(*api.HistoryContext)
-		if !ok {
-			return modelInvocationID{}, errors.New("model invocation has invalid prepared history context")
+	if !summary {
+		if value := ctx.Value(preparedHistoryKey{}); value != nil {
+			var ok bool
+			historyContext, ok = value.(*api.HistoryContext)
+			if !ok {
+				return modelInvocationID{}, errors.New("model invocation has invalid prepared history context")
+			}
 		}
 	}
 	id := provenance.New()
@@ -120,6 +144,7 @@ func (j *modelInvocationJournal) beginModelInvocation(
 		j.invocations = make(map[modelInvocationID]*modelInvocationCandidate)
 	}
 	j.invocations[id] = &modelInvocationCandidate{
+		summary:           summary,
 		requestModelClass: requestModelClass,
 		cancel:            cancel,
 		done:              make(chan struct{}),
@@ -203,6 +228,9 @@ func (j *modelInvocationJournal) designateModelInvocation(id modelInvocationID) 
 	if candidate == nil {
 		return errors.New("cannot designate an unknown model invocation")
 	}
+	if candidate.summary {
+		return errors.New("cannot designate a history summary model invocation")
+	}
 	j.designated = id
 	return nil
 }
@@ -254,15 +282,18 @@ func (j *modelInvocationJournal) recordRejectedModelUsageTotal(
 	if candidate == nil {
 		return errors.New("rejected model usage references an unknown invocation")
 	}
-	rejected = candidate.attributeUsage(rejected)
 	previous := candidate.usage
 	previousSeen := candidate.usageSeen
-	candidate.usage = rejected
 	candidate.usageSeen = true
+	if model.HasObservedTokenCounts(rejected) {
+		candidate.usage = candidate.attributeUsage(rejected)
+	} else {
+		candidate.usage = model.TokenUsage{}
+	}
 	var activityUsage model.TokenUsage
 	for _, id := range j.order {
 		invocation := j.invocations[id]
-		if invocation == nil || !invocation.usageSeen {
+		if invocation == nil || !invocation.usageSeen || !model.HasObservedTokenCounts(invocation.usage) {
 			continue
 		}
 		var err error
@@ -323,7 +354,7 @@ func (j *modelInvocationJournal) saveModelResponse(
 	}
 	candidate.response = captured
 	candidate.responseEvidence = model.EvidenceForResponse(response)
-	if !candidate.usageSeen && hasTokenCounts(response.Usage) {
+	if !candidate.usageSeen && model.HasObservedTokenCounts(response.Usage) {
 		responseUsage := candidate.attributeUsage(response.Usage)
 		usage, err := model.AddTokenUsage(j.usage, responseUsage)
 		if err != nil {
@@ -371,9 +402,15 @@ func (j *modelInvocationJournal) recordModelChunk(
 	switch chunk.(type) {
 	case model.TextChunk, model.ThinkingChunk, model.ToolCallChunk, model.ToolCallDeltaChunk,
 		model.CompletionChunk, model.CompletionDeltaChunk:
-		j.outputObserved = true
+		if !candidate.summary {
+			j.outputObserved = true
+		}
 	}
 	if usage, ok := chunk.(model.UsageChunk); ok {
+		if !model.HasObservedTokenCounts(usage.Usage) {
+			j.mu.Unlock()
+			return nil
+		}
 		attributed := candidate.attributeUsage(usage.Usage)
 		activityUsage, err := model.AddTokenUsage(j.usage, attributed)
 		if err != nil {
@@ -503,7 +540,7 @@ func (j *modelInvocationJournal) exportModelInvocation(
 	var hasOwner bool
 	if response != nil {
 		for id, candidate := range j.invocations {
-			if candidate.response == nil {
+			if candidate.summary || candidate.response == nil {
 				continue
 			}
 			for messageIndex := range candidate.response.Content {
@@ -524,7 +561,14 @@ func (j *modelInvocationJournal) exportModelInvocation(
 			}
 		}
 	}
-	if len(j.invocations) == 0 {
+	hasPlannerInvocations := false
+	for _, candidate := range j.invocations {
+		if candidate != nil && !candidate.summary {
+			hasPlannerInvocations = true
+			break
+		}
+	}
+	if !hasPlannerInvocations && j.designated.IsZero() && !hasOwner {
 		return nil, nil
 	}
 	var selected *modelInvocationCandidate
@@ -532,7 +576,7 @@ func (j *modelInvocationJournal) exportModelInvocation(
 	var selectedOwner modelInvocationMessageOwner
 	var selectedHasOwner bool
 	for id, candidate := range j.invocations {
-		if candidate.response == nil || candidate.err != nil {
+		if candidate.summary || candidate.response == nil || candidate.err != nil {
 			continue
 		}
 		if !j.designated.IsZero() && !hasOwner && id != j.designated {
@@ -642,7 +686,7 @@ func (j *modelInvocationJournal) publishUsage(ctx context.Context, events planne
 	usageEvents := make([]model.TokenUsage, 0, len(j.order))
 	for _, id := range j.order {
 		candidate := j.invocations[id]
-		if candidate != nil && candidate.usage != (model.TokenUsage{}) {
+		if candidate != nil && model.HasObservedTokenCounts(candidate.usage) {
 			usageEvents = append(usageEvents, candidate.usage)
 		}
 	}
@@ -650,6 +694,20 @@ func (j *modelInvocationJournal) publishUsage(ctx context.Context, events planne
 	for _, usage := range usageEvents {
 		events.UsageDelta(ctx, usage)
 	}
+}
+
+// hasFinalizedSummaryInvocation reports whether this planner activity executed
+// and finalized at least one history-compression summary model call.
+func (j *modelInvocationJournal) hasFinalizedSummaryInvocation() bool {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	for _, id := range j.order {
+		candidate := j.invocations[id]
+		if candidate != nil && candidate.summary && candidate.finished && candidate.outcome != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func (j *modelInvocationJournal) publishedAssistantText() string {
@@ -663,16 +721,6 @@ func (j *modelInvocationJournal) publishedAssistantText() string {
 func (c *modelInvocationCandidate) attributeUsage(usage model.TokenUsage) model.TokenUsage {
 	usage.ModelClass = c.requestModelClass
 	return usage
-}
-
-// hasTokenCounts reports whether a terminal response actually reported usage
-// rather than carrying only request identity stamped by validation.
-func hasTokenCounts(usage model.TokenUsage) bool {
-	return usage.InputTokens != 0 ||
-		usage.OutputTokens != 0 ||
-		usage.TotalTokens != 0 ||
-		usage.CacheReadTokens != 0 ||
-		usage.CacheWriteTokens != 0
 }
 
 // liveModelOutputEventsLocked converts one provider chunk into the client
@@ -911,7 +959,7 @@ func modelInvocationOwnsAnyCall(
 ) bool {
 	ids := make(map[string]struct{})
 	for _, candidate := range invocations {
-		if candidate.response == nil {
+		if candidate.summary || candidate.response == nil {
 			continue
 		}
 		for _, call := range candidate.response.ToolCalls() {

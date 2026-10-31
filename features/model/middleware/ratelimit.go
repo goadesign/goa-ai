@@ -57,10 +57,12 @@ type (
 	// Opening a stream is not success because the provider can return a rate
 	// limit after earlier chunks have already arrived.
 	limitedStreamer struct {
-		next      model.Streamer
-		limiter   *AdaptiveRateLimiter
-		reserved  int
-		usage     model.TokenUsage
+		next     model.Streamer
+		limiter  *AdaptiveRateLimiter
+		reserved int
+		usage    model.TokenUsage
+		// usageSeen records whether the stream emitted a UsageChunk or terminal Response usage.
+		usageSeen bool
 		settleErr error
 		once      sync.Once
 	}
@@ -227,11 +229,11 @@ func (c *limitedProvider) Complete(ctx context.Context, req *model.Request) (*mo
 	resp, err := c.next.Complete(ctx, req)
 	if c.limiter.reconcileUsage {
 		if err != nil {
-			if settleErr := c.limiter.settle(reserved, model.UsageFromError(err)); settleErr != nil {
+			if settleErr := c.limiter.settleError(reserved, err); settleErr != nil {
 				err = errors.Join(err, settleErr)
 			}
 		} else {
-			err = c.limiter.settle(reserved, &resp.Usage)
+			err = c.limiter.settleResponse(reserved, resp)
 		}
 	}
 	c.limiter.observe(err)
@@ -250,7 +252,7 @@ func (c *limitedProvider) Stream(ctx context.Context, req *model.Request) (model
 	stream, err := c.next.Stream(ctx, req)
 	if err != nil {
 		if c.limiter.reconcileUsage {
-			if settleErr := c.limiter.settle(reserved, model.UsageFromError(err)); settleErr != nil {
+			if settleErr := c.limiter.settleError(reserved, err); settleErr != nil {
 				err = errors.Join(err, settleErr)
 			}
 		}
@@ -281,6 +283,7 @@ func (s *limitedStreamer) Recv() (model.Chunk, error) {
 				return nil, usageErr
 			}
 			s.usage = usage
+			s.usageSeen = true
 		}
 	}
 	if err != nil {
@@ -321,15 +324,18 @@ func (s *limitedStreamer) Close() error {
 // unfinished stream uses retained usage or the usage chunks already received.
 func (s *limitedStreamer) settle(err error) error {
 	if usage := model.UsageFromError(err); usage != nil {
-		return s.limiter.settle(s.reserved, usage)
+		return s.limiter.settleError(s.reserved, err)
 	}
 	//nolint:errorlint // Only literal EOF proves a complete provider response.
 	if err == io.EOF {
-		if response := s.next.Response(); response != nil {
-			return s.limiter.settle(s.reserved, &response.Usage)
+		if response := s.next.Response(); response.HasObservedUsage() {
+			return s.limiter.settleResponse(s.reserved, response)
 		}
 	}
-	return s.limiter.settle(s.reserved, &s.usage)
+	if s.usageSeen {
+		return s.limiter.settleIncomplete(s.reserved, &s.usage)
+	}
+	return s.limiter.settle(s.reserved, nil)
 }
 
 // Response returns the provider's response after clean stream completion.
@@ -400,10 +406,57 @@ func (l *AdaptiveRateLimiter) waitForBalance(ctx context.Context, cost int) erro
 	}
 }
 
+// settleResponse reconciles a completed provider response against the provisional
+// reservation. Complete usage (including explicit zero) and legacy nonzero usage
+// replace the reservation; incomplete partial usage charges only overruns above
+// the reservation and never refunds unknown rounds or omitted counters.
+func (l *AdaptiveRateLimiter) settleResponse(reserved int, resp *model.Response) error {
+	if !resp.HasObservedUsage() {
+		return nil
+	}
+	if resp.UsageIncomplete {
+		return l.settleIncomplete(reserved, &resp.Usage)
+	}
+	return l.settle(reserved, &resp.Usage)
+}
+
+// settleError reconciles error-retained usage against the provisional
+// reservation. Complete retained usage replaces the reservation; incomplete
+// retained usage charges only overruns above the reservation.
+func (l *AdaptiveRateLimiter) settleError(reserved int, err error) error {
+	usage := model.UsageFromError(err)
+	if usage == nil {
+		return nil
+	}
+	if model.UsageIncompleteFromError(err) {
+		return l.settleIncomplete(reserved, usage)
+	}
+	return l.settle(reserved, usage)
+}
+
+// settleIncomplete charges only overruns when usage metadata is known to be
+// partial, preserving the provisional reservation when partial counts are smaller.
+func (l *AdaptiveRateLimiter) settleIncomplete(reserved int, usage *model.TokenUsage) error {
+	if usage == nil {
+		return nil
+	}
+	if _, err := model.AddTokenUsage(model.TokenUsage{}, *usage); err != nil {
+		return fmt.Errorf("adaptive rate limiting received invalid provider usage: %w", err)
+	}
+	actual := float64(usage.TotalTokens)
+	if actual == 0 {
+		actual = float64(usage.InputTokens) + float64(usage.OutputTokens)
+	}
+	if actual <= float64(reserved) {
+		return nil
+	}
+	return l.settle(reserved, usage)
+}
+
 // settle replaces a request's estimated charge with the provider's reported
 // token total. Unknown usage retains the provisional charge in the limiter.
 func (l *AdaptiveRateLimiter) settle(reserved int, usage *model.TokenUsage) error {
-	if usage == nil || usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.TotalTokens == 0 {
+	if usage == nil {
 		return nil
 	}
 	if _, err := model.AddTokenUsage(model.TokenUsage{}, *usage); err != nil {

@@ -21,6 +21,7 @@ import (
 
 	commonpb "go.temporal.io/api/common/v1"
 
+	genrunidentity "goa.design/goa-ai/registry/gen/runidentity"
 	"goa.design/goa-ai/runtime/agent/api"
 	"goa.design/goa-ai/runtime/agent/engine"
 	"goa.design/goa-ai/runtime/agent/engine/contract"
@@ -62,6 +63,18 @@ type (
 		digest   [sha256.Size]byte
 		workflow string
 		queue    string
+		accepted acceptedRunIdentity
+	}
+
+	// acceptedRunIdentity retains only the immutable identity metadata of an
+	// accepted workflow execution needed by QueryAcceptedRun.
+	acceptedRunIdentity struct {
+		subject   genrunidentity.RunSubject
+		runID     string
+		sessionID string
+		turnID    string
+		seedEndID string
+		labels    map[string]string
 	}
 
 	// wfCtx adapts context.Context into engine.WorkflowContext.
@@ -366,7 +379,12 @@ func (e *eng) StartWorkflow(ctx context.Context, req engine.WorkflowStartRequest
 		return nil, &engine.WorkflowStartConflictError{ID: req.ID}
 	}
 	h, executionCtx := e.reserveWorkflowLocked(context.WithoutCancel(ctx), req.ID)
-	e.recipes[req.ID] = acceptedWorkflowRecipe{digest: snapshot.Digest, workflow: req.Workflow, queue: req.TaskQueue}
+	e.recipes[req.ID] = acceptedWorkflowRecipe{
+		digest:   snapshot.Digest,
+		workflow: req.Workflow,
+		queue:    req.TaskQueue,
+		accepted: extractAcceptedRunIdentity(req.Input),
+	}
 	e.mu.Unlock()
 
 	e.executeWorkflow(executionCtx, req.ID, req.RunTimeout, req.RetryPolicy, def, snapshot.InputPayload, snapshot.Digest, h)
@@ -736,7 +754,12 @@ func (w *wfCtx) StartChildWorkflow(_ context.Context, req engine.ChildWorkflowRe
 		return nil, &engine.ChildWorkflowIDReuseError{ID: req.ID}
 	}
 	h, executionCtx := w.eng.reserveWorkflowLocked(w.ctx, req.ID)
-	w.eng.recipes[req.ID] = acceptedWorkflowRecipe{digest: snapshot.Digest, workflow: req.Workflow, queue: req.TaskQueue}
+	w.eng.recipes[req.ID] = acceptedWorkflowRecipe{
+		digest:   snapshot.Digest,
+		workflow: req.Workflow,
+		queue:    req.TaskQueue,
+		accepted: extractAcceptedRunIdentity(req.Input),
+	}
 	w.eng.mu.Unlock()
 
 	control := w.executionControl()

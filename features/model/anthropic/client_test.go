@@ -57,6 +57,15 @@ func mustAnthropicToolInput(t *testing.T, schema rawjson.Message) model.ToolInpu
 	return input
 }
 
+// mustAnthropicUsage decodes a JSON usage payload into sdk.Usage so SDK JSON
+// presence metadata matches a real Anthropic wire response.
+func mustAnthropicUsage(t *testing.T, raw string) sdk.Usage {
+	t.Helper()
+	var usage sdk.Usage
+	require.NoError(t, json.Unmarshal([]byte(raw), &usage))
+	return usage
+}
+
 type (
 	// stubMessagesClient records the last request per Messages endpoint and
 	// replays canned responses.
@@ -144,10 +153,7 @@ func TestCompleteRejectsMissingToolCallIDWithUsage(t *testing.T) {
 			Input: json.RawMessage(`{"id":"a"}`),
 		}},
 		StopReason: sdk.StopReasonToolUse,
-		Usage: sdk.Usage{
-			InputTokens:  7,
-			OutputTokens: 2,
-		},
+		Usage:      mustAnthropicUsage(t, `{"input_tokens":7,"output_tokens":2}`),
 	}}
 	client, err := New(stub, Options{DefaultModel: "claude-test", MaxTokens: 64})
 	require.NoError(t, err)
@@ -293,10 +299,7 @@ func TestComplete_TextOnly(t *testing.T) {
 			},
 		},
 		StopReason: sdk.StopReasonEndTurn,
-		Usage: sdk.Usage{
-			InputTokens:  10,
-			OutputTokens: 5,
-		},
+		Usage:      mustAnthropicUsage(t, `{"input_tokens":10,"output_tokens":5}`),
 	}
 
 	resp, err := cl.Complete(context.Background(), req)
@@ -1180,4 +1183,47 @@ func TestCompleteUsesNativeStructuredOutputOnSupportedModel(t *testing.T) {
 	schemaType, ok := stub.lastParams.OutputConfig.Format.Schema["type"].(json.RawMessage)
 	require.True(t, ok)
 	assert.JSONEq(t, `"object"`, string(schemaType))
+}
+
+func TestCompleteUsageCompletenessAndValidationErrorUsage(t *testing.T) {
+	var partialMsg sdk.Message
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"id":"msg_1",
+		"type":"message",
+		"role":"assistant",
+		"model":"claude-sonnet-5",
+		"stop_reason":"end_turn",
+		"content":[{"type":"text","text":"{\"answer\":\"yes\"}"}],
+		"usage":{"input_tokens":14}
+	}`), &partialMsg))
+	stub := &stubMessagesClient{resp: &partialMsg}
+	client, err := New(stub, Options{DefaultModel: "claude-sonnet-5", MaxTokens: 64})
+	require.NoError(t, err)
+	resp, err := client.Complete(t.Context(), &model.Request{
+		Messages: []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "hi"}}}},
+	})
+	require.NoError(t, err)
+	assert.False(t, resp.UsageReported)
+	assert.True(t, resp.UsageIncomplete)
+	assert.True(t, resp.HasObservedUsage())
+	assert.Equal(t, 14, resp.Usage.InputTokens)
+
+	// Unreported usage on provider translation rejection leaves Usage() nil.
+	var noUsageInvalidMsg sdk.Message
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"id":"msg_2",
+		"type":"message",
+		"role":"assistant",
+		"model":"claude-sonnet-5",
+		"stop_reason":"end_turn",
+		"content":[{"type":"unknown_block"}]
+	}`), &noUsageInvalidMsg))
+	stub.resp = &noUsageInvalidMsg
+	req := &model.Request{
+		Messages: []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "hi"}}}},
+	}
+	_, err = client.Complete(t.Context(), req)
+	var valErr *model.OutputValidationError
+	require.ErrorAs(t, err, &valErr)
+	assert.Nil(t, valErr.Usage())
 }

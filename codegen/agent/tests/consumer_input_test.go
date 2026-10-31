@@ -5,6 +5,7 @@ package tests
 import (
 	"context"
 	"crypto/sha256"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -251,8 +252,35 @@ func TestConsumerFieldBindingAndLookup(t *testing.T) {
 	})
 
 	assert.Contains(t, fileContent(t, files, "gen/reader/agents/bound/registry.go"), `WithInputBinding([]tools.Ident{ "records.read", "records.search_optional", }, cfg.PrepareInputs)`)
+	catalog := readSchemaCatalogs(t, files)["reader.bound"]
+	var provider catalogTool
+	for _, tool := range catalog.Tools {
+		if tool.ID == "records.read" {
+			provider = tool
+		}
+	}
+	require.NotNil(t, provider.Payload)
+	require.NotNil(t, provider.Result)
+	require.NotNil(t, provider.TextOnlyPayload)
+	require.NotNil(t, provider.InputBinding)
+	consumer := provider.InputBinding
+	require.NotNil(t, consumer.TextOnlyPayload)
+	require.NotNil(t, consumer.LookupPayload)
+	require.NotNil(t, consumer.LookupTextOnlyPayload)
+	artifactTest := fmt.Sprintf(`
+func TestArtifactMatchesInstalledSpecifications(t *testing.T) {
+ original := records.SpecRead()
+ assert.JSONEq(t,%q,string(original.Payload.Schema)); assert.JSONEq(t,%q,string(original.Result.Schema)); assert.JSONEq(t,%q,string(original.ForTextOnly().Payload.Schema))
+ scope := &records.ScopeRef{Name:"north",Details:&records.DetailsRef{Code:"one"}}
+ bound,err := prepareReadInput(original,scope); if err != nil { t.Fatal(err) }
+ assert.JSONEq(t,%q,string(bound.Payload.Schema)); assert.JSONEq(t,%q,string(bound.ForTextOnly().Payload.Schema))
+ lookup,err := prepareReadLookup(original,map[string]*records.ScopeRef{"North":scope}); if err != nil { t.Fatal(err) }
+ assert.JSONEq(t,%q,string(lookup.Payload.Schema)); assert.JSONEq(t,%q,string(lookup.ForTextOnly().Payload.Schema))
+}
+`, string(provider.Payload.Schema), string(provider.Result.Schema), string(provider.TextOnlyPayload.Schema),
+		string(consumer.Payload.Schema), string(consumer.TextOnlyPayload.Schema), string(consumer.LookupPayload.Schema), string(consumer.LookupTextOnlyPayload.Schema))
 	root := writeGeneratedModuleKeepingGen(t, files)
-	require.NoError(t, os.WriteFile(filepath.Join(root, "gen/reader/agents/bound/records/inputbinding/field_binding_test.go"), []byte(consumerFieldBindingBehaviorTest), 0600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, "gen/reader/agents/bound/records/inputbinding/field_binding_test.go"), []byte(consumerFieldBindingBehaviorTest+artifactTest), 0600))
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	defer cancel()
 	runGeneratedGoTestCommand(t, root, exec.CommandContext(ctx, "go", "test", "-mod=mod", "-race", "-count=1", "./gen/reader/agents/bound/records/inputbinding"))
@@ -263,6 +291,7 @@ import (
  "bytes"
  "errors"
  "testing"
+ "github.com/stretchr/testify/assert"
  "generated.local/gen/reader/toolsets/records"
  "goa.design/goa-ai/runtime/agent/tools"
 )

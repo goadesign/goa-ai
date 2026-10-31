@@ -15,10 +15,13 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"goa.design/goa-ai/runtime/agent/api"
+	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/model"
 	"goa.design/goa-ai/runtime/agent/planner"
 	"goa.design/goa-ai/runtime/agent/rawjson"
 	"goa.design/goa-ai/runtime/agent/run"
+	"time"
 )
 
 func TestRequestHistoryActivityCarry(t *testing.T) {
@@ -428,4 +431,654 @@ func requestHistoryAnswer(ctx context.Context, agent planner.PlannerContext, mes
 		return nil, err
 	}
 	return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &response.Content[0]}}, nil
+}
+
+func TestRequestHistoryCompressPublishesSummaryAndPlannerUsage(t *testing.T) {
+	for _, rawClient := range []bool{false, true} {
+		t.Run(map[bool]string{false: "designated planner client", true: "raw model client"}[rawClient], func(t *testing.T) {
+			summaryUsage := model.TokenUsage{
+				Model:        "provider-summary",
+				ModelClass:   model.ModelClassSmall,
+				InputTokens:  11,
+				OutputTokens: 4,
+				TotalTokens:  15,
+			}
+			plannerUsage := model.TokenUsage{
+				Model:        "provider-planner",
+				ModelClass:   model.ModelClassDefault,
+				InputTokens:  20,
+				OutputTokens: 7,
+				TotalTokens:  27,
+			}
+			summaryCalls := 0
+			summaryClient := historyTestClient(t, stubModelClient{
+				complete: func(context.Context, *model.Request) (*model.Response, error) {
+					summaryCalls++
+					return testModelResponseWithUsage(
+						[]model.Message{*assistantTextMsg("Earlier observations")},
+						summaryUsage,
+					), nil
+				},
+			})
+			policy := Compress(
+				summaryClient,
+				HistoryCompressionConfig{CompressAtTurns: 2, KeepMaxTurns: 1},
+				WithModelClass(model.ModelClassSmall),
+			)
+			callPlanner := func(ctx context.Context, agent planner.PlannerContext, messages []*model.Message) (*planner.PlanResult, error) {
+				req := &model.Request{
+					Model:      "planner-model",
+					ModelClass: model.ModelClassDefault,
+					Messages:   messages,
+				}
+				if rawClient {
+					cli, ok := agent.ModelClient("test")
+					require.True(t, ok)
+					resp, err := cli.Complete(ctx, req)
+					if err != nil {
+						return nil, err
+					}
+					return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &resp.Content[0]}}, nil
+				}
+				cli, ok := agent.PlannerModelClient("test")
+				require.True(t, ok)
+				resp, err := cli.Complete(ctx, req)
+				if err != nil {
+					return nil, err
+				}
+				return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &resp.Content[0]}}, nil
+			}
+			pl := &stubPlanner{
+				start: func(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
+					return callPlanner(ctx, in.Agent, in.Messages)
+				},
+				resume: func(ctx context.Context, in *planner.PlanResumeInput) (*planner.PlanResult, error) {
+					return callPlanner(ctx, in.Agent, in.Messages)
+				},
+			}
+			rt := newRequestHistoryRuntime(pl, policy)
+			tracer := &recordingTelemetryTracer{}
+			rt.tracer = tracer
+			rt.models["test"] = mustTestModelClient(stubModelClient{
+				complete: func(context.Context, *model.Request) (*model.Response, error) {
+					return testModelResponseWithUsage(
+						[]model.Message{*assistantTextMsg("answer")},
+						plannerUsage,
+					), nil
+				},
+			})
+
+			input := seedTestPlanInput(t, rt, PlanActivityInput{
+				AgentID:    "service.agent",
+				RunID:      "history-usage-run",
+				RunContext: run.Context{RunID: "history-usage-run", SessionID: "sess-1"},
+			}, requestHistoryMessages())
+			first, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, *input, nil))
+			require.NoError(t, err)
+			require.NotNil(t, first.HistoryContext)
+			assert.Equal(t, 1, summaryCalls)
+			assert.Equal(t, model.TokenUsage{
+				InputTokens:  31,
+				OutputTokens: 11,
+				TotalTokens:  42,
+			}, first.Usage)
+			assert.Equal(t, []model.TokenUsage{summaryUsage, plannerUsage}, plannerOutputUsageEvents(t, first))
+			assert.Equal(t, 2, countFinishedModelCompleteSpans(tracer))
+
+			// Reused summary on the next turn must not re-run or re-bill the summary call.
+			input.HistoryContext = first.HistoryContext
+			second, err := rt.PlanResumeActivity(t.Context(), seedTestPlanInput(t, rt, *input, nil))
+			require.NoError(t, err)
+			require.NotNil(t, second.HistoryContext)
+			assert.Equal(t, 1, summaryCalls)
+			assert.Equal(t, model.TokenUsage{
+				InputTokens:  20,
+				OutputTokens: 7,
+				TotalTokens:  27,
+			}, second.Usage)
+			assert.Equal(t, []model.TokenUsage{plannerUsage}, plannerOutputUsageEvents(t, second))
+		})
+	}
+}
+
+func TestRequestHistoryCompressCertifiesProviderRecoveryAndRetainsSummaryUsage(t *testing.T) {
+	summaryUsage := model.TokenUsage{
+		Model:        "provider-summary",
+		ModelClass:   model.ModelClassSmall,
+		InputTokens:  6,
+		OutputTokens: 3,
+		TotalTokens:  9,
+	}
+	plannerUsage := model.TokenUsage{
+		Model:        "provider-planner",
+		ModelClass:   model.ModelClassDefault,
+		InputTokens:  10,
+		OutputTokens: 5,
+		TotalTokens:  15,
+	}
+	rateLimitErr := model.NewProviderError(
+		"synthetic",
+		"complete",
+		429,
+		model.ProviderErrorKindRateLimited,
+		"rate_limited",
+		"rate limited",
+		"req-1",
+		true,
+		nil,
+	)
+
+	t.Run("summary succeeds then planner fails retryably", func(t *testing.T) {
+		summaryCalls := 0
+		plannerCalls := 0
+		summaryClient := historyTestClient(t, stubModelClient{
+			complete: func(context.Context, *model.Request) (*model.Response, error) {
+				summaryCalls++
+				return testModelResponseWithUsage(
+					[]model.Message{*assistantTextMsg("Earlier observations")},
+					summaryUsage,
+				), nil
+			},
+		})
+		policy := Compress(
+			summaryClient,
+			HistoryCompressionConfig{CompressAtTurns: 2, KeepMaxTurns: 1},
+			WithModelClass(model.ModelClassSmall),
+		)
+		pl := &stubPlanner{start: func(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
+			return requestHistoryAnswer(ctx, in.Agent, in.Messages)
+		}}
+		rt := newRequestHistoryRuntime(pl, policy)
+		rt.models["test"] = mustTestModelClient(stubModelClient{
+			complete: func(context.Context, *model.Request) (*model.Response, error) {
+				plannerCalls++
+				if plannerCalls == 1 {
+					return nil, rateLimitErr
+				}
+				return testModelResponseWithUsage(
+					[]model.Message{*assistantTextMsg("recovered answer")},
+					plannerUsage,
+				), nil
+			},
+		})
+
+		input := seedTestPlanInput(t, rt, PlanActivityInput{
+			AgentID:    "service.agent",
+			RunID:      "history-retry-run",
+			RunContext: run.Context{RunID: "history-retry-run", SessionID: "sess-1", TurnID: "turn-1"},
+			Policy:     &PolicyOverrides{ProviderRetryBudget: time.Hour},
+		}, requestHistoryMessages())
+
+		firstAttempt, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, *input, nil))
+		require.NoError(t, err)
+		require.NotNil(t, firstAttempt.ProviderFailure)
+		assert.Equal(t, model.TokenUsage{
+			InputTokens:  6,
+			OutputTokens: 3,
+			TotalTokens:  9,
+		}, firstAttempt.Usage)
+		assert.Equal(t, []model.TokenUsage{summaryUsage}, plannerOutputUsageEvents(t, firstAttempt))
+
+		// Verify runPlanActivity aggregates the first attempt's summary usage with the retry attempt.
+		plannerCalls = 0
+		summaryCalls = 0
+		base := &workflowConversation{
+			finalization:     &workflowFinalizationState{},
+			providerRecovery: &providerRecoveryBudget{Remaining: time.Hour},
+		}
+		w := &providerRecoveryWorkflow{clock: time.Unix(100, 0)}
+		w.routeWorkflowContext = &routeWorkflowContext{
+			ctx:         t.Context(),
+			runID:       input.RunID,
+			hookRuntime: rt,
+			plannerRoutes: map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error){
+				"plan": func(ctx context.Context, actual *PlanActivityInput) (*PlanActivityOutput, error) {
+					w.clock = w.clock.Add(time.Second)
+					return rt.PlanStartActivity(ctx, actual)
+				},
+			},
+		}
+		budget := w.Now().Add(15 * time.Minute)
+		hard := budget.Add(time.Minute)
+		wf, err := installProviderRecovery(w, base.providerRecovery)
+		require.NoError(t, err)
+		base.providerControl = wf.actor
+		wf.actor.budget = &budget
+		wf.actor.hard = &hard
+		recovered, err := rt.runPlanActivity(
+			wf,
+			"plan",
+			engine.ActivityOptions{StartToCloseTimeout: time.Minute, RetryPolicy: engine.RetryPolicy{MaxAttempts: 1}},
+			*seedTestPlanInput(t, rt, *input, nil),
+			base,
+			budget,
+		)
+		require.NoError(t, err)
+		require.NotNil(t, recovered.Result)
+		assert.Equal(t, 2, summaryCalls)
+		assert.Equal(t, 2, plannerCalls)
+		assert.Equal(t, model.TokenUsage{
+			InputTokens:  22,
+			OutputTokens: 11,
+			TotalTokens:  33,
+		}, recovered.Usage)
+	})
+
+	t.Run("summary fails retryably with usage", func(t *testing.T) {
+		summaryClient := historyTestClient(t, stubModelClient{
+			complete: func(context.Context, *model.Request) (*model.Response, error) {
+				return nil, model.RetainUsage(rateLimitErr, summaryUsage)
+			},
+		})
+		policy := Compress(
+			summaryClient,
+			HistoryCompressionConfig{CompressAtTurns: 2, KeepMaxTurns: 1},
+			WithModelClass(model.ModelClassSmall),
+		)
+		pl := &stubPlanner{start: func(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
+			return requestHistoryAnswer(ctx, in.Agent, in.Messages)
+		}}
+		rt := newRequestHistoryRuntime(pl, policy)
+		input := seedTestPlanInput(t, rt, PlanActivityInput{
+			AgentID:    "service.agent",
+			RunID:      "history-summary-retry-run",
+			RunContext: run.Context{RunID: "history-summary-retry-run"},
+			Policy:     &PolicyOverrides{ProviderRetryBudget: time.Hour},
+		}, requestHistoryMessages())
+
+		out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, *input, nil))
+		require.NoError(t, err)
+		require.NotNil(t, out.ProviderFailure)
+		assert.Equal(t, model.ProviderErrorKindRateLimited, out.ProviderFailure.Kind())
+		assert.Equal(t, model.TokenUsage{
+			InputTokens:  6,
+			OutputTokens: 3,
+			TotalTokens:  9,
+		}, out.Usage)
+		assert.Equal(t, []model.TokenUsage{summaryUsage}, plannerOutputUsageEvents(t, out))
+	})
+}
+
+func TestRequestHistoryCompressPublishesTerminalFailureAndRejectedPlannerUsage(t *testing.T) {
+	summaryUsage := model.TokenUsage{
+		Model:        "provider-summary",
+		ModelClass:   model.ModelClassSmall,
+		InputTokens:  5,
+		OutputTokens: 4,
+		TotalTokens:  9,
+	}
+	plannerRejectedUsage := model.TokenUsage{
+		Model:        "provider-planner",
+		ModelClass:   model.ModelClassDefault,
+		InputTokens:  8,
+		OutputTokens: 3,
+		TotalTokens:  11,
+	}
+	terminalProviderErr := model.NewProviderError(
+		"synthetic",
+		"complete",
+		400,
+		model.ProviderErrorKindInvalidRequest,
+		"invalid_request",
+		"invalid request",
+		"req-terminal",
+		false,
+		nil,
+	)
+
+	t.Run("failed summary terminal with and without usage keeps identical failure shape", func(t *testing.T) {
+		for _, reportUsage := range []bool{true, false} {
+			summaryClient := historyTestClient(t, stubModelClient{
+				complete: func(context.Context, *model.Request) (*model.Response, error) {
+					if reportUsage {
+						return nil, model.RetainUsage(terminalProviderErr, summaryUsage)
+					}
+					return nil, model.RetainUsage(terminalProviderErr, model.TokenUsage{
+						Model:      "provider-summary",
+						ModelClass: model.ModelClassSmall,
+					})
+				},
+			})
+			policy := Compress(
+				summaryClient,
+				HistoryCompressionConfig{CompressAtTurns: 2, KeepMaxTurns: 1},
+				WithModelClass(model.ModelClassSmall),
+			)
+			pl := &stubPlanner{start: func(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
+				return requestHistoryAnswer(ctx, in.Agent, in.Messages)
+			}}
+			rt := newRequestHistoryRuntime(pl, policy)
+			input := seedTestPlanInput(t, rt, PlanActivityInput{
+				AgentID:    "service.agent",
+				RunID:      "history-summary-terminal-run",
+				RunContext: run.Context{RunID: "history-summary-terminal-run"},
+			}, requestHistoryMessages())
+
+			out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, *input, nil))
+			require.NoError(t, err)
+			require.NotNil(t, out)
+			require.NotNil(t, out.PlanningFailure)
+			assert.Equal(t, string(model.ProviderErrorKindInvalidRequest), out.PlanningFailure.Kind)
+			if reportUsage {
+				assert.Equal(t, model.TokenUsage{
+					InputTokens:  5,
+					OutputTokens: 4,
+					TotalTokens:  9,
+				}, out.Usage)
+				assert.Equal(t, []model.TokenUsage{summaryUsage}, plannerOutputUsageEvents(t, out))
+			} else {
+				assert.Equal(t, model.TokenUsage{}, out.Usage)
+				assert.Empty(t, plannerOutputUsageEvents(t, out))
+			}
+		}
+	})
+
+	t.Run("summary followed by rejected planner terminal usage", func(t *testing.T) {
+		summaryClient := historyTestClient(t, stubModelClient{
+			complete: func(context.Context, *model.Request) (*model.Response, error) {
+				return testModelResponseWithUsage(
+					[]model.Message{*assistantTextMsg("Earlier observations")},
+					summaryUsage,
+				), nil
+			},
+		})
+		policy := Compress(
+			summaryClient,
+			HistoryCompressionConfig{CompressAtTurns: 2, KeepMaxTurns: 1},
+			WithModelClass(model.ModelClassSmall),
+		)
+		pl := &stubPlanner{start: func(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
+			client, ok := in.Agent.PlannerModelClient("test")
+			require.True(t, ok)
+			resp, err := client.Complete(ctx, &model.Request{
+				Model:      "planner-model",
+				ModelClass: model.ModelClassDefault,
+				Messages:   in.Messages,
+				Tools:      fitTools(),
+			})
+			if err != nil {
+				return nil, err
+			}
+			return &planner.PlanResult{FinalResponse: &planner.FinalResponse{Message: &resp.Content[0]}}, nil
+		}}
+		rt := newRequestHistoryRuntime(pl, policy)
+		rt.models["test"] = mustTestModelClient(stubModelClient{
+			complete: func(context.Context, *model.Request) (*model.Response, error) {
+				return &model.Response{
+					Content: []model.Message{{
+						Role:  model.ConversationRoleAssistant,
+						Parts: []model.Part{nil},
+					}},
+					StopReason: "end_turn",
+					Usage:      plannerRejectedUsage,
+				}, nil
+			},
+		})
+		input := seedTestPlanInput(t, rt, PlanActivityInput{
+			AgentID:    "service.agent",
+			RunID:      "history-planner-rejected-run",
+			RunContext: run.Context{RunID: "history-planner-rejected-run"},
+		}, requestHistoryMessages())
+
+		out, err := rt.PlanStartActivity(t.Context(), seedTestPlanInput(t, rt, *input, nil))
+		require.NoError(t, err)
+		require.NotNil(t, out.OutputContractFailure)
+		assert.Equal(t, planner.OutputContractOriginModel, out.OutputContractFailure.Origin)
+		assert.Equal(t, model.TokenUsage{
+			InputTokens:  13,
+			OutputTokens: 7,
+			TotalTokens:  20,
+		}, out.Usage)
+		assert.Equal(t, []model.TokenUsage{summaryUsage, plannerRejectedUsage}, plannerOutputUsageEvents(t, out))
+	})
+
+	t.Run("non-summary planner failure returns activity error while summary planner failure preserves terminal failure and failUnproven", func(t *testing.T) {
+		nonSummaryPlanner := &stubPlanner{start: func(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
+			client, ok := in.Agent.PlannerModelClient("test")
+			require.True(t, ok)
+			_, err := client.Complete(ctx, &model.Request{Model: "planner-model", Messages: in.Messages})
+			require.NoError(t, err)
+			return nil, terminalProviderErr
+		}}
+		nonSummaryRT := newTestRuntimeWithPlanner("service.agent", nonSummaryPlanner)
+		nonSummaryRT.models["test"] = mustTestModelClient(stubModelClient{
+			complete: func(context.Context, *model.Request) (*model.Response, error) {
+				return testModelResponse([]model.Message{*assistantTextMsg("answer")}), nil
+			},
+		})
+		nonSummaryInput := seedTestPlanInput(t, nonSummaryRT, PlanActivityInput{
+			AgentID:    "service.agent",
+			RunID:      "non-summary-failure-run",
+			RunContext: run.Context{RunID: "non-summary-failure-run"},
+		}, requestHistoryMessages())
+		nonSummaryOut, nonSummaryErr := nonSummaryRT.PlanStartActivity(t.Context(), seedTestPlanInput(t, nonSummaryRT, *nonSummaryInput, nil))
+		require.Nil(t, nonSummaryOut)
+		require.ErrorIs(t, nonSummaryErr, terminalProviderErr)
+
+		// With a summary call, runPlanActivity returns the same terminal failure facts
+		// and closes active provider recovery via failUnproven while publishing summary usage.
+		rateLimitErr := model.NewProviderError(
+			"synthetic",
+			"complete",
+			429,
+			model.ProviderErrorKindRateLimited,
+			"rate_limited",
+			"rate limited",
+			"req-1",
+			true,
+			nil,
+		)
+		summaryClient := historyTestClient(t, stubModelClient{
+			complete: func(context.Context, *model.Request) (*model.Response, error) {
+				return testModelResponseWithUsage(
+					[]model.Message{*assistantTextMsg("Earlier observations")},
+					summaryUsage,
+				), nil
+			},
+		})
+		policy := Compress(
+			summaryClient,
+			HistoryCompressionConfig{CompressAtTurns: 2, KeepMaxTurns: 1},
+			WithModelClass(model.ModelClassSmall),
+		)
+		attempt := 0
+		pl := &stubPlanner{start: func(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
+			attempt++
+			client, ok := in.Agent.PlannerModelClient("test")
+			require.True(t, ok)
+			_, err := client.Complete(ctx, &model.Request{Model: "planner-model", Messages: in.Messages})
+			if err != nil {
+				return nil, err
+			}
+			return nil, terminalProviderErr
+		}}
+		rt := newRequestHistoryRuntime(pl, policy)
+		rt.models["test"] = mustTestModelClient(stubModelClient{
+			complete: func(context.Context, *model.Request) (*model.Response, error) {
+				if attempt == 1 {
+					return nil, rateLimitErr
+				}
+				return testModelResponse([]model.Message{*assistantTextMsg("answer")}), nil
+			},
+		})
+		input := seedTestPlanInput(t, rt, PlanActivityInput{
+			AgentID:    "service.agent",
+			RunID:      "summary-fail-unproven-run",
+			RunContext: run.Context{RunID: "summary-fail-unproven-run", SessionID: "sess-1", TurnID: "turn-1"},
+			Policy:     &PolicyOverrides{ProviderRetryBudget: time.Hour},
+		}, requestHistoryMessages())
+		base := &workflowConversation{
+			finalization:     &workflowFinalizationState{},
+			providerRecovery: &providerRecoveryBudget{Remaining: time.Hour},
+		}
+		w := &providerRecoveryWorkflow{clock: time.Unix(100, 0)}
+		w.routeWorkflowContext = &routeWorkflowContext{
+			ctx:         t.Context(),
+			runID:       input.RunID,
+			hookRuntime: rt,
+			plannerRoutes: map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error){
+				"plan": func(ctx context.Context, actual *PlanActivityInput) (*PlanActivityOutput, error) {
+					w.clock = w.clock.Add(time.Second)
+					return rt.PlanStartActivity(ctx, actual)
+				},
+			},
+		}
+		budget := w.Now().Add(15 * time.Minute)
+		hard := budget.Add(time.Minute)
+		wf, err := installProviderRecovery(w, base.providerRecovery)
+		require.NoError(t, err)
+		base.providerControl = wf.actor
+		wf.actor.budget = &budget
+		wf.actor.hard = &hard
+		failedOut, failedErr := rt.runPlanActivity(
+			wf,
+			"plan",
+			engine.ActivityOptions{StartToCloseTimeout: time.Minute, RetryPolicy: engine.RetryPolicy{MaxAttempts: 1}},
+			*seedTestPlanInput(t, rt, *input, nil),
+			base,
+			budget,
+		)
+		require.Error(t, failedErr)
+		require.NotNil(t, failedOut)
+		assert.Equal(t, hooks.RunFailureFromError(nonSummaryErr).Kind, hooks.RunFailureFromError(failedErr).Kind)
+		assert.Equal(t, hooks.RunFailureFromError(nonSummaryErr).Retryable, hooks.RunFailureFromError(failedErr).Retryable)
+		assert.Equal(t, model.TokenUsage{
+			InputTokens:  10,
+			OutputTokens: 8,
+			TotalTokens:  18,
+		}, failedOut.Usage)
+	})
+
+	t.Run("summary succeeds and model child context is canceled while activity context stays live", func(t *testing.T) {
+		summaryUsage := model.TokenUsage{
+			Model:        "summary-model",
+			ModelClass:   model.ModelClassSmall,
+			InputTokens:  12,
+			OutputTokens: 5,
+			TotalTokens:  17,
+		}
+		summaryClient := historyTestClient(t, stubModelClient{
+			complete: func(context.Context, *model.Request) (*model.Response, error) {
+				return testModelResponseWithUsage(
+					[]model.Message{*assistantTextMsg("summary before child cancellation")},
+					summaryUsage,
+				), nil
+			},
+		})
+		policy := Compress(
+			summaryClient,
+			HistoryCompressionConfig{CompressAtTurns: 2, KeepMaxTurns: 1},
+			WithModelClass(model.ModelClassSmall),
+		)
+		var cancelChild context.CancelFunc
+		pl := &stubPlanner{start: func(ctx context.Context, in *planner.PlanInput) (*planner.PlanResult, error) {
+			client, ok := in.Agent.PlannerModelClient("test")
+			require.True(t, ok)
+			var childCtx context.Context
+			childCtx, cancelChild = context.WithCancel(ctx)
+			defer cancelChild()
+			_, err := client.Complete(childCtx, &model.Request{Model: "planner-model", Messages: in.Messages})
+			return nil, err
+		}}
+		rt := newRequestHistoryRuntime(pl, policy)
+		rt.models["test"] = mustTestModelClient(stubModelClient{
+			complete: func(callCtx context.Context, _ *model.Request) (*model.Response, error) {
+				cancelChild()
+				return nil, callCtx.Err()
+			},
+		})
+		input := seedTestPlanInput(t, rt, PlanActivityInput{
+			AgentID:    "service.agent",
+			RunID:      "summary-child-canceled-run",
+			RunContext: run.Context{RunID: "summary-child-canceled-run", SessionID: "sess-1", TurnID: "turn-1"},
+			Policy:     &PolicyOverrides{ProviderRetryBudget: time.Hour},
+		}, requestHistoryMessages())
+		base := &workflowConversation{
+			finalization:     &workflowFinalizationState{},
+			providerRecovery: &providerRecoveryBudget{Remaining: time.Hour},
+		}
+		w := &providerRecoveryWorkflow{clock: time.Unix(100, 0)}
+		w.routeWorkflowContext = &routeWorkflowContext{
+			ctx:         t.Context(),
+			runID:       input.RunID,
+			hookRuntime: rt,
+			plannerRoutes: map[string]func(context.Context, *PlanActivityInput) (*PlanActivityOutput, error){
+				"plan": func(ctx context.Context, actual *PlanActivityInput) (*PlanActivityOutput, error) {
+					w.clock = w.clock.Add(time.Second)
+					return rt.PlanStartActivity(ctx, actual)
+				},
+			},
+		}
+		budget := w.Now().Add(15 * time.Minute)
+		hard := budget.Add(time.Minute)
+		wf, err := installProviderRecovery(w, base.providerRecovery)
+		require.NoError(t, err)
+		base.providerControl = wf.actor
+		wf.actor.budget = &budget
+		wf.actor.hard = &hard
+		canceledOut, canceledErr := rt.runPlanActivity(
+			wf,
+			"plan",
+			engine.ActivityOptions{StartToCloseTimeout: time.Minute, RetryPolicy: engine.RetryPolicy{MaxAttempts: 1}},
+			*seedTestPlanInput(t, rt, *input, nil),
+			base,
+			budget,
+		)
+		require.Error(t, canceledErr)
+		require.ErrorIs(t, canceledErr, context.Canceled)
+		assert.Equal(t, runStatusCanceled, terminalRunStatusForError(canceledErr))
+		require.NotNil(t, canceledOut)
+		assert.Empty(t, canceledOut.PublishedAssistantText)
+		assert.Equal(t, model.TokenUsage{
+			InputTokens:  12,
+			OutputTokens: 5,
+			TotalTokens:  17,
+		}, canceledOut.Usage)
+		assert.Equal(t, []model.TokenUsage{summaryUsage}, plannerOutputUsageEvents(t, canceledOut))
+	})
+}
+
+func TestCompressStandaloneLeavesSuppliedClientUnmodified(t *testing.T) {
+	calls := 0
+	client := historyTestClient(t, stubModelClient{
+		complete: func(context.Context, *model.Request) (*model.Response, error) {
+			calls++
+			return testModelResponseWithUsage(
+				[]model.Message{*assistantTextMsg("standalone summary")},
+				model.TokenUsage{InputTokens: 4, OutputTokens: 2, TotalTokens: 6},
+			), nil
+		},
+	})
+	policy := Compress(client, HistoryCompressionConfig{CompressAtTurns: 2, KeepMaxTurns: 1})
+	res, err := policy(t.Context(), &model.Request{Messages: requestHistoryMessages()}, nil, nil)
+	require.NoError(t, err)
+	require.NotNil(t, res.Summary)
+	assert.Equal(t, 1, calls)
+	assert.Contains(t, res.Summary.Message.Parts[0].(model.TextPart).Text, "standalone summary")
+}
+
+func plannerOutputUsageEvents(t *testing.T, out *PlanActivityOutput) []model.TokenUsage {
+	t.Helper()
+	var usage []model.TokenUsage
+	for _, record := range out.PlannerEvents {
+		if record.Type != hooks.Usage {
+			continue
+		}
+		var event hooks.UsageEvent
+		require.NoError(t, json.Unmarshal(record.Payload, &event))
+		usage = append(usage, event.TokenUsage)
+	}
+	return usage
+}
+
+func countFinishedModelCompleteSpans(tracer *recordingTelemetryTracer) int {
+	tracer.mu.Lock()
+	defer tracer.mu.Unlock()
+	count := 0
+	for _, span := range tracer.spans {
+		if strings.HasPrefix(span.name, "chat ") && span.ended {
+			count++
+		}
+	}
+	return count
 }

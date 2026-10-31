@@ -227,14 +227,19 @@ func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Res
 	}
 	response, err := translateSearchResponse(msg, enc)
 	if err != nil {
-		usage := translateAnthropicUsage(msg, enc.model, req.ModelClass)
-		return nil, contract.RejectProviderOutput(
+		rejected := contract.RejectProviderOutput(
 			outputvalidation.RequiredKind(err),
-			&usage,
+			rejectedAnthropicUsage(msg, enc.model, req.ModelClass),
 			err,
 		)
+		if !anthropicMessageUsageReported(msg) && rejected.Usage() != nil {
+			return nil, model.RetainIncompleteUsage(rejected, *rejected.Usage())
+		}
+		return nil, rejected
 	}
 	response.Usage = translateAnthropicUsage(msg, enc.model, req.ModelClass)
+	response.UsageReported = anthropicMessageUsageReported(msg)
+	response.UsageIncomplete = !response.UsageReported && anthropicMessageUsageObserved(msg)
 	return response, nil
 }
 
@@ -1042,7 +1047,8 @@ func translateResponse(msg *sdk.Message, nameMap map[string]string) (*model.Resp
 	if len(assistant.Parts) > 0 {
 		resp.Content = append(resp.Content, assistant)
 	}
-	if u := msg.Usage; u.InputTokens != 0 || u.OutputTokens != 0 || u.CacheReadInputTokens != 0 || u.CacheCreationInputTokens != 0 {
+	if anthropicMessageUsageObserved(msg) {
+		u := msg.Usage
 		resp.Usage = model.TokenUsage{
 			InputTokens:      int(u.InputTokens),
 			OutputTokens:     int(u.OutputTokens),
@@ -1050,6 +1056,8 @@ func translateResponse(msg *sdk.Message, nameMap map[string]string) (*model.Resp
 			CacheReadTokens:  int(u.CacheReadInputTokens),
 			CacheWriteTokens: int(u.CacheCreationInputTokens),
 		}
+		resp.UsageReported = anthropicMessageUsageReported(msg)
+		resp.UsageIncomplete = !resp.UsageReported
 	}
 	resp.StopReason = string(msg.StopReason)
 	if resp.StopReason == "" {
@@ -1088,6 +1096,57 @@ func translateAnthropicUsage(msg *sdk.Message, modelID string, modelClass model.
 		CacheReadTokens:  int(usage.CacheReadInputTokens),
 		CacheWriteTokens: int(usage.CacheCreationInputTokens),
 	}
+}
+
+// rejectedAnthropicUsage returns provider usage for rejected responses only
+// when the provider response reported usage counters.
+func rejectedAnthropicUsage(msg *sdk.Message, modelID string, modelClass model.ModelClass) *model.TokenUsage {
+	if !anthropicMessageUsageObserved(msg) {
+		return nil
+	}
+	usage := translateAnthropicUsage(msg, modelID, modelClass)
+	return &usage
+}
+
+// anthropicMessageUsageReported reports whether an Anthropic message included
+// complete provider usage counters.
+func anthropicMessageUsageReported(msg *sdk.Message) bool {
+	if msg == nil {
+		return false
+	}
+	return anthropicUsageComplete(msg.Usage)
+}
+
+// anthropicMessageUsageObserved reports whether an Anthropic message included
+// any explicit or non-zero usage counter.
+func anthropicMessageUsageObserved(msg *sdk.Message) bool {
+	if msg == nil {
+		return false
+	}
+	return anthropicUsageReported(msg.Usage) ||
+		msg.Usage.InputTokens != 0 ||
+		msg.Usage.OutputTokens != 0 ||
+		msg.Usage.CacheReadInputTokens != 0 ||
+		msg.Usage.CacheCreationInputTokens != 0
+}
+
+// anthropicUsageComplete reports whether an Anthropic usage object carries
+// both required input and output token fields (or non-zero counts when
+// constructed directly without JSON metadata).
+func anthropicUsageComplete(usage sdk.Usage) bool {
+	if anthropicUsageReported(usage) {
+		return usage.JSON.InputTokens.Valid() && usage.JSON.OutputTokens.Valid()
+	}
+	return usage.InputTokens > 0 && usage.OutputTokens > 0
+}
+
+// anthropicUsageReported reports whether an Anthropic usage object included
+// any explicit JSON usage field.
+func anthropicUsageReported(usage sdk.Usage) bool {
+	return usage.JSON.InputTokens.Valid() ||
+		usage.JSON.OutputTokens.Valid() ||
+		usage.JSON.CacheReadInputTokens.Valid() ||
+		usage.JSON.CacheCreationInputTokens.Valid()
 }
 
 // translateCitations preserves every Anthropic text citation in the canonical

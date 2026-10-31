@@ -18,17 +18,24 @@ import (
 )
 
 // retryableProviderFailure accepts one failed model call only after all phases
-// finished. Errors from cleanup, observers, validation, or application code do
+// finished. Preceding history-compression summary calls must have completed
+// cleanly. Errors from cleanup, observers, validation, or application code do
 // not become retry permission just because they wrap a provider error.
 func (j *modelInvocationJournal) retryableProviderFailure(err error) *model.ProviderError {
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	if !j.sealed || j.sealedErr != nil || j.outputObserved ||
-		j.outputErr != nil || len(j.order) != 1 || !j.selected.IsZero() {
+		j.outputErr != nil || len(j.order) == 0 || !j.selected.IsZero() {
 		return nil
 	}
-	candidate := j.invocations[j.order[0]]
-	if !candidate.finished || candidate.outcome == nil || candidate.response != nil ||
+	for _, id := range j.order[:len(j.order)-1] {
+		prior := j.invocations[id]
+		if !cleanCompletedSummaryCall(prior) {
+			return nil
+		}
+	}
+	candidate := j.invocations[j.order[len(j.order)-1]]
+	if candidate == nil || !candidate.finished || candidate.outcome == nil || candidate.response != nil ||
 		candidate.rejectedOutputErr != nil {
 		return nil
 	}
@@ -84,6 +91,30 @@ func (j *modelInvocationJournal) retryableProviderFailure(err error) *model.Prov
 		return nil
 	}
 	return failure
+}
+
+// cleanCompletedSummaryCall reports whether a preceding history-compression
+// summary call finished cleanly with a validated response before a later call
+// in the same planner activity failed.
+func cleanCompletedSummaryCall(candidate *modelInvocationCandidate) bool {
+	if candidate == nil || !candidate.summary || !candidate.finished ||
+		candidate.outcome == nil || candidate.response == nil ||
+		candidate.err != nil || candidate.rejectedOutputErr != nil {
+		return false
+	}
+	outcome := candidate.outcome
+	return outcome.ValidateFinalized() == nil &&
+		outcome.Error() == nil &&
+		outcome.HasFinalizer &&
+		!outcome.Incomplete &&
+		outcome.ProviderCall.Called &&
+		outcome.ProviderCall.Err == nil &&
+		cleanResults(outcome.Validations) &&
+		cleanResults(outcome.CompletionObservers) &&
+		cleanResults(outcome.Finishers) &&
+		cleanResults(outcome.Aborts) &&
+		cleanResults(outcome.Usage) &&
+		cleanResults(outcome.Staging)
 }
 
 // onlyProviderFailure rejects additional error branches. The rate-limit
@@ -211,6 +242,15 @@ func (r *Runtime) runPlanActivity(wfCtx engine.WorkflowContext, activityName str
 			recovery.cancel = nil
 		}
 		if err != nil {
+			if out != nil && model.HasObservedTokenCounts(out.Usage) {
+				aggregated, usageErr := model.AddTokenUsage(usage, out.Usage)
+				if usageErr != nil {
+					return out, errors.Join(err, fmt.Errorf("aggregate provider recovery usage: %w", usageErr))
+				}
+				out.Usage = aggregated
+			} else if out != nil && model.HasObservedTokenCounts(usage) {
+				out.Usage = usage
+			}
 			if recovery != nil {
 				message, stateErr := recovery.state.failUnproven(err)
 				if stateErr != nil {

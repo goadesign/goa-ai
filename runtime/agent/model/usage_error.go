@@ -11,8 +11,9 @@ import (
 type (
 	// usageError adds validated counts without changing the original failure.
 	usageError struct {
-		cause error
-		usage TokenUsage
+		cause      error
+		usage      TokenUsage
+		incomplete bool
 	}
 )
 
@@ -22,6 +23,46 @@ type (
 // Invalid counts add a validation error and are never exposed as valid usage.
 // Passing nil is a programming error: successful calls return Response.Usage.
 func RetainUsage(err error, usage TokenUsage) error {
+	return retainUsageWithCompleteness(err, usage, false)
+}
+
+// RetainIncompleteUsage attaches partial or incomplete observed token usage of a
+// failed invocation to err (for example, when a multi-round search fails after
+// an uncounted round or a response reports only partial counters). Rate limiters
+// charge overruns from incomplete usage without refunding unknown work.
+func RetainIncompleteUsage(err error, usage TokenUsage) error {
+	return retainUsageWithCompleteness(err, usage, true)
+}
+
+// UsageFromError returns an owned copy of reported invocation totals retained
+// by RetainUsage, RetainIncompleteUsage, or an OutputValidationError. It returns
+// nil when no validated counts are available. These totals replace, rather than
+// add to, stream deltas.
+func UsageFromError(err error) *TokenUsage {
+	usage, _ := usageFromError(err)
+	return usage
+}
+
+// UsageIncompleteFromError reports whether the invocation usage retained on err
+// represents partial or incomplete token counts.
+func UsageIncompleteFromError(err error) bool {
+	_, incomplete := usageFromError(err)
+	return incomplete
+}
+
+// Error returns the wrapped cause message unchanged.
+func (e *usageError) Error() string {
+	return e.cause.Error()
+}
+
+// Unwrap returns the wrapped cause.
+func (e *usageError) Unwrap() error {
+	return e.cause
+}
+
+// retainUsageWithCompleteness attaches validated usage and its completeness
+// flag to err while preserving OutputValidationError root identity when present.
+func retainUsageWithCompleteness(err error, usage TokenUsage, incomplete bool) error {
 	if err == nil {
 		panic("model: retaining failed usage requires an error")
 	}
@@ -35,41 +76,33 @@ func RetainUsage(err error, usage TokenUsage) error {
 		owned := *rejected
 		owned.cause = rejected
 		owned.usage = &usage
+		owned.usageIncomplete = incomplete
 		return &owned
 	}
-	return &usageError{cause: err, usage: usage}
+	return &usageError{cause: err, usage: usage, incomplete: incomplete}
 }
 
-// UsageFromError returns an owned copy of reported invocation totals retained
-// by RetainUsage or an OutputValidationError. It returns nil when no validated
-// counts are available. These totals replace, rather than add to, stream deltas.
-func UsageFromError(err error) *TokenUsage {
+// usageFromError walks err in order so an outer retained total supersedes
+// earlier nested counts and returns both the cloned usage and its completeness.
+func usageFromError(err error) (*TokenUsage, bool) {
 	switch failure := err.(type) { //nolint:errorlint // Walk in order so an outer total supersedes earlier nested counts.
 	case *usageError:
 		usage := failure.usage
-		return &usage
+		return &usage, failure.incomplete
 	case *OutputValidationError:
 		if usage := failure.Usage(); usage != nil {
-			return usage
+			return usage, failure.usageIncomplete
 		}
 	}
 	if wrapped, ok := err.(interface{ Unwrap() error }); ok {
-		return UsageFromError(wrapped.Unwrap())
+		return usageFromError(wrapped.Unwrap())
 	}
 	if joined, ok := err.(interface{ Unwrap() []error }); ok {
 		for _, cause := range joined.Unwrap() {
-			if usage := UsageFromError(cause); usage != nil {
-				return usage
+			if usage, incomplete := usageFromError(cause); usage != nil {
+				return usage, incomplete
 			}
 		}
 	}
-	return nil
-}
-
-func (e *usageError) Error() string {
-	return e.cause.Error()
-}
-
-func (e *usageError) Unwrap() error {
-	return e.cause
+	return nil, false
 }

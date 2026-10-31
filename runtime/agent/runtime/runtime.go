@@ -33,7 +33,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -71,7 +70,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/stream"
 	"goa.design/goa-ai/runtime/agent/telemetry"
 	"goa.design/goa-ai/runtime/agent/tools"
-	"goa.design/goa-ai/runtime/agent/transcript"
 	"google.golang.org/genai"
 )
 
@@ -2042,48 +2040,25 @@ func (r *Runtime) ListRunEvents(ctx context.Context, runID, cursor string, limit
 }
 
 // GetRunSnapshot derives a compact snapshot of the run state by replaying the
-// canonical run log.
+// canonical run log, falling back to the engine's accepted execution metadata
+// when a run has been accepted by the engine before its first worker activity
+// records StartRootRun.
 func (r *Runtime) GetRunSnapshot(ctx context.Context, runID string) (*run.Snapshot, error) {
 	return r.loadRunSnapshot(ctx, runID)
 }
 
-// loadRunSnapshot replays the canonical run log without changing stored state.
+// loadRunSnapshot replays the canonical run log without changing stored state,
+// falling back to accepted workflow metadata when StartRootRun has not yet
+// been recorded.
 func (r *Runtime) loadRunSnapshot(ctx context.Context, runID string) (*run.Snapshot, error) {
-	events, err := r.loadRunEvents(ctx, runID)
+	snapshot, found, err := r.loadRecordedRunSnapshotIfPresent(ctx, runID)
 	if err != nil {
 		return nil, err
 	}
-	metadata, err := r.Store.LoadRun(ctx, runID)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := genrunidentity.EncodeRunSubject(&metadata.Subject); err != nil {
-		return nil, fmt.Errorf("saved run subject: %w", err)
-	}
-	parentToolCallID, err := r.snapshotParentToolCall(ctx, metadata)
-	if err != nil {
-		return nil, err
-	}
-	inherited, err := r.snapshotInheritedEvents(ctx, metadata)
-	if err != nil {
-		return nil, err
-	}
-	snapshot, err := newRunSnapshot(events, parentToolCallID, inherited)
-	if err != nil {
-		return nil, err
-	}
-	if !reflect.DeepEqual(snapshot.Subject, metadata.Subject) {
-		return nil, errors.New("run snapshot subject differs from saved run metadata")
-	}
-	if _, isAgent := metadata.Subject.Executor.AsAgent(); !isAgent {
+	if found {
 		return snapshot, nil
 	}
-	messages, err := transcript.BuildMessagesFromRunLogPrefix(ctx, r.Store, runID, events[len(events)-1].ID)
-	if err != nil {
-		return nil, err
-	}
-	setSnapshotTranscript(snapshot, messages)
-	return snapshot, nil
+	return r.loadAcceptedRunSnapshot(ctx, runID)
 }
 
 // isTerminalRunEventType reports the two durable events that permanently end

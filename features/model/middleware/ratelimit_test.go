@@ -83,7 +83,10 @@ func (p *blockingCountingProvider) Complete(context.Context, *model.Request) (*m
 		close(p.entered)
 		<-p.release
 	}
-	return &model.Response{Usage: model.TokenUsage{InputTokens: 20, OutputTokens: 5, TotalTokens: 25}}, nil
+	return &model.Response{
+		Usage:         model.TokenUsage{InputTokens: 20, OutputTokens: 5, TotalTokens: 25},
+		UsageReported: true,
+	}, nil
 }
 
 func (*blockingCountingProvider) Stream(context.Context, *model.Request) (model.Streamer, error) {
@@ -191,9 +194,12 @@ func TestUsageReconciledRateLimiterProviderOverestimateBlocksNextRequest(t *test
 	limiter, err := NewUsageReconciledAdaptiveRateLimiter(t.Context(), nil, "", 300, 300)
 	require.NoError(t, err)
 	raw := &fakeCountingClient{
-		fakeClient: fakeClient{response: &model.Response{Usage: model.TokenUsage{
-			InputTokens: 200, OutputTokens: 60, TotalTokens: 260,
-		}}},
+		fakeClient: fakeClient{response: &model.Response{
+			Usage: model.TokenUsage{
+				InputTokens: 200, OutputTokens: 60, TotalTokens: 260,
+			},
+			UsageReported: true,
+		}},
 		count: model.TokenCount{InputTokens: 100},
 	}
 	provider, err := limiter.WrapProvider(raw)
@@ -239,8 +245,11 @@ func TestUsageReconciledRateLimiterRejectsInvalidProviderUsage(t *testing.T) {
 	l, err := NewUsageReconciledAdaptiveRateLimiter(t.Context(), nil, "", 400, 400)
 	require.NoError(t, err)
 	raw := &fakeCountingClient{
-		fakeClient: fakeClient{response: &model.Response{Usage: model.TokenUsage{TotalTokens: -1}}},
-		count:      model.TokenCount{InputTokens: 100},
+		fakeClient: fakeClient{response: &model.Response{
+			Usage:         model.TokenUsage{TotalTokens: -1},
+			UsageReported: true,
+		}},
+		count: model.TokenCount{InputTokens: 100},
 	}
 	provider, err := l.WrapProvider(raw)
 	require.NoError(t, err)
@@ -260,19 +269,28 @@ func TestUsageReconciledRateLimiterRejectsInvalidProviderUsage(t *testing.T) {
 
 func TestUsageReconciledRateLimiterUsesProviderTotal(t *testing.T) {
 	for _, tc := range []struct {
-		name  string
-		usage model.TokenUsage
-		want  float64
+		name       string
+		usage      model.TokenUsage
+		reported   bool
+		incomplete bool
+		want       float64
 	}{
-		{name: "reported", usage: model.TokenUsage{InputTokens: 17, OutputTokens: 8, TotalTokens: 25}, want: 375},
+		{name: "reported", usage: model.TokenUsage{InputTokens: 17, OutputTokens: 8, TotalTokens: 25}, reported: true, want: 375},
+		{name: "reported_zero", usage: model.TokenUsage{}, reported: true, want: 400},
+		{name: "unreported_nonzero", usage: model.TokenUsage{InputTokens: 17, OutputTokens: 8, TotalTokens: 25}, reported: false, want: 375},
+		{name: "incomplete_partial", usage: model.TokenUsage{InputTokens: 17, OutputTokens: 8, TotalTokens: 25}, incomplete: true, want: 200},
 		{name: "unknown", want: 200},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			l, err := NewUsageReconciledAdaptiveRateLimiter(t.Context(), nil, "", 400, 400)
 			require.NoError(t, err)
 			provider, err := l.WrapProvider(&fakeCountingClient{
-				fakeClient: fakeClient{response: &model.Response{Usage: tc.usage}},
-				count:      model.TokenCount{InputTokens: 100, Exact: false},
+				fakeClient: fakeClient{response: &model.Response{
+					Usage:           tc.usage,
+					UsageReported:   tc.reported,
+					UsageIncomplete: tc.incomplete,
+				}},
+				count: model.TokenCount{InputTokens: 100, Exact: false},
 			})
 			require.NoError(t, err)
 			_, err = provider.Complete(t.Context(), &model.Request{MaxTokens: 100})
@@ -289,9 +307,12 @@ func TestUsageReconciledRateLimiterAdmitsNextRequestFromReportedUsage(t *testing
 	l, err := NewUsageReconciledAdaptiveRateLimiter(t.Context(), nil, "", 300, 300)
 	require.NoError(t, err)
 	provider, err := l.WrapProvider(&fakeCountingClient{
-		fakeClient: fakeClient{response: &model.Response{Usage: model.TokenUsage{
-			InputTokens: 17, OutputTokens: 8, TotalTokens: 25,
-		}}},
+		fakeClient: fakeClient{response: &model.Response{
+			Usage: model.TokenUsage{
+				InputTokens: 17, OutputTokens: 8, TotalTokens: 25,
+			},
+			UsageReported: true,
+		}},
 		count: model.TokenCount{InputTokens: 100, Exact: false},
 	})
 	require.NoError(t, err)
@@ -326,8 +347,11 @@ func TestUsageReconciledRateLimiterStreamFinalTotalReplacesChunks(t *testing.T) 
 	l, err := NewUsageReconciledAdaptiveRateLimiter(t.Context(), nil, "", 400, 400)
 	require.NoError(t, err)
 	stream := &closeTrackingStreamer{
-		chunk:    model.UsageChunk{Usage: model.TokenUsage{InputTokens: 10, OutputTokens: 2, TotalTokens: 12}},
-		response: &model.Response{Usage: model.TokenUsage{InputTokens: 17, OutputTokens: 8, TotalTokens: 25}},
+		chunk: model.UsageChunk{Usage: model.TokenUsage{InputTokens: 10, OutputTokens: 2, TotalTokens: 12}},
+		response: &model.Response{
+			Usage:         model.TokenUsage{InputTokens: 17, OutputTokens: 8, TotalTokens: 25},
+			UsageReported: true,
+		},
 	}
 	provider, err := l.WrapProvider(&fakeCountingClient{
 		fakeClient: fakeClient{stream: stream},
@@ -348,24 +372,46 @@ func TestUsageReconciledRateLimiterStreamFinalTotalReplacesChunks(t *testing.T) 
 }
 
 func TestUsageReconciledRateLimiterEarlyCloseUsesReportedChunks(t *testing.T) {
-	l, err := NewUsageReconciledAdaptiveRateLimiter(t.Context(), nil, "", 400, 400)
-	require.NoError(t, err)
-	provider, err := l.WrapProvider(&fakeCountingClient{
-		fakeClient: fakeClient{stream: &closeTrackingStreamer{
-			chunk: model.UsageChunk{Usage: model.TokenUsage{InputTokens: 10, OutputTokens: 2, TotalTokens: 12}},
-		}},
-		count: model.TokenCount{InputTokens: 100, Exact: false},
+	t.Run("partial chunks below reservation do not refund unfinished stream", func(t *testing.T) {
+		l, err := NewUsageReconciledAdaptiveRateLimiter(t.Context(), nil, "", 400, 400)
+		require.NoError(t, err)
+		provider, err := l.WrapProvider(&fakeCountingClient{
+			fakeClient: fakeClient{stream: &closeTrackingStreamer{
+				chunk: model.UsageChunk{Usage: model.TokenUsage{InputTokens: 10, OutputTokens: 2, TotalTokens: 12}},
+			}},
+			count: model.TokenCount{InputTokens: 100, Exact: false},
+		})
+		require.NoError(t, err)
+		stream, err := provider.Stream(t.Context(), &model.Request{MaxTokens: 100})
+		require.NoError(t, err)
+		_, err = stream.Recv()
+		require.NoError(t, err)
+		require.NoError(t, stream.Close())
+		l.mu.Lock()
+		balance := l.balance
+		l.mu.Unlock()
+		require.InDelta(t, 200, balance, 0.1)
 	})
-	require.NoError(t, err)
-	stream, err := provider.Stream(t.Context(), &model.Request{MaxTokens: 100})
-	require.NoError(t, err)
-	_, err = stream.Recv()
-	require.NoError(t, err)
-	require.NoError(t, stream.Close())
-	l.mu.Lock()
-	balance := l.balance
-	l.mu.Unlock()
-	require.InDelta(t, 388, balance, 0.1)
+	t.Run("partial chunks above reservation charge overrun on early close", func(t *testing.T) {
+		l, err := NewUsageReconciledAdaptiveRateLimiter(t.Context(), nil, "", 400, 400)
+		require.NoError(t, err)
+		provider, err := l.WrapProvider(&fakeCountingClient{
+			fakeClient: fakeClient{stream: &closeTrackingStreamer{
+				chunk: model.UsageChunk{Usage: model.TokenUsage{InputTokens: 150, OutputTokens: 100, TotalTokens: 250}},
+			}},
+			count: model.TokenCount{InputTokens: 100, Exact: false},
+		})
+		require.NoError(t, err)
+		stream, err := provider.Stream(t.Context(), &model.Request{MaxTokens: 100})
+		require.NoError(t, err)
+		_, err = stream.Recv()
+		require.NoError(t, err)
+		require.NoError(t, stream.Close())
+		l.mu.Lock()
+		balance := l.balance
+		l.mu.Unlock()
+		require.InDelta(t, 150, balance, 0.1)
+	})
 }
 
 func TestAdaptiveRateLimiterPublicConstructorsSelectRequestCost(t *testing.T) {

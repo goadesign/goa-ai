@@ -45,6 +45,12 @@ const (
 	// call during finalization. The runtime writes the exact planner termination
 	// reason after run and policy labels have been applied.
 	FinalizationReasonLabel = "goa-ai.finalization_reason"
+
+	// planningFailureKindCanceled marks a PlanningFailure envelope that crossed
+	// the planner activity boundary solely to preserve summary usage or
+	// published assistant text when a child operation returned a cancellation
+	// while the activity context remained live.
+	planningFailureKindCanceled = "canceled"
 )
 
 // finalizeRun selects the configured fixed terminal call for a runtime
@@ -801,9 +807,6 @@ func (r *Runtime) runPlanActivityOnce(
 		if out.Result != nil {
 			return nil, errors.New("runPlanActivity received both PlanResult and PlanningFailure")
 		}
-		if out.PublishedAssistantText == "" {
-			return nil, errors.New("runPlanActivity received PlanningFailure without published assistant text")
-		}
 		if err := validatePlanningFailure(out.PlanningFailure); err != nil {
 			return nil, err
 		}
@@ -886,6 +889,12 @@ func (r *Runtime) runPlanActivityOnce(
 		return out, nil //nolint:nilerr // A completed certificate is a successful activity value; the recovery consumer decides whether to retry or return its error.
 	}
 	if out.PlanningFailure != nil {
+		if out.PlanningFailure.Kind == planningFailureKindCanceled {
+			if out.PlanningFailure.DebugMessage == "" || out.PlanningFailure.DebugMessage == context.Canceled.Error() {
+				return out, context.Canceled
+			}
+			return out, fmt.Errorf("%s: %w", out.PlanningFailure.DebugMessage, context.Canceled)
+		}
 		failure := &planningFailureError{failure: *out.PlanningFailure}
 		if out.PlanningFailure.Kind == hooks.ErrorKindModelRequest {
 			// The activity already published text and returned a classified
@@ -927,6 +936,10 @@ func validatePlanningFailure(failure *run.Failure) error {
 	if failure.Kind == hooks.ErrorKindModelRequest &&
 		(failure.Retryable || failure.Provider != "" || failure.Operation != "" || failure.Code != "" || failure.HTTPStatus != 0) {
 		return errors.New("model request failure must be nonretryable without provider facts")
+	}
+	if failure.Kind == planningFailureKindCanceled &&
+		(failure.Retryable || failure.Provider != "" || failure.Operation != "" || failure.Code != "" || failure.HTTPStatus != 0) {
+		return errors.New("canceled planning failure must be nonretryable without provider facts")
 	}
 	return nil
 }

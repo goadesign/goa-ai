@@ -1174,6 +1174,14 @@ func (s *fakeModelInvocationSink) beginModelInvocation(
 	return s.last, nil
 }
 
+func (s *fakeModelInvocationSink) beginSummaryModelInvocation(
+	ctx context.Context,
+	class model.ModelClass,
+	cancel context.CancelFunc,
+) (modelInvocationID, error) {
+	return s.beginModelInvocation(ctx, class, cancel)
+}
+
 func (s *fakeModelInvocationSink) designateModelInvocation(modelInvocationID) error {
 	return nil
 }

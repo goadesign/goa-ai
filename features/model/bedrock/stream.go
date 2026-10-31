@@ -165,9 +165,9 @@ func (s *bedrockStreamer) run() {
 						processor.started,
 					))
 				} else if err := processor.finishStream(); err != nil {
-					s.setErr(s.outputError(processor.rejectedUsage(), err))
+					s.setErr(s.outputErrorWithCompleteness(processor.rejectedUsage(), !processor.canonical.HasCompleteUsage(), err))
 				} else if rejected != nil {
-					s.setErr(s.outputError(processor.rejectedUsage(), rejected))
+					s.setErr(s.outputErrorWithCompleteness(processor.rejectedUsage(), !processor.canonical.HasCompleteUsage(), rejected))
 				} else {
 					response := processor.response()
 					s.responseMu.Lock()
@@ -185,7 +185,7 @@ func (s *bedrockStreamer) run() {
 					processor.discardSemanticOutput()
 					continue
 				}
-				s.setErr(s.outputError(processor.rejectedUsage(), err))
+				s.setErr(s.outputErrorWithCompleteness(processor.rejectedUsage(), !processor.canonical.HasCompleteUsage(), err))
 				return
 			}
 		}
@@ -214,7 +214,14 @@ func (s *bedrockStreamer) closeProviderStream() error {
 
 // outputError preserves provider and caller flow-control errors while marking
 // malformed Bedrock stream data as output validation.
-func (s *bedrockStreamer) outputError(usage model.TokenUsage, err error) error {
+func (s *bedrockStreamer) outputError(usage *model.TokenUsage, err error) error {
+	return s.outputErrorWithCompleteness(usage, false, err)
+}
+
+// outputErrorWithCompleteness preserves provider and caller flow-control errors
+// while marking malformed Bedrock stream data as output validation and retaining
+// whether the captured usage was incomplete.
+func (s *bedrockStreamer) outputErrorWithCompleteness(usage *model.TokenUsage, incomplete bool, err error) error {
 	if err == nil ||
 		errors.Is(err, context.Canceled) ||
 		errors.Is(err, context.DeadlineExceeded) {
@@ -227,11 +234,15 @@ func (s *bedrockStreamer) outputError(usage model.TokenUsage, err error) error {
 	if errors.As(err, &validationErr) {
 		return err
 	}
-	return s.contract.RejectProviderOutput(
+	rejected := s.contract.RejectProviderOutput(
 		outputvalidation.RequiredKind(err),
-		&usage,
+		usage,
 		err,
 	)
+	if incomplete && rejected.Usage() != nil {
+		return model.RetainIncompleteUsage(rejected, *rejected.Usage())
+	}
+	return rejected
 }
 
 func (s *bedrockStreamer) emitChunk(chunk model.Chunk) error {
@@ -729,7 +740,7 @@ func (p *chunkProcessor) Handle(event any) error {
 				errors.New("bedrock stream: metadata received outside a completed message"),
 			)
 		}
-		if ev.Value.Usage == nil {
+		if !bedrockTokenUsageObserved(ev.Value.Usage) {
 			return p.finishStream()
 		}
 		// Compute ints efficiently with direct nil checks (avoid helper + double cast)
@@ -759,6 +770,8 @@ func (p *chunkProcessor) Handle(event any) error {
 			CacheWriteTokens: cacheWrite,
 		}
 		p.canonical.Usage = usage
+		p.canonical.UsageReported = bedrockTokenUsageComplete(ev.Value.Usage)
+		p.canonical.UsageIncomplete = !p.canonical.UsageReported
 		if err := p.emit(model.UsageChunk{Usage: usage}); err != nil {
 			return err
 		}
@@ -801,9 +814,12 @@ func bedrockTerminalEvidence(event any) bool {
 	}
 }
 
-// rejectedUsage returns scalar usage with resolved identity even when content
-// translation fails before the provider emits metadata.
-func (p *chunkProcessor) rejectedUsage() model.TokenUsage {
+// rejectedUsage returns scalar usage with resolved identity when the stream
+// emitted usage metadata before or after content rejection.
+func (p *chunkProcessor) rejectedUsage() *model.TokenUsage {
+	if !p.canonical.HasObservedUsage() {
+		return nil
+	}
 	usage := p.canonical.Usage
 	if usage.Model == "" {
 		usage.Model = p.modelID
@@ -811,7 +827,7 @@ func (p *chunkProcessor) rejectedUsage() model.TokenUsage {
 	if usage.ModelClass == "" {
 		usage.ModelClass = p.modelClass
 	}
-	return usage
+	return &usage
 }
 
 // response returns the canonical provider response assembled from the completed

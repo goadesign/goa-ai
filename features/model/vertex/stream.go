@@ -62,10 +62,11 @@ type (
 		// response is the canonical model response assembled by the pump.
 		response model.Response
 		// canonical is published atomically when the provider stream completes.
-		canonical      *model.Response
-		retainedBytes  int
-		retainedValues int
-		rejectedUsage  model.TokenUsage
+		canonical               *model.Response
+		retainedBytes           int
+		retainedValues          int
+		rejectedUsage           *model.TokenUsage
+		rejectedUsageIncomplete bool
 
 		// assistant accumulates provider-authored response parts in provider order.
 		assistant model.Message
@@ -101,13 +102,12 @@ func (c *provider) Stream(ctx context.Context, req *model.Request) (model.Stream
 	ctx, cancel := context.WithCancel(ctx)
 	seq := c.models.GenerateContentStream(ctx, prep.modelID, prep.contents, prep.config)
 	s := &geminiStreamer{
-		ctx:           ctx,
-		cancel:        cancel,
-		chunks:        make(chan model.Chunk, 32),
-		done:          make(chan struct{}),
-		contract:      contract,
-		callIDs:       prep.toolCallIDs,
-		rejectedUsage: translateUsage(nil, prep.modelID, prep.modelClass),
+		ctx:      ctx,
+		cancel:   cancel,
+		chunks:   make(chan model.Chunk, 32),
+		done:     make(chan struct{}),
+		contract: contract,
+		callIDs:  prep.toolCallIDs,
 	}
 	go s.run(seq, prep)
 	return s, nil
@@ -128,7 +128,13 @@ func (s *geminiStreamer) Recv() (model.Chunk, error) {
 		}
 		return ch, nil
 	case <-s.ctx.Done():
-		return nil, s.ctx.Err()
+		err := s.ctx.Err()
+		s.mu.Lock()
+		if s.rejectedUsage != nil {
+			err = model.RetainIncompleteUsage(err, *s.rejectedUsage)
+		}
+		s.mu.Unlock()
+		return nil, err
 	}
 }
 
@@ -158,7 +164,9 @@ func (s *geminiStreamer) run(seq func(func(*genai.GenerateContentResponse, error
 	var stopReason string
 	var sawCandidate bool
 	var usageSeen bool
-	var latestUsage model.TokenUsage
+	var sawInputUsage bool
+	var sawOutputUsage bool
+	latestUsage := translateUsage(nil, prep.modelID, prep.modelClass)
 	var grounding *genai.GroundingMetadata
 	var rejected error
 	for resp, err := range seq {
@@ -166,11 +174,27 @@ func (s *geminiStreamer) run(seq func(func(*genai.GenerateContentResponse, error
 			s.setErr(wrapGeminiError("generate_content_stream", err))
 			return
 		}
-		if resp != nil && resp.UsageMetadata != nil {
+		if resp != nil && vertexUsageObserved(resp.UsageMetadata) {
 			// Usage is independent of candidate content and must survive any
 			// later translation rejection.
-			latestUsage = translateUsage(resp.UsageMetadata, prep.modelID, prep.modelClass)
-			s.rejectedUsage = latestUsage
+			frameUsage := translateUsage(resp.UsageMetadata, prep.modelID, prep.modelClass)
+			if vertexUsageInputObserved(resp.UsageMetadata) {
+				latestUsage.InputTokens = frameUsage.InputTokens
+				latestUsage.CacheReadTokens = frameUsage.CacheReadTokens
+				sawInputUsage = true
+			}
+			if vertexUsageOutputObserved(resp.UsageMetadata) {
+				latestUsage.OutputTokens = frameUsage.OutputTokens
+				sawOutputUsage = true
+			}
+			if resp.UsageMetadata.TotalTokenCount > 0 {
+				latestUsage.TotalTokens = frameUsage.TotalTokens
+			}
+			copied := latestUsage
+			s.mu.Lock()
+			s.rejectedUsage = &copied
+			s.rejectedUsageIncomplete = !sawInputUsage || !sawOutputUsage
+			s.mu.Unlock()
 			usageSeen = true
 		}
 		if resp == nil || len(resp.Candidates) == 0 {
@@ -296,7 +320,13 @@ func (s *geminiStreamer) run(seq func(func(*genai.GenerateContentResponse, error
 	}
 	s.response.StopReason = stopReason
 	s.response.OutputLimited = vertexOutputLimited(stopReason)
-	s.response.Usage = latestUsage
+	if usageSeen {
+		s.response.Usage = latestUsage
+		s.response.UsageReported = sawInputUsage && sawOutputUsage
+		s.response.UsageIncomplete = !s.response.UsageReported
+	} else {
+		s.response.Usage = translateUsage(nil, prep.modelID, prep.modelClass)
+	}
 	grounded, err := applyGroundingMetadata(s.assistant.Parts, grounding)
 	if err != nil {
 		s.setErr(outputvalidation.New(model.OutputValidationResponseShape, err))
@@ -488,24 +518,31 @@ func (s *geminiStreamer) emit(ch model.Chunk) {
 // setErr records the terminal pump error surfaced by Recv after chunks
 // closes.
 func (s *geminiStreamer) setErr(err error) {
-	if err != nil &&
-		!errors.Is(err, context.Canceled) &&
-		!errors.Is(err, context.DeadlineExceeded) {
-		if _, providerFailure := model.AsProviderError(err); !providerFailure {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err != nil {
+		_, providerFailure := model.AsProviderError(err)
+		if !errors.Is(err, context.Canceled) &&
+			!errors.Is(err, context.DeadlineExceeded) &&
+			!providerFailure {
 			var validationErr *model.OutputValidationError
 			if !errors.As(err, &validationErr) {
-				usage := s.rejectedUsage
-				err = s.contract.RejectProviderOutput(
+				rejected := s.contract.RejectProviderOutput(
 					outputvalidation.RequiredKind(err),
-					&usage,
+					s.rejectedUsage,
 					err,
 				)
+				if s.rejectedUsageIncomplete && rejected.Usage() != nil {
+					err = model.RetainIncompleteUsage(rejected, *rejected.Usage())
+				} else {
+					err = rejected
+				}
 			}
+		} else if s.rejectedUsage != nil {
+			err = model.RetainIncompleteUsage(err, *s.rejectedUsage)
 		}
 	}
-	s.mu.Lock()
 	s.err = err
-	s.mu.Unlock()
 }
 
 // finalStructuredCompletionPayload validates the fully-accumulated

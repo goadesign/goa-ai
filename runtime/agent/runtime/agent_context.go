@@ -187,6 +187,7 @@ func (c *simplePlannerContext) configuredModelClient(id string, designated bool)
 	// or summarization; preparation runs only on Complete or Stream.
 	m = c.rt.imageSourceClient(m, c.runContext)
 	m = c.rt.historyStatusClient(m, c.runID, c.sessionID)
+	m = c.historySummaryClient(m, id)
 	cli := newRequestConfiguredClient(m, c.cache, c.history, c.agent, c.historyMessages, c.historyContext)
 	// Check and save each provider response before tracing or planner code can
 	// read it. This also keeps concurrent model calls separate.
@@ -203,6 +204,33 @@ func (c *simplePlannerContext) configuredModelClient(id string, designated bool)
 		AgentName:      string(c.agent),
 	}, c.rt.captureGenAIMessages)
 	return cli, true
+}
+
+// historySummaryClient attaches a request-scoped decorator to the model call
+// context so HistoryPolicy summary calls run through the current planner
+// turn's invocation journal and telemetry tracer.
+func (c *simplePlannerContext) historySummaryClient(client model.Client, id string) model.Client {
+	if c.history == nil {
+		return client
+	}
+	genAI := telemetry.GenAIContext{
+		ConversationID: conversationID(c.sessionID, c.runID),
+		AgentID:        string(c.agent),
+		AgentName:      string(c.agent),
+	}
+	decorate := historySummaryClientDecorator(func(summaryClient model.Client) model.Client {
+		summaryClient = newSummaryModelInvocationClient(summaryClient, c.invocations)
+		return newTracedClient(summaryClient, c.rt.tracer, c.rt.logger, id, genAI, c.rt.captureGenAIMessages)
+	})
+	wrapped, err := model.WithRequestPreparation(client, func(ctx context.Context, request *model.Request) (context.Context, *model.Request, error) {
+		return context.WithValue(ctx, historySummaryClientDecoratorKey{}, decorate), request, nil
+	})
+	if err != nil {
+		// WithRequestPreparation only rejects an unvalidated model.Client or a nil
+		// callback; registered runtime models are validated on registration.
+		panic(err)
+	}
+	return wrapped
 }
 
 // RenderPrompt resolves and renders a prompt for the current run scope.

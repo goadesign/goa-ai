@@ -36,13 +36,14 @@ type (
 	// check. Callers can inspect the original cause and, when bounded copying
 	// succeeded, an isolated copy of the rejected response.
 	OutputValidationError struct {
-		kind       OutputValidationKind
-		cause      error
-		evidence   ResponseEvidence
-		rejected   *Response
-		usage      *TokenUsage
-		correction string
-		restored   bool
+		kind            OutputValidationKind
+		cause           error
+		evidence        ResponseEvidence
+		rejected        *Response
+		usage           *TokenUsage
+		usageIncomplete bool
+		correction      string
+		restored        bool
 	}
 
 	streamValidationContract struct {
@@ -148,31 +149,30 @@ func preparedRequest(request *Request, contract *RequestContract) *Request {
 func (c *RequestContract) ValidateResponse(response *Response) (*Response, error) {
 	evidence := ResponseEvidence{Present: response != nil}
 	usage := c.validatedUsageEvidence(response)
+	incomplete := response != nil && response.UsageIncomplete && usage != nil
+	reject := func(kind OutputValidationKind, err error, rejected *Response) *OutputValidationError {
+		validationErr := newOutputValidationError(kind, err, evidence, rejected, usage, c.toolValidators)
+		validationErr.usageIncomplete = incomplete
+		return validationErr
+	}
 	if response != nil {
 		if err := validateTokenUsage(response.Usage); err != nil {
-			return nil, newOutputValidationError(OutputValidationUsage, err, evidence, nil, usage, c.toolValidators)
+			return nil, reject(OutputValidationUsage, err, nil)
 		}
 	}
 	if err := preflightResponse(response, &dynamicValueWalk{}, dynamicCloneEvidence); err != nil {
-		return nil, newOutputValidationError(
-			requiredOutputValidationKind(err),
-			err,
-			evidence,
-			nil,
-			usage,
-			c.toolValidators,
-		)
+		return nil, reject(requiredOutputValidationKind(err), err, nil)
 	}
 	evidence = responseEvidencePreflighted(response)
 	owned, err := ownPreflightedResponse(response)
 	if err != nil {
-		return nil, newOutputValidationError(OutputValidationResponseShape, err, evidence, nil, usage, c.toolValidators)
+		return nil, reject(OutputValidationResponseShape, err, nil)
 	}
 	if owned != nil {
 		c.stampUsageIdentity(&owned.Usage)
 	}
 	if kind, err := c.validateOwnedResponse(owned); err != nil {
-		return nil, newOutputValidationError(kind, err, evidence, owned, usage, c.toolValidators)
+		return nil, reject(kind, err, owned)
 	}
 	return owned, nil
 }
@@ -210,8 +210,11 @@ func (c *RequestContract) RejectResponse(
 	}
 	evidence := ResponseEvidence{Present: response != nil}
 	usage := c.validatedUsageEvidence(response)
+	incomplete := response != nil && response.UsageIncomplete && usage != nil
 	if err := preflightResponse(response, &dynamicValueWalk{}, dynamicCloneEvidence); err != nil {
-		return newOutputValidationError(kind, errors.Join(cause, err), evidence, nil, usage, c.toolValidators)
+		validationErr := newOutputValidationError(kind, errors.Join(cause, err), evidence, nil, usage, c.toolValidators)
+		validationErr.usageIncomplete = incomplete
+		return validationErr
 	}
 	evidence = responseEvidencePreflighted(response)
 	owned, err := ownPreflightedResponse(response)
@@ -219,7 +222,9 @@ func (c *RequestContract) RejectResponse(
 		cause = errors.Join(cause, err)
 		owned = nil
 	}
-	return newOutputValidationError(kind, cause, evidence, owned, usage, c.toolValidators)
+	validationErr := newOutputValidationError(kind, cause, evidence, owned, usage, c.toolValidators)
+	validationErr.usageIncomplete = incomplete
+	return validationErr
 }
 
 // EvidenceForResponse returns a bounded fingerprint for one complete response.
@@ -267,6 +272,12 @@ func (e *OutputValidationError) Usage() *TokenUsage {
 	}
 	usage := *e.usage
 	return &usage
+}
+
+// UsageIncomplete reports whether the retained token usage represents only
+// partial or incomplete invocation counts.
+func (e *OutputValidationError) UsageIncomplete() bool {
+	return e != nil && e.usage != nil && e.usageIncomplete
 }
 
 // RecoveryCorrection returns framework-authored guidance when an advertised
@@ -353,12 +364,13 @@ func RestoreCorrectableOutputValidationError(
 		)
 	}
 	return &OutputValidationError{
-		kind:       restored.kind,
-		cause:      restored.cause,
-		evidence:   restored.evidence,
-		usage:      restored.Usage(),
-		correction: recoveryCorrection,
-		restored:   true,
+		kind:            restored.kind,
+		cause:           restored.cause,
+		evidence:        restored.evidence,
+		usage:           restored.Usage(),
+		usageIncomplete: restored.usageIncomplete,
+		correction:      recoveryCorrection,
+		restored:        true,
 	}, nil
 }
 
@@ -445,10 +457,11 @@ func (c *RequestContract) stampUsageIdentity(usage *TokenUsage) {
 }
 
 // validatedUsageEvidence snapshots nonnegative counts before response
-// traversal. Invalid provider model identity is omitted from rejected evidence,
-// while a valid concrete provider model is preserved.
+// traversal when the response reported or observed token usage. Invalid
+// provider model identity is omitted from rejected evidence, while a valid
+// concrete provider model is preserved.
 func (c *RequestContract) validatedUsageEvidence(response *Response) *TokenUsage {
-	if response == nil {
+	if !response.HasObservedUsage() {
 		return nil
 	}
 	return c.validatedUsageValue(&response.Usage)

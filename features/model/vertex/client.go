@@ -96,15 +96,22 @@ func (c *provider) Complete(ctx context.Context, req *model.Request) (*model.Res
 	}
 	response, err := translateResponse(resp, prep.modelID, prep.modelClass, prep.provToCanon, prep.toolCallIDs)
 	if err != nil {
-		usage := translateUsage(nil, prep.modelID, prep.modelClass)
-		if resp != nil {
-			usage = translateUsage(resp.UsageMetadata, prep.modelID, prep.modelClass)
+		var usage *model.TokenUsage
+		incomplete := false
+		if resp != nil && vertexUsageObserved(resp.UsageMetadata) {
+			translated := translateUsage(resp.UsageMetadata, prep.modelID, prep.modelClass)
+			usage = &translated
+			incomplete = !vertexUsageComplete(resp.UsageMetadata)
 		}
-		return nil, contract.RejectProviderOutput(
+		rejected := contract.RejectProviderOutput(
 			outputvalidation.RequiredKind(err),
-			&usage,
+			usage,
 			err,
 		)
+		if incomplete && rejected.Usage() != nil {
+			return nil, model.RetainIncompleteUsage(rejected, *rejected.Usage())
+		}
+		return nil, rejected
 	}
 	return response, nil
 }

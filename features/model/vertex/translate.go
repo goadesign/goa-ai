@@ -190,6 +190,8 @@ func translateResponse(resp *genai.GenerateContentResponse, modelID string, clas
 		}
 	}
 	out.Usage = translateUsage(resp.UsageMetadata, modelID, class)
+	out.UsageReported = vertexUsageComplete(resp.UsageMetadata)
+	out.UsageIncomplete = vertexUsageObserved(resp.UsageMetadata) && !out.UsageReported
 	return out, nil
 }
 
@@ -521,4 +523,37 @@ func translateUsage(md *genai.GenerateContentResponseUsageMetadata, modelID stri
 	usage.TotalTokens = int(md.TotalTokenCount)
 	usage.CacheReadTokens = int(md.CachedContentTokenCount)
 	return usage
+}
+
+// vertexUsageInputObserved reports whether Gemini usage metadata carries input
+// token attribution.
+func vertexUsageInputObserved(md *genai.GenerateContentResponseUsageMetadata) bool {
+	return md != nil && (md.PromptTokenCount > 0 ||
+		md.CachedContentTokenCount > 0 ||
+		md.ToolUsePromptTokenCount > 0 ||
+		len(md.PromptTokensDetails) > 0 ||
+		len(md.CacheTokensDetails) > 0 ||
+		len(md.ToolUsePromptTokensDetails) > 0)
+}
+
+// vertexUsageOutputObserved reports whether Gemini usage metadata carries
+// output token attribution.
+func vertexUsageOutputObserved(md *genai.GenerateContentResponseUsageMetadata) bool {
+	return md != nil && (md.CandidatesTokenCount > 0 ||
+		md.ThoughtsTokenCount > 0 ||
+		len(md.CandidatesTokensDetails) > 0)
+}
+
+// vertexUsageObserved reports whether Gemini usage metadata carries at least
+// one non-zero token count or modality breakdown.
+func vertexUsageObserved(md *genai.GenerateContentResponseUsageMetadata) bool {
+	return vertexUsageInputObserved(md) ||
+		vertexUsageOutputObserved(md) ||
+		(md != nil && md.TotalTokenCount > 0)
+}
+
+// vertexUsageComplete reports whether Gemini usage metadata carries both input
+// and output token attribution.
+func vertexUsageComplete(md *genai.GenerateContentResponseUsageMetadata) bool {
+	return vertexUsageInputObserved(md) && vertexUsageOutputObserved(md)
 }

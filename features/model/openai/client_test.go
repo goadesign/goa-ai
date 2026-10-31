@@ -956,6 +956,70 @@ func TestClientCompleteSupportsStructuredOutput(t *testing.T) {
 	assert.Equal(t, "stop", resp.StopReason)
 }
 
+func TestClientCompleteUsageCompletenessAndValidationErrorUsage(t *testing.T) {
+	t.Run("empty_usage_object_is_unreported", func(t *testing.T) {
+		transport := &mockTransport{
+			completeResponse: mustResponse(t, `{
+				"status":"completed",
+				"output":[{"id":"msg_1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"ok","annotations":[],"logprobs":[]}]}],
+				"usage":{}
+			}`),
+		}
+		client, err := New(Options{DefaultModel: "gpt-4o", transport: transport})
+		require.NoError(t, err)
+		resp, err := client.Complete(context.Background(), &model.Request{
+			Messages: []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "hi"}}}},
+		})
+		require.NoError(t, err)
+		assert.False(t, resp.UsageReported)
+		assert.False(t, resp.UsageIncomplete)
+		assert.False(t, resp.HasObservedUsage())
+	})
+
+	t.Run("partial_usage_sets_usage_incomplete", func(t *testing.T) {
+		transport := &mockTransport{
+			completeResponse: mustResponse(t, `{
+				"status":"completed",
+				"output":[{"id":"msg_1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"ok","annotations":[],"logprobs":[]}]}],
+				"usage":{"input_tokens":19}
+			}`),
+		}
+		client, err := New(Options{DefaultModel: "gpt-4o", transport: transport})
+		require.NoError(t, err)
+		resp, err := client.Complete(context.Background(), &model.Request{
+			Messages: []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "hi"}}}},
+		})
+		require.NoError(t, err)
+		assert.False(t, resp.UsageReported)
+		assert.True(t, resp.UsageIncomplete)
+		assert.True(t, resp.HasObservedUsage())
+		assert.Equal(t, 19, resp.Usage.InputTokens)
+	})
+
+	t.Run("validation_failure_without_usage_leaves_error_usage_nil", func(t *testing.T) {
+		transport := &mockTransport{
+			completeResponse: mustResponse(t, `{
+				"status":"completed",
+				"output":[{"id":"msg_1","type":"message","role":"assistant","status":"completed","content":[{"type":"output_text","text":"not-json","annotations":[],"logprobs":[]}]}]
+			}`),
+		}
+		client, err := New(Options{DefaultModel: "gpt-4o", transport: transport})
+		require.NoError(t, err)
+		req := &model.Request{
+			Messages: []*model.Message{{Role: model.ConversationRoleUser, Parts: []model.Part{model.TextPart{Text: "hi"}}}},
+			StructuredOutput: &model.StructuredOutput{
+				Name:   "answer",
+				Schema: tools.RawJSON(`{"type":"object","properties":{"answer":{"type":"string"}},"required":["answer"],"additionalProperties":false}`),
+			},
+		}
+		require.NoError(t, model.SetCompletionValidator(req, func(*model.Response, *model.Completion) error { return nil }))
+		_, err = client.Complete(context.Background(), req)
+		var valErr *model.OutputValidationError
+		require.ErrorAs(t, err, &valErr)
+		assert.Nil(t, valErr.Usage())
+	})
+}
+
 func TestOpenAIProviderErrorsPreserveRateLimitsAndCancellation(t *testing.T) {
 	rateLimitErr := providerErrorFromResponseFailure(
 		"stream",
@@ -1638,13 +1702,14 @@ func TestOpenAIStreamerStructuredOutput(t *testing.T) {
 		chunks = append(chunks, chunk)
 	}
 
-	require.Len(t, chunks, 3)
+	require.Len(t, chunks, 2)
 	completion := chunks[0].(model.CompletionChunk).Completion
 	assert.Equal(t, "draft_from_transcript", completion.Name)
 	assert.JSONEq(t, `{"answer":"ok"}`, string(completion.Payload))
-	assert.Equal(t, "gpt-4o", chunks[1].(model.UsageChunk).Usage.Model)
-	assert.Equal(t, "stop", chunks[2].(model.StopChunk).Reason)
+	assert.Equal(t, "stop", chunks[1].(model.StopChunk).Reason)
 	require.NotNil(t, streamer.Response())
+	assert.False(t, streamer.Response().HasUsage())
+	assert.False(t, streamer.Response().HasObservedUsage())
 }
 
 func TestOpenAIStreamerRejectsSchemaInvalidStructuredOutput(t *testing.T) {
