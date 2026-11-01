@@ -4,6 +4,7 @@ package mongo
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"sort"
 	"strings"
@@ -296,6 +297,76 @@ func TestResetPreservesOtherScopes(t *testing.T) {
 	}
 }
 
+func TestResolveEmptyStringLabel(t *testing.T) {
+	t.Parallel()
+
+	client := mustNewTestClient()
+	ctx := context.Background()
+	id := prompt.Ident("example.empty.label")
+
+	scopeEmptyAccount := prompt.Scope{
+		Labels: map[string]string{"account": ""},
+	}
+	scopeOther := prompt.Scope{
+		Labels: map[string]string{"account": "other"},
+	}
+
+	require.NoError(t, client.Set(ctx, id, scopeEmptyAccount, "empty account", nil))
+	require.NoError(t, client.Set(ctx, id, scopeOther, "other account", nil))
+
+	// Request missing "account": must NOT match empty-string label.
+	override, err := client.Resolve(ctx, id, prompt.Scope{
+		Labels: map[string]string{"region": "us"},
+	})
+	require.NoError(t, err)
+	require.Nil(t, override)
+
+	// Request with empty labels: must NOT match.
+	override, err = client.Resolve(ctx, id, prompt.Scope{})
+	require.NoError(t, err)
+	require.Nil(t, override)
+
+	// Request with "account": "": MUST match.
+	override, err = client.Resolve(ctx, id, scopeEmptyAccount)
+	require.NoError(t, err)
+	require.NotNil(t, override)
+	require.Equal(t, "empty account", override.Template)
+
+	// Unrelated override is preserved.
+	override, err = client.Resolve(ctx, id, scopeOther)
+	require.NoError(t, err)
+	require.NotNil(t, override)
+	require.Equal(t, "other account", override.Template)
+}
+
+func TestResolveSessionZeroLabelsOutranksNonSessionManyLabels(t *testing.T) {
+	t.Parallel()
+
+	for _, count := range []int{999, 1000, 1001} {
+		t.Run(fmt.Sprintf("%d_labels", count), func(t *testing.T) {
+			client := mustNewTestClient()
+			ctx := context.Background()
+			id := prompt.Ident("example.session.precedence")
+
+			labels := make(map[string]string, count)
+			for i := 0; i < count; i++ {
+				labels[fmt.Sprintf("k%04d", i)] = "v"
+			}
+
+			require.NoError(t, client.Set(ctx, id, prompt.Scope{Labels: labels}, "many_labels", nil))
+			require.NoError(t, client.Set(ctx, id, prompt.Scope{SessionID: "sess_1"}, "session_zero", nil))
+
+			override, err := client.Resolve(ctx, id, prompt.Scope{
+				SessionID: "sess_1",
+				Labels:    labels,
+			})
+			require.NoError(t, err)
+			require.NotNil(t, override)
+			require.Equal(t, "session_zero", override.Template)
+		})
+	}
+}
+
 func mustNewTestClient() *client {
 	fc := newFakeCollection()
 	return newClientWithCollection(nil, fc, time.Second)
@@ -531,14 +602,10 @@ type fakeIndexView struct {
 	parent *fakeCollection
 }
 
-func (v fakeIndexView) CreateMany(ctx context.Context, models []mongodriver.IndexModel,
-	opts ...options.Lister[options.CreateIndexesOptions]) ([]string, error) {
+func (v fakeIndexView) CreateOne(ctx context.Context, model mongodriver.IndexModel,
+	opts ...options.Lister[options.CreateIndexesOptions]) (string, error) {
 	v.parent.mu.Lock()
 	defer v.parent.mu.Unlock()
-	v.parent.indexes = append(v.parent.indexes, models...)
-	names := make([]string, len(models))
-	for i := range models {
-		names[i] = "idx"
-	}
-	return names, nil
+	v.parent.indexes = append(v.parent.indexes, model)
+	return "idx", nil
 }

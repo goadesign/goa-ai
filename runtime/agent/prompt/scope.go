@@ -2,8 +2,9 @@
 package prompt
 
 import (
-	"sort"
-	"strings"
+	"cmp"
+	"maps"
+	"slices"
 )
 
 // ScopeMatches reports whether overrideScope applies to requestedScope.
@@ -17,7 +18,8 @@ func ScopeMatches(overrideScope Scope, requestedScope Scope) bool {
 		return false
 	}
 	for key, value := range overrideScope.Labels {
-		if requestedScope.Labels[key] != value {
+		got, ok := requestedScope.Labels[key]
+		if !ok || got != value {
 			return false
 		}
 	}
@@ -42,10 +44,11 @@ func ScopePrecedence(scope Scope) int {
 // OverridePrecedes reports whether candidate outranks current when resolving overrides.
 //
 // Precedence order:
-//  1. Higher ScopePrecedence (session presence, then label count)
-//  2. Newer CreatedAt timestamp
-//  3. Deterministic tie-breaker on equal CreatedAt: lexicographical comparison of
-//     canonical sorted "k=v" label strings.
+//  1. Session-scoped overrides outrank non-session overrides.
+//  2. More constrained label sets outrank less constrained ones (higher label count).
+//  3. Newer CreatedAt timestamp.
+//  4. Deterministic tie-breaker on equal CreatedAt: lexicographical comparison of
+//     sorted label key and value pairs.
 func OverridePrecedes(candidate, current *Override) bool {
 	if current == nil {
 		return true
@@ -53,27 +56,33 @@ func OverridePrecedes(candidate, current *Override) bool {
 	if candidate == nil {
 		return false
 	}
-	candLevel := ScopePrecedence(candidate.Scope)
-	currLevel := ScopePrecedence(current.Scope)
-	if candLevel != currLevel {
-		return candLevel > currLevel
+	candSession := candidate.Scope.SessionID != ""
+	currSession := current.Scope.SessionID != ""
+	if candSession != currSession {
+		return candSession
+	}
+	if len(candidate.Scope.Labels) != len(current.Scope.Labels) {
+		return len(candidate.Scope.Labels) > len(current.Scope.Labels)
 	}
 	if !candidate.CreatedAt.Equal(current.CreatedAt) {
 		return candidate.CreatedAt.After(current.CreatedAt)
 	}
-	return canonicalLabels(candidate.Scope.Labels) > canonicalLabels(current.Scope.Labels)
+	return compareLabelMaps(candidate.Scope.Labels, current.Scope.Labels) > 0
 }
 
-// canonicalLabels returns a deterministic string representation of scope labels,
-// formatted as sorted comma-separated "key=value" pairs.
-func canonicalLabels(labels map[string]string) string {
-	if len(labels) == 0 {
-		return ""
+// compareLabelMaps compares two label maps by sorted key and value pairs.
+func compareLabelMaps(left, right map[string]string) int {
+	leftKeys := slices.Sorted(maps.Keys(left))
+	rightKeys := slices.Sorted(maps.Keys(right))
+	for index := 0; index < min(len(leftKeys), len(rightKeys)); index++ {
+		leftKey := leftKeys[index]
+		rightKey := rightKeys[index]
+		if compared := cmp.Compare(leftKey, rightKey); compared != 0 {
+			return compared
+		}
+		if compared := cmp.Compare(left[leftKey], right[rightKey]); compared != 0 {
+			return compared
+		}
 	}
-	pairs := make([]string, 0, len(labels))
-	for k, v := range labels {
-		pairs = append(pairs, k+"="+v)
-	}
-	sort.Strings(pairs)
-	return strings.Join(pairs, ",")
+	return len(leftKeys) - len(rightKeys)
 }

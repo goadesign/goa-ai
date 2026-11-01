@@ -34,8 +34,9 @@ func NewInMemoryStore() *InMemoryStore {
 // Precedence order is:
 //   - session-scoped overrides before non-session overrides
 //   - then most constrained label set (more labels = more specific)
-//   - then newest override
-//   - deterministic canonical label tie-breaking on equal timestamps
+//   - then newest override (CreatedAt timestamp)
+//   - deterministic tie-breaker on equal CreatedAt: lexicographical comparison
+//     of sorted label key and value pairs
 func (s *InMemoryStore) Resolve(ctx context.Context, promptID Ident, scope Scope) (*Override, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err

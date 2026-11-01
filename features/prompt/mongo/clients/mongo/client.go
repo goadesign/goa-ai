@@ -119,8 +119,6 @@ func (c *client) Resolve(ctx context.Context, promptID prompt.Ident, scope promp
 	defer cancel()
 
 	findOpts := options.Find().SetSort(bson.D{
-		{Key: "scope_session", Value: -1},
-		{Key: "scope_label_count", Value: -1},
 		{Key: "created_at", Value: -1},
 	})
 	cur, err := c.coll.Find(ctx, bson.M{"prompt_id": promptID.String()}, findOpts)
@@ -359,8 +357,8 @@ func (c mongoCursor) Close(ctx context.Context) error {
 	return c.cur.Close(ctx)
 }
 
-func (v mongoIndexView) CreateMany(ctx context.Context, models []mongodriver.IndexModel, opts ...options.Lister[options.CreateIndexesOptions]) ([]string, error) {
-	return v.view.CreateMany(ctx, models, opts...)
+func (v mongoIndexView) CreateOne(ctx context.Context, model mongodriver.IndexModel, opts ...options.Lister[options.CreateIndexesOptions]) (string, error) {
+	return v.view.CreateOne(ctx, model, opts...)
 }
 
 type (
@@ -384,27 +382,30 @@ type (
 	}
 
 	indexView interface {
-		CreateMany(ctx context.Context, models []mongodriver.IndexModel, opts ...options.Lister[options.CreateIndexesOptions]) ([]string, error)
+		CreateOne(ctx context.Context, model mongodriver.IndexModel, opts ...options.Lister[options.CreateIndexesOptions]) (string, error)
 	}
 )
 
 func ensureIndexes(ctx context.Context, coll collection) error {
-	models := []mongodriver.IndexModel{
-		{
-			Keys: bson.D{
-				{Key: "prompt_id", Value: 1},
-				{Key: "created_at", Value: -1},
-			},
-		},
-		{
-			Keys: bson.D{
-				{Key: "prompt_id", Value: 1},
-				{Key: "scope_session", Value: -1},
-				{Key: "scope_label_count", Value: -1},
-				{Key: "created_at", Value: -1},
-			},
+	lookup := mongodriver.IndexModel{
+		Keys: bson.D{
+			{Key: "prompt_id", Value: 1},
+			{Key: "scope_session", Value: 1},
+			{Key: "scope_label_count", Value: -1},
+			{Key: "created_at", Value: -1},
 		},
 	}
-	_, err := coll.Indexes().CreateMany(ctx, models)
-	return err
+	if _, err := coll.Indexes().CreateOne(ctx, lookup); err != nil {
+		return err
+	}
+	history := mongodriver.IndexModel{
+		Keys: bson.D{
+			{Key: "prompt_id", Value: 1},
+			{Key: "created_at", Value: -1},
+		},
+	}
+	if _, err := coll.Indexes().CreateOne(ctx, history); err != nil {
+		return err
+	}
+	return nil
 }

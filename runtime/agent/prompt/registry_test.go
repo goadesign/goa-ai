@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"text/template"
 
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -880,5 +881,125 @@ func TestValidatePromptTemplateDirect(t *testing.T) {
 
 	if err := ValidatePromptTemplate(spec, "Hello {{ .Missing }}"); !errors.Is(err, ErrTemplateFieldNotFound) {
 		t.Fatalf("expected ErrTemplateFieldNotFound, got %v", err)
+	}
+}
+
+func TestAdversarialReviewA62(t *testing.T) {
+	t.Parallel()
+
+	type customerStruct struct {
+		Label string
+	}
+
+	spec := PromptSpec{
+		ID:   "adversarial.review",
+		Role: PromptRoleSystem,
+		Fields: []tools.FieldMetadata{
+			{
+				Path:     []tools.FieldPathSegment{tools.FixedField("Customer")},
+				JSONType: "object",
+			},
+			{
+				Path:     []tools.FieldPathSegment{tools.FixedField("Customer"), tools.FixedField("Name")},
+				JSONType: "string",
+			},
+			{
+				Path:     []tools.FieldPathSegment{tools.FixedField("Customer"), tools.FixedField("Address")},
+				JSONType: "object",
+			},
+			{
+				Path:     []tools.FieldPathSegment{tools.FixedField("Customer"), tools.FixedField("Address"), tools.FixedField("City")},
+				JSONType: "string",
+			},
+		},
+		Funcs: template.FuncMap{
+			"decorate": func(any) map[string]any {
+				return map[string]any{"Label": "VIP"}
+			},
+			"name": func(any) string {
+				return "acme"
+			},
+			"typed": func(any) customerStruct {
+				return customerStruct{Label: "VIP"}
+			},
+		},
+	}
+
+	cases := []struct {
+		name      string
+		template  string
+		wantError bool
+	}{
+		{
+			name:      "if_alias_typo",
+			template:  "{{if $c := .Customer}}{{$c.Missing}}{{end}}",
+			wantError: true,
+		},
+		{
+			name:      "valid_if_alias",
+			template:  "{{if $c := .Customer}}{{$c.Name}}{{end}}",
+			wantError: false,
+		},
+		{
+			name:      "valid_reassignment",
+			template:  "{{$x := .Customer}}{{$x = $x.Address}}{{$x.City}}",
+			wantError: false,
+		},
+		{
+			name:      "invalid_reassignment_typo",
+			template:  "{{$x := .Customer}}{{$x = $x.Missing}}",
+			wantError: true,
+		},
+		{
+			name:      "valid_function_pipeline_map",
+			template:  "{{with decorate .Customer}}{{.Label}}{{end}}",
+			wantError: false,
+		},
+		{
+			name:      "invalid_function_pipeline_string",
+			template:  "{{with name .Customer}}{{.Label}}{{end}}",
+			wantError: true,
+		},
+		{
+			name:      "struct_function_valid_field",
+			template:  "{{with typed .Customer}}{{.Label}}{{end}}",
+			wantError: false,
+		},
+		{
+			name:      "struct_function_invalid_field",
+			template:  "{{with typed .Customer}}{{.Missing}}{{end}}",
+			wantError: true,
+		},
+		{
+			name:      "chain_node_function_missing_field",
+			template:  "{{(name .Customer).Missing}}",
+			wantError: true,
+		},
+		{
+			name:      "chain_node_struct_function_valid",
+			template:  "{{(typed .Customer).Label}}",
+			wantError: false,
+		},
+		{
+			name:      "chain_node_struct_function_missing",
+			template:  "{{(typed .Customer).Missing}}",
+			wantError: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidatePromptTemplate(spec, tc.template)
+			if tc.wantError {
+				if !errors.Is(err, ErrTemplateFieldNotFound) {
+					t.Fatalf("expected ErrTemplateFieldNotFound, got %v", err)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("expected template to be valid, got %v", err)
+				}
+			}
+		})
 	}
 }
