@@ -63,6 +63,9 @@ func ReflectType(t reflect.Type) Type {
 // ID returns a canonical comparable identity for cycle detection in recursive
 // named template invocations.
 func (r *reflectType) ID() string {
+	if r.knownTruth != nil {
+		return fmt.Sprintf("reflect:%p:addr=%t:truth=%t", r.t, r.addressable, *r.knownTruth)
+	}
 	return fmt.Sprintf("reflect:%p:addr=%t", r.t, r.addressable)
 }
 
@@ -168,22 +171,18 @@ func (r *reflectType) Range(twoVars bool) (Type, Type, error) {
 	case reflect.Chan:
 		return ReflectType(reflect.TypeFor[int]()), ReflectType(cur.Elem()), nil
 	case reflect.Func:
-		if cur.NumIn() == 1 && cur.NumOut() == 0 {
-			yield := cur.In(0)
-			if yield.Kind() == reflect.Func && yield.NumOut() == 1 && yield.Out(0).Kind() == reflect.Bool {
-				if yield.NumIn() == 1 {
-					if twoVars {
-						return nil, nil, fmt.Errorf("cannot range over %s with two variables", cur)
-					}
-					return nil, ReflectType(yield.In(0)), nil
-				}
-				if yield.NumIn() == 2 {
-					if twoVars {
-						return ReflectType(yield.In(0)), ReflectType(yield.In(1)), nil
-					}
-					return nil, ReflectType(yield.In(0)), nil
-				}
+		if cur.CanSeq() {
+			if twoVars {
+				return nil, nil, fmt.Errorf("cannot range over %s with two variables", cur)
 			}
+			return nil, ReflectType(cur.In(0).In(0)), nil
+		}
+		if cur.CanSeq2() {
+			yield := cur.In(0)
+			if twoVars {
+				return ReflectType(yield.In(0)), ReflectType(yield.In(1)), nil
+			}
+			return nil, ReflectType(yield.In(0)), nil
 		}
 		return nil, nil, fmt.Errorf("cannot range over type %s", cur)
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
@@ -223,7 +222,11 @@ func (m *multiType) ID() string {
 	for _, t := range m.types {
 		ids = append(ids, typeID(t))
 	}
-	return "union:" + strings.Join(ids, "|")
+	base := "union:" + strings.Join(ids, "|")
+	if m.knownTruth != nil {
+		return fmt.Sprintf("%s:truth=%t", base, *m.knownTruth)
+	}
+	return base
 }
 
 // Member resolves member access across union alternatives. An operation is valid only if all alternatives support it.
@@ -302,6 +305,31 @@ func withKnownTruth(t Type, truth bool) Type {
 	case *multiType:
 		clone := *v
 		clone.knownTruth = &b
+		return &clone
+	default:
+		return t
+	}
+}
+
+// withoutKnownTruth returns a copy of t with knownTruth cleared.
+func withoutKnownTruth(t Type) Type {
+	if t == nil {
+		return nil
+	}
+	switch v := t.(type) {
+	case *reflectType:
+		if v.knownTruth == nil {
+			return v
+		}
+		clone := *v
+		clone.knownTruth = nil
+		return &clone
+	case *multiType:
+		if v.knownTruth == nil {
+			return v
+		}
+		clone := *v
+		clone.knownTruth = nil
 		return &clone
 	default:
 		return t
@@ -407,15 +435,33 @@ func mergeTypes(t1, t2 Type) Type {
 
 // mergeTypeList flattens and deduplicates a slice of Types into a canonical union Type.
 func mergeTypeList(types []Type) Type {
-	flattened := make([]Type, 0, len(types))
-	for _, t := range types {
+	if len(types) == 0 {
+		return nil
+	}
+	allKnownTruth := true
+	var commonTruth bool
+	for i, t := range types {
 		if t == nil {
 			return nil
 		}
-		if mt, ok := t.(*multiType); ok {
+		k, tr := staticTruth(nil, t)
+		switch {
+		case !k:
+			allKnownTruth = false
+		case i == 0:
+			commonTruth = tr
+		case commonTruth != tr:
+			allKnownTruth = false
+		}
+	}
+
+	flattened := make([]Type, 0, len(types))
+	for _, t := range types {
+		clean := withoutKnownTruth(t)
+		if mt, ok := clean.(*multiType); ok {
 			flattened = append(flattened, mt.types...)
 		} else {
-			flattened = append(flattened, t)
+			flattened = append(flattened, clean)
 		}
 	}
 	seen := make(map[string]bool, len(flattened))
@@ -433,8 +479,14 @@ func mergeTypeList(types []Type) Type {
 	if len(dedup) == 0 {
 		return nil
 	}
+	var res Type
 	if len(dedup) == 1 {
-		return dedup[0]
+		res = dedup[0]
+	} else {
+		res = &multiType{types: dedup}
 	}
-	return &multiType{types: dedup}
+	if allKnownTruth {
+		return withKnownTruth(res, commonTruth)
+	}
+	return res
 }
