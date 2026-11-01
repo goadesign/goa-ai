@@ -98,3 +98,72 @@ func TestInMemoryStoreHistoryNewestFirst(t *testing.T) {
 		t.Fatalf("expected newest first, got %q", history[0].Template)
 	}
 }
+
+func TestInMemoryStoreReset(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	ctx := context.Background()
+	promptID := Ident("example.agent.system")
+
+	err := store.Reset(ctx, "", Scope{})
+	if err == nil {
+		t.Fatal("expected error for empty promptID")
+	}
+
+	scopeGlobal := Scope{}
+	scopeAccount := Scope{Labels: map[string]string{"account": "acme"}}
+
+	if err := store.Set(ctx, promptID, scopeGlobal, "global", nil); err != nil {
+		t.Fatalf("set global: %v", err)
+	}
+	if err := store.Set(ctx, promptID, scopeAccount, "account", nil); err != nil {
+		t.Fatalf("set account: %v", err)
+	}
+
+	got, err := store.Resolve(ctx, promptID, scopeAccount)
+	if err != nil || got == nil || got.Template != "account" {
+		t.Fatalf("expected account override, got %#v, err=%v", got, err)
+	}
+
+	if err := store.Reset(ctx, promptID, scopeAccount); err != nil {
+		t.Fatalf("reset account: %v", err)
+	}
+
+	got, err = store.Resolve(ctx, promptID, scopeAccount)
+	if err != nil || got == nil || got.Template != "global" {
+		t.Fatalf("expected global override, got %#v, err=%v", got, err)
+	}
+}
+
+func TestInMemoryStoreDeterministicTieBreaking(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	ctx := context.Background()
+	promptID := Ident("example.agent.system")
+	now := time.Now().UTC()
+
+	store.mu.Lock()
+	store.overrides = append(store.overrides,
+		&Override{
+			PromptID:  promptID,
+			Scope:     Scope{Labels: map[string]string{"env": "dev"}},
+			Template:  "dev template",
+			CreatedAt: now,
+		},
+		&Override{
+			PromptID:  promptID,
+			Scope:     Scope{Labels: map[string]string{"env": "prod"}},
+			Template:  "prod template",
+			CreatedAt: now,
+		},
+	)
+	store.mu.Unlock()
+
+	reqScope := Scope{Labels: map[string]string{"env": "prod"}}
+	got, err := store.Resolve(ctx, promptID, reqScope)
+	if err != nil || got == nil || got.Template != "prod template" {
+		t.Fatalf("expected prod template, got %#v, err=%v", got, err)
+	}
+}

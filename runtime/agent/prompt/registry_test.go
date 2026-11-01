@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 func TestRegistryRegisterRejectsDuplicateID(t *testing.T) {
@@ -255,5 +257,300 @@ func TestRegistryRenderReturnsNotFound(t *testing.T) {
 	_, err := reg.Render(context.Background(), "missing.prompt", Scope{}, nil)
 	if !errors.Is(err, ErrPromptNotFound) {
 		t.Fatalf("expected ErrPromptNotFound, got %v", err)
+	}
+}
+
+func TestRegistryStaticFieldValidation(t *testing.T) {
+	t.Parallel()
+
+	fields := []tools.FieldSpec{
+		{
+			Path: []tools.FieldPathSegment{
+				tools.FixedField("customer"),
+				tools.FixedField("name"),
+			},
+		},
+		{
+			Path: []tools.FieldPathSegment{
+				tools.FixedField("company"),
+			},
+		},
+		{
+			Path: []tools.FieldPathSegment{
+				tools.FixedField("items"),
+			},
+		},
+	}
+
+	// Valid root field
+	reg := NewRegistry(nil)
+	err := reg.Register(PromptSpec{
+		ID:       "valid.root",
+		AgentID:  "agent",
+		Role:     PromptRoleSystem,
+		Template: "Hello {{ .Company }}",
+		Fields:   fields,
+	})
+	if err != nil {
+		t.Fatalf("unexpected register error: %v", err)
+	}
+
+	// Valid nested field
+	err = reg.Register(PromptSpec{
+		ID:       "valid.nested",
+		AgentID:  "agent",
+		Role:     PromptRoleSystem,
+		Template: "Customer: {{ .Customer.Name }}",
+		Fields:   fields,
+	})
+	if err != nil {
+		t.Fatalf("unexpected register error: %v", err)
+	}
+
+	// Undeclared root field
+	err = reg.Register(PromptSpec{
+		ID:       "invalid.root",
+		AgentID:  "agent",
+		Role:     PromptRoleSystem,
+		Template: "Hello {{ .Undeclared }}",
+		Fields:   fields,
+	})
+	if !errors.Is(err, ErrTemplateFieldNotFound) {
+		t.Fatalf("expected ErrTemplateFieldNotFound, got %v", err)
+	}
+
+	// Undeclared nested field
+	err = reg.Register(PromptSpec{
+		ID:       "invalid.nested",
+		AgentID:  "agent",
+		Role:     PromptRoleSystem,
+		Template: "Customer: {{ .Customer.Unknown }}",
+		Fields:   fields,
+	})
+	if !errors.Is(err, ErrTemplateFieldNotFound) {
+		t.Fatalf("expected ErrTemplateFieldNotFound, got %v", err)
+	}
+
+	// With block rebinding dot does not check sub-fields as root
+	err = reg.Register(PromptSpec{
+		ID:       "valid.with",
+		AgentID:  "agent",
+		Role:     PromptRoleSystem,
+		Template: "{{ with .Customer }}Name: {{ .Name }}{{ end }}",
+		Fields:   fields,
+	})
+	if err != nil {
+		t.Fatalf("unexpected register error: %v", err)
+	}
+
+	// Range block rebinding dot does not check element fields as root
+	err = reg.Register(PromptSpec{
+		ID:       "valid.range",
+		AgentID:  "agent",
+		Role:     PromptRoleSystem,
+		Template: "{{ range .Items }}Item: {{ .ID }}{{ end }}",
+		Fields:   fields,
+	})
+	if err != nil {
+		t.Fatalf("unexpected register error: %v", err)
+	}
+
+	// ValidateOverride enforces fields
+	err = reg.ValidateOverride("valid.root", "New template {{ .Unknown }}")
+	if !errors.Is(err, ErrTemplateFieldNotFound) {
+		t.Fatalf("expected ErrTemplateFieldNotFound for override, got %v", err)
+	}
+
+	err = reg.ValidateOverride("valid.root", "New template {{ .Company }}")
+	if err != nil {
+		t.Fatalf("unexpected error validating valid override: %v", err)
+	}
+}
+
+func TestRegistrySubPromptComposition(t *testing.T) {
+	t.Parallel()
+
+	recorder := NewRenderRecorder()
+	store := NewInMemoryStore()
+	reg := NewRegistry(store)
+
+	// Register sub-prompt
+	if err := reg.Register(PromptSpec{
+		ID:       "sub.guardrails",
+		AgentID:  "agent",
+		Role:     PromptRoleSystem,
+		Template: "Guardrails for {{ .Name }}",
+	}); err != nil {
+		t.Fatalf("register sub spec: %v", err)
+	}
+
+	// Register main prompt that renders sub-prompt
+	if err := reg.Register(PromptSpec{
+		ID:       "main.system",
+		AgentID:  "agent",
+		Role:     PromptRoleSystem,
+		Template: "System: {{ render \"sub.guardrails\" . }}",
+	}); err != nil {
+		t.Fatalf("register main spec: %v", err)
+	}
+
+	ctx := WithRenderRecorder(context.Background(), recorder)
+	content, err := reg.Render(ctx, "main.system", Scope{}, map[string]any{"Name": "Alice"})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	if content.Text != "System: Guardrails for Alice" {
+		t.Fatalf("unexpected text: %q", content.Text)
+	}
+	if content.Ref.ID != "main.system" {
+		t.Fatalf("unexpected root ref id: %q", content.Ref.ID)
+	}
+	if len(content.Refs) != 2 {
+		t.Fatalf("expected 2 refs, got %d", len(content.Refs))
+	}
+	if content.Refs[0].ID != "main.system" || content.Refs[1].ID != "sub.guardrails" {
+		t.Fatalf("unexpected content.Refs: %#v", content.Refs)
+	}
+
+	// Check recorder recorded both events in stable identity order
+	events := recorder.Events()
+	if len(events) != 2 {
+		t.Fatalf("expected 2 recorded events, got %d", len(events))
+	}
+	if events[0].PromptID != "main.system" || events[1].PromptID != "sub.guardrails" {
+		t.Fatalf("unexpected recorded events order: %#v", events)
+	}
+}
+
+func TestRegistryCycleDetection(t *testing.T) {
+	t.Parallel()
+
+	reg := NewRegistry(nil)
+
+	// Direct self-recursion
+	if err := reg.Register(PromptSpec{
+		ID:       "self.cycle",
+		AgentID:  "agent",
+		Role:     PromptRoleSystem,
+		Template: "{{ render \"self.cycle\" . }}",
+	}); err != nil {
+		t.Fatalf("register self cycle: %v", err)
+	}
+
+	_, err := reg.Render(context.Background(), "self.cycle", Scope{}, nil)
+	if !errors.Is(err, ErrTemplateCycle) {
+		t.Fatalf("expected ErrTemplateCycle for self recursion, got %v", err)
+	}
+
+	// Mutual recursion: A -> B -> A
+	if err := reg.Register(PromptSpec{
+		ID:       "mutual.a",
+		AgentID:  "agent",
+		Role:     PromptRoleSystem,
+		Template: "{{ render \"mutual.b\" . }}",
+	}); err != nil {
+		t.Fatalf("register mutual.a: %v", err)
+	}
+	if err := reg.Register(PromptSpec{
+		ID:       "mutual.b",
+		AgentID:  "agent",
+		Role:     PromptRoleSystem,
+		Template: "{{ render \"mutual.a\" . }}",
+	}); err != nil {
+		t.Fatalf("register mutual.b: %v", err)
+	}
+
+	_, err = reg.Render(context.Background(), "mutual.a", Scope{}, nil)
+	if !errors.Is(err, ErrTemplateCycle) {
+		t.Fatalf("expected ErrTemplateCycle for mutual recursion, got %v", err)
+	}
+}
+
+func TestRegistryManagementMethods(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store := NewInMemoryStore()
+	reg := NewRegistry(store)
+
+	spec := PromptSpec{
+		ID:       "example.prompt",
+		AgentID:  "agent",
+		Role:     PromptRoleSystem,
+		Template: "hello {{ .Name }}",
+	}
+	if err := reg.Register(spec); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	// Spec
+	retrieved, ok := reg.Spec("example.prompt")
+	if !ok || retrieved.ID != "example.prompt" {
+		t.Fatalf("Spec failed: %v, %v", retrieved, ok)
+	}
+	_, ok = reg.Spec("nonexistent")
+	if ok {
+		t.Fatal("expected false for nonexistent spec")
+	}
+
+	// SetOverride
+	scope := Scope{SessionID: "sess_1"}
+	override, err := reg.SetOverride(ctx, "example.prompt", scope, "custom {{ .Name }}", map[string]string{"env": "test"})
+	if err != nil {
+		t.Fatalf("SetOverride failed: %v", err)
+	}
+	if override.Template != "custom {{ .Name }}" || override.Version == "" {
+		t.Fatalf("unexpected override: %#v", override)
+	}
+
+	// Resolve with override
+	resSpec, resOverride, err := reg.Resolve(ctx, "example.prompt", scope)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if resSpec.ID != "example.prompt" || resOverride == nil || resOverride.Template != "custom {{ .Name }}" {
+		t.Fatalf("unexpected resolve result: spec=%#v, override=%#v", resSpec, resOverride)
+	}
+
+	// History
+	history, err := reg.History(ctx, "example.prompt")
+	if err != nil {
+		t.Fatalf("History failed: %v", err)
+	}
+	if len(history) != 1 {
+		t.Fatalf("expected 1 history record, got %d", len(history))
+	}
+
+	// ResetOverride
+	if err := reg.ResetOverride(ctx, "example.prompt", scope); err != nil {
+		t.Fatalf("ResetOverride failed: %v", err)
+	}
+
+	// Resolve after reset
+	_, resOverride, err = reg.Resolve(ctx, "example.prompt", scope)
+	if err != nil {
+		t.Fatalf("Resolve failed: %v", err)
+	}
+	if resOverride != nil {
+		t.Fatalf("expected nil override after reset, got %#v", resOverride)
+	}
+
+	// Operations on registry without store
+	noStoreReg := NewRegistry(nil)
+	if err := noStoreReg.Register(spec); err != nil {
+		t.Fatalf("register on noStoreReg: %v", err)
+	}
+	_, err = noStoreReg.SetOverride(ctx, "example.prompt", scope, "tmpl", nil)
+	if !errors.Is(err, ErrPromptStoreNotConfigured) {
+		t.Fatalf("expected ErrPromptStoreNotConfigured, got %v", err)
+	}
+	err = noStoreReg.ResetOverride(ctx, "example.prompt", scope)
+	if !errors.Is(err, ErrPromptStoreNotConfigured) {
+		t.Fatalf("expected ErrPromptStoreNotConfigured, got %v", err)
+	}
+	_, err = noStoreReg.History(ctx, "example.prompt")
+	if !errors.Is(err, ErrPromptStoreNotConfigured) {
+		t.Fatalf("expected ErrPromptStoreNotConfigured, got %v", err)
 	}
 }

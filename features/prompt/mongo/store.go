@@ -36,6 +36,11 @@ func (s *Store) Set(ctx context.Context, promptID prompt.Ident, scope prompt.Sco
 	return s.client.Set(ctx, promptID, scope, template, metadata)
 }
 
+// Reset removes active overrides matching the exact (promptID, scope) pair.
+func (s *Store) Reset(ctx context.Context, promptID prompt.Ident, scope prompt.Scope) error {
+	return s.client.Reset(ctx, promptID, scope)
+}
+
 // History returns prompt override history for one prompt ID.
 func (s *Store) History(ctx context.Context, promptID prompt.Ident) ([]*prompt.Override, error) {
 	return s.client.History(ctx, promptID)

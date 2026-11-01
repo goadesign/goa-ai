@@ -26,6 +26,7 @@ type (
 
 		Resolve(ctx context.Context, promptID prompt.Ident, scope prompt.Scope) (*prompt.Override, error)
 		Set(ctx context.Context, promptID prompt.Ident, scope prompt.Scope, template string, metadata map[string]string) error
+		Reset(ctx context.Context, promptID prompt.Ident, scope prompt.Scope) error
 		History(ctx context.Context, promptID prompt.Ident) ([]*prompt.Override, error)
 		List(ctx context.Context) ([]*prompt.Override, error)
 	}
@@ -121,18 +122,13 @@ func (c *client) Resolve(ctx context.Context, promptID prompt.Ident, scope promp
 		return nil, err
 	}
 
-	var (
-		best      *prompt.Override
-		bestLevel = -1
-	)
+	var best *prompt.Override
 	for _, override := range overrides {
 		if !prompt.ScopeMatches(override.Scope, scope) {
 			continue
 		}
-		level := prompt.ScopePrecedence(override.Scope)
-		if best == nil || level > bestLevel || (level == bestLevel && override.CreatedAt.After(best.CreatedAt)) {
+		if prompt.OverridePrecedes(override, best) {
 			best = override
-			bestLevel = level
 		}
 	}
 	return best, nil
@@ -159,6 +155,25 @@ func (c *client) Set(ctx context.Context, promptID prompt.Ident, scope prompt.Sc
 		Metadata:        cloneMetadata(metadata),
 	}
 	_, err := c.coll.InsertOne(ctx, doc)
+	return err
+}
+
+func (c *client) Reset(ctx context.Context, promptID prompt.Ident, scope prompt.Scope) error {
+	if promptID == "" {
+		return errors.New("prompt id is required")
+	}
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+
+	filter := bson.M{
+		"prompt_id":         promptID.String(),
+		"scope_session":     scope.SessionID,
+		"scope_label_count": len(scope.Labels),
+	}
+	for key, val := range scope.Labels {
+		filter["scope_labels."+key] = val
+	}
+	_, err := c.coll.DeleteMany(ctx, filter)
 	return err
 }
 
@@ -285,6 +300,7 @@ type collection interface {
 	FindOne(ctx context.Context, filter any, opts ...options.Lister[options.FindOneOptions]) singleResult
 	Find(ctx context.Context, filter any, opts ...options.Lister[options.FindOptions]) (cursor, error)
 	InsertOne(ctx context.Context, document any, opts ...options.Lister[options.InsertOneOptions]) (*mongodriver.InsertOneResult, error)
+	DeleteMany(ctx context.Context, filter any, opts ...options.Lister[options.DeleteManyOptions]) (*mongodriver.DeleteResult, error)
 	Indexes() indexView
 }
 
@@ -321,6 +337,10 @@ func (c mongoCollection) Find(ctx context.Context, filter any, opts ...options.L
 
 func (c mongoCollection) InsertOne(ctx context.Context, document any, opts ...options.Lister[options.InsertOneOptions]) (*mongodriver.InsertOneResult, error) {
 	return c.coll.InsertOne(ctx, document, opts...)
+}
+
+func (c mongoCollection) DeleteMany(ctx context.Context, filter any, opts ...options.Lister[options.DeleteManyOptions]) (*mongodriver.DeleteResult, error) {
+	return c.coll.DeleteMany(ctx, filter, opts...)
 }
 
 func (c mongoCollection) Indexes() indexView {
