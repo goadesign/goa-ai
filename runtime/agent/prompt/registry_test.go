@@ -1197,6 +1197,7 @@ func TestSemanticsReview(t *testing.T) {
 		{"recursive_different_type", `{{define "recur"}}{{.Label}}{{with .Next}}{{template "recur" .}}{{end}}{{end}}{{template "recur" first}}`},
 		{"method_returns_callable", `{{with (maker).Get "x"}}{{.Label}}{{end}}`},
 		{"range_integer", `{{range 1}}{{.Nope}}{{end}}`},
+		{"and_short_circuit_mutation", `{{$x := person}}{{and ($x = "text") ($x.Label)}}`},
 	}
 	spec := PromptSpec{
 		ID:       "review",
@@ -1331,5 +1332,42 @@ func TestQA79SemanticOracle(t *testing.T) {
 					tc.wantValidation, tc.wantExecution, validation == nil, execution == nil)
 			}
 		})
+	}
+}
+
+func TestQA79UnusedDefinition(t *testing.T) {
+	t.Parallel()
+
+	type rootData struct {
+		P qa79Person
+	}
+
+	const source = `{{define "unused"}}{{.Other}}{{end}}Hello {{.P.Label}}`
+	spec := PromptSpec{
+		ID:       "qa79.unused",
+		Role:     PromptRoleSystem,
+		Template: source,
+		ArgsType: reflect.TypeFor[rootData](),
+	}
+
+	// 1. ValidatePromptTemplate should succeed because "unused" is never executed.
+	if err := ValidatePromptTemplate(spec, source); err != nil {
+		t.Fatalf("ValidatePromptTemplate: expected nil, got %v", err)
+	}
+
+	// 2. Register should succeed.
+	reg := NewRegistry(NewInMemoryStore())
+	if err := reg.Register(spec); err != nil {
+		t.Fatalf("Register: expected nil, got %v", err)
+	}
+
+	// 3. store.Set override + Render should succeed.
+	data := rootData{P: qa79Person{Label: "world"}}
+	res, err := reg.Render(context.Background(), spec.ID, Scope{}, data)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if res.Text != "Hello world" {
+		t.Fatalf("Render: expected 'Hello world', got %q", res.Text)
 	}
 }

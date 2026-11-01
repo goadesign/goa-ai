@@ -14,7 +14,6 @@ type (
 		funcs        template.FuncMap
 		activeCalls  map[templateCallKey]bool
 		visitedCalls map[templateCallKey]bool
-		invokedNames map[string]bool
 		nextVarID    int
 	}
 
@@ -33,8 +32,8 @@ type (
 
 // Check validates parsed template ASTs starting from rootType.
 // When rootType is nil, no static type constraints are checked.
-func Check(parsed *template.Template, rootName string, rootType Type, funcs template.FuncMap) error {
-	if parsed == nil || rootType == nil {
+func Check(parsed *template.Template, _ string, rootType Type, funcs template.FuncMap) error {
+	if parsed == nil || rootType == nil || parsed.Root == nil {
 		return nil
 	}
 
@@ -43,62 +42,10 @@ func Check(parsed *template.Template, rootName string, rootType Type, funcs temp
 		funcs:        funcs,
 		activeCalls:  make(map[templateCallKey]bool),
 		visitedCalls: make(map[templateCallKey]bool),
-		invokedNames: make(map[string]bool),
 	}
 
-	c.invokedNames[rootName] = true
-	if parsed.Name() != "" {
-		c.invokedNames[parsed.Name()] = true
-	}
-
-	root := parsed.Root
-	if !hasExecutableNodes(root) {
-		if named := parsed.Lookup(rootName); named != nil && named.Root != nil {
-			root = named.Root
-		}
-	}
-
-	if root != nil {
-		env := c.newVarEnv(rootType)
-		if err := c.walk(root, rootType, env); err != nil {
-			return err
-		}
-	}
-
-	// Walk any remaining defined templates in parsed.Templates() not invoked via {{ template "..." }} with rootType.
-	for _, t := range parsed.Templates() {
-		if t.Root == nil || c.invokedNames[t.Name()] {
-			continue
-		}
-		env := c.newVarEnv(rootType)
-		if err := c.walk(t.Root, rootType, env); err != nil {
-			return err
-		}
-	}
-
-	return nil
-}
-
-// hasExecutableNodes reports whether the node contains any executable AST node.
-func hasExecutableNodes(node parse.Node) bool {
-	switch n := node.(type) {
-	case nil:
-		return false
-	case *parse.ListNode:
-		if n == nil {
-			return false
-		}
-		for _, child := range n.Nodes {
-			if hasExecutableNodes(child) {
-				return true
-			}
-		}
-		return false
-	case *parse.TextNode, *parse.CommentNode:
-		return false
-	default:
-		return true
-	}
+	env := c.newVarEnv(rootType)
+	return c.walk(parsed.Root, rootType, env)
 }
 
 // isConstBool checks whether a pipeline consists of a single constant boolean literal.
@@ -272,60 +219,9 @@ func (c *checker) walk(node parse.Node, dot Type, env *varEnv) error {
 		}
 		return c.walkNamedTemplate(n.Name, pipeDot)
 
-	case *parse.FieldNode:
-		if n == nil || len(n.Ident) == 0 {
-			return nil
-		}
-		cur := dot
-		for _, ident := range n.Ident {
-			if cur == nil {
-				return nil
-			}
-			next, err := cur.Member(ident)
-			if err != nil {
-				return err
-			}
-			cur = next
-		}
-		return nil
-
-	case *parse.VariableNode:
-		if n == nil || len(n.Ident) == 0 {
-			return nil
-		}
-		base := env.lookup(n.Ident[0])
-		cur := base
-		for _, ident := range n.Ident[1:] {
-			if cur == nil {
-				return nil
-			}
-			next, err := cur.Member(ident)
-			if err != nil {
-				return err
-			}
-			cur = next
-		}
-		return nil
-
-	case *parse.ChainNode:
-		if n == nil {
-			return nil
-		}
-		if err := c.walk(n.Node, dot, env); err != nil {
-			return err
-		}
-		cur := c.resolveNode(n.Node, dot, env)
-		for _, field := range n.Field {
-			if cur == nil {
-				return nil
-			}
-			next, err := cur.Member(field)
-			if err != nil {
-				return err
-			}
-			cur = next
-		}
-		return nil
+	case *parse.FieldNode, *parse.VariableNode, *parse.ChainNode:
+		_, err := c.evalNode(n, dot, env)
+		return err
 
 	default:
 		return nil
@@ -378,8 +274,6 @@ func (c *checker) walkBranch(pipe *parse.PipeNode, list, elseList *parse.ListNod
 
 // walkNamedTemplate validates an invoked named template, tracking (name, typeID) pairs for cycle detection.
 func (c *checker) walkNamedTemplate(name string, pipeDot Type) error {
-	c.invokedNames[name] = true
-
 	key := templateCallKey{
 		name:   name,
 		typeID: typeID(pipeDot),
@@ -433,78 +327,53 @@ func (c *checker) evalPipe(pipe *parse.PipeNode, dot Type, env *varEnv) (Type, e
 	return pipedVal, nil
 }
 
-// evalCommand validates arguments (evaluating sub-pipelines) and returns the static Type of the command.
+// evalCommand validates arguments left-to-right (evaluating sub-pipelines) and returns the static Type of the command.
 func (c *checker) evalCommand(cmd *parse.CommandNode, dot Type, env *varEnv, pipedVal Type) (Type, error) {
 	if cmd == nil || len(cmd.Args) == 0 {
 		return nil, nil
 	}
-	if ident, ok := cmd.Args[0].(*parse.IdentifierNode); ok && ident.Ident == "index" {
-		if _, overridden := c.funcs["index"]; !overridden {
-			if len(cmd.Args) >= 2 {
-				coll := c.resolveNode(cmd.Args[1], dot, env)
-				keyOps := len(cmd.Args) - 2
-				if pipedVal != nil {
-					keyOps++
-				}
-				for i := 0; i < keyOps; i++ {
-					if coll == nil {
-						break
-					}
-					elem, err := coll.Index()
-					if err != nil {
-						return nil, err
-					}
-					coll = elem
-				}
-			}
-		}
-	}
-	for _, arg := range cmd.Args {
-		if err := c.walk(arg, dot, env); err != nil {
+
+	argTypes := make([]Type, len(cmd.Args))
+	for i, arg := range cmd.Args {
+		var err error
+		argTypes[i], err = c.evalNode(arg, dot, env)
+		if err != nil {
 			return nil, err
 		}
 	}
-	return c.resolveCommand(cmd, dot, env, pipedVal), nil
-}
 
-// resolveCommand evaluates the static type result of one command in a pipeline.
-func (c *checker) resolveCommand(cmd *parse.CommandNode, dot Type, env *varEnv, pipedVal Type) Type {
-	if cmd == nil || len(cmd.Args) == 0 {
-		return nil
-	}
-
-	switch first := cmd.Args[0].(type) {
-	case *parse.IdentifierNode:
-		if _, ok := c.funcs[first.Ident]; ok && first.Ident != "render" {
-			return c.resolveFuncIdent(first.Ident)
+	firstIdent, isIdent := cmd.Args[0].(*parse.IdentifierNode)
+	if isIdent {
+		if _, ok := c.funcs[firstIdent.Ident]; ok && firstIdent.Ident != "render" {
+			return c.resolveFuncIdent(firstIdent.Ident), nil
 		}
 
-		switch first.Ident {
+		switch firstIdent.Ident {
 		case "index":
-			if len(cmd.Args) < 2 {
-				return nil
+			if len(argTypes) < 2 {
+				return nil, nil
 			}
-			coll := c.resolveNode(cmd.Args[1], dot, env)
-			keyOps := len(cmd.Args) - 2
+			coll := argTypes[1]
+			keyOps := len(argTypes) - 2
 			if pipedVal != nil {
 				keyOps++
 			}
 			for i := 0; i < keyOps; i++ {
 				if coll == nil {
-					return nil
+					return nil, nil
 				}
 				elem, err := coll.Index()
 				if err != nil {
-					return nil
+					return nil, err
 				}
 				coll = elem
 			}
-			return coll
+			return coll, nil
 
 		case "slice":
 			var coll Type
-			if len(cmd.Args) >= 2 {
-				coll = c.resolveNode(cmd.Args[1], dot, env)
+			if len(argTypes) >= 2 {
+				coll = argTypes[1]
 			} else if pipedVal != nil {
 				coll = pipedVal
 			}
@@ -512,17 +381,17 @@ func (c *checker) resolveCommand(cmd *parse.CommandNode, dot Type, env *varEnv, 
 				cur := deref(rt.t)
 				if cur != nil {
 					if cur.Kind() == reflect.Array {
-						return ReflectType(reflect.SliceOf(cur.Elem()))
+						return ReflectType(reflect.SliceOf(cur.Elem())), nil
 					}
-					return ReflectType(cur)
+					return ReflectType(cur), nil
 				}
 			}
-			return coll
+			return coll, nil
 
 		case "call":
 			var fnType Type
-			if len(cmd.Args) >= 2 {
-				fnType = c.resolveNode(cmd.Args[1], dot, env)
+			if len(argTypes) >= 2 {
+				fnType = argTypes[1]
 			} else if pipedVal != nil {
 				fnType = pipedVal
 			}
@@ -530,128 +399,127 @@ func (c *checker) resolveCommand(cmd *parse.CommandNode, dot Type, env *varEnv, 
 				cur := deref(rt.t)
 				if cur != nil && cur.Kind() == reflect.Func {
 					if out, valid := validMethodReturn(cur); valid {
-						return ReflectType(out)
+						return ReflectType(out), nil
 					}
 				}
 			}
-			return nil
+			return nil, nil
 
 		case "print", "printf", "println", "html", "js", "urlquery", "render":
-			return ReflectType(reflect.TypeFor[string]())
+			return ReflectType(reflect.TypeFor[string]()), nil
 
 		case "len":
-			return ReflectType(reflect.TypeFor[int]())
+			return ReflectType(reflect.TypeFor[int]()), nil
 
 		case "not", "eq", "ne", "lt", "le", "gt", "ge":
-			return ReflectType(reflect.TypeFor[bool]())
+			return ReflectType(reflect.TypeFor[bool]()), nil
 
 		case "and", "or":
-			var types []Type
-			for _, arg := range cmd.Args[1:] {
-				types = append(types, c.resolveNode(arg, dot, env))
-			}
+			types := make([]Type, 0, len(argTypes)-1+1)
+			types = append(types, argTypes[1:]...)
 			if pipedVal != nil {
 				types = append(types, pipedVal)
 			}
-			return mergeTypeList(types)
+			return mergeTypeList(types), nil
 
 		default:
-			return c.resolveFuncIdent(first.Ident)
+			return c.resolveFuncIdent(firstIdent.Ident), nil
 		}
-
-	default:
-		return c.resolveNode(first, dot, env)
 	}
+
+	return argTypes[0], nil
 }
 
-// resolveNode evaluates the static type result of an individual expression node.
-func (c *checker) resolveNode(node parse.Node, dot Type, env *varEnv) Type {
+// evalNode evaluates an individual expression node in a single left-to-right pass.
+func (c *checker) evalNode(node parse.Node, dot Type, env *varEnv) (Type, error) {
 	switch n := node.(type) {
 	case nil:
-		return nil
+		return nil, nil
 
 	case *parse.DotNode:
-		return dot
+		return dot, nil
 
 	case *parse.FieldNode:
 		if n == nil || len(n.Ident) == 0 {
-			return dot
+			return dot, nil
 		}
 		cur := dot
 		for _, ident := range n.Ident {
 			if cur == nil {
-				return nil
+				return nil, nil
 			}
 			next, err := cur.Member(ident)
 			if err != nil {
-				return nil
+				return nil, err
 			}
 			cur = next
 		}
-		return cur
+		return cur, nil
 
 	case *parse.VariableNode:
 		if n == nil || len(n.Ident) == 0 {
-			return nil
+			return nil, nil
 		}
 		base := env.lookup(n.Ident[0])
 		cur := base
 		for _, ident := range n.Ident[1:] {
 			if cur == nil {
-				return nil
+				return nil, nil
 			}
 			next, err := cur.Member(ident)
 			if err != nil {
-				return nil
+				return nil, err
 			}
 			cur = next
 		}
-		return cur
+		return cur, nil
 
 	case *parse.ChainNode:
 		if n == nil {
-			return nil
+			return nil, nil
 		}
-		cur := c.resolveNode(n.Node, dot, env)
+		cur, err := c.evalNode(n.Node, dot, env)
+		if err != nil {
+			return nil, err
+		}
 		for _, field := range n.Field {
 			if cur == nil {
-				return nil
+				return nil, nil
 			}
 			next, err := cur.Member(field)
 			if err != nil {
-				return nil
+				return nil, err
 			}
 			cur = next
 		}
-		return cur
+		return cur, nil
+
+	case *parse.PipeNode:
+		return c.evalPipe(n, dot, env)
 
 	case *parse.IdentifierNode:
 		if n == nil {
-			return nil
+			return nil, nil
 		}
-		return c.resolveFuncIdent(n.Ident)
-
-	case *parse.PipeNode:
-		val, _ := c.evalPipe(n, dot, env)
-		return val
+		return c.resolveFuncIdent(n.Ident), nil
 
 	case *parse.StringNode:
-		return ReflectType(reflect.TypeFor[string]())
+		return ReflectType(reflect.TypeFor[string]()), nil
 
 	case *parse.BoolNode:
-		return ReflectType(reflect.TypeFor[bool]())
+		return ReflectType(reflect.TypeFor[bool]()), nil
 
 	case *parse.NumberNode:
 		if n.IsInt {
-			return ReflectType(reflect.TypeFor[int]())
+			return ReflectType(reflect.TypeFor[int]()), nil
 		}
 		if n.IsFloat {
-			return ReflectType(reflect.TypeFor[float64]())
+			return ReflectType(reflect.TypeFor[float64]()), nil
 		}
-		return ReflectType(reflect.TypeFor[int]())
+		return ReflectType(reflect.TypeFor[int]()), nil
 
 	default:
-		return nil
+		return nil, nil
 	}
 }
 
