@@ -28,13 +28,14 @@ type (
 		// Range resolves a range operation (range x) on this type.
 		// It returns the key/index Type, the element Type, and an error if
 		// this type cannot be ranged over.
-		Range() (key Type, elem Type, err error)
+		Range(twoVars bool) (key Type, elem Type, err error)
 	}
 
 	// reflectType wraps a Go reflect.Type to implement Type with addressability tracking.
 	reflectType struct {
 		t           reflect.Type
 		addressable bool
+		knownTruth  *bool
 	}
 
 	// nilDataType represents untyped nil data passed to a named template
@@ -43,7 +44,8 @@ type (
 
 	// multiType represents a union of types from divergent branches.
 	multiType struct {
-		types []Type
+		types      []Type
+		knownTruth *bool
 	}
 )
 
@@ -69,7 +71,7 @@ func (r *reflectType) Member(name string) (Type, error) {
 	// First check direct methods on r.t (e.g. pointer receiver methods when r.t is a pointer).
 	if m, ok := r.t.MethodByName(name); ok {
 		if out, valid := validMethodReturn(m.Type); valid {
-			return ReflectType(out), nil
+			return unwrapFuncReturn(out), nil
 		}
 		return nil, fmt.Errorf("method %q on type %s has invalid template return signature", name, r.t)
 	}
@@ -89,14 +91,14 @@ func (r *reflectType) Member(name string) (Type, error) {
 		}
 		if m, ok := cur.MethodByName(name); ok {
 			if out, valid := validMethodReturn(m.Type); valid {
-				return ReflectType(out), nil
+				return unwrapFuncReturn(out), nil
 			}
 			return nil, fmt.Errorf("method %q on type %s has invalid template return signature", name, cur)
 		}
 		if isAddr {
 			if m, ok := reflect.PointerTo(cur).MethodByName(name); ok {
 				if out, valid := validMethodReturn(m.Type); valid {
-					return ReflectType(out), nil
+					return unwrapFuncReturn(out), nil
 				}
 				return nil, fmt.Errorf("method %q on type %s has invalid template return signature", name, reflect.PointerTo(cur))
 			}
@@ -112,14 +114,14 @@ func (r *reflectType) Member(name string) (Type, error) {
 	default:
 		if m, ok := cur.MethodByName(name); ok {
 			if out, valid := validMethodReturn(m.Type); valid {
-				return ReflectType(out), nil
+				return unwrapFuncReturn(out), nil
 			}
 			return nil, fmt.Errorf("method %q on type %s has invalid template return signature", name, cur)
 		}
 		if isAddr {
 			if m, ok := reflect.PointerTo(cur).MethodByName(name); ok {
 				if out, valid := validMethodReturn(m.Type); valid {
-					return ReflectType(out), nil
+					return unwrapFuncReturn(out), nil
 				}
 				return nil, fmt.Errorf("method %q on type %s has invalid template return signature", name, reflect.PointerTo(cur))
 			}
@@ -150,7 +152,7 @@ func (r *reflectType) Index() (Type, error) {
 }
 
 // Range resolves a range operation (range x) on this type.
-func (r *reflectType) Range() (Type, Type, error) {
+func (r *reflectType) Range(twoVars bool) (Type, Type, error) {
 	cur, isAddr := derefWithAddr(r.t, r.addressable)
 	if cur == nil || cur.Kind() == reflect.Interface {
 		return nil, nil, nil
@@ -170,16 +172,25 @@ func (r *reflectType) Range() (Type, Type, error) {
 			yield := cur.In(0)
 			if yield.Kind() == reflect.Func && yield.NumOut() == 1 && yield.Out(0).Kind() == reflect.Bool {
 				if yield.NumIn() == 1 {
+					if twoVars {
+						return nil, nil, fmt.Errorf("cannot range over %s with two variables", cur)
+					}
 					return nil, ReflectType(yield.In(0)), nil
 				}
 				if yield.NumIn() == 2 {
-					return ReflectType(yield.In(0)), ReflectType(yield.In(1)), nil
+					if twoVars {
+						return ReflectType(yield.In(0)), ReflectType(yield.In(1)), nil
+					}
+					return nil, ReflectType(yield.In(0)), nil
 				}
 			}
 		}
 		return nil, nil, fmt.Errorf("cannot range over type %s", cur)
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		if twoVars {
+			return nil, nil, fmt.Errorf("cannot range over %s with two variables", cur)
+		}
 		return nil, ReflectType(cur), nil
 	default:
 		return nil, nil, fmt.Errorf("cannot range over type %s", cur)
@@ -202,7 +213,7 @@ func (nilDataType) Index() (Type, error) {
 }
 
 // Range allows ranging over untyped nil data (which acts as empty collection).
-func (nilDataType) Range() (Type, Type, error) {
+func (nilDataType) Range(_ bool) (Type, Type, error) {
 	return nilDataType{}, nilDataType{}, nil
 }
 
@@ -248,14 +259,14 @@ func (m *multiType) Index() (Type, error) {
 }
 
 // Range resolves ranging across union alternatives. An operation is valid only if all alternatives support it.
-func (m *multiType) Range() (Type, Type, error) {
+func (m *multiType) Range(twoVars bool) (Type, Type, error) {
 	keyResults := make([]Type, 0, len(m.types))
 	elemResults := make([]Type, 0, len(m.types))
 	for _, t := range m.types {
 		if t == nil {
 			continue
 		}
-		k, e, err := t.Range()
+		k, e, err := t.Range(twoVars)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -271,17 +282,60 @@ func newReflectType(t reflect.Type, addressable bool) Type {
 		return nil
 	}
 	cur := deref(t)
-	if cur == nil || cur.Kind() == reflect.Interface || cur == reflect.TypeFor[reflect.Value]() {
+	if cur == nil || cur.Kind() == reflect.Interface {
 		return nil
 	}
 	return &reflectType{t: t, addressable: addressable}
 }
 
-// derefWithAddr unwraps pointer types while tracking addressability.
+// withKnownTruth attaches a known boolean truth value to a Type.
+func withKnownTruth(t Type, truth bool) Type {
+	if t == nil {
+		return nil
+	}
+	b := truth
+	switch v := t.(type) {
+	case *reflectType:
+		clone := *v
+		clone.knownTruth = &b
+		return &clone
+	case *multiType:
+		clone := *v
+		clone.knownTruth = &b
+		return &clone
+	default:
+		return t
+	}
+}
+
+// unwrapFuncReturn converts a function or method return reflect.Type to a Type,
+// unwrapping reflect.Value to dynamic (nil Type) per text/template execution semantics.
+func unwrapFuncReturn(out reflect.Type) Type {
+	if out == nil || out == reflect.TypeFor[reflect.Value]() {
+		return nil
+	}
+	return ReflectType(out)
+}
+
+// derefWithAddr unwraps pointer types while tracking addressability and terminating on recursive pointer cycles.
 func derefWithAddr(t reflect.Type, addr bool) (reflect.Type, bool) {
 	cur := t
+	var seen map[reflect.Type]bool
 	for cur != nil && cur.Kind() == reflect.Ptr {
-		cur = cur.Elem()
+		elem := cur.Elem()
+		if elem == cur {
+			break
+		}
+		if elem != nil && elem.Kind() == reflect.Ptr {
+			if seen == nil {
+				seen = make(map[reflect.Type]bool)
+			}
+			if seen[elem] {
+				break
+			}
+			seen[cur] = true
+		}
+		cur = elem
 		addr = true
 	}
 	return cur, addr
@@ -289,10 +343,7 @@ func derefWithAddr(t reflect.Type, addr bool) (reflect.Type, bool) {
 
 // deref unwraps pointer types until reaching the underlying value type.
 func deref(t reflect.Type) reflect.Type {
-	cur := t
-	for cur != nil && cur.Kind() == reflect.Ptr {
-		cur = cur.Elem()
-	}
+	cur, _ := derefWithAddr(t, false)
 	return cur
 }
 

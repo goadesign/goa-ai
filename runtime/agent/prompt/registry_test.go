@@ -1503,3 +1503,149 @@ func TestQA6283Oracle(t *testing.T) {
 		})
 	}
 }
+
+type (
+	// qa254Good is a test helper for adversarial oracle testing.
+	qa254Good struct{ Label string }
+
+	// qa254Data is a root struct for adversarial oracle testing.
+	qa254Data struct {
+		Good     qa254Good
+		Bad      string
+		Rows     []int
+		One      [1]int
+		Zero     [0]int
+		Flag     bool
+		Children []qa254Good
+		Seq1     iter.Seq[qa254Good]
+		Seq2     iter.Seq2[qa254Good, qa254Good]
+		SeqAny   iter.Seq[any]
+		Value    reflect.Value
+		PValue   *reflect.Value
+	}
+
+	// qa254RecursivePointer tests termination on recursive pointer types.
+	qa254RecursivePointer *qa254RecursivePointer
+)
+
+// TestQA254RecursivePointer checks that static typing terminates on valid recursive pointer types.
+func TestQA254RecursivePointer(t *testing.T) {
+	t.Parallel()
+
+	var data qa254RecursivePointer
+	source := "literal"
+	parsed, err := template.New("oracle").Parse(source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := parsed.Execute(&output, data); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("oracle=%q; invoking ValidatePromptTemplate with type=%s", output.String(), reflect.TypeOf(data))
+	spec := PromptSpec{ID: "recursive", Role: PromptRoleSystem, Template: source, ArgsType: reflect.TypeOf(data)}
+	if err := ValidatePromptTemplate(spec, source); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestQA254Adversarial compares every prompt entry with actual template execution.
+func TestQA254Adversarial(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name   string
+		source string
+		funcs  template.FuncMap
+		wantOK bool
+	}{
+		{"custom_argument_missing", `{{consume .Missing}}`, template.FuncMap{"consume": func(any) string { return "ok" }}, false},
+		{"render_argument_missing", `{{render "child" .Missing}}`, nil, false},
+		{"custom_argument_assignment", `{{$x := .Good}}{{consume ($x = .Bad)}}{{$x.Label}}`, template.FuncMap{"consume": func(any) string { return "ok" }}, false},
+		{"custom_nested_argument", `{{consume (printf "%s" .Missing)}}`, template.FuncMap{"consume": func(any) string { return "ok" }}, false},
+		{"nested_break_tail", `{{$x := .Good}}{{range .Rows}}{{if true}}{{break}}{{end}}{{$x = $.Bad}}{{end}}{{$x.Label}}`, nil, true},
+		{"nested_continue_tail", `{{$x := .Good}}{{range .Rows}}{{with $.Good}}{{continue}}{{end}}{{$x = $.Bad}}{{end}}{{$x.Label}}`, nil, true},
+		{"nested_break_stops_iterations", `{{$x := .Good}}{{range .Rows}}{{$x.Label}}{{$x = $.Bad}}{{if true}}{{break}}{{end}}{{end}}`, nil, true},
+		{"unreachable_break_after_continue", `{{$x := .Good}}{{range .Rows}}{{$x.Label}}{{$x = $.Bad}}{{continue}}{{break}}{{end}}`, nil, false},
+		{"unreachable_break_after_nested_continue", `{{$x := .Good}}{{range .Rows}}{{$x.Label}}{{$x = $.Bad}}{{if true}}{{continue}}{{end}}{{break}}{{end}}`, nil, false},
+		{"literal_zero_iterations", `{{$x := .Good}}{{range 0}}{{$x = $.Bad}}{{end}}{{$x.Label}}`, nil, true},
+		{"literal_one_iteration", `{{$x := .Good}}{{range 1}}{{$x.Label}}{{$x = $.Bad}}{{end}}`, nil, true},
+		{"one_array_iteration", `{{$x := .Good}}{{range .One}}{{$x.Label}}{{$x = $.Bad}}{{end}}`, nil, true},
+		{"constant_or_branch", `{{$x := .Good}}{{if or false true}}{{else}}{{$x = .Bad}}{{end}}{{$x.Label}}`, nil, true},
+		{"constant_and_branch", `{{$x := .Good}}{{if and true true}}{{else}}{{$x = .Bad}}{{end}}{{$x.Label}}`, nil, true},
+		{"reflect_field_member", `{{.Value.Missing}}`, nil, false},
+		{"reflect_field_method_result", `{{.Value.String.Missing}}`, nil, false},
+		{"reflect_pointer_field_member", `{{.PValue.Missing}}`, nil, false},
+		{"seq2_slice_union_one_variable", `{{$xs := .Children}}{{if .Flag}}{{$xs = .Seq2}}{{end}}{{range $v := $xs}}{{$v.Label}}{{end}}`, nil, true},
+		{"seq2_slice_union_no_variable", `{{$xs := .Children}}{{if .Flag}}{{$xs = .Seq2}}{{end}}{{range $xs}}{{.Label}}{{end}}`, nil, true},
+		{"seq2_seq1_union_invalid_member", `{{$xs := .Seq1}}{{if .Flag}}{{$xs = .Seq2}}{{end}}{{range $v := $xs}}{{$v.Missing}}{{end}}`, nil, false},
+		{"seq2_seq1_union_valid_member", `{{$xs := .Seq1}}{{if .Flag}}{{$xs = .Seq2}}{{end}}{{range $v := $xs}}{{$v.Label}}{{end}}`, nil, true},
+		{"seq1_dynamic_two_variables", `{{range $k,$v := .SeqAny}}{{$v}}{{end}}`, nil, false},
+		{"seq2_two_variables_correct", `{{range $k,$v := .Seq2}}{{$k.Label}}:{{$v.Label}}{{end}}`, nil, true},
+		{"body_declaration_converges", `{{$x := .Good}}{{range .Rows}}{{$local := .}}{{$x = $.Good}}{{end}}{{$x.Label}}`, nil, true},
+		{"swap_declaration_converges", `{{$x := .Good}}{{$y := .Good}}{{range .Rows}}{{$tmp := $x}}{{$x = $y}}{{$y = $tmp}}{{end}}{{$x.Label}}`, nil, true},
+		{"and_nested_shortcircuit_safe", `{{$x := .Good}}{{and .Flag false ($x = .Bad)}}{{$x.Label}}`, nil, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, flag := range []bool{false, true} {
+				rv := reflect.ValueOf(qa254Good{"wrapped"})
+				data := qa254Data{Good: qa254Good{"good"}, Bad: "bad", Rows: []int{0, 1, 2}, One: [1]int{0}, Flag: flag, Children: []qa254Good{{"child"}}, Value: rv, PValue: &rv}
+				data.Seq1 = func(yield func(qa254Good) bool) { yield(qa254Good{"seq1"}) }
+				data.Seq2 = func(yield func(qa254Good, qa254Good) bool) { yield(qa254Good{"key"}, qa254Good{"value"}) }
+				data.SeqAny = func(yield func(any) bool) { yield(qa254Good{"any"}) }
+				calls := 0
+				funcs := template.FuncMap{"emit": func() string { calls++; return "" }}
+				for k, v := range tc.funcs {
+					funcs[k] = v
+				}
+				source := `{{emit}}` + tc.source
+				spec := PromptSpec{ID: "qa254", Role: PromptRoleSystem, Template: source, ArgsType: reflect.TypeOf(data), Funcs: funcs}
+				validation := ValidatePromptTemplate(spec, source)
+				registration := NewRegistry(nil).Register(spec)
+				store := NewInMemoryStore()
+				reg := NewRegistry(store)
+				base := spec
+				base.Template = "baseline"
+				if err := reg.Register(base); err != nil {
+					t.Fatal(err)
+				}
+				override := reg.ValidateOverride(spec.ID, source)
+				validationCalls := calls
+				if err := store.Set(context.Background(), spec.ID, Scope{}, source, nil); err != nil {
+					t.Fatal(err)
+				}
+				content, renderErr := reg.Render(context.Background(), spec.ID, Scope{}, data)
+				renderCalls := calls
+				oracleFuncs := template.FuncMap{"render": func(string, ...any) (string, error) { return "", nil }}
+				for k, v := range funcs {
+					oracleFuncs[k] = v
+				}
+				parsed, err := template.New("oracle").Option("missingkey=error").Funcs(oracleFuncs).Parse(source)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var output bytes.Buffer
+				execution := parsed.Execute(&output, data)
+				t.Logf("flag=%t source=%q validate=%v register=%v override=%v raw_render=%v validation_calls=%d render_calls=%d content=%v oracle=%v output=%q", flag, tc.source, validation, registration, override, renderErr, validationCalls, renderCalls, content, execution, output.String())
+				if validationCalls != 0 {
+					t.Errorf("validation executed custom function")
+				}
+				if (execution == nil) != tc.wantOK {
+					t.Errorf("oracle OK=%t want=%t", execution == nil, tc.wantOK)
+				}
+				for name, got := range map[string]error{"validate": validation, "register": registration, "override": override} {
+					if (got == nil) != tc.wantOK {
+						t.Errorf("%s OK=%t want=%t", name, got == nil, tc.wantOK)
+					}
+				}
+				if tc.wantOK && renderErr != nil {
+					t.Errorf("valid raw override rejected: %v", renderErr)
+				}
+				if !tc.wantOK && renderCalls != 0 {
+					t.Errorf("invalid raw override reached Execute")
+				}
+			}
+		})
+	}
+}
