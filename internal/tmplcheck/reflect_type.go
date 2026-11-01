@@ -47,6 +47,12 @@ type (
 		types      []Type
 		knownTruth *bool
 	}
+
+	// knownTruthType wraps a non-reflected Type with statically known boolean truthiness.
+	knownTruthType struct {
+		base  Type
+		truth bool
+	}
 )
 
 const dynamicTypeID = "<dynamic>"
@@ -58,6 +64,11 @@ var errorType = reflect.TypeFor[error]()
 // If t is nil, or if dereferencing t results in nil or interface{}, ReflectType returns nil.
 func ReflectType(t reflect.Type) Type {
 	return newReflectType(t, false)
+}
+
+// WithKnownTruth returns a copy of t tagged with statically known boolean truthiness.
+func WithKnownTruth(t Type, truth bool) Type {
+	return withKnownTruth(t, truth)
 }
 
 // ID returns a canonical comparable identity for cycle detection in recursive
@@ -279,6 +290,35 @@ func (m *multiType) Range(twoVars bool) (Type, Type, error) {
 	return mergeTypeList(keyResults), mergeTypeList(elemResults), nil
 }
 
+// ID returns a canonical comparable identity for cycle detection in recursive named template invocations.
+func (k *knownTruthType) ID() string {
+	return fmt.Sprintf("%s:truth=%t", typeID(k.base), k.truth)
+}
+
+// Member resolves a dot field, method, or map key access on the underlying type.
+func (k *knownTruthType) Member(name string) (Type, error) {
+	if k.base == nil {
+		return nil, nil
+	}
+	return k.base.Member(name)
+}
+
+// Index resolves an index operation on the underlying type.
+func (k *knownTruthType) Index() (Type, error) {
+	if k.base == nil {
+		return nil, nil
+	}
+	return k.base.Index()
+}
+
+// Range resolves a range operation on the underlying type.
+func (k *knownTruthType) Range(twoVars bool) (Type, Type, error) {
+	if k.base == nil {
+		return nil, nil, nil
+	}
+	return k.base.Range(twoVars)
+}
+
 // newReflectType constructs a reflectType with explicit addressability tracking.
 func newReflectType(t reflect.Type, addressable bool) Type {
 	if t == nil {
@@ -296,18 +336,19 @@ func withKnownTruth(t Type, truth bool) Type {
 	if t == nil {
 		return nil
 	}
-	b := truth
 	switch v := t.(type) {
 	case *reflectType:
 		clone := *v
-		clone.knownTruth = &b
+		clone.knownTruth = &truth
 		return &clone
 	case *multiType:
 		clone := *v
-		clone.knownTruth = &b
+		clone.knownTruth = &truth
 		return &clone
+	case *knownTruthType:
+		return &knownTruthType{base: v.base, truth: truth}
 	default:
-		return t
+		return &knownTruthType{base: withoutKnownTruth(t), truth: truth}
 	}
 }
 
@@ -331,9 +372,37 @@ func withoutKnownTruth(t Type) Type {
 		clone := *v
 		clone.knownTruth = nil
 		return &clone
+	case *knownTruthType:
+		return v.base
 	default:
 		return t
 	}
+}
+
+// unwrapAndOrOperand unwraps reflect.Value operands to dynamic (nil Type) for built-in and/or.
+func unwrapAndOrOperand(t Type) Type {
+	if t == nil {
+		return nil
+	}
+	clean := withoutKnownTruth(t)
+	if rt, ok := clean.(*reflectType); ok {
+		if rt.t == reflect.TypeFor[reflect.Value]() {
+			return nil
+		}
+		return t
+	}
+	if mt, ok := clean.(*multiType); ok {
+		mapped := make([]Type, len(mt.types))
+		for i, alt := range mt.types {
+			mapped[i] = unwrapAndOrOperand(alt)
+		}
+		merged := mergeTypeList(mapped)
+		if mt.knownTruth != nil && merged != nil {
+			return withKnownTruth(merged, *mt.knownTruth)
+		}
+		return merged
+	}
+	return t
 }
 
 // unwrapFuncReturn converts a function or method return reflect.Type to a Type,
