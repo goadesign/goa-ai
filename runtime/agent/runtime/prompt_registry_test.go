@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -11,7 +12,6 @@ import (
 	"goa.design/goa-ai/runtime/agent/hooks"
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa-ai/runtime/agent/session"
-	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 func TestNewFromOptionsInitializesPromptRegistryWithStore(t *testing.T) {
@@ -249,12 +249,7 @@ func TestRegisterAgentWithInvalidPromptSpecFails(t *testing.T) {
 				ID:       "agent.invalid.system",
 				Role:     prompt.PromptRoleSystem,
 				Template: "Hello {{ .Undeclared }}",
-				Fields: []tools.FieldMetadata{
-					{
-						Path:     []tools.FieldPathSegment{tools.FixedField("Declared")},
-						JSONType: "string",
-					},
-				},
+				ArgsType: reflect.TypeFor[struct{ Declared string }](),
 			},
 		},
 	})

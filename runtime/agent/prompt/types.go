@@ -8,10 +8,9 @@
 package prompt
 
 import (
+	"reflect"
 	"text/template"
 	"time"
-
-	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type (
@@ -38,9 +37,11 @@ type (
 		Version string
 		// Funcs is the template function map used when rendering this prompt.
 		Funcs template.FuncMap
-		// Fields describes the declared template data attributes when the prompt
-		// takes typed input data. Empty when the prompt takes no structured fields.
-		Fields []tools.FieldMetadata
+		// ArgsType is the Go type of the template data contract when the prompt
+		// takes a typed input struct (or reflect.TypeFor[struct{}]() for generated
+		// zero-argument prompts). When nil, the prompt accepts untyped/dynamic data
+		// and only template syntax is validated.
+		ArgsType reflect.Type
 	}
 
 	// PromptRef is a lightweight prompt identity attached to rendered outputs and
