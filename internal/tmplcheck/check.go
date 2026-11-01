@@ -2,14 +2,14 @@
 package tmplcheck
 
 import (
-	"fmt"
+	"math"
 	"reflect"
 	"text/template"
 	"text/template/parse"
 )
 
 type (
-	// checker manages static template type checking state.
+	// checker coordinates static type checking across a parsed template AST.
 	checker struct {
 		tmpl         *template.Template
 		funcs        template.FuncMap
@@ -18,13 +18,13 @@ type (
 		nextVarID    int
 	}
 
-	// templateCallKey tracks named template invocations by template name and input type identity.
+	// templateCallKey uniquely identifies a template call by target name and dot type.
 	templateCallKey struct {
 		name   string
 		typeID string
 	}
 
-	// varEnv tracks lexical scope and mutable variable dataflow bindings.
+	// varEnv tracks lexical variable bindings and flow-sensitive static types.
 	varEnv struct {
 		names map[string]int // lexical scope: variable name -> binding ID
 		types map[int]Type   // dataflow state: binding ID -> current static Type
@@ -37,6 +37,9 @@ func Check(parsed *template.Template, rootType Type, funcs template.FuncMap) err
 	if parsed == nil || rootType == nil || parsed.Root == nil {
 		return nil
 	}
+	if rt, ok := rootType.(*reflectType); ok && rt.t == reflect.TypeFor[reflect.Value]() {
+		rootType = nil
+	}
 
 	c := &checker{
 		tmpl:         parsed,
@@ -46,11 +49,24 @@ func Check(parsed *template.Template, rootType Type, funcs template.FuncMap) err
 	}
 
 	env := c.newVarEnv(rootType)
-	return c.walk(parsed.Root, rootType, env)
+	_, _, _, err := c.walkFlow(parsed.Root, rootType, env)
+	return err
 }
 
 // staticTruth evaluates whether a node and its static type have statically known truthiness.
 func staticTruth(node parse.Node, typ Type) (known bool, truth bool) {
+	if typ != nil {
+		switch v := typ.(type) {
+		case *reflectType:
+			if v.knownTruth != nil {
+				return true, *v.knownTruth
+			}
+		case *multiType:
+			if v.knownTruth != nil {
+				return true, *v.knownTruth
+			}
+		}
+	}
 	if isNilDataType(typ) {
 		return true, false
 	}
@@ -79,44 +95,112 @@ func staticTruth(node parse.Node, typ Type) (known bool, truth bool) {
 	return false, false
 }
 
-// isBreakOrContinue reports whether node represents a break or continue action.
-func isBreakOrContinue(node parse.Node) bool {
-	switch node.(type) {
-	case *parse.BreakNode, *parse.ContinueNode:
-		return true
-	default:
-		return false
-	}
-}
-
-// hasTopLevelBreak reports whether the node list directly contains a break action.
-func hasTopLevelBreak(list *parse.ListNode) bool {
-	if list == nil {
-		return false
-	}
-	for _, child := range list.Nodes {
-		if _, ok := child.(*parse.BreakNode); ok {
-			return true
-		}
-	}
-	return false
-}
-
-// isZeroIterationRange reports whether ranging over collType is statically known to execute 0 iterations.
-func isZeroIterationRange(collType Type) bool {
-	if collType == nil {
-		return false
-	}
+// rangeIterBound determines if a collection has a statically known exact iteration count.
+func rangeIterBound(pipe *parse.PipeNode, collType Type) (exact int, known bool) {
 	if isNilDataType(collType) {
-		return true
+		return 0, true
 	}
 	if rt, ok := collType.(*reflectType); ok && rt.t != nil {
 		cur := deref(rt.t)
-		if cur != nil && cur.Kind() == reflect.Array && cur.Len() == 0 {
-			return true
+		if cur != nil && cur.Kind() == reflect.Array {
+			return cur.Len(), true
 		}
 	}
-	return false
+	if pipe != nil && len(pipe.Cmds) == 1 && len(pipe.Cmds[0].Args) == 1 {
+		if num, ok := pipe.Cmds[0].Args[0].(*parse.NumberNode); ok {
+			if num.IsInt {
+				if num.Int64 <= 0 {
+					return 0, true
+				}
+				if num.Int64 > math.MaxInt {
+					return 0, false
+				}
+				return int(num.Int64), true
+			}
+			if num.IsUint {
+				if num.Uint64 > math.MaxInt {
+					return 0, false
+				}
+				return int(num.Uint64), true
+			}
+		}
+	}
+	return 0, false
+}
+
+// cleanScope projects resultEnv onto baseEnv's lexical scope, preserving mutations
+// to outer variables while discarding locally declared variables that shadowed outer names.
+func cleanScope(baseEnv, resultEnv *varEnv) *varEnv {
+	if resultEnv == nil || baseEnv == nil {
+		return resultEnv
+	}
+	res := baseEnv.clone()
+	for id := range baseEnv.types {
+		if t, ok := resultEnv.types[id]; ok {
+			res.types[id] = t
+		}
+	}
+	return res
+}
+
+// mergeTwoEnvs merges two optional fall environments using baseEnv as the domain.
+func mergeTwoEnvs(baseEnv, a, b *varEnv) *varEnv {
+	if a == nil && b == nil {
+		return nil
+	}
+	if a == nil {
+		return cleanScope(baseEnv, b)
+	}
+	if b == nil {
+		return cleanScope(baseEnv, a)
+	}
+	res := baseEnv.clone()
+	for id := range baseEnv.types {
+		res.types[id] = mergeTypes(a.types[id], b.types[id])
+	}
+	return res
+}
+
+// mergeEnvSlice merges a slice of optional environments using baseEnv as the domain.
+func mergeEnvSlice(baseEnv *varEnv, envs []*varEnv) *varEnv {
+	var nonNil []*varEnv
+	for _, e := range envs {
+		if e != nil {
+			nonNil = append(nonNil, e)
+		}
+	}
+	if len(nonNil) == 0 {
+		return nil
+	}
+	res := baseEnv.clone()
+	for id := range baseEnv.types {
+		merged := nonNil[0].types[id]
+		for _, e := range nonNil[1:] {
+			merged = mergeTypes(merged, e.types[id])
+		}
+		res.types[id] = merged
+	}
+	return res
+}
+
+// envsEqual reports whether two variable environments bind all variables to identical static type IDs.
+func envsEqual(a, b *varEnv) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	if len(a.names) != len(b.names) {
+		return false
+	}
+	for name, idA := range a.names {
+		idB, ok := b.names[name]
+		if !ok {
+			return false
+		}
+		if typeID(a.types[idA]) != typeID(b.types[idB]) {
+			return false
+		}
+	}
+	return true
 }
 
 // isNilDataType reports whether t represents untyped nil data.
@@ -126,45 +210,6 @@ func isNilDataType(t Type) bool {
 	}
 	_, ok := t.(nilDataType)
 	return ok
-}
-
-// isSeq2 reports whether collType is an iter.Seq2 function yielding two values.
-func isSeq2(collType Type) bool {
-	if collType == nil {
-		return false
-	}
-	if rt, ok := collType.(*reflectType); ok && rt.t != nil {
-		cur := deref(rt.t)
-		if cur != nil && cur.Kind() == reflect.Func && cur.NumIn() == 1 && cur.NumOut() == 0 {
-			yield := cur.In(0)
-			return yield.Kind() == reflect.Func && yield.NumIn() == 2 && yield.NumOut() == 1 && yield.Out(0).Kind() == reflect.Bool
-		}
-	}
-	if mt, ok := collType.(*multiType); ok {
-		for _, alt := range mt.types {
-			if isSeq2(alt) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// envsEqual reports whether two variable environments bind all variables to identical static type IDs.
-func envsEqual(a, b *varEnv) bool {
-	if a == nil || b == nil {
-		return a == b
-	}
-	if len(a.types) != len(b.types) {
-		return false
-	}
-	for id, ta := range a.types {
-		tb, ok := b.types[id]
-		if !ok || typeID(ta) != typeID(tb) {
-			return false
-		}
-	}
-	return true
 }
 
 // newVarEnv creates an environment initialized with root data $.
@@ -194,213 +239,316 @@ func (c *checker) assign(env *varEnv, name string, t Type) {
 	c.declare(env, name, t)
 }
 
-// walk recursively traverses a template AST node and validates member and index accesses against static types.
-func (c *checker) walk(node parse.Node, dot Type, env *varEnv) error {
+// walkFlow traverses a template AST node with control-flow propagation for break/continue.
+func (c *checker) walkFlow(node parse.Node, dot Type, env *varEnv) (fallEnv *varEnv, breakEnvs []*varEnv, continueEnvs []*varEnv, err error) {
 	switch n := node.(type) {
 	case nil:
-		return nil
+		return env, nil, nil, nil
+
+	case *parse.BreakNode:
+		return nil, []*varEnv{env.clone()}, nil, nil
+
+	case *parse.ContinueNode:
+		return nil, nil, []*varEnv{env.clone()}, nil
 
 	case *parse.ListNode:
 		if n == nil {
-			return nil
+			return env, nil, nil, nil
 		}
 		curEnv := env
+		var deadEnv *varEnv
 		for _, child := range n.Nodes {
-			if err := c.walk(child, dot, curEnv); err != nil {
-				return err
-			}
-			if isBreakOrContinue(child) {
-				curEnv = curEnv.clone()
+			if curEnv != nil {
+				nextFall, bEnvs, cEnvs, err := c.walkFlow(child, dot, curEnv)
+				if err != nil {
+					return nil, nil, nil, err
+				}
+				breakEnvs = append(breakEnvs, bEnvs...)
+				continueEnvs = append(continueEnvs, cEnvs...)
+				if nextFall == nil {
+					deadEnv = curEnv.clone()
+					curEnv = nil
+				} else {
+					curEnv = nextFall
+				}
+			} else {
+				// Dead tail after unconditional break/continue.
+				if _, _, _, err := c.walkFlow(child, dot, deadEnv.clone()); err != nil {
+					return nil, nil, nil, err
+				}
 			}
 		}
-		return nil
+		return curEnv, breakEnvs, continueEnvs, nil
 
 	case *parse.ActionNode:
 		if n == nil || n.Pipe == nil {
-			return nil
+			return env, nil, nil, nil
 		}
 		_, err := c.evalPipe(n.Pipe, dot, env)
-		return err
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		return env, nil, nil, nil
 
 	case *parse.PipeNode:
 		_, err := c.evalPipe(n, dot, env)
-		return err
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		return env, nil, nil, nil
 
 	case *parse.CommandNode:
 		_, err := c.evalCommand(n, dot, env, nil)
-		return err
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		return env, nil, nil, nil
 
 	case *parse.IfNode:
 		if n == nil {
-			return nil
+			return env, nil, nil, nil
 		}
-		return c.walkBranch(n.Pipe, n.List, n.ElseList, dot, false, env)
+		return c.walkBranch(false, n.Pipe, n.List, n.ElseList, dot, env)
 
 	case *parse.WithNode:
 		if n == nil {
-			return nil
+			return env, nil, nil, nil
 		}
-		return c.walkBranch(n.Pipe, n.List, n.ElseList, dot, true, env)
+		return c.walkBranch(true, n.Pipe, n.List, n.ElseList, dot, env)
 
 	case *parse.RangeNode:
 		if n == nil {
-			return nil
+			return env, nil, nil, nil
 		}
 		rangeEnv := env.clone()
 		collType, err := c.evalPipe(n.Pipe, dot, rangeEnv)
 		if err != nil {
-			return err
+			return nil, nil, nil, err
 		}
-		for id := range env.types {
-			env.types[id] = rangeEnv.types[id]
-		}
+		twoVars := n.Pipe != nil && len(n.Pipe.Decl) > 1
 		var keyType, elemType Type
 		if collType != nil {
-			var rangeErr error
-			keyType, elemType, rangeErr = collType.Range()
-			if rangeErr != nil {
-				return rangeErr
+			keyType, elemType, err = collType.Range(twoVars)
+			if err != nil {
+				return nil, nil, nil, err
 			}
 		}
-		if n.Pipe != nil && len(n.Pipe.Decl) > 1 && collType != nil && !isNilDataType(collType) && keyType == nil && elemType != nil {
-			return fmt.Errorf("cannot range over %s with two variables", collType.ID())
+
+		bodyDot := dot
+		if n.Pipe == nil || len(n.Pipe.Decl) == 0 {
+			bodyDot = elemType
 		}
-		if (n.Pipe == nil || len(n.Pipe.Decl) <= 1) && isSeq2(collType) {
-			elemType = keyType
-		}
-		elseEnv := rangeEnv.clone()
-		listEnv := rangeEnv.clone()
+
+		rangeVarIDs := make(map[string]int)
 		bindRangeDecls := func(targetEnv *varEnv) {
 			if n.Pipe != nil && len(n.Pipe.Decl) > 0 {
+				bindVar := func(name string, t Type) {
+					if len(name) == 0 {
+						return
+					}
+					id, ok := rangeVarIDs[name]
+					if !ok {
+						if n.Pipe.IsAssign {
+							if existingID, exists := targetEnv.names[name]; exists {
+								id = existingID
+							} else {
+								id = c.nextVarID
+								c.nextVarID++
+							}
+						} else {
+							id = c.nextVarID
+							c.nextVarID++
+						}
+						rangeVarIDs[name] = id
+					}
+					targetEnv.names[name] = id
+					targetEnv.types[id] = t
+				}
 				if len(n.Pipe.Decl) == 1 {
 					if len(n.Pipe.Decl[0].Ident) > 0 {
-						c.assign(targetEnv, n.Pipe.Decl[0].Ident[0], elemType)
+						bindVar(n.Pipe.Decl[0].Ident[0], elemType)
 					}
 				} else if len(n.Pipe.Decl) >= 2 {
 					if len(n.Pipe.Decl[0].Ident) > 0 {
-						c.assign(targetEnv, n.Pipe.Decl[0].Ident[0], keyType)
+						bindVar(n.Pipe.Decl[0].Ident[0], keyType)
 					}
 					if len(n.Pipe.Decl[1].Ident) > 0 {
-						c.assign(targetEnv, n.Pipe.Decl[1].Ident[0], elemType)
+						bindVar(n.Pipe.Decl[1].Ident[0], elemType)
 					}
 				}
 			}
 		}
+
+		listEnv := rangeEnv.clone()
 		bindRangeDecls(listEnv)
-		if n.List != nil {
-			iterEnv := listEnv.clone()
-			if err := c.walk(n.List, elemType, iterEnv); err != nil {
-				return err
+		elseEnv := rangeEnv.clone()
+
+		exact, known := rangeIterBound(n.Pipe, collType)
+		switch {
+		case known && exact == 0:
+			if n.List != nil {
+				if _, _, _, err := c.walkFlow(n.List, bodyDot, listEnv.clone()); err != nil {
+					return nil, nil, nil, err
+				}
 			}
-			if !hasTopLevelBreak(n.List) {
+			if n.ElseList != nil {
+				elseFall, elseBreaks, elseContinues, err := c.walkFlow(n.ElseList, dot, elseEnv)
+				return cleanScope(env, elseFall), elseBreaks, elseContinues, err
+			}
+			return env, nil, nil, nil
+
+		case known && exact == 1:
+			var fall1 *varEnv
+			var breaks1, continues1 []*varEnv
+			if n.List != nil {
+				fall1, breaks1, continues1, err = c.walkFlow(n.List, bodyDot, listEnv.clone())
+				if err != nil {
+					return nil, nil, nil, err
+				}
+			} else {
+				fall1 = listEnv.clone()
+			}
+			if n.ElseList != nil {
+				if _, _, _, err := c.walkFlow(n.ElseList, dot, elseEnv.clone()); err != nil {
+					return nil, nil, nil, err
+				}
+			}
+			postEnv := mergeEnvSlice(rangeEnv, append(append([]*varEnv{fall1}, continues1...), breaks1...))
+			return cleanScope(env, postEnv), nil, nil, nil
+
+		default:
+			var fall1 *varEnv
+			var breaks1, continues1 []*varEnv
+			if n.List != nil {
+				fall1, breaks1, continues1, err = c.walkFlow(n.List, bodyDot, listEnv.clone())
+				if err != nil {
+					return nil, nil, nil, err
+				}
+			} else {
+				fall1 = listEnv.clone()
+			}
+			allBreaks := append([]*varEnv(nil), breaks1...)
+			nextIterEnv := mergeEnvSlice(rangeEnv, append([]*varEnv{fall1}, continues1...))
+			if nextIterEnv != nil {
 				for {
-					nextEnv := listEnv.clone()
+					candidate := rangeEnv.clone()
 					for id := range rangeEnv.types {
-						nextEnv.types[id] = mergeTypes(listEnv.types[id], iterEnv.types[id])
+						candidate.types[id] = mergeTypes(listEnv.types[id], nextIterEnv.types[id])
 					}
-					bindRangeDecls(nextEnv)
-					if envsEqual(listEnv, nextEnv) {
+					bindRangeDecls(candidate)
+					if envsEqual(listEnv, candidate) {
 						break
 					}
-					listEnv = nextEnv
-					iterEnv = listEnv.clone()
-					if err := c.walk(n.List, elemType, iterEnv); err != nil {
-						return err
+					listEnv = candidate
+					stepFall, stepBreaks, stepContinues, err := c.walkFlow(n.List, bodyDot, listEnv.clone())
+					if err != nil {
+						return nil, nil, nil, err
+					}
+					allBreaks = append(allBreaks, stepBreaks...)
+					nextIterEnv = mergeEnvSlice(rangeEnv, append([]*varEnv{stepFall}, stepContinues...))
+					if nextIterEnv == nil {
+						break
 					}
 				}
 			}
-			listEnv = iterEnv
-		}
-		if n.ElseList != nil {
-			if err := c.walk(n.ElseList, dot, elseEnv); err != nil {
-				return err
-			}
-		}
-		if isZeroIterationRange(collType) {
+			bodyExitEnv := mergeEnvSlice(rangeEnv, append([]*varEnv{nextIterEnv}, allBreaks...))
 			if n.ElseList != nil {
-				for id := range env.types {
-					env.types[id] = elseEnv.types[id]
+				elseFall, elseBreaks, elseContinues, err := c.walkFlow(n.ElseList, dot, elseEnv)
+				if err != nil {
+					return nil, nil, nil, err
 				}
-			}
-		} else {
-			for id := range env.types {
-				if n.ElseList != nil {
-					env.types[id] = mergeTypes(listEnv.types[id], elseEnv.types[id])
-				} else {
-					env.types[id] = mergeTypes(listEnv.types[id], env.types[id])
+				if known && exact > 1 {
+					return cleanScope(env, bodyExitEnv), nil, nil, nil
 				}
+				return mergeTwoEnvs(env, bodyExitEnv, elseFall), elseBreaks, elseContinues, nil
 			}
+			if known && exact > 1 {
+				return cleanScope(env, bodyExitEnv), nil, nil, nil
+			}
+			return mergeTwoEnvs(env, bodyExitEnv, rangeEnv), nil, nil, nil
 		}
-		return nil
 
 	case *parse.BranchNode:
-		return nil
+		return env, nil, nil, nil
 
 	case *parse.TemplateNode:
 		if n == nil {
-			return nil
+			return env, nil, nil, nil
 		}
 		var pipeDot Type = nilDataType{}
 		if n.Pipe != nil {
 			var err error
 			pipeDot, err = c.evalPipe(n.Pipe, dot, env)
 			if err != nil {
-				return err
+				return nil, nil, nil, err
 			}
 		}
-		return c.walkNamedTemplate(n.Name, pipeDot)
+		if err := c.walkNamedTemplate(n.Name, pipeDot); err != nil {
+			return nil, nil, nil, err
+		}
+		return env, nil, nil, nil
 
 	case *parse.FieldNode, *parse.VariableNode, *parse.ChainNode:
 		_, err := c.evalNode(n, dot, env)
-		return err
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		return env, nil, nil, nil
 
 	default:
-		return nil
+		return env, nil, nil, nil
 	}
 }
 
 // walkBranch manages variable scoping and branch merging for IfNode and WithNode.
-func (c *checker) walkBranch(pipe *parse.PipeNode, list, elseList *parse.ListNode, outerDot Type, withDot bool, env *varEnv) error {
+func (c *checker) walkBranch(isWith bool, pipe *parse.PipeNode, list, elseList *parse.ListNode, dot Type, env *varEnv) (*varEnv, []*varEnv, []*varEnv, error) {
 	pipeEnv := env.clone()
-	pipeVal, err := c.evalPipe(pipe, outerDot, pipeEnv)
+	pipeVal, err := c.evalPipe(pipe, dot, pipeEnv)
 	if err != nil {
-		return err
+		return nil, nil, nil, err
 	}
-	for id := range env.types {
-		env.types[id] = pipeEnv.types[id]
+
+	branchDot := dot
+	if isWith {
+		branchDot = pipeVal
 	}
-	thenEnv := pipeEnv.clone()
-	listDot := outerDot
-	if withDot {
-		listDot = pipeVal
-	}
+
+	var thenFall *varEnv
+	var thenBreaks, thenContinues []*varEnv
 	if list != nil {
-		if err := c.walk(list, listDot, thenEnv); err != nil {
-			return err
+		thenFall, thenBreaks, thenContinues, err = c.walkFlow(list, branchDot, pipeEnv.clone())
+		if err != nil {
+			return nil, nil, nil, err
 		}
+	} else {
+		thenFall = pipeEnv.clone()
 	}
-	elseEnv := pipeEnv.clone()
+
+	var elseFall *varEnv
+	var elseBreaks, elseContinues []*varEnv
 	if elseList != nil {
-		if err := c.walk(elseList, outerDot, elseEnv); err != nil {
-			return err
+		elseFall, elseBreaks, elseContinues, err = c.walkFlow(elseList, dot, pipeEnv.clone())
+		if err != nil {
+			return nil, nil, nil, err
 		}
+	} else {
+		elseFall = pipeEnv.clone()
 	}
+
 	known, truth := staticTruth(pipe, pipeVal)
-	for id := range env.types {
-		switch {
-		case known && truth:
-			env.types[id] = thenEnv.types[id]
-		case known && !truth:
-			if elseList != nil {
-				env.types[id] = elseEnv.types[id]
-			}
-		case elseList != nil:
-			env.types[id] = mergeTypes(thenEnv.types[id], elseEnv.types[id])
-		default:
-			env.types[id] = mergeTypes(thenEnv.types[id], env.types[id])
-		}
+	switch {
+	case known && truth:
+		return cleanScope(env, thenFall), thenBreaks, thenContinues, nil
+	case known && !truth:
+		return cleanScope(env, elseFall), elseBreaks, elseContinues, nil
+	default:
+		mergedFall := mergeTwoEnvs(env, thenFall, elseFall)
+		allBreaks := append([]*varEnv(nil), thenBreaks...)
+		allBreaks = append(allBreaks, elseBreaks...)
+		allContinues := append([]*varEnv(nil), thenContinues...)
+		allContinues = append(allContinues, elseContinues...)
+		return mergedFall, allBreaks, allContinues, nil
 	}
-	return nil
 }
 
 // walkNamedTemplate validates an invoked named template, tracking (name, typeID) pairs for cycle detection.
@@ -420,7 +568,7 @@ func (c *checker) walkNamedTemplate(name string, pipeDot Type) error {
 	if sub := c.tmpl.Lookup(name); sub != nil && sub.Root != nil {
 		c.activeCalls[key] = true
 		subEnv := c.newVarEnv(pipeDot)
-		err := c.walk(sub.Root, pipeDot, subEnv)
+		_, _, _, err := c.walkFlow(sub.Root, pipeDot, subEnv)
 		delete(c.activeCalls, key)
 		if err != nil {
 			return err
@@ -430,19 +578,21 @@ func (c *checker) walkNamedTemplate(name string, pipeDot Type) error {
 	return nil
 }
 
-// evalPipe evaluates a pipeline, updates declared/assigned variables in env, and returns the resulting static Type.
+// evalPipe evaluates pipeline declarations and commands, updating the variable environment.
 func (c *checker) evalPipe(pipe *parse.PipeNode, dot Type, env *varEnv) (Type, error) {
 	if pipe == nil {
 		return nil, nil
 	}
+
 	var pipedVal Type
 	for _, cmd := range pipe.Cmds {
-		var err error
-		pipedVal, err = c.evalCommand(cmd, dot, env, pipedVal)
+		res, err := c.evalCommand(cmd, dot, env, pipedVal)
 		if err != nil {
 			return nil, err
 		}
+		pipedVal = res
 	}
+
 	if len(pipe.Decl) > 0 {
 		for _, decl := range pipe.Decl {
 			if len(decl.Ident) == 0 {
@@ -465,12 +615,8 @@ func (c *checker) evalCommand(cmd *parse.CommandNode, dot Type, env *varEnv, pip
 	}
 
 	firstIdent, isIdent := cmd.Args[0].(*parse.IdentifierNode)
-	if isIdent {
-		if _, ok := c.funcs[firstIdent.Ident]; ok {
-			return c.resolveFuncIdent(firstIdent.Ident), nil
-		}
-
-		if firstIdent.Ident == "and" || firstIdent.Ident == "or" {
+	if isIdent && (firstIdent.Ident == "and" || firstIdent.Ident == "or") {
+		if _, ok := c.funcs[firstIdent.Ident]; !ok {
 			return c.evalAndOr(firstIdent.Ident == "or", cmd.Args[1:], dot, env, pipedVal)
 		}
 	}
@@ -485,6 +631,10 @@ func (c *checker) evalCommand(cmd *parse.CommandNode, dot Type, env *varEnv, pip
 	}
 
 	if isIdent {
+		if _, ok := c.funcs[firstIdent.Ident]; ok {
+			return c.resolveFuncIdent(firstIdent.Ident), nil
+		}
+
 		switch firstIdent.Ident {
 		case "index":
 			if len(argTypes) < 2 {
@@ -536,7 +686,7 @@ func (c *checker) evalCommand(cmd *parse.CommandNode, dot Type, env *varEnv, pip
 				cur := deref(rt.t)
 				if cur != nil && cur.Kind() == reflect.Func {
 					if out, valid := validMethodReturn(cur); valid {
-						return ReflectType(out), nil
+						return unwrapFuncReturn(out), nil
 					}
 				}
 			}
@@ -548,7 +698,17 @@ func (c *checker) evalCommand(cmd *parse.CommandNode, dot Type, env *varEnv, pip
 		case "len":
 			return ReflectType(reflect.TypeFor[int]()), nil
 
-		case "not", "eq", "ne", "lt", "le", "gt", "ge":
+		case "not":
+			if len(argTypes) >= 2 {
+				argNode := cmd.Args[1]
+				argType := argTypes[1]
+				if known, truth := staticTruth(argNode, argType); known {
+					return withKnownTruth(ReflectType(reflect.TypeFor[bool]()), !truth), nil
+				}
+			}
+			return ReflectType(reflect.TypeFor[bool]()), nil
+
+		case "eq", "ne", "lt", "le", "gt", "ge":
 			return ReflectType(reflect.TypeFor[bool]()), nil
 
 		default:
@@ -566,24 +726,29 @@ func (c *checker) evalAndOr(isOr bool, args []parse.Node, dot Type, env *varEnv,
 		piped bool
 	}
 	var ops []operand
-	for _, arg := range args {
-		ops = append(ops, operand{node: arg, piped: false})
-	}
 	if pipedVal != nil {
-		ops = append(ops, operand{node: nil, piped: true})
+		ops = append(ops, operand{piped: true})
+	}
+	for _, a := range args {
+		ops = append(ops, operand{node: a})
 	}
 
-	curEnv := env.clone()
+	if len(ops) == 0 {
+		return nil, nil
+	}
+
+	curEnv := env
+	var resultTypes []Type
 	var forkEnvs []*varEnv
 	shortCircuited := false
-	var resultTypes []Type
-
 	totalOperands := len(ops)
+
 	for i, op := range ops {
 		if shortCircuited {
+			// Validate dead operand in a discarded clone.
 			if op.node != nil {
-				deadEnv := curEnv.clone()
-				if _, err := c.evalNode(op.node, dot, deadEnv); err != nil {
+				discardEnv := curEnv.clone()
+				if _, err := c.evalNode(op.node, dot, discardEnv); err != nil {
 					return nil, err
 				}
 			}
@@ -630,7 +795,14 @@ func (c *checker) evalAndOr(isOr bool, args []parse.Node, dot Type, env *varEnv,
 		env.types[id] = merged
 	}
 
-	return mergeTypeList(resultTypes), nil
+	result := mergeTypeList(resultTypes)
+	if shortCircuited {
+		return withKnownTruth(result, isOr), nil
+	}
+	if len(forkEnvs) == 0 && len(ops) > 0 {
+		return withKnownTruth(result, !isOr), nil
+	}
+	return result, nil
 }
 
 // evalNode evaluates an individual expression node in a single left-to-right pass.
@@ -707,19 +879,23 @@ func (c *checker) evalNode(node parse.Node, dot Type, env *varEnv) (Type, error)
 		return c.resolveFuncIdent(n.Ident), nil
 
 	case *parse.StringNode:
-		return ReflectType(reflect.TypeFor[string]()), nil
+		return withKnownTruth(ReflectType(reflect.TypeFor[string]()), len(n.Text) > 0), nil
 
 	case *parse.BoolNode:
-		return ReflectType(reflect.TypeFor[bool]()), nil
+		return withKnownTruth(ReflectType(reflect.TypeFor[bool]()), n.True), nil
 
 	case *parse.NumberNode:
+		truth := (n.IsInt && n.Int64 != 0) || (n.IsUint && n.Uint64 != 0) || (n.IsFloat && n.Float64 != 0) || (n.IsComplex && n.Complex128 != 0)
 		if n.IsInt {
-			return ReflectType(reflect.TypeFor[int]()), nil
+			return withKnownTruth(ReflectType(reflect.TypeFor[int]()), truth), nil
+		}
+		if n.IsUint {
+			return withKnownTruth(ReflectType(reflect.TypeFor[uint]()), truth), nil
 		}
 		if n.IsFloat {
-			return ReflectType(reflect.TypeFor[float64]()), nil
+			return withKnownTruth(ReflectType(reflect.TypeFor[float64]()), truth), nil
 		}
-		return ReflectType(reflect.TypeFor[int]()), nil
+		return withKnownTruth(ReflectType(reflect.TypeFor[int]()), truth), nil
 
 	default:
 		return nil, nil
@@ -730,8 +906,10 @@ func (c *checker) evalNode(node parse.Node, dot Type, env *varEnv) (Type, error)
 func (c *checker) resolveFuncIdent(ident string) Type {
 	if fn, ok := c.funcs[ident]; ok && fn != nil {
 		ft := reflect.TypeOf(fn)
-		if ft.Kind() == reflect.Func && ft.NumOut() >= 1 {
-			return ReflectType(ft.Out(0))
+		if ft.Kind() == reflect.Func {
+			if out, valid := validMethodReturn(ft); valid {
+				return unwrapFuncReturn(out)
+			}
 		}
 	}
 	return nil
