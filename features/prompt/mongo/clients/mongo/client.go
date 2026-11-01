@@ -172,6 +172,9 @@ func (c *client) Set(ctx context.Context, promptID prompt.Ident, scope prompt.Sc
 	return err
 }
 
+// Reset deletes all stored overrides for promptID whose session ID and labels
+// exactly equal scope. Label strings remain literal data. Database errors are
+// returned; no matching records is a successful no-op.
 func (c *client) Reset(ctx context.Context, promptID prompt.Ident, scope prompt.Scope) error {
 	if promptID == "" {
 		return errors.New("prompt id is required")
@@ -196,7 +199,8 @@ func (c *client) Reset(ctx context.Context, promptID prompt.Ident, scope prompt.
 		"$expr": bson.M{
 			"$setEquals": bson.A{
 				bson.M{"$objectToArray": bson.M{"$ifNull": bson.A{"$scope_labels", bson.M{}}}},
-				expectedArray,
+				// Label strings are data even when they start with "$".
+				bson.M{"$literal": expectedArray},
 			},
 		},
 	}
