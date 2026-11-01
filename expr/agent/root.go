@@ -456,7 +456,7 @@ func (r *RootExpr) validateCompletionNames(verr *eval.ValidationErrors) {
 }
 
 // validatePromptIDs verifies that all prompt IDs are globally unique across services and agents,
-// enforces Go identifier uniqueness per owner, and validates static sub-prompt composition.
+// and enforces Go identifier uniqueness per owner.
 func (r *RootExpr) validatePromptIDs(verr *eval.ValidationErrors) {
 	prompts := make(map[string]*PromptExpr)
 	recordPrompt := func(p *PromptExpr) {

@@ -4,8 +4,10 @@ package codegen
 
 import (
 	"fmt"
+	"path"
 
 	agentir "goa.design/goa-ai/codegen/ir"
+	agentexpr "goa.design/goa-ai/expr/agent"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
 	goacodegen "goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/codegen/service"
@@ -16,21 +18,27 @@ type (
 	// Plan stores the agent design, Goa service types, generated package names,
 	// and command mode used to write one run's files.
 	Plan struct {
-		roots      []eval.Root
-		design     *agentir.Design
-		service    *service.Plan
-		specs      *toolSpecsPlan
-		helpers    *toolsetHelperPackagesPlan
-		agents     *agentPackagesPlan
-		aggregates *aggregateSpecsPackagesPlan
-		agentTools *agentToolsPackagesPlan
-		exports    *serviceExportPackagesPlan
-		bootstraps *exampleBootstrapPackagesPlan
-		mains      *exampleMainPackagesPlan
-		registry   *registryClientPlan
-		mcp        *mcpexpr.RootExpr
-		data       *GeneratorData
-		example    bool
+		roots          []eval.Root
+		design         *agentir.Design
+		service        *service.Plan
+		specs          *toolSpecsPlan
+		helpers        *toolsetHelperPackagesPlan
+		agents         *agentPackagesPlan
+		servicePrompts *servicePromptsPackagesPlan
+		aggregates     *aggregateSpecsPackagesPlan
+		agentTools     *agentToolsPackagesPlan
+		exports        *serviceExportPackagesPlan
+		bootstraps     *exampleBootstrapPackagesPlan
+		mains          *exampleMainPackagesPlan
+		registry       *registryClientPlan
+		mcp            *mcpexpr.RootExpr
+		data           *GeneratorData
+		example        bool
+	}
+
+	// servicePromptsPackagesPlan stores the prompt package plans for service-level prompts.
+	servicePromptsPackagesPlan struct {
+		byService map[string]*promptPackagePlan
 	}
 )
 
@@ -68,6 +76,11 @@ func (p *Plan) Link() error {
 	}
 	if p.agents != nil {
 		if err := p.agents.link(data); err != nil {
+			return err
+		}
+	}
+	if p.servicePrompts != nil {
+		if err := p.servicePrompts.link(data); err != nil {
 			return err
 		}
 	}
@@ -138,6 +151,10 @@ func newPlan(generation *goacodegen.Generation, servicePlan *service.Plan, examp
 	if err != nil {
 		return nil, err
 	}
+	plan.servicePrompts, err = planServicePromptsPackages(generation, design)
+	if err != nil {
+		return nil, err
+	}
 	plan.aggregates, err = planAggregateSpecsPackages(generation, design, plan.mcp)
 	if err != nil {
 		return nil, err
@@ -174,6 +191,51 @@ func mcpDesignRoot(roots []eval.Root) *mcpexpr.RootExpr {
 	for _, root := range roots {
 		if mcpRoot, ok := root.(*mcpexpr.RootExpr); ok {
 			return mcpRoot
+		}
+	}
+	return nil
+}
+
+// planServicePromptsPackages claims packages and plans names for service-level prompts.
+func planServicePromptsPackages(generation *goacodegen.Generation, design *agentir.Design) (*servicePromptsPackagesPlan, error) {
+	planned := &servicePromptsPackagesPlan{byService: make(map[string]*promptPackagePlan)}
+	if design.AgentsRoot == nil {
+		return planned, nil
+	}
+	promptsByService := make(map[string][]*agentexpr.PromptExpr)
+	for _, p := range design.AgentsRoot.Prompts {
+		if p.Agent == nil && p.Service != nil {
+			promptsByService[p.Service.Name] = append(promptsByService[p.Service.Name], p)
+		}
+	}
+	for _, svc := range design.Services {
+		prompts := promptsByService[svc.Name]
+		if len(prompts) == 0 {
+			continue
+		}
+		pkgPath := path.Join(design.Genpkg, svc.PathName, "prompts")
+		pkg, err := generation.ClaimPackage(pkgPath)
+		if err != nil {
+			return nil, fmt.Errorf("claim service %q prompts package: %w", svc.Name, err)
+		}
+		pkgPlan := newPromptPackagePlan(pkg, design.Genpkg)
+		if err := pkgPlan.declare(prompts); err != nil {
+			return nil, fmt.Errorf("declare service %q prompts: %w", svc.Name, err)
+		}
+		planned.byService[svc.Name] = pkgPlan
+	}
+	return planned, nil
+}
+
+// link evaluates finalized types and imports for service-level prompts.
+func (p *servicePromptsPackagesPlan) link(data *GeneratorData) error {
+	for _, svc := range data.Services {
+		pkgPlan := p.byService[svc.Service.Name]
+		if pkgPlan != nil && len(svc.Prompts) > 0 {
+			if err := pkgPlan.link(svc.Prompts, "", true); err != nil {
+				return fmt.Errorf("link service %q prompt package plan: %w", svc.Service.Name, err)
+			}
+			svc.promptsPlan = pkgPlan
 		}
 	}
 	return nil

@@ -12,7 +12,6 @@ import (
 	agentir "goa.design/goa-ai/codegen/ir"
 	agentexpr "goa.design/goa-ai/expr/agent"
 	goacodegen "goa.design/goa/v3/codegen"
-	goaexpr "goa.design/goa/v3/expr"
 )
 
 type (
@@ -41,6 +40,7 @@ type (
 		registryPaths            []string
 		definitionAgentIDs       []string
 		registrySources          []*agentRegistrySourcesData
+		promptsPlan              *promptPackagePlan
 	}
 
 	// agentPackageFilesData contains the imports and package names used by the
@@ -201,7 +201,7 @@ func planAgentPackages(generation *goacodegen.Generation, design *agentir.Design
 			definitionAgentIDs:  reachableAgentIDs(agent),
 		}
 		packagePlan.registrySources = planRegistrySources(agent, packagePlan.definitionAgentIDs)
-		if err := packagePlan.declare(agent); err != nil {
+		if err := packagePlan.declare(agent, design.Genpkg); err != nil {
 			return nil, fmt.Errorf("plan agent %q package names: %w", agent.ID, err)
 		}
 		planned.byAgent[agent.ID] = packagePlan
@@ -232,7 +232,7 @@ func (p *agentPackagesPlan) link(data *GeneratorData) error {
 }
 
 // declare records the fixed and design-derived names written for one agent.
-func (p *agentPackagePlan) declare(agent *agentir.Agent) error {
+func (p *agentPackagePlan) declare(agent *agentir.Agent, genpkg string) error {
 	if err := p.declareFixedNames(map[goacodegen.PackageNameKind][]string{
 		goacodegen.NameConstant: {
 			agentIDName,
@@ -259,44 +259,10 @@ func (p *agentPackagePlan) declare(agent *agentir.Agent) error {
 		sources.declaration = declaration
 	}
 
-	if len(agent.Expr.Prompts) > 0 {
-		if err := p.declareFixedNames(map[goacodegen.PackageNameKind][]string{
-			goacodegen.NameFunction: {"PromptSpecs", "RegisterPrompts"},
-		}); err != nil {
-			return err
-		}
-		for _, pr := range agent.Expr.Prompts {
-			goName := goacodegen.Goify(pr.Name, true)
-			specFuncName := "PromptSpec" + goName
-			renderFuncName := "Render" + goName + "Prompt"
-			renderWithRegFuncName := "Render" + goName + "PromptWithRegistry"
-			constantName := "Prompt" + goName + "ID"
-			argsTypeName := goName + "PromptArgs"
-			if pr.Name == systemPromptName {
-				specFuncName = "PromptSpecSystem"
-				renderFuncName = "RenderSystemPrompt"
-				renderWithRegFuncName = "RenderSystemPromptWithRegistry"
-				constantName = "SystemPromptID"
-				argsTypeName = "SystemPromptArgs"
-			}
-			idKey := string(pr.ID())
-			if _, err := p.declarePreferred(goacodegen.NameConstant, constantName, goacodegen.ExportedName, idKey+":const"); err != nil {
-				return err
-			}
-			if _, err := p.declarePreferred(goacodegen.NameFunction, specFuncName, goacodegen.ExportedName, idKey+":spec"); err != nil {
-				return err
-			}
-			if _, err := p.declarePreferred(goacodegen.NameFunction, renderFuncName, goacodegen.ExportedName, idKey+":render"); err != nil {
-				return err
-			}
-			if _, err := p.declarePreferred(goacodegen.NameFunction, renderWithRegFuncName, goacodegen.ExportedName, idKey+":render-with-registry"); err != nil {
-				return err
-			}
-			if pr.Args != nil && pr.Args.Type != nil && pr.Args.Type != goaexpr.Empty {
-				if _, err := p.declarePreferred(goacodegen.NameType, argsTypeName, goacodegen.ExportedName, idKey+":args-type"); err != nil {
-					return err
-				}
-			}
+	if agent.Expr != nil && len(agent.Expr.Prompts) > 0 {
+		p.promptsPlan = newPromptPackagePlan(p.pkg, genpkg)
+		if err := p.promptsPlan.declare(agent.Expr.Prompts); err != nil {
+			return fmt.Errorf("declare agent %q prompt package plan: %w", agent.ID, err)
 		}
 	}
 
@@ -669,6 +635,12 @@ func (p *agentPackagePlan) link(agent *AgentData, agentsByID map[string]*AgentDa
 			toolset.agentToolsRuntimeAlias = p.pkg.ImportName(agentToolsRuntimePath)
 			toolset.agentToolsProviderAlias = p.pkg.ImportName(providerPath)
 		}
+	}
+	if p.promptsPlan != nil && len(agent.Prompts) > 0 {
+		if err := p.promptsPlan.link(agent.Prompts, agent.ID, false); err != nil {
+			return fmt.Errorf("link agent %q prompt package plan: %w", agent.ID, err)
+		}
+		agent.promptsPlan = p.promptsPlan
 	}
 	return nil
 }

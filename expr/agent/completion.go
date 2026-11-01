@@ -7,6 +7,7 @@ package agent
 import (
 	"fmt"
 
+	"goa.design/goa-ai/internal/dslshape"
 	"goa.design/goa/v3/eval"
 	goaexpr "goa.design/goa/v3/expr"
 )
@@ -68,7 +69,7 @@ func (c *CompletionExpr) Validate() error {
 
 // Finalize materializes any Extend-composed completion return shape.
 func (c *CompletionExpr) Finalize() {
-	finalizeToolShape(c.Return)
+	dslshape.Finalize(c.Return)
 }
 
 // validateStructuredOutputName enforces the provider-safe identifier syntax used

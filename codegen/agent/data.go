@@ -62,6 +62,8 @@ type (
 		Completions []*CompletionData
 		// Prompts lists each service-level prompt template declared under this service.
 		Prompts []*PromptData
+		// promptsPlan stores the linked package plan for service-level prompts.
+		promptsPlan *promptPackagePlan
 		// RegistryClients lists the registry clients written under this service.
 		RegistryClients []*RegistryClientData
 		// HasMCP indicates whether any agent under this service references external
@@ -145,6 +147,8 @@ type (
 		RunPolicy RunPolicyData
 		// Prompts contains all baseline prompt templates declared on this agent.
 		Prompts []*PromptData
+		// promptsPlan stores the linked package plan for agent-level prompts.
+		promptsPlan *promptPackagePlan
 		// UsedToolsets lists toolsets referenced via `Use`.
 		UsedToolsets []*ToolsetData
 		// ExportedToolsets lists toolsets declared via `Export`.

@@ -93,3 +93,37 @@ func Build(ownerName, suffix string, value any, args ...any) *goaexpr.AttributeE
 	}
 	return att
 }
+
+// Finalize recursively finalizes user types and bases on an attribute expression,
+// materializing Extend-composed fields before expression validation or codegen.
+// If the finalized type is an object with zero fields, Finalize collapses it to
+// goaexpr.Empty.
+func Finalize(att *goaexpr.AttributeExpr) {
+	finalizeVisited(att, make(map[string]bool))
+}
+
+// finalizeVisited tracks visited user types to prevent infinite recursion on
+// self-referential or mutually referential types while finalizing bases and references.
+func finalizeVisited(att *goaexpr.AttributeExpr, visited map[string]bool) {
+	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
+		return
+	}
+	for _, dt := range append(append([]goaexpr.DataType{}, att.Bases...), att.References...) {
+		if ut, ok := dt.(goaexpr.UserType); ok {
+			if id := ut.ID(); id != "" && !visited[id] {
+				visited[id] = true
+				finalizeVisited(ut.Attribute(), visited)
+			}
+		}
+	}
+	if ut, ok := att.Type.(goaexpr.UserType); ok {
+		if id := ut.ID(); id != "" && !visited[id] {
+			visited[id] = true
+			finalizeVisited(ut.Attribute(), visited)
+		}
+	}
+	att.Finalize()
+	if obj, ok := att.Type.(*goaexpr.Object); ok && len(*obj) == 0 {
+		att.Type = goaexpr.Empty
+	}
+}

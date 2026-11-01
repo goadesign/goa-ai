@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"sort"
 
+	agentexpr "goa.design/goa-ai/expr/agent"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/codegen/service"
 	goaexpr "goa.design/goa/v3/expr"
@@ -28,10 +29,40 @@ type (
 
 	// promptFileTemplateData contains the data passed to agent_prompts.go.tpl.
 	promptFileTemplateData struct {
-		AgentID   string
-		IsService bool
-		Prompts   []*PromptData
-		UserTypes []*PromptUserTypeData
+		AgentID      string
+		IsService    bool
+		Prompts      []*PromptData
+		UserTypes    []*PromptUserTypeData
+		ContextAlias string
+		ErrorsAlias  string
+		ReflectAlias string
+		PlannerAlias string
+		PromptAlias  string
+	}
+
+	// promptPackagePlan coordinates symbols, types, sum unions, and imports for prompts.go
+	// in an agent or service package.
+	promptPackagePlan struct {
+		pkg               *codegen.GeneratedPackage
+		genpkg            string
+		imports           *codegen.GeneratedImportPlan
+		decls             []plannedPromptDeclarations
+		declaredTypes     map[localizedTypeKey]*codegen.TypeDeclaration
+		allLocalizedTypes []*localizedType
+		publicShapes      []*goaexpr.AttributeExpr
+		unionDecls        map[codegen.UnionDeclarationID]*codegen.UnionDeclaration
+		templateData      *promptFileTemplateData
+		fileImports       []*codegen.ImportSpec
+		unions            []*service.UnionTypeData
+	}
+
+	// plannedPromptDeclarations stores name reservations for one prompt.
+	plannedPromptDeclarations struct {
+		constDecl     *codegen.NameDeclaration
+		specDecl      *codegen.NameDeclaration
+		renderDecl    *codegen.NameDeclaration
+		renderRegDecl *codegen.NameDeclaration
+		argsTypeDecl  *codegen.NameDeclaration
 	}
 
 	// promptSchemaRecord represents one prompt in specs/prompt_schemas.json.
@@ -60,28 +91,41 @@ type (
 	}
 )
 
+// newPromptPackagePlan initializes prompt package planning for one generated Go package.
+func newPromptPackagePlan(pkg *codegen.GeneratedPackage, genpkg string) *promptPackagePlan {
+	if genpkg == "" {
+		genpkg = "goa.design/goa-ai/gen"
+	}
+	return &promptPackagePlan{
+		pkg:           pkg,
+		genpkg:        genpkg,
+		imports:       codegen.NewGeneratedImportPlan(pkg),
+		declaredTypes: make(map[localizedTypeKey]*codegen.TypeDeclaration),
+		unionDecls:    make(map[codegen.UnionDeclarationID]*codegen.UnionDeclaration),
+	}
+}
+
 // agentPromptsFile writes gen/<svc>/agents/<agent>/prompts.go containing canonical prompt IDs,
 // precomputed PromptSpecs, PromptSpecs aggregator, typed Render helpers, and RegisterPrompts.
 func agentPromptsFile(agent *AgentData) (*codegen.File, error) {
 	if len(agent.Prompts) == 0 {
 		return nil, nil
 	}
-
-	data, imports, unions, err := buildPromptFileTemplateData(agent.Prompts, agent.ID, false, agent.ImportPath, agent.Genpkg)
-	if err != nil {
-		return nil, err
+	plan := agent.promptsPlan
+	if plan == nil {
+		return nil, fmt.Errorf("agent %q has prompts but no prompt package plan", agent.ID)
 	}
 
 	sections := []*codegen.SectionTemplate{
-		codegen.Header(agent.StructName+" prompt specifications and helpers", agent.PackageName, imports),
+		codegen.Header(agent.StructName+" prompt specifications and helpers", agent.PackageName, plan.fileImports),
 		{
 			Name:    "agent-prompts",
 			Source:  agentsTemplates.Read(agentPromptsFileT),
-			Data:    data,
+			Data:    plan.templateData,
 			FuncMap: templateFuncMap(),
 		},
 	}
-	for _, union := range unions {
+	for _, union := range plan.unions {
 		sections = append(sections, &codegen.SectionTemplate{
 			Name:   "prompt-union-type",
 			Source: service.UnionTypeSource,
@@ -156,24 +200,22 @@ func servicePromptsFiles(svc *ServiceAgentsData) ([]*codegen.File, error) {
 	if len(svc.Prompts) == 0 {
 		return nil, nil
 	}
-
-	svcImportPath := path.Join(svc.Genpkg, svc.Service.PathName, "prompts")
-	data, imports, unions, err := buildPromptFileTemplateData(svc.Prompts, "", true, svcImportPath, svc.Genpkg)
-	if err != nil {
-		return nil, err
+	plan := svc.promptsPlan
+	if plan == nil {
+		return nil, fmt.Errorf("service %q has prompts but no prompt package plan", svc.Service.Name)
 	}
 
 	dir := filepath.Join(codegen.Gendir, svc.Service.PathName, "prompts")
 	sections := []*codegen.SectionTemplate{
-		codegen.Header(svc.Service.Name+" service prompt specifications and helpers", "prompts", imports),
+		codegen.Header(svc.Service.Name+" service prompt specifications and helpers", "prompts", plan.fileImports),
 		{
 			Name:    "service-prompts",
 			Source:  agentsTemplates.Read(agentPromptsFileT),
-			Data:    data,
+			Data:    plan.templateData,
 			FuncMap: templateFuncMap(),
 		},
 	}
-	for _, union := range unions {
+	for _, union := range plan.unions {
 		sections = append(sections, &codegen.SectionTemplate{
 			Name:   "prompt-union-type",
 			Source: service.UnionTypeSource,
@@ -232,103 +274,57 @@ func servicePromptsFiles(svc *ServiceAgentsData) ([]*codegen.File, error) {
 	return []*codegen.File{promptsFile, jsonFile}, nil
 }
 
-// buildPromptFileTemplateData collects nested user types, resolves imports, and plans
-// prompt template data using package generation machinery and symbol reservations.
-func buildPromptFileTemplateData(prompts []*PromptData, agentID string, isService bool, pkgImportPath, genpkg string) (*promptFileTemplateData, []*codegen.ImportSpec, []*service.UnionTypeData, error) {
-	genRoot := genpkg
-	if genRoot == "" {
-		genRoot = "goa.design/goa-ai/gen"
+// declare reserves symbols, localized types, sum unions, and imports for prompts.go
+// before Generation.Freeze runs.
+func (p *promptPackagePlan) declare(prompts []*agentexpr.PromptExpr) error {
+	if err := p.pkg.DeclareName(codegen.NewExactName(codegen.NameFunction, "PromptSpecs")); err != nil {
+		return err
 	}
-	generation, err := codegen.NewGeneration(genRoot, nil)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("create generation for prompt templates: %w", err)
-	}
-	if pkgImportPath == "" {
-		pkgImportPath = path.Join(genRoot, "prompts")
-	}
-	pkg, err := generation.ClaimPackage(pkgImportPath)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("claim package %q for prompt templates: %w", pkgImportPath, err)
+	if err := p.pkg.DeclareName(codegen.NewExactName(codegen.NameFunction, "RegisterPrompts")); err != nil {
+		return err
 	}
 
-	// Declare fixed names for prompt functions.
-	if err := pkg.DeclareName(codegen.NewExactName(codegen.NameFunction, "PromptSpecs")); err != nil {
-		return nil, nil, nil, err
-	}
-	if err := pkg.DeclareName(codegen.NewExactName(codegen.NameFunction, "RegisterPrompts")); err != nil {
-		return nil, nil, nil, err
-	}
+	p.decls = make([]plannedPromptDeclarations, len(prompts))
+	for i, pr := range prompts {
+		goName := codegen.Goify(pr.Name, true)
+		specFuncName := "PromptSpec" + goName
+		renderFuncName := "Render" + goName + "Prompt"
+		renderWithRegFuncName := "Render" + goName + "PromptWithRegistry"
+		constantName := "Prompt" + goName + "ID"
+		argsTypeName := goName + "PromptArgs"
+		if pr.Name == systemPromptName {
+			specFuncName = "PromptSpecSystem"
+			renderFuncName = "RenderSystemPrompt"
+			renderWithRegFuncName = "RenderSystemPromptWithRegistry"
+			constantName = "SystemPromptID"
+			argsTypeName = "SystemPromptArgs"
+		}
 
-	// For agent packages, also declare the fixed agent package names to prevent collision.
-	if !isService {
-		fixedConstants := []string{
-			"AgentID",
-			"WorkflowName",
-			"DefaultTaskQueue",
-			"PlanActivity",
-			"ResumeActivity",
-			"ExecuteToolActivity",
+		idKey := string(pr.ID())
+		constDecl := codegen.NewPreferredName(codegen.NameConstant, constantName, codegen.ExportedName, specNameOrder{packagePath: p.pkg.ImportPath(), key: idKey + ":const"})
+		if err := p.pkg.DeclareName(constDecl); err != nil {
+			return err
 		}
-		for _, name := range fixedConstants {
-			if err := pkg.DeclareName(codegen.NewExactName(codegen.NameConstant, name)); err != nil {
-				return nil, nil, nil, err
-			}
+		specDecl := codegen.NewPreferredName(codegen.NameFunction, specFuncName, codegen.ExportedName, specNameOrder{packagePath: p.pkg.ImportPath(), key: idKey + ":spec"})
+		if err := p.pkg.DeclareName(specDecl); err != nil {
+			return err
 		}
-		fixedFunctions := []string{
-			"Definition",
-			"NewClient",
-			"RegisterUsedToolsets",
+		renderDecl := codegen.NewPreferredName(codegen.NameFunction, renderFuncName, codegen.ExportedName, specNameOrder{packagePath: p.pkg.ImportPath(), key: idKey + ":render"})
+		if err := p.pkg.DeclareName(renderDecl); err != nil {
+			return err
 		}
-		for _, name := range fixedFunctions {
-			if err := pkg.DeclareName(codegen.NewExactName(codegen.NameFunction, name)); err != nil {
-				return nil, nil, nil, err
-			}
-		}
-		fixedVariables := []string{
-			"agentDefinition",
-			"usedToolsetRegistrationOptions",
-		}
-		for _, name := range fixedVariables {
-			if err := pkg.DeclareName(codegen.NewExactName(codegen.NameVariable, name)); err != nil {
-				return nil, nil, nil, err
-			}
-		}
-	}
-
-	// Declare preferred names for each prompt.
-	type promptDeclarations struct {
-		constDecl     *codegen.NameDeclaration
-		specDecl      *codegen.NameDeclaration
-		renderDecl    *codegen.NameDeclaration
-		renderRegDecl *codegen.NameDeclaration
-		argsTypeDecl  *codegen.NameDeclaration
-	}
-	decls := make([]promptDeclarations, len(prompts))
-	for i, p := range prompts {
-		constDecl := codegen.NewPreferredName(codegen.NameConstant, p.ConstantName, codegen.ExportedName, specNameOrder{packagePath: pkg.ImportPath(), key: p.ID + ":const"})
-		if err := pkg.DeclareName(constDecl); err != nil {
-			return nil, nil, nil, err
-		}
-		specDecl := codegen.NewPreferredName(codegen.NameFunction, p.SpecFuncName, codegen.ExportedName, specNameOrder{packagePath: pkg.ImportPath(), key: p.ID + ":spec"})
-		if err := pkg.DeclareName(specDecl); err != nil {
-			return nil, nil, nil, err
-		}
-		renderDecl := codegen.NewPreferredName(codegen.NameFunction, p.RenderFuncName, codegen.ExportedName, specNameOrder{packagePath: pkg.ImportPath(), key: p.ID + ":render"})
-		if err := pkg.DeclareName(renderDecl); err != nil {
-			return nil, nil, nil, err
-		}
-		renderRegDecl := codegen.NewPreferredName(codegen.NameFunction, p.RenderWithRegistryFuncName, codegen.ExportedName, specNameOrder{packagePath: pkg.ImportPath(), key: p.ID + ":render-with-registry"})
-		if err := pkg.DeclareName(renderRegDecl); err != nil {
-			return nil, nil, nil, err
+		renderRegDecl := codegen.NewPreferredName(codegen.NameFunction, renderWithRegFuncName, codegen.ExportedName, specNameOrder{packagePath: p.pkg.ImportPath(), key: idKey + ":render-with-registry"})
+		if err := p.pkg.DeclareName(renderRegDecl); err != nil {
+			return err
 		}
 		var argsTypeDecl *codegen.NameDeclaration
-		if p.HasArgs {
-			argsTypeDecl = codegen.NewPreferredName(codegen.NameType, p.ArgsTypeName, codegen.ExportedName, specNameOrder{packagePath: pkg.ImportPath(), key: p.ID + ":args-type"})
-			if err := pkg.DeclareName(argsTypeDecl); err != nil {
-				return nil, nil, nil, err
+		if pr.Args != nil && pr.Args.Type != nil && pr.Args.Type != goaexpr.Empty {
+			argsTypeDecl = codegen.NewPreferredName(codegen.NameType, argsTypeName, codegen.ExportedName, specNameOrder{packagePath: p.pkg.ImportPath(), key: idKey + ":args-type"})
+			if err := p.pkg.DeclareName(argsTypeDecl); err != nil {
+				return err
 			}
 		}
-		decls[i] = promptDeclarations{
+		p.decls[i] = plannedPromptDeclarations{
 			constDecl:     constDecl,
 			specDecl:      specDecl,
 			renderDecl:    renderDecl,
@@ -337,23 +333,19 @@ func buildPromptFileTemplateData(prompts []*PromptData, agentID string, isServic
 		}
 	}
 
-	declaredTypes := make(map[localizedTypeKey]*codegen.TypeDeclaration)
-	var allLocalizedTypes []*localizedType
-	publicShapes := make([]*goaexpr.AttributeExpr, len(prompts))
-	unionDecls := make(map[codegen.UnionDeclarationID]*codegen.UnionDeclaration)
-
-	for i, p := range prompts {
-		if !p.HasArgs || p.Expr == nil || p.Expr.Args == nil {
+	p.publicShapes = make([]*goaexpr.AttributeExpr, len(prompts))
+	for i, pr := range prompts {
+		if pr.Args == nil || pr.Args.Type == nil || pr.Args.Type == goaexpr.Empty {
 			continue
 		}
-		shape := p.Expr.Args
+		shape := pr.Args
 		if ut, ok := shape.Type.(goaexpr.UserType); ok && ut != goaexpr.Empty {
 			shape = stripStructPkgMeta(ut.Attribute())
 		} else {
 			shape = stripStructPkgMeta(shape)
 		}
 		public, publicTypes := localizeNestedTypes(shape, false, nil, specJSONModel)
-		publicShapes[i] = public
+		p.publicShapes[i] = public
 
 		for _, localized := range publicTypes {
 			key := localizedTypeKey{source: localized.source, jsonContract: localized.jsonContract}
@@ -361,51 +353,169 @@ func buildPromptFileTemplateData(prompts []*PromptData, agentID string, isServic
 				key.resultIdentifier = result.Identifier
 				key.source = nil
 			}
-			if declaration := declaredTypes[key]; declaration != nil {
-				if err := pkg.BindGeneratedType(localized.generated, declaration); err != nil {
-					return nil, nil, nil, err
+			if declaration := p.declaredTypes[key]; declaration != nil {
+				if err := p.pkg.BindGeneratedType(localized.generated, declaration); err != nil {
+					return err
 				}
 				localized.declaration = declaration
 				continue
 			}
-			declaration, err := pkg.DeclareGeneratedType(
+			declaration, err := p.pkg.DeclareGeneratedType(
 				localized.generated.TypeName,
-				newLocalizedTypeNameOrder(pkg.ImportPath(), localized.source, localizedTypeDeclarationName, localized.jsonContract),
+				newLocalizedTypeNameOrder(p.pkg.ImportPath(), localized.source, localizedTypeDeclarationName, localized.jsonContract),
 			)
 			if err != nil {
-				return nil, nil, nil, err
+				return err
 			}
-			if err := pkg.BindGeneratedType(localized.generated, declaration); err != nil {
-				return nil, nil, nil, err
+			if err := p.pkg.BindGeneratedType(localized.generated, declaration); err != nil {
+				return err
 			}
-			declaredTypes[key] = declaration
+			p.declaredTypes[key] = declaration
 			localized.declaration = declaration
-			allLocalizedTypes = append(allLocalizedTypes, localized)
+			p.allLocalizedTypes = append(p.allLocalizedTypes, localized)
 		}
 
-		if err := declareAttributeUnions(pkg, unionDecls, public); err != nil {
-			return nil, nil, nil, fmt.Errorf("declare prompt union sum types: %w", err)
-		}
-	}
-
-	if err := generation.Freeze(); err != nil {
-		return nil, nil, nil, fmt.Errorf("freeze generation for prompt templates: %w", err)
-	}
-
-	scope := pkg.Scope().Fork()
-
-	for i, p := range prompts {
-		p.ConstantName = decls[i].constDecl.Name()
-		p.SpecFuncName = decls[i].specDecl.Name()
-		p.RenderFuncName = decls[i].renderDecl.Name()
-		p.RenderWithRegistryFuncName = decls[i].renderRegDecl.Name()
-		if p.HasArgs && decls[i].argsTypeDecl != nil {
-			p.ArgsTypeName = decls[i].argsTypeDecl.Name()
+		if err := declareAttributeUnions(p.pkg, p.unionDecls, public); err != nil {
+			return fmt.Errorf("declare prompt union sum types: %w", err)
 		}
 	}
 
-	userTypeData := make([]*PromptUserTypeData, 0, len(allLocalizedTypes))
-	for _, localized := range allLocalizedTypes {
+	requiredImports := []*codegen.ImportSpec{
+		codegen.SimpleImport("context"),
+		codegen.SimpleImport("errors"),
+		codegen.SimpleImport("reflect"),
+		codegen.SimpleImport(plannerImportPath),
+		codegen.SimpleImport(promptImportPath),
+	}
+	if len(p.unionDecls) > 0 {
+		requiredImports = append(requiredImports,
+			codegen.SimpleImport("bytes"),
+			codegen.SimpleImport("encoding/json"),
+			codegen.SimpleImport("fmt"),
+			codegen.GoaImport(""),
+		)
+	}
+	if err := p.imports.Require(requiredImports...); err != nil {
+		return err
+	}
+
+	for _, shape := range p.publicShapes {
+		if shape != nil {
+			if err := p.imports.AddTypeExpressions(shape); err != nil {
+				return err
+			}
+		}
+	}
+	for _, localized := range p.allLocalizedTypes {
+		if err := p.imports.AddTypeExpressions(localized.generated.AttributeExpr); err != nil {
+			return err
+		}
+	}
+
+	seenDesignImports := make(map[string]*codegen.ImportSpec)
+	seenGeneratedImports := make(map[string]*codegen.ImportSpec)
+	seenTypes := make(map[string]bool)
+	var collectMetaImports func(att *goaexpr.AttributeExpr)
+	collectMetaImports = func(att *goaexpr.AttributeExpr) {
+		if att == nil || att.Type == nil {
+			return
+		}
+		for _, imp := range codegen.GetMetaTypeImports(att) {
+			if imp != nil && imp.Path != "" && imp.Path != p.pkg.ImportPath() {
+				seenDesignImports[imp.Path] = imp
+			}
+		}
+		if ut, ok := att.Type.(goaexpr.UserType); ok {
+			loc := codegen.UserTypeLocation(ut)
+			if loc != nil {
+				importPath := path.Join(p.genpkg, loc.RelImportPath)
+				if importPath != p.pkg.ImportPath() {
+					seenGeneratedImports[importPath] = &codegen.ImportSpec{
+						Path: importPath,
+						Name: loc.PackageName(),
+					}
+				}
+				return
+			}
+			id := ut.ID()
+			if !seenTypes[id] {
+				seenTypes[id] = true
+				collectMetaImports(ut.Attribute())
+			}
+			return
+		}
+		if obj := goaexpr.AsObject(att.Type); obj != nil {
+			for _, nat := range *obj {
+				if nat != nil {
+					collectMetaImports(nat.Attribute)
+				}
+			}
+			return
+		}
+		if arr := goaexpr.AsArray(att.Type); arr != nil {
+			collectMetaImports(arr.ElemType)
+			return
+		}
+		if mp := goaexpr.AsMap(att.Type); mp != nil {
+			collectMetaImports(mp.KeyType)
+			collectMetaImports(mp.ElemType)
+			return
+		}
+		if un := goaexpr.AsUnion(att.Type); un != nil {
+			for _, nat := range un.Values {
+				if nat != nil {
+					collectMetaImports(nat.Attribute)
+				}
+			}
+			return
+		}
+	}
+	for _, shape := range p.publicShapes {
+		if shape != nil {
+			collectMetaImports(shape)
+		}
+	}
+	for _, localized := range p.allLocalizedTypes {
+		collectMetaImports(localized.generated.AttributeExpr)
+	}
+	for _, imp := range seenDesignImports {
+		if err := p.imports.AddDesign(imp); err != nil {
+			return err
+		}
+	}
+	for _, imp := range seenGeneratedImports {
+		if err := p.imports.AddGenerated(imp); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// link evaluates finalized types, sums, argument shapes, and import aliases
+// after Generation.Freeze has run.
+func (p *promptPackagePlan) link(prompts []*PromptData, agentID string, isService bool) error {
+	if err := p.imports.Link(); err != nil {
+		return fmt.Errorf("link prompt imports: %w", err)
+	}
+
+	for i, prompt := range prompts {
+		if i >= len(p.decls) {
+			continue
+		}
+		decl := p.decls[i]
+		prompt.ConstantName = decl.constDecl.Name()
+		prompt.SpecFuncName = decl.specDecl.Name()
+		prompt.RenderFuncName = decl.renderDecl.Name()
+		prompt.RenderWithRegistryFuncName = decl.renderRegDecl.Name()
+		if prompt.HasArgs && decl.argsTypeDecl != nil {
+			prompt.ArgsTypeName = decl.argsTypeDecl.Name()
+		}
+	}
+
+	scope := p.pkg.Scope().Fork()
+
+	userTypeData := make([]*PromptUserTypeData, 0, len(p.allLocalizedTypes))
+	for _, localized := range p.allLocalizedTypes {
 		userTypeData = append(userTypeData, &PromptUserTypeData{
 			Name: localized.declaration.Name(),
 			Def:  scope.GoTypeDef(localized.generated.AttributeExpr, false, true),
@@ -417,9 +527,9 @@ func buildPromptFileTemplateData(prompts []*PromptData, agentID string, isServic
 
 	unionMap := make(map[codegen.UnionDeclarationID]*unionTypeData)
 	seenUnionTypes := make(map[goaexpr.UserType]struct{})
-	for i, p := range prompts {
-		if p.HasArgs && publicShapes[i] != nil {
-			collectUnionSumTypes(publicShapes[i], scope, pkg, unionMap, seenUnionTypes)
+	for i, prompt := range prompts {
+		if prompt.HasArgs && i < len(p.publicShapes) && p.publicShapes[i] != nil {
+			collectUnionSumTypes(p.publicShapes[i], scope, p.pkg, unionMap, seenUnionTypes)
 		}
 	}
 	unions := make([]*service.UnionTypeData, 0, len(unionMap))
@@ -430,105 +540,24 @@ func buildPromptFileTemplateData(prompts []*PromptData, agentID string, isServic
 		return unions[i].TypeDeclaration.Name() < unions[j].TypeDeclaration.Name()
 	})
 
-	for i, p := range prompts {
-		if p.HasArgs && publicShapes[i] != nil {
-			p.ArgsDef = scope.GoTypeDef(publicShapes[i], false, true)
+	for i, prompt := range prompts {
+		if prompt.HasArgs && i < len(p.publicShapes) && p.publicShapes[i] != nil {
+			prompt.ArgsDef = scope.GoTypeDef(p.publicShapes[i], false, true)
 		}
 	}
 
-	seenImports := make(map[string]*codegen.ImportSpec)
-	seenTypes := make(map[string]bool)
-	var collectExternalImports func(att *goaexpr.AttributeExpr)
-	collectExternalImports = func(att *goaexpr.AttributeExpr) {
-		if att == nil || att.Type == nil {
-			return
-		}
-		for _, imp := range codegen.GetMetaTypeImports(att) {
-			if imp != nil && imp.Path != "" {
-				seenImports[imp.Path] = imp
-			}
-		}
-		if ut, ok := att.Type.(goaexpr.UserType); ok {
-			loc := codegen.UserTypeLocation(ut)
-			if loc != nil {
-				importPath := path.Join(genpkg, loc.RelImportPath)
-				seenImports[importPath] = &codegen.ImportSpec{
-					Path: importPath,
-					Name: loc.PackageName(),
-				}
-				return
-			}
-			id := ut.ID()
-			if !seenTypes[id] {
-				seenTypes[id] = true
-				collectExternalImports(ut.Attribute())
-			}
-			return
-		}
-		if obj := goaexpr.AsObject(att.Type); obj != nil {
-			for _, nat := range *obj {
-				if nat != nil {
-					collectExternalImports(nat.Attribute)
-				}
-			}
-			return
-		}
-		if arr := goaexpr.AsArray(att.Type); arr != nil {
-			collectExternalImports(arr.ElemType)
-			return
-		}
-		if mp := goaexpr.AsMap(att.Type); mp != nil {
-			collectExternalImports(mp.KeyType)
-			collectExternalImports(mp.ElemType)
-			return
-		}
-		if un := goaexpr.AsUnion(att.Type); un != nil {
-			for _, nat := range un.Values {
-				if nat != nil {
-					collectExternalImports(nat.Attribute)
-				}
-			}
-			return
-		}
+	p.templateData = &promptFileTemplateData{
+		AgentID:      agentID,
+		IsService:    isService,
+		Prompts:      prompts,
+		UserTypes:    userTypeData,
+		ContextAlias: p.pkg.ImportName("context"),
+		ErrorsAlias:  p.pkg.ImportName("errors"),
+		ReflectAlias: p.pkg.ImportName("reflect"),
+		PlannerAlias: p.pkg.ImportName(plannerImportPath),
+		PromptAlias:  p.pkg.ImportName(promptImportPath),
 	}
-	for i, p := range prompts {
-		if p.HasArgs && publicShapes[i] != nil {
-			collectExternalImports(publicShapes[i])
-		}
-	}
-	for _, localized := range allLocalizedTypes {
-		collectExternalImports(localized.generated.AttributeExpr)
-	}
-
-	imports := []*codegen.ImportSpec{
-		{Path: "context"},
-		{Path: "errors"},
-		{Path: "reflect"},
-		{Path: "goa.design/goa-ai/runtime/agent/planner"},
-		{Path: "goa.design/goa-ai/runtime/agent/prompt"},
-	}
-	if len(unions) > 0 {
-		seenImports["bytes"] = &codegen.ImportSpec{Path: "bytes"}
-		seenImports["encoding/json"] = &codegen.ImportSpec{Path: "encoding/json"}
-		seenImports["fmt"] = &codegen.ImportSpec{Path: "fmt"}
-		seenImports["goa.design/goa/v3/pkg"] = &codegen.ImportSpec{Path: "goa.design/goa/v3/pkg", Name: "goa"}
-	}
-
-	importPaths := make([]string, 0, len(seenImports))
-	for p := range seenImports {
-		importPaths = append(importPaths, p)
-	}
-	sort.Strings(importPaths)
-	for _, p := range importPaths {
-		imports = append(imports, seenImports[p])
-	}
-
-	tplData := &promptFileTemplateData{
-		AgentID:   agentID,
-		IsService: isService,
-		Prompts:   prompts,
-		UserTypes: userTypeData,
-	}
-
-	return tplData, imports, unions, nil
+	p.fileImports = p.imports.Imports()
+	p.unions = unions
+	return nil
 }

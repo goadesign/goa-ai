@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"goa.design/goa-ai/boundedresult"
+	"goa.design/goa-ai/internal/dslshape"
 	"goa.design/goa-ai/internal/mcpinput"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/eval"
@@ -874,8 +875,8 @@ func canonicalBoundedResultFieldNames(bounds *ToolBoundsExpr) []string {
 //     materialized once at the expression layer.
 //   - Method bindings are resolved after validation and must be deterministic.
 func (t *ToolExpr) Finalize() {
-	finalizeToolShape(t.Args)
-	finalizeToolShape(t.Return)
+	dslshape.Finalize(t.Args)
+	dslshape.Finalize(t.Return)
 
 	if t.bindMethodName == "" {
 		return
@@ -905,32 +906,4 @@ func (t *ToolExpr) BoundServiceName() string {
 // to set the tool title.
 func (t *ToolExpr) SetTitle(title string) {
 	t.Title = title
-}
-
-// finalizeToolShape finalizes an attribute expression and all referenced user types.
-func finalizeToolShape(att *goaexpr.AttributeExpr) {
-	finalizeToolShapeVisited(att, make(map[string]bool))
-}
-
-// finalizeToolShapeVisited recursively finalizes user types and bases to ensure Extend-composed
-// fields are materialized before expression validation.
-func finalizeToolShapeVisited(att *goaexpr.AttributeExpr, visited map[string]bool) {
-	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
-		return
-	}
-	for _, dt := range append(append([]goaexpr.DataType{}, att.Bases...), att.References...) {
-		if ut, ok := dt.(goaexpr.UserType); ok {
-			if id := ut.ID(); id != "" && !visited[id] {
-				visited[id] = true
-				finalizeToolShapeVisited(ut.Attribute(), visited)
-			}
-		}
-	}
-	if ut, ok := att.Type.(goaexpr.UserType); ok {
-		if id := ut.ID(); id != "" && !visited[id] {
-			visited[id] = true
-			finalizeToolShapeVisited(ut.Attribute(), visited)
-		}
-	}
-	att.Finalize()
 }

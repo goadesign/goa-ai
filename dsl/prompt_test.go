@@ -1,7 +1,10 @@
 package dsl_test
 
 import (
+	"context"
+	"reflect"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -10,7 +13,15 @@ import (
 	mcpexpr "goa.design/goa-ai/expr/mcp"
 	"goa.design/goa-ai/runtime/agent/prompt"
 	. "goa.design/goa/v3/dsl"
+	goaexpr "goa.design/goa/v3/expr"
 )
+
+type qaUnion struct{ text string }
+
+func (u qaUnion) Kind() string { return "text" }
+func (u qaUnion) Value() (any, error) { //nolint:unparam // Error return mirrors Goa generated union Value method signature.
+	return u.text, nil
+}
 
 func TestStaticSystemPrompt(t *testing.T) {
 	runDSL(t, func() {
@@ -465,4 +476,79 @@ func TestReviewFollowupManualCompositionDSL(t *testing.T) {
 			})
 		})
 	})
+}
+
+// TestQABC70Adapter verifies that template adapters correctly support bytes ranges,
+// union methods (Kind, Value), and dynamic Any arguments.
+func TestQABC70Adapter(t *testing.T) {
+	var dynamic goaexpr.UserType
+	tests := []struct {
+		name, source string
+		schema       func()
+		data         any
+	}{
+		{"bytes_range", `{{range .Data}}{{.}}{{end}}`, func() { Attribute("data", Bytes, "Raw bytes"); Required("data") }, struct{ Data []byte }{[]byte{65, 66}}},
+		{"union_kind", `{{.Choice.Kind}}`, func() { OneOf("choice", "Chosen value", func() { Attribute("text", String, "Text value") }); Required("choice") }, struct{ Choice qaUnion }{qaUnion{"Ada"}}},
+		{"union_value", `{{.Choice.Value}}`, func() { OneOf("choice", "Chosen value", func() { Attribute("text", String, "Text value") }); Required("choice") }, struct{ Choice qaUnion }{qaUnion{"Ada"}}},
+		{"named_any", `{{.Payload.foo}}`, func() { Attribute("payload", dynamic, "Dynamic payload"); Required("payload") }, struct{ Payload any }{map[string]any{"foo": "Ada"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := runDSLWithError(t, func() {
+				dynamic = Type("Dynamic", Any)
+				Service("support", func() {
+					Prompt("main", func() {
+						Template(tt.source)
+						Args(tt.schema)
+					})
+				})
+			})
+			require.NoError(t, err)
+			r := prompt.NewRegistry(nil)
+			registerErr := r.Register(prompt.PromptSpec{
+				ID:       "qa.main",
+				Role:     prompt.PromptRoleUser,
+				Template: tt.source,
+				ArgsType: reflect.TypeOf(tt.data),
+			})
+			require.NoError(t, registerErr)
+			out, renderErr := r.Render(context.Background(), "qa.main", prompt.Scope{}, tt.data)
+			require.NoError(t, renderErr)
+			require.NotNil(t, out)
+		})
+	}
+}
+
+// TestQABC70ExternalOverride verifies that struct:field:type overrides are treated dynamically
+// at compile time and enforced against the concrete type at runtime.
+func TestQABC70ExternalOverride(t *testing.T) {
+	for _, source := range []string{`{{.Timestamp.Year}}`, `{{.Timestamp.Missing}}`} {
+		t.Run(source, func(t *testing.T) {
+			err := runDSLWithError(t, func() {
+				Service("support", func() {
+					Prompt("main", func() {
+						Template(source)
+						Args(func() {
+							Attribute("timestamp", String, "Time", func() {
+								Meta("struct:field:type", "time.Time", "time")
+							})
+						})
+					})
+				})
+			})
+			require.NoError(t, err)
+			r := prompt.NewRegistry(nil)
+			registerErr := r.Register(prompt.PromptSpec{
+				ID:       "qa.main",
+				Role:     prompt.PromptRoleUser,
+				Template: source,
+				ArgsType: reflect.TypeFor[struct{ Timestamp time.Time }](),
+			})
+			if source == `{{.Timestamp.Year}}` {
+				require.NoError(t, registerErr)
+			} else {
+				require.ErrorIs(t, registerErr, prompt.ErrTemplateFieldNotFound)
+			}
+		})
+	}
 }

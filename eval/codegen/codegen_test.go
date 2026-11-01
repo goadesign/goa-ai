@@ -83,6 +83,36 @@ func TestGenerateTypedSuiteAndExample(t *testing.T) {
 	assert.Contains(t, example, "json.NewEncoder(os.Stdout)")
 }
 
+func TestQABC70EvalExtend(t *testing.T) {
+	roots := runDesign(t, func() {
+		base := goadsl.Type("Base", func() {
+			goadsl.Attribute("query", goadsl.String, "Required query")
+			goadsl.Required("query")
+		})
+		evaldsl.Suite("qa", func() {
+			goadsl.Description("QA suite")
+			goadsl.Timeout("30s")
+			evaldsl.Scenario("example", func() {
+				goadsl.Description("QA example")
+				evaldsl.Input(func() {
+					goadsl.Extend(base)
+				})
+			})
+		})
+	})
+	input := evaluationRootForTest(t, roots).Suites[0].Scenarios[0].Input
+	require.NotNil(t, input)
+	obj := goaexpr.AsObject(input.Type)
+	require.NotNil(t, obj)
+	assert.NotEmpty(t, *obj)
+	assert.NotNil(t, input.Find("query"))
+	files := generateEvalFiles(t, roots, false)
+	require.NotEmpty(t, files)
+	content := render(t, files[0])
+	assert.Contains(t, content, "ExampleInput")
+	assert.Contains(t, content, "Query")
+}
+
 func TestGenerateInputFormsAndDistinctCustomizations(t *testing.T) {
 	roots := runDesign(t, func() {
 		shared := goadsl.Type("SharedInput", func() {

@@ -2,7 +2,7 @@
 const (
 {{- range .Prompts }}
 	// {{ .ConstantName }} is the canonical identifier for the {{ .Name }} prompt.
-	{{ .ConstantName }} prompt.Ident = {{ printf "%q" .ID }}
+	{{ .ConstantName }} {{ $.PromptAlias }}.Ident = {{ printf "%q" .ID }}
 {{- end }}
 )
 
@@ -20,26 +20,26 @@ type {{ .ArgsTypeName }} {{ .ArgsDef }}
 
 {{- range .Prompts }}
 // {{ .SpecFuncName }} returns the baseline prompt specification for {{ .Name }}.
-func {{ .SpecFuncName }}() prompt.PromptSpec {
-	return prompt.PromptSpec{
+func {{ .SpecFuncName }}() {{ $.PromptAlias }}.PromptSpec {
+	return {{ $.PromptAlias }}.PromptSpec{
 		ID:          {{ .ConstantName }},
 		AgentID:     {{ printf "%q" .AgentID }},
-		Role:        prompt.PromptRole{{ .Role | promptRoleTitle }},
+		Role:        {{ $.PromptAlias }}.PromptRole{{ .Role | promptRoleTitle }},
 		Description: {{ printf "%q" .Description }},
 		Template:    {{ printf "%q" .Template }},
 		Version:     {{ printf "%q" .Version }},
 {{- if .HasArgs }}
-		ArgsType:    reflect.TypeFor[{{ .ArgsTypeName }}](),
+		ArgsType:    {{ $.ReflectAlias }}.TypeFor[{{ .ArgsTypeName }}](),
 {{- else }}
-		ArgsType:    reflect.TypeFor[struct{}](),
+		ArgsType:    {{ $.ReflectAlias }}.TypeFor[struct{}](),
 {{- end }}
 	}
 }
 {{- end }}
 
 // PromptSpecs returns all baseline prompt specifications declared {{ if .IsService }}for this service{{ else }}for this agent{{ end }}.
-func PromptSpecs() []prompt.PromptSpec {
-	return []prompt.PromptSpec{
+func PromptSpecs() []{{ $.PromptAlias }}.PromptSpec {
+	return []{{ $.PromptAlias }}.PromptSpec{
 {{- range .Prompts }}
 		{{ .SpecFuncName }}(),
 {{- end }}
@@ -47,9 +47,9 @@ func PromptSpecs() []prompt.PromptSpec {
 }
 
 // RegisterPrompts registers all baseline prompt specifications into the given PromptRegistry.
-func RegisterPrompts(reg *prompt.Registry) error {
+func RegisterPrompts(reg *{{ $.PromptAlias }}.Registry) error {
 	if reg == nil {
-		return errors.New("prompt registry is required")
+		return {{ $.ErrorsAlias }}.New("prompt registry is required")
 	}
 	for _, spec := range PromptSpecs() {
 		if err := reg.Register(spec); err != nil {
@@ -62,33 +62,33 @@ func RegisterPrompts(reg *prompt.Registry) error {
 {{- range .Prompts }}
 {{- if not .HasArgs }}
 // {{ .RenderFuncName }} resolves and renders the {{ .Name }} prompt using the run-scoped PlannerContext.
-func {{ .RenderFuncName }}(ctx context.Context, pctx planner.PlannerContext) (*prompt.PromptContent, error) {
+func {{ .RenderFuncName }}(ctx {{ $.ContextAlias }}.Context, pctx {{ $.PlannerAlias }}.PlannerContext) (*{{ $.PromptAlias }}.PromptContent, error) {
 	if pctx == nil {
-		return nil, errors.New("planner context is required")
+		return nil, {{ $.ErrorsAlias }}.New("planner context is required")
 	}
-	return pctx.RenderPrompt(ctx, {{ .ConstantName }}, nil)
+	return pctx.RenderPrompt(ctx, {{ .ConstantName }}, struct{}{})
 }
 
 // {{ .RenderWithRegistryFuncName }} resolves and renders the {{ .Name }} prompt directly against a prompt registry.
-func {{ .RenderWithRegistryFuncName }}(ctx context.Context, reg *prompt.Registry, scope prompt.Scope) (*prompt.PromptContent, error) {
+func {{ .RenderWithRegistryFuncName }}(ctx {{ $.ContextAlias }}.Context, reg *{{ $.PromptAlias }}.Registry, scope {{ $.PromptAlias }}.Scope) (*{{ $.PromptAlias }}.PromptContent, error) {
 	if reg == nil {
-		return nil, errors.New("prompt registry is required")
+		return nil, {{ $.ErrorsAlias }}.New("prompt registry is required")
 	}
-	return reg.Render(ctx, {{ .ConstantName }}, scope, nil)
+	return reg.Render(ctx, {{ .ConstantName }}, scope, struct{}{})
 }
 {{- else }}
 // {{ .RenderFuncName }} resolves and renders the {{ .Name }} prompt using the run-scoped PlannerContext and typed arguments.
-func {{ .RenderFuncName }}(ctx context.Context, pctx planner.PlannerContext, args {{ .ArgsTypeName }}) (*prompt.PromptContent, error) {
+func {{ .RenderFuncName }}(ctx {{ $.ContextAlias }}.Context, pctx {{ $.PlannerAlias }}.PlannerContext, args {{ .ArgsTypeName }}) (*{{ $.PromptAlias }}.PromptContent, error) {
 	if pctx == nil {
-		return nil, errors.New("planner context is required")
+		return nil, {{ $.ErrorsAlias }}.New("planner context is required")
 	}
 	return pctx.RenderPrompt(ctx, {{ .ConstantName }}, args)
 }
 
 // {{ .RenderWithRegistryFuncName }} resolves and renders the {{ .Name }} prompt directly against a prompt registry with typed arguments.
-func {{ .RenderWithRegistryFuncName }}(ctx context.Context, reg *prompt.Registry, scope prompt.Scope, args {{ .ArgsTypeName }}) (*prompt.PromptContent, error) {
+func {{ .RenderWithRegistryFuncName }}(ctx {{ $.ContextAlias }}.Context, reg *{{ $.PromptAlias }}.Registry, scope {{ $.PromptAlias }}.Scope, args {{ .ArgsTypeName }}) (*{{ $.PromptAlias }}.PromptContent, error) {
 	if reg == nil {
-		return nil, errors.New("prompt registry is required")
+		return nil, {{ $.ErrorsAlias }}.New("prompt registry is required")
 	}
 	return reg.Render(ctx, {{ .ConstantName }}, scope, args)
 }

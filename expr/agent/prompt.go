@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"text/template"
 
+	"goa.design/goa-ai/internal/dslshape"
 	"goa.design/goa-ai/internal/tmplcheck"
 	"goa.design/goa-ai/runtime/agent/prompt"
 	"goa.design/goa/v3/codegen"
@@ -95,12 +96,12 @@ func (p *PromptExpr) Prepare() {
 			p.Role = prompt.PromptRoleUser
 		}
 	}
-	finalizeToolShape(p.Args)
+	dslshape.Finalize(p.Args)
 }
 
 // Finalize ensures prompt attribute shapes are finalized before code generation.
 func (p *PromptExpr) Finalize() {
-	finalizeToolShape(p.Args)
+	dslshape.Finalize(p.Args)
 }
 
 // Validate verifies prompt invariants: non-empty name and template, valid role,
@@ -165,16 +166,9 @@ func newExprAttrType(att *goaexpr.AttributeExpr) tmplcheck.Type {
 	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
 		return tmplcheck.ReflectType(reflect.TypeFor[struct{}]())
 	}
-	if len(att.Meta["struct:field:type"]) > 0 {
+	curr, dynamic := unwrapAttr(att)
+	if dynamic || curr == nil || curr.Type == nil || curr.Type == goaexpr.Any {
 		return nil
-	}
-	if att.Type == goaexpr.Any {
-		return nil
-	}
-	if ut, ok := att.Type.(goaexpr.UserType); ok {
-		if len(ut.Attribute().Meta["struct:field:type"]) > 0 {
-			return nil
-		}
 	}
 	return &exprAttrType{att: att}
 }
@@ -184,6 +178,9 @@ func newExprAttrType(att *goaexpr.AttributeExpr) tmplcheck.Type {
 func unwrapAttr(att *goaexpr.AttributeExpr) (*goaexpr.AttributeExpr, bool) {
 	curr := att
 	for curr != nil && curr.Type != nil {
+		if len(curr.Meta["struct:field:type"]) > 0 {
+			return nil, true
+		}
 		if ut, ok := curr.Type.(goaexpr.UserType); ok && ut != goaexpr.Empty {
 			if len(ut.Attribute().Meta["struct:field:type"]) > 0 {
 				return nil, true
@@ -205,6 +202,8 @@ func (e *exprAttrType) ID() string {
 		return "ut:" + ut.ID()
 	}
 	switch dt := e.att.Type.(type) {
+	case *goaexpr.Union:
+		return fmt.Sprintf("union:%p", dt)
 	case *goaexpr.Object:
 		return fmt.Sprintf("obj:%p", dt)
 	case *goaexpr.Array:
@@ -223,13 +222,25 @@ func (e *exprAttrType) Member(name string) (tmplcheck.Type, error) {
 	if e == nil || e.att == nil || e.att.Type == nil {
 		return nil, fmt.Errorf("%w: member %q on nil type", prompt.ErrTemplateFieldNotFound, name)
 	}
-	if ut, ok := e.att.Type.(goaexpr.UserType); ok {
-		if len(ut.Attribute().Meta["struct:field:type"]) > 0 {
-			return nil, nil
-		}
-		return (&exprAttrType{att: ut.Attribute()}).Member(name)
+	curr, dynamic := unwrapAttr(e.att)
+	if dynamic || curr == nil || curr.Type == nil || curr.Type == goaexpr.Any {
+		return nil, nil
 	}
-	if obj := goaexpr.AsObject(e.att.Type); obj != nil {
+	if un := goaexpr.AsUnion(curr.Type); un != nil {
+		switch name {
+		case "Kind":
+			return tmplcheck.ReflectType(reflect.TypeFor[string]()), nil
+		case "Value":
+			return nil, nil
+		case "MarshalJSON":
+			return tmplcheck.ReflectType(reflect.TypeFor[[]byte]()), nil
+		case "Validate":
+			return tmplcheck.ReflectType(reflect.TypeFor[error]()), nil
+		default:
+			return nil, fmt.Errorf("%w: field %q not declared in type %s", prompt.ErrTemplateFieldNotFound, name, curr.Type.Name())
+		}
+	}
+	if obj := goaexpr.AsObject(curr.Type); obj != nil {
 		for _, nat := range *obj {
 			if nat == nil || nat.Attribute == nil {
 				continue
@@ -241,13 +252,13 @@ func (e *exprAttrType) Member(name string) (tmplcheck.Type, error) {
 		}
 		return nil, fmt.Errorf("%w: field %q not declared in Args", prompt.ErrTemplateFieldNotFound, name)
 	}
-	if mp := goaexpr.AsMap(e.att.Type); mp != nil {
+	if mp := goaexpr.AsMap(curr.Type); mp != nil {
 		if mp.KeyType != nil && ((mp.KeyType.Type == goaexpr.String && len(mp.KeyType.Meta["struct:field:type"]) == 0) || mp.KeyType.Type == goaexpr.Any) {
 			return newExprAttrType(mp.ElemType), nil
 		}
-		return nil, fmt.Errorf("%w: field %q not declared in type %s", prompt.ErrTemplateFieldNotFound, name, e.att.Type.Name())
+		return nil, fmt.Errorf("%w: field %q not declared in type %s", prompt.ErrTemplateFieldNotFound, name, curr.Type.Name())
 	}
-	return nil, fmt.Errorf("%w: field %q not declared in type %s", prompt.ErrTemplateFieldNotFound, name, e.att.Type.Name())
+	return nil, fmt.Errorf("%w: field %q not declared in type %s", prompt.ErrTemplateFieldNotFound, name, curr.Type.Name())
 }
 
 // Index resolves an index operation (index x k) on array, map, string, or bytes types.
@@ -275,7 +286,7 @@ func (e *exprAttrType) Index() (tmplcheck.Type, error) {
 }
 
 // Range resolves a range iteration (range x) on array, map, or integer range types.
-func (e *exprAttrType) Range() (tmplcheck.Type, tmplcheck.Type, error) {
+func (e *exprAttrType) Range(twoVars bool) (tmplcheck.Type, tmplcheck.Type, error) {
 	curr, dynamic := unwrapAttr(e.att)
 	if dynamic || curr == nil || curr.Type == nil {
 		return nil, nil, nil
@@ -289,9 +300,14 @@ func (e *exprAttrType) Range() (tmplcheck.Type, tmplcheck.Type, error) {
 	case *goaexpr.Map:
 		return newExprAttrType(dt.KeyType), newExprAttrType(dt.ElemType), nil
 	case goaexpr.Primitive:
-		switch dt.Kind() { //nolint:exhaustive // Only integer primitives support range.
+		switch dt.Kind() { //nolint:exhaustive // Only bytes and integer primitives support range.
+		case goaexpr.BytesKind:
+			return tmplcheck.ReflectType(reflect.TypeFor[int]()), tmplcheck.ReflectType(reflect.TypeFor[byte]()), nil
 		case goaexpr.IntKind, goaexpr.Int32Kind, goaexpr.Int64Kind, goaexpr.UIntKind, goaexpr.UInt32Kind, goaexpr.UInt64Kind:
-			return tmplcheck.ReflectType(reflect.TypeFor[int]()), tmplcheck.ReflectType(reflect.TypeFor[int]()), nil
+			if twoVars {
+				return nil, nil, fmt.Errorf("%w: cannot range over %s with two variables", prompt.ErrTemplateFieldNotFound, curr.Type.Name())
+			}
+			return nil, tmplcheck.ReflectType(reflect.TypeFor[int]()), nil
 		default:
 			return nil, nil, fmt.Errorf("%w: cannot range over type %s", prompt.ErrTemplateFieldNotFound, curr.Type.Name())
 		}
