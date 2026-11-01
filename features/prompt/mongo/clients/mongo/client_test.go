@@ -3,6 +3,7 @@ package mongo
 import (
 	"context"
 	"errors"
+	"maps"
 	"sort"
 	"sync"
 	"testing"
@@ -216,13 +217,36 @@ func TestReset(t *testing.T) {
 	require.Nil(t, override)
 }
 
+func TestResetWithDottedKeysAndEmptyStringValues(t *testing.T) {
+	t.Parallel()
+
+	client := mustNewTestClient()
+	ctx := context.Background()
+	id := prompt.Ident("dotted.prompt")
+
+	scopeWithDot := prompt.Scope{
+		Labels: map[string]string{
+			"account.id": "123",
+			"env":        "",
+		},
+	}
+	require.NoError(t, client.Set(ctx, id, scopeWithDot, "dotted template", nil))
+
+	override, err := client.Resolve(ctx, id, scopeWithDot)
+	require.NoError(t, err)
+	require.NotNil(t, override)
+	require.Equal(t, "dotted template", override.Template)
+
+	require.NoError(t, client.Reset(ctx, id, scopeWithDot))
+
+	override, err = client.Resolve(ctx, id, scopeWithDot)
+	require.NoError(t, err)
+	require.Nil(t, override)
+}
+
 func mustNewTestClient() *client {
 	fc := newFakeCollection()
-	c, err := newClientWithCollection(nil, fc, time.Second)
-	if err != nil {
-		panic(err)
-	}
-	return c
+	return newClientWithCollection(nil, fc, time.Second)
 }
 
 type fakeCollection struct {
@@ -323,14 +347,42 @@ func matchesFilter(doc overrideDocument, filter bson.M) bool {
 			if doc.ScopeLabelCount != val {
 				return false
 			}
-		default:
-			if len(key) > len("scope_labels.") && key[:len("scope_labels.")] == "scope_labels." {
-				labelKey := key[len("scope_labels."):]
-				if doc.ScopeLabels == nil || doc.ScopeLabels[labelKey] != val {
-					return false
+		case "$expr":
+			exprMap, ok := val.(bson.M)
+			if !ok {
+				return false
+			}
+			setEqualsArgs, ok := exprMap["$setEquals"].(bson.A)
+			if !ok || len(setEqualsArgs) != 2 {
+				return false
+			}
+			expectedArr, ok := setEqualsArgs[1].(bson.A)
+			if !ok {
+				return false
+			}
+			expectedMap := make(map[string]string, len(expectedArr))
+			for _, item := range expectedArr {
+				if d, ok := item.(bson.D); ok {
+					var k, v string
+					for _, elem := range d {
+						switch elem.Key {
+						case "k":
+							k, _ = elem.Value.(string)
+						case "v":
+							v, _ = elem.Value.(string)
+						}
+					}
+					expectedMap[k] = v
 				}
+			}
+			if len(doc.ScopeLabels) == 0 && len(expectedMap) == 0 {
 				continue
 			}
+			if !maps.Equal(doc.ScopeLabels, expectedMap) {
+				return false
+			}
+		default:
+			// Dotted paths like "scope_labels.*" are rejected by design.
 			return false
 		}
 	}
@@ -392,10 +444,14 @@ type fakeIndexView struct {
 	parent *fakeCollection
 }
 
-func (v fakeIndexView) CreateOne(ctx context.Context, model mongodriver.IndexModel,
-	opts ...options.Lister[options.CreateIndexesOptions]) (string, error) {
+func (v fakeIndexView) CreateMany(ctx context.Context, models []mongodriver.IndexModel,
+	opts ...options.Lister[options.CreateIndexesOptions]) ([]string, error) {
 	v.parent.mu.Lock()
 	defer v.parent.mu.Unlock()
-	v.parent.indexes = append(v.parent.indexes, model)
-	return "idx", nil
+	v.parent.indexes = append(v.parent.indexes, models...)
+	names := make([]string, len(models))
+	for i := range models {
+		names[i] = "idx"
+	}
+	return names, nil
 }

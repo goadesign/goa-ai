@@ -167,3 +167,36 @@ func TestInMemoryStoreDeterministicTieBreaking(t *testing.T) {
 		t.Fatalf("expected prod template, got %#v, err=%v", got, err)
 	}
 }
+
+func TestInMemoryStoreResetDottedKeysAndEmptyStringValues(t *testing.T) {
+	t.Parallel()
+
+	store := NewInMemoryStore()
+	ctx := context.Background()
+	promptID := Ident("example.dotted")
+
+	scopeDotted := Scope{
+		Labels: map[string]string{
+			"account.id": "123",
+			"env":        "",
+		},
+	}
+
+	if err := store.Set(ctx, promptID, scopeDotted, "dotted template", nil); err != nil {
+		t.Fatalf("set dotted: %v", err)
+	}
+
+	got, err := store.Resolve(ctx, promptID, scopeDotted)
+	if err != nil || got == nil || got.Template != "dotted template" {
+		t.Fatalf("expected dotted override, got %#v, err=%v", got, err)
+	}
+
+	if err := store.Reset(ctx, promptID, scopeDotted); err != nil {
+		t.Fatalf("reset dotted: %v", err)
+	}
+
+	got, err = store.Resolve(ctx, promptID, scopeDotted)
+	if err != nil || got != nil {
+		t.Fatalf("expected nil after reset, got %#v, err=%v", got, err)
+	}
+}

@@ -5,6 +5,7 @@ package prompt
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sort"
 	"sync"
 	"time"
@@ -91,7 +92,11 @@ func (s *InMemoryStore) Set(ctx context.Context, promptID Ident, scope Scope, te
 	return nil
 }
 
-// Reset removes active overrides matching the exact (promptID, scope) pair.
+// Reset destructively removes stored override records matching the exact
+// (promptID, scope) pair. Subsequent resolutions for this promptID and scope
+// fall back to the next applicable scoped override or baseline spec.
+// Matching on scope is exact: SessionID must match exactly, and the labels map
+// must contain identical key/value entries with no extra or missing keys.
 func (s *InMemoryStore) Reset(ctx context.Context, promptID Ident, scope Scope) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -114,7 +119,7 @@ func (s *InMemoryStore) Reset(ctx context.Context, promptID Ident, scope Scope) 
 	return nil
 }
 
-// History returns override records for one prompt, newest-first.
+// History returns all stored override records for promptID, newest-first.
 func (s *InMemoryStore) History(ctx context.Context, promptID Ident) ([]*Override, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -163,15 +168,10 @@ func exactScopeMatch(a, b Scope) bool {
 	if a.SessionID != b.SessionID {
 		return false
 	}
-	if len(a.Labels) != len(b.Labels) {
-		return false
+	if len(a.Labels) == 0 && len(b.Labels) == 0 {
+		return true
 	}
-	for k, v := range a.Labels {
-		if b.Labels[k] != v {
-			return false
-		}
-	}
-	return true
+	return maps.Equal(a.Labels, b.Labels)
 }
 
 // cloneOverride returns a deep copy safe for callers to mutate.

@@ -335,9 +335,9 @@ func modelSpanAttrs(ctx context.Context, req *model.Request) []attribute.KeyValu
 		}
 		attrs = append(
 			attrs,
-			attribute.StringSlice("gen_ai.prompt.ids", ids),
-			attribute.StringSlice("gen_ai.prompt.versions", versions),
-			attribute.StringSlice("goa_ai.prompt.refs", refs),
+			telemetry.AttrGenAIPromptIDs.StringSlice(ids),
+			telemetry.AttrGenAIPromptVersions.StringSlice(versions),
+			telemetry.AttrGoaAIPromptRefs.StringSlice(refs),
 		)
 	}
 	return attrs

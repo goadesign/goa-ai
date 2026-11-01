@@ -40,7 +40,7 @@ type (
 		Funcs template.FuncMap
 		// Fields describes the declared template data attributes when the prompt
 		// takes typed input data. Empty when the prompt takes no structured fields.
-		Fields []tools.FieldSpec
+		Fields []tools.FieldMetadata
 	}
 
 	// PromptRef is a lightweight prompt identity attached to rendered outputs and

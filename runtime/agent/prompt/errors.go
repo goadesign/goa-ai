@@ -1,3 +1,5 @@
+// Package prompt defines sentinel error values returned by prompt registries,
+// template validators, and override stores.
 package prompt
 
 import "errors"

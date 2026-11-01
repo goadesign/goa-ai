@@ -67,10 +67,6 @@ type (
 		// union discriminator. It is empty for ordinary fields.
 		DiscriminatorValues []string
 	}
-
-	// FieldSpec describes one field advertised in a schema or template data contract.
-	// It is an alias for FieldMetadata.
-	FieldSpec = FieldMetadata
 )
 
 // CloneFieldMetadata returns an independent copy of field details.

@@ -39,20 +39,6 @@ func ScopePrecedence(scope Scope) int {
 	return precedence
 }
 
-// CanonicalLabels returns a deterministic string representation of scope labels,
-// formatted as sorted comma-separated "key=value" pairs.
-func CanonicalLabels(labels map[string]string) string {
-	if len(labels) == 0 {
-		return ""
-	}
-	pairs := make([]string, 0, len(labels))
-	for k, v := range labels {
-		pairs = append(pairs, k+"="+v)
-	}
-	sort.Strings(pairs)
-	return strings.Join(pairs, ",")
-}
-
 // OverridePrecedes reports whether candidate outranks current when resolving overrides.
 //
 // Precedence order:
@@ -75,5 +61,19 @@ func OverridePrecedes(candidate, current *Override) bool {
 	if !candidate.CreatedAt.Equal(current.CreatedAt) {
 		return candidate.CreatedAt.After(current.CreatedAt)
 	}
-	return CanonicalLabels(candidate.Scope.Labels) > CanonicalLabels(current.Scope.Labels)
+	return canonicalLabels(candidate.Scope.Labels) > canonicalLabels(current.Scope.Labels)
+}
+
+// canonicalLabels returns a deterministic string representation of scope labels,
+// formatted as sorted comma-separated "key=value" pairs.
+func canonicalLabels(labels map[string]string) string {
+	if len(labels) == 0 {
+		return ""
+	}
+	pairs := make([]string, 0, len(labels))
+	for k, v := range labels {
+		pairs = append(pairs, k+"="+v)
+	}
+	sort.Strings(pairs)
+	return strings.Join(pairs, ",")
 }

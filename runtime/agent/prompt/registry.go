@@ -9,7 +9,6 @@ import (
 	"sort"
 	"sync"
 	"text/template"
-	"time"
 
 	"goa.design/goa-ai/runtime/agent/tools"
 )
@@ -67,68 +66,13 @@ func (r *Registry) Register(spec PromptSpec) error {
 
 // Render resolves and renders one prompt using baseline+override composition.
 func (r *Registry) Render(ctx context.Context, id Ident, scope Scope, data any) (*PromptContent, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	if id == "" {
-		return nil, fmt.Errorf("%w: id is required", ErrPromptNotFound)
-	}
-
-	stack := renderStackFromContext(ctx)
-	for _, parentID := range stack {
-		if parentID == id {
-			return nil, fmt.Errorf("%w: prompt %q recursively renders itself (chain: %v)", ErrTemplateCycle, id, append(stack, id))
-		}
-	}
-	childStack := append(append([]Ident(nil), stack...), id)
-	childCtx := context.WithValue(ctx, renderStackKey{}, childStack)
-
-	spec, override, err := r.Resolve(ctx, id, scope)
+	content, events, err := r.render(ctx, id, scope, data)
 	if err != nil {
 		return nil, err
 	}
-
-	templateSource := spec.Template
-	version := spec.Version
-	if override != nil {
-		templateSource = override.Template
-		version = override.Version
-		if version == "" {
-			version = VersionFromTemplate(templateSource)
-		}
+	for _, event := range events {
+		r.publishRender(ctx, event)
 	}
-
-	rendered, childRefs, err := r.renderTemplate(childCtx, spec, templateSource, scope, data)
-	if err != nil {
-		return nil, err
-	}
-
-	rootRef := PromptRef{
-		ID:      spec.ID,
-		Version: version,
-	}
-	seen := make(map[Ident]struct{}, 1+len(childRefs))
-	allRefs := make([]PromptRef, 0, 1+len(childRefs))
-	seen[rootRef.ID] = struct{}{}
-	allRefs = append(allRefs, rootRef)
-	for _, ref := range childRefs {
-		if _, exists := seen[ref.ID]; exists {
-			continue
-		}
-		seen[ref.ID] = struct{}{}
-		allRefs = append(allRefs, ref)
-	}
-
-	content := &PromptContent{
-		Text: rendered,
-		Ref:  rootRef,
-		Refs: allRefs,
-	}
-	r.publishRender(ctx, RenderEvent{
-		PromptID: spec.ID,
-		Version:  version,
-		Scope:    scope,
-	})
 	return content, nil
 }
 
@@ -181,30 +125,22 @@ func (r *Registry) ValidateOverride(id Ident, templateSource string) error {
 }
 
 // SetOverride validates and persists a prompt override in the configured store.
-func (r *Registry) SetOverride(ctx context.Context, id Ident, scope Scope, templateSource string, metadata map[string]string) (*Override, error) {
+func (r *Registry) SetOverride(ctx context.Context, id Ident, scope Scope, templateSource string, metadata map[string]string) error {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return err
 	}
 	if r.store == nil {
-		return nil, ErrPromptStoreNotConfigured
+		return ErrPromptStoreNotConfigured
 	}
 	if err := r.ValidateOverride(id, templateSource); err != nil {
-		return nil, err
+		return err
 	}
-	if err := r.store.Set(ctx, id, scope, templateSource, metadata); err != nil {
-		return nil, err
-	}
-	return &Override{
-		PromptID:  id,
-		Scope:     cloneScope(scope),
-		Template:  templateSource,
-		Version:   VersionFromTemplate(templateSource),
-		CreatedAt: time.Now().UTC(),
-		Metadata:  cloneMetadata(metadata),
-	}, nil
+	return r.store.Set(ctx, id, scope, templateSource, metadata)
 }
 
-// ResetOverride removes active overrides for id within scope in the configured store.
+// ResetOverride destructively removes stored override records matching the exact
+// (id, scope) pair in the configured store. Subsequent resolutions for this prompt
+// fall back to the next applicable scoped override or baseline spec.
 func (r *Registry) ResetOverride(ctx context.Context, id Ident, scope Scope) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -299,6 +235,72 @@ func clonePromptSpec(spec PromptSpec) PromptSpec {
 	return cloned
 }
 
+func (r *Registry) render(ctx context.Context, id Ident, scope Scope, data any) (*PromptContent, []RenderEvent, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, err
+	}
+	if id == "" {
+		return nil, nil, fmt.Errorf("%w: id is required", ErrPromptNotFound)
+	}
+
+	stack := renderStackFromContext(ctx)
+	for _, parentID := range stack {
+		if parentID == id {
+			return nil, nil, fmt.Errorf("%w: prompt %q recursively renders itself (chain: %v)", ErrTemplateCycle, id, append(stack, id))
+		}
+	}
+	childStack := append(append([]Ident(nil), stack...), id)
+	childCtx := context.WithValue(ctx, renderStackKey{}, childStack)
+
+	spec, override, err := r.Resolve(ctx, id, scope)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	templateSource := spec.Template
+	version := spec.Version
+	if override != nil {
+		templateSource = override.Template
+		version = override.Version
+		if version == "" {
+			version = VersionFromTemplate(templateSource)
+		}
+	}
+
+	rendered, childRefs, childEvents, err := r.renderTemplate(childCtx, spec, templateSource, scope, data)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	rootRef := PromptRef{
+		ID:      spec.ID,
+		Version: version,
+	}
+	seen := make(map[PromptRef]struct{}, 1+len(childRefs))
+	allRefs := make([]PromptRef, 0, 1+len(childRefs))
+	seen[rootRef] = struct{}{}
+	allRefs = append(allRefs, rootRef)
+	for _, ref := range childRefs {
+		if _, exists := seen[ref]; exists {
+			continue
+		}
+		seen[ref] = struct{}{}
+		allRefs = append(allRefs, ref)
+	}
+
+	content := &PromptContent{
+		Text: rendered,
+		Ref:  rootRef,
+		Refs: allRefs,
+	}
+	childEvents = append(childEvents, RenderEvent{
+		PromptID: spec.ID,
+		Version:  version,
+		Scope:    scope,
+	})
+	return content, childEvents, nil
+}
+
 // lookupSpec resolves one prompt spec by ID.
 func (r *Registry) lookupSpec(id Ident) (PromptSpec, error) {
 	r.mu.RLock()
@@ -319,10 +321,10 @@ func (r *Registry) publishRender(ctx context.Context, event RenderEvent) {
 }
 
 // renderTemplate parses and executes one prompt template, injecting sub-prompt rendering.
-func (r *Registry) renderTemplate(ctx context.Context, spec PromptSpec, source string, scope Scope, data any) (string, []PromptRef, error) {
+func (r *Registry) renderTemplate(ctx context.Context, spec PromptSpec, source string, scope Scope, data any) (string, []PromptRef, []RenderEvent, error) {
 	var (
-		mu        sync.Mutex
-		childRefs []PromptRef
+		childRefs   []PromptRef
+		childEvents []RenderEvent
 	)
 	tmpl := template.New(spec.ID.String()).Option("missingkey=error")
 	funcs := template.FuncMap{
@@ -334,13 +336,12 @@ func (r *Registry) renderTemplate(ctx context.Context, spec PromptSpec, source s
 			if len(subData) > 0 {
 				arg = subData[0]
 			}
-			subContent, err := r.Render(ctx, Ident(subID), scope, arg)
+			subContent, subEvents, err := r.render(ctx, Ident(subID), scope, arg)
 			if err != nil {
 				return "", err
 			}
-			mu.Lock()
 			childRefs = append(childRefs, subContent.Refs...)
-			mu.Unlock()
+			childEvents = append(childEvents, subEvents...)
 			return subContent.Text, nil
 		},
 	}
@@ -351,12 +352,12 @@ func (r *Registry) renderTemplate(ctx context.Context, spec PromptSpec, source s
 
 	parsed, err := tmpl.Parse(source)
 	if err != nil {
-		return "", nil, fmt.Errorf("%w: %s: %w", ErrTemplateParse, spec.ID, err)
+		return "", nil, nil, fmt.Errorf("%w: %s: %w", ErrTemplateParse, spec.ID, err)
 	}
 
 	var buffer bytes.Buffer
 	if err := parsed.Execute(&buffer, data); err != nil {
-		return "", nil, fmt.Errorf("%w: %s: %w", ErrTemplateExecute, spec.ID, err)
+		return "", nil, nil, fmt.Errorf("%w: %s: %w", ErrTemplateExecute, spec.ID, err)
 	}
-	return buffer.String(), childRefs, nil
+	return buffer.String(), childRefs, childEvents, nil
 }

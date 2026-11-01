@@ -263,21 +263,23 @@ func TestRegistryRenderReturnsNotFound(t *testing.T) {
 func TestRegistryStaticFieldValidation(t *testing.T) {
 	t.Parallel()
 
-	fields := []tools.FieldSpec{
+	fields := []tools.FieldMetadata{
 		{
 			Path: []tools.FieldPathSegment{
-				tools.FixedField("customer"),
-				tools.FixedField("name"),
+				tools.FixedField("Customer"),
+				tools.FixedField("Name"),
 			},
 		},
 		{
 			Path: []tools.FieldPathSegment{
-				tools.FixedField("company"),
+				tools.FixedField("Company"),
 			},
 		},
 		{
 			Path: []tools.FieldPathSegment{
-				tools.FixedField("items"),
+				tools.FixedField("Items"),
+				tools.DynamicField{},
+				tools.FixedField("ID"),
 			},
 		},
 	}
@@ -496,12 +498,9 @@ func TestRegistryManagementMethods(t *testing.T) {
 
 	// SetOverride
 	scope := Scope{SessionID: "sess_1"}
-	override, err := reg.SetOverride(ctx, "example.prompt", scope, "custom {{ .Name }}", map[string]string{"env": "test"})
+	err := reg.SetOverride(ctx, "example.prompt", scope, "custom {{ .Name }}", map[string]string{"env": "test"})
 	if err != nil {
 		t.Fatalf("SetOverride failed: %v", err)
-	}
-	if override.Template != "custom {{ .Name }}" || override.Version == "" {
-		t.Fatalf("unexpected override: %#v", override)
 	}
 
 	// Resolve with override
@@ -541,7 +540,7 @@ func TestRegistryManagementMethods(t *testing.T) {
 	if err := noStoreReg.Register(spec); err != nil {
 		t.Fatalf("register on noStoreReg: %v", err)
 	}
-	_, err = noStoreReg.SetOverride(ctx, "example.prompt", scope, "tmpl", nil)
+	err = noStoreReg.SetOverride(ctx, "example.prompt", scope, "tmpl", nil)
 	if !errors.Is(err, ErrPromptStoreNotConfigured) {
 		t.Fatalf("expected ErrPromptStoreNotConfigured, got %v", err)
 	}
@@ -552,5 +551,189 @@ func TestRegistryManagementMethods(t *testing.T) {
 	_, err = noStoreReg.History(ctx, "example.prompt")
 	if !errors.Is(err, ErrPromptStoreNotConfigured) {
 		t.Fatalf("expected ErrPromptStoreNotConfigured, got %v", err)
+	}
+}
+
+func TestRegistryAtomicRenderEventPublication(t *testing.T) {
+	t.Parallel()
+
+	recorder := NewRenderRecorder()
+	store := NewInMemoryStore()
+	reg := NewRegistry(store)
+
+	if err := reg.Register(PromptSpec{
+		ID:       "child.prompt",
+		AgentID:  "agent",
+		Role:     PromptRoleSystem,
+		Template: "Child rendered",
+	}); err != nil {
+		t.Fatalf("register child: %v", err)
+	}
+
+	if err := reg.Register(PromptSpec{
+		ID:       "failing.main",
+		AgentID:  "agent",
+		Role:     PromptRoleSystem,
+		Template: "Main: {{ render \"child.prompt\" . }} {{ .MissingField }}",
+	}); err != nil {
+		t.Fatalf("register main: %v", err)
+	}
+
+	ctx := WithRenderRecorder(context.Background(), recorder)
+	type dataStruct struct {
+		Existing string
+	}
+	_, err := reg.Render(ctx, "failing.main", Scope{}, dataStruct{Existing: "ok"})
+	if err == nil {
+		t.Fatal("expected render error on missing field")
+	}
+
+	events := recorder.Events()
+	if len(events) != 0 {
+		t.Fatalf("expected 0 recorded events on failed render, got %d: %#v", len(events), events)
+	}
+}
+
+func TestRegistryStaticFieldValidationAST(t *testing.T) {
+	t.Parallel()
+
+	reg := NewRegistry(nil)
+
+	// Untyped manual prompt (len(spec.Fields) == 0): accepts arbitrary fields
+	if err := reg.Register(PromptSpec{
+		ID:       "untyped.prompt",
+		AgentID:  "agent",
+		Role:     PromptRoleSystem,
+		Template: "Hello {{ .arbitrary.deep.field }}",
+	}); err != nil {
+		t.Fatalf("untyped prompt register: %v", err)
+	}
+
+	// Zero-arg prompt (Fields: []FieldMetadata{{JSONType: "null"}}): static text succeeds, field access fails
+	if err := reg.Register(PromptSpec{
+		ID:       "zeroarg.valid",
+		AgentID:  "agent",
+		Role:     PromptRoleSystem,
+		Template: "Static instructions with no fields",
+		Fields:   []tools.FieldMetadata{{JSONType: "null"}},
+	}); err != nil {
+		t.Fatalf("zero-arg static text register: %v", err)
+	}
+	err := reg.Register(PromptSpec{
+		ID:       "zeroarg.invalid",
+		AgentID:  "agent",
+		Role:     PromptRoleSystem,
+		Template: "Tries to access {{ .foo }}",
+		Fields:   []tools.FieldMetadata{{JSONType: "null"}},
+	})
+	if !errors.Is(err, ErrTemplateFieldNotFound) {
+		t.Fatalf("expected ErrTemplateFieldNotFound for zeroarg field access, got %v", err)
+	}
+
+	schemaFields := []tools.FieldMetadata{
+		{
+			Path:     []tools.FieldPathSegment{tools.FixedField("Customer"), tools.FixedField("Name")},
+			JSONType: "string",
+		},
+		{
+			Path:     []tools.FieldPathSegment{tools.FixedField("Items"), tools.DynamicField{}, tools.FixedField("ID")},
+			JSONType: "string",
+		},
+		{
+			Path:     []tools.FieldPathSegment{tools.FixedField("Config")},
+			JSONType: "object",
+		},
+		{
+			Path:     []tools.FieldPathSegment{tools.FixedField("Structured")},
+			JSONType: "object",
+		},
+		{
+			Path:     []tools.FieldPathSegment{tools.FixedField("Structured"), tools.FixedField("Key")},
+			JSONType: "string",
+		},
+	}
+
+	cases := []struct {
+		name    string
+		tmpl    string
+		wantErr bool
+	}{
+		{"var assignment valid", "{{ $x := .Customer }}{{ $x.Name }}", false},
+		{"var assignment undeclared", "{{ $x := .Customer }}{{ $x.Invalid }}", true},
+		{"root var valid", "{{ $.Customer.Name }}", false},
+		{"root var undeclared", "{{ $.Customer.Invalid }}", true},
+		{"index valid", `{{ index . "Config" }}`, false},
+		{"index customer valid", `{{ index .Customer "Name" }}`, false},
+		{"index undeclared", `{{ index . "Invalid" }}`, true},
+		{"with var valid", "{{ with $c := .Customer }}{{ $c.Name }}{{ end }}", false},
+		{"with var undeclared", "{{ with $c := .Customer }}{{ $c.Invalid }}{{ end }}", true},
+		{"range 1 var valid", "{{ range $it := .Items }}{{ $it.ID }}{{ end }}", false},
+		{"range 1 var undeclared", "{{ range $it := .Items }}{{ $it.Invalid }}{{ end }}", true},
+		{"range 2 var valid", "{{ range $idx, $it := .Items }}{{ $it.ID }}{{ end }}", false},
+		{"range 2 var undeclared", "{{ range $idx, $it := .Items }}{{ $it.Invalid }}{{ end }}", true},
+		{"chain valid", "{{ (.Customer).Name }}", false},
+		{"chain undeclared", "{{ (.Customer).Invalid }}", true},
+		{"named template valid", `{{ define "card" }}{{ .Name }}{{ end }}{{ template "card" .Customer }}`, false},
+		{"named template undeclared", `{{ define "card" }}{{ .Invalid }}{{ end }}{{ template "card" .Customer }}`, true},
+		{"unstructured object deep valid", "{{ .Config.nested.setting.flag }}", false},
+		{"structured object undeclared", "{{ .Structured.Invalid }}", true},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := reg.Register(PromptSpec{
+				ID:       Ident("test." + tc.name),
+				AgentID:  "agent",
+				Role:     PromptRoleSystem,
+				Template: tc.tmpl,
+				Fields:   schemaFields,
+			})
+			if tc.wantErr {
+				if !errors.Is(err, ErrTemplateFieldNotFound) {
+					t.Fatalf("expected ErrTemplateFieldNotFound, got %v", err)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+			}
+		})
+	}
+}
+
+func TestRegistryDeduplicatePromptRefs(t *testing.T) {
+	t.Parallel()
+
+	reg := NewRegistry(nil)
+	if err := reg.Register(PromptSpec{
+		ID:       "child.sub",
+		AgentID:  "agent",
+		Role:     PromptRoleSystem,
+		Template: "child output",
+		Version:  "v1",
+	}); err != nil {
+		t.Fatalf("register child: %v", err)
+	}
+
+	if err := reg.Register(PromptSpec{
+		ID:       "main.dup",
+		AgentID:  "agent",
+		Role:     PromptRoleSystem,
+		Template: `{{ render "child.sub" . }} {{ render "child.sub" . }}`,
+		Version:  "v1",
+	}); err != nil {
+		t.Fatalf("register main: %v", err)
+	}
+
+	content, err := reg.Render(context.Background(), "main.dup", Scope{}, nil)
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+
+	if len(content.Refs) != 2 {
+		t.Fatalf("expected 2 unique refs, got %d: %#v", len(content.Refs), content.Refs)
+	}
+	if content.Refs[0].ID != "main.dup" || content.Refs[1].ID != "child.sub" {
+		t.Fatalf("unexpected refs: %#v", content.Refs)
 	}
 }
