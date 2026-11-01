@@ -24,8 +24,6 @@ type (
 	}
 )
 
-const dynamicTypeID = "<dynamic>"
-
 // Check validates parsed template ASTs starting from rootType.
 // When rootType is nil, no static type constraints are checked.
 func Check(parsed *template.Template, rootName string, rootType Type, funcs template.FuncMap) error {
@@ -41,11 +39,15 @@ func Check(parsed *template.Template, rootName string, rootType Type, funcs temp
 		invokedNames: make(map[string]bool),
 	}
 
+	c.invokedNames[rootName] = true
+	if parsed.Name() != "" {
+		c.invokedNames[parsed.Name()] = true
+	}
+
 	root := parsed.Root
 	if !hasExecutableNodes(root) {
 		if named := parsed.Lookup(rootName); named != nil && named.Root != nil {
 			root = named.Root
-			c.invokedNames[rootName] = true
 		}
 	}
 
@@ -74,6 +76,37 @@ func Check(parsed *template.Template, rootName string, rootType Type, funcs temp
 	return nil
 }
 
+// hasExecutableNodes reports whether the node contains any executable AST node.
+func hasExecutableNodes(node parse.Node) bool {
+	switch n := node.(type) {
+	case nil:
+		return false
+	case *parse.ListNode:
+		if n == nil {
+			return false
+		}
+		for _, child := range n.Nodes {
+			if hasExecutableNodes(child) {
+				return true
+			}
+		}
+		return false
+	case *parse.TextNode, *parse.CommentNode:
+		return false
+	default:
+		return true
+	}
+}
+
+// copyVars returns a shallow copy of the variables map.
+func copyVars(vars map[string]Type) map[string]Type {
+	cp := make(map[string]Type, len(vars))
+	for k, v := range vars {
+		cp[k] = v
+	}
+	return cp
+}
+
 // walk recursively traverses a template AST node and validates member and index accesses against static types.
 func (c *checker) walk(node parse.Node, dot Type, vars map[string]Type) error {
 	switch n := node.(type) {
@@ -95,11 +128,9 @@ func (c *checker) walk(node parse.Node, dot Type, vars map[string]Type) error {
 		if n == nil || n.Pipe == nil {
 			return nil
 		}
-		// Validate pipe with current vars first
 		if err := c.walk(n.Pipe, dot, vars); err != nil {
 			return err
 		}
-		// Then resolve pipe value and bind declared variables
 		if len(n.Pipe.Decl) > 0 {
 			pipeVal := c.resolvePipe(n.Pipe, dot, vars)
 			for _, decl := range n.Pipe.Decl {
@@ -130,64 +161,17 @@ func (c *checker) walk(node parse.Node, dot Type, vars map[string]Type) error {
 		if n == nil {
 			return nil
 		}
-		if n.Pipe != nil {
-			if err := c.walk(n.Pipe, dot, vars); err != nil {
-				return err
-			}
-		}
-		branchVars := copyVars(vars)
-		if n.Pipe != nil && len(n.Pipe.Decl) > 0 {
-			pipeVal := c.resolvePipe(n.Pipe, dot, vars)
-			for _, decl := range n.Pipe.Decl {
-				if len(decl.Ident) > 0 {
-					branchVars[decl.Ident[0]] = pipeVal
-				}
-			}
-		}
-		if n.List != nil {
-			if err := c.walk(n.List, dot, copyVars(branchVars)); err != nil {
-				return err
-			}
-		}
-		if n.ElseList != nil {
-			if err := c.walk(n.ElseList, dot, copyVars(branchVars)); err != nil {
-				return err
-			}
-		}
-		return nil
+		return c.walkBranch(n.Pipe, n.List, n.ElseList, dot, dot, vars)
 
 	case *parse.WithNode:
 		if n == nil {
 			return nil
 		}
-		if n.Pipe != nil {
-			if err := c.walk(n.Pipe, dot, vars); err != nil {
-				return err
-			}
-		}
 		var listDot Type
 		if n.Pipe != nil {
 			listDot = c.resolvePipe(n.Pipe, dot, vars)
 		}
-		listVars := copyVars(vars)
-		if n.Pipe != nil && len(n.Pipe.Decl) > 0 {
-			for _, decl := range n.Pipe.Decl {
-				if len(decl.Ident) > 0 {
-					listVars[decl.Ident[0]] = listDot
-				}
-			}
-		}
-		if n.List != nil {
-			if err := c.walk(n.List, listDot, copyVars(listVars)); err != nil {
-				return err
-			}
-		}
-		if n.ElseList != nil {
-			if err := c.walk(n.ElseList, dot, copyVars(listVars)); err != nil {
-				return err
-			}
-		}
-		return nil
+		return c.walkBranch(n.Pipe, n.List, n.ElseList, dot, listDot, vars)
 
 	case *parse.RangeNode:
 		if n == nil {
@@ -210,6 +194,13 @@ func (c *checker) walk(node parse.Node, dot Type, vars map[string]Type) error {
 				return err
 			}
 		}
+		if n.Pipe != nil && n.Pipe.IsAssign {
+			for _, decl := range n.Pipe.Decl {
+				if len(decl.Ident) > 0 {
+					vars[decl.Ident[0]] = collType
+				}
+			}
+		}
 		listVars := copyVars(vars)
 		if n.Pipe != nil && len(n.Pipe.Decl) > 0 {
 			if len(n.Pipe.Decl) == 1 {
@@ -230,11 +221,20 @@ func (c *checker) walk(node parse.Node, dot Type, vars map[string]Type) error {
 				return err
 			}
 		}
+		elseVars := copyVars(vars)
+		if n.Pipe != nil && len(n.Pipe.Decl) > 0 {
+			for _, decl := range n.Pipe.Decl {
+				if len(decl.Ident) > 0 {
+					elseVars[decl.Ident[0]] = collType
+				}
+			}
+		}
 		if n.ElseList != nil {
-			if err := c.walk(n.ElseList, dot, copyVars(vars)); err != nil {
+			if err := c.walk(n.ElseList, dot, elseVars); err != nil {
 				return err
 			}
 		}
+		c.mergeBranchVars(vars, listVars, elseVars, n.ElseList != nil)
 		return nil
 
 	case *parse.BranchNode:
@@ -329,6 +329,48 @@ func (c *checker) walk(node parse.Node, dot Type, vars map[string]Type) error {
 	}
 }
 
+// walkBranch manages variable scoping and branch merging for IfNode and WithNode.
+func (c *checker) walkBranch(pipe *parse.PipeNode, list, elseList *parse.ListNode, outerDot, listDot Type, vars map[string]Type) error {
+	if pipe != nil {
+		if err := c.walk(pipe, outerDot, vars); err != nil {
+			return err
+		}
+	}
+	var pipeVal Type
+	if pipe != nil {
+		pipeVal = c.resolvePipe(pipe, outerDot, vars)
+	}
+	if pipe != nil && pipe.IsAssign {
+		for _, decl := range pipe.Decl {
+			if len(decl.Ident) > 0 {
+				vars[decl.Ident[0]] = pipeVal
+			}
+		}
+	}
+	branchVars := copyVars(vars)
+	if pipe != nil && len(pipe.Decl) > 0 {
+		for _, decl := range pipe.Decl {
+			if len(decl.Ident) > 0 {
+				branchVars[decl.Ident[0]] = pipeVal
+			}
+		}
+	}
+	thenVars := copyVars(branchVars)
+	if list != nil {
+		if err := c.walk(list, listDot, thenVars); err != nil {
+			return err
+		}
+	}
+	elseVars := copyVars(branchVars)
+	if elseList != nil {
+		if err := c.walk(elseList, outerDot, elseVars); err != nil {
+			return err
+		}
+	}
+	c.mergeBranchVars(vars, thenVars, elseVars, elseList != nil)
+	return nil
+}
+
 // walkCommand validates field accesses and index operations inside one pipeline command.
 func (c *checker) walkCommand(cmd *parse.CommandNode, dot Type, vars map[string]Type, pipedVal Type) error {
 	if cmd == nil || len(cmd.Args) == 0 {
@@ -364,7 +406,7 @@ func (c *checker) walkCommand(cmd *parse.CommandNode, dot Type, vars map[string]
 // walkNamedTemplate validates an invoked named template, tracking (name, typeID) pairs for cycle detection.
 func (c *checker) walkNamedTemplate(name string, dot Type, vars map[string]Type, pipe *parse.PipeNode) error {
 	c.invokedNames[name] = true
-	pipeDot := dot
+	var pipeDot Type = nilDataType{}
 	if pipe != nil {
 		pipeDot = c.resolvePipe(pipe, dot, vars)
 	}
@@ -447,6 +489,23 @@ func (c *checker) resolveCommand(cmd *parse.CommandNode, dot Type, vars map[stri
 			}
 			return nil
 
+		case "call":
+			var fnType Type
+			if len(cmd.Args) >= 2 {
+				fnType = c.resolveNode(cmd.Args[1], dot, vars)
+			} else if pipedVal != nil {
+				fnType = pipedVal
+			}
+			if rt, ok := fnType.(*reflectType); ok {
+				cur := deref(rt.t)
+				if cur != nil && cur.Kind() == reflect.Func {
+					if out, valid := validMethodReturn(cur); valid {
+						return ReflectType(out)
+					}
+				}
+			}
+			return nil
+
 		case "print", "printf", "println", "html", "js", "urlquery", "render":
 			return ReflectType(reflect.TypeFor[string]())
 
@@ -486,21 +545,11 @@ func (c *checker) resolveCommand(cmd *parse.CommandNode, dot Type, vars map[stri
 			return resultType
 
 		default:
-			if fn, ok := c.funcs[first.Ident]; ok && fn != nil {
-				ft := reflect.TypeOf(fn)
-				if ft.Kind() == reflect.Func && ft.NumOut() >= 1 {
-					return ReflectType(ft.Out(0))
-				}
-			}
-			return nil
+			return c.resolveFuncIdent(first.Ident)
 		}
 
 	default:
-		if pipedVal == nil && len(cmd.Args) == 1 {
-			return c.resolveNode(first, dot, vars)
-		}
-		receiver := c.resolveNode(first, dot, vars)
-		return receiver
+		return c.resolveNode(first, dot, vars)
 	}
 }
 
@@ -565,6 +614,12 @@ func (c *checker) resolveNode(node parse.Node, dot Type, vars map[string]Type) T
 		}
 		return cur
 
+	case *parse.IdentifierNode:
+		if n == nil {
+			return nil
+		}
+		return c.resolveFuncIdent(n.Ident)
+
 	case *parse.PipeNode:
 		return c.resolvePipe(n, dot, vars)
 
@@ -588,45 +643,24 @@ func (c *checker) resolveNode(node parse.Node, dot Type, vars map[string]Type) T
 	}
 }
 
-// typeID returns the canonical string ID of t, or dynamicTypeID when t is nil or has an empty ID.
-func typeID(t Type) string {
-	if t == nil {
-		return dynamicTypeID
+// resolveFuncIdent checks registered template functions and returns the primary return type.
+func (c *checker) resolveFuncIdent(ident string) Type {
+	if fn, ok := c.funcs[ident]; ok && fn != nil {
+		ft := reflect.TypeOf(fn)
+		if ft.Kind() == reflect.Func && ft.NumOut() >= 1 {
+			return ReflectType(ft.Out(0))
+		}
 	}
-	id := t.ID()
-	if id == "" {
-		return dynamicTypeID
-	}
-	return id
+	return nil
 }
 
-// copyVars returns a shallow copy of the variables map.
-func copyVars(vars map[string]Type) map[string]Type {
-	cp := make(map[string]Type, len(vars))
-	for k, v := range vars {
-		cp[k] = v
-	}
-	return cp
-}
-
-// hasExecutableNodes reports whether the node contains any executable AST node.
-func hasExecutableNodes(node parse.Node) bool {
-	switch n := node.(type) {
-	case nil:
-		return false
-	case *parse.ListNode:
-		if n == nil {
-			return false
+// mergeBranchVars merges variable state after divergent execution branches.
+func (c *checker) mergeBranchVars(outerVars, thenVars, elseVars map[string]Type, hasElse bool) {
+	for k := range outerVars {
+		if hasElse {
+			outerVars[k] = mergeTypes(thenVars[k], elseVars[k])
+		} else {
+			outerVars[k] = mergeTypes(thenVars[k], outerVars[k])
 		}
-		for _, child := range n.Nodes {
-			if hasExecutableNodes(child) {
-				return true
-			}
-		}
-		return false
-	case *parse.TextNode, *parse.CommentNode:
-		return false
-	default:
-		return true
 	}
 }

@@ -1,6 +1,7 @@
 package prompt
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"reflect"
@@ -1128,5 +1129,96 @@ func TestRegistryRenderRejectsInvalidRawOverrideWithArgsType(t *testing.T) {
 	_, err := reg.Render(context.Background(), id, Scope{}, promptArgs{ValidField: "ok"})
 	if !errors.Is(err, ErrTemplateFieldNotFound) {
 		t.Fatalf("expected ErrTemplateFieldNotFound for raw override, got: %v", err)
+	}
+}
+
+type (
+	// ReviewPerson is a test helper for template semantics verification.
+	ReviewPerson struct{ Label string }
+
+	// ReviewNext is a test helper for template semantics verification.
+	ReviewNext struct{ Other string }
+
+	// ReviewFirst is a test helper for template semantics verification.
+	ReviewFirst struct {
+		Label string
+		Next  *ReviewNext
+	}
+
+	// ReviewKey is a defined string type to test map key assignability.
+	ReviewKey string
+
+	// ReviewMaker is a test helper for method-returning-callable verification.
+	ReviewMaker struct{}
+)
+
+// PointerLabel is a pointer receiver method on ReviewPerson.
+func (*ReviewPerson) PointerLabel() string { return "ptr" }
+
+// Get returns a function returning ReviewPerson.
+func (ReviewMaker) Get(string) func() ReviewPerson {
+	return func() ReviewPerson { return ReviewPerson{Label: "ok"} }
+}
+
+func TestSemanticsReview(t *testing.T) {
+	t.Parallel()
+
+	funcs := template.FuncMap{
+		"person":   func() ReviewPerson { return ReviewPerson{Label: "ok"} },
+		"items":    func() []ReviewPerson { return []ReviewPerson{} },
+		"nonempty": func() []ReviewPerson { return []ReviewPerson{{Label: "ok"}} },
+		"matrix":   func() [][]ReviewPerson { return [][]ReviewPerson{{{Label: "ok"}}} },
+		"empty":    func() string { return "" },
+		"callable": func() func() ReviewPerson { return func() ReviewPerson { return ReviewPerson{Label: "ok"} } },
+		"first":    func() ReviewFirst { return ReviewFirst{Label: "ok", Next: &ReviewNext{Other: "x"}} },
+		"namedmap": func() map[ReviewKey]ReviewPerson { return map[ReviewKey]ReviewPerson{"Entry": {Label: "ok"}} },
+		"maker":    func() ReviewMaker { return ReviewMaker{} },
+	}
+	cases := []struct {
+		name string
+		src  string
+	}{
+		{"if_else_contamination", `{{$x := person}}{{if false}}{{$x = "s"}}{{else}}{{$x.Label}}{{end}}`},
+		{"outer_assignment", `{{$x := "s"}}{{if true}}{{$x = person}}{{end}}{{$x.Label}}`},
+		{"if_pipeline_assignment", `{{$x := "s"}}{{if $x = person}}{{end}}{{$x.Label}}`},
+		{"with_else_declaration", `{{with $x := empty}}{{else}}{{$x.Nope}}{{end}}`},
+		{"range_else_declaration", `{{range $x := items}}{{else}}{{$x.Nope}}{{end}}`},
+		{"and_known_result", `{{(and person person).Nope}}`},
+		{"or_known_result", `{{(or person person).Nope}}`},
+		{"slice_known_result", `{{(slice nonempty 0 1).Nope}}`},
+		{"call_known_result", `{{(call callable).Nope}}`},
+		{"index_pipeline_order", `{{with 0 | index matrix 0}}{{.Label}}{{end}}`},
+		{"index_pipeline_known_result", `{{with 0 | index matrix 0}}{{range .}}{{.Label}}{{end}}{{end}}`},
+		{"index_string_known_result", `{{(index "abc" 0).Nope}}`},
+		{"pointer_method_unaddressable", `{{(person).PointerLabel}}`},
+		{"named_string_map_key", `{{(namedmap).Entry.Label}}`},
+		{"named_template_no_data", `{{define "show"}}{{.Label}}{{end}}{{with person}}{{template "show"}}{{end}}`},
+		{"recursive_different_type", `{{define "recur"}}{{.Label}}{{with .Next}}{{template "recur" .}}{{end}}{{end}}{{template "recur" first}}`},
+		{"method_returns_callable", `{{with (maker).Get "x"}}{{.Label}}{{end}}`},
+		{"range_integer", `{{range 1}}{{.Nope}}{{end}}`},
+	}
+	spec := PromptSpec{
+		ID:       "review",
+		Role:     PromptRoleSystem,
+		ArgsType: reflect.TypeFor[struct{ Seed string }](),
+		Funcs:    funcs,
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			validation := ValidatePromptTemplate(spec, tc.src)
+			compiled, err := template.New("review").Option("missingkey=error").Funcs(funcs).Parse(tc.src)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var b bytes.Buffer
+			execution := compiled.Execute(&b, struct{ Seed string }{})
+			t.Logf("source=%q validation=%v execution=%v output=%q", tc.src, validation, execution, b.String())
+			if (validation == nil) != (execution == nil) {
+				t.Fatalf("validation/execution mismatch: validation=%v execution=%v output=%q", validation, execution, b.String())
+			}
+			if execution != nil && !errors.Is(validation, ErrTemplateFieldNotFound) {
+				t.Fatalf("expected ErrTemplateFieldNotFound when execution fails, got: %v", validation)
+			}
+		})
 	}
 }
