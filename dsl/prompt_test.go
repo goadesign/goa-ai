@@ -343,6 +343,48 @@ func TestPromptDSLRejections(t *testing.T) {
 			},
 			want: "Prompt Args must be an object or a user type backed by an object",
 		},
+		{
+			name: "Method prompt with extra arguments",
+			dsl: func() {
+				API("test", func() {})
+				Service("svc", func() {
+					MCP("prompts", "1")
+					Method("m", func() {
+						Prompt("p", "desc", func() {})
+					})
+				})
+			},
+			want: "too many arguments",
+		},
+		{
+			name: "SystemPrompt inline template with closure Template override",
+			dsl: func() {
+				API("test", func() {})
+				Service("svc", func() {
+					Agent("agent", "desc", func() {
+						SystemPrompt("inline", func() {
+							Template("override")
+						})
+					})
+				})
+			},
+			want: "prompt template already set",
+		},
+		{
+			name: "Duplicate Template inside Prompt",
+			dsl: func() {
+				API("test", func() {})
+				Service("svc", func() {
+					Agent("agent", "desc", func() {
+						Prompt("p", func() {
+							Template("first")
+							Template("second")
+						})
+					})
+				})
+			},
+			want: "prompt template already set",
+		},
 	}
 
 	for _, tt := range tests {

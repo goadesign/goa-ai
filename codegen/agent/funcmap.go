@@ -163,7 +163,7 @@ func isSimpleAttr(a *goaexpr.AttributeExpr) bool {
 // promptRoleTitle returns the Go identifier fragment for a PromptRole.
 func promptRoleTitle(role string) string {
 	switch role {
-	case "system":
+	case systemPromptName:
 		return "System"
 	case "user":
 		return "User"

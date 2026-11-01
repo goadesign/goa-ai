@@ -15,6 +15,7 @@ import (
 	"sort"
 
 	"goa.design/goa/v3/codegen"
+	"goa.design/goa/v3/codegen/service"
 	goaexpr "goa.design/goa/v3/expr"
 )
 
@@ -66,7 +67,7 @@ func agentPromptsFile(agent *AgentData) *codegen.File {
 		return nil
 	}
 
-	data, imports := buildPromptFileTemplateData(agent.Prompts, agent.ID, false, agent.Genpkg)
+	data, imports, unions := buildPromptFileTemplateData(agent.Prompts, agent.ID, false, agent.ImportPath, agent.Genpkg)
 
 	sections := []*codegen.SectionTemplate{
 		codegen.Header(agent.StructName+" prompt specifications and helpers", agent.PackageName, imports),
@@ -76,6 +77,13 @@ func agentPromptsFile(agent *AgentData) *codegen.File {
 			Data:    data,
 			FuncMap: templateFuncMap(),
 		},
+	}
+	for _, union := range unions {
+		sections = append(sections, &codegen.SectionTemplate{
+			Name:   "prompt-union-type",
+			Source: service.UnionTypeSource,
+			Data:   union,
+		})
 	}
 
 	return &codegen.File{
@@ -146,20 +154,29 @@ func servicePromptsFiles(svc *ServiceAgentsData) ([]*codegen.File, error) {
 		return nil, nil
 	}
 
-	data, imports := buildPromptFileTemplateData(svc.Prompts, "", true, svc.Genpkg)
+	svcImportPath := path.Join(svc.Genpkg, svc.Service.PathName, "prompts")
+	data, imports, unions := buildPromptFileTemplateData(svc.Prompts, "", true, svcImportPath, svc.Genpkg)
 
 	dir := filepath.Join(codegen.Gendir, svc.Service.PathName, "prompts")
-	promptsFile := &codegen.File{
-		Path: filepath.Join(dir, "prompts.go"),
-		SectionTemplates: []*codegen.SectionTemplate{
-			codegen.Header(svc.Service.Name+" service prompt specifications and helpers", "prompts", imports),
-			{
-				Name:    "service-prompts",
-				Source:  agentsTemplates.Read(agentPromptsFileT),
-				Data:    data,
-				FuncMap: templateFuncMap(),
-			},
+	sections := []*codegen.SectionTemplate{
+		codegen.Header(svc.Service.Name+" service prompt specifications and helpers", "prompts", imports),
+		{
+			Name:    "service-prompts",
+			Source:  agentsTemplates.Read(agentPromptsFileT),
+			Data:    data,
+			FuncMap: templateFuncMap(),
 		},
+	}
+	for _, union := range unions {
+		sections = append(sections, &codegen.SectionTemplate{
+			Name:   "prompt-union-type",
+			Source: service.UnionTypeSource,
+			Data:   union,
+		})
+	}
+	promptsFile := &codegen.File{
+		Path:             filepath.Join(dir, "prompts.go"),
+		SectionTemplates: sections,
 	}
 
 	doc := servicePromptSchemasDoc{
@@ -211,8 +228,36 @@ func servicePromptsFiles(svc *ServiceAgentsData) ([]*codegen.File, error) {
 
 // buildPromptFileTemplateData collects nested user types, resolves imports, and plans
 // prompt template data using a single shared NameScope.
-func buildPromptFileTemplateData(prompts []*PromptData, agentID string, isService bool, genpkg string) (*promptFileTemplateData, []*codegen.ImportSpec) {
-	scope := codegen.NewNameScope()
+func buildPromptFileTemplateData(prompts []*PromptData, agentID string, isService bool, pkgImportPath, genpkg string) (*promptFileTemplateData, []*codegen.ImportSpec, []*service.UnionTypeData) {
+	genRoot := genpkg
+	if genRoot == "" {
+		genRoot = "goa.design/goa-ai/gen"
+	}
+	generation, err := codegen.NewGeneration(genRoot, nil)
+	if err != nil {
+		panic(fmt.Errorf("create generation for prompt templates: %w", err))
+	}
+	if pkgImportPath == "" {
+		pkgImportPath = path.Join(genRoot, "prompts")
+	}
+	pkg, err := generation.ClaimPackage(pkgImportPath)
+	if err != nil {
+		panic(fmt.Errorf("claim package %q for prompt templates: %w", pkgImportPath, err))
+	}
+
+	unionDecls := make(map[codegen.UnionDeclarationID]*codegen.UnionDeclaration)
+	for _, p := range prompts {
+		if p.Expr != nil && p.Expr.Args != nil {
+			if err := declareAttributeUnions(pkg, unionDecls, p.Expr.Args); err != nil {
+				panic(fmt.Errorf("declare prompt union sum types: %w", err))
+			}
+		}
+	}
+	if err := generation.Freeze(); err != nil {
+		panic(fmt.Errorf("freeze generation for prompt templates: %w", err))
+	}
+
+	scope := pkg.Scope().Fork()
 	for _, p := range prompts {
 		scope.Unique(p.ArgsTypeName)
 	}
@@ -274,6 +319,7 @@ func buildPromptFileTemplateData(prompts []*PromptData, agentID string, isServic
 					collectTypes(nat.Attribute)
 				}
 			}
+			return
 		}
 	}
 
@@ -292,6 +338,21 @@ func buildPromptFileTemplateData(prompts []*PromptData, agentID string, isServic
 			Def:  def,
 		})
 	}
+
+	unionMap := make(map[codegen.UnionDeclarationID]*unionTypeData)
+	seenUnionTypes := make(map[goaexpr.UserType]struct{})
+	for _, p := range prompts {
+		if p.Expr != nil && p.Expr.Args != nil {
+			collectUnionSumTypes(p.Expr.Args, scope, pkg, unionMap, seenUnionTypes)
+		}
+	}
+	unions := make([]*service.UnionTypeData, 0, len(unionMap))
+	for _, u := range unionMap {
+		unions = append(unions, u)
+	}
+	sort.Slice(unions, func(i, j int) bool {
+		return unions[i].TypeDeclaration.Name() < unions[j].TypeDeclaration.Name()
+	})
 
 	for _, p := range prompts {
 		if p.HasArgs && p.Expr != nil && p.Expr.Args != nil {
@@ -316,6 +377,12 @@ func buildPromptFileTemplateData(prompts []*PromptData, agentID string, isServic
 	if hasFields {
 		imports = append(imports, &codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/tools"})
 	}
+	if len(unions) > 0 {
+		seenImports["bytes"] = &codegen.ImportSpec{Path: "bytes"}
+		seenImports["encoding/json"] = &codegen.ImportSpec{Path: "encoding/json"}
+		seenImports["fmt"] = &codegen.ImportSpec{Path: "fmt"}
+		seenImports["goa.design/goa/v3/pkg"] = &codegen.ImportSpec{Path: "goa.design/goa/v3/pkg", Name: "goa"}
+	}
 
 	importPaths := make([]string, 0, len(seenImports))
 	for p := range seenImports {
@@ -333,5 +400,5 @@ func buildPromptFileTemplateData(prompts []*PromptData, agentID string, isServic
 		UserTypes: userTypeData,
 	}
 
-	return tplData, imports
+	return tplData, imports, unions
 }

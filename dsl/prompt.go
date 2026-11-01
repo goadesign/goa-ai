@@ -82,8 +82,12 @@ func Prompt(name string, args ...any) {
 			eval.IncompatibleDSL()
 			return
 		}
+		if len(args) > 1 {
+			eval.TooManyArgError()
+			return
+		}
 		var description string
-		if len(args) > 0 {
+		if len(args) == 1 {
 			if desc, ok := args[0].(string); ok {
 				description = desc
 			} else {
@@ -328,6 +332,10 @@ func Template(tmpl string) {
 	p, ok := eval.Current().(*agentsexpr.PromptExpr)
 	if !ok {
 		eval.IncompatibleDSL()
+		return
+	}
+	if p.Template != "" {
+		eval.ReportError("prompt template already set")
 		return
 	}
 	p.Template = tmpl

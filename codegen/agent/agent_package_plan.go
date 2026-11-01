@@ -12,6 +12,7 @@ import (
 	agentir "goa.design/goa-ai/codegen/ir"
 	agentexpr "goa.design/goa-ai/expr/agent"
 	goacodegen "goa.design/goa/v3/codegen"
+	goaexpr "goa.design/goa/v3/expr"
 )
 
 type (
@@ -256,6 +257,42 @@ func (p *agentPackagePlan) declare(agent *agentir.Agent) error {
 			return err
 		}
 		sources.declaration = declaration
+	}
+
+	if len(agent.Expr.Prompts) > 0 {
+		promptFuncs := []string{"PromptSpecs", "RegisterPrompts"}
+		var promptConsts []string
+		var promptTypes []string
+		for _, pr := range agent.Expr.Prompts {
+			goName := goacodegen.Goify(pr.Name, true)
+			specFuncName := "PromptSpec" + goName
+			renderFuncName := "Render" + goName + "Prompt"
+			renderWithRegFuncName := "Render" + goName + "PromptWithRegistry"
+			constantName := "Prompt" + goName + "ID"
+			argsTypeName := goName + "PromptArgs"
+			if pr.Name == systemPromptName {
+				specFuncName = "PromptSpecSystem"
+				renderFuncName = "RenderSystemPrompt"
+				renderWithRegFuncName = "RenderSystemPromptWithRegistry"
+				constantName = "SystemPromptID"
+				argsTypeName = "SystemPromptArgs"
+			}
+			promptFuncs = append(promptFuncs, specFuncName, renderFuncName, renderWithRegFuncName)
+			promptConsts = append(promptConsts, constantName)
+			if pr.Args != nil && pr.Args.Type != nil && pr.Args.Type != goaexpr.Empty {
+				promptTypes = append(promptTypes, argsTypeName)
+			}
+		}
+		fixedPrompts := map[goacodegen.PackageNameKind][]string{
+			goacodegen.NameFunction: promptFuncs,
+			goacodegen.NameConstant: promptConsts,
+		}
+		if len(promptTypes) > 0 {
+			fixedPrompts[goacodegen.NameType] = promptTypes
+		}
+		if err := p.declareFixedNames(fixedPrompts); err != nil {
+			return err
+		}
 	}
 
 	var err error

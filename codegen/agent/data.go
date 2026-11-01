@@ -957,6 +957,9 @@ const (
 	// 2 minutes accommodates typical LLM response times with retries while
 	// preventing indefinite hangs.
 	defaultPlannerActivityTimeout = 2 * time.Minute
+
+	// systemPromptName is the canonical name for an agent's system prompt.
+	systemPromptName = "system"
 )
 
 // buildGeneratorDataFromIR combines the saved agent design with the service
@@ -1189,7 +1192,7 @@ func newPromptData(p *agentsExpr.PromptExpr, agentID string) (*PromptData, error
 	specFuncName := "PromptSpec" + goName
 	renderFuncName := "Render" + goName + "Prompt"
 	argsTypeName := goName + "PromptArgs"
-	if name == "system" {
+	if name == systemPromptName {
 		constantName = "SystemPromptID"
 		specFuncName = "PromptSpecSystem"
 		renderFuncName = "RenderSystemPrompt"
