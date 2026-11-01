@@ -106,18 +106,17 @@ func TestAgentPromptCodegen(t *testing.T) {
 	assert.Contains(t, promptsContent, "Role:        prompt.PromptRoleSystem")
 	assert.Contains(t, promptsContent, `Template:    "You are {{ .AssistantName }}, an automated assistant."`)
 	assert.Contains(t, promptsContent, `Version:     "sha256:`)
-	assert.Contains(t, promptsContent, `tools.FixedField("AssistantName")`)
+	assert.Contains(t, promptsContent, `ArgsType:    reflect.TypeFor[SystemPromptArgs](),`)
 
 	assert.Contains(t, promptsContent, "func PromptSpecTriage() prompt.PromptSpec")
 	assert.Contains(t, promptsContent, "Role:        prompt.PromptRoleUser")
 	assert.Contains(t, promptsContent, `Description: "Triage incoming user issues"`)
 	assert.Contains(t, promptsContent, `Template:    "Please triage ticket {{ .TicketID }}: {{ .Summary }}"`)
-	assert.Contains(t, promptsContent, `tools.FixedField("TicketID")`)
-	assert.Contains(t, promptsContent, `tools.FixedField("Summary")`)
+	assert.Contains(t, promptsContent, `ArgsType:    reflect.TypeFor[TriagePromptArgs](),`)
 
 	assert.Contains(t, promptsContent, "func PromptSpecFarewell() prompt.PromptSpec")
 	assert.Contains(t, promptsContent, "Role:        prompt.PromptRoleSynthesis")
-	assert.Contains(t, promptsContent, `JSONType: "null"`)
+	assert.Contains(t, promptsContent, `ArgsType:    reflect.TypeFor[struct{}](),`)
 
 	// PromptSpecs aggregator and RegisterPrompts
 	assert.Contains(t, promptsContent, "func PromptSpecs() []prompt.PromptSpec")
@@ -812,6 +811,7 @@ func TestPackageImportCollision(t *testing.T) {
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -822,8 +822,8 @@ import (
 
 func TestEmptyArgs(t *testing.T) {
 	spec := gensvc.PromptSpecGreet()
-	require.Len(t, spec.Fields, 1)
-	assert.Equal(t, "null", spec.Fields[0].JSONType)
+	require.NotNil(t, spec.ArgsType)
+	assert.Equal(t, reflect.TypeFor[struct{}](), spec.ArgsType)
 
 	reg := prompt.NewRegistry(prompt.NewInMemoryStore())
 	require.NoError(t, gensvc.RegisterPrompts(reg))

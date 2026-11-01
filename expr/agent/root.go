@@ -3,7 +3,6 @@ package agent
 import (
 	"fmt"
 	"sort"
-	"strings"
 
 	"goa.design/goa-ai/codegen/naming"
 	"goa.design/goa/v3/codegen"
@@ -250,6 +249,9 @@ func (r *RootExpr) Validate() error {
 	}
 	r.validateOwnerScopedToolsetSlugs(verr)
 
+	if len(verr.Errors) == 0 {
+		return nil
+	}
 	return verr
 }
 
@@ -512,76 +514,6 @@ func (r *RootExpr) validatePromptIDs(verr *eval.ValidationErrors) {
 				continue
 			}
 			agentPrompts[goIdent] = p
-		}
-	}
-
-	r.validatePromptCompositions(verr, prompts)
-}
-
-// validatePromptCompositions verifies that any literal sub-prompt ID rendered via {{ render "id" ... }}
-// exists in the declared prompts and that no static composition cycles exist.
-func (r *RootExpr) validatePromptCompositions(verr *eval.ValidationErrors, allPrompts map[string]*PromptExpr) {
-	graph := make(map[string][]string)
-	for id, p := range allPrompts {
-		rendered := extractRenderedPromptIDs(p.Template)
-		for _, subID := range rendered {
-			if _, ok := allPrompts[subID]; !ok {
-				verr.Add(p, "prompt %q renders unknown prompt %q", p.ID(), subID)
-				continue
-			}
-			graph[id] = append(graph[id], subID)
-		}
-	}
-
-	const (
-		white = 0
-		gray  = 1
-		black = 2
-	)
-	state := make(map[string]int)
-	var path []string
-
-	var dfs func(u string) bool
-	dfs = func(u string) bool {
-		state[u] = gray
-		path = append(path, u)
-
-		for _, v := range graph[u] {
-			if state[v] == gray {
-				cycleStart := 0
-				for i, node := range path {
-					if node == v {
-						cycleStart = i
-						break
-					}
-				}
-				cycleTrace := append(append([]string(nil), path[cycleStart:]...), v)
-				p := allPrompts[u]
-				verr.Add(p, "cyclical prompt composition detected: %s", strings.Join(cycleTrace, " -> "))
-				return true
-			}
-			if state[v] == white {
-				if dfs(v) {
-					return true
-				}
-			}
-		}
-
-		path = path[:len(path)-1]
-		state[u] = black
-		return false
-	}
-
-	// Sort keys for deterministic error reporting
-	keys := make([]string, 0, len(allPrompts))
-	for id := range allPrompts {
-		keys = append(keys, id)
-	}
-	sort.Strings(keys)
-
-	for _, id := range keys {
-		if state[id] == white {
-			dfs(id)
 		}
 	}
 }

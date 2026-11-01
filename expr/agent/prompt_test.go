@@ -1,7 +1,11 @@
 package agent
 
 import (
+	"bytes"
+	"context"
+	"reflect"
 	"testing"
+	"text/template"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -57,7 +61,7 @@ func TestPromptExprValidateMalformedTemplate(t *testing.T) {
 
 	err := p.Validate()
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "prompt template parse failed")
+	assert.Contains(t, err.Error(), "invalid prompt template syntax")
 }
 
 func TestPromptExprValidateUndeclaredField(t *testing.T) {
@@ -87,7 +91,7 @@ func TestPromptExprValidateUndeclaredField(t *testing.T) {
 
 		err := p.Validate()
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "field \"TypoField\" not declared in prompt spec")
+		assert.Contains(t, err.Error(), `field "TypoField" not declared in Args`)
 	})
 
 	t.Run("field with no args declared", func(t *testing.T) {
@@ -101,7 +105,7 @@ func TestPromptExprValidateUndeclaredField(t *testing.T) {
 
 		err := p.Validate()
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "field \"AnyField\" not declared in prompt spec")
+		assert.Contains(t, err.Error(), `field "AnyField" not declared in type struct {}`)
 	})
 }
 
@@ -291,14 +295,14 @@ func TestRootExprValidateRejectsGoIdentifierCollision(t *testing.T) {
 	assert.Contains(t, err.Error(), "generates Go identifier \"GreetOne\" which duplicates prompt \"greet-one\"")
 }
 
-func TestRootExprValidateRejectsUnknownRenderedPrompt(t *testing.T) {
+func TestRootExprValidateAllowsManualComposition(t *testing.T) {
 	service := &goaexpr.ServiceExpr{Name: "support"}
 	agent := &AgentExpr{Name: "assistant", Service: service}
 
 	p := &PromptExpr{
 		Name:     "main",
 		Role:     prompt.PromptRoleUser,
-		Template: `Welcome {{ render "unknown.prompt.id" . }}`,
+		Template: `Welcome {{ render "manual.shared" . }}`,
 		Service:  service,
 		Agent:    agent,
 	}
@@ -309,35 +313,116 @@ func TestRootExprValidateRejectsUnknownRenderedPrompt(t *testing.T) {
 	}
 
 	err := root.Validate()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), `renders unknown prompt "unknown.prompt.id"`)
+	require.NoError(t, err)
 }
 
-func TestRootExprValidateRejectsCompositionCycle(t *testing.T) {
-	service := &goaexpr.ServiceExpr{Name: "support"}
-	agent := &AgentExpr{Name: "assistant", Service: service}
+func TestReviewFollowupCollectionMetadata(t *testing.T) {
+	tests := []struct {
+		name   string
+		source string
+		field  string
+		typ    goaexpr.DataType
+		data   any
+	}{
+		{"scalar_array_index", `{{ index .Names 0 }}`, "names", &goaexpr.Array{ElemType: &goaexpr.AttributeExpr{Type: goaexpr.String}}, struct{ Names []string }{[]string{"Ada"}}},
+		{"scalar_map_bad_descendant", `{{ .Labels.foo.Missing }}`, "labels", &goaexpr.Map{KeyType: &goaexpr.AttributeExpr{Type: goaexpr.String}, ElemType: &goaexpr.AttributeExpr{Type: goaexpr.String}}, struct{ Labels map[string]string }{map[string]string{"foo": "bar"}}},
+		{"scalar_array_range", `{{ range .Names }}{{ . }}{{ end }}`, "names", &goaexpr.Array{ElemType: &goaexpr.AttributeExpr{Type: goaexpr.String}}, struct{ Names []string }{[]string{"Ada"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &PromptExpr{
+				Name:     "main",
+				Role:     prompt.PromptRoleUser,
+				Template: tt.source,
+				Service:  &goaexpr.ServiceExpr{Name: "test"},
+				Args:     &goaexpr.AttributeExpr{Type: &goaexpr.Object{&goaexpr.NamedAttributeExpr{Name: tt.field, Attribute: &goaexpr.AttributeExpr{Type: tt.typ}}}},
+			}
+			p.Prepare()
+			verr := p.Validate()
+			parsed, err := template.New("test").Option("missingkey=error").Parse(tt.source)
+			require.NoError(t, err)
+			var out bytes.Buffer
+			err = parsed.Execute(&out, tt.data)
+			assert.Equal(t, err == nil, verr == nil, "static validation agrees with real Go template execution")
+		})
+	}
+}
 
-	p1 := &PromptExpr{
-		Name:     "prompt_a",
+func TestReviewFollowupEmptyObject(t *testing.T) {
+	p := &PromptExpr{
+		Name:     "main",
 		Role:     prompt.PromptRoleUser,
-		Template: `A calls B: {{ render "support.assistant.prompt_b" . }}`,
-		Service:  service,
-		Agent:    agent,
+		Template: `{{ .Missing }}`,
+		Service:  &goaexpr.ServiceExpr{Name: "test"},
+		Args: &goaexpr.AttributeExpr{
+			Type: &goaexpr.UserTypeExpr{
+				TypeName:      "EmptyArgs",
+				AttributeExpr: &goaexpr.AttributeExpr{Type: &goaexpr.Object{}},
+			},
+		},
 	}
-	p2 := &PromptExpr{
-		Name:     "prompt_b",
+	p.Prepare()
+	verr := p.Validate()
+	require.Error(t, verr)
+	assert.Contains(t, verr.Error(), `field "Missing" not declared in Args`)
+}
+
+func TestReviewFollowupManualComposition(t *testing.T) {
+	p := &PromptExpr{
+		Name:     "main",
 		Role:     prompt.PromptRoleUser,
-		Template: `B calls A: {{ render "support.assistant.prompt_a" . }}`,
-		Service:  service,
-		Agent:    agent,
+		Template: `{{ render "manual.shared" }}`,
+		Service:  &goaexpr.ServiceExpr{Name: "test"},
 	}
-	agent.Prompts = []*PromptExpr{p1, p2}
+	rootErr := (&RootExpr{Prompts: []*PromptExpr{p}}).Validate()
+	require.NoError(t, rootErr)
 
-	root := &RootExpr{
-		Agents: []*AgentExpr{agent},
+	r := prompt.NewRegistry(nil)
+	for _, spec := range []prompt.PromptSpec{
+		{ID: "manual.shared", Role: prompt.PromptRoleUser, Template: "shared instructions", ArgsType: reflect.TypeFor[struct{}]()},
+		{ID: p.ID(), Role: p.Role, Template: p.Template, ArgsType: reflect.TypeFor[struct{}]()},
+	} {
+		require.NoError(t, r.Register(spec))
 	}
+	content, renderErr := r.Render(context.Background(), p.ID(), prompt.Scope{}, nil)
+	require.NoError(t, renderErr)
+	assert.Equal(t, "shared instructions", content.Text)
+}
 
-	err := root.Validate()
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "cyclical prompt composition detected: support.assistant.prompt_a -> support.assistant.prompt_b -> support.assistant.prompt_a")
+func TestReviewFollowupRecursiveObject(t *testing.T) {
+	type node struct {
+		Name string
+		Next *node
+	}
+	nodeType := &goaexpr.UserTypeExpr{TypeName: "Node", AttributeExpr: &goaexpr.AttributeExpr{Type: &goaexpr.Object{}}}
+	nodeType.Type = &goaexpr.Object{
+		&goaexpr.NamedAttributeExpr{Name: "name", Attribute: &goaexpr.AttributeExpr{Type: goaexpr.String}},
+		&goaexpr.NamedAttributeExpr{Name: "next", Attribute: &goaexpr.AttributeExpr{Type: nodeType}},
+	}
+	for _, source := range []string{`{{ .Next.Name }}`, `{{ .Next.Missing }}`} {
+		t.Run(source, func(t *testing.T) {
+			p := &PromptExpr{
+				Name:     "main",
+				Role:     prompt.PromptRoleUser,
+				Template: source,
+				Service:  &goaexpr.ServiceExpr{Name: "test"},
+				Args:     &goaexpr.AttributeExpr{Type: nodeType},
+			}
+			p.Prepare()
+			validationErr := p.Validate()
+			r := prompt.NewRegistry(nil)
+			registrationErr := r.Register(prompt.PromptSpec{
+				ID:       p.ID(),
+				Role:     p.Role,
+				Template: p.Template,
+				ArgsType: reflect.TypeFor[node](),
+			})
+			assert.Equal(t, validationErr == nil, registrationErr == nil, "recursive object validation agrees with registration")
+			if registrationErr == nil {
+				content, renderErr := r.Render(context.Background(), p.ID(), prompt.Scope{}, &node{Name: "root", Next: &node{Name: "child"}})
+				require.NoError(t, renderErr)
+				assert.Equal(t, "child", content.Text)
+			}
+		})
+	}
 }

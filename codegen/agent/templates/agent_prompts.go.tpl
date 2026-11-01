@@ -28,7 +28,11 @@ func {{ .SpecFuncName }}() prompt.PromptSpec {
 		Description: {{ printf "%q" .Description }},
 		Template:    {{ printf "%q" .Template }},
 		Version:     {{ printf "%q" .Version }},
-		Fields:      {{ renderPromptFields .Fields }},
+{{- if .HasArgs }}
+		ArgsType:    reflect.TypeFor[{{ .ArgsTypeName }}](),
+{{- else }}
+		ArgsType:    reflect.TypeFor[struct{}](),
+{{- end }}
 	}
 }
 {{- end }}
@@ -65,8 +69,8 @@ func {{ .RenderFuncName }}(ctx context.Context, pctx planner.PlannerContext) (*p
 	return pctx.RenderPrompt(ctx, {{ .ConstantName }}, nil)
 }
 
-// {{ .RenderFuncName }}WithRegistry resolves and renders the {{ .Name }} prompt directly against a prompt registry.
-func {{ .RenderFuncName }}WithRegistry(ctx context.Context, reg *prompt.Registry, scope prompt.Scope) (*prompt.PromptContent, error) {
+// {{ .RenderWithRegistryFuncName }} resolves and renders the {{ .Name }} prompt directly against a prompt registry.
+func {{ .RenderWithRegistryFuncName }}(ctx context.Context, reg *prompt.Registry, scope prompt.Scope) (*prompt.PromptContent, error) {
 	if reg == nil {
 		return nil, errors.New("prompt registry is required")
 	}
@@ -81,8 +85,8 @@ func {{ .RenderFuncName }}(ctx context.Context, pctx planner.PlannerContext, arg
 	return pctx.RenderPrompt(ctx, {{ .ConstantName }}, args)
 }
 
-// {{ .RenderFuncName }}WithRegistry resolves and renders the {{ .Name }} prompt directly against a prompt registry with typed arguments.
-func {{ .RenderFuncName }}WithRegistry(ctx context.Context, reg *prompt.Registry, scope prompt.Scope, args {{ .ArgsTypeName }}) (*prompt.PromptContent, error) {
+// {{ .RenderWithRegistryFuncName }} resolves and renders the {{ .Name }} prompt directly against a prompt registry with typed arguments.
+func {{ .RenderWithRegistryFuncName }}(ctx context.Context, reg *prompt.Registry, scope prompt.Scope, args {{ .ArgsTypeName }}) (*prompt.PromptContent, error) {
 	if reg == nil {
 		return nil, errors.New("prompt registry is required")
 	}

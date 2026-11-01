@@ -896,13 +896,6 @@ func (t *ToolExpr) Finalize() {
 	panic(fmt.Sprintf("tool %q: method %q not found in service %q after successful validation", t.Name, t.bindMethodName, svc.Name))
 }
 
-func finalizeToolShape(att *goaexpr.AttributeExpr) {
-	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
-		return
-	}
-	att.Finalize()
-}
-
 // BoundServiceName returns the service name specified via BindTo, if any.
 func (t *ToolExpr) BoundServiceName() string {
 	return t.bindServiceName
@@ -912,4 +905,32 @@ func (t *ToolExpr) BoundServiceName() string {
 // to set the tool title.
 func (t *ToolExpr) SetTitle(title string) {
 	t.Title = title
+}
+
+// finalizeToolShape finalizes an attribute expression and all referenced user types.
+func finalizeToolShape(att *goaexpr.AttributeExpr) {
+	finalizeToolShapeVisited(att, make(map[string]bool))
+}
+
+// finalizeToolShapeVisited recursively finalizes user types and bases to ensure Extend-composed
+// fields are materialized before expression validation.
+func finalizeToolShapeVisited(att *goaexpr.AttributeExpr, visited map[string]bool) {
+	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
+		return
+	}
+	for _, dt := range append(append([]goaexpr.DataType{}, att.Bases...), att.References...) {
+		if ut, ok := dt.(goaexpr.UserType); ok {
+			if id := ut.ID(); id != "" && !visited[id] {
+				visited[id] = true
+				finalizeToolShapeVisited(ut.Attribute(), visited)
+			}
+		}
+	}
+	if ut, ok := att.Type.(goaexpr.UserType); ok {
+		if id := ut.ID(); id != "" && !visited[id] {
+			visited[id] = true
+			finalizeToolShapeVisited(ut.Attribute(), visited)
+		}
+	}
+	att.Finalize()
 }

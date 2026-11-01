@@ -99,6 +99,40 @@ func Prepare(_ string, roots []eval.Root) error {
 		}
 		collectAndForceTypes(goaRoot, serviceName, completion.Return, designTypes, rootTypes, true)
 	}
+	promptShape := func(att *goaexpr.AttributeExpr) *goaexpr.AttributeExpr {
+		if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
+			return nil
+		}
+		if ut, ok := att.Type.(goaexpr.UserType); ok && ut != goaexpr.Empty {
+			return ut.Attribute()
+		}
+		return att
+	}
+	for _, pr := range agentRoot.Prompts {
+		if pr == nil {
+			continue
+		}
+		var serviceName string
+		if pr.Service != nil {
+			serviceName = pr.Service.Name
+		}
+		collectAndForceTypes(goaRoot, serviceName, promptShape(pr.Args), designTypes, rootTypes, true)
+	}
+	for _, ag := range agentRoot.Agents {
+		if ag == nil {
+			continue
+		}
+		var serviceName string
+		if ag.Service != nil {
+			serviceName = ag.Service.Name
+		}
+		for _, pr := range ag.Prompts {
+			if pr == nil {
+				continue
+			}
+			collectAndForceTypes(goaRoot, serviceName, promptShape(pr.Args), designTypes, rootTypes, true)
+		}
+	}
 	return nil
 }
 

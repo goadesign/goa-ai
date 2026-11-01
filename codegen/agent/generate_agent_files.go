@@ -48,7 +48,11 @@ func agentFiles(
 		agentConfigFile(agent),
 		agentRegistryFile(agent),
 	}
-	if pfile := agentPromptsFile(agent); pfile != nil {
+	pfile, err := agentPromptsFile(agent)
+	if err != nil {
+		return nil, err
+	}
+	if pfile != nil {
 		files = append(files, pfile)
 	}
 	pjsonFile, err := agentPromptSchemasJSONFile(agent)

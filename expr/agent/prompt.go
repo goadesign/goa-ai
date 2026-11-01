@@ -9,11 +9,11 @@ package agent
 
 import (
 	"fmt"
+	"reflect"
 	"text/template"
-	"text/template/parse"
 
+	"goa.design/goa-ai/internal/tmplcheck"
 	"goa.design/goa-ai/runtime/agent/prompt"
-	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/eval"
 	goaexpr "goa.design/goa/v3/expr"
@@ -44,6 +44,11 @@ type (
 		Service *goaexpr.ServiceExpr
 		// Agent is the enclosing agent expression, or nil for service-level prompts.
 		Agent *AgentExpr
+	}
+
+	// exprAttrType adapts a Goa AttributeExpr into tmplcheck.Type for static template checking.
+	exprAttrType struct {
+		att *goaexpr.AttributeExpr
 	}
 )
 
@@ -81,69 +86,6 @@ func (p *PromptExpr) SetDescription(d string) {
 	p.Description = d
 }
 
-// FieldMetadata returns the static field specifications for this prompt.
-//
-// When p.Args is empty or nil, it returns a single entry with JSONType "null"
-// (the zero-arg sentinel recognized by prompt.ValidatePromptTemplate).
-// When p.Args is an object, it traverses fields recursively, emitting exported Go
-// struct field names (using codegen.GoifyAtt, respecting struct:field:name metadata).
-func (p *PromptExpr) FieldMetadata() []tools.FieldMetadata {
-	if p.Args == nil || p.Args.Type == nil || p.Args.Type == goaexpr.Empty {
-		return []tools.FieldMetadata{{JSONType: "null"}}
-	}
-	obj := goaexpr.AsObject(p.Args.Type)
-	if obj == nil {
-		return []tools.FieldMetadata{{JSONType: "null"}}
-	}
-	var (
-		fields  []tools.FieldMetadata
-		visited = make(map[string]bool)
-	)
-	var walk func(att *goaexpr.AttributeExpr, path []tools.FieldPathSegment)
-	walk = func(att *goaexpr.AttributeExpr, path []tools.FieldPathSegment) {
-		if att == nil || att.Type == nil {
-			return
-		}
-		if ut, ok := att.Type.(goaexpr.UserType); ok {
-			typeName := ut.Name()
-			if typeName != "" {
-				if visited[typeName] {
-					return
-				}
-				visited[typeName] = true
-				defer func() { delete(visited, typeName) }()
-			}
-			walk(ut.Attribute(), path)
-			return
-		}
-		switch t := att.Type.(type) {
-		case *goaexpr.Object:
-			for _, nat := range *t {
-				if nat == nil || nat.Attribute == nil {
-					continue
-				}
-				goName := codegen.GoifyAtt(nat.Attribute, nat.Name, true)
-				fieldPath := append(append([]tools.FieldPathSegment(nil), path...), tools.FixedField(goName))
-				jsonType := jsonCategory(nat.Attribute.Type)
-				fields = append(fields, tools.FieldMetadata{
-					Path:        fieldPath,
-					JSONType:    jsonType,
-					Description: nat.Attribute.Description,
-				})
-				walk(nat.Attribute, fieldPath)
-			}
-		case *goaexpr.Array:
-			elemPath := append(append([]tools.FieldPathSegment(nil), path...), tools.DynamicField{})
-			walk(t.ElemType, elemPath)
-		case *goaexpr.Map:
-			keyPath := append(append([]tools.FieldPathSegment(nil), path...), tools.DynamicField{})
-			walk(t.ElemType, keyPath)
-		}
-	}
-	walk(p.Args, nil)
-	return fields
-}
-
 // Prepare ensures prompt defaults and shapes are initialized before validation.
 func (p *PromptExpr) Prepare() {
 	if p.Role == "" {
@@ -163,7 +105,7 @@ func (p *PromptExpr) Finalize() {
 
 // Validate verifies prompt invariants: non-empty name and template, valid role,
 // valid Go template syntax, valid object Args shape, and field access alignment
-// using prompt.ValidatePromptTemplate.
+// using static template checking.
 func (p *PromptExpr) Validate() error {
 	verr := new(eval.ValidationErrors)
 	if p.Name == "" {
@@ -188,13 +130,26 @@ func (p *PromptExpr) Validate() error {
 		}
 	}
 
-	spec := prompt.PromptSpec{
-		ID:       p.ID(),
-		Role:     p.Role,
-		Template: p.Template,
-		Fields:   p.FieldMetadata(),
+	funcs := template.FuncMap{
+		"render": func(string, ...any) (string, error) { return "", nil },
 	}
-	if err := prompt.ValidatePromptTemplate(spec, p.Template); err != nil {
+	parsed, err := template.New(string(p.ID())).Option("missingkey=error").Funcs(funcs).Parse(p.Template)
+	if err != nil {
+		verr.Add(p, "invalid prompt template syntax: %v", err)
+		if len(verr.Errors) == 0 {
+			return nil
+		}
+		return verr
+	}
+
+	var rootType tmplcheck.Type
+	if hasArgs {
+		rootType = newExprAttrType(p.Args)
+	} else {
+		rootType = tmplcheck.ReflectType(reflect.TypeFor[struct{}]())
+	}
+
+	if err := tmplcheck.Check(parsed, string(p.ID()), rootType, funcs); err != nil {
 		verr.Add(p, "%s", err)
 	}
 
@@ -204,104 +159,143 @@ func (p *PromptExpr) Validate() error {
 	return verr
 }
 
-// extractRenderedPromptIDs parses templateSource and extracts literal string prompt IDs
-// passed as the first argument to the "render" template function (e.g. {{ render "id" ... }}).
-func extractRenderedPromptIDs(templateSource string) []string {
-	tmpl, err := template.New("").
-		Funcs(template.FuncMap{
-			"render": func(string, ...any) (string, error) { return "", nil },
-		}).
-		Parse(templateSource)
-	if err != nil || tmpl.Tree == nil || tmpl.Root == nil {
+// newExprAttrType creates a tmplcheck.Type wrapping an attribute expression, returning nil
+// for unconstrained dynamic types (such as Any or struct:field:type overrides).
+func newExprAttrType(att *goaexpr.AttributeExpr) tmplcheck.Type {
+	if att == nil || att.Type == nil || att.Type == goaexpr.Empty {
+		return tmplcheck.ReflectType(reflect.TypeFor[struct{}]())
+	}
+	if len(att.Meta["struct:field:type"]) > 0 {
 		return nil
 	}
-
-	var (
-		ids  []string
-		seen = make(map[string]bool)
-	)
-
-	var walkNode func(n parse.Node)
-	walkNode = func(n parse.Node) {
-		if n == nil {
-			return
-		}
-		switch node := n.(type) {
-		case *parse.ListNode:
-			if node != nil {
-				for _, item := range node.Nodes {
-					walkNode(item)
-				}
-			}
-		case *parse.ActionNode:
-			if node != nil {
-				walkNode(node.Pipe)
-			}
-		case *parse.PipeNode:
-			if node != nil {
-				for _, cmd := range node.Cmds {
-					walkNode(cmd)
-				}
-			}
-		case *parse.CommandNode:
-			if node != nil && len(node.Args) >= 2 {
-				if idNode, ok := node.Args[0].(*parse.IdentifierNode); ok && idNode.Ident == "render" {
-					if strNode, ok := node.Args[1].(*parse.StringNode); ok {
-						if !seen[strNode.Text] {
-							seen[strNode.Text] = true
-							ids = append(ids, strNode.Text)
-						}
-					}
-				}
-			}
-		case *parse.BranchNode:
-			if node != nil {
-				walkNode(node.Pipe)
-				walkNode(node.List)
-				walkNode(node.ElseList)
-			}
-		case *parse.IfNode:
-			if node != nil {
-				walkNode(&node.BranchNode)
-			}
-		case *parse.WithNode:
-			if node != nil {
-				walkNode(&node.BranchNode)
-			}
-		case *parse.RangeNode:
-			if node != nil {
-				walkNode(&node.BranchNode)
-			}
+	if att.Type == goaexpr.Any {
+		return nil
+	}
+	if ut, ok := att.Type.(goaexpr.UserType); ok {
+		if len(ut.Attribute().Meta["struct:field:type"]) > 0 {
+			return nil
 		}
 	}
-
-	walkNode(tmpl.Root)
-	return ids
+	return &exprAttrType{att: att}
 }
 
-// jsonCategory maps Goa data types to JSON Schema type strings.
-func jsonCategory(dt goaexpr.DataType) string {
-	switch actual := dt.(type) {
-	case goaexpr.UserType:
-		return jsonCategory(actual.Attribute().Type)
-	case *goaexpr.Object, *goaexpr.Map:
-		return "object"
-	case *goaexpr.Array:
-		return "array"
-	case goaexpr.Primitive:
-		//nolint:exhaustive // Only primitive kinds map to JSON scalar types.
-		switch actual.Kind() {
-		case goaexpr.BooleanKind:
-			return "boolean"
-		case goaexpr.StringKind, goaexpr.BytesKind:
-			return "string"
-		case goaexpr.IntKind, goaexpr.Int32Kind, goaexpr.Int64Kind, goaexpr.UIntKind, goaexpr.UInt32Kind, goaexpr.UInt64Kind:
-			return "integer"
-		case goaexpr.Float32Kind, goaexpr.Float64Kind:
-			return "number"
-		default:
-			return ""
+// unwrapAttr strips enclosing user types, returning the underlying attribute expression
+// and a boolean indicating whether any encountered user type had a dynamic override.
+func unwrapAttr(att *goaexpr.AttributeExpr) (*goaexpr.AttributeExpr, bool) {
+	curr := att
+	for curr != nil && curr.Type != nil {
+		if ut, ok := curr.Type.(goaexpr.UserType); ok && ut != goaexpr.Empty {
+			if len(ut.Attribute().Meta["struct:field:type"]) > 0 {
+				return nil, true
+			}
+			curr = ut.Attribute()
+			continue
 		}
+		break
 	}
-	return ""
+	return curr, false
+}
+
+// ID returns the type identity for cycle detection in recursive template invocations.
+func (e *exprAttrType) ID() string {
+	if e == nil || e.att == nil || e.att.Type == nil {
+		return ""
+	}
+	if ut, ok := e.att.Type.(goaexpr.UserType); ok {
+		return "ut:" + ut.ID()
+	}
+	switch dt := e.att.Type.(type) {
+	case *goaexpr.Object:
+		return fmt.Sprintf("obj:%p", dt)
+	case *goaexpr.Array:
+		return fmt.Sprintf("arr:%p", dt)
+	case *goaexpr.Map:
+		return fmt.Sprintf("map:%p", dt)
+	case goaexpr.Primitive:
+		return "prim:" + dt.Name()
+	default:
+		return ""
+	}
+}
+
+// Member resolves dot-field or map key access on this attribute type.
+func (e *exprAttrType) Member(name string) (tmplcheck.Type, error) {
+	if e == nil || e.att == nil || e.att.Type == nil {
+		return nil, fmt.Errorf("%w: member %q on nil type", prompt.ErrTemplateFieldNotFound, name)
+	}
+	if ut, ok := e.att.Type.(goaexpr.UserType); ok {
+		if len(ut.Attribute().Meta["struct:field:type"]) > 0 {
+			return nil, nil
+		}
+		return (&exprAttrType{att: ut.Attribute()}).Member(name)
+	}
+	if obj := goaexpr.AsObject(e.att.Type); obj != nil {
+		for _, nat := range *obj {
+			if nat == nil || nat.Attribute == nil {
+				continue
+			}
+			goName := codegen.GoifyAtt(nat.Attribute, nat.Name, true)
+			if goName == name {
+				return newExprAttrType(nat.Attribute), nil
+			}
+		}
+		return nil, fmt.Errorf("%w: field %q not declared in Args", prompt.ErrTemplateFieldNotFound, name)
+	}
+	if mp := goaexpr.AsMap(e.att.Type); mp != nil {
+		if mp.KeyType != nil && ((mp.KeyType.Type == goaexpr.String && len(mp.KeyType.Meta["struct:field:type"]) == 0) || mp.KeyType.Type == goaexpr.Any) {
+			return newExprAttrType(mp.ElemType), nil
+		}
+		return nil, fmt.Errorf("%w: field %q not declared in type %s", prompt.ErrTemplateFieldNotFound, name, e.att.Type.Name())
+	}
+	return nil, fmt.Errorf("%w: field %q not declared in type %s", prompt.ErrTemplateFieldNotFound, name, e.att.Type.Name())
+}
+
+// Index resolves an index operation (index x k) on array, map, string, or bytes types.
+func (e *exprAttrType) Index() (tmplcheck.Type, error) {
+	curr, dynamic := unwrapAttr(e.att)
+	if dynamic || curr == nil || curr.Type == nil {
+		return nil, nil
+	}
+	if curr.Type == goaexpr.Any {
+		return nil, nil
+	}
+	switch dt := curr.Type.(type) {
+	case *goaexpr.Array:
+		return newExprAttrType(dt.ElemType), nil
+	case *goaexpr.Map:
+		return newExprAttrType(dt.ElemType), nil
+	case goaexpr.Primitive:
+		if dt.Kind() == goaexpr.StringKind || dt.Kind() == goaexpr.BytesKind {
+			return tmplcheck.ReflectType(reflect.TypeFor[byte]()), nil
+		}
+		return nil, fmt.Errorf("%w: cannot index type %s", prompt.ErrTemplateFieldNotFound, curr.Type.Name())
+	default:
+		return nil, fmt.Errorf("%w: cannot index type %s", prompt.ErrTemplateFieldNotFound, curr.Type.Name())
+	}
+}
+
+// Range resolves a range iteration (range x) on array, map, or integer range types.
+func (e *exprAttrType) Range() (tmplcheck.Type, tmplcheck.Type, error) {
+	curr, dynamic := unwrapAttr(e.att)
+	if dynamic || curr == nil || curr.Type == nil {
+		return nil, nil, nil
+	}
+	if curr.Type == goaexpr.Any {
+		return nil, nil, nil
+	}
+	switch dt := curr.Type.(type) {
+	case *goaexpr.Array:
+		return tmplcheck.ReflectType(reflect.TypeFor[int]()), newExprAttrType(dt.ElemType), nil
+	case *goaexpr.Map:
+		return newExprAttrType(dt.KeyType), newExprAttrType(dt.ElemType), nil
+	case goaexpr.Primitive:
+		switch dt.Kind() { //nolint:exhaustive // Only integer primitives support range.
+		case goaexpr.IntKind, goaexpr.Int32Kind, goaexpr.Int64Kind, goaexpr.UIntKind, goaexpr.UInt32Kind, goaexpr.UInt64Kind:
+			return tmplcheck.ReflectType(reflect.TypeFor[int]()), tmplcheck.ReflectType(reflect.TypeFor[int]()), nil
+		default:
+			return nil, nil, fmt.Errorf("%w: cannot range over type %s", prompt.ErrTemplateFieldNotFound, curr.Type.Name())
+		}
+	default:
+		return nil, nil, fmt.Errorf("%w: cannot range over type %s", prompt.ErrTemplateFieldNotFound, curr.Type.Name())
+	}
 }

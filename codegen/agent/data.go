@@ -11,7 +11,6 @@ import (
 	agentsExpr "goa.design/goa-ai/expr/agent"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
 	"goa.design/goa-ai/runtime/agent/engine"
-	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/codegen/service"
 	goaexpr "goa.design/goa/v3/expr"
@@ -230,6 +229,8 @@ type (
 		SpecFuncName string
 		// RenderFuncName is the Go render helper name (e.g. "RenderSystemPrompt" or "RenderTriagePrompt").
 		RenderFuncName string
+		// RenderWithRegistryFuncName is the Go render helper name accepting an explicit Registry.
+		RenderWithRegistryFuncName string
 		// ArgsTypeName is the Go type name for the typed args struct (e.g. "SystemPromptArgs" or "TriagePromptArgs").
 		ArgsTypeName string
 		// Name is the authored prompt name.
@@ -248,8 +249,6 @@ type (
 		HasArgs bool
 		// ArgsDef is the Go type definition for the Args struct.
 		ArgsDef string
-		// Fields is the precomputed field metadata list for prompt spec.
-		Fields []tools.FieldMetadata
 		// SchemaJSON is the compiled JSON Schema bytes for the Args attribute.
 		SchemaJSON []byte
 	}
@@ -1191,29 +1190,31 @@ func newPromptData(p *agentsExpr.PromptExpr, agentID string) (*PromptData, error
 	constantName := "Prompt" + goName + "ID"
 	specFuncName := "PromptSpec" + goName
 	renderFuncName := "Render" + goName + "Prompt"
+	renderWithRegistryFuncName := "Render" + goName + "PromptWithRegistry"
 	argsTypeName := goName + "PromptArgs"
 	if name == systemPromptName {
 		constantName = "SystemPromptID"
 		specFuncName = "PromptSpecSystem"
 		renderFuncName = "RenderSystemPrompt"
+		renderWithRegistryFuncName = "RenderSystemPromptWithRegistry"
 		argsTypeName = "SystemPromptArgs"
 	}
 
 	data := &PromptData{
-		Expr:           p,
-		ID:             id,
-		AgentID:        agentID,
-		ConstantName:   constantName,
-		SpecFuncName:   specFuncName,
-		RenderFuncName: renderFuncName,
-		ArgsTypeName:   argsTypeName,
-		Name:           name,
-		GoName:         goName,
-		Description:    p.Description,
-		Role:           string(p.Role),
-		Template:       p.Template,
-		Version:        version,
-		Fields:         p.FieldMetadata(),
+		Expr:                       p,
+		ID:                         id,
+		AgentID:                    agentID,
+		ConstantName:               constantName,
+		SpecFuncName:               specFuncName,
+		RenderFuncName:             renderFuncName,
+		RenderWithRegistryFuncName: renderWithRegistryFuncName,
+		ArgsTypeName:               argsTypeName,
+		Name:                       name,
+		GoName:                     goName,
+		Description:                p.Description,
+		Role:                       string(p.Role),
+		Template:                   p.Template,
+		Version:                    version,
 	}
 
 	if p.Args != nil && p.Args.Type != nil && p.Args.Type != goaexpr.Empty {

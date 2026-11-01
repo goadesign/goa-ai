@@ -312,7 +312,7 @@ func TestPromptDSLRejections(t *testing.T) {
 					})
 				})
 			},
-			want: "prompt template parse failed",
+			want: "invalid prompt template syntax",
 		},
 		{
 			name: "Agent prompt with undeclared field access fails RunDSL",
@@ -326,7 +326,7 @@ func TestPromptDSLRejections(t *testing.T) {
 					})
 				})
 			},
-			want: `field "MissingField" not declared in prompt spec`,
+			want: `field "MissingField" not declared in type struct {}`,
 		},
 		{
 			name: "Agent prompt with non-object Args fails RunDSL",
@@ -394,4 +394,75 @@ func TestPromptDSLRejections(t *testing.T) {
 			assert.Contains(t, err.Error(), tt.want)
 		})
 	}
+}
+
+// TestReviewFollowupNamedEmptyArgs verifies that an empty named user type passed to Args
+// rejects undeclared field accesses in prompt templates.
+func TestReviewFollowupNamedEmptyArgs(t *testing.T) {
+	err := runDSLWithError(t, func() {
+		API("test", func() {})
+		empty := Type("EmptyArgs", func() {})
+		Service("support", func() {
+			Prompt("main", func() {
+				Template(`{{ .Missing }}`)
+				Args(empty)
+			})
+		})
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `field "Missing" not declared in Args`)
+}
+
+// TestReviewFollowupInheritedArgs verifies that inline Args using Extend materialize
+// inherited fields before template static validation.
+func TestReviewFollowupInheritedArgs(t *testing.T) {
+	runDSL(t, func() {
+		API("test", func() {})
+		base := Type("Base", func() {
+			Attribute("ticket_id", String, "Ticket identifier")
+			Required("ticket_id")
+		})
+		Service("support", func() {
+			Prompt("main", func() {
+				Template(`{{ .TicketID }}`)
+				Args(func() {
+					Extend(base)
+				})
+			})
+		})
+	})
+}
+
+// TestReviewFollowupNamedInheritedArgs verifies that named user types extending a base
+// type materialize inherited fields before template static validation.
+func TestReviewFollowupNamedInheritedArgs(t *testing.T) {
+	runDSL(t, func() {
+		API("test", func() {})
+		base := Type("Base", func() {
+			Attribute("ticket_id", String, "Ticket identifier")
+			Required("ticket_id")
+		})
+		derived := Type("Derived", func() {
+			Extend(base)
+		})
+		Service("support", func() {
+			Prompt("main", func() {
+				Template(`{{ .TicketID }}`)
+				Args(derived)
+			})
+		})
+	})
+}
+
+// TestReviewFollowupManualCompositionDSL verifies that sub-prompt render calls referencing
+// manually registered or external prompts pass DSL evaluation.
+func TestReviewFollowupManualCompositionDSL(t *testing.T) {
+	runDSL(t, func() {
+		API("test", func() {})
+		Service("support", func() {
+			Prompt("main", func() {
+				Template(`{{ render "manual.shared" }}`)
+			})
+		})
+	})
 }

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"strings"
 
-	"goa.design/goa-ai/runtime/agent/tools"
 	goacodegen "goa.design/goa/v3/codegen"
 	goaexpr "goa.design/goa/v3/expr"
 )
@@ -21,8 +20,6 @@ func templateFuncMap() map[string]any {
 		"goify":              goacodegen.Goify,
 		"nativeTaskDispatch": nativeTaskDispatchSource,
 		"promptRoleTitle":    promptRoleTitle,
-		"renderPromptFields": formatFieldSpecs,
-		"formatFieldSpecs":   formatFieldSpecs,
 		"trimPrefix":         strings.TrimPrefix,
 		"trimSuffix":         strings.TrimSuffix,
 		"ToLower":            strings.ToLower,
@@ -174,37 +171,4 @@ func promptRoleTitle(role string) string {
 	default:
 		panic(fmt.Sprintf("unknown prompt role: %q", role))
 	}
-}
-
-// formatFieldSpecs formats prompt field metadata into Go source for PromptSpec.Fields.
-func formatFieldSpecs(fields []tools.FieldMetadata) string {
-	if len(fields) == 0 {
-		return "nil"
-	}
-	var b strings.Builder
-	b.WriteString("[]tools.FieldMetadata{\n")
-	for _, f := range fields {
-		b.WriteString("\t\t\t{\n")
-		if len(f.Path) > 0 {
-			b.WriteString("\t\t\t\tPath: []tools.FieldPathSegment{\n")
-			for _, seg := range f.Path {
-				switch s := seg.(type) {
-				case tools.FixedField:
-					fmt.Fprintf(&b, "\t\t\t\t\ttools.FixedField(%q),\n", string(s))
-				case tools.DynamicField:
-					b.WriteString("\t\t\t\t\ttools.DynamicField{},\n")
-				}
-			}
-			b.WriteString("\t\t\t\t},\n")
-		}
-		if f.JSONType != "" {
-			fmt.Fprintf(&b, "\t\t\t\tJSONType: %q,\n", f.JSONType)
-		}
-		if f.Description != "" {
-			fmt.Fprintf(&b, "\t\t\t\tDescription: %q,\n", f.Description)
-		}
-		b.WriteString("\t\t\t},\n")
-	}
-	b.WriteString("\t\t}")
-	return b.String()
 }

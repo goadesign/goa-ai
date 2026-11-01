@@ -260,9 +260,11 @@ func (p *agentPackagePlan) declare(agent *agentir.Agent) error {
 	}
 
 	if len(agent.Expr.Prompts) > 0 {
-		promptFuncs := []string{"PromptSpecs", "RegisterPrompts"}
-		var promptConsts []string
-		var promptTypes []string
+		if err := p.declareFixedNames(map[goacodegen.PackageNameKind][]string{
+			goacodegen.NameFunction: {"PromptSpecs", "RegisterPrompts"},
+		}); err != nil {
+			return err
+		}
 		for _, pr := range agent.Expr.Prompts {
 			goName := goacodegen.Goify(pr.Name, true)
 			specFuncName := "PromptSpec" + goName
@@ -277,21 +279,24 @@ func (p *agentPackagePlan) declare(agent *agentir.Agent) error {
 				constantName = "SystemPromptID"
 				argsTypeName = "SystemPromptArgs"
 			}
-			promptFuncs = append(promptFuncs, specFuncName, renderFuncName, renderWithRegFuncName)
-			promptConsts = append(promptConsts, constantName)
-			if pr.Args != nil && pr.Args.Type != nil && pr.Args.Type != goaexpr.Empty {
-				promptTypes = append(promptTypes, argsTypeName)
+			idKey := string(pr.ID())
+			if _, err := p.declarePreferred(goacodegen.NameConstant, constantName, goacodegen.ExportedName, idKey+":const"); err != nil {
+				return err
 			}
-		}
-		fixedPrompts := map[goacodegen.PackageNameKind][]string{
-			goacodegen.NameFunction: promptFuncs,
-			goacodegen.NameConstant: promptConsts,
-		}
-		if len(promptTypes) > 0 {
-			fixedPrompts[goacodegen.NameType] = promptTypes
-		}
-		if err := p.declareFixedNames(fixedPrompts); err != nil {
-			return err
+			if _, err := p.declarePreferred(goacodegen.NameFunction, specFuncName, goacodegen.ExportedName, idKey+":spec"); err != nil {
+				return err
+			}
+			if _, err := p.declarePreferred(goacodegen.NameFunction, renderFuncName, goacodegen.ExportedName, idKey+":render"); err != nil {
+				return err
+			}
+			if _, err := p.declarePreferred(goacodegen.NameFunction, renderWithRegFuncName, goacodegen.ExportedName, idKey+":render-with-registry"); err != nil {
+				return err
+			}
+			if pr.Args != nil && pr.Args.Type != nil && pr.Args.Type != goaexpr.Empty {
+				if _, err := p.declarePreferred(goacodegen.NameType, argsTypeName, goacodegen.ExportedName, idKey+":args-type"); err != nil {
+					return err
+				}
+			}
 		}
 	}
 

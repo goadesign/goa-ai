@@ -159,7 +159,7 @@ func TestRootExprValidateAllowsSameToolsetExportedByDifferentServices(t *testing
 	}
 
 	err := root.Validate()
-	require.Empty(t, err.Error())
+	require.NoError(t, err)
 }
 
 func TestRootExprValidateRejectsDuplicateAgentToolsetReference(t *testing.T) {
