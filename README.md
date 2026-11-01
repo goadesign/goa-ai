@@ -44,6 +44,7 @@ and an application-specific guide to the code they need to implement.
 | Your goal | Start here |
 | --- | --- |
 | **An AI agent** that calls typed tools, returns structured answers, and can pause for human input | [Agent quickstart](quickstart/README.md) |
+| **Composable prompts and scoped overrides** with compile-time AST validation, sub-prompt composition, and OpenTelemetry tracing | [Composable prompt management](docs/prompts.md) |
 | **An MCP server** exposing Go service methods, resources, and prompts, or **an MCP client** consuming them | [MCP integration guide](https://goa.design/docs/2-goa-ai/mcp-integration/) |
 | **A tool registry** that publishes capabilities across services and lets agents discover independently implemented Agent operations without loading provider code, or binds generated native tools to selected registrations while retaining typed codecs and child routes | [Registries and tool search](docs/tool_search.md) |
 
@@ -123,6 +124,7 @@ go run goa.design/goa/v3/cmd/goa gen <design-package-import-path>
 | --- | --- |
 | Service contract | Typed Go interfaces, payloads, results, and validation |
 | Agent tool | Model-facing JSON Schema, examples, codecs, and a service executor |
+| Composable prompt | Validated AST, typed args struct, spec builder, and typed render helper |
 | MCP tool | A typed client and HTTP server with discovery and input/output schemas |
 | HTTP and gRPC methods | Clients, servers, OpenAPI, and protobuf definitions |
 
@@ -171,6 +173,11 @@ service wiring, and connecting a model. For MCP, follow the
 - **Typed tools and structured answers.** Bind tools to Goa methods or custom
   executors; declare `Completion(...)` for typed direct responses. Generated
   codecs and schemas enforce the authored contract.
+- **Composable prompts and scoped overrides.** Declare agent system instructions
+  and shared prompt templates in Goa design. Templates compile with `missingkey=error`
+  and validate field references against typed `Args` at generation time. Compose
+  sub-prompts via `{{ render "<prompt_id>" . }}` and manage scoped overrides
+  dynamically with exact-scope reset and OpenTelemetry model span tracing.
 - **Correction of invalid tool calls.** Missing fields, wrong types, and invalid
   values receive specific feedback and authored examples. The runtime can ask
   the model for a replacement within your recovery budget, before execution.
@@ -194,7 +201,7 @@ service wiring, and connecting a model. For MCP, follow the
   the workflow payload allowance before publication; complete records assembled
   inside storage and historical reads preserve separately accepted data.
 
-[Agent DSL](docs/dsl.md#agent-use-and-export) · [Runtime and composition](docs/runtime.md) · [Native images](docs/native_images.md)
+[Agent DSL](docs/dsl.md#agent-use-and-export) · [Composable prompts](docs/prompts.md) · [Runtime and composition](docs/runtime.md) · [Native images](docs/native_images.md)
 
 ### MCP clients and servers
 
@@ -395,6 +402,7 @@ including after a tool description changes. See [static tool binding](docs/tool_
 
 - [Guided documentation](https://goa.design/docs/2-goa-ai/) — start with agents, MCP, or registries.
 - [Framework overview](docs/overview.md) — how design, generation, runtime, and engines fit together.
+- [Composable prompt management](docs/prompts.md) — declarative templates, typed renderers, scoped overrides, and tracing.
 - [DSL reference](docs/dsl.md) and [runtime reference](docs/runtime.md) — exact contracts and supported choices.
 - [Architecture](DESIGN.md) — ownership and execution flows for contributors.
 - [Go package reference](https://pkg.go.dev/goa.design/goa-ai) and [release notes](https://github.com/goadesign/goa-ai/releases).

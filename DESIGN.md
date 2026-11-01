@@ -21,6 +21,7 @@
 5. [Agent Runtime, Operations, and Evaluations](#agent-runtime-operations-and-evaluations)
    - [Direct Agent Operations](#direct-agent-operations)
    - [Service-Owned Typed Completions](#service-owned-typed-completions)
+   - [Composable Prompt Management and Template Registry](#composable-prompt-management-and-template-registry)
    - [Generated Evaluations](#generated-evaluations)
    - [Planner Step Contract](#planner-step-contract)
    - [Run Timing and Workflow Continuations](#run-timing-and-workflow-continuations)
@@ -101,12 +102,12 @@
 
 ```
 goa-ai/
-├── dsl/                          # Public DSL functions (Agent, Toolset, Tool, Operation, EvalSuite, MCP, ...)
+├── dsl/                          # Public DSL functions (Agent, Toolset, Tool, Operation, Prompt, SystemPrompt, EvalSuite, MCP, ...)
 ├── expr/
-│   ├── agent/                    # Evaluated AST expressions for agents, toolsets, operations, codecs, evals
+│   ├── agent/                    # Evaluated AST expressions for agents, toolsets, operations, prompts, codecs, evals
 │   └── mcp/                      # Evaluated AST expressions for MCP servers, tools, resources, prompts, tasks
 ├── codegen/
-│   ├── agent/                    # Code generator for agents, toolsets, specs, operations, codecs, completions
+│   ├── agent/                    # Code generator for agents, toolsets, specs, prompts, operations, codecs, completions
 │   ├── eval/                     # Code generator for evaluation suites and scenario runners
 │   ├── mcp/                      # Code generator for MCP servers, adapters, clients, and JSON-RPC transports
 │   ├── ir/                       # Intermediate representation shared across generators
@@ -122,7 +123,7 @@ goa-ai/
 │   │   ├── memory/               # Transcript persistence store interfaces
 │   │   ├── planner/              # Planner interfaces, PlanResult, ToolFailure, RetryHint, FinalTool
 │   │   ├── policy/               # Run capability and budget policies
-│   │   ├── prompt/               # Prompt registry, template rendering, and prompt specialization
+│   │   ├── prompt/               # Prompt registry, template rendering, static AST field validation, sub-prompt composition
 │   │   ├── rawjson/              # Immutable raw JSON message wrappers
 │   │   ├── reminder/             # System reminder injection for planner turns
 │   │   ├── runtime/              # Runtime orchestrator, workflow loop, tool execution, hints/
@@ -144,12 +145,13 @@ goa-ai/
 │   ├── memory/mongo/             # MongoDB transcript backing store
 │   ├── model/                    # Model adapters: anthropic/, bedrock/, gemini/, openai/, middleware/, ollama/
 │   ├── policy/basic/             # Basic turn/time budget policy implementation
-│   ├── prompt/mongo/             # MongoDB prompt override store
+│   ├── prompt/mongo/             # MongoDB prompt override store with exact-scope Reset
 │   ├── session/mongo/            # MongoDB session, run, event, seed, and checkpoint store
 │   └── stream/pulse/             # Redis Streams (Pulse) sink and subscriber implementation
 └── gen/ (emitted in user repos)
     ├── <svc>/
-    │   ├── agents/<agent>/       # Agent registration, workflow definitions, specs/, exports/, agenttools/
+    │   ├── agents/<agent>/       # Agent registration, prompts.go, specs/prompt_schemas.json, workflow definitions, ...
+    │   ├── prompts/              # Service-level shared prompts.go and specs/prompt_schemas.json
     │   ├── toolsets/<toolset>/   # Shared toolset specs.go, codecs.go, types.go, transforms.go
     │   ├── operations/<op>/      # Direct operation types, codecs, and runners
     │   ├── completions/          # Service-owned typed completion specs and helpers
@@ -333,6 +335,33 @@ When a service needs a single, schema-constrained structured output from a model
 - `codegen/agent` emits `gen/<svc>/completions/` with a canonical JSON Schema and typed `JSONCodec` for `ResultType`.
 - At runtime, `CompleteStructured` / `StreamCompleteStructured` invokes the model with constrained decoding (`StructuredOutput` schema enforcement) and validates the response through the generated codec before returning the Go struct to the caller.
 - Completion names must be 1–64 ASCII characters matching `^[A-Za-z0-9_-]+$` so they satisfy every model provider's structured-output schema name rules.
+
+### Composable Prompt Management and Template Registry
+
+Goa-AI provides declarative prompt management spanning design, static compile-time AST validation, code generation, constructor-pure registration, scoped runtime overrides, and per-request OpenTelemetry tracing:
+
+1. **Declarative Prompt AST (`dsl/prompt.go`, `expr/agent/prompt.go`)**:
+   - `SystemPrompt(...)`: Declares the baseline system instructions for an agent (`<service>.<agent>.system`, role `"system"`). Supports static text shorthand, parameterized templates with closures and typed `Args`, or full closures.
+   - `Prompt(...)` inside `Agent`: Declares agent-owned prompt templates (`<service>.<agent>.<name>`, default role `"user"`).
+   - `Prompt(...)` inside `Service`: Declares service-level shared prompt templates (`<service>.<name>`), usable across multiple agents, typed completions, and direct service operations.
+   - Sub-prompt composition via `{{ render "<prompt_id>" [data] }}`: Enables modular prompt assembly, forwarding the parent template's root input data when the data argument is omitted.
+2. **Compile-Time AST Validation & Code Generation (`codegen/agent`)**:
+   - `goa gen` parses every declared template with `text/template` (`missingkey=error`) and traverses the `text/template/parse` AST against the Goa `Args` attribute graph (`*goaexpr.AttributeExpr`, accounting for `Goify` and `struct:field:name` metadata). Undeclared fields in the Goa attribute graph and syntax errors fail fast at generation time; sub-paths beneath external `Meta("struct:field:type", ...)` fields whose members are outside the Goa design graph are treated as dynamic during codegen and verified at runtime against the compiled Go type.
+   - `goa gen` parses templates using a stub `render` function to check syntax and AST field paths without evaluating sub-prompts. Recursive composition cycles are rejected at runtime via `prompt.ErrTemplateCycle` during `Registry.Render`.
+   - Emits `gen/<svc>/agents/<agent>/prompts.go` and `gen/<svc>/prompts/prompts.go` containing canonical identifier constants, typed argument structs, spec builders (binding `PromptSpec.ArgsType`), package aggregators (`PromptSpecs()`), and typed render helpers (`RenderSystemPrompt`, `Render<Name>Prompt`).
+   - Emits `specs/prompt_schemas.json` catalogs for tooling and evaluation analysis.
+3. **Constructor-Pure Registration & Preflight Validation (`runtime/agent/runtime`)**:
+   - `New<Agent>Registration` attaches `PromptSpecs: PromptSpecs()` without mutating global state.
+   - `Register<Agent>Agent` (or `rt.RegisterAgent`) sequentially: (a) preflights all specs with `rt.PromptRegistry.ValidateSpecs` (rejecting duplicates with `prompt.ErrDuplicatePromptSpec` and validating template ASTs against the compiled `PromptSpec.ArgsType` and `Funcs`, including custom external `struct:field:type` fields and methods) before calling the workflow engine, (b) registers workflows and activities with `rt.Engine`, (c) installs each prompt spec via `rt.PromptRegistry.Register(spec)`, and (d) publishes the agent registration into the runtime maps (without a cross-engine transaction). Service prompts are registered once at startup via `prompts.RegisterPrompts(rt.PromptRegistry)`.
+4. **Scoped Overrides & Exact-Scope Destructive Reset (`runtime/agent/prompt`)**:
+   - `rt.PromptRegistry` resolves baseline specs and integrates with an optional `prompt.Store` (`runtime.WithPromptStore(...)`), supporting in-memory and MongoDB stores.
+   - `rt.PromptRegistry.ValidateOverride` (as well as registration and selected-template `Render` parse boundaries) verifies override templates against the registered `PromptSpec.ArgsType` (`reflect.Type`) before persistence or execution.
+   - Scope resolution applies three precedence tiers: (1) an override with a `SessionID` beats one without; (2) otherwise, the override with more labels wins; (3) otherwise, the newer override (`CreatedAt`) wins.
+   - `ResetOverride` permanently deletes records matching the exact `(promptID, scope)` pair (`SessionID` and exact `Labels` map).
+5. **Per-Request Provenance & OpenTelemetry Tracing (`runtime/agent/runtime/model_tracing.go`)**:
+   - Renders return `PromptContent` with `Text`, root `Ref`, and `Refs` in composition encounter order.
+   - Callers set `PromptRefs: content.Refs` on the `model.Request` carrying `content.Text`. Planners do not stage mutable refs on context, avoiding cross-request contamination.
+   - Model client spans record `gen_ai.prompt.ids`, `gen_ai.prompt.versions`, and `goa_ai.prompt.refs`.
 
 ### Generated Evaluations
 
