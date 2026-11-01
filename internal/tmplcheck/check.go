@@ -273,8 +273,12 @@ func (c *checker) walkFlow(node parse.Node, dot Type, env *varEnv) (fallEnv *var
 				}
 			} else {
 				// Dead tail after unconditional break/continue.
-				if _, _, _, err := c.walkFlow(child, dot, deadEnv.clone()); err != nil {
+				nextDead, _, _, err := c.walkFlow(child, dot, deadEnv.clone())
+				if err != nil {
 					return nil, nil, nil, err
+				}
+				if nextDead != nil {
+					deadEnv = nextDead
 				}
 			}
 		}
@@ -334,10 +338,7 @@ func (c *checker) walkFlow(node parse.Node, dot Type, env *varEnv) (fallEnv *var
 			}
 		}
 
-		bodyDot := dot
-		if n.Pipe == nil || len(n.Pipe.Decl) == 0 {
-			bodyDot = elemType
-		}
+		bodyDot := elemType
 
 		rangeVarIDs := make(map[string]int)
 		bindRangeDecls := func(targetEnv *varEnv) {
@@ -395,25 +396,38 @@ func (c *checker) walkFlow(node parse.Node, dot Type, env *varEnv) (fallEnv *var
 				elseFall, elseBreaks, elseContinues, err := c.walkFlow(n.ElseList, dot, elseEnv)
 				return cleanScope(env, elseFall), elseBreaks, elseContinues, err
 			}
-			return env, nil, nil, nil
+			return cleanScope(env, rangeEnv), nil, nil, nil
 
-		case known && exact == 1:
-			var fall1 *varEnv
-			var breaks1, continues1 []*varEnv
-			if n.List != nil {
-				fall1, breaks1, continues1, err = c.walkFlow(n.List, bodyDot, listEnv.clone())
-				if err != nil {
-					return nil, nil, nil, err
-				}
-			} else {
-				fall1 = listEnv.clone()
-			}
+		case known && exact > 0:
 			if n.ElseList != nil {
 				if _, _, _, err := c.walkFlow(n.ElseList, dot, elseEnv.clone()); err != nil {
 					return nil, nil, nil, err
 				}
 			}
-			postEnv := mergeEnvSlice(rangeEnv, append(append([]*varEnv{fall1}, continues1...), breaks1...))
+			var allBreaks []*varEnv
+			nextIterEnv := rangeEnv.clone()
+			var prevIterEnv *varEnv
+			for iter := 0; iter < exact && nextIterEnv != nil; iter++ {
+				curIterEnv := nextIterEnv.clone()
+				bindRangeDecls(curIterEnv)
+				if prevIterEnv != nil && envsEqual(prevIterEnv, curIterEnv) {
+					break
+				}
+				prevIterEnv = curIterEnv.clone()
+				var stepFall *varEnv
+				var stepBreaks, stepContinues []*varEnv
+				if n.List != nil {
+					stepFall, stepBreaks, stepContinues, err = c.walkFlow(n.List, bodyDot, curIterEnv.clone())
+					if err != nil {
+						return nil, nil, nil, err
+					}
+				} else {
+					stepFall = curIterEnv.clone()
+				}
+				allBreaks = append(allBreaks, stepBreaks...)
+				nextIterEnv = mergeEnvSlice(rangeEnv, append([]*varEnv{stepFall}, stepContinues...))
+			}
+			postEnv := mergeEnvSlice(rangeEnv, append([]*varEnv{nextIterEnv}, allBreaks...))
 			return cleanScope(env, postEnv), nil, nil, nil
 
 		default:
@@ -457,13 +471,7 @@ func (c *checker) walkFlow(node parse.Node, dot Type, env *varEnv) (fallEnv *var
 				if err != nil {
 					return nil, nil, nil, err
 				}
-				if known && exact > 1 {
-					return cleanScope(env, bodyExitEnv), nil, nil, nil
-				}
 				return mergeTwoEnvs(env, bodyExitEnv, elseFall), elseBreaks, elseContinues, nil
-			}
-			if known && exact > 1 {
-				return cleanScope(env, bodyExitEnv), nil, nil, nil
 			}
 			return mergeTwoEnvs(env, bodyExitEnv, rangeEnv), nil, nil, nil
 		}
@@ -637,15 +645,15 @@ func (c *checker) evalCommand(cmd *parse.CommandNode, dot Type, env *varEnv, pip
 
 		switch firstIdent.Ident {
 		case "index":
-			if len(argTypes) < 2 {
+			args := append([]Type(nil), argTypes[1:]...)
+			if pipedVal != nil {
+				args = append(args, pipedVal)
+			}
+			if len(args) == 0 {
 				return nil, nil
 			}
-			coll := argTypes[1]
-			keyOps := len(argTypes) - 2
-			if pipedVal != nil {
-				keyOps++
-			}
-			for i := 0; i < keyOps; i++ {
+			coll := args[0]
+			for i := 1; i < len(args); i++ {
 				if coll == nil {
 					return nil, nil
 				}
@@ -686,7 +694,7 @@ func (c *checker) evalCommand(cmd *parse.CommandNode, dot Type, env *varEnv, pip
 				cur := deref(rt.t)
 				if cur != nil && cur.Kind() == reflect.Func {
 					if out, valid := validMethodReturn(cur); valid {
-						return unwrapFuncReturn(out), nil
+						return ReflectType(out), nil
 					}
 				}
 			}
@@ -726,11 +734,11 @@ func (c *checker) evalAndOr(isOr bool, args []parse.Node, dot Type, env *varEnv,
 		piped bool
 	}
 	var ops []operand
-	if pipedVal != nil {
-		ops = append(ops, operand{piped: true})
-	}
 	for _, a := range args {
 		ops = append(ops, operand{node: a})
+	}
+	if pipedVal != nil {
+		ops = append(ops, operand{piped: true})
 	}
 
 	if len(ops) == 0 {
@@ -741,6 +749,7 @@ func (c *checker) evalAndOr(isOr bool, args []parse.Node, dot Type, env *varEnv,
 	var resultTypes []Type
 	var forkEnvs []*varEnv
 	shortCircuited := false
+	allKnownContinue := true
 	totalOperands := len(ops)
 
 	for i, op := range ops {
@@ -780,6 +789,7 @@ func (c *checker) evalAndOr(isOr bool, args []parse.Node, dot Type, env *varEnv,
 				resultTypes = append(resultTypes, opType)
 			}
 		default:
+			allKnownContinue = false
 			resultTypes = append(resultTypes, opType)
 			if !isLast {
 				forkEnvs = append(forkEnvs, curEnv.clone())
@@ -799,7 +809,7 @@ func (c *checker) evalAndOr(isOr bool, args []parse.Node, dot Type, env *varEnv,
 	if shortCircuited {
 		return withKnownTruth(result, isOr), nil
 	}
-	if len(forkEnvs) == 0 && len(ops) > 0 {
+	if allKnownContinue && len(ops) > 0 {
 		return withKnownTruth(result, !isOr), nil
 	}
 	return result, nil
