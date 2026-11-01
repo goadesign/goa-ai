@@ -15,9 +15,9 @@ import (
 	"goa.design/goa-ai/runtime/agent/tools"
 )
 
-// validatePromptTemplate parses templateSource and verifies field accesses
+// ValidatePromptTemplate parses templateSource and verifies field accesses
 // against spec.Fields using the template AST.
-func validatePromptTemplate(spec PromptSpec, templateSource string) error {
+func ValidatePromptTemplate(spec PromptSpec, templateSource string) error {
 	tmpl := template.New(spec.ID.String()).Option("missingkey=error")
 	funcs := template.FuncMap{
 		"render": func(string, ...any) (string, error) {

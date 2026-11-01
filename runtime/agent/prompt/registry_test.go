@@ -737,3 +737,148 @@ func TestRegistryDeduplicatePromptRefs(t *testing.T) {
 		t.Fatalf("unexpected refs: %#v", content.Refs)
 	}
 }
+
+func TestRegistryServiceLevelAndSpecValidation(t *testing.T) {
+	t.Parallel()
+
+	reg := NewRegistry(nil)
+
+	// Service-level prompt with empty AgentID succeeds
+	err := reg.Register(PromptSpec{
+		ID:       "service.shared.prompt",
+		AgentID:  "", // Service-level / shared prompt
+		Role:     PromptRoleSystem,
+		Template: "service level prompt",
+	})
+	if err != nil {
+		t.Fatalf("expected service-level prompt registration to succeed, got %v", err)
+	}
+
+	// Empty ID fails
+	err = reg.Register(PromptSpec{
+		Role:     PromptRoleSystem,
+		Template: "hello",
+	})
+	if !errors.Is(err, ErrInvalidPromptSpec) {
+		t.Fatalf("expected ErrInvalidPromptSpec for empty ID, got %v", err)
+	}
+
+	// Empty Role fails
+	err = reg.Register(PromptSpec{
+		ID:       "bad.role",
+		Template: "hello",
+	})
+	if !errors.Is(err, ErrInvalidPromptSpec) {
+		t.Fatalf("expected ErrInvalidPromptSpec for empty Role, got %v", err)
+	}
+
+	// Empty Template fails
+	err = reg.Register(PromptSpec{
+		ID:   "bad.template",
+		Role: PromptRoleSystem,
+	})
+	if !errors.Is(err, ErrInvalidPromptSpec) {
+		t.Fatalf("expected ErrInvalidPromptSpec for empty Template, got %v", err)
+	}
+}
+
+func TestRegistryValidateSpecs(t *testing.T) {
+	t.Parallel()
+
+	reg := NewRegistry(nil)
+	if err := reg.Register(PromptSpec{
+		ID:       "already.registered",
+		Role:     PromptRoleSystem,
+		Template: "existing",
+	}); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+
+	// Valid slice of specs
+	specs := []PromptSpec{
+		{
+			ID:       "new.spec.1",
+			Role:     PromptRoleSystem,
+			Template: "first",
+		},
+		{
+			ID:       "new.spec.2",
+			Role:     PromptRoleUser,
+			Template: "second",
+		},
+	}
+	if err := reg.ValidateSpecs(specs); err != nil {
+		t.Fatalf("expected ValidateSpecs to succeed, got %v", err)
+	}
+	// Verify ValidateSpecs did not mutate reg
+	if len(reg.List()) != 1 {
+		t.Fatalf("expected 1 registered spec, got %d", len(reg.List()))
+	}
+
+	// Duplicate ID within specs slice
+	dupSpecs := []PromptSpec{
+		{
+			ID:       "duplicate.in.input",
+			Role:     PromptRoleSystem,
+			Template: "first",
+		},
+		{
+			ID:       "duplicate.in.input",
+			Role:     PromptRoleUser,
+			Template: "second",
+		},
+	}
+	err := reg.ValidateSpecs(dupSpecs)
+	if !errors.Is(err, ErrDuplicatePromptSpec) {
+		t.Fatalf("expected ErrDuplicatePromptSpec for duplicate in input, got %v", err)
+	}
+
+	// Conflict with already registered spec
+	conflictSpecs := []PromptSpec{
+		{
+			ID:       "already.registered",
+			Role:     PromptRoleSystem,
+			Template: "duplicate of existing",
+		},
+	}
+	err = reg.ValidateSpecs(conflictSpecs)
+	if !errors.Is(err, ErrDuplicatePromptSpec) {
+		t.Fatalf("expected ErrDuplicatePromptSpec for conflict with registry, got %v", err)
+	}
+
+	// Invalid spec inside slice
+	invalidSpecs := []PromptSpec{
+		{
+			ID:       "invalid.spec",
+			Role:     "",
+			Template: "no role",
+		},
+	}
+	err = reg.ValidateSpecs(invalidSpecs)
+	if !errors.Is(err, ErrInvalidPromptSpec) {
+		t.Fatalf("expected ErrInvalidPromptSpec for invalid spec in slice, got %v", err)
+	}
+}
+
+func TestValidatePromptTemplateDirect(t *testing.T) {
+	t.Parallel()
+
+	spec := PromptSpec{
+		ID:   "direct.test",
+		Role: PromptRoleSystem,
+		Fields: []tools.FieldMetadata{
+			{
+				Path:     []tools.FieldPathSegment{tools.FixedField("Name")},
+				JSONType: "string",
+			},
+		},
+	}
+
+	if err := ValidatePromptTemplate(spec, "Hello {{ .Name }}"); err != nil {
+		t.Fatalf("expected valid template to pass, got %v", err)
+	}
+
+	if err := ValidatePromptTemplate(spec, "Hello {{ .Missing }}"); !errors.Is(err, ErrTemplateFieldNotFound) {
+		t.Fatalf("expected ErrTemplateFieldNotFound, got %v", err)
+	}
+}

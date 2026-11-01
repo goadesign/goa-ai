@@ -25,7 +25,7 @@ type (
 	PromptSpec struct {
 		// ID is the globally unique prompt identifier.
 		ID Ident
-		// AgentID identifies the owning agent.
+		// AgentID identifies the owning agent when the prompt is agent-scoped; empty for service-level or shared prompts.
 		AgentID string
 		// Role identifies how the prompt is used (system/user/tool/synthesis).
 		Role PromptRole

@@ -121,7 +121,33 @@ func (r *Registry) ValidateOverride(id Ident, templateSource string) error {
 	if err != nil {
 		return err
 	}
-	return validatePromptTemplate(spec, templateSource)
+	return ValidatePromptTemplate(spec, templateSource)
+}
+
+// ValidateSpecs validates baseline prompt declarations before registration,
+// ensuring each spec is valid, no duplicates exist within specs, and no spec ID
+// is already registered in r. It does not mutate the registry.
+func (r *Registry) ValidateSpecs(specs []PromptSpec) error {
+	seen := make(map[Ident]struct{}, len(specs))
+	for _, spec := range specs {
+		if err := validatePromptSpec(spec); err != nil {
+			return err
+		}
+		if _, exists := seen[spec.ID]; exists {
+			return fmt.Errorf("%w: duplicate prompt spec ID in input: %s", ErrDuplicatePromptSpec, spec.ID)
+		}
+		seen[spec.ID] = struct{}{}
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	for id := range seen {
+		if _, exists := r.specs[id]; exists {
+			return fmt.Errorf("%w: %s", ErrDuplicatePromptSpec, id)
+		}
+	}
+	return nil
 }
 
 // SetOverride validates and persists a prompt override in the configured store.
@@ -208,16 +234,13 @@ func validatePromptSpec(spec PromptSpec) error {
 	if spec.ID == "" {
 		return fmt.Errorf("%w: id is required", ErrInvalidPromptSpec)
 	}
-	if spec.AgentID == "" {
-		return fmt.Errorf("%w: agent_id is required", ErrInvalidPromptSpec)
-	}
 	if spec.Role == "" {
 		return fmt.Errorf("%w: role is required", ErrInvalidPromptSpec)
 	}
 	if spec.Template == "" {
 		return fmt.Errorf("%w: template is required", ErrInvalidPromptSpec)
 	}
-	return validatePromptTemplate(spec, spec.Template)
+	return ValidatePromptTemplate(spec, spec.Template)
 }
 
 // clonePromptSpec returns a safe copy of a prompt spec.
