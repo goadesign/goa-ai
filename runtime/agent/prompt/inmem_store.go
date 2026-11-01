@@ -1,8 +1,11 @@
+// Package prompt provides an in-memory implementation of the prompt.Store interface
+// for tests and local development.
 package prompt
 
 import (
 	"context"
 	"fmt"
+	"maps"
 	"sort"
 	"sync"
 	"time"
@@ -32,6 +35,7 @@ func NewInMemoryStore() *InMemoryStore {
 //   - session-scoped overrides before non-session overrides
 //   - then most constrained label set (more labels = more specific)
 //   - then newest override
+//   - deterministic canonical label tie-breaking on equal timestamps
 func (s *InMemoryStore) Resolve(ctx context.Context, promptID Ident, scope Scope) (*Override, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -44,7 +48,6 @@ func (s *InMemoryStore) Resolve(ctx context.Context, promptID Ident, scope Scope
 	defer s.mu.RUnlock()
 
 	var best *Override
-	bestLevel := -1
 	for _, override := range s.overrides {
 		if override.PromptID != promptID {
 			continue
@@ -52,10 +55,8 @@ func (s *InMemoryStore) Resolve(ctx context.Context, promptID Ident, scope Scope
 		if !ScopeMatches(override.Scope, scope) {
 			continue
 		}
-		level := ScopePrecedence(override.Scope)
-		if best == nil || level > bestLevel || (level == bestLevel && override.CreatedAt.After(best.CreatedAt)) {
+		if OverridePrecedes(override, best) {
 			best = override
-			bestLevel = level
 		}
 	}
 	if best == nil {
@@ -91,7 +92,34 @@ func (s *InMemoryStore) Set(ctx context.Context, promptID Ident, scope Scope, te
 	return nil
 }
 
-// History returns override records for one prompt, newest-first.
+// Reset destructively removes stored override records matching the exact
+// (promptID, scope) pair. Subsequent resolutions for this promptID and scope
+// fall back to the next applicable scoped override or baseline spec.
+// Matching on scope is exact: SessionID must match exactly, and the labels map
+// must contain identical key/value entries with no extra or missing keys.
+func (s *InMemoryStore) Reset(ctx context.Context, promptID Ident, scope Scope) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if promptID == "" {
+		return fmt.Errorf("reset prompt override: promptID is required")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	filtered := make([]*Override, 0, len(s.overrides))
+	for _, override := range s.overrides {
+		if override.PromptID == promptID && exactScopeMatch(override.Scope, scope) {
+			continue
+		}
+		filtered = append(filtered, override)
+	}
+	s.overrides = filtered
+	return nil
+}
+
+// History returns all stored override records for promptID, newest-first.
 func (s *InMemoryStore) History(ctx context.Context, promptID Ident) ([]*Override, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -133,6 +161,17 @@ func (s *InMemoryStore) List(ctx context.Context) ([]*Override, error) {
 		return overrides[i].CreatedAt.After(overrides[j].CreatedAt)
 	})
 	return overrides, nil
+}
+
+// exactScopeMatch returns true if two scopes have identical SessionID and identical Labels.
+func exactScopeMatch(a, b Scope) bool {
+	if a.SessionID != b.SessionID {
+		return false
+	}
+	if len(a.Labels) == 0 && len(b.Labels) == 0 {
+		return true
+	}
+	return maps.Equal(a.Labels, b.Labels)
 }
 
 // cloneOverride returns a deep copy safe for callers to mutate.

@@ -7,6 +7,7 @@ package mongo
 import (
 	"context"
 	"errors"
+	"sort"
 	"time"
 
 	"go.mongodb.org/mongo-driver/v2/bson"
@@ -26,16 +27,21 @@ type (
 
 		Resolve(ctx context.Context, promptID prompt.Ident, scope prompt.Scope) (*prompt.Override, error)
 		Set(ctx context.Context, promptID prompt.Ident, scope prompt.Scope, template string, metadata map[string]string) error
+		Reset(ctx context.Context, promptID prompt.Ident, scope prompt.Scope) error
 		History(ctx context.Context, promptID prompt.Ident) ([]*prompt.Override, error)
 		List(ctx context.Context) ([]*prompt.Override, error)
 	}
 
 	// Options configures the Mongo client implementation.
 	Options struct {
-		Client     *mongodriver.Client
-		Database   string
+		// Client is the connected MongoDB client handle used to execute operations.
+		Client *mongodriver.Client
+		// Database is the database containing prompt override collections.
+		Database string
+		// Collection is the collection storing override documents. Defaults to "prompt_overrides".
 		Collection string
-		Timeout    time.Duration
+		// Timeout bounds individual MongoDB command executions. Defaults to 5s.
+		Timeout time.Duration
 	}
 
 	client struct {
@@ -86,7 +92,7 @@ func New(opts Options) (Client, error) {
 	if err := ensureIndexes(ctx, wrapper); err != nil {
 		return nil, err
 	}
-	return newClientWithCollection(opts.Client, wrapper, timeout)
+	return newClientWithCollection(opts.Client, wrapper, timeout), nil
 }
 
 func (c *client) Name() string {
@@ -97,6 +103,11 @@ func (c *client) Ping(ctx context.Context) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if c.mongo == nil {
+		return errors.New("mongo client is not configured")
+	}
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
 	return c.mongo.Ping(ctx, readpref.Primary())
 }
 
@@ -107,32 +118,31 @@ func (c *client) Resolve(ctx context.Context, promptID prompt.Ident, scope promp
 	ctx, cancel := c.withTimeout(ctx)
 	defer cancel()
 
-	cur, err := c.coll.Find(ctx, bson.M{"prompt_id": promptID.String()}, options.Find().SetSort(bson.D{
+	findOpts := options.Find().SetSort(bson.D{
+		{Key: "scope_session", Value: -1},
+		{Key: "scope_label_count", Value: -1},
 		{Key: "created_at", Value: -1},
-	}))
+	})
+	cur, err := c.coll.Find(ctx, bson.M{"prompt_id": promptID.String()}, findOpts)
 	if err != nil {
 		return nil, err
 	}
 	defer func() {
 		_ = cur.Close(ctx)
 	}()
-	overrides, err := decodeOverrides(ctx, cur)
+
+	candidates, err := decodeOverrides(ctx, cur)
 	if err != nil {
 		return nil, err
 	}
 
-	var (
-		best      *prompt.Override
-		bestLevel = -1
-	)
-	for _, override := range overrides {
-		if !prompt.ScopeMatches(override.Scope, scope) {
+	var best *prompt.Override
+	for _, candidate := range candidates {
+		if !prompt.ScopeMatches(candidate.Scope, scope) {
 			continue
 		}
-		level := prompt.ScopePrecedence(override.Scope)
-		if best == nil || level > bestLevel || (level == bestLevel && override.CreatedAt.After(best.CreatedAt)) {
-			best = override
-			bestLevel = level
+		if prompt.OverridePrecedes(candidate, best) {
+			best = candidate
 		}
 	}
 	return best, nil
@@ -159,6 +169,38 @@ func (c *client) Set(ctx context.Context, promptID prompt.Ident, scope prompt.Sc
 		Metadata:        cloneMetadata(metadata),
 	}
 	_, err := c.coll.InsertOne(ctx, doc)
+	return err
+}
+
+func (c *client) Reset(ctx context.Context, promptID prompt.Ident, scope prompt.Scope) error {
+	if promptID == "" {
+		return errors.New("prompt id is required")
+	}
+	ctx, cancel := c.withTimeout(ctx)
+	defer cancel()
+
+	expectedArray := make(bson.A, 0, len(scope.Labels))
+	keys := make([]string, 0, len(scope.Labels))
+	for k := range scope.Labels {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		expectedArray = append(expectedArray, bson.D{{Key: "k", Value: k}, {Key: "v", Value: scope.Labels[k]}})
+	}
+
+	filter := bson.M{
+		"prompt_id":         promptID.String(),
+		"scope_session":     scope.SessionID,
+		"scope_label_count": len(scope.Labels),
+		"$expr": bson.M{
+			"$setEquals": bson.A{
+				bson.M{"$objectToArray": bson.M{"$ifNull": bson.A{"$scope_labels", bson.M{}}}},
+				expectedArray,
+			},
+		},
+	}
+	_, err := c.coll.DeleteMany(ctx, filter)
 	return err
 }
 
@@ -233,78 +275,40 @@ func toOverride(doc overrideDocument) *prompt.Override {
 }
 
 func cloneMetadata(src map[string]string) map[string]string {
-	if len(src) == 0 {
+	if src == nil {
 		return nil
 	}
-	dst := make(map[string]string, len(src))
-	for key, val := range src {
-		dst[key] = val
+	cloned := make(map[string]string, len(src))
+	for k, v := range src {
+		cloned[k] = v
 	}
-	return dst
+	return cloned
 }
 
-func ensureIndexes(ctx context.Context, coll collection) error {
-	lookup := mongodriver.IndexModel{
-		Keys: bson.D{
-			{Key: "prompt_id", Value: 1},
-			{Key: "scope_session", Value: 1},
-			{Key: "scope_label_count", Value: -1},
-			{Key: "created_at", Value: -1},
-		},
+type (
+	mongoCollection struct {
+		coll *mongodriver.Collection
 	}
-	if _, err := coll.Indexes().CreateOne(ctx, lookup); err != nil {
-		return err
-	}
-	history := mongodriver.IndexModel{
-		Keys: bson.D{
-			{Key: "prompt_id", Value: 1},
-			{Key: "created_at", Value: -1},
-		},
-	}
-	if _, err := coll.Indexes().CreateOne(ctx, history); err != nil {
-		return err
-	}
-	return nil
-}
 
-func newClientWithCollection(mongoClient *mongodriver.Client, coll collection, timeout time.Duration) (*client, error) {
-	if coll == nil {
-		return nil, errors.New("collection is required")
+	mongoSingleResult struct {
+		res *mongodriver.SingleResult
 	}
-	if timeout <= 0 {
-		timeout = defaultTimeout
+
+	mongoCursor struct {
+		cur *mongodriver.Cursor
 	}
+
+	mongoIndexView struct {
+		view mongodriver.IndexView
+	}
+)
+
+func newClientWithCollection(mclient *mongodriver.Client, coll collection, timeout time.Duration) *client {
 	return &client{
-		mongo:   mongoClient,
+		mongo:   mclient,
 		coll:    coll,
 		timeout: timeout,
-	}, nil
-}
-
-type collection interface {
-	FindOne(ctx context.Context, filter any, opts ...options.Lister[options.FindOneOptions]) singleResult
-	Find(ctx context.Context, filter any, opts ...options.Lister[options.FindOptions]) (cursor, error)
-	InsertOne(ctx context.Context, document any, opts ...options.Lister[options.InsertOneOptions]) (*mongodriver.InsertOneResult, error)
-	Indexes() indexView
-}
-
-type indexView interface {
-	CreateOne(ctx context.Context, model mongodriver.IndexModel, opts ...options.Lister[options.CreateIndexesOptions]) (string, error)
-}
-
-type singleResult interface {
-	Decode(val any) error
-}
-
-type cursor interface {
-	Next(ctx context.Context) bool
-	Decode(val any) error
-	Err() error
-	Close(ctx context.Context) error
-}
-
-type mongoCollection struct {
-	coll *mongodriver.Collection
+	}
 }
 
 func (c mongoCollection) FindOne(ctx context.Context, filter any, opts ...options.Lister[options.FindOneOptions]) singleResult {
@@ -323,20 +327,16 @@ func (c mongoCollection) InsertOne(ctx context.Context, document any, opts ...op
 	return c.coll.InsertOne(ctx, document, opts...)
 }
 
+func (c mongoCollection) DeleteMany(ctx context.Context, filter any, opts ...options.Lister[options.DeleteManyOptions]) (*mongodriver.DeleteResult, error) {
+	return c.coll.DeleteMany(ctx, filter, opts...)
+}
+
 func (c mongoCollection) Indexes() indexView {
 	return mongoIndexView{view: c.coll.Indexes()}
 }
 
-type mongoSingleResult struct {
-	res *mongodriver.SingleResult
-}
-
 func (r mongoSingleResult) Decode(val any) error {
 	return r.res.Decode(val)
-}
-
-type mongoCursor struct {
-	cur *mongodriver.Cursor
 }
 
 func (c mongoCursor) Next(ctx context.Context) bool {
@@ -355,10 +355,52 @@ func (c mongoCursor) Close(ctx context.Context) error {
 	return c.cur.Close(ctx)
 }
 
-type mongoIndexView struct {
-	view mongodriver.IndexView
+func (v mongoIndexView) CreateMany(ctx context.Context, models []mongodriver.IndexModel, opts ...options.Lister[options.CreateIndexesOptions]) ([]string, error) {
+	return v.view.CreateMany(ctx, models, opts...)
 }
 
-func (v mongoIndexView) CreateOne(ctx context.Context, model mongodriver.IndexModel, opts ...options.Lister[options.CreateIndexesOptions]) (string, error) {
-	return v.view.CreateOne(ctx, model, opts...)
+type (
+	collection interface {
+		FindOne(ctx context.Context, filter any, opts ...options.Lister[options.FindOneOptions]) singleResult
+		Find(ctx context.Context, filter any, opts ...options.Lister[options.FindOptions]) (cursor, error)
+		InsertOne(ctx context.Context, document any, opts ...options.Lister[options.InsertOneOptions]) (*mongodriver.InsertOneResult, error)
+		DeleteMany(ctx context.Context, filter any, opts ...options.Lister[options.DeleteManyOptions]) (*mongodriver.DeleteResult, error)
+		Indexes() indexView
+	}
+
+	singleResult interface {
+		Decode(val any) error
+	}
+
+	cursor interface {
+		Next(ctx context.Context) bool
+		Decode(val any) error
+		Err() error
+		Close(ctx context.Context) error
+	}
+
+	indexView interface {
+		CreateMany(ctx context.Context, models []mongodriver.IndexModel, opts ...options.Lister[options.CreateIndexesOptions]) ([]string, error)
+	}
+)
+
+func ensureIndexes(ctx context.Context, coll collection) error {
+	models := []mongodriver.IndexModel{
+		{
+			Keys: bson.D{
+				{Key: "prompt_id", Value: 1},
+				{Key: "created_at", Value: -1},
+			},
+		},
+		{
+			Keys: bson.D{
+				{Key: "prompt_id", Value: 1},
+				{Key: "scope_session", Value: -1},
+				{Key: "scope_label_count", Value: -1},
+				{Key: "created_at", Value: -1},
+			},
+		},
+	}
+	_, err := coll.Indexes().CreateMany(ctx, models)
+	return err
 }

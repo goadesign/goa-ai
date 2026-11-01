@@ -72,6 +72,28 @@ func TestSetDelegatesToClient(t *testing.T) {
 	require.False(t, mockClient.HasMore())
 }
 
+func TestResetDelegatesToClient(t *testing.T) {
+	t.Parallel()
+
+	mockClient := mockmongo.NewClient(t)
+	mockClient.AddReset(func(ctx context.Context, promptID prompt.Ident, scope prompt.Scope) error {
+		require.Equal(t, prompt.Ident("example.agent.system"), promptID)
+		require.Equal(t, "acme", scope.Labels["account"])
+		return nil
+	})
+
+	store, err := NewStore(mockClient)
+	require.NoError(t, err)
+
+	err = store.Reset(context.Background(), "example.agent.system", prompt.Scope{
+		Labels: map[string]string{
+			"account": "acme",
+		},
+	})
+	require.NoError(t, err)
+	require.False(t, mockClient.HasMore())
+}
+
 func TestHistoryDelegatesToClient(t *testing.T) {
 	t.Parallel()
 

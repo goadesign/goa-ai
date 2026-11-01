@@ -25,7 +25,7 @@ type (
 	PromptSpec struct {
 		// ID is the globally unique prompt identifier.
 		ID Ident
-		// AgentID identifies the owning agent.
+		// AgentID identifies the owning agent when the prompt is agent-scoped; empty for service-level or shared prompts.
 		AgentID string
 		// Role identifies how the prompt is used (system/user/tool/synthesis).
 		Role PromptRole
@@ -38,8 +38,9 @@ type (
 		Version string
 		// Funcs is the template function map used when rendering this prompt.
 		Funcs template.FuncMap
-		// Fields describes the declared template data attributes when the prompt takes typed input data. Empty when the prompt takes no structured fields.
-		Fields []tools.FieldSpec
+		// Fields describes the declared template data attributes when the prompt
+		// takes typed input data. Empty when the prompt takes no structured fields.
+		Fields []tools.FieldMetadata
 	}
 
 	// PromptRef is a lightweight prompt identity attached to rendered outputs and
@@ -57,6 +58,8 @@ type (
 		Text string
 		// Ref identifies which prompt/version produced Text.
 		Ref PromptRef
+		// Refs lists the resolved prompt and any composed sub-prompts in render order.
+		Refs []PromptRef
 	}
 
 	// Scope constrains which prompt overrides apply to a render call.

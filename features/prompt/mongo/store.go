@@ -36,7 +36,14 @@ func (s *Store) Set(ctx context.Context, promptID prompt.Ident, scope prompt.Sco
 	return s.client.Set(ctx, promptID, scope, template, metadata)
 }
 
-// History returns prompt override history for one prompt ID.
+// Reset destructively removes stored override records matching the exact
+// (promptID, scope) pair. Subsequent resolutions for this promptID and scope
+// fall back to the next applicable scoped override or baseline spec.
+func (s *Store) Reset(ctx context.Context, promptID prompt.Ident, scope prompt.Scope) error {
+	return s.client.Reset(ctx, promptID, scope)
+}
+
+// History returns all stored override records for promptID ordered newest-first.
 func (s *Store) History(ctx context.Context, promptID prompt.Ident) ([]*prompt.Override, error) {
 	return s.client.History(ctx, promptID)
 }

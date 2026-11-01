@@ -3,6 +3,7 @@ package mongo
 import (
 	"context"
 	"errors"
+	"maps"
 	"sort"
 	"sync"
 	"testing"
@@ -179,13 +180,73 @@ func TestSetWritesDocumentDefaults(t *testing.T) {
 	require.Nil(t, doc.Metadata)
 }
 
+func TestReset(t *testing.T) {
+	t.Parallel()
+
+	client := mustNewTestClient()
+	ctx := context.Background()
+	id := prompt.Ident("example.agent.system")
+
+	err := client.Reset(ctx, "", prompt.Scope{})
+	require.EqualError(t, err, "prompt id is required")
+
+	scopeGlobal := prompt.Scope{}
+	scopeAccount := prompt.Scope{
+		Labels: map[string]string{"account": "acme"},
+	}
+
+	require.NoError(t, client.Set(ctx, id, scopeGlobal, "global template", nil))
+	require.NoError(t, client.Set(ctx, id, scopeAccount, "account template", nil))
+
+	override, err := client.Resolve(ctx, id, scopeAccount)
+	require.NoError(t, err)
+	require.NotNil(t, override)
+	require.Equal(t, "account template", override.Template)
+
+	require.NoError(t, client.Reset(ctx, id, scopeAccount))
+
+	override, err = client.Resolve(ctx, id, scopeAccount)
+	require.NoError(t, err)
+	require.NotNil(t, override)
+	require.Equal(t, "global template", override.Template)
+
+	require.NoError(t, client.Reset(ctx, id, scopeGlobal))
+
+	override, err = client.Resolve(ctx, id, scopeAccount)
+	require.NoError(t, err)
+	require.Nil(t, override)
+}
+
+func TestResetWithDottedKeysAndEmptyStringValues(t *testing.T) {
+	t.Parallel()
+
+	client := mustNewTestClient()
+	ctx := context.Background()
+	id := prompt.Ident("dotted.prompt")
+
+	scopeWithDot := prompt.Scope{
+		Labels: map[string]string{
+			"account.id": "123",
+			"env":        "",
+		},
+	}
+	require.NoError(t, client.Set(ctx, id, scopeWithDot, "dotted template", nil))
+
+	override, err := client.Resolve(ctx, id, scopeWithDot)
+	require.NoError(t, err)
+	require.NotNil(t, override)
+	require.Equal(t, "dotted template", override.Template)
+
+	require.NoError(t, client.Reset(ctx, id, scopeWithDot))
+
+	override, err = client.Resolve(ctx, id, scopeWithDot)
+	require.NoError(t, err)
+	require.Nil(t, override)
+}
+
 func mustNewTestClient() *client {
 	fc := newFakeCollection()
-	c, err := newClientWithCollection(nil, fc, time.Second)
-	if err != nil {
-		panic(err)
-	}
-	return c
+	return newClientWithCollection(nil, fc, time.Second)
 }
 
 type fakeCollection struct {
@@ -237,6 +298,24 @@ func (c *fakeCollection) InsertOne(ctx context.Context, document any, opts ...op
 	return &mongodriver.InsertOneResult{InsertedID: "id"}, nil
 }
 
+func (c *fakeCollection) DeleteMany(ctx context.Context, filter any, opts ...options.Lister[options.DeleteManyOptions]) (*mongodriver.DeleteResult, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	f, _ := filter.(bson.M)
+	remaining := make([]overrideDocument, 0, len(c.docs))
+	deleted := int64(0)
+	for _, doc := range c.docs {
+		if matchesFilter(doc, f) {
+			deleted++
+			continue
+		}
+		remaining = append(remaining, doc)
+	}
+	c.docs = remaining
+	return &mongodriver.DeleteResult{DeletedCount: deleted}, nil
+}
+
 func (c *fakeCollection) Indexes() indexView {
 	return fakeIndexView{parent: c}
 }
@@ -264,7 +343,46 @@ func matchesFilter(doc overrideDocument, filter bson.M) bool {
 			if doc.ScopeSession != val {
 				return false
 			}
+		case "scope_label_count":
+			if doc.ScopeLabelCount != val {
+				return false
+			}
+		case "$expr":
+			exprMap, ok := val.(bson.M)
+			if !ok {
+				return false
+			}
+			setEqualsArgs, ok := exprMap["$setEquals"].(bson.A)
+			if !ok || len(setEqualsArgs) != 2 {
+				return false
+			}
+			expectedArr, ok := setEqualsArgs[1].(bson.A)
+			if !ok {
+				return false
+			}
+			expectedMap := make(map[string]string, len(expectedArr))
+			for _, item := range expectedArr {
+				if d, ok := item.(bson.D); ok {
+					var k, v string
+					for _, elem := range d {
+						switch elem.Key {
+						case "k":
+							k, _ = elem.Value.(string)
+						case "v":
+							v, _ = elem.Value.(string)
+						}
+					}
+					expectedMap[k] = v
+				}
+			}
+			if len(doc.ScopeLabels) == 0 && len(expectedMap) == 0 {
+				continue
+			}
+			if !maps.Equal(doc.ScopeLabels, expectedMap) {
+				return false
+			}
 		default:
+			// Dotted paths like "scope_labels.*" are rejected by design.
 			return false
 		}
 	}
@@ -326,10 +444,14 @@ type fakeIndexView struct {
 	parent *fakeCollection
 }
 
-func (v fakeIndexView) CreateOne(ctx context.Context, model mongodriver.IndexModel,
-	opts ...options.Lister[options.CreateIndexesOptions]) (string, error) {
+func (v fakeIndexView) CreateMany(ctx context.Context, models []mongodriver.IndexModel,
+	opts ...options.Lister[options.CreateIndexesOptions]) ([]string, error) {
 	v.parent.mu.Lock()
 	defer v.parent.mu.Unlock()
-	v.parent.indexes = append(v.parent.indexes, model)
-	return "idx", nil
+	v.parent.indexes = append(v.parent.indexes, models...)
+	names := make([]string, len(models))
+	for i := range models {
+		names[i] = "idx"
+	}
+	return names, nil
 }

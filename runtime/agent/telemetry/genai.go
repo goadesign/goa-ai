@@ -39,6 +39,9 @@ const (
 	AttrGenAIUsageCacheCreationToken = attribute.Key("gen_ai.usage.cache_creation.input_tokens")
 	AttrGenAIToolName                = attribute.Key("gen_ai.tool.name")
 	AttrGenAIToolCallID              = attribute.Key("gen_ai.tool.call.id")
+	AttrGenAIPromptIDs               = attribute.Key("gen_ai.prompt.ids")
+	AttrGenAIPromptVersions          = attribute.Key("gen_ai.prompt.versions")
+	AttrGoaAIPromptRefs              = attribute.Key("goa_ai.prompt.refs")
 )
 
 type genAIContextKey struct{}
