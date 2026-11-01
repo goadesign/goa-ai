@@ -84,7 +84,8 @@ func (r *reflectType) Member(name string) (Type, error) {
 		if sf, ok := cur.FieldByName(name); ok && sf.IsExported() {
 			// In Go text/template, accessing a struct field of func type returns
 			// the func value without invoking it; only the 'call' builtin invokes it.
-			return newReflectType(sf.Type, isAddr), nil
+			fieldAddr := isFieldAddressable(cur, sf.Index, isAddr)
+			return newReflectType(sf.Type, fieldAddr), nil
 		}
 		if m, ok := cur.MethodByName(name); ok {
 			if out, valid := validMethodReturn(m.Type); valid {
@@ -169,7 +170,7 @@ func (r *reflectType) Range() (Type, Type, error) {
 			yield := cur.In(0)
 			if yield.Kind() == reflect.Func && yield.NumOut() == 1 && yield.Out(0).Kind() == reflect.Bool {
 				if yield.NumIn() == 1 {
-					return nilDataType{}, ReflectType(yield.In(0)), nil
+					return nil, ReflectType(yield.In(0)), nil
 				}
 				if yield.NumIn() == 2 {
 					return ReflectType(yield.In(0)), ReflectType(yield.In(1)), nil
@@ -179,7 +180,7 @@ func (r *reflectType) Range() (Type, Type, error) {
 		return nil, nil, fmt.Errorf("cannot range over type %s", cur)
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
-		return ReflectType(reflect.TypeFor[int]()), ReflectType(cur), nil
+		return nil, ReflectType(cur), nil
 	default:
 		return nil, nil, fmt.Errorf("cannot range over type %s", cur)
 	}
@@ -270,7 +271,7 @@ func newReflectType(t reflect.Type, addressable bool) Type {
 		return nil
 	}
 	cur := deref(t)
-	if cur == nil || cur.Kind() == reflect.Interface {
+	if cur == nil || cur.Kind() == reflect.Interface || cur == reflect.TypeFor[reflect.Value]() {
 		return nil
 	}
 	return &reflectType{t: t, addressable: addressable}
@@ -293,6 +294,23 @@ func deref(t reflect.Type) reflect.Type {
 		cur = cur.Elem()
 	}
 	return cur
+}
+
+// isFieldAddressable reports whether accessing a field path produces an addressable value.
+func isFieldAddressable(structType reflect.Type, index []int, baseAddressable bool) bool {
+	if baseAddressable {
+		return true
+	}
+	cur := structType
+	for i := 0; i < len(index)-1; i++ {
+		sf := cur.Field(index[i])
+		t := sf.Type
+		if t.Kind() == reflect.Ptr {
+			return true
+		}
+		cur = t
+	}
+	return false
 }
 
 // validMethodReturn verifies that mt has a valid template method/function return signature

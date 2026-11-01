@@ -29,7 +29,7 @@ func ValidatePromptTemplate(spec PromptSpec, templateSource string) error {
 	}
 
 	if spec.ArgsType != nil {
-		if err := tmplcheck.Check(parsed, spec.ID.String(), tmplcheck.ReflectType(spec.ArgsType), funcs); err != nil {
+		if err := tmplcheck.Check(parsed, tmplcheck.ReflectType(spec.ArgsType), funcs); err != nil {
 			return fmt.Errorf("%w: %s: %w", ErrTemplateFieldNotFound, spec.ID, err)
 		}
 	}
