@@ -1,14 +1,18 @@
+// These tests exercise prompt override queries with an in-memory collection fake.
 package mongo
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.mongodb.org/mongo-driver/v2/bson"
 	mongodriver "go.mongodb.org/mongo-driver/v2/mongo"
@@ -217,31 +221,150 @@ func TestReset(t *testing.T) {
 	require.Nil(t, override)
 }
 
-func TestResetWithDottedKeysAndEmptyStringValues(t *testing.T) {
+// TestResetPreservesOtherScopes verifies that label strings remain data when
+// MongoDB compares scopes, including strings that name document fields.
+func TestResetPreservesOtherScopes(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name        string
+		labels      map[string]string
+		otherLabels map[string]string
+	}{
+		{
+			name:        "document field in value",
+			labels:      map[string]string{"account": "$prompt_id"},
+			otherLabels: map[string]string{"account": "literal.prompt"},
+		},
+		{
+			name:        "document field in key",
+			labels:      map[string]string{"$prompt_id": "acme"},
+			otherLabels: map[string]string{"literal.prompt": "acme"},
+		},
+		{
+			name:        "dotted key and document field value",
+			labels:      map[string]string{"account.id": "$scope_session"},
+			otherLabels: map[string]string{"account.id": "session"},
+		},
+		{
+			name:        "system variable strings",
+			labels:      map[string]string{"$$ROOT": "$$CURRENT"},
+			otherLabels: map[string]string{"account": "acme"},
+		},
+		{
+			name:        "dotted key and empty values",
+			labels:      map[string]string{"account.id": "123", "env": ""},
+			otherLabels: map[string]string{"account.id": "123", "region": ""},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			client := mustNewTestClient()
+			ctx := t.Context()
+			id := prompt.Ident("literal.prompt")
+			scope := prompt.Scope{SessionID: "session", Labels: tc.labels}
+
+			require.NoError(t, client.Set(ctx, id, scope, "target first", nil))
+			require.NoError(t, client.Set(ctx, id, scope, "target second", nil))
+			require.NoError(t, client.Set(ctx, id, prompt.Scope{
+				SessionID: "session",
+				Labels:    tc.otherLabels,
+			}, "other labels", nil))
+			require.NoError(t, client.Set(ctx, id, prompt.Scope{}, "global", nil))
+			require.NoError(t, client.Set(ctx, id, prompt.Scope{
+				SessionID: "other session",
+				Labels:    tc.labels,
+			}, "other session", nil))
+			require.NoError(t, client.Set(ctx, "other.prompt", scope, "other prompt", nil))
+
+			before, err := client.List(ctx)
+			require.NoError(t, err)
+			var expected []*prompt.Override
+			for _, override := range before {
+				if override.Template != "target first" && override.Template != "target second" {
+					expected = append(expected, override)
+				}
+			}
+
+			require.NoError(t, client.Reset(ctx, id, scope))
+			after, err := client.List(ctx)
+			require.NoError(t, err)
+			assert.ElementsMatch(t, expected, after)
+		})
+	}
+}
+
+func TestResolveEmptyStringLabel(t *testing.T) {
 	t.Parallel()
 
 	client := mustNewTestClient()
 	ctx := context.Background()
-	id := prompt.Ident("dotted.prompt")
+	id := prompt.Ident("example.empty.label")
 
-	scopeWithDot := prompt.Scope{
-		Labels: map[string]string{
-			"account.id": "123",
-			"env":        "",
-		},
+	scopeEmptyAccount := prompt.Scope{
+		Labels: map[string]string{"account": ""},
 	}
-	require.NoError(t, client.Set(ctx, id, scopeWithDot, "dotted template", nil))
+	scopeOther := prompt.Scope{
+		Labels: map[string]string{"account": "other"},
+	}
 
-	override, err := client.Resolve(ctx, id, scopeWithDot)
-	require.NoError(t, err)
-	require.NotNil(t, override)
-	require.Equal(t, "dotted template", override.Template)
+	require.NoError(t, client.Set(ctx, id, scopeEmptyAccount, "empty account", nil))
+	require.NoError(t, client.Set(ctx, id, scopeOther, "other account", nil))
 
-	require.NoError(t, client.Reset(ctx, id, scopeWithDot))
-
-	override, err = client.Resolve(ctx, id, scopeWithDot)
+	// Request missing "account": must NOT match empty-string label.
+	override, err := client.Resolve(ctx, id, prompt.Scope{
+		Labels: map[string]string{"region": "us"},
+	})
 	require.NoError(t, err)
 	require.Nil(t, override)
+
+	// Request with empty labels: must NOT match.
+	override, err = client.Resolve(ctx, id, prompt.Scope{})
+	require.NoError(t, err)
+	require.Nil(t, override)
+
+	// Request with "account": "": MUST match.
+	override, err = client.Resolve(ctx, id, scopeEmptyAccount)
+	require.NoError(t, err)
+	require.NotNil(t, override)
+	require.Equal(t, "empty account", override.Template)
+
+	// Unrelated override is preserved.
+	override, err = client.Resolve(ctx, id, scopeOther)
+	require.NoError(t, err)
+	require.NotNil(t, override)
+	require.Equal(t, "other account", override.Template)
+}
+
+func TestResolveSessionZeroLabelsOutranksNonSessionManyLabels(t *testing.T) {
+	t.Parallel()
+
+	for _, count := range []int{999, 1000, 1001} {
+		t.Run(fmt.Sprintf("%d_labels", count), func(t *testing.T) {
+			client := mustNewTestClient()
+			ctx := context.Background()
+			id := prompt.Ident("example.session.precedence")
+
+			labels := make(map[string]string, count)
+			for i := 0; i < count; i++ {
+				labels[fmt.Sprintf("k%04d", i)] = "v"
+			}
+
+			require.NoError(t, client.Set(ctx, id, prompt.Scope{Labels: labels}, "many_labels", nil))
+			require.NoError(t, client.Set(ctx, id, prompt.Scope{SessionID: "sess_1"}, "session_zero", nil))
+
+			override, err := client.Resolve(ctx, id, prompt.Scope{
+				SessionID: "sess_1",
+				Labels:    labels,
+			})
+			require.NoError(t, err)
+			require.NotNil(t, override)
+			require.Equal(t, "session_zero", override.Template)
+		})
+	}
 }
 
 func mustNewTestClient() *client {
@@ -332,6 +455,8 @@ func (c *fakeCollection) match(filter any) []overrideDocument {
 	return out
 }
 
+// matchesFilter applies the query shapes used by this client, including literal
+// values and the document field references exercised by reset preservation tests.
 func matchesFilter(doc overrideDocument, filter bson.M) bool {
 	for key, val := range filter {
 		switch key {
@@ -356,8 +481,18 @@ func matchesFilter(doc overrideDocument, filter bson.M) bool {
 			if !ok || len(setEqualsArgs) != 2 {
 				return false
 			}
-			expectedArr, ok := setEqualsArgs[1].(bson.A)
-			if !ok {
+			var expectedArr bson.A
+			literal := false
+			switch operand := setEqualsArgs[1].(type) {
+			case bson.A:
+				expectedArr = operand
+			case bson.M:
+				expectedArr, ok = operand["$literal"].(bson.A)
+				if !ok {
+					return false
+				}
+				literal = true
+			default:
 				return false
 			}
 			expectedMap := make(map[string]string, len(expectedArr))
@@ -367,9 +502,12 @@ func matchesFilter(doc overrideDocument, filter bson.M) bool {
 					for _, elem := range d {
 						switch elem.Key {
 						case "k":
-							k, _ = elem.Value.(string)
+							k, ok = resetExpressionString(doc, elem.Value, literal)
 						case "v":
-							v, _ = elem.Value.(string)
+							v, ok = resetExpressionString(doc, elem.Value, literal)
+						}
+						if !ok {
+							return false
 						}
 					}
 					expectedMap[k] = v
@@ -387,6 +525,26 @@ func matchesFilter(doc overrideDocument, filter bson.M) bool {
 		}
 	}
 	return true
+}
+
+// resetExpressionString evaluates the literal strings and document field paths
+// used by the reset tests. Other expression results are outside this fake's scope.
+func resetExpressionString(doc overrideDocument, value any, literal bool) (string, bool) {
+	text, ok := value.(string)
+	if !ok {
+		return "", false
+	}
+	if literal || !strings.HasPrefix(text, "$") {
+		return text, true
+	}
+	switch text {
+	case "$prompt_id":
+		return doc.PromptID, true
+	case "$scope_session":
+		return doc.ScopeSession, true
+	default:
+		return "", false
+	}
 }
 
 type fakeSingleResult struct {
@@ -444,14 +602,10 @@ type fakeIndexView struct {
 	parent *fakeCollection
 }
 
-func (v fakeIndexView) CreateMany(ctx context.Context, models []mongodriver.IndexModel,
-	opts ...options.Lister[options.CreateIndexesOptions]) ([]string, error) {
+func (v fakeIndexView) CreateOne(ctx context.Context, model mongodriver.IndexModel,
+	opts ...options.Lister[options.CreateIndexesOptions]) (string, error) {
 	v.parent.mu.Lock()
 	defer v.parent.mu.Unlock()
-	v.parent.indexes = append(v.parent.indexes, models...)
-	names := make([]string, len(models))
-	for i := range models {
-		names[i] = "idx"
-	}
-	return names, nil
+	v.parent.indexes = append(v.parent.indexes, model)
+	return "idx", nil
 }

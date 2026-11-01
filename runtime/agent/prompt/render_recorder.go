@@ -7,8 +7,6 @@ package prompt
 import (
 	"cmp"
 	"context"
-	"maps"
-	"slices"
 	"sort"
 	"sync"
 )
@@ -90,22 +88,5 @@ func compareRenderEvents(left, right RenderEvent) int {
 	if compared := cmp.Compare(left.Scope.SessionID, right.Scope.SessionID); compared != 0 {
 		return compared
 	}
-	return compareLabels(left.Scope.Labels, right.Scope.Labels)
-}
-
-// compareLabels orders label maps by sorted key and value pairs.
-func compareLabels(left, right map[string]string) int {
-	leftKeys := slices.Sorted(maps.Keys(left))
-	rightKeys := slices.Sorted(maps.Keys(right))
-	for index := 0; index < min(len(leftKeys), len(rightKeys)); index++ {
-		leftKey := leftKeys[index]
-		rightKey := rightKeys[index]
-		if compared := cmp.Compare(leftKey, rightKey); compared != 0 {
-			return compared
-		}
-		if compared := cmp.Compare(left[leftKey], right[rightKey]); compared != 0 {
-			return compared
-		}
-	}
-	return len(leftKeys) - len(rightKeys)
+	return compareLabelMaps(left.Scope.Labels, right.Scope.Labels)
 }

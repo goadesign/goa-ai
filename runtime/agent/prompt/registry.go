@@ -10,7 +10,7 @@ import (
 	"sync"
 	"text/template"
 
-	"goa.design/goa-ai/runtime/agent/tools"
+	"goa.design/goa-ai/internal/tmplcheck"
 )
 
 type (
@@ -252,9 +252,6 @@ func clonePromptSpec(spec PromptSpec) PromptSpec {
 			cloned.Funcs[key] = value
 		}
 	}
-	if len(spec.Fields) > 0 {
-		cloned.Fields = tools.CloneFieldMetadata(spec.Fields)
-	}
 	return cloned
 }
 
@@ -376,6 +373,12 @@ func (r *Registry) renderTemplate(ctx context.Context, spec PromptSpec, source s
 	parsed, err := tmpl.Parse(source)
 	if err != nil {
 		return "", nil, nil, fmt.Errorf("%w: %s: %w", ErrTemplateParse, spec.ID, err)
+	}
+
+	if spec.ArgsType != nil {
+		if err := tmplcheck.Check(parsed, spec.ID.String(), tmplcheck.ReflectType(spec.ArgsType), funcs); err != nil {
+			return "", nil, nil, fmt.Errorf("%w: %s: %w", ErrTemplateFieldNotFound, spec.ID, err)
+		}
 	}
 
 	var buffer bytes.Buffer
