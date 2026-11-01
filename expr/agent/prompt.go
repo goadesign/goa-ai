@@ -149,7 +149,7 @@ func (p *PromptExpr) Validate() error {
 		rootType = tmplcheck.ReflectType(reflect.TypeFor[struct{}]())
 	}
 
-	if err := tmplcheck.Check(parsed, string(p.ID()), rootType, funcs); err != nil {
+	if err := tmplcheck.Check(parsed, rootType, funcs); err != nil {
 		verr.Add(p, "%s", err)
 	}
 

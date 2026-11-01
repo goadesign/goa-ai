@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"text/template"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestRegistryRegisterRejectsDuplicateID(t *testing.T) {
@@ -1346,7 +1348,7 @@ func TestQA79UnusedDefinition(t *testing.T) {
 	spec := PromptSpec{
 		ID:       "qa79.unused",
 		Role:     PromptRoleSystem,
-		Template: source,
+		Template: "Hello {{.P.Label}}",
 		ArgsType: reflect.TypeFor[rootData](),
 	}
 
@@ -1356,12 +1358,14 @@ func TestQA79UnusedDefinition(t *testing.T) {
 	}
 
 	// 2. Register should succeed.
-	reg := NewRegistry(NewInMemoryStore())
+	store := NewInMemoryStore()
+	reg := NewRegistry(store)
 	if err := reg.Register(spec); err != nil {
 		t.Fatalf("Register: expected nil, got %v", err)
 	}
 
 	// 3. store.Set override + Render should succeed.
+	require.NoError(t, store.Set(context.Background(), spec.ID, Scope{}, source, nil))
 	data := rootData{P: qa79Person{Label: "world"}}
 	res, err := reg.Render(context.Background(), spec.ID, Scope{}, data)
 	if err != nil {
@@ -1369,5 +1373,133 @@ func TestQA79UnusedDefinition(t *testing.T) {
 	}
 	if res.Text != "Hello world" {
 		t.Fatalf("Render: expected 'Hello world', got %q", res.Text)
+	}
+}
+
+type (
+	// qa6283Person is a test helper for oracle testing.
+	qa6283Person struct{ Label string }
+
+	// qa6283Slice is a test helper for slice method lookup.
+	qa6283Slice []qa6283Person
+
+	// qa6283Embedded is an embedded struct pointer test helper.
+	qa6283Embedded struct{ Child qa6283Person }
+
+	// qa6283Root is the root struct for oracle testing.
+	qa6283Root struct {
+		*qa6283Embedded
+		P       qa6283Person
+		Items   []qa6283Person
+		Flag    bool
+		Count   int
+		Sl      qa6283Slice
+		Seq2    iter.Seq2[qa6283Person, string]
+		Seq2Bad iter.Seq2[string, qa6283Person]
+	}
+)
+
+// PointerLabel is a pointer receiver method on qa6283Person.
+func (*qa6283Person) PointerLabel() string { return "pointer" }
+
+// Label is a value receiver method on qa6283Slice.
+func (qa6283Slice) Label() string { return "slice" }
+
+// TestQA6283Oracle compares static acceptance at all registry entries with the
+// module-pinned Go template executor. Its custom functions only run at execution.
+func TestQA6283Oracle(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name           string
+		source         string
+		funcs          template.FuncMap
+		wantValidation bool
+		wantExecution  bool
+	}{
+		{"third_iteration_reassignment", `{{$x := .P}}{{$y := .P}}{{$z := "text"}}{{range .Items}}{{$x.Label}}{{$x = $y}}{{$y = $z}}{{end}}`, nil, false, false},
+		{"and_skips_assignment", `{{$x := .P}}{{and false ($x = "text")}}{{$x.Label}}`, nil, true, true},
+		{"or_skips_assignment", `{{$x := .P}}{{or true ($x = "text")}}{{$x.Label}}`, nil, true, true},
+		{"and_dynamic_skip_safe", `{{$x := .P}}{{and .Flag ($x = .P)}}{{$x.Label}}`, nil, true, true},
+		{"and_struct_truth", `{{(and .P .P).Label}}`, nil, true, true},
+		{"or_struct_truth", `{{(or .P "text").Label}}`, nil, true, true},
+		{"break_skips_assignment", `{{$x := .P}}{{range .Items}}{{break}}{{$x = "text"}}{{end}}`, nil, true, true},
+		{"continue_skips_assignment", `{{$x := .P}}{{range .Items}}{{continue}}{{$x = "text"}}{{end}}`, nil, true, true},
+		{"break_stops_loop", `{{$x := .P}}{{range .Items}}{{$x.Label}}{{$x = "text"}}{{break}}{{end}}`, nil, true, true},
+		{"constant_false_dead_assignment", `{{$x := .P}}{{if false}}{{$x = "text"}}{{end}}{{$x.Label}}`, nil, true, true},
+		{"constant_true_dead_else_assignment", `{{$x := .P}}{{if true}}{{else}}{{$x = "text"}}{{end}}{{$x.Label}}`, nil, true, true},
+		{"embedded_pointer_addressable", `{{.Child.PointerLabel}}`, nil, true, true},
+		{"custom_render_struct_return", `{{(render).Label}}`, template.FuncMap{"render": func() qa6283Person { return qa6283Person{"custom"} }}, true, true},
+		{"range_integer_two_vars", `{{range $i,$x := .Count}}{{$x}}{{end}}`, nil, false, false},
+		{"nested_index_double_assignment", `{{$x := .P}}{{$y := .P}}{{index ($x = (printf "%v" ($y = "text"))) 0}}{{$y.Label}}`, nil, false, false},
+		{"range_single_array_break", `{{$x := .P}}{{range .Items}}{{$x.Label}}{{break}}{{$x = "text"}}{{end}}`, nil, true, true},
+		{"index_reexec_restores_earlier_assignment", `{{$x := .Sl}}{{index ($x = .Sl) (len ($x = "text"))}}{{$x.Label}}`, nil, false, false},
+		{"slice_reexec_restores_earlier_assignment", `{{$x := .Sl}}{{slice ($x = .Sl) 0 (len ($x = "text"))}}{{$x.Label}}`, nil, false, false},
+		{"custom_reflect_value", `{{(value).Label}}`, template.FuncMap{"value": func() reflect.Value { return reflect.ValueOf(qa6283Person{"value"}) }}, true, true},
+		{"range_zero_array_skips_assignment", `{{$x := .P}}{{range .Zero}}{{$x = "text"}}{{end}}{{$x.Label}}`, nil, true, true},
+		{"seq2_one_variable_yields_key", `{{range $x := .Seq2}}{{$x.Label}}{{end}}`, nil, true, true},
+		{"seq2_no_variable_yields_key", `{{range .Seq2}}{{.Label}}{{end}}`, nil, true, true},
+		{"seq2_invalid_one_variable_member", `{{range $x := .Seq2Bad}}{{$x.Label}}{{end}}`, nil, false, false},
+		{"seq2_invalid_no_variable_member", `{{range .Seq2Bad}}{{.Label}}{{end}}`, nil, false, false},
+		{"seq2_two_variables_yields_value", `{{range $key,$value := .Seq2Bad}}{{$value.Label}}{{end}}`, nil, true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			data := struct {
+				qa6283Root
+				Zero [0]int
+			}{
+				qa6283Root: qa6283Root{
+					qa6283Embedded: &qa6283Embedded{Child: qa6283Person{"child"}},
+					P:              qa6283Person{"person"},
+					Items:          []qa6283Person{{"one"}, {"two"}, {"three"}},
+					Count:          1,
+					Flag:           false,
+					Sl:             qa6283Slice{{"zero"}, {"one"}, {"two"}, {"three"}, {"four"}},
+				},
+			}
+			data.Seq2 = func(yield func(qa6283Person, string) bool) { yield(qa6283Person{"key"}, "value") }
+			data.Seq2Bad = func(yield func(string, qa6283Person) bool) { yield("key", qa6283Person{"value"}) }
+			spec := PromptSpec{
+				ID:       "qa6283",
+				Role:     PromptRoleSystem,
+				Template: tc.source,
+				ArgsType: reflect.TypeOf(data),
+				Funcs:    tc.funcs,
+			}
+			validation := ValidatePromptTemplate(spec, tc.source)
+			registration := NewRegistry(nil).Register(spec)
+			store := NewInMemoryStore()
+			reg := NewRegistry(store)
+			baseline := spec
+			baseline.Template = `{{.P.Label}}`
+			if err := reg.Register(baseline); err != nil {
+				t.Fatal(err)
+			}
+			override := reg.ValidateOverride(spec.ID, tc.source)
+			if err := store.Set(context.Background(), spec.ID, Scope{}, tc.source, nil); err != nil {
+				t.Fatal(err)
+			}
+			content, renderErr := reg.Render(context.Background(), spec.ID, Scope{}, data)
+			parsed, err := template.New(spec.ID.String()).Option("missingkey=error").Funcs(tc.funcs).Parse(tc.source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var output bytes.Buffer
+			execution := parsed.Execute(&output, data)
+			t.Logf("source=%q validation=%v registration=%v override=%v raw_render=%v content=%v stdlib_execution=%v output=%q",
+				tc.source, validation, registration, override, renderErr, content, execution, output.String())
+			if (execution == nil) != tc.wantExecution {
+				t.Errorf("stdlib executionOK=%v want=%v", execution == nil, tc.wantExecution)
+			}
+			for name, got := range map[string]error{"validation": validation, "registration": registration, "override": override} {
+				if (got == nil) != tc.wantValidation {
+					t.Errorf("%s accepted=%v want=%v", name, got == nil, tc.wantValidation)
+				}
+			}
+			if tc.wantValidation && renderErr != nil {
+				t.Errorf("valid raw override rejected: %v", renderErr)
+			}
+		})
 	}
 }

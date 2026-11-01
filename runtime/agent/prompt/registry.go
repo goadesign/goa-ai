@@ -376,7 +376,7 @@ func (r *Registry) renderTemplate(ctx context.Context, spec PromptSpec, source s
 	}
 
 	if spec.ArgsType != nil {
-		if err := tmplcheck.Check(parsed, spec.ID.String(), tmplcheck.ReflectType(spec.ArgsType), funcs); err != nil {
+		if err := tmplcheck.Check(parsed, tmplcheck.ReflectType(spec.ArgsType), funcs); err != nil {
 			return "", nil, nil, fmt.Errorf("%w: %s: %w", ErrTemplateFieldNotFound, spec.ID, err)
 		}
 	}
