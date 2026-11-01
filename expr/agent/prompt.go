@@ -3,17 +3,17 @@
 //
 // PromptExpr captures prompt declarations configured via Goa DSL on agents and
 // services. Compile-time validation enforces non-empty names, baseline templates,
-// valid prompt roles, template syntax correctness, and alignment between template
-// dot-field references and declared Args schemas.
+// valid prompt roles, template syntax correctness, object Args shapes, and alignment
+// between template dot-field references and declared exported Go struct fields.
 package agent
 
 import (
 	"fmt"
-	"strings"
 	"text/template"
 	"text/template/parse"
 
 	"goa.design/goa-ai/runtime/agent/prompt"
+	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/eval"
 	goaexpr "goa.design/goa/v3/expr"
@@ -81,7 +81,70 @@ func (p *PromptExpr) SetDescription(d string) {
 	p.Description = d
 }
 
-// Prepare ensures prompt defaults are initialized before validation.
+// FieldMetadata returns the static field specifications for this prompt.
+//
+// When p.Args is empty or nil, it returns a single entry with JSONType "null"
+// (the zero-arg sentinel recognized by prompt.ValidatePromptTemplate).
+// When p.Args is an object, it traverses fields recursively, emitting exported Go
+// struct field names (using codegen.GoifyAtt, respecting struct:field:name metadata).
+func (p *PromptExpr) FieldMetadata() []tools.FieldMetadata {
+	if p.Args == nil || p.Args.Type == nil || p.Args.Type == goaexpr.Empty {
+		return []tools.FieldMetadata{{JSONType: "null"}}
+	}
+	obj := goaexpr.AsObject(p.Args.Type)
+	if obj == nil {
+		return []tools.FieldMetadata{{JSONType: "null"}}
+	}
+	var (
+		fields  []tools.FieldMetadata
+		visited = make(map[string]bool)
+	)
+	var walk func(att *goaexpr.AttributeExpr, path []tools.FieldPathSegment)
+	walk = func(att *goaexpr.AttributeExpr, path []tools.FieldPathSegment) {
+		if att == nil || att.Type == nil {
+			return
+		}
+		if ut, ok := att.Type.(goaexpr.UserType); ok {
+			typeName := ut.Name()
+			if typeName != "" {
+				if visited[typeName] {
+					return
+				}
+				visited[typeName] = true
+				defer func() { delete(visited, typeName) }()
+			}
+			walk(ut.Attribute(), path)
+			return
+		}
+		switch t := att.Type.(type) {
+		case *goaexpr.Object:
+			for _, nat := range *t {
+				if nat == nil || nat.Attribute == nil {
+					continue
+				}
+				goName := codegen.GoifyAtt(nat.Attribute, nat.Name, true)
+				fieldPath := append(append([]tools.FieldPathSegment(nil), path...), tools.FixedField(goName))
+				jsonType := jsonCategory(nat.Attribute.Type)
+				fields = append(fields, tools.FieldMetadata{
+					Path:        fieldPath,
+					JSONType:    jsonType,
+					Description: nat.Attribute.Description,
+				})
+				walk(nat.Attribute, fieldPath)
+			}
+		case *goaexpr.Array:
+			elemPath := append(append([]tools.FieldPathSegment(nil), path...), tools.DynamicField{})
+			walk(t.ElemType, elemPath)
+		case *goaexpr.Map:
+			keyPath := append(append([]tools.FieldPathSegment(nil), path...), tools.DynamicField{})
+			walk(t.ElemType, keyPath)
+		}
+	}
+	walk(p.Args, nil)
+	return fields
+}
+
+// Prepare ensures prompt defaults and shapes are initialized before validation.
 func (p *PromptExpr) Prepare() {
 	if p.Role == "" {
 		if p.Name == "system" {
@@ -90,10 +153,17 @@ func (p *PromptExpr) Prepare() {
 			p.Role = prompt.PromptRoleUser
 		}
 	}
+	finalizeToolShape(p.Args)
+}
+
+// Finalize ensures prompt attribute shapes are finalized before code generation.
+func (p *PromptExpr) Finalize() {
+	finalizeToolShape(p.Args)
 }
 
 // Validate verifies prompt invariants: non-empty name and template, valid role,
-// syntactically valid Go template, and typed Args shape and field alignment.
+// valid Go template syntax, valid object Args shape, and field access alignment
+// using prompt.ValidatePromptTemplate.
 func (p *PromptExpr) Validate() error {
 	verr := new(eval.ValidationErrors)
 	if p.Name == "" {
@@ -110,32 +180,22 @@ func (p *PromptExpr) Validate() error {
 		verr.Add(p, "prompt role %q must be one of \"system\", \"user\", \"tool\", or \"synthesis\"", p.Role)
 	}
 
-	tmpl, err := template.New(string(p.ID())).
-		Option("missingkey=error").
-		Funcs(template.FuncMap{
-			"render": func(string, ...any) string { return "" },
-		}).
-		Parse(p.Template)
-	if err != nil {
-		verr.Add(p, "failed to parse template: %s", err)
-		return verr
-	}
-
-	fieldRefs := collectTemplateFieldRefs(tmpl.Tree)
-
 	hasArgs := p.Args != nil && p.Args.Type != nil && p.Args.Type != goaexpr.Empty
 	if hasArgs {
 		validateContractShape(p, "Args", p.Args, verr)
+		if goaexpr.AsObject(p.Args.Type) == nil {
+			verr.Add(p, "Prompt Args must be an object or a user type backed by an object")
+		}
 	}
 
-	for _, ref := range fieldRefs {
-		if !hasArgs {
-			verr.Add(p, "template references undeclared argument %q but prompt declares no Args", "."+ref)
-			continue
-		}
-		if !attributeHasField(p.Args, ref) {
-			verr.Add(p, "template references undeclared argument %q on Args contract", "."+ref)
-		}
+	spec := prompt.PromptSpec{
+		ID:       p.ID(),
+		Role:     p.Role,
+		Template: p.Template,
+		Fields:   p.FieldMetadata(),
+	}
+	if err := prompt.ValidatePromptTemplate(spec, p.Template); err != nil {
+		verr.Add(p, "%s", err)
 	}
 
 	if len(verr.Errors) == 0 {
@@ -144,116 +204,104 @@ func (p *PromptExpr) Validate() error {
 	return verr
 }
 
-// collectTemplateFieldRefs walks the parsed template AST tree and collects all
-// top-level dot field references (.FieldName).
-func collectTemplateFieldRefs(tree *parse.Tree) []string {
-	if tree == nil || tree.Root == nil {
+// extractRenderedPromptIDs parses templateSource and extracts literal string prompt IDs
+// passed as the first argument to the "render" template function (e.g. {{ render "id" ... }}).
+func extractRenderedPromptIDs(templateSource string) []string {
+	tmpl, err := template.New("").
+		Funcs(template.FuncMap{
+			"render": func(string, ...any) (string, error) { return "", nil },
+		}).
+		Parse(templateSource)
+	if err != nil || tmpl.Tree == nil || tmpl.Root == nil {
 		return nil
 	}
-	var refs []string
-	seen := make(map[string]struct{})
-	var walk func(node parse.Node)
-	walk = func(node parse.Node) {
-		if node == nil {
+
+	var (
+		ids  []string
+		seen = make(map[string]bool)
+	)
+
+	var walkNode func(n parse.Node)
+	walkNode = func(n parse.Node) {
+		if n == nil {
 			return
 		}
-		switch n := node.(type) {
+		switch node := n.(type) {
 		case *parse.ListNode:
-			if n != nil {
-				for _, item := range n.Nodes {
-					walk(item)
+			if node != nil {
+				for _, item := range node.Nodes {
+					walkNode(item)
 				}
 			}
 		case *parse.ActionNode:
-			if n != nil {
-				walk(n.Pipe)
+			if node != nil {
+				walkNode(node.Pipe)
 			}
 		case *parse.PipeNode:
-			if n != nil {
-				for _, cmd := range n.Cmds {
-					walk(cmd)
-				}
-				for _, decl := range n.Decl {
-					walk(decl)
+			if node != nil {
+				for _, cmd := range node.Cmds {
+					walkNode(cmd)
 				}
 			}
 		case *parse.CommandNode:
-			if n != nil {
-				for _, arg := range n.Args {
-					walk(arg)
+			if node != nil && len(node.Args) >= 2 {
+				if idNode, ok := node.Args[0].(*parse.IdentifierNode); ok && idNode.Ident == "render" {
+					if strNode, ok := node.Args[1].(*parse.StringNode); ok {
+						if !seen[strNode.Text] {
+							seen[strNode.Text] = true
+							ids = append(ids, strNode.Text)
+						}
+					}
 				}
 			}
 		case *parse.BranchNode:
-			if n != nil {
-				walk(n.Pipe)
-				walk(n.List)
-				walk(n.ElseList)
+			if node != nil {
+				walkNode(node.Pipe)
+				walkNode(node.List)
+				walkNode(node.ElseList)
 			}
 		case *parse.IfNode:
-			if n != nil {
-				walk(&n.BranchNode)
+			if node != nil {
+				walkNode(&node.BranchNode)
 			}
 		case *parse.WithNode:
-			if n != nil {
-				walk(&n.BranchNode)
+			if node != nil {
+				walkNode(&node.BranchNode)
 			}
 		case *parse.RangeNode:
-			if n != nil {
-				walk(&n.BranchNode)
-			}
-		case *parse.TemplateNode:
-			if n != nil {
-				walk(n.Pipe)
-			}
-		case *parse.ChainNode:
-			if n != nil {
-				walk(n.Node)
-			}
-		case *parse.FieldNode:
-			if n != nil && len(n.Ident) > 0 {
-				ref := n.Ident[0]
-				if _, dup := seen[ref]; !dup {
-					seen[ref] = struct{}{}
-					refs = append(refs, ref)
-				}
+			if node != nil {
+				walkNode(&node.BranchNode)
 			}
 		}
 	}
-	walk(tree.Root)
-	return refs
+
+	walkNode(tmpl.Root)
+	return ids
 }
 
-// attributeHasField returns true if the given attribute represents an object
-// containing a field matching ref by attribute name, Go struct name, or field tag.
-func attributeHasField(att *goaexpr.AttributeExpr, ref string) bool {
-	if att == nil || att.Type == nil {
-		return false
-	}
-	obj := goaexpr.AsObject(att.Type)
-	if obj == nil {
-		return false
-	}
-	for _, named := range *obj {
-		if named == nil {
-			continue
-		}
-		if named.Name == ref {
-			return true
-		}
-		if codegen.Goify(named.Name, true) == ref {
-			return true
-		}
-		if codegen.Goify(named.Name, false) == ref {
-			return true
-		}
-		if strings.EqualFold(named.Name, ref) {
-			return true
-		}
-		if named.Attribute != nil && len(named.Attribute.Meta["struct:field:name"]) > 0 {
-			if named.Attribute.Meta["struct:field:name"][0] == ref {
-				return true
-			}
+// jsonCategory maps Goa data types to JSON Schema type strings.
+func jsonCategory(dt goaexpr.DataType) string {
+	switch actual := dt.(type) {
+	case goaexpr.UserType:
+		return jsonCategory(actual.Attribute().Type)
+	case *goaexpr.Object, *goaexpr.Map:
+		return "object"
+	case *goaexpr.Array:
+		return "array"
+	case goaexpr.Primitive:
+		//nolint:exhaustive // Only primitive kinds map to JSON scalar types.
+		switch actual.Kind() {
+		case goaexpr.BooleanKind:
+			return "boolean"
+		case goaexpr.StringKind, goaexpr.BytesKind:
+			return "string"
+		case goaexpr.IntKind, goaexpr.Int32Kind, goaexpr.Int64Kind, goaexpr.UIntKind, goaexpr.UInt32Kind, goaexpr.UInt64Kind:
+			return "integer"
+		case goaexpr.Float32Kind, goaexpr.Float64Kind:
+			return "number"
+		default:
+			return ""
 		}
 	}
-	return false
+	return ""
 }

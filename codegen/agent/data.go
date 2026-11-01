@@ -11,6 +11,7 @@ import (
 	agentsExpr "goa.design/goa-ai/expr/agent"
 	mcpexpr "goa.design/goa-ai/expr/mcp"
 	"goa.design/goa-ai/runtime/agent/engine"
+	"goa.design/goa-ai/runtime/agent/tools"
 	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/codegen/service"
 	goaexpr "goa.design/goa/v3/expr"
@@ -52,6 +53,8 @@ type (
 	// Templates use this to generate service-scoped agent packages and to access
 	// both service-level types (via Service.UserTypes) and agent-level artifacts.
 	ServiceAgentsData struct {
+		// Genpkg is the root generated package path.
+		Genpkg string
 		// Service contains the Goa service metadata from the core generators.
 		Service *service.Data
 		// Agents lists each agent declared within the service DSL.
@@ -219,6 +222,8 @@ type (
 		Expr *agentsExpr.PromptExpr
 		// ID is the canonical prompt identifier (e.g., "svc.agent.system").
 		ID string
+		// AgentID is the enclosing agent ID, or empty for service-level prompts.
+		AgentID string
 		// ConstantName is the Go constant identifier (e.g. "SystemPromptID" or "PromptTriageID").
 		ConstantName string
 		// SpecFuncName is the Go factory function name (e.g. "PromptSpecSystem" or "PromptSpecTriage").
@@ -244,7 +249,7 @@ type (
 		// ArgsDef is the Go type definition for the Args struct.
 		ArgsDef string
 		// Fields is the precomputed field metadata list for prompt spec.
-		Fields []*fieldMetadataData
+		Fields []tools.FieldMetadata
 		// SchemaJSON is the compiled JSON Schema bytes for the Args attribute.
 		SchemaJSON []byte
 	}
@@ -978,7 +983,7 @@ func buildGeneratorDataFromIR(
 		if svcIR == nil || (len(svcIR.Agents) == 0 && len(svcIR.Completions) == 0 && !hasServicePrompts) {
 			continue
 		}
-		svc := &ServiceAgentsData{Service: servicesData.Get(svcIR.Name)}
+		svc := &ServiceAgentsData{Service: servicesData.Get(svcIR.Name), Genpkg: design.Genpkg}
 		for _, agentIR := range svcIR.Agents {
 			agentData, err := newAgentData(design.Genpkg, agentIR, servicesData, mcpRoot)
 			if err != nil {
@@ -995,7 +1000,7 @@ func buildGeneratorDataFromIR(
 		if design.AgentsRoot != nil {
 			for _, p := range design.AgentsRoot.Prompts {
 				if p.Service != nil && p.Service.Name == svcIR.Name {
-					pdata, err := newPromptData(p)
+					pdata, err := newPromptData(p, "")
 					if err != nil {
 						return nil, err
 					}
@@ -1162,7 +1167,7 @@ func newAgentData(
 
 	if agentIR.Expr != nil && len(agentIR.Expr.Prompts) > 0 {
 		for _, p := range agentIR.Expr.Prompts {
-			pdata, err := newPromptData(p)
+			pdata, err := newPromptData(p, agent.ID)
 			if err != nil {
 				return nil, err
 			}
@@ -1174,7 +1179,7 @@ func newAgentData(
 }
 
 // newPromptData converts one PromptExpr into its code-generation representation.
-func newPromptData(p *agentsExpr.PromptExpr) (*PromptData, error) {
+func newPromptData(p *agentsExpr.PromptExpr, agentID string) (*PromptData, error) {
 	name := p.Name
 	goName := codegen.Goify(name, true)
 	version := p.Version()
@@ -1194,6 +1199,7 @@ func newPromptData(p *agentsExpr.PromptExpr) (*PromptData, error) {
 	data := &PromptData{
 		Expr:           p,
 		ID:             id,
+		AgentID:        agentID,
 		ConstantName:   constantName,
 		SpecFuncName:   specFuncName,
 		RenderFuncName: renderFuncName,
@@ -1204,11 +1210,11 @@ func newPromptData(p *agentsExpr.PromptExpr) (*PromptData, error) {
 		Role:           string(p.Role),
 		Template:       p.Template,
 		Version:        version,
+		Fields:         p.FieldMetadata(),
 	}
 
 	if p.Args != nil && p.Args.Type != nil && p.Args.Type != goaexpr.Empty {
 		data.HasArgs = true
-		data.Fields = buildFieldMetadata(p.Args)
 		scope := codegen.NewNameScope()
 		data.ArgsDef = scope.GoTypeDef(p.Args, false, true)
 		exampleIdentity := goaexpr.UserTypeExampleIdentity(&goaexpr.UserTypeExpr{

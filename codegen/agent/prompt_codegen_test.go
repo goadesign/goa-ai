@@ -2,14 +2,19 @@ package codegen_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	codegen "goa.design/goa-ai/codegen/agent"
+	"goa.design/goa-ai/codegen/testhelpers"
 	. "goa.design/goa-ai/dsl"
 	agentsExpr "goa.design/goa-ai/expr/agent"
 	goadsl "goa.design/goa/v3/dsl"
@@ -112,18 +117,22 @@ func TestAgentPromptCodegen(t *testing.T) {
 
 	assert.Contains(t, promptsContent, "func PromptSpecFarewell() prompt.PromptSpec")
 	assert.Contains(t, promptsContent, "Role:        prompt.PromptRoleSynthesis")
-	assert.Contains(t, promptsContent, "Fields:      nil")
+	assert.Contains(t, promptsContent, `JSONType: "null"`)
 
-	// PromptSpecs aggregator
+	// PromptSpecs aggregator and RegisterPrompts
 	assert.Contains(t, promptsContent, "func PromptSpecs() []prompt.PromptSpec")
 	assert.Contains(t, promptsContent, "PromptSpecFarewell(),")
 	assert.Contains(t, promptsContent, "PromptSpecSystem(),")
 	assert.Contains(t, promptsContent, "PromptSpecTriage(),")
+	assert.Contains(t, promptsContent, "func RegisterPrompts(reg *prompt.Registry) error")
 
 	// Render helpers
 	assert.Contains(t, promptsContent, "func RenderSystemPrompt(ctx context.Context, pctx planner.PlannerContext, args SystemPromptArgs) (*prompt.PromptContent, error)")
+	assert.Contains(t, promptsContent, "func RenderSystemPromptWithRegistry(ctx context.Context, reg *prompt.Registry, scope prompt.Scope, args SystemPromptArgs) (*prompt.PromptContent, error)")
 	assert.Contains(t, promptsContent, "func RenderTriagePrompt(ctx context.Context, pctx planner.PlannerContext, args TriagePromptArgs) (*prompt.PromptContent, error)")
+	assert.Contains(t, promptsContent, "func RenderTriagePromptWithRegistry(ctx context.Context, reg *prompt.Registry, scope prompt.Scope, args TriagePromptArgs) (*prompt.PromptContent, error)")
 	assert.Contains(t, promptsContent, "func RenderFarewellPrompt(ctx context.Context, pctx planner.PlannerContext) (*prompt.PromptContent, error)")
+	assert.Contains(t, promptsContent, "func RenderFarewellPromptWithRegistry(ctx context.Context, reg *prompt.Registry, scope prompt.Scope) (*prompt.PromptContent, error)")
 
 	// 2. Verify gen/assistant/agents/bot/registry.go has PromptRegistry auto-registration
 	registryPath := filepath.ToSlash("gen/assistant/agents/bot/registry.go")
@@ -139,9 +148,8 @@ func TestAgentPromptCodegen(t *testing.T) {
 		}
 	}
 	require.NotEmpty(t, registryContent, "expected %s to be generated", registryPath)
-	assert.Contains(t, registryContent, "if rt.PromptRegistry != nil {")
-	assert.Contains(t, registryContent, "for _, spec := range PromptSpecs() {")
-	assert.Contains(t, registryContent, "if err := rt.PromptRegistry.Register(spec); err != nil && !errors.Is(err, prompt.ErrDuplicatePromptSpec) {")
+	assert.Contains(t, registryContent, "PromptSpecs: PromptSpecs(),")
+	assert.Contains(t, registryContent, "if err := rt.RegisterAgent(ctx, registration); err != nil {")
 
 	// 3. Verify gen/assistant/agents/bot/specs/prompt_schemas.json
 	schemasPath := filepath.ToSlash("gen/assistant/agents/bot/specs/prompt_schemas.json")
@@ -344,4 +352,197 @@ func TestAgentWithoutPromptsCodegen(t *testing.T) {
 			assert.NotContains(t, buf.String(), "PromptSpecs()")
 		}
 	}
+}
+
+// TestPromptEndToEndCompiledAndExecuted verifies that generated agent and service
+// prompt code compiles under standard Go toolchain and executes against runtime.Runtime,
+// prompt.Registry, and PlannerContext.
+func TestPromptEndToEndCompiledAndExecuted(t *testing.T) {
+	design := func() {
+		Base := goadsl.Type("Base", func() {
+			goadsl.Attribute("created_at", goadsl.String, "Creation timestamp")
+		})
+		Author := goadsl.Type("Author", func() {
+			goadsl.Attribute("name", goadsl.String, "Author name")
+		})
+		Tag := goadsl.Type("Tag", func() {
+			goadsl.Attribute("label", goadsl.String, "Tag label")
+		})
+		Ticket := goadsl.Type("Ticket", func() {
+			goadsl.Extend(Base)
+			goadsl.Attribute("ticket_id", goadsl.String, "Unique ticket identifier", func() {
+				goadsl.Meta("struct:field:name", "CustomID")
+			})
+			goadsl.Attribute("author", Author, "Ticket author")
+			goadsl.Attribute("tags", goadsl.ArrayOf(Tag), "Ticket tags")
+			goadsl.Required("ticket_id", "author")
+		})
+
+		goadsl.API("support_api", func() {})
+		goadsl.Service("support", func() {
+			Prompt("farewell", func() {
+				goadsl.Description("Service farewell")
+				Role("synthesis")
+				Template("Thank you for contacting support.")
+			})
+
+			Agent("helpdesk", "Help desk agent", func() {
+				SystemPrompt("You are {{ .AssistantName }}.", func() {
+					Args(func() {
+						goadsl.Attribute("AssistantName", goadsl.String)
+						goadsl.Required("AssistantName")
+					})
+				})
+
+				Prompt("triage", func() {
+					goadsl.Description("Triage ticket")
+					Role("user")
+					Template("Ticket {{ .CustomID }} by {{ .Author.Name }} (Created: {{ .CreatedAt }}): {{ render \"support.farewell\" . }}")
+					Args(Ticket)
+				})
+			})
+		})
+	}
+
+	files := testhelpers.BuildAndGenerateWithPkg(t, "generated.local/gen", design)
+	root := t.TempDir()
+	repoRoot, err := filepath.Abs("../..")
+	require.NoError(t, err)
+
+	goMod := "module generated.local\n\ngo 1.24\n\nrequire (\n\tgoa.design/goa-ai v0.0.0\n\tgithub.com/stretchr/testify v1.10.0\n)\n\nreplace goa.design/goa-ai => " + filepath.ToSlash(repoRoot) + "\n"
+	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte(goMod), 0o600))
+
+	for _, file := range files {
+		_, err := file.Render(root)
+		require.NoErrorf(t, err, "render %s", file.Path)
+	}
+
+	testSource := `package helpdesk_test
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	genhelpdesk "generated.local/gen/support/agents/helpdesk"
+	gensvc "generated.local/gen/support/prompts"
+	"goa.design/goa-ai/runtime/agent/planner"
+	"goa.design/goa-ai/runtime/agent/prompt"
+	"goa.design/goa-ai/runtime/agent/runtime"
+	storageinmem "goa.design/goa-ai/runtime/agent/storage/inmem"
+)
+
+type mockPlanner struct{}
+
+func (m *mockPlanner) PlanStart(ctx context.Context, input *planner.PlanInput) (*planner.PlanResult, error) {
+	return &planner.PlanResult{}, nil
+}
+
+func (m *mockPlanner) PlanResume(ctx context.Context, input *planner.PlanResumeInput) (*planner.PlanResult, error) {
+	return &planner.PlanResult{}, nil
+}
+
+type mockPlannerContext struct {
+	planner.PlannerContext
+	reg   *prompt.Registry
+	scope prompt.Scope
+}
+
+func (m *mockPlannerContext) RenderPrompt(ctx context.Context, id prompt.Ident, data any) (*prompt.PromptContent, error) {
+	return m.reg.Render(ctx, id, m.scope, data)
+}
+
+func TestCompiledPromptsIntegration(t *testing.T) {
+	ctx := context.Background()
+
+	// 1. Verify prompt specs factories
+	sysSpec := genhelpdesk.PromptSpecSystem()
+	assert.Equal(t, genhelpdesk.SystemPromptID, sysSpec.ID)
+	assert.Equal(t, prompt.PromptRoleSystem, sysSpec.Role)
+
+	triageSpec := genhelpdesk.PromptSpecTriage()
+	assert.Equal(t, genhelpdesk.PromptTriageID, triageSpec.ID)
+	assert.Equal(t, prompt.PromptRoleUser, triageSpec.Role)
+
+	farewellSpec := gensvc.PromptSpecFarewell()
+	assert.Equal(t, gensvc.PromptFarewellID, farewellSpec.ID)
+	assert.Equal(t, prompt.PromptRoleSynthesis, farewellSpec.Role)
+
+	// 2. Setup runtime with inmem store and PromptRegistry
+	promptStore := prompt.NewInMemoryStore()
+	store := storageinmem.New()
+	rt := runtime.New(store, runtime.WithPromptStore(promptStore))
+	reg := rt.PromptRegistry
+	require.NotNil(t, reg)
+
+	// Register service-level prompts
+	require.NoError(t, gensvc.RegisterPrompts(reg))
+
+	// 3. NewHelpdeskAgentRegistration contains PromptSpecs
+	registration, err := genhelpdesk.NewHelpdeskAgentRegistration(rt, genhelpdesk.HelpdeskAgentConfig{
+		Planner: &mockPlanner{},
+	})
+	require.NoError(t, err)
+	require.Len(t, registration.PromptSpecs, 2)
+
+	// 4. Register agent: rt.RegisterAgent registers PromptSpecs
+	require.NoError(t, rt.RegisterAgent(ctx, registration))
+
+	// 5. Register agent again returns prompt.ErrDuplicatePromptSpec
+	errDup := rt.RegisterAgent(ctx, registration)
+	require.Error(t, errDup)
+	require.True(t, errors.Is(errDup, prompt.ErrDuplicatePromptSpec), "expected ErrDuplicatePromptSpec, got: %v", errDup)
+
+	// 6. Render with registry directly:
+	scope := prompt.Scope{
+		SessionID: "session-1",
+	}
+	strPtr := func(s string) *string { return &s }
+	args := genhelpdesk.TriagePromptArgs{
+		CustomID:  "T-123",
+		CreatedAt: strPtr("2026-11-01"),
+		Author: &genhelpdesk.Author{
+			Name: strPtr("Alice"),
+		},
+		Tags: []*genhelpdesk.Tag{
+			{Label: strPtr("urgent")},
+		},
+	}
+
+	content, err := genhelpdesk.RenderTriagePromptWithRegistry(ctx, reg, scope, args)
+	require.NoError(t, err)
+	require.NotNil(t, content)
+	assert.Contains(t, content.Text, "Ticket T-123 by Alice (Created: 2026-11-01): Thank you for contacting support.")
+
+	// 7. Verify SetOverride behavior
+	badTmpl := "Undeclared: {{ .NonExistent }}"
+	errBad := reg.SetOverride(ctx, genhelpdesk.PromptTriageID, scope, badTmpl, nil)
+	require.Error(t, errBad)
+	require.True(t, errors.Is(errBad, prompt.ErrTemplateFieldNotFound), "expected ErrTemplateFieldNotFound, got: %v", errBad)
+
+	goodTmpl := "Overridden: {{ .CustomID }} from {{ .Author.Name }}"
+	require.NoError(t, reg.SetOverride(ctx, genhelpdesk.PromptTriageID, scope, goodTmpl, nil))
+
+	contentOverridden, err := genhelpdesk.RenderTriagePromptWithRegistry(ctx, reg, scope, args)
+	require.NoError(t, err)
+	assert.Equal(t, "Overridden: T-123 from Alice", contentOverridden.Text)
+
+	// 8. Test RenderTriagePrompt with PlannerContext
+	pctx := &mockPlannerContext{reg: reg, scope: scope}
+	contentPctx, err := genhelpdesk.RenderTriagePrompt(ctx, pctx, args)
+	require.NoError(t, err)
+	assert.Equal(t, "Overridden: T-123 from Alice", contentPctx.Text)
+}
+`
+	require.NoError(t, os.WriteFile(filepath.Join(root, "gen/support/agents/helpdesk/prompts_compiled_test.go"), []byte(testSource), 0o600))
+
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "go", "test", "-mod=mod", "-race", "-count=1", "-v", "./gen/support/agents/helpdesk")
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(), "GOWORK=off")
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(out))
 }

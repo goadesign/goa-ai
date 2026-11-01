@@ -3,8 +3,10 @@ package agent
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"goa.design/goa-ai/codegen/naming"
+	"goa.design/goa/v3/codegen"
 	"goa.design/goa/v3/eval"
 	goaexpr "goa.design/goa/v3/expr"
 )
@@ -92,8 +94,13 @@ func (r *RootExpr) WalkSets(walk eval.SetWalker) {
 	if len(r.Completions) > 0 {
 		walk(eval.ToExpressionSet(r.Completions))
 	}
-	if len(r.Prompts) > 0 {
-		walk(eval.ToExpressionSet(r.Prompts))
+	var prompts []*PromptExpr
+	for _, agent := range r.Agents {
+		prompts = append(prompts, agent.Prompts...)
+	}
+	prompts = append(prompts, r.Prompts...)
+	if len(prompts) > 0 {
+		walk(eval.ToExpressionSet(prompts))
 	}
 
 	var groups eval.ExpressionSet
@@ -446,7 +453,8 @@ func (r *RootExpr) validateCompletionNames(verr *eval.ValidationErrors) {
 	}
 }
 
-// validatePromptIDs verifies that all prompt IDs are globally unique across services and agents.
+// validatePromptIDs verifies that all prompt IDs are globally unique across services and agents,
+// enforces Go identifier uniqueness per owner, and validates static sub-prompt composition.
 func (r *RootExpr) validatePromptIDs(verr *eval.ValidationErrors) {
 	prompts := make(map[string]*PromptExpr)
 	recordPrompt := func(p *PromptExpr) {
@@ -470,6 +478,110 @@ func (r *RootExpr) validatePromptIDs(verr *eval.ValidationErrors) {
 	for _, a := range r.Agents {
 		for _, p := range a.Prompts {
 			recordPrompt(p)
+		}
+	}
+
+	// Check Go identifier collisions for service prompts within the same service
+	servicePrompts := make(map[string]map[string]*PromptExpr)
+	for _, p := range r.Prompts {
+		if p == nil || p.Service == nil {
+			continue
+		}
+		svcName := p.Service.Name
+		if servicePrompts[svcName] == nil {
+			servicePrompts[svcName] = make(map[string]*PromptExpr)
+		}
+		goIdent := codegen.Goify(p.Name, true)
+		if other, dup := servicePrompts[svcName][goIdent]; dup {
+			verr.Add(p, "prompt %q in service %q generates Go identifier %q which duplicates prompt %q", p.Name, svcName, goIdent, other.Name)
+			continue
+		}
+		servicePrompts[svcName][goIdent] = p
+	}
+
+	// Check Go identifier collisions for agent prompts within the same agent
+	for _, a := range r.Agents {
+		agentPrompts := make(map[string]*PromptExpr)
+		for _, p := range a.Prompts {
+			if p == nil {
+				continue
+			}
+			goIdent := codegen.Goify(p.Name, true)
+			if other, dup := agentPrompts[goIdent]; dup {
+				verr.Add(p, "prompt %q on agent %q generates Go identifier %q which duplicates prompt %q", p.Name, a.Name, goIdent, other.Name)
+				continue
+			}
+			agentPrompts[goIdent] = p
+		}
+	}
+
+	r.validatePromptCompositions(verr, prompts)
+}
+
+// validatePromptCompositions verifies that any literal sub-prompt ID rendered via {{ render "id" ... }}
+// exists in the declared prompts and that no static composition cycles exist.
+func (r *RootExpr) validatePromptCompositions(verr *eval.ValidationErrors, allPrompts map[string]*PromptExpr) {
+	graph := make(map[string][]string)
+	for id, p := range allPrompts {
+		rendered := extractRenderedPromptIDs(p.Template)
+		for _, subID := range rendered {
+			if _, ok := allPrompts[subID]; !ok {
+				verr.Add(p, "prompt %q renders unknown prompt %q", p.ID(), subID)
+				continue
+			}
+			graph[id] = append(graph[id], subID)
+		}
+	}
+
+	const (
+		white = 0
+		gray  = 1
+		black = 2
+	)
+	state := make(map[string]int)
+	var path []string
+
+	var dfs func(u string) bool
+	dfs = func(u string) bool {
+		state[u] = gray
+		path = append(path, u)
+
+		for _, v := range graph[u] {
+			if state[v] == gray {
+				cycleStart := 0
+				for i, node := range path {
+					if node == v {
+						cycleStart = i
+						break
+					}
+				}
+				cycleTrace := append(append([]string(nil), path[cycleStart:]...), v)
+				p := allPrompts[u]
+				verr.Add(p, "cyclical prompt composition detected: %s", strings.Join(cycleTrace, " -> "))
+				return true
+			}
+			if state[v] == white {
+				if dfs(v) {
+					return true
+				}
+			}
+		}
+
+		path = path[:len(path)-1]
+		state[u] = black
+		return false
+	}
+
+	// Sort keys for deterministic error reporting
+	keys := make([]string, 0, len(allPrompts))
+	for id := range allPrompts {
+		keys = append(keys, id)
+	}
+	sort.Strings(keys)
+
+	for _, id := range keys {
+		if state[id] == white {
+			dfs(id)
 		}
 	}
 }

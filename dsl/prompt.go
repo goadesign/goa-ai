@@ -98,6 +98,12 @@ func Prompt(name string, args ...any) {
 		})
 
 	case *agentsexpr.AgentExpr:
+		for _, existing := range parent.Prompts {
+			if existing.Name == name {
+				eval.ReportError("duplicate prompt %q on agent %q", name, parent.Name)
+				return
+			}
+		}
 		var description string
 		var dslf func()
 		for _, arg := range args {
@@ -133,6 +139,14 @@ func Prompt(name string, args ...any) {
 		}
 
 	case *goaexpr.ServiceExpr:
+		if agentsexpr.Root != nil {
+			for _, existing := range agentsexpr.Root.Prompts {
+				if existing.Service == parent && existing.Name == name {
+					eval.ReportError("duplicate prompt %q on service %q", name, parent.Name)
+					return
+				}
+			}
+		}
 		var description string
 		var dslf func()
 		for _, arg := range args {
@@ -207,6 +221,13 @@ func SystemPrompt(args ...any) {
 	if !ok {
 		eval.IncompatibleDSL()
 		return
+	}
+
+	for _, existing := range parent.Prompts {
+		if existing.Name == "system" {
+			eval.ReportError("duplicate prompt %q on agent %q: system prompt already declared", "system", parent.Name)
+			return
+		}
 	}
 
 	if len(args) == 0 {

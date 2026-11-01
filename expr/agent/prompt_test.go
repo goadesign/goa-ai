@@ -33,7 +33,7 @@ func TestPromptExprValidateSuccess(t *testing.T) {
 	p := &PromptExpr{
 		Name:     "evaluate",
 		Role:     prompt.PromptRoleUser,
-		Template: "Hello {{ .AssistantName }}, please triage {{ .ticket_id }}! {{ render \"other.id\" . }}",
+		Template: "Hello {{ .AssistantName }}, please triage {{ .TicketID }}! {{ render \"other.id\" . }}",
 		Args:     argsAttr,
 		Service:  service,
 		Agent:    agent,
@@ -57,7 +57,7 @@ func TestPromptExprValidateMalformedTemplate(t *testing.T) {
 
 	err := p.Validate()
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to parse template")
+	assert.Contains(t, err.Error(), "prompt template parse failed")
 }
 
 func TestPromptExprValidateUndeclaredField(t *testing.T) {
@@ -87,7 +87,7 @@ func TestPromptExprValidateUndeclaredField(t *testing.T) {
 
 		err := p.Validate()
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "template references undeclared argument \".TypoField\" on Args contract")
+		assert.Contains(t, err.Error(), "field \"TypoField\" not declared in prompt spec")
 	})
 
 	t.Run("field with no args declared", func(t *testing.T) {
@@ -101,8 +101,72 @@ func TestPromptExprValidateUndeclaredField(t *testing.T) {
 
 		err := p.Validate()
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "template references undeclared argument \".AnyField\" but prompt declares no Args")
+		assert.Contains(t, err.Error(), "field \"AnyField\" not declared in prompt spec")
 	})
+}
+
+func TestPromptExprValidateRejectNonObjectArgs(t *testing.T) {
+	service := &goaexpr.ServiceExpr{Name: "tickets"}
+	agent := &AgentExpr{Name: "triage", Service: service}
+
+	t.Run("primitive args", func(t *testing.T) {
+		p := &PromptExpr{
+			Name:     "evaluate",
+			Role:     prompt.PromptRoleUser,
+			Template: "Hello {{ . }}",
+			Args:     &goaexpr.AttributeExpr{Type: goaexpr.String},
+			Service:  service,
+			Agent:    agent,
+		}
+		err := p.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "Prompt Args must be an object or a user type backed by an object")
+	})
+
+	t.Run("array args", func(t *testing.T) {
+		p := &PromptExpr{
+			Name:     "evaluate",
+			Role:     prompt.PromptRoleUser,
+			Template: "Hello",
+			Args:     &goaexpr.AttributeExpr{Type: &goaexpr.Array{ElemType: &goaexpr.AttributeExpr{Type: goaexpr.String}}},
+			Service:  service,
+			Agent:    agent,
+		}
+		err := p.Validate()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "Prompt Args must be an object or a user type backed by an object")
+	})
+}
+
+func TestPromptExprValidateCustomStructFieldName(t *testing.T) {
+	service := &goaexpr.ServiceExpr{Name: "tickets"}
+	agent := &AgentExpr{Name: "triage", Service: service}
+
+	argsAttr := &goaexpr.AttributeExpr{
+		Type: &goaexpr.Object{
+			&goaexpr.NamedAttributeExpr{
+				Name: "ticket_id",
+				Attribute: &goaexpr.AttributeExpr{
+					Type: goaexpr.String,
+					Meta: goaexpr.MetaExpr{
+						"struct:field:name": []string{"CustomTicketID"},
+					},
+				},
+			},
+		},
+	}
+
+	p := &PromptExpr{
+		Name:     "evaluate",
+		Role:     prompt.PromptRoleUser,
+		Template: "Triage {{ .CustomTicketID }}",
+		Args:     argsAttr,
+		Service:  service,
+		Agent:    agent,
+	}
+
+	err := p.Validate()
+	require.NoError(t, err)
 }
 
 func TestPromptExprValidateRole(t *testing.T) {
@@ -196,4 +260,84 @@ func TestRootExprValidateRejectsDuplicatePromptIDs(t *testing.T) {
 	err := root.Validate()
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "prompt ID \"support.assistant.system\" duplicates prompt")
+}
+
+func TestRootExprValidateRejectsGoIdentifierCollision(t *testing.T) {
+	service := &goaexpr.ServiceExpr{Name: "support"}
+	agent := &AgentExpr{Name: "assistant", Service: service}
+
+	p1 := &PromptExpr{
+		Name:     "greet-one",
+		Role:     prompt.PromptRoleUser,
+		Template: "Hello 1",
+		Service:  service,
+		Agent:    agent,
+	}
+	p2 := &PromptExpr{
+		Name:     "greet_one",
+		Role:     prompt.PromptRoleUser,
+		Template: "Hello 2",
+		Service:  service,
+		Agent:    agent,
+	}
+	agent.Prompts = []*PromptExpr{p1, p2}
+
+	root := &RootExpr{
+		Agents: []*AgentExpr{agent},
+	}
+
+	err := root.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "generates Go identifier \"GreetOne\" which duplicates prompt \"greet-one\"")
+}
+
+func TestRootExprValidateRejectsUnknownRenderedPrompt(t *testing.T) {
+	service := &goaexpr.ServiceExpr{Name: "support"}
+	agent := &AgentExpr{Name: "assistant", Service: service}
+
+	p := &PromptExpr{
+		Name:     "main",
+		Role:     prompt.PromptRoleUser,
+		Template: `Welcome {{ render "unknown.prompt.id" . }}`,
+		Service:  service,
+		Agent:    agent,
+	}
+	agent.Prompts = []*PromptExpr{p}
+
+	root := &RootExpr{
+		Agents: []*AgentExpr{agent},
+	}
+
+	err := root.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), `renders unknown prompt "unknown.prompt.id"`)
+}
+
+func TestRootExprValidateRejectsCompositionCycle(t *testing.T) {
+	service := &goaexpr.ServiceExpr{Name: "support"}
+	agent := &AgentExpr{Name: "assistant", Service: service}
+
+	p1 := &PromptExpr{
+		Name:     "prompt_a",
+		Role:     prompt.PromptRoleUser,
+		Template: `A calls B: {{ render "support.assistant.prompt_b" . }}`,
+		Service:  service,
+		Agent:    agent,
+	}
+	p2 := &PromptExpr{
+		Name:     "prompt_b",
+		Role:     prompt.PromptRoleUser,
+		Template: `B calls A: {{ render "support.assistant.prompt_a" . }}`,
+		Service:  service,
+		Agent:    agent,
+	}
+	agent.Prompts = []*PromptExpr{p1, p2}
+
+	root := &RootExpr{
+		Agents: []*AgentExpr{agent},
+	}
+
+	err := root.Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cyclical prompt composition detected: support.assistant.prompt_a -> support.assistant.prompt_b -> support.assistant.prompt_a")
 }

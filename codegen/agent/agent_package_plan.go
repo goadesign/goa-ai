@@ -131,8 +131,6 @@ type (
 		FmtAlias string
 		// HintsAlias names the package that compiles generated hint templates.
 		HintsAlias string
-		// PromptAlias names the prompt package.
-		PromptAlias string
 		// RuntimeAlias names the package that registers and runs agents.
 		RuntimeAlias string
 		// TimeAlias names the standard time package.
@@ -362,9 +360,6 @@ func (p *agentPackagePlan) declareFileImports(agent *agentir.Agent) error {
 	}
 	if len(agent.UsedToolsets)+len(agent.ExportedToolsets) > 0 && agent.ToolSpecsImportPath != "" {
 		p.registryPaths = append(p.registryPaths, agent.ToolSpecsImportPath)
-	}
-	if agent.Expr != nil && len(agent.Expr.Prompts) > 0 {
-		p.registryPaths = append(p.registryPaths, promptImportPath)
 	}
 
 	requests := map[string]string{
@@ -733,9 +728,6 @@ func (p *agentPackagePlan) linkFileData(agent *AgentData, agentsByID map[string]
 	registry.AgentVar = localNameForImports("agent", registry.Imports)
 	if importPathIncluded(p.registryPaths, hintsImportPath) {
 		registry.HintsAlias = p.pkg.ImportName(hintsImportPath)
-	}
-	if importPathIncluded(p.registryPaths, promptImportPath) {
-		registry.PromptAlias = p.pkg.ImportName(promptImportPath)
 	}
 	if importPathIncluded(p.registryPaths, toolsImportPath) {
 		registry.ToolsAlias = p.pkg.ImportName(toolsImportPath)

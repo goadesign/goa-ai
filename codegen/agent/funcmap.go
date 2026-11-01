@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"goa.design/goa-ai/runtime/agent/tools"
 	goacodegen "goa.design/goa/v3/codegen"
 	goaexpr "goa.design/goa/v3/expr"
 )
@@ -19,24 +20,9 @@ func templateFuncMap() map[string]any {
 		"resultHintTemplate": resultHintTemplate,
 		"goify":              goacodegen.Goify,
 		"nativeTaskDispatch": nativeTaskDispatchSource,
-		"promptRoleTitle": func(role string) string {
-			switch role {
-			case "system":
-				return "System"
-			case "user":
-				return "User"
-			case "tool":
-				return "Tool"
-			case "synthesis":
-				return "Synthesis"
-			default:
-				if len(role) == 0 {
-					return "User"
-				}
-				return strings.ToUpper(role[:1]) + role[1:]
-			}
-		},
-		"renderPromptFields": renderPromptFieldsSource,
+		"promptRoleTitle":    promptRoleTitle,
+		"renderPromptFields": formatFieldSpecs,
+		"formatFieldSpecs":   formatFieldSpecs,
 		"trimPrefix":         strings.TrimPrefix,
 		"trimSuffix":         strings.TrimSuffix,
 		"ToLower":            strings.ToLower,
@@ -174,22 +160,39 @@ func isSimpleAttr(a *goaexpr.AttributeExpr) bool {
 	}
 }
 
-// renderPromptFieldsSource formats field metadata into Go source for PromptSpec.Fields.
-func renderPromptFieldsSource(fields []*fieldMetadataData) string {
+// promptRoleTitle returns the Go identifier fragment for a PromptRole.
+func promptRoleTitle(role string) string {
+	switch role {
+	case "system":
+		return "System"
+	case "user":
+		return "User"
+	case "tool":
+		return "Tool"
+	case "synthesis":
+		return "Synthesis"
+	default:
+		panic(fmt.Sprintf("unknown prompt role: %q", role))
+	}
+}
+
+// formatFieldSpecs formats prompt field metadata into Go source for PromptSpec.Fields.
+func formatFieldSpecs(fields []tools.FieldMetadata) string {
 	if len(fields) == 0 {
 		return "nil"
 	}
 	var b strings.Builder
-	b.WriteString("[]tools.FieldSpec{\n")
+	b.WriteString("[]tools.FieldMetadata{\n")
 	for _, f := range fields {
 		b.WriteString("\t\t\t{\n")
 		if len(f.Path) > 0 {
 			b.WriteString("\t\t\t\tPath: []tools.FieldPathSegment{\n")
 			for _, seg := range f.Path {
-				if seg.Dynamic {
+				switch s := seg.(type) {
+				case tools.FixedField:
+					fmt.Fprintf(&b, "\t\t\t\t\ttools.FixedField(%q),\n", string(s))
+				case tools.DynamicField:
 					b.WriteString("\t\t\t\t\ttools.DynamicField{},\n")
-				} else {
-					fmt.Fprintf(&b, "\t\t\t\t\ttools.FixedField(%q),\n", seg.Name)
 				}
 			}
 			b.WriteString("\t\t\t\t},\n")
@@ -199,13 +202,6 @@ func renderPromptFieldsSource(fields []*fieldMetadataData) string {
 		}
 		if f.Description != "" {
 			fmt.Fprintf(&b, "\t\t\t\tDescription: %q,\n", f.Description)
-		}
-		if len(f.DiscriminatorValues) > 0 {
-			b.WriteString("\t\t\t\tDiscriminatorValues: []string{\n")
-			for _, dv := range f.DiscriminatorValues {
-				fmt.Fprintf(&b, "\t\t\t\t\t%q,\n", dv)
-			}
-			b.WriteString("\t\t\t\t},\n")
 		}
 		b.WriteString("\t\t\t},\n")
 	}

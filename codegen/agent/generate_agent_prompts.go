@@ -10,17 +10,27 @@ package codegen
 import (
 	"encoding/json"
 	"fmt"
+	"path"
 	"path/filepath"
 	"sort"
 
 	"goa.design/goa/v3/codegen"
+	goaexpr "goa.design/goa/v3/expr"
 )
 
 type (
+	// PromptUserTypeData describes one user type definition emitted in prompts.go.
+	PromptUserTypeData struct {
+		Name string
+		Def  string
+	}
+
 	// promptFileTemplateData contains the data passed to agent_prompts.go.tpl.
 	promptFileTemplateData struct {
-		AgentID string
-		Prompts []*PromptData
+		AgentID   string
+		IsService bool
+		Prompts   []*PromptData
+		UserTypes []*PromptUserTypeData
 	}
 
 	// promptSchemaRecord represents one prompt in specs/prompt_schemas.json.
@@ -50,34 +60,13 @@ type (
 )
 
 // agentPromptsFile writes gen/<svc>/agents/<agent>/prompts.go containing canonical prompt IDs,
-// precomputed PromptSpecs, PromptSpecs aggregator, and typed Render helpers.
+// precomputed PromptSpecs, PromptSpecs aggregator, typed Render helpers, and RegisterPrompts.
 func agentPromptsFile(agent *AgentData) *codegen.File {
 	if len(agent.Prompts) == 0 {
 		return nil
 	}
 
-	hasFields := false
-	for _, p := range agent.Prompts {
-		if len(p.Fields) > 0 {
-			hasFields = true
-			break
-		}
-	}
-
-	imports := []*codegen.ImportSpec{
-		{Path: "context"},
-		{Path: "errors"},
-		{Path: "goa.design/goa-ai/runtime/agent/planner"},
-		{Path: "goa.design/goa-ai/runtime/agent/prompt"},
-	}
-	if hasFields {
-		imports = append(imports, &codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/tools"})
-	}
-
-	data := &promptFileTemplateData{
-		AgentID: agent.ID,
-		Prompts: agent.Prompts,
-	}
+	data, imports := buildPromptFileTemplateData(agent.Prompts, agent.ID, false, agent.Genpkg)
 
 	sections := []*codegen.SectionTemplate{
 		codegen.Header(agent.StructName+" prompt specifications and helpers", agent.PackageName, imports),
@@ -157,28 +146,7 @@ func servicePromptsFiles(svc *ServiceAgentsData) ([]*codegen.File, error) {
 		return nil, nil
 	}
 
-	hasFields := false
-	for _, p := range svc.Prompts {
-		if len(p.Fields) > 0 {
-			hasFields = true
-			break
-		}
-	}
-
-	imports := []*codegen.ImportSpec{
-		{Path: "context"},
-		{Path: "errors"},
-		{Path: "goa.design/goa-ai/runtime/agent/planner"},
-		{Path: "goa.design/goa-ai/runtime/agent/prompt"},
-	}
-	if hasFields {
-		imports = append(imports, &codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/tools"})
-	}
-
-	data := &promptFileTemplateData{
-		AgentID: "",
-		Prompts: svc.Prompts,
-	}
+	data, imports := buildPromptFileTemplateData(svc.Prompts, "", true, svc.Genpkg)
 
 	dir := filepath.Join(codegen.Gendir, svc.Service.PathName, "prompts")
 	promptsFile := &codegen.File{
@@ -239,4 +207,131 @@ func servicePromptsFiles(svc *ServiceAgentsData) ([]*codegen.File, error) {
 	}
 
 	return []*codegen.File{promptsFile, jsonFile}, nil
+}
+
+// buildPromptFileTemplateData collects nested user types, resolves imports, and plans
+// prompt template data using a single shared NameScope.
+func buildPromptFileTemplateData(prompts []*PromptData, agentID string, isService bool, genpkg string) (*promptFileTemplateData, []*codegen.ImportSpec) {
+	scope := codegen.NewNameScope()
+	for _, p := range prompts {
+		scope.Unique(p.ArgsTypeName)
+	}
+
+	var (
+		userTypes   []goaexpr.UserType
+		seenTypes   = make(map[string]bool)
+		seenImports = make(map[string]*codegen.ImportSpec)
+	)
+
+	var collectTypes func(att *goaexpr.AttributeExpr)
+	collectTypes = func(att *goaexpr.AttributeExpr) {
+		if att == nil || att.Type == nil {
+			return
+		}
+		for _, imp := range codegen.GetMetaTypeImports(att) {
+			if imp != nil && imp.Path != "" {
+				seenImports[imp.Path] = imp
+			}
+		}
+		if ut, ok := att.Type.(goaexpr.UserType); ok {
+			loc := codegen.UserTypeLocation(ut)
+			if loc != nil {
+				importPath := path.Join(genpkg, loc.RelImportPath)
+				seenImports[importPath] = &codegen.ImportSpec{
+					Path: importPath,
+					Name: loc.PackageName(),
+				}
+				return
+			}
+			id := ut.ID()
+			if !seenTypes[id] {
+				seenTypes[id] = true
+				collectTypes(ut.Attribute())
+				userTypes = append(userTypes, ut)
+			}
+			return
+		}
+		if obj := goaexpr.AsObject(att.Type); obj != nil {
+			for _, nat := range *obj {
+				if nat != nil {
+					collectTypes(nat.Attribute)
+				}
+			}
+			return
+		}
+		if arr := goaexpr.AsArray(att.Type); arr != nil {
+			collectTypes(arr.ElemType)
+			return
+		}
+		if mp := goaexpr.AsMap(att.Type); mp != nil {
+			collectTypes(mp.KeyType)
+			collectTypes(mp.ElemType)
+			return
+		}
+		if un := goaexpr.AsUnion(att.Type); un != nil {
+			for _, nat := range un.Values {
+				if nat != nil {
+					collectTypes(nat.Attribute)
+				}
+			}
+		}
+	}
+
+	for _, p := range prompts {
+		if p.Expr != nil && p.Expr.Args != nil {
+			collectTypes(p.Expr.Args)
+		}
+	}
+
+	userTypeData := make([]*PromptUserTypeData, 0, len(userTypes))
+	for _, ut := range userTypes {
+		typeName := scope.GoTypeName(&goaexpr.AttributeExpr{Type: ut})
+		def := scope.GoTypeDef(ut.Attribute(), false, true)
+		userTypeData = append(userTypeData, &PromptUserTypeData{
+			Name: typeName,
+			Def:  def,
+		})
+	}
+
+	for _, p := range prompts {
+		if p.HasArgs && p.Expr != nil && p.Expr.Args != nil {
+			p.ArgsDef = scope.GoTypeDef(p.Expr.Args, false, true)
+		}
+	}
+
+	hasFields := false
+	for _, p := range prompts {
+		if len(p.Fields) > 0 {
+			hasFields = true
+			break
+		}
+	}
+
+	imports := []*codegen.ImportSpec{
+		{Path: "context"},
+		{Path: "errors"},
+		{Path: "goa.design/goa-ai/runtime/agent/planner"},
+		{Path: "goa.design/goa-ai/runtime/agent/prompt"},
+	}
+	if hasFields {
+		imports = append(imports, &codegen.ImportSpec{Path: "goa.design/goa-ai/runtime/agent/tools"})
+	}
+
+	importPaths := make([]string, 0, len(seenImports))
+	for p := range seenImports {
+		importPaths = append(importPaths, p)
+	}
+	sort.Strings(importPaths)
+	for _, p := range importPaths {
+		imports = append(imports, seenImports[p])
+	}
+
+	tplData := &promptFileTemplateData{
+		AgentID:   agentID,
+		IsService: isService,
+		Prompts:   prompts,
+		UserTypes: userTypeData,
+	}
+
+	return tplData, imports
 }

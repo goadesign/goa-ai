@@ -249,6 +249,100 @@ func TestPromptDSLRejections(t *testing.T) {
 			},
 			want: "invalid prompt role",
 		},
+		{
+			name: "Duplicate prompt on agent",
+			dsl: func() {
+				API("test", func() {})
+				Service("svc", func() {
+					Agent("agent", "desc", func() {
+						Prompt("greet", func() { Template("Hello") })
+						Prompt("greet", func() { Template("Hi") })
+					})
+				})
+			},
+			want: `duplicate prompt "greet" on agent "agent"`,
+		},
+		{
+			name: "Duplicate system prompt on agent",
+			dsl: func() {
+				API("test", func() {})
+				Service("svc", func() {
+					Agent("agent", "desc", func() {
+						SystemPrompt("You are bot 1.")
+						SystemPrompt("You are bot 2.")
+					})
+				})
+			},
+			want: `duplicate prompt "system" on agent "agent"`,
+		},
+		{
+			name: "Duplicate prompt on service",
+			dsl: func() {
+				API("test", func() {})
+				Service("svc", func() {
+					Prompt("greet", func() { Template("Hello") })
+					Prompt("greet", func() { Template("Hi") })
+				})
+			},
+			want: `duplicate prompt "greet" on service "svc"`,
+		},
+		{
+			name: "Agent prompt with empty template fails RunDSL",
+			dsl: func() {
+				API("test", func() {})
+				Service("svc", func() {
+					Agent("agent", "desc", func() {
+						Prompt("empty_tmpl", func() {
+							Role("user")
+						})
+					})
+				})
+			},
+			want: "prompt template cannot be empty",
+		},
+		{
+			name: "Agent prompt with bad template syntax fails RunDSL",
+			dsl: func() {
+				API("test", func() {})
+				Service("svc", func() {
+					Agent("agent", "desc", func() {
+						Prompt("bad_syntax", func() {
+							Template("Hello {{ .Unclosed")
+						})
+					})
+				})
+			},
+			want: "prompt template parse failed",
+		},
+		{
+			name: "Agent prompt with undeclared field access fails RunDSL",
+			dsl: func() {
+				API("test", func() {})
+				Service("svc", func() {
+					Agent("agent", "desc", func() {
+						Prompt("undeclared", func() {
+							Template("Hello {{ .MissingField }}")
+						})
+					})
+				})
+			},
+			want: `field "MissingField" not declared in prompt spec`,
+		},
+		{
+			name: "Agent prompt with non-object Args fails RunDSL",
+			dsl: func() {
+				API("test", func() {})
+				Service("svc", func() {
+					Agent("agent", "desc", func() {
+						Prompt("bad_args", func() {
+							Template("Hello")
+							Args(String)
+						})
+					})
+				})
+			},
+			want: "Prompt Args must be an object or a user type backed by an object",
+		},
 	}
 
 	for _, tt := range tests {
