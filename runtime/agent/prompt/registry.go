@@ -109,7 +109,7 @@ func (r *Registry) Spec(id Ident) (PromptSpec, bool) {
 }
 
 // ValidateOverride checks that templateSource is valid for the prompt registered with id,
-// verifying syntax and checking field accesses against spec.Fields.
+// verifying syntax and checking field accesses against spec.ArgsType.
 func (r *Registry) ValidateOverride(id Ident, templateSource string) error {
 	if id == "" {
 		return fmt.Errorf("%w: id is required", ErrPromptNotFound)

@@ -38,7 +38,7 @@ type (
 		// Funcs is the template function map used when rendering this prompt.
 		Funcs template.FuncMap
 		// ArgsType is the Go type of the template data contract when the prompt
-		// takes a typed input struct (or reflect.TypeFor[struct{}]() for generated
+		// takes a Go template-data type (or reflect.TypeFor[struct{}]() for generated
 		// zero-argument prompts). When nil, the prompt accepts untyped/dynamic data
 		// and only template syntax is validated.
 		ArgsType reflect.Type
