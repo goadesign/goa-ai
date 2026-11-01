@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"iter"
 	"reflect"
 	"strings"
 	"testing"
@@ -591,7 +592,7 @@ func TestRegistryStaticFieldValidationAST(t *testing.T) {
 
 	reg := NewRegistry(nil)
 
-	// Untyped manual prompt (len(spec.Fields) == 0): accepts arbitrary fields
+	// Untyped manual prompt (spec.ArgsType == nil): accepts arbitrary fields
 	if err := reg.Register(PromptSpec{
 		ID:       "untyped.prompt",
 		AgentID:  "agent",
@@ -1218,6 +1219,116 @@ func TestSemanticsReview(t *testing.T) {
 			}
 			if execution != nil && !errors.Is(validation, ErrTemplateFieldNotFound) {
 				t.Fatalf("expected ErrTemplateFieldNotFound when execution fails, got: %v", validation)
+			}
+		})
+	}
+}
+
+type (
+	// qa79Person is a test helper for semantic oracle review.
+	qa79Person struct{ Label string }
+
+	// qa79Slice is a test helper for slice addressability checks.
+	qa79Slice []qa79Person
+
+	// qa79Array is a test helper for array slicing checks.
+	qa79Array [1]qa79Person
+
+	// qa79Root is the root data structure for the semantic oracle suite.
+	qa79Root struct {
+		P     qa79Person
+		Flag  bool
+		Items []qa79Person
+		Sl    qa79Slice
+		Arr   qa79Array
+		Seq   iter.Seq[qa79Person]
+		Ch    chan string
+	}
+)
+
+// PointerLabel is a pointer receiver method on qa79Slice.
+func (*qa79Slice) PointerLabel() string { return "ptr-slice" }
+
+// Label is a value receiver method on qa79Array.
+func (qa79Array) Label() string { return "array-label" }
+
+func TestQA79SemanticOracle(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name           string
+		src            string
+		funcs          template.FuncMap
+		wantValidation bool
+		wantExecution  bool
+	}{
+		{"template_pipeline_assignment", `{{define "sub"}}{{end}}{{$x := .P}}{{template "sub" $x = "text"}}{{$x.Label}}`, nil, false, false},
+		{"template_pipeline_declaration", `{{define "sub"}}{{end}}{{template "sub" $x := .P}}{{$x.Missing}}`, nil, false, false},
+		{"nested_pipeline_assignment", `{{$x := .P}}{{printf "%s" ($x = "text")}}{{$x.Label}}`, nil, false, false},
+		{"if_shadow_pipeline", `{{$x := .P}}{{if $x := true}}{{end}}{{$x.Label}}`, nil, true, true},
+		{"if_shadow_body", `{{$x := .P}}{{if true}}{{$x := "inner"}}{{end}}{{$x.Label}}`, nil, true, true},
+		{"with_shadow_pipeline", `{{$x := .P}}{{with $x := "inner"}}{{else}}{{end}}{{$x.Label}}`, nil, true, true},
+		{"range_shadow_pipeline", `{{$x := .P}}{{range $x := .Items}}{{else}}{{end}}{{$x.Label}}`, nil, true, true},
+		{"branch_unsafe_union", `{{$x := .P}}{{if .Flag}}{{$x = "text"}}{{end}}{{$x.Label}}`, nil, false, false},
+		{"and_mixed_known_result", `{{(and .P "text").Missing}}`, nil, false, false},
+		{"or_mixed_known_result", `{{(or .P "text").Missing}}`, nil, false, false},
+		{"range_loop_reassignment", `{{$x := .P}}{{range .Items}}{{$x.Label}}{{$x = "text"}}{{end}}`, nil, false, false},
+		{"slice_result_addressability", `{{(slice .Sl 0 1).PointerLabel}}`, nil, false, false},
+		{"array_slice_result", `{{(slice .Arr 0 1).Label}}`, nil, false, false},
+		{"iterator_range", `{{range .Seq}}{{.Label}}{{end}}`, nil, true, true},
+		{"channel_index_type", `{{range $i,$x := .Ch}}{{$i.Missing}}{{end}}`, nil, false, false},
+		{"template_without_data_range", `{{define "sub"}}{{range .}}body{{else}}empty{{end}}{{end}}{{template "sub"}}`, nil, true, true},
+		{"builtin_override_printf", `{{(printf).Label}}`, template.FuncMap{"printf": func() qa79Person { return qa79Person{"override"} }}, true, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ch := make(chan string, 1)
+			ch <- "x"
+			close(ch)
+			data := &qa79Root{
+				P:     qa79Person{"person"},
+				Flag:  true,
+				Items: []qa79Person{{"one"}, {"two"}},
+				Arr:   qa79Array{{"arr"}},
+				Sl:    qa79Slice{{"slice"}},
+				Seq:   func(yield func(qa79Person) bool) { yield(qa79Person{"seq"}) },
+				Ch:    ch,
+			}
+			spec := PromptSpec{
+				ID:       "qa79",
+				Role:     PromptRoleSystem,
+				Template: tc.src,
+				ArgsType: reflect.TypeFor[*qa79Root](),
+				Funcs:    tc.funcs,
+			}
+			validation := ValidatePromptTemplate(spec, tc.src)
+			raw, err := template.New("qa79").Option("missingkey=error").Funcs(tc.funcs).Parse(tc.src)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var b bytes.Buffer
+			execution := raw.Execute(&b, data)
+			reg := NewRegistry(nil)
+			registration := reg.Register(spec)
+			var renderErr error
+			var renderText string
+			if registration == nil {
+				renderData := *data
+				freshCh := make(chan string, 1)
+				freshCh <- "x"
+				close(freshCh)
+				renderData.Ch = freshCh
+				content, err := reg.Render(context.Background(), spec.ID, Scope{}, &renderData)
+				renderErr = err
+				if content != nil {
+					renderText = content.Text
+				}
+			}
+			t.Logf("source=%q validation=%v execution=%v output=%q registration=%v render=%v rendered=%q",
+				tc.src, validation, execution, b.String(), registration, renderErr, renderText)
+			if (validation == nil) != tc.wantValidation || (execution == nil) != tc.wantExecution {
+				t.Errorf("semantic oracle expected validationOK=%t executionOK=%t; got validationOK=%t executionOK=%t",
+					tc.wantValidation, tc.wantExecution, validation == nil, execution == nil)
 			}
 		})
 	}

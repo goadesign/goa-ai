@@ -155,7 +155,7 @@ func (r *reflectType) Range() (Type, Type, error) {
 		return nil, nil, nil
 	}
 
-	switch cur.Kind() { //nolint:exhaustive // Only collection kinds and integers support range.
+	switch cur.Kind() { //nolint:exhaustive // Only collection kinds, integers, and iter functions support range.
 	case reflect.Slice:
 		return ReflectType(reflect.TypeFor[int]()), newReflectType(cur.Elem(), true), nil
 	case reflect.Array:
@@ -163,7 +163,20 @@ func (r *reflectType) Range() (Type, Type, error) {
 	case reflect.Map:
 		return ReflectType(cur.Key()), ReflectType(cur.Elem()), nil
 	case reflect.Chan:
-		return nil, ReflectType(cur.Elem()), nil
+		return ReflectType(reflect.TypeFor[int]()), ReflectType(cur.Elem()), nil
+	case reflect.Func:
+		if cur.NumIn() == 1 && cur.NumOut() == 0 {
+			yield := cur.In(0)
+			if yield.Kind() == reflect.Func && yield.NumOut() == 1 && yield.Out(0).Kind() == reflect.Bool {
+				if yield.NumIn() == 1 {
+					return nilDataType{}, ReflectType(yield.In(0)), nil
+				}
+				if yield.NumIn() == 2 {
+					return ReflectType(yield.In(0)), ReflectType(yield.In(1)), nil
+				}
+			}
+		}
+		return nil, nil, fmt.Errorf("cannot range over type %s", cur)
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
 		return ReflectType(reflect.TypeFor[int]()), ReflectType(cur), nil
@@ -187,9 +200,9 @@ func (nilDataType) Index() (Type, error) {
 	return nil, fmt.Errorf("cannot index nil data")
 }
 
-// Range always fails on nil data.
+// Range allows ranging over untyped nil data (which acts as empty collection).
 func (nilDataType) Range() (Type, Type, error) {
-	return nil, nil, fmt.Errorf("cannot range over nil data")
+	return nilDataType{}, nilDataType{}, nil
 }
 
 // ID returns a composite identifier of all union branch types.
@@ -201,77 +214,54 @@ func (m *multiType) ID() string {
 	return "union:" + strings.Join(ids, "|")
 }
 
-// Member resolves member access across union alternatives.
+// Member resolves member access across union alternatives. An operation is valid only if all alternatives support it.
 func (m *multiType) Member(name string) (Type, error) {
-	var results []Type
-	var lastErr error
+	results := make([]Type, 0, len(m.types))
 	for _, t := range m.types {
 		if t == nil {
-			return nil, nil
+			continue
 		}
 		res, err := t.Member(name)
-		if err == nil {
-			results = append(results, res)
-		} else {
-			lastErr = err
+		if err != nil {
+			return nil, err
 		}
+		results = append(results, res)
 	}
-	if len(results) > 0 {
-		return mergeTypeList(results), nil
-	}
-	if lastErr != nil {
-		return nil, lastErr
-	}
-	return nil, fmt.Errorf("field %q not declared", name)
+	return mergeTypeList(results), nil
 }
 
-// Index resolves indexing across union alternatives.
+// Index resolves indexing across union alternatives. An operation is valid only if all alternatives support it.
 func (m *multiType) Index() (Type, error) {
-	var results []Type
-	var lastErr error
+	results := make([]Type, 0, len(m.types))
 	for _, t := range m.types {
 		if t == nil {
-			return nil, nil
+			continue
 		}
 		res, err := t.Index()
-		if err == nil {
-			results = append(results, res)
-		} else {
-			lastErr = err
+		if err != nil {
+			return nil, err
 		}
+		results = append(results, res)
 	}
-	if len(results) > 0 {
-		return mergeTypeList(results), nil
-	}
-	if lastErr != nil {
-		return nil, lastErr
-	}
-	return nil, fmt.Errorf("cannot index union type")
+	return mergeTypeList(results), nil
 }
 
-// Range resolves ranging across union alternatives.
+// Range resolves ranging across union alternatives. An operation is valid only if all alternatives support it.
 func (m *multiType) Range() (Type, Type, error) {
-	var keyResults, elemResults []Type
-	var lastErr error
+	keyResults := make([]Type, 0, len(m.types))
+	elemResults := make([]Type, 0, len(m.types))
 	for _, t := range m.types {
 		if t == nil {
-			return nil, nil, nil
+			continue
 		}
 		k, e, err := t.Range()
-		if err == nil {
-			keyResults = append(keyResults, k)
-			elemResults = append(elemResults, e)
-		} else {
-			lastErr = err
+		if err != nil {
+			return nil, nil, err
 		}
+		keyResults = append(keyResults, k)
+		elemResults = append(elemResults, e)
 	}
-	if len(elemResults) > 0 {
-		return mergeTypeList(keyResults), mergeTypeList(elemResults), nil
-	}
-	if lastErr != nil {
-		return nil, nil, lastErr
-	}
-	return nil, nil, fmt.Errorf("cannot range over union type")
+	return mergeTypeList(keyResults), mergeTypeList(elemResults), nil
 }
 
 // newReflectType constructs a reflectType with explicit addressability tracking.
