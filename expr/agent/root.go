@@ -26,6 +26,9 @@ type RootExpr struct {
 	// Registries is the collection of all registry expressions defined
 	// in the design.
 	Registries []*RegistryExpr
+	// Prompts is the collection of all service-level prompt expressions not
+	// owned by an agent.
+	Prompts []*PromptExpr
 	// DisableAgentDocs controls whether agent-specific documentation
 	// generation is suppressed.
 	DisableAgentDocs bool
@@ -88,6 +91,9 @@ func (r *RootExpr) WalkSets(walk eval.SetWalker) {
 	walk(eval.ToExpressionSet(registryUses))
 	if len(r.Completions) > 0 {
 		walk(eval.ToExpressionSet(r.Completions))
+	}
+	if len(r.Prompts) > 0 {
+		walk(eval.ToExpressionSet(r.Prompts))
 	}
 
 	var groups eval.ExpressionSet
@@ -152,6 +158,7 @@ func (r *RootExpr) Validate() error {
 	verr := new(eval.ValidationErrors)
 	r.validateSanitizedAgentSlugs(verr)
 	r.validateCompletionNames(verr)
+	r.validatePromptIDs(verr)
 	r.validateAgentToolsetReferences(verr)
 	r.validateAgentToolsetSources(verr)
 	r.validateServiceExportRoutes(verr)
@@ -436,6 +443,34 @@ func (r *RootExpr) validateCompletionNames(verr *eval.ValidationErrors) {
 			continue
 		}
 		slugs[slugKey] = completion
+	}
+}
+
+// validatePromptIDs verifies that all prompt IDs are globally unique across services and agents.
+func (r *RootExpr) validatePromptIDs(verr *eval.ValidationErrors) {
+	prompts := make(map[string]*PromptExpr)
+	recordPrompt := func(p *PromptExpr) {
+		if p == nil {
+			return
+		}
+		id := string(p.ID())
+		if id == "" {
+			return
+		}
+		if other, dup := prompts[id]; dup {
+			verr.Add(p, "prompt ID %q duplicates prompt declared in %s", id, other.EvalName())
+			return
+		}
+		prompts[id] = p
+	}
+
+	for _, p := range r.Prompts {
+		recordPrompt(p)
+	}
+	for _, a := range r.Agents {
+		for _, p := range a.Prompts {
+			recordPrompt(p)
+		}
 	}
 }
 

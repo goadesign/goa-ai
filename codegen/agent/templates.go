@@ -8,6 +8,7 @@ import (
 
 const (
 	agentFileT                 = "agent"
+	agentPromptsFileT          = "agent_prompts"
 	agentToolsFileT            = "agent_tools"
 	agentToolsConsumerT        = "agent_tools_consumer"
 	bootstrapInternalT         = "bootstrap_internal"

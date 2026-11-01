@@ -131,6 +131,8 @@ type (
 		FmtAlias string
 		// HintsAlias names the package that compiles generated hint templates.
 		HintsAlias string
+		// PromptAlias names the prompt package.
+		PromptAlias string
 		// RuntimeAlias names the package that registers and runs agents.
 		RuntimeAlias string
 		// TimeAlias names the standard time package.
@@ -176,6 +178,7 @@ const (
 	mcpRuntimeImportPath     = "goa.design/goa-ai/runtime/mcp"
 	modelImportPath          = "goa.design/goa-ai/runtime/agent/model"
 	plannerImportPath        = "goa.design/goa-ai/runtime/agent/planner"
+	promptImportPath         = "goa.design/goa-ai/runtime/agent/prompt"
 	runtimeImportPath        = "goa.design/goa-ai/runtime/agent/runtime"
 	toolsImportPath          = "goa.design/goa-ai/runtime/agent/tools"
 )
@@ -360,6 +363,9 @@ func (p *agentPackagePlan) declareFileImports(agent *agentir.Agent) error {
 	if len(agent.UsedToolsets)+len(agent.ExportedToolsets) > 0 && agent.ToolSpecsImportPath != "" {
 		p.registryPaths = append(p.registryPaths, agent.ToolSpecsImportPath)
 	}
+	if agent.Expr != nil && len(agent.Expr.Prompts) > 0 {
+		p.registryPaths = append(p.registryPaths, promptImportPath)
+	}
 
 	requests := map[string]string{
 		"context":              "context",
@@ -373,6 +379,7 @@ func (p *agentPackagePlan) declareFileImports(agent *agentir.Agent) error {
 		mcpRuntimeImportPath:   "mcpruntime",
 		modelImportPath:        "model",
 		plannerImportPath:      "planner",
+		promptImportPath:       "prompt",
 		runtimeImportPath:      "agentsruntime",
 		toolsImportPath:        "tools",
 	}
@@ -726,6 +733,9 @@ func (p *agentPackagePlan) linkFileData(agent *AgentData, agentsByID map[string]
 	registry.AgentVar = localNameForImports("agent", registry.Imports)
 	if importPathIncluded(p.registryPaths, hintsImportPath) {
 		registry.HintsAlias = p.pkg.ImportName(hintsImportPath)
+	}
+	if importPathIncluded(p.registryPaths, promptImportPath) {
+		registry.PromptAlias = p.pkg.ImportName(promptImportPath)
 	}
 	if importPathIncluded(p.registryPaths, toolsImportPath) {
 		registry.ToolsAlias = p.pkg.ImportName(toolsImportPath)

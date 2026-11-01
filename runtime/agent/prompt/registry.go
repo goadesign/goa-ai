@@ -7,6 +7,8 @@ import (
 	"sort"
 	"sync"
 	"text/template"
+
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type (
@@ -190,6 +192,9 @@ func clonePromptSpec(spec PromptSpec) PromptSpec {
 		for key, value := range spec.Funcs {
 			cloned.Funcs[key] = value
 		}
+	}
+	if len(spec.Fields) > 0 {
+		cloned.Fields = tools.CloneFieldMetadata(spec.Fields)
 	}
 	return cloned
 }

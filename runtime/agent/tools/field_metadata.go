@@ -67,6 +67,9 @@ type (
 		// union discriminator. It is empty for ordinary fields.
 		DiscriminatorValues []string
 	}
+
+	// FieldSpec describes declared field metadata. It is an alias for FieldMetadata.
+	FieldSpec = FieldMetadata
 )
 
 // CloneFieldMetadata returns an independent copy of field details.

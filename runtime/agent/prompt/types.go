@@ -10,6 +10,8 @@ package prompt
 import (
 	"text/template"
 	"time"
+
+	"goa.design/goa-ai/runtime/agent/tools"
 )
 
 type (
@@ -36,6 +38,8 @@ type (
 		Version string
 		// Funcs is the template function map used when rendering this prompt.
 		Funcs template.FuncMap
+		// Fields describes the declared template data attributes when the prompt takes typed input data. Empty when the prompt takes no structured fields.
+		Fields []tools.FieldSpec
 	}
 
 	// PromptRef is a lightweight prompt identity attached to rendered outputs and

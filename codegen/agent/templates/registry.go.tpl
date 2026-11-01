@@ -125,6 +125,15 @@ func {{ .PackageNames.Register }}(ctx {{ .ContextAlias }}.Context, rt *{{ .Runti
     if err := rt.RegisterAgent(ctx, registration); err != nil {
         return err
     }
+{{- if .Prompts }}
+    if rt.PromptRegistry != nil {
+        for _, spec := range PromptSpecs() {
+            if err := rt.PromptRegistry.Register(spec); err != nil && !{{ .ErrorsAlias }}.Is(err, {{ .PromptAlias }}.ErrDuplicatePromptSpec) {
+                return err
+            }
+        }
+    }
+{{- end }}
 
     // Application code registers toolsets that call Goa service methods.
     // Generated helpers register toolsets provided by another agent.
