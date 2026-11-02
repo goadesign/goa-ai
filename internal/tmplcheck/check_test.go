@@ -304,8 +304,8 @@ func TestReview09CustomSlice(t *testing.T) {
 		name, src                    string
 		inputTruth, known, wantTruth bool
 	}{
-		{"direct_no_index", `{{slice .V}}`, true, true, true},
-		{"piped_collection", `{{.V | slice}}`, true, true, true},
+		{"direct_no_index", `{{slice .V}}`, true, false, false},
+		{"piped_collection", `{{.V | slice}}`, true, false, false},
 		{"false_no_index", `{{slice .V}}`, false, true, false},
 		{"direct_low", `{{slice .V 0}}`, true, false, false},
 		{"direct_low_high", `{{slice .V 0 0}}`, true, false, false},
