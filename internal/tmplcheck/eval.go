@@ -43,6 +43,82 @@ func evalCall(fnType Type) (Type, error) {
 	return nil, fmt.Errorf("non-function of type %s", typeID(fnType))
 }
 
+// evalSlice resolves the result type and static truth of the built-in slice
+// function for a collection operand and index argument count.
+//
+// In Go text/template, slice dereferences its collection operand via indirect
+// before slicing. With zero index arguments, slice returns item[0:item.Len()]:
+//   - A falsy input collection is either nil (which errors at runtime) or has
+//     length 0, so a successful zero-index slice of a known-false operand is
+//     always false.
+//   - After dereferencing, a fixed-size array [N]T always slices to length N,
+//     whose truth is N > 0.
+//   - A non-pointer slice, string, or custom collection type preserves a
+//     known-true input fact across a zero-index slice, whereas a dynamic (nil)
+//     type or pointer to a slice or string does not because a non-nil pointer
+//     to an empty collection is truthy before indirection and falsy after.
+func evalSlice(coll Type, numIdx int) Type {
+	clean := withoutKnownTruth(coll)
+	res, preservesTrue := sliceResultType(clean)
+	if numIdx > 0 {
+		return res
+	}
+	if rt, ok := clean.(*reflectType); ok && rt.t != nil {
+		if cur := deref(rt.t); cur != nil && cur.Kind() == reflect.Array {
+			return withKnownTruth(res, cur.Len() > 0)
+		}
+	}
+	if known, truth := staticTruth(nil, coll); known {
+		if !truth || preservesTrue {
+			return withKnownTruth(res, truth)
+		}
+	}
+	return res
+}
+
+// sliceResultType returns the static Type produced by slicing clean (with
+// outer known-truth wrappers already stripped) and reports whether clean is a
+// non-pointer collection type whose truthiness is invariant under indirect.
+func sliceResultType(clean Type) (Type, bool) {
+	if clean == nil || isNilDataType(clean) {
+		return clean, false
+	}
+	if rt, ok := clean.(*reflectType); ok {
+		if rt.t == nil {
+			return clean, false
+		}
+		cur := deref(rt.t)
+		if cur == nil {
+			return clean, false
+		}
+		switch cur.Kind() { //nolint:exhaustive // Only array, slice, and string support slicing.
+		case reflect.Array:
+			return ReflectType(reflect.SliceOf(cur.Elem())), cur.Len() > 0
+		case reflect.Slice, reflect.String:
+			isDirect := rt.t.Kind() == reflect.Slice || rt.t.Kind() == reflect.String
+			return ReflectType(cur), isDirect
+		default:
+			return ReflectType(cur), false
+		}
+	}
+	if mt, ok := clean.(*multiType); ok {
+		if len(mt.types) == 0 {
+			return clean, false
+		}
+		results := make([]Type, len(mt.types))
+		allPreserve := true
+		for i, alt := range mt.types {
+			r, p := sliceResultType(withoutKnownTruth(alt))
+			results[i] = r
+			if !p {
+				allPreserve = false
+			}
+		}
+		return withoutKnownTruth(mergeTypeList(results)), allPreserve
+	}
+	return clean, true
+}
+
 // evalPipe evaluates pipeline declarations and commands, updating the variable environment.
 func (c *checker) evalPipe(pipe *parse.PipeNode, dot Type, env *varEnv) (Type, error) {
 	if pipe == nil {
@@ -135,28 +211,7 @@ func (c *checker) evalCommand(cmd *parse.CommandNode, dot Type, env *varEnv, has
 				coll = pipedVal
 				numIdx = 0
 			}
-			clean := withoutKnownTruth(coll)
-			var res Type
-			if rt, ok := clean.(*reflectType); ok {
-				cur := deref(rt.t)
-				if cur != nil {
-					if cur.Kind() == reflect.Array {
-						res = ReflectType(reflect.SliceOf(cur.Elem()))
-					} else {
-						res = ReflectType(cur)
-					}
-				} else {
-					res = clean
-				}
-			} else {
-				res = clean
-			}
-			if numIdx == 0 {
-				if known, truth := staticTruth(nil, coll); known {
-					return withKnownTruth(res, truth), nil
-				}
-			}
-			return res, nil
+			return evalSlice(coll, numIdx), nil
 
 		case "call":
 			var fnType Type

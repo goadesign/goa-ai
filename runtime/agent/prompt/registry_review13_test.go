@@ -5,6 +5,7 @@ package prompt
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -42,6 +43,24 @@ type (
 		FnPRV    func() *reflect.Value
 		Any      any
 		Flag     bool
+	}
+
+	// review09Item supplies the field that becomes invalid after a bad branch assignment.
+	review09Item struct {
+		Label string
+	}
+
+	// review09Data supplies fixed, dynamic, and pointer collection contracts.
+	review09Data struct {
+		Item      review09Item
+		Dynamic   any
+		Values    []int
+		Array     [1]int
+		ZeroArray [0]int
+		Text      string
+		Ptr       *[]int
+		TextPtr   *string
+		ArrayPtr  *[0]int
 	}
 )
 
@@ -389,7 +408,6 @@ func TestReview8722FreshDynamicPropagation(t *testing.T) {
 		{"loop_dynamic_break", `{{$x := .Item}}{{$v := or .Dynamic true}}{{range 4}}{{$v = not $v}}{{break}}{{end}}{{if $v}}{{$x = "bad"}}{{end}}{{$x.Label}}`, true, nil},
 		{"custom_not_not_constant", `{{$x := .Item}}{{if not (or .Dynamic true)}}{{$x = "bad"}}{{end}}{{$x.Label}}`, false, template.FuncMap{"not": func(any) bool { return true }}},
 		{"dynamic_slice_truth_not_assumed", `{{$x := .Item}}{{$v := or .Dynamic true}}{{if slice $v 0 0}}{{else}}{{$x = "bad"}}{{end}}{{$x.Label}}`, false, nil},
-		{"dynamic_slice_no_indices_preserves_truth", `{{$x := .Item}}{{$v := or .Dynamic true}}{{if slice $v}}{{else}}{{$x = "bad"}}{{end}}{{$x.Label}}`, true, nil},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -401,7 +419,7 @@ func TestReview8722FreshDynamicPropagation(t *testing.T) {
 				Flag    bool
 			}
 			d := data{Item: item{"ok"}, Dynamic: []int{1}, Other: false, Flag: true}
-			if c.name == "dynamic_slice_truth_not_assumed" || c.name == "dynamic_slice_no_indices_preserves_truth" {
+			if c.name == "dynamic_slice_truth_not_assumed" {
 				d.Dynamic = []int{1}
 			}
 			calls := 0
@@ -476,5 +494,161 @@ func TestReview8722CounterField(t *testing.T) {
 	type data struct{ Item item }
 	if err := ValidatePromptTemplate(PromptSpec{ID: "counter-field", ArgsType: reflect.TypeFor[data]()}, src); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestReview09SliceEntries checks all static entries and direct-store rendering before witness execution.
+func TestReview09SliceEntries(t *testing.T) {
+	t.Parallel()
+
+	empty := []int{}
+	emptyText := ""
+	zero := [0]int{}
+	base := review09Data{Item: review09Item{"ok"}, Dynamic: []int{1}, Values: []int{1}, Array: [1]int{1}, Text: "a", Ptr: &empty, TextPtr: &emptyText, ArrayPtr: &zero}
+	cases := []struct {
+		name, init, condition string
+		badTrue, accept       bool
+		dynamic               any
+		funcs                 template.FuncMap
+	}{
+		{name: "dynamic_direct_no_index", init: `or .Dynamic true`, condition: `slice $v`, accept: false},
+		{name: "dynamic_piped_collection_no_index", init: `or .Dynamic true`, condition: `$v | slice`, accept: false},
+		{name: "dynamic_direct_one_index", init: `or .Dynamic true`, condition: `slice $v 1`},
+		{name: "dynamic_direct_two_indexes", init: `or .Dynamic true`, condition: `slice $v 0 0`},
+		{name: "dynamic_direct_three_indexes", init: `or .Dynamic true`, condition: `slice $v 0 0 1`},
+		{name: "dynamic_piped_last_low", init: `or .Dynamic true`, condition: `1 | slice $v`},
+		{name: "dynamic_piped_last_high", init: `or .Dynamic true`, condition: `0 | slice $v 0`},
+		{name: "dynamic_piped_last_cap", init: `or .Dynamic true`, condition: `0 | slice $v 0 0`},
+		{name: "dynamic_false_no_index", init: `and .Dynamic false`, condition: `slice $v`, badTrue: true, accept: true, dynamic: make([]int, 0, 1)},
+		{name: "dynamic_false_piped_no_index", init: `and .Dynamic false`, condition: `$v | slice`, badTrue: true, accept: true, dynamic: make([]int, 0, 1)},
+		{name: "dynamic_false_to_true", init: `and .Dynamic false`, condition: `slice $v 0 1`, badTrue: true, dynamic: make([]int, 0, 1)},
+		{name: "dynamic_false_to_true_pipe", init: `and .Dynamic false`, condition: `1 | slice $v 0`, badTrue: true, dynamic: make([]int, 0, 1)},
+		{name: "typed_array_no_index", init: `.Array`, condition: `slice $v`, accept: true},
+		{name: "typed_array_to_false", init: `.Array`, condition: `slice $v 0 0`},
+		{name: "typed_zero_array_no_index", init: `.ZeroArray`, condition: `slice $v`, badTrue: true, accept: true},
+		{name: "typed_slice_no_index", init: `or .Values .Array`, condition: `slice $v`, accept: true},
+		{name: "typed_slice_to_false", init: `or .Values .Array`, condition: `slice $v 0 0`},
+		{name: "typed_string_no_index", init: `or .Text "x"`, condition: `slice $v`, accept: true},
+		{name: "typed_string_to_false", init: `or .Text "x"`, condition: `slice $v 0 0`},
+		{name: "function_override_slice_false", init: `or .Dynamic true`, condition: `slice $v`, funcs: template.FuncMap{"slice": func(any) []int { return nil }}},
+		{name: "function_override_slice_struct", init: `or .Dynamic true`, condition: `slice $v`, accept: true, funcs: template.FuncMap{"slice": func(any) review09Item { return review09Item{"function"} }}},
+		{name: "dynamic_pointer_slice_no_index", init: `or .Dynamic true`, condition: `slice $v`, dynamic: &empty},
+		{name: "dynamic_pointer_slice_piped_no_index", init: `or .Dynamic true`, condition: `$v | slice`, dynamic: &empty},
+		{name: "typed_pointer_slice_no_index", init: `or .Ptr true`, condition: `slice $v`},
+		{name: "typed_pointer_string_no_index", init: `or .TextPtr true`, condition: `slice $v`},
+		{name: "typed_pointer_zero_array_no_index", init: `or .ArrayPtr true`, condition: `slice $v`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			d := base
+			if tc.dynamic != nil {
+				d.Dynamic = tc.dynamic
+			}
+			var data any = d
+			if tc.name == "typed_array_no_index" || tc.name == "typed_array_to_false" || tc.name == "typed_zero_array_no_index" {
+				data = &d
+			}
+			calls := 0
+			funcs := template.FuncMap{"witness": func() string { calls++; return "" }}
+			for k, v := range tc.funcs {
+				funcs[k] = v
+			}
+			branch := `{{if ` + tc.condition + `}}{{else}}{{$x = "bad"}}{{end}}`
+			if tc.badTrue {
+				branch = `{{if ` + tc.condition + `}}{{$x = "bad"}}{{end}}`
+			}
+			src := `{{witness}}{{$x := .Item}}{{$v := ` + tc.init + `}}` + branch + `{{$x.Label}}`
+			spec := PromptSpec{ID: "review09", Role: PromptRoleSystem, Template: src, ArgsType: reflect.TypeOf(data), Funcs: funcs}
+			store := NewInMemoryStore()
+			reg := NewRegistry(store)
+			baseline := spec
+			baseline.Template = "base"
+			if err := reg.Register(baseline); err != nil {
+				t.Fatal(err)
+			}
+			errs := []error{
+				ValidatePromptTemplate(spec, src),
+				NewRegistry(nil).Register(spec),
+				NewRegistry(nil).ValidateSpecs([]PromptSpec{spec}),
+				reg.ValidateOverride(spec.ID, src),
+				reg.SetOverride(context.Background(), spec.ID, Scope{}, src, nil),
+			}
+			if calls != 0 {
+				t.Fatal("validation executed witness")
+			}
+			if err := store.Set(context.Background(), spec.ID, Scope{}, src, nil); err != nil {
+				t.Fatal(err)
+			}
+			content, renderErr := reg.Render(context.Background(), spec.ID, Scope{}, data)
+			renderCalls := calls
+			var out bytes.Buffer
+			oracle := template.Must(template.New("oracle").Option("missingkey=error").Funcs(funcs).Parse(src)).Execute(&out, data)
+			t.Logf("src=%q static=%v render=%v calls=%d content=%v oracle=%v output=%q", src, errs, renderErr, renderCalls, content, oracle, out.String())
+			for i, err := range errs {
+				if (err == nil) != tc.accept {
+					t.Errorf("entry %d accepted=%t want=%t err=%v", i, err == nil, tc.accept, err)
+				}
+				if !tc.accept && err != nil && !errors.Is(err, ErrTemplateFieldNotFound) {
+					t.Errorf("entry %d wrong error: %v", i, err)
+				}
+			}
+			if tc.accept {
+				if renderErr != nil || oracle != nil || content == nil || content.Text != out.String() {
+					t.Error("valid result differs from Go execution")
+				}
+			} else if !errors.Is(renderErr, ErrTemplateFieldNotFound) || renderCalls != 0 {
+				t.Error("known invalid field must fail validation before witness")
+			}
+		})
+	}
+}
+
+// TestReview09SliceFlow checks slicing facts through loop mutation and named-template inputs.
+func TestReview09SliceFlow(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name, src       string
+		accept, pointer bool
+	}{
+		{"loop_bounded", `{{$x := .Item}}{{$v := or .Dynamic true}}{{range 2}}{{$v = slice $v 0 0}}{{end}}{{if $v}}{{else}}{{$x = "bad"}}{{end}}{{$x.Label}}`, false, false},
+		{"loop_no_index", `{{$x := .Item}}{{$v := or .Values .Array}}{{range 2}}{{$v = slice $v}}{{end}}{{if $v}}{{else}}{{$x = "bad"}}{{end}}{{$x.Label}}`, true, false},
+		{"named_bounded", `{{define "n"}}{{$x := item}}{{if $}}{{else}}{{$x = "bad"}}{{end}}{{$x.Label}}{{end}}{{template "n" (slice (or .Dynamic true) 0 0)}}`, false, false},
+		{"named_no_index", `{{define "n"}}{{$x := item}}{{if $}}{{else}}{{$x = "bad"}}{{end}}{{$x.Label}}{{end}}{{template "n" (slice (or .Values .Array))}}`, true, false},
+		{"named_false_to_true", `{{define "n"}}{{$x := item}}{{if $}}{{$x = "bad"}}{{end}}{{$x.Label}}{{end}}{{template "n" (slice (and .Empty false) 0 1)}}`, false, false},
+		{"loop_pointer_no_index", `{{$x := .Item}}{{$v := or .Dynamic true}}{{range 2}}{{$v = slice $v}}{{end}}{{if $v}}{{else}}{{$x = "bad"}}{{end}}{{$x.Label}}`, false, true},
+		{"named_pointer_no_index", `{{define "n"}}{{$x := item}}{{if $}}{{else}}{{$x = "bad"}}{{end}}{{$x.Label}}{{end}}{{template "n" (slice (or .Dynamic true))}}`, false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := struct {
+				Item    review09Item
+				Dynamic any
+				Empty   any
+				Values  []int
+				Array   [1]int
+			}{
+				Item:    review09Item{"ok"},
+				Dynamic: []int{1},
+				Empty:   make([]int, 0, 1),
+				Values:  []int{1},
+				Array:   [1]int{1},
+			}
+			if tc.pointer {
+				empty := []int{}
+				d.Dynamic = &empty
+			}
+			funcs := template.FuncMap{"item": func() review09Item { return d.Item }}
+			spec := PromptSpec{ID: "flow09", Role: PromptRoleSystem, Template: tc.src, ArgsType: reflect.TypeOf(d), Funcs: funcs}
+			err := ValidatePromptTemplate(spec, tc.src)
+			var out bytes.Buffer
+			oracle := template.Must(template.New("oracle").Funcs(funcs).Parse(tc.src)).Execute(&out, d)
+			t.Logf("checked=%v oracle=%v output=%q", err, oracle, out.String())
+			if (err == nil) != tc.accept {
+				t.Errorf("accepted=%t want=%t: %v", err == nil, tc.accept, err)
+			}
+			if tc.accept && oracle != nil {
+				t.Error(oracle)
+			}
+		})
 	}
 }
