@@ -31,6 +31,14 @@ type (
 		Range(twoVars bool) (key Type, elem Type, err error)
 	}
 
+	// SliceType is an optional extension of Type for custom type adapters
+	// that know the static result type of Go text/template's built-in slice
+	// operation and whether a zero-index slice preserves a known-true input fact.
+	SliceType interface {
+		Type
+		Slice() (res Type, preservesTrue bool)
+	}
+
 	// reflectType wraps a Go reflect.Type to implement Type with addressability tracking.
 	reflectType struct {
 		t           reflect.Type
@@ -317,6 +325,14 @@ func (k *knownTruthType) Range(twoVars bool) (Type, Type, error) {
 		return nil, nil, nil
 	}
 	return k.base.Range(twoVars)
+}
+
+// Slice resolves a built-in slice operation on the underlying type.
+func (k *knownTruthType) Slice() (Type, bool) {
+	if st, ok := k.base.(SliceType); ok {
+		return st.Slice()
+	}
+	return k.base, false
 }
 
 // newReflectType constructs a reflectType with explicit addressability tracking.
