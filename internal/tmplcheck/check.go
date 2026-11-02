@@ -4,6 +4,8 @@ package tmplcheck
 import (
 	"math"
 	"reflect"
+	"slices"
+	"strings"
 	"text/template"
 	"text/template/parse"
 )
@@ -99,6 +101,7 @@ func staticTruth(node parse.Node, typ Type) (known bool, truth bool) {
 
 // rangeIterBound determines if a collection has a statically known exact iteration count.
 func rangeIterBound(pipe *parse.PipeNode, collType Type) (exact int, known bool) {
+	collType = withoutKnownTruth(collType)
 	if isNilDataType(collType) {
 		return 0, true
 	}
@@ -205,12 +208,33 @@ func envsEqual(a, b *varEnv) bool {
 	return true
 }
 
+// envStateKey constructs a canonical string key representing the variable bindings and their static type IDs.
+func envStateKey(env *varEnv) string {
+	if env == nil {
+		return ""
+	}
+	names := make([]string, 0, len(env.names))
+	for name := range env.names {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	var b strings.Builder
+	for _, name := range names {
+		id := env.names[name]
+		b.WriteString(name)
+		b.WriteByte('=')
+		b.WriteString(typeID(env.types[id]))
+		b.WriteByte(';')
+	}
+	return b.String()
+}
+
 // isNilDataType reports whether t represents untyped nil data.
 func isNilDataType(t Type) bool {
 	if t == nil {
 		return false
 	}
-	_, ok := t.(nilDataType)
+	_, ok := withoutKnownTruth(t).(nilDataType)
 	return ok
 }
 
@@ -408,25 +432,19 @@ func (c *checker) walkFlow(node parse.Node, dot Type, env *varEnv) (fallEnv *var
 			}
 			var allBreaks []*varEnv
 			nextIterEnv := rangeEnv.clone()
-			var seenPreEnvs []*varEnv
+			seenPreIdx := make(map[string]int)
 			var seenPostEnvs []*varEnv
 			for iter := 0; iter < exact && nextIterEnv != nil; iter++ {
 				curIterEnv := nextIterEnv.clone()
 				bindRangeDecls(curIterEnv)
-				prevIdx := -1
-				for idx, seen := range seenPreEnvs {
-					if envsEqual(seen, curIterEnv) {
-						prevIdx = idx
-						break
-					}
-				}
-				if prevIdx >= 0 {
+				key := envStateKey(curIterEnv)
+				if prevIdx, found := seenPreIdx[key]; found {
 					cycleLen := iter - prevIdx
 					targetIdx := prevIdx + (exact-1-prevIdx)%cycleLen
 					nextIterEnv = seenPostEnvs[targetIdx].clone()
 					break
 				}
-				seenPreEnvs = append(seenPreEnvs, curIterEnv.clone())
+				seenPreIdx[key] = iter
 				var stepFall *varEnv
 				var stepBreaks, stepContinues []*varEnv
 				if n.List != nil {

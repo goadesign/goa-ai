@@ -591,6 +591,9 @@ func TestReview65Flow(t *testing.T) {
 			if tc.name != "fixedpoint_large" && (execution == nil) != tc.execute {
 				t.Errorf("oracle execution=%t want=%t", execution == nil, tc.execute)
 			}
+			if tc.accept && tc.name != "fixedpoint_large" && (renderErr == nil) != tc.execute {
+				t.Errorf("render execution=%t want=%t", renderErr == nil, tc.execute)
+			}
 			if !tc.accept && renderCalls != 0 {
 				t.Error("invalid override executed helper")
 			}
@@ -598,7 +601,8 @@ func TestReview65Flow(t *testing.T) {
 	}
 }
 
-// TestReview65CycleCost validates that cycle detection in range loops terminates in constant time.
+// TestReview65CycleCost validates that cycle detection in range loops terminates in bounded time
+// across cycle periods without unrolling all loop iterations.
 func TestReview65CycleCost(t *testing.T) {
 	t.Parallel()
 

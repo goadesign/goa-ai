@@ -1,3 +1,5 @@
+// Package tmplcheck provides static type checking for Go text/template ASTs.
+// This file implements pipeline, command, and expression node evaluation.
 package tmplcheck
 
 import (
@@ -127,7 +129,8 @@ func (c *checker) evalCommand(cmd *parse.CommandNode, dot Type, env *varEnv, has
 			} else if hasPiped {
 				coll = pipedVal
 			}
-			if rt, ok := coll.(*reflectType); ok {
+			clean := withoutKnownTruth(coll)
+			if rt, ok := clean.(*reflectType); ok {
 				cur := deref(rt.t)
 				if cur != nil {
 					if cur.Kind() == reflect.Array {

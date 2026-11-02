@@ -334,7 +334,10 @@ func newReflectType(t reflect.Type, addressable bool) Type {
 // withKnownTruth attaches a known boolean truth value to a Type.
 func withKnownTruth(t Type, truth bool) Type {
 	if t == nil {
-		return nil
+		return &knownTruthType{base: nil, truth: truth}
+	}
+	if isNilDataType(t) && !truth {
+		return nilDataType{}
 	}
 	switch v := t.(type) {
 	case *reflectType:
@@ -385,8 +388,14 @@ func unwrapAndOrOperand(t Type) Type {
 		return nil
 	}
 	clean := withoutKnownTruth(t)
+	if clean == nil {
+		return t
+	}
 	if rt, ok := clean.(*reflectType); ok {
 		if rt.t == reflect.TypeFor[reflect.Value]() {
+			if k, tr := staticTruth(nil, t); k {
+				return withKnownTruth(nil, tr)
+			}
 			return nil
 		}
 		return t
@@ -397,8 +406,8 @@ func unwrapAndOrOperand(t Type) Type {
 			mapped[i] = unwrapAndOrOperand(alt)
 		}
 		merged := mergeTypeList(mapped)
-		if mt.knownTruth != nil && merged != nil {
-			return withKnownTruth(merged, *mt.knownTruth)
+		if k, tr := staticTruth(nil, t); k {
+			return withKnownTruth(merged, tr)
 		}
 		return merged
 	}
@@ -489,13 +498,9 @@ func typeID(t Type) string {
 }
 
 // mergeTypes combines two static Types into a single Type.
-// If either is nil (dynamic), the result is nil (dynamic).
 // If both have identical IDs, t1 is returned.
 // Otherwise, a multiType containing both alternatives is returned.
 func mergeTypes(t1, t2 Type) Type {
-	if t1 == nil || t2 == nil {
-		return nil
-	}
 	if typeID(t1) == typeID(t2) {
 		return t1
 	}
@@ -509,9 +514,10 @@ func mergeTypeList(types []Type) Type {
 	}
 	allKnownTruth := true
 	var commonTruth bool
+	hasDynamic := false
 	for i, t := range types {
-		if t == nil {
-			return nil
+		if withoutKnownTruth(t) == nil {
+			hasDynamic = true
 		}
 		k, tr := staticTruth(nil, t)
 		switch {
@@ -522,6 +528,12 @@ func mergeTypeList(types []Type) Type {
 		case commonTruth != tr:
 			allKnownTruth = false
 		}
+	}
+	if hasDynamic {
+		if allKnownTruth {
+			return withKnownTruth(nil, commonTruth)
+		}
+		return nil
 	}
 
 	flattened := make([]Type, 0, len(types))
@@ -538,6 +550,9 @@ func mergeTypeList(types []Type) Type {
 	for _, t := range flattened {
 		id := typeID(t)
 		if id == dynamicTypeID {
+			if allKnownTruth {
+				return withKnownTruth(nil, commonTruth)
+			}
 			return nil
 		}
 		if !seen[id] {
