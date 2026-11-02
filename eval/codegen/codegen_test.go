@@ -5,6 +5,7 @@ package codegen_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"go/parser"
 	"go/token"
 	"maps"
@@ -152,6 +153,96 @@ func TestReview24EvalNestedExtend(t *testing.T) {
 			content := render(t, files[0])
 			assert.Contains(t, content, "Query string")
 			assert.Contains(t, content, "utf8.RuneCountInString")
+		})
+	}
+}
+
+// TestReviewF603EvalRecursiveExtend executes the emitted validators for both
+// sibling orders using the same public JSON input and expected length boundary.
+func TestReviewF603EvalRecursiveExtend(t *testing.T) {
+	for _, reverse := range []bool{false, true} {
+		t.Run(map[bool]string{false: "recursive_first", true: "nested_first"}[reverse], func(t *testing.T) {
+			roots := runDesign(t, func() {
+				base := goadsl.Type("Base", func() {
+					goadsl.Attribute("query", goadsl.String, "Query", func() { goadsl.MinLength(2) })
+					goadsl.Required("query")
+				})
+				derived := goadsl.Type("Derived", func() { goadsl.Extend(base) })
+				node := goadsl.Type("Node", func() {
+					if !reverse {
+						goadsl.Attribute("other", "Other", "Other node")
+					}
+					goadsl.Attribute("nested", &goaexpr.Object{}, "Nested query", func() { goadsl.Extend(derived) })
+					goadsl.Required("nested")
+					if reverse {
+						goadsl.Attribute("other", "Other", "Other node")
+					}
+				})
+				goadsl.Type("Other", func() { goadsl.Attribute("node", node, "Node") })
+				evaldsl.Suite("recursive", func() {
+					goadsl.Description("Recursive inputs")
+					goadsl.Timeout("1s")
+					evaldsl.Scenario("query", func() {
+						goadsl.Description("Query")
+						evaldsl.Input(func() {
+							goadsl.Attribute("root", node, "Root")
+							goadsl.Required("root")
+						})
+					})
+				})
+			})
+			files := generateEvalFiles(t, roots, false)
+			require.Len(t, files, 1)
+			content := render(t, files[0])
+			t.Logf("BEGIN GENERATED SUITE\n%s\nEND GENERATED SUITE", content)
+			root := t.TempDir()
+			repoRoot, err := filepath.Abs("../..")
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte(fmt.Sprintf("module example.com/project\n\ngo 1.27.3\n\nrequire goa.design/goa-ai v0.0.0\nreplace goa.design/goa-ai => %s\n", repoRoot)), 0o600))
+			require.NoError(t, os.WriteFile(filepath.Join(root, "suite.go"), []byte(content), 0o600))
+			testSource := `package recursive
+
+import (
+	"encoding/json"
+	"testing"
+)
+
+func TestGeneratedValidators(t *testing.T) {
+	for _, query := range []string{"", "a", "ab", "abc"} {
+		var input QueryInput
+		if err := json.Unmarshal([]byte("{\"root\":{\"nested\":{\"query\":\""+query+"\"}}}"), &input); err != nil {
+			t.Fatal(err)
+		}
+		err := ValidateQueryInput(&input)
+		t.Logf("query=%q validation_error=%v", query, err)
+		if (err != nil) != (len(query) < 2) {
+			t.Errorf("query=%q: want invalid=%t got %v", query, len(query) < 2, err)
+		}
+	}
+}
+
+func TestMissingNestedObservation(t *testing.T) {
+	var input QueryInput
+	if err := json.Unmarshal([]byte("{\"root\":{}}"), &input); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if v := recover(); v != nil {
+			t.Logf("missing nested panic=%v", v)
+		}
+	}()
+	t.Logf("missing nested error=%v", ValidateQueryInput(&input))
+}
+`
+			require.NoError(t, os.WriteFile(filepath.Join(root, "suite_test.go"), []byte(testSource), 0o600))
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, "go", "test", "-mod=mod", "-v", "-timeout=20s", ".")
+			cmd.Dir = root
+			cmd.Env = append(os.Environ(), "CI=true", "GOWORK=off")
+			out, err := cmd.CombinedOutput()
+			t.Log(string(out))
+			require.NoError(t, err)
 		})
 	}
 }

@@ -1,3 +1,5 @@
+// Package codegen_test tests code generation for agent and service prompt artifacts,
+// verifying that artifact variations and package name collisions compile and execute cleanly.
 package codegen_test
 
 import (
@@ -11,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	codegen "goa.design/goa-ai/codegen/agent"
+	"goa.design/goa-ai/codegen/testhelpers"
 	. "goa.design/goa-ai/dsl"
 	agentsExpr "goa.design/goa-ai/expr/agent"
 	goadsl "goa.design/goa/v3/dsl"
@@ -536,6 +539,77 @@ func TestCompiles(t *testing.T) {}
 			cmd.Env = append(os.Environ(), "GOWORK=off")
 			out, err := cmd.CombinedOutput()
 			require.NoError(t, err, string(out))
+		})
+	}
+}
+
+// TestReviewF603InlineUnionInheritance tests requiredness on the actual generated
+// union branch where Goa copied the inline schema and its named base types.
+func TestReviewF603InlineUnionInheritance(t *testing.T) {
+	for _, explicit := range []bool{false, true} {
+		t.Run(map[bool]string{false: "inherited_required", true: "explicit_required_control"}[explicit], func(t *testing.T) {
+			files := testhelpers.BuildAndGenerateWithPkg(t, "review.local/gen", func() {
+				base := goadsl.Type("Base", func() {
+					goadsl.Attribute("query", goadsl.String, "Query", func() { goadsl.MinLength(2) })
+					goadsl.Required("query")
+				})
+				derived := goadsl.Type("Derived", func() { goadsl.Extend(base) })
+				goadsl.API("review", func() {})
+				goadsl.Service("support", func() {
+					Prompt("greet", func() {
+						Template(`{{.Choice.Kind}}`)
+						Args(func() {
+							goadsl.OneOf("choice", "Query choice", func() {
+								goadsl.Attribute("structured", &goaexpr.Object{}, "Query", func() {
+									goadsl.Extend(derived)
+									if explicit {
+										goadsl.Required("query")
+									}
+								})
+							})
+							goadsl.Required("choice")
+						})
+					})
+				})
+			})
+			dir := t.TempDir()
+			repoRoot, err := filepath.Abs("../..")
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module review.local\n\ngo 1.27.3\n\nrequire goa.design/goa-ai v0.0.0\nreplace goa.design/goa-ai => "+repoRoot+"\n"), 0o600))
+			for _, f := range files {
+				_, err := f.Render(dir)
+				require.NoError(t, err)
+			}
+			source, err := os.ReadFile(filepath.Join(dir, "gen/support/prompts/prompts.go")) //nolint:gosec // Reading test generated file in temporary test directory.
+			require.NoError(t, err)
+			t.Logf("BEGIN GENERATED PROMPTS\n%s\nEND GENERATED PROMPTS", source)
+			testSource := `package prompts
+
+import (
+	"reflect"
+	"testing"
+)
+
+func TestEmittedUnionRequiredField(t *testing.T) {
+	field, ok := reflect.TypeFor[ChoiceStructured]().FieldByName("Query")
+	if !ok {
+		t.Fatal("missing query")
+	}
+	t.Logf("generated Query field type=%v", field.Type)
+	if field.Type.Kind() != reflect.String {
+		t.Errorf("required query must be string, got %v", field.Type)
+	}
+}
+`
+			require.NoError(t, os.WriteFile(filepath.Join(dir, "gen/support/prompts/union_review_test.go"), []byte(testSource), 0o600))
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, "go", "test", "-mod=mod", "-v", "-timeout=20s", "./gen/support/prompts")
+			cmd.Dir = dir
+			cmd.Env = append(os.Environ(), "CI=true", "GOWORK=off")
+			out, err := cmd.CombinedOutput()
+			t.Log(string(out))
+			require.NoError(t, err)
 		})
 	}
 }
